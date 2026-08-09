@@ -63,7 +63,9 @@ class EphemeralKeyServiceTest {
                 PaymentServiceTestFactory.stubbedResolver(),
                 mock(com.yadony.api.promo.PromoService.class),
                 stripeGateway,
-                PaymentServiceTestFactory.stubbedContacts()
+                PaymentServiceTestFactory.stubbedContacts(),
+                mock(com.yadony.api.settings.UserBusinessPrefsRepository.class),
+                new com.yadony.api.payments.currency.CurrencyMatchGuard()
                 );
     }
 

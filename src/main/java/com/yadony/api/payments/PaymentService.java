@@ -28,12 +28,11 @@ import com.yadony.api.payments.dto.OnboardingLinkResponse;
 import com.yadony.api.payments.dto.PaymentMethodResponse;
 import com.yadony.api.payments.dto.PaymentResponse;
 import com.yadony.api.payments.currency.CurrencyAmount;
-import com.yadony.api.payments.currency.CurrencyCatalog;
-import com.yadony.api.payments.currency.ExchangeRateProperties;
-import com.yadony.api.payments.currency.FxRateService;
+import com.yadony.api.payments.currency.CurrencyMatchGuard;
 import com.yadony.api.payments.currency.SupportedCurrency;
-import com.yadony.api.payments.currency.StripeFxQuoteService;
 import com.yadony.api.payments.events.StripeOnboardingCompletedEvent;
+import com.yadony.api.settings.UserBusinessPrefsEntity;
+import com.yadony.api.settings.UserBusinessPrefsRepository;
 import com.stripe.exception.StripeException;
 import com.stripe.model.Account;
 import com.stripe.model.AccountLink;
@@ -58,7 +57,6 @@ import com.yadony.api.payments.events.PaymentEscrowReadyEvent;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -67,7 +65,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
-import com.github.benmanes.caffeine.cache.Caffeine;
 
 @Service
 @Transactional
@@ -89,12 +86,8 @@ public class PaymentService {
     private final PromoService promoService;
     private final StripeGateway stripeGateway;
     private final FirebaseContactService firebaseContact;
-    private StripeFxQuoteService stripeFxQuoteService;
-    private CurrencyCatalog currencyCatalog = new CurrencyCatalog();
-    private FxRateService fxRateService = new FxRateService(
-            (source, target) -> { throw new IllegalStateException("FX provider not configured"); },
-            new ExchangeRateProperties(new BigDecimal("655.957"), new BigDecimal("655.957"), 300),
-            Caffeine.newBuilder().build());
+    private final UserBusinessPrefsRepository userBusinessPrefsRepository;
+    private final CurrencyMatchGuard currencyMatchGuard;
 
     public PaymentService(UserRepository userRepository,
                           BidRepository bidRepository,
@@ -109,7 +102,9 @@ public class PaymentService {
                           CommissionRateResolver commissionRateResolver,
                           PromoService promoService,
                           StripeGateway stripeGateway,
-                          FirebaseContactService firebaseContact) {
+                          FirebaseContactService firebaseContact,
+                          UserBusinessPrefsRepository userBusinessPrefsRepository,
+                          CurrencyMatchGuard currencyMatchGuard) {
         this.userRepository = userRepository;
         this.bidRepository = bidRepository;
         this.bidGridItemRepository = bidGridItemRepository;
@@ -124,30 +119,8 @@ public class PaymentService {
         this.promoService = promoService;
         this.stripeGateway = stripeGateway;
         this.firebaseContact = firebaseContact;
-    }
-
-    @Autowired
-    public void configureCurrency(CurrencyCatalog currencyCatalog, FxRateService fxRateService) {
-        this.currencyCatalog = currencyCatalog;
-        this.fxRateService = fxRateService;
-    }
-
-    @Autowired(required = false)
-    public void configureFxQuotes(StripeFxQuoteService stripeFxQuoteService) {
-        this.stripeFxQuoteService = stripeFxQuoteService;
-    }
-
-    private StripeFxQuoteService.FxQuoteSnapshot createFxQuote(SupportedCurrency currency) {
-        return stripeFxQuoteService == null ? null : stripeFxQuoteService.createPaymentQuote(currency);
-    }
-
-    private CurrencyAmount convertForPayment(BigDecimal amountEur,
-                                             SupportedCurrency currency,
-                                             StripeFxQuoteService.FxQuoteSnapshot fxQuote) {
-        if (fxQuote == null) {
-            return fxRateService.convert(amountEur, currency);
-        }
-        return CurrencyAmount.of(amountEur.multiply(fxQuote.localUnitsPerEur()), currency);
+        this.userBusinessPrefsRepository = userBusinessPrefsRepository;
+        this.currencyMatchGuard = currencyMatchGuard;
     }
 
     // ── Story 6.2 : Onboarding Stripe Connect ────────────────────────────────
@@ -396,6 +369,12 @@ public class PaymentService {
                     "Cette demande ne peut plus être payée (statut : " + bid.getStatus() + ")");
         }
 
+        String senderCurrency = userBusinessPrefsRepository.findById(sender.getId())
+                .map(UserBusinessPrefsEntity::getCurrencyCode)
+                .orElse("EUR");
+        currencyMatchGuard.assertMatches(bid.getCurrency(), senderCurrency);
+        SupportedCurrency currency = SupportedCurrency.fromCode(bid.getCurrency());
+
         // Idempotency: reuse existing non-failed payment
         Optional<PaymentEntity> existing = paymentRepository.findByBidId(bidId);
         if (existing.isPresent()) {
@@ -495,10 +474,8 @@ public class PaymentService {
         }
         BigDecimal amount = totalNet.multiply(BigDecimal.ONE.add(rate)).setScale(2, RoundingMode.HALF_UP);
         BigDecimal commission = totalNet.multiply(rate).setScale(2, RoundingMode.HALF_UP);
-        SupportedCurrency currency = currencyCatalog.resolve(sender.getCountry(), request.getCurrencyCode());
-        StripeFxQuoteService.FxQuoteSnapshot fxQuote = createFxQuote(currency);
-        CurrencyAmount localAmount = convertForPayment(amount, currency, fxQuote);
-        CurrencyAmount localCommission = convertForPayment(commission, currency, fxQuote);
+        CurrencyAmount localAmount = CurrencyAmount.of(amount, currency);
+        CurrencyAmount localCommission = CurrencyAmount.of(commission, currency);
 
         try {
             // Compatibilité comptes legacy : avant cette fix, certains comptes Stripe Connect
@@ -531,16 +508,10 @@ public class PaymentService {
                     .putMetadata("bid_id", bidId.toString())
                     .putMetadata("sender_id", sender.getId().toString())
                     .putMetadata("traveler_id", traveler.getId().toString())
-                    .putMetadata("commission_eur", commission.toPlainString())
+                    .putMetadata("commission_amount", localCommission.major().toPlainString())
                     .putMetadata("currency", currency.code())
                     .putMetadata("commission_rate", rate.toPlainString())
-                    .putMetadata("commission_cents", String.valueOf(commissionCents));
-
-            if (fxQuote != null) {
-                paramsBuilder.putExtraParam("fx_quote", fxQuote.id())
-                        .putMetadata("fx_quote_id", fxQuote.id())
-                        .putMetadata("fx_exchange_rate", fxQuote.exchangeRate().toPlainString());
-            }
+                    .putMetadata("commission_minor", String.valueOf(commissionCents));
 
             // Défaut aligné sur le toggle « Enregistrer cette carte » (ON) de la sheet.
             // Décochable ensuite via PATCH /payments/intents/{id}/save-payment-method.
@@ -556,11 +527,6 @@ public class PaymentService {
             payment.setAmount(localAmount.major());
             payment.setCommissionAmount(localCommission.major());
             payment.setCurrency(currency.code());
-            if (fxQuote != null) {
-                payment.setStripeFxQuoteId(fxQuote.id());
-                payment.setFxExchangeRate(fxQuote.exchangeRate());
-                payment.setFxQuoteExpiresAt(fxQuote.expiresAt());
-            }
             payment.setStatus(PaymentStatus.PENDING);
             payment.setLegacyDestinationCharge(false);
             paymentRepository.save(payment);
@@ -1412,22 +1378,22 @@ public class PaymentService {
             UUID threadId,
             UUID senderId,
             UUID travelerId,
-            BigDecimal amountEur) {
-        return createNegotiationEscrow(threadId, senderId, travelerId, amountEur, null);
-    }
-
-    public PaymentResponse createNegotiationEscrow(
-            UUID threadId,
-            UUID senderId,
-            UUID travelerId,
             BigDecimal amountEur,
-            String promoCode) {
+            String promoCode,
+            String serverCurrency) {
         log.info("createNegotiationEscrow(threadId={}, senderId={}, travelerId={}, amount={})",
                 threadId, senderId, travelerId, amountEur);
 
         UserEntity sender = userRepository.findById(senderId)
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
                         "user-not-found", "User Not Found", "Sender introuvable"));
+
+        String senderCurrency = userBusinessPrefsRepository.findById(sender.getId())
+                .map(UserBusinessPrefsEntity::getCurrencyCode)
+                .orElse("EUR");
+        currencyMatchGuard.assertMatches(serverCurrency, senderCurrency);
+        SupportedCurrency currency = SupportedCurrency.fromCode(serverCurrency);
+
         UserEntity traveler = userRepository.findById(travelerId)
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
                         "traveler-not-found", "Traveler Not Found", "Voyageur introuvable"));
@@ -1509,10 +1475,8 @@ public class PaymentService {
         }
         // Modèle B : amountEur = NET voyageur. L'expéditeur paie gross = net*(1+rate).
         PriceBreakdown b = PriceBreakdown.fromNet(amountEur, rate);
-        SupportedCurrency currency = currencyCatalog.resolve(sender.getCountry(), null);
-        StripeFxQuoteService.FxQuoteSnapshot fxQuote = createFxQuote(currency);
-        CurrencyAmount localGross = convertForPayment(b.gross(), currency, fxQuote);
-        CurrencyAmount localCommission = convertForPayment(b.commission(), currency, fxQuote);
+        CurrencyAmount localGross = CurrencyAmount.of(b.gross(), currency);
+        CurrencyAmount localCommission = CurrencyAmount.of(b.commission(), currency);
 
         try {
             ensureCardPaymentsCapability(traveler.getStripeAccountId());
@@ -1543,13 +1507,7 @@ public class PaymentService {
                     .putMetadata("traveler_id", traveler.getId().toString())
                     .putMetadata("commission_rate", rate.toPlainString())
                     .putMetadata("currency", currency.code())
-                    .putMetadata("fx_quote_id", fxQuote != null ? fxQuote.id() : "")
                     .putMetadata("scope", "NEGOTIATION");
-
-            if (fxQuote != null) {
-                paramsBuilder.putExtraParam("fx_quote", fxQuote.id())
-                        .putMetadata("fx_exchange_rate", fxQuote.exchangeRate().toPlainString());
-            }
             PaymentIntentCreateParams params = paramsBuilder.build();
 
             PaymentIntent pi = stripeGateway.createPaymentIntent(params);
@@ -1561,11 +1519,6 @@ public class PaymentService {
             payment.setAmount(localGross.major());          // total payé par l'expéditeur (gross)
             payment.setCommissionAmount(localCommission.major());
             payment.setCurrency(currency.code());
-            if (fxQuote != null) {
-                payment.setStripeFxQuoteId(fxQuote.id());
-                payment.setFxExchangeRate(fxQuote.exchangeRate());
-                payment.setFxQuoteExpiresAt(fxQuote.expiresAt());
-            }
             payment.setStatus(PaymentStatus.PENDING);
             paymentRepository.save(payment);
 

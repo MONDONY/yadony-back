@@ -2692,6 +2692,7 @@ class NegotiationServiceTest {
             thread.setPackageRequestId(REQUEST_ID);
             thread.setTravelerId(TRAVELER_ID);
             thread.setStatus(NegotiationThreadStatus.OPEN);
+            thread.setCurrency("CAD");
             thread.setCurrentPriceEur(new BigDecimal("35"));
             thread.setRoundsCount((short) 1);
             thread.setLastActivityAt(java.time.LocalDateTime.now());
@@ -2718,6 +2719,7 @@ class NegotiationServiceTest {
 
             // paymentMethod is null (not set on entity)
             assertThat(response.paymentMethod()).isNull();
+            assertThat(response.currency()).isEqualTo("CAD");
         }
 
         @Test

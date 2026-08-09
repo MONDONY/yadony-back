@@ -1468,7 +1468,8 @@ public class NegotiationService {
             t.getAvailablePaymentMethods(),
             canNudge,
             hasUnread,
-            t.getPromoCode()
+            t.getPromoCode(),
+            t.getCurrency()
         );
     }
 

@@ -80,7 +80,9 @@ class PaymentSheetSupportTest {
                 PaymentServiceTestFactory.stubbedResolver(),
                 mock(com.yadony.api.promo.PromoService.class),
                 new StripeGatewayImpl(),
-                PaymentServiceTestFactory.stubbedContacts()
+                PaymentServiceTestFactory.stubbedContacts(),
+                mock(com.yadony.api.settings.UserBusinessPrefsRepository.class),
+                new com.yadony.api.payments.currency.CurrencyMatchGuard()
                 );
     }
 

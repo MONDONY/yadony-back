@@ -16,7 +16,9 @@ import com.yadony.api.payments.dto.ConnectAccountResponse;
 import com.yadony.api.payments.dto.OnboardingLinkResponse;
 import com.yadony.api.payments.dto.PaymentResponse;
 import com.yadony.api.payments.events.PaymentEscrowReadyEvent;
-import com.yadony.api.payments.currency.StripeFxQuoteService;
+import com.yadony.api.payments.currency.CurrencyMatchGuard;
+import com.yadony.api.settings.UserBusinessPrefsEntity;
+import com.yadony.api.settings.UserBusinessPrefsRepository;
 import com.stripe.exception.StripeException;
 import com.stripe.model.Account;
 import com.stripe.model.AccountLink;
@@ -58,6 +60,7 @@ class PaymentServiceTest {
     @Mock PaymentRepository paymentRepository;
     @Mock AuditService auditService;
     @Mock ApplicationEventPublisher eventPublisher;
+    @Mock UserBusinessPrefsRepository userBusinessPrefsRepository;
 
     PaymentService service;
     com.yadony.api.common.CommissionRateResolver commissionRateResolver;
@@ -79,7 +82,8 @@ class PaymentServiceTest {
                 new com.fasterxml.jackson.databind.ObjectMapper(),
                 org.mockito.Mockito.mock(com.yadony.api.common.stripe.AdminAlertService.class),
                 commissionRateResolver, promoService, new StripeGatewayImpl(),
-                PaymentServiceTestFactory.stubbedContacts()
+                PaymentServiceTestFactory.stubbedContacts(),
+                userBusinessPrefsRepository, new CurrencyMatchGuard()
 );
     }
 
@@ -125,6 +129,13 @@ class PaymentServiceTest {
         p.setAmount(new BigDecimal("25.00"));
         p.setCommissionAmount(new BigDecimal("3.00"));
         return p;
+    }
+
+    private UserBusinessPrefsEntity prefsWithCurrency(String currency) {
+        UserBusinessPrefsEntity prefs = new UserBusinessPrefsEntity();
+        prefs.setUserId(senderId);
+        prefs.setCurrencyCode(currency);
+        return prefs;
     }
 
     private void setId(Object entity, UUID id) {
@@ -732,30 +743,22 @@ class PaymentServiceTest {
     // ── createNegotiationEscrow (Model B) ─────────────────────────────────────
 
     @Test
-    void createNegotiationEscrow_modelB_grossAmount_separateChargesNoApplicationFee() throws Exception {
+    void createNegotiationEscrow_usesServerCadOneToOne_withoutFxQuote() throws Exception {
         UUID threadId = UUID.randomUUID();
 
         // sender and traveler
         UserEntity sender = buildUser(senderId, "uid-sender");
         sender.setStripeCustomerId("cus_existing"); // évite Customer.create (statique non mocké)
-        sender.setCountry("CA");
         UserEntity traveler = buildUser(travelerId, "uid-traveler");
         traveler.setStripeAccountId("acct_traveler");
         traveler.setStripeAccountStatus(StripeAccountStatus.ONBOARDING_COMPLETE);
 
         when(userRepository.findById(senderId)).thenReturn(Optional.of(sender));
         when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler));
+        when(userBusinessPrefsRepository.findById(senderId))
+                .thenReturn(Optional.of(prefsWithCurrency("CAD")));
         when(paymentRepository.findByNegotiationThreadId(threadId)).thenReturn(Optional.empty());
         when(paymentRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-
-        StripeFxQuoteService.FxQuoteSnapshot fxQuote = new StripeFxQuoteService.FxQuoteSnapshot(
-                "fxq_test_cad", com.yadony.api.payments.currency.SupportedCurrency.CAD,
-                new BigDecimal("1.47"), new BigDecimal("0.6802721088"),
-                java.time.Instant.parse("2030-01-01T00:00:00Z"));
-        StripeFxQuoteService quoteService = mock(StripeFxQuoteService.class);
-        service.configureFxQuotes(quoteService);
-        when(quoteService.createPaymentQuote(com.yadony.api.payments.currency.SupportedCurrency.CAD))
-                .thenReturn(fxQuote);
 
         // net = 35 €, rate = 0.12 → gross = 39.20 €, commission = 4.20 €
         BigDecimal netAmount = new BigDecimal("35.00");
@@ -783,7 +786,8 @@ class PaymentServiceTest {
                         return mockPi;
                     });
 
-            PaymentResponse resp = service.createNegotiationEscrow(threadId, senderId, travelerId, netAmount);
+            PaymentResponse resp = service.createNegotiationEscrow(
+                    threadId, senderId, travelerId, netAmount, null, "CAD");
 
             // Modèle "separate charges and transfers" : on encaisse le gross sur la
             // plateforme, SANS application_fee_amount ni transfer_data (Stripe rejette
@@ -791,8 +795,10 @@ class PaymentServiceTest {
             // implicitement via le Transfer(net) à la livraison (DeliveryEventListener).
             PaymentIntentCreateParams params = capturedParams.get();
             assertThat(params).isNotNull();
-            assertThat(params.getAmount()).isEqualTo(2667L);               // 39.20 EUR converted by Stripe quote
-            assertThat(params.getExtraParams()).containsEntry("fx_quote", "fxq_test_cad");
+            assertThat(params.getAmount()).isEqualTo(3920L);               // 39.20 CAD, sans conversion
+            assertThat(params.getCurrency()).isEqualTo("cad");
+            assertThat(params.getExtraParams()).isNullOrEmpty();
+            assertThat(params.getMetadata()).doesNotContainKeys("fx_quote_id", "fx_exchange_rate");
             assertThat(params.getApplicationFeeAmount()).isNull();         // PAS de fee ici
             assertThat(params.getTransferData()).isNull();                 // pas de destination charge
             assertThat(params.getOnBehalfOf()).isNull();                   // retiré (incompatible PayPal)
@@ -800,10 +806,37 @@ class PaymentServiceTest {
 
             // L'entité paiement enregistre toujours gross + commission : la commission
             // sert au calcul du Transfer(net = gross - commission) à la livraison.
-            assertThat(resp.getAmount()).isEqualByComparingTo(new BigDecimal("26.67"));     // gross CAD
-            assertThat(resp.getCommissionAmount()).isEqualByComparingTo(new BigDecimal("2.86")); // commission CAD
+            assertThat(resp.getAmount()).isEqualByComparingTo(new BigDecimal("39.20"));
+            assertThat(resp.getCommissionAmount()).isEqualByComparingTo(new BigDecimal("4.20"));
             assertThat(resp.getCurrency()).isEqualTo("cad");
+
+            var paymentCaptor = org.mockito.ArgumentCaptor.forClass(PaymentEntity.class);
+            verify(paymentRepository).save(paymentCaptor.capture());
+            PaymentEntity saved = paymentCaptor.getValue();
+            assertThat(saved.getAmount()).isEqualByComparingTo("39.20");
+            assertThat(saved.getCommissionAmount()).isEqualByComparingTo("4.20");
+            assertThat(saved.getCurrency()).isEqualTo("cad");
+            assertThat(saved.getStripeFxQuoteId()).isNull();
+            assertThat(saved.getFxExchangeRate()).isNull();
+            assertThat(saved.getFxQuoteExpiresAt()).isNull();
         }
+    }
+
+    @Test
+    void createNegotiationEscrow_currencyMismatchFailsBeforePaymentResume() {
+        UUID threadId = UUID.randomUUID();
+        UserEntity sender = buildUser(senderId, "uid-sender");
+        when(userRepository.findById(senderId)).thenReturn(Optional.of(sender));
+        when(userBusinessPrefsRepository.findById(senderId))
+                .thenReturn(Optional.of(prefsWithCurrency("CAD")));
+
+        assertYadonyError(
+                () -> service.createNegotiationEscrow(
+                        threadId, senderId, travelerId, new BigDecimal("35.00"), null, "EUR"),
+                "currency-mismatch");
+
+        verify(userRepository, never()).findById(travelerId);
+        verifyNoInteractions(paymentRepository, auditService);
     }
 
     @Test
@@ -845,7 +878,8 @@ class PaymentServiceTest {
                         return mockPi;
                     });
 
-            service.createNegotiationEscrow(threadId, senderId, travelerId, new BigDecimal("35.00"));
+            service.createNegotiationEscrow(
+                    threadId, senderId, travelerId, new BigDecimal("35.00"), null, "EUR");
 
             assertThat(capturedParams.get().getCustomer()).isEqualTo("cus_existing");
             // Customer déjà existant → jamais recréé
@@ -896,7 +930,8 @@ class PaymentServiceTest {
                         return mockPi;
                     });
 
-            service.createNegotiationEscrow(threadId, senderId, travelerId, new BigDecimal("35.00"));
+            service.createNegotiationEscrow(
+                    threadId, senderId, travelerId, new BigDecimal("35.00"), null, "EUR");
 
             assertThat(capturedParams.get().getCustomer()).isEqualTo("cus_created");
             assertThat(sender.getStripeCustomerId()).isEqualTo("cus_created");
@@ -917,7 +952,8 @@ class PaymentServiceTest {
         when(paymentRepository.findByNegotiationThreadId(threadId)).thenReturn(Optional.empty());
 
         Throwable thrown = catchThrowable(() ->
-                service.createNegotiationEscrow(threadId, senderId, travelerId, new BigDecimal("35.00")));
+                service.createNegotiationEscrow(
+                        threadId, senderId, travelerId, new BigDecimal("35.00"), null, "EUR"));
         assertThat(thrown).isInstanceOf(TravelerNotEligibleForPaymentException.class);
     }
 
@@ -941,7 +977,8 @@ class PaymentServiceTest {
         when(paymentRepository.findByNegotiationThreadId(threadId)).thenReturn(Optional.of(existing));
 
         assertYadonyError(() ->
-                service.createNegotiationEscrow(threadId, senderId, travelerId, new BigDecimal("35.00")),
+                service.createNegotiationEscrow(
+                        threadId, senderId, travelerId, new BigDecimal("35.00"), null, "EUR"),
                 "payment-already-completed");
     }
 
@@ -977,7 +1014,8 @@ class PaymentServiceTest {
             when(mockPi.getClientSecret()).thenReturn("pi_fresh_secret");
             piStatic.when(() -> PaymentIntent.create(any(PaymentIntentCreateParams.class))).thenReturn(mockPi);
 
-            service.createNegotiationEscrow(threadId, senderId, travelerId, new BigDecimal("35.00"));
+            service.createNegotiationEscrow(
+                    threadId, senderId, travelerId, new BigDecimal("35.00"), null, "EUR");
 
             // Same row recycled (no duplicate insert under the UNIQUE constraint),
             // now pointing at the fresh PaymentIntent and back to PENDING.
@@ -1024,7 +1062,8 @@ class PaymentServiceTest {
             when(freshPi.getClientSecret()).thenReturn("pi_fresh2_secret");
             piStatic.when(() -> PaymentIntent.create(any(PaymentIntentCreateParams.class))).thenReturn(freshPi);
 
-            service.createNegotiationEscrow(threadId, senderId, travelerId, new BigDecimal("35.00"));
+            service.createNegotiationEscrow(
+                    threadId, senderId, travelerId, new BigDecimal("35.00"), null, "EUR");
 
             assertThat(stale.getStripePaymentIntentId()).isEqualTo("pi_fresh2");
             assertThat(stale.getStatus()).isEqualTo(PaymentStatus.PENDING);
@@ -1071,7 +1110,8 @@ class PaymentServiceTest {
             when(freshPi.getClientSecret()).thenReturn("pi_fresh3_secret");
             piStatic.when(() -> PaymentIntent.create(any(PaymentIntentCreateParams.class))).thenReturn(freshPi);
 
-            service.createNegotiationEscrow(threadId, senderId, travelerId, new BigDecimal("35.00"));
+            service.createNegotiationEscrow(
+                    threadId, senderId, travelerId, new BigDecimal("35.00"), null, "EUR");
 
             verify(stuckPi).cancel(any(PaymentIntentCancelParams.class));
             assertThat(stale.getStripePaymentIntentId()).isEqualTo("pi_fresh3");
@@ -1111,7 +1151,7 @@ class PaymentServiceTest {
 
             // net = 35 € ; rate promo 0.06 → gross = 37.10, commission = 2.10 (vs 39.20/4.20 sans promo).
             PaymentResponse resp = service.createNegotiationEscrow(
-                    threadId, senderId, travelerId, new BigDecimal("35.00"), "WELCOME6");
+                    threadId, senderId, travelerId, new BigDecimal("35.00"), "WELCOME6", "EUR");
 
             assertThat(resp.getAmount()).isEqualByComparingTo(new BigDecimal("37.10"));
             assertThat(resp.getCommissionAmount()).isEqualByComparingTo(new BigDecimal("2.10"));
@@ -1153,7 +1193,7 @@ class PaymentServiceTest {
             // Promo expiré → jamais bloquant : repli sur le taux de base (0.12), le
             // paiement continue au lieu de faire échouer l'expéditeur au checkout.
             PaymentResponse resp = service.createNegotiationEscrow(
-                    threadId, senderId, travelerId, new BigDecimal("35.00"), "EXPIRED");
+                    threadId, senderId, travelerId, new BigDecimal("35.00"), "EXPIRED", "EUR");
 
             assertThat(resp.getAmount()).isEqualByComparingTo(new BigDecimal("39.20"));
             assertThat(resp.getCommissionRate()).isEqualByComparingTo(new BigDecimal("0.12"));

@@ -387,18 +387,24 @@ class NegotiationControllerIT {
             true, // cashCommissionAvailable
             null, // availablePaymentMethods
             false, // canNudge
-            false  // hasUnread
+            false, // hasUnread
+            null,  // promoCode
+            "CAD"  // devise serveur du thread
         );
         when(service.getById(eq(SENDER_UUID), eq(threadId))).thenReturn(awaitingPaymentThread);
-        when(paymentService.createNegotiationEscrow(eq(threadId), eq(SENDER_UUID), eq(TRAVELER_UUID), any(), isNull()))
+        when(paymentService.createNegotiationEscrow(
+                eq(threadId), eq(SENDER_UUID), eq(TRAVELER_UUID), any(), isNull(), eq("CAD")))
             .thenReturn(new com.yadony.api.payments.dto.PaymentResponse(
                 UUID.randomUUID(), null, "pi_test_secret",
                 new java.math.BigDecimal("33.60"), new java.math.BigDecimal("3.60"),
-                "PENDING", "pi_test_id"));
+                "PENDING", "pi_test_id", "CAD"));
 
         mockMvc.perform(post("/negotiations/{id}/initiate-payment", threadId)
                 .with(authentication(authAs("uid-sender", "SENDER"))))
-            .andExpect(status().isOk());
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.currency").value("cad"));
+        verify(paymentService).createNegotiationEscrow(
+                threadId, SENDER_UUID, TRAVELER_UUID, new java.math.BigDecimal("30"), null, "CAD");
         verify(service, org.mockito.Mockito.never()).recordAppliedPromo(any(), any(), any());
     }
 
@@ -431,7 +437,8 @@ class NegotiationControllerIT {
                 "PENDING", "pi_test_id");
         promoResponse.setCommissionRate(new java.math.BigDecimal("0.06"));
         promoResponse.setPromoApplied(true);
-        when(paymentService.createNegotiationEscrow(eq(threadId), eq(SENDER_UUID), eq(TRAVELER_UUID), any(), eq("WELCOME6")))
+        when(paymentService.createNegotiationEscrow(
+                eq(threadId), eq(SENDER_UUID), eq(TRAVELER_UUID), any(), eq("WELCOME6"), eq("EUR")))
             .thenReturn(promoResponse);
 
         mockMvc.perform(post("/negotiations/{id}/initiate-payment", threadId)
@@ -475,7 +482,8 @@ class NegotiationControllerIT {
                 "PENDING", "pi_test_id");
         promoResponse.setCommissionRate(new java.math.BigDecimal("0.06"));
         promoResponse.setPromoApplied(true);
-        when(paymentService.createNegotiationEscrow(eq(threadId), eq(SENDER_UUID), eq(TRAVELER_UUID), any(), eq("AUTOCODE")))
+        when(paymentService.createNegotiationEscrow(
+                eq(threadId), eq(SENDER_UUID), eq(TRAVELER_UUID), any(), eq("AUTOCODE"), eq("EUR")))
             .thenReturn(promoResponse);
 
         mockMvc.perform(post("/negotiations/{id}/initiate-payment", threadId)
@@ -518,7 +526,8 @@ class NegotiationControllerIT {
                 new java.math.BigDecimal("33.60"), new java.math.BigDecimal("3.60"),
                 "PENDING", "pi_test_id");
         // promoApplied reste false par défaut : le fallback tarif de base.
-        when(paymentService.createNegotiationEscrow(eq(threadId), eq(SENDER_UUID), eq(TRAVELER_UUID), any(), eq("WELCOME6")))
+        when(paymentService.createNegotiationEscrow(
+                eq(threadId), eq(SENDER_UUID), eq(TRAVELER_UUID), any(), eq("WELCOME6"), eq("EUR")))
             .thenReturn(baseRateResponse);
 
         mockMvc.perform(post("/negotiations/{id}/initiate-payment", threadId)

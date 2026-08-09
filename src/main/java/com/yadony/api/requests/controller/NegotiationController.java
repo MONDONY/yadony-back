@@ -169,7 +169,7 @@ public class NegotiationController {
         // resaisi ici. Le param reste un override défensif (tests, cas futurs).
         String code = promoCode != null ? promoCode : thread.promoCode();
         var response = paymentService.createNegotiationEscrow(
-            id, senderId, thread.travelerId(), thread.currentPriceEur(), code);
+            id, senderId, thread.travelerId(), thread.currentPriceEur(), code, thread.currency());
         // Persiste le taux réellement appliqué pour que le rachat (redeem, décompte
         // per-user-limit) puisse se raccrocher au bid_id une fois matérialisé après
         // paiement confirmé (ThreadAcceptedBidListener) — createNegotiationEscrow ne
