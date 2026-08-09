@@ -132,7 +132,7 @@ class MultiCurrencySchemaMigrationTest {
     private void assertCurrencyColumn(String tableName) throws Exception {
         try (Connection c = dataSource.getConnection(); Statement s = c.createStatement()) {
             ResultSet rs = s.executeQuery("""
-                    SELECT is_nullable, column_default
+                    SELECT is_nullable, column_default, data_type, character_maximum_length
                     FROM information_schema.columns
                     WHERE table_schema = 'public'
                       AND table_name = '%s'
@@ -140,6 +140,8 @@ class MultiCurrencySchemaMigrationTest {
                     """.formatted(tableName));
 
             assertThat(rs.next()).as("currency column on " + tableName).isTrue();
+            assertThat(rs.getString("data_type")).isEqualTo("character varying");
+            assertThat(rs.getInt("character_maximum_length")).isEqualTo(3);
             assertThat(rs.getString("is_nullable")).isEqualTo("NO");
             assertThat(rs.getString("column_default")).containsIgnoringCase("eur");
         }

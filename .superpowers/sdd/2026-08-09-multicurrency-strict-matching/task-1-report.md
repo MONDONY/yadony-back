@@ -242,3 +242,118 @@ Ce point n’a pas été modifié ici car la task demandée portait strictement 
 - `src/main/resources/db/migration/V198__bid_negotiation_wallet_tx_currency.sql`
 - `src/main/resources/db/migration/V199__wallet_accounts_per_currency.sql`
 - `src/test/java/com/yadony/api/migrations/MultiCurrencySchemaMigrationTest.java`
+
+## Fix round 1/5 — findings Important
+
+### Finding 1 — preuve HTTP health après démarrage dev
+
+Vérification préalable du port:
+
+```bash
+lsof -nP -iTCP:8080 -sTCP:LISTEN || true
+```
+
+Sortie:
+
+```text
+(aucune sortie, port libre)
+```
+
+Commande de démarrage:
+
+```bash
+set -a
+source .env.dev
+set +a
+./mvnw spring-boot:run -Dspring.profiles.active=dev
+```
+
+Sortie pertinente:
+
+```text
+Tomcat started on port 8080 (http) with context path '/api/v1'
+Started YadonyBackApplication in 24.078 seconds
+```
+
+Commande HTTP exacte demandée:
+
+```bash
+curl http://localhost:8080/api/v1/actuator/health
+```
+
+Sortie:
+
+```text
+{"status":"UP"}
+```
+
+Arrêt propre:
+
+```text
+Commencing graceful shutdown. Waiting for active requests to complete
+Graceful shutdown complete
+BUILD SUCCESS
+```
+
+Conclusion:
+
+- la preuve `curl http://localhost:8080/api/v1/actuator/health` a bien été obtenue
+- aucun secret n’a été affiché ni copié
+- aucun process tiers n’a été tué; le port 8080 était libre
+
+### Finding 2 — verrouillage réel `VARCHAR(3)` dans `MultiCurrencySchemaMigrationTest`
+
+Changement apporté dans `assertCurrencyColumn(...)`:
+
+- lecture de `data_type`
+- lecture de `character_maximum_length`
+- assertions réelles sur `character varying` et longueur `3`
+
+Commande:
+
+```bash
+./mvnw -Dtest=MultiCurrencySchemaMigrationTest test
+```
+
+Sortie pertinente:
+
+```text
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0
+BUILD SUCCESS
+```
+
+Précision importante:
+
+- ce renforcement de test a passé immédiatement, car les migrations SQL satisfaisaient déjà le contrat `VARCHAR(3)`
+- je ne fabrique donc pas un faux RED rétroactif
+
+### Suite `*MigrationTest` relancée
+
+Commande:
+
+```bash
+./mvnw -Dtest='*MigrationTest' test
+```
+
+Comme la sortie CLI a été volumineuse/tronquée pendant le run, j’ai vérifié le résultat final via les rapports Surefire générés par ce run:
+
+```text
+com.yadony.api.matching.BidEntityMigrationTest.txt: Tests run: 2, Failures: 0, Errors: 0, Skipped: 1
+com.yadony.api.migrations.MultiCurrencySchemaMigrationTest.txt: Tests run: 3, Failures: 0, Errors: 0, Skipped: 0
+com.yadony.api.migrations.PaymentCurrencyMigrationTest.txt: Tests run: 2, Failures: 0, Errors: 0, Skipped: 0
+com.yadony.api.migrations.V117CommissionRateMigrationTest.txt: Tests run: 2, Failures: 0, Errors: 0, Skipped: 0
+com.yadony.api.migrations.V171ContentCategoriesMigrationTest.txt: Tests run: 36, Failures: 0, Errors: 0, Skipped: 0
+com.yadony.api.migrations.V185DraftStatusMigrationTest.txt: Tests run: 4, Failures: 0, Errors: 0, Skipped: 0
+com.yadony.api.migrations.V189AdminUsersEmailIdentityMigrationTest.txt: Tests run: 2, Failures: 0, Errors: 0, Skipped: 0
+com.yadony.api.migrations.V89MigrationTest.txt: Tests run: 7, Failures: 0, Errors: 0, Skipped: 0
+com.yadony.api.payments.PaymentEntityV38MigrationTest.txt: Tests run: 1, Failures: 0, Errors: 0, Skipped: 0
+TOTAL=59
+```
+
+Conclusion:
+
+- la suite ciblée `*MigrationTest` est verte sur 59 tests
+
+### Minor documenté, non falsifié
+
+Le RED initial de cette task était réel sur l’absence des migrations `V197/V198/V199`, mais il ne couvrait pas explicitement le contrat `VARCHAR(3)`. Ce manque de force initial est documenté ici; aucune “preuve” rétroactive n’a été inventée.
