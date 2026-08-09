@@ -11,6 +11,7 @@ public class PaymentResponse {
     private String clientSecret;
     private BigDecimal amount;
     private BigDecimal commissionAmount;
+    private String currency = "eur";
     private String status;
     private String stripePaymentIntentId;
     // Types du PaymentIntent (ex. ["card","paypal"]) — le SDK flutter_stripe ne les
@@ -30,6 +31,12 @@ public class PaymentResponse {
     public PaymentResponse(UUID id, UUID bidId, String clientSecret,
                            BigDecimal amount, BigDecimal commissionAmount, String status,
                            String stripePaymentIntentId) {
+        this(id, bidId, clientSecret, amount, commissionAmount, status, stripePaymentIntentId, "eur");
+    }
+
+    public PaymentResponse(UUID id, UUID bidId, String clientSecret,
+                           BigDecimal amount, BigDecimal commissionAmount, String status,
+                           String stripePaymentIntentId, String currency) {
         this.id = id;
         this.bidId = bidId;
         this.clientSecret = clientSecret;
@@ -37,6 +44,7 @@ public class PaymentResponse {
         this.commissionAmount = commissionAmount;
         this.status = status;
         this.stripePaymentIntentId = stripePaymentIntentId;
+        this.currency = currency == null ? "eur" : currency.toLowerCase();
     }
 
     public UUID getId() { return id; }
@@ -44,6 +52,7 @@ public class PaymentResponse {
     public String getClientSecret() { return clientSecret; }
     public BigDecimal getAmount() { return amount; }
     public BigDecimal getCommissionAmount() { return commissionAmount; }
+    public String getCurrency() { return currency; }
     public String getStatus() { return status; }
     public String getStripePaymentIntentId() { return stripePaymentIntentId; }
     public List<String> getPaymentMethodTypes() { return paymentMethodTypes; }

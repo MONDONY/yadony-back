@@ -147,6 +147,16 @@ yadony:
       max-retries: 8
       retry-backoff-base: 30s
       scheduler-enabled: true
+  currency:
+    fx:
+      xof-per-eur: ${YADONY_FX_XOF_PER_EUR:655.957}
+      xaf-per-eur: ${YADONY_FX_XAF_PER_EUR:655.957}
+      cache-ttl-seconds: ${YADONY_FX_CACHE_TTL_SECONDS:300}
+      rates:
+        usd: ${YADONY_FX_USD_PER_EUR:1.08}
+        cad: ${YADONY_FX_CAD_PER_EUR:1.47}
+        gbp: ${YADONY_FX_GBP_PER_EUR:0.86}
+        chf: ${YADONY_FX_CHF_PER_EUR:0.95}
   referral:
     reward-amount-cents: ${YADONY_REFERRAL_REWARD_AMOUNT_CENTS:500}
     max-invitations-per-user: ${YADONY_REFERRAL_MAX_INVITATIONS_PER_USER:50}

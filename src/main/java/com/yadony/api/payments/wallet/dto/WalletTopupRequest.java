@@ -13,8 +13,12 @@ public class WalletTopupRequest {
     @NotNull
     private String paymentMethod; // STRIPE | WAVE | ORANGE_MONEY
 
+    private String currencyCode;
+
     public BigDecimal getAmount() { return amount; }
     public void setAmount(BigDecimal amount) { this.amount = amount; }
     public String getPaymentMethod() { return paymentMethod; }
     public void setPaymentMethod(String paymentMethod) { this.paymentMethod = paymentMethod; }
+    public String getCurrencyCode() { return currencyCode; }
+    public void setCurrencyCode(String currencyCode) { this.currencyCode = currencyCode; }
 }
