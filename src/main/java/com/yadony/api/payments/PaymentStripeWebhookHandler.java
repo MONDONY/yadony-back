@@ -94,8 +94,11 @@ public class PaymentStripeWebhookHandler implements StripeWebhookHandler {
                         return;
                     }
                     UUID userId = UUID.fromString(rawUserId);
-                    BigDecimal amount = BigDecimal.valueOf(pi.getAmount())
-                        .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
+                    String walletCreditEur = pi.getMetadata().get("wallet_credit_eur");
+                    BigDecimal amount = walletCreditEur != null
+                        ? new BigDecimal(walletCreditEur)
+                        : BigDecimal.valueOf(pi.getAmount())
+                            .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
                     walletService.credit(userId, amount, WalletTransactionType.TOP_UP,
                         pi.getId(), "stripe-" + pi.getId());
                 } else {

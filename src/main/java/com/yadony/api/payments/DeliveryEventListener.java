@@ -8,6 +8,8 @@ import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.payments.events.PaymentReleasedEvent;
+import com.yadony.api.payments.currency.CurrencyAmount;
+import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.tracking.events.DeliveryConfirmedEvent;
 import com.stripe.exception.StripeException;
 import com.stripe.model.PaymentIntent;
@@ -203,11 +205,15 @@ public class DeliveryEventListener {
         //     net = total - commission - transferFees
         // Pour l'instant on assume Transfers EUR gratuits (zone SEPA / hypothèse MVP).
         BigDecimal net = payment.getAmount().subtract(payment.getCommissionAmount());
-        long netCents = net.multiply(BigDecimal.valueOf(100)).longValueExact();
+        SupportedCurrency currency = SupportedCurrency.fromCode(payment.getCurrency());
+        if (currency == null) {
+            currency = SupportedCurrency.EUR;
+        }
+        long netMinor = CurrencyAmount.of(net, currency).minor();
 
         TransferCreateParams.Builder builder = TransferCreateParams.builder()
-                .setAmount(netCents)
-                .setCurrency("eur")
+                .setAmount(netMinor)
+                .setCurrency(currency.code())
                 .setDestination(traveler.getStripeAccountId())
                 .putMetadata("bid_id", event.getBidId().toString())
                 .putMetadata("payment_id", payment.getId() != null ? payment.getId().toString() : "");

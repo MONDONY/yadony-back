@@ -27,6 +27,11 @@ import com.yadony.api.payments.dto.EphemeralKeyResponse;
 import com.yadony.api.payments.dto.OnboardingLinkResponse;
 import com.yadony.api.payments.dto.PaymentMethodResponse;
 import com.yadony.api.payments.dto.PaymentResponse;
+import com.yadony.api.payments.currency.CurrencyAmount;
+import com.yadony.api.payments.currency.CurrencyCatalog;
+import com.yadony.api.payments.currency.ExchangeRateProperties;
+import com.yadony.api.payments.currency.FxRateService;
+import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.events.StripeOnboardingCompletedEvent;
 import com.stripe.exception.StripeException;
 import com.stripe.model.Account;
@@ -52,6 +57,7 @@ import com.yadony.api.payments.events.PaymentEscrowReadyEvent;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -60,6 +66,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import com.github.benmanes.caffeine.cache.Caffeine;
 
 @Service
 @Transactional
@@ -81,6 +88,11 @@ public class PaymentService {
     private final PromoService promoService;
     private final StripeGateway stripeGateway;
     private final FirebaseContactService firebaseContact;
+    private CurrencyCatalog currencyCatalog = new CurrencyCatalog();
+    private FxRateService fxRateService = new FxRateService(
+            (source, target) -> { throw new IllegalStateException("FX provider not configured"); },
+            new ExchangeRateProperties(new BigDecimal("655.957"), new BigDecimal("655.957"), 300),
+            Caffeine.newBuilder().build());
 
     public PaymentService(UserRepository userRepository,
                           BidRepository bidRepository,
@@ -110,6 +122,12 @@ public class PaymentService {
         this.promoService = promoService;
         this.stripeGateway = stripeGateway;
         this.firebaseContact = firebaseContact;
+    }
+
+    @Autowired
+    public void configureCurrency(CurrencyCatalog currencyCatalog, FxRateService fxRateService) {
+        this.currencyCatalog = currencyCatalog;
+        this.fxRateService = fxRateService;
     }
 
     // ── Story 6.2 : Onboarding Stripe Connect ────────────────────────────────
@@ -457,7 +475,9 @@ public class PaymentService {
         }
         BigDecimal amount = totalNet.multiply(BigDecimal.ONE.add(rate)).setScale(2, RoundingMode.HALF_UP);
         BigDecimal commission = totalNet.multiply(rate).setScale(2, RoundingMode.HALF_UP);
-        long amountCents = amount.multiply(BigDecimal.valueOf(100)).longValue();
+        SupportedCurrency currency = currencyCatalog.resolve(sender.getCountry(), request.getCurrencyCode());
+        CurrencyAmount localAmount = fxRateService.convert(amount, currency);
+        CurrencyAmount localCommission = fxRateService.convert(commission, currency);
 
         try {
             // Compatibilité comptes legacy : avant cette fix, certains comptes Stripe Connect
@@ -466,15 +486,15 @@ public class PaymentService {
             // On la demande de manière idempotente : si déjà active, no-op.
             ensureCardPaymentsCapability(traveler.getStripeAccountId());
 
-            long commissionCents = commission.multiply(BigDecimal.valueOf(100)).longValue();
+            long commissionCents = localCommission.minor();
 
             // Customer attaché : rend les cartes réutilisables (YadonyPaymentSheet).
             // Sans effet sur l'escrow (separate charges & transfers inchangé).
             String customerId = ensureStripeCustomer(sender);
 
             PaymentIntentCreateParams.Builder paramsBuilder = PaymentIntentCreateParams.builder()
-                    .setAmount(amountCents)
-                    .setCurrency("eur")
+                    .setAmount(localAmount.minor())
+                    .setCurrency(currency.code())
                     .setCustomer(customerId)
                     .setCaptureMethod(PaymentIntentCreateParams.CaptureMethod.MANUAL)
                     // Approche A : carte + Apple Pay + Google Pay (= "card") + PayPal,
@@ -491,6 +511,7 @@ public class PaymentService {
                     .putMetadata("sender_id", sender.getId().toString())
                     .putMetadata("traveler_id", traveler.getId().toString())
                     .putMetadata("commission_eur", commission.toPlainString())
+                    .putMetadata("currency", currency.code())
                     .putMetadata("commission_rate", rate.toPlainString())
                     .putMetadata("commission_cents", String.valueOf(commissionCents));
 
@@ -505,14 +526,15 @@ public class PaymentService {
             PaymentEntity payment = new PaymentEntity();
             payment.setBidId(bidId);
             payment.setStripePaymentIntentId(pi.getId());
-            payment.setAmount(amount);
-            payment.setCommissionAmount(commission);
+            payment.setAmount(localAmount.major());
+            payment.setCommissionAmount(localCommission.major());
+            payment.setCurrency(currency.code());
             payment.setStatus(PaymentStatus.PENDING);
             payment.setLegacyDestinationCharge(false);
             paymentRepository.save(payment);
 
             auditService.log("PAYMENT", payment.getId(), "PAYMENT_ESCROW_CREATED", sender.getId(),
-                    Map.of("bidId", bidId, "amount", amount, "commission", commission,
+                    Map.of("bidId", bidId, "amount", localAmount.major(), "commission", localCommission.major(),
                             "piId", pi.getId()));
 
             log.info("PaymentIntent {} created for bid {} (sender={})", pi.getId(), bidId, sender.getId());
@@ -928,9 +950,13 @@ public class PaymentService {
                     log.warn("charge.refunded pour PI {} sans montant exploitable — ignoré", piId);
                     return;
                 }
-                // Montants Stripe en cents → EUR scale 2. amount_refunded est CUMULÉ et
+                // Montants Stripe en unités mineures de la devise persistée. amount_refunded est CUMULÉ et
                 // ABSOLU : rejouer le même webhook réécrit la même valeur (idempotent).
-                BigDecimal refunded = BigDecimal.valueOf(amountRefundedCents, 2);
+                SupportedCurrency paymentCurrency = SupportedCurrency.fromCode(payment.getCurrency());
+                if (paymentCurrency == null) {
+                    paymentCurrency = SupportedCurrency.EUR;
+                }
+                BigDecimal refunded = BigDecimal.valueOf(amountRefundedCents, paymentCurrency.minorUnit());
                 boolean fullRefund = amountRefundedCents >= amountCents;
                 // compareTo (et non equals) : insensible à l'échelle BigDecimal — la valeur
                 // relue depuis NUMERIC(10,2) peut différer d'échelle sans changer de montant.
@@ -1084,7 +1110,8 @@ public class PaymentService {
                 payment.getAmount(),
                 payment.getCommissionAmount(),
                 payment.getStatus().name(),
-                payment.getStripePaymentIntentId()
+                payment.getStripePaymentIntentId(),
+                payment.getCurrency()
         );
     }
 
@@ -1450,6 +1477,9 @@ public class PaymentService {
         }
         // Modèle B : amountEur = NET voyageur. L'expéditeur paie gross = net*(1+rate).
         PriceBreakdown b = PriceBreakdown.fromNet(amountEur, rate);
+        SupportedCurrency currency = currencyCatalog.resolve(sender.getCountry(), null);
+        CurrencyAmount localGross = fxRateService.convert(b.gross(), currency);
+        CurrencyAmount localCommission = fxRateService.convert(b.commission(), currency);
 
         try {
             ensureCardPaymentsCapability(traveler.getStripeAccountId());
@@ -1460,8 +1490,8 @@ public class PaymentService {
             String customerId = ensureStripeCustomer(sender);
 
             PaymentIntentCreateParams params = PaymentIntentCreateParams.builder()
-                    .setAmount(b.grossCents())                        // gross, pas net
-                    .setCurrency("eur")
+                    .setAmount(localGross.minor())                     // gross, pas net
+                    .setCurrency(currency.code())
                     .setCustomer(customerId)
                     .setCaptureMethod(PaymentIntentCreateParams.CaptureMethod.MANUAL)
                     // Approche A : carte + wallets + PayPal dans la PaymentSheet.
@@ -1479,6 +1509,7 @@ public class PaymentService {
                     .putMetadata("sender_id", sender.getId().toString())
                     .putMetadata("traveler_id", traveler.getId().toString())
                     .putMetadata("commission_rate", rate.toPlainString())
+                    .putMetadata("currency", currency.code())
                     .putMetadata("scope", "NEGOTIATION")
                     .build();
 
@@ -1488,8 +1519,9 @@ public class PaymentService {
             PaymentEntity payment = (recyclable != null) ? recyclable : new PaymentEntity();
             payment.setNegotiationThreadId(threadId);
             payment.setStripePaymentIntentId(pi.getId());
-            payment.setAmount(b.gross());          // total payé par l'expéditeur (gross)
-            payment.setCommissionAmount(b.commission());
+            payment.setAmount(localGross.major());          // total payé par l'expéditeur (gross)
+            payment.setCommissionAmount(localCommission.major());
+            payment.setCurrency(currency.code());
             payment.setStatus(PaymentStatus.PENDING);
             paymentRepository.save(payment);
 

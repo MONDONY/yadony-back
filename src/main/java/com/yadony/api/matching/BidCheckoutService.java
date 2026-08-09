@@ -130,6 +130,7 @@ public class BidCheckoutService {
                 resumed.getClientSecret(),
                 stripePublishableKey,
                 existing.getAwaitingPaymentExpiresAt(),
+                resumed.getCurrency(),
                 resumed.getPaymentMethodTypes()
             );
         }
@@ -234,6 +235,7 @@ public class BidCheckoutService {
             paymentResp.getClientSecret(),
             stripePublishableKey,
             saved.getAwaitingPaymentExpiresAt(),
+            paymentResp.getCurrency(),
             paymentResp.getPaymentMethodTypes()
         );
     }

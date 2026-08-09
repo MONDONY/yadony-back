@@ -78,6 +78,11 @@ class BidCheckoutServiceTest {
                                    BigDecimal.TEN, BigDecimal.ONE, "PENDING", "pi_test123");
     }
 
+    private PaymentResponse stubPaymentResponse(String currency) {
+        return new PaymentResponse(UUID.randomUUID(), UUID.randomUUID(), "secret_xyz",
+                                   BigDecimal.TEN, BigDecimal.ONE, "PENDING", "pi_test123", currency);
+    }
+
     @Test
     void creates_bid_in_AWAITING_PAYMENT_and_delegates_to_payment_service() {
         ArgumentCaptor<BidEntity> savedBid = ArgumentCaptor.forClass(BidEntity.class);
@@ -95,6 +100,21 @@ class BidCheckoutServiceTest {
         assertThat(bid.getStatus()).isEqualTo(BidStatus.AWAITING_PAYMENT);
         assertThat(bid.getAwaitingPaymentExpiresAt()).isNotNull();
         assertThat(resp.clientSecret()).isEqualTo("secret_xyz");
+    }
+
+    @Test
+    void checkout_response_exposes_the_payment_currency_for_local_display() {
+        when(bidRepository.save(any(BidEntity.class))).thenAnswer(inv -> {
+            BidEntity b = inv.getArgument(0);
+            if (b.getId() == null) ReflectionTestUtils.setField(b, "id", UUID.randomUUID());
+            return b;
+        });
+        when(paymentService.createEscrow(any(CreatePaymentRequest.class), eq("uid-sender")))
+            .thenReturn(stubPaymentResponse("usd"));
+
+        BidCheckoutResponse response = service.checkout("uid-sender", req, httpRequest);
+
+        assertThat(response.currency()).isEqualTo("usd");
     }
 
     // C2 : normalisation à l'écriture — un client pas à jour envoie un libellé/code

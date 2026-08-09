@@ -34,10 +34,13 @@ public class PaymentEntity extends BaseEntity {
     @Column(name = "amount", nullable = false, precision = 10, scale = 2)
     private BigDecimal amount;
 
+    @Column(name = "currency", nullable = false, length = 3)
+    private String currency = "eur";
+
     @Column(name = "commission_amount", nullable = false, precision = 10, scale = 2)
     private BigDecimal commissionAmount;
 
-    /** Montant cumulé remboursé (EUR) — miroir absolu de Stripe charge.amount_refunded. */
+    /** Montant cumulé remboursé dans la devise du paiement — miroir absolu de Stripe charge.amount_refunded. */
     @Column(name = "refunded_amount", precision = 10, scale = 2)
     private BigDecimal refundedAmount;
 
@@ -71,6 +74,9 @@ public class PaymentEntity extends BaseEntity {
 
     public BigDecimal getAmount() { return amount; }
     public void setAmount(BigDecimal amount) { this.amount = amount; }
+
+    public String getCurrency() { return currency; }
+    public void setCurrency(String currency) { this.currency = currency == null ? null : currency.toLowerCase(); }
 
     public BigDecimal getCommissionAmount() { return commissionAmount; }
     public void setCommissionAmount(BigDecimal commissionAmount) { this.commissionAmount = commissionAmount; }

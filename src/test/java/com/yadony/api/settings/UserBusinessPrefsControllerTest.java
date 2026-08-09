@@ -73,6 +73,19 @@ class UserBusinessPrefsControllerTest {
     }
 
     @Test
+    void putPrefs_acceptsNorthAmericanCurrency() throws Exception {
+        UserBusinessPrefsDto dto = new UserBusinessPrefsDto("kg", "CAD", 20, 30, 5, "call", 2);
+        when(service.upsert(eq(FIREBASE_UID), any())).thenReturn(dto);
+
+        mockMvc.perform(put("/users/me/business-preferences")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(dto))
+                        .with(authentication(asUser())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.currencyCode").value("CAD"));
+    }
+
+    @Test
     void putPrefs_invalidEnum_returns422() throws Exception {
         String body = "{\"weightUnit\":\"ton\",\"currencyCode\":\"EUR\",\"pickupRadiusKm\":10,\"defaultPackageWeightKg\":23,\"minBidPriceEur\":0}";
         mockMvc.perform(put("/users/me/business-preferences")
