@@ -48,7 +48,8 @@ class PaymentWebhookBidPromotionTest {
             PaymentServiceTestFactory.defaultConnectProperties(),
             new com.fasterxml.jackson.databind.ObjectMapper(),
             org.mockito.Mockito.mock(com.yadony.api.common.stripe.AdminAlertService.class), PaymentServiceTestFactory.stubbedResolver(), org.mockito.Mockito.mock(com.yadony.api.promo.PromoService.class), new StripeGatewayImpl(),
-            PaymentServiceTestFactory.stubbedContacts()
+            PaymentServiceTestFactory.stubbedContacts(),
+            mock(com.yadony.api.kyc.KycRepository.class)
 );
 
         bid = new BidEntity();

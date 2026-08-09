@@ -54,7 +54,8 @@ class PaymentServiceRefreshConnectAccountTest {
                 PaymentServiceTestFactory.defaultConnectProperties(),
                 new com.fasterxml.jackson.databind.ObjectMapper(),
                 org.mockito.Mockito.mock(com.yadony.api.common.stripe.AdminAlertService.class), PaymentServiceTestFactory.stubbedResolver(), org.mockito.Mockito.mock(com.yadony.api.promo.PromoService.class), new StripeGatewayImpl(),
-                PaymentServiceTestFactory.stubbedContacts()
+                PaymentServiceTestFactory.stubbedContacts(),
+                mock(com.yadony.api.kyc.KycRepository.class)
 );
     }
 
@@ -172,6 +173,31 @@ class PaymentServiceRefreshConnectAccountTest {
 
             assertThat(resp.stripeAccountStatus()).isEqualTo(StripeAccountStatus.PENDING_ONBOARDING);
             verify(userRepository, never()).save(any());
+            verify(auditService, never()).log(any(), any(), any(), any(), any());
+        }
+    }
+
+    @Test
+    void requirementsChanged_statusUnchanged_savesWithoutAuditLog() throws StripeException {
+        UserEntity user = buildUser(ACCT_ID, true);
+        when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+
+        Account account = mock(Account.class);
+        when(account.getId()).thenReturn(ACCT_ID);
+        when(account.getChargesEnabled()).thenReturn(true);
+        when(account.getPayoutsEnabled()).thenReturn(true);
+        Account.Requirements requirements = mock(Account.Requirements.class);
+        when(requirements.getCurrentlyDue()).thenReturn(java.util.List.of("individual.verification.document"));
+        when(account.getRequirements()).thenReturn(requirements);
+
+        try (MockedStatic<Account> mocked = mockStatic(Account.class)) {
+            mocked.when(() -> Account.retrieve(ACCT_ID)).thenReturn(account);
+
+            ConnectAccountResponse resp = service.refreshConnectAccount(FIREBASE_UID);
+
+            assertThat(resp.requirementsCurrentlyDue()).containsExactly("individual.verification.document");
+            assertThat(user.getStripeAccountStatus()).isEqualTo(StripeAccountStatus.ONBOARDING_COMPLETE);
+            verify(userRepository).save(user);
             verify(auditService, never()).log(any(), any(), any(), any(), any());
         }
     }

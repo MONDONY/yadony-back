@@ -32,11 +32,17 @@ class PublicDisplayNameCallersTest {
      * <p>Back-office admin (modération, support), exports fiscaux DAC7 et export RGPD :
      * y abréger le patronyme dégraderait la donnée. {@code buildInitials} lit les deux
      * champs par nature. {@code buildPrefix} fabrique un code de parrainage, pas un nom.
+     *
+     * <p>{@code PaymentService} lit {@code getFirstName()}/{@code getLastName()} sur
+     * {@code VerificationSession.VerifiedOutputs} (Stripe Identity), pas sur
+     * {@code UserEntity} — collision de nom de méthode entre deux modèles distincts,
+     * pas un nom d'affichage recomposé à la main.
      */
     private static final List<String> ALLOWED_FULL_NAME_CONTEXTS = List.of(
             "com/yadony/api/admin/",
             "com/yadony/api/export/",
             "com/yadony/api/payments/FiscalExportService",
+            "com/yadony/api/payments/PaymentService",
             "com/yadony/api/referral/ReferralService",
             "com/yadony/api/common/MatchingTextUtil",
             "com/yadony/api/auth/UserEntity",

@@ -78,7 +78,8 @@ class PaymentServiceTest {
                 new com.fasterxml.jackson.databind.ObjectMapper(),
                 org.mockito.Mockito.mock(com.yadony.api.common.stripe.AdminAlertService.class),
                 commissionRateResolver, promoService, new StripeGatewayImpl(),
-                PaymentServiceTestFactory.stubbedContacts()
+                PaymentServiceTestFactory.stubbedContacts(),
+                mock(com.yadony.api.kyc.KycRepository.class)
 );
     }
 

@@ -141,6 +141,17 @@ public class UserEntity extends BaseEntity {
     @Column(name = "stripe_onboarding_completed_at")
     private Instant stripeOnboardingCompletedAt;
 
+    /**
+     * Miroir de {@code account.requirements.currently_due} — chaînes Stripe non-PII
+     * ({@code "external_account"}, {@code "individual.verification.document"}...). Permet au
+     * front d'afficher précisément ce qu'il reste à fournir plutôt qu'un renvoi générique vers
+     * le lien d'onboarding hébergé, utile depuis que le compte est préremplli via KYC Identity.
+     */
+    @ElementCollection(fetch = FetchType.EAGER)
+    @CollectionTable(name = "user_stripe_requirements_due", joinColumns = @JoinColumn(name = "user_id"))
+    @Column(name = "requirement", length = 64)
+    private Set<String> stripeRequirementsCurrentlyDue = new HashSet<>();
+
     @Column(name = "is_pro_account", nullable = false)
     private boolean isProAccount = false;
 
@@ -332,6 +343,9 @@ public class UserEntity extends BaseEntity {
 
     public Instant getStripeOnboardingCompletedAt() { return stripeOnboardingCompletedAt; }
     public void setStripeOnboardingCompletedAt(Instant stripeOnboardingCompletedAt) { this.stripeOnboardingCompletedAt = stripeOnboardingCompletedAt; }
+
+    public Set<String> getStripeRequirementsCurrentlyDue() { return stripeRequirementsCurrentlyDue; }
+    public void setStripeRequirementsCurrentlyDue(Set<String> stripeRequirementsCurrentlyDue) { this.stripeRequirementsCurrentlyDue = stripeRequirementsCurrentlyDue; }
 
     public boolean isProAccount() { return isProAccount; }
     public void setProAccount(boolean proAccount) { isProAccount = proAccount; }

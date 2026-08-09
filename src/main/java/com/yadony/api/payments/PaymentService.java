@@ -8,6 +8,9 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.CommissionRateResolver;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.stripe.AdminAlertService;
+import com.yadony.api.kyc.KycRepository;
+import com.yadony.api.kyc.KycVerificationEntity;
+import com.yadony.api.kyc.KycVerificationStatus;
 import com.yadony.api.promo.PromoService;
 import com.yadony.api.config.StripeConnectProperties;
 import com.yadony.api.payments.exceptions.TravelerNotEligibleForPaymentException;
@@ -37,6 +40,7 @@ import com.stripe.model.EphemeralKey;
 import com.stripe.model.Event;
 import com.stripe.model.PaymentIntent;
 import com.stripe.model.PaymentMethod;
+import com.stripe.model.identity.VerificationSession;
 import com.stripe.param.AccountCreateParams;
 import com.stripe.param.AccountLinkCreateParams;
 import com.stripe.param.AccountUpdateParams;
@@ -56,9 +60,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -81,6 +87,7 @@ public class PaymentService {
     private final PromoService promoService;
     private final StripeGateway stripeGateway;
     private final FirebaseContactService firebaseContact;
+    private final KycRepository kycRepository;
 
     public PaymentService(UserRepository userRepository,
                           BidRepository bidRepository,
@@ -95,7 +102,8 @@ public class PaymentService {
                           CommissionRateResolver commissionRateResolver,
                           PromoService promoService,
                           StripeGateway stripeGateway,
-                          FirebaseContactService firebaseContact) {
+                          FirebaseContactService firebaseContact,
+                          KycRepository kycRepository) {
         this.userRepository = userRepository;
         this.bidRepository = bidRepository;
         this.bidGridItemRepository = bidGridItemRepository;
@@ -108,6 +116,7 @@ public class PaymentService {
         this.adminAlert = adminAlert;
         this.commissionRateResolver = commissionRateResolver;
         this.promoService = promoService;
+        this.kycRepository = kycRepository;
         this.stripeGateway = stripeGateway;
         this.firebaseContact = firebaseContact;
     }
@@ -116,7 +125,8 @@ public class PaymentService {
 
     public ConnectAccountResponse getConnectAccountStatus(String firebaseUid) {
         UserEntity user = findUser(firebaseUid);
-        return new ConnectAccountResponse(user.getStripeAccountId(), user.getStripeAccountStatus());
+        return new ConnectAccountResponse(user.getStripeAccountId(), user.getStripeAccountStatus(),
+                user.getStripeRequirementsCurrentlyDue());
     }
 
     public ConnectAccountResponse createConnectAccount(String firebaseUid) {
@@ -133,7 +143,8 @@ public class PaymentService {
         if (user.getStripeAccountId() != null) {
             try {
                 stripeGateway.retrieveAccount(user.getStripeAccountId());
-                return new ConnectAccountResponse(user.getStripeAccountId(), user.getStripeAccountStatus());
+                return new ConnectAccountResponse(user.getStripeAccountId(), user.getStripeAccountStatus(),
+                        user.getStripeRequirementsCurrentlyDue());
             } catch (StripeException e) {
                 if (!isStripeAccountMissing(e)) {
                     log.error("Failed to verify Stripe account {} for user {}",
@@ -150,8 +161,32 @@ public class PaymentService {
         }
 
         try {
-            AccountCreateParams params = AccountCreateParams.builder()
-                    .setType(AccountCreateParams.Type.EXPRESS)
+            AccountCreateParams.Individual individualPrefill = buildIndividualPrefill(user);
+
+            AccountCreateParams.Builder paramsBuilder = AccountCreateParams.builder()
+                    // Accounts v2 : équivalent fonctionnel d'Express (dashboard léger,
+                    // Stripe reste responsable des requirements KYC/AML), mais laisse la porte
+                    // ouverte à d'autres configurations plus tard sans changer de type figé.
+                    .setController(
+                            AccountCreateParams.Controller.builder()
+                                    .setStripeDashboard(
+                                            AccountCreateParams.Controller.StripeDashboard.builder()
+                                                    .setType(AccountCreateParams.Controller.StripeDashboard.Type.EXPRESS)
+                                                    .build()
+                                    )
+                                    .setFees(
+                                            AccountCreateParams.Controller.Fees.builder()
+                                                    .setPayer(AccountCreateParams.Controller.Fees.Payer.APPLICATION)
+                                                    .build()
+                                    )
+                                    .setLosses(
+                                            AccountCreateParams.Controller.Losses.builder()
+                                                    .setPayments(AccountCreateParams.Controller.Losses.Payments.STRIPE)
+                                                    .build()
+                                    )
+                                    .setRequirementCollection(AccountCreateParams.Controller.RequirementCollection.STRIPE)
+                                    .build()
+                    )
                     .setCountry(user.getCountry())
                     .setEmail(firebaseContact.getContact(user.getFirebaseUid()).email())
                     .setBusinessType(
@@ -194,13 +229,19 @@ public class PaymentService {
                                     )
                                     .build()
                     )
-                    .putMetadata("user_id", user.getId().toString())
-                    .build();
+                    .putMetadata("user_id", user.getId().toString());
+
+            if (individualPrefill != null) {
+                paramsBuilder.setIndividual(individualPrefill);
+            }
+
+            AccountCreateParams params = paramsBuilder.build();
 
             Account account = stripeGateway.createAccount(params);
             user.setStripeAccountId(account.getId());
             user.setStripeAccountStatus(StripeAccountStatus.PENDING_ONBOARDING);
             user.setStripeAccountCreatedAt(java.time.Instant.now());
+            user.setStripeRequirementsCurrentlyDue(currentlyDue(account));
             try {
                 userRepository.save(user);
             } catch (Exception saveEx) {
@@ -213,7 +254,8 @@ public class PaymentService {
                     Map.of("stripeAccountId", account.getId()));
 
             log.info("Stripe Express account created for user {} : {}", user.getId(), account.getId());
-            return new ConnectAccountResponse(account.getId(), StripeAccountStatus.PENDING_ONBOARDING);
+            return new ConnectAccountResponse(account.getId(), StripeAccountStatus.PENDING_ONBOARDING,
+                    user.getStripeRequirementsCurrentlyDue());
 
         } catch (Exception e) {
             log.error("Failed to create Stripe account for user {}", user.getId(), e);
@@ -284,6 +326,74 @@ public class PaymentService {
         user.setStripeAccountStatus(StripeAccountStatus.NOT_CREATED);
         user.setStripeAccountCreatedAt(null);
         user.setStripeOnboardingCompletedAt(null);
+        user.setStripeRequirementsCurrentlyDue(new HashSet<>());
+    }
+
+    /**
+     * Best-effort reuse of the Stripe Identity verification already completed for this user —
+     * avoids asking the same name/DOB/address/ID number a second time during Connect onboarding.
+     * Returns {@code null} (no prefill) when there's no verified KYC session, the user is a PRO
+     * account (business_type=company, Individual params don't apply), or the Identity API call
+     * fails — the Express onboarding link then simply asks for whatever wasn't prefilled.
+     */
+    private AccountCreateParams.Individual buildIndividualPrefill(UserEntity user) {
+        if (user.isProAccount()) {
+            return null;
+        }
+        Optional<KycVerificationEntity> kyc = kycRepository.findByUserId(user.getId());
+        if (kyc.isEmpty()
+                || kyc.get().getStatus() != KycVerificationStatus.VERIFIED
+                || kyc.get().getStripeVerificationSessionId() == null) {
+            return null;
+        }
+        try {
+            VerificationSession session = stripeGateway.retrieveVerificationSession(
+                    kyc.get().getStripeVerificationSessionId());
+            VerificationSession.VerifiedOutputs outputs = session.getVerifiedOutputs();
+            if (outputs == null) {
+                return null;
+            }
+
+            AccountCreateParams.Individual.Builder individual = AccountCreateParams.Individual.builder();
+            if (outputs.getFirstName() != null) individual.setFirstName(outputs.getFirstName());
+            if (outputs.getLastName() != null) individual.setLastName(outputs.getLastName());
+            if (outputs.getIdNumber() != null) individual.setIdNumber(outputs.getIdNumber());
+
+            VerificationSession.VerifiedOutputs.Dob dob = outputs.getDob();
+            if (dob != null) {
+                individual.setDob(AccountCreateParams.Individual.Dob.builder()
+                        .setDay(dob.getDay())
+                        .setMonth(dob.getMonth())
+                        .setYear(dob.getYear())
+                        .build());
+            }
+
+            com.stripe.model.Address address = outputs.getAddress();
+            if (address != null) {
+                individual.setAddress(AccountCreateParams.Individual.Address.builder()
+                        .setLine1(address.getLine1())
+                        .setLine2(address.getLine2())
+                        .setCity(address.getCity())
+                        .setPostalCode(address.getPostalCode())
+                        .setState(address.getState())
+                        .setCountry(address.getCountry())
+                        .build());
+            }
+
+            return individual.build();
+        } catch (StripeException e) {
+            log.warn("Could not fetch Identity verified_outputs for user {} — Connect onboarding will ask for everything",
+                    user.getId(), e);
+            return null;
+        }
+    }
+
+    /** Non-PII Stripe requirement field paths (e.g. "external_account") still missing on the account. */
+    private static Set<String> currentlyDue(Account account) {
+        if (account.getRequirements() == null || account.getRequirements().getCurrentlyDue() == null) {
+            return new HashSet<>();
+        }
+        return new HashSet<>(account.getRequirements().getCurrentlyDue());
     }
 
     /**
@@ -306,23 +416,31 @@ public class PaymentService {
             Account account = stripeGateway.retrieveAccount(user.getStripeAccountId());
             boolean chargesEnabled = Boolean.TRUE.equals(account.getChargesEnabled());
             StripeAccountStatus newStatus = deriveStripeAccountStatus(account);
+            Set<String> newRequirementsDue = currentlyDue(account);
 
-            if (newStatus != user.getStripeAccountStatus()) {
+            boolean statusChanged = newStatus != user.getStripeAccountStatus();
+            boolean requirementsChanged = !newRequirementsDue.equals(user.getStripeRequirementsCurrentlyDue());
+
+            if (statusChanged || requirementsChanged) {
                 user.setStripeAccountStatus(newStatus);
+                user.setStripeRequirementsCurrentlyDue(newRequirementsDue);
                 if (newStatus == StripeAccountStatus.ONBOARDING_COMPLETE
                         && user.getStripeOnboardingCompletedAt() == null) {
                     user.setStripeOnboardingCompletedAt(java.time.Instant.now());
                 }
                 userRepository.save(user);
-                String action = chargesEnabled ? "STRIPE_ONBOARDING_COMPLETE" : "STRIPE_ONBOARDING_REVOKED";
-                auditService.log("USER", user.getId(), action, user.getId(),
-                        Map.of("stripeAccountId", account.getId(),
-                                "source", "manual-refresh"));
-                log.info("Stripe onboarding state synced for user {} : newStatus={}",
-                        user.getId(), newStatus);
+                if (statusChanged) {
+                    String action = chargesEnabled ? "STRIPE_ONBOARDING_COMPLETE" : "STRIPE_ONBOARDING_REVOKED";
+                    auditService.log("USER", user.getId(), action, user.getId(),
+                            Map.of("stripeAccountId", account.getId(),
+                                    "source", "manual-refresh"));
+                    log.info("Stripe onboarding state synced for user {} : newStatus={}",
+                            user.getId(), newStatus);
+                }
             }
 
-            return new ConnectAccountResponse(account.getId(), user.getStripeAccountStatus());
+            return new ConnectAccountResponse(account.getId(), user.getStripeAccountStatus(),
+                    user.getStripeRequirementsCurrentlyDue());
 
         } catch (StripeException e) {
             log.error("Failed to refresh Stripe account {} for user {}",
@@ -667,9 +785,11 @@ public class PaymentService {
         String accountId = account.getId();
         userRepository.findByStripeAccountId(accountId).ifPresent(user -> {
             StripeAccountStatus newStatus = deriveStripeAccountStatus(account);
+            Set<String> newRequirementsDue = currentlyDue(account);
 
             if (newStatus == StripeAccountStatus.PENDING_ONBOARDING
-                    && user.getStripeAccountStatus() == StripeAccountStatus.PENDING_ONBOARDING) {
+                    && user.getStripeAccountStatus() == StripeAccountStatus.PENDING_ONBOARDING
+                    && newRequirementsDue.equals(user.getStripeRequirementsCurrentlyDue())) {
                 return;
             }
 
@@ -683,6 +803,7 @@ public class PaymentService {
             }
 
             user.setStripeAccountStatus(newStatus);
+            user.setStripeRequirementsCurrentlyDue(newRequirementsDue);
             userRepository.save(user);
         });
     }

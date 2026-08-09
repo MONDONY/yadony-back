@@ -81,7 +81,8 @@ class PaymentServiceTestFactory {
                 stubbedResolver(),
                 mock(PromoService.class),
                 new StripeGatewayImpl(),
-                PaymentServiceTestFactory.stubbedContacts()
+                PaymentServiceTestFactory.stubbedContacts(),
+                mock(com.yadony.api.kyc.KycRepository.class)
         );
     }
 
@@ -115,7 +116,8 @@ class PaymentServiceTestFactory {
                 stubbedResolver(),
                 mock(PromoService.class),
                 new StripeGatewayImpl(),
-                PaymentServiceTestFactory.stubbedContacts()
+                PaymentServiceTestFactory.stubbedContacts(),
+                mock(com.yadony.api.kyc.KycRepository.class)
         );
     }
 }

@@ -6,11 +6,13 @@ import com.stripe.model.AccountLink;
 import com.stripe.model.Customer;
 import com.stripe.model.EphemeralKey;
 import com.stripe.model.PaymentIntent;
+import com.stripe.model.identity.VerificationSession;
 import com.stripe.param.AccountCreateParams;
 import com.stripe.param.AccountLinkCreateParams;
 import com.stripe.param.CustomerCreateParams;
 import com.stripe.param.EphemeralKeyCreateParams;
 import com.stripe.param.PaymentIntentCreateParams;
+import com.stripe.param.identity.VerificationSessionRetrieveParams;
 import org.springframework.stereotype.Component;
 
 /**
@@ -61,5 +63,13 @@ public class StripeGatewayImpl implements StripeGateway {
         // stripe-java exige que la version d'API du client mobile soit portée par les params
         // (EphemeralKeyCreateParams.setStripeVersion) — pas par RequestOptions.
         return EphemeralKey.create(params);
+    }
+
+    @Override
+    public VerificationSession retrieveVerificationSession(String sessionId) throws StripeException {
+        VerificationSessionRetrieveParams params = VerificationSessionRetrieveParams.builder()
+                .addExpand("verified_outputs")
+                .build();
+        return VerificationSession.retrieve(sessionId, params, null);
     }
 }

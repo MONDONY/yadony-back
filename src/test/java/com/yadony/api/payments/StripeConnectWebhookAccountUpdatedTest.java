@@ -53,7 +53,8 @@ class StripeConnectWebhookAccountUpdatedTest {
                 PaymentServiceTestFactory.defaultConnectProperties(),
                 new com.fasterxml.jackson.databind.ObjectMapper(),
                 org.mockito.Mockito.mock(com.yadony.api.common.stripe.AdminAlertService.class), PaymentServiceTestFactory.stubbedResolver(), org.mockito.Mockito.mock(com.yadony.api.promo.PromoService.class), new StripeGatewayImpl(),
-                PaymentServiceTestFactory.stubbedContacts()
+                PaymentServiceTestFactory.stubbedContacts(),
+                mock(com.yadony.api.kyc.KycRepository.class)
 );
     }
 
@@ -68,14 +69,20 @@ class StripeConnectWebhookAccountUpdatedTest {
 
     private Event buildAccountUpdatedEvent(boolean chargesEnabled, boolean payoutsEnabled,
                                             String disabledReason) {
+        return buildAccountUpdatedEvent(chargesEnabled, payoutsEnabled, disabledReason, java.util.List.of());
+    }
+
+    private Event buildAccountUpdatedEvent(boolean chargesEnabled, boolean payoutsEnabled,
+                                            String disabledReason, java.util.List<String> currentlyDue) {
         Account account = mock(Account.class);
         when(account.getId()).thenReturn(ACCOUNT_ID);
         when(account.getChargesEnabled()).thenReturn(chargesEnabled);
         when(account.getPayoutsEnabled()).thenReturn(payoutsEnabled);
 
-        if (disabledReason != null) {
+        if (disabledReason != null || !currentlyDue.isEmpty()) {
             Account.Requirements requirements = mock(Account.Requirements.class);
-            when(requirements.getDisabledReason()).thenReturn(disabledReason);
+            lenient().when(requirements.getDisabledReason()).thenReturn(disabledReason);
+            lenient().when(requirements.getCurrentlyDue()).thenReturn(currentlyDue);
             when(account.getRequirements()).thenReturn(requirements);
         } else {
             when(account.getRequirements()).thenReturn(null);
@@ -165,6 +172,32 @@ class StripeConnectWebhookAccountUpdatedTest {
         assertThat(user.getStripeAccountStatus()).isEqualTo(StripeAccountStatus.PENDING_ONBOARDING);
         verify(userRepository, never()).save(any());
         verify(eventPublisher, never()).publishEvent(any());
+    }
+
+    @Test
+    void requirementsCurrentlyDue_syncedEvenWhileStillPending_savesDespiteEarlyReturnGuard() {
+        UserEntity user = buildUser(StripeAccountStatus.PENDING_ONBOARDING);
+        when(userRepository.findByStripeAccountId(ACCOUNT_ID)).thenReturn(Optional.of(user));
+        when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.handleAccountUpdated(buildAccountUpdatedEvent(false, false, null,
+                java.util.List.of("external_account")));
+
+        assertThat(user.getStripeAccountStatus()).isEqualTo(StripeAccountStatus.PENDING_ONBOARDING);
+        assertThat(user.getStripeRequirementsCurrentlyDue()).containsExactly("external_account");
+        verify(userRepository).save(user);
+        verify(eventPublisher, never()).publishEvent(any());
+    }
+
+    @Test
+    void requirementsUnchanged_stillPending_noSave() {
+        UserEntity user = buildUser(StripeAccountStatus.PENDING_ONBOARDING);
+        when(userRepository.findByStripeAccountId(ACCOUNT_ID)).thenReturn(Optional.of(user));
+
+        service.handleAccountUpdated(buildAccountUpdatedEvent(false, false, null, java.util.List.of()));
+
+        assertThat(user.getStripeRequirementsCurrentlyDue()).isEmpty();
+        verify(userRepository, never()).save(any());
     }
 
     @Test
