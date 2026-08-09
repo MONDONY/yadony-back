@@ -5,12 +5,15 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.cancellation.CancellationRepository;
+import com.yadony.api.payments.currency.CurrencyMatchGuard;
 import com.yadony.api.ratings.RatingRepository;
+import com.yadony.api.settings.UserBusinessPrefsRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -38,6 +41,8 @@ class BidVisibilityTest {
     @Mock private StorageService storageService;
     @Mock private BidPhotoService bidPhotoService;
     @Mock private com.yadony.api.common.CommissionRateResolver commissionRateResolver;
+    @Mock private UserBusinessPrefsRepository userBusinessPrefsRepository;
+    @Spy private CurrencyMatchGuard currencyMatchGuard = new CurrencyMatchGuard();
 
     @InjectMocks private BidService bidService;
 
