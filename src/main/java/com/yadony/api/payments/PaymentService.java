@@ -32,6 +32,7 @@ import com.yadony.api.payments.currency.CurrencyCatalog;
 import com.yadony.api.payments.currency.ExchangeRateProperties;
 import com.yadony.api.payments.currency.FxRateService;
 import com.yadony.api.payments.currency.SupportedCurrency;
+import com.yadony.api.payments.currency.StripeFxQuoteService;
 import com.yadony.api.payments.events.StripeOnboardingCompletedEvent;
 import com.stripe.exception.StripeException;
 import com.stripe.model.Account;
@@ -88,6 +89,7 @@ public class PaymentService {
     private final PromoService promoService;
     private final StripeGateway stripeGateway;
     private final FirebaseContactService firebaseContact;
+    private StripeFxQuoteService stripeFxQuoteService;
     private CurrencyCatalog currencyCatalog = new CurrencyCatalog();
     private FxRateService fxRateService = new FxRateService(
             (source, target) -> { throw new IllegalStateException("FX provider not configured"); },
@@ -128,6 +130,24 @@ public class PaymentService {
     public void configureCurrency(CurrencyCatalog currencyCatalog, FxRateService fxRateService) {
         this.currencyCatalog = currencyCatalog;
         this.fxRateService = fxRateService;
+    }
+
+    @Autowired(required = false)
+    public void configureFxQuotes(StripeFxQuoteService stripeFxQuoteService) {
+        this.stripeFxQuoteService = stripeFxQuoteService;
+    }
+
+    private StripeFxQuoteService.FxQuoteSnapshot createFxQuote(SupportedCurrency currency) {
+        return stripeFxQuoteService == null ? null : stripeFxQuoteService.createPaymentQuote(currency);
+    }
+
+    private CurrencyAmount convertForPayment(BigDecimal amountEur,
+                                             SupportedCurrency currency,
+                                             StripeFxQuoteService.FxQuoteSnapshot fxQuote) {
+        if (fxQuote == null) {
+            return fxRateService.convert(amountEur, currency);
+        }
+        return CurrencyAmount.of(amountEur.multiply(fxQuote.localUnitsPerEur()), currency);
     }
 
     // ── Story 6.2 : Onboarding Stripe Connect ────────────────────────────────
@@ -476,8 +496,9 @@ public class PaymentService {
         BigDecimal amount = totalNet.multiply(BigDecimal.ONE.add(rate)).setScale(2, RoundingMode.HALF_UP);
         BigDecimal commission = totalNet.multiply(rate).setScale(2, RoundingMode.HALF_UP);
         SupportedCurrency currency = currencyCatalog.resolve(sender.getCountry(), request.getCurrencyCode());
-        CurrencyAmount localAmount = fxRateService.convert(amount, currency);
-        CurrencyAmount localCommission = fxRateService.convert(commission, currency);
+        StripeFxQuoteService.FxQuoteSnapshot fxQuote = createFxQuote(currency);
+        CurrencyAmount localAmount = convertForPayment(amount, currency, fxQuote);
+        CurrencyAmount localCommission = convertForPayment(commission, currency, fxQuote);
 
         try {
             // Compatibilité comptes legacy : avant cette fix, certains comptes Stripe Connect
@@ -515,6 +536,12 @@ public class PaymentService {
                     .putMetadata("commission_rate", rate.toPlainString())
                     .putMetadata("commission_cents", String.valueOf(commissionCents));
 
+            if (fxQuote != null) {
+                paramsBuilder.putExtraParam("fx_quote", fxQuote.id())
+                        .putMetadata("fx_quote_id", fxQuote.id())
+                        .putMetadata("fx_exchange_rate", fxQuote.exchangeRate().toPlainString());
+            }
+
             // Défaut aligné sur le toggle « Enregistrer cette carte » (ON) de la sheet.
             // Décochable ensuite via PATCH /payments/intents/{id}/save-payment-method.
             if (!Boolean.FALSE.equals(request.getSavePaymentMethod())) {
@@ -529,6 +556,11 @@ public class PaymentService {
             payment.setAmount(localAmount.major());
             payment.setCommissionAmount(localCommission.major());
             payment.setCurrency(currency.code());
+            if (fxQuote != null) {
+                payment.setStripeFxQuoteId(fxQuote.id());
+                payment.setFxExchangeRate(fxQuote.exchangeRate());
+                payment.setFxQuoteExpiresAt(fxQuote.expiresAt());
+            }
             payment.setStatus(PaymentStatus.PENDING);
             payment.setLegacyDestinationCharge(false);
             paymentRepository.save(payment);
@@ -1478,8 +1510,9 @@ public class PaymentService {
         // Modèle B : amountEur = NET voyageur. L'expéditeur paie gross = net*(1+rate).
         PriceBreakdown b = PriceBreakdown.fromNet(amountEur, rate);
         SupportedCurrency currency = currencyCatalog.resolve(sender.getCountry(), null);
-        CurrencyAmount localGross = fxRateService.convert(b.gross(), currency);
-        CurrencyAmount localCommission = fxRateService.convert(b.commission(), currency);
+        StripeFxQuoteService.FxQuoteSnapshot fxQuote = createFxQuote(currency);
+        CurrencyAmount localGross = convertForPayment(b.gross(), currency, fxQuote);
+        CurrencyAmount localCommission = convertForPayment(b.commission(), currency, fxQuote);
 
         try {
             ensureCardPaymentsCapability(traveler.getStripeAccountId());
@@ -1489,7 +1522,7 @@ public class PaymentService {
             // la PaymentSheet native paie la négociation avec une carte enregistrée.
             String customerId = ensureStripeCustomer(sender);
 
-            PaymentIntentCreateParams params = PaymentIntentCreateParams.builder()
+            PaymentIntentCreateParams.Builder paramsBuilder = PaymentIntentCreateParams.builder()
                     .setAmount(localGross.minor())                     // gross, pas net
                     .setCurrency(currency.code())
                     .setCustomer(customerId)
@@ -1510,8 +1543,14 @@ public class PaymentService {
                     .putMetadata("traveler_id", traveler.getId().toString())
                     .putMetadata("commission_rate", rate.toPlainString())
                     .putMetadata("currency", currency.code())
-                    .putMetadata("scope", "NEGOTIATION")
-                    .build();
+                    .putMetadata("fx_quote_id", fxQuote != null ? fxQuote.id() : "")
+                    .putMetadata("scope", "NEGOTIATION");
+
+            if (fxQuote != null) {
+                paramsBuilder.putExtraParam("fx_quote", fxQuote.id())
+                        .putMetadata("fx_exchange_rate", fxQuote.exchangeRate().toPlainString());
+            }
+            PaymentIntentCreateParams params = paramsBuilder.build();
 
             PaymentIntent pi = stripeGateway.createPaymentIntent(params);
 
@@ -1522,6 +1561,11 @@ public class PaymentService {
             payment.setAmount(localGross.major());          // total payé par l'expéditeur (gross)
             payment.setCommissionAmount(localCommission.major());
             payment.setCurrency(currency.code());
+            if (fxQuote != null) {
+                payment.setStripeFxQuoteId(fxQuote.id());
+                payment.setFxExchangeRate(fxQuote.exchangeRate());
+                payment.setFxQuoteExpiresAt(fxQuote.expiresAt());
+            }
             payment.setStatus(PaymentStatus.PENDING);
             paymentRepository.save(payment);
 

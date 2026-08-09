@@ -37,6 +37,16 @@ public class PaymentEntity extends BaseEntity {
     @Column(name = "currency", nullable = false, length = 3)
     private String currency = "eur";
 
+    /** Stripe FX Quote used to lock the presentment-to-EUR conversion for this payment. */
+    @Column(name = "stripe_fx_quote_id", length = 255)
+    private String stripeFxQuoteId;
+
+    @Column(name = "fx_exchange_rate", precision = 20, scale = 10)
+    private BigDecimal fxExchangeRate;
+
+    @Column(name = "fx_quote_expires_at")
+    private Instant fxQuoteExpiresAt;
+
     @Column(name = "commission_amount", nullable = false, precision = 10, scale = 2)
     private BigDecimal commissionAmount;
 
@@ -77,6 +87,15 @@ public class PaymentEntity extends BaseEntity {
 
     public String getCurrency() { return currency; }
     public void setCurrency(String currency) { this.currency = currency == null ? null : currency.toLowerCase(); }
+
+    public String getStripeFxQuoteId() { return stripeFxQuoteId; }
+    public void setStripeFxQuoteId(String stripeFxQuoteId) { this.stripeFxQuoteId = stripeFxQuoteId; }
+
+    public BigDecimal getFxExchangeRate() { return fxExchangeRate; }
+    public void setFxExchangeRate(BigDecimal fxExchangeRate) { this.fxExchangeRate = fxExchangeRate; }
+
+    public Instant getFxQuoteExpiresAt() { return fxQuoteExpiresAt; }
+    public void setFxQuoteExpiresAt(Instant fxQuoteExpiresAt) { this.fxQuoteExpiresAt = fxQuoteExpiresAt; }
 
     public BigDecimal getCommissionAmount() { return commissionAmount; }
     public void setCommissionAmount(BigDecimal commissionAmount) { this.commissionAmount = commissionAmount; }

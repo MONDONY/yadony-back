@@ -16,6 +16,7 @@ import com.yadony.api.payments.dto.ConnectAccountResponse;
 import com.yadony.api.payments.dto.OnboardingLinkResponse;
 import com.yadony.api.payments.dto.PaymentResponse;
 import com.yadony.api.payments.events.PaymentEscrowReadyEvent;
+import com.yadony.api.payments.currency.StripeFxQuoteService;
 import com.stripe.exception.StripeException;
 import com.stripe.model.Account;
 import com.stripe.model.AccountLink;
@@ -737,6 +738,7 @@ class PaymentServiceTest {
         // sender and traveler
         UserEntity sender = buildUser(senderId, "uid-sender");
         sender.setStripeCustomerId("cus_existing"); // évite Customer.create (statique non mocké)
+        sender.setCountry("CA");
         UserEntity traveler = buildUser(travelerId, "uid-traveler");
         traveler.setStripeAccountId("acct_traveler");
         traveler.setStripeAccountStatus(StripeAccountStatus.ONBOARDING_COMPLETE);
@@ -745,6 +747,15 @@ class PaymentServiceTest {
         when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler));
         when(paymentRepository.findByNegotiationThreadId(threadId)).thenReturn(Optional.empty());
         when(paymentRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        StripeFxQuoteService.FxQuoteSnapshot fxQuote = new StripeFxQuoteService.FxQuoteSnapshot(
+                "fxq_test_cad", com.yadony.api.payments.currency.SupportedCurrency.CAD,
+                new BigDecimal("1.47"), new BigDecimal("0.6802721088"),
+                java.time.Instant.parse("2030-01-01T00:00:00Z"));
+        StripeFxQuoteService quoteService = mock(StripeFxQuoteService.class);
+        service.configureFxQuotes(quoteService);
+        when(quoteService.createPaymentQuote(com.yadony.api.payments.currency.SupportedCurrency.CAD))
+                .thenReturn(fxQuote);
 
         // net = 35 €, rate = 0.12 → gross = 39.20 €, commission = 4.20 €
         BigDecimal netAmount = new BigDecimal("35.00");
@@ -780,7 +791,8 @@ class PaymentServiceTest {
             // implicitement via le Transfer(net) à la livraison (DeliveryEventListener).
             PaymentIntentCreateParams params = capturedParams.get();
             assertThat(params).isNotNull();
-            assertThat(params.getAmount()).isEqualTo(3920L);               // gross cents
+            assertThat(params.getAmount()).isEqualTo(2667L);               // 39.20 EUR converted by Stripe quote
+            assertThat(params.getExtraParams()).containsEntry("fx_quote", "fxq_test_cad");
             assertThat(params.getApplicationFeeAmount()).isNull();         // PAS de fee ici
             assertThat(params.getTransferData()).isNull();                 // pas de destination charge
             assertThat(params.getOnBehalfOf()).isNull();                   // retiré (incompatible PayPal)
@@ -788,8 +800,9 @@ class PaymentServiceTest {
 
             // L'entité paiement enregistre toujours gross + commission : la commission
             // sert au calcul du Transfer(net = gross - commission) à la livraison.
-            assertThat(resp.getAmount()).isEqualByComparingTo(new BigDecimal("39.20"));     // gross
-            assertThat(resp.getCommissionAmount()).isEqualByComparingTo(new BigDecimal("4.20")); // commission
+            assertThat(resp.getAmount()).isEqualByComparingTo(new BigDecimal("26.67"));     // gross CAD
+            assertThat(resp.getCommissionAmount()).isEqualByComparingTo(new BigDecimal("2.86")); // commission CAD
+            assertThat(resp.getCurrency()).isEqualTo("cad");
         }
     }
 
