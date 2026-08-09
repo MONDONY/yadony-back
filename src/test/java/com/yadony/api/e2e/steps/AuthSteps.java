@@ -24,20 +24,6 @@ public class AuthSteps extends AbstractSteps {
         ctx.setCurrentUser(uid, "");
     }
 
-    /**
-     * Simulates a completed KYC + Stripe Connect onboarding for the current user.
-     * Real KYC/Stripe flows aren't run in E2E. Note: activateTravelerRole() no longer
-     * gates on KYC/Stripe (universal traveler role, Task 4) — this step remains as a
-     * test bridge for scenarios that still assert on a fully onboarded user.
-     */
-    @Etantdonné("mon KYC est vérifié et mon compte Stripe est complet")
-    public void givenKycAndStripeComplete() {
-        jdbcTemplate.update(
-                "UPDATE users SET kyc_status = 'VERIFIED', stripe_account_status = 'ONBOARDING_COMPLETE' "
-                        + "WHERE firebase_uid = ?",
-                ctx.getCurrentUid());
-    }
-
     @Etantdonné("un utilisateur VOYAGEUR enregistré avec l'uid {string} et le téléphone {string}")
     public void givenRegisteredTraveler(String uid, String phone) {
         ctx.setCurrentUser(uid, "ROLE_TRAVELER");
@@ -72,16 +58,6 @@ public class AuthSteps extends AbstractSteps {
     }
 
     // ── When ──────────────────────────────────────────────────────────────────
-
-    @Quand("j'active mon rôle voyageur")
-    public void whenActivateTraveler() {
-        // Registration already grants both SENDER and TRAVELER (universal traveler
-        // role, Task 1). This endpoint is kept for backward compatibility with
-        // already-deployed app versions — activation is now idempotent (no-op if the
-        // user already has TRAVELER, e.g. via migration V176 backfill).
-        ctx.setCurrentUser(ctx.getCurrentUid(), "ROLE_SENDER");
-        store(asCurrentUser().post("/users/me/roles/traveler/activate"));
-    }
 
     @Quand("je m'inscris avec le téléphone {string} et le rôle {string}")
     public void whenRegister(String phone, String role) {

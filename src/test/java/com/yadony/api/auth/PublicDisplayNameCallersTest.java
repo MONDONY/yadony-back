@@ -40,8 +40,7 @@ class PublicDisplayNameCallersTest {
             "com/yadony/api/referral/ReferralService",
             "com/yadony/api/common/MatchingTextUtil",
             "com/yadony/api/auth/UserEntity",
-            "com/yadony/api/auth/AuthService",
-            "com/yadony/api/auth/UserRoleService"
+            "com/yadony/api/auth/AuthService"
     );
 
     @Test

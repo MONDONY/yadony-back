@@ -14,26 +14,19 @@ Fonctionnalité: Inscription des utilisateurs
     Et la réponse contient le rôle "SENDER"
 
   @happy-path @critical
-  Scénario: Inscription puis activation du rôle voyageur
+  Scénario: Inscription — le rôle voyageur est accordé d'office
     Etant donné un token Firebase pour l'uid "new-traveler-001"
     Quand je m'inscris avec le téléphone "+33611000002" et le rôle "TRAVELER"
     Alors la réponse HTTP est 201
     Et la réponse contient un identifiant utilisateur
     Et la réponse contient le rôle "SENDER"
-    Et mon KYC est vérifié et mon compte Stripe est complet
-    Quand j'active mon rôle voyageur
-    Alors la réponse HTTP est 200
     Et la réponse contient le rôle "TRAVELER"
 
   @happy-path
-  Scénario: Inscription expéditeur puis activation voyageur — cumul des deux rôles
+  Scénario: Inscription expéditeur — cumul des deux rôles dès l'inscription
     Etant donné un token Firebase pour l'uid "new-both-001"
     Quand je m'inscris avec le téléphone "+33611000003" et le rôle "SENDER"
     Alors la réponse HTTP est 201
-    Et la réponse contient le rôle "SENDER"
-    Et mon KYC est vérifié et mon compte Stripe est complet
-    Quand j'active mon rôle voyageur
-    Alors la réponse HTTP est 200
     Et la réponse contient le rôle "SENDER"
     Et la réponse contient le rôle "TRAVELER"
 
