@@ -15,6 +15,8 @@ import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.config.ContentCategoryNormalizer;
 import com.yadony.api.config.YadonyConfigProperties;
+import com.yadony.api.settings.UserBusinessPrefsEntity;
+import com.yadony.api.settings.UserBusinessPrefsRepository;
 import com.yadony.api.matching.dto.AnnouncementDetailResponse;
 import com.yadony.api.matching.dto.AnnouncementPriceGridItemResponse;
 import com.yadony.api.matching.dto.AnnouncementRequest;
@@ -95,6 +97,7 @@ public class AnnouncementService {
     private final com.yadony.api.country.FlagService flagService;
     private final StorageService storageService;
     private final FavoriteRepository favoriteRepository;
+    private final UserBusinessPrefsRepository userBusinessPrefsRepository;
     private final AnnouncementSearchMapper announcementSearchMapper;
     private final PackageRequestRepository packageRequestRepository;
     private final NegotiationThreadRepository negotiationThreadRepository;
@@ -116,6 +119,7 @@ public class AnnouncementService {
             com.yadony.api.country.FlagService flagService,
             StorageService storageService,
             FavoriteRepository favoriteRepository,
+            UserBusinessPrefsRepository userBusinessPrefsRepository,
             AnnouncementSearchMapper announcementSearchMapper,
             PackageRequestRepository packageRequestRepository,
             NegotiationThreadRepository negotiationThreadRepository
@@ -130,6 +134,7 @@ public class AnnouncementService {
         this.flagService = flagService;
         this.storageService = storageService;
         this.favoriteRepository = favoriteRepository;
+        this.userBusinessPrefsRepository = userBusinessPrefsRepository;
         this.announcementSearchMapper = announcementSearchMapper;
         this.packageRequestRepository = packageRequestRepository;
         this.negotiationThreadRepository = negotiationThreadRepository;
@@ -156,9 +161,15 @@ public class AnnouncementService {
                 : userRepository.findByFirebaseUid(viewerFirebaseUid)
                         .map(UserEntity::getId)
                         .orElse(null);
+        String viewerCurrency = viewerId != null
+                ? userBusinessPrefsRepository.findById(viewerId)
+                        .map(UserBusinessPrefsEntity::getCurrencyCode)
+                        .orElse("EUR")
+                : "EUR";
 
         Specification<AnnouncementEntity> spec = AnnouncementSpecification.hasStatus(AnnouncementStatus.ACTIVE)
-                .and(AnnouncementSpecification.publicOrOpenSurplus());
+                .and(AnnouncementSpecification.publicOrOpenSurplus())
+                .and(AnnouncementSpecification.hasCurrency(viewerCurrency));
 
         if (viewerId != null)
             spec = spec.and(AnnouncementSpecification.notBlockedBy(viewerId));
@@ -353,6 +364,10 @@ public class AnnouncementService {
 
         AnnouncementEntity announcement = new AnnouncementEntity();
         announcement.setTravelerId(user.getId());
+        String creatorCurrency = userBusinessPrefsRepository.findById(user.getId())
+                .map(UserBusinessPrefsEntity::getCurrencyCode)
+                .orElse("EUR");
+        announcement.setCurrency(creatorCurrency);
         announcement.setTravelerIsPro(user.isProAccount());
         announcement.setDepartureCity(request.departureCity());
         announcement.setArrivalCity(request.arrivalCity());

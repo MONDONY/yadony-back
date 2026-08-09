@@ -8,6 +8,7 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.matching.dto.AnnouncementRequest;
 import com.yadony.api.matching.dto.AnnouncementResponse;
+import com.yadony.api.settings.UserBusinessPrefsRepository;
 import jakarta.validation.Validation;
 import jakarta.validation.Validator;
 import org.junit.jupiter.api.BeforeEach;
@@ -72,6 +73,7 @@ class AnnouncementServiceAddressTest {
     @Mock ApplicationEventPublisher eventPublisher;
     @Mock PriceGridService priceGridService;
     @Mock com.yadony.api.country.FlagService flagService;
+    @Mock UserBusinessPrefsRepository userBusinessPrefsRepository;
     AnnouncementService announcementService;
 
     @org.junit.jupiter.api.BeforeEach
@@ -83,6 +85,7 @@ class AnnouncementServiceAddressTest {
                 auditService, eventPublisher, cfg, priceGridService, flagService,
                 mock(com.yadony.api.common.StorageService.class),
                 mock(com.yadony.api.favorites.FavoriteRepository.class),
+                userBusinessPrefsRepository,
                 mock(AnnouncementSearchMapper.class),
                 mock(com.yadony.api.requests.repository.PackageRequestRepository.class),
                 mock(com.yadony.api.requests.repository.NegotiationThreadRepository.class));

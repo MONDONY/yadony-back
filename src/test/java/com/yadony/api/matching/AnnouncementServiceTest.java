@@ -17,6 +17,8 @@ import com.yadony.api.matching.dto.AnnouncementRequest;
 import com.yadony.api.matching.dto.AnnouncementResponse;
 import com.yadony.api.matching.events.AnnouncementDeletedEvent;
 import com.yadony.api.payments.cash.PaymentMethod;
+import com.yadony.api.settings.UserBusinessPrefsEntity;
+import com.yadony.api.settings.UserBusinessPrefsRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -63,6 +65,7 @@ class AnnouncementServiceTest {
     @Mock private com.yadony.api.country.FlagService flagService;
     @Mock private com.yadony.api.common.StorageService storageService;
     @Mock private FavoriteRepository favoriteRepository;
+    @Mock private UserBusinessPrefsRepository userBusinessPrefsRepository;
     @Mock private com.yadony.api.requests.repository.PackageRequestRepository packageRequestRepository;
     @Mock private com.yadony.api.requests.repository.NegotiationThreadRepository negotiationThreadRepository;
 
@@ -80,7 +83,7 @@ class AnnouncementServiceTest {
         announcementService = new AnnouncementService(
                 announcementRepository, bidRepository, userRepository,
                 auditService, eventPublisher, config, priceGridService, flagService,
-                storageService, favoriteRepository, realMapper, packageRequestRepository,
+                storageService, favoriteRepository, userBusinessPrefsRepository, realMapper, packageRequestRepository,
                 negotiationThreadRepository);
     }
 
@@ -236,6 +239,7 @@ class AnnouncementServiceTest {
         void create_validRequest_createsAndAudits() {
             UserEntity traveler = buildTraveler();
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(userBusinessPrefsRepository.findById(traveler.getId())).thenReturn(Optional.empty());
             when(announcementRepository.save(any())).thenAnswer(inv -> {
                 AnnouncementEntity a = inv.getArgument(0);
                 setId(a, ANNOUNCEMENT_ID);
@@ -250,6 +254,51 @@ class AnnouncementServiceTest {
             assertThat(result.arrivalCity()).isEqualTo("Dakar");
             assertThat(result.status()).isEqualTo("ACTIVE");
             verify(auditService).log(eq("USER"), any(), eq("ANNOUNCEMENT_CREATED"), any(), any());
+        }
+
+        @Test
+        @DisplayName("devise business du créateur = CAD → persistée sur l'annonce")
+        void createAnnouncement_assignsCurrencyFromCreatorBusinessPrefs() {
+            UserEntity traveler = buildTraveler();
+            UserBusinessPrefsEntity prefs = new UserBusinessPrefsEntity();
+            prefs.setUserId(traveler.getId());
+            prefs.setCurrencyCode("CAD");
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(userBusinessPrefsRepository.findById(traveler.getId())).thenReturn(Optional.of(prefs));
+            when(announcementRepository.save(any())).thenAnswer(inv -> {
+                AnnouncementEntity a = inv.getArgument(0);
+                setId(a, ANNOUNCEMENT_ID);
+                return a;
+            });
+            when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
+            when(bidRepository.countByAnnouncementIdAndStatusIn(any(), any())).thenReturn(0L);
+
+            announcementService.createAnnouncement(FIREBASE_UID, buildRequest());
+
+            ArgumentCaptor<AnnouncementEntity> captor = ArgumentCaptor.forClass(AnnouncementEntity.class);
+            verify(announcementRepository).save(captor.capture());
+            assertThat(captor.getValue().getCurrency()).isEqualTo("CAD");
+        }
+
+        @Test
+        @DisplayName("sans business prefs → fallback EUR à la création")
+        void createAnnouncement_defaultsToEurWhenNoBusinessPrefs() {
+            UserEntity traveler = buildTraveler();
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(userBusinessPrefsRepository.findById(traveler.getId())).thenReturn(Optional.empty());
+            when(announcementRepository.save(any())).thenAnswer(inv -> {
+                AnnouncementEntity a = inv.getArgument(0);
+                setId(a, ANNOUNCEMENT_ID);
+                return a;
+            });
+            when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
+            when(bidRepository.countByAnnouncementIdAndStatusIn(any(), any())).thenReturn(0L);
+
+            announcementService.createAnnouncement(FIREBASE_UID, buildRequest());
+
+            ArgumentCaptor<AnnouncementEntity> captor = ArgumentCaptor.forClass(AnnouncementEntity.class);
+            verify(announcementRepository).save(captor.capture());
+            assertThat(captor.getValue().getCurrency()).isEqualTo("EUR");
         }
 
         // C2 : normalisation à l'écriture — un client pas à jour envoie un libellé/code
@@ -1548,6 +1597,74 @@ class AnnouncementServiceTest {
             }
         }
 
+        @Test
+        @DisplayName("viewer avec prefs CAD → filtre recherche sur CAD")
+        void searchAnnouncements_viewerCurrencyFromBusinessPrefs_filtersByCad() {
+            UserEntity viewer = buildTraveler();
+            UUID viewerId = UUID.randomUUID();
+            setId(viewer, viewerId);
+            UserBusinessPrefsEntity prefs = new UserBusinessPrefsEntity();
+            prefs.setUserId(viewerId);
+            prefs.setCurrencyCode("CAD");
+
+            when(userRepository.findByFirebaseUid("viewer-cad")).thenReturn(Optional.of(viewer));
+            when(userBusinessPrefsRepository.findById(viewerId)).thenReturn(Optional.of(prefs));
+            when(favoriteRepository.findTargetIds(viewerId, FavoriteTargetType.TRIP)).thenReturn(List.of());
+            when(announcementRepository.findAll(ArgumentMatchers.<Specification<AnnouncementEntity>>any(), any(Pageable.class)))
+                    .thenReturn(Page.empty(PageRequest.of(0, 10)));
+
+            try (org.mockito.MockedStatic<AnnouncementSpecification> specMock =
+                         mockStatic(AnnouncementSpecification.class, CALLS_REAL_METHODS)) {
+                announcementService.searchAnnouncements(
+                        null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+                        "date", "asc", PageRequest.of(0, 10), "viewer-cad", null);
+
+                specMock.verify(() -> AnnouncementSpecification.hasCurrency("CAD"));
+            }
+        }
+
+        @Test
+        @DisplayName("viewer connu sans prefs → filtre recherche par défaut sur EUR")
+        void searchAnnouncements_knownViewerWithoutPrefs_defaultsToEurCurrencyFilter() {
+            UserEntity viewer = buildTraveler();
+            UUID viewerId = UUID.randomUUID();
+            setId(viewer, viewerId);
+
+            when(userRepository.findByFirebaseUid("viewer-no-prefs")).thenReturn(Optional.of(viewer));
+            when(userBusinessPrefsRepository.findById(viewerId)).thenReturn(Optional.empty());
+            when(favoriteRepository.findTargetIds(viewerId, FavoriteTargetType.TRIP)).thenReturn(List.of());
+            when(announcementRepository.findAll(ArgumentMatchers.<Specification<AnnouncementEntity>>any(), any(Pageable.class)))
+                    .thenReturn(Page.empty(PageRequest.of(0, 10)));
+
+            try (org.mockito.MockedStatic<AnnouncementSpecification> specMock =
+                         mockStatic(AnnouncementSpecification.class, CALLS_REAL_METHODS)) {
+                announcementService.searchAnnouncements(
+                        null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+                        "date", "asc", PageRequest.of(0, 10), "viewer-no-prefs", null);
+
+                specMock.verify(() -> AnnouncementSpecification.hasCurrency("EUR"));
+            }
+        }
+
+        @Test
+        @DisplayName("viewer absent → filtre recherche par défaut sur EUR")
+        void searchAnnouncements_missingViewer_defaultsToEurCurrencyFilter() {
+            when(announcementRepository.findAll(ArgumentMatchers.<Specification<AnnouncementEntity>>any(), any(Pageable.class)))
+                    .thenReturn(Page.empty(PageRequest.of(0, 10)));
+
+            try (org.mockito.MockedStatic<AnnouncementSpecification> specMock =
+                         mockStatic(AnnouncementSpecification.class, CALLS_REAL_METHODS)) {
+                announcementService.searchAnnouncements(
+                        null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+                        "date", "asc", PageRequest.of(0, 10), null, null);
+
+                specMock.verify(() -> AnnouncementSpecification.hasCurrency("EUR"));
+            }
+
+            verify(userRepository, never()).findByFirebaseUid(null);
+            verifyNoInteractions(userBusinessPrefsRepository);
+        }
+
         // ─── computeUrgent boundary (DTO field, seuil de test = 3) ─────────────────
 
         private com.yadony.api.matching.dto.AnnouncementSearchResponse searchSingle(LocalDate departureDate) {
@@ -1771,7 +1888,7 @@ class AnnouncementServiceTest {
             AnnouncementService serviceWithLimits = new AnnouncementService(
                     announcementRepository, bidRepository, userRepository,
                     auditService, eventPublisher, configWithLimits, priceGridService, flagService,
-                    storageService, favoriteRepository, mapperWithLimits, packageRequestRepository,
+                    storageService, favoriteRepository, userBusinessPrefsRepository, mapperWithLimits, packageRequestRepository,
                     negotiationThreadRepository);
 
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
@@ -2103,7 +2220,7 @@ class AnnouncementServiceTest {
             AnnouncementService serviceWithLimits = new AnnouncementService(
                     announcementRepository, bidRepository, userRepository,
                     auditService, eventPublisher, configWithLimits, priceGridService, flagService,
-                    storageService, favoriteRepository, mapperWithLimits, packageRequestRepository,
+                    storageService, favoriteRepository, userBusinessPrefsRepository, mapperWithLimits, packageRequestRepository,
                     negotiationThreadRepository);
 
             AnnouncementEntity draft = draftEntityOwnedBy(user);
