@@ -17,6 +17,9 @@ import com.yadony.api.requests.entity.*;
 import com.yadony.api.requests.event.PackageRequestCreatedEvent;
 import com.yadony.api.requests.repository.NegotiationThreadRepository;
 import com.yadony.api.requests.repository.PackageRequestRepository;
+import com.yadony.api.requests.specification.PackageRequestSpecifications;
+import com.yadony.api.settings.UserBusinessPrefsEntity;
+import com.yadony.api.settings.UserBusinessPrefsRepository;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.*;
@@ -51,6 +54,7 @@ class PackageRequestServiceTest {
     @Mock private StorageService storageService;
     @Mock private PackageRequestPhotoService photoService;
     @Mock private FavoriteRepository favoriteRepository;
+    @Mock private UserBusinessPrefsRepository userBusinessPrefsRepository;
     @Mock private com.yadony.api.matching.MatchingService matchingService;
     @Mock private com.yadony.api.matching.AnnouncementRepository announcementRepository;
     @Mock private com.yadony.api.common.CommissionRateResolver commissionRateResolver;
@@ -103,7 +107,7 @@ class PackageRequestServiceTest {
         service = new PackageRequestService(
                 repository, userRepository, eventPublisher, auditService, config,
                 threadRepository, cityRepository, commissionProperties,
-                storageService, photoService, favoriteRepository, realMapper, matchingService,
+                storageService, photoService, favoriteRepository, userBusinessPrefsRepository, realMapper, matchingService,
                 yadonyConfig, announcementRepository, commissionRateResolver);
     }
 
@@ -374,6 +378,37 @@ class PackageRequestServiceTest {
             assertThat(saved.getTransportMode()).isEqualTo(TransportMode.PLANE);
             assertThat(saved.getTargetPriceEur()).isEqualByComparingTo("35.00"); // 39.20 / 1.12
             assertThat(saved.isNegotiable()).isTrue();
+        }
+
+        @Test @DisplayName("devise business CAD de l'expéditeur → assignée à la demande")
+        void create_assignsCurrencyFromSenderBusinessPrefs() {
+            UserBusinessPrefsEntity prefs = new UserBusinessPrefsEntity();
+            prefs.setUserId(SENDER_ID);
+            prefs.setCurrencyCode("CAD");
+            when(config.maxOpenRequestsPerSender()).thenReturn(10);
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+            when(userBusinessPrefsRepository.findById(SENDER_ID)).thenReturn(Optional.of(prefs));
+            when(repository.countBySenderIdAndStatusIn(eq(SENDER_ID), any())).thenReturn(0L);
+            when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            PackageRequestEntity saved = service.createAndReturnEntity(SENDER_ID, validRequest());
+
+            assertThat(saved.getCurrency()).isEqualTo("CAD");
+            verify(userBusinessPrefsRepository).findById(SENDER_ID);
+        }
+
+        @Test @DisplayName("sans business prefs → fallback EUR après lookup repository")
+        void create_defaultsToEurWhenSenderHasNoBusinessPrefs() {
+            when(config.maxOpenRequestsPerSender()).thenReturn(10);
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+            when(userBusinessPrefsRepository.findById(SENDER_ID)).thenReturn(Optional.empty());
+            when(repository.countBySenderIdAndStatusIn(eq(SENDER_ID), any())).thenReturn(0L);
+            when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            PackageRequestEntity saved = service.createAndReturnEntity(SENDER_ID, validRequest());
+
+            assertThat(saved.getCurrency()).isEqualTo("EUR");
+            verify(userBusinessPrefsRepository).findById(SENDER_ID);
         }
 
         // C2 : normalisation à l'écriture — un client pas à jour envoie un libellé/code
@@ -908,6 +943,43 @@ class PackageRequestServiceTest {
             assertThat(result.getContent()).isEmpty();
         }
 
+        @Test @DisplayName("caller sans prefs → spec repository inclut hasCurrency(EUR)")
+        void searchNearMe_withoutPrefs_passesEurCurrencySpecToRepository() {
+            UUID callerId = UUID.randomUUID();
+            when(userBusinessPrefsRepository.findById(callerId)).thenReturn(Optional.empty());
+
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<org.springframework.data.jpa.domain.Specification<PackageRequestEntity>> specCaptor =
+                ArgumentCaptor.forClass((Class) org.springframework.data.jpa.domain.Specification.class);
+            when(repository.findAll(specCaptor.capture(), any(org.springframework.data.domain.Pageable.class)))
+                .thenReturn(org.springframework.data.domain.Page.empty(org.springframework.data.domain.PageRequest.of(0, 20)));
+
+            java.util.concurrent.atomic.AtomicBoolean eurCurrencySpecIncluded = new java.util.concurrent.atomic.AtomicBoolean(false);
+            org.springframework.data.jpa.domain.Specification<PackageRequestEntity> eurCurrencyMarker =
+                (root, query, cb) -> {
+                    eurCurrencySpecIncluded.set(true);
+                    return cb.conjunction();
+                };
+
+            try (org.mockito.MockedStatic<PackageRequestSpecifications> specMock =
+                     org.mockito.Mockito.mockStatic(PackageRequestSpecifications.class)) {
+                specMock.when(() -> PackageRequestSpecifications.hasCurrency("EUR"))
+                    .thenReturn(eurCurrencyMarker);
+
+                service.searchNearMe(
+                    org.springframework.data.jpa.domain.Specification.where(null),
+                    org.springframework.data.domain.PageRequest.of(0, 20),
+                    new BigDecimal("48.8566"), new BigDecimal("2.3522"),
+                    10.0,
+                    callerId
+                );
+            }
+
+            assertThat(specCaptor.getValue()).isNotNull();
+            assertCurrencyMarkerIncluded(specCaptor.getValue(), eurCurrencySpecIncluded);
+            verify(userBusinessPrefsRepository).findById(callerId);
+        }
+
         private com.yadony.api.city.CityEntity cityWith(BigDecimal lat, BigDecimal lng) {
             com.yadony.api.city.CityEntity c = new com.yadony.api.city.CityEntity();
             c.setLatitude(lat);
@@ -988,6 +1060,44 @@ class PackageRequestServiceTest {
                 .containsExactlyInAnyOrder(
                     com.yadony.api.payments.cash.PaymentMethod.STRIPE,
                     com.yadony.api.payments.cash.PaymentMethod.CASH);
+        }
+
+        @Test @DisplayName("caller avec prefs CAD → spec repository inclut hasCurrency(CAD)")
+        void search_withBusinessPrefs_passesCadCurrencySpecToRepository() {
+            UUID callerId = UUID.randomUUID();
+            UserBusinessPrefsEntity prefs = new UserBusinessPrefsEntity();
+            prefs.setUserId(callerId);
+            prefs.setCurrencyCode("CAD");
+            when(userBusinessPrefsRepository.findById(callerId)).thenReturn(Optional.of(prefs));
+
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<org.springframework.data.jpa.domain.Specification<PackageRequestEntity>> specCaptor =
+                ArgumentCaptor.forClass((Class) org.springframework.data.jpa.domain.Specification.class);
+            when(repository.findAll(specCaptor.capture(), any(org.springframework.data.domain.Pageable.class)))
+                .thenReturn(org.springframework.data.domain.Page.empty(org.springframework.data.domain.PageRequest.of(0, 20)));
+
+            java.util.concurrent.atomic.AtomicBoolean cadCurrencySpecIncluded = new java.util.concurrent.atomic.AtomicBoolean(false);
+            org.springframework.data.jpa.domain.Specification<PackageRequestEntity> cadCurrencyMarker =
+                (root, query, cb) -> {
+                    cadCurrencySpecIncluded.set(true);
+                    return cb.conjunction();
+                };
+
+            try (org.mockito.MockedStatic<PackageRequestSpecifications> specMock =
+                     org.mockito.Mockito.mockStatic(PackageRequestSpecifications.class)) {
+                specMock.when(() -> PackageRequestSpecifications.hasCurrency("CAD"))
+                    .thenReturn(cadCurrencyMarker);
+
+                service.search(
+                    org.springframework.data.jpa.domain.Specification.where(null),
+                    org.springframework.data.domain.PageRequest.of(0, 20),
+                    callerId
+                );
+            }
+
+            assertThat(specCaptor.getValue()).isNotNull();
+            assertCurrencyMarkerIncluded(specCaptor.getValue(), cadCurrencySpecIncluded);
+            verify(userBusinessPrefsRepository).findById(callerId);
         }
 
         @Test @DisplayName("N résultats → userRepository.findAllById appelé 1 fois, findById jamais")
@@ -1250,6 +1360,24 @@ class PackageRequestServiceTest {
             verifyNoInteractions(threadRepository);
         }
 
+    }
+
+    private void assertCurrencyMarkerIncluded(
+            org.springframework.data.jpa.domain.Specification<PackageRequestEntity> capturedSpec,
+            java.util.concurrent.atomic.AtomicBoolean currencyMarkerIncluded) {
+        jakarta.persistence.criteria.CriteriaBuilder criteriaBuilder = mock(jakarta.persistence.criteria.CriteriaBuilder.class);
+        jakarta.persistence.criteria.Predicate conjunction = mock(jakarta.persistence.criteria.Predicate.class);
+        when(criteriaBuilder.conjunction()).thenReturn(conjunction);
+        lenient().when(criteriaBuilder.and(any(jakarta.persistence.criteria.Predicate.class), any(jakarta.persistence.criteria.Predicate.class)))
+            .thenReturn(conjunction);
+
+        capturedSpec.toPredicate(
+            mock(jakarta.persistence.criteria.Root.class),
+            mock(jakarta.persistence.criteria.CriteriaQuery.class),
+            criteriaBuilder
+        );
+
+        assertThat(currencyMarkerIncluded).isTrue();
     }
 
     // ─── Shared helpers ─────────────────────────────────────────────────────────

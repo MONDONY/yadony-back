@@ -22,6 +22,8 @@ import com.yadony.api.requests.event.*;
 import com.yadony.api.requests.repository.NegotiationThreadRepository;
 import com.yadony.api.requests.repository.PackageRequestRepository;
 import com.yadony.api.requests.specification.PackageRequestSpecifications;
+import com.yadony.api.settings.UserBusinessPrefsEntity;
+import com.yadony.api.settings.UserBusinessPrefsRepository;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -50,6 +52,8 @@ import java.util.stream.Collectors;
 @Service
 public class PackageRequestService {
 
+    private static final String DEFAULT_CURRENCY = "EUR";
+
     private final PackageRequestRepository repository;
     private final UserRepository userRepository;
     private final ApplicationEventPublisher eventPublisher;
@@ -61,6 +65,7 @@ public class PackageRequestService {
     private final StorageService storageService;
     private final PackageRequestPhotoService photoService;
     private final FavoriteRepository favoriteRepository;
+    private final UserBusinessPrefsRepository userBusinessPrefsRepository;
     private final PackageRequestSearchMapper packageRequestSearchMapper;
     private final MatchingService matchingService;
     private final YadonyConfigProperties yadonyConfig;
@@ -78,6 +83,7 @@ public class PackageRequestService {
                                   StorageService storageService,
                                   PackageRequestPhotoService photoService,
                                   FavoriteRepository favoriteRepository,
+                                  UserBusinessPrefsRepository userBusinessPrefsRepository,
                                   PackageRequestSearchMapper packageRequestSearchMapper,
                                   MatchingService matchingService,
                                   YadonyConfigProperties yadonyConfig,
@@ -94,6 +100,7 @@ public class PackageRequestService {
         this.storageService = storageService;
         this.photoService = photoService;
         this.favoriteRepository = favoriteRepository;
+        this.userBusinessPrefsRepository = userBusinessPrefsRepository;
         this.packageRequestSearchMapper = packageRequestSearchMapper;
         this.matchingService = matchingService;
         this.yadonyConfig = yadonyConfig;
@@ -226,6 +233,7 @@ public class PackageRequestService {
 
         PackageRequestEntity entity = new PackageRequestEntity();
         entity.setSenderId(senderId);
+        entity.setCurrency(resolveActiveCurrency(senderId));
         entity.setDepartureCity(req.departureCity());
         entity.setArrivalCity(req.arrivalCity());
         entity.setDesiredDate(req.desiredDate());
@@ -624,7 +632,7 @@ public class PackageRequestService {
                                                       Pageable pageable,
                                                       UUID callerId) {
         Set<UUID> favIds = loadFavIds(callerId);
-        Page<PackageRequestEntity> page = repository.findAll(spec, pageable);
+        Page<PackageRequestEntity> page = repository.findAll(withActiveCurrency(spec, callerId), pageable);
         BatchMaps batch = buildBatchMaps(page.getContent());
         return page.map(e -> packageRequestSearchMapper.toSearchResponse(
                 e, favIds.contains(e.getId()), batch.userMap, batch.cityMap, batch.photoMap));
@@ -660,8 +668,8 @@ public class PackageRequestService {
             return new org.springframework.data.domain.PageImpl<>(List.of(), pageable, 0);
         }
 
-        Specification<PackageRequestEntity> restricted = spec.and(
-                PackageRequestSpecifications.idIn(matches.keySet()));
+        Specification<PackageRequestEntity> restricted = withActiveCurrency(spec, callerId)
+                .and(PackageRequestSpecifications.idIn(matches.keySet()));
 
         List<PackageRequestEntity> sorted = repository.findAll(restricted).stream()
                 .sorted(matchOrder(matches))
@@ -726,7 +734,7 @@ public class PackageRequestService {
                                                             double radiusKm,
                                                             UUID callerId) {
         Set<UUID> favIds = loadFavIds(callerId);
-        Page<PackageRequestEntity> rawPage = repository.findAll(spec, pageable);
+        Page<PackageRequestEntity> rawPage = repository.findAll(withActiveCurrency(spec, callerId), pageable);
         BatchMaps batch = buildBatchMaps(rawPage.getContent());
         Page<PackageRequestSearchResponse> mapped = rawPage.map(e -> packageRequestSearchMapper.toSearchResponse(
                 e, favIds.contains(e.getId()), batch.userMap, batch.cityMap, batch.photoMap));
@@ -740,6 +748,22 @@ public class PackageRequestService {
             .map(Map.Entry::getKey)
             .toList();
         return new org.springframework.data.domain.PageImpl<>(filtered, pageable, mapped.getTotalElements());
+    }
+
+    private Specification<PackageRequestEntity> withActiveCurrency(
+            Specification<PackageRequestEntity> spec,
+            UUID callerId) {
+        return Specification.where(spec)
+                .and(PackageRequestSpecifications.hasCurrency(resolveActiveCurrency(callerId)));
+    }
+
+    private String resolveActiveCurrency(UUID userId) {
+        if (userId == null) {
+            return DEFAULT_CURRENCY;
+        }
+        return userBusinessPrefsRepository.findById(userId)
+                .map(UserBusinessPrefsEntity::getCurrencyCode)
+                .orElse(DEFAULT_CURRENCY);
     }
 
     /** Immutable value object carrying the three batch-loaded maps for search mapping. */
