@@ -1,2 +1,0 @@
-ALTER TABLE payments
-    ADD COLUMN currency VARCHAR(3) NOT NULL DEFAULT 'eur';

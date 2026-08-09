@@ -11,7 +11,9 @@ import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.currency.StripeFxQuoteService;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import com.stripe.model.PaymentIntent;
+import com.stripe.net.RequestOptions;
 import com.stripe.param.PaymentIntentCreateParams;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
@@ -21,6 +23,9 @@ import java.util.UUID;
 
 @Component
 public class WalletTopupOrchestrator {
+
+    @Value("${stripe.fx-quotes.api-version:2025-03-31.preview}")
+    private String fxQuotesApiVersion;
 
     private CurrencyCatalog currencyCatalog = new CurrencyCatalog();
     private FxRateService fxRateService = new FxRateService(
@@ -76,7 +81,15 @@ public class WalletTopupOrchestrator {
                         .putMetadata("fx_exchange_rate", fxQuote.exchangeRate().toPlainString());
             }
             PaymentIntentCreateParams params = paramsBuilder.build();
-            PaymentIntent pi = PaymentIntent.create(params);
+            PaymentIntent pi;
+            if (fxQuote == null) {
+                pi = PaymentIntent.create(params);
+            } else {
+                RequestOptions.RequestOptionsBuilder optionsBuilder = RequestOptions.builder();
+                RequestOptions.RequestOptionsBuilder.unsafeSetStripeVersionOverride(
+                        optionsBuilder, fxQuotesApiVersion);
+                pi = PaymentIntent.create(params, optionsBuilder.build());
+            }
             return new WalletTopupResponse(pi.getClientSecret(), null);
         } catch (Exception e) {
             throw new RuntimeException("Erreur Stripe topup", e);

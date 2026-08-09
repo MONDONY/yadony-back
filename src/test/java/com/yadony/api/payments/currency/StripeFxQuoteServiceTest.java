@@ -2,6 +2,8 @@ package com.yadony.api.payments.currency;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -49,11 +51,18 @@ class StripeFxQuoteServiceTest {
         assertThat(quote.localUnitsPerEur()).isEqualByComparingTo("0.6802721088");
         assertThat(quote.expiresAt().getEpochSecond()).isEqualTo(1893459600L);
 
+        ArgumentCaptor<HttpEntity<?>> requestCaptor = ArgumentCaptor.forClass(HttpEntity.class);
         verify(restTemplate).exchange(
                 eq("https://api.stripe.com/v1/fx_quotes"),
                 eq(HttpMethod.POST),
-                any(),
+                requestCaptor.capture(),
                 eq(String.class));
+        assertThat(requestCaptor.getValue().getHeaders().getFirst("Stripe-Version"))
+                .isEqualTo("2025-03-31.preview");
+        String expectedAuth = "Basic " + java.util.Base64.getEncoder()
+                .encodeToString("sk_test_secret:".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        assertThat(requestCaptor.getValue().getHeaders().getFirst("Authorization"))
+                .isEqualTo(expectedAuth);
     }
 
     @Test

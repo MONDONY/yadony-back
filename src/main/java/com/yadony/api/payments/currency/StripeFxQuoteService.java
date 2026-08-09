@@ -78,9 +78,10 @@ public class StripeFxQuoteService {
         form.add("usage[type]", "payment");
 
         HttpHeaders headers = new HttpHeaders();
-        headers.setBasicAuth(secretKey);
+        headers.setBasicAuth(secretKey, "");
         headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
         headers.setAccept(java.util.List.of(MediaType.APPLICATION_JSON));
+        headers.set("Stripe-Version", stripeApiVersion);
 
         try {
             ResponseEntity<String> response = restTemplate.exchange(
