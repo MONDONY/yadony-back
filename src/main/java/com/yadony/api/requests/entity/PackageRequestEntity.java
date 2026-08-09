@@ -83,6 +83,9 @@ public class PackageRequestEntity extends BaseEntity {
     @Column(nullable = false, length = 20)
     private PackageRequestStatus status;
 
+    @Column(name = "currency", nullable = false, length = 3)
+    private String currency = "EUR";
+
     @Column(name = "negotiable", nullable = false)
     private boolean negotiable = true;
 
@@ -161,6 +164,8 @@ public class PackageRequestEntity extends BaseEntity {
 
     public PackageRequestStatus getStatus() { return status; }
 
+    public String getCurrency() { return currency; }
+
     public boolean isNegotiable() { return negotiable; }
 
     public Set<PaymentMethod> getAcceptedPaymentMethods() { return acceptedPaymentMethods; }
@@ -219,6 +224,8 @@ public class PackageRequestEntity extends BaseEntity {
     public void setDeliveryNeighborhood(String deliveryNeighborhood) { this.deliveryNeighborhood = deliveryNeighborhood; }
 
     public void setStatus(PackageRequestStatus status) { this.status = status; }
+
+    public void setCurrency(String currency) { this.currency = currency; }
 
     public void setNegotiable(boolean negotiable) { this.negotiable = negotiable; }
 
