@@ -1647,6 +1647,55 @@ class AnnouncementServiceTest {
         }
 
         @Test
+        @DisplayName("viewer Firebase UID inconnu → spec repository filtrée par défaut sur EUR")
+        void searchAnnouncements_unknownViewerUid_defaultsToEurCurrencyFilterInRepositorySpec() {
+            when(userRepository.findByFirebaseUid("viewer-unknown")).thenReturn(Optional.empty());
+
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<Specification<AnnouncementEntity>> specCaptor =
+                    ArgumentCaptor.forClass((Class) Specification.class);
+            when(announcementRepository.findAll(specCaptor.capture(), any(Pageable.class)))
+                    .thenReturn(Page.empty(PageRequest.of(0, 10)));
+
+            Specification<AnnouncementEntity> passThrough = (root, query, cb) -> cb.conjunction();
+            java.util.concurrent.atomic.AtomicBoolean eurCurrencySpecIncluded = new java.util.concurrent.atomic.AtomicBoolean(false);
+            Specification<AnnouncementEntity> eurCurrencyMarker = (root, query, cb) -> {
+                eurCurrencySpecIncluded.set(true);
+                return cb.conjunction();
+            };
+
+            try (org.mockito.MockedStatic<AnnouncementSpecification> specMock =
+                         mockStatic(AnnouncementSpecification.class)) {
+                specMock.when(() -> AnnouncementSpecification.hasStatus(AnnouncementStatus.ACTIVE))
+                        .thenReturn(passThrough);
+                specMock.when(AnnouncementSpecification::publicOrOpenSurplus)
+                        .thenReturn(passThrough);
+                specMock.when(() -> AnnouncementSpecification.hasCurrency("EUR"))
+                        .thenReturn(eurCurrencyMarker);
+
+                announcementService.searchAnnouncements(
+                        null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+                        "date", "asc", PageRequest.of(0, 10), "viewer-unknown", null);
+            }
+
+            jakarta.persistence.criteria.CriteriaBuilder criteriaBuilder = mock(jakarta.persistence.criteria.CriteriaBuilder.class);
+            jakarta.persistence.criteria.Predicate conjunction = mock(jakarta.persistence.criteria.Predicate.class);
+            when(criteriaBuilder.conjunction()).thenReturn(conjunction);
+            when(criteriaBuilder.and(any(jakarta.persistence.criteria.Predicate.class), any(jakarta.persistence.criteria.Predicate.class)))
+                    .thenReturn(conjunction);
+
+            specCaptor.getValue().toPredicate(
+                    mock(jakarta.persistence.criteria.Root.class),
+                    mock(jakarta.persistence.criteria.CriteriaQuery.class),
+                    criteriaBuilder
+            );
+
+            assertThat(eurCurrencySpecIncluded).isTrue();
+            verify(userRepository).findByFirebaseUid("viewer-unknown");
+            verifyNoInteractions(userBusinessPrefsRepository, favoriteRepository);
+        }
+
+        @Test
         @DisplayName("viewer absent → filtre recherche par défaut sur EUR")
         void searchAnnouncements_missingViewer_defaultsToEurCurrencyFilter() {
             when(announcementRepository.findAll(ArgumentMatchers.<Specification<AnnouncementEntity>>any(), any(Pageable.class)))
