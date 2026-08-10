@@ -34,6 +34,8 @@ import org.assertj.core.api.ThrowableAssert;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -1072,6 +1074,67 @@ class PaymentServiceTest {
     }
 
     @Test
+    void createNegotiationEscrow_pendingLegacyStripeFxAmountAndCurrency_cancelsAndRecycles() throws Exception {
+        UUID threadId = UUID.randomUUID();
+        UserEntity sender = buildUser(senderId, "uid-sender");
+        sender.setStripeCustomerId("cus_existing");
+        UserEntity traveler = buildUser(travelerId, "uid-traveler");
+        traveler.setStripeAccountId("acct_traveler");
+        traveler.setStripeAccountStatus(StripeAccountStatus.ONBOARDING_COMPLETE);
+        when(userRepository.findById(senderId)).thenReturn(Optional.of(sender));
+        when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler));
+        when(userBusinessPrefsRepository.findById(senderId))
+                .thenReturn(Optional.of(prefsWithCurrency("CAD")));
+
+        PaymentEntity legacy = new PaymentEntity();
+        setId(legacy, UUID.randomUUID());
+        legacy.setNegotiationThreadId(threadId);
+        legacy.setStripePaymentIntentId("pi_legacy_fx");
+        legacy.setAmount(new BigDecimal("39.20"));
+        legacy.setCommissionAmount(new BigDecimal("4.20"));
+        legacy.setCurrency("CAD");
+        legacy.setStripeFxQuoteId("fxq_legacy");
+        legacy.setFxExchangeRate(new BigDecimal("0.6800000000"));
+        legacy.setFxQuoteExpiresAt(java.time.Instant.parse("2026-08-09T10:00:00Z"));
+        legacy.setStatus(PaymentStatus.PENDING);
+        when(paymentRepository.findByNegotiationThreadId(threadId)).thenReturn(Optional.of(legacy));
+        when(paymentRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        try (MockedStatic<Account> acctStatic = mockStatic(Account.class);
+             MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class)) {
+            PaymentIntent legacyPi = mock(PaymentIntent.class);
+            when(legacyPi.getStatus()).thenReturn("requires_payment_method");
+            when(legacyPi.getAmount()).thenReturn(2666L);
+            when(legacyPi.getCurrency()).thenReturn("eur");
+            when(legacyPi.cancel(any(PaymentIntentCancelParams.class))).thenReturn(legacyPi);
+            piStatic.when(() -> PaymentIntent.retrieve("pi_legacy_fx")).thenReturn(legacyPi);
+
+            Account mockAccount = mock(Account.class);
+            com.stripe.model.Account.Capabilities caps = mock(com.stripe.model.Account.Capabilities.class);
+            when(caps.getCardPayments()).thenReturn("active");
+            when(mockAccount.getCapabilities()).thenReturn(caps);
+            acctStatic.when(() -> Account.retrieve("acct_traveler")).thenReturn(mockAccount);
+
+            PaymentIntent freshPi = mock(PaymentIntent.class);
+            when(freshPi.getId()).thenReturn("pi_fresh_cad");
+            when(freshPi.getClientSecret()).thenReturn("pi_fresh_cad_secret");
+            piStatic.when(() -> PaymentIntent.create(any(PaymentIntentCreateParams.class)))
+                    .thenReturn(freshPi);
+
+            PaymentResponse response = service.createNegotiationEscrow(
+                    threadId, senderId, travelerId, new BigDecimal("35.00"), null, "CAD");
+
+            assertThat(response.getStripePaymentIntentId()).isEqualTo("pi_fresh_cad");
+            verify(legacyPi).cancel(any(PaymentIntentCancelParams.class));
+            verify(paymentRepository).save(legacy);
+            assertThat(legacy.getStripePaymentIntentId()).isEqualTo("pi_fresh_cad");
+            assertThat(legacy.getStripeFxQuoteId()).isNull();
+            assertThat(legacy.getFxExchangeRate()).isNull();
+            assertThat(legacy.getFxQuoteExpiresAt()).isNull();
+        }
+    }
+
+    @Test
     void createNegotiationEscrow_existingPendingRequiresActionPi_cancelsAndRecycles() throws Exception {
         UUID threadId = UUID.randomUUID();
         UserEntity sender = buildUser(senderId, "uid-sender");
@@ -1117,6 +1180,53 @@ class PaymentServiceTest {
             assertThat(stale.getStripePaymentIntentId()).isEqualTo("pi_fresh3");
             assertThat(stale.getStatus()).isEqualTo(PaymentStatus.PENDING);
             verify(paymentRepository).save(stale);
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"XOF", "XAF"})
+    void createNegotiationEscrow_zeroDecimalCurrency_auditsNormalizedGrossCommissionAndCurrency(
+            String serverCurrency) throws Exception {
+        UUID threadId = UUID.randomUUID();
+        UserEntity sender = buildUser(senderId, "uid-sender");
+        sender.setStripeCustomerId("cus_existing");
+        UserEntity traveler = buildUser(travelerId, "uid-traveler");
+        traveler.setStripeAccountId("acct_traveler");
+        traveler.setStripeAccountStatus(StripeAccountStatus.ONBOARDING_COMPLETE);
+        when(userRepository.findById(senderId)).thenReturn(Optional.of(sender));
+        when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler));
+        when(userBusinessPrefsRepository.findById(senderId))
+                .thenReturn(Optional.of(prefsWithCurrency(serverCurrency)));
+        when(paymentRepository.findByNegotiationThreadId(threadId)).thenReturn(Optional.empty());
+        when(paymentRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        try (MockedStatic<Account> acctStatic = mockStatic(Account.class);
+             MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class)) {
+            Account mockAccount = mock(Account.class);
+            com.stripe.model.Account.Capabilities caps = mock(com.stripe.model.Account.Capabilities.class);
+            when(caps.getCardPayments()).thenReturn("active");
+            when(mockAccount.getCapabilities()).thenReturn(caps);
+            acctStatic.when(() -> Account.retrieve("acct_traveler")).thenReturn(mockAccount);
+
+            PaymentIntent paymentIntent = mock(PaymentIntent.class);
+            when(paymentIntent.getId()).thenReturn("pi_zero_decimal_" + serverCurrency.toLowerCase());
+            when(paymentIntent.getClientSecret()).thenReturn("pi_zero_decimal_secret");
+            piStatic.when(() -> PaymentIntent.create(any(PaymentIntentCreateParams.class)))
+                    .thenReturn(paymentIntent);
+
+            service.createNegotiationEscrow(
+                    threadId, senderId, travelerId, new BigDecimal("26.25"), null, serverCurrency);
+
+            @SuppressWarnings("unchecked")
+            org.mockito.ArgumentCaptor<java.util.Map<String, Object>> payloadCaptor =
+                    org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+            verify(auditService).log(
+                    eq("PAYMENT"), any(), eq("NEGOTIATION_ESCROW_CREATED"), eq(senderId),
+                    payloadCaptor.capture());
+            assertThat(payloadCaptor.getValue())
+                    .containsEntry("amount", new BigDecimal("29"))
+                    .containsEntry("commission", new BigDecimal("3"))
+                    .containsEntry("currency", serverCurrency.toLowerCase());
         }
     }
 

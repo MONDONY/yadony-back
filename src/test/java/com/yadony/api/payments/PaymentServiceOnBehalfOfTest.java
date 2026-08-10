@@ -17,6 +17,7 @@ import com.yadony.api.payments.currency.CurrencyMatchGuard;
 import com.yadony.api.settings.UserBusinessPrefsEntity;
 import com.yadony.api.settings.UserBusinessPrefsRepository;
 import com.stripe.model.PaymentIntent;
+import com.stripe.param.PaymentIntentCancelParams;
 import com.stripe.param.PaymentIntentCreateParams;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -321,6 +322,73 @@ class PaymentServiceOnBehalfOfTest {
             verify(paymentRepository).save(paymentCaptor.capture());
             assertThat(paymentCaptor.getValue().getAmount()).isEqualByComparingTo("29");
             assertThat(paymentCaptor.getValue().getCommissionAmount()).isEqualByComparingTo("3");
+        }
+    }
+
+    @Test
+    void pendingLegacyEntityFxAmountAndCurrency_cancelsAndRecyclesEvenWhenStripeIntentMatchesServer()
+            throws Exception {
+        UserEntity sender = buildSender();
+        UserEntity traveler = buildTraveler("acct_traveler_123", StripeAccountStatus.ONBOARDING_COMPLETE);
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(buildBid("CAD")));
+        when(userBusinessPrefsRepository.findById(senderId))
+                .thenReturn(Optional.of(prefsWithCurrency("CAD")));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(buildAnnouncement()));
+        when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler));
+
+        PaymentEntity legacy = new PaymentEntity();
+        setId(legacy, UUID.randomUUID());
+        legacy.setBidId(bidId);
+        legacy.setStripePaymentIntentId("pi_legacy_fx");
+        legacy.setAmount(new BigDecimal("25.00"));
+        legacy.setCommissionAmount(new BigDecimal("3.00"));
+        legacy.setCurrency("EUR");
+        legacy.setStripeFxQuoteId("fxq_legacy");
+        legacy.setFxExchangeRate(new BigDecimal("1.1200000000"));
+        legacy.setFxQuoteExpiresAt(java.time.Instant.parse("2026-08-09T10:00:00Z"));
+        legacy.setStatus(PaymentStatus.PENDING);
+        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.of(legacy));
+        when(paymentRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        try (MockedStatic<com.stripe.model.Account> accountStatic = mockStatic(com.stripe.model.Account.class);
+             MockedStatic<PaymentIntent> paymentIntentStatic = mockStatic(PaymentIntent.class)) {
+            PaymentIntent legacyPi = mock(PaymentIntent.class);
+            when(legacyPi.getStatus()).thenReturn("requires_payment_method");
+            when(legacyPi.getAmount()).thenReturn(2800L);
+            when(legacyPi.getCurrency()).thenReturn("cad");
+            when(legacyPi.cancel(any(PaymentIntentCancelParams.class))).thenReturn(legacyPi);
+            paymentIntentStatic.when(() -> PaymentIntent.retrieve("pi_legacy_fx"))
+                    .thenReturn(legacyPi);
+
+            com.stripe.model.Account account = mock(com.stripe.model.Account.class);
+            com.stripe.model.Account.Capabilities capabilities = mock(com.stripe.model.Account.Capabilities.class);
+            when(capabilities.getCardPayments()).thenReturn("active");
+            when(account.getCapabilities()).thenReturn(capabilities);
+            accountStatic.when(() -> com.stripe.model.Account.retrieve("acct_traveler_123"))
+                    .thenReturn(account);
+
+            ArgumentCaptor<PaymentIntentCreateParams> paramsCaptor =
+                    ArgumentCaptor.forClass(PaymentIntentCreateParams.class);
+            PaymentIntent freshPi = mock(PaymentIntent.class);
+            when(freshPi.getId()).thenReturn("pi_fresh_cad");
+            when(freshPi.getClientSecret()).thenReturn("pi_fresh_cad_secret");
+            paymentIntentStatic.when(() -> PaymentIntent.create(paramsCaptor.capture()))
+                    .thenReturn(freshPi);
+
+            PaymentResponse response = service.createEscrow(buildRequest(), "uid-sender");
+
+            assertThat(response.getStripePaymentIntentId()).isEqualTo("pi_fresh_cad");
+            assertThat(paramsCaptor.getValue().getAmount()).isEqualTo(2800L);
+            assertThat(paramsCaptor.getValue().getCurrency()).isEqualTo("cad");
+            verify(legacyPi).cancel(any(PaymentIntentCancelParams.class));
+            verify(paymentRepository).save(legacy);
+            assertThat(legacy.getStripePaymentIntentId()).isEqualTo("pi_fresh_cad");
+            assertThat(legacy.getAmount()).isEqualByComparingTo("28.00");
+            assertThat(legacy.getCurrency()).isEqualTo("cad");
+            assertThat(legacy.getStripeFxQuoteId()).isNull();
+            assertThat(legacy.getFxExchangeRate()).isNull();
+            assertThat(legacy.getFxQuoteExpiresAt()).isNull();
         }
     }
 

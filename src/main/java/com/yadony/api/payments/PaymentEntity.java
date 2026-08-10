@@ -97,6 +97,13 @@ public class PaymentEntity extends BaseEntity {
     public Instant getFxQuoteExpiresAt() { return fxQuoteExpiresAt; }
     public void setFxQuoteExpiresAt(Instant fxQuoteExpiresAt) { this.fxQuoteExpiresAt = fxQuoteExpiresAt; }
 
+    /** Clears obsolete Stripe FX data when this row is recycled for a 1:1 currency payment. */
+    public void clearLegacyFxData() {
+        stripeFxQuoteId = null;
+        fxExchangeRate = null;
+        fxQuoteExpiresAt = null;
+    }
+
     public BigDecimal getCommissionAmount() { return commissionAmount; }
     public void setCommissionAmount(BigDecimal commissionAmount) { this.commissionAmount = commissionAmount; }
 
