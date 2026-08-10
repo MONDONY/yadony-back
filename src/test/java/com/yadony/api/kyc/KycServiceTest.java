@@ -7,6 +7,7 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyNotFoundException;
 import com.yadony.api.kyc.dto.KycSessionResponse;
 import com.yadony.api.kyc.dto.KycStatusResponse;
+import com.yadony.api.kyc.events.UserKycVerifiedEvent;
 import com.stripe.model.identity.VerificationSession;
 import com.stripe.param.identity.VerificationSessionCreateParams;
 import org.junit.jupiter.api.BeforeEach;
@@ -15,9 +16,13 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.lang.reflect.Field;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -33,12 +38,13 @@ class KycServiceTest {
     @Mock KycRepository kycRepository;
     @Mock UserRepository userRepository;
     @Mock AuditService auditService;
+    @Mock ApplicationEventPublisher eventPublisher;
 
     KycService service;
 
     @BeforeEach
     void setUp() {
-        service = new KycService(kycRepository, userRepository, auditService);
+        service = new KycService(kycRepository, userRepository, auditService, eventPublisher);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -215,5 +221,157 @@ class KycServiceTest {
         when(userRepository.findByFirebaseUid("unknown")).thenReturn(Optional.empty());
         assertThatThrownBy(() -> service.abandonSession("unknown"))
                 .isInstanceOf(YadonyNotFoundException.class);
+    }
+
+    // ── reconcilePendingVerifications / reconcileOne ────────────────────────────
+    // Filet de sécurité si le webhook Stripe est perdu — retéléphone Stripe directement.
+
+    @Test
+    void reconcileOne_verified_updatesStatusAndPublishesEvent() {
+        UserEntity user = buildUser(KycStatus.PENDING);
+        KycVerificationEntity kyc = buildKyc(user.getId(), KycVerificationStatus.PENDING);
+        when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
+
+        try (MockedStatic<VerificationSession> vsStatic = mockStatic(VerificationSession.class)) {
+            VerificationSession session = mock(VerificationSession.class);
+            when(session.getStatus()).thenReturn("verified");
+            vsStatic.when(() -> VerificationSession.retrieve(kyc.getStripeVerificationSessionId()))
+                    .thenReturn(session);
+
+            service.reconcileOne(kyc);
+
+            assertThat(kyc.getStatus()).isEqualTo(KycVerificationStatus.VERIFIED);
+            assertThat(user.getKycStatus()).isEqualTo(KycStatus.VERIFIED);
+            verify(kycRepository).save(kyc);
+            verify(userRepository).save(user);
+            verify(eventPublisher).publishEvent(any(UserKycVerifiedEvent.class));
+            verify(auditService).log(eq("kyc_verification"), any(), eq("KYC_VERIFIED_RECONCILED"), any(), any());
+        }
+    }
+
+    @Test
+    void reconcileOne_requiresInput_setsRejectedWithReason() {
+        UserEntity user = buildUser(KycStatus.PENDING);
+        KycVerificationEntity kyc = buildKyc(user.getId(), KycVerificationStatus.PENDING);
+        when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
+
+        try (MockedStatic<VerificationSession> vsStatic = mockStatic(VerificationSession.class)) {
+            VerificationSession session = mock(VerificationSession.class);
+            when(session.getStatus()).thenReturn("requires_input");
+            VerificationSession.LastError lastError = mock(VerificationSession.LastError.class);
+            when(lastError.getCode()).thenReturn("document_expired");
+            when(session.getLastError()).thenReturn(lastError);
+            vsStatic.when(() -> VerificationSession.retrieve(kyc.getStripeVerificationSessionId()))
+                    .thenReturn(session);
+
+            service.reconcileOne(kyc);
+
+            assertThat(kyc.getStatus()).isEqualTo(KycVerificationStatus.REJECTED);
+            assertThat(kyc.getRejectionReason()).isEqualTo("document_expired");
+            assertThat(user.getKycStatus()).isEqualTo(KycStatus.REJECTED);
+            verify(eventPublisher, never()).publishEvent(any());
+        }
+    }
+
+    @Test
+    void reconcileOne_canceled_resetsToNotStarted() {
+        UserEntity user = buildUser(KycStatus.PENDING);
+        KycVerificationEntity kyc = buildKyc(user.getId(), KycVerificationStatus.PENDING);
+        when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
+
+        try (MockedStatic<VerificationSession> vsStatic = mockStatic(VerificationSession.class)) {
+            VerificationSession session = mock(VerificationSession.class);
+            when(session.getStatus()).thenReturn("canceled");
+            vsStatic.when(() -> VerificationSession.retrieve(kyc.getStripeVerificationSessionId()))
+                    .thenReturn(session);
+
+            service.reconcileOne(kyc);
+
+            assertThat(kyc.getStatus()).isEqualTo(KycVerificationStatus.REJECTED);
+            assertThat(user.getKycStatus()).isEqualTo(KycStatus.NOT_STARTED);
+        }
+    }
+
+    @Test
+    void reconcileOne_stillProcessing_doesNothing() {
+        UserEntity user = buildUser(KycStatus.PENDING);
+        KycVerificationEntity kyc = buildKyc(user.getId(), KycVerificationStatus.PENDING);
+
+        try (MockedStatic<VerificationSession> vsStatic = mockStatic(VerificationSession.class)) {
+            VerificationSession session = mock(VerificationSession.class);
+            when(session.getStatus()).thenReturn("processing");
+            vsStatic.when(() -> VerificationSession.retrieve(kyc.getStripeVerificationSessionId()))
+                    .thenReturn(session);
+
+            service.reconcileOne(kyc);
+
+            verify(kycRepository, never()).save(any());
+            verify(userRepository, never()).findById(any());
+        }
+    }
+
+    @Test
+    void reconcileOne_alreadyVerifiedLocally_skipsRaceWithWebhook() {
+        UserEntity user = buildUser(KycStatus.VERIFIED);
+        KycVerificationEntity kyc = buildKyc(user.getId(), KycVerificationStatus.VERIFIED);
+        when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
+
+        try (MockedStatic<VerificationSession> vsStatic = mockStatic(VerificationSession.class)) {
+            VerificationSession session = mock(VerificationSession.class);
+            when(session.getStatus()).thenReturn("verified");
+            vsStatic.when(() -> VerificationSession.retrieve(kyc.getStripeVerificationSessionId()))
+                    .thenReturn(session);
+
+            service.reconcileOne(kyc);
+
+            verify(kycRepository, never()).save(any());
+            verify(eventPublisher, never()).publishEvent(any());
+        }
+    }
+
+    @Test
+    void reconcileOne_stripeRetrieveFails_doesNotThrow() {
+        KycVerificationEntity kyc = buildKyc(UUID.randomUUID(), KycVerificationStatus.PENDING);
+
+        try (MockedStatic<VerificationSession> vsStatic = mockStatic(VerificationSession.class)) {
+            vsStatic.when(() -> VerificationSession.retrieve(kyc.getStripeVerificationSessionId()))
+                    .thenThrow(new RuntimeException("Stripe unavailable"));
+
+            service.reconcileOne(kyc);
+
+            verify(kycRepository, never()).save(any());
+        }
+    }
+
+    @Test
+    void reconcilePendingVerifications_queriesStaleSessionsAndReconcilesEach() {
+        UserEntity user = buildUser(KycStatus.PENDING);
+        KycVerificationEntity kyc = buildKyc(user.getId(), KycVerificationStatus.PENDING);
+        when(kycRepository.findByStatusAndStripeVerificationSessionIdIsNotNullAndCreatedAtBefore(
+                eq(KycVerificationStatus.PENDING), any(LocalDateTime.class)))
+                .thenReturn(List.of(kyc));
+        when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
+
+        try (MockedStatic<VerificationSession> vsStatic = mockStatic(VerificationSession.class)) {
+            VerificationSession session = mock(VerificationSession.class);
+            when(session.getStatus()).thenReturn("verified");
+            vsStatic.when(() -> VerificationSession.retrieve(kyc.getStripeVerificationSessionId()))
+                    .thenReturn(session);
+
+            service.reconcilePendingVerifications();
+
+            assertThat(user.getKycStatus()).isEqualTo(KycStatus.VERIFIED);
+        }
+    }
+
+    @Test
+    void reconcilePendingVerifications_noStaleSessions_doesNothing() {
+        when(kycRepository.findByStatusAndStripeVerificationSessionIdIsNotNullAndCreatedAtBefore(
+                eq(KycVerificationStatus.PENDING), any(LocalDateTime.class)))
+                .thenReturn(List.of());
+
+        service.reconcilePendingVerifications();
+
+        verify(userRepository, never()).findById(any());
     }
 }

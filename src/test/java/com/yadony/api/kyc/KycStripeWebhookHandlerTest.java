@@ -201,7 +201,7 @@ class KycStripeWebhookHandlerTest {
     }
 
     @Test
-    void handle_requiresInput_withLastErrorReason_usesReason() {
+    void handle_requiresInput_withLastErrorCode_usesCode() {
         UUID userId = UUID.randomUUID();
         var kyc = new KycVerificationEntity();
         kyc.setUserId(userId);
@@ -212,10 +212,10 @@ class KycStripeWebhookHandlerTest {
         when(kycRepository.findByStripeVerificationSessionId("vs_007")).thenReturn(Optional.of(kyc));
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
 
-        // Event with last_error.reason populated
+        // Event with last_error.code populated
         String json = "{\"id\":\"evt_kyc7\",\"object\":\"event\"," +
                 "\"type\":\"identity.verification_session.requires_input\"," +
-                "\"data\":{\"object\":{\"id\":\"vs_007\",\"last_error\":{\"reason\":\"document_expired\"}}}}";
+                "\"data\":{\"object\":{\"id\":\"vs_007\",\"last_error\":{\"code\":\"document_expired\"}}}}";
         com.stripe.model.Event event = com.stripe.net.ApiResource.GSON.fromJson(json, com.stripe.model.Event.class);
 
         handler.handle(event);
