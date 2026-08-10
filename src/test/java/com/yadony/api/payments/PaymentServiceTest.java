@@ -12,6 +12,9 @@ import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
+import com.yadony.api.kyc.KycRepository;
+import com.yadony.api.kyc.KycVerificationEntity;
+import com.yadony.api.kyc.KycVerificationStatus;
 import com.yadony.api.payments.dto.ConnectAccountResponse;
 import com.yadony.api.payments.dto.OnboardingLinkResponse;
 import com.yadony.api.payments.dto.PaymentResponse;
@@ -19,10 +22,12 @@ import com.yadony.api.payments.events.PaymentEscrowReadyEvent;
 import com.stripe.exception.StripeException;
 import com.stripe.model.Account;
 import com.stripe.model.AccountLink;
+import com.stripe.model.Address;
 import com.stripe.model.Charge;
 import com.stripe.model.Event;
 import com.stripe.model.EventDataObjectDeserializer;
 import com.stripe.model.PaymentIntent;
+import com.stripe.model.identity.VerificationSession;
 import com.stripe.param.AccountCreateParams;
 import com.stripe.param.AccountLinkCreateParams;
 import com.stripe.param.PaymentIntentCancelParams;
@@ -57,6 +62,7 @@ class PaymentServiceTest {
     @Mock PaymentRepository paymentRepository;
     @Mock AuditService auditService;
     @Mock ApplicationEventPublisher eventPublisher;
+    @Mock KycRepository kycRepository;
 
     PaymentService service;
     com.yadony.api.common.CommissionRateResolver commissionRateResolver;
@@ -79,7 +85,7 @@ class PaymentServiceTest {
                 org.mockito.Mockito.mock(com.yadony.api.common.stripe.AdminAlertService.class),
                 commissionRateResolver, promoService, new StripeGatewayImpl(),
                 PaymentServiceTestFactory.stubbedContacts(),
-                mock(com.yadony.api.kyc.KycRepository.class)
+                kycRepository
 );
     }
 
@@ -285,6 +291,74 @@ class PaymentServiceTest {
             ConnectAccountResponse resp = service.createConnectAccount("uid-sender");
             assertThat(resp.stripeAccountId()).isEqualTo("acct_new");
             assertThat(resp.stripeAccountStatus()).isEqualTo(StripeAccountStatus.PENDING_ONBOARDING);
+        }
+    }
+
+    @Test
+    void createConnectAccount_setsApplicationLosses_requiredForExpressDashboard() {
+        UserEntity user = buildUser(senderId, "uid-sender");
+        user.setCountry("FR");
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(user));
+        when(userRepository.findByIdForUpdate(senderId)).thenReturn(Optional.of(user));
+        when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(kycRepository.findByUserId(senderId)).thenReturn(Optional.empty());
+
+        try (MockedStatic<Account> acctStatic = mockStatic(Account.class)) {
+            Account mockAcct = mock(Account.class);
+            when(mockAcct.getId()).thenReturn("acct_new");
+            var captor = org.mockito.ArgumentCaptor.forClass(AccountCreateParams.class);
+            acctStatic.when(() -> Account.create(captor.capture())).thenReturn(mockAcct);
+
+            service.createConnectAccount("uid-sender");
+
+            // Stripe rejette la création (InvalidRequestException) si un dashboard Express
+            // n'a pas la plateforme comme responsable des pertes sur les paiements.
+            assertThat(captor.getValue().getController().getLosses().getPayments())
+                    .isEqualTo(AccountCreateParams.Controller.Losses.Payments.APPLICATION);
+        }
+    }
+
+    @Test
+    void createConnectAccount_kycAddressCountryMismatch_omitsAddressKeepsIdentity() throws Exception {
+        UserEntity user = buildUser(senderId, "uid-sender");
+        user.setCountry("FR");
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(user));
+        when(userRepository.findByIdForUpdate(senderId)).thenReturn(Optional.of(user));
+        when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        KycVerificationEntity kyc = new KycVerificationEntity();
+        kyc.setStatus(KycVerificationStatus.VERIFIED);
+        kyc.setStripeVerificationSessionId("vs_123");
+        when(kycRepository.findByUserId(senderId)).thenReturn(Optional.of(kyc));
+
+        Address mismatchedAddress = mock(Address.class);
+        when(mismatchedAddress.getCountry()).thenReturn("US");
+
+        VerificationSession.VerifiedOutputs outputs = mock(VerificationSession.VerifiedOutputs.class);
+        when(outputs.getFirstName()).thenReturn("Aboubakar");
+        when(outputs.getLastName()).thenReturn("Diakite");
+        when(outputs.getAddress()).thenReturn(mismatchedAddress);
+
+        VerificationSession session = mock(VerificationSession.class);
+        when(session.getVerifiedOutputs()).thenReturn(outputs);
+
+        try (MockedStatic<VerificationSession> vsStatic = mockStatic(VerificationSession.class);
+             MockedStatic<Account> acctStatic = mockStatic(Account.class)) {
+            vsStatic.when(() -> VerificationSession.retrieve(eq("vs_123"),
+                            any(com.stripe.param.identity.VerificationSessionRetrieveParams.class),
+                            org.mockito.ArgumentMatchers.isNull()))
+                    .thenReturn(session);
+
+            Account mockAcct = mock(Account.class);
+            when(mockAcct.getId()).thenReturn("acct_new");
+            var captor = org.mockito.ArgumentCaptor.forClass(AccountCreateParams.class);
+            acctStatic.when(() -> Account.create(captor.capture())).thenReturn(mockAcct);
+
+            service.createConnectAccount("uid-sender");
+
+            AccountCreateParams.Individual individual = captor.getValue().getIndividual();
+            assertThat(individual.getFirstName()).isEqualTo("Aboubakar");
+            assertThat(individual.getAddress()).isNull();
         }
     }
 

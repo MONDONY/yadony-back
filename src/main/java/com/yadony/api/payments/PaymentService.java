@@ -181,7 +181,12 @@ public class PaymentService {
                                     )
                                     .setLosses(
                                             AccountCreateParams.Controller.Losses.builder()
-                                                    .setPayments(AccountCreateParams.Controller.Losses.Payments.STRIPE)
+                                                    // Le dashboard Express exige que la plateforme porte le
+                                                    // risque de perte sur les paiements — Stripe rejette la
+                                                    // création avec InvalidRequestException sinon ("With a
+                                                    // dashboard type of `express`, the Connect application
+                                                    // must control losses.").
+                                                    .setPayments(AccountCreateParams.Controller.Losses.Payments.APPLICATION)
                                                     .build()
                                     )
                                     .setRequirementCollection(AccountCreateParams.Controller.RequirementCollection.STRIPE)
@@ -369,7 +374,13 @@ public class PaymentService {
             }
 
             com.stripe.model.Address address = outputs.getAddress();
-            if (address != null) {
+            // Stripe rejette la création (account_country_invalid_address) si l'adresse
+            // de l'individual ne correspond pas au pays du compte (setCountry(user.getCountry())
+            // plus haut). Le document KYC vérifié peut désigner un pays différent du profil
+            // (ex. pièce d'identité étrangère) — dans ce cas on laisse Stripe demander
+            // l'adresse pendant l'onboarding plutôt que d'envoyer une donnée incohérente.
+            if (address != null && address.getCountry() != null
+                    && address.getCountry().equalsIgnoreCase(user.getCountry())) {
                 individual.setAddress(AccountCreateParams.Individual.Address.builder()
                         .setLine1(address.getLine1())
                         .setLine2(address.getLine2())
@@ -378,6 +389,9 @@ public class PaymentService {
                         .setState(address.getState())
                         .setCountry(address.getCountry())
                         .build());
+            } else if (address != null) {
+                log.info("Skipping KYC-prefilled address for user {} — country mismatch (kyc={}, account={})",
+                        user.getId(), address.getCountry(), user.getCountry());
             }
 
             return individual.build();
