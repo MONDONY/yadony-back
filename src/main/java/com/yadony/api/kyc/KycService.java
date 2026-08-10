@@ -98,6 +98,13 @@ public class KycService {
                                             VerificationSessionCreateParams.Options.Document.builder()
                                                     .setRequireLiveCapture(true)
                                                     .setRequireMatchingSelfie(true)
+                                                    // Vérifie le numéro de pièce auprès de bases tierces, dans la
+                                                    // même session Identity (aucun écran supplémentaire pour
+                                                    // l'utilisateur). verified_outputs.id_number en résulte, réutilisé
+                                                    // par PaymentService.buildIndividualPrefill pour que la création
+                                                    // du compte Connect passe la vérification automatique Stripe sans
+                                                    // redemander l'identité à l'onboarding.
+                                                    .setRequireIdNumber(true)
                                                     .addAllowedType(VerificationSessionCreateParams.Options.Document.AllowedType.ID_CARD)
                                                     .addAllowedType(VerificationSessionCreateParams.Options.Document.AllowedType.PASSPORT)
                                                     .addAllowedType(VerificationSessionCreateParams.Options.Document.AllowedType.DRIVING_LICENSE)

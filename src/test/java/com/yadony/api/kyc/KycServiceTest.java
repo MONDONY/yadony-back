@@ -190,6 +190,34 @@ class KycServiceTest {
         }
     }
 
+    @Test
+    void createSession_success_requestsIdNumberVerification() {
+        UserEntity user = buildUser(KycStatus.PENDING);
+        when(userRepository.findByFirebaseUid("uid-001")).thenReturn(Optional.of(user));
+        when(kycRepository.findByUserId(user.getId())).thenReturn(Optional.empty());
+        when(kycRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        try (MockedStatic<VerificationSession> vsStatic = mockStatic(VerificationSession.class)) {
+            VerificationSession mockSession = mock(VerificationSession.class);
+            when(mockSession.getId()).thenReturn("vs_test_new");
+            when(mockSession.getUrl()).thenReturn("https://verify.stripe.com/start/vs_test_new");
+
+            org.mockito.ArgumentCaptor<VerificationSessionCreateParams> captor =
+                    org.mockito.ArgumentCaptor.forClass(VerificationSessionCreateParams.class);
+            vsStatic.when(() -> VerificationSession.create(captor.capture()))
+                    .thenReturn(mockSession);
+
+            service.createSession("uid-001");
+
+            // Vérifie le numéro de pièce dans la même session Identity — verified_outputs.id_number
+            // en résulte, réutilisé par PaymentService.buildIndividualPrefill pour que Connect
+            // n'ait pas besoin de revérifier l'identité pendant l'onboarding.
+            VerificationSessionCreateParams.Options.Document document =
+                    (VerificationSessionCreateParams.Options.Document) captor.getValue().getOptions().getDocument();
+            assertThat(document.getRequireIdNumber()).isTrue();
+        }
+    }
+
     // ── abandonSession ────────────────────────────────────────────────────────
 
     @Test
