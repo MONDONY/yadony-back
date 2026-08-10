@@ -991,6 +991,8 @@ class NegotiationServiceTest {
             thread.setTravelerId(TRAVELER_ID);
             thread.setStatus(NegotiationThreadStatus.OPEN);
             thread.setCurrentPriceEur(new BigDecimal("30"));
+            thread.setPromoCode("WELCOME6");
+            thread.setCommissionRate(new BigDecimal("0.06"));
             thread.setRoundsCount((short) 1);
             thread.setLastActivityAt(java.time.LocalDateTime.now());
             try {
@@ -1006,6 +1008,9 @@ class NegotiationServiceTest {
 
             var resp = service.getById(TRAVELER_ID, THREAD_ID);
             assertThat(resp.id()).isEqualTo(THREAD_ID);
+            assertThat(resp.promoCode()).isEqualTo("WELCOME6");
+            assertThat(new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules().valueToTree(resp)
+                    .path("commissionRate").decimalValue()).isEqualByComparingTo("0.06");
             assertThat(thread.getTravelerLastReadAt()).isNotNull();
             assertThat(resp.hasUnread()).isFalse();
             verify(threadRepo).save(thread);

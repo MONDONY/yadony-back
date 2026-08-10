@@ -1103,7 +1103,7 @@ class PaymentServiceTest {
         try (MockedStatic<Account> acctStatic = mockStatic(Account.class);
              MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class)) {
             PaymentIntent legacyPi = mock(PaymentIntent.class);
-            when(legacyPi.getStatus()).thenReturn("requires_payment_method");
+            when(legacyPi.getStatus()).thenReturn("requires_payment_method", "canceled");
             when(legacyPi.getAmount()).thenReturn(2666L);
             when(legacyPi.getCurrency()).thenReturn("eur");
             when(legacyPi.cancel(any(PaymentIntentCancelParams.class))).thenReturn(legacyPi);
@@ -1159,7 +1159,8 @@ class PaymentServiceTest {
             // 3DS/PayPal redirect) → it must be canceled on Stripe and the row recycled,
             // never treated as an already-completed payment (409).
             PaymentIntent stuckPi = mock(PaymentIntent.class);
-            when(stuckPi.getStatus()).thenReturn("requires_action");
+            when(stuckPi.getStatus()).thenReturn("requires_action", "canceled");
+            when(stuckPi.cancel(any(PaymentIntentCancelParams.class))).thenReturn(stuckPi);
             piStatic.when(() -> PaymentIntent.retrieve("pi_stuck")).thenReturn(stuckPi);
 
             Account mockAccount = mock(Account.class);

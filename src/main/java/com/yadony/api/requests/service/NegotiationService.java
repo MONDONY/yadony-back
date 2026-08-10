@@ -1469,6 +1469,7 @@ public class NegotiationService {
             canNudge,
             hasUnread,
             t.getPromoCode(),
+            t.getCommissionRate(),
             t.getCurrency()
         );
     }

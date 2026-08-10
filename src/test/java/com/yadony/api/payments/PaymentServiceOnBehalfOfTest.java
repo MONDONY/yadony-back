@@ -331,7 +331,9 @@ class PaymentServiceOnBehalfOfTest {
         UserEntity sender = buildSender();
         UserEntity traveler = buildTraveler("acct_traveler_123", StripeAccountStatus.ONBOARDING_COMPLETE);
         when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
-        when(bidRepository.findById(bidId)).thenReturn(Optional.of(buildBid("CAD")));
+        BidEntity bid = buildBid("CAD");
+        bid.setCommissionRate(new BigDecimal("0.12"));
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
         when(userBusinessPrefsRepository.findById(senderId))
                 .thenReturn(Optional.of(prefsWithCurrency("CAD")));
         when(announcementRepository.findById(annId)).thenReturn(Optional.of(buildAnnouncement()));
@@ -354,7 +356,7 @@ class PaymentServiceOnBehalfOfTest {
         try (MockedStatic<com.stripe.model.Account> accountStatic = mockStatic(com.stripe.model.Account.class);
              MockedStatic<PaymentIntent> paymentIntentStatic = mockStatic(PaymentIntent.class)) {
             PaymentIntent legacyPi = mock(PaymentIntent.class);
-            when(legacyPi.getStatus()).thenReturn("requires_payment_method");
+            when(legacyPi.getStatus()).thenReturn("requires_payment_method", "canceled");
             when(legacyPi.getAmount()).thenReturn(2800L);
             when(legacyPi.getCurrency()).thenReturn("cad");
             when(legacyPi.cancel(any(PaymentIntentCancelParams.class))).thenReturn(legacyPi);

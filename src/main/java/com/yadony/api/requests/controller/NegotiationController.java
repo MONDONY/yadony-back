@@ -169,14 +169,15 @@ public class NegotiationController {
         // resaisi ici. Le param reste un override défensif (tests, cas futurs).
         String code = promoCode != null ? promoCode : thread.promoCode();
         var response = paymentService.createNegotiationEscrow(
-            id, senderId, thread.travelerId(), thread.currentPriceEur(), code, thread.currency());
+            id, senderId, thread.travelerId(), thread.currentPriceEur(), code,
+            thread.commissionRate(), thread.currency());
         // Persiste le taux réellement appliqué pour que le rachat (redeem, décompte
         // per-user-limit) puisse se raccrocher au bid_id une fois matérialisé après
         // paiement confirmé (ThreadAcceptedBidListener) — createNegotiationEscrow ne
         // peut pas le faire lui-même, aucun bid n'existe encore à cet instant.
         if (response.isPromoApplied()) {
             service.recordAppliedPromo(id, code, response.getCommissionRate());
-        } else if (thread.promoCode() != null) {
+        } else if (thread.promoCode() != null && thread.commissionRate() == null) {
             // Le code portait un promoCode mais createNegotiationEscrow est retombé sur le
             // tarif de base (code expiré, limite atteinte…) : nettoyer l'état pour que
             // ThreadAcceptedBidListener ne tente pas un rachat sur un code jamais appliqué.
