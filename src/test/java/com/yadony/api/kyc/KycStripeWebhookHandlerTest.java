@@ -225,6 +225,47 @@ class KycStripeWebhookHandlerTest {
     }
 
     @Test
+    void handle_requiresInput_withLastErrorCode_setsRejectionCode() {
+        UUID userId = UUID.randomUUID();
+        var kyc = new KycVerificationEntity();
+        kyc.setUserId(userId);
+        kyc.setStatus(KycVerificationStatus.PENDING);
+        var user = new UserEntity();
+        user.setKycStatus(KycStatus.PENDING);
+
+        when(kycRepository.findByStripeVerificationSessionId("vs_011")).thenReturn(Optional.of(kyc));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+
+        String json = "{\"id\":\"evt_kyc11\",\"object\":\"event\"," +
+                "\"type\":\"identity.verification_session.requires_input\"," +
+                "\"data\":{\"object\":{\"id\":\"vs_011\",\"last_error\":" +
+                "{\"code\":\"document_unverified_other\",\"reason\":\"The document is invalid.\"}}}}";
+        com.stripe.model.Event event = com.stripe.net.ApiResource.GSON.fromJson(json, com.stripe.model.Event.class);
+
+        handler.handle(event);
+
+        assertThat(kyc.getRejectionCode()).isEqualTo("document_unverified_other");
+        assertThat(kyc.getRejectionReason()).isEqualTo("The document is invalid.");
+    }
+
+    @Test
+    void handle_canceled_setsRejectionCode() {
+        UUID userId = UUID.randomUUID();
+        var kyc = new KycVerificationEntity();
+        kyc.setUserId(userId);
+        kyc.setStatus(KycVerificationStatus.PENDING);
+        var user = new UserEntity();
+        user.setKycStatus(KycStatus.PENDING);
+
+        when(kycRepository.findByStripeVerificationSessionId("vs_012")).thenReturn(Optional.of(kyc));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+
+        handler.handle(buildEvent("identity.verification_session.canceled", "vs_012"));
+
+        assertThat(kyc.getRejectionCode()).isEqualTo("session_canceled");
+    }
+
+    @Test
     void handle_missingSessionId_returnsEarlyWithoutLookup() {
         // Event with null/missing id in the data object
         String json = "{\"id\":\"evt_kyc8\",\"object\":\"event\"," +

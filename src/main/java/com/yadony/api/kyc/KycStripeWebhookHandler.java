@@ -57,6 +57,7 @@ public class KycStripeWebhookHandler implements StripeWebhookHandler {
         String rawJson = event.getDataObjectDeserializer().getRawJson();
         String sessionId;
         String lastErrorReason = null;
+        String lastErrorCode = null;
 
         try {
             JsonNode root = objectMapper.readTree(rawJson);
@@ -69,6 +70,7 @@ public class KycStripeWebhookHandler implements StripeWebhookHandler {
             JsonNode lastError = root.path("last_error");
             if (!lastError.isMissingNode() && !lastError.isNull()) {
                 lastErrorReason = lastError.path("reason").asText(null);
+                lastErrorCode = lastError.path("code").asText(null);
             }
         } catch (Exception e) {
             log.warn("Could not parse KYC webhook payload for {}: {}", eventType, e.getMessage());
@@ -102,6 +104,7 @@ public class KycStripeWebhookHandler implements StripeWebhookHandler {
                 }
                 kyc.setStatus(KycVerificationStatus.REJECTED);
                 kyc.setRejectionReason("session_canceled");
+                kyc.setRejectionCode("session_canceled");
                 user.setKycStatus(KycStatus.NOT_STARTED);
                 kycRepository.save(kyc);
                 userRepository.save(user);
@@ -115,6 +118,7 @@ public class KycStripeWebhookHandler implements StripeWebhookHandler {
                 }
                 kyc.setStatus(KycVerificationStatus.REJECTED);
                 kyc.setRejectionReason(lastErrorReason != null ? lastErrorReason : "verification_failed");
+                kyc.setRejectionCode(lastErrorCode != null ? lastErrorCode : "verification_failed");
                 user.setKycStatus(KycStatus.REJECTED);
                 kycRepository.save(kyc);
                 userRepository.save(user);

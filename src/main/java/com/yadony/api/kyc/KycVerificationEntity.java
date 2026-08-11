@@ -28,6 +28,9 @@ public class KycVerificationEntity extends BaseEntity {
     @Column(name = "rejection_reason", length = 512)
     private String rejectionReason;
 
+    @Column(name = "rejection_code", length = 64)
+    private String rejectionCode;
+
     public UUID getUserId() { return userId; }
     public void setUserId(UUID userId) { this.userId = userId; }
 
@@ -39,4 +42,7 @@ public class KycVerificationEntity extends BaseEntity {
 
     public String getRejectionReason() { return rejectionReason; }
     public void setRejectionReason(String rejectionReason) { this.rejectionReason = rejectionReason; }
+
+    public String getRejectionCode() { return rejectionCode; }
+    public void setRejectionCode(String rejectionCode) { this.rejectionCode = rejectionCode; }
 }
