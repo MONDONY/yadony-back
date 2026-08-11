@@ -39,4 +39,18 @@ class PaymentCurrencyMigrationTest {
         assertThat(sql).contains("'xof'");
         assertThat(sql).contains("'xaf'");
     }
+
+    @Test
+    void migration_adds_bid_currency_column_with_eur_default_and_check_constraint() throws Exception {
+        var resource = getClass().getClassLoader().getResourceAsStream(
+                "db/migration/V198__bid_negotiation_wallet_tx_currency.sql");
+
+        assertThat(resource).as("V198 bid/negotiation/wallet-tx currency migration").isNotNull();
+        String sql = new String(resource.readAllBytes(), StandardCharsets.UTF_8).toLowerCase();
+        assertThat(sql).contains("alter table bids");
+        assertThat(sql).contains("add column currency varchar(3) not null default 'eur'");
+        assertThat(sql).contains("add constraint chk_bids_currency");
+        assertThat(sql)
+                .contains("currency in ('eur', 'usd', 'cad', 'gbp', 'chf', 'xof', 'xaf')");
+    }
 }
