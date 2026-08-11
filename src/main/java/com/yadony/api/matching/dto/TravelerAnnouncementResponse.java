@@ -11,5 +11,6 @@ public record TravelerAnnouncementResponse(
     LocalDate departureDate,
     BigDecimal pricePerKg,
     BigDecimal availableKg,
-    String status
+    String status,
+    String currency
 ) {}

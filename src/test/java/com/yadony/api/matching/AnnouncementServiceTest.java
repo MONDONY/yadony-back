@@ -2491,5 +2491,25 @@ class AnnouncementServiceTest {
             assertThat(result).allSatisfy(r -> assertThat(r.status()).isNotEqualTo("DRAFT"));
             assertThat(result.get(0).status()).isEqualTo("ACTIVE");
         }
+
+        @Test
+        @DisplayName("expose la devise de l'annonce, pas toujours EUR")
+        void getTravelerAnnouncements_exposesCurrency() {
+            UUID travelerId = UUID.randomUUID();
+            UserEntity traveler = buildTraveler();
+            setId(traveler, travelerId);
+            AnnouncementEntity active = buildAnnouncement(traveler);
+            active.setStatus(AnnouncementStatus.ACTIVE);
+            active.setCurrency("CAD");
+
+            when(announcementRepository.findByTravelerIdAndStatus(eq(travelerId), eq(AnnouncementStatus.ACTIVE), any()))
+                    .thenReturn(new PageImpl<>(List.of(active)));
+            when(announcementRepository.findByTravelerIdAndStatus(eq(travelerId), eq(AnnouncementStatus.FULL), any()))
+                    .thenReturn(new PageImpl<>(List.of()));
+
+            var result = announcementService.getTravelerAnnouncements(travelerId);
+
+            assertThat(result.get(0).currency()).isEqualTo("CAD");
+        }
     }
 }

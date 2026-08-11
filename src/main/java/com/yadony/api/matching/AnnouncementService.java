@@ -1162,7 +1162,8 @@ public class AnnouncementService {
         return java.util.stream.Stream.concat(active.stream(), full.stream())
             .map(a -> new com.yadony.api.matching.dto.TravelerAnnouncementResponse(
                 a.getId(), a.getDepartureCity(), a.getArrivalCity(),
-                a.getDepartureDate(), a.getPricePerKg(), a.getAvailableKg(), a.getStatus().name()))
+                a.getDepartureDate(), a.getPricePerKg(), a.getAvailableKg(), a.getStatus().name(),
+                a.getCurrency()))
             .toList();
     }
 
