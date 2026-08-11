@@ -1265,7 +1265,8 @@ public class BidService {
                 storageService.avatarUrl(traveler != null ? traveler.getAvatarUrl() : null),
                 bidPhotoService.activePhotos(bid.getId()),
                 tripCancellationId,
-                tripCancellationRematchStatus
+                tripCancellationRematchStatus,
+                bid.getCurrency()
         );
     }
 }

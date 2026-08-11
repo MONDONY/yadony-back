@@ -2071,6 +2071,24 @@ class BidServiceTest {
     }
 
     @Test
+    @DisplayName("getBidById expose la devise du bid, pas toujours EUR")
+    void getBidById_exposesBidCurrency() {
+        UserEntity sender = buildSender();
+        BidEntity bid = buildBid();
+        bid.setCurrency("CAD");
+        AnnouncementEntity announcement = buildAnnouncement();
+
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+        when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
+        when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+
+        BidResponse result = bidService.getBidById(BID_ID, SENDER_UID);
+
+        assertThat(result.currency()).isEqualTo("CAD");
+    }
+
+    @Test
     @DisplayName("expéditeur : net masqué — pricePerKg + totalNetAmountEur null, brut exposé")
     void getBidById_callerIsSender_hidesNet() {
         UserEntity sender = buildSender();
