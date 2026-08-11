@@ -15,13 +15,19 @@ import org.mockito.MockedStatic;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 
 import java.math.BigDecimal;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -268,6 +274,91 @@ class PaymentStripeWebhookHandlerTest {
             eq("stripe-pi_fallback")
         );
         verify(cashHandler, never()).handlePaymentIntentSucceeded(any());
+    }
+
+    @Test
+    void handle_paymentIntentSucceeded_paymentIntentPayloadCannotBeParsed_failsRetryably() {
+        EventDataObjectDeserializer deserializer = mock(EventDataObjectDeserializer.class);
+        when(deserializer.getObject()).thenReturn(Optional.empty());
+        when(deserializer.getRawJson()).thenReturn("{");
+
+        Event event = mock(Event.class);
+        when(event.getType()).thenReturn("payment_intent.succeeded");
+        when(event.getId()).thenReturn("evt_parse_failure");
+        when(event.getDataObjectDeserializer()).thenReturn(deserializer);
+
+        assertThatThrownBy(() -> handler.handle(event))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, error -> {
+                    assertThat(error.getStatus()).isEqualTo(HttpStatus.BAD_GATEWAY);
+                    assertThat(error.getErrorCode())
+                            .isEqualTo("stripe-payment-intent-resolution-failed");
+                    assertThat(error.getMessage())
+                            .isEqualTo("Impossible de résoudre le PaymentIntent Stripe du webhook.");
+                });
+        verify(cashHandler, never()).handlePaymentIntentSucceeded(any());
+        verify(walletService, never()).credit(any(), anyString(), any(), any(), any(), any());
+    }
+
+    @Test
+    void handle_paymentIntentSucceeded_paymentIntentRetrievalFails_failsRetryably() {
+        EventDataObjectDeserializer deserializer = mock(EventDataObjectDeserializer.class);
+        when(deserializer.getObject()).thenReturn(Optional.empty());
+        when(deserializer.getRawJson()).thenReturn("{\"id\":\"pi_unavailable\"}");
+
+        Event event = mock(Event.class);
+        when(event.getType()).thenReturn("payment_intent.succeeded");
+        when(event.getId()).thenReturn("evt_retrieve_failure");
+        when(event.getDataObjectDeserializer()).thenReturn(deserializer);
+
+        try (MockedStatic<PaymentIntent> mocked = mockStatic(PaymentIntent.class)) {
+            mocked.when(() -> PaymentIntent.retrieve("pi_unavailable"))
+                    .thenThrow(new RuntimeException("Stripe unavailable"));
+
+            assertThatThrownBy(() -> handler.handle(event))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, error -> {
+                        assertThat(error.getStatus()).isEqualTo(HttpStatus.BAD_GATEWAY);
+                        assertThat(error.getErrorCode())
+                                .isEqualTo("stripe-payment-intent-resolution-failed");
+                        assertThat(error.getMessage())
+                                .isEqualTo("Impossible de résoudre le PaymentIntent Stripe du webhook.");
+                    });
+        }
+        verify(cashHandler, never()).handlePaymentIntentSucceeded(any());
+        verify(walletService, never()).credit(any(), anyString(), any(), any(), any(), any());
+    }
+
+    @ParameterizedTest(name = "user_id {0} est rejeté avant crédit")
+    @MethodSource("invalidWalletUserIds")
+    void handle_paymentIntentSucceeded_walletTopup_rejectsInvalidUserId(
+            String scenario, String rawUserId) {
+        Map<String, String> metadata = new HashMap<>();
+        metadata.put("wallet_topup", "true");
+        metadata.put("wallet_currency", "cad");
+        if (rawUserId != null) {
+            metadata.put("user_id", rawUserId);
+        }
+
+        PaymentIntent pi = mock(PaymentIntent.class);
+        when(pi.getMetadata()).thenReturn(metadata);
+
+        assertThatThrownBy(() -> handler.handle(eventWith(pi)))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, error -> {
+                    assertThat(error.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(error.getErrorCode()).isEqualTo("wallet-topup-user-id-invalid");
+                    assertThat(error.getMessage()).isEqualTo(
+                            "L'identifiant utilisateur de la recharge wallet est absent ou invalide "
+                                    + "dans les métadonnées Stripe.");
+                });
+        verify(cashHandler, never()).handlePaymentIntentSucceeded(any());
+        verify(walletService, never()).credit(any(), anyString(), any(), any(), any(), any());
+    }
+
+    private static Stream<Arguments> invalidWalletUserIds() {
+        return Stream.of(
+                Arguments.of("absent", null),
+                Arguments.of("blanc", "   "),
+                Arguments.of("UUID invalide", "not-a-uuid"),
+                Arguments.of("UUID non canonique", "1-1-1-1-1"));
     }
 
     @Test
