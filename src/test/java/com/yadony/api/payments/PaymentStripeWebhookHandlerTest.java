@@ -23,6 +23,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
@@ -149,6 +150,7 @@ class PaymentStripeWebhookHandlerTest {
 
         verify(walletService).credit(
             eq(UUID.fromString(TEST_USER_ID)),
+            eq("EUR"),
             eq(new BigDecimal("50.00")),
             eq(WalletTransactionType.TOP_UP),
             eq("pi_test"),
@@ -182,6 +184,7 @@ class PaymentStripeWebhookHandlerTest {
 
         verify(walletService).credit(
             eq(UUID.fromString(TEST_USER_ID)),
+            eq("EUR"),
             eq(new BigDecimal("100.00")),
             eq(WalletTransactionType.TOP_UP),
             eq("pi_fallback"),
@@ -205,6 +208,6 @@ class PaymentStripeWebhookHandlerTest {
         handler.handle(event);
 
         verify(cashHandler).handlePaymentIntentSucceeded(any());
-        verify(walletService, never()).credit(any(), any(), any(), any(), any());
+        verify(walletService, never()).credit(any(), anyString(), any(), any(), any(), any());
     }
 }

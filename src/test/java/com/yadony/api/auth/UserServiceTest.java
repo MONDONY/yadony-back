@@ -148,7 +148,7 @@ class UserServiceTest {
             when(paymentRepository.hasActiveEscrowForUser(USER_ID)).thenReturn(false);
             WalletAccountEntity wallet = new WalletAccountEntity();
             wallet.setBalance(java.math.BigDecimal.TEN);
-            when(walletAccountRepository.findByUserId(USER_ID)).thenReturn(Optional.of(wallet));
+            when(walletAccountRepository.findByUserIdAndCurrency(USER_ID, "EUR")).thenReturn(Optional.of(wallet));
 
             assertThatThrownBy(() -> userService.deleteAccount(FIREBASE_UID))
                     .isInstanceOf(YadonyBusinessException.class)
@@ -165,7 +165,7 @@ class UserServiceTest {
             when(paymentRepository.hasActiveEscrowForUser(USER_ID)).thenReturn(false);
             WalletAccountEntity wallet = new WalletAccountEntity();
             wallet.setBalance(java.math.BigDecimal.ZERO);
-            when(walletAccountRepository.findByUserId(USER_ID)).thenReturn(Optional.of(wallet));
+            when(walletAccountRepository.findByUserIdAndCurrency(USER_ID, "EUR")).thenReturn(Optional.of(wallet));
             when(userRepository.save(any())).thenReturn(user);
 
             userService.deleteAccount(FIREBASE_UID);
@@ -183,7 +183,7 @@ class UserServiceTest {
         void noBlockers_returnsEligible() {
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
             when(paymentRepository.hasActiveEscrowForUser(USER_ID)).thenReturn(false);
-            when(walletAccountRepository.findByUserId(USER_ID)).thenReturn(Optional.empty());
+            when(walletAccountRepository.findByUserIdAndCurrency(USER_ID, "EUR")).thenReturn(Optional.empty());
 
             var result = userService.checkDeletionEligibility(FIREBASE_UID);
 
@@ -213,7 +213,7 @@ class UserServiceTest {
             when(paymentRepository.hasActiveEscrowForUser(USER_ID)).thenReturn(false);
             WalletAccountEntity wallet = new WalletAccountEntity();
             wallet.setBalance(java.math.BigDecimal.TEN);
-            when(walletAccountRepository.findByUserId(USER_ID)).thenReturn(Optional.of(wallet));
+            when(walletAccountRepository.findByUserIdAndCurrency(USER_ID, "EUR")).thenReturn(Optional.of(wallet));
 
             var result = userService.checkDeletionEligibility(FIREBASE_UID);
 

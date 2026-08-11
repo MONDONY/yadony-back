@@ -45,7 +45,7 @@ public class WalletController {
     public ResponseEntity<WalletBalanceResponse> getBalance(
             @RequestParam(defaultValue = "0") int page) {
         UUID userId = currentUserId();
-        WalletAccountEntity wallet = walletService.getOrCreate(userId);
+        WalletAccountEntity wallet = walletService.getOrCreate(userId, "EUR");
         List<WalletTransactionDto> txs = walletService.getTransactions(userId, page)
             .stream()
             .map(WalletTransactionDto::from)

@@ -42,6 +42,7 @@ class ReferralRewardWalletListenerTest {
 
         verify(walletService).credit(
                 org.mockito.ArgumentMatchers.eq(REFERRER_ID),
+                org.mockito.ArgumentMatchers.eq("EUR"),
                 amountCaptor.capture(),
                 org.mockito.ArgumentMatchers.eq(WalletTransactionType.REFERRAL_REWARD),
                 org.mockito.ArgumentMatchers.eq(INVITATION_ID.toString()),
@@ -62,6 +63,7 @@ class ReferralRewardWalletListenerTest {
         ArgumentCaptor<BigDecimal> amountCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         verify(walletService).credit(
                 org.mockito.ArgumentMatchers.eq(REFERRER_ID),
+                org.mockito.ArgumentMatchers.eq("EUR"),
                 amountCaptor.capture(),
                 org.mockito.ArgumentMatchers.eq(WalletTransactionType.REFERRAL_REWARD),
                 org.mockito.ArgumentMatchers.any(),

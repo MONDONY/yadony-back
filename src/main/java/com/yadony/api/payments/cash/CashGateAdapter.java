@@ -21,7 +21,7 @@ public class CashGateAdapter implements CashGatePort {
 
     @Override
     public boolean hasSufficientFunds(UUID travelerId, BigDecimal commissionAmount) {
-        BigDecimal balance = walletService.getBalance(travelerId);
+        BigDecimal balance = walletService.getBalance(travelerId, "EUR");
         return balance.compareTo(commissionAmount) >= 0;
     }
 

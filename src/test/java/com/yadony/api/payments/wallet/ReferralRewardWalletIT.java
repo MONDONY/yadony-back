@@ -31,10 +31,10 @@ class ReferralRewardWalletIT {
         UUID userId = UUID.randomUUID();
 
         // Would throw a constraint-violation if V121 hadn't extended wallet_transactions_type_check
-        walletService.credit(userId, new BigDecimal("5.00"),
+        walletService.credit(userId, "EUR", new BigDecimal("5.00"),
                 WalletTransactionType.REFERRAL_REWARD, "ref-1", "referral-reward-it-1");
 
-        assertThat(walletService.getBalance(userId)).isEqualByComparingTo(new BigDecimal("5.00"));
+        assertThat(walletService.getBalance(userId, "EUR")).isEqualByComparingTo(new BigDecimal("5.00"));
     }
 
     @Test
@@ -47,7 +47,7 @@ class ReferralRewardWalletIT {
                 eventPublisher.publishEvent(
                         new ReferralRewardGrantedEvent(referrerId, 500, invitationId)));
 
-        assertThat(walletService.getBalance(referrerId)).isEqualByComparingTo(new BigDecimal("5.00"));
+        assertThat(walletService.getBalance(referrerId, "EUR")).isEqualByComparingTo(new BigDecimal("5.00"));
     }
 
     @Test
@@ -60,6 +60,6 @@ class ReferralRewardWalletIT {
         transactionTemplate.executeWithoutResult(s -> eventPublisher.publishEvent(ev));
 
         // Same invitation → credited exactly once (idempotency key referral-reward-{invitationId})
-        assertThat(walletService.getBalance(referrerId)).isEqualByComparingTo(new BigDecimal("5.00"));
+        assertThat(walletService.getBalance(referrerId, "EUR")).isEqualByComparingTo(new BigDecimal("5.00"));
     }
 }

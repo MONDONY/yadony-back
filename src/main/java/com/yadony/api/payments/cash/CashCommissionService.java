@@ -346,7 +346,7 @@ public class CashCommissionService {
             log.info("Commission wallet déjà prélevée pour bid {}, idempotent skip", bid.getId());
             return;
         }
-        walletService.debit(travelerId, commission, WalletTransactionType.COMMISSION_DEDUCTED, bid.getId());
+        walletService.debit(travelerId, "EUR", commission, WalletTransactionType.COMMISSION_DEDUCTED, bid.getId());
         bid.setCommissionStatus(CommissionStatus.CHARGED);
         bid.setCommissionChargedVia(CommissionChargedVia.WALLET);
         bidRepo.save(bid);
@@ -366,7 +366,7 @@ public class CashCommissionService {
         BigDecimal commission = computeBidCommission(bid, announcement);
 
         // 1) Wallet prioritaire
-        BigDecimal balance = walletService.getBalance(travelerId);
+        BigDecimal balance = walletService.getBalance(travelerId, "EUR");
         if (balance.compareTo(commission) >= 0) {
             try {
                 chargeCommissionFromWallet(bid, travelerId, commission);
@@ -441,10 +441,10 @@ public class CashCommissionService {
 
         // 1) Wallet prioritaire — débit SANS bid (réf = threadId dans payment_ref/
         // idempotency_key). On ne passe PAS le threadId dans la colonne FK bid_id.
-        BigDecimal balance = walletService.getBalance(travelerId);
+        BigDecimal balance = walletService.getBalance(travelerId, "EUR");
         if (balance.compareTo(commission) >= 0) {
             try {
-                walletService.debit(travelerId, commission,
+                walletService.debit(travelerId, "EUR", commission,
                         WalletTransactionType.COMMISSION_DEDUCTED,
                         threadId.toString(), "nego_commission_wallet_" + threadId);
                 thread.setCommissionStatus(NEGO_COMMISSION_CHARGED);
@@ -576,7 +576,7 @@ public class CashCommissionService {
         BigDecimal commission = computeBidCommission(bid, announcement);
 
         if (commissionSource == CommissionSource.WALLET_FIRST) {
-            BigDecimal balance = walletService.getBalance(travelerId);
+            BigDecimal balance = walletService.getBalance(travelerId, "EUR");
             if (balance.compareTo(commission) >= 0) {
                 try {
                     chargeCommissionFromWallet(bid, travelerId, commission);
@@ -667,7 +667,7 @@ public class CashCommissionService {
             return;
         }
         BigDecimal refundAmount = commissionTx.get().getAmount().abs();
-        walletService.credit(travelerId, refundAmount, com.yadony.api.payments.wallet.WalletTransactionType.REFUND,
+        walletService.credit(travelerId, "EUR", refundAmount, com.yadony.api.payments.wallet.WalletTransactionType.REFUND,
                 "refund-" + bid.getId(), idempotencyKey);
         bid.setCommissionStatus(CommissionStatus.REFUNDED);
         bidRepo.save(bid);

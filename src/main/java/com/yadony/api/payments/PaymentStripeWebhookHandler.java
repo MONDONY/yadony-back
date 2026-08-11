@@ -99,7 +99,7 @@ public class PaymentStripeWebhookHandler implements StripeWebhookHandler {
                         ? new BigDecimal(walletCreditEur)
                         : BigDecimal.valueOf(pi.getAmount())
                             .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
-                    walletService.credit(userId, amount, WalletTransactionType.TOP_UP,
+                    walletService.credit(userId, "EUR", amount, WalletTransactionType.TOP_UP,
                         pi.getId(), "stripe-" + pi.getId());
                 } else {
                     cashHandler.handlePaymentIntentSucceeded(event);

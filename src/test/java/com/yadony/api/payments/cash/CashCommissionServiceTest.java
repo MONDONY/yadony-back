@@ -634,7 +634,7 @@ class CashCommissionServiceTest {
             ReflectionTestUtils.setField(traveler, "id", travelerId);
             lenient().when(userRepo.findById(travelerId)).thenReturn(Optional.of(traveler));
             // Solde wallet = 0 → fallback carte (préserve le comportement carte des tests existants)
-            lenient().when(walletService.getBalance(travelerId)).thenReturn(java.math.BigDecimal.ZERO);
+            lenient().when(walletService.getBalance(travelerId, "EUR")).thenReturn(java.math.BigDecimal.ZERO);
 
             bid = new BidEntity();
             ReflectionTestUtils.setField(bid, "id", UUID.randomUUID());
@@ -661,7 +661,7 @@ class CashCommissionServiceTest {
         void walletFirstPath_sufficientBalance_debitsWalletAndFinalizesBid() {
             // Solde suffisant → débit wallet, pas de PaymentIntent Stripe
             java.math.BigDecimal commission = new java.math.BigDecimal("12.00"); // 5kg × 20€ × 12%
-            when(walletService.getBalance(travelerId)).thenReturn(commission.add(java.math.BigDecimal.ONE));
+            when(walletService.getBalance(travelerId, "EUR")).thenReturn(commission.add(java.math.BigDecimal.ONE));
             when(walletTransactionRepository.existsByUserIdAndBidIdAndType(eq(travelerId), any(), any()))
                     .thenReturn(false);
 
@@ -671,7 +671,7 @@ class CashCommissionServiceTest {
             assertThat(bid.getStatus()).isEqualTo(BidStatus.ACCEPTED);
             assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.CHARGED);
             assertThat(bid.getCommissionChargedVia()).isEqualTo(CommissionChargedVia.WALLET);
-            verify(walletService).debit(eq(travelerId), any(), eq(com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED), any());
+            verify(walletService).debit(eq(travelerId), eq("EUR"), any(), eq(com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED), any());
             verify(events).publishEvent(any(BidAcceptedEvent.class));
         }
 
@@ -687,7 +687,7 @@ class CashCommissionServiceTest {
             when(bidGridItemRepository.findByBidId(bid.getId()))
                     .thenReturn(java.util.List.of(gridItem));
             // commission = 50 × 12% = 6.00 → solde suffisant
-            when(walletService.getBalance(travelerId)).thenReturn(new java.math.BigDecimal("100"));
+            when(walletService.getBalance(travelerId, "EUR")).thenReturn(new java.math.BigDecimal("100"));
             when(walletTransactionRepository.existsByUserIdAndBidIdAndType(eq(travelerId), any(), any()))
                     .thenReturn(false);
 
@@ -698,7 +698,7 @@ class CashCommissionServiceTest {
             assertThat(bid.getStatus()).isEqualTo(BidStatus.ACCEPTED);
             // Capacité kilo non décrémentée pour un bid grille (poids null).
             assertThat(announcement.getAvailableKg()).isEqualByComparingTo("20");
-            verify(walletService).debit(eq(travelerId), eq(new java.math.BigDecimal("6.00")),
+            verify(walletService).debit(eq(travelerId), eq("EUR"), eq(new java.math.BigDecimal("6.00")),
                     eq(com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED), any());
         }
 
@@ -706,7 +706,7 @@ class CashCommissionServiceTest {
         void walletFirstPath_insufficientBalance_returnsInsufficientWallet() {
             // Solde 0 → pas de carte non plus
             traveler.setCommissionPaymentMethodId(null);
-            when(walletService.getBalance(travelerId)).thenReturn(java.math.BigDecimal.ZERO);
+            when(walletService.getBalance(travelerId, "EUR")).thenReturn(java.math.BigDecimal.ZERO);
 
             AcceptBidResponse resp = service.acceptCashBid(bid.getId(), travelerId, com.yadony.api.payments.cash.CommissionSource.WALLET_FIRST);
 
@@ -718,7 +718,7 @@ class CashCommissionServiceTest {
 
         @Test
         void walletFirstPath_insufficientBalance_hasCard_returnsInsufficientWalletWithHasCardTrue() {
-            when(walletService.getBalance(travelerId)).thenReturn(java.math.BigDecimal.ZERO);
+            when(walletService.getBalance(travelerId, "EUR")).thenReturn(java.math.BigDecimal.ZERO);
 
             AcceptBidResponse resp = service.acceptCashBid(bid.getId(), travelerId, com.yadony.api.payments.cash.CommissionSource.WALLET_FIRST);
 
@@ -733,12 +733,12 @@ class CashCommissionServiceTest {
             // répondre INSUFFICIENT_WALLET (409) avec le solde réel de l'exception, PAS laisser
             // l'exception rollback-only remonter en 500.
             java.math.BigDecimal commission = new java.math.BigDecimal("12.00"); // 5kg × 20€ × 12%
-            when(walletService.getBalance(travelerId)).thenReturn(commission.add(java.math.BigDecimal.TEN)); // suffisant à la lecture
+            when(walletService.getBalance(travelerId, "EUR")).thenReturn(commission.add(java.math.BigDecimal.TEN)); // suffisant à la lecture
             when(walletTransactionRepository.existsByUserIdAndBidIdAndType(eq(travelerId), any(), any()))
                     .thenReturn(false);
             doThrow(new com.yadony.api.payments.wallet.InsufficientWalletBalanceException(
                     new java.math.BigDecimal("3.00"), commission))
-                    .when(walletService).debit(eq(travelerId), any(),
+                    .when(walletService).debit(eq(travelerId), eq("EUR"), any(),
                             eq(com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED), any());
 
             AcceptBidResponse resp = service.acceptCashBid(bid.getId(), travelerId, com.yadony.api.payments.cash.CommissionSource.WALLET_FIRST);
@@ -866,7 +866,7 @@ class CashCommissionServiceTest {
             announcement.setPickupAddressLabel("Gare du Nord");
             // Use wallet path so no Stripe mocking needed
             java.math.BigDecimal commission = new java.math.BigDecimal("12.00"); // 5kg × 20€ × 12%
-            when(walletService.getBalance(travelerId)).thenReturn(commission.add(java.math.BigDecimal.ONE));
+            when(walletService.getBalance(travelerId, "EUR")).thenReturn(commission.add(java.math.BigDecimal.ONE));
             when(walletTransactionRepository.existsByUserIdAndBidIdAndType(eq(travelerId), any(), any()))
                     .thenReturn(false);
 
@@ -1008,7 +1008,7 @@ class CashCommissionServiceTest {
 
             service.chargeCommissionFromWallet(bid, travelerId, new BigDecimal("12.00"));
 
-            verify(walletService).debit(eq(travelerId), eq(new BigDecimal("12.00")),
+            verify(walletService).debit(eq(travelerId), eq("EUR"), eq(new BigDecimal("12.00")),
                     eq(com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED), eq(bid.getId()));
             assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.CHARGED);
             assertThat(bid.getCommissionChargedVia()).isEqualTo(CommissionChargedVia.WALLET);
@@ -1026,7 +1026,7 @@ class CashCommissionServiceTest {
 
             service.chargeCommissionFromWallet(bid, travelerId, new BigDecimal("12.00"));
 
-            verify(walletService, never()).debit(any(), any(), any(), any());
+            verify(walletService, never()).debit(any(), anyString(), any(), any(), any());
             verify(bidRepo, never()).save(any());
             verifyNoInteractions(auditService);
         }
@@ -1056,7 +1056,7 @@ class CashCommissionServiceTest {
 
         @Test
         void walletSufficient_chargesFromWalletViaWallet() {
-            when(walletService.getBalance(travelerId)).thenReturn(new BigDecimal("50.00"));
+            when(walletService.getBalance(travelerId, "EUR")).thenReturn(new BigDecimal("50.00"));
             when(walletTransactionRepository.existsByUserIdAndBidIdAndType(eq(travelerId), eq(bid.getId()), any()))
                     .thenReturn(false);
 
@@ -1064,13 +1064,13 @@ class CashCommissionServiceTest {
 
             assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.CHARGED);
             assertThat(bid.getCommissionChargedVia()).isEqualTo(CommissionChargedVia.WALLET);
-            verify(walletService).debit(eq(travelerId), any(),
+            verify(walletService).debit(eq(travelerId), eq("EUR"), any(),
                     eq(com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED), eq(bid.getId()));
         }
 
         @Test
         void walletInsufficient_cardSucceeds_viaCard() throws StripeException {
-            when(walletService.getBalance(travelerId)).thenReturn(java.math.BigDecimal.ZERO);
+            when(walletService.getBalance(travelerId, "EUR")).thenReturn(java.math.BigDecimal.ZERO);
             PaymentIntent mockPi = new PaymentIntent();
             mockPi.setId("pi_auto");
             mockPi.setStatus("succeeded");
@@ -1088,7 +1088,7 @@ class CashCommissionServiceTest {
 
         @Test
         void walletInsufficient_noCard_setsFailedAndAudits() {
-            when(walletService.getBalance(travelerId)).thenReturn(java.math.BigDecimal.ZERO);
+            when(walletService.getBalance(travelerId, "EUR")).thenReturn(java.math.BigDecimal.ZERO);
             traveler.setCommissionPaymentMethodId(null); // ni wallet ni carte
 
             service.chargeCommissionAuto(bid, travelerId);
@@ -1101,7 +1101,7 @@ class CashCommissionServiceTest {
         @Test
         void walletInsufficient_card3ds_setsFailedNoException() throws StripeException {
             // 3DS impossible en async (pas d'interaction utilisateur) → créance FAILED, pas d'exception.
-            when(walletService.getBalance(travelerId)).thenReturn(java.math.BigDecimal.ZERO);
+            when(walletService.getBalance(travelerId, "EUR")).thenReturn(java.math.BigDecimal.ZERO);
             PaymentIntent mockPi = new PaymentIntent();
             mockPi.setId("pi_3ds");
             mockPi.setStatus("requires_action");
@@ -1122,7 +1122,7 @@ class CashCommissionServiceTest {
             // FIX #4 : chargeCommission relève une CommissionChargeFailedException (RuntimeException)
             // sur erreur Stripe transitoire. chargeCommissionAuto doit la rattraper (catch RuntimeException)
             // et NE PAS la laisser remonter, sinon la tx REQUIRES_NEW du listener MM rollback le paiement déjà commité.
-            when(walletService.getBalance(travelerId)).thenReturn(java.math.BigDecimal.ZERO);
+            when(walletService.getBalance(travelerId, "EUR")).thenReturn(java.math.BigDecimal.ZERO);
 
             try (MockedStatic<PaymentIntent> pi = mockStatic(PaymentIntent.class)) {
                 pi.when(() -> PaymentIntent.create(any(PaymentIntentCreateParams.class), any(RequestOptions.class)))
@@ -1137,12 +1137,12 @@ class CashCommissionServiceTest {
         @Test
         void walletToctouRace_fallsBackToCard() throws StripeException {
             // Solde suffisant à la lecture mais debit lève → fallback carte automatique.
-            when(walletService.getBalance(travelerId)).thenReturn(new BigDecimal("50.00"));
+            when(walletService.getBalance(travelerId, "EUR")).thenReturn(new BigDecimal("50.00"));
             when(walletTransactionRepository.existsByUserIdAndBidIdAndType(eq(travelerId), eq(bid.getId()), any()))
                     .thenReturn(false);
             doThrow(new com.yadony.api.payments.wallet.InsufficientWalletBalanceException(
                     java.math.BigDecimal.ZERO, new BigDecimal("12.00")))
-                    .when(walletService).debit(eq(travelerId), any(), any(), eq(bid.getId()));
+                    .when(walletService).debit(eq(travelerId), eq("EUR"), any(), any(), eq(bid.getId()));
 
             PaymentIntent mockPi = new PaymentIntent();
             mockPi.setId("pi_fb");
@@ -1193,7 +1193,7 @@ class CashCommissionServiceTest {
 
             service.refundCommissionToWallet(bid, travelerId, key);
 
-            verify(walletService).credit(eq(travelerId), eq(new BigDecimal("12.00")),
+            verify(walletService).credit(eq(travelerId), eq("EUR"), eq(new BigDecimal("12.00")),
                     eq(com.yadony.api.payments.wallet.WalletTransactionType.REFUND),
                     eq("refund-" + bid.getId()), eq(key));
             assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.REFUNDED);
@@ -1208,7 +1208,7 @@ class CashCommissionServiceTest {
 
             service.refundCommissionToWallet(bid, travelerId, "k");
 
-            verify(walletService, never()).credit(any(), any(), any(), any(), any());
+            verify(walletService, never()).credit(any(), anyString(), any(), any(), any(), any());
             verify(bidRepo, never()).save(any());
         }
 
@@ -1218,7 +1218,7 @@ class CashCommissionServiceTest {
 
             service.refundCommissionToWallet(bid, travelerId, "k");
 
-            verify(walletService, never()).credit(any(), any(), any(), any(), any());
+            verify(walletService, never()).credit(any(), anyString(), any(), any(), any(), any());
             verify(bidRepo, never()).save(any());
         }
 
@@ -1231,7 +1231,7 @@ class CashCommissionServiceTest {
 
             service.refundCommissionToWallet(bid, travelerId, "k");
 
-            verify(walletService, never()).credit(any(), any(), any(), any(), any());
+            verify(walletService, never()).credit(any(), anyString(), any(), any(), any(), any());
             assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.CHARGED); // inchangé
         }
     }
@@ -1443,7 +1443,7 @@ class CashCommissionServiceTest {
         @Test
         void walletSufficient_chargesViaWalletReturnsTrue() {
             when(negotiationThreadRepository.findById(threadId)).thenReturn(Optional.of(thread));
-            when(walletService.getBalance(travelerId)).thenReturn(new BigDecimal("50.00"));
+            when(walletService.getBalance(travelerId, "EUR")).thenReturn(new BigDecimal("50.00"));
 
             boolean charged = service.chargeNegotiationCommission(travelerId, senderId, threadId, thread.getCurrentPriceEur());
 
@@ -1452,7 +1452,7 @@ class CashCommissionServiceTest {
             assertThat(thread.getCommissionChargedVia()).isEqualTo("WALLET");
             // Débit SANS bid : réf = threadId dans payment_ref + idempotency_key (pas la FK bid_id).
             // La déduplication wallet est déléguée à WalletService via l'idempotencyKey.
-            verify(walletService).debit(eq(travelerId), eq(new BigDecimal("12.00")),
+            verify(walletService).debit(eq(travelerId), eq("EUR"), eq(new BigDecimal("12.00")),
                     eq(com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED),
                     eq(threadId.toString()), eq("nego_commission_wallet_" + threadId));
             verify(negotiationThreadRepository).save(thread);
@@ -1463,7 +1463,7 @@ class CashCommissionServiceTest {
         @Test
         void walletInsufficient_cardSucceeds_chargesViaCardReturnsTrue() throws StripeException {
             when(negotiationThreadRepository.findById(threadId)).thenReturn(Optional.of(thread));
-            when(walletService.getBalance(travelerId)).thenReturn(BigDecimal.ZERO);
+            when(walletService.getBalance(travelerId, "EUR")).thenReturn(BigDecimal.ZERO);
             when(userRepo.findById(travelerId)).thenReturn(Optional.of(traveler));
 
             PaymentIntent mockPi = new PaymentIntent();
@@ -1490,7 +1490,7 @@ class CashCommissionServiceTest {
         @Test
         void cardDeclined_returnsFalseSetsFailed_noThrow() throws StripeException {
             when(negotiationThreadRepository.findById(threadId)).thenReturn(Optional.of(thread));
-            when(walletService.getBalance(travelerId)).thenReturn(BigDecimal.ZERO);
+            when(walletService.getBalance(travelerId, "EUR")).thenReturn(BigDecimal.ZERO);
             when(userRepo.findById(travelerId)).thenReturn(Optional.of(traveler));
 
             try (MockedStatic<PaymentIntent> pi = mockStatic(PaymentIntent.class)) {
@@ -1509,7 +1509,7 @@ class CashCommissionServiceTest {
         void card3ds_returnsFalseSetsFailed() throws StripeException {
             // 3DS impossible (voyageur absent) → échec, on bloque.
             when(negotiationThreadRepository.findById(threadId)).thenReturn(Optional.of(thread));
-            when(walletService.getBalance(travelerId)).thenReturn(BigDecimal.ZERO);
+            when(walletService.getBalance(travelerId, "EUR")).thenReturn(BigDecimal.ZERO);
             when(userRepo.findById(travelerId)).thenReturn(Optional.of(traveler));
 
             PaymentIntent mockPi = new PaymentIntent();
@@ -1531,7 +1531,7 @@ class CashCommissionServiceTest {
         void noWalletNoCard_returnsFalseSetsFailed() {
             traveler.setCommissionPaymentMethodId(null);
             when(negotiationThreadRepository.findById(threadId)).thenReturn(Optional.of(thread));
-            when(walletService.getBalance(travelerId)).thenReturn(BigDecimal.ZERO);
+            when(walletService.getBalance(travelerId, "EUR")).thenReturn(BigDecimal.ZERO);
             when(userRepo.findById(travelerId)).thenReturn(Optional.of(traveler));
 
             boolean charged = service.chargeNegotiationCommission(travelerId, senderId, threadId, thread.getCurrentPriceEur());
@@ -1550,19 +1550,19 @@ class CashCommissionServiceTest {
             boolean charged = service.chargeNegotiationCommission(travelerId, senderId, threadId, thread.getCurrentPriceEur());
 
             assertThat(charged).isTrue();
-            verify(walletService, never()).debit(any(), any(), any(), any());
-            verify(walletService, never()).getBalance(any());
+            verify(walletService, never()).debit(any(), anyString(), any(), any(), any());
+            verify(walletService, never()).getBalance(any(), anyString());
             verify(negotiationThreadRepository, never()).save(any());
         }
 
         @Test
         void walletToctouRace_fallsBackToCard() throws StripeException {
             when(negotiationThreadRepository.findById(threadId)).thenReturn(Optional.of(thread));
-            when(walletService.getBalance(travelerId)).thenReturn(new BigDecimal("50.00"));
+            when(walletService.getBalance(travelerId, "EUR")).thenReturn(new BigDecimal("50.00"));
             when(userRepo.findById(travelerId)).thenReturn(Optional.of(traveler));
             doThrow(new com.yadony.api.payments.wallet.InsufficientWalletBalanceException(
                     BigDecimal.ZERO, new BigDecimal("12.00")))
-                    .when(walletService).debit(eq(travelerId), any(), any(),
+                    .when(walletService).debit(eq(travelerId), eq("EUR"), any(), any(),
                             eq(threadId.toString()), any());
 
             PaymentIntent mockPi = new PaymentIntent();
@@ -1589,8 +1589,8 @@ class CashCommissionServiceTest {
             boolean charged = service.chargeNegotiationCommission(travelerId, senderId, threadId, BigDecimal.ZERO);
 
             assertThat(charged).isTrue();
-            verify(walletService, never()).getBalance(any());
-            verify(walletService, never()).debit(any(), any(), any(), any());
+            verify(walletService, never()).getBalance(any(), anyString());
+            verify(walletService, never()).debit(any(), anyString(), any(), any(), any());
         }
     }
 }

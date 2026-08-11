@@ -21,9 +21,4 @@ public interface WalletAccountRepository extends JpaRepository<WalletAccountEnti
     Optional<WalletAccountEntity> findByUserIdAndCurrencyForUpdate(
             @Param("userId") UUID userId, @Param("currency") String currency);
 
-    Optional<WalletAccountEntity> findByUserId(UUID userId);
-
-    @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("SELECT w FROM WalletAccountEntity w WHERE w.userId = :userId")
-    Optional<WalletAccountEntity> findByUserIdForUpdate(@Param("userId") UUID userId);
 }
