@@ -227,6 +227,37 @@ class PaymentServiceLegacyIntentRecoveryTest {
     }
 
     @Test
+    void existingBidWithoutPersistedCommissionRate_failsClosedWithoutSideEffects() throws Exception {
+        PaymentEntity existing = bidPayment("pi_existing", "26.50", "cad");
+        BidEntity bid = stubExistingBid(existing, null, "WELCOME6");
+        UUID promoId = UUID.randomUUID();
+        bid.setPromoCodeId(promoId);
+
+        Throwable thrown = catchThrowable(() -> service.createEscrow(paymentRequest(), "uid-sender"));
+
+        assertAll(
+                () -> assertThat(thrown).isInstanceOf(YadonyBusinessException.class),
+                () -> assertThat(thrown).isInstanceOfSatisfying(
+                        YadonyBusinessException.class,
+                        error -> assertThat(error.getStatus()).isEqualTo(HttpStatus.CONFLICT)),
+                () -> assertThat(thrown).isInstanceOfSatisfying(
+                        YadonyBusinessException.class,
+                        error -> assertThat(error.getErrorCode())
+                                .isEqualTo("payment-pricing-context-missing")),
+                () -> verifyNoInteractions(stripeGateway, commissionRateResolver, promoService, auditService),
+                () -> verify(bidRepository, never()).save(any()),
+                () -> verify(paymentRepository, never()).save(any()),
+                () -> verify(userRepository, never()).save(any()),
+                () -> verify(announcementRepository, never()).save(any()),
+                () -> verify(bidGridItemRepository, never()).save(any()),
+                () -> assertThat(bid.getCommissionRate()).isNull(),
+                () -> assertThat(bid.getPromoCode()).isEqualTo("WELCOME6"),
+                () -> assertThat(bid.getPromoCodeId()).isEqualTo(promoId),
+                () -> assertThat(existing.getStripePaymentIntentId()).isEqualTo("pi_existing"),
+                () -> assertThat(existing.getStatus()).isEqualTo(PaymentStatus.PENDING));
+    }
+
+    @Test
     void compatibleNegotiationResume_returnsAppliedRateAndPromo() throws Exception {
         UUID threadId = UUID.randomUUID();
         PaymentEntity existing = negotiationPayment(threadId, "pi_existing", "37.10", "eur");

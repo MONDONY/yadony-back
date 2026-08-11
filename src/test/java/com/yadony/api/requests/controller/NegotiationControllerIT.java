@@ -572,6 +572,7 @@ class NegotiationControllerIT {
             .andExpect(jsonPath("$.commissionRate").value(0.06))
             .andExpect(jsonPath("$.promoApplied").value(true));
         mockMvc.perform(post("/negotiations/{id}/initiate-payment", threadId)
+                .param("promoCode", "OTHER")
                 .with(authentication(authAs("uid-sender", "SENDER"))))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.commissionRate").value(0.06))
@@ -579,6 +580,11 @@ class NegotiationControllerIT {
 
         verify(service, org.mockito.Mockito.times(2))
                 .recordAppliedPromo(threadId, "WELCOME6", new BigDecimal("0.06"));
+        verify(paymentService, org.mockito.Mockito.never()).createNegotiationEscrow(
+                threadId, SENDER_UUID, TRAVELER_UUID, new BigDecimal("30"),
+                "OTHER", new BigDecimal("0.06"), "EUR");
+        verify(service, org.mockito.Mockito.never())
+                .recordAppliedPromo(threadId, "OTHER", new BigDecimal("0.06"));
         verify(service, org.mockito.Mockito.never()).recordAppliedPromo(threadId, null, null);
     }
 
