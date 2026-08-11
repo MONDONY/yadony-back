@@ -15,6 +15,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -35,6 +36,7 @@ class WalletControllerIT {
 
     @Autowired MockMvc mockMvc;
     @Autowired ObjectMapper objectMapper;
+    @Autowired WalletService walletService;
     @MockBean UserRepository userRepository;
 
     private static final UUID USER_UUID = UUID.randomUUID();
@@ -118,6 +120,27 @@ class WalletControllerIT {
                 .with(authentication(authAs(FIREBASE_UID, "TRAVELER"))))
             .andExpect(status().isUnprocessableEntity())
             .andExpect(jsonPath("$.code").value("mobile-money-topup-retired"));
+    }
+
+    @Test
+    void getBalance_returnsBalancesListWithActiveCurrencyFlagged() throws Exception {
+        mockMvc.perform(get("/wallet/balance")
+                .with(authentication(authAs(FIREBASE_UID, "SENDER"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.balances").isArray())
+            .andExpect(jsonPath("$.balances[?(@.currency == 'EUR')].active").value(true));
+    }
+
+    @Test
+    void getBalance_includesLockedNonActiveCurrencyBalances() throws Exception {
+        walletService.credit(USER_UUID, "CAD", new BigDecimal("15.00"),
+            WalletTransactionType.TOP_UP, "ref-cad", null);
+
+        mockMvc.perform(get("/wallet/balance")
+                .with(authentication(authAs(FIREBASE_UID, "SENDER"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.balances[?(@.currency == 'CAD')].balance").value(15.0))
+            .andExpect(jsonPath("$.balances[?(@.currency == 'CAD')].active").value(false));
     }
 
     @Test

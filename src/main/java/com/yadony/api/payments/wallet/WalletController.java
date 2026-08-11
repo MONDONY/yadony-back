@@ -4,9 +4,11 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.wallet.dto.WalletBalanceResponse;
+import com.yadony.api.payments.wallet.dto.WalletCurrencyBalanceDto;
 import com.yadony.api.payments.wallet.dto.WalletTopupRequest;
 import com.yadony.api.payments.wallet.dto.WalletTopupResponse;
 import com.yadony.api.payments.wallet.dto.WalletTransactionDto;
+import com.yadony.api.settings.UserBusinessPrefsService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -32,26 +34,35 @@ public class WalletController {
     private final WalletService walletService;
     private final WalletTopupOrchestrator topupOrchestrator;
     private final UserRepository userRepository;
+    private final UserBusinessPrefsService businessPrefsService;
 
     public WalletController(WalletService walletService,
                             WalletTopupOrchestrator topupOrchestrator,
-                            UserRepository userRepository) {
+                            UserRepository userRepository,
+                            UserBusinessPrefsService businessPrefsService) {
         this.walletService = walletService;
         this.topupOrchestrator = topupOrchestrator;
         this.userRepository = userRepository;
+        this.businessPrefsService = businessPrefsService;
     }
 
     @GetMapping("/balance")
     public ResponseEntity<WalletBalanceResponse> getBalance(
             @RequestParam(defaultValue = "0") int page) {
         UUID userId = currentUserId();
-        WalletAccountEntity wallet = walletService.getOrCreate(userId, "EUR");
+        String activeCurrency = businessPrefsService.getPrefs(currentFirebaseUid()).currencyCode();
+        WalletAccountEntity wallet = walletService.getOrCreate(userId, activeCurrency);
         List<WalletTransactionDto> txs = walletService.getTransactions(userId, page)
             .stream()
             .map(WalletTransactionDto::from)
             .collect(Collectors.toList());
+        List<WalletCurrencyBalanceDto> balances = walletService.getAllBalances(userId)
+            .stream()
+            .map(w -> new WalletCurrencyBalanceDto(
+                w.getCurrency(), w.getBalance(), w.getCurrency().equals(activeCurrency)))
+            .collect(Collectors.toList());
         return ResponseEntity.ok(
-            new WalletBalanceResponse(wallet.getBalance(), wallet.getCurrency(), txs));
+            new WalletBalanceResponse(wallet.getBalance(), activeCurrency, txs, balances));
     }
 
     @PostMapping("/topup")
@@ -62,11 +73,14 @@ public class WalletController {
     }
 
     private UUID currentUserId() {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        String firebaseUid = (String) auth.getPrincipal();
-        return userRepository.findByFirebaseUid(firebaseUid)
+        return userRepository.findByFirebaseUid(currentFirebaseUid())
             .map(UserEntity::getId)
             .orElseThrow(() -> new YadonyBusinessException(
                 HttpStatus.NOT_FOUND, "user-not-found", "Utilisateur introuvable", ""));
+    }
+
+    private String currentFirebaseUid() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        return (String) auth.getPrincipal();
     }
 }
