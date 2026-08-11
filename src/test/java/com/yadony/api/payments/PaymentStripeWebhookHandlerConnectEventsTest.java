@@ -26,7 +26,9 @@ class PaymentStripeWebhookHandlerConnectEventsTest {
 
     @BeforeEach
     void setUp() {
-        handler = new PaymentStripeWebhookHandler(paymentService, cashHandler, chargebackService, walletService, new com.fasterxml.jackson.databind.ObjectMapper());
+        handler = new PaymentStripeWebhookHandler(paymentService, cashHandler, chargebackService, walletService,
+                new com.fasterxml.jackson.databind.ObjectMapper(),
+                new com.yadony.api.payments.currency.CurrencyCatalog());
     }
 
     private Event evt(String type) {

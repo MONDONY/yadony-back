@@ -1,8 +1,11 @@
 package com.yadony.api.payments;
 
+import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.stripe.StripeWebhookHandler;
 import com.yadony.api.payments.cash.CashCommissionWebhookHandler;
 import com.yadony.api.payments.chargeback.ChargebackService;
+import com.yadony.api.payments.currency.CurrencyCatalog;
+import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.wallet.WalletService;
 import com.yadony.api.payments.wallet.WalletTransactionType;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -12,10 +15,10 @@ import com.stripe.model.PaymentIntent;
 import com.stripe.model.StripeObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -54,17 +57,20 @@ public class PaymentStripeWebhookHandler implements StripeWebhookHandler {
     private final ChargebackService chargebackService;
     private final WalletService walletService;
     private final ObjectMapper objectMapper;
+    private final CurrencyCatalog currencyCatalog;
 
     public PaymentStripeWebhookHandler(PaymentService paymentService,
                                         CashCommissionWebhookHandler cashHandler,
                                         ChargebackService chargebackService,
                                         WalletService walletService,
-                                        ObjectMapper objectMapper) {
+                                        ObjectMapper objectMapper,
+                                        CurrencyCatalog currencyCatalog) {
         this.paymentService = paymentService;
         this.cashHandler = cashHandler;
         this.chargebackService = chargebackService;
         this.walletService = walletService;
         this.objectMapper = objectMapper;
+        this.currencyCatalog = currencyCatalog;
     }
 
     @Override
@@ -88,19 +94,7 @@ public class PaymentStripeWebhookHandler implements StripeWebhookHandler {
                 if (pi != null
                         && pi.getMetadata() != null
                         && "true".equals(pi.getMetadata().get("wallet_topup"))) {
-                    String rawUserId = pi.getMetadata().get("user_id");
-                    if (rawUserId == null) {
-                        log.warn("wallet_topup webhook sans user_id, event ignoré: {}", pi.getId());
-                        return;
-                    }
-                    UUID userId = UUID.fromString(rawUserId);
-                    String walletCreditEur = pi.getMetadata().get("wallet_credit_eur");
-                    BigDecimal amount = walletCreditEur != null
-                        ? new BigDecimal(walletCreditEur)
-                        : BigDecimal.valueOf(pi.getAmount())
-                            .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
-                    walletService.credit(userId, "EUR", amount, WalletTransactionType.TOP_UP,
-                        pi.getId(), "stripe-" + pi.getId());
+                    handleWalletTopup(pi);
                 } else {
                     cashHandler.handlePaymentIntentSucceeded(event);
                 }
@@ -121,6 +115,36 @@ public class PaymentStripeWebhookHandler implements StripeWebhookHandler {
             case "charge.refund.updated"              -> paymentService.handleRefundUpdated(event);
             case "radar.early_fraud_warning.created"  -> paymentService.handleEarlyFraudWarning(event);
         }
+    }
+
+    private void handleWalletTopup(PaymentIntent paymentIntent) {
+        String rawUserId = paymentIntent.getMetadata().get("user_id");
+        if (rawUserId == null) {
+            log.warn("wallet_topup webhook sans user_id, event ignoré: {}", paymentIntent.getId());
+            return;
+        }
+
+        String rawWalletCurrency = paymentIntent.getMetadata().get("wallet_currency");
+        if (rawWalletCurrency == null || rawWalletCurrency.isBlank()) {
+            throw new YadonyBusinessException(
+                    HttpStatus.UNPROCESSABLE_ENTITY,
+                    "wallet-topup-currency-missing", "Wallet Topup Currency Missing",
+                    "La devise de la recharge wallet est absente des métadonnées Stripe.");
+        }
+
+        SupportedCurrency walletCurrency = currencyCatalog.resolve(null, rawWalletCurrency);
+        if (!walletCurrency.code().equalsIgnoreCase(paymentIntent.getCurrency())) {
+            throw new YadonyBusinessException(
+                    HttpStatus.UNPROCESSABLE_ENTITY,
+                    "wallet-topup-currency-mismatch", "Wallet Topup Currency Mismatch",
+                    "La devise débitée par Stripe ne correspond pas à la devise du wallet.");
+        }
+
+        UUID userId = UUID.fromString(rawUserId);
+        BigDecimal amount = BigDecimal.valueOf(
+                paymentIntent.getAmount(), walletCurrency.minorUnit());
+        walletService.credit(userId, walletCurrency.name(), amount, WalletTransactionType.TOP_UP,
+                paymentIntent.getId(), "stripe-" + paymentIntent.getId());
     }
 
     /**
