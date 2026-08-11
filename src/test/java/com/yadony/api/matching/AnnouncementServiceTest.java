@@ -865,6 +865,21 @@ class AnnouncementServiceTest {
         }
 
         @Test
+        @DisplayName("détail expose la devise de l'annonce, pas toujours EUR")
+        void getDetail_exposesAnnouncementCurrency() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity a = buildAnnouncement(traveler);
+            a.setCurrency("CAD");
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
+            when(bidRepository.countVisibleByAnnouncementId(ANNOUNCEMENT_ID)).thenReturn(0L);
+
+            AnnouncementDetailResponse result = announcementService.getAnnouncementDetail(
+                    ANNOUNCEMENT_ID, FIREBASE_UID);
+
+            assertThat(result.currency()).isEqualTo("CAD");
+        }
+
+        @Test
         @DisplayName("annonce KG_FREE → capacityUnit présent dans le détail (regression)")
         void getDetail_kgFreeAnnouncement_returnsCapacityUnit() {
             UserEntity traveler = buildTraveler();

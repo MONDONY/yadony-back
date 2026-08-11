@@ -692,7 +692,8 @@ public class AnnouncementService {
                 announcement.isSurplusEligible(),
                 announcement.isSurplusPublished(),
                 announcement.getHandoverWindowStart(),
-                announcement.getHandoverWindowEnd()
+                announcement.getHandoverWindowEnd(),
+                announcement.getCurrency()
         );
     }
 
@@ -845,7 +846,8 @@ public class AnnouncementService {
                 saved.isSurplusEligible(),
                 saved.isSurplusPublished(),
                 saved.getHandoverWindowStart(),
-                saved.getHandoverWindowEnd()
+                saved.getHandoverWindowEnd(),
+                saved.getCurrency()
         );
     }
 
