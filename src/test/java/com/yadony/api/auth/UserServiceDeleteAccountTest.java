@@ -114,7 +114,7 @@ class UserServiceDeleteAccountTest {
             when(paymentRepository.hasActiveEscrowForUser(USER_ID)).thenReturn(false);
             WalletAccountEntity wallet = new WalletAccountEntity();
             wallet.setBalance(java.math.BigDecimal.TEN);
-            when(walletAccountRepository.findByUserIdAndCurrency(USER_ID, "EUR")).thenReturn(Optional.of(wallet));
+            when(walletAccountRepository.findAllByUserId(USER_ID)).thenReturn(java.util.List.of(wallet));
 
             assertThatThrownBy(() -> userService.requestDeletion(FIREBASE_UID))
                 .isInstanceOf(YadonyBusinessException.class)

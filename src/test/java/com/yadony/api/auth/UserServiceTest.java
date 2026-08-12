@@ -148,7 +148,29 @@ class UserServiceTest {
             when(paymentRepository.hasActiveEscrowForUser(USER_ID)).thenReturn(false);
             WalletAccountEntity wallet = new WalletAccountEntity();
             wallet.setBalance(java.math.BigDecimal.TEN);
-            when(walletAccountRepository.findByUserIdAndCurrency(USER_ID, "EUR")).thenReturn(Optional.of(wallet));
+            when(walletAccountRepository.findAllByUserId(USER_ID)).thenReturn(java.util.List.of(wallet));
+
+            assertThatThrownBy(() -> userService.deleteAccount(FIREBASE_UID))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getStatus())
+                            .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY));
+
+            verify(userRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("régression : un solde non-EUR bloque aussi la suppression")
+        void deleteAccount_positiveNonEurBalance_throws422() {
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+            when(paymentRepository.hasActiveEscrowForUser(USER_ID)).thenReturn(false);
+            WalletAccountEntity eurWallet = new WalletAccountEntity();
+            eurWallet.setCurrency("EUR");
+            eurWallet.setBalance(java.math.BigDecimal.ZERO);
+            WalletAccountEntity xofWallet = new WalletAccountEntity();
+            xofWallet.setCurrency("XOF");
+            xofWallet.setBalance(new java.math.BigDecimal("50000"));
+            when(walletAccountRepository.findAllByUserId(USER_ID))
+                    .thenReturn(java.util.List.of(eurWallet, xofWallet));
 
             assertThatThrownBy(() -> userService.deleteAccount(FIREBASE_UID))
                     .isInstanceOf(YadonyBusinessException.class)
@@ -165,7 +187,7 @@ class UserServiceTest {
             when(paymentRepository.hasActiveEscrowForUser(USER_ID)).thenReturn(false);
             WalletAccountEntity wallet = new WalletAccountEntity();
             wallet.setBalance(java.math.BigDecimal.ZERO);
-            when(walletAccountRepository.findByUserIdAndCurrency(USER_ID, "EUR")).thenReturn(Optional.of(wallet));
+            when(walletAccountRepository.findAllByUserId(USER_ID)).thenReturn(java.util.List.of(wallet));
             when(userRepository.save(any())).thenReturn(user);
 
             userService.deleteAccount(FIREBASE_UID);
@@ -183,7 +205,7 @@ class UserServiceTest {
         void noBlockers_returnsEligible() {
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
             when(paymentRepository.hasActiveEscrowForUser(USER_ID)).thenReturn(false);
-            when(walletAccountRepository.findByUserIdAndCurrency(USER_ID, "EUR")).thenReturn(Optional.empty());
+            when(walletAccountRepository.findAllByUserId(USER_ID)).thenReturn(java.util.List.of());
 
             var result = userService.checkDeletionEligibility(FIREBASE_UID);
 
@@ -213,7 +235,7 @@ class UserServiceTest {
             when(paymentRepository.hasActiveEscrowForUser(USER_ID)).thenReturn(false);
             WalletAccountEntity wallet = new WalletAccountEntity();
             wallet.setBalance(java.math.BigDecimal.TEN);
-            when(walletAccountRepository.findByUserIdAndCurrency(USER_ID, "EUR")).thenReturn(Optional.of(wallet));
+            when(walletAccountRepository.findAllByUserId(USER_ID)).thenReturn(java.util.List.of(wallet));
 
             var result = userService.checkDeletionEligibility(FIREBASE_UID);
 

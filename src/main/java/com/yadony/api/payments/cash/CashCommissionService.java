@@ -14,6 +14,8 @@ import com.yadony.api.matching.BidStatus;
 import com.yadony.api.matching.CapacityUnit;
 import com.yadony.api.matching.events.BidAcceptedEvent;
 import com.yadony.api.common.AuditService;
+import com.yadony.api.payments.currency.CurrencyAmount;
+import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.cash.dto.AcceptBidResponse;
 import com.yadony.api.payments.cash.dto.AcceptanceStatusDto;
 import com.yadony.api.payments.cash.dto.CommissionMethodResponse;
@@ -278,13 +280,17 @@ public class CashCommissionService {
 
         AnnouncementEntity announcement = announcementRepo.findById(bid.getAnnouncementId()).orElseThrow();
         BigDecimal commission = computeBidCommission(bid, announcement);
-        long amountCents = commission.multiply(new BigDecimal(100)).longValueExact();
+        // La commission est libellée dans la devise snapshottée du bid : convertir en
+        // unités mineures avec un x100 fixe fausserait XOF/XAF (minorUnit = 0) d'un
+        // facteur 100, et un PaymentIntent en "eur" débiterait la mauvaise devise.
+        CurrencyAmount commissionAmount = CurrencyAmount.of(
+                commission, SupportedCurrency.fromCodeOrDefault(bid.getCurrency()));
         String idempotencyKey = "bid_accept_" + bid.getId() + "_v" + bid.getCommissionRetryCount();
 
         try {
             PaymentIntentCreateParams params = PaymentIntentCreateParams.builder()
-                    .setAmount(amountCents)
-                    .setCurrency("eur")
+                    .setAmount(commissionAmount.minor())
+                    .setCurrency(commissionAmount.currency().code())
                     .setCustomer(traveler.getStripeCustomerId())
                     .setPaymentMethod(traveler.getCommissionPaymentMethodId())
                     .setOffSession(true)
@@ -462,12 +468,13 @@ public class CashCommissionService {
         // 2) Fallback carte off-session
         UserEntity traveler = userRepo.findById(travelerId).orElseThrow();
         if (traveler.getCommissionPaymentMethodId() != null) {
-            long amountCents = commission.multiply(new BigDecimal(100)).longValueExact();
+            CurrencyAmount commissionAmount = CurrencyAmount.of(
+                    commission, SupportedCurrency.fromCodeOrDefault(thread.getCurrency()));
             String idempotencyKey = "nego_commission_" + threadId;
             try {
                 PaymentIntentCreateParams params = PaymentIntentCreateParams.builder()
-                        .setAmount(amountCents)
-                        .setCurrency("eur")
+                        .setAmount(commissionAmount.minor())
+                        .setCurrency(commissionAmount.currency().code())
                         .setCustomer(traveler.getStripeCustomerId())
                         .setPaymentMethod(traveler.getCommissionPaymentMethodId())
                         .setOffSession(true)

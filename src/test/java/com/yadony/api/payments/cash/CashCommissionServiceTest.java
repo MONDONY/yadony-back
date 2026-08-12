@@ -364,6 +364,34 @@ class CashCommissionServiceTest {
         }
 
         @Test
+        void xofBidChargesInXofWithoutMinorUnitInflation() throws StripeException {
+            // Régression : la commission était envoyée en "eur" avec un ×100 fixe.
+            // XOF n'a pas de sous-unité → 5 kg × 20 000 = 100 000, 12 % = 12 000 XOF,
+            // soit 12 000 unités mineures (et non 1 200 000).
+            bid.setCurrency("XOF");
+            AnnouncementEntity xofAnnouncement =
+                    announcementWithPrice(bid.getAnnouncementId(), new BigDecimal("20000"));
+            xofAnnouncement.setCurrency("XOF");
+            when(announcementRepo.findById(bid.getAnnouncementId()))
+                    .thenReturn(Optional.of(xofAnnouncement));
+
+            ArgumentCaptor<PaymentIntentCreateParams> captor =
+                    ArgumentCaptor.forClass(PaymentIntentCreateParams.class);
+            PaymentIntent mockPi = new PaymentIntent();
+            mockPi.setId("pi_xof");
+            mockPi.setStatus("succeeded");
+            try (MockedStatic<PaymentIntent> pi = mockStatic(PaymentIntent.class)) {
+                pi.when(() -> PaymentIntent.create(captor.capture(), any(RequestOptions.class)))
+                        .thenReturn(mockPi);
+
+                service.chargeCommission(bid, travelerId);
+
+                assertThat(captor.getValue().getCurrency()).isEqualTo("xof");
+                assertThat(captor.getValue().getAmount()).isEqualTo(12000L);
+            }
+        }
+
+        @Test
         void successPathReturnsAccepted() throws StripeException {
             PaymentIntent mockPi = new PaymentIntent();
             mockPi.setId("pi_test");
