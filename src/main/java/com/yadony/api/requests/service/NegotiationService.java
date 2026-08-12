@@ -1415,7 +1415,7 @@ public class NegotiationService {
         if (checkCashAvailability && t.getCurrentPriceEur() != null) {
             BigDecimal commission = PriceBreakdown.fromNet(
                 t.getCurrentPriceEur(), commissionProperties.rate()).commission();
-            cashCommissionAvailable = cashGatePort.hasSufficientFunds(t.getTravelerId(), commission)
+            cashCommissionAvailable = cashGatePort.hasSufficientFunds(t.getTravelerId(), commission, t.getCurrency())
                 || cashGatePort.hasCommissionCard(t.getTravelerId());
         }
 
@@ -1531,7 +1531,7 @@ public class NegotiationService {
         if (accepted.contains(PaymentMethod.CASH)) {
             BigDecimal commission = PriceBreakdown
                 .fromNet(negotiatedPrice, commissionProperties.rate()).commission();
-            boolean cashOk = cashGatePort.hasSufficientFunds(traveler.getId(), commission)
+            boolean cashOk = cashGatePort.hasSufficientFunds(traveler.getId(), commission, request.getCurrency())
                 || (useCardForCommission && cashGatePort.hasCommissionCard(traveler.getId()));
             if (cashOk) {
                 set.add(PaymentMethod.CASH);

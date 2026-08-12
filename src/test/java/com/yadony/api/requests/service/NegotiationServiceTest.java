@@ -1068,7 +1068,7 @@ class NegotiationServiceTest {
             when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(java.util.Optional.of(traveler));
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(java.util.List.of());
-            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any())).thenReturn(true);
+            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any(), any())).thenReturn(true);
 
             var resp = service.getById(TRAVELER_ID, THREAD_ID);
 
@@ -1085,7 +1085,7 @@ class NegotiationServiceTest {
             when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(java.util.Optional.of(traveler));
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(java.util.List.of());
-            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any())).thenReturn(false);
+            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any(), any())).thenReturn(false);
             when(cashGatePort.hasCommissionCard(eq(TRAVELER_ID))).thenReturn(false);
 
             var resp = service.getById(TRAVELER_ID, THREAD_ID);
@@ -1103,7 +1103,7 @@ class NegotiationServiceTest {
             when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(java.util.Optional.of(traveler));
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(java.util.List.of());
-            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any())).thenReturn(false);
+            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any(), any())).thenReturn(false);
             when(cashGatePort.hasCommissionCard(eq(TRAVELER_ID))).thenReturn(true);
 
             var resp = service.getById(TRAVELER_ID, THREAD_ID);
@@ -1630,7 +1630,7 @@ class NegotiationServiceTest {
             when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
             when(commissionProperties.rate()).thenReturn(new BigDecimal("0.12"));
-            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any())).thenReturn(true);
+            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any(), any())).thenReturn(true);
             UUID newAnnId = UUID.randomUUID();
             when(announcementRepo.save(any())).thenAnswer(inv -> {
                 com.yadony.api.matching.AnnouncementEntity a = inv.getArgument(0);
@@ -1689,7 +1689,7 @@ class NegotiationServiceTest {
             when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
             when(commissionProperties.rate()).thenReturn(new BigDecimal("0.12"));
-            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any())).thenReturn(true);
+            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any(), any())).thenReturn(true);
             when(announcementRepo.save(any())).thenAnswer(inv -> {
                 com.yadony.api.matching.AnnouncementEntity a = inv.getArgument(0);
                 try {
@@ -1730,7 +1730,7 @@ class NegotiationServiceTest {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
             when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
-            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any())).thenReturn(true);
+            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any(), any())).thenReturn(true);
 
             var req = buildRequest(request.getDesiredDate().minusDays(3));
             assertThatThrownBy(() -> service.createDedicatedTrip(TRAVELER_ID, THREAD_ID, req))
@@ -1745,7 +1745,7 @@ class NegotiationServiceTest {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
             when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
-            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any())).thenReturn(true);
+            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any(), any())).thenReturn(true);
 
             var req = buildRequest(request.getDesiredDate().plusDays(3));
             assertThatThrownBy(() -> service.createDedicatedTrip(TRAVELER_ID, THREAD_ID, req))
@@ -1798,7 +1798,7 @@ class NegotiationServiceTest {
             when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
             when(commissionProperties.rate()).thenReturn(new BigDecimal("0.12"));
-            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any())).thenReturn(false);
+            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any(), any())).thenReturn(false);
 
             // buildRequest uses CASH as payment method (now ignored — request only accepts CASH,
             // and the wallet has insufficient funds with no card consent → SET is empty).
@@ -1883,7 +1883,7 @@ class NegotiationServiceTest {
             when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
             when(commissionProperties.rate()).thenReturn(new java.math.BigDecimal("0.12"));
-            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any())).thenReturn(false);
+            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any(), any())).thenReturn(false);
 
             var req = new com.yadony.api.requests.dto.NegotiationSubmitTripRequest(annId, PaymentMethod.CASH);
 
@@ -2062,7 +2062,7 @@ class NegotiationServiceTest {
             when(requestRepo.findById(any())).thenReturn(java.util.Optional.of(request));
             when(userRepository.findById(travelerId)).thenReturn(java.util.Optional.of(traveler));
             when(commissionProperties.rate()).thenReturn(new BigDecimal("0.05"));
-            when(cashGatePort.hasSufficientFunds(eq(travelerId), any())).thenReturn(false);
+            when(cashGatePort.hasSufficientFunds(eq(travelerId), any(), any())).thenReturn(false);
 
             com.yadony.api.requests.dto.NegotiationSubmitTripRequest req =
                 new com.yadony.api.requests.dto.NegotiationSubmitTripRequest(annId, PaymentMethod.CASH, false); // pas de consentement
@@ -2113,7 +2113,7 @@ class NegotiationServiceTest {
             when(userRepository.findById(SENDER_ID)).thenReturn(java.util.Optional.of(traveler));
             when(announcementRepo.findById(annId)).thenReturn(java.util.Optional.of(ann));
             when(commissionProperties.rate()).thenReturn(new BigDecimal("0.05"));
-            when(cashGatePort.hasSufficientFunds(eq(travelerId), any())).thenReturn(false);
+            when(cashGatePort.hasSufficientFunds(eq(travelerId), any(), any())).thenReturn(false);
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(threadId)).thenReturn(List.of());
 
             service.submitTrip(travelerId, threadId,
@@ -2163,7 +2163,7 @@ class NegotiationServiceTest {
             when(userRepository.findById(SENDER_ID)).thenReturn(java.util.Optional.of(traveler));
             when(announcementRepo.findById(annId)).thenReturn(java.util.Optional.of(ann));
             when(commissionProperties.rate()).thenReturn(new BigDecimal("0.05"));
-            when(cashGatePort.hasSufficientFunds(eq(travelerId), any())).thenReturn(false);
+            when(cashGatePort.hasSufficientFunds(eq(travelerId), any(), any())).thenReturn(false);
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(threadId)).thenReturn(List.of());
 
             NegotiationThreadResponse res = service.submitTrip(travelerId, threadId,
