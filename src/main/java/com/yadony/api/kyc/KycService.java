@@ -128,6 +128,18 @@ public class KycService {
         user.setKycStatus(KycStatus.NOT_STARTED);
         userRepository.save(user);
 
+        // Best-effort: cancel the Stripe session so it doesn't linger PENDING forever.
+        // Never blocks the local abandon if Stripe is unreachable or the session already terminated.
+        kycRepository.findByUserId(user.getId())
+                .map(KycVerificationEntity::getStripeVerificationSessionId)
+                .ifPresent(sessionId -> {
+                    try {
+                        VerificationSession.retrieve(sessionId).cancel();
+                    } catch (Exception e) {
+                        log.warn("Could not cancel Stripe KYC session {} on abandon: {}", sessionId, e.getMessage());
+                    }
+                });
+
         auditService.log("kyc_verification", user.getId(), "KYC_SESSION_ABANDONED",
                 user.getId(), Map.of("reason", "user_closed_webview"));
     }
@@ -143,7 +155,12 @@ public class KycService {
                 .map(k -> k.getStatus().name())
                 .orElse("NOT_STARTED");
 
-        return new KycStatusResponse(user.getKycStatus().name(), verificationStatus);
+        return new KycStatusResponse(
+                user.getKycStatus().name(),
+                verificationStatus,
+                kyc.map(KycVerificationEntity::getRejectionReason).orElse(null),
+                kyc.map(KycVerificationEntity::getRejectionCode).orElse(null)
+        );
     }
 
 }

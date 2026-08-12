@@ -105,6 +105,21 @@ class KycServiceTest {
         assertThat(resp.verificationStatus()).isEqualTo("VERIFIED");
     }
 
+    @Test
+    void getStatus_withRejectedKycRecord_exposesReasonAndCode() {
+        UserEntity user = buildUser(KycStatus.REJECTED);
+        KycVerificationEntity kyc = buildKyc(user.getId(), KycVerificationStatus.REJECTED);
+        kyc.setRejectionReason("The document is invalid.");
+        kyc.setRejectionCode("document_unverified_other");
+        when(userRepository.findByFirebaseUid("uid-001")).thenReturn(Optional.of(user));
+        when(kycRepository.findByUserId(user.getId())).thenReturn(Optional.of(kyc));
+
+        KycStatusResponse resp = service.getStatus("uid-001");
+
+        assertThat(resp.rejectionReason()).isEqualTo("The document is invalid.");
+        assertThat(resp.rejectionCode()).isEqualTo("document_unverified_other");
+    }
+
     // ── createSession ─────────────────────────────────────────────────────────
 
     @Test
@@ -215,5 +230,43 @@ class KycServiceTest {
         when(userRepository.findByFirebaseUid("unknown")).thenReturn(Optional.empty());
         assertThatThrownBy(() -> service.abandonSession("unknown"))
                 .isInstanceOf(YadonyNotFoundException.class);
+    }
+
+    @Test
+    void abandonSession_withActiveStripeSession_cancelsIt() throws Exception {
+        UserEntity user = buildUser(KycStatus.PENDING);
+        KycVerificationEntity kyc = buildKyc(user.getId(), KycVerificationStatus.PENDING);
+        when(userRepository.findByFirebaseUid("uid-001")).thenReturn(Optional.of(user));
+        when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(kycRepository.findByUserId(user.getId())).thenReturn(Optional.of(kyc));
+
+        try (MockedStatic<VerificationSession> vsStatic = mockStatic(VerificationSession.class)) {
+            VerificationSession mockSession = mock(VerificationSession.class);
+            vsStatic.when(() -> VerificationSession.retrieve("vs_test_001")).thenReturn(mockSession);
+
+            service.abandonSession("uid-001");
+
+            assertThat(user.getKycStatus()).isEqualTo(KycStatus.NOT_STARTED);
+            verify(mockSession).cancel();
+        }
+    }
+
+    @Test
+    void abandonSession_stripeCancelFails_stillResetsLocalStatus() {
+        UserEntity user = buildUser(KycStatus.PENDING);
+        KycVerificationEntity kyc = buildKyc(user.getId(), KycVerificationStatus.PENDING);
+        when(userRepository.findByFirebaseUid("uid-001")).thenReturn(Optional.of(user));
+        when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(kycRepository.findByUserId(user.getId())).thenReturn(Optional.of(kyc));
+
+        try (MockedStatic<VerificationSession> vsStatic = mockStatic(VerificationSession.class)) {
+            vsStatic.when(() -> VerificationSession.retrieve("vs_test_001"))
+                    .thenThrow(new RuntimeException("Stripe unavailable"));
+
+            service.abandonSession("uid-001");
+
+            assertThat(user.getKycStatus()).isEqualTo(KycStatus.NOT_STARTED);
+            verify(userRepository).save(user);
+        }
     }
 }
