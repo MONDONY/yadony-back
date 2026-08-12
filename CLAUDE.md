@@ -702,6 +702,7 @@ public class AnnouncementService {
 19. ❌ Capturer un `PaymentIntent` sans passer par `markCapturedIfEscrow()` en premier — protection atomique contre la double capture
 20. ❌ Laisser `yadony.kyc.enforce` ou `yadony.stripe.enforce` à `false` en prod — ces flags doivent être `true` en production
 21. ❌ Commenter ou désactiver les vérifications KYC/Stripe avec un TODO — utiliser les flags `yadony.kyc.enforce` et `yadony.stripe.enforce` à la place
+22. ❌ Laisser du code mort dans le repo — un service/controller/DTO sans aucun appelant (frontend ou backend) doit être supprimé, pas laissé "au cas où". Vérifier par `grep` avant de le garder ; supprimer aussi ses tests dédiés
 
 ### ALWAYS:
 

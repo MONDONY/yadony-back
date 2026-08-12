@@ -1149,7 +1149,8 @@ public class AnnouncementService {
                 flagService.getFlag(entity.getDepartureCountryCode()),
                 flagService.getFlag(entity.getArrivalCountryCode()),
                 entity.getHandoverWindowStart(),
-                entity.getHandoverWindowEnd()
+                entity.getHandoverWindowEnd(),
+                entity.getCurrency()
         );
     }
 

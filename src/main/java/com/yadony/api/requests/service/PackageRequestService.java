@@ -846,7 +846,8 @@ public class PackageRequestService {
             photos,
             viewerThreadId,
             viewerThreadStatus,
-            e.getPromoCode()
+            e.getPromoCode(),
+            e.getCurrency()
         );
     }
 

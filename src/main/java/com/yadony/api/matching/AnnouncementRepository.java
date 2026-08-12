@@ -164,6 +164,7 @@ public interface AnnouncementRepository extends JpaRepository<AnnouncementEntity
         SELECT a FROM AnnouncementEntity a
         WHERE LOWER(a.departureCity) = LOWER(:departure)
           AND LOWER(a.arrivalCity)   = LOWER(:arrival)
+          AND a.currency = :currency
           AND a.departureDate >= CURRENT_DATE
           AND a.status <> com.yadony.api.matching.AnnouncementStatus.DRAFT
         ORDER BY a.createdAt DESC
@@ -171,6 +172,7 @@ public interface AnnouncementRepository extends JpaRepository<AnnouncementEntity
     List<AnnouncementEntity> findRecentByCorridor(
         @Param("departure") String departure,
         @Param("arrival") String arrival,
+        @Param("currency") String currency,
         org.springframework.data.domain.Pageable pageable);
 
     /**

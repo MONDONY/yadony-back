@@ -165,7 +165,7 @@ class AnnouncementRepositoryCorridorTest {
         assertThat(result.get(0).getStatus()).isEqualTo(AnnouncementStatus.ACTIVE);
     }
 
-    // ── findRecentByCorridor (estimation de prix publique — PriceEstimationService/MarketPriceService) ──
+    // ── findRecentByCorridor (estimation de prix publique — PriceEstimationService) ──
 
     @Test
     void findRecentByCorridor_draft_excluded_activeIncluded() {
@@ -173,10 +173,29 @@ class AnnouncementRepositoryCorridorTest {
         repository.saveAndFlush(newAnnouncement("Paris", "Bamako", AnnouncementStatus.ACTIVE));
 
         List<AnnouncementEntity> result = repository.findRecentByCorridor(
-                "Paris", "Bamako", org.springframework.data.domain.PageRequest.of(0, 30));
+                "Paris", "Bamako", "EUR", org.springframework.data.domain.PageRequest.of(0, 30));
 
         assertThat(result).hasSize(1);
         assertThat(result.get(0).getStatus()).isEqualTo(AnnouncementStatus.ACTIVE);
+    }
+
+    @Test
+    void findRecentByCorridor_filtersByCurrency_excludesOtherCurrencies() {
+        // Deux annonces sur le même corridor mais en devises différentes : moyenner
+        // leurs prix serait sans signification, la requête doit isoler la devise demandée.
+        AnnouncementEntity eur = newAnnouncement("Paris", "Bamako", AnnouncementStatus.ACTIVE);
+        eur.setCurrency("EUR");
+        repository.saveAndFlush(eur);
+
+        AnnouncementEntity cad = newAnnouncement("Paris", "Bamako", AnnouncementStatus.ACTIVE);
+        cad.setCurrency("CAD");
+        repository.saveAndFlush(cad);
+
+        List<AnnouncementEntity> result = repository.findRecentByCorridor(
+                "Paris", "Bamako", "CAD", org.springframework.data.domain.PageRequest.of(0, 30));
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).getCurrency()).isEqualTo("CAD");
     }
 
     // ── findTopDestinationsForTraveler (TravelerStatsService) ──────────────────

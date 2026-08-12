@@ -33,7 +33,8 @@ public record PackageRequestSearchResponse(
     /** Trajet du voyageur retenu pour ce match. Null hors filtre matchingMyTrips. */
     UUID matchedTripId,
     /** Date de départ du trajet retenu. Null hors filtre matchingMyTrips. */
-    LocalDate matchedTripDepartureDate
+    LocalDate matchedTripDepartureDate,
+    String currency
 ) {
     public record SenderPublicProfile(UUID id, String displayName, double averageRating, int totalRatings, boolean kycVerified, String avatarUrl) {}
 
@@ -47,6 +48,6 @@ public record PackageRequestSearchResponse(
                 targetPriceEur, negotiable, photoUrl,
                 pickupNeighborhood, deliveryNeighborhood,
                 sender, acceptedPaymentMethods, photos, isFavorite, urgent,
-                info.matchScore(), info.tripId(), info.tripDepartureDate());
+                info.matchScore(), info.tripId(), info.tripDepartureDate(), currency);
     }
 }

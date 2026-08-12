@@ -44,5 +44,6 @@ public record AnnouncementResponse(
         String departureFlag,
         String arrivalFlag,
         LocalDateTime handoverWindowStart,
-        LocalDateTime handoverWindowEnd
+        LocalDateTime handoverWindowEnd,
+        String currency
 ) {}

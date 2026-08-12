@@ -38,5 +38,6 @@ public record AnnouncementSearchResponse(
         LocalDateTime handoverWindowStart,
         LocalDateTime handoverWindowEnd,
         boolean isFavorite,
-        boolean urgent
+        boolean urgent,
+        String currency
 ) {}

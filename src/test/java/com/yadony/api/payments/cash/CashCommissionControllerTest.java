@@ -180,7 +180,7 @@ class CashCommissionControllerTest {
     void acceptCashBid_insufficientWallet_returns409WithDetails() throws Exception {
         when(cashCommissionService.acceptCashBid(any(), any(), any()))
                 .thenReturn(AcceptBidResponse.insufficientWallet(
-                        new java.math.BigDecimal("3.00"), new java.math.BigDecimal("12.00"), true));
+                        new java.math.BigDecimal("3.00"), new java.math.BigDecimal("12.00"), true, "EUR"));
 
         mockMvc.perform(post("/bids/{bidId}/accept-with-commission", BID_ID)
                 .with(authentication(asTraveler())))

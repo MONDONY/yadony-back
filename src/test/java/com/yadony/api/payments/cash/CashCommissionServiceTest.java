@@ -676,6 +676,26 @@ class CashCommissionServiceTest {
         }
 
         @Test
+        void walletFirstPath_nonEurCurrency_checksAndDebitsInBidCurrency() {
+            // Un bid/annonce CAD doit interroger et débiter le wallet CAD, pas le
+            // wallet EUR — sinon le voyageur avec un solde CAD suffisant se voit
+            // renvoyer « solde insuffisant » à tort.
+            bid.setCurrency("CAD");
+            announcement.setCurrency("CAD");
+            java.math.BigDecimal commission = new java.math.BigDecimal("12.00"); // 5kg × 20 × 12%
+            when(walletService.getBalance(travelerId, "CAD")).thenReturn(commission.add(java.math.BigDecimal.ONE));
+            when(walletTransactionRepository.existsByUserIdAndBidIdAndType(eq(travelerId), any(), any()))
+                    .thenReturn(false);
+
+            AcceptBidResponse resp = service.acceptCashBid(bid.getId(), travelerId, com.yadony.api.payments.cash.CommissionSource.WALLET_FIRST);
+
+            assertThat(resp.status()).isEqualTo(AcceptanceStatusDto.ACCEPTED);
+            verify(walletService).debit(eq(travelerId), eq("CAD"), any(), eq(com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED), any());
+            verify(walletService, never()).getBalance(travelerId, "EUR");
+            verify(walletService, never()).debit(eq(travelerId), eq("EUR"), any(), any(), any());
+        }
+
+        @Test
         void gridOnlyBid_nullWeight_acceptsWithoutNpe_commissionFromGrid() {
             // Bid grille pure : weightKg null. La commission doit venir de la grille
             // (et non du poids), sans NPE, et la capacité kilo ne doit pas être touchée.
@@ -714,6 +734,22 @@ class CashCommissionServiceTest {
             assertThat(resp.hasCard()).isFalse();
             assertThat(bid.getStatus()).isNotEqualTo(BidStatus.ACCEPTED);
             verify(events, never()).publishEvent(any());
+        }
+
+        @Test
+        void walletFirstPath_insufficientBalance_nonEurCurrency_exposesBidCurrency() {
+            // Le client a besoin de savoir dans QUELLE devise sont exprimés
+            // availableBalance/requiredCommission pour les afficher correctement —
+            // sinon un montant CAD s'affiche avec le symbole € par défaut.
+            bid.setCurrency("CAD");
+            announcement.setCurrency("CAD");
+            traveler.setCommissionPaymentMethodId(null);
+            when(walletService.getBalance(travelerId, "CAD")).thenReturn(java.math.BigDecimal.ZERO);
+
+            AcceptBidResponse resp = service.acceptCashBid(bid.getId(), travelerId, com.yadony.api.payments.cash.CommissionSource.WALLET_FIRST);
+
+            assertThat(resp.status()).isEqualTo(AcceptanceStatusDto.INSUFFICIENT_WALLET);
+            assertThat(resp.currency()).isEqualTo("CAD");
         }
 
         @Test
@@ -1030,6 +1066,23 @@ class CashCommissionServiceTest {
             verify(bidRepo, never()).save(any());
             verifyNoInteractions(auditService);
         }
+
+        @Test
+        void debitsWalletInBidCurrency_notAlwaysEur() {
+            // Un bid CAD doit débiter le wallet CAD du voyageur, pas le wallet EUR
+            // (sinon un voyageur avec un wallet CAD approvisionné se voit refuser
+            // l'acceptation faute de solde EUR, qu'il n'a jamais eu besoin d'avoir).
+            bid.setCurrency("CAD");
+            when(walletTransactionRepository.existsByUserIdAndBidIdAndType(
+                    travelerId, bid.getId(), com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED))
+                    .thenReturn(false);
+
+            service.chargeCommissionFromWallet(bid, travelerId, new BigDecimal("12.00"));
+
+            verify(walletService).debit(eq(travelerId), eq("CAD"), eq(new BigDecimal("12.00")),
+                    eq(com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED), eq(bid.getId()));
+            verify(walletService, never()).debit(eq(travelerId), eq("EUR"), any(), any(), any());
+        }
     }
 
     // ===================== chargeCommissionAuto (mobile money) =====================
@@ -1066,6 +1119,23 @@ class CashCommissionServiceTest {
             assertThat(bid.getCommissionChargedVia()).isEqualTo(CommissionChargedVia.WALLET);
             verify(walletService).debit(eq(travelerId), eq("EUR"), any(),
                     eq(com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED), eq(bid.getId()));
+        }
+
+        @Test
+        void walletSufficient_nonEurCurrency_chargesInBidCurrency() {
+            // Flux mobile money asynchrone : un bid CAD doit interroger/débiter le
+            // wallet CAD, jamais le wallet EUR.
+            bid.setCurrency("CAD");
+            when(walletService.getBalance(travelerId, "CAD")).thenReturn(new BigDecimal("50.00"));
+            when(walletTransactionRepository.existsByUserIdAndBidIdAndType(eq(travelerId), eq(bid.getId()), any()))
+                    .thenReturn(false);
+
+            service.chargeCommissionAuto(bid, travelerId);
+
+            assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.CHARGED);
+            verify(walletService).debit(eq(travelerId), eq("CAD"), any(),
+                    eq(com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED), eq(bid.getId()));
+            verify(walletService, never()).getBalance(travelerId, "EUR");
         }
 
         @Test
@@ -1177,10 +1247,15 @@ class CashCommissionServiceTest {
         }
 
         private com.yadony.api.payments.wallet.WalletTransactionEntity commissionTx(BigDecimal amount) {
+            return commissionTx(amount, "EUR");
+        }
+
+        private com.yadony.api.payments.wallet.WalletTransactionEntity commissionTx(BigDecimal amount, String currency) {
             com.yadony.api.payments.wallet.WalletTransactionEntity tx =
                     new com.yadony.api.payments.wallet.WalletTransactionEntity();
             tx.setAmount(amount.negate()); // débit stocké en négatif
             tx.setType(com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED);
+            tx.setCurrency(currency);
             return tx;
         }
 
@@ -1200,6 +1275,23 @@ class CashCommissionServiceTest {
             verify(bidRepo).save(bid);
             verify(auditService).log(eq("payment"), eq(bid.getId()), eq("COMMISSION_REFUNDED_TO_WALLET"),
                     eq(travelerId), any());
+        }
+
+        @Test
+        void creditsWalletInOriginalTransactionCurrency_notAlwaysEur() {
+            // Le remboursement doit créditer le wallet dans la MÊME devise que le
+            // débit d'origine (CAD ici), jamais forcer EUR.
+            String key = "wallet-refund-noshow-" + bid.getId();
+            when(walletTransactionRepository.findByUserIdAndBidIdAndType(
+                    travelerId, bid.getId(), com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED))
+                    .thenReturn(Optional.of(commissionTx(new BigDecimal("12.00"), "CAD")));
+
+            service.refundCommissionToWallet(bid, travelerId, key);
+
+            verify(walletService).credit(eq(travelerId), eq("CAD"), eq(new BigDecimal("12.00")),
+                    eq(com.yadony.api.payments.wallet.WalletTransactionType.REFUND),
+                    eq("refund-" + bid.getId()), eq(key));
+            verify(walletService, never()).credit(eq(travelerId), eq("EUR"), any(), any(), any(), any());
         }
 
         @Test
@@ -1458,6 +1550,22 @@ class CashCommissionServiceTest {
             verify(negotiationThreadRepository).save(thread);
             verify(auditService).log(eq("NEGOTIATION_THREAD"), eq(threadId), eq("CASH_COMMISSION_CHARGED"),
                     eq(travelerId), any());
+        }
+
+        @Test
+        void walletSufficient_nonEurCurrency_chargesInThreadCurrency() {
+            // Un thread de négociation CAD doit débiter le wallet CAD, pas EUR.
+            thread.setCurrency("CAD");
+            when(negotiationThreadRepository.findById(threadId)).thenReturn(Optional.of(thread));
+            when(walletService.getBalance(travelerId, "CAD")).thenReturn(new BigDecimal("50.00"));
+
+            boolean charged = service.chargeNegotiationCommission(travelerId, senderId, threadId, thread.getCurrentPriceEur());
+
+            assertThat(charged).isTrue();
+            verify(walletService).debit(eq(travelerId), eq("CAD"), eq(new BigDecimal("12.00")),
+                    eq(com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED),
+                    eq(threadId.toString()), eq("nego_commission_wallet_" + threadId));
+            verify(walletService, never()).getBalance(travelerId, "EUR");
         }
 
         @Test

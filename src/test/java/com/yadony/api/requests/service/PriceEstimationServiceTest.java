@@ -45,10 +45,10 @@ class PriceEstimationServiceTest {
     @DisplayName("N=15 → confidence HIGH, range = avg×weight × [0.85, 1.15]")
     void estimate_highConfidence() {
         List<AnnouncementEntity> sample = buildSample(15, new BigDecimal("20"));
-        when(announcementRepo.findRecentByCorridor(eq("Paris"), eq("Dakar"), any(Pageable.class)))
+        when(announcementRepo.findRecentByCorridor(eq("Paris"), eq("Dakar"), eq("EUR"), any(Pageable.class)))
             .thenReturn(sample);
 
-        var est = service.estimate("Paris", "Dakar", new BigDecimal("5"));
+        var est = service.estimate("Paris", "Dakar", new BigDecimal("5"), "EUR");
 
         assertThat(est.confidence()).isEqualTo("HIGH");
         assertThat(est.lowEur()).isEqualByComparingTo("85.00");
@@ -60,10 +60,10 @@ class PriceEstimationServiceTest {
     @DisplayName("N=5 → confidence MEDIUM")
     void estimate_mediumConfidence() {
         List<AnnouncementEntity> sample = buildSample(5, new BigDecimal("20"));
-        when(announcementRepo.findRecentByCorridor(eq("Paris"), eq("Dakar"), any(Pageable.class)))
+        when(announcementRepo.findRecentByCorridor(eq("Paris"), eq("Dakar"), eq("EUR"), any(Pageable.class)))
             .thenReturn(sample);
 
-        var est = service.estimate("Paris", "Dakar", new BigDecimal("5"));
+        var est = service.estimate("Paris", "Dakar", new BigDecimal("5"), "EUR");
 
         assertThat(est.confidence()).isEqualTo("MEDIUM");
         assertThat(est.sampleSize()).isEqualTo(5);
@@ -73,10 +73,10 @@ class PriceEstimationServiceTest {
     @DisplayName("N=2 → confidence LOW")
     void estimate_lowConfidence() {
         List<AnnouncementEntity> sample = buildSample(2, new BigDecimal("20"));
-        when(announcementRepo.findRecentByCorridor(eq("Paris"), eq("Dakar"), any(Pageable.class)))
+        when(announcementRepo.findRecentByCorridor(eq("Paris"), eq("Dakar"), eq("EUR"), any(Pageable.class)))
             .thenReturn(sample);
 
-        var est = service.estimate("Paris", "Dakar", new BigDecimal("5"));
+        var est = service.estimate("Paris", "Dakar", new BigDecimal("5"), "EUR");
 
         assertThat(est.confidence()).isEqualTo("LOW");
         assertThat(est.sampleSize()).isEqualTo(2);
@@ -85,14 +85,28 @@ class PriceEstimationServiceTest {
     @Test
     @DisplayName("N=0 → fourchette null + LOW")
     void estimate_emptyCorridor() {
-        when(announcementRepo.findRecentByCorridor(eq("Paris"), eq("Dakar"), any(Pageable.class)))
+        when(announcementRepo.findRecentByCorridor(eq("Paris"), eq("Dakar"), eq("EUR"), any(Pageable.class)))
             .thenReturn(List.of());
 
-        var est = service.estimate("Paris", "Dakar", new BigDecimal("5"));
+        var est = service.estimate("Paris", "Dakar", new BigDecimal("5"), "EUR");
 
         assertThat(est.confidence()).isEqualTo("LOW");
         assertThat(est.lowEur()).isNull();
         assertThat(est.highEur()).isNull();
         assertThat(est.sampleSize()).isEqualTo(0);
+    }
+
+    @Test
+    @DisplayName("filtre le sample par devise et l'expose dans la réponse — jamais EUR forcé")
+    void estimate_nonEurCurrency_filtersRepositoryQueryAndExposesCurrency() {
+        List<AnnouncementEntity> sample = buildSample(15, new BigDecimal("20"));
+        when(announcementRepo.findRecentByCorridor(eq("Paris"), eq("Toronto"), eq("CAD"), any(Pageable.class)))
+            .thenReturn(sample);
+
+        var est = service.estimate("Paris", "Toronto", new BigDecimal("5"), "CAD");
+
+        assertThat(est.currency()).isEqualTo("CAD");
+        Mockito.verify(announcementRepo, Mockito.never())
+            .findRecentByCorridor(anyString(), anyString(), eq("EUR"), any(Pageable.class));
     }
 }

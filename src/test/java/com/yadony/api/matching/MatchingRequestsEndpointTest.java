@@ -70,7 +70,7 @@ class MatchingRequestsEndpointTest {
         MatchingRequestDto dto = new MatchingRequestDto(
                 UUID.randomUUID().toString(), UUID.randomUUID().toString(), "Paris → Bamako",
                 "2026-07-10", 23.0, UUID.randomUUID().toString(), "Awa K", "AK", 4.5, 3,
-                3.0, "Documents", 8.0, null, "excerpt", 80, "2026-06-20T10:00:00");
+                3.0, "Documents", 8.0, null, "excerpt", 80, "2026-06-20T10:00:00", "EUR");
         when(matchingService.findMatchingRequests(travelerId)).thenReturn(List.of(dto));
 
         mockMvc.perform(get("/travelers/me/matching-requests").with(authentication(asTraveler())))

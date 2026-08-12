@@ -117,7 +117,8 @@ public class AnnouncementSearchMapper {
                 entity.getHandoverWindowStart(),
                 entity.getHandoverWindowEnd(),
                 isFavorite,
-                computeUrgent(entity.getDepartureDate())
+                computeUrgent(entity.getDepartureDate()),
+                entity.getCurrency()
         );
     }
 
@@ -172,7 +173,8 @@ public class AnnouncementSearchMapper {
                 entity.getHandoverWindowStart(),
                 entity.getHandoverWindowEnd(),
                 isFavorite,
-                computeUrgent(entity.getDepartureDate())
+                computeUrgent(entity.getDepartureDate()),
+                entity.getCurrency()
         );
     }
 
