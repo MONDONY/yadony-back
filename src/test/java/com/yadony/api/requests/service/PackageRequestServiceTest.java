@@ -19,7 +19,7 @@ import com.yadony.api.requests.repository.NegotiationThreadRepository;
 import com.yadony.api.requests.repository.PackageRequestRepository;
 import com.yadony.api.requests.specification.PackageRequestSpecifications;
 import com.yadony.api.settings.UserBusinessPrefsEntity;
-import com.yadony.api.settings.UserBusinessPrefsRepository;
+import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.*;
@@ -54,7 +54,14 @@ class PackageRequestServiceTest {
     @Mock private StorageService storageService;
     @Mock private PackageRequestPhotoService photoService;
     @Mock private FavoriteRepository favoriteRepository;
-    @Mock private UserBusinessPrefsRepository userBusinessPrefsRepository;
+    @Mock private ActiveCurrencyResolver activeCurrencyResolver;
+
+    @org.junit.jupiter.api.BeforeEach
+    void stubDefaultActiveCurrency() {
+        org.mockito.Mockito.lenient()
+                .when(activeCurrencyResolver.resolve(org.mockito.ArgumentMatchers.any()))
+                .thenReturn("EUR");
+    }
     @Mock private com.yadony.api.matching.MatchingService matchingService;
     @Mock private com.yadony.api.matching.AnnouncementRepository announcementRepository;
     @Mock private com.yadony.api.common.CommissionRateResolver commissionRateResolver;
@@ -107,7 +114,7 @@ class PackageRequestServiceTest {
         service = new PackageRequestService(
                 repository, userRepository, eventPublisher, auditService, config,
                 threadRepository, cityRepository, commissionProperties,
-                storageService, photoService, favoriteRepository, userBusinessPrefsRepository, realMapper, matchingService,
+                storageService, photoService, favoriteRepository, activeCurrencyResolver, realMapper, matchingService,
                 yadonyConfig, announcementRepository, commissionRateResolver);
     }
 
@@ -387,28 +394,28 @@ class PackageRequestServiceTest {
             prefs.setCurrencyCode("CAD");
             when(config.maxOpenRequestsPerSender()).thenReturn(10);
             when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
-            when(userBusinessPrefsRepository.findById(SENDER_ID)).thenReturn(Optional.of(prefs));
+            when(activeCurrencyResolver.resolve(SENDER_ID)).thenReturn(prefs.getCurrencyCode());
             when(repository.countBySenderIdAndStatusIn(eq(SENDER_ID), any())).thenReturn(0L);
             when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
             PackageRequestEntity saved = service.createAndReturnEntity(SENDER_ID, validRequest());
 
             assertThat(saved.getCurrency()).isEqualTo("CAD");
-            verify(userBusinessPrefsRepository).findById(SENDER_ID);
+            verify(activeCurrencyResolver).resolve(SENDER_ID);
         }
 
         @Test @DisplayName("sans business prefs → fallback EUR après lookup repository")
         void create_defaultsToEurWhenSenderHasNoBusinessPrefs() {
             when(config.maxOpenRequestsPerSender()).thenReturn(10);
             when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
-            when(userBusinessPrefsRepository.findById(SENDER_ID)).thenReturn(Optional.empty());
+            when(activeCurrencyResolver.resolve(SENDER_ID)).thenReturn("EUR");
             when(repository.countBySenderIdAndStatusIn(eq(SENDER_ID), any())).thenReturn(0L);
             when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
             PackageRequestEntity saved = service.createAndReturnEntity(SENDER_ID, validRequest());
 
             assertThat(saved.getCurrency()).isEqualTo("EUR");
-            verify(userBusinessPrefsRepository).findById(SENDER_ID);
+            verify(activeCurrencyResolver).resolve(SENDER_ID);
         }
 
         // C2 : normalisation à l'écriture — un client pas à jour envoie un libellé/code
@@ -946,7 +953,7 @@ class PackageRequestServiceTest {
         @Test @DisplayName("caller sans prefs → spec repository inclut hasCurrency(EUR)")
         void searchNearMe_withoutPrefs_passesEurCurrencySpecToRepository() {
             UUID callerId = UUID.randomUUID();
-            when(userBusinessPrefsRepository.findById(callerId)).thenReturn(Optional.empty());
+            when(activeCurrencyResolver.resolve(callerId)).thenReturn("EUR");
 
             @SuppressWarnings("unchecked")
             ArgumentCaptor<org.springframework.data.jpa.domain.Specification<PackageRequestEntity>> specCaptor =
@@ -977,7 +984,7 @@ class PackageRequestServiceTest {
 
             assertThat(specCaptor.getValue()).isNotNull();
             assertCurrencyMarkerIncluded(specCaptor.getValue(), eurCurrencySpecIncluded);
-            verify(userBusinessPrefsRepository).findById(callerId);
+            verify(activeCurrencyResolver).resolve(callerId);
         }
 
         private com.yadony.api.city.CityEntity cityWith(BigDecimal lat, BigDecimal lng) {
@@ -1068,7 +1075,7 @@ class PackageRequestServiceTest {
             UserBusinessPrefsEntity prefs = new UserBusinessPrefsEntity();
             prefs.setUserId(callerId);
             prefs.setCurrencyCode("CAD");
-            when(userBusinessPrefsRepository.findById(callerId)).thenReturn(Optional.of(prefs));
+            when(activeCurrencyResolver.resolve(callerId)).thenReturn(prefs.getCurrencyCode());
 
             @SuppressWarnings("unchecked")
             ArgumentCaptor<org.springframework.data.jpa.domain.Specification<PackageRequestEntity>> specCaptor =
@@ -1097,7 +1104,7 @@ class PackageRequestServiceTest {
 
             assertThat(specCaptor.getValue()).isNotNull();
             assertCurrencyMarkerIncluded(specCaptor.getValue(), cadCurrencySpecIncluded);
-            verify(userBusinessPrefsRepository).findById(callerId);
+            verify(activeCurrencyResolver).resolve(callerId);
         }
 
         @Test @DisplayName("N résultats → userRepository.findAllById appelé 1 fois, findById jamais")

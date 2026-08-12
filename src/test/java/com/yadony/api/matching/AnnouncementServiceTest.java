@@ -18,7 +18,7 @@ import com.yadony.api.matching.dto.AnnouncementResponse;
 import com.yadony.api.matching.events.AnnouncementDeletedEvent;
 import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.settings.UserBusinessPrefsEntity;
-import com.yadony.api.settings.UserBusinessPrefsRepository;
+import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -65,7 +65,14 @@ class AnnouncementServiceTest {
     @Mock private com.yadony.api.country.FlagService flagService;
     @Mock private com.yadony.api.common.StorageService storageService;
     @Mock private FavoriteRepository favoriteRepository;
-    @Mock private UserBusinessPrefsRepository userBusinessPrefsRepository;
+    @Mock private ActiveCurrencyResolver activeCurrencyResolver;
+
+    @org.junit.jupiter.api.BeforeEach
+    void stubDefaultActiveCurrency() {
+        org.mockito.Mockito.lenient()
+                .when(activeCurrencyResolver.resolve(org.mockito.ArgumentMatchers.any()))
+                .thenReturn("EUR");
+    }
     @Mock private com.yadony.api.requests.repository.PackageRequestRepository packageRequestRepository;
     @Mock private com.yadony.api.requests.repository.NegotiationThreadRepository negotiationThreadRepository;
 
@@ -83,7 +90,7 @@ class AnnouncementServiceTest {
         announcementService = new AnnouncementService(
                 announcementRepository, bidRepository, userRepository,
                 auditService, eventPublisher, config, priceGridService, flagService,
-                storageService, favoriteRepository, userBusinessPrefsRepository, realMapper, packageRequestRepository,
+                storageService, favoriteRepository, activeCurrencyResolver, realMapper, packageRequestRepository,
                 negotiationThreadRepository);
     }
 
@@ -239,7 +246,7 @@ class AnnouncementServiceTest {
         void create_validRequest_createsAndAudits() {
             UserEntity traveler = buildTraveler();
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
-            when(userBusinessPrefsRepository.findById(traveler.getId())).thenReturn(Optional.empty());
+            when(activeCurrencyResolver.resolve(traveler.getId())).thenReturn("EUR");
             when(announcementRepository.save(any())).thenAnswer(inv -> {
                 AnnouncementEntity a = inv.getArgument(0);
                 setId(a, ANNOUNCEMENT_ID);
@@ -264,7 +271,7 @@ class AnnouncementServiceTest {
             prefs.setUserId(traveler.getId());
             prefs.setCurrencyCode("CAD");
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
-            when(userBusinessPrefsRepository.findById(traveler.getId())).thenReturn(Optional.of(prefs));
+            when(activeCurrencyResolver.resolve(traveler.getId())).thenReturn(prefs.getCurrencyCode());
             when(announcementRepository.save(any())).thenAnswer(inv -> {
                 AnnouncementEntity a = inv.getArgument(0);
                 setId(a, ANNOUNCEMENT_ID);
@@ -285,7 +292,7 @@ class AnnouncementServiceTest {
         void createAnnouncement_defaultsToEurWhenNoBusinessPrefs() {
             UserEntity traveler = buildTraveler();
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
-            when(userBusinessPrefsRepository.findById(traveler.getId())).thenReturn(Optional.empty());
+            when(activeCurrencyResolver.resolve(traveler.getId())).thenReturn("EUR");
             when(announcementRepository.save(any())).thenAnswer(inv -> {
                 AnnouncementEntity a = inv.getArgument(0);
                 setId(a, ANNOUNCEMENT_ID);
@@ -1623,7 +1630,7 @@ class AnnouncementServiceTest {
             prefs.setCurrencyCode("CAD");
 
             when(userRepository.findByFirebaseUid("viewer-cad")).thenReturn(Optional.of(viewer));
-            when(userBusinessPrefsRepository.findById(viewerId)).thenReturn(Optional.of(prefs));
+            when(activeCurrencyResolver.resolve(viewerId)).thenReturn(prefs.getCurrencyCode());
             when(favoriteRepository.findTargetIds(viewerId, FavoriteTargetType.TRIP)).thenReturn(List.of());
             when(announcementRepository.findAll(ArgumentMatchers.<Specification<AnnouncementEntity>>any(), any(Pageable.class)))
                     .thenReturn(Page.empty(PageRequest.of(0, 10)));
@@ -1646,7 +1653,7 @@ class AnnouncementServiceTest {
             setId(viewer, viewerId);
 
             when(userRepository.findByFirebaseUid("viewer-no-prefs")).thenReturn(Optional.of(viewer));
-            when(userBusinessPrefsRepository.findById(viewerId)).thenReturn(Optional.empty());
+            when(activeCurrencyResolver.resolve(viewerId)).thenReturn("EUR");
             when(favoriteRepository.findTargetIds(viewerId, FavoriteTargetType.TRIP)).thenReturn(List.of());
             when(announcementRepository.findAll(ArgumentMatchers.<Specification<AnnouncementEntity>>any(), any(Pageable.class)))
                     .thenReturn(Page.empty(PageRequest.of(0, 10)));
@@ -1665,6 +1672,7 @@ class AnnouncementServiceTest {
         @DisplayName("viewer Firebase UID inconnu → spec repository filtrée par défaut sur EUR")
         void searchAnnouncements_unknownViewerUid_defaultsToEurCurrencyFilterInRepositorySpec() {
             when(userRepository.findByFirebaseUid("viewer-unknown")).thenReturn(Optional.empty());
+            when(activeCurrencyResolver.resolve(null)).thenReturn("EUR");
 
             @SuppressWarnings("unchecked")
             ArgumentCaptor<Specification<AnnouncementEntity>> specCaptor =
@@ -1707,12 +1715,16 @@ class AnnouncementServiceTest {
 
             assertThat(eurCurrencySpecIncluded).isTrue();
             verify(userRepository).findByFirebaseUid("viewer-unknown");
-            verifyNoInteractions(userBusinessPrefsRepository, favoriteRepository);
+            // Le repli EUR appartient au résolveur, pas à l'appelant : il est donc
+            // bien sollicité, avec un viewer null.
+            verify(activeCurrencyResolver).resolve(null);
+            verifyNoInteractions(favoriteRepository);
         }
 
         @Test
         @DisplayName("viewer absent → filtre recherche par défaut sur EUR")
         void searchAnnouncements_missingViewer_defaultsToEurCurrencyFilter() {
+            when(activeCurrencyResolver.resolve(null)).thenReturn("EUR");
             when(announcementRepository.findAll(ArgumentMatchers.<Specification<AnnouncementEntity>>any(), any(Pageable.class)))
                     .thenReturn(Page.empty(PageRequest.of(0, 10)));
 
@@ -1726,7 +1738,7 @@ class AnnouncementServiceTest {
             }
 
             verify(userRepository, never()).findByFirebaseUid(null);
-            verifyNoInteractions(userBusinessPrefsRepository);
+            verify(activeCurrencyResolver).resolve(null);
         }
 
         // ─── computeUrgent boundary (DTO field, seuil de test = 3) ─────────────────
@@ -1952,7 +1964,7 @@ class AnnouncementServiceTest {
             AnnouncementService serviceWithLimits = new AnnouncementService(
                     announcementRepository, bidRepository, userRepository,
                     auditService, eventPublisher, configWithLimits, priceGridService, flagService,
-                    storageService, favoriteRepository, userBusinessPrefsRepository, mapperWithLimits, packageRequestRepository,
+                    storageService, favoriteRepository, activeCurrencyResolver, mapperWithLimits, packageRequestRepository,
                     negotiationThreadRepository);
 
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
@@ -2284,7 +2296,7 @@ class AnnouncementServiceTest {
             AnnouncementService serviceWithLimits = new AnnouncementService(
                     announcementRepository, bidRepository, userRepository,
                     auditService, eventPublisher, configWithLimits, priceGridService, flagService,
-                    storageService, favoriteRepository, userBusinessPrefsRepository, mapperWithLimits, packageRequestRepository,
+                    storageService, favoriteRepository, activeCurrencyResolver, mapperWithLimits, packageRequestRepository,
                     negotiationThreadRepository);
 
             AnnouncementEntity draft = draftEntityOwnedBy(user);

@@ -22,8 +22,7 @@ import com.yadony.api.requests.event.*;
 import com.yadony.api.requests.repository.NegotiationThreadRepository;
 import com.yadony.api.requests.repository.PackageRequestRepository;
 import com.yadony.api.requests.specification.PackageRequestSpecifications;
-import com.yadony.api.settings.UserBusinessPrefsEntity;
-import com.yadony.api.settings.UserBusinessPrefsRepository;
+import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -52,7 +51,6 @@ import java.util.stream.Collectors;
 @Service
 public class PackageRequestService {
 
-    private static final String DEFAULT_CURRENCY = "EUR";
 
     private final PackageRequestRepository repository;
     private final UserRepository userRepository;
@@ -65,7 +63,7 @@ public class PackageRequestService {
     private final StorageService storageService;
     private final PackageRequestPhotoService photoService;
     private final FavoriteRepository favoriteRepository;
-    private final UserBusinessPrefsRepository userBusinessPrefsRepository;
+    private final ActiveCurrencyResolver activeCurrencyResolver;
     private final PackageRequestSearchMapper packageRequestSearchMapper;
     private final MatchingService matchingService;
     private final YadonyConfigProperties yadonyConfig;
@@ -83,7 +81,7 @@ public class PackageRequestService {
                                   StorageService storageService,
                                   PackageRequestPhotoService photoService,
                                   FavoriteRepository favoriteRepository,
-                                  UserBusinessPrefsRepository userBusinessPrefsRepository,
+                                  ActiveCurrencyResolver activeCurrencyResolver,
                                   PackageRequestSearchMapper packageRequestSearchMapper,
                                   MatchingService matchingService,
                                   YadonyConfigProperties yadonyConfig,
@@ -100,7 +98,7 @@ public class PackageRequestService {
         this.storageService = storageService;
         this.photoService = photoService;
         this.favoriteRepository = favoriteRepository;
-        this.userBusinessPrefsRepository = userBusinessPrefsRepository;
+        this.activeCurrencyResolver = activeCurrencyResolver;
         this.packageRequestSearchMapper = packageRequestSearchMapper;
         this.matchingService = matchingService;
         this.yadonyConfig = yadonyConfig;
@@ -233,7 +231,7 @@ public class PackageRequestService {
 
         PackageRequestEntity entity = new PackageRequestEntity();
         entity.setSenderId(senderId);
-        entity.setCurrency(resolveActiveCurrency(senderId));
+        entity.setCurrency(activeCurrencyResolver.resolve(senderId));
         entity.setDepartureCity(req.departureCity());
         entity.setArrivalCity(req.arrivalCity());
         entity.setDesiredDate(req.desiredDate());
@@ -754,16 +752,7 @@ public class PackageRequestService {
             Specification<PackageRequestEntity> spec,
             UUID callerId) {
         return Specification.where(spec)
-                .and(PackageRequestSpecifications.hasCurrency(resolveActiveCurrency(callerId)));
-    }
-
-    private String resolveActiveCurrency(UUID userId) {
-        if (userId == null) {
-            return DEFAULT_CURRENCY;
-        }
-        return userBusinessPrefsRepository.findById(userId)
-                .map(UserBusinessPrefsEntity::getCurrencyCode)
-                .orElse(DEFAULT_CURRENCY);
+                .and(PackageRequestSpecifications.hasCurrency(activeCurrencyResolver.resolve(callerId)));
     }
 
     /** Immutable value object carrying the three batch-loaded maps for search mapping. */

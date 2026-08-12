@@ -18,7 +18,7 @@ import com.yadony.api.payments.dto.PaymentResponse;
 import com.yadony.api.payments.events.PaymentEscrowReadyEvent;
 import com.yadony.api.payments.currency.CurrencyMatchGuard;
 import com.yadony.api.settings.UserBusinessPrefsEntity;
-import com.yadony.api.settings.UserBusinessPrefsRepository;
+import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import com.stripe.exception.StripeException;
 import com.stripe.model.Account;
 import com.stripe.model.AccountLink;
@@ -62,7 +62,14 @@ class PaymentServiceTest {
     @Mock PaymentRepository paymentRepository;
     @Mock AuditService auditService;
     @Mock ApplicationEventPublisher eventPublisher;
-    @Mock UserBusinessPrefsRepository userBusinessPrefsRepository;
+    @Mock ActiveCurrencyResolver activeCurrencyResolver;
+
+    @org.junit.jupiter.api.BeforeEach
+    void stubDefaultActiveCurrency() {
+        org.mockito.Mockito.lenient()
+                .when(activeCurrencyResolver.resolve(org.mockito.ArgumentMatchers.any()))
+                .thenReturn("EUR");
+    }
 
     PaymentService service;
     com.yadony.api.common.CommissionRateResolver commissionRateResolver;
@@ -85,7 +92,7 @@ class PaymentServiceTest {
                 org.mockito.Mockito.mock(com.yadony.api.common.stripe.AdminAlertService.class),
                 commissionRateResolver, promoService, new StripeGatewayImpl(),
                 PaymentServiceTestFactory.stubbedContacts(),
-                userBusinessPrefsRepository, new CurrencyMatchGuard()
+                activeCurrencyResolver, new CurrencyMatchGuard()
 );
     }
 
@@ -757,8 +764,7 @@ class PaymentServiceTest {
 
         when(userRepository.findById(senderId)).thenReturn(Optional.of(sender));
         when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler));
-        when(userBusinessPrefsRepository.findById(senderId))
-                .thenReturn(Optional.of(prefsWithCurrency("CAD")));
+        when(activeCurrencyResolver.resolve(senderId)).thenReturn("CAD");
         when(paymentRepository.findByNegotiationThreadId(threadId)).thenReturn(Optional.empty());
         when(paymentRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
@@ -829,8 +835,7 @@ class PaymentServiceTest {
         UUID threadId = UUID.randomUUID();
         UserEntity sender = buildUser(senderId, "uid-sender");
         when(userRepository.findById(senderId)).thenReturn(Optional.of(sender));
-        when(userBusinessPrefsRepository.findById(senderId))
-                .thenReturn(Optional.of(prefsWithCurrency("CAD")));
+        when(activeCurrencyResolver.resolve(senderId)).thenReturn("CAD");
 
         assertYadonyError(
                 () -> service.createNegotiationEscrow(
@@ -1083,8 +1088,7 @@ class PaymentServiceTest {
         traveler.setStripeAccountStatus(StripeAccountStatus.ONBOARDING_COMPLETE);
         when(userRepository.findById(senderId)).thenReturn(Optional.of(sender));
         when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler));
-        when(userBusinessPrefsRepository.findById(senderId))
-                .thenReturn(Optional.of(prefsWithCurrency("CAD")));
+        when(activeCurrencyResolver.resolve(senderId)).thenReturn("CAD");
 
         PaymentEntity legacy = new PaymentEntity();
         setId(legacy, UUID.randomUUID());
@@ -1196,8 +1200,7 @@ class PaymentServiceTest {
         traveler.setStripeAccountStatus(StripeAccountStatus.ONBOARDING_COMPLETE);
         when(userRepository.findById(senderId)).thenReturn(Optional.of(sender));
         when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler));
-        when(userBusinessPrefsRepository.findById(senderId))
-                .thenReturn(Optional.of(prefsWithCurrency(serverCurrency)));
+        when(activeCurrencyResolver.resolve(senderId)).thenReturn(serverCurrency);
         when(paymentRepository.findByNegotiationThreadId(threadId)).thenReturn(Optional.empty());
         when(paymentRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 

@@ -15,8 +15,7 @@ import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.config.ContentCategoryNormalizer;
 import com.yadony.api.config.YadonyConfigProperties;
-import com.yadony.api.settings.UserBusinessPrefsEntity;
-import com.yadony.api.settings.UserBusinessPrefsRepository;
+import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import com.yadony.api.matching.dto.AnnouncementDetailResponse;
 import com.yadony.api.matching.dto.AnnouncementPriceGridItemResponse;
 import com.yadony.api.matching.dto.AnnouncementRequest;
@@ -97,7 +96,7 @@ public class AnnouncementService {
     private final com.yadony.api.country.FlagService flagService;
     private final StorageService storageService;
     private final FavoriteRepository favoriteRepository;
-    private final UserBusinessPrefsRepository userBusinessPrefsRepository;
+    private final ActiveCurrencyResolver activeCurrencyResolver;
     private final AnnouncementSearchMapper announcementSearchMapper;
     private final PackageRequestRepository packageRequestRepository;
     private final NegotiationThreadRepository negotiationThreadRepository;
@@ -119,7 +118,7 @@ public class AnnouncementService {
             com.yadony.api.country.FlagService flagService,
             StorageService storageService,
             FavoriteRepository favoriteRepository,
-            UserBusinessPrefsRepository userBusinessPrefsRepository,
+            ActiveCurrencyResolver activeCurrencyResolver,
             AnnouncementSearchMapper announcementSearchMapper,
             PackageRequestRepository packageRequestRepository,
             NegotiationThreadRepository negotiationThreadRepository
@@ -134,7 +133,7 @@ public class AnnouncementService {
         this.flagService = flagService;
         this.storageService = storageService;
         this.favoriteRepository = favoriteRepository;
-        this.userBusinessPrefsRepository = userBusinessPrefsRepository;
+        this.activeCurrencyResolver = activeCurrencyResolver;
         this.announcementSearchMapper = announcementSearchMapper;
         this.packageRequestRepository = packageRequestRepository;
         this.negotiationThreadRepository = negotiationThreadRepository;
@@ -161,11 +160,7 @@ public class AnnouncementService {
                 : userRepository.findByFirebaseUid(viewerFirebaseUid)
                         .map(UserEntity::getId)
                         .orElse(null);
-        String viewerCurrency = viewerId != null
-                ? userBusinessPrefsRepository.findById(viewerId)
-                        .map(UserBusinessPrefsEntity::getCurrencyCode)
-                        .orElse("EUR")
-                : "EUR";
+        String viewerCurrency = activeCurrencyResolver.resolve(viewerId);
 
         Specification<AnnouncementEntity> spec = AnnouncementSpecification.hasStatus(AnnouncementStatus.ACTIVE)
                 .and(AnnouncementSpecification.publicOrOpenSurplus())
@@ -364,9 +359,7 @@ public class AnnouncementService {
 
         AnnouncementEntity announcement = new AnnouncementEntity();
         announcement.setTravelerId(user.getId());
-        String creatorCurrency = userBusinessPrefsRepository.findById(user.getId())
-                .map(UserBusinessPrefsEntity::getCurrencyCode)
-                .orElse("EUR");
+        String creatorCurrency = activeCurrencyResolver.resolve(user.getId());
         announcement.setCurrency(creatorCurrency);
         announcement.setTravelerIsPro(user.isProAccount());
         announcement.setDepartureCity(request.departureCity());

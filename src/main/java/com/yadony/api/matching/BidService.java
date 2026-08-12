@@ -28,8 +28,7 @@ import com.yadony.api.cancellation.CancellationScope;
 import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.payments.currency.CurrencyMatchGuard;
 import com.yadony.api.ratings.RatingRepository;
-import com.yadony.api.settings.UserBusinessPrefsEntity;
-import com.yadony.api.settings.UserBusinessPrefsRepository;
+import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
@@ -68,7 +67,7 @@ public class BidService {
     private final StorageService storageService;
     private final BidPhotoService bidPhotoService;
     private final FirebaseContactService firebaseContact;
-    private final UserBusinessPrefsRepository userBusinessPrefsRepository;
+    private final ActiveCurrencyResolver activeCurrencyResolver;
     private final CurrencyMatchGuard currencyMatchGuard;
 
     public BidService(BidRepository bidRepository, AnnouncementRepository announcementRepository,
@@ -83,7 +82,7 @@ public class BidService {
                       StorageService storageService,
                       BidPhotoService bidPhotoService,
                       FirebaseContactService firebaseContact,
-                      UserBusinessPrefsRepository userBusinessPrefsRepository,
+                      ActiveCurrencyResolver activeCurrencyResolver,
                       CurrencyMatchGuard currencyMatchGuard) {
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
@@ -100,7 +99,7 @@ public class BidService {
         this.storageService = storageService;
         this.bidPhotoService = bidPhotoService;
         this.firebaseContact = firebaseContact;
-        this.userBusinessPrefsRepository = userBusinessPrefsRepository;
+        this.activeCurrencyResolver = activeCurrencyResolver;
         this.currencyMatchGuard = currencyMatchGuard;
     }
 
@@ -210,9 +209,7 @@ public class BidService {
                     "Cette annonce n'est plus disponible");
         }
 
-        String senderCurrency = userBusinessPrefsRepository.findById(sender.getId())
-                .map(UserBusinessPrefsEntity::getCurrencyCode)
-                .orElse("EUR");
+        String senderCurrency = activeCurrencyResolver.resolve(sender.getId());
         currencyMatchGuard.assertMatches(announcement.getCurrency(), senderCurrency);
 
         if (!sender.getRoles().contains(Role.SENDER)) {

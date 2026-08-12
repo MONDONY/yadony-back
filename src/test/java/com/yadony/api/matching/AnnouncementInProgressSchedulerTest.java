@@ -84,7 +84,7 @@ class AnnouncementInProgressTransitionTest {
                 mock(com.yadony.api.country.FlagService.class),
                 mock(com.yadony.api.common.StorageService.class),
                 mock(com.yadony.api.favorites.FavoriteRepository.class),
-                mock(com.yadony.api.settings.UserBusinessPrefsRepository.class),
+                mock(com.yadony.api.payments.currency.ActiveCurrencyResolver.class, inv -> "EUR"),
                 mock(AnnouncementSearchMapper.class),
                 mock(com.yadony.api.requests.repository.PackageRequestRepository.class),
                 mock(com.yadony.api.requests.repository.NegotiationThreadRepository.class));

@@ -22,7 +22,7 @@ import com.yadony.api.payments.dto.CreatePaymentRequest;
 import com.yadony.api.payments.dto.PaymentResponse;
 import com.yadony.api.promo.PromoService;
 import com.yadony.api.settings.UserBusinessPrefsEntity;
-import com.yadony.api.settings.UserBusinessPrefsRepository;
+import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -61,7 +61,14 @@ class PaymentServiceLegacyIntentRecoveryTest {
     @Mock CommissionRateResolver commissionRateResolver;
     @Mock PromoService promoService;
     @Mock StripeGateway stripeGateway;
-    @Mock UserBusinessPrefsRepository userBusinessPrefsRepository;
+    @Mock ActiveCurrencyResolver activeCurrencyResolver;
+
+    @org.junit.jupiter.api.BeforeEach
+    void stubDefaultActiveCurrency() {
+        org.mockito.Mockito.lenient()
+                .when(activeCurrencyResolver.resolve(org.mockito.ArgumentMatchers.any()))
+                .thenReturn("EUR");
+    }
 
     private PaymentService service;
 
@@ -89,7 +96,7 @@ class PaymentServiceLegacyIntentRecoveryTest {
                 promoService,
                 stripeGateway,
                 PaymentServiceTestFactory.stubbedContacts(),
-                userBusinessPrefsRepository,
+                activeCurrencyResolver,
                 new CurrencyMatchGuard());
     }
 
@@ -331,8 +338,7 @@ class PaymentServiceLegacyIntentRecoveryTest {
         lenient().when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler));
         when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
         when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(announcement()));
-        when(userBusinessPrefsRepository.findById(senderId))
-                .thenReturn(Optional.of(prefs("CAD")));
+        when(activeCurrencyResolver.resolve(senderId)).thenReturn("CAD");
         when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.of(payment));
         Account account = activeAccount();
         lenient().when(stripeGateway.retrieveAccount("acct_traveler")).thenReturn(account);
@@ -342,8 +348,7 @@ class PaymentServiceLegacyIntentRecoveryTest {
     private void stubExistingNegotiation(UUID threadId, PaymentEntity payment) throws StripeException {
         when(userRepository.findById(senderId)).thenReturn(Optional.of(sender()));
         when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler()));
-        when(userBusinessPrefsRepository.findById(senderId))
-                .thenReturn(Optional.of(prefs("EUR")));
+        when(activeCurrencyResolver.resolve(senderId)).thenReturn("EUR");
         when(paymentRepository.findByNegotiationThreadId(threadId)).thenReturn(Optional.of(payment));
         Account account = activeAccount();
         lenient().when(stripeGateway.retrieveAccount("acct_traveler")).thenReturn(account);

@@ -37,7 +37,7 @@ public class WalletTopupOrchestrator {
     }
 
     private WalletTopupResponse initiateStripe(UUID userId, WalletTopupRequest request) {
-        SupportedCurrency currency = currencyCatalog.resolve(null, request.getCurrencyCode());
+        SupportedCurrency currency = currencyCatalog.resolve(request.getCurrencyCode());
         CurrencyAmount amount = CurrencyAmount.of(request.getAmount(), currency);
 
         PaymentIntentCreateParams params = PaymentIntentCreateParams.builder()

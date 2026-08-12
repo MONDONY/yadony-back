@@ -20,7 +20,7 @@ import com.yadony.api.ratings.RatingRepository;
 import com.yadony.api.matching.events.BidCreatedEvent;
 import com.yadony.api.matching.events.BidRejectedEvent;
 import com.yadony.api.settings.UserBusinessPrefsEntity;
-import com.yadony.api.settings.UserBusinessPrefsRepository;
+import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -69,7 +69,14 @@ class BidServiceTest {
     @Mock private StorageService storageService;
     @Mock private BidPhotoService bidPhotoService;
     @Mock private com.yadony.api.auth.FirebaseContactService firebaseContact;
-    @Mock private UserBusinessPrefsRepository userBusinessPrefsRepository;
+    @Mock private ActiveCurrencyResolver activeCurrencyResolver;
+
+    @org.junit.jupiter.api.BeforeEach
+    void stubDefaultActiveCurrency() {
+        org.mockito.Mockito.lenient()
+                .when(activeCurrencyResolver.resolve(org.mockito.ArgumentMatchers.any()))
+                .thenReturn("EUR");
+    }
     @Mock private HttpServletRequest httpRequest;
     @Spy private CurrencyMatchGuard currencyMatchGuard = new CurrencyMatchGuard();
 
@@ -165,8 +172,7 @@ class BidServiceTest {
     void stubCancellationRepository() {
         lenient().when(cancellationRepository.findAllByBidId(any()))
                 .thenReturn(java.util.List.of());
-        lenient().when(userBusinessPrefsRepository.findById(any()))
-                .thenReturn(Optional.empty());
+        lenient().when(activeCurrencyResolver.resolve(any())).thenReturn("EUR");
         // Les numéros viennent de Firebase, plus de la colonne users.phone_number
         lenient().when(firebaseContact.getContact(SENDER_UID)).thenReturn(
                 new com.yadony.api.auth.FirebaseContactService.Contact("+33612345678", null));
@@ -245,7 +251,7 @@ class BidServiceTest {
                         assertThat(ex.getErrorCode()).isEqualTo("currency-mismatch");
                     });
 
-            verify(userBusinessPrefsRepository).findById(SENDER_ID);
+            verify(activeCurrencyResolver).resolve(SENDER_ID);
             verify(userRepository, never()).save(any(UserEntity.class));
             verify(bidRepository, never()).save(any(BidEntity.class));
             verify(announcementRepository, never()).save(any(AnnouncementEntity.class));
@@ -264,8 +270,7 @@ class BidServiceTest {
 
             when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
             when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
-            when(userBusinessPrefsRepository.findById(SENDER_ID))
-                    .thenReturn(Optional.of(prefsWithCurrency("CAD")));
+            when(activeCurrencyResolver.resolve(SENDER_ID)).thenReturn("CAD");
             when(bidRepository.existsBySenderIdAndAnnouncementIdAndStatusIn(
                     SENDER_ID, ANNOUNCEMENT_ID, List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED)))
                     .thenReturn(false);

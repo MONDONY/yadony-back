@@ -82,7 +82,7 @@ class PaymentServiceTestFactory {
                 mock(PromoService.class),
                 new StripeGatewayImpl(),
                 PaymentServiceTestFactory.stubbedContacts(),
-                mock(com.yadony.api.settings.UserBusinessPrefsRepository.class),
+                mock(com.yadony.api.payments.currency.ActiveCurrencyResolver.class, inv -> "EUR"),
                 new com.yadony.api.payments.currency.CurrencyMatchGuard()
         );
     }
@@ -118,7 +118,7 @@ class PaymentServiceTestFactory {
                 mock(PromoService.class),
                 new StripeGatewayImpl(),
                 PaymentServiceTestFactory.stubbedContacts(),
-                mock(com.yadony.api.settings.UserBusinessPrefsRepository.class),
+                mock(com.yadony.api.payments.currency.ActiveCurrencyResolver.class, inv -> "EUR"),
                 new com.yadony.api.payments.currency.CurrencyMatchGuard()
         );
     }

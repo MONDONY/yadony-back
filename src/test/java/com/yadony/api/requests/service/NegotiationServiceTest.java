@@ -20,7 +20,7 @@ import com.yadony.api.requests.event.PackageRequestAcceptedEvent;
 import com.yadony.api.requests.event.NegotiationAwaitingTripEvent;
 import com.yadony.api.requests.repository.*;
 import com.yadony.api.settings.UserBusinessPrefsEntity;
-import com.yadony.api.settings.UserBusinessPrefsRepository;
+import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.*;
@@ -52,7 +52,14 @@ class NegotiationServiceTest {
     @Mock private com.yadony.api.matching.AnnouncementRepository announcementRepo;
     @Mock private ApplicationEventPublisher eventPublisher;
     @Mock private AuditService auditService;
-    @Mock private UserBusinessPrefsRepository userBusinessPrefsRepository;
+    @Mock private ActiveCurrencyResolver activeCurrencyResolver;
+
+    @org.junit.jupiter.api.BeforeEach
+    void stubDefaultActiveCurrency() {
+        org.mockito.Mockito.lenient()
+                .when(activeCurrencyResolver.resolve(org.mockito.ArgumentMatchers.any()))
+                .thenReturn("EUR");
+    }
     @Mock private RequestsConfig config;
     @Mock private CommissionProperties commissionProperties;
     @Mock private CashGatePort cashGatePort;
@@ -101,7 +108,7 @@ class NegotiationServiceTest {
         lenient().when(commissionProperties.rate()).thenReturn(new BigDecimal("0.12"));
         // Pass-through for presigned avatar URLs
         lenient().when(storageService.avatarUrl(any())).thenAnswer(inv -> inv.getArgument(0));
-        lenient().when(userBusinessPrefsRepository.findById(any())).thenReturn(Optional.empty());
+        lenient().when(activeCurrencyResolver.resolve(any())).thenReturn("EUR");
     }
 
     private UserBusinessPrefsEntity prefsWithCurrency(UUID userId, String code) {
@@ -212,7 +219,7 @@ class NegotiationServiceTest {
 
             ArgumentCaptor<NegotiationThreadEntity> captor =
                 ArgumentCaptor.forClass(NegotiationThreadEntity.class);
-            verify(userBusinessPrefsRepository).findById(TRAVELER_ID);
+            verify(activeCurrencyResolver).resolve(TRAVELER_ID);
             verify(threadRepo).save(captor.capture());
             assertThat(response).isNotNull();
             assertThat(captor.getValue().getCurrency()).isEqualTo("EUR");
@@ -233,8 +240,7 @@ class NegotiationServiceTest {
             when(threadRepo.countByTravelerIdAndStatus(eq(TRAVELER_ID), eq(NegotiationThreadStatus.OPEN)))
                 .thenReturn(0L);
             when(threadRepo.countCreatedBy(eq(TRAVELER_ID), any())).thenReturn(0L);
-            when(userBusinessPrefsRepository.findById(TRAVELER_ID))
-                .thenReturn(Optional.of(prefsWithCurrency(TRAVELER_ID, "CAD")));
+            when(activeCurrencyResolver.resolve(TRAVELER_ID)).thenReturn("CAD");
             when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
             service.start(TRAVELER_ID, validStartReq());
@@ -388,7 +394,7 @@ class NegotiationServiceTest {
                     assertThat(business.getErrorCode()).isEqualTo("currency-mismatch");
                 });
 
-            verify(userBusinessPrefsRepository).findById(TRAVELER_ID);
+            verify(activeCurrencyResolver).resolve(TRAVELER_ID);
             verify(threadRepo, never()).save(any(NegotiationThreadEntity.class));
             verify(messageRepo, never()).save(any(NegotiationMessageEntity.class));
             verify(requestRepo, never()).save(any(PackageRequestEntity.class));

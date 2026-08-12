@@ -127,7 +127,7 @@ public class PaymentStripeWebhookHandler implements StripeWebhookHandler {
                     "La devise de la recharge wallet est absente des métadonnées Stripe.");
         }
 
-        SupportedCurrency walletCurrency = currencyCatalog.resolve(null, rawWalletCurrency);
+        SupportedCurrency walletCurrency = currencyCatalog.resolve(rawWalletCurrency);
         if (!walletCurrency.code().equalsIgnoreCase(paymentIntent.getCurrency())) {
             throw new YadonyBusinessException(
                     HttpStatus.UNPROCESSABLE_ENTITY,

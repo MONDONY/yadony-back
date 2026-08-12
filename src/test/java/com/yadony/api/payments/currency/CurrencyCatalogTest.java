@@ -11,33 +11,33 @@ class CurrencyCatalogTest {
     private final CurrencyCatalog catalog = new CurrencyCatalog();
 
     @Test
-    void resolves_default_currency_for_supported_countries() {
-        assertThat(catalog.resolve("US", null)).isEqualTo(SupportedCurrency.USD);
-        assertThat(catalog.resolve("CA", null)).isEqualTo(SupportedCurrency.CAD);
-        assertThat(catalog.resolve("FR", null)).isEqualTo(SupportedCurrency.EUR);
-        assertThat(catalog.resolve("SN", null)).isEqualTo(SupportedCurrency.XOF);
-        assertThat(catalog.resolve("CI", null)).isEqualTo(SupportedCurrency.XOF);
-        assertThat(catalog.resolve("CM", null)).isEqualTo(SupportedCurrency.XAF);
+    void resolves_a_supported_preference_whatever_its_case() {
+        assertThat(catalog.resolve("cad")).isEqualTo(SupportedCurrency.CAD);
+        assertThat(catalog.resolve("XOF")).isEqualTo(SupportedCurrency.XOF);
+        assertThat(catalog.resolve(" eur ")).isEqualTo(SupportedCurrency.EUR);
     }
 
     @Test
-    void falls_back_to_eur_for_an_unconfigured_country() {
-        assertThat(catalog.resolve("JP", null)).isEqualTo(SupportedCurrency.EUR);
-    }
-
-    @Test
-    void explicit_supported_preference_has_priority_over_country_default() {
-        assertThat(catalog.resolve("US", "cad")).isEqualTo(SupportedCurrency.CAD);
+    void falls_back_to_eur_when_no_preference_is_given() {
+        assertThat(catalog.resolve(null)).isEqualTo(SupportedCurrency.EUR);
+        assertThat(catalog.resolve("  ")).isEqualTo(SupportedCurrency.EUR);
     }
 
     @Test
     void rejects_an_unsupported_preference_as_a_business_error() {
-        assertThatThrownBy(() -> catalog.resolve("US", "JPY"))
+        assertThatThrownBy(() -> catalog.resolve("JPY"))
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(error -> {
                     YadonyBusinessException exception = (YadonyBusinessException) error;
                     assertThat(exception.getErrorCode()).isEqualTo("unsupported-currency");
                 });
+    }
+
+    @Test
+    void fromCodeOrDefault_is_the_single_fallback_policy() {
+        assertThat(SupportedCurrency.fromCodeOrDefault("xaf")).isEqualTo(SupportedCurrency.XAF);
+        assertThat(SupportedCurrency.fromCodeOrDefault("JPY")).isEqualTo(SupportedCurrency.EUR);
+        assertThat(SupportedCurrency.fromCodeOrDefault(null)).isEqualTo(SupportedCurrency.EUR);
     }
 
     @Test

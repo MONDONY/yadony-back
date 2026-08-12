@@ -18,8 +18,7 @@ import com.yadony.api.requests.dto.*;
 import com.yadony.api.requests.entity.*;
 import com.yadony.api.requests.event.*;
 import com.yadony.api.requests.repository.*;
-import com.yadony.api.settings.UserBusinessPrefsEntity;
-import com.yadony.api.settings.UserBusinessPrefsRepository;
+import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
@@ -54,7 +53,7 @@ public class NegotiationService {
     private final CommissionProperties commissionProperties;
     private final CashGatePort cashGatePort;
     private final NegotiationEscrowPort escrowPort;
-    private final UserBusinessPrefsRepository userBusinessPrefsRepository;
+    private final ActiveCurrencyResolver activeCurrencyResolver;
     private final CurrencyMatchGuard currencyMatchGuard;
     private final StorageService storageService;
     private final PackageRequestPhotoService photoService;
@@ -71,7 +70,7 @@ public class NegotiationService {
                                CommissionProperties commissionProperties,
                                CashGatePort cashGatePort,
                                NegotiationEscrowPort escrowPort,
-                               UserBusinessPrefsRepository userBusinessPrefsRepository,
+                               ActiveCurrencyResolver activeCurrencyResolver,
                                CurrencyMatchGuard currencyMatchGuard,
                                StorageService storageService,
                                PackageRequestPhotoService photoService,
@@ -87,7 +86,7 @@ public class NegotiationService {
         this.commissionProperties = commissionProperties;
         this.cashGatePort = cashGatePort;
         this.escrowPort = escrowPort;
-        this.userBusinessPrefsRepository = userBusinessPrefsRepository;
+        this.activeCurrencyResolver = activeCurrencyResolver;
         this.currencyMatchGuard = currencyMatchGuard;
         this.storageService = storageService;
         this.photoService = photoService;
@@ -148,9 +147,7 @@ public class NegotiationService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "request/not-open");
         }
 
-        String travelerCurrency = userBusinessPrefsRepository.findById(travelerId)
-                .map(UserBusinessPrefsEntity::getCurrencyCode)
-                .orElse("EUR");
+        String travelerCurrency = activeCurrencyResolver.resolve(travelerId);
         currencyMatchGuard.assertMatches(request.getCurrency(), travelerCurrency);
 
         if (!request.isNegotiable()) {

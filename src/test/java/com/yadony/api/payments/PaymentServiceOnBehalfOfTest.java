@@ -15,7 +15,7 @@ import com.yadony.api.payments.dto.PaymentResponse;
 import com.yadony.api.payments.exceptions.TravelerNotEligibleForPaymentException;
 import com.yadony.api.payments.currency.CurrencyMatchGuard;
 import com.yadony.api.settings.UserBusinessPrefsEntity;
-import com.yadony.api.settings.UserBusinessPrefsRepository;
+import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import com.stripe.model.PaymentIntent;
 import com.stripe.param.PaymentIntentCancelParams;
 import com.stripe.param.PaymentIntentCreateParams;
@@ -54,7 +54,14 @@ class PaymentServiceOnBehalfOfTest {
     @Mock PaymentRepository paymentRepository;
     @Mock AuditService auditService;
     @Mock ApplicationEventPublisher eventPublisher;
-    @Mock UserBusinessPrefsRepository userBusinessPrefsRepository;
+    @Mock ActiveCurrencyResolver activeCurrencyResolver;
+
+    @org.junit.jupiter.api.BeforeEach
+    void stubDefaultActiveCurrency() {
+        org.mockito.Mockito.lenient()
+                .when(activeCurrencyResolver.resolve(org.mockito.ArgumentMatchers.any()))
+                .thenReturn("EUR");
+    }
 
     PaymentService service;
     com.yadony.api.common.CommissionRateResolver commissionRateResolver;
@@ -83,7 +90,7 @@ class PaymentServiceOnBehalfOfTest {
                 new com.fasterxml.jackson.databind.ObjectMapper(),
                 org.mockito.Mockito.mock(com.yadony.api.common.stripe.AdminAlertService.class), commissionRateResolver, org.mockito.Mockito.mock(com.yadony.api.promo.PromoService.class), new StripeGatewayImpl(),
                 PaymentServiceTestFactory.stubbedContacts(),
-                userBusinessPrefsRepository, new CurrencyMatchGuard()
+                activeCurrencyResolver, new CurrencyMatchGuard()
 );
     }
 
@@ -224,8 +231,7 @@ class PaymentServiceOnBehalfOfTest {
         UserEntity traveler = buildTraveler("acct_traveler_123", StripeAccountStatus.ONBOARDING_COMPLETE);
         when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
         when(bidRepository.findById(bidId)).thenReturn(Optional.of(buildBid("CAD")));
-        when(userBusinessPrefsRepository.findById(senderId))
-                .thenReturn(Optional.of(prefsWithCurrency("CAD")));
+        when(activeCurrencyResolver.resolve(senderId)).thenReturn("CAD");
         when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.empty());
         when(announcementRepository.findById(annId)).thenReturn(Optional.of(buildAnnouncement()));
         when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler));
@@ -279,8 +285,7 @@ class PaymentServiceOnBehalfOfTest {
 
         when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
         when(bidRepository.findById(bidId)).thenReturn(Optional.of(buildBid("XOF")));
-        when(userBusinessPrefsRepository.findById(senderId))
-                .thenReturn(Optional.of(prefsWithCurrency("XOF")));
+        when(activeCurrencyResolver.resolve(senderId)).thenReturn("XOF");
         when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.empty());
         when(announcementRepository.findById(annId)).thenReturn(Optional.of(announcement));
         when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler));
@@ -334,8 +339,7 @@ class PaymentServiceOnBehalfOfTest {
         BidEntity bid = buildBid("CAD");
         bid.setCommissionRate(new BigDecimal("0.12"));
         when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
-        when(userBusinessPrefsRepository.findById(senderId))
-                .thenReturn(Optional.of(prefsWithCurrency("CAD")));
+        when(activeCurrencyResolver.resolve(senderId)).thenReturn("CAD");
         when(announcementRepository.findById(annId)).thenReturn(Optional.of(buildAnnouncement()));
         when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler));
 
@@ -399,8 +403,7 @@ class PaymentServiceOnBehalfOfTest {
         UserEntity sender = buildSender();
         when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
         when(bidRepository.findById(bidId)).thenReturn(Optional.of(buildBid("EUR")));
-        when(userBusinessPrefsRepository.findById(senderId))
-                .thenReturn(Optional.of(prefsWithCurrency("CAD")));
+        when(activeCurrencyResolver.resolve(senderId)).thenReturn("CAD");
 
         Throwable thrown = catchThrowable(
                 () -> service.createEscrow(buildRequest("EUR"), "uid-sender"));

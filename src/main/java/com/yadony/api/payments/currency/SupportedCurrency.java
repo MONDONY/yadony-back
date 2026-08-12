@@ -11,6 +11,16 @@ public enum SupportedCurrency {
     XOF("xof", 0),
     XAF("xaf", 0);
 
+    private static final java.util.Map<String, SupportedCurrency> BY_CODE;
+
+    static {
+        java.util.Map<String, SupportedCurrency> byCode = new java.util.HashMap<>();
+        for (SupportedCurrency currency : values()) {
+            byCode.put(currency.code, currency);
+        }
+        BY_CODE = java.util.Map.copyOf(byCode);
+    }
+
     private final String code;
     private final int minorUnit;
 
@@ -31,27 +41,15 @@ public enum SupportedCurrency {
         if (code == null || code.isBlank()) {
             return null;
         }
-        String normalized = code.trim().toLowerCase(Locale.ROOT);
-        for (SupportedCurrency currency : values()) {
-            if (currency.code.equals(normalized)) {
-                return currency;
-            }
-        }
-        return null;
+        return BY_CODE.get(code.trim().toLowerCase(Locale.ROOT));
     }
 
-    public static SupportedCurrency defaultForCountry(String countryCode) {
-        if (countryCode == null || countryCode.isBlank()) {
-            return EUR;
-        }
-        return switch (countryCode.trim().toUpperCase(Locale.ROOT)) {
-            case "US" -> USD;
-            case "CA" -> CAD;
-            case "GB" -> GBP;
-            case "CH" -> CHF;
-            case "SN", "CI", "ML", "BF", "BJ", "TG", "NE", "GW" -> XOF;
-            case "CM", "GA", "CG", "TD", "CF", "GQ" -> XAF;
-            default -> EUR;
-        };
+    /**
+     * Single fallback policy for an unknown or absent code. Call sites must use this
+     * rather than rewriting {@code fromCode(x)} + a local EUR default.
+     */
+    public static SupportedCurrency fromCodeOrDefault(String code) {
+        SupportedCurrency currency = fromCode(code);
+        return currency != null ? currency : EUR;
     }
 }

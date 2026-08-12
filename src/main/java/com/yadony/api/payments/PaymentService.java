@@ -31,8 +31,7 @@ import com.yadony.api.payments.currency.CurrencyAmount;
 import com.yadony.api.payments.currency.CurrencyMatchGuard;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.events.StripeOnboardingCompletedEvent;
-import com.yadony.api.settings.UserBusinessPrefsEntity;
-import com.yadony.api.settings.UserBusinessPrefsRepository;
+import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import com.stripe.exception.StripeException;
 import com.stripe.model.Account;
 import com.stripe.model.AccountLink;
@@ -86,7 +85,7 @@ public class PaymentService {
     private final PromoService promoService;
     private final StripeGateway stripeGateway;
     private final FirebaseContactService firebaseContact;
-    private final UserBusinessPrefsRepository userBusinessPrefsRepository;
+    private final ActiveCurrencyResolver activeCurrencyResolver;
     private final CurrencyMatchGuard currencyMatchGuard;
 
     public PaymentService(UserRepository userRepository,
@@ -103,7 +102,7 @@ public class PaymentService {
                           PromoService promoService,
                           StripeGateway stripeGateway,
                           FirebaseContactService firebaseContact,
-                          UserBusinessPrefsRepository userBusinessPrefsRepository,
+                          ActiveCurrencyResolver activeCurrencyResolver,
                           CurrencyMatchGuard currencyMatchGuard) {
         this.userRepository = userRepository;
         this.bidRepository = bidRepository;
@@ -119,7 +118,7 @@ public class PaymentService {
         this.promoService = promoService;
         this.stripeGateway = stripeGateway;
         this.firebaseContact = firebaseContact;
-        this.userBusinessPrefsRepository = userBusinessPrefsRepository;
+        this.activeCurrencyResolver = activeCurrencyResolver;
         this.currencyMatchGuard = currencyMatchGuard;
     }
 
@@ -369,9 +368,7 @@ public class PaymentService {
                     "Cette demande ne peut plus être payée (statut : " + bid.getStatus() + ")");
         }
 
-        String senderCurrency = userBusinessPrefsRepository.findById(sender.getId())
-                .map(UserBusinessPrefsEntity::getCurrencyCode)
-                .orElse("EUR");
+        String senderCurrency = activeCurrencyResolver.resolve(sender.getId());
         currencyMatchGuard.assertMatches(bid.getCurrency(), senderCurrency);
         SupportedCurrency currency = SupportedCurrency.fromCode(bid.getCurrency());
 
@@ -1471,9 +1468,7 @@ public class PaymentService {
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
                         "user-not-found", "User Not Found", "Sender introuvable"));
 
-        String senderCurrency = userBusinessPrefsRepository.findById(sender.getId())
-                .map(UserBusinessPrefsEntity::getCurrencyCode)
-                .orElse("EUR");
+        String senderCurrency = activeCurrencyResolver.resolve(sender.getId());
         currencyMatchGuard.assertMatches(serverCurrency, senderCurrency);
         SupportedCurrency currency = SupportedCurrency.fromCode(serverCurrency);
 

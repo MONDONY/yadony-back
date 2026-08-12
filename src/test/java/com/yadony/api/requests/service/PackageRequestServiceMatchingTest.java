@@ -19,7 +19,7 @@ import com.yadony.api.requests.repository.NegotiationThreadRepository;
 import com.yadony.api.requests.repository.PackageRequestRepository;
 import com.yadony.api.requests.specification.PackageRequestSpecifications;
 import com.yadony.api.settings.UserBusinessPrefsEntity;
-import com.yadony.api.settings.UserBusinessPrefsRepository;
+import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -65,7 +65,14 @@ class PackageRequestServiceMatchingTest {
     @Mock private StorageService storageService;
     @Mock private PackageRequestPhotoService photoService;
     @Mock private FavoriteRepository favoriteRepository;
-    @Mock private UserBusinessPrefsRepository userBusinessPrefsRepository;
+    @Mock private ActiveCurrencyResolver activeCurrencyResolver;
+
+    @org.junit.jupiter.api.BeforeEach
+    void stubDefaultActiveCurrency() {
+        org.mockito.Mockito.lenient()
+                .when(activeCurrencyResolver.resolve(org.mockito.ArgumentMatchers.any()))
+                .thenReturn("EUR");
+    }
     @Mock private MatchingService matchingService;
     @Mock private com.yadony.api.matching.AnnouncementRepository announcementRepository;
     @Mock private com.yadony.api.common.CommissionRateResolver commissionRateResolver;
@@ -157,7 +164,7 @@ class PackageRequestServiceMatchingTest {
         service = new PackageRequestService(
                 repository, userRepository, eventPublisher, auditService, config,
                 threadRepository, cityRepository, commissionProperties,
-                storageService, photoService, favoriteRepository, userBusinessPrefsRepository, realMapper, matchingService,
+                storageService, photoService, favoriteRepository, activeCurrencyResolver, realMapper, matchingService,
                 yadonyConfig, announcementRepository, commissionRateResolver);
     }
 
@@ -363,7 +370,7 @@ class PackageRequestServiceMatchingTest {
         UserBusinessPrefsEntity prefs = new UserBusinessPrefsEntity();
         prefs.setUserId(CALLER_ID);
         prefs.setCurrencyCode("CAD");
-        when(userBusinessPrefsRepository.findById(CALLER_ID)).thenReturn(Optional.of(prefs));
+        when(activeCurrencyResolver.resolve(CALLER_ID)).thenReturn(prefs.getCurrencyCode());
 
         @SuppressWarnings("unchecked")
         org.mockito.ArgumentCaptor<Specification<PackageRequestEntity>> specCaptor =
@@ -389,7 +396,7 @@ class PackageRequestServiceMatchingTest {
 
         assertThat(specCaptor.getValue()).isNotNull();
         assertCurrencyMarkerIncluded(specCaptor.getValue(), cadCurrencySpecIncluded);
-        verify(userBusinessPrefsRepository).findById(CALLER_ID);
+        verify(activeCurrencyResolver).resolve(CALLER_ID);
     }
 
     // ─── Mapping / présignage limités à la page ──────────────────────────────
