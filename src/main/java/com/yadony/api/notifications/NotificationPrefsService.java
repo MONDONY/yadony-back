@@ -7,16 +7,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 
 @Service
 @Transactional
 public class NotificationPrefsService {
-
-    private static final Set<String> CRITICAL_TYPES = Set.of(
-            "PAYMENT_RELEASED", "DELIVERY_CONFIRMED", "DISPUTE_OPENED"
-    );
 
     private static final Map<String, String> TYPE_TO_PREF = Map.ofEntries(
             Map.entry("BID_CREATED",                  "pushActivityBids"),
@@ -128,7 +123,7 @@ public class NotificationPrefsService {
     @Transactional(readOnly = true)
     public boolean isAllowed(UUID userId, String notificationType) {
         if (notificationType == null) return true;
-        if (CRITICAL_TYPES.contains(notificationType)) return true;
+        if (NotificationTypes.isCritical(notificationType)) return true;
         String prefKey = TYPE_TO_PREF.get(notificationType);
         if (prefKey == null) return true;
         return repository.findById(userId)
