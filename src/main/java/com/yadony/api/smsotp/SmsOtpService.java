@@ -35,10 +35,6 @@ public class SmsOtpService {
     private static final Logger log = LoggerFactory.getLogger(SmsOtpService.class);
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
-    private static final int MAX_SENDS_PER_WINDOW = 3;
-    private static final int RATE_WINDOW_MINUTES  = 5;
-    private static final int MAX_ATTEMPTS         = 5;
-    private static final int OTP_VALID_MINUTES    = 10;
 
     private final SmsOtpRepository smsOtpRepository;
     private final PasswordEncoder passwordEncoder;
@@ -83,15 +79,18 @@ public class SmsOtpService {
                     "SMS OTP Disabled", "L'authentification par SMS n'est pas encore disponible");
         }
 
-        LocalDateTime since = LocalDateTime.now(ZoneOffset.UTC).minusMinutes(RATE_WINDOW_MINUTES);
-        if (smsOtpRepository.countByPhoneSince(phoneNumber, since) >= MAX_SENDS_PER_WINDOW) {
+        int windowMinutes = properties.getRateWindowMinutes();
+        LocalDateTime since = LocalDateTime.now(ZoneOffset.UTC).minusMinutes(windowMinutes);
+        if (smsOtpRepository.countByPhoneSince(phoneNumber, since) >= properties.getMaxSendsPerWindow()) {
             throw new YadonyBusinessException(
                     HttpStatus.TOO_MANY_REQUESTS, "phone-otp-rate-limit",
-                    "Too Many Requests", "Trop de tentatives, réessaie dans 5 min");
+                    "Too Many Requests",
+                    "Trop de codes demandés, réessaie dans " + windowMinutes + " min");
         }
 
         String code = String.format("%06d", SECURE_RANDOM.nextInt(1_000_000));
-        LocalDateTime expiresAt = LocalDateTime.now(ZoneOffset.UTC).plusMinutes(OTP_VALID_MINUTES);
+        LocalDateTime expiresAt = LocalDateTime.now(ZoneOffset.UTC)
+                .plusMinutes(properties.getOtpValidMinutes());
 
         SmsOtpEntity entity = new SmsOtpEntity();
         entity.setPhoneNumber(phoneNumber);
@@ -218,8 +217,8 @@ public class SmsOtpService {
         // 5 essais frais (le compteur vit sur le token, et la vérification lit
         // toujours le token le plus récent).
         LocalDateTime attemptsSince =
-                LocalDateTime.now(ZoneOffset.UTC).minusMinutes(OTP_VALID_MINUTES);
-        if (smsOtpRepository.sumAttemptsByPhoneSince(phoneNumber, attemptsSince) >= MAX_ATTEMPTS) {
+                LocalDateTime.now(ZoneOffset.UTC).minusMinutes(properties.getOtpValidMinutes());
+        if (smsOtpRepository.sumAttemptsByPhoneSince(phoneNumber, attemptsSince) >= properties.getMaxAttempts()) {
             throw new YadonyBusinessException(
                     HttpStatus.TOO_MANY_REQUESTS, "phone-otp-attempts-exceeded",
                     "Too Many Attempts", "Trop de tentatives échouées");
@@ -231,7 +230,7 @@ public class SmsOtpService {
                         HttpStatus.BAD_REQUEST, "phone-otp-invalid",
                         "Invalid OTP", "Code invalide ou expiré"));
 
-        if (token.getAttempts() >= MAX_ATTEMPTS) {
+        if (token.getAttempts() >= properties.getMaxAttempts()) {
             throw new YadonyBusinessException(
                     HttpStatus.TOO_MANY_REQUESTS, "phone-otp-attempts-exceeded",
                     "Too Many Attempts", "Trop de tentatives échouées");

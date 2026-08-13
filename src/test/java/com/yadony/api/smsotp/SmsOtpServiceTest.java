@@ -37,7 +37,10 @@ class SmsOtpServiceTest {
     @Mock private SmsOtpRepository smsOtpRepository;
     @Mock private PasswordEncoder passwordEncoder;
     @Mock private SmsService smsService;
-    @Mock private SmsOtpProperties properties;
+    // Instance réelle et non un mock : ces seuils sont la règle métier vérifiée
+    // ici. Un mock renverrait 0 partout et ferait passer les tests contre des
+    // valeurs choisies par le test au lieu de celles de la production.
+    @org.mockito.Spy private SmsOtpProperties properties = new SmsOtpProperties();
     @Mock private FirebaseAuth firebaseAuth;
     @Mock private UserRepository userRepository;
     @Mock private FirebaseContactService firebaseContact;
@@ -63,7 +66,6 @@ class SmsOtpServiceTest {
             when(smsOtpRepository.countByPhoneSince(eq(PHONE), any())).thenReturn(0L);
             when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$hashed");
             when(smsOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
-            when(properties.getOtpTemplate()).thenReturn("Code : %s");
             when(smsService.isEnabled()).thenReturn(true);
 
             var result = service.sendOtp(PHONE);
@@ -71,14 +73,29 @@ class SmsOtpServiceTest {
             assertThat(result).isNotNull();
             verify(smsOtpRepository).save(argThat(e ->
                     PHONE.equals(e.getPhoneNumber()) && "$2a$10$hashed".equals(e.getCodeHash())));
-            verify(smsService).send(eq(PHONE), argThat(msg -> msg.startsWith("Code : ")));
+            verify(smsService).send(eq(PHONE), argThat(msg -> msg.matches(".*\\d{6}.*")));
         }
 
         @Test
-        @DisplayName("429 — 3 envois ou plus dans la fenêtre de 5 min")
+        @DisplayName("le 5e renvoi passe encore — le bouton de l'app se rouvre toutes les 60 s")
+        void fourPreviousSendsStillAllowANewOne() {
+            // Régression : le budget était de 3, alors que l'écran de saisie du code
+            // (partagé avec le canal email) rouvre « Renvoyer » chaque minute.
+            SmsOtpService service = newService();
+            when(smsOtpRepository.countByPhoneSince(eq(PHONE), any())).thenReturn(4L);
+            when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$hashed");
+            when(smsOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+            when(smsService.isEnabled()).thenReturn(true);
+
+            assertThat(service.sendOtp(PHONE)).isNotNull();
+            verify(smsService).send(eq(PHONE), anyString());
+        }
+
+        @Test
+        @DisplayName("429 — 5 envois ou plus dans la fenêtre de 5 min")
         void rateLimitExceeded() {
             SmsOtpService service = newService();
-            when(smsOtpRepository.countByPhoneSince(eq(PHONE), any())).thenReturn(3L);
+            when(smsOtpRepository.countByPhoneSince(eq(PHONE), any())).thenReturn(5L);
 
             assertThatThrownBy(() -> service.sendOtp(PHONE))
                     .isInstanceOf(YadonyBusinessException.class)
@@ -115,7 +132,6 @@ class SmsOtpServiceTest {
             when(smsOtpRepository.countByPhoneSince(eq(PHONE), any())).thenReturn(0L);
             when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$hashed");
             when(smsOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
-            when(properties.getOtpTemplate()).thenReturn("Code : %s");
             when(smsService.isEnabled()).thenReturn(false);
 
             var result = service.sendOtp(PHONE);
