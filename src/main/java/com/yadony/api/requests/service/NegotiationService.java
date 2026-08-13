@@ -10,7 +10,9 @@ import com.yadony.api.common.StorageService;
 import com.yadony.api.payments.PriceBreakdown;
 import com.yadony.api.payments.cash.CommissionProperties;
 import com.yadony.api.payments.cash.PaymentMethod;
+import com.yadony.api.payments.currency.CurrencyBounds;
 import com.yadony.api.payments.currency.CurrencyMatchGuard;
+import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.requests.CashGatePort;
 import com.yadony.api.requests.NegotiationEscrowPort;
 import com.yadony.api.requests.RequestsConfig;
@@ -149,6 +151,7 @@ public class NegotiationService {
 
         String travelerCurrency = activeCurrencyResolver.resolve(travelerId);
         currencyMatchGuard.assertMatches(request.getCurrency(), travelerCurrency);
+        assertPriceWithinBounds(req.proposedPriceEur(), request.getCurrency());
 
         if (!request.isNegotiable()) {
             if (request.getTargetPriceEur() == null
@@ -216,6 +219,25 @@ public class NegotiationService {
     }
 
     @Transactional
+    /**
+     * Vérifie qu'un prix proposé tient dans les bornes de sa devise.
+     *
+     * <p>Les DTO ne portent qu'un garde-fou large : une annotation Bean Validation
+     * est une constante de compilation et ne peut pas connaître la devise du fil.
+     * Le plafond réel se calcule donc ici. Auparavant les DTO imposaient 500 quelle
+     * que soit la devise, ce qui plafonnait un voyageur en franc CFA à 0,76 €/kg et
+     * lui interdisait de fait toute proposition réaliste.
+     */
+    private void assertPriceWithinBounds(java.math.BigDecimal price, String currencyCode) {
+        SupportedCurrency currency = SupportedCurrency.fromCodeOrDefault(currencyCode);
+        java.math.BigDecimal max = CurrencyBounds.maxNegotiationPrice(currency);
+        java.math.BigDecimal min = CurrencyBounds.smallestUnit(currency);
+        if (price.compareTo(min) < 0 || price.compareTo(max) > 0) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                "negotiation/price-out-of-bounds");
+        }
+    }
+
     public NegotiationThreadResponse counter(UUID callerId, UUID threadId, NegotiationCounterRequest req) {
         NegotiationThreadEntity thread = threadRepo.findById(threadId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "thread/not-found"));
@@ -231,6 +253,8 @@ public class NegotiationService {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "negotiation/counter-not-allowed-firm-price");
         }
+
+        assertPriceWithinBounds(req.proposedPriceEur(), thread.getCurrency());
 
         UUID senderId = request.getSenderId();
         UUID travelerId = thread.getTravelerId();

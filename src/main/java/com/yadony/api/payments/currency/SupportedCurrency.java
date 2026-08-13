@@ -3,13 +3,13 @@ package com.yadony.api.payments.currency;
 import java.util.Locale;
 
 public enum SupportedCurrency {
-    EUR("eur", 2),
-    USD("usd", 2),
-    CAD("cad", 2),
-    GBP("gbp", 2),
-    CHF("chf", 2),
-    XOF("xof", 0),
-    XAF("xaf", 0);
+    EUR("eur", 2, "1"),
+    USD("usd", 2, "1.08"),
+    CAD("cad", 2, "1.47"),
+    GBP("gbp", 2, "0.86"),
+    CHF("chf", 2, "0.95"),
+    XOF("xof", 0, "655.957"),
+    XAF("xaf", 0, "655.957");
 
     private static final java.util.Map<String, SupportedCurrency> BY_CODE;
 
@@ -23,10 +23,12 @@ public enum SupportedCurrency {
 
     private final String code;
     private final int minorUnit;
+    private final java.math.BigDecimal unitsPerEur;
 
-    SupportedCurrency(String code, int minorUnit) {
+    SupportedCurrency(String code, int minorUnit, String unitsPerEur) {
         this.code = code;
         this.minorUnit = minorUnit;
+        this.unitsPerEur = new java.math.BigDecimal(unitsPerEur);
     }
 
     public String code() {
@@ -35,6 +37,31 @@ public enum SupportedCurrency {
 
     public int minorUnit() {
         return minorUnit;
+    }
+
+    /**
+     * Nombre d'unités de cette devise pour un euro.
+     *
+     * <p>Sert à exprimer dans la devise de l'utilisateur les <b>barèmes définis en
+     * euros</b> : bornes de validation (prix maximum au kilo, montant minimum de
+     * rechargement) et montants promotionnels comme la récompense de parrainage.
+     * Une valeur figée à 500 vaut 500 €/kg en euro mais 0,76 €/kg en franc CFA,
+     * et une récompense de 5 y devient 0,008 € : sans mise à l'échelle, ces règles
+     * n'ont aucun sens hors zone euro.
+     *
+     * <p><b>Ne jamais s'en servir pour convertir le montant d'une transaction entre
+     * deux parties.</b> Le partitionnement des devises reste strict : un prix, une
+     * offre ou un paiement demeure dans la devise où il a été créé, et l'appariement
+     * est refusé quand les devises diffèrent (voir CurrencyMatchGuard). Ce facteur
+     * traduit un barème interne, il n'arbitre aucun échange.
+     *
+     * <p>Pour XOF et XAF ce n'est pas une estimation de marché : leur parité avec
+     * l'euro est fixe (655,957). Les autres valeurs sont des ordres de grandeur qui
+     * dérivent avec le marché ; elles dimensionnent des bornes et des cadeaux, pas
+     * des prix, et une imprécision de quelques pour cent y est sans conséquence.
+     */
+    public java.math.BigDecimal unitsPerEur() {
+        return unitsPerEur;
     }
 
     public static SupportedCurrency fromCode(String code) {

@@ -48,7 +48,8 @@ class DeliveryConfirmedReferralListenerTest {
         config.setCodeRegenerationCooldownDays(30);
         listener = new DeliveryConfirmedReferralListener(
                 referralInvitationRepository, userCreditRepository,
-                bidRepository, auditService, config, eventPublisher);
+                bidRepository, auditService, config, eventPublisher,
+                resolverReturning("EUR"));
     }
 
     private static void setId(Object entity, UUID id) {
@@ -210,4 +211,16 @@ class DeliveryConfirmedReferralListenerTest {
                 .isInstanceOf(RuntimeException.class)
                 .hasMessageContaining("DB constraint violation");
     }
+
+    // Mockito renvoie null pour un retour String non stubé (et non Optional.empty()) :
+    // sans ce stub la devise résolue serait nulle et le repli ne serait pas testé.
+    private static com.yadony.api.payments.currency.ActiveCurrencyResolver resolverReturning(String code) {
+        var resolver = org.mockito.Mockito.mock(
+                com.yadony.api.payments.currency.ActiveCurrencyResolver.class);
+        org.mockito.Mockito.lenient()
+                .when(resolver.resolve(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(code);
+        return resolver;
+    }
+
 }

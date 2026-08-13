@@ -23,7 +23,16 @@ class TripTemplateServiceTest {
 
     @Mock TripTemplateRepository repository;
     @Mock AuditService auditService;
+    @Mock com.yadony.api.payments.currency.ActiveCurrencyResolver activeCurrencyResolver;
     @InjectMocks TripTemplateService service;
+
+    // Mockito renvoie null pour un retour String non stubé, et non Optional.empty() :
+    // sans ce stub le plafond serait calculé sur une devise nulle.
+    @org.junit.jupiter.api.BeforeEach
+    void stubDefaultActiveCurrency() {
+        lenient().when(activeCurrencyResolver.resolve(org.mockito.ArgumentMatchers.any()))
+                .thenReturn("EUR");
+    }
 
     private final UUID userId = UUID.randomUUID();
 
@@ -149,4 +158,32 @@ class TripTemplateServiceTest {
         assertThatThrownBy(() -> service.delete(userId, id))
                 .isInstanceOf(YadonyNotFoundException.class);
     }
+
+    // ── Bornes de prix par devise ────────────────────────────────────────────
+
+    @Test
+    void create_rejectsPricePerKgAboveTheCurrencyCeiling() {
+        var request = new CreateTripTemplateRequest(
+                "Trop cher", "🇸🇳", "Paris", 48.85, 2.35, "Dakar", 14.71, -17.46,
+                "PLANE", "SUITCASE_23KG", 23, 900.0, List.of(), false, null);
+
+        assertThatThrownBy(() -> service.create(userId, request))
+                .hasMessageContaining("trip-template/price-out-of-bounds");
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void create_allowsALargePriceWhenTheCurrencyHasNoMinorUnit() {
+        // 5 000 XOF/kg vaut environ 7,60 €/kg : un tarif banal, que l'ancien
+        // plafond fixe à 500 rejetait alors qu'il est parfaitement légitime.
+        when(activeCurrencyResolver.resolve(userId)).thenReturn("XOF");
+        var request = new CreateTripTemplateRequest(
+                "Paris Dakar", "🇸🇳", "Paris", 48.85, 2.35, "Dakar", 14.71, -17.46,
+                "PLANE", "SUITCASE_23KG", 23, 5000.0, List.of(), false, null);
+
+        var dto = service.create(userId, request);
+
+        assertThat(dto.pricePerKg()).isEqualTo(5000.0);
+    }
+
 }

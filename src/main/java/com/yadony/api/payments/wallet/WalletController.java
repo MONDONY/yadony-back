@@ -59,7 +59,10 @@ public class WalletController {
         List<WalletCurrencyBalanceDto> balances = walletService.getAllBalances(userId)
             .stream()
             .map(w -> new WalletCurrencyBalanceDto(
-                w.getCurrency(), w.getBalance(), w.getCurrency().equals(activeCurrency)))
+                // equalsIgnoreCase : les portefeuilles antérieurs à V202 peuvent
+                // encore porter une casse mixte, et un simple equals aurait
+                // affiché « aucun portefeuille actif » à leur propriétaire.
+                w.getCurrency(), w.getBalance(), w.getCurrency().equalsIgnoreCase(activeCurrency)))
             .collect(Collectors.toList());
         return ResponseEntity.ok(
             new WalletBalanceResponse(wallet.getBalance(), activeCurrency, txs, balances));
