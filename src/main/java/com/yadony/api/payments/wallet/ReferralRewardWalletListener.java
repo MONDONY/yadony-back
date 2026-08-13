@@ -1,7 +1,7 @@
 package com.yadony.api.payments.wallet;
 
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
-import com.yadony.api.payments.currency.CurrencyAmount;
+import com.yadony.api.payments.currency.CurrencyBounds;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.referral.events.ReferralRewardGrantedEvent;
 import org.slf4j.Logger;
@@ -46,19 +46,19 @@ public class ReferralRewardWalletListener {
         // versement, sur le portefeuille correspondant. Elle était auparavant
         // toujours créditée en euros : un parrain travaillant en dollar recevait
         // une somme qu'il ne pouvait dépenser que sur des transactions en euros.
-        //
-        // Le montant nominal est repris tel quel, sans conversion : 5 devient
-        // 5 USD et non l'équivalent de 5 EUR. C'est cohérent avec le
-        // partitionnement strict des devises, qui interdit toute conversion.
         String currencyCode = activeCurrencyResolver.resolve(event.referrerUserId());
         SupportedCurrency currency = SupportedCurrency.fromCodeOrDefault(currencyCode);
 
-        // amountCents est exprimé en centimes d'euro : c'est une valeur de
-        // configuration, pas un montant déjà dans la devise cible. On en retire
-        // la valeur nominale (500 → 5) avant de la porter à la précision de la
-        // devise, le franc CFA n'ayant pas de sous-unité.
-        BigDecimal nominal = BigDecimal.valueOf(event.amountCents()).movePointLeft(2);
-        BigDecimal amount = CurrencyAmount.of(nominal, currency).major();
+        // reward-amount-cents est un barème exprimé en centimes d'euro. Il est
+        // converti pour garder sa VALEUR : 5 € valent environ 3 280 F CFA. Reprendre
+        // le nombre tel quel aurait versé 5 XOF, soit moins d'un centime d'euro.
+        //
+        // Convertir un barème que la plateforme fixe elle-même ne contredit pas le
+        // partitionnement des devises : celui-ci interdit de convertir un montant
+        // échangé entre deux utilisateurs, pas d'exprimer un cadeau maison dans la
+        // devise de son destinataire.
+        BigDecimal nominalEur = BigDecimal.valueOf(event.amountCents()).movePointLeft(2);
+        BigDecimal amount = CurrencyBounds.scaleFromEur(nominalEur, currency);
         String idempotencyKey = "referral-reward-" + event.invitationId();
 
         walletService.credit(

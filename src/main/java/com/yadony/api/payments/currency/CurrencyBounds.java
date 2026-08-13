@@ -12,9 +12,9 @@ import java.math.RoundingMode;
  * vraie règle est appliquée ici, côté service, une fois la devise connue.
  *
  * <p>Toutes les valeurs de référence sont exprimées en euros puis mises à
- * l'échelle par {@link SupportedCurrency#boundScale()}. Il ne s'agit jamais
- * d'une conversion de montant : on dimensionne un formulaire, on ne calcule pas
- * un prix. Le montant saisi reste intégralement dans sa devise d'origine.
+ * l'échelle par {@link SupportedCurrency#unitsPerEur()}. On dimensionne un
+ * formulaire, on ne convertit pas la saisie : le montant entré par l'utilisateur
+ * reste intégralement dans sa devise d'origine.
  */
 public final class CurrencyBounds {
 
@@ -41,7 +41,7 @@ public final class CurrencyBounds {
      */
     private static BigDecimal scale(BigDecimal amountInEur, SupportedCurrency currency, RoundingMode rounding) {
         return amountInEur
-                .multiply(BigDecimal.valueOf(currency.boundScale()))
+                .multiply(currency.unitsPerEur())
                 .setScale(currency.minorUnit(), rounding);
     }
 
@@ -59,6 +59,18 @@ public final class CurrencyBounds {
 
     public static BigDecimal minTopup(SupportedCurrency currency) {
         return scale(MIN_TOPUP_EUR, currency, RoundingMode.UP);
+    }
+
+    /**
+     * Exprime dans {@code currency} un barème défini en euros : récompense de
+     * parrainage, seuil promotionnel. Le résultat garde la valeur du barème
+     * (5 € valent environ 3 280 F CFA) et respecte la précision de la devise.
+     *
+     * <p>Réservé aux montants que la plateforme fixe elle-même. Un montant
+     * échangé entre deux utilisateurs n'est jamais converti.
+     */
+    public static BigDecimal scaleFromEur(BigDecimal amountInEur, SupportedCurrency currency) {
+        return scale(amountInEur, currency, RoundingMode.HALF_UP);
     }
 
     /**

@@ -1,6 +1,8 @@
 package com.yadony.api.payments.currency;
 
 import org.junit.jupiter.api.DisplayName;
+
+import java.math.BigDecimal;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -22,10 +24,10 @@ class CurrencyBoundsTest {
         // 500 XOF/kg valaient 0,76 €/kg : un voyageur en franc CFA ne pouvait pas
         // publier un tarif réaliste. Le plafond suit désormais la parité fixe.
         assertThat(CurrencyBounds.maxPricePerKg(SupportedCurrency.XOF))
-                .isEqualByComparingTo("327500");
+                .isEqualByComparingTo("327978");
         // XOF n'a pas de sous-unité : les bornes doivent rester entières.
         assertThat(CurrencyBounds.maxPricePerKg(SupportedCurrency.XOF).scale()).isZero();
-        assertThat(CurrencyBounds.minTopup(SupportedCurrency.XOF)).isEqualByComparingTo("655");
+        assertThat(CurrencyBounds.minTopup(SupportedCurrency.XOF)).isEqualByComparingTo("656");
     }
 
     @Test
@@ -44,4 +46,19 @@ class CurrencyBoundsTest {
             assertThat(CurrencyBounds.minTopup(currency)).isPositive();
         }
     }
+
+    @Test
+    @DisplayName("un barème en euros garde sa valeur une fois exprimé en devise")
+    void scaleFromEurKeepsTheValueOfTheScale() {
+        // 5 € de récompense valent environ 3 280 F CFA. Verser 5 XOF, soit moins
+        // d'un centime d'euro, aurait vidé la promesse de tout contenu.
+        assertThat(CurrencyBounds.scaleFromEur(new BigDecimal("5"), SupportedCurrency.XOF))
+                .isEqualByComparingTo("3280");
+        assertThat(CurrencyBounds.scaleFromEur(new BigDecimal("5"), SupportedCurrency.EUR))
+                .isEqualByComparingTo("5.00");
+        // Le résultat respecte la précision de la devise : pas de centimes en XOF.
+        assertThat(CurrencyBounds.scaleFromEur(new BigDecimal("5"), SupportedCurrency.XOF).scale())
+                .isZero();
+    }
+
 }

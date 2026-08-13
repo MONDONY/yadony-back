@@ -49,16 +49,17 @@ class SupportedCurrencyTest {
     }
 
     @Test
-    @DisplayName("le facteur d'échelle est positif et vaut 1 pour l'euro")
-    void boundScaleIsAnchoredOnTheEuro() {
-        assertThat(SupportedCurrency.EUR.boundScale()).isEqualTo(1);
+    @DisplayName("le taux est ancré sur l'euro et strictement positif")
+    void unitsPerEurIsAnchoredOnTheEuro() {
+        assertThat(SupportedCurrency.EUR.unitsPerEur()).isEqualByComparingTo("1");
         for (SupportedCurrency currency : SupportedCurrency.values()) {
-            assertThat(currency.boundScale())
-                    .as("facteur d'échelle de %s", currency)
+            assertThat(currency.unitsPerEur())
+                    .as("taux de %s", currency)
                     .isPositive();
         }
-        // Parité fixe avec l'euro : ce n'est pas une estimation de marché.
-        assertThat(SupportedCurrency.XOF.boundScale()).isEqualTo(655);
-        assertThat(SupportedCurrency.XAF.boundScale()).isEqualTo(655);
+        // Parité fixe avec l'euro, fixée par traité : ce n'est pas une estimation
+        // de marché et la valeur ne dérive pas.
+        assertThat(SupportedCurrency.XOF.unitsPerEur()).isEqualByComparingTo("655.957");
+        assertThat(SupportedCurrency.XAF.unitsPerEur()).isEqualByComparingTo("655.957");
     }
 }

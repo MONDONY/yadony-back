@@ -85,7 +85,7 @@ class ReferralRewardWalletListenerTest {
 
 
     @Test
-    @DisplayName("la récompense suit la devise active du parrain, sans conversion")
+    @DisplayName("la récompense est versée dans la devise active du parrain")
     void creditsTheRewardInTheReferrerActiveCurrency() {
         var listenerInUsd = new ReferralRewardWalletListener(walletService, resolverReturning("USD"));
 
@@ -93,21 +93,20 @@ class ReferralRewardWalletListenerTest {
                 new com.yadony.api.referral.events.ReferralRewardGrantedEvent(
                         REFERRER_ID, 500, INVITATION_ID));
 
-        // 500 centimes donnent 5 unités de la devise du parrain : 5 USD, et non
-        // l'équivalent en dollars de 5 EUR. Le partitionnement des devises
-        // interdit toute conversion.
+        // Le barème de 5 € est converti pour garder sa valeur : 5,40 USD. Le
+        // portefeuille crédité est bien celui de la devise du parrain.
         org.mockito.Mockito.verify(walletService).credit(
                 org.mockito.ArgumentMatchers.eq(REFERRER_ID),
                 org.mockito.ArgumentMatchers.eq("USD"),
                 org.mockito.ArgumentMatchers.argThat(
-                        a -> a.compareTo(new java.math.BigDecimal("5.00")) == 0),
+                        a -> a.compareTo(new java.math.BigDecimal("5.40")) == 0),
                 org.mockito.ArgumentMatchers.eq(WalletTransactionType.REFERRAL_REWARD),
                 org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.anyString());
     }
 
     @Test
-    @DisplayName("une devise sans sous-unité reçoit un montant entier")
+    @DisplayName("le barème est converti et arrondi à la précision de la devise")
     void roundsTheRewardToTheCurrencyPrecision() {
         var listenerInXof = new ReferralRewardWalletListener(walletService, resolverReturning("XOF"));
 
@@ -115,15 +114,15 @@ class ReferralRewardWalletListenerTest {
                 new com.yadony.api.referral.events.ReferralRewardGrantedEvent(
                         REFERRER_ID, 500, INVITATION_ID));
 
-        // Le franc CFA n'a pas de centimes : un montant décimal aurait été rejeté
-        // à l'écriture. Et la valeur reste 5, pas 500 : reward-amount-cents est
-        // exprimé en centimes d'euro, c'est une configuration et non un montant
-        // déjà libellé dans la devise du parrain.
+        // Le barème de 5 € garde sa valeur : environ 3 280 F CFA. Verser 5 XOF,
+        // soit moins d'un centime d'euro, aurait vidé la récompense de tout
+        // contenu. Le franc CFA n'ayant pas de sous-unité, le montant est entier.
         org.mockito.Mockito.verify(walletService).credit(
                 org.mockito.ArgumentMatchers.eq(REFERRER_ID),
                 org.mockito.ArgumentMatchers.eq("XOF"),
                 org.mockito.ArgumentMatchers.argThat(
-                        a -> a.scale() == 0 && a.compareTo(new java.math.BigDecimal("5")) == 0),
+                        a -> a.scale() == 0
+                                && a.compareTo(new java.math.BigDecimal("3280")) == 0),
                 org.mockito.ArgumentMatchers.eq(WalletTransactionType.REFERRAL_REWARD),
                 org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.anyString());

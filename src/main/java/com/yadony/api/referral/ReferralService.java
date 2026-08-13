@@ -106,15 +106,17 @@ public class ReferralService {
         int totalEarnedCents =
                 userCreditRepository.sumAmountCentsByUserIdAndCurrency(user.getId(), currency);
 
-        // reward-amount-cents est configuré en centimes d'euro. Exposé tel quel,
-        // il annonçait 500 F CFA à un parrain qui n'en recevra que 5 : le montant
-        // est donc converti dans les unités mineures de sa devise, exactement
-        // comme le crédit qui sera versé.
+        // Le montant annoncé doit être exactement celui qui sera versé : même
+        // barème, même conversion, mêmes unités mineures. Toute divergence ferait
+        // promettre à l'écran une somme que le parrain ne recevrait pas.
         var rewardCurrency = com.yadony.api.payments.currency.SupportedCurrency
                 .fromCodeOrDefault(currency);
+        java.math.BigDecimal rewardEur = java.math.BigDecimal
+                .valueOf(config.getRewardAmountCents())
+                .movePointLeft(2);
         int rewardAmountInMinorUnits = (int) com.yadony.api.payments.currency.CurrencyAmount
-                .of(java.math.BigDecimal.valueOf(config.getRewardAmountCents()).movePointLeft(2),
-                        rewardCurrency)
+                .of(com.yadony.api.payments.currency.CurrencyBounds
+                        .scaleFromEur(rewardEur, rewardCurrency), rewardCurrency)
                 .minor();
 
         boolean hasBeenReferred =
