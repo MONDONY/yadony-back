@@ -452,9 +452,30 @@ public class AuthService {
                                 HttpStatus.UNPROCESSABLE_ENTITY, "phone-required",
                                 "Phone Required", "Le numéro de téléphone est introuvable");
                     }
+                } else if ("email".equals(extractOtpChannelClaim(decodedToken))) {
+                    // Custom token issu de EmailOtpService.verifyOtp() : l'UID a été résolu
+                    // via getUserByEmail()/createUser(), l'adresse est donc déjà portée par
+                    // le UserRecord. Rien à comparer à request.email() — et surtout rien à
+                    // réécrire : réattribuer une adresse déjà détenue par ce même compte
+                    // faisait échouer l'inscription sur EMAIL_ALREADY_EXISTS.
+                    //
+                    // L'identité ne vient plus du corps de la requête mais de Firebase, ce
+                    // qui retire au client toute prise sur l'UID auquel il s'inscrit.
+                    if (firebaseContact.getContact(firebaseUid).email() == null) {
+                        throw new YadonyBusinessException(
+                                HttpStatus.UNPROCESSABLE_ENTITY, "email-required",
+                                "Email Required", "L'adresse email est introuvable");
+                    }
+                    Optional<UserResponse> existing =
+                            findLocalAccountByEmail(firebaseContact.getContact(firebaseUid).email(), firebaseUid);
+                    if (existing.isPresent()) {
+                        return existing.get();
+                    }
                 } else {
-                    // Pour les custom tokens email, l'UID Firebase est l'email utilisé dans createCustomToken(email)
-                    // On vérifie que l'email du body correspond à l'UID pour éviter l'usurpation
+                    // Custom token email émis avant l'ajout du claim `otp_channel` : l'UID
+                    // y valait l'adresse elle-même. Conservé le temps que les jetons en
+                    // circulation expirent (1 h), les comptes déjà créés ainsi restant
+                    // valides puisque leur UID porte désormais l'adresse.
                     if (request.email() == null) {
                         throw new YadonyBusinessException(
                                 HttpStatus.UNPROCESSABLE_ENTITY, "email-required",

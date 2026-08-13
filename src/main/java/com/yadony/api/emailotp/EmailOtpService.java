@@ -5,8 +5,10 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
+import com.google.firebase.auth.AuthErrorCode;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseAuthException;
+import com.google.firebase.auth.UserRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -89,19 +91,63 @@ public class EmailOtpService {
             log.warn("FirebaseAuth not available — returning null custom token (test mode)");
             return null;
         }
+        String uid = resolveOrCreateFirebaseUid(email);
         try {
-            // Si l'utilisateur existe déjà, on crée le token avec son firebase_uid existant
-            // pour que GET /auth/me fonctionne même si le compte a été créé via un autre
-            // provider. L'adresse n'étant plus stockée en base, c'est Firebase — seule
-            // source de vérité — qui donne l'UID rattaché à cet email.
-            String uid = firebaseContact.findUidByEmail(email)
-                    .filter(u -> userRepository.findByFirebaseUid(u).isPresent())
-                    .orElse(email);
-            return firebaseAuth.createCustomToken(uid);
+            // Le claim dit à AuthService que l'UID a déjà été résolu par ce service et
+            // que l'adresse est portée par le UserRecord : il n'a donc pas à comparer
+            // l'UID à l'email du body, ni à réécrire l'adresse.
+            return firebaseAuth.createCustomToken(uid, java.util.Map.of("otp_channel", "email"));
         } catch (FirebaseAuthException e) {
             throw new YadonyBusinessException(
                     HttpStatus.INTERNAL_SERVER_ERROR, "firebase-error",
                     "Firebase Error", "Erreur lors de la création du token");
+        }
+    }
+
+    /**
+     * Rend l'UID Firebase qui détient déjà cette adresse, et n'en crée un qu'à défaut.
+     *
+     * <p>Le repli précédent prenait l'adresse elle-même comme UID dès qu'aucun compte
+     * local n'y correspondait. Quand Firebase connaissait déjà l'adresse — inscription
+     * par Google, ou base locale réinitialisée — cela fabriquait une <b>seconde</b>
+     * identité pour la même personne, puis tentait de lui attribuer une adresse déjà
+     * prise : Firebase répondait {@code EMAIL_ALREADY_EXISTS}. L'inscription échouait
+     * après que le code OTP a été consommé, si bien que l'utilisateur ne voyait plus
+     * que « Code invalide » sans jamais pouvoir aboutir.
+     *
+     * <p>Un compte Firebase portant cette adresse <b>est</b> le compte de cette
+     * personne : la possession de l'adresse vient d'être prouvée par le code OTP. On
+     * s'y connecte donc directement, quel que soit l'état de la base locale.
+     */
+    private String resolveOrCreateFirebaseUid(String email) {
+        try {
+            return firebaseAuth.getUserByEmail(email).getUid();
+        } catch (FirebaseAuthException e) {
+            if (e.getAuthErrorCode() != AuthErrorCode.USER_NOT_FOUND) {
+                throw new YadonyBusinessException(
+                        HttpStatus.INTERNAL_SERVER_ERROR, "firebase-error",
+                        "Firebase Error", "Erreur lors de la résolution du compte");
+            }
+        }
+        try {
+            return firebaseAuth.createUser(
+                    new UserRecord.CreateRequest().setEmail(email)).getUid();
+        } catch (FirebaseAuthException e) {
+            // Course possible : deux vérifications concurrentes pour une adresse
+            // inconnue (double envoi, deux appareils). Le second createUser échoue,
+            // on relit alors l'UID gagnant plutôt que d'échouer la requête.
+            if (e.getAuthErrorCode() == AuthErrorCode.EMAIL_ALREADY_EXISTS) {
+                try {
+                    return firebaseAuth.getUserByEmail(email).getUid();
+                } catch (FirebaseAuthException e2) {
+                    throw new YadonyBusinessException(
+                            HttpStatus.INTERNAL_SERVER_ERROR, "firebase-error",
+                            "Firebase Error", "Erreur lors de la résolution du compte");
+                }
+            }
+            throw new YadonyBusinessException(
+                    HttpStatus.INTERNAL_SERVER_ERROR, "firebase-error",
+                    "Firebase Error", "Erreur lors de la création du compte");
         }
     }
 
