@@ -224,6 +224,20 @@ class PackageRequestSpecificationsTest {
     }
 
     @Test
+    @DisplayName("hasCurrency() non-null → equal sur currency")
+    void hasCurrency_nonNull() {
+        Predicate pred = mock(Predicate.class);
+        when(cb.equal(any(), eq("CAD"))).thenReturn(pred);
+
+        Specification<PackageRequestEntity> spec = PackageRequestSpecifications.hasCurrency("CAD");
+        Predicate result = spec.toPredicate(root, query, cb);
+
+        assertThat(result).isEqualTo(pred);
+        verify(root).get("currency");
+        verify(cb).equal(any(), eq("CAD"));
+    }
+
+    @Test
     @DisplayName("urgent() → between(desiredDate, today, today+thresholdDays)")
     void urgent_buildsBetweenOnDesiredDate() {
         Predicate pred = mock(Predicate.class);

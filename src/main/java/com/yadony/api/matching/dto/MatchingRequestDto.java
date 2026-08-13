@@ -17,5 +17,6 @@ public record MatchingRequestDto(
         String packagePhotoUrl,
         String messageExcerpt,
         int matchScore,
-        String requestedAt
+        String requestedAt,
+        String currency
 ) {}

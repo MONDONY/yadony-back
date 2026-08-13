@@ -4,8 +4,13 @@ import java.math.BigDecimal;
 import java.util.UUID;
 
 public interface CashGatePort {
-    /** Returns true if the traveler has sufficient funds to cover the commission amount. */
-    boolean hasSufficientFunds(UUID travelerId, BigDecimal commissionAmount);
+    /**
+     * Returns true if the traveler's wallet balance IN {@code currency} covers the
+     * commission amount. The commission is snapshotted in the request/thread's own
+     * currency — comparing it against a wallet balance in a different currency would
+     * silently under- or over-report available funds.
+     */
+    boolean hasSufficientFunds(UUID travelerId, BigDecimal commissionAmount, String currency);
 
     /**
      * Returns true if the traveler has a commission payment card registered.

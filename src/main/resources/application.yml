@@ -218,6 +218,10 @@ app:
 
 stripe:
   secret-key: ${STRIPE_SECRET_KEY}
+  fx-quotes:
+    api-version: ${STRIPE_FX_QUOTES_API_VERSION:2025-03-31.preview}
+    lock-duration: ${STRIPE_FX_QUOTES_LOCK_DURATION:hour}
+    fallback-ttl: ${STRIPE_FX_QUOTES_FALLBACK_TTL:PT1H}
   webhook-secret: ${STRIPE_WEBHOOK_SECRET:}
   webhook:
     payments-secret: ${STRIPE_WEBHOOK_PAYMENTS_SECRET:${STRIPE_WEBHOOK_SECRET:}}

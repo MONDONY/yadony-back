@@ -51,9 +51,10 @@ public class UserService {
      *  la suppression : cet argent deviendrait orphelin et irrécupérable une fois le compte
      *  Firebase supprimé (aucun flow de remboursement wallet n'existe, contrairement à l'escrow). */
     public boolean hasWalletBalance(UUID userId) {
-        return walletAccountRepository.findByUserId(userId)
-                .filter(w -> w.getBalance().compareTo(BigDecimal.ZERO) > 0)
-                .isPresent();
+        // Un utilisateur a un portefeuille par devise : n'interroger que l'EUR
+        // laisserait un solde XOF/USD devenir orphelin à la suppression.
+        return walletAccountRepository.findAllByUserId(userId).stream()
+                .anyMatch(w -> w.getBalance().compareTo(BigDecimal.ZERO) > 0);
     }
 
     /** Variante throwing de {@link #hasWalletBalance}, pour les deux chemins de suppression :

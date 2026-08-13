@@ -7,13 +7,16 @@ import com.yadony.api.cancellation.CancellationRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
+import com.yadony.api.payments.currency.CurrencyMatchGuard;
 import com.yadony.api.ratings.RatingRepository;
+import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
@@ -57,6 +60,15 @@ class BidContactRevealTest {
     @Mock private BidPhotoService bidPhotoService;
     @Mock private com.yadony.api.common.CommissionRateResolver commissionRateResolver;
     @Mock private FirebaseContactService firebaseContact;
+    @Mock private ActiveCurrencyResolver activeCurrencyResolver;
+
+    @org.junit.jupiter.api.BeforeEach
+    void stubDefaultActiveCurrency() {
+        org.mockito.Mockito.lenient()
+                .when(activeCurrencyResolver.resolve(org.mockito.ArgumentMatchers.any()))
+                .thenReturn("EUR");
+    }
+    @Spy private CurrencyMatchGuard currencyMatchGuard = new CurrencyMatchGuard();
 
     @InjectMocks private BidService bidService;
 

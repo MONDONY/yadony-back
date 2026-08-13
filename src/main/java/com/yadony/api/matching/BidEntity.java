@@ -70,6 +70,9 @@ public class BidEntity extends BaseEntity {
     @Enumerated(EnumType.STRING)
     private BidStatus status = BidStatus.PENDING;
 
+    @Column(name = "currency", nullable = false, length = 3)
+    private String currency = "EUR";
+
     @Column(name = "qr_token", unique = true, length = 255)
     private String qrToken;
 
@@ -235,6 +238,9 @@ public class BidEntity extends BaseEntity {
 
     public BidStatus getStatus() { return status; }
     public void setStatus(BidStatus status) { this.status = status; }
+
+    public String getCurrency() { return currency; }
+    public void setCurrency(String currency) { this.currency = currency; }
 
     public String getQrToken() { return qrToken; }
     public void setQrToken(String qrToken) { this.qrToken = qrToken; }

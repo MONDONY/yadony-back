@@ -31,42 +31,48 @@ public class WalletService {
         this.auditService = auditService;
     }
 
-    public WalletAccountEntity getOrCreate(UUID userId) {
-        return walletAccountRepository.findByUserId(userId).orElseGet(() -> {
+    public WalletAccountEntity getOrCreate(UUID userId, String currency) {
+        return walletAccountRepository.findByUserIdAndCurrency(userId, currency).orElseGet(() -> {
             WalletAccountEntity wallet = new WalletAccountEntity();
             wallet.setUserId(userId);
+            wallet.setCurrency(currency);
             return walletAccountRepository.save(wallet);
         });
     }
 
-    public BigDecimal getBalance(UUID userId) {
-        return getOrCreate(userId).getBalance();
+    public BigDecimal getBalance(UUID userId, String currency) {
+        return getOrCreate(userId, currency).getBalance();
+    }
+
+    public List<WalletAccountEntity> getAllBalances(UUID userId) {
+        return walletAccountRepository.findAllByUserId(userId);
     }
 
     public List<WalletTransactionEntity> getTransactions(UUID userId, int page) {
         return walletTransactionRepository
-            .findByUserIdOrderByCreatedAtDesc(userId, PageRequest.of(page, 50))
-            .getContent();
+                .findByUserIdOrderByCreatedAtDesc(userId, PageRequest.of(page, 50))
+                .getContent();
     }
 
-    public void credit(UUID userId, BigDecimal amount, WalletTransactionType type,
+    public void credit(UUID userId, String currency, BigDecimal amount, WalletTransactionType type,
                        String paymentRef, String idempotencyKey) {
         if (idempotencyKey != null) {
             Optional<WalletTransactionEntity> existing =
-                walletTransactionRepository.findByIdempotencyKey(idempotencyKey);
+                    walletTransactionRepository.findByIdempotencyKey(idempotencyKey);
             if (existing.isPresent()) {
                 log.info("Idempotent credit ignored for key={}", idempotencyKey);
                 return;
             }
         }
 
-        WalletAccountEntity wallet = getOrCreate(userId);
+        WalletAccountEntity wallet = getOrCreate(userId, currency);
         BigDecimal newBalance = wallet.getBalance().add(amount);
         wallet.setBalance(newBalance);
         walletAccountRepository.save(wallet);
 
         WalletTransactionEntity tx = new WalletTransactionEntity();
         tx.setUserId(userId);
+        tx.setCurrency(currency);
         tx.setType(type);
         tx.setAmount(amount);
         tx.setBalanceAfter(newBalance);
@@ -75,17 +81,14 @@ public class WalletService {
         walletTransactionRepository.save(tx);
 
         auditService.log("wallet", wallet.getId(), "WALLET_" + type.name(),
-            userId, Map.of("amount", amount.toString(), "paymentRef", String.valueOf(paymentRef)));
+                userId, Map.of("amount", amount.toString(), "currency", currency,
+                "paymentRef", String.valueOf(paymentRef)));
     }
 
     @Transactional(noRollbackFor = InsufficientWalletBalanceException.class)
-    public void debit(UUID userId, BigDecimal amount, WalletTransactionType type, UUID bidId) {
-        WalletAccountEntity wallet = walletAccountRepository.findByUserIdForUpdate(userId)
-            .orElseGet(() -> {
-                WalletAccountEntity w = new WalletAccountEntity();
-                w.setUserId(userId);
-                return walletAccountRepository.save(w);
-            });
+    public void debit(UUID userId, String currency, BigDecimal amount, WalletTransactionType type, UUID bidId) {
+        WalletAccountEntity wallet = walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, currency)
+                .orElseGet(() -> getOrCreate(userId, currency));
 
         if (wallet.getBalance().compareTo(amount) < 0) {
             throw new InsufficientWalletBalanceException(wallet.getBalance(), amount);
@@ -97,6 +100,7 @@ public class WalletService {
 
         WalletTransactionEntity tx = new WalletTransactionEntity();
         tx.setUserId(userId);
+        tx.setCurrency(currency);
         tx.setType(type);
         tx.setAmount(amount.negate());
         tx.setBalanceAfter(newBalance);
@@ -104,33 +108,23 @@ public class WalletService {
         walletTransactionRepository.save(tx);
 
         auditService.log("wallet", wallet.getId(), "WALLET_" + type.name(),
-            userId, Map.of("amount", amount.toString(), "bidId", String.valueOf(bidId)));
+                userId, Map.of("amount", amount.toString(), "currency", currency, "bidId", String.valueOf(bidId)));
     }
 
-    /**
-     * Variante de débit pour les contextes SANS bid (ex. commission d'une
-     * négociation) : la référence est stockée dans {@code payment_ref} +
-     * {@code idempotency_key}, et non dans la colonne FK {@code bid_id}
-     * (qui pointe vers {@code bids}). Idempotent via {@code idempotencyKey}.
-     */
     @Transactional(noRollbackFor = InsufficientWalletBalanceException.class)
-    public void debit(UUID userId, BigDecimal amount, WalletTransactionType type,
+    public void debit(UUID userId, String currency, BigDecimal amount, WalletTransactionType type,
                       String paymentRef, String idempotencyKey) {
         if (idempotencyKey != null) {
             Optional<WalletTransactionEntity> existing =
-                walletTransactionRepository.findByIdempotencyKey(idempotencyKey);
+                    walletTransactionRepository.findByIdempotencyKey(idempotencyKey);
             if (existing.isPresent()) {
                 log.info("Idempotent debit ignored for key={}", idempotencyKey);
                 return;
             }
         }
 
-        WalletAccountEntity wallet = walletAccountRepository.findByUserIdForUpdate(userId)
-            .orElseGet(() -> {
-                WalletAccountEntity w = new WalletAccountEntity();
-                w.setUserId(userId);
-                return walletAccountRepository.save(w);
-            });
+        WalletAccountEntity wallet = walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, currency)
+                .orElseGet(() -> getOrCreate(userId, currency));
 
         if (wallet.getBalance().compareTo(amount) < 0) {
             throw new InsufficientWalletBalanceException(wallet.getBalance(), amount);
@@ -142,6 +136,7 @@ public class WalletService {
 
         WalletTransactionEntity tx = new WalletTransactionEntity();
         tx.setUserId(userId);
+        tx.setCurrency(currency);
         tx.setType(type);
         tx.setAmount(amount.negate());
         tx.setBalanceAfter(newBalance);
@@ -150,6 +145,7 @@ public class WalletService {
         walletTransactionRepository.save(tx);
 
         auditService.log("wallet", wallet.getId(), "WALLET_" + type.name(),
-            userId, Map.of("amount", amount.toString(), "paymentRef", String.valueOf(paymentRef)));
+                userId, Map.of("amount", amount.toString(), "currency", currency,
+                "paymentRef", String.valueOf(paymentRef)));
     }
 }

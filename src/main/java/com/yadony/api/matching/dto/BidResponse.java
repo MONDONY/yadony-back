@@ -85,5 +85,6 @@ public record BidResponse(
         /** {@code rematchStatus} de cette cancellation ("NONE" / "SUGGESTED") — permet au
          * front d'afficher le CTA « Voir les trajets alternatifs ». Null si pas de
          * cancellation ouvrant droit au rematch pour ce bid. */
-        String tripCancellationRematchStatus
+        String tripCancellationRematchStatus,
+        String currency
 ) {}

@@ -104,7 +104,7 @@ public class PackageRequestSearchMapper {
                 photos,
                 isFavorite,
                 computeUrgent(entity.getDesiredDate()),
-                null, null, null
+                null, null, null, entity.getCurrency()
         );
     }
 
@@ -147,7 +147,7 @@ public class PackageRequestSearchMapper {
                 photos,
                 isFavorite,
                 computeUrgent(entity.getDesiredDate()),
-                null, null, null
+                null, null, null, entity.getCurrency()
         );
     }
 

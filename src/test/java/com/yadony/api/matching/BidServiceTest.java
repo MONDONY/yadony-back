@@ -15,9 +15,12 @@ import com.yadony.api.cancellation.CancellationEntity;
 import com.yadony.api.cancellation.CancellationRepository;
 import com.yadony.api.cancellation.CancellationScope;
 import com.yadony.api.cancellation.CancellationStatus;
+import com.yadony.api.payments.currency.CurrencyMatchGuard;
 import com.yadony.api.ratings.RatingRepository;
 import com.yadony.api.matching.events.BidCreatedEvent;
 import com.yadony.api.matching.events.BidRejectedEvent;
+import com.yadony.api.settings.UserBusinessPrefsEntity;
+import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -27,6 +30,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
@@ -65,7 +69,16 @@ class BidServiceTest {
     @Mock private StorageService storageService;
     @Mock private BidPhotoService bidPhotoService;
     @Mock private com.yadony.api.auth.FirebaseContactService firebaseContact;
+    @Mock private ActiveCurrencyResolver activeCurrencyResolver;
+
+    @org.junit.jupiter.api.BeforeEach
+    void stubDefaultActiveCurrency() {
+        org.mockito.Mockito.lenient()
+                .when(activeCurrencyResolver.resolve(org.mockito.ArgumentMatchers.any()))
+                .thenReturn("EUR");
+    }
     @Mock private HttpServletRequest httpRequest;
+    @Spy private CurrencyMatchGuard currencyMatchGuard = new CurrencyMatchGuard();
 
     @InjectMocks private BidService bidService;
 
@@ -148,10 +161,18 @@ class BidServiceTest {
                 "Aminata Diallo", "+221701234567", true, null, null, null, null, null, null);
     }
 
+    private UserBusinessPrefsEntity prefsWithCurrency(String code) {
+        UserBusinessPrefsEntity prefs = new UserBusinessPrefsEntity();
+        prefs.setUserId(SENDER_ID);
+        prefs.setCurrencyCode(code);
+        return prefs;
+    }
+
     @BeforeEach
     void stubCancellationRepository() {
         lenient().when(cancellationRepository.findAllByBidId(any()))
                 .thenReturn(java.util.List.of());
+        lenient().when(activeCurrencyResolver.resolve(any())).thenReturn("EUR");
         // Les numéros viennent de Firebase, plus de la colonne users.phone_number
         lenient().when(firebaseContact.getContact(SENDER_UID)).thenReturn(
                 new com.yadony.api.auth.FirebaseContactService.Contact("+33612345678", null));
@@ -206,6 +227,66 @@ class BidServiceTest {
             // Task 8: BidCreatedEvent is no longer published from createBid — the
             // webhook (PaymentService.promoteBidOnPaymentAuthorized) does it now.
             verify(eventPublisher, never()).publishEvent(any(BidCreatedEvent.class));
+        }
+
+        @Test
+        @DisplayName("devise absente côté sender → fallback EUR, mismatch 422, aucun save irréversible")
+        void createBid_missingSenderCurrencyFallsBackToEurAndFailsBeforeAnySave() {
+            UserEntity sender = buildSender();
+            sender.getRoles().clear();
+            AnnouncementEntity announcement = buildAnnouncement();
+            announcement.setCurrency("USD");
+            BigDecimal availableKgBefore = announcement.getAvailableKg();
+            AnnouncementStatus statusBefore = announcement.getStatus();
+
+            when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+
+            assertThatThrownBy(() -> bidService.createBid(
+                    ANNOUNCEMENT_ID, SENDER_UID, buildRequest(BigDecimal.valueOf(5)), httpRequest))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> {
+                        YadonyBusinessException ex = (YadonyBusinessException) e;
+                        assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                        assertThat(ex.getErrorCode()).isEqualTo("currency-mismatch");
+                    });
+
+            verify(activeCurrencyResolver).resolve(SENDER_ID);
+            verify(userRepository, never()).save(any(UserEntity.class));
+            verify(bidRepository, never()).save(any(BidEntity.class));
+            verify(announcementRepository, never()).save(any(AnnouncementEntity.class));
+            verifyNoInteractions(auditService, eventPublisher);
+            assertThat(sender.getRoles()).doesNotContain(Role.SENDER);
+            assertThat(announcement.getAvailableKg()).isEqualByComparingTo(availableKgBefore);
+            assertThat(announcement.getStatus()).isEqualTo(statusBefore);
+        }
+
+        @Test
+        @DisplayName("quand la devise matche, le bid copie exactement la devise de l'annonce")
+        void createBid_matchingCurrencyCopiesExactAnnouncementCurrency() {
+            UserEntity sender = buildSender();
+            AnnouncementEntity announcement = buildAnnouncement();
+            announcement.setCurrency("cad");
+
+            when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(activeCurrencyResolver.resolve(SENDER_ID)).thenReturn("CAD");
+            when(bidRepository.existsBySenderIdAndAnnouncementIdAndStatusIn(
+                    SENDER_ID, ANNOUNCEMENT_ID, List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED)))
+                    .thenReturn(false);
+            when(bidRepository.save(any(BidEntity.class))).thenAnswer(inv -> {
+                BidEntity b = inv.getArgument(0);
+                setId(b, BID_ID);
+                return b;
+            });
+
+            BidResponse result = bidService.createBid(
+                    ANNOUNCEMENT_ID, SENDER_UID, buildRequest(BigDecimal.valueOf(5)), httpRequest);
+
+            ArgumentCaptor<BidEntity> captor = ArgumentCaptor.forClass(BidEntity.class);
+            verify(bidRepository).save(captor.capture());
+            assertThat(result).isNotNull();
+            assertThat(captor.getValue().getCurrency()).isEqualTo("cad");
         }
 
         // C2 : normalisation à l'écriture — un client pas à jour envoie un libellé/code
@@ -1992,6 +2073,24 @@ class BidServiceTest {
         BidResponse result = bidService.getBidById(BID_ID, SENDER_UID);
 
         assertThat(result.confirmationCode()).isEqualTo("654321");
+    }
+
+    @Test
+    @DisplayName("getBidById expose la devise du bid, pas toujours EUR")
+    void getBidById_exposesBidCurrency() {
+        UserEntity sender = buildSender();
+        BidEntity bid = buildBid();
+        bid.setCurrency("CAD");
+        AnnouncementEntity announcement = buildAnnouncement();
+
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+        when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
+        when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+
+        BidResponse result = bidService.getBidById(BID_ID, SENDER_UID);
+
+        assertThat(result.currency()).isEqualTo("CAD");
     }
 
     @Test

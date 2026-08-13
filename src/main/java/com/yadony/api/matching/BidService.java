@@ -26,7 +26,9 @@ import com.yadony.api.cancellation.CancellationReason;
 import com.yadony.api.cancellation.CancellationRepository;
 import com.yadony.api.cancellation.CancellationScope;
 import com.yadony.api.payments.cash.PaymentMethod;
+import com.yadony.api.payments.currency.CurrencyMatchGuard;
 import com.yadony.api.ratings.RatingRepository;
+import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
@@ -64,8 +66,9 @@ public class BidService {
     private final PromoService promoService;
     private final StorageService storageService;
     private final BidPhotoService bidPhotoService;
-
     private final FirebaseContactService firebaseContact;
+    private final ActiveCurrencyResolver activeCurrencyResolver;
+    private final CurrencyMatchGuard currencyMatchGuard;
 
     public BidService(BidRepository bidRepository, AnnouncementRepository announcementRepository,
                       UserRepository userRepository, AuditService auditService,
@@ -78,7 +81,9 @@ public class BidService {
                       PromoService promoService,
                       StorageService storageService,
                       BidPhotoService bidPhotoService,
-                      FirebaseContactService firebaseContact) {
+                      FirebaseContactService firebaseContact,
+                      ActiveCurrencyResolver activeCurrencyResolver,
+                      CurrencyMatchGuard currencyMatchGuard) {
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.userRepository = userRepository;
@@ -94,6 +99,8 @@ public class BidService {
         this.storageService = storageService;
         this.bidPhotoService = bidPhotoService;
         this.firebaseContact = firebaseContact;
+        this.activeCurrencyResolver = activeCurrencyResolver;
+        this.currencyMatchGuard = currencyMatchGuard;
     }
 
     /**
@@ -191,11 +198,6 @@ public class BidService {
         // continue de gouverner la publication d'annonces
         // (AnnouncementService#assertCanPublish), où personne d'autre ne consent.
 
-        if (!sender.getRoles().contains(Role.SENDER)) {
-            sender.getRoles().add(Role.SENDER);
-            userRepository.save(sender);
-        }
-
         AnnouncementEntity announcement = announcementRepository.findByIdForUpdate(announcementId)
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND, "announcement-not-found", "Announcement Not Found",
@@ -205,6 +207,14 @@ public class BidService {
             throw new YadonyBusinessException(
                     HttpStatus.CONFLICT, "announcement-not-active", "Announcement Not Active",
                     "Cette annonce n'est plus disponible");
+        }
+
+        String senderCurrency = activeCurrencyResolver.resolve(sender.getId());
+        currencyMatchGuard.assertMatches(announcement.getCurrency(), senderCurrency);
+
+        if (!sender.getRoles().contains(Role.SENDER)) {
+            sender.getRoles().add(Role.SENDER);
+            userRepository.save(sender);
         }
 
         // Dedicated trip (tied to a negotiation): other senders can only bid on the
@@ -347,6 +357,7 @@ public class BidService {
         bid.setDisclaimerSignedIp(clientIp);
         bid.setPaymentMethod(pm);
         bid.setStatus(BidStatus.PENDING);
+        bid.setCurrency(announcement.getCurrency());
 
         // Code promo stocké brut (validation + rachat au moment du paiement).
         if (request.promoCode() != null && !request.promoCode().isBlank()) {
@@ -1251,7 +1262,8 @@ public class BidService {
                 storageService.avatarUrl(traveler != null ? traveler.getAvatarUrl() : null),
                 bidPhotoService.activePhotos(bid.getId()),
                 tripCancellationId,
-                tripCancellationRematchStatus
+                tripCancellationRematchStatus,
+                bid.getCurrency()
         );
     }
 }

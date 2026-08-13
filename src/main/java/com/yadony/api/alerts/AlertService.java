@@ -382,7 +382,7 @@ public class AlertService {
                     a.getId(), a.getDepartureCity(), a.getArrivalCity(), a.getDepartureDate(),
                     traveler.getId(), MatchingTextUtil.buildPublicName(traveler),
                     MatchingTextUtil.buildInitials(traveler), rating,
-                    a.getAvailableKg(), a.getPricePerKg(), a.getTransportMode(), null));
+                    a.getAvailableKg(), a.getPricePerKg(), a.getTransportMode(), null, a.getCurrency()));
         }
         return result;
     }
@@ -466,7 +466,8 @@ public class AlertService {
                 p.getPhotoUrl(),
                 MatchingTextUtil.truncate(p.getDescription(), 100),
                 0,
-                p.getCreatedAt() != null ? p.getCreatedAt().toString() : null);
+                p.getCreatedAt() != null ? p.getCreatedAt().toString() : null,
+                p.getCurrency());
     }
 
     private CorridorAlertResponse toResponse(CorridorAlertEntity e, long matchCount) {

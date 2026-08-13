@@ -52,7 +52,9 @@ class StripeConnectAccountCreationTest {
                 PaymentServiceTestFactory.defaultConnectProperties(),
                 new com.fasterxml.jackson.databind.ObjectMapper(),
                 org.mockito.Mockito.mock(com.yadony.api.common.stripe.AdminAlertService.class), PaymentServiceTestFactory.stubbedResolver(), org.mockito.Mockito.mock(com.yadony.api.promo.PromoService.class), new StripeGatewayImpl(),
-                PaymentServiceTestFactory.stubbedContacts()
+                PaymentServiceTestFactory.stubbedContacts(),
+                mock(com.yadony.api.payments.currency.ActiveCurrencyResolver.class, inv -> "EUR"),
+                new com.yadony.api.payments.currency.CurrencyMatchGuard()
 );
     }
 

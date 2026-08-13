@@ -2,6 +2,7 @@ package com.yadony.api.settings;
 
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,6 +28,7 @@ public class UserBusinessPrefsService {
         return repository.findById(userId).map(this::toDto).orElse(UserBusinessPrefsDto.defaults());
     }
 
+    @CacheEvict(value = "announcements-search", allEntries = true)
     public UserBusinessPrefsDto upsert(String firebaseUid, UserBusinessPrefsDto dto) {
         UUID userId = resolveUserId(firebaseUid);
         UserBusinessPrefsEntity e = repository.findById(userId).orElseGet(() -> {

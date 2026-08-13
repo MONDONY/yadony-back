@@ -26,6 +26,9 @@ public class WalletTransactionEntity {
     @Column(name = "user_id", nullable = false)
     private UUID userId;
 
+    @Column(name = "currency", nullable = false, length = 3)
+    private String currency = "EUR";
+
     @Column(name = "type", nullable = false, length = 30)
     @Enumerated(EnumType.STRING)
     private WalletTransactionType type;
@@ -54,6 +57,8 @@ public class WalletTransactionEntity {
     public UUID getId() { return id; }
     public UUID getUserId() { return userId; }
     public void setUserId(UUID userId) { this.userId = userId; }
+    public String getCurrency() { return currency; }
+    public void setCurrency(String currency) { this.currency = currency; }
     public WalletTransactionType getType() { return type; }
     public void setType(WalletTransactionType type) { this.type = type; }
     public BigDecimal getAmount() { return amount; }

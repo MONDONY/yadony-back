@@ -8,6 +8,7 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.matching.dto.AnnouncementRequest;
 import com.yadony.api.matching.dto.AnnouncementResponse;
+import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import jakarta.validation.Validation;
 import jakarta.validation.Validator;
 import org.junit.jupiter.api.BeforeEach;
@@ -72,6 +73,14 @@ class AnnouncementServiceAddressTest {
     @Mock ApplicationEventPublisher eventPublisher;
     @Mock PriceGridService priceGridService;
     @Mock com.yadony.api.country.FlagService flagService;
+    @Mock ActiveCurrencyResolver activeCurrencyResolver;
+
+    @org.junit.jupiter.api.BeforeEach
+    void stubDefaultActiveCurrency() {
+        org.mockito.Mockito.lenient()
+                .when(activeCurrencyResolver.resolve(org.mockito.ArgumentMatchers.any()))
+                .thenReturn("EUR");
+    }
     AnnouncementService announcementService;
 
     @org.junit.jupiter.api.BeforeEach
@@ -83,6 +92,7 @@ class AnnouncementServiceAddressTest {
                 auditService, eventPublisher, cfg, priceGridService, flagService,
                 mock(com.yadony.api.common.StorageService.class),
                 mock(com.yadony.api.favorites.FavoriteRepository.class),
+                activeCurrencyResolver,
                 mock(AnnouncementSearchMapper.class),
                 mock(com.yadony.api.requests.repository.PackageRequestRepository.class),
                 mock(com.yadony.api.requests.repository.NegotiationThreadRepository.class));

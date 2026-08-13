@@ -22,11 +22,14 @@ class NegotiationEntityTest {
         UUID travelerId = UUID.randomUUID();
         UUID annId = UUID.randomUUID();
 
+        assertThat(e.getCurrency()).isEqualTo("EUR");
+
         e.setPackageRequestId(pkgId);
         e.setTravelerId(travelerId);
         e.setTravelerAnnouncementId(annId);
         e.setTravelerTravelDate(LocalDate.now());
         e.setTravelerAvailableKg(new BigDecimal("10"));
+        e.setCurrency("CAD");
         e.setStatus(NegotiationThreadStatus.OPEN);
         e.setCurrentPriceEur(new BigDecimal("35"));
         e.setRoundsCount((short) 2);
@@ -37,6 +40,7 @@ class NegotiationEntityTest {
         assertThat(e.getPackageRequestId()).isEqualTo(pkgId);
         assertThat(e.getTravelerId()).isEqualTo(travelerId);
         assertThat(e.getTravelerAnnouncementId()).isEqualTo(annId);
+        assertThat(e.getCurrency()).isEqualTo("CAD");
         assertThat(e.getStatus()).isEqualTo(NegotiationThreadStatus.OPEN);
         assertThat(e.getCurrentPriceEur()).isEqualByComparingTo("35");
         assertThat(e.getRoundsCount()).isEqualTo((short) 2);

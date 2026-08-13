@@ -14,6 +14,8 @@ import com.yadony.api.matching.BidStatus;
 import com.yadony.api.matching.CapacityUnit;
 import com.yadony.api.matching.events.BidAcceptedEvent;
 import com.yadony.api.common.AuditService;
+import com.yadony.api.payments.currency.CurrencyAmount;
+import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.cash.dto.AcceptBidResponse;
 import com.yadony.api.payments.cash.dto.AcceptanceStatusDto;
 import com.yadony.api.payments.cash.dto.CommissionMethodResponse;
@@ -278,13 +280,17 @@ public class CashCommissionService {
 
         AnnouncementEntity announcement = announcementRepo.findById(bid.getAnnouncementId()).orElseThrow();
         BigDecimal commission = computeBidCommission(bid, announcement);
-        long amountCents = commission.multiply(new BigDecimal(100)).longValueExact();
+        // La commission est libellée dans la devise snapshottée du bid : convertir en
+        // unités mineures avec un x100 fixe fausserait XOF/XAF (minorUnit = 0) d'un
+        // facteur 100, et un PaymentIntent en "eur" débiterait la mauvaise devise.
+        CurrencyAmount commissionAmount = CurrencyAmount.of(
+                commission, SupportedCurrency.fromCodeOrDefault(bid.getCurrency()));
         String idempotencyKey = "bid_accept_" + bid.getId() + "_v" + bid.getCommissionRetryCount();
 
         try {
             PaymentIntentCreateParams params = PaymentIntentCreateParams.builder()
-                    .setAmount(amountCents)
-                    .setCurrency("eur")
+                    .setAmount(commissionAmount.minor())
+                    .setCurrency(commissionAmount.currency().code())
                     .setCustomer(traveler.getStripeCustomerId())
                     .setPaymentMethod(traveler.getCommissionPaymentMethodId())
                     .setOffSession(true)
@@ -346,7 +352,7 @@ public class CashCommissionService {
             log.info("Commission wallet déjà prélevée pour bid {}, idempotent skip", bid.getId());
             return;
         }
-        walletService.debit(travelerId, commission, WalletTransactionType.COMMISSION_DEDUCTED, bid.getId());
+        walletService.debit(travelerId, bid.getCurrency(), commission, WalletTransactionType.COMMISSION_DEDUCTED, bid.getId());
         bid.setCommissionStatus(CommissionStatus.CHARGED);
         bid.setCommissionChargedVia(CommissionChargedVia.WALLET);
         bidRepo.save(bid);
@@ -366,7 +372,7 @@ public class CashCommissionService {
         BigDecimal commission = computeBidCommission(bid, announcement);
 
         // 1) Wallet prioritaire
-        BigDecimal balance = walletService.getBalance(travelerId);
+        BigDecimal balance = walletService.getBalance(travelerId, bid.getCurrency());
         if (balance.compareTo(commission) >= 0) {
             try {
                 chargeCommissionFromWallet(bid, travelerId, commission);
@@ -441,10 +447,10 @@ public class CashCommissionService {
 
         // 1) Wallet prioritaire — débit SANS bid (réf = threadId dans payment_ref/
         // idempotency_key). On ne passe PAS le threadId dans la colonne FK bid_id.
-        BigDecimal balance = walletService.getBalance(travelerId);
+        BigDecimal balance = walletService.getBalance(travelerId, thread.getCurrency());
         if (balance.compareTo(commission) >= 0) {
             try {
-                walletService.debit(travelerId, commission,
+                walletService.debit(travelerId, thread.getCurrency(), commission,
                         WalletTransactionType.COMMISSION_DEDUCTED,
                         threadId.toString(), "nego_commission_wallet_" + threadId);
                 thread.setCommissionStatus(NEGO_COMMISSION_CHARGED);
@@ -462,12 +468,13 @@ public class CashCommissionService {
         // 2) Fallback carte off-session
         UserEntity traveler = userRepo.findById(travelerId).orElseThrow();
         if (traveler.getCommissionPaymentMethodId() != null) {
-            long amountCents = commission.multiply(new BigDecimal(100)).longValueExact();
+            CurrencyAmount commissionAmount = CurrencyAmount.of(
+                    commission, SupportedCurrency.fromCodeOrDefault(thread.getCurrency()));
             String idempotencyKey = "nego_commission_" + threadId;
             try {
                 PaymentIntentCreateParams params = PaymentIntentCreateParams.builder()
-                        .setAmount(amountCents)
-                        .setCurrency("eur")
+                        .setAmount(commissionAmount.minor())
+                        .setCurrency(commissionAmount.currency().code())
                         .setCustomer(traveler.getStripeCustomerId())
                         .setPaymentMethod(traveler.getCommissionPaymentMethodId())
                         .setOffSession(true)
@@ -576,7 +583,7 @@ public class CashCommissionService {
         BigDecimal commission = computeBidCommission(bid, announcement);
 
         if (commissionSource == CommissionSource.WALLET_FIRST) {
-            BigDecimal balance = walletService.getBalance(travelerId);
+            BigDecimal balance = walletService.getBalance(travelerId, bid.getCurrency());
             if (balance.compareTo(commission) >= 0) {
                 try {
                     chargeCommissionFromWallet(bid, travelerId, commission);
@@ -590,7 +597,7 @@ public class CashCommissionService {
             // Solde insuffisant → informer le voyageur
             UserEntity traveler = userRepo.findById(travelerId).orElseThrow();
             boolean hasCard = traveler.getCommissionPaymentMethodId() != null;
-            return AcceptBidResponse.insufficientWallet(balance, commission, hasCard);
+            return AcceptBidResponse.insufficientWallet(balance, commission, hasCard, bid.getCurrency());
         }
 
         // commissionSource == CARD → comportement carte existant
@@ -667,7 +674,8 @@ public class CashCommissionService {
             return;
         }
         BigDecimal refundAmount = commissionTx.get().getAmount().abs();
-        walletService.credit(travelerId, refundAmount, com.yadony.api.payments.wallet.WalletTransactionType.REFUND,
+        walletService.credit(travelerId, commissionTx.get().getCurrency(), refundAmount,
+                com.yadony.api.payments.wallet.WalletTransactionType.REFUND,
                 "refund-" + bid.getId(), idempotencyKey);
         bid.setCommissionStatus(CommissionStatus.REFUNDED);
         bidRepo.save(bid);

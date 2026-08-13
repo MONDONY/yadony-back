@@ -183,7 +183,7 @@ class PackageRequestControllerIT {
             new PackageRequestSearchResponse.SenderPublicProfile(
                 UUID.randomUUID(), "Sender", 4.5, 12, true, null),
             java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.STRIPE)
-        , List.of(), false, false, null, null, null);
+        , List.of(), false, false, null, null, null, "EUR");
         var pageable = org.springframework.data.domain.PageRequest.of(0, 20);
         when(service.search(any(), any(), any())).thenReturn(new PageImpl<>(List.of(searchResp), pageable, 1));
 
@@ -211,7 +211,7 @@ class PackageRequestControllerIT {
             new PackageRequestSearchResponse.SenderPublicProfile(
                 UUID.randomUUID(), "Sender", 4.5, 12, true, null),
             java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.STRIPE)
-        , List.of(), false, false, null, null, null);
+        , List.of(), false, false, null, null, null, "EUR");
         var pageable = org.springframework.data.domain.PageRequest.of(0, 20);
         when(service.search(any(), any(), any())).thenReturn(new PageImpl<>(List.of(searchResp), pageable, 1));
 
@@ -246,8 +246,8 @@ class PackageRequestControllerIT {
 
     @Test
     void get_estimate_returnsEstimate() throws Exception {
-        when(estimationService.estimate(eq("Paris"), eq("Dakar"), any()))
-            .thenReturn(new PriceEstimateResponse(new BigDecimal("85"), new BigDecimal("115"), "HIGH", 15));
+        when(estimationService.estimate(eq("Paris"), eq("Dakar"), any(), eq("EUR")))
+            .thenReturn(new PriceEstimateResponse(new BigDecimal("85"), new BigDecimal("115"), "HIGH", 15, "EUR"));
 
         mockMvc.perform(get("/package-requests/estimate")
                 .param("from", "Paris")
@@ -438,7 +438,7 @@ class PackageRequestControllerIT {
             new PackageRequestSearchResponse.SenderPublicProfile(
                 UUID.randomUUID(), "Sender", 4.5, 12, true, null),
             java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.STRIPE)
-        , List.of(), false, true, null, null, null);
+        , List.of(), false, true, null, null, null, "EUR");
         var pageable = org.springframework.data.domain.PageRequest.of(0, 20);
         when(service.search(any(), any(), any())).thenReturn(new PageImpl<>(List.of(searchResp), pageable, 1));
 

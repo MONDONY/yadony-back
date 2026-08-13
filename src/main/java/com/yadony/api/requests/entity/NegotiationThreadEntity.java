@@ -39,6 +39,9 @@ public class NegotiationThreadEntity extends BaseEntity {
     @Column(nullable = false, length = 20)
     private NegotiationThreadStatus status;
 
+    @Column(name = "currency", nullable = false, length = 3)
+    private String currency = "EUR";
+
     /**
      * Optimistic-lock guard. Serializes the AWAITING_PAYMENT → ACCEPTED finalize:
      * the synchronous {@code /checkout} and the Stripe webhook can finalize the same
@@ -138,6 +141,8 @@ public class NegotiationThreadEntity extends BaseEntity {
 
     public NegotiationThreadStatus getStatus() { return status; }
 
+    public String getCurrency() { return currency; }
+
     public BigDecimal getCurrentPriceEur() { return currentPriceEur; }
 
     public Short getRoundsCount() { return roundsCount; }
@@ -181,6 +186,8 @@ public class NegotiationThreadEntity extends BaseEntity {
     public void setTravelerAvailableKg(BigDecimal travelerAvailableKg) { this.travelerAvailableKg = travelerAvailableKg; }
 
     public void setStatus(NegotiationThreadStatus status) { this.status = status; }
+
+    public void setCurrency(String currency) { this.currency = currency; }
 
     public void setCurrentPriceEur(BigDecimal currentPriceEur) { this.currentPriceEur = currentPriceEur; }
 

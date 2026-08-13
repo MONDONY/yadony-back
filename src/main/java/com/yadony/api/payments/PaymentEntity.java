@@ -34,10 +34,23 @@ public class PaymentEntity extends BaseEntity {
     @Column(name = "amount", nullable = false, precision = 10, scale = 2)
     private BigDecimal amount;
 
+    @Column(name = "currency", nullable = false, length = 3)
+    private String currency = "eur";
+
+    /** Stripe FX Quote used to lock the presentment-to-EUR conversion for this payment. */
+    @Column(name = "stripe_fx_quote_id", length = 255)
+    private String stripeFxQuoteId;
+
+    @Column(name = "fx_exchange_rate", precision = 20, scale = 10)
+    private BigDecimal fxExchangeRate;
+
+    @Column(name = "fx_quote_expires_at")
+    private Instant fxQuoteExpiresAt;
+
     @Column(name = "commission_amount", nullable = false, precision = 10, scale = 2)
     private BigDecimal commissionAmount;
 
-    /** Montant cumulé remboursé (EUR) — miroir absolu de Stripe charge.amount_refunded. */
+    /** Montant cumulé remboursé dans la devise du paiement — miroir absolu de Stripe charge.amount_refunded. */
     @Column(name = "refunded_amount", precision = 10, scale = 2)
     private BigDecimal refundedAmount;
 
@@ -71,6 +84,25 @@ public class PaymentEntity extends BaseEntity {
 
     public BigDecimal getAmount() { return amount; }
     public void setAmount(BigDecimal amount) { this.amount = amount; }
+
+    public String getCurrency() { return currency; }
+    public void setCurrency(String currency) { this.currency = currency == null ? null : currency.toLowerCase(); }
+
+    public String getStripeFxQuoteId() { return stripeFxQuoteId; }
+    public void setStripeFxQuoteId(String stripeFxQuoteId) { this.stripeFxQuoteId = stripeFxQuoteId; }
+
+    public BigDecimal getFxExchangeRate() { return fxExchangeRate; }
+    public void setFxExchangeRate(BigDecimal fxExchangeRate) { this.fxExchangeRate = fxExchangeRate; }
+
+    public Instant getFxQuoteExpiresAt() { return fxQuoteExpiresAt; }
+    public void setFxQuoteExpiresAt(Instant fxQuoteExpiresAt) { this.fxQuoteExpiresAt = fxQuoteExpiresAt; }
+
+    /** Clears obsolete Stripe FX data when this row is recycled for a 1:1 currency payment. */
+    public void clearLegacyFxData() {
+        stripeFxQuoteId = null;
+        fxExchangeRate = null;
+        fxQuoteExpiresAt = null;
+    }
 
     public BigDecimal getCommissionAmount() { return commissionAmount; }
     public void setCommissionAmount(BigDecimal commissionAmount) { this.commissionAmount = commissionAmount; }

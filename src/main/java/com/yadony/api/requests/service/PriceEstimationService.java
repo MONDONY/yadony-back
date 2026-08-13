@@ -42,14 +42,17 @@ public class PriceEstimationService {
      * </ul>
      */
     @Cacheable(value = "estimation-corridor",
-               key = "#departure + '|' + #arrival + '|' + T(java.lang.Math).ceil(#weightKg.doubleValue())")
-    public PriceEstimateResponse estimate(String departure, String arrival, BigDecimal weightKg) {
+               key = "#departure + '|' + #arrival + '|' + #currency + '|' + T(java.lang.Math).ceil(#weightKg.doubleValue())")
+    public PriceEstimateResponse estimate(String departure, String arrival, BigDecimal weightKg, String currency) {
+        // Filtré par devise : moyenner des annonces en devises différentes (ex. EUR et CAD)
+        // produirait un montant sans signification. Le sample ne compare que des trajets
+        // publiés dans la même devise que la demande à estimer.
         List<AnnouncementEntity> sample = announcementRepo.findRecentByCorridor(
-            departure, arrival,
+            departure, arrival, currency,
             PageRequest.of(0, config.estimationCorridorRecentTrips()));
 
         if (sample.isEmpty()) {
-            return new PriceEstimateResponse(null, null, "LOW", 0);
+            return new PriceEstimateResponse(null, null, "LOW", 0, currency);
         }
 
         BigDecimal sum = sample.stream()
@@ -69,6 +72,6 @@ public class PriceEstimationService {
             confidence = "LOW";
         }
 
-        return new PriceEstimateResponse(low, high, confidence, sample.size());
+        return new PriceEstimateResponse(low, high, confidence, sample.size(), currency);
     }
 }

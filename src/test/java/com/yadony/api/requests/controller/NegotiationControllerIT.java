@@ -387,18 +387,24 @@ class NegotiationControllerIT {
             true, // cashCommissionAvailable
             null, // availablePaymentMethods
             false, // canNudge
-            false  // hasUnread
+            false, // hasUnread
+            null,  // promoCode
+            "CAD"  // devise serveur du thread
         );
         when(service.getById(eq(SENDER_UUID), eq(threadId))).thenReturn(awaitingPaymentThread);
-        when(paymentService.createNegotiationEscrow(eq(threadId), eq(SENDER_UUID), eq(TRAVELER_UUID), any(), isNull()))
+        when(paymentService.createNegotiationEscrow(
+                eq(threadId), eq(SENDER_UUID), eq(TRAVELER_UUID), any(), isNull(), isNull(), eq("CAD")))
             .thenReturn(new com.yadony.api.payments.dto.PaymentResponse(
                 UUID.randomUUID(), null, "pi_test_secret",
                 new java.math.BigDecimal("33.60"), new java.math.BigDecimal("3.60"),
-                "PENDING", "pi_test_id"));
+                "PENDING", "pi_test_id", "CAD"));
 
         mockMvc.perform(post("/negotiations/{id}/initiate-payment", threadId)
                 .with(authentication(authAs("uid-sender", "SENDER"))))
-            .andExpect(status().isOk());
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.currency").value("cad"));
+        verify(paymentService).createNegotiationEscrow(
+                threadId, SENDER_UUID, TRAVELER_UUID, new java.math.BigDecimal("30"), null, null, "CAD");
         verify(service, org.mockito.Mockito.never()).recordAppliedPromo(any(), any(), any());
     }
 
@@ -431,7 +437,8 @@ class NegotiationControllerIT {
                 "PENDING", "pi_test_id");
         promoResponse.setCommissionRate(new java.math.BigDecimal("0.06"));
         promoResponse.setPromoApplied(true);
-        when(paymentService.createNegotiationEscrow(eq(threadId), eq(SENDER_UUID), eq(TRAVELER_UUID), any(), eq("WELCOME6")))
+        when(paymentService.createNegotiationEscrow(
+                eq(threadId), eq(SENDER_UUID), eq(TRAVELER_UUID), any(), eq("WELCOME6"), isNull(), eq("EUR")))
             .thenReturn(promoResponse);
 
         mockMvc.perform(post("/negotiations/{id}/initiate-payment", threadId)
@@ -475,7 +482,8 @@ class NegotiationControllerIT {
                 "PENDING", "pi_test_id");
         promoResponse.setCommissionRate(new java.math.BigDecimal("0.06"));
         promoResponse.setPromoApplied(true);
-        when(paymentService.createNegotiationEscrow(eq(threadId), eq(SENDER_UUID), eq(TRAVELER_UUID), any(), eq("AUTOCODE")))
+        when(paymentService.createNegotiationEscrow(
+                eq(threadId), eq(SENDER_UUID), eq(TRAVELER_UUID), any(), eq("AUTOCODE"), isNull(), eq("EUR")))
             .thenReturn(promoResponse);
 
         mockMvc.perform(post("/negotiations/{id}/initiate-payment", threadId)
@@ -518,7 +526,8 @@ class NegotiationControllerIT {
                 new java.math.BigDecimal("33.60"), new java.math.BigDecimal("3.60"),
                 "PENDING", "pi_test_id");
         // promoApplied reste false par défaut : le fallback tarif de base.
-        when(paymentService.createNegotiationEscrow(eq(threadId), eq(SENDER_UUID), eq(TRAVELER_UUID), any(), eq("WELCOME6")))
+        when(paymentService.createNegotiationEscrow(
+                eq(threadId), eq(SENDER_UUID), eq(TRAVELER_UUID), any(), eq("WELCOME6"), isNull(), eq("EUR")))
             .thenReturn(baseRateResponse);
 
         mockMvc.perform(post("/negotiations/{id}/initiate-payment", threadId)
@@ -526,6 +535,71 @@ class NegotiationControllerIT {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.promoApplied").value(false));
         verify(service).recordAppliedPromo(threadId, null, null);
+    }
+
+    @Test
+    void post_initiatePayment_twice_preservesPersistedPromoAndCommissionRate() throws Exception {
+        UUID threadId = UUID.randomUUID();
+        NegotiationThreadResponse firstRead = paymentThread(threadId, null);
+        NegotiationThreadResponse persistedRead = paymentThread(threadId, new BigDecimal("0.06"));
+        when(service.getById(SENDER_UUID, threadId)).thenReturn(firstRead, persistedRead);
+
+        var created = new com.yadony.api.payments.dto.PaymentResponse(
+                UUID.randomUUID(), null, "pi_promo_secret",
+                new BigDecimal("31.80"), new BigDecimal("1.80"),
+                "PENDING", "pi_promo", "EUR");
+        created.setCommissionRate(new BigDecimal("0.06"));
+        created.setPromoApplied(true);
+        var resumed = new com.yadony.api.payments.dto.PaymentResponse(
+                created.getId(), null, "pi_promo_secret",
+                new BigDecimal("31.80"), new BigDecimal("1.80"),
+                "PENDING", "pi_promo", "EUR");
+        resumed.setCommissionRate(new BigDecimal("0.06"));
+        resumed.setPromoApplied(true);
+
+        when(paymentService.createNegotiationEscrow(
+                threadId, SENDER_UUID, TRAVELER_UUID, new BigDecimal("30"),
+                "WELCOME6", null, "EUR"))
+                .thenReturn(created);
+        when(paymentService.createNegotiationEscrow(
+                threadId, SENDER_UUID, TRAVELER_UUID, new BigDecimal("30"),
+                "WELCOME6", new BigDecimal("0.06"), "EUR"))
+                .thenReturn(resumed);
+
+        mockMvc.perform(post("/negotiations/{id}/initiate-payment", threadId)
+                .with(authentication(authAs("uid-sender", "SENDER"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.commissionRate").value(0.06))
+            .andExpect(jsonPath("$.promoApplied").value(true));
+        mockMvc.perform(post("/negotiations/{id}/initiate-payment", threadId)
+                .param("promoCode", "OTHER")
+                .with(authentication(authAs("uid-sender", "SENDER"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.commissionRate").value(0.06))
+            .andExpect(jsonPath("$.promoApplied").value(true));
+
+        verify(service, org.mockito.Mockito.times(2))
+                .recordAppliedPromo(threadId, "WELCOME6", new BigDecimal("0.06"));
+        verify(paymentService, org.mockito.Mockito.never()).createNegotiationEscrow(
+                threadId, SENDER_UUID, TRAVELER_UUID, new BigDecimal("30"),
+                "OTHER", new BigDecimal("0.06"), "EUR");
+        verify(service, org.mockito.Mockito.never())
+                .recordAppliedPromo(threadId, "OTHER", new BigDecimal("0.06"));
+        verify(service, org.mockito.Mockito.never()).recordAppliedPromo(threadId, null, null);
+    }
+
+    private NegotiationThreadResponse paymentThread(UUID threadId, BigDecimal persistedRate) {
+        return org.mockito.Mockito.mock(NegotiationThreadResponse.class, invocation -> switch (
+                invocation.getMethod().getName()) {
+            case "id" -> threadId;
+            case "travelerId" -> TRAVELER_UUID;
+            case "status" -> NegotiationThreadStatus.AWAITING_PAYMENT;
+            case "currentPriceEur" -> new BigDecimal("30");
+            case "promoCode" -> "WELCOME6";
+            case "commissionRate" -> persistedRate;
+            case "currency" -> "EUR";
+            default -> org.mockito.Answers.RETURNS_DEFAULTS.answer(invocation);
+        });
     }
 
     @Test

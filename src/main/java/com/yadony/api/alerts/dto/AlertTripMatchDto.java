@@ -18,5 +18,6 @@ public record AlertTripMatchDto(
         BigDecimal availableKg,
         BigDecimal pricePerKg,
         TransportMode transportMode,
-        String photoUrl
+        String photoUrl,
+        String currency
 ) {}

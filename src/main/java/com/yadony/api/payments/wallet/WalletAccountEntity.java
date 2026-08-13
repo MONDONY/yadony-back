@@ -14,7 +14,7 @@ import java.util.UUID;
 @Where(clause = "deleted_at IS NULL")
 public class WalletAccountEntity extends BaseEntity {
 
-    @Column(name = "user_id", nullable = false, unique = true)
+    @Column(name = "user_id", nullable = false)
     private UUID userId;
 
     @Column(name = "balance", nullable = false, precision = 10, scale = 2)

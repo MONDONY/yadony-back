@@ -11,19 +11,14 @@ class PriceBreakdownTest {
         assertThat(b.net()).isEqualByComparingTo("35.00");
         assertThat(b.commission()).isEqualByComparingTo("4.20");
         assertThat(b.gross()).isEqualByComparingTo("39.20");
-        assertThat(b.grossCents()).isEqualTo(3920L);
-        assertThat(b.commissionCents()).isEqualTo(420L);
     }
 
-    /** Vérifie que grossCents / commissionCents ne lancent pas ArithmeticException
-     *  même si le taux a plus de 2 décimales (ex. 12.333...%). */
-    @Test void cents_withFractionalRate_noArithmeticException() {
-        // rate avec beaucoup de décimales — simule un taux futur non standard
+    /** Le taux peut avoir plus de 2 décimales (ex. 12.3456789%) : les montants restent
+     *  arrondis au centime et gross - commission redonne exactement le net. */
+    @Test void withFractionalRate_amountsStayConsistent() {
         PriceBreakdown b = PriceBreakdown.fromNet(new BigDecimal("35"), new BigDecimal("0.123456789"));
-        // L'important : pas d'exception, et les valeurs sont cohérentes
-        assertThat(b.grossCents()).isGreaterThan(3900L);
-        assertThat(b.commissionCents()).isGreaterThan(0L);
-        assertThat(b.grossCents()).isEqualTo(b.commissionCents() + b.net().multiply(BigDecimal.valueOf(100))
-                .setScale(0, java.math.RoundingMode.HALF_UP).longValue());
+        assertThat(b.commission()).isEqualByComparingTo("4.32");
+        assertThat(b.gross()).isEqualByComparingTo("39.32");
+        assertThat(b.gross().subtract(b.commission())).isEqualByComparingTo(b.net());
     }
 }

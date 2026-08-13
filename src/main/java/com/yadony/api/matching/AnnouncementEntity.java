@@ -103,6 +103,9 @@ public class AnnouncementEntity extends BaseEntity {
     @Enumerated(EnumType.STRING)
     private AnnouncementStatus status = AnnouncementStatus.ACTIVE;
 
+    @Column(name = "currency", nullable = false, length = 3)
+    private String currency = "EUR";
+
     @Column(name = "description", length = 500)
     private String description;
 
@@ -283,6 +286,9 @@ public class AnnouncementEntity extends BaseEntity {
 
     public AnnouncementStatus getStatus() { return status; }
     public void setStatus(AnnouncementStatus status) { this.status = status; }
+
+    public String getCurrency() { return currency; }
+    public void setCurrency(String currency) { this.currency = currency; }
 
     public String getDescription() { return description; }
     public void setDescription(String description) { this.description = description; }

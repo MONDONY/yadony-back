@@ -137,6 +137,29 @@ class DeliveryEventListenerTest {
     }
 
     @Test
+    void v2_path_uses_persisted_xof_currency_and_zero_decimal_units() {
+        PaymentEntity p = payment(false, PaymentStatus.ESCROW, "ch_xof");
+        p.setCurrency("xof");
+        p.setAmount(new BigDecimal("30000"));
+        p.setCommissionAmount(new BigDecimal("3600"));
+        UUID travelerId = UUID.randomUUID();
+        when(paymentRepository.findByBidId(p.getBidId())).thenReturn(Optional.of(p));
+        when(paymentRepository.markReleasedIfEscrow(any(), any())).thenReturn(1);
+        when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler()));
+
+        try (MockedStatic<Transfer> transferStatic = mockStatic(Transfer.class)) {
+            ArgumentCaptor<TransferCreateParams> captor = ArgumentCaptor.forClass(TransferCreateParams.class);
+            transferStatic.when(() -> Transfer.create(captor.capture(), any(RequestOptions.class)))
+                    .thenReturn(mock(Transfer.class));
+
+            listener.handleDeliveryConfirmed(event(p.getBidId(), travelerId));
+
+            assertThat(captor.getValue().getAmount()).isEqualTo(26400L);
+            assertThat(captor.getValue().getCurrency()).isEqualTo("xof");
+        }
+    }
+
+    @Test
     void release_skipped_when_atomic_claim_lost() {
         // Un traitement concurrent a déjà sorti le paiement d'ESCROW entre la lecture
         // et le claim → aucun appel Stripe, aucun audit, aucun event.

@@ -186,9 +186,10 @@ public class PackageRequestController {
     public PriceEstimateResponse estimate(
             @RequestParam String from,
             @RequestParam String to,
-            @RequestParam BigDecimal weight
+            @RequestParam BigDecimal weight,
+            @RequestParam(defaultValue = "EUR") String currency
     ) {
-        return estimationService.estimate(from, to, weight);
+        return estimationService.estimate(from, to, weight, currency);
     }
 
     // ─── Auth helpers ────────────────────────────────────────────────────────────

@@ -27,7 +27,11 @@ import com.yadony.api.payments.dto.EphemeralKeyResponse;
 import com.yadony.api.payments.dto.OnboardingLinkResponse;
 import com.yadony.api.payments.dto.PaymentMethodResponse;
 import com.yadony.api.payments.dto.PaymentResponse;
+import com.yadony.api.payments.currency.CurrencyAmount;
+import com.yadony.api.payments.currency.CurrencyMatchGuard;
+import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.events.StripeOnboardingCompletedEvent;
+import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import com.stripe.exception.StripeException;
 import com.stripe.model.Account;
 import com.stripe.model.AccountLink;
@@ -81,6 +85,8 @@ public class PaymentService {
     private final PromoService promoService;
     private final StripeGateway stripeGateway;
     private final FirebaseContactService firebaseContact;
+    private final ActiveCurrencyResolver activeCurrencyResolver;
+    private final CurrencyMatchGuard currencyMatchGuard;
 
     public PaymentService(UserRepository userRepository,
                           BidRepository bidRepository,
@@ -95,7 +101,9 @@ public class PaymentService {
                           CommissionRateResolver commissionRateResolver,
                           PromoService promoService,
                           StripeGateway stripeGateway,
-                          FirebaseContactService firebaseContact) {
+                          FirebaseContactService firebaseContact,
+                          ActiveCurrencyResolver activeCurrencyResolver,
+                          CurrencyMatchGuard currencyMatchGuard) {
         this.userRepository = userRepository;
         this.bidRepository = bidRepository;
         this.bidGridItemRepository = bidGridItemRepository;
@@ -110,6 +118,8 @@ public class PaymentService {
         this.promoService = promoService;
         this.stripeGateway = stripeGateway;
         this.firebaseContact = firebaseContact;
+        this.activeCurrencyResolver = activeCurrencyResolver;
+        this.currencyMatchGuard = currencyMatchGuard;
     }
 
     // ── Story 6.2 : Onboarding Stripe Connect ────────────────────────────────
@@ -358,49 +368,25 @@ public class PaymentService {
                     "Cette demande ne peut plus être payée (statut : " + bid.getStatus() + ")");
         }
 
-        // Idempotency: reuse existing non-failed payment
+        String senderCurrency = activeCurrencyResolver.resolve(sender.getId());
+        currencyMatchGuard.assertMatches(bid.getCurrency(), senderCurrency);
+        SupportedCurrency currency = SupportedCurrency.fromCode(bid.getCurrency());
+
+        // Currency ownership is checked before idempotency and any persistent/Stripe effect.
         Optional<PaymentEntity> existing = paymentRepository.findByBidId(bidId);
         if (existing.isPresent()) {
             PaymentEntity payment = existing.get();
-            // Paiement déjà autorisé ou libéré → ne pas recréer
             if (payment.getStatus() == PaymentStatus.ESCROW
                     || payment.getStatus() == PaymentStatus.RELEASED) {
                 throw new YadonyBusinessException(HttpStatus.CONFLICT,
                         "payment-already-completed", "Payment Already Completed",
                         "Le paiement pour cette demande a déjà été effectué");
             }
-            // PENDING → retourner le clientSecret existant pour que le client finalise
-            if (payment.getStatus() == PaymentStatus.PENDING) {
-                try {
-                    PaymentIntent pi = stripeGateway.retrievePaymentIntent(payment.getStripePaymentIntentId());
-                    if ("requires_payment_method".equals(pi.getStatus())
-                            || "requires_confirmation".equals(pi.getStatus())) {
-                        return toPaymentResponse(payment, pi);
-                    }
-                    // PI déjà autorisé côté Stripe mais pas encore mis à jour en DB → conflict
-                    throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                            "payment-already-completed", "Payment Already Completed",
-                            "Le paiement pour cette demande a déjà été effectué");
-                } catch (StripeException e) {
-                    log.warn("Could not retrieve existing PaymentIntent for bid {}, creating new one", bidId);
-                }
-            }
-            // FAILED → laisser passer pour créer un nouveau PaymentIntent
         }
 
         AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
                         "announcement-not-found", "Announcement Not Found", "Annonce introuvable"));
-
-        UserEntity traveler = userRepository.findById(announcement.getTravelerId())
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "traveler-not-found", "Traveler Not Found", "Voyageur introuvable"));
-
-        if (traveler.getStripeAccountStatus() != StripeAccountStatus.ONBOARDING_COMPLETE
-                || traveler.getStripeAccountId() == null
-                || traveler.getStripeAccountId().isBlank()) {
-            throw new TravelerNotEligibleForPaymentException(traveler.getId());
-        }
 
         // SECURITE : le montant net est TOUJOURS recalculé côté serveur à partir
         // des données persistées du bid (grid items snapshotés + poids × prix/kg
@@ -423,6 +409,78 @@ public class PaymentService {
                 "invalid-amount", "Invalid Amount",
                 "Le montant calculé est invalide (≤ 0)");
         }
+        BigDecimal rate;
+        boolean promoApplied = false;
+        if (existing.isPresent()) {
+            // A payment row means pricing was already committed server-side. Never
+            // revalidate a consumed promo or current overrides on retries: both may
+            // legitimately have changed since the first PaymentIntent was created.
+            rate = bid.getCommissionRate();
+            if (rate == null) {
+                throw new YadonyBusinessException(HttpStatus.CONFLICT,
+                        "payment-pricing-context-missing", "Payment Pricing Context Missing",
+                        "Le taux de commission figé de ce paiement est introuvable");
+            }
+        } else {
+            // Truly new payment only: promo > overrides > global.
+            if (bid.getPromoCode() != null) {
+                try {
+                    rate = commissionRateResolver.resolve(
+                            announcement.getTravelerId(), sender.getId(), bid.getPromoCode());
+                    promoApplied = true;
+                } catch (YadonyBusinessException e) {
+                    log.warn("Promo {} no longer valid for bid {} ({}): falling back to override/global rate",
+                            bid.getPromoCode(), bidId, e.getErrorCode());
+                    rate = commissionRateResolver.resolve(announcement.getTravelerId(), sender.getId());
+                }
+            } else {
+                rate = commissionRateResolver.resolve(announcement.getTravelerId(), sender.getId());
+            }
+        }
+        BigDecimal amount = totalNet.multiply(BigDecimal.ONE.add(rate)).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal commission = totalNet.multiply(rate).setScale(2, RoundingMode.HALF_UP);
+        CurrencyAmount localAmount = CurrencyAmount.of(amount, currency);
+        CurrencyAmount localCommission = CurrencyAmount.of(commission, currency);
+
+        PaymentEntity recyclable = null;
+        if (existing.isPresent()) {
+            PaymentEntity payment = existing.get();
+            if (payment.getStatus() == PaymentStatus.PENDING) {
+                try {
+                    PaymentIntent pi = stripeGateway.retrievePaymentIntent(payment.getStripePaymentIntentId());
+                    String piStatus = pi.getStatus();
+                    if ("requires_payment_method".equals(piStatus)
+                            || "requires_confirmation".equals(piStatus)) {
+                        if (matchesExpectedAmountAndCurrency(payment, pi, localAmount)) {
+                            return toPaymentResponse(payment, pi);
+                        }
+                        log.info("Canceling incompatible legacy PaymentIntent {} for bid {}",
+                                payment.getStripePaymentIntentId(), bidId);
+                        cancelAndConfirmForRecycle(pi);
+                    } else if (!"canceled".equals(piStatus)) {
+                        // PI déjà autorisé côté Stripe mais pas encore mis à jour en DB → conflict
+                        throw new YadonyBusinessException(HttpStatus.CONFLICT,
+                                "payment-already-completed", "Payment Already Completed",
+                                "Le paiement pour cette demande a déjà été effectué");
+                    }
+                } catch (StripeException e) {
+                    log.error("Could not retrieve or cancel existing PaymentIntent for bid {}", bidId, e);
+                    throw stripeRecoveryFailed();
+                }
+            }
+            recyclable = payment;
+        }
+
+        UserEntity traveler = userRepository.findById(announcement.getTravelerId())
+                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
+                        "traveler-not-found", "Traveler Not Found", "Voyageur introuvable"));
+
+        if (traveler.getStripeAccountStatus() != StripeAccountStatus.ONBOARDING_COMPLETE
+                || traveler.getStripeAccountId() == null
+                || traveler.getStripeAccountId().isBlank()) {
+            throw new TravelerNotEligibleForPaymentException(traveler.getId());
+        }
+
         if (request.getTotalNetEur() != null
                 && request.getTotalNetEur().setScale(2, RoundingMode.HALF_UP).compareTo(totalNet) != 0) {
             log.warn("Paiement bid {} rejeté : totalNetEur client {} ≠ montant serveur {}",
@@ -431,33 +489,17 @@ public class PaymentService {
                 "amount-mismatch", "Amount Mismatch",
                 "Le montant fourni ne correspond pas au montant calculé pour cette demande");
         }
-        // Taux effectif : promo > overrides > global (SOURCE UNIQUE via CommissionRateResolver).
-        // Si le promo est expiré/épuisé depuis la création du bid → fallback silencieux.
-        BigDecimal rate;
-        boolean promoApplied = false;
-        if (bid.getPromoCode() != null) {
-            try {
-                rate = commissionRateResolver.resolve(traveler.getId(), sender.getId(), bid.getPromoCode());
-                promoApplied = true;
-            } catch (YadonyBusinessException e) {
-                log.warn("Promo {} no longer valid for bid {} ({}): falling back to override/global rate",
-                        bid.getPromoCode(), bidId, e.getErrorCode());
-                rate = commissionRateResolver.resolve(traveler.getId(), sender.getId());
-            }
-        } else {
-            rate = commissionRateResolver.resolve(traveler.getId(), sender.getId());
-        }
-        bid.setCommissionRate(rate);
-        bidRepository.save(bid);
-        // Rachat du promo (idempotent) — même tx que le bid.save ci-dessus.
-        if (promoApplied) {
-            var redemption = promoService.redeem(bid.getPromoCode(), sender.getId(), bidId, rate);
-            bid.setPromoCodeId(redemption.getPromoCodeId());
+
+        if (existing.isEmpty()) {
+            bid.setCommissionRate(rate);
             bidRepository.save(bid);
+            // Rachat du promo (idempotent) — même tx que le bid.save ci-dessus.
+            if (promoApplied) {
+                var redemption = promoService.redeem(bid.getPromoCode(), sender.getId(), bidId, rate);
+                bid.setPromoCodeId(redemption.getPromoCodeId());
+                bidRepository.save(bid);
+            }
         }
-        BigDecimal amount = totalNet.multiply(BigDecimal.ONE.add(rate)).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal commission = totalNet.multiply(rate).setScale(2, RoundingMode.HALF_UP);
-        long amountCents = amount.multiply(BigDecimal.valueOf(100)).longValue();
 
         try {
             // Compatibilité comptes legacy : avant cette fix, certains comptes Stripe Connect
@@ -466,15 +508,15 @@ public class PaymentService {
             // On la demande de manière idempotente : si déjà active, no-op.
             ensureCardPaymentsCapability(traveler.getStripeAccountId());
 
-            long commissionCents = commission.multiply(BigDecimal.valueOf(100)).longValue();
+            long commissionCents = localCommission.minor();
 
             // Customer attaché : rend les cartes réutilisables (YadonyPaymentSheet).
             // Sans effet sur l'escrow (separate charges & transfers inchangé).
             String customerId = ensureStripeCustomer(sender);
 
             PaymentIntentCreateParams.Builder paramsBuilder = PaymentIntentCreateParams.builder()
-                    .setAmount(amountCents)
-                    .setCurrency("eur")
+                    .setAmount(localAmount.minor())
+                    .setCurrency(currency.code())
                     .setCustomer(customerId)
                     .setCaptureMethod(PaymentIntentCreateParams.CaptureMethod.MANUAL)
                     // Approche A : carte + Apple Pay + Google Pay (= "card") + PayPal,
@@ -490,9 +532,10 @@ public class PaymentService {
                     .putMetadata("bid_id", bidId.toString())
                     .putMetadata("sender_id", sender.getId().toString())
                     .putMetadata("traveler_id", traveler.getId().toString())
-                    .putMetadata("commission_eur", commission.toPlainString())
+                    .putMetadata("commission_amount", localCommission.major().toPlainString())
+                    .putMetadata("currency", currency.code())
                     .putMetadata("commission_rate", rate.toPlainString())
-                    .putMetadata("commission_cents", String.valueOf(commissionCents));
+                    .putMetadata("commission_minor", String.valueOf(commissionCents));
 
             // Défaut aligné sur le toggle « Enregistrer cette carte » (ON) de la sheet.
             // Décochable ensuite via PATCH /payments/intents/{id}/save-payment-method.
@@ -502,17 +545,21 @@ public class PaymentService {
 
             PaymentIntent pi = stripeGateway.createPaymentIntent(paramsBuilder.build());
 
-            PaymentEntity payment = new PaymentEntity();
+            PaymentEntity payment = recyclable != null ? recyclable : new PaymentEntity();
             payment.setBidId(bidId);
             payment.setStripePaymentIntentId(pi.getId());
-            payment.setAmount(amount);
-            payment.setCommissionAmount(commission);
+            payment.setAmount(localAmount.major());
+            payment.setCommissionAmount(localCommission.major());
+            payment.setCurrency(currency.code());
             payment.setStatus(PaymentStatus.PENDING);
             payment.setLegacyDestinationCharge(false);
+            if (recyclable != null) {
+                payment.clearLegacyFxData();
+            }
             paymentRepository.save(payment);
 
             auditService.log("PAYMENT", payment.getId(), "PAYMENT_ESCROW_CREATED", sender.getId(),
-                    Map.of("bidId", bidId, "amount", amount, "commission", commission,
+                    Map.of("bidId", bidId, "amount", localAmount.major(), "commission", localCommission.major(),
                             "piId", pi.getId()));
 
             log.info("PaymentIntent {} created for bid {} (sender={})", pi.getId(), bidId, sender.getId());
@@ -928,9 +975,13 @@ public class PaymentService {
                     log.warn("charge.refunded pour PI {} sans montant exploitable — ignoré", piId);
                     return;
                 }
-                // Montants Stripe en cents → EUR scale 2. amount_refunded est CUMULÉ et
+                // Montants Stripe en unités mineures de la devise persistée. amount_refunded est CUMULÉ et
                 // ABSOLU : rejouer le même webhook réécrit la même valeur (idempotent).
-                BigDecimal refunded = BigDecimal.valueOf(amountRefundedCents, 2);
+                SupportedCurrency paymentCurrency = SupportedCurrency.fromCode(payment.getCurrency());
+                if (paymentCurrency == null) {
+                    paymentCurrency = SupportedCurrency.EUR;
+                }
+                BigDecimal refunded = BigDecimal.valueOf(amountRefundedCents, paymentCurrency.minorUnit());
                 boolean fullRefund = amountRefundedCents >= amountCents;
                 // compareTo (et non equals) : insensible à l'échelle BigDecimal — la valeur
                 // relue depuis NUMERIC(10,2) peut différer d'échelle sans changer de montant.
@@ -1084,7 +1135,8 @@ public class PaymentService {
                 payment.getAmount(),
                 payment.getCommissionAmount(),
                 payment.getStatus().name(),
-                payment.getStripePaymentIntentId()
+                payment.getStripePaymentIntentId(),
+                payment.getCurrency()
         );
     }
 
@@ -1093,6 +1145,47 @@ public class PaymentService {
         PaymentResponse response = toPaymentResponse(payment, pi.getClientSecret());
         response.setPaymentMethodTypes(pi.getPaymentMethodTypes());
         return response;
+    }
+
+    private PaymentResponse toNegotiationPaymentResponse(
+            PaymentEntity payment, PaymentIntent paymentIntent,
+            BigDecimal commissionRate, boolean promoApplied) {
+        PaymentResponse response = toPaymentResponse(payment, paymentIntent);
+        response.setCommissionRate(commissionRate);
+        response.setPromoApplied(promoApplied);
+        return response;
+    }
+
+    private boolean matchesExpectedAmountAndCurrency(
+            PaymentEntity payment, PaymentIntent paymentIntent, CurrencyAmount expected) {
+        boolean entityAmountMatches = payment.getAmount() != null
+                && payment.getAmount().compareTo(expected.major()) == 0;
+        boolean entityCurrencyMatches = sameCurrency(payment.getCurrency(), expected.currency());
+        Long intentAmount = paymentIntent.getAmount();
+        boolean intentAmountMatches = intentAmount != null && intentAmount == expected.minor();
+        boolean intentCurrencyMatches = sameCurrency(paymentIntent.getCurrency(), expected.currency());
+        return entityAmountMatches && entityCurrencyMatches
+                && intentAmountMatches && intentCurrencyMatches;
+    }
+
+    private boolean sameCurrency(String actual, SupportedCurrency expected) {
+        return actual != null && actual.equalsIgnoreCase(expected.code());
+    }
+
+    private void cancelAndConfirmForRecycle(PaymentIntent paymentIntent) throws StripeException {
+        PaymentIntent canceled = paymentIntent.cancel(PaymentIntentCancelParams.builder()
+                .setCancellationReason(PaymentIntentCancelParams.CancellationReason.ABANDONED)
+                .build());
+        if (canceled == null || !"canceled".equals(canceled.getStatus())) {
+            log.error("Stripe did not confirm cancellation of PaymentIntent {}", paymentIntent.getId());
+            throw stripeRecoveryFailed();
+        }
+    }
+
+    private YadonyBusinessException stripeRecoveryFailed() {
+        return new YadonyBusinessException(HttpStatus.BAD_GATEWAY,
+                "stripe-error", "Stripe Error",
+                "Impossible de vérifier ou d'annuler le paiement existant auprès de Stripe");
     }
 
     /**
@@ -1353,8 +1446,11 @@ public class PaymentService {
             UUID threadId,
             UUID senderId,
             UUID travelerId,
-            BigDecimal amountEur) {
-        return createNegotiationEscrow(threadId, senderId, travelerId, amountEur, null);
+            BigDecimal amountEur,
+            String promoCode,
+            String serverCurrency) {
+        return createNegotiationEscrow(
+                threadId, senderId, travelerId, amountEur, promoCode, null, serverCurrency);
     }
 
     public PaymentResponse createNegotiationEscrow(
@@ -1362,16 +1458,54 @@ public class PaymentService {
             UUID senderId,
             UUID travelerId,
             BigDecimal amountEur,
-            String promoCode) {
+            String promoCode,
+            BigDecimal persistedCommissionRate,
+            String serverCurrency) {
         log.info("createNegotiationEscrow(threadId={}, senderId={}, travelerId={}, amount={})",
                 threadId, senderId, travelerId, amountEur);
 
         UserEntity sender = userRepository.findById(senderId)
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
                         "user-not-found", "User Not Found", "Sender introuvable"));
+
+        String senderCurrency = activeCurrencyResolver.resolve(sender.getId());
+        currencyMatchGuard.assertMatches(serverCurrency, senderCurrency);
+        SupportedCurrency currency = SupportedCurrency.fromCode(serverCurrency);
+
         UserEntity traveler = userRepository.findById(travelerId)
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
                         "traveler-not-found", "Traveler Not Found", "Voyageur introuvable"));
+
+        // Taux effectif (override voyageur/expéditeur ; min le plus favorable) — SOURCE UNIQUE.
+        // Promo optionnel : résolu strictement (invalide/expiré → repli silencieux sur le
+        // taux sans promo, même contrat que le flux bid — cf. BidService.quote et
+        // PaymentService.createEscrow). Le rachat (redeem) n'a PAS lieu ici : aucun bid_id
+        // n'existe encore pour ce thread, il n'est matérialisé qu'après paiement confirmé
+        // (ThreadAcceptedBidListener). L'appelant (NegotiationController) persiste le promo
+        // sur le thread quand promoApplied=true pour que le rachat puisse s'y raccrocher.
+        // Ce calcul et sa normalisation précèdent toute reprise de PaymentIntent.
+        BigDecimal rate;
+        boolean promoApplied = false;
+        String code = promoCode != null ? promoCode.strip() : null;
+        if (persistedCommissionRate != null) {
+            rate = persistedCommissionRate;
+            promoApplied = code != null && !code.isBlank();
+        } else if (code != null && !code.isBlank()) {
+            try {
+                rate = commissionRateResolver.resolve(traveler.getId(), sender.getId(), code);
+                promoApplied = true;
+            } catch (com.yadony.api.common.YadonyBusinessException e) {
+                log.warn("Promo {} invalide pour la négociation {} ({}): repli sur le taux sans promo",
+                        code, threadId, e.getErrorCode());
+                rate = commissionRateResolver.resolve(traveler.getId(), sender.getId());
+            }
+        } else {
+            rate = commissionRateResolver.resolve(traveler.getId(), sender.getId());
+        }
+        // Modèle B : amountEur = NET voyageur. L'expéditeur paie gross = net*(1+rate).
+        PriceBreakdown b = PriceBreakdown.fromNet(amountEur, rate);
+        CurrencyAmount localGross = CurrencyAmount.of(b.gross(), currency);
+        CurrencyAmount localCommission = CurrencyAmount.of(b.commission(), currency);
 
         // Idempotency: reuse existing non-failed payment for this thread
         Optional<PaymentEntity> existing = paymentRepository.findByNegotiationThreadId(threadId);
@@ -1390,18 +1524,21 @@ public class PaymentService {
                     String piStatus = pi.getStatus();
                     if ("requires_payment_method".equals(piStatus)
                             || "requires_confirmation".equals(piStatus)) {
-                        return toPaymentResponse(payment, pi); // resume in-flight
-                    }
-                    if ("requires_action".equals(piStatus)) {
+                        if (matchesExpectedAmountAndCurrency(payment, pi, localGross)) {
+                            return toNegotiationPaymentResponse(
+                                    payment, pi, rate, promoApplied); // resume compatible in-flight PI
+                        }
+                        log.info("Canceling incompatible legacy PaymentIntent {} for thread {}",
+                                payment.getStripePaymentIntentId(), threadId);
+                        cancelAndConfirmForRecycle(pi);
+                    } else if ("requires_action".equals(piStatus)) {
                         // Abandoned 3DS/PayPal redirect: nothing was captured, but the PI
                         // can no longer be resumed by a fresh PaymentSheet. Cancel it on
                         // Stripe and recycle the row instead of blocking the sender with
                         // a spurious "already completed" conflict.
                         log.info("Canceling abandoned requires_action PaymentIntent {} for thread {}",
                                 pi.getId(), threadId);
-                        pi.cancel(PaymentIntentCancelParams.builder()
-                                .setCancellationReason(PaymentIntentCancelParams.CancellationReason.ABANDONED)
-                                .build());
+                        cancelAndConfirmForRecycle(pi);
                     } else if (!"canceled".equals(piStatus)) {
                         // requires_capture / processing / succeeded → a live or used PI
                         throw new YadonyBusinessException(HttpStatus.CONFLICT,
@@ -1410,11 +1547,12 @@ public class PaymentService {
                     }
                     // canceled (or just-canceled requires_action) → stale; recycle below
                 } catch (StripeException e) {
-                    log.warn("Could not retrieve existing PaymentIntent for thread {}, recycling row",
-                            threadId);
+                    log.error("Could not retrieve or cancel existing PaymentIntent for thread {}",
+                            threadId, e);
+                    throw stripeRecoveryFailed();
                 }
             }
-            // PENDING-with-canceled-PI, FAILED, REFUNDED, CANCELLED or unretrievable:
+            // PENDING-with-confirmed-canceled-PI, FAILED, REFUNDED or CANCELLED:
             // recycle this row for a fresh PaymentIntent rather than inserting a second
             // one (which would violate the UNIQUE negotiation_thread_id constraint).
             recyclable = payment;
@@ -1426,31 +1564,6 @@ public class PaymentService {
             throw new TravelerNotEligibleForPaymentException(traveler.getId());
         }
 
-        // Taux effectif (override voyageur/expéditeur ; min le plus favorable) — SOURCE UNIQUE.
-        // Promo optionnel : résolu strictement (invalide/expiré → repli silencieux sur le
-        // taux sans promo, même contrat que le flux bid — cf. BidService.quote et
-        // PaymentService.createEscrow). Le rachat (redeem) n'a PAS lieu ici : aucun bid_id
-        // n'existe encore pour ce thread, il n'est matérialisé qu'après paiement confirmé
-        // (ThreadAcceptedBidListener). L'appelant (NegotiationController) persiste le promo
-        // sur le thread quand promoApplied=true pour que le rachat puisse s'y raccrocher.
-        BigDecimal rate;
-        boolean promoApplied = false;
-        String code = promoCode != null ? promoCode.strip() : null;
-        if (code != null && !code.isBlank()) {
-            try {
-                rate = commissionRateResolver.resolve(traveler.getId(), sender.getId(), code);
-                promoApplied = true;
-            } catch (com.yadony.api.common.YadonyBusinessException e) {
-                log.warn("Promo {} invalide pour la négociation {} ({}): repli sur le taux sans promo",
-                        code, threadId, e.getErrorCode());
-                rate = commissionRateResolver.resolve(traveler.getId(), sender.getId());
-            }
-        } else {
-            rate = commissionRateResolver.resolve(traveler.getId(), sender.getId());
-        }
-        // Modèle B : amountEur = NET voyageur. L'expéditeur paie gross = net*(1+rate).
-        PriceBreakdown b = PriceBreakdown.fromNet(amountEur, rate);
-
         try {
             ensureCardPaymentsCapability(traveler.getStripeAccountId());
 
@@ -1459,9 +1572,9 @@ public class PaymentService {
             // la PaymentSheet native paie la négociation avec une carte enregistrée.
             String customerId = ensureStripeCustomer(sender);
 
-            PaymentIntentCreateParams params = PaymentIntentCreateParams.builder()
-                    .setAmount(b.grossCents())                        // gross, pas net
-                    .setCurrency("eur")
+            PaymentIntentCreateParams.Builder paramsBuilder = PaymentIntentCreateParams.builder()
+                    .setAmount(localGross.minor())                     // gross, pas net
+                    .setCurrency(currency.code())
                     .setCustomer(customerId)
                     .setCaptureMethod(PaymentIntentCreateParams.CaptureMethod.MANUAL)
                     // Approche A : carte + wallets + PayPal dans la PaymentSheet.
@@ -1479,8 +1592,9 @@ public class PaymentService {
                     .putMetadata("sender_id", sender.getId().toString())
                     .putMetadata("traveler_id", traveler.getId().toString())
                     .putMetadata("commission_rate", rate.toPlainString())
-                    .putMetadata("scope", "NEGOTIATION")
-                    .build();
+                    .putMetadata("currency", currency.code())
+                    .putMetadata("scope", "NEGOTIATION");
+            PaymentIntentCreateParams params = paramsBuilder.build();
 
             PaymentIntent pi = stripeGateway.createPaymentIntent(params);
 
@@ -1488,23 +1602,26 @@ public class PaymentService {
             PaymentEntity payment = (recyclable != null) ? recyclable : new PaymentEntity();
             payment.setNegotiationThreadId(threadId);
             payment.setStripePaymentIntentId(pi.getId());
-            payment.setAmount(b.gross());          // total payé par l'expéditeur (gross)
-            payment.setCommissionAmount(b.commission());
+            payment.setAmount(localGross.major());          // total payé par l'expéditeur (gross)
+            payment.setCommissionAmount(localCommission.major());
+            payment.setCurrency(currency.code());
             payment.setStatus(PaymentStatus.PENDING);
+            if (recyclable != null) {
+                payment.clearLegacyFxData();
+            }
             paymentRepository.save(payment);
 
             auditService.log("PAYMENT", payment.getId(), "NEGOTIATION_ESCROW_CREATED",
                     sender.getId(),
                     java.util.Map.of("threadId", threadId.toString(),
-                            "amount", b.gross().toString(),
+                            "amount", localGross.major(),
+                            "commission", localCommission.major(),
+                            "currency", currency.code(),
                             "stripePaymentIntentId", pi.getId()));
 
             log.info("PaymentIntent {} created for negotiation thread {} (sender={})",
                     pi.getId(), threadId, sender.getId());
-            PaymentResponse response = toPaymentResponse(payment, pi);
-            response.setCommissionRate(rate);
-            response.setPromoApplied(promoApplied);
-            return response;
+            return toNegotiationPaymentResponse(payment, pi, rate, promoApplied);
         } catch (StripeException e) {
             log.error("Stripe PaymentIntent creation failed for negotiation thread {}", threadId, e);
             throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY,

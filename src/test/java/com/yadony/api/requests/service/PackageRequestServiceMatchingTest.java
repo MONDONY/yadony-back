@@ -17,6 +17,9 @@ import com.yadony.api.requests.entity.PackageRequestStatus;
 import com.yadony.api.requests.entity.ParcelSize;
 import com.yadony.api.requests.repository.NegotiationThreadRepository;
 import com.yadony.api.requests.repository.PackageRequestRepository;
+import com.yadony.api.requests.specification.PackageRequestSpecifications;
+import com.yadony.api.settings.UserBusinessPrefsEntity;
+import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -35,6 +38,7 @@ import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -61,6 +65,14 @@ class PackageRequestServiceMatchingTest {
     @Mock private StorageService storageService;
     @Mock private PackageRequestPhotoService photoService;
     @Mock private FavoriteRepository favoriteRepository;
+    @Mock private ActiveCurrencyResolver activeCurrencyResolver;
+
+    @org.junit.jupiter.api.BeforeEach
+    void stubDefaultActiveCurrency() {
+        org.mockito.Mockito.lenient()
+                .when(activeCurrencyResolver.resolve(org.mockito.ArgumentMatchers.any()))
+                .thenReturn("EUR");
+    }
     @Mock private MatchingService matchingService;
     @Mock private com.yadony.api.matching.AnnouncementRepository announcementRepository;
     @Mock private com.yadony.api.common.CommissionRateResolver commissionRateResolver;
@@ -152,7 +164,7 @@ class PackageRequestServiceMatchingTest {
         service = new PackageRequestService(
                 repository, userRepository, eventPublisher, auditService, config,
                 threadRepository, cityRepository, commissionProperties,
-                storageService, photoService, favoriteRepository, realMapper, matchingService,
+                storageService, photoService, favoriteRepository, activeCurrencyResolver, realMapper, matchingService,
                 yadonyConfig, announcementRepository, commissionRateResolver);
     }
 
@@ -348,6 +360,45 @@ class PackageRequestServiceMatchingTest {
         assertThat(premierePage.getTotalElements()).isEqualTo(2);
     }
 
+    @Test
+    void searchMatchingMyTrips_avecPrefsCad_passeUneSpecCadAuRepository() {
+        UUID reqId = UUID.randomUUID();
+        Map<UUID, MatchingService.MatchInfo> matches = new LinkedHashMap<>();
+        matches.put(reqId, new MatchingService.MatchInfo(reqId, UUID.randomUUID(), LocalDate.now().plusDays(3), 90));
+        when(matchingService.findBestMatchByRequestId(CALLER_ID)).thenReturn(matches);
+
+        UserBusinessPrefsEntity prefs = new UserBusinessPrefsEntity();
+        prefs.setUserId(CALLER_ID);
+        prefs.setCurrencyCode("CAD");
+        when(activeCurrencyResolver.resolve(CALLER_ID)).thenReturn(prefs.getCurrencyCode());
+
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<Specification<PackageRequestEntity>> specCaptor =
+                org.mockito.ArgumentCaptor.forClass((Class) Specification.class);
+        when(repository.findAll(specCaptor.capture())).thenReturn(List.of());
+
+        java.util.concurrent.atomic.AtomicBoolean cadCurrencySpecIncluded = new java.util.concurrent.atomic.AtomicBoolean(false);
+        Specification<PackageRequestEntity> cadCurrencyMarker = (root, query, cb) -> {
+            cadCurrencySpecIncluded.set(true);
+            return cb.conjunction();
+        };
+        Specification<PackageRequestEntity> idInMarker = (root, query, cb) -> cb.conjunction();
+
+        try (org.mockito.MockedStatic<PackageRequestSpecifications> specMock =
+                     org.mockito.Mockito.mockStatic(PackageRequestSpecifications.class)) {
+            specMock.when(() -> PackageRequestSpecifications.hasCurrency("CAD"))
+                    .thenReturn(cadCurrencyMarker);
+            specMock.when(() -> PackageRequestSpecifications.idIn(matches.keySet()))
+                    .thenReturn(idInMarker);
+
+            service.searchMatchingMyTrips(Specification.where(null), PageRequest.of(0, 20), CALLER_ID);
+        }
+
+        assertThat(specCaptor.getValue()).isNotNull();
+        assertCurrencyMarkerIncluded(specCaptor.getValue(), cadCurrencySpecIncluded);
+        verify(activeCurrencyResolver).resolve(CALLER_ID);
+    }
+
     // ─── Mapping / présignage limités à la page ──────────────────────────────
 
     @Test
@@ -373,5 +424,23 @@ class PackageRequestServiceMatchingTest {
         // Ordre createdAt décroissant → page 0 = [id3, id2].
         verify(photoService).activePhotosBatch(List.of(id3, id2));
         assertThat(page.getTotalElements()).isEqualTo(3);
+    }
+
+    private void assertCurrencyMarkerIncluded(
+            Specification<PackageRequestEntity> capturedSpec,
+            java.util.concurrent.atomic.AtomicBoolean currencyMarkerIncluded) {
+        jakarta.persistence.criteria.CriteriaBuilder criteriaBuilder = mock(jakarta.persistence.criteria.CriteriaBuilder.class);
+        jakarta.persistence.criteria.Predicate conjunction = mock(jakarta.persistence.criteria.Predicate.class);
+        when(criteriaBuilder.conjunction()).thenReturn(conjunction);
+        when(criteriaBuilder.and(any(jakarta.persistence.criteria.Predicate.class), any(jakarta.persistence.criteria.Predicate.class)))
+                .thenReturn(conjunction);
+
+        capturedSpec.toPredicate(
+                mock(jakarta.persistence.criteria.Root.class),
+                mock(jakarta.persistence.criteria.CriteriaQuery.class),
+                criteriaBuilder
+        );
+
+        assertThat(currencyMarkerIncluded).isTrue();
     }
 }

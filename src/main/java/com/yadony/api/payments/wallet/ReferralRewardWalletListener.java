@@ -42,6 +42,7 @@ public class ReferralRewardWalletListener {
 
         walletService.credit(
                 event.referrerUserId(),
+                "EUR",
                 amountEur,
                 WalletTransactionType.REFERRAL_REWARD,
                 event.invitationId().toString(),

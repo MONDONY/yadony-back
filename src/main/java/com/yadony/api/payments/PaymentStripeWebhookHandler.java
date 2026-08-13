@@ -1,8 +1,11 @@
 package com.yadony.api.payments;
 
+import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.stripe.StripeWebhookHandler;
 import com.yadony.api.payments.cash.CashCommissionWebhookHandler;
 import com.yadony.api.payments.chargeback.ChargebackService;
+import com.yadony.api.payments.currency.CurrencyCatalog;
+import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.wallet.WalletService;
 import com.yadony.api.payments.wallet.WalletTransactionType;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -12,10 +15,10 @@ import com.stripe.model.PaymentIntent;
 import com.stripe.model.StripeObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -54,17 +57,20 @@ public class PaymentStripeWebhookHandler implements StripeWebhookHandler {
     private final ChargebackService chargebackService;
     private final WalletService walletService;
     private final ObjectMapper objectMapper;
+    private final CurrencyCatalog currencyCatalog;
 
     public PaymentStripeWebhookHandler(PaymentService paymentService,
                                         CashCommissionWebhookHandler cashHandler,
                                         ChargebackService chargebackService,
                                         WalletService walletService,
-                                        ObjectMapper objectMapper) {
+                                        ObjectMapper objectMapper,
+                                        CurrencyCatalog currencyCatalog) {
         this.paymentService = paymentService;
         this.cashHandler = cashHandler;
         this.chargebackService = chargebackService;
         this.walletService = walletService;
         this.objectMapper = objectMapper;
+        this.currencyCatalog = currencyCatalog;
     }
 
     @Override
@@ -85,19 +91,9 @@ public class PaymentStripeWebhookHandler implements StripeWebhookHandler {
             case "setup_intent.succeeded"             -> cashHandler.handleSetupIntentSucceeded(event);
             case "payment_intent.succeeded" -> {
                 PaymentIntent pi = resolvePaymentIntent(event);
-                if (pi != null
-                        && pi.getMetadata() != null
+                if (pi.getMetadata() != null
                         && "true".equals(pi.getMetadata().get("wallet_topup"))) {
-                    String rawUserId = pi.getMetadata().get("user_id");
-                    if (rawUserId == null) {
-                        log.warn("wallet_topup webhook sans user_id, event ignoré: {}", pi.getId());
-                        return;
-                    }
-                    UUID userId = UUID.fromString(rawUserId);
-                    BigDecimal amount = BigDecimal.valueOf(pi.getAmount())
-                        .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
-                    walletService.credit(userId, amount, WalletTransactionType.TOP_UP,
-                        pi.getId(), "stripe-" + pi.getId());
+                    handleWalletTopup(pi);
                 } else {
                     cashHandler.handlePaymentIntentSucceeded(event);
                 }
@@ -120,6 +116,54 @@ public class PaymentStripeWebhookHandler implements StripeWebhookHandler {
         }
     }
 
+    private void handleWalletTopup(PaymentIntent paymentIntent) {
+        UUID userId = resolveWalletUserId(paymentIntent.getMetadata().get("user_id"));
+
+        String rawWalletCurrency = paymentIntent.getMetadata().get("wallet_currency");
+        if (rawWalletCurrency == null || rawWalletCurrency.isBlank()) {
+            throw new YadonyBusinessException(
+                    HttpStatus.UNPROCESSABLE_ENTITY,
+                    "wallet-topup-currency-missing", "Wallet Topup Currency Missing",
+                    "La devise de la recharge wallet est absente des métadonnées Stripe.");
+        }
+
+        SupportedCurrency walletCurrency = currencyCatalog.resolve(rawWalletCurrency);
+        if (!walletCurrency.code().equalsIgnoreCase(paymentIntent.getCurrency())) {
+            throw new YadonyBusinessException(
+                    HttpStatus.UNPROCESSABLE_ENTITY,
+                    "wallet-topup-currency-mismatch", "Wallet Topup Currency Mismatch",
+                    "La devise débitée par Stripe ne correspond pas à la devise du wallet.");
+        }
+
+        BigDecimal amount = BigDecimal.valueOf(
+                paymentIntent.getAmount(), walletCurrency.minorUnit());
+        walletService.credit(userId, walletCurrency.name(), amount, WalletTransactionType.TOP_UP,
+                paymentIntent.getId(), "stripe-" + paymentIntent.getId());
+    }
+
+    private UUID resolveWalletUserId(String rawUserId) {
+        if (rawUserId == null || rawUserId.isBlank()) {
+            throw invalidWalletUserId();
+        }
+        try {
+            UUID userId = UUID.fromString(rawUserId);
+            if (!userId.toString().equalsIgnoreCase(rawUserId)) {
+                throw new IllegalArgumentException("UUID non canonique");
+            }
+            return userId;
+        } catch (IllegalArgumentException exception) {
+            throw invalidWalletUserId();
+        }
+    }
+
+    private YadonyBusinessException invalidWalletUserId() {
+        return new YadonyBusinessException(
+                HttpStatus.UNPROCESSABLE_ENTITY,
+                "wallet-topup-user-id-invalid", "Wallet Topup User ID Invalid",
+                "L'identifiant utilisateur de la recharge wallet est absent ou invalide "
+                        + "dans les métadonnées Stripe.");
+    }
+
     /**
      * Résout le PaymentIntent d'un event. Si le deserializer est vide — mismatch
      * de version d'API entre Stripe (serveur/CLI) et le SDK Java — on récupère le
@@ -129,21 +173,37 @@ public class PaymentStripeWebhookHandler implements StripeWebhookHandler {
      * {@code Optional.empty()} et le routage tombe dans la branche bid.
      */
     private PaymentIntent resolvePaymentIntent(Event event) {
-        Optional<StripeObject> objOpt = event.getDataObjectDeserializer().getObject();
-        if (objOpt.isPresent()) {
-            return (PaymentIntent) objOpt.get();
-        }
         try {
+            Optional<StripeObject> objOpt = event.getDataObjectDeserializer().getObject();
+            if (objOpt.isPresent()) {
+                if (objOpt.get() instanceof PaymentIntent paymentIntent) {
+                    return paymentIntent;
+                }
+                throw new IllegalStateException("L'objet Stripe résolu n'est pas un PaymentIntent");
+            }
+
             String rawJson = event.getDataObjectDeserializer().getRawJson();
             JsonNode node = objectMapper.readTree(rawJson);
-            String piId = node.get("id").asText();
+            JsonNode idNode = node == null ? null : node.get("id");
+            if (idNode == null || !idNode.isTextual() || idNode.asText().isBlank()) {
+                throw new IllegalStateException("Identifiant PaymentIntent absent du payload Stripe");
+            }
+            String piId = idNode.asText();
             log.debug("payment_intent.succeeded: deserializer vide pour event {}, fetch PI {} via API",
                     event.getId(), piId);
-            return PaymentIntent.retrieve(piId);
+            PaymentIntent paymentIntent = PaymentIntent.retrieve(piId);
+            if (paymentIntent == null) {
+                throw new IllegalStateException("Stripe n'a retourné aucun PaymentIntent");
+            }
+            return paymentIntent;
         } catch (Exception e) {
             log.error("payment_intent.succeeded: impossible de résoudre le PaymentIntent depuis l'event {}: {}",
                     event.getId(), e.getMessage(), e);
-            return null;
+            throw new YadonyBusinessException(
+                    HttpStatus.BAD_GATEWAY,
+                    "stripe-payment-intent-resolution-failed",
+                    "Stripe PaymentIntent Resolution Failed",
+                    "Impossible de résoudre le PaymentIntent Stripe du webhook.");
         }
     }
 }

@@ -45,6 +45,10 @@ public final class PackageRequestSpecifications {
                 : cb.equal(root.get("parcelSize"), size);
     }
 
+    public static Specification<PackageRequestEntity> hasCurrency(String currency) {
+        return (root, query, cb) -> cb.equal(root.get("currency"), currency);
+    }
+
     /**
      * Restricts results to requests whose {@code desiredDate} falls within
      * {@code [today, today + thresholdDays]} (bounds inclusive, today in UTC).

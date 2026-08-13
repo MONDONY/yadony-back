@@ -41,5 +41,6 @@ public record AnnouncementDetailResponse(
         boolean surplusEligible,
         boolean surplusPublished,
         LocalDateTime handoverWindowStart,
-        LocalDateTime handoverWindowEnd
+        LocalDateTime handoverWindowEnd,
+        String currency
 ) {}

@@ -34,9 +34,10 @@ public record PackageRequestResponse(
     /** Statut de ce thread (OPEN, AWAITING_TRIP, AWAITING_PAYMENT, ACCEPTED) — null sinon. */
     String viewerThreadStatus,
     /** Code promo saisi à la publication (brut, null si aucun) — pré-remplit l'édition. */
-    String promoCode
+    String promoCode,
+    String currency
 ) {
-    /** Constructeur de compatibilité (sans promoCode) — évite de retoucher tous les tests. */
+    /** Constructeur de compatibilité (sans promoCode/currency) — évite de retoucher tous les tests. */
     public PackageRequestResponse(
             UUID id, UUID senderId,
             String departureCity, String arrivalCity,
@@ -57,6 +58,6 @@ public record PackageRequestResponse(
         this(id, senderId, departureCity, arrivalCity, desiredDate, dateToleranceDays, weightKg, parcelSize,
             transportMode, contentCategory, description, targetPriceEur, photoUrl, pickupNeighborhood,
             deliveryNeighborhood, status, createdAt, negotiable, acceptedPaymentMethods, grossPriceEur, photos,
-            viewerThreadId, viewerThreadStatus, null);
+            viewerThreadId, viewerThreadStatus, null, "EUR");
     }
 }

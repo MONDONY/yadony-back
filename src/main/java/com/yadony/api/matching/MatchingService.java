@@ -221,7 +221,8 @@ public class MatchingService {
                 request.getPhotoUrl(),
                 messageExcerpt,
                 matchScore,
-                request.getCreatedAt().toString()
+                request.getCreatedAt().toString(),
+                request.getCurrency()
         );
     }
 

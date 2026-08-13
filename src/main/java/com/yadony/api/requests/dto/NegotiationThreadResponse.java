@@ -52,7 +52,12 @@ public record NegotiationThreadResponse(
     // Code promo auto-porté depuis la demande (PackageRequestEntity.promoCode) dès la
     // création du thread — appliqué automatiquement au paiement, jamais resaisi. Null
     // si l'expéditeur n'en avait pas renseigné à la publication.
-    String promoCode
+    String promoCode,
+    // Snapshot serveur du taux réellement appliqué. Null avant la première
+    // initiation de paiement réussie.
+    BigDecimal commissionRate,
+    // Devise persistée sur le thread, source serveur du paiement de négociation.
+    String currency
 ) {
     /** Constructeur de compatibilité (sans promoCode) — évite de retoucher tous les tests. */
     public NegotiationThreadResponse(
@@ -84,6 +89,75 @@ public record NegotiationThreadResponse(
             paymentIntentClientSecret, travelerName, travelerRating, travelerTripsCount, travelerPhotoUrl,
             departureCity, arrivalCity, weightKg, senderName, senderPhotoUrl, isMyTurn, canAccept, canCounter,
             roundsRemaining, linkedTrip, grossPriceEur, paymentMethod, materializedBidId, cashCommissionAvailable,
-            availablePaymentMethods, canNudge, hasUnread, null);
+            availablePaymentMethods, canNudge, hasUnread, null, null, "EUR");
+    }
+
+    /** Constructeur de compatibilité (sans currency) — les anciens appelants restent en EUR. */
+    public NegotiationThreadResponse(
+            UUID id, UUID packageRequestId, UUID travelerId,
+            UUID travelerAnnouncementId, LocalDate travelerTravelDate, BigDecimal travelerAvailableKg,
+            String travelerCapacityUnit,
+            NegotiationThreadStatus status, BigDecimal currentPriceEur, int roundsCount,
+            LocalDateTime lastActivityAt, LocalDateTime createdAt,
+            List<NegotiationMessageResponse> messages,
+            String paymentIntentClientSecret,
+            String travelerName, BigDecimal travelerRating, Integer travelerTripsCount, String travelerPhotoUrl,
+            String departureCity, String arrivalCity, BigDecimal weightKg,
+            String senderName,
+            String senderPhotoUrl,
+            boolean isMyTurn,
+            boolean canAccept,
+            boolean canCounter,
+            int roundsRemaining,
+            LinkedTripSummary linkedTrip,
+            BigDecimal grossPriceEur,
+            PaymentMethod paymentMethod,
+            UUID materializedBidId,
+            boolean cashCommissionAvailable,
+            Set<PaymentMethod> availablePaymentMethods,
+            boolean canNudge,
+            boolean hasUnread,
+            String promoCode) {
+        this(id, packageRequestId, travelerId, travelerAnnouncementId, travelerTravelDate, travelerAvailableKg,
+            travelerCapacityUnit, status, currentPriceEur, roundsCount, lastActivityAt, createdAt, messages,
+            paymentIntentClientSecret, travelerName, travelerRating, travelerTripsCount, travelerPhotoUrl,
+            departureCity, arrivalCity, weightKg, senderName, senderPhotoUrl, isMyTurn, canAccept, canCounter,
+            roundsRemaining, linkedTrip, grossPriceEur, paymentMethod, materializedBidId, cashCommissionAvailable,
+            availablePaymentMethods, canNudge, hasUnread, promoCode, null, "EUR");
+    }
+
+    /** Constructeur de compatibilité avec le contrat Task 9 round 1. */
+    public NegotiationThreadResponse(
+            UUID id, UUID packageRequestId, UUID travelerId,
+            UUID travelerAnnouncementId, LocalDate travelerTravelDate, BigDecimal travelerAvailableKg,
+            String travelerCapacityUnit,
+            NegotiationThreadStatus status, BigDecimal currentPriceEur, int roundsCount,
+            LocalDateTime lastActivityAt, LocalDateTime createdAt,
+            List<NegotiationMessageResponse> messages,
+            String paymentIntentClientSecret,
+            String travelerName, BigDecimal travelerRating, Integer travelerTripsCount, String travelerPhotoUrl,
+            String departureCity, String arrivalCity, BigDecimal weightKg,
+            String senderName,
+            String senderPhotoUrl,
+            boolean isMyTurn,
+            boolean canAccept,
+            boolean canCounter,
+            int roundsRemaining,
+            LinkedTripSummary linkedTrip,
+            BigDecimal grossPriceEur,
+            PaymentMethod paymentMethod,
+            UUID materializedBidId,
+            boolean cashCommissionAvailable,
+            Set<PaymentMethod> availablePaymentMethods,
+            boolean canNudge,
+            boolean hasUnread,
+            String promoCode,
+            String currency) {
+        this(id, packageRequestId, travelerId, travelerAnnouncementId, travelerTravelDate, travelerAvailableKg,
+            travelerCapacityUnit, status, currentPriceEur, roundsCount, lastActivityAt, createdAt, messages,
+            paymentIntentClientSecret, travelerName, travelerRating, travelerTripsCount, travelerPhotoUrl,
+            departureCity, arrivalCity, weightKg, senderName, senderPhotoUrl, isMyTurn, canAccept, canCounter,
+            roundsRemaining, linkedTrip, grossPriceEur, paymentMethod, materializedBidId, cashCommissionAvailable,
+            availablePaymentMethods, canNudge, hasUnread, promoCode, null, currency);
     }
 }

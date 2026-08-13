@@ -5,7 +5,9 @@ import com.yadony.api.auth.StripeAccountStatus;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
+import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
+import com.yadony.api.payments.currency.CurrencyMatchGuard;
 import com.yadony.api.payments.cash.CommissionProperties;
 import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.requests.CashGatePort;
@@ -17,6 +19,8 @@ import com.yadony.api.requests.event.NegotiationStartedEvent;
 import com.yadony.api.requests.event.PackageRequestAcceptedEvent;
 import com.yadony.api.requests.event.NegotiationAwaitingTripEvent;
 import com.yadony.api.requests.repository.*;
+import com.yadony.api.settings.UserBusinessPrefsEntity;
+import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.*;
@@ -48,6 +52,14 @@ class NegotiationServiceTest {
     @Mock private com.yadony.api.matching.AnnouncementRepository announcementRepo;
     @Mock private ApplicationEventPublisher eventPublisher;
     @Mock private AuditService auditService;
+    @Mock private ActiveCurrencyResolver activeCurrencyResolver;
+
+    @org.junit.jupiter.api.BeforeEach
+    void stubDefaultActiveCurrency() {
+        org.mockito.Mockito.lenient()
+                .when(activeCurrencyResolver.resolve(org.mockito.ArgumentMatchers.any()))
+                .thenReturn("EUR");
+    }
     @Mock private RequestsConfig config;
     @Mock private CommissionProperties commissionProperties;
     @Mock private CashGatePort cashGatePort;
@@ -55,6 +67,7 @@ class NegotiationServiceTest {
     @Mock private StorageService storageService;
     @Mock private PackageRequestPhotoService photoService;
     @Mock private com.yadony.api.common.CommissionRateResolver commissionRateResolver;
+    @Spy private CurrencyMatchGuard currencyMatchGuard = new CurrencyMatchGuard();
 
     @InjectMocks private NegotiationService service;
 
@@ -95,6 +108,14 @@ class NegotiationServiceTest {
         lenient().when(commissionProperties.rate()).thenReturn(new BigDecimal("0.12"));
         // Pass-through for presigned avatar URLs
         lenient().when(storageService.avatarUrl(any())).thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(activeCurrencyResolver.resolve(any())).thenReturn("EUR");
+    }
+
+    private UserBusinessPrefsEntity prefsWithCurrency(UUID userId, String code) {
+        UserBusinessPrefsEntity prefs = new UserBusinessPrefsEntity();
+        prefs.setUserId(userId);
+        prefs.setCurrencyCode(code);
+        return prefs;
     }
 
     @Nested
@@ -177,6 +198,57 @@ class NegotiationServiceTest {
                 ArgumentCaptor.forClass(NegotiationThreadEntity.class);
             verify(threadRepo).save(captor.capture());
             assertThat(captor.getValue().getPromoCode()).isEqualTo("WELCOME6");
+        }
+
+        @Test
+        @DisplayName("devise voyageur absente → fallback EUR, la négociation démarre et le thread copie EUR")
+        void start_missingTravelerPrefsFallsBackToEurAndCopiesRequestCurrency() {
+            when(config.maxOpenThreadsPerTraveler()).thenReturn(5);
+            when(config.threadsPerMinuteRateLimit()).thenReturn(1);
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
+            when(requestRepo.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(threadRepo.findActiveByPackageRequestIdAndTravelerId(REQUEST_ID, TRAVELER_ID))
+                .thenReturn(Optional.empty());
+            when(threadRepo.countByTravelerIdAndStatus(eq(TRAVELER_ID), eq(NegotiationThreadStatus.OPEN)))
+                .thenReturn(0L);
+            when(threadRepo.countCreatedBy(eq(TRAVELER_ID), any())).thenReturn(0L);
+            when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            var response = service.start(TRAVELER_ID, validStartReq());
+
+            ArgumentCaptor<NegotiationThreadEntity> captor =
+                ArgumentCaptor.forClass(NegotiationThreadEntity.class);
+            verify(activeCurrencyResolver).resolve(TRAVELER_ID);
+            verify(threadRepo).save(captor.capture());
+            assertThat(response).isNotNull();
+            assertThat(captor.getValue().getCurrency()).isEqualTo("EUR");
+        }
+
+        @Test
+        @DisplayName("quand la devise matche, le thread copie exactement la devise de la demande")
+        void start_matchingCurrencyCopiesExactRequestCurrency() {
+            request.setCurrency("cad");
+
+            when(config.maxOpenThreadsPerTraveler()).thenReturn(5);
+            when(config.threadsPerMinuteRateLimit()).thenReturn(1);
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
+            when(requestRepo.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(threadRepo.findActiveByPackageRequestIdAndTravelerId(REQUEST_ID, TRAVELER_ID))
+                .thenReturn(Optional.empty());
+            when(threadRepo.countByTravelerIdAndStatus(eq(TRAVELER_ID), eq(NegotiationThreadStatus.OPEN)))
+                .thenReturn(0L);
+            when(threadRepo.countCreatedBy(eq(TRAVELER_ID), any())).thenReturn(0L);
+            when(activeCurrencyResolver.resolve(TRAVELER_ID)).thenReturn("CAD");
+            when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            service.start(TRAVELER_ID, validStartReq());
+
+            ArgumentCaptor<NegotiationThreadEntity> captor =
+                ArgumentCaptor.forClass(NegotiationThreadEntity.class);
+            verify(threadRepo).save(captor.capture());
+            assertThat(captor.getValue().getCurrency()).isEqualTo("cad");
         }
     }
 
@@ -302,6 +374,34 @@ class NegotiationServiceTest {
             assertThat(response).isNotNull();
             assertThat(response.status()).isEqualTo(NegotiationThreadStatus.OPEN);
             verify(messageRepo).save(argThat(m -> m.getKind() == NegotiationMessageKind.PROPOSAL));
+        }
+
+        @Test
+        @DisplayName("mismatch de devise → 422 avant tout save, event, audit ou mutation irréversible")
+        void start_currencyMismatch_throws422BeforeAnyIrreversibleEffect() {
+            request.setCurrency("USD");
+            traveler.getRoles().clear();
+            PackageRequestStatus statusBefore = request.getStatus();
+
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(requestRepo.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(request));
+
+            assertThatThrownBy(() -> service.start(TRAVELER_ID, validStartReq()))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(ex -> {
+                    YadonyBusinessException business = (YadonyBusinessException) ex;
+                    assertThat(business.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(business.getErrorCode()).isEqualTo("currency-mismatch");
+                });
+
+            verify(activeCurrencyResolver).resolve(TRAVELER_ID);
+            verify(threadRepo, never()).save(any(NegotiationThreadEntity.class));
+            verify(messageRepo, never()).save(any(NegotiationMessageEntity.class));
+            verify(requestRepo, never()).save(any(PackageRequestEntity.class));
+            verify(userRepository, never()).save(any(UserEntity.class));
+            verifyNoInteractions(auditService, eventPublisher);
+            assertThat(request.getStatus()).isEqualTo(statusBefore);
+            assertThat(traveler.getRoles()).isEmpty();
         }
     }
 
@@ -897,6 +997,8 @@ class NegotiationServiceTest {
             thread.setTravelerId(TRAVELER_ID);
             thread.setStatus(NegotiationThreadStatus.OPEN);
             thread.setCurrentPriceEur(new BigDecimal("30"));
+            thread.setPromoCode("WELCOME6");
+            thread.setCommissionRate(new BigDecimal("0.06"));
             thread.setRoundsCount((short) 1);
             thread.setLastActivityAt(java.time.LocalDateTime.now());
             try {
@@ -912,6 +1014,9 @@ class NegotiationServiceTest {
 
             var resp = service.getById(TRAVELER_ID, THREAD_ID);
             assertThat(resp.id()).isEqualTo(THREAD_ID);
+            assertThat(resp.promoCode()).isEqualTo("WELCOME6");
+            assertThat(new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules().valueToTree(resp)
+                    .path("commissionRate").decimalValue()).isEqualByComparingTo("0.06");
             assertThat(thread.getTravelerLastReadAt()).isNotNull();
             assertThat(resp.hasUnread()).isFalse();
             verify(threadRepo).save(thread);
@@ -969,7 +1074,7 @@ class NegotiationServiceTest {
             when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(java.util.Optional.of(traveler));
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(java.util.List.of());
-            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any())).thenReturn(true);
+            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any(), any())).thenReturn(true);
 
             var resp = service.getById(TRAVELER_ID, THREAD_ID);
 
@@ -986,7 +1091,7 @@ class NegotiationServiceTest {
             when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(java.util.Optional.of(traveler));
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(java.util.List.of());
-            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any())).thenReturn(false);
+            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any(), any())).thenReturn(false);
             when(cashGatePort.hasCommissionCard(eq(TRAVELER_ID))).thenReturn(false);
 
             var resp = service.getById(TRAVELER_ID, THREAD_ID);
@@ -1004,7 +1109,7 @@ class NegotiationServiceTest {
             when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(java.util.Optional.of(traveler));
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(java.util.List.of());
-            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any())).thenReturn(false);
+            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any(), any())).thenReturn(false);
             when(cashGatePort.hasCommissionCard(eq(TRAVELER_ID))).thenReturn(true);
 
             var resp = service.getById(TRAVELER_ID, THREAD_ID);
@@ -1531,7 +1636,7 @@ class NegotiationServiceTest {
             when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
             when(commissionProperties.rate()).thenReturn(new BigDecimal("0.12"));
-            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any())).thenReturn(true);
+            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any(), any())).thenReturn(true);
             UUID newAnnId = UUID.randomUUID();
             when(announcementRepo.save(any())).thenAnswer(inv -> {
                 com.yadony.api.matching.AnnouncementEntity a = inv.getArgument(0);
@@ -1590,7 +1695,7 @@ class NegotiationServiceTest {
             when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
             when(commissionProperties.rate()).thenReturn(new BigDecimal("0.12"));
-            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any())).thenReturn(true);
+            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any(), any())).thenReturn(true);
             when(announcementRepo.save(any())).thenAnswer(inv -> {
                 com.yadony.api.matching.AnnouncementEntity a = inv.getArgument(0);
                 try {
@@ -1631,7 +1736,7 @@ class NegotiationServiceTest {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
             when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
-            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any())).thenReturn(true);
+            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any(), any())).thenReturn(true);
 
             var req = buildRequest(request.getDesiredDate().minusDays(3));
             assertThatThrownBy(() -> service.createDedicatedTrip(TRAVELER_ID, THREAD_ID, req))
@@ -1646,7 +1751,7 @@ class NegotiationServiceTest {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
             when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
-            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any())).thenReturn(true);
+            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any(), any())).thenReturn(true);
 
             var req = buildRequest(request.getDesiredDate().plusDays(3));
             assertThatThrownBy(() -> service.createDedicatedTrip(TRAVELER_ID, THREAD_ID, req))
@@ -1699,7 +1804,7 @@ class NegotiationServiceTest {
             when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
             when(commissionProperties.rate()).thenReturn(new BigDecimal("0.12"));
-            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any())).thenReturn(false);
+            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any(), any())).thenReturn(false);
 
             // buildRequest uses CASH as payment method (now ignored — request only accepts CASH,
             // and the wallet has insufficient funds with no card consent → SET is empty).
@@ -1784,7 +1889,7 @@ class NegotiationServiceTest {
             when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
             when(commissionProperties.rate()).thenReturn(new java.math.BigDecimal("0.12"));
-            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any())).thenReturn(false);
+            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any(), any())).thenReturn(false);
 
             var req = new com.yadony.api.requests.dto.NegotiationSubmitTripRequest(annId, PaymentMethod.CASH);
 
@@ -1963,7 +2068,7 @@ class NegotiationServiceTest {
             when(requestRepo.findById(any())).thenReturn(java.util.Optional.of(request));
             when(userRepository.findById(travelerId)).thenReturn(java.util.Optional.of(traveler));
             when(commissionProperties.rate()).thenReturn(new BigDecimal("0.05"));
-            when(cashGatePort.hasSufficientFunds(eq(travelerId), any())).thenReturn(false);
+            when(cashGatePort.hasSufficientFunds(eq(travelerId), any(), any())).thenReturn(false);
 
             com.yadony.api.requests.dto.NegotiationSubmitTripRequest req =
                 new com.yadony.api.requests.dto.NegotiationSubmitTripRequest(annId, PaymentMethod.CASH, false); // pas de consentement
@@ -2014,7 +2119,7 @@ class NegotiationServiceTest {
             when(userRepository.findById(SENDER_ID)).thenReturn(java.util.Optional.of(traveler));
             when(announcementRepo.findById(annId)).thenReturn(java.util.Optional.of(ann));
             when(commissionProperties.rate()).thenReturn(new BigDecimal("0.05"));
-            when(cashGatePort.hasSufficientFunds(eq(travelerId), any())).thenReturn(false);
+            when(cashGatePort.hasSufficientFunds(eq(travelerId), any(), any())).thenReturn(false);
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(threadId)).thenReturn(List.of());
 
             service.submitTrip(travelerId, threadId,
@@ -2064,7 +2169,7 @@ class NegotiationServiceTest {
             when(userRepository.findById(SENDER_ID)).thenReturn(java.util.Optional.of(traveler));
             when(announcementRepo.findById(annId)).thenReturn(java.util.Optional.of(ann));
             when(commissionProperties.rate()).thenReturn(new BigDecimal("0.05"));
-            when(cashGatePort.hasSufficientFunds(eq(travelerId), any())).thenReturn(false);
+            when(cashGatePort.hasSufficientFunds(eq(travelerId), any(), any())).thenReturn(false);
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(threadId)).thenReturn(List.of());
 
             NegotiationThreadResponse res = service.submitTrip(travelerId, threadId,
@@ -2598,6 +2703,7 @@ class NegotiationServiceTest {
             thread.setPackageRequestId(REQUEST_ID);
             thread.setTravelerId(TRAVELER_ID);
             thread.setStatus(NegotiationThreadStatus.OPEN);
+            thread.setCurrency("CAD");
             thread.setCurrentPriceEur(new BigDecimal("35"));
             thread.setRoundsCount((short) 1);
             thread.setLastActivityAt(java.time.LocalDateTime.now());
@@ -2624,6 +2730,7 @@ class NegotiationServiceTest {
 
             // paymentMethod is null (not set on entity)
             assertThat(response.paymentMethod()).isNull();
+            assertThat(response.currency()).isEqualTo("CAD");
         }
 
         @Test
