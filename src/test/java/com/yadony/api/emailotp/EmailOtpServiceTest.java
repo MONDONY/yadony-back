@@ -35,9 +35,36 @@ class EmailOtpServiceTest {
     @Mock private UserRepository userRepository;
     @Mock private com.yadony.api.auth.FirebaseContactService firebaseContact;
     @Mock private com.yadony.api.common.AuditService auditService;
+
+    // Instance réelle, pas un mock : ces seuils sont la règle métier testée ici.
+    // Les mocker reviendrait à vérifier des valeurs choisies par le test plutôt
+    // que celles qu'appliquera la production.
+    @org.mockito.Spy private EmailOtpProperties properties = new EmailOtpProperties();
+
     @InjectMocks private EmailOtpService emailOtpService;
 
     private static final String EMAIL = "test@example.com";
+
+    // Ces fabriques stubbent leurs propres mocks : les appeler à l'intérieur d'un
+    // when(...) imbriquerait deux stubbings et Mockito lèverait
+    // UnfinishedStubbingException. Toujours les affecter à une variable d'abord.
+
+    /** UserRecord minimal : seul l'UID est lu par le service. */
+    private static com.google.firebase.auth.UserRecord userRecord(String uid) {
+        com.google.firebase.auth.UserRecord record =
+                mock(com.google.firebase.auth.UserRecord.class);
+        doReturn(uid).when(record).getUid();
+        return record;
+    }
+
+    /** Firebase signale une adresse inconnue par ce code d'erreur, pas par un null. */
+    private static com.google.firebase.auth.FirebaseAuthException userNotFound() {
+        com.google.firebase.auth.FirebaseAuthException e =
+                mock(com.google.firebase.auth.FirebaseAuthException.class);
+        doReturn(com.google.firebase.auth.AuthErrorCode.USER_NOT_FOUND)
+                .when(e).getAuthErrorCode();
+        return e;
+    }
 
     @Nested
     @DisplayName("sendOtp")
@@ -60,9 +87,23 @@ class EmailOtpServiceTest {
         }
 
         @Test
-        @DisplayName("429 — 3 envois ou plus dans la fenêtre de 5 min")
+        @DisplayName("le 5e renvoi passe encore — le bouton de l'app se rouvre toutes les 60 s")
+        void fourPreviousSendsStillAllowANewOne() {
+            // Régression : le budget était de 3, alors que l'écran rouvre « Renvoyer
+            // le code » chaque minute. L'utilisateur se voyait refuser un renvoi que
+            // l'interface venait de lui proposer.
+            when(emailOtpRepository.countByEmailSince(eq(EMAIL), any())).thenReturn(4L);
+            when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$hashed");
+            when(emailOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+            assertThat(emailOtpService.sendOtp(EMAIL)).isNotNull();
+            verify(resendEmailService).sendOtp(eq(EMAIL), anyString());
+        }
+
+        @Test
+        @DisplayName("429 — 5 envois ou plus dans la fenêtre de 5 min")
         void rateLimitExceeded() {
-            when(emailOtpRepository.countByEmailSince(eq(EMAIL), any())).thenReturn(3L);
+            when(emailOtpRepository.countByEmailSince(eq(EMAIL), any())).thenReturn(5L);
 
             assertThatThrownBy(() -> emailOtpService.sendOtp(EMAIL))
                     .isInstanceOf(YadonyBusinessException.class)
@@ -194,15 +235,18 @@ class EmailOtpServiceTest {
         }
 
         @Test
-        @DisplayName("succès — nouvel utilisateur, retourne customToken Firebase avec uid=email")
+        @DisplayName("succès — adresse inconnue de Firebase, le compte est créé")
         void success() throws Exception {
             EmailOtpEntity token = validToken();
             when(emailOtpRepository.findTopByEmailAndUsedAtIsNullOrderByCreatedAtDesc(EMAIL))
                     .thenReturn(Optional.of(token));
             when(passwordEncoder.matches("123456", "$2a$10$hash")).thenReturn(true);
-            // Aucun compte Firebase ne porte cette adresse → l'UID retombe sur l'email
-            when(firebaseContact.findUidByEmail(EMAIL)).thenReturn(Optional.empty());
-            when(firebaseAuth.createCustomToken(EMAIL)).thenReturn("firebase-custom-token");
+            var absente = userNotFound();
+            var nouveau = userRecord("uid-tout-neuf");
+            when(firebaseAuth.getUserByEmail(EMAIL)).thenThrow(absente);
+            when(firebaseAuth.createUser(any())).thenReturn(nouveau);
+            when(firebaseAuth.createCustomToken(eq("uid-tout-neuf"), any()))
+                    .thenReturn("firebase-custom-token");
             when(emailOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
             String result = emailOtpService.verifyOtp(EMAIL, "123456");
@@ -212,28 +256,26 @@ class EmailOtpServiceTest {
         }
 
         @Test
-        @DisplayName("succès — utilisateur existant, customToken créé avec son firebase_uid existant")
+        @DisplayName("le compte Firebase qui porte l'adresse est réutilisé, même sans ligne locale")
         void success_existingUser_usesExistingFirebaseUid() throws Exception {
+            // RÉGRESSION : l'UID n'était réutilisé que si un compte local y correspondait.
+            // Sinon le service prenait l'adresse elle-même comme UID, fabriquant une
+            // seconde identité Firebase pour la même personne ; l'inscription échouait
+            // ensuite sur EMAIL_ALREADY_EXISTS, après consommation du code OTP.
             EmailOtpEntity token = validToken();
-            UserEntity existingUser = new UserEntity();
-            existingUser.setFirebaseUid("existing-firebase-uid-from-phone");
-
             when(emailOtpRepository.findTopByEmailAndUsedAtIsNullOrderByCreatedAtDesc(EMAIL))
                     .thenReturn(Optional.of(token));
             when(passwordEncoder.matches("123456", "$2a$10$hash")).thenReturn(true);
-            // L'adresse n'est plus en base : Firebase donne l'UID qui la porte
-            when(firebaseContact.findUidByEmail(EMAIL))
-                    .thenReturn(Optional.of("existing-firebase-uid-from-phone"));
-            when(userRepository.findByFirebaseUid("existing-firebase-uid-from-phone"))
-                    .thenReturn(Optional.of(existingUser));
-            when(firebaseAuth.createCustomToken("existing-firebase-uid-from-phone"))
+            var compteGoogle = userRecord("uid-cree-par-google");
+            when(firebaseAuth.getUserByEmail(EMAIL)).thenReturn(compteGoogle);
+            when(firebaseAuth.createCustomToken(eq("uid-cree-par-google"), any()))
                     .thenReturn("firebase-token-with-existing-uid");
             when(emailOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
             String result = emailOtpService.verifyOtp(EMAIL, "123456");
 
             assertThat(result).isEqualTo("firebase-token-with-existing-uid");
-            verify(firebaseAuth).createCustomToken("existing-firebase-uid-from-phone");
+            verify(firebaseAuth, never()).createUser(any());
         }
 
         @Test
@@ -326,7 +368,7 @@ class EmailOtpServiceTest {
         @DisplayName("succès — retourne null si firebaseAuth non disponible (mode test)")
         void firebaseAuth_null_returnsNull() {
             EmailOtpService serviceWithoutFirebase = new EmailOtpService(
-                    emailOtpRepository, passwordEncoder, resendEmailService, null,
+                    properties, emailOtpRepository, passwordEncoder, resendEmailService, null,
                     userRepository, firebaseContact, auditService);
             EmailOtpEntity token = validToken();
             when(emailOtpRepository.findTopByEmailAndUsedAtIsNullOrderByCreatedAtDesc(EMAIL))
@@ -347,9 +389,10 @@ class EmailOtpServiceTest {
                     .thenReturn(Optional.of(token));
             when(passwordEncoder.matches("123456", "$2a$10$hash")).thenReturn(true);
             when(emailOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
-            when(firebaseContact.findUidByEmail(EMAIL)).thenReturn(Optional.empty());
-            doThrow(mock(com.google.firebase.auth.FirebaseAuthException.class))
-                    .when(firebaseAuth).createCustomToken(EMAIL);
+            var existant = userRecord("uid-existant");
+            var panne = mock(com.google.firebase.auth.FirebaseAuthException.class);
+            when(firebaseAuth.getUserByEmail(EMAIL)).thenReturn(existant);
+            when(firebaseAuth.createCustomToken(eq("uid-existant"), any())).thenThrow(panne);
 
             assertThatThrownBy(() -> emailOtpService.verifyOtp(EMAIL, "123456"))
                     .isInstanceOf(YadonyBusinessException.class)

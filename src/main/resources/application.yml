@@ -181,8 +181,20 @@ yadony:
     resend-api-key: ${RESEND_API_KEY:}
     from-address: ${YADONY_EMAIL_FROM_ADDRESS:noreply@yadony.com}
     otp-template: "Ton code Yadony est : %s. Valable 10 minutes."
+    # 5 envois / 5 min : le bouton « Renvoyer le code » de l'app se rouvre toutes
+    # les 60 s, ce budget suit donc exactement ce que l'écran autorise à demander.
+    max-sends-per-window: ${YADONY_EMAIL_OTP_MAX_SENDS:5}
+    rate-window-minutes: ${YADONY_EMAIL_OTP_WINDOW_MINUTES:5}
+    max-attempts: ${YADONY_EMAIL_OTP_MAX_ATTEMPTS:5}
+    otp-valid-minutes: ${YADONY_EMAIL_OTP_VALID_MINUTES:10}
   sms:
     otp-template: "Ton code Yadony est : %s. Valable 10 minutes."
+    # Mêmes valeurs que le canal email : l'écran de saisie du code est partagé
+    # entre les deux, son bouton « Renvoyer » se rouvrant toutes les 60 s.
+    max-sends-per-window: ${YADONY_SMS_OTP_MAX_SENDS:5}
+    rate-window-minutes: ${YADONY_SMS_OTP_WINDOW_MINUTES:5}
+    max-attempts: ${YADONY_SMS_OTP_MAX_ATTEMPTS:5}
+    otp-valid-minutes: ${YADONY_SMS_OTP_VALID_MINUTES:10}
 
 # Encryption (AES-256 for KYC sensitive data)
 app:

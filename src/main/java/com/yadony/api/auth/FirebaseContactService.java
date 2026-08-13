@@ -212,7 +212,7 @@ public class FirebaseContactService {
         if (unavailable()) {
             return;
         }
-        applyUpdate(new UserRecord.UpdateRequest(firebaseUid).setEmail(email),
+        applyUpdate(firebaseUid, new UserRecord.UpdateRequest(firebaseUid).setEmail(email),
                 "Mise à jour email Firebase impossible");
     }
 
@@ -221,7 +221,7 @@ public class FirebaseContactService {
         if (unavailable()) {
             return;
         }
-        applyUpdate(new UserRecord.UpdateRequest(firebaseUid).setPhoneNumber(phoneNumber),
+        applyUpdate(firebaseUid, new UserRecord.UpdateRequest(firebaseUid).setPhoneNumber(phoneNumber),
                 "Mise à jour téléphone Firebase impossible");
     }
 
@@ -231,11 +231,17 @@ public class FirebaseContactService {
      * dans la foulée (réponse de profil), une invalidation leur coûterait un
      * aller-retour supplémentaire pour une donnée déjà en main.
      */
-    private void applyUpdate(UserRecord.UpdateRequest request, String errorDetail) {
+    private void applyUpdate(String firebaseUid, UserRecord.UpdateRequest request, String errorDetail) {
         try {
             UserRecord updated = firebaseAuth.updateUser(request);
             cache.put(updated.getUid(), new Contact(updated.getPhoneNumber(), updated.getEmail()));
         } catch (FirebaseAuthException e) {
+            // Le code d'erreur Firebase est la seule information qui distingue une
+            // adresse déjà prise par un autre compte d'une panne de service. Sans
+            // cette trace, l'incident ne laissait qu'un « firebase-error » opaque,
+            // impossible à diagnostiquer après coup.
+            log.error("Firebase updateUser({}) refusé : {} — {}",
+                    firebaseUid, e.getAuthErrorCode(), e.getMessage());
             // YadonyBusinessException pour rester dans le contrat RFC 7807 du
             // GlobalExceptionHandler : ces méthodes sont sur des chemins utilisateur
             // (mise à jour de profil, rattachement d'email).
