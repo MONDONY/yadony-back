@@ -40,6 +40,7 @@ public class ReferralService {
     private final UserRepository userRepository;
     private final AuditService auditService;
     private final ReferralConfig config;
+    private final com.yadony.api.payments.currency.ActiveCurrencyResolver activeCurrencyResolver;
     private final Random random = new Random();
 
     public ReferralService(ReferralCodeRepository referralCodeRepository,
@@ -47,13 +48,15 @@ public class ReferralService {
                            UserCreditRepository userCreditRepository,
                            UserRepository userRepository,
                            AuditService auditService,
-                           ReferralConfig config) {
+                           ReferralConfig config,
+                           com.yadony.api.payments.currency.ActiveCurrencyResolver activeCurrencyResolver) {
         this.referralCodeRepository = referralCodeRepository;
         this.referralInvitationRepository = referralInvitationRepository;
         this.userCreditRepository = userCreditRepository;
         this.userRepository = userRepository;
         this.auditService = auditService;
         this.config = config;
+        this.activeCurrencyResolver = activeCurrencyResolver;
     }
 
     // ── Code generation ──────────────────────────────────────────────────────
@@ -97,7 +100,11 @@ public class ReferralService {
         long totalInvited = referralInvitationRepository.countByReferrerUserId(user.getId());
         long signedUp = referralInvitationRepository.countByReferrerUserIdAndStatus(user.getId(), "SIGNED_UP");
         long rewarded = referralInvitationRepository.countByReferrerUserIdAndStatus(user.getId(), "REWARDED");
-        int totalEarnedCents = userCreditRepository.sumAmountCentsByUserId(user.getId());
+        // Total de la seule devise active : additionner toutes devises confondues
+        // mêlerait dollars et euros en un chiffre qu'aucun symbole ne peut légender.
+        String currency = activeCurrencyResolver.resolve(user.getId());
+        int totalEarnedCents =
+                userCreditRepository.sumAmountCentsByUserIdAndCurrency(user.getId(), currency);
 
         boolean hasBeenReferred =
                 referralInvitationRepository.findByRefereeUserIdAndStatus(user.getId(), "SIGNED_UP").isPresent() ||
@@ -106,7 +113,7 @@ public class ReferralService {
         return new MyReferralResponse(
                 code, shareUrl,
                 (int) totalInvited, (int) signedUp, (int) rewarded,
-                totalEarnedCents, hasBeenReferred
+                totalEarnedCents, hasBeenReferred, currency, config.getRewardAmountCents()
         );
     }
 

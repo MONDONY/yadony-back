@@ -52,7 +52,8 @@ class ReferralServiceTest {
         config.setCodeRegenerationCooldownDays(30);
         referralService = new ReferralService(
                 referralCodeRepository, referralInvitationRepository,
-                userCreditRepository, userRepository, auditService, config);
+                userCreditRepository, userRepository, auditService, config,
+                resolverReturning("EUR"));
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
@@ -146,7 +147,7 @@ class ReferralServiceTest {
         when(referralInvitationRepository.countByReferrerUserId(USER_ID)).thenReturn(3L);
         when(referralInvitationRepository.countByReferrerUserIdAndStatus(USER_ID, "SIGNED_UP")).thenReturn(2L);
         when(referralInvitationRepository.countByReferrerUserIdAndStatus(USER_ID, "REWARDED")).thenReturn(1L);
-        when(userCreditRepository.sumAmountCentsByUserId(USER_ID)).thenReturn(500);
+        when(userCreditRepository.sumAmountCentsByUserIdAndCurrency(USER_ID, "EUR")).thenReturn(500);
         when(referralInvitationRepository.findByRefereeUserIdAndStatus(USER_ID, "SIGNED_UP")).thenReturn(Optional.empty());
         when(referralInvitationRepository.findByRefereeUserIdAndStatus(USER_ID, "REWARDED")).thenReturn(Optional.empty());
 
@@ -171,7 +172,7 @@ class ReferralServiceTest {
         when(referralInvitationRepository.countByReferrerUserId(USER_ID)).thenReturn(0L);
         when(referralInvitationRepository.countByReferrerUserIdAndStatus(USER_ID, "SIGNED_UP")).thenReturn(0L);
         when(referralInvitationRepository.countByReferrerUserIdAndStatus(USER_ID, "REWARDED")).thenReturn(0L);
-        when(userCreditRepository.sumAmountCentsByUserId(USER_ID)).thenReturn(0);
+        when(userCreditRepository.sumAmountCentsByUserIdAndCurrency(USER_ID, "EUR")).thenReturn(0);
         ReferralInvitationEntity invitation = new ReferralInvitationEntity();
         when(referralInvitationRepository.findByRefereeUserIdAndStatus(USER_ID, "SIGNED_UP"))
                 .thenReturn(Optional.of(invitation));
@@ -281,4 +282,16 @@ class ReferralServiceTest {
                     assertThat(dbe.getErrorCode()).isEqualTo("already-referred");
                 });
     }
+
+    // Mockito renvoie null pour un retour String non stubé (et non Optional.empty()) :
+    // sans ce stub la devise résolue serait nulle et le repli ne serait pas testé.
+    private static com.yadony.api.payments.currency.ActiveCurrencyResolver resolverReturning(String code) {
+        var resolver = org.mockito.Mockito.mock(
+                com.yadony.api.payments.currency.ActiveCurrencyResolver.class);
+        org.mockito.Mockito.lenient()
+                .when(resolver.resolve(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(code);
+        return resolver;
+    }
+
 }

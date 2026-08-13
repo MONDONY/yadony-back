@@ -38,19 +38,22 @@ public class DeliveryConfirmedReferralListener {
     private final AuditService auditService;
     private final ReferralConfig config;
     private final ApplicationEventPublisher eventPublisher;
+    private final com.yadony.api.payments.currency.ActiveCurrencyResolver activeCurrencyResolver;
 
     public DeliveryConfirmedReferralListener(ReferralInvitationRepository referralInvitationRepository,
                                               UserCreditRepository userCreditRepository,
                                               BidRepository bidRepository,
                                               AuditService auditService,
                                               ReferralConfig config,
-                                              ApplicationEventPublisher eventPublisher) {
+                                              ApplicationEventPublisher eventPublisher,
+                                              com.yadony.api.payments.currency.ActiveCurrencyResolver activeCurrencyResolver) {
         this.referralInvitationRepository = referralInvitationRepository;
         this.userCreditRepository = userCreditRepository;
         this.bidRepository = bidRepository;
         this.auditService = auditService;
         this.config = config;
         this.eventPublisher = eventPublisher;
+        this.activeCurrencyResolver = activeCurrencyResolver;
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -101,9 +104,17 @@ public class DeliveryConfirmedReferralListener {
         inv.setCreditAmountCents(config.getRewardAmountCents());
         referralInvitationRepository.save(inv);
 
+        // La récompense suit la devise active du parrain au moment du versement.
+        // Elle n'est pas convertie : le montant nominal est repris tel quel, si
+        // bien qu'un parrain en dollar reçoit 5 USD et non l'équivalent de 5 EUR.
+        // La devise est stockée sur le crédit, faute de quoi le cumul
+        // additionnerait des devises différentes en un total illégendable.
+        String referrerCurrency = activeCurrencyResolver.resolve(inv.getReferrerUserId());
+
         UserCreditEntity credit = new UserCreditEntity();
         credit.setUserId(inv.getReferrerUserId());
         credit.setAmountCents(config.getRewardAmountCents());
+        credit.setCurrency(referrerCurrency);
         credit.setSource("REFERRAL_REWARD");
         credit.setReferenceId(inv.getId());
         userCreditRepository.save(credit);

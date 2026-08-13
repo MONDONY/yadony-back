@@ -30,6 +30,13 @@ public class UserCreditEntity {
     @Column(name = "amount_cents", nullable = false)
     private int amountCents;
 
+    /**
+     * Devise dans laquelle le crédit a été versé. Sans elle, le cumul des crédits
+     * additionnait des montants de devises différentes en un seul total.
+     */
+    @Column(name = "currency", nullable = false, length = 3)
+    private String currency = "EUR";
+
     @Column(name = "source", nullable = false, length = 50)
     private String source;
 
@@ -51,6 +58,8 @@ public class UserCreditEntity {
 
     public int getAmountCents() { return amountCents; }
     public void setAmountCents(int amountCents) { this.amountCents = amountCents; }
+    public String getCurrency() { return currency; }
+    public void setCurrency(String currency) { this.currency = currency; }
 
     public String getSource() { return source; }
     public void setSource(String source) { this.source = source; }

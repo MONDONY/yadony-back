@@ -28,7 +28,7 @@ class ReferralRewardWalletListenerTest {
 
     @BeforeEach
     void setUp() {
-        listener = new ReferralRewardWalletListener(walletService);
+        listener = new ReferralRewardWalletListener(walletService, resolverReturning("EUR"));
     }
 
     @Test
@@ -71,4 +71,59 @@ class ReferralRewardWalletListenerTest {
 
         assertThat(amountCaptor.getValue()).isEqualByComparingTo(new BigDecimal("12.34"));
     }
+
+    // Mockito renvoie null pour un retour String non stubé (et non Optional.empty()) :
+    // sans ce stub la devise résolue serait nulle et le repli ne serait pas testé.
+    private static com.yadony.api.payments.currency.ActiveCurrencyResolver resolverReturning(String code) {
+        var resolver = org.mockito.Mockito.mock(
+                com.yadony.api.payments.currency.ActiveCurrencyResolver.class);
+        org.mockito.Mockito.lenient()
+                .when(resolver.resolve(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(code);
+        return resolver;
+    }
+
+
+    @Test
+    @DisplayName("la récompense suit la devise active du parrain, sans conversion")
+    void creditsTheRewardInTheReferrerActiveCurrency() {
+        var listenerInUsd = new ReferralRewardWalletListener(walletService, resolverReturning("USD"));
+
+        listenerInUsd.onReferralRewardGranted(
+                new com.yadony.api.referral.events.ReferralRewardGrantedEvent(
+                        REFERRER_ID, 500, INVITATION_ID));
+
+        // 500 centimes donnent 5 unités de la devise du parrain : 5 USD, et non
+        // l'équivalent en dollars de 5 EUR. Le partitionnement des devises
+        // interdit toute conversion.
+        org.mockito.Mockito.verify(walletService).credit(
+                org.mockito.ArgumentMatchers.eq(REFERRER_ID),
+                org.mockito.ArgumentMatchers.eq("USD"),
+                org.mockito.ArgumentMatchers.argThat(
+                        a -> a.compareTo(new java.math.BigDecimal("5.00")) == 0),
+                org.mockito.ArgumentMatchers.eq(WalletTransactionType.REFERRAL_REWARD),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString());
+    }
+
+    @Test
+    @DisplayName("une devise sans sous-unité reçoit un montant entier")
+    void roundsTheRewardToTheCurrencyPrecision() {
+        var listenerInXof = new ReferralRewardWalletListener(walletService, resolverReturning("XOF"));
+
+        listenerInXof.onReferralRewardGranted(
+                new com.yadony.api.referral.events.ReferralRewardGrantedEvent(
+                        REFERRER_ID, 500, INVITATION_ID));
+
+        // Le franc CFA n'a pas de centimes : un montant décimal aurait été rejeté
+        // à l'écriture.
+        org.mockito.Mockito.verify(walletService).credit(
+                org.mockito.ArgumentMatchers.eq(REFERRER_ID),
+                org.mockito.ArgumentMatchers.eq("XOF"),
+                org.mockito.ArgumentMatchers.argThat(a -> a.scale() == 0),
+                org.mockito.ArgumentMatchers.eq(WalletTransactionType.REFERRAL_REWARD),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString());
+    }
+
 }

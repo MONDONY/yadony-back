@@ -1,5 +1,7 @@
 package com.yadony.api.payments.wallet;
 
+import com.yadony.api.payments.currency.ActiveCurrencyResolver;
+import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.referral.events.ReferralRewardGrantedEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -10,6 +12,7 @@ import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 
 /**
  * Credits a referrer's spendable wallet balance when a referral reward is granted.
@@ -28,27 +31,45 @@ public class ReferralRewardWalletListener {
     private static final Logger log = LoggerFactory.getLogger(ReferralRewardWalletListener.class);
 
     private final WalletService walletService;
+    private final ActiveCurrencyResolver activeCurrencyResolver;
 
-    public ReferralRewardWalletListener(WalletService walletService) {
+    public ReferralRewardWalletListener(WalletService walletService,
+                                        ActiveCurrencyResolver activeCurrencyResolver) {
         this.walletService = walletService;
+        this.activeCurrencyResolver = activeCurrencyResolver;
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onReferralRewardGranted(ReferralRewardGrantedEvent event) {
-        // user_credits stores cents; the wallet stores euros as DECIMAL(10,2).
-        BigDecimal amountEur = BigDecimal.valueOf(event.amountCents()).movePointLeft(2);
+        // La récompense est versée dans la devise active du parrain au moment du
+        // versement, sur le portefeuille correspondant. Elle était auparavant
+        // toujours créditée en euros : un parrain travaillant en dollar recevait
+        // une somme qu'il ne pouvait dépenser que sur des transactions en euros.
+        //
+        // Le montant nominal est repris tel quel, sans conversion : 5 devient
+        // 5 USD et non l'équivalent de 5 EUR. C'est cohérent avec le
+        // partitionnement strict des devises, qui interdit toute conversion.
+        String currencyCode = activeCurrencyResolver.resolve(event.referrerUserId());
+        SupportedCurrency currency = SupportedCurrency.fromCodeOrDefault(currencyCode);
+
+        // amountCents est exprimé en centimes d'euro. On en retire la valeur
+        // nominale (500 → 5), puis on l'arrondit à la précision de la devise
+        // cible : le franc CFA n'a pas de sous-unité et refuserait des décimales.
+        BigDecimal amount = BigDecimal.valueOf(event.amountCents())
+                .movePointLeft(2)
+                .setScale(currency.minorUnit(), RoundingMode.DOWN);
         String idempotencyKey = "referral-reward-" + event.invitationId();
 
         walletService.credit(
                 event.referrerUserId(),
-                "EUR",
-                amountEur,
+                currencyCode,
+                amount,
                 WalletTransactionType.REFERRAL_REWARD,
                 event.invitationId().toString(),
                 idempotencyKey);
 
-        log.info("Referral reward credited to wallet: referrer={} amountEur={} invitation={}",
-                event.referrerUserId(), amountEur, event.invitationId());
+        log.info("Referral reward credited to wallet: referrer={} amount={} currency={} invitation={}",
+                event.referrerUserId(), amount, currencyCode, event.invitationId());
     }
 }
