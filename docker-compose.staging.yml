@@ -39,6 +39,13 @@ services:
       - run
       - /etc/alloy/config.alloy
       - --storage.path=/var/lib/alloy/data
+    environment:
+      YADONY_ENV: staging
+      GRAFANA_PROM_URL: ${GRAFANA_PROM_URL}
+      GRAFANA_PROM_USER: ${GRAFANA_PROM_USER}
+      GRAFANA_LOKI_URL: ${GRAFANA_LOKI_URL}
+      GRAFANA_LOKI_USER: ${GRAFANA_LOKI_USER}
+      GRAFANA_CLOUD_TOKEN: ${GRAFANA_CLOUD_TOKEN}
     volumes:
       - ./monitoring/alloy/config.alloy:/etc/alloy/config.alloy:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -177,6 +184,7 @@ services:
       - '--web.enable-remote-write-receiver'
     volumes:
       - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/rules:/etc/prometheus/rules:ro
       - yadony_prometheus_data:/prometheus
     networks:
       - yadony_internal
@@ -184,6 +192,31 @@ services:
       - "9090:9090"
     depends_on:
       - api
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    container_name: yadony_alertmanager
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    volumes:
+      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - yadony_alertmanager_data:/alertmanager
+    networks:
+      - yadony_internal
+    depends_on:
+      - discord-alerts
+
+  discord-alerts:
+    image: rogerrum/alertmanager-discord:latest
+    container_name: yadony_discord_alerts
+    restart: unless-stopped
+    environment:
+      DISCORD_WEBHOOK: ${DISCORD_WEBHOOK_URL}
+      LISTEN_ADDRESS: 0.0.0.0:9094
+    networks:
+      - yadony_internal
 
   grafana:
     image: grafana/grafana:latest
@@ -209,6 +242,7 @@ volumes:
   yadony_alloy_data:
   yadony_prometheus_data:
   yadony_grafana_data:
+  yadony_alertmanager_data:
 
 networks:
   yadony_internal:

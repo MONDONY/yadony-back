@@ -1,0 +1,101 @@
+groups:
+  - name: yadony-api
+    rules:
+      - alert: YadonyApiDown
+        expr: up{job="yadony-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "API Yadony indisponible"
+          description: "Prometheus ne reçoit plus les métriques de l'API depuis 2 minutes."
+
+      - alert: YadonyApiHigh5xxRate
+        expr: |
+          100 * sum(rate(http_server_requests_seconds_count{job="yadony-api",status=~"5.."}[5m]))
+          / clamp_min(sum(rate(http_server_requests_seconds_count{job="yadony-api"}[5m])), 0.001) > 2
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Taux d'erreurs 5xx élevé"
+          description: "Le taux d'erreurs 5xx de l'API dépasse 2 % depuis 5 minutes."
+
+      - alert: YadonyApiHighP95Latency
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(http_server_requests_seconds_bucket{job="yadony-api"}[5m])) by (le)
+          ) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Latence API p95 élevée"
+          description: "La latence p95 de l'API dépasse 1 seconde depuis 10 minutes."
+
+      - alert: YadonyMetricsStale
+        expr: absent(up{job="yadony-api"})
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Métriques API absentes"
+          description: "Aucune série de métriques API n'est disponible depuis 5 minutes."
+
+  - name: yadony-runtime
+    rules:
+      - alert: YadonyJvmHeapHigh
+        expr: |
+          100 * sum(jvm_memory_used_bytes{job="yadony-api",area="heap"})
+          / clamp_min(sum(jvm_memory_max_bytes{job="yadony-api",area="heap"}), 1) > 85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Mémoire JVM élevée"
+          description: "Le heap JVM dépasse 85 % depuis 10 minutes."
+
+      - alert: YadonyDatabasePoolHigh
+        expr: |
+          100 * sum(hikaricp_connections_active{job="yadony-api"})
+          / clamp_min(sum(hikaricp_connections_max{job="yadony-api"}), 1) > 85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Pool PostgreSQL proche de la saturation"
+          description: "Le pool HikariCP utilise plus de 85 % de ses connexions depuis 10 minutes."
+
+  - name: yadony-host
+    rules:
+      - alert: YadonyHostCpuHigh
+        expr: |
+          100 - (avg by (instance) (rate(node_cpu_seconds_total{job="host",mode="idle"}[5m])) * 100) > 80
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CPU VPS élevé"
+          description: "Le CPU du VPS dépasse 80 % depuis 10 minutes."
+
+      - alert: YadonyHostMemoryHigh
+        expr: |
+          100 * (1 - node_memory_MemAvailable_bytes{job="host"}
+          / node_memory_MemTotal_bytes{job="host"}) > 85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Mémoire VPS élevée"
+          description: "La mémoire disponible du VPS est inférieure à 15 % depuis 10 minutes."
+
+      - alert: YadonyHostDiskHigh
+        expr: |
+          100 * (1 - node_filesystem_avail_bytes{job="host",fstype!~"tmpfs|overlay|squashfs",mountpoint=~"/host/root|/"}
+          / node_filesystem_size_bytes{job="host",fstype!~"tmpfs|overlay|squashfs",mountpoint=~"/host/root|/"}) > 80
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disque VPS bientôt plein"
+          description: "L'espace disque utilisé dépasse 80 % depuis 15 minutes."

@@ -123,9 +123,13 @@ GRAFANA_PROM_USER = xxxx
 GRAFANA_LOKI_URL = https://logs-prod-us-central1.grafana.net/loki/api/v1/push
 GRAFANA_LOKI_USER = yyyy
 GRAFANA_CLOUD_TOKEN = zzzz
+DISCORD_WEBHOOK_URL = https://discord.com/api/webhooks/xxxx/yyyy
 ```
 
-Optionnel. Récupérer depuis [Grafana Cloud](https://grafana.com/auth/sign-in/grafana-cloud).
+Récupérer les variables Grafana depuis [Grafana Cloud](https://grafana.com/auth/sign-in/grafana-cloud).
+Créer `DISCORD_WEBHOOK_URL` depuis les paramètres du salon Discord destiné aux
+alertes de production. Ne jamais mettre cette URL dans GitHub Actions logs ou
+dans un fichier committé.
 
 #### 2.11 CORS
 ```
@@ -197,7 +201,8 @@ git push origin test/deployment-check
 | `CORS_ALLOWED_ORIGINS` | Config | ✅ | Origins CORS |
 | `SENTRY_DSN` | Sentry | ❌ | DSN Sentry (optionnel) |
 | `RESEND_API_KEY` | Resend | ❌ | Clé API email (optionnel) |
-| `GRAFANA_*` | Grafana Cloud | ❌ | Credentials monitoring (optionnel) |
+| `GRAFANA_*` | Grafana Cloud | ✅ prod | Credentials métriques et logs |
+| `DISCORD_WEBHOOK_URL` | Discord | ✅ prod | Webhook du salon d'alertes |
 | `INTERNAL_SHARED_SECRET` | Config | ✅ | Secret interne API |
 
 ---
@@ -310,4 +315,3 @@ df -h  # Vérifier l'espace disque
 - [ ] VPS = firewall ouvert uniquement au port 22 (SSH) depuis votre IP
 - [ ] Database = mot de passe min 16 chars avec caractères spéciaux
 - [ ] CORS = domaines spécifiques (pas `*`)
-
