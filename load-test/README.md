@@ -102,6 +102,9 @@ Exercises the main read-only endpoints:
 | `GET /favorites/ids` | Auth required |
 | `GET /package-requests` | `ROLE_TRAVELER` required |
 | `GET /auth/me` | Any authenticated user |
+| `GET /cities/search?query=Par&limit=10` | Cached public city search |
+| `GET /cities/corridors/popular?limit=10` | Short-TTL cached corridor list |
+| `GET /notifications/unread-count` | Authenticated notification counter |
 
 Profiles: **smoke** (1 VU / 30 s) + **load** (ramp 0→50 VUs).
 
@@ -156,3 +159,18 @@ k6 exits with a non-zero code if any threshold is breached.
 **NEVER point `BASE_URL` at `https://api.yadony.app`.**
 
 The runner (`run.sh`) refuses to execute if `BASE_URL` contains `api.yadony.app` or is empty. This guard protects real users and production data. Load tests must only target **staging** or a local dev environment.
+
+## Production gates
+
+Do not increase traffic until these alerts are green for at least 15 minutes:
+
+- API availability: `up{job="yadony-api"} == 1`.
+- 5xx rate: below 1% over 5 minutes.
+- p95 latency: below 800 ms and p99 below 1.5 s.
+- Hikari active connections: below 80% of the configured maximum.
+- JVM memory: below 80% and no sustained GC pause increase.
+- Cache hit ratio: monitor `cache_gets_total` and `cache_puts_total` for the hot caches.
+
+The production Nginx limits are per client IP: 30 requests/minute for the general
+API and 5 requests/minute for auth/KYC. They protect individual clients, but do not
+replace capacity testing at the aggregate traffic level.

@@ -1,6 +1,7 @@
 package com.yadony.api.common;
 
 import io.sentry.Sentry;
+import io.sentry.ScopeCallback;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
 import org.junit.jupiter.api.BeforeEach;
@@ -241,7 +242,7 @@ class GlobalExceptionHandlerTest {
             RuntimeException ex = new RuntimeException("Erreur inattendue");
 
             try (MockedStatic<Sentry> sentryMock = mockStatic(Sentry.class)) {
-                sentryMock.when(() -> Sentry.captureException(any())).thenAnswer(inv -> null);
+                sentryMock.when(() -> Sentry.withScope(any(ScopeCallback.class))).thenAnswer(inv -> null);
 
                 ResponseEntity<ProblemDetail> response = handler.handleGeneric(ex);
 
@@ -250,7 +251,7 @@ class GlobalExceptionHandlerTest {
                 assertThat(response.getBody().getDetail()).isEqualTo("An unexpected error occurred");
                 assertThat(response.getBody().getType().toString()).contains("internal-error");
 
-                sentryMock.verify(() -> Sentry.captureException(ex));
+                sentryMock.verify(() -> Sentry.withScope(any(ScopeCallback.class)));
             }
         }
 

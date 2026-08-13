@@ -14,6 +14,7 @@ import com.yadony.api.messaging.dto.ParticipantDTO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -210,15 +211,12 @@ public class ConversationService {
         auditService.log("conversation", conversationId, "CONVERSATION_UNARCHIVED", requestingUserId, Map.of());
     }
 
-    public List<ConversationResponse> getArchivedConversations(UUID userId) {
-        List<ConversationEntity> archived = conversationRepository
-            .findArchivedByParticipant(userId, Pageable.unpaged())
-            .getContent();
+    public Page<ConversationResponse> getArchivedConversations(UUID userId, Pageable pageable) {
+        Page<ConversationEntity> archived = conversationRepository
+            .findArchivedByParticipant(userId, pageable);
         Map<String, Map<String, Object>> meta = fetchConversationMeta(
-            archived.stream().map(ConversationEntity::getFirestoreConversationId).toList());
-        return archived.stream()
-            .map(c -> toResponse(c, userId, meta))
-            .toList();
+            archived.getContent().stream().map(ConversationEntity::getFirestoreConversationId).toList());
+        return archived.map(c -> toResponse(c, userId, meta));
     }
 
     public void updateLastMessage(String firestoreConversationId, String preview) {

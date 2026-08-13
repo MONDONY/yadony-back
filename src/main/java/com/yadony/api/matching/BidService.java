@@ -506,11 +506,13 @@ public class BidService {
                 .filter(b -> !b.isDeletedByTraveler())
                 .filter(b -> b.getStatus() != BidStatus.AWAITING_PAYMENT)
                 .toList();
+        Map<UUID, UserEntity> sendersById = userRepository.findAllById(
+                        visible.stream().map(BidEntity::getSenderId).distinct().toList())
+                .stream()
+                .collect(Collectors.toMap(UserEntity::getId, u -> u));
         return visible.stream()
-                .map(b -> {
-                    UserEntity sender = userRepository.findById(b.getSenderId()).orElse(null);
-                    return toResponse(b, sender);
-                }).toList();
+                .map(b -> toResponse(b, sendersById.get(b.getSenderId())))
+                .toList();
     }
 
     // TTL courte (8 s, cf. CacheConfig) et volontairement SANS @CacheEvict : un

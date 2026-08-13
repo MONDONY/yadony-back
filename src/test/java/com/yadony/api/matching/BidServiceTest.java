@@ -2149,12 +2149,14 @@ class BidServiceTest {
         when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
         when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
         when(bidRepository.findByAnnouncementId(ANNOUNCEMENT_ID)).thenReturn(List.of(visible, hidden));
-        when(userRepository.findById(SENDER_ID)).thenReturn(Optional.empty());
+        when(userRepository.findAllById(any())).thenReturn(List.of());
         when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
 
         List<BidResponse> result = bidService.getBidsForAnnouncement(ANNOUNCEMENT_ID, TRAVELER_UID);
 
         assertThat(result).hasSize(1);
+        verify(userRepository, times(1)).findAllById(any());
+        verify(userRepository, never()).findById(SENDER_ID);
     }
 
     @Test

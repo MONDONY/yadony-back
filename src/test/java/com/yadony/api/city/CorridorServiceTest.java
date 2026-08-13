@@ -51,6 +51,13 @@ class CorridorServiceTest {
     }
 
     @Test
+    void getPopular_clampsLimitAtOne() {
+        when(corridorRepository.findTopByUsageCount(1)).thenReturn(List.of());
+        corridorService.getPopular(-5);
+        verify(corridorRepository).findTopByUsageCount(1);
+    }
+
+    @Test
     void upsertCorridor_insertsNewCorridor() {
         when(corridorRepository.existsByDepartureCityAndArrivalCity("Lyon", "Bamako"))
             .thenReturn(false);

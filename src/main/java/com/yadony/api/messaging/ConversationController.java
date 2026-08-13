@@ -18,6 +18,8 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -115,9 +117,14 @@ public class ConversationController {
 
     // GET /conversations/archived — conversations archivées par l'utilisateur courant
     @GetMapping("/archived")
-    public ResponseEntity<List<ConversationResponse>> listArchivedConversations() {
+    public ResponseEntity<PageResponse<ConversationResponse>> listArchivedConversations(
+            @PageableDefault(size = 50, sort = "updatedAt", direction = Sort.Direction.DESC)
+            Pageable pageable) {
         UserEntity currentUser = resolveCurrentUser();
-        return ResponseEntity.ok(conversationService.getArchivedConversations(currentUser.getId()));
+        Pageable bounded = PageRequest.of(
+                pageable.getPageNumber(), Math.min(pageable.getPageSize(), 50), pageable.getSort());
+        return ResponseEntity.ok(PageResponse.from(
+                conversationService.getArchivedConversations(currentUser.getId(), bounded)));
     }
 
     // POST /conversations/{id}/archive — archiver une conversation
