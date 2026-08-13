@@ -110,10 +110,23 @@ public class DeliveryConfirmedReferralListener {
         // La devise est stockée sur le crédit, faute de quoi le cumul
         // additionnerait des devises différentes en un total illégendable.
         String referrerCurrency = activeCurrencyResolver.resolve(inv.getReferrerUserId());
+        var currency = com.yadony.api.payments.currency.SupportedCurrency
+                .fromCodeOrDefault(referrerCurrency);
+
+        // reward-amount-cents est une valeur de configuration en centimes d'euro.
+        // amount_cents, lui, se lit dans les unités mineures de la devise du
+        // crédit : stocker 500 pour un crédit de 5 XOF aurait affiché cent fois
+        // le montant réellement versé au portefeuille, le franc CFA n'ayant pas
+        // de sous-unité.
+        java.math.BigDecimal nominal = java.math.BigDecimal
+                .valueOf(config.getRewardAmountCents())
+                .movePointLeft(2);
+        long amountInMinorUnits = com.yadony.api.payments.currency.CurrencyAmount
+                .of(nominal, currency).minor();
 
         UserCreditEntity credit = new UserCreditEntity();
         credit.setUserId(inv.getReferrerUserId());
-        credit.setAmountCents(config.getRewardAmountCents());
+        credit.setAmountCents((int) amountInMinorUnits);
         credit.setCurrency(referrerCurrency);
         credit.setSource("REFERRAL_REWARD");
         credit.setReferenceId(inv.getId());

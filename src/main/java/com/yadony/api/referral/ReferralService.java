@@ -106,6 +106,17 @@ public class ReferralService {
         int totalEarnedCents =
                 userCreditRepository.sumAmountCentsByUserIdAndCurrency(user.getId(), currency);
 
+        // reward-amount-cents est configuré en centimes d'euro. Exposé tel quel,
+        // il annonçait 500 F CFA à un parrain qui n'en recevra que 5 : le montant
+        // est donc converti dans les unités mineures de sa devise, exactement
+        // comme le crédit qui sera versé.
+        var rewardCurrency = com.yadony.api.payments.currency.SupportedCurrency
+                .fromCodeOrDefault(currency);
+        int rewardAmountInMinorUnits = (int) com.yadony.api.payments.currency.CurrencyAmount
+                .of(java.math.BigDecimal.valueOf(config.getRewardAmountCents()).movePointLeft(2),
+                        rewardCurrency)
+                .minor();
+
         boolean hasBeenReferred =
                 referralInvitationRepository.findByRefereeUserIdAndStatus(user.getId(), "SIGNED_UP").isPresent() ||
                 referralInvitationRepository.findByRefereeUserIdAndStatus(user.getId(), "REWARDED").isPresent();
@@ -113,7 +124,7 @@ public class ReferralService {
         return new MyReferralResponse(
                 code, shareUrl,
                 (int) totalInvited, (int) signedUp, (int) rewarded,
-                totalEarnedCents, hasBeenReferred, currency, config.getRewardAmountCents()
+                totalEarnedCents, hasBeenReferred, currency, rewardAmountInMinorUnits
         );
     }
 

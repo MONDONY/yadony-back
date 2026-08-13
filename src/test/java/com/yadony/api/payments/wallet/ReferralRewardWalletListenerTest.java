@@ -116,11 +116,14 @@ class ReferralRewardWalletListenerTest {
                         REFERRER_ID, 500, INVITATION_ID));
 
         // Le franc CFA n'a pas de centimes : un montant décimal aurait été rejeté
-        // à l'écriture.
+        // à l'écriture. Et la valeur reste 5, pas 500 : reward-amount-cents est
+        // exprimé en centimes d'euro, c'est une configuration et non un montant
+        // déjà libellé dans la devise du parrain.
         org.mockito.Mockito.verify(walletService).credit(
                 org.mockito.ArgumentMatchers.eq(REFERRER_ID),
                 org.mockito.ArgumentMatchers.eq("XOF"),
-                org.mockito.ArgumentMatchers.argThat(a -> a.scale() == 0),
+                org.mockito.ArgumentMatchers.argThat(
+                        a -> a.scale() == 0 && a.compareTo(new java.math.BigDecimal("5")) == 0),
                 org.mockito.ArgumentMatchers.eq(WalletTransactionType.REFERRAL_REWARD),
                 org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.anyString());

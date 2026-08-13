@@ -1,6 +1,7 @@
 package com.yadony.api.payments.wallet;
 
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
+import com.yadony.api.payments.currency.CurrencyAmount;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.referral.events.ReferralRewardGrantedEvent;
 import org.slf4j.Logger;
@@ -12,7 +13,6 @@ import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 
 /**
  * Credits a referrer's spendable wallet balance when a referral reward is granted.
@@ -53,12 +53,12 @@ public class ReferralRewardWalletListener {
         String currencyCode = activeCurrencyResolver.resolve(event.referrerUserId());
         SupportedCurrency currency = SupportedCurrency.fromCodeOrDefault(currencyCode);
 
-        // amountCents est exprimé en centimes d'euro. On en retire la valeur
-        // nominale (500 → 5), puis on l'arrondit à la précision de la devise
-        // cible : le franc CFA n'a pas de sous-unité et refuserait des décimales.
-        BigDecimal amount = BigDecimal.valueOf(event.amountCents())
-                .movePointLeft(2)
-                .setScale(currency.minorUnit(), RoundingMode.DOWN);
+        // amountCents est exprimé en centimes d'euro : c'est une valeur de
+        // configuration, pas un montant déjà dans la devise cible. On en retire
+        // la valeur nominale (500 → 5) avant de la porter à la précision de la
+        // devise, le franc CFA n'ayant pas de sous-unité.
+        BigDecimal nominal = BigDecimal.valueOf(event.amountCents()).movePointLeft(2);
+        BigDecimal amount = CurrencyAmount.of(nominal, currency).major();
         String idempotencyKey = "referral-reward-" + event.invitationId();
 
         walletService.credit(
