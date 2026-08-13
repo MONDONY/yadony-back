@@ -35,6 +35,12 @@ class EmailOtpServiceTest {
     @Mock private UserRepository userRepository;
     @Mock private com.yadony.api.auth.FirebaseContactService firebaseContact;
     @Mock private com.yadony.api.common.AuditService auditService;
+
+    // Instance réelle, pas un mock : ces seuils sont la règle métier testée ici.
+    // Les mocker reviendrait à vérifier des valeurs choisies par le test plutôt
+    // que celles qu'appliquera la production.
+    @org.mockito.Spy private EmailOtpProperties properties = new EmailOtpProperties();
+
     @InjectMocks private EmailOtpService emailOtpService;
 
     private static final String EMAIL = "test@example.com";
@@ -60,9 +66,23 @@ class EmailOtpServiceTest {
         }
 
         @Test
-        @DisplayName("429 — 3 envois ou plus dans la fenêtre de 5 min")
+        @DisplayName("le 5e renvoi passe encore — le bouton de l'app se rouvre toutes les 60 s")
+        void fourPreviousSendsStillAllowANewOne() {
+            // Régression : le budget était de 3, alors que l'écran rouvre « Renvoyer
+            // le code » chaque minute. L'utilisateur se voyait refuser un renvoi que
+            // l'interface venait de lui proposer.
+            when(emailOtpRepository.countByEmailSince(eq(EMAIL), any())).thenReturn(4L);
+            when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$hashed");
+            when(emailOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+            assertThat(emailOtpService.sendOtp(EMAIL)).isNotNull();
+            verify(resendEmailService).sendOtp(eq(EMAIL), anyString());
+        }
+
+        @Test
+        @DisplayName("429 — 5 envois ou plus dans la fenêtre de 5 min")
         void rateLimitExceeded() {
-            when(emailOtpRepository.countByEmailSince(eq(EMAIL), any())).thenReturn(3L);
+            when(emailOtpRepository.countByEmailSince(eq(EMAIL), any())).thenReturn(5L);
 
             assertThatThrownBy(() -> emailOtpService.sendOtp(EMAIL))
                     .isInstanceOf(YadonyBusinessException.class)
@@ -326,7 +346,7 @@ class EmailOtpServiceTest {
         @DisplayName("succès — retourne null si firebaseAuth non disponible (mode test)")
         void firebaseAuth_null_returnsNull() {
             EmailOtpService serviceWithoutFirebase = new EmailOtpService(
-                    emailOtpRepository, passwordEncoder, resendEmailService, null,
+                    properties, emailOtpRepository, passwordEncoder, resendEmailService, null,
                     userRepository, firebaseContact, auditService);
             EmailOtpEntity token = validToken();
             when(emailOtpRepository.findTopByEmailAndUsedAtIsNullOrderByCreatedAtDesc(EMAIL))

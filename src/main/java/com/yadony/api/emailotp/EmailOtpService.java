@@ -28,11 +28,7 @@ public class EmailOtpService {
     private static final Logger log = LoggerFactory.getLogger(EmailOtpService.class);
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
-    private static final int MAX_SENDS_PER_WINDOW = 3;
-    private static final int RATE_WINDOW_MINUTES  = 5;
-    private static final int MAX_ATTEMPTS         = 5;
-    private static final int OTP_VALID_MINUTES    = 10;
-
+    private final EmailOtpProperties properties;
     private final EmailOtpRepository emailOtpRepository;
     private final PasswordEncoder passwordEncoder;
     private final ResendEmailService resendEmailService;
@@ -41,13 +37,15 @@ public class EmailOtpService {
     private final FirebaseContactService firebaseContact;
     private final AuditService auditService;
 
-    public EmailOtpService(EmailOtpRepository emailOtpRepository,
+    public EmailOtpService(EmailOtpProperties properties,
+                           EmailOtpRepository emailOtpRepository,
                            PasswordEncoder passwordEncoder,
                            ResendEmailService resendEmailService,
                            @Autowired(required = false) FirebaseAuth firebaseAuth,
                            UserRepository userRepository,
                            FirebaseContactService firebaseContact,
                            AuditService auditService) {
+        this.properties         = properties;
         this.emailOtpRepository = emailOtpRepository;
         this.passwordEncoder    = passwordEncoder;
         this.resendEmailService = resendEmailService;
@@ -59,15 +57,18 @@ public class EmailOtpService {
 
     @Transactional(isolation = Isolation.SERIALIZABLE)
     public Instant sendOtp(String email) {
-        LocalDateTime since = LocalDateTime.now(ZoneOffset.UTC).minusMinutes(RATE_WINDOW_MINUTES);
-        if (emailOtpRepository.countByEmailSince(email, since) >= MAX_SENDS_PER_WINDOW) {
+        int windowMinutes = properties.getRateWindowMinutes();
+        LocalDateTime since = LocalDateTime.now(ZoneOffset.UTC).minusMinutes(windowMinutes);
+        if (emailOtpRepository.countByEmailSince(email, since) >= properties.getMaxSendsPerWindow()) {
             throw new YadonyBusinessException(
                     HttpStatus.TOO_MANY_REQUESTS, "rate-limit",
-                    "Too Many Requests", "Trop de tentatives, réessaie dans 5 min");
+                    "Too Many Requests",
+                    "Trop de codes demandés, réessaie dans " + windowMinutes + " min");
         }
 
         String code = String.format("%06d", SECURE_RANDOM.nextInt(1_000_000));
-        LocalDateTime expiresAt = LocalDateTime.now(ZoneOffset.UTC).plusMinutes(OTP_VALID_MINUTES);
+        LocalDateTime expiresAt = LocalDateTime.now(ZoneOffset.UTC)
+                .plusMinutes(properties.getOtpValidMinutes());
 
         EmailOtpEntity entity = new EmailOtpEntity();
         entity.setEmail(email);
@@ -156,8 +157,8 @@ public class EmailOtpService {
         // 5 essais frais (le compteur vit sur le token, et la vérification lit
         // toujours le token le plus récent).
         LocalDateTime attemptsSince =
-                LocalDateTime.now(ZoneOffset.UTC).minusMinutes(OTP_VALID_MINUTES);
-        if (emailOtpRepository.sumAttemptsByEmailSince(email, attemptsSince) >= MAX_ATTEMPTS) {
+                LocalDateTime.now(ZoneOffset.UTC).minusMinutes(properties.getOtpValidMinutes());
+        if (emailOtpRepository.sumAttemptsByEmailSince(email, attemptsSince) >= properties.getMaxAttempts()) {
             throw new YadonyBusinessException(
                     HttpStatus.TOO_MANY_REQUESTS, "otp-attempts-exceeded",
                     "Too Many Attempts", "Trop de tentatives échouées");
@@ -169,7 +170,7 @@ public class EmailOtpService {
                         HttpStatus.BAD_REQUEST, "otp-invalid",
                         "Invalid OTP", "Code invalide ou expiré"));
 
-        if (token.getAttempts() >= MAX_ATTEMPTS) {
+        if (token.getAttempts() >= properties.getMaxAttempts()) {
             throw new YadonyBusinessException(
                     HttpStatus.TOO_MANY_REQUESTS, "otp-attempts-exceeded",
                     "Too Many Attempts", "Trop de tentatives échouées");
