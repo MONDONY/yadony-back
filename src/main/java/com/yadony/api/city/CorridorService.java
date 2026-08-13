@@ -1,6 +1,8 @@
 package com.yadony.api.city;
 
 import com.yadony.api.city.dto.PopularCorridorResponse;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -15,8 +17,9 @@ public class CorridorService {
         this.corridorRepository = corridorRepository;
     }
 
+    @Cacheable(value = "popular-corridors", key = "T(java.lang.Math).max(1, T(java.lang.Math).min(#limit, 20))")
     public List<PopularCorridorResponse> getPopular(int limit) {
-        int effective = Math.min(limit, 20);
+        int effective = Math.max(1, Math.min(limit, 20));
         return corridorRepository.findTopByUsageCount(effective).stream()
             .map(e -> new PopularCorridorResponse(
                 e.getDepartureCity(),
@@ -28,6 +31,7 @@ public class CorridorService {
     }
 
     @Transactional
+    @CacheEvict(value = "popular-corridors", allEntries = true)
     public void upsertCorridor(String depCity, String depCountry,
                                 String arrCity, String arrCountry) {
         if (corridorRepository.existsByDepartureCityAndArrivalCity(depCity, arrCity)) {
