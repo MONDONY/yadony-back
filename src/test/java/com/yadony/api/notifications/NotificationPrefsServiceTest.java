@@ -175,6 +175,24 @@ class NotificationPrefsServiceTest {
     }
 
     @Test
+    void isAllowed_packageMatch_followsPackageMatchPref() {
+        NotificationPrefsEntity e = buildEntity(true, true, true, true, false);
+        e.setPushTripPackageMatch(false);
+        when(repository.findById(USER_ID)).thenReturn(Optional.of(e));
+
+        assertThat(service.isAllowed(USER_ID, "PACKAGE_MATCH")).isFalse();
+    }
+
+    @Test
+    void isAllowed_packageMatch_allowedWhenPrefEnabled() {
+        NotificationPrefsEntity e = buildEntity(true, true, true, true, false);
+        e.setPushTripPackageMatch(true);
+        when(repository.findById(USER_ID)).thenReturn(Optional.of(e));
+
+        assertThat(service.isAllowed(USER_ID, "PACKAGE_MATCH")).isTrue();
+    }
+
+    @Test
     void getPackageMatchAlert_noRow_returnsTrueByDefault() {
         when(repository.findById(USER_ID)).thenReturn(Optional.empty());
         assertThat(service.getPackageMatchAlert(FIREBASE_UID)).isTrue();

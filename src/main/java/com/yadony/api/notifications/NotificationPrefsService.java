@@ -50,7 +50,12 @@ public class NotificationPrefsService {
             // « on me signale un nouveau trajet ». L'abonnement voyageur garde en plus son
             // propre interrupteur par abonnement ; celui-ci est le garde-fou global, pour
             // qui coupe la découverte de trajets sans vouloir dénouer chaque abonnement.
-            Map.entry("TRAVELER_NEW_ANNOUNCEMENT",    "pushCorridorAlerts")
+            Map.entry("TRAVELER_NEW_ANNOUNCEMENT",    "pushCorridorAlerts"),
+            // PackageMatchTravelerNotifyListener coupe déjà en amont via
+            // isPackageMatchEnabled ; cette entrée aligne isAllowed sur le même
+            // interrupteur pour que tout futur émetteur du type soit filtré sans
+            // avoir à répliquer le garde-fou du listener.
+            Map.entry("PACKAGE_MATCH",                "pushTripPackageMatch")
     );
 
     private final NotificationPrefsJpaRepository repository;
@@ -139,6 +144,7 @@ public class NotificationPrefsService {
             case "pushTripReminder"         -> prefs.isPushTripReminder();
             case "pushPromo"                -> prefs.isPushPromo();
             case "pushCorridorAlerts"       -> prefs.isPushCorridorAlerts();
+            case "pushTripPackageMatch"     -> prefs.isPushTripPackageMatch();
             default                         -> true;
         };
     }
