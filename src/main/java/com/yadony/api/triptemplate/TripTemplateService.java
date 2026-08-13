@@ -3,6 +3,9 @@ package com.yadony.api.triptemplate;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyNotFoundException;
 import com.yadony.api.config.ContentCategoryNormalizer;
+import com.yadony.api.payments.currency.ActiveCurrencyResolver;
+import com.yadony.api.payments.currency.CurrencyBounds;
+import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.triptemplate.dto.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,10 +24,35 @@ public class TripTemplateService {
 
     private final TripTemplateRepository repository;
     private final AuditService auditService;
+    private final ActiveCurrencyResolver activeCurrencyResolver;
 
-    public TripTemplateService(TripTemplateRepository repository, AuditService auditService) {
+    public TripTemplateService(TripTemplateRepository repository, AuditService auditService,
+                               ActiveCurrencyResolver activeCurrencyResolver) {
         this.repository = repository;
         this.auditService = auditService;
+        this.activeCurrencyResolver = activeCurrencyResolver;
+    }
+
+    /**
+     * Vérifie que le prix au kilo tient dans les bornes de la devise du voyageur.
+     *
+     * <p>Les DTO plafonnaient à 500 quelle que soit la devise. En franc CFA cela
+     * valait 0,76 €/kg : aucun voyageur en XOF ne pouvait enregistrer un modèle de
+     * trajet réaliste. Une annotation Bean Validation ne pouvant pas dépendre de la
+     * devise, la règle est appliquée ici.
+     */
+    private void assertPricePerKgWithinBounds(UUID userId, Double pricePerKg) {
+        if (pricePerKg == null) {
+            return;
+        }
+        SupportedCurrency currency =
+                SupportedCurrency.fromCodeOrDefault(activeCurrencyResolver.resolve(userId));
+        java.math.BigDecimal value = java.math.BigDecimal.valueOf(pricePerKg);
+        if (value.compareTo(CurrencyBounds.maxPricePerKg(currency)) > 0) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY,
+                    "trip-template/price-out-of-bounds");
+        }
     }
 
     public List<TripTemplateDto> findAll(UUID userId) {
@@ -34,6 +62,7 @@ public class TripTemplateService {
 
     @Transactional
     public TripTemplateDto create(UUID userId, CreateTripTemplateRequest request) {
+        assertPricePerKgWithinBounds(userId, request.pricePerKg());
         TripTemplateEntity entity = new TripTemplateEntity();
         entity.setUserId(userId);
         applyFields(entity, request.label(), request.emoji(), request.departureCity(),
@@ -52,6 +81,7 @@ public class TripTemplateService {
 
     @Transactional
     public TripTemplateDto update(UUID userId, UUID id, UpdateTripTemplateRequest request) {
+        assertPricePerKgWithinBounds(userId, request.pricePerKg());
         TripTemplateEntity entity = repository.findByUserIdAndId(userId, id)
                 .orElseThrow(() -> new YadonyNotFoundException("TripTemplate", id));
         applyFields(entity, request.label(), request.emoji(), request.departureCity(),

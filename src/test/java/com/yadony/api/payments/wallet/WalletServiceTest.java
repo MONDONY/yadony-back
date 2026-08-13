@@ -251,4 +251,92 @@ class WalletServiceTest {
         wallet.setBalance(balance);
         return wallet;
     }
+
+    // ── Normalisation de la casse ────────────────────────────────────────────
+    //
+    // SupportedCurrency.code() renvoie « eur » (forme attendue par Stripe) alors
+    // que les colonnes currency des tables métier n'acceptent que « EUR ». Sans
+    // normalisation, un appelant transmettant la forme minuscule ouvrait un
+    // second portefeuille pour une devise déjà détenue : UNIQUE(user_id,
+    // currency) compare des chaînes et ne voyait pas le doublon. Le solde se
+    // serait éclaté sur deux comptes.
+
+    @Test
+    void getOrCreate_normalizesLowercaseCurrency_soNoDuplicateWalletIsOpened() {
+        UUID userId = UUID.randomUUID();
+        WalletAccountEntity existing = new WalletAccountEntity();
+        existing.setUserId(userId);
+        existing.setCurrency("EUR");
+        existing.setBalance(new BigDecimal("42.00"));
+        when(walletAccountRepository.findByUserIdAndCurrency(userId, "EUR"))
+                .thenReturn(Optional.of(existing));
+
+        WalletAccountEntity wallet = walletService.getOrCreate(userId, "eur");
+
+        assertThat(wallet).isSameAs(existing);
+        verify(walletAccountRepository).findByUserIdAndCurrency(userId, "EUR");
+        verify(walletAccountRepository, never()).save(any());
+    }
+
+    @Test
+    void getOrCreate_normalizesCasingAndWhitespaceWhenCreating() {
+        UUID userId = UUID.randomUUID();
+        when(walletAccountRepository.findByUserIdAndCurrency(userId, "XOF")).thenReturn(Optional.empty());
+        when(walletAccountRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        WalletAccountEntity wallet = walletService.getOrCreate(userId, "  xof ");
+
+        assertThat(wallet.getCurrency()).isEqualTo("XOF");
+    }
+
+    @Test
+    void getOrCreate_fallsBackToDefaultCurrencyWhenBlank() {
+        UUID userId = UUID.randomUUID();
+        when(walletAccountRepository.findByUserIdAndCurrency(userId, "EUR")).thenReturn(Optional.empty());
+        when(walletAccountRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        WalletAccountEntity wallet = walletService.getOrCreate(userId, "   ");
+
+        assertThat(wallet.getCurrency()).isEqualTo("EUR");
+    }
+
+    @Test
+    void credit_storesTransactionInNormalizedCurrency() {
+        UUID userId = UUID.randomUUID();
+        WalletAccountEntity wallet = new WalletAccountEntity();
+        wallet.setUserId(userId);
+        wallet.setCurrency("EUR");
+        wallet.setBalance(BigDecimal.ZERO);
+        when(walletAccountRepository.findByUserIdAndCurrency(userId, "EUR"))
+                .thenReturn(Optional.of(wallet));
+        when(walletAccountRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(walletTransactionRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        walletService.credit(userId, "eur", new BigDecimal("10.00"),
+                WalletTransactionType.TOP_UP, "pi_1", null);
+
+        ArgumentCaptor<WalletTransactionEntity> tx = ArgumentCaptor.forClass(WalletTransactionEntity.class);
+        verify(walletTransactionRepository).save(tx.capture());
+        assertThat(tx.getValue().getCurrency()).isEqualTo("EUR");
+    }
+
+    @Test
+    void debit_locksTheWalletUsingTheNormalizedCurrency() {
+        UUID userId = UUID.randomUUID();
+        WalletAccountEntity wallet = new WalletAccountEntity();
+        wallet.setUserId(userId);
+        wallet.setCurrency("EUR");
+        wallet.setBalance(new BigDecimal("30.00"));
+        when(walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, "EUR"))
+                .thenReturn(Optional.of(wallet));
+        when(walletAccountRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(walletTransactionRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        walletService.debit(userId, "eur", new BigDecimal("10.00"),
+                WalletTransactionType.COMMISSION_DEDUCTED, UUID.randomUUID());
+
+        verify(walletAccountRepository).findByUserIdAndCurrencyForUpdate(userId, "EUR");
+        assertThat(wallet.getBalance()).isEqualByComparingTo("20.00");
+    }
+
 }
