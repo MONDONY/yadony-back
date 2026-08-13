@@ -7,16 +7,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 
 @Service
 @Transactional
 public class NotificationPrefsService {
-
-    private static final Set<String> CRITICAL_TYPES = Set.of(
-            "PAYMENT_RELEASED", "DELIVERY_CONFIRMED", "DISPUTE_OPENED"
-    );
 
     private static final Map<String, String> TYPE_TO_PREF = Map.ofEntries(
             Map.entry("BID_CREATED",                  "pushActivityBids"),
@@ -50,7 +45,12 @@ public class NotificationPrefsService {
             // « on me signale un nouveau trajet ». L'abonnement voyageur garde en plus son
             // propre interrupteur par abonnement ; celui-ci est le garde-fou global, pour
             // qui coupe la découverte de trajets sans vouloir dénouer chaque abonnement.
-            Map.entry("TRAVELER_NEW_ANNOUNCEMENT",    "pushCorridorAlerts")
+            Map.entry("TRAVELER_NEW_ANNOUNCEMENT",    "pushCorridorAlerts"),
+            // PackageMatchTravelerNotifyListener coupe déjà en amont via
+            // isPackageMatchEnabled ; cette entrée aligne isAllowed sur le même
+            // interrupteur pour que tout futur émetteur du type soit filtré sans
+            // avoir à répliquer le garde-fou du listener.
+            Map.entry("PACKAGE_MATCH",                "pushTripPackageMatch")
     );
 
     private final NotificationPrefsJpaRepository repository;
@@ -123,7 +123,7 @@ public class NotificationPrefsService {
     @Transactional(readOnly = true)
     public boolean isAllowed(UUID userId, String notificationType) {
         if (notificationType == null) return true;
-        if (CRITICAL_TYPES.contains(notificationType)) return true;
+        if (NotificationTypes.isCritical(notificationType)) return true;
         String prefKey = TYPE_TO_PREF.get(notificationType);
         if (prefKey == null) return true;
         return repository.findById(userId)
@@ -139,6 +139,7 @@ public class NotificationPrefsService {
             case "pushTripReminder"         -> prefs.isPushTripReminder();
             case "pushPromo"                -> prefs.isPushPromo();
             case "pushCorridorAlerts"       -> prefs.isPushCorridorAlerts();
+            case "pushTripPackageMatch"     -> prefs.isPushTripPackageMatch();
             default                         -> true;
         };
     }

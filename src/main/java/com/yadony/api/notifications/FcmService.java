@@ -81,6 +81,7 @@ public class FcmService {
 
     private boolean sendToToken(String token, String title, String body,
                                 Map<String, String> data, UUID userId) {
+        boolean isCritical = data != null && NotificationTypes.isCritical(data.get("type"));
         Message.Builder builder = Message.builder()
                 .setToken(token)
                 .setNotification(Notification.builder()
@@ -97,6 +98,15 @@ public class FcmService {
                         .setAps(Aps.builder()
                                 .setSound("default")
                                 .setBadge(1)
+                                // Les notifications critiques attendent un ACK sous 60 s,
+                                // faute de quoi SmsFallbackScheduler envoie un SMS. Sans
+                                // content-available, iOS ne réveille pas l'application tant
+                                // que l'utilisateur n'ouvre pas la notification : l'ACK ne
+                                // pourrait jamais partir depuis l'arrière-plan et le SMS
+                                // serait envoyé à chaque fois, alors que le push est arrivé.
+                                // Réservé aux critiques : c'est le seul cas qui justifie de
+                                // réveiller le téléphone, et iOS bride ces réveils.
+                                .setContentAvailable(isCritical)
                                 .build())
                         .build());
 
