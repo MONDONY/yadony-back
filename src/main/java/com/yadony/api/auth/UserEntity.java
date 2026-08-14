@@ -149,6 +149,13 @@ public class UserEntity extends BaseEntity {
     @Column(name = "stripe_onboarding_completed_at")
     private Instant stripeOnboardingCompletedAt;
 
+    /**
+     * Dernière relance envoyée pour un onboarding Connect resté inachevé.
+     * {@code null} = jamais relancé. Voir {@code StripeOnboardingReminderScheduler}.
+     */
+    @Column(name = "stripe_onboarding_last_reminder_at")
+    private Instant stripeOnboardingLastReminderAt;
+
     @Column(name = "is_pro_account", nullable = false)
     private boolean isProAccount = false;
 
@@ -340,6 +347,9 @@ public class UserEntity extends BaseEntity {
 
     public Instant getStripeOnboardingCompletedAt() { return stripeOnboardingCompletedAt; }
     public void setStripeOnboardingCompletedAt(Instant stripeOnboardingCompletedAt) { this.stripeOnboardingCompletedAt = stripeOnboardingCompletedAt; }
+
+    public Instant getStripeOnboardingLastReminderAt() { return stripeOnboardingLastReminderAt; }
+    public void setStripeOnboardingLastReminderAt(Instant stripeOnboardingLastReminderAt) { this.stripeOnboardingLastReminderAt = stripeOnboardingLastReminderAt; }
 
     public boolean isProAccount() { return isProAccount; }
     public void setProAccount(boolean proAccount) { isProAccount = proAccount; }

@@ -143,16 +143,64 @@ class StripeConnectWebhookAccountUpdatedTest {
         verify(userRepository).save(user);
     }
 
+    /**
+     * "requirements.*" means Stripe is waiting for information: onboarding is
+     * simply unfinished. Every freshly created Express account reports
+     * "requirements.past_due", so mapping it to DISABLED used to strand users
+     * on a dead-end "account disabled" screen.
+     */
     @Test
-    void disabledReason_requirementsPastDue_setsStatusDisabled() {
-        UserEntity user = buildUser(StripeAccountStatus.PENDING_ONBOARDING);
+    void disabledReason_requirementsPastDue_setsStatusPendingOnboarding() {
+        UserEntity user = buildUser(StripeAccountStatus.ONBOARDING_COMPLETE);
         when(userRepository.findByStripeAccountId(ACCOUNT_ID)).thenReturn(Optional.of(user));
         when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         service.handleAccountUpdated(buildAccountUpdatedEvent(false, false, "requirements.past_due"));
 
+        assertThat(user.getStripeAccountStatus()).isEqualTo(StripeAccountStatus.PENDING_ONBOARDING);
+        verify(eventPublisher, never()).publishEvent(any(StripeOnboardingCompletedEvent.class));
+        verify(userRepository).save(user);
+    }
+
+    @Test
+    void disabledReason_requirementsPendingVerification_setsStatusPendingOnboarding() {
+        UserEntity user = buildUser(StripeAccountStatus.ONBOARDING_COMPLETE);
+        when(userRepository.findByStripeAccountId(ACCOUNT_ID)).thenReturn(Optional.of(user));
+        when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.handleAccountUpdated(
+                buildAccountUpdatedEvent(false, false, "requirements.pending_verification"));
+
+        assertThat(user.getStripeAccountStatus()).isEqualTo(StripeAccountStatus.PENDING_ONBOARDING);
+        verify(userRepository).save(user);
+    }
+
+    /**
+     * Reasons outside "requirements.*" are restrictions the user cannot lift by
+     * submitting anything — those stay DISABLED.
+     */
+    @Test
+    void disabledReason_platformPaused_setsStatusDisabled() {
+        UserEntity user = buildUser(StripeAccountStatus.PENDING_ONBOARDING);
+        when(userRepository.findByStripeAccountId(ACCOUNT_ID)).thenReturn(Optional.of(user));
+        when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.handleAccountUpdated(buildAccountUpdatedEvent(false, false, "platform_paused"));
+
         assertThat(user.getStripeAccountStatus()).isEqualTo(StripeAccountStatus.DISABLED);
         verify(eventPublisher, never()).publishEvent(any(StripeOnboardingCompletedEvent.class));
+        verify(userRepository).save(user);
+    }
+
+    @Test
+    void disabledReason_listed_setsStatusDisabled() {
+        UserEntity user = buildUser(StripeAccountStatus.PENDING_ONBOARDING);
+        when(userRepository.findByStripeAccountId(ACCOUNT_ID)).thenReturn(Optional.of(user));
+        when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.handleAccountUpdated(buildAccountUpdatedEvent(false, false, "listed"));
+
+        assertThat(user.getStripeAccountStatus()).isEqualTo(StripeAccountStatus.DISABLED);
         verify(userRepository).save(user);
     }
 
