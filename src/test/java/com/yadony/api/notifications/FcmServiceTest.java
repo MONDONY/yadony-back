@@ -1,15 +1,21 @@
 package com.yadony.api.notifications;
 
+import com.yadony.api.auth.UserDeviceEntity;
+import com.yadony.api.auth.UserDeviceJpaRepository;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
+import com.google.firebase.messaging.FirebaseMessaging;
+import com.google.firebase.messaging.Message;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
+import org.mockito.MockedStatic;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -21,6 +27,7 @@ import static org.mockito.Mockito.*;
 class FcmServiceTest {
 
     @Mock UserRepository userRepository;
+    @Mock UserDeviceJpaRepository userDeviceRepository;
     @Mock NotificationPrefsService notificationPrefsService;
     @InjectMocks FcmService service;
 
@@ -104,5 +111,68 @@ class FcmServiceTest {
 
         assertThat(result).isFalse();
         verify(userRepository).findById(USER_ID);
+    }
+
+    // Test 7 (régression) : deux appareils inscrits → les deux jetons reçoivent la push.
+    // Avant, seul users.fcm_token était utilisé : le dernier appareil connecté rendait
+    // muets tous les autres (un Android relancé coupait les notifications de l'iPhone).
+    @Test
+    void sendToUser_multipleDevices_sendsToEveryDeviceToken() throws Exception {
+        UserEntity user = new UserEntity();
+        ReflectionTestUtils.setField(user, "id", USER_ID);
+        user.setFcmToken("token-android");
+
+        when(notificationPrefsService.isAllowed(USER_ID, "NEW_MESSAGE")).thenReturn(true);
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        when(userDeviceRepository.findByUserIdOrderByLastSeenAtDesc(USER_ID))
+                .thenReturn(List.of(device("token-android"), device("token-iphone")));
+
+        FirebaseMessaging messaging = mock(FirebaseMessaging.class);
+        when(messaging.send(any(Message.class))).thenReturn("msg-id");
+
+        try (MockedStatic<FirebaseMessaging> fcmStatic = mockStatic(FirebaseMessaging.class)) {
+            fcmStatic.when(FirebaseMessaging::getInstance).thenReturn(messaging);
+
+            boolean result = service.sendToUser(USER_ID, "Message", "Vous avez un message",
+                    Map.of("type", "NEW_MESSAGE"));
+
+            assertThat(result).isTrue();
+        }
+
+        // Deux envois distincts, un par appareil — le jeton legacy est dédupliqué.
+        verify(messaging, times(2)).send(any(Message.class));
+    }
+
+    // Test 8 : le jeton de users.fcm_token reste utilisé si aucun appareil n'est enregistré
+    // (comptes antérieurs à user_devices).
+    @Test
+    void sendToUser_noDeviceRows_fallsBackToLegacyUserToken() throws Exception {
+        UserEntity user = new UserEntity();
+        ReflectionTestUtils.setField(user, "id", USER_ID);
+        user.setFcmToken("token-legacy");
+
+        when(notificationPrefsService.isAllowed(USER_ID, "NEW_MESSAGE")).thenReturn(true);
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        when(userDeviceRepository.findByUserIdOrderByLastSeenAtDesc(USER_ID)).thenReturn(List.of());
+
+        FirebaseMessaging messaging = mock(FirebaseMessaging.class);
+        when(messaging.send(any(Message.class))).thenReturn("msg-id");
+
+        try (MockedStatic<FirebaseMessaging> fcmStatic = mockStatic(FirebaseMessaging.class)) {
+            fcmStatic.when(FirebaseMessaging::getInstance).thenReturn(messaging);
+
+            boolean result = service.sendToUser(USER_ID, "Message", "Vous avez un message",
+                    Map.of("type", "NEW_MESSAGE"));
+
+            assertThat(result).isTrue();
+        }
+
+        verify(messaging, times(1)).send(any(Message.class));
+    }
+
+    private static UserDeviceEntity device(String fcmToken) {
+        UserDeviceEntity device = new UserDeviceEntity();
+        ReflectionTestUtils.setField(device, "fcmToken", fcmToken);
+        return device;
     }
 }
