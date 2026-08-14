@@ -1,5 +1,7 @@
 package com.yadony.api.notifications;
 
+import com.yadony.api.auth.UserDeviceEntity;
+import com.yadony.api.auth.UserDeviceJpaRepository;
 import com.yadony.api.auth.UserRepository;
 import com.google.firebase.messaging.AndroidConfig;
 import com.google.firebase.messaging.AndroidNotification;
@@ -14,7 +16,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -23,11 +29,14 @@ public class FcmService {
     private static final Logger log = LoggerFactory.getLogger(FcmService.class);
 
     private final UserRepository userRepository;
+    private final UserDeviceJpaRepository userDeviceRepository;
     private final NotificationPrefsService notificationPrefsService;
 
     public FcmService(UserRepository userRepository,
+                      UserDeviceJpaRepository userDeviceRepository,
                       NotificationPrefsService notificationPrefsService) {
         this.userRepository = userRepository;
+        this.userDeviceRepository = userDeviceRepository;
         this.notificationPrefsService = notificationPrefsService;
     }
 
@@ -44,17 +53,41 @@ public class FcmService {
         }
         return userRepository.findById(userId)
                 .map(user -> {
-                    String token = user.getFcmToken();
-                    if (token == null || token.isBlank()) {
+                    // Un utilisateur peut être connecté sur plusieurs appareils (iPhone +
+                    // Android). users.fcm_token ne retient que le dernier inscrit : s'y
+                    // limiter rendrait muets tous les autres appareils. On diffuse donc à
+                    // tous les jetons connus, user_devices faisant foi.
+                    Set<String> tokens = collectTokens(userId, user.getFcmToken());
+                    if (tokens.isEmpty()) {
                         log.debug("[FCM] User {} has no FCM token — skipping", userId);
                         return false;
                     }
-                    return sendToToken(token, title, body, data, userId);
+                    boolean anySent = false;
+                    for (String token : tokens) {
+                        anySent |= sendToToken(token, title, body, data, userId);
+                    }
+                    return anySent;
                 })
                 .orElseGet(() -> {
                     log.warn("[FCM] User {} not found", userId);
                     return false;
                 });
+    }
+
+    /** Jetons distincts de tous les appareils de l'utilisateur, le plus récent d'abord. */
+    private Set<String> collectTokens(UUID userId, String legacyToken) {
+        Set<String> tokens = new LinkedHashSet<>();
+        for (UserDeviceEntity device : userDeviceRepository.findByUserIdOrderByLastSeenAtDesc(userId)) {
+            String token = device.getFcmToken();
+            if (token != null && !token.isBlank()) {
+                tokens.add(token);
+            }
+        }
+        // Comptes antérieurs à user_devices, ou appareil dont la ligne manque.
+        if (legacyToken != null && !legacyToken.isBlank()) {
+            tokens.add(legacyToken);
+        }
+        return tokens;
     }
 
     public void sendToTopic(String topic, String title, String body) {
@@ -121,8 +154,8 @@ public class FcmService {
         } catch (FirebaseMessagingException e) {
             if ("UNREGISTERED".equals(e.getMessagingErrorCode() != null
                     ? e.getMessagingErrorCode().name() : "")) {
-                log.warn("[FCM] Token UNREGISTERED for user={} — clearing token", userId);
-                clearToken(userId);
+                log.warn("[FCM] Token UNREGISTERED for user={} — clearing that device", userId);
+                clearToken(userId, token);
             } else {
                 log.error("[FCM] Send failed for user={}: {}", userId, e.getMessage(), e);
             }
@@ -130,11 +163,25 @@ public class FcmService {
         }
     }
 
+    /**
+     * Retire un jeton devenu invalide. Seul l'appareil concerné est purgé : effacer
+     * users.fcm_token systématiquement couperait les autres appareils du compte.
+     */
     @Transactional
-    protected void clearToken(UUID userId) {
+    protected void clearToken(UUID userId, String staleToken) {
+        List<UserDeviceEntity> stale = new ArrayList<>();
+        for (UserDeviceEntity device : userDeviceRepository.findByUserIdOrderByLastSeenAtDesc(userId)) {
+            if (staleToken.equals(device.getFcmToken())) {
+                stale.add(device);
+            }
+        }
+        userDeviceRepository.deleteAll(stale);
+
         userRepository.findById(userId).ifPresent(user -> {
-            user.setFcmToken(null);
-            userRepository.save(user);
+            if (staleToken.equals(user.getFcmToken())) {
+                user.setFcmToken(null);
+                userRepository.save(user);
+            }
         });
     }
 }
