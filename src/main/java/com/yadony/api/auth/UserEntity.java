@@ -53,6 +53,13 @@ public class UserEntity extends BaseEntity {
      *
      * <p>Le suffixe aléatoire n'est pas décoratif : sans lui, deux comptes créés dans la même
      * seconde produiraient la même valeur et se heurteraient à l'index unique.
+     *
+     * <p>Ce suffixe faisait 4 chiffres, soit 10 000 valeurs par seconde. Le paradoxe des
+     * anniversaires rend la collision bien plus probable que ce chiffre ne le suggère :
+     * ~12 % dès 50 insertions dans la même seconde. Une suite de tests d'intégration en crée
+     * couramment davantage, et la CI est tombée sur le cas — insertion rejetée par l'index
+     * unique, build rouge, déploiement bloqué. Avec 48 bits, la même rafale descend sous
+     * 1 pour 10 milliards. La colonne fait 32 caractères, le format en occupe 26.
      */
     // Instance unique : réamorcer un SecureRandom à chaque insertion coûte cher et n'apporte
     // aucune entropie supplémentaire (SpotBugs DMI_RANDOM_USED_ONLY_ONCE).
@@ -61,8 +68,9 @@ public class UserEntity extends BaseEntity {
     @jakarta.persistence.PrePersist
     void ensureUsername() {
         if (username == null || username.isBlank()) {
+            long suffix = FALLBACK_RANDOM.nextLong() & 0xFFFF_FFFF_FFFFL;
             username = "user" + java.time.Instant.now().getEpochSecond()
-                    + String.format("%04d", FALLBACK_RANDOM.nextInt(10000));
+                    + String.format("%012x", suffix);
         }
     }
 
