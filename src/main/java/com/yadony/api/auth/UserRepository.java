@@ -130,4 +130,28 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
 
     java.util.List<UserEntity> findAllByCreatedAtBetweenOrderByCreatedAtAsc(
             java.time.LocalDateTime from, java.time.LocalDateTime to);
+
+    /**
+     * Onboardings Connect commencés puis abandonnés, éligibles à une relance.
+     *
+     * Deux relances au total, pas une de plus : la première passé
+     * {@code firstDueBefore} (compte créé il y a assez longtemps, jamais
+     * relancé), la seconde passé {@code secondDueBefore} et seulement si la
+     * relance précédente est antérieure à ce seuil. Une fois la seconde
+     * envoyée, {@code stripeOnboardingLastReminderAt} dépasse le seuil et la
+     * ligne ne ressort plus — le scheduler peut donc tourner en boucle sans
+     * jamais renvoyer deux fois la même relance.
+     */
+    @Query("SELECT u FROM UserEntity u "
+            + "WHERE u.stripeAccountStatus = com.yadony.api.auth.StripeAccountStatus.PENDING_ONBOARDING "
+            + "AND u.stripeAccountId IS NOT NULL "
+            + "AND u.stripeAccountCreatedAt IS NOT NULL "
+            + "AND ( (u.stripeOnboardingLastReminderAt IS NULL "
+            + "         AND u.stripeAccountCreatedAt <= :firstDueBefore) "
+            + "   OR (u.stripeOnboardingLastReminderAt IS NOT NULL "
+            + "         AND u.stripeAccountCreatedAt <= :secondDueBefore "
+            + "         AND u.stripeOnboardingLastReminderAt <= :secondDueBefore) )")
+    List<UserEntity> findStaleConnectOnboardings(
+            @Param("firstDueBefore") Instant firstDueBefore,
+            @Param("secondDueBefore") Instant secondDueBefore);
 }

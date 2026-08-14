@@ -768,7 +768,19 @@ public class PaymentService {
             return StripeAccountStatus.ONBOARDING_COMPLETE;
         } else if (disabledReason != null && disabledReason.startsWith("rejected")) {
             return StripeAccountStatus.REJECTED;
+        } else if (disabledReason != null && disabledReason.startsWith("requirements.")) {
+            // "requirements.past_due" / "requirements.currently_due" /
+            // "requirements.pending_verification" : Stripe attend des
+            // informations, l'onboarding n'est simplement pas fini. C'est le
+            // cas de TOUT compte Express fraîchement créé — le classer DISABLED
+            // envoyait l'utilisateur sur un écran « compte désactivé » sans
+            // issue, alors que la seule action utile est de reprendre
+            // l'onboarding.
+            return StripeAccountStatus.PENDING_ONBOARDING;
         } else if (disabledReason != null) {
+            // Raisons hors "requirements" : "listed", "platform_paused",
+            // "under_review", "other" — restriction subie, l'utilisateur ne
+            // peut rien fournir pour la lever lui-même.
             return StripeAccountStatus.DISABLED;
         } else {
             return StripeAccountStatus.PENDING_ONBOARDING;
