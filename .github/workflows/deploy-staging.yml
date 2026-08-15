@@ -200,6 +200,16 @@ jobs:
             if [ -d monitoring ]; then
               docker run --rm -v "$PWD:/work" alpine rm -rf /work/monitoring || rm -rf monitoring
             fi
+            echo "🧹 Reprise en main de nginx/static..."
+            # Même piège que monitoring, mais en pire : nginx/static est monté
+            # (docker-compose.staging.yml) et Docker crée les chemins manquants en
+            # root. Le logo.png ainsi créé n'était plus écrasable par l'utilisateur
+            # SSH, et le `scp` échouait — bloquant TOUT déploiement, y compris ceux
+            # qui n'avaient rien à voir avec le logo.
+            # On rend le dossier à l'utilisateur courant plutôt que de le supprimer :
+            # il est remplacé juste après par le contenu du repo.
+            docker run --rm -v "$PWD:/work" alpine \
+              chown -R "$(id -u):$(id -g)" /work/nginx/static || true
             echo "✅ Répertoires prêts"
 
       - name: Transférer compose, config et .env au VPS
