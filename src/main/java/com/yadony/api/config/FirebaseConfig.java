@@ -28,7 +28,16 @@ public class FirebaseConfig {
 
     @Bean
     public Firestore firestore() {
-        if (serviceAccountPath.isBlank() || FirebaseApp.getApps().isEmpty()) {
+        // La seule question qui vaille est « Firebase est-il initialisé ? », pas
+        // « par quel mécanisme ». Tester aussi serviceAccountPath annulait le bean
+        // en staging et en prod, où l'initialisation passe par
+        // GOOGLE_APPLICATION_CREDENTIALS et où cette propriété est donc vide :
+        // le backend perdait Firestore alors que Firebase tournait, et
+        // FirestoreService retombait sur ses branches « disabled » sans rien casser
+        // de visible. Conséquences silencieuses : documents de conversation jamais
+        // créés (donc Cloud Function incapable de router les non-lus), aperçus de
+        // dernier message figés, messages système absents.
+        if (FirebaseApp.getApps().isEmpty()) {
             log.warn("Firestore bean unavailable — Firebase not initialized (test/ci mode)");
             return null;
         }

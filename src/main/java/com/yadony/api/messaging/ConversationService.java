@@ -152,6 +152,51 @@ public class ConversationService {
         });
     }
 
+    /**
+     * Recrée le document Firestore d'une conversation s'il manque.
+     *
+     * <p>Les conversations nées pendant que le bean Firestore était nul n'ont
+     * jamais reçu leur document parent : seule leur sous-collection
+     * {@code messages} existe. La Cloud Function y lit les participants pour
+     * router les non-lus, et le backend y lit l'aperçu du dernier message. Plutôt
+     * qu'une migration ponctuelle, chaque conversation se répare à son prochain
+     * message — la base reste la source de vérité, Firestore n'en est que le reflet.
+     *
+     * <p>Ne propage aucune erreur : la réparation est un bonus, jamais une
+     * condition de l'envoi d'une notification.
+     */
+    @Transactional(readOnly = true)
+    public void ensureFirestoreDocument(ConversationEntity conv) {
+        String firestoreId = conv.getFirestoreConversationId();
+        try {
+            if (firestoreService.conversationExists(firestoreId)) {
+                return;
+            }
+
+            UserEntity sender   = userRepository.findById(conv.getSenderId()).orElse(null);
+            UserEntity traveler = userRepository.findById(conv.getTravelerId()).orElse(null);
+            if (sender == null || traveler == null) {
+                log.warn("Firestore document repair skipped for {} — participant missing", firestoreId);
+                return;
+            }
+
+            Map<String, Object> data = new java.util.HashMap<>();
+            data.put("senderId",   sender.getFirebaseUid());
+            data.put("travelerId", traveler.getFirebaseUid());
+            data.put("senderName",   fullName(sender));
+            data.put("travelerName", fullName(traveler));
+            data.put("createdAt", conv.getCreatedAt() != null ? conv.getCreatedAt().toString() : Instant.now().toString());
+            if (conv.getBidId() != null) {
+                data.put("bidId", conv.getBidId().toString());
+            }
+
+            firestoreService.createConversation(firestoreId, data);
+            log.info("Firestore document repaired for conversation {}", firestoreId);
+        } catch (Exception e) {
+            log.warn("Firestore document repair failed for {}: {}", firestoreId, e.getMessage());
+        }
+    }
+
     @Transactional
     public void deleteConversation(UUID conversationId, UUID requestingUserId) {
         ConversationEntity conv = conversationRepository

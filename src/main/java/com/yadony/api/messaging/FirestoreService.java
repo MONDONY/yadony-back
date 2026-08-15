@@ -34,6 +34,28 @@ public class FirestoreService {
         }
     }
 
+    /**
+     * Le document parent existe-t-il ? Une sous-collection {@code messages} peut
+     * très bien vivre sous un document absent : Firestore l'autorise, et c'est
+     * exactement l'état dans lequel se trouvaient les conversations créées pendant
+     * que le bean Firestore était nul.
+     *
+     * <p>Renvoie {@code true} quand Firestore est indisponible, afin qu'un appelant
+     * ne tente pas une réparation qui ne pourrait de toute façon pas aboutir.
+     */
+    public boolean conversationExists(String conversationId) {
+        if (firestore == null) {
+            log.warn("Firestore disabled — assuming conversation {} exists", conversationId);
+            return true;
+        }
+        try {
+            return firestore.collection("conversations").document(conversationId).get().get().exists();
+        } catch (Exception e) {
+            log.warn("Firestore conversationExists failed for {}: {}", conversationId, e.getMessage());
+            return true;
+        }
+    }
+
     public void addSystemMessage(String conversationId, String body) {
         if (firestore == null) {
             log.warn("Firestore disabled — skipping addSystemMessage");

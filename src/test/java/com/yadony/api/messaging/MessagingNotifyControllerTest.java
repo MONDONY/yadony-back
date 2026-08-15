@@ -20,13 +20,15 @@ import static org.mockito.Mockito.*;
 class MessagingNotifyControllerTest {
 
     @Mock ConversationRepository conversationRepository;
+    @Mock ConversationService conversationService;
     @Mock NotificationDispatcher notificationDispatcher;
 
     MessagingNotifyController controller;
 
     @BeforeEach
     void setUp() {
-        controller = new MessagingNotifyController(conversationRepository, notificationDispatcher);
+        controller = new MessagingNotifyController(
+                conversationRepository, conversationService, notificationDispatcher);
         ReflectionTestUtils.setField(controller, "internalSecret", "test-secret");
     }
 
@@ -64,5 +66,34 @@ class MessagingNotifyControllerTest {
 
         verify(notificationDispatcher).sendMessageNotification(
             eq(senderId), eq(travelerId), eq("uid-sender"), eq("Hello!"), eq("conv_bid1"));
+    }
+
+    @Test
+    void notify_returnsRecipientUid_soTheFunctionCanCreditUnreadWithoutFirestoreDoc() {
+        UUID senderId = UUID.randomUUID();
+        UUID travelerId = UUID.randomUUID();
+        var conv = new ConversationEntity(UUID.randomUUID(), senderId, travelerId, "conv_bid1");
+        when(conversationRepository.findByFirestoreConversationId("conv_bid1")).thenReturn(Optional.of(conv));
+        when(notificationDispatcher.sendMessageNotification(any(), any(), any(), any(), any()))
+            .thenReturn("uid-recipient");
+
+        var response = controller.notify("test-secret",
+            new NotifyMessageRequest("conv_bid1", "uid-sender", "Hello!"));
+
+        assert response.getStatusCode().value() == 200;
+        assert "uid-recipient".equals(response.getBody().recipientFirebaseUid());
+    }
+
+    @Test
+    void notify_repairsMissingFirestoreDocument() {
+        UUID senderId = UUID.randomUUID();
+        UUID travelerId = UUID.randomUUID();
+        var conv = new ConversationEntity(UUID.randomUUID(), senderId, travelerId, "conv_bid1");
+        when(conversationRepository.findByFirestoreConversationId("conv_bid1")).thenReturn(Optional.of(conv));
+
+        controller.notify("test-secret",
+            new NotifyMessageRequest("conv_bid1", "uid-sender", "Hello!"));
+
+        verify(conversationService).ensureFirestoreDocument(conv);
     }
 }

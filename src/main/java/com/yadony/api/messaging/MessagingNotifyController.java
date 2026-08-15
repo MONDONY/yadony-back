@@ -2,6 +2,7 @@ package com.yadony.api.messaging;
 
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.messaging.dto.NotifyMessageRequest;
+import com.yadony.api.messaging.dto.NotifyMessageResponse;
 import com.yadony.api.notifications.NotificationDispatcher;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Value;
@@ -20,16 +21,19 @@ public class MessagingNotifyController {
     private String internalSecret;
 
     private final ConversationRepository conversationRepository;
+    private final ConversationService conversationService;
     private final NotificationDispatcher notificationDispatcher;
 
     public MessagingNotifyController(ConversationRepository conversationRepository,
+                                      ConversationService conversationService,
                                       NotificationDispatcher notificationDispatcher) {
         this.conversationRepository = conversationRepository;
+        this.conversationService = conversationService;
         this.notificationDispatcher = notificationDispatcher;
     }
 
     @PostMapping("/notify")
-    public ResponseEntity<Void> notify(
+    public ResponseEntity<NotifyMessageResponse> notify(
             @RequestHeader(value = "X-Internal-Secret", required = false) String secret,
             @Valid @RequestBody NotifyMessageRequest request) {
 
@@ -47,11 +51,17 @@ public class MessagingNotifyController {
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
                         "conversation-not-found", "Not Found", "Conversation introuvable"));
 
+        // Répare au passage le document Firestore s'il manque. Les conversations
+        // créées pendant que le bean Firestore était nul n'ont que leur
+        // sous-collection `messages` : la Cloud Function ne peut alors pas y lire
+        // les participants, et l'aperçu du dernier message reste figé côté liste.
+        conversationService.ensureFirestoreDocument(conv);
+
         String preview = request.messagePreview() != null ? request.messagePreview() : "[Image]";
-        notificationDispatcher.sendMessageNotification(
+        String recipientFirebaseUid = notificationDispatcher.sendMessageNotification(
                 conv.getSenderId(), conv.getTravelerId(),
                 request.senderFirebaseUid(), preview, conv.getFirestoreConversationId());
 
-        return ResponseEntity.noContent().build();
+        return ResponseEntity.ok(new NotifyMessageResponse(recipientFirebaseUid));
     }
 }
