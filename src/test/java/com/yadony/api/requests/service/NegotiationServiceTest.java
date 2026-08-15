@@ -1677,12 +1677,9 @@ class NegotiationServiceTest {
             // Price-per-kg derived from agreed total (80 / 5 = 16)
             assertThat(savedAnn.getPricePerKg()).isEqualByComparingTo("16.00");
             assertThat(savedAnn.getStatus()).isEqualTo(com.yadony.api.matching.AnnouncementStatus.ACTIVE);
-            // Fenêtre de remise dérivée du jour de départ (héritée par le bid dédié).
-            assertThat(savedAnn.getHandoverWindowStart()).isNotNull();
-            assertThat(savedAnn.getHandoverWindowEnd()).isNotNull();
-            assertThat(savedAnn.getHandoverWindowStart().toLocalDate())
-                .isEqualTo(savedAnn.getDepartureDate());
-            assertThat(savedAnn.getHandoverWindowEnd().toLocalDate())
+            // Date limite de dépôt dérivée du jour de départ (héritée par le bid dédié).
+            assertThat(savedAnn.getHandoverDeadline()).isNotNull();
+            assertThat(savedAnn.getHandoverDeadline().toLocalDate())
                 .isEqualTo(savedAnn.getDepartureDate());
 
             verify(eventPublisher).publishEvent(any(com.yadony.api.requests.event.NegotiationAwaitingPaymentEvent.class));

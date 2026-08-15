@@ -140,7 +140,7 @@ class AnnouncementServiceAddressTest {
             com.yadony.api.matching.TransportMode.PLANE,
             null, java.util.List.of(), java.util.List.of(), null, null, null,
             null, null,
-            departure.atTime(16, 0), departure.atTime(18, 0),
+            departure.atTime(18, 0),
             null
         );
     }

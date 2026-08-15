@@ -18,7 +18,7 @@ class HandoverAlertNotificationListenerTest {
     void afterCommit_dispatchesNotification() {
         HandoverAlertEvent event = new HandoverAlertEvent(
                 UUID.randomUUID(), UUID.randomUUID(), "Gare du Nord",
-                LocalDateTime.now(), LocalDateTime.now().plusHours(2));
+                LocalDateTime.now().plusHours(2));
         HandoverAlertNotificationListener listener =
                 new HandoverAlertNotificationListener(dispatcher);
 

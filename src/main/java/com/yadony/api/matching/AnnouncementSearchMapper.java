@@ -114,8 +114,7 @@ public class AnnouncementSearchMapper {
                 entity.getCreatedAt(), entity.getUpdatedAt(),
                 entity.getPricingMode(),
                 gridItems,
-                entity.getHandoverWindowStart(),
-                entity.getHandoverWindowEnd(),
+                entity.getHandoverDeadline(),
                 isFavorite,
                 computeUrgent(entity.getDepartureDate()),
                 entity.getCurrency()
@@ -170,8 +169,7 @@ public class AnnouncementSearchMapper {
                 entity.getCreatedAt(), entity.getUpdatedAt(),
                 entity.getPricingMode(),
                 gridItems,
-                entity.getHandoverWindowStart(),
-                entity.getHandoverWindowEnd(),
+                entity.getHandoverDeadline(),
                 isFavorite,
                 computeUrgent(entity.getDepartureDate()),
                 entity.getCurrency()

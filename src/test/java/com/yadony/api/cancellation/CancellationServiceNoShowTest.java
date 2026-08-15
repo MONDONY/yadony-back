@@ -77,7 +77,7 @@ class CancellationServiceNoShowTest {
         ReflectionTestUtils.setField(bid, "id", BID_ID);
         bid.setPaymentMethod(pm);
         bid.setStatus(status);
-        bid.setHandoverWindowEnd(handoverEnd);
+        bid.setHandoverDeadline(handoverEnd);
         bid.setSenderId(SENDER_ID);
         bid.setAnnouncementId(ANNOUNCEMENT_ID);
         return bid;
@@ -122,7 +122,7 @@ class CancellationServiceNoShowTest {
 
     /** The handover window must have passed; a future window is rejected. */
     @Test
-    void handoverWindowInFuture_throws() {
+    void handoverDeadlineInFuture_throws() {
         BidEntity future = bid(BidStatus.ACCEPTED, PaymentMethod.STRIPE,
                 LocalDateTime.now().plusHours(1));
         when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(future));
@@ -207,9 +207,9 @@ class CancellationServiceNoShowTest {
         verify(eventPublisher, never()).publishEvent(any());
     }
 
-    /** Fenêtre de remise non encore passée → IllegalStateException. */
+    /** Date limite de dépôt non encore passée → IllegalStateException. */
     @Test
-    void reportTravelerNoShow_handoverWindowInFuture_throws() {
+    void reportTravelerNoShow_handoverDeadlineInFuture_throws() {
         BidEntity future = bid(BidStatus.ACCEPTED, PaymentMethod.STRIPE,
                 LocalDateTime.now().plusHours(1));
         when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(future));

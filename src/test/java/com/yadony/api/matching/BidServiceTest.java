@@ -1141,14 +1141,13 @@ class BidServiceTest {
         }
 
         @Test
-        @DisplayName("acceptBid — bid hérite de la fenêtre de remise de l'annonce")
+        @DisplayName("acceptBid — bid hérite de la date limite de dépôt de l'annonce")
         void acceptBid_copiesHandoverWindowFromAnnouncement() {
             UserEntity traveler = buildTraveler();
             AnnouncementEntity announcement = buildAnnouncement();
             LocalDateTime start = LocalDate.now().plusDays(5).atTime(16, 0);
             LocalDateTime end   = LocalDate.now().plusDays(5).atTime(18, 0);
-            announcement.setHandoverWindowStart(start);
-            announcement.setHandoverWindowEnd(end);
+            announcement.setHandoverDeadline(end);
             announcement.setPickupAddressLabel("Gare du Nord");
             BidEntity bid = buildBid();
 
@@ -1165,8 +1164,7 @@ class BidServiceTest {
             ArgumentCaptor<BidEntity> captor = ArgumentCaptor.forClass(BidEntity.class);
             verify(bidRepository, atLeastOnce()).save(captor.capture());
             BidEntity saved = captor.getValue();
-            assertThat(saved.getHandoverWindowStart()).isEqualTo(start);
-            assertThat(saved.getHandoverWindowEnd()).isEqualTo(end);
+            assertThat(saved.getHandoverDeadline()).isEqualTo(end);
             assertThat(saved.getHandoverLocation()).isEqualTo("Gare du Nord");
         }
     }

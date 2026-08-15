@@ -69,10 +69,9 @@ public record AnnouncementRequest(
         @Size(max = 2, message = "Le code pays d'arrivée doit faire 2 caractères")
         String arrivalCountryCode,
 
-        // Fenêtre de remise — obligatoire (validée dans AnnouncementService).
+        // Date limite de dépôt — obligatoire (validée dans AnnouncementService).
         // Pas de @JsonFormat : reçoit un ISO-8601 (ex "2026-06-14T18:00:00.000Z").
-        LocalDateTime handoverWindowStart,
-        LocalDateTime handoverWindowEnd,
+        LocalDateTime handoverDeadline,
 
         // Brouillon : si true, l'annonce est créée en statut DRAFT (skip KYC + limite mensuelle,
         // soumise au quota de brouillons — cf AnnouncementService.createAnnouncement).

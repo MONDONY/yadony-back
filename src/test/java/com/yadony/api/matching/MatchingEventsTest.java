@@ -46,7 +46,7 @@ class MatchingEventsTest {
     void handoverAlertEvent_fieldsAccessible() {
         UUID bidId = UUID.randomUUID(), sendId = UUID.randomUUID();
         LocalDateTime start = LocalDateTime.now();
-        HandoverAlertEvent e = new HandoverAlertEvent(bidId, sendId, "CDG", start, start.plusHours(2));
+        HandoverAlertEvent e = new HandoverAlertEvent(bidId, sendId, "CDG", start.plusHours(2));
         assertThat(e.bidId()).isEqualTo(bidId);
         assertThat(e.senderId()).isEqualTo(sendId);
     }

@@ -13,8 +13,7 @@ class BidEntityTest {
         AnnouncementEntity ann = new AnnouncementEntity();
         LocalDateTime start = LocalDate.now().plusDays(5).atTime(16, 0);
         LocalDateTime end   = LocalDate.now().plusDays(5).atTime(18, 0);
-        ann.setHandoverWindowStart(start);
-        ann.setHandoverWindowEnd(end);
+        ann.setHandoverDeadline(end);
         ann.setPickupAddressLabel("Gare du Nord, Paris");
         ann.setPickupLat(BigDecimal.valueOf(48.88));
         ann.setPickupLng(BigDecimal.valueOf(2.35));
@@ -22,8 +21,7 @@ class BidEntityTest {
         BidEntity bid = new BidEntity();
         bid.applyHandoverFrom(ann);
 
-        assertThat(bid.getHandoverWindowStart()).isEqualTo(start);
-        assertThat(bid.getHandoverWindowEnd()).isEqualTo(end);
+        assertThat(bid.getHandoverDeadline()).isEqualTo(end);
         assertThat(bid.getHandoverLocation()).isEqualTo("Gare du Nord, Paris");
     }
 
@@ -33,8 +31,7 @@ class BidEntityTest {
         ann.setPickupAddressLabel("X");
         BidEntity bid = new BidEntity();
         bid.applyHandoverFrom(ann);
-        assertThat(bid.getHandoverWindowStart()).isNull();
-        assertThat(bid.getHandoverWindowEnd()).isNull();
+        assertThat(bid.getHandoverDeadline()).isNull();
         assertThat(bid.getHandoverLocation()).isEqualTo("X");
     }
 }

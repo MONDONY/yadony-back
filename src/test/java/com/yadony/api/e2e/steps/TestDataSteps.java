@@ -87,7 +87,7 @@ public class TestDataSteps extends AbstractSteps {
         // has already passed — bridge the bid into that exact state.
         jdbcTemplate.update(
                 "UPDATE bids SET payment_method = 'CASH', status = 'ACCEPTED', "
-                        + "handover_window_end = CURRENT_TIMESTAMP - INTERVAL '2 hours' WHERE id = ?",
+                        + "handover_deadline = CURRENT_TIMESTAMP - INTERVAL '2 hours' WHERE id = ?",
                 ctx.getId(bidAlias));
     }
 

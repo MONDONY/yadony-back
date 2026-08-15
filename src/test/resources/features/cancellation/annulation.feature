@@ -79,7 +79,7 @@ Fonctionnalité: Annulation d'un voyage
     Alors la réponse HTTP est 200
 
   @happy-path @critical
-  Scénario: L'expéditeur signale un voyageur absent après la fenêtre de remise
+  Scénario: L'expéditeur signale un voyageur absent après la date limite de dépôt
     Etant donné un utilisateur VOYAGEUR enregistré avec l'uid "tns-traveler-001" et le téléphone "+33700000020"
     Et il existe une annonce de "Paris" à "Dakar" avec 20 kg disponibles à 5.0 €/kg sauvegardée sous "annonce-tns-1"
     Etant donné un utilisateur EXPÉDITEUR enregistré avec l'uid "tns-sender-001" et le téléphone "+33700000021"

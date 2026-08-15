@@ -47,8 +47,7 @@ public class BidScheduler {
                         bid.getId(),
                         bid.getSenderId(),
                         bid.getHandoverLocation(),
-                        bid.getHandoverWindowStart(),
-                        bid.getHandoverWindowEnd()
+                        bid.getHandoverDeadline()
                 ));
                 
             } catch (Exception e) {

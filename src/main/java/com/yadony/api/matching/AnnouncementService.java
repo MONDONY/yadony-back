@@ -74,7 +74,7 @@ public class AnnouncementService {
      * au verrou d'annulation après remise (D1/D3).
      *
      * <p>Tolérant : retourne {@code null} si la date ou l'heure manque, sans pré-empter
-     * les autres validations (fenêtre de remise, date passée…). L'obligation de l'heure
+     * les autres validations (date limite de dépôt, date passée…). L'obligation de l'heure
      * de départ est portée par {@code @NotNull} sur {@code AnnouncementRequest.departureTime}
      * (validation bean au niveau du contrôleur).
      */
@@ -412,10 +412,9 @@ public class AnnouncementService {
             );
         }
 
-        validateHandoverWindow(request.handoverWindowStart(), request.handoverWindowEnd(),
+        validateHandoverDeadline(request.handoverDeadline(),
                 request.departureDate(), request.departureTime());
-        announcement.setHandoverWindowStart(request.handoverWindowStart());
-        announcement.setHandoverWindowEnd(request.handoverWindowEnd());
+        announcement.setHandoverDeadline(request.handoverDeadline());
 
         AnnouncementEntity saved = announcementRepository.save(announcement);
 
@@ -684,8 +683,7 @@ public class AnnouncementService {
                 announcement.getReservedKg(),
                 announcement.isSurplusEligible(),
                 announcement.isSurplusPublished(),
-                announcement.getHandoverWindowStart(),
-                announcement.getHandoverWindowEnd(),
+                announcement.getHandoverDeadline(),
                 announcement.getCurrency()
         );
     }
@@ -727,7 +725,7 @@ public class AnnouncementService {
             );
         }
 
-        validateHandoverWindow(request.handoverWindowStart(), request.handoverWindowEnd(),
+        validateHandoverDeadline(request.handoverDeadline(),
                 request.departureDate(), request.departureTime());
 
         announcement.setDepartureCity(request.departureCity());
@@ -739,8 +737,7 @@ public class AnnouncementService {
         announcement.setArrivalTime(request.arrivalTime());
         announcement.setDepartureAt(deriveDepartureAt(
                 request.departureDate(), request.departureTime(), announcement.getTimezone()));
-        announcement.setHandoverWindowStart(request.handoverWindowStart());
-        announcement.setHandoverWindowEnd(request.handoverWindowEnd());
+        announcement.setHandoverDeadline(request.handoverDeadline());
         announcement.setPickupAddressLabel(request.pickupAddress().label());
         announcement.setPickupLat(java.math.BigDecimal.valueOf(request.pickupAddress().lat()));
         announcement.setPickupLng(java.math.BigDecimal.valueOf(request.pickupAddress().lng()));
@@ -838,8 +835,7 @@ public class AnnouncementService {
                 saved.getReservedKg(),
                 saved.isSurplusEligible(),
                 saved.isSurplusPublished(),
-                saved.getHandoverWindowStart(),
-                saved.getHandoverWindowEnd(),
+                saved.getHandoverDeadline(),
                 saved.getCurrency()
         );
     }
@@ -1141,8 +1137,7 @@ public class AnnouncementService {
                 entity.getArrivalCountryCode(),
                 flagService.getFlag(entity.getDepartureCountryCode()),
                 flagService.getFlag(entity.getArrivalCountryCode()),
-                entity.getHandoverWindowStart(),
-                entity.getHandoverWindowEnd(),
+                entity.getHandoverDeadline(),
                 entity.getCurrency()
         );
     }
@@ -1185,31 +1180,28 @@ public class AnnouncementService {
     }
 
     /**
-     * Valide la fenêtre de remise saisie à la création/édition d'un trajet.
-     * Règles : non nulle, fin > début, fin <= départ (date+heure si présente,
-     * sinon fin du jour de départ — on ne remet pas un colis après le départ).
+     * Valide la date limite de dépôt saisie à la création/édition d'un trajet.
+     * Règles : non nulle et <= départ (date+heure si présente, sinon fin du
+     * jour de départ — on ne remet pas un colis après le départ du voyageur).
+     *
+     * Il n'y a plus de borne basse : le trajet accepte les colis dès sa
+     * publication, et jusqu'à cette date limite.
      */
-    private void validateHandoverWindow(LocalDateTime start,
-                                        LocalDateTime end,
-                                        LocalDate departureDate,
-                                        LocalTime departureTime) {
-        if (start == null || end == null) {
+    private void validateHandoverDeadline(LocalDateTime deadline,
+                                          LocalDate departureDate,
+                                          LocalTime departureTime) {
+        if (deadline == null) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "handover-window-required", "Fenêtre requise",
-                    "La fenêtre de remise est obligatoire");
-        }
-        if (!end.isAfter(start)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "invalid-handover-window", "Fenêtre invalide",
-                    "La fin de la fenêtre de remise doit être après le début");
+                    "handover-deadline-required", "Date limite requise",
+                    "La date limite de dépôt est obligatoire");
         }
         LocalDateTime departureBound = departureTime != null
                 ? departureDate.atTime(departureTime)
                 : departureDate.atTime(LocalTime.MAX);
-        if (end.isAfter(departureBound)) {
+        if (deadline.isAfter(departureBound)) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "handover-after-departure", "Fenêtre après le départ",
-                    "La fenêtre de remise doit se terminer avant le départ du voyageur");
+                    "handover-after-departure", "Date limite après le départ",
+                    "La date limite de dépôt doit précéder le départ du voyageur");
         }
     }
 }

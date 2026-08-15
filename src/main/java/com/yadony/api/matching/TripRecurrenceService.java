@@ -156,8 +156,8 @@ public class TripRecurrenceService {
         LocalTime depTime = rec.getDepartureTime();
         LocalDateTime departureDt = depTime != null
                 ? date.atTime(depTime) : date.atTime(12, 0);
-        LocalDateTime handoverEnd   = departureDt;
-        LocalDateTime handoverStart = departureDt.minusHours(2);
+        // Date limite de dépôt d'un trajet récurrent : l'heure du départ.
+        LocalDateTime handoverDeadline = departureDt;
         return new AnnouncementRequest(
                 rec.getDepartureCity(),
                 rec.getArrivalCity(),
@@ -177,8 +177,7 @@ public class TripRecurrenceService {
                 PricingMode.KG,
                 null,
                 null,
-                handoverStart,
-                handoverEnd,
+                handoverDeadline,
                 Boolean.FALSE
         );
     }
