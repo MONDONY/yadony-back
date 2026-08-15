@@ -9,6 +9,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.core.env.Environment;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
+import org.thymeleaf.TemplateEngine;
+import org.thymeleaf.context.Context;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClient;
 
@@ -22,14 +24,16 @@ public class ResendEmailService {
     private static final Logger log = LoggerFactory.getLogger(ResendEmailService.class);
 
     private final RestClient restClient;
+    private final TemplateEngine templateEngine;
     private final String fromAddress;
     private final String otpTemplate;
     private final boolean devProfile;
 
     @Autowired
-    public ResendEmailService(EmailOtpProperties props, Environment env) {
+    public ResendEmailService(EmailOtpProperties props, Environment env, TemplateEngine templateEngine) {
         this.fromAddress = props.getFromAddress();
         this.otpTemplate = props.getOtpTemplate();
+        this.templateEngine = templateEngine;
         this.devProfile = Arrays.asList(env.getActiveProfiles()).contains("dev");
         this.restClient = RestClient.builder()
                 .baseUrl("https://api.resend.com")
@@ -37,19 +41,22 @@ public class ResendEmailService {
                 .build();
     }
 
-    ResendEmailService(String fromAddress, String otpTemplate, RestClient restClient) {
+    ResendEmailService(String fromAddress, String otpTemplate, RestClient restClient, TemplateEngine templateEngine) {
         this.fromAddress = fromAddress;
         this.otpTemplate = otpTemplate;
         this.restClient = restClient;
+        this.templateEngine = templateEngine;
         this.devProfile = false;
     }
 
     public void sendOtp(String to, String code) {
+        String textBody = String.format(otpTemplate, code);
         Map<String, Object> payload = Map.of(
                 "from", fromAddress,
                 "to", List.of(to),
                 "subject", "Ton code Yadony",
-                "text", String.format(otpTemplate, code)
+                "html", renderOtpHtml(code),
+                "text", textBody
         );
         try {
             restClient.post()
@@ -72,6 +79,12 @@ public class ResendEmailService {
                     HttpStatus.SERVICE_UNAVAILABLE, "email-service-error",
                     "Email Service Error", "L'envoi de l'email a échoué, veuillez réessayer");
         }
+    }
+
+    private String renderOtpHtml(String code) {
+        Context context = new Context();
+        context.setVariable("otpCode", code);
+        return templateEngine.process("email-otp", context);
     }
 
     /** Masque une adresse email pour les logs : {@code j***@domain.com}. */

@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="fr" xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <title>Verification de compte</title>
+  <style>
+    @media only screen and (max-width: 620px) {
+      .email-wrapper {
+        padding: 24px 12px !important;
+      }
+
+      .email-card {
+        width: 100% !important;
+        border-radius: 18px !important;
+      }
+
+      .email-content {
+        padding: 28px 22px 24px !important;
+      }
+
+      .logo {
+        max-width: 180px !important;
+      }
+
+      .title {
+        font-size: 27px !important;
+        line-height: 34px !important;
+      }
+
+      .otp-code {
+        font-size: 38px !important;
+        line-height: 48px !important;
+        letter-spacing: 12px !important;
+      }
+
+      .otp-cell {
+        padding: 22px 10px !important;
+      }
+    }
+  </style>
+</head>
+<body style="margin:0; padding:0; background:#f4f6f8; -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%;">
+  <div style="display:none; max-height:0; overflow:hidden; opacity:0; color:transparent;">
+    Votre code de verification Yadony est valable 10 minutes.
+  </div>
+
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%; background:#f4f6f8;">
+    <tr>
+      <td class="email-wrapper" align="center" style="padding:48px 16px;">
+        <table role="presentation" class="email-card" width="600" cellspacing="0" cellpadding="0" border="0" style="width:600px; max-width:600px; background:#ffffff; border-radius:24px; overflow:hidden; box-shadow:0 0 0 1px rgba(11,31,66,0.06), 0 12px 32px rgba(11,31,66,0.10);">
+          <tr>
+            <td class="email-content" align="center" style="padding:48px 44px 36px; font-family:Arial, Helvetica, sans-serif; color:#071b3c;">
+              <img class="logo" src="https://yadony.com/logo.png" width="220" alt="Yadony" style="display:block; width:220px; max-width:220px; height:auto; margin:0 auto 36px; border:0; outline:none; text-decoration:none;">
+
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin:0 0 30px;">
+                <tr>
+                  <td style="border-top:3px solid #1263d8; font-size:0; line-height:0;">&nbsp;</td>
+                  <td width="72" align="center" style="width:72px;">
+                    <div style="width:42px; height:42px; margin:-22px auto 0; border-radius:21px; background:#ffffff; color:#1263d8; font-size:30px; line-height:42px; font-family:Arial, Helvetica, sans-serif;">&#10003;</div>
+                  </td>
+                  <td style="border-top:3px solid #1263d8; font-size:0; line-height:0;">&nbsp;</td>
+                </tr>
+              </table>
+
+              <h1 class="title" style="margin:0 0 28px; color:#071b3c; font-family:Arial, Helvetica, sans-serif; font-size:32px; line-height:40px; font-weight:700; text-align:center;">
+                Vérification de compte
+              </h1>
+
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td align="left" style="font-family:Arial, Helvetica, sans-serif; color:#14213d; font-size:18px; line-height:29px; font-weight:400;">
+                    <p style="margin:0 0 16px;">Bonjour,</p>
+                    <p style="margin:0 0 32px;">Merci d'avoir choisi Yadony. Pour vérifier votre compte, veuillez utiliser le code à 6 chiffres ci-dessous.</p>
+                  </td>
+                </tr>
+              </table>
+
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin:0 0 28px;">
+                <tr>
+                  <td class="otp-cell" align="center" style="padding:26px 18px; background:#f8fbff; border:2px solid #9fc2f8; border-radius:14px;">
+                    <span class="otp-code" th:text="${otpCode}" style="display:inline-block; color:#1158c7; font-family:'Courier New', Courier, monospace; font-size:48px; line-height:56px; font-weight:700; letter-spacing:16px;">
+                      482913
+                    </span>
+                  </td>
+                </tr>
+              </table>
+
+              <p style="margin:0 0 36px; color:#1158c7; font-family:Arial, Helvetica, sans-serif; font-size:18px; line-height:27px; font-weight:500; text-align:center;">
+                <span style="display:inline-block; width:24px; height:24px; border:2px solid #1158c7; border-radius:50%; line-height:22px; text-align:center; vertical-align:-4px; margin-right:8px;">&#9711;</span>
+                Code valable 10 minutes
+              </p>
+
+              <div style="height:1px; line-height:1px; background:#d7dee8; margin:0 0 28px;">&nbsp;</div>
+
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" style="margin:0 auto 24px;">
+                <tr>
+                  <td align="center" style="padding:0 5px 10px;">
+                    <a href="https://whatsapp.com/channel/0029VbCfmMzAYlUE5EddiT41" target="_blank" rel="noopener" style="display:inline-block; min-width:84px; padding:9px 10px; border-radius:20px; background:#f3f7ff; color:#1158c7; font-family:Arial, Helvetica, sans-serif; font-size:13px; line-height:18px; font-weight:700; text-decoration:none;">WhatsApp</a>
+                  </td>
+                  <td align="center" style="padding:0 5px 10px;">
+                    <a href="https://www.youtube.com/@yadony" target="_blank" rel="noopener" style="display:inline-block; min-width:84px; padding:9px 10px; border-radius:20px; background:#f3f7ff; color:#1158c7; font-family:Arial, Helvetica, sans-serif; font-size:13px; line-height:18px; font-weight:700; text-decoration:none;">YouTube</a>
+                  </td>
+                  <td align="center" style="padding:0 5px 10px;">
+                    <a href="https://www.tiktok.com/@yadony26" target="_blank" rel="noopener" style="display:inline-block; min-width:84px; padding:9px 10px; border-radius:20px; background:#f3f7ff; color:#1158c7; font-family:Arial, Helvetica, sans-serif; font-size:13px; line-height:18px; font-weight:700; text-decoration:none;">TikTok</a>
+                  </td>
+                </tr>
+                <tr>
+                  <td colspan="3" align="center" style="padding:0;">
+                    <table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center">
+                      <tr>
+                        <td align="center" style="padding:0 5px;">
+                          <a href="https://www.facebook.com/groups/1051558350756867" target="_blank" rel="noopener" style="display:inline-block; min-width:84px; padding:9px 10px; border-radius:20px; background:#f3f7ff; color:#1158c7; font-family:Arial, Helvetica, sans-serif; font-size:13px; line-height:18px; font-weight:700; text-decoration:none;">Facebook</a>
+                        </td>
+                        <td align="center" style="padding:0 5px;">
+                          <a href="https://www.instagram.com/yadony2026/" target="_blank" rel="noopener" style="display:inline-block; min-width:84px; padding:9px 10px; border-radius:20px; background:#f3f7ff; color:#1158c7; font-family:Arial, Helvetica, sans-serif; font-size:13px; line-height:18px; font-weight:700; text-decoration:none;">Instagram</a>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+
+              <p style="margin:0 0 8px; color:#738198; font-family:Arial, Helvetica, sans-serif; font-size:16px; line-height:24px; text-align:center;">
+                © 2026 Yadony. Tous droits réservés.
+              </p>
+              <p style="margin:0; color:#738198; font-family:Arial, Helvetica, sans-serif; font-size:16px; line-height:24px; text-align:center;">
+                Ne répondez pas à cet e-mail.
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
