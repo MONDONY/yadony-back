@@ -544,41 +544,10 @@ public class NegotiationService {
             request, traveler, thread.getCurrentPriceEur(), req.useCardForCommission());
         assertNonEmptyOrThrow(available, request.getAcceptedPaymentMethods());
 
-        // Validate the announcement belongs to caller and matches corridor + date window
-        com.yadony.api.matching.AnnouncementEntity ann = announcementRepo.findById(travelerAnnouncementId)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "announcement/not-found"));
-        if (!ann.getTravelerId().equals(callerId)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "announcement/not-yours");
-        }
-        // Only an ACTIVE trip with enough remaining capacity can carry this parcel.
-        // A terminal/in-progress trip (COMPLETED/CANCELLED/IN_PROGRESS) would stay
-        // out of the traveler's "À venir" list after linking, and a full trip would
-        // overbook. Reject both here — the traveler should create a dedicated trip.
-        if (ann.getStatus() != com.yadony.api.matching.AnnouncementStatus.ACTIVE) {
-            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
-                "announcement/not-active");
-        }
-        if (ann.getAvailableKg().compareTo(request.getWeightKg()) < 0) {
-            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
-                "announcement/insufficient-capacity");
-        }
-        // Normalize city names before comparison: "Paris, France" and "Paris" both
-        // reduce to "paris". Legacy announcements were stored with country suffix.
-        if (!cityKey(ann.getDepartureCity()).equals(cityKey(request.getDepartureCity()))
-            || !cityKey(ann.getArrivalCity()).equals(cityKey(request.getArrivalCity()))) {
-            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
-                "announcement/corridor-mismatch");
-        }
-        java.time.LocalDate annDate = ann.getDepartureDate();
-        java.time.LocalDate from = request.getDesiredDate().minusDays(request.getDateToleranceDays());
-        java.time.LocalDate to = request.getDesiredDate().plusDays(request.getDateToleranceDays());
-        if (annDate.isBefore(from) || annDate.isAfter(to)) {
-            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
-                "announcement/date-mismatch");
-        }
+        com.yadony.api.matching.AnnouncementEntity ann = validateAndFetchExistingTrip(travelerAnnouncementId, callerId, request);
 
         thread.setTravelerAnnouncementId(travelerAnnouncementId);
-        thread.setTravelerTravelDate(annDate);
+        thread.setTravelerTravelDate(ann.getDepartureDate());
         thread.setAvailablePaymentMethods(available);
         thread.setPaymentMethod(null); // l'expéditeur choisit au checkout parmi le SET
         thread.setStatus(NegotiationThreadStatus.AWAITING_PAYMENT);
@@ -617,6 +586,42 @@ public class NegotiationService {
      * On success the thread transitions AWAITING_TRIP → AWAITING_PAYMENT and the
      * sender is notified to checkout, exactly like {@link #submitTrip}.
      */
+
+    /**
+     * Valide qu'une announcement existante peut porter ce package_request :
+     * appartient à l'appelant, ACTIVE, capacité suffisante, corridor et fenêtre
+     * de dates compatibles. Partagée par {@link #submitTrip} (thread
+     * AWAITING_TRIP) et {@link #start} (trajet fourni dès la première offre) et
+     * par le futur endpoint de changement de trajet.
+     */
+    com.yadony.api.matching.AnnouncementEntity validateAndFetchExistingTrip(
+            UUID travelerAnnouncementId, UUID callerId, PackageRequestEntity request) {
+        com.yadony.api.matching.AnnouncementEntity ann = announcementRepo.findById(travelerAnnouncementId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "announcement/not-found"));
+        if (!ann.getTravelerId().equals(callerId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "announcement/not-yours");
+        }
+        if (ann.getStatus() != com.yadony.api.matching.AnnouncementStatus.ACTIVE) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "announcement/not-active");
+        }
+        if (ann.getAvailableKg().compareTo(request.getWeightKg()) < 0) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                "announcement/insufficient-capacity");
+        }
+        if (!cityKey(ann.getDepartureCity()).equals(cityKey(request.getDepartureCity()))
+            || !cityKey(ann.getArrivalCity()).equals(cityKey(request.getArrivalCity()))) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                "announcement/corridor-mismatch");
+        }
+        java.time.LocalDate annDate = ann.getDepartureDate();
+        java.time.LocalDate from = request.getDesiredDate().minusDays(request.getDateToleranceDays());
+        java.time.LocalDate to = request.getDesiredDate().plusDays(request.getDateToleranceDays());
+        if (annDate.isBefore(from) || annDate.isAfter(to)) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                "announcement/date-mismatch");
+        }
+        return ann;
+    }
 
     /**
      * Construit (sans sauvegarder) l'AnnouncementEntity d'un trajet dédié à un

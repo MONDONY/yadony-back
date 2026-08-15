@@ -2210,6 +2210,40 @@ class NegotiationServiceTest {
     }
 
     @Nested
+    @DisplayName("validateAndFetchExistingTrip()")
+    class ValidateAndFetchExistingTripTests {
+
+        @Test
+        @DisplayName("rejectsCorridorMismatch — annonce Lyon→Dakar, colis Paris→Dakar")
+        void validateAndFetchExistingTrip_rejectsCorridorMismatch() {
+            UUID travelerId = UUID.randomUUID();
+            UUID annId = UUID.randomUUID();
+
+            PackageRequestEntity req = new PackageRequestEntity();
+            req.setDepartureCity("Paris");
+            req.setArrivalCity("Dakar");
+            req.setDesiredDate(LocalDate.now().plusDays(5));
+            req.setDateToleranceDays((short) 1);
+            req.setWeightKg(new BigDecimal("10"));
+
+            com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
+            ann.setTravelerId(travelerId);
+            ann.setStatus(com.yadony.api.matching.AnnouncementStatus.ACTIVE);
+            ann.setAvailableKg(new BigDecimal("20"));
+            ann.setDepartureCity("Lyon"); // mismatch!
+            ann.setArrivalCity("Dakar");
+            ann.setDepartureDate(req.getDesiredDate());
+
+            when(announcementRepo.findById(annId)).thenReturn(Optional.of(ann));
+
+            assertThatThrownBy(() ->
+                service.validateAndFetchExistingTrip(annId, travelerId, req))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                .hasMessageContaining("announcement/corridor-mismatch");
+        }
+    }
+
+    @Nested
     @DisplayName("Firm-price (negotiable=false)")
     class FirmPriceTests {
 
