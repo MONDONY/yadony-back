@@ -32,8 +32,7 @@ class BidSchedulerTest {
         ReflectionTestUtils.setField(bid, "id", bidId);
         ReflectionTestUtils.setField(bid, "senderId", UUID.randomUUID());
         bid.setHandoverLocation("Gare du Nord");
-        bid.setHandoverWindowStart(LocalDateTime.now().plusHours(1));
-        bid.setHandoverWindowEnd(LocalDateTime.now().plusHours(2));
+        bid.setHandoverDeadline(LocalDateTime.now().plusHours(2));
         when(bidRepository.findBidsNeedingH2Alert(any(), any())).thenReturn(List.of(bid));
 
         new BidScheduler(bidRepository, eventPublisher).scanAndSendH2Alerts();

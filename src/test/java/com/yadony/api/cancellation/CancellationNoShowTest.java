@@ -69,7 +69,7 @@ class CancellationNoShowTest {
         ReflectionTestUtils.setField(bid, "id", BID_ID);
         bid.setPaymentMethod(PaymentMethod.CASH);
         bid.setStatus(status);
-        bid.setHandoverWindowEnd(handoverEnd);
+        bid.setHandoverDeadline(handoverEnd);
         bid.setSenderId(SENDER_ID);
         bid.setAnnouncementId(ANNOUNCEMENT_ID);
         return bid;
@@ -115,7 +115,7 @@ class CancellationNoShowTest {
         }
 
         @Test
-        void failsBeforeHandoverWindowEnd() {
+        void failsBeforeHandoverDeadline() {
             BidEntity bid = cashBid(BidStatus.ACCEPTED, LocalDateTime.now().plusHours(2));
             when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
 

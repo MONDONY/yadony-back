@@ -95,11 +95,8 @@ public class BidEntity extends BaseEntity {
     @Column(name = "handover_location", columnDefinition = "TEXT")
     private String handoverLocation;
 
-    @Column(name = "handover_window_start")
-    private LocalDateTime handoverWindowStart;
-
-    @Column(name = "handover_window_end")
-    private LocalDateTime handoverWindowEnd;
+    @Column(name = "handover_deadline")
+    private LocalDateTime handoverDeadline;
 
     @Column(name = "voyageur_confirmed", nullable = false)
     private boolean voyageurConfirmed = false;
@@ -263,20 +260,16 @@ public class BidEntity extends BaseEntity {
     public String getHandoverLocation() { return handoverLocation; }
     public void setHandoverLocation(String handoverLocation) { this.handoverLocation = handoverLocation; }
 
-    public LocalDateTime getHandoverWindowStart() { return handoverWindowStart; }
-    public void setHandoverWindowStart(LocalDateTime handoverWindowStart) { this.handoverWindowStart = handoverWindowStart; }
-
-    public LocalDateTime getHandoverWindowEnd() { return handoverWindowEnd; }
-    public void setHandoverWindowEnd(LocalDateTime handoverWindowEnd) { this.handoverWindowEnd = handoverWindowEnd; }
+    public LocalDateTime getHandoverDeadline() { return handoverDeadline; }
+    public void setHandoverDeadline(LocalDateTime handoverDeadline) { this.handoverDeadline = handoverDeadline; }
 
     /**
-     * Copie la fenêtre de remise + le lieu de pickup du trajet sur le bid au
+     * Copie la date limite de dépôt + le lieu de pickup du trajet sur le bid au
      * moment de l'acceptation. Le bid devient autoporteur : toute la logique
      * aval (no-show, alerte H-2, confirm-presence) lit ses propres champs.
      */
     public void applyHandoverFrom(AnnouncementEntity announcement) {
-        this.handoverWindowStart = announcement.getHandoverWindowStart();
-        this.handoverWindowEnd = announcement.getHandoverWindowEnd();
+        this.handoverDeadline = announcement.getHandoverDeadline();
         this.handoverLocation = announcement.getPickupAddressLabel();
     }
 

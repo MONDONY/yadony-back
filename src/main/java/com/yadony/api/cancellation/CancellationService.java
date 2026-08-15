@@ -332,7 +332,7 @@ public class CancellationService {
         if (bid.getStatus() != BidStatus.ACCEPTED) {
             throw new IllegalStateException("Le bid doit être en statut ACCEPTED.");
         }
-        LocalDateTime handoverEnd = bid.getHandoverWindowEnd();
+        LocalDateTime handoverEnd = bid.getHandoverDeadline();
         if (handoverEnd == null || LocalDateTime.now().isBefore(handoverEnd)) {
             throw new IllegalStateException("Vous ne pouvez signaler qu'après l'heure de remise prévue.");
         }
@@ -352,7 +352,7 @@ public class CancellationService {
 
     /**
      * L'expéditeur signale un voyageur absent (no-show manuel). Vérifie l'ownership, le statut
-     * ACCEPTED et que la fenêtre de remise est passée, puis publie
+     * ACCEPTED et que la date limite de dépôt est passée, puis publie
      * {@link TravelerNoShowReportedEvent} — écouté côté matching/ par {@code NoShowService}.
      */
     @Transactional
@@ -367,7 +367,7 @@ public class CancellationService {
         if (bid.getStatus() != BidStatus.ACCEPTED) {
             throw new IllegalStateException("Le bid doit être en statut ACCEPTED.");
         }
-        LocalDateTime handoverEnd = bid.getHandoverWindowEnd();
+        LocalDateTime handoverEnd = bid.getHandoverDeadline();
         if (handoverEnd == null || LocalDateTime.now().isBefore(handoverEnd)) {
             throw new IllegalStateException("Vous ne pouvez signaler qu'après l'heure de remise prévue.");
         }

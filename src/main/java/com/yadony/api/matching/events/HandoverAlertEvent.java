@@ -7,6 +7,5 @@ public record HandoverAlertEvent(
         UUID bidId,
         UUID senderId,
         String handoverLocation,
-        LocalDateTime handoverWindowStart,
-        LocalDateTime handoverWindowEnd
+        LocalDateTime handoverDeadline
 ) {}

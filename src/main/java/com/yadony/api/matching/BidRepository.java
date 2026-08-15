@@ -212,19 +212,22 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
     List<BidEntity> findByStatusAndAwaitingPaymentExpiresAtBefore(
             BidStatus status, LocalDateTime threshold);
 
+    // Rappel H-2 : l'alerte se cale désormais sur la date limite de dépôt (il
+    // n'y a plus de début de fenêtre). On prévient donc l'expéditeur quand il
+    // ne lui reste que 2 h pour remettre son colis, ce qui est le moment utile.
     @Query("SELECT b FROM BidEntity b WHERE b.status = 'ACCEPTED' " +
-           "AND b.handoverWindowStart IS NOT NULL " +
-           "AND b.handoverWindowStart <= :threshold " +
-           "AND b.handoverWindowStart > :now " +
+           "AND b.handoverDeadline IS NOT NULL " +
+           "AND b.handoverDeadline <= :threshold " +
+           "AND b.handoverDeadline > :now " +
            "AND b.voyageurConfirmed = false " +
            "AND b.h2AlertSentAt IS NULL")
     List<BidEntity> findBidsNeedingH2Alert(@Param("now") LocalDateTime now,
                                             @Param("threshold") LocalDateTime threshold);
 
-    // No-show detection: ACCEPTED bids with handoverWindowEnd > 1h ago, no DEPART scan, not yet marked NO_SHOW
+    // No-show detection: ACCEPTED bids with handoverDeadline > 1h ago, no DEPART scan, not yet marked NO_SHOW
     @Query("SELECT b FROM BidEntity b WHERE b.status = 'ACCEPTED' " +
-           "AND b.handoverWindowEnd IS NOT NULL " +
-           "AND b.handoverWindowEnd < :cutoff " +
+           "AND b.handoverDeadline IS NOT NULL " +
+           "AND b.handoverDeadline < :cutoff " +
            "AND b.noShowAt IS NULL " +
            "AND b.deletedAt IS NULL " +
            "AND NOT EXISTS (SELECT t FROM TrackingEventEntity t WHERE t.bidId = b.id AND t.eventType = 'DEPART')")

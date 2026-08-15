@@ -154,9 +154,8 @@ public class AnnouncementSteps extends AbstractSteps {
         body.put("departureTime", "08:00");
         body.put("arrivalTime", "20:00");
 
-        // Fenêtre de remise : avant le départ (08:00 le jour `date`).
-        body.put("handoverWindowStart", date + "T06:00:00");
-        body.put("handoverWindowEnd", date + "T07:30:00");
+        // Date limite de dépôt : avant le départ (08:00 le jour `date`).
+        body.put("handoverDeadline", date + "T07:30:00");
 
         // Pickup address (departure)
         Map<String, Object> pickupAddress = new HashMap<>();

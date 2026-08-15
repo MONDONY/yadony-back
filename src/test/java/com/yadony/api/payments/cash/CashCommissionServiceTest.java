@@ -925,8 +925,7 @@ class CashCommissionServiceTest {
         void finalizeBidAcceptance_copiesHandoverWindowFromAnnouncement() {
             java.time.LocalDateTime start = java.time.LocalDate.now().plusDays(5).atTime(16, 0);
             java.time.LocalDateTime end   = java.time.LocalDate.now().plusDays(5).atTime(18, 0);
-            announcement.setHandoverWindowStart(start);
-            announcement.setHandoverWindowEnd(end);
+            announcement.setHandoverDeadline(end);
             announcement.setPickupAddressLabel("Gare du Nord");
             // Use wallet path so no Stripe mocking needed
             java.math.BigDecimal commission = new java.math.BigDecimal("12.00"); // 5kg × 20€ × 12%
@@ -937,8 +936,7 @@ class CashCommissionServiceTest {
             AcceptBidResponse resp = service.acceptCashBid(bid.getId(), travelerId, com.yadony.api.payments.cash.CommissionSource.WALLET_FIRST);
 
             assertThat(resp.status()).isEqualTo(AcceptanceStatusDto.ACCEPTED);
-            assertThat(bid.getHandoverWindowStart()).isEqualTo(start);
-            assertThat(bid.getHandoverWindowEnd()).isEqualTo(end);
+            assertThat(bid.getHandoverDeadline()).isEqualTo(end);
             assertThat(bid.getHandoverLocation()).isEqualTo("Gare du Nord");
         }
 

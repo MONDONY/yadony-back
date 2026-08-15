@@ -126,9 +126,9 @@ public class NotificationDispatcher {
     }
 
     public void onHandoverAlert(HandoverAlertEvent event) {
-        String body = "Le point de remise approche à " + event.handoverLocation()
+        String body = "Dernier créneau pour déposer votre colis à " + event.handoverLocation()
                 + " — confirmation du voyageur en attente.";
-        notifyCritical(event.senderId(), "Remise dans moins de 2 heures", body,
+        notifyCritical(event.senderId(), "Plus que 2 heures pour déposer", body,
                 Map.of("type", "HANDOVER_REMINDER_H2",
                        "bidId", event.bidId().toString()));
     }

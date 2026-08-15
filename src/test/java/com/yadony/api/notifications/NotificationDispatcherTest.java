@@ -136,15 +136,15 @@ class NotificationDispatcherTest {
         when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
 
         dispatcher.onHandoverAlert(new HandoverAlertEvent(
-                bidId, senderId, "Gare du Nord", start, end));
+                bidId, senderId, "Gare du Nord", end));
 
         var dataCaptor = ArgumentCaptor.forClass(Map.class);
         verify(notificationService).persist(
                 eq(senderId), eq("HANDOVER_REMINDER_H2"),
-                eq("Remise dans moins de 2 heures"), contains("Gare du Nord"),
+                eq("Plus que 2 heures pour déposer"), contains("Gare du Nord"),
                 any(), eq(true));
         verify(fcmService).sendToUser(
-                eq(senderId), eq("Remise dans moins de 2 heures"),
+                eq(senderId), eq("Plus que 2 heures pour déposer"),
                 contains("confirmation du voyageur"), dataCaptor.capture());
         assertThat(dataCaptor.getValue())
                 .containsEntry("type", "HANDOVER_REMINDER_H2")

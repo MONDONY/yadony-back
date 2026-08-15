@@ -225,10 +225,9 @@ class AnnouncementControllerIntegrationTest {
               "deliveryAddress": {"label": "Dakar", "lat": 14.693, "lng": -17.447},
               "departureCountryCode": "US",
               "arrivalCountryCode": "SN",
-              "handoverWindowStart": "%sT06:00:00",
-              "handoverWindowEnd": "%sT07:30:00"
+              "handoverDeadline": "%sT07:30:00"
             }
-            """.formatted(date, date, date);
+            """.formatted(date, date);
         mockMvc.perform(post("/announcements")
                 .with(authentication(authenticatedAs("uid-test-traveler")))
                 .contentType(MediaType.APPLICATION_JSON)
@@ -258,10 +257,9 @@ class AnnouncementControllerIntegrationTest {
               "capacityUnit": "KG_EXACT",
               "pickupAddress": {"label": "Lyon", "lat": 45.748, "lng": 4.846},
               "deliveryAddress": {"label": "Dakar", "lat": 14.693, "lng": -17.447},
-              "handoverWindowStart": "%sT06:00:00",
-              "handoverWindowEnd": "%sT07:30:00"
+              "handoverDeadline": "%sT07:30:00"
             }
-            """.formatted(date, date, date);
+            """.formatted(date, date);
         mockMvc.perform(post("/announcements")
                 .with(authentication(authenticatedAs("uid-test-traveler")))
                 .contentType(MediaType.APPLICATION_JSON)
@@ -326,7 +324,7 @@ class AnnouncementControllerIntegrationTest {
      * wall-clock value with a 'Z' suffix (our UtcLocalDateTimeSerializer).
      */
     @Test
-    void createAnnouncement_handoverWindowWithZSuffix_roundTripsWithoutShift() throws Exception {
+    void createAnnouncement_handoverDeadlineWithZSuffix_roundTripsWithoutShift() throws Exception {
         seedTraveler("uid-test-traveler");
         String date = LocalDate.now().plusDays(30).toString();
         String body = """
@@ -340,10 +338,9 @@ class AnnouncementControllerIntegrationTest {
               "transportMode": "PLANE",
               "pickupAddress": {"label": "Lyon", "lat": 45.748, "lng": 4.846},
               "deliveryAddress": {"label": "Dakar", "lat": 14.693, "lng": -17.447},
-              "handoverWindowStart": "%sT06:00:00.000Z",
-              "handoverWindowEnd": "%sT07:30:00.000Z"
+              "handoverDeadline": "%sT07:30:00.000Z"
             }
-            """.formatted(date, date, date);
+            """.formatted(date, date);
 
         mockMvc.perform(post("/announcements")
                 .with(authentication(authenticatedAs("uid-test-traveler")))
@@ -351,8 +348,7 @@ class AnnouncementControllerIntegrationTest {
                 .content(body))
             .andExpect(status().isCreated())
             // Wall-clock time must be preserved: 06:00 in, 06:00:00Z out (no TZ shift)
-            .andExpect(jsonPath("$.handoverWindowStart").value(date + "T06:00:00Z"))
-            .andExpect(jsonPath("$.handoverWindowEnd").value(date + "T07:30:00Z"));
+            .andExpect(jsonPath("$.handoverDeadline").value(date + "T07:30:00Z"));
     }
 
     // ─── POST /announcements/{id}/publish ──────────────────────────────────────
@@ -510,10 +506,9 @@ class AnnouncementControllerIntegrationTest {
               "transportMode": "%s",
               "pickupAddress": {"label": "Lyon", "lat": 45.748, "lng": 4.846},
               "deliveryAddress": {"label": "Dakar", "lat": 14.693, "lng": -17.447},
-              "handoverWindowStart": "%sT06:00:00",
-              "handoverWindowEnd": "%sT07:30:00"
+              "handoverDeadline": "%sT07:30:00"
             }
-            """.formatted(date, mode, date, date);
+            """.formatted(date, mode, date);
     }
 
     private String draftBodyWithMode(String mode) {
@@ -529,11 +524,10 @@ class AnnouncementControllerIntegrationTest {
               "transportMode": "%s",
               "pickupAddress": {"label": "Lyon", "lat": 45.748, "lng": 4.846},
               "deliveryAddress": {"label": "Dakar", "lat": 14.693, "lng": -17.447},
-              "handoverWindowStart": "%sT06:00:00",
-              "handoverWindowEnd": "%sT07:30:00",
+              "handoverDeadline": "%sT07:30:00",
               "saveAsDraft": true
             }
-            """.formatted(date, mode, date, date);
+            """.formatted(date, mode, date);
     }
 
     private AnnouncementEntity seedAnnouncementForTraveler(UUID travelerId, AnnouncementStatus status) {

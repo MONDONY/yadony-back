@@ -40,7 +40,6 @@ public record AnnouncementDetailResponse(
         BigDecimal reservedKg,
         boolean surplusEligible,
         boolean surplusPublished,
-        LocalDateTime handoverWindowStart,
-        LocalDateTime handoverWindowEnd,
+        LocalDateTime handoverDeadline,
         String currency
 ) {}

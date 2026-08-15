@@ -161,7 +161,7 @@ class AnnouncementServiceTest {
                 mode,
                 null, null, null, null, null, null,
                 null, null,
-                departure.atTime(8, 0), departure.atTime(9, 0),
+                departure.atTime(9, 0),
                 null
         );
     }
@@ -178,7 +178,7 @@ class AnnouncementServiceTest {
                 TransportMode.PLANE,
                 null, null, null, null, null, null,
                 null, null,
-                departure.atTime(8, 0), departure.atTime(9, 0),
+                departure.atTime(9, 0),
                 true
         );
     }
@@ -200,7 +200,7 @@ class AnnouncementServiceTest {
                 TransportMode.PLANE,
                 null, null, null, methods, null, null,
                 null, null,
-                departure.atTime(8, 0), departure.atTime(9, 0),
+                departure.atTime(9, 0),
                 null
         );
     }
@@ -336,7 +336,7 @@ class AnnouncementServiceTest {
                     List.of("Hi-fi", "Téléphone"),
                     List.of("Nourriture"),
                     null, null, null, null, null,
-                    departure.atTime(8, 0), departure.atTime(9, 0),
+                    departure.atTime(9, 0),
                     null
             );
 
@@ -374,7 +374,7 @@ class AnnouncementServiceTest {
                     TransportMode.PLANE,
                     null, null, null, null, null, null,
                     "US", "SN",
-                    LocalDate.now().plusDays(10).atTime(8, 0), LocalDate.now().plusDays(10).atTime(9, 0),
+                    LocalDate.now().plusDays(10).atTime(9, 0),
                     null
             );
 
@@ -646,7 +646,7 @@ class AnnouncementServiceTest {
                     TransportMode.PLANE,
                     null, null, null, java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.STRIPE, com.yadony.api.payments.cash.PaymentMethod.CASH), null, null,
                     null, null,
-                    LocalDate.now().plusDays(10).atTime(16, 0), LocalDate.now().plusDays(10).atTime(18, 0),
+                    LocalDate.now().plusDays(10).atTime(18, 0),
                     null
             );
 
@@ -679,7 +679,7 @@ class AnnouncementServiceTest {
                     TransportMode.PLANE,
                     null, null, null, java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.STRIPE, com.yadony.api.payments.cash.PaymentMethod.CASH), null, null,
                     null, null,
-                    LocalDate.now().plusDays(10).atTime(16, 0), LocalDate.now().plusDays(10).atTime(18, 0),
+                    LocalDate.now().plusDays(10).atTime(18, 0),
                     null
             );
 
@@ -717,7 +717,7 @@ class AnnouncementServiceTest {
                     TransportMode.PLANE,
                     null, null, null, null, null, PricingMode.MIXED,
                     null, null,
-                    LocalDate.now().plusDays(10).atTime(8, 0), LocalDate.now().plusDays(10).atTime(9, 0),
+                    LocalDate.now().plusDays(10).atTime(9, 0),
                     null
             );
 
@@ -754,7 +754,7 @@ class AnnouncementServiceTest {
                     TransportMode.PLANE,
                     null, null, null, null, null, PricingMode.MIXED,
                     null, null,
-                    LocalDate.now().plusDays(10).atTime(8, 0), LocalDate.now().plusDays(10).atTime(9, 0),
+                    LocalDate.now().plusDays(10).atTime(9, 0),
                     null
             );
 
@@ -1029,7 +1029,7 @@ class AnnouncementServiceTest {
                     TransportMode.PLANE,
                     null, null, null, null, null, null,
                     null, null,
-                    LocalDate.now().plusDays(15).atTime(16, 0), LocalDate.now().plusDays(15).atTime(18, 0),
+                    LocalDate.now().plusDays(15).atTime(18, 0),
                     null
             );
 
@@ -1067,7 +1067,7 @@ class AnnouncementServiceTest {
                     List.of("Hi-fi"),
                     List.of("Nourriture", "Nourriture"),
                     null, null, null, null, null,
-                    departure.atTime(16, 0), departure.atTime(18, 0),
+                    departure.atTime(18, 0),
                     null
             );
 
@@ -1123,7 +1123,7 @@ class AnnouncementServiceTest {
                     TransportMode.PLANE,
                     null, null, null, null, null, null,
                     null, null,
-                    LocalDate.now().plusDays(15).atTime(16, 0), LocalDate.now().plusDays(15).atTime(18, 0),
+                    LocalDate.now().plusDays(15).atTime(18, 0),
                     null
             );
 
@@ -1824,7 +1824,7 @@ class AnnouncementServiceTest {
                     TransportMode.PLANE,
                     null, null, null, null, CapacityUnit.SUITCASE_32KG, null,
                     null, null,
-                    LocalDate.now().plusDays(10).atTime(8, 0), LocalDate.now().plusDays(10).atTime(9, 0),
+                    LocalDate.now().plusDays(10).atTime(9, 0),
                     null
             );
 
@@ -1868,7 +1868,7 @@ class AnnouncementServiceTest {
                     TransportMode.PLANE,
                     null, null, null, null, null, null,
                     null, null,
-                    LocalDate.now().minusDays(1).atTime(16, 0), LocalDate.now().minusDays(1).atTime(18, 0),
+                    LocalDate.now().minusDays(1).atTime(18, 0),
                     null
             );
 
@@ -2026,15 +2026,14 @@ class AnnouncementServiceTest {
         }
     }
 
-    // ─── HandoverWindow validation ─────────────────────────────────────────────
+    // ─── HandoverDeadline validation ───────────────────────────────────────────
 
     @Nested
-    @DisplayName("HandoverWindow — validation createAnnouncement()")
-    class HandoverWindowTests {
+    @DisplayName("HandoverDeadline — validation createAnnouncement()")
+    class HandoverDeadlineTests {
 
-        private AnnouncementRequest buildRequestWithWindow(LocalDate departure,
-                                                           LocalDateTime start,
-                                                           LocalDateTime end) {
+        private AnnouncementRequest buildRequestWithDeadline(LocalDate departure,
+                                                             LocalDateTime deadline) {
             return new AnnouncementRequest(
                     "Paris", "Dakar",
                     departure,
@@ -2045,55 +2044,56 @@ class AnnouncementServiceTest {
                     TransportMode.PLANE,
                     null, null, null, null, null, null,
                     null, null,
-                    start, end,
+                    deadline,
                     null
             );
         }
 
         @Test
-        @DisplayName("fenêtre de remise nulle → 422 handover-window-required")
-        void createAnnouncement_handoverWindowNull_throws422() {
+        @DisplayName("date limite de dépôt nulle → 422 handover-deadline-required")
+        void createAnnouncement_handoverDeadlineNull_throws422() {
             LocalDate departure = LocalDate.now().plusDays(10);
             UserEntity traveler = buildTraveler();
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
 
-            AnnouncementRequest req = buildRequestWithWindow(departure, null, null);
+            AnnouncementRequest req = buildRequestWithDeadline(departure, null);
 
             assertThatThrownBy(() -> announcementService.createAnnouncement(FIREBASE_UID, req))
                     .isInstanceOf(YadonyBusinessException.class)
                     .satisfies(e -> {
                         YadonyBusinessException ex = (YadonyBusinessException) e;
                         assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
-                        assertThat(ex.getErrorCode()).isEqualTo("handover-window-required");
+                        assertThat(ex.getErrorCode()).isEqualTo("handover-deadline-required");
                     });
         }
 
         @Test
-        @DisplayName("fenêtre fin avant début → 422 invalid-handover-window")
-        void createAnnouncement_handoverEndBeforeStart_throws422() {
+        @DisplayName("date limite avant le départ → acceptée (plus de borne basse)")
+        void createAnnouncement_handoverDeadlineWellBeforeDeparture_ok() {
             LocalDate departure = LocalDate.now().plusDays(10);
-            LocalDateTime start = departure.atTime(18, 0);
-            LocalDateTime end   = start.minusHours(1);
             UserEntity traveler = buildTraveler();
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.save(any())).thenAnswer(inv -> {
+                AnnouncementEntity a = inv.getArgument(0);
+                setId(a, ANNOUNCEMENT_ID);
+                return a;
+            });
+            when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
+            when(bidRepository.countByAnnouncementIdAndStatusIn(any(), any())).thenReturn(0L);
 
-            AnnouncementRequest req = buildRequestWithWindow(departure, start, end);
+            // Une date limite très en amont du départ était impossible avec
+            // l'ancienne fenêtre (début imposé) : elle est désormais valide.
+            AnnouncementRequest req = buildRequestWithDeadline(departure, departure.atTime(6, 0));
 
-            assertThatThrownBy(() -> announcementService.createAnnouncement(FIREBASE_UID, req))
-                    .isInstanceOf(YadonyBusinessException.class)
-                    .satisfies(e -> {
-                        YadonyBusinessException ex = (YadonyBusinessException) e;
-                        assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
-                        assertThat(ex.getErrorCode()).isEqualTo("invalid-handover-window");
-                    });
+            assertThatCode(() -> announcementService.createAnnouncement(FIREBASE_UID, req))
+                    .doesNotThrowAnyException();
         }
 
         @Test
-        @DisplayName("fenêtre fin après départ → 422 handover-after-departure")
-        void createAnnouncement_handoverEndAfterDeparture_throws422() {
+        @DisplayName("date limite après le départ → 422 handover-after-departure")
+        void createAnnouncement_handoverDeadlineAfterDeparture_throws422() {
             LocalDate departure = LocalDate.now().plusDays(10);
-            LocalDateTime start = departure.atTime(18, 0);
-            LocalDateTime end   = departure.plusDays(1).atTime(8, 0); // after departure
+            LocalDateTime deadline = departure.plusDays(1).atTime(8, 0); // after departure
             UserEntity traveler = buildTraveler();
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
 
@@ -2108,7 +2108,7 @@ class AnnouncementServiceTest {
                     TransportMode.PLANE,
                     null, null, null, null, null, null,
                     null, null,
-                    start, end,
+                    deadline,
                     null
             );
 
@@ -2122,11 +2122,10 @@ class AnnouncementServiceTest {
         }
 
         @Test
-        @DisplayName("fenêtre valide → persistée sur l'entité")
-        void createAnnouncement_validHandoverWindow_persistsIt() {
+        @DisplayName("date limite valide → persistée sur l'entité")
+        void createAnnouncement_validHandoverDeadline_persistsIt() {
             LocalDate departure = LocalDate.now().plusDays(10);
-            LocalDateTime start = departure.atTime(16, 0);
-            LocalDateTime end   = departure.atTime(18, 0);
+            LocalDateTime deadline = departure.atTime(18, 0);
 
             UserEntity traveler = buildTraveler();
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
@@ -2139,11 +2138,10 @@ class AnnouncementServiceTest {
             when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
             when(bidRepository.countByAnnouncementIdAndStatusIn(any(), any())).thenReturn(0L);
 
-            AnnouncementRequest req = buildRequestWithWindow(departure, start, end);
+            AnnouncementRequest req = buildRequestWithDeadline(departure, deadline);
             announcementService.createAnnouncement(FIREBASE_UID, req);
 
-            assertThat(captor.getValue().getHandoverWindowStart()).isEqualTo(start);
-            assertThat(captor.getValue().getHandoverWindowEnd()).isEqualTo(end);
+            assertThat(captor.getValue().getHandoverDeadline()).isEqualTo(deadline);
         }
     }
 

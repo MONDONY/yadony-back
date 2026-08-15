@@ -35,8 +35,7 @@ public record AnnouncementSearchResponse(
         LocalDateTime updatedAt,
         com.yadony.api.matching.PricingMode pricingMode,
         List<AnnouncementPriceGridItemResponse> priceGridItems,
-        LocalDateTime handoverWindowStart,
-        LocalDateTime handoverWindowEnd,
+        LocalDateTime handoverDeadline,
         boolean isFavorite,
         boolean urgent,
         String currency

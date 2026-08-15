@@ -410,13 +410,12 @@ class ThreadAcceptedBidListenerTest {
         }
 
         @Test
-        @DisplayName("annonce trouvée → bid hérite fenêtre de remise + lieu de pickup")
+        @DisplayName("annonce trouvée → bid hérite date limite de dépôt + lieu de pickup")
         void copiesHandoverWindowFromAnnouncement() {
             LocalDateTime start = LocalDate.now().plusDays(5).atTime(16, 0);
             LocalDateTime end   = LocalDate.now().plusDays(5).atTime(18, 0);
             AnnouncementEntity ann = new AnnouncementEntity();
-            ann.setHandoverWindowStart(start);
-            ann.setHandoverWindowEnd(end);
+            ann.setHandoverDeadline(end);
             ann.setPickupAddressLabel("Gare du Nord");
             lenient().when(announcementRepository.findById(ANNOUNCEMENT_ID))
                     .thenReturn(Optional.of(ann));
@@ -426,8 +425,7 @@ class ThreadAcceptedBidListenerTest {
             ArgumentCaptor<BidEntity> captor = ArgumentCaptor.forClass(BidEntity.class);
             verify(bidRepository).save(captor.capture());
             BidEntity saved = captor.getValue();
-            assertThat(saved.getHandoverWindowStart()).isEqualTo(start);
-            assertThat(saved.getHandoverWindowEnd()).isEqualTo(end);
+            assertThat(saved.getHandoverDeadline()).isEqualTo(end);
             assertThat(saved.getHandoverLocation()).isEqualTo("Gare du Nord");
         }
     }

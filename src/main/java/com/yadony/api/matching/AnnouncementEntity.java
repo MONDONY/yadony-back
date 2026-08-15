@@ -62,11 +62,8 @@ public class AnnouncementEntity extends BaseEntity {
     @Column(name = "arrival_time")
     private LocalTime arrivalTime;
 
-    @Column(name = "handover_window_start")
-    private LocalDateTime handoverWindowStart;
-
-    @Column(name = "handover_window_end")
-    private LocalDateTime handoverWindowEnd;
+    @Column(name = "handover_deadline")
+    private LocalDateTime handoverDeadline;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "transport_mode", nullable = false, length = 20)
@@ -308,9 +305,6 @@ public class AnnouncementEntity extends BaseEntity {
     public PricingMode getPricingMode() { return pricingMode; }
     public void setPricingMode(PricingMode pricingMode) { this.pricingMode = pricingMode; }
 
-    public LocalDateTime getHandoverWindowStart() { return handoverWindowStart; }
-    public void setHandoverWindowStart(LocalDateTime handoverWindowStart) { this.handoverWindowStart = handoverWindowStart; }
-
-    public LocalDateTime getHandoverWindowEnd() { return handoverWindowEnd; }
-    public void setHandoverWindowEnd(LocalDateTime handoverWindowEnd) { this.handoverWindowEnd = handoverWindowEnd; }
+    public LocalDateTime getHandoverDeadline() { return handoverDeadline; }
+    public void setHandoverDeadline(LocalDateTime handoverDeadline) { this.handoverDeadline = handoverDeadline; }
 }
