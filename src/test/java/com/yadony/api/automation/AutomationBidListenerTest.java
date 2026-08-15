@@ -9,6 +9,8 @@ import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
+import com.yadony.api.matching.BidStatus;
+import com.yadony.api.payments.cash.PaymentMethod;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
@@ -103,6 +105,30 @@ class AutomationBidListenerTest {
         listener.onBidCreated(event);
 
         verify(bidService).acceptBidBySystem(bidId, travelerId);
+    }
+
+    @Test
+    void onBidCreated_cashBid_doesNotRunPaymentEscrowAutomation() {
+        BidEntity cashBid = new BidEntity();
+        cashBid.setPaymentMethod(PaymentMethod.CASH);
+        cashBid.setStatus(BidStatus.PENDING);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(cashBid));
+
+        UserEntity sender = new UserEntity();
+        sender.setAverageRating(new BigDecimal("4.8"));
+        when(userRepository.findById(senderId)).thenReturn(Optional.of(sender));
+        AnnouncementEntity announcement = new AnnouncementEntity();
+        announcement.setAvailableKg(new BigDecimal("20"));
+        when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(announcement));
+        when(ruleRepository.findByTravelerIdOrderByCreatedAtAsc(travelerId)).thenReturn(List.of(
+                presetRule("auto_accept_trusted", true, Map.of("minRating", 4.0))));
+
+        listener.onBidCreated(new BidCreatedEvent(
+                bidId, announcementId, travelerId, senderId,
+                "Awa", new BigDecimal("5"), "Paris → Dakar"));
+
+        verify(bidService, never()).acceptBidBySystem(any(), any());
+        verify(bidService, never()).rejectBidBySystem(any(), any(), any());
     }
 
     @Test

@@ -224,8 +224,8 @@ class BidServiceTest {
             assertThat(result.weightKg()).isEqualByComparingTo(BigDecimal.valueOf(5));
             assertThat(result.photos()).isEmpty();
             verify(auditService).log(eq("BID"), any(), eq("BID_CREATED"), any(), any());
-            // Task 8: BidCreatedEvent is no longer published from createBid — the
-            // webhook (PaymentService.promoteBidOnPaymentAuthorized) does it now.
+            // Carte : pas d'événement avant l'autorisation Stripe, sinon le voyageur
+            // recevrait une proposition abandonnée ou un doublon après le webhook.
             verify(eventPublisher, never()).publishEvent(any(BidCreatedEvent.class));
         }
 
@@ -682,6 +682,12 @@ class BidServiceTest {
             verify(bidRepository).save(captor.capture());
             assertThat(captor.getValue().getPaymentMethod())
                     .isEqualTo(com.yadony.api.payments.cash.PaymentMethod.CASH);
+
+            ArgumentCaptor<Object> eventCaptor = ArgumentCaptor.forClass(Object.class);
+            verify(eventPublisher, times(1)).publishEvent(eventCaptor.capture());
+            assertThat(eventCaptor.getValue()).isNotInstanceOf(BidCreatedEvent.class);
+            assertThat(eventCaptor.getValue().getClass().getSimpleName())
+                    .isEqualTo("CashBidCreatedEvent");
         }
 
         @Test
@@ -2010,29 +2016,6 @@ class BidServiceTest {
                     .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
                             .isEqualTo("bid-not-accepted"));
         }
-    }
-
-    // ─── markH2AlertSent ───────────────────────────────────────────────────────
-
-    @Test
-    @DisplayName("markH2AlertSent → heure alert enregistrée")
-    void markH2AlertSent_existingBid_setsAlertTime() {
-        BidEntity bid = buildBid();
-        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
-        when(bidRepository.save(any())).thenReturn(bid);
-
-        bidService.markH2AlertSent(BID_ID);
-
-        assertThat(bid.getH2AlertSentAt()).isNotNull();
-    }
-
-    @Test
-    @DisplayName("markH2AlertSent bid introuvable → no-op silencieux")
-    void markH2AlertSent_unknownBid_doesNothing() {
-        when(bidRepository.findById(BID_ID)).thenReturn(Optional.empty());
-
-        assertThatCode(() -> bidService.markH2AlertSent(BID_ID)).doesNotThrowAnyException();
-        verify(bidRepository, never()).save(any());
     }
 
     // ─── getMyBids ─────────────────────────────────────────────────────────────

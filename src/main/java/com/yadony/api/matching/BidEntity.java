@@ -136,6 +136,12 @@ public class BidEntity extends BaseEntity {
     @Column(name = "returned_at")
     private LocalDateTime returnedAt;
 
+    @Column(name = "return_warning_sent_at")
+    private LocalDateTime returnWarningSentAt;
+
+    @Column(name = "return_expired_notified_at")
+    private LocalDateTime returnExpiredNotifiedAt;
+
     @Column(name = "h2_alert_sent_at")
     private LocalDateTime h2AlertSentAt;
 
@@ -306,6 +312,14 @@ public class BidEntity extends BaseEntity {
 
     public LocalDateTime getReturnedAt() { return returnedAt; }
     public void setReturnedAt(LocalDateTime returnedAt) { this.returnedAt = returnedAt; }
+
+    public LocalDateTime getReturnWarningSentAt() { return returnWarningSentAt; }
+    public void setReturnWarningSentAt(LocalDateTime returnWarningSentAt) { this.returnWarningSentAt = returnWarningSentAt; }
+
+    public LocalDateTime getReturnExpiredNotifiedAt() { return returnExpiredNotifiedAt; }
+    public void setReturnExpiredNotifiedAt(LocalDateTime returnExpiredNotifiedAt) {
+        this.returnExpiredNotifiedAt = returnExpiredNotifiedAt;
+    }
 
     public LocalDateTime getH2AlertSentAt() { return h2AlertSentAt; }
     public void setH2AlertSentAt(LocalDateTime h2AlertSentAt) { this.h2AlertSentAt = h2AlertSentAt; }

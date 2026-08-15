@@ -5,11 +5,21 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.cancellation.events.BidLostRematchPreparedEvent;
 import com.yadony.api.cancellation.events.DeliveryNoShowReportedEvent;
 import com.yadony.api.cancellation.events.TripCancelledEvent;
+import com.yadony.api.cancellation.events.ParcelReturnedEvent;
+import com.yadony.api.cancellation.events.ReturnDeadlineExpiredEvent;
+import com.yadony.api.cancellation.events.ReturnDeadlineWarningEvent;
 import com.yadony.api.disputes.events.DisputeOpenedEvent;
+import com.yadony.api.disputes.events.DisputeResolvedEvent;
+import com.yadony.api.disputes.events.DisputeUpdatedEvent;
+import com.yadony.api.kyc.events.UserKycVerifiedEvent;
+import com.yadony.api.kyc.events.UserKycActionRequiredEvent;
 import com.yadony.api.matching.events.BidAcceptedEvent;
 import com.yadony.api.matching.events.BidCreatedEvent;
+import com.yadony.api.matching.events.CashBidCreatedEvent;
 import com.yadony.api.matching.events.BidRejectedEvent;
+import com.yadony.api.matching.events.HandoverAlertEvent;
 import com.yadony.api.payments.events.PaymentReleasedEvent;
+import com.yadony.api.payments.mobilemoney.events.BidPaidByMobileMoneyEvent;
 import com.yadony.api.tracking.events.DeliveryConfirmedEvent;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -17,6 +27,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.event.TransactionPhase;
+import org.springframework.transaction.event.TransactionalEventListener;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -68,6 +80,21 @@ class NotificationDispatcherTest {
     // ── BidCreatedEvent ───────────────────────────────────────────────────────
 
     @Test
+    void bidCreatedAndAccepted_notificationsRunOnlyAfterCommit() throws NoSuchMethodException {
+        var created = NotificationDispatcher.class
+                .getMethod("onBidCreated", BidCreatedEvent.class)
+                .getAnnotation(TransactionalEventListener.class);
+        var accepted = NotificationDispatcher.class
+                .getMethod("onBidAccepted", BidAcceptedEvent.class)
+                .getAnnotation(TransactionalEventListener.class);
+
+        assertThat(created).isNotNull();
+        assertThat(created.phase()).isEqualTo(TransactionPhase.AFTER_COMMIT);
+        assertThat(accepted).isNotNull();
+        assertThat(accepted.phase()).isEqualTo(TransactionPhase.AFTER_COMMIT);
+    }
+
+    @Test
     void onBidCreated_notifiesTraveler() {
         BidCreatedEvent event = new BidCreatedEvent(
                 bidId, annId, travelerId, senderId, "Mariama", BigDecimal.valueOf(3.5), "Paris → Dakar");
@@ -78,6 +105,161 @@ class NotificationDispatcherTest {
         var dataCaptor = ArgumentCaptor.forClass(Map.class);
         verify(fcmService).sendToUser(eq(travelerId), eq("Nouvelle demande d'envoi"), contains("Mariama"), dataCaptor.capture());
         assertThat(dataCaptor.getValue()).containsEntry("type", "BID_CREATED");
+    }
+
+    @Test
+    void onCashBidCreated_notifiesTravelerWithoutUsingAutomationSignal() throws NoSuchMethodException {
+        CashBidCreatedEvent event = new CashBidCreatedEvent(
+                bidId, annId, travelerId, senderId,
+                "Mariama", BigDecimal.valueOf(3.5), "Paris → Dakar");
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onCashBidCreated(event);
+
+        verify(fcmService).sendToUser(
+                eq(travelerId), eq("Nouvelle demande d'envoi"), contains("Mariama"),
+                argThat(data -> "BID_CREATED".equals(data.get("type"))
+                        && bidId.toString().equals(data.get("bidId"))));
+        var listener = NotificationDispatcher.class
+                .getMethod("onCashBidCreated", CashBidCreatedEvent.class)
+                .getAnnotation(TransactionalEventListener.class);
+        assertThat(listener).isNotNull();
+        assertThat(listener.phase()).isEqualTo(TransactionPhase.AFTER_COMMIT);
+    }
+
+    // ── HandoverAlertEvent ───────────────────────────────────────────────────
+
+    @Test
+    void onHandoverAlert_persistsCriticalNotificationForSmsFallback() {
+        LocalDateTime start = LocalDateTime.of(2026, 8, 20, 18, 0);
+        LocalDateTime end = start.plusHours(2);
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onHandoverAlert(new HandoverAlertEvent(
+                bidId, senderId, "Gare du Nord", start, end));
+
+        var dataCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(notificationService).persist(
+                eq(senderId), eq("HANDOVER_REMINDER_H2"),
+                eq("Remise dans moins de 2 heures"), contains("Gare du Nord"),
+                any(), eq(true));
+        verify(fcmService).sendToUser(
+                eq(senderId), eq("Remise dans moins de 2 heures"),
+                contains("confirmation du voyageur"), dataCaptor.capture());
+        assertThat(dataCaptor.getValue())
+                .containsEntry("type", "HANDOVER_REMINDER_H2")
+                .containsEntry("bidId", bidId.toString());
+    }
+
+    // ── KYC events ───────────────────────────────────────────────────────────
+
+    @Test
+    void onUserKycVerified_notifiesUserWithKycRouteType() {
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onUserKycVerified(new UserKycVerifiedEvent(senderId));
+
+        var dataCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(fcmService).sendToUser(
+                eq(senderId), eq("Identité vérifiée"),
+                contains("publier"), dataCaptor.capture());
+        assertThat(dataCaptor.getValue()).containsEntry("type", "KYC_VERIFIED");
+    }
+
+    @Test
+    void onUserKycActionRequired_notifiesUserWithoutExposingStripeReason() {
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onUserKycActionRequired(
+                new UserKycActionRequiredEvent(senderId, "document_unverified_other"));
+
+        var dataCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(fcmService).sendToUser(
+                eq(senderId), eq("Vérification à compléter"),
+                contains("identité"), dataCaptor.capture());
+        assertThat(dataCaptor.getValue())
+                .containsEntry("type", "KYC_ACTION_REQUIRED")
+                .doesNotContainKey("reasonCode");
+    }
+
+    // ── Mobile Money ─────────────────────────────────────────────────────────
+
+    @Test
+    void onBidPaidByMobileMoney_notifiesTraveler() {
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onBidPaidByMobileMoney(
+                new BidPaidByMobileMoneyEvent(bidId, travelerId));
+
+        var dataCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(fcmService).sendToUser(
+                eq(travelerId), eq("Paiement confirmé"),
+                contains("Mobile Money"), dataCaptor.capture());
+        assertThat(dataCaptor.getValue())
+                .containsEntry("type", "MOBILE_MONEY_PAYMENT_CONFIRMED")
+                .containsEntry("bidId", bidId.toString());
+    }
+
+    // ── Parcel return ────────────────────────────────────────────────────────
+
+    @Test
+    void onParcelReturned_notifiesBothParties() {
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onParcelReturned(
+                new ParcelReturnedEvent(bidId, travelerId, senderId));
+
+        verify(fcmService).sendToUser(
+                eq(senderId), eq("Colis rendu"), any(), argThat(data ->
+                        "PARCEL_RETURNED".equals(data.get("type"))));
+        verify(fcmService).sendToUser(
+                eq(travelerId), eq("Retour confirmé"), any(), argThat(data ->
+                        "PARCEL_RETURNED".equals(data.get("type"))));
+    }
+
+    @Test
+    void onReturnDeadlineWarning_notifiesBothParties() {
+        dispatcher.onReturnDeadlineWarning(new ReturnDeadlineWarningEvent(
+                bidId, senderId, travelerId, LocalDateTime.now().plusHours(20)));
+
+        verify(fcmService).sendToUser(eq(senderId), eq("Communiquez votre code de retour"),
+                any(), argThat(data -> "RETURN_DEADLINE_WARNING".equals(data.get("type"))));
+        verify(fcmService).sendToUser(eq(travelerId), eq("Retour du colis à effectuer"),
+                any(), argThat(data -> "RETURN_DEADLINE_WARNING".equals(data.get("type"))));
+    }
+
+    @Test
+    void onReturnDeadlineExpired_notifiesBothParties() {
+        dispatcher.onReturnDeadlineExpired(
+                new ReturnDeadlineExpiredEvent(bidId, senderId, travelerId));
+
+        verify(fcmService).sendToUser(eq(senderId), eq("Délai de retour dépassé"),
+                any(), argThat(data -> "RETURN_DEADLINE_EXPIRED".equals(data.get("type"))));
+        verify(fcmService).sendToUser(eq(travelerId), eq("Délai de retour dépassé"),
+                any(), argThat(data -> "RETURN_DEADLINE_EXPIRED".equals(data.get("type"))));
+    }
+
+    @Test
+    void onDisputeUpdated_notifiesBothParties() {
+        UUID disputeId = UUID.randomUUID();
+        dispatcher.onDisputeUpdated(new DisputeUpdatedEvent(
+                disputeId, bidId, senderId, travelerId, "GUARANTEE_PAID"));
+
+        verify(fcmService).sendToUser(eq(senderId), eq("Litige mis à jour"), any(),
+                argThat(data -> disputeId.toString().equals(data.get("disputeId"))
+                        && "DISPUTE_UPDATED".equals(data.get("type"))));
+        verify(fcmService).sendToUser(eq(travelerId), eq("Litige mis à jour"), any(), any());
+    }
+
+    @Test
+    void onDisputeResolved_notifiesBothParties() {
+        UUID disputeId = UUID.randomUUID();
+        dispatcher.onDisputeResolved(new DisputeResolvedEvent(
+                disputeId, bidId, senderId, travelerId, "REFUND_SENDER"));
+
+        verify(fcmService).sendToUser(eq(senderId), eq("Litige résolu"), any(),
+                argThat(data -> "DISPUTE_RESOLVED".equals(data.get("type"))));
+        verify(fcmService).sendToUser(eq(travelerId), eq("Litige résolu"), any(), any());
     }
 
     // ── AnnouncementInProgressEvent ───────────────────────────────────────────

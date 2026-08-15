@@ -13,15 +13,18 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.disputes.DisputeEntity;
 import com.yadony.api.disputes.DisputeRepository;
+import com.yadony.api.disputes.events.DisputeResolvedEvent;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
+import org.mockito.ArgumentMatchers;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.context.ApplicationEventPublisher;
 
 import java.util.List;
 import java.util.Optional;
@@ -39,9 +42,11 @@ class AdminDisputesControllerTest {
     @Mock CancellationRepository cancellationRepo;
     @Mock AuditService auditService;
     @Mock UserRepository userRepo;
+    @Mock ApplicationEventPublisher eventPublisher;
 
     private AdminDisputesController controller() {
-        return new AdminDisputesController(disputeRepo, cancellationRepo, auditService, userRepo);
+        return new AdminDisputesController(
+                disputeRepo, cancellationRepo, auditService, userRepo, eventPublisher);
     }
 
     // ---- listDisputes ----
@@ -115,6 +120,10 @@ class AdminDisputesControllerTest {
         assertThat(entity.getResolvedAt()).isNotNull();
         verify(disputeRepo).save(entity);
         verify(auditService).log(eq("DISPUTE"), eq(entity.getId()), eq("RESOLVE"), isNull(), any());
+        verify(eventPublisher).publishEvent(ArgumentMatchers.<Object>argThat(event ->
+                event instanceof DisputeResolvedEvent resolved
+                        && resolved.disputeId().equals(id)
+                        && "REFUND_SENDER".equals(resolved.resolution())));
     }
 
     @Test
@@ -124,6 +133,22 @@ class AdminDisputesControllerTest {
 
         assertThrows(YadonyBusinessException.class,
                 () -> controller().resolveDispute(id, new AdminResolveDisputeRequest("res", "note")));
+    }
+
+    @Test
+    void resolveDispute_alreadyResolved_throws409WithoutPublishingAgain() {
+        UUID id = UUID.randomUUID();
+        DisputeEntity entity = new DisputeEntity();
+        entity.setStatus("RESOLVED");
+        when(disputeRepo.findById(id)).thenReturn(Optional.of(entity));
+
+        YadonyBusinessException error = assertThrows(YadonyBusinessException.class,
+                () -> controller().resolveDispute(
+                        id, new AdminResolveDisputeRequest("REFUND_SENDER", "retry")));
+
+        assertThat(error.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+        verify(disputeRepo, never()).save(any());
+        verifyNoInteractions(eventPublisher);
     }
 
     @Test
@@ -230,6 +255,10 @@ class AdminDisputesControllerTest {
         assertThat(entity.getResolvedAt()).isNotNull();
         verify(disputeRepo).save(entity);
         verify(auditService).log(eq("DISPUTE"), eq(entity.getId()), eq("GUARANTEE_FUND"), isNull(), any());
+        verify(eventPublisher).publishEvent(ArgumentMatchers.<Object>argThat(event ->
+                event instanceof DisputeResolvedEvent resolved
+                        && resolved.disputeId().equals(id)
+                        && "GUARANTEE_PAID".equals(resolved.resolution())));
     }
 
     @Test
@@ -264,6 +293,22 @@ class AdminDisputesControllerTest {
         assertThrows(YadonyBusinessException.class,
                 () -> controller().payGuaranteeFund(id,
                         new AdminGuaranteeFundRequest(5000, UUID.randomUUID(), "reason")));
+    }
+
+    @Test
+    void payGuaranteeFund_alreadyResolved_throws409WithoutPublishingAgain() {
+        UUID id = UUID.randomUUID();
+        DisputeEntity entity = new DisputeEntity();
+        entity.setStatus("RESOLVED");
+        when(disputeRepo.findById(id)).thenReturn(Optional.of(entity));
+
+        YadonyBusinessException error = assertThrows(YadonyBusinessException.class,
+                () -> controller().payGuaranteeFund(id,
+                        new AdminGuaranteeFundRequest(5000, UUID.randomUUID(), "retry")));
+
+        assertThat(error.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+        verify(disputeRepo, never()).save(any());
+        verifyNoInteractions(eventPublisher);
     }
 
     // ---- listCancellations ----

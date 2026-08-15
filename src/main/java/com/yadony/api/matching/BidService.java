@@ -20,6 +20,8 @@ import com.yadony.api.matching.dto.BidResponse;
 import com.yadony.api.matching.dto.ContactPhoneResponse;
 import com.yadony.api.promo.PromoService;
 import com.yadony.api.matching.events.BidAcceptedEvent;
+import com.yadony.api.matching.events.BidCreatedEvent;
+import com.yadony.api.matching.events.CashBidCreatedEvent;
 import com.yadony.api.matching.events.BidRejectedEvent;
 import com.yadony.api.cancellation.CancellationEntity;
 import com.yadony.api.cancellation.CancellationReason;
@@ -396,11 +398,19 @@ public class BidService {
             bidGridItemRepository.saveAll(bidGridItems);
         }
 
-        // Note: BidCreatedEvent is no longer published here. Traveler notification
-        // happens after the sender's payment is authorized — see
-        // PaymentService.promoteBidOnPaymentAuthorized().
-
         bidPhotoService.attachPhotos(saved.getId(), sender.getId(), request.photoKeys());
+
+        // Le parcours carte publie le même événement après autorisation Stripe dans
+        // PaymentService.promoteBidOnPaymentAuthorized(). En CASH, la création du bid
+        // termine directement le parcours : le voyageur peut donc être notifié ici.
+        if (pm == PaymentMethod.CASH) {
+            String senderName = sender.getFirstName() != null && !sender.getFirstName().isBlank()
+                    ? sender.getFirstName() : "Un expéditeur";
+            String corridor = announcement.getDepartureCity() + " → " + announcement.getArrivalCity();
+            eventPublisher.publishEvent(new CashBidCreatedEvent(
+                    saved.getId(), announcement.getId(), announcement.getTravelerId(), sender.getId(),
+                    senderName, saved.getWeightKg(), corridor));
+        }
 
         return toResponse(saved, sender);
     }
@@ -915,14 +925,6 @@ public class BidService {
                         "senderId", bid.getSenderId().toString()));
 
         return toResponse(bid, sender);
-    }
-
-    @Transactional
-    public void markH2AlertSent(UUID bidId) {
-        bidRepository.findById(bidId).ifPresent(bid -> {
-            bid.setH2AlertSentAt(LocalDateTime.now(ZoneOffset.UTC));
-            bidRepository.save(bid);
-        });
     }
 
     /** Upload une photo de colis pour le sender courant ; renvoie la clé S3. */

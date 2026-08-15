@@ -6,6 +6,7 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.stripe.StripeWebhookHandler;
 import com.yadony.api.kyc.events.UserKycVerifiedEvent;
+import com.yadony.api.kyc.events.UserKycActionRequiredEvent;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.stripe.model.Event;
@@ -124,6 +125,8 @@ public class KycStripeWebhookHandler implements StripeWebhookHandler {
                 userRepository.save(user);
                 auditService.log("kyc_verification", kyc.getId(), "KYC_REJECTED",
                         user.getId(), Map.of("sessionId", sessionId, "reason", kyc.getRejectionReason()));
+                eventPublisher.publishEvent(new UserKycActionRequiredEvent(
+                        user.getId(), kyc.getRejectionCode()));
             }
         }
     }

@@ -3,6 +3,9 @@ package com.yadony.api.cancellation.job;
 import com.yadony.api.admin.AdminAlertEntity;
 import com.yadony.api.admin.AdminAlertRepository;
 import com.yadony.api.cancellation.events.ReturnDeadlineExpiredEvent;
+import com.yadony.api.cancellation.events.ReturnDeadlineWarningEvent;
+import com.yadony.api.matching.AnnouncementEntity;
+import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import java.time.LocalDateTime;
@@ -18,7 +21,8 @@ import org.springframework.transaction.annotation.Transactional;
  * Job J+3 (D4) : détecte les colis annulés après remise non rendus dans les 3 jours,
  * lève une alerte admin persistée {@code RETURN_DEADLINE_EXPIRED} et publie
  * {@link ReturnDeadlineExpiredEvent}. NE suspend JAMAIS automatiquement : l'admin décide
- * (voir {@code AdminUserController.suspendPublishing}). Idempotent via le payload de l'alerte.
+ * (voir {@code AdminUserController.suspendPublishing}). Idempotent via un marqueur métier
+ * persistant sur le bid, indépendant de la résolution de l'alerte admin.
  */
 @Component
 public class ReturnDeadlineScheduler {
@@ -29,31 +33,52 @@ public class ReturnDeadlineScheduler {
     private final BidRepository bidRepository;
     private final AdminAlertRepository adminAlertRepository;
     private final ApplicationEventPublisher eventPublisher;
+    private final AnnouncementRepository announcementRepository;
 
     public ReturnDeadlineScheduler(BidRepository bidRepository,
                                    AdminAlertRepository adminAlertRepository,
-                                   ApplicationEventPublisher eventPublisher) {
+                                   ApplicationEventPublisher eventPublisher,
+                                   AnnouncementRepository announcementRepository) {
         this.bidRepository = bidRepository;
         this.adminAlertRepository = adminAlertRepository;
         this.eventPublisher = eventPublisher;
+        this.announcementRepository = announcementRepository;
     }
 
     @Scheduled(cron = "${yadony.cancellation.return-deadline-cron}", zone = "UTC")
     @Transactional
     public void run() {
+        LocalDateTime now = LocalDateTime.now();
+        List<BidEntity> warnings = bidRepository
+                .findByReturnDeadlineBetweenAndReturnWarningSentAtIsNullAndReturnedAtIsNull(
+                        now, now.plusDays(1));
+        for (BidEntity bid : warnings) {
+            AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
+                    .orElse(null);
+            if (announcement == null) {
+                log.warn("Cannot send return warning for bid {}: announcement missing", bid.getId());
+                continue;
+            }
+            eventPublisher.publishEvent(new ReturnDeadlineWarningEvent(
+                    bid.getId(), bid.getSenderId(), announcement.getTravelerId(),
+                    bid.getReturnDeadline()));
+            bid.setReturnWarningSentAt(now);
+            bidRepository.save(bid);
+        }
+
         List<BidEntity> expired =
-                bidRepository.findByReturnDeadlineBeforeAndReturnedAtIsNull(LocalDateTime.now());
+                bidRepository.findByReturnDeadlineBeforeAndReturnedAtIsNullAndReturnExpiredNotifiedAtIsNull(now);
         if (expired.isEmpty()) {
             return;
         }
-        List<AdminAlertEntity> open = adminAlertRepository.findByTypeAndResolved(ALERT_TYPE, false);
         for (BidEntity bid : expired) {
-            String bidIdStr = bid.getId().toString();
-            boolean already = open.stream()
-                    .anyMatch(a -> a.getPayload() != null && a.getPayload().contains(bidIdStr));
-            if (already) {
+            if (bid.getReturnExpiredNotifiedAt() != null) {
                 continue;
             }
+            String bidIdStr = bid.getId().toString();
+            bid.setReturnExpiredNotifiedAt(now);
+            bidRepository.save(bid);
+
             AdminAlertEntity alert = new AdminAlertEntity();
             alert.setType(ALERT_TYPE);
             alert.setPayload(String.format(
@@ -62,7 +87,11 @@ public class ReturnDeadlineScheduler {
             alert.setResolved(false);
             adminAlertRepository.save(alert);
 
-            eventPublisher.publishEvent(new ReturnDeadlineExpiredEvent(bid.getId()));
+            AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
+                    .orElse(null);
+            eventPublisher.publishEvent(new ReturnDeadlineExpiredEvent(
+                    bid.getId(), bid.getSenderId(),
+                    announcement == null ? null : announcement.getTravelerId()));
             log.warn("Return deadline expired for bid {} — admin alert raised", bidIdStr);
         }
     }

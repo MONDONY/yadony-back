@@ -8,6 +8,7 @@ import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidService;
 import com.yadony.api.matching.events.BidCreatedEvent;
+import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.notifications.NotificationDispatcher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -71,6 +72,12 @@ public class AutomationBidListener {
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onBidCreated(BidCreatedEvent event) {
+        BidEntity persistedBid = bidRepository.findById(event.getBidId()).orElse(null);
+        if (persistedBid != null && persistedBid.getPaymentMethod() == PaymentMethod.CASH) {
+            log.warn("Automation: CASH bid {} ignored because it is not in escrow", event.getBidId());
+            return;
+        }
+
         List<AutomationRuleEntity> rules =
                 ruleRepository.findByTravelerIdOrderByCreatedAtAsc(event.getTravelerId());
 
@@ -94,14 +101,13 @@ public class AutomationBidListener {
 
         BidEvaluationContext ctx = null;
         if (!customRejectRules.isEmpty() || !customAcceptRules.isEmpty()) {
-            BidEntity bid = bidRepository.findById(event.getBidId()).orElse(null);
-            if (bid == null) {
+            if (persistedBid == null) {
                 log.warn("Automation: bid {} not found, custom rules skipped", event.getBidId());
             } else {
                 ctx = new BidEvaluationContext(
                         event.getWeightKg(),
                         event.getCorridor(),
-                        bid.getContentCategory(),
+                        persistedBid.getContentCategory(),
                         sender != null ? sender.getAverageRating() : null,
                         announcement.getAvailableKg(),
                         announcement.getDepartureAt() == null ? null

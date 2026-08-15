@@ -156,6 +156,16 @@ class NotificationPrefsServiceTest {
     }
 
     @Test
+    void isAllowed_transactionLifecycleTypes_followBidsPref() {
+        when(repository.findById(USER_ID)).thenReturn(Optional.of(buildEntity(false, true, true, true, false)));
+
+        assertThat(service.isAllowed(USER_ID, "MOBILE_MONEY_PAYMENT_CONFIRMED")).isFalse();
+        assertThat(service.isAllowed(USER_ID, "PARCEL_RETURNED")).isFalse();
+        assertThat(service.isAllowed(USER_ID, "RETURN_DEADLINE_WARNING")).isFalse();
+        assertThat(service.isAllowed(USER_ID, "RETURN_DEADLINE_EXPIRED")).isFalse();
+    }
+
+    @Test
     void isAllowed_travelerNewAnnouncement_followsCorridorAlertsPref() {
         NotificationPrefsEntity e = buildEntity(true, true, true, true, false);
         e.setPushCorridorAlerts(false);
