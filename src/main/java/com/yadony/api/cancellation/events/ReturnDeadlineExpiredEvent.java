@@ -7,5 +7,5 @@ import java.util.UUID;
  * d'un colis annulé après remise est dépassé sans confirmation. NE suspend PAS :
  * lève une alerte admin (la suspension de publication est décidée par l'admin).
  */
-public record ReturnDeadlineExpiredEvent(UUID bidId) {
+public record ReturnDeadlineExpiredEvent(UUID bidId, UUID senderId, UUID travelerId) {
 }

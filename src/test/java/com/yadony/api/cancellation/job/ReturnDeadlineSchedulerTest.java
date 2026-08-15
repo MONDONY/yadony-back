@@ -10,11 +10,15 @@ import static org.mockito.Mockito.when;
 import com.yadony.api.admin.AdminAlertEntity;
 import com.yadony.api.admin.AdminAlertRepository;
 import com.yadony.api.cancellation.events.ReturnDeadlineExpiredEvent;
+import com.yadony.api.cancellation.events.ReturnDeadlineWarningEvent;
+import com.yadony.api.matching.AnnouncementEntity;
+import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -31,6 +35,7 @@ class ReturnDeadlineSchedulerTest {
     @Mock private BidRepository bidRepository;
     @Mock private AdminAlertRepository adminAlertRepository;
     @Mock private ApplicationEventPublisher eventPublisher;
+    @Mock private AnnouncementRepository announcementRepository;
 
     @InjectMocks private ReturnDeadlineScheduler scheduler;
 
@@ -45,11 +50,8 @@ class ReturnDeadlineSchedulerTest {
     @Test
     void expired_raises_admin_alert_and_publishes_event() {
         UUID bidId = UUID.randomUUID();
-        when(bidRepository.findByReturnDeadlineBeforeAndReturnedAtIsNull(any()))
+        when(bidRepository.findByReturnDeadlineBeforeAndReturnedAtIsNullAndReturnExpiredNotifiedAtIsNull(any()))
                 .thenReturn(List.of(expiredBid(bidId)));
-        when(adminAlertRepository.findByTypeAndResolved("RETURN_DEADLINE_EXPIRED", false))
-                .thenReturn(List.of());
-
         scheduler.run();
 
         ArgumentCaptor<AdminAlertEntity> alertCap = ArgumentCaptor.forClass(AdminAlertEntity.class);
@@ -63,14 +65,12 @@ class ReturnDeadlineSchedulerTest {
     }
 
     @Test
-    void idempotent_skips_when_alert_already_exists() {
+    void idempotent_skips_when_expiration_notification_was_already_marked() {
         UUID bidId = UUID.randomUUID();
-        AdminAlertEntity existing = new AdminAlertEntity();
-        existing.setPayload("{\"bidId\":\"" + bidId + "\"}");
-        when(bidRepository.findByReturnDeadlineBeforeAndReturnedAtIsNull(any()))
-                .thenReturn(List.of(expiredBid(bidId)));
-        when(adminAlertRepository.findByTypeAndResolved("RETURN_DEADLINE_EXPIRED", false))
-                .thenReturn(List.of(existing));
+        BidEntity bid = expiredBid(bidId);
+        ReflectionTestUtils.setField(bid, "returnExpiredNotifiedAt", LocalDateTime.now());
+        when(bidRepository.findByReturnDeadlineBeforeAndReturnedAtIsNullAndReturnExpiredNotifiedAtIsNull(any()))
+                .thenReturn(List.of(bid));
 
         scheduler.run();
 
@@ -80,12 +80,39 @@ class ReturnDeadlineSchedulerTest {
 
     @Test
     void no_expired_is_noop() {
-        when(bidRepository.findByReturnDeadlineBeforeAndReturnedAtIsNull(any()))
+        when(bidRepository.findByReturnDeadlineBeforeAndReturnedAtIsNullAndReturnExpiredNotifiedAtIsNull(any()))
                 .thenReturn(List.of());
 
         scheduler.run();
 
         verifyNoInteractions(eventPublisher);
         verify(adminAlertRepository, never()).save(any());
+    }
+
+    @Test
+    void deadlineWithinOneDay_publishesSingleWarningAndMarksBid() {
+        UUID bidId = UUID.randomUUID();
+        UUID announcementId = UUID.randomUUID();
+        UUID travelerId = UUID.randomUUID();
+        BidEntity bid = expiredBid(bidId);
+        bid.setReturnDeadline(LocalDateTime.now().plusHours(20));
+        ReflectionTestUtils.setField(bid, "announcementId", announcementId);
+        AnnouncementEntity announcement = new AnnouncementEntity();
+        ReflectionTestUtils.setField(announcement, "travelerId", travelerId);
+        when(bidRepository.findByReturnDeadlineBetweenAndReturnWarningSentAtIsNullAndReturnedAtIsNull(
+                any(), any())).thenReturn(List.of(bid));
+        when(bidRepository.findByReturnDeadlineBeforeAndReturnedAtIsNullAndReturnExpiredNotifiedAtIsNull(any()))
+                .thenReturn(List.of());
+        when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(announcement));
+
+        scheduler.run();
+
+        ArgumentCaptor<ReturnDeadlineWarningEvent> eventCaptor =
+                ArgumentCaptor.forClass(ReturnDeadlineWarningEvent.class);
+        verify(eventPublisher).publishEvent(eventCaptor.capture());
+        assertThat(eventCaptor.getValue().bidId()).isEqualTo(bidId);
+        assertThat(eventCaptor.getValue().travelerId()).isEqualTo(travelerId);
+        assertThat(bid.getReturnWarningSentAt()).isNotNull();
+        verify(bidRepository).save(bid);
     }
 }

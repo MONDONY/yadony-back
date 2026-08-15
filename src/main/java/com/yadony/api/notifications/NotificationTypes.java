@@ -21,7 +21,8 @@ public final class NotificationTypes {
     private NotificationTypes() {}
 
     public static final Set<String> CRITICAL = Set.of(
-            "PAYMENT_RELEASED", "DELIVERY_CONFIRMED", "DISPUTE_OPENED"
+            "PAYMENT_RELEASED", "DELIVERY_CONFIRMED", "DISPUTE_OPENED",
+            "HANDOVER_REMINDER_H2"
     );
 
     public static boolean isCritical(String type) {

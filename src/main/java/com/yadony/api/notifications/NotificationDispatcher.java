@@ -5,15 +5,25 @@ import com.yadony.api.auth.events.UserSuspendedEvent;
 import com.yadony.api.cancellation.events.BidLostRematchPreparedEvent;
 import com.yadony.api.cancellation.events.DeliveryNoShowReportedEvent;
 import com.yadony.api.cancellation.events.TripCancelledEvent;
+import com.yadony.api.cancellation.events.ParcelReturnedEvent;
+import com.yadony.api.cancellation.events.ReturnDeadlineExpiredEvent;
+import com.yadony.api.cancellation.events.ReturnDeadlineWarningEvent;
 import com.yadony.api.disputes.events.DisputeOpenedEvent;
+import com.yadony.api.disputes.events.DisputeResolvedEvent;
+import com.yadony.api.disputes.events.DisputeUpdatedEvent;
+import com.yadony.api.kyc.events.UserKycVerifiedEvent;
+import com.yadony.api.kyc.events.UserKycActionRequiredEvent;
 import com.yadony.api.matching.events.AnnouncementInProgressEvent;
 import com.yadony.api.matching.events.BidAcceptedEvent;
 import com.yadony.api.matching.events.BidCreatedEvent;
+import com.yadony.api.matching.events.CashBidCreatedEvent;
 import com.yadony.api.matching.events.BidExpiredOnDepartureEvent;
 import com.yadony.api.matching.events.BidRejectedEvent;
+import com.yadony.api.matching.events.HandoverAlertEvent;
 import com.yadony.api.matching.events.ParcelRefusedEvent;
 import com.yadony.api.matching.events.VoyageurNoShowEvent;
 import com.yadony.api.payments.events.PaymentReleasedEvent;
+import com.yadony.api.payments.mobilemoney.events.BidPaidByMobileMoneyEvent;
 import com.yadony.api.tracking.events.DeliveryConfirmedEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,6 +33,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
+import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -87,20 +98,105 @@ public class NotificationDispatcher {
 
     // ── Story 8.2 — Event listeners ──────────────────────────────────────────
 
-    @EventListener @Async
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
     public void onBidCreated(BidCreatedEvent event) {
-        String body = event.getWeightKg() != null
-                ? String.format("%s veut envoyer %.1f kg — %s",
-                        event.getSenderFirstName(), event.getWeightKg().doubleValue(), event.getCorridor())
-                : String.format("%s a une demande d'envoi — %s",
-                        event.getSenderFirstName(), event.getCorridor());
-        notifyUser(event.getTravelerId(), "Nouvelle demande d'envoi", body,
-                Map.of("type", "BID_CREATED",
-                       "bidId", event.getBidId().toString(),
-                       "announcementId", event.getAnnouncementId().toString()));
+        notifyNewBid(event.getBidId(), event.getAnnouncementId(), event.getTravelerId(),
+                event.getSenderFirstName(), event.getWeightKg(), event.getCorridor());
     }
 
-    @EventListener @Async
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
+    public void onCashBidCreated(CashBidCreatedEvent event) {
+        notifyNewBid(event.bidId(), event.announcementId(), event.travelerId(),
+                event.senderFirstName(), event.weightKg(), event.corridor());
+    }
+
+    private void notifyNewBid(UUID bidId, UUID announcementId, UUID travelerId,
+                              String senderFirstName, BigDecimal weightKg, String corridor) {
+        String body = weightKg != null
+                ? String.format("%s veut envoyer %.1f kg — %s",
+                        senderFirstName, weightKg.doubleValue(), corridor)
+                : String.format("%s a une demande d'envoi — %s",
+                        senderFirstName, corridor);
+        notifyUser(travelerId, "Nouvelle demande d'envoi", body,
+                Map.of("type", "BID_CREATED",
+                       "bidId", bidId.toString(),
+                       "announcementId", announcementId.toString()));
+    }
+
+    public void onHandoverAlert(HandoverAlertEvent event) {
+        String body = "Le point de remise approche à " + event.handoverLocation()
+                + " — confirmation du voyageur en attente.";
+        notifyCritical(event.senderId(), "Remise dans moins de 2 heures", body,
+                Map.of("type", "HANDOVER_REMINDER_H2",
+                       "bidId", event.bidId().toString()));
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
+    public void onUserKycVerified(UserKycVerifiedEvent event) {
+        notifyUser(event.getUserId(), "Identité vérifiée",
+                "Votre identité est vérifiée. Vous pouvez maintenant publier et effectuer vos transactions.",
+                Map.of("type", "KYC_VERIFIED"));
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
+    public void onUserKycActionRequired(UserKycActionRequiredEvent event) {
+        notifyUser(event.userId(), "Vérification à compléter",
+                "Une action est nécessaire pour terminer la vérification de votre identité.",
+                Map.of("type", "KYC_ACTION_REQUIRED"));
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
+    public void onBidPaidByMobileMoney(BidPaidByMobileMoneyEvent event) {
+        notifyUser(event.getTravelerId(), "Paiement confirmé",
+                "Le paiement Mobile Money de cet envoi est confirmé.",
+                Map.of("type", "MOBILE_MONEY_PAYMENT_CONFIRMED",
+                       "bidId", event.getBidId().toString()));
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
+    public void onParcelReturned(ParcelReturnedEvent event) {
+        Map<String, String> data = Map.of(
+                "type", "PARCEL_RETURNED", "bidId", event.bidId().toString());
+        notifyUser(event.senderId(), "Colis rendu",
+                "Le retour de votre colis a été confirmé.", data);
+        notifyUser(event.travelerId(), "Retour confirmé",
+                "La restitution du colis est enregistrée.", data);
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
+    public void onReturnDeadlineWarning(ReturnDeadlineWarningEvent event) {
+        Map<String, String> data = Map.of(
+                "type", "RETURN_DEADLINE_WARNING", "bidId", event.bidId().toString());
+        notifyUser(event.senderId(), "Communiquez votre code de retour",
+                "Le délai de retour expire dans moins de 24 heures.", data);
+        notifyUser(event.travelerId(), "Retour du colis à effectuer",
+                "Confirmez la restitution avant l'expiration du délai.", data);
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
+    public void onReturnDeadlineExpired(ReturnDeadlineExpiredEvent event) {
+        Map<String, String> data = Map.of(
+                "type", "RETURN_DEADLINE_EXPIRED", "bidId", event.bidId().toString());
+        if (event.senderId() != null) {
+            notifyUser(event.senderId(), "Délai de retour dépassé",
+                    "Le retour du colis n'a pas été confirmé. Notre équipe a été alertée.", data);
+        }
+        if (event.travelerId() != null) {
+            notifyUser(event.travelerId(), "Délai de retour dépassé",
+                    "Le retour du colis n'a pas été confirmé. Notre équipe a été alertée.", data);
+        }
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
     public void onBidAccepted(BidAcceptedEvent event) {
         String name = userRepository.findById(event.getTravelerId())
                 .map(u -> u.getFirstName() != null ? u.getFirstName() : "Le voyageur")
@@ -217,6 +313,40 @@ public class NotificationDispatcher {
         Map<String, String> data = Map.of("type", "DISPUTE_OPENED", "bidId", event.getBidId().toString());
         notifyCritical(event.getSenderId(),  "Litige ouvert", "Un incident a été signalé sur votre envoi",  data);
         notifyCritical(event.getTravelerId(), "Litige ouvert", "Un incident a été signalé sur votre colis", data);
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
+    public void onDisputeUpdated(DisputeUpdatedEvent event) {
+        Map<String, String> data = disputeData(
+                "DISPUTE_UPDATED", event.disputeId(), event.bidId());
+        notifyDisputeParties(event.senderId(), event.travelerId(),
+                "Litige mis à jour",
+                "Une nouvelle décision financière a été enregistrée sur votre litige.", data);
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
+    public void onDisputeResolved(DisputeResolvedEvent event) {
+        Map<String, String> data = disputeData(
+                "DISPUTE_RESOLVED", event.disputeId(), event.bidId());
+        notifyDisputeParties(event.senderId(), event.travelerId(),
+                "Litige résolu",
+                "Une décision finale a été prise. Consultez le détail du litige.", data);
+    }
+
+    private Map<String, String> disputeData(String type, UUID disputeId, UUID bidId) {
+        Map<String, String> data = new HashMap<>();
+        data.put("type", type);
+        data.put("disputeId", disputeId.toString());
+        if (bidId != null) data.put("bidId", bidId.toString());
+        return data;
+    }
+
+    private void notifyDisputeParties(UUID senderId, UUID travelerId,
+                                      String title, String body, Map<String, String> data) {
+        if (senderId != null) notifyUser(senderId, title, body, data);
+        if (travelerId != null) notifyUser(travelerId, title, body, data);
     }
 
     // Story 9.4 — Notification expéditeur : colis refusé

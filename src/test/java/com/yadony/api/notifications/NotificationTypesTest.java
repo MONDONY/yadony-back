@@ -14,9 +14,11 @@ class NotificationTypesTest {
      * chaque envoi. Ce test force à traiter les deux côtés dans le même geste.
      */
     @Test
-    void criticalSet_isExactlyTheThreeSharedWithTheFlutterClient() {
+    void criticalSet_isExactlySharedWithTheFlutterClient() {
         assertThat(NotificationTypes.CRITICAL)
-                .containsExactlyInAnyOrder("PAYMENT_RELEASED", "DELIVERY_CONFIRMED", "DISPUTE_OPENED");
+                .containsExactlyInAnyOrder(
+                        "PAYMENT_RELEASED", "DELIVERY_CONFIRMED", "DISPUTE_OPENED",
+                        "HANDOVER_REMINDER_H2");
     }
 
     @Test
@@ -24,6 +26,7 @@ class NotificationTypesTest {
         assertThat(NotificationTypes.isCritical("PAYMENT_RELEASED")).isTrue();
         assertThat(NotificationTypes.isCritical("DELIVERY_CONFIRMED")).isTrue();
         assertThat(NotificationTypes.isCritical("DISPUTE_OPENED")).isTrue();
+        assertThat(NotificationTypes.isCritical("HANDOVER_REMINDER_H2")).isTrue();
     }
 
     @Test

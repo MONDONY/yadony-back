@@ -16,6 +16,8 @@ import com.yadony.api.common.MatchingTextUtil;
 import com.yadony.api.disputes.DisputeEntity;
 import com.yadony.api.disputes.DisputeRepository;
 import com.yadony.api.disputes.DisputeTypes;
+import com.yadony.api.disputes.events.DisputeResolvedEvent;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -46,15 +48,18 @@ public class AdminDisputesController {
     private final CancellationRepository cancellationRepo;
     private final AuditService auditService;
     private final UserRepository userRepo;
+    private final ApplicationEventPublisher eventPublisher;
 
     public AdminDisputesController(DisputeRepository disputeRepo,
                                    CancellationRepository cancellationRepo,
                                    AuditService auditService,
-                                   UserRepository userRepo) {
+                                   UserRepository userRepo,
+                                   ApplicationEventPublisher eventPublisher) {
         this.disputeRepo = disputeRepo;
         this.cancellationRepo = cancellationRepo;
         this.auditService = auditService;
         this.userRepo = userRepo;
+        this.eventPublisher = eventPublisher;
     }
 
     // -------------------------------------------------------------------------
@@ -105,6 +110,7 @@ public class AdminDisputesController {
             @RequestBody AdminResolveDisputeRequest request) {
 
         DisputeEntity entity = findDisputeOrThrow(id);
+        requireNotResolved(entity);
         entity.setStatus("RESOLVED");
         entity.setResolutionType(request.resolution());
         entity.setResolutionNote(request.note());
@@ -115,6 +121,9 @@ public class AdminDisputesController {
         auditService.log("DISPUTE", entity.getId(), "RESOLVE", null,
                 Map.of("resolution", Objects.toString(request.resolution(), ""),
                        "note", Objects.toString(request.note(), "")));
+        eventPublisher.publishEvent(new DisputeResolvedEvent(
+                id, entity.getBidId(), entity.getSenderId(), entity.getTravelerId(),
+                request.resolution()));
 
         Set<UUID> resolveIds = new HashSet<>();
         if (entity.getSenderId() != null) resolveIds.add(entity.getSenderId());
@@ -133,6 +142,7 @@ public class AdminDisputesController {
             @RequestBody AdminGuaranteeFundRequest request) {
 
         DisputeEntity entity = findDisputeOrThrow(id);
+        requireNotResolved(entity);
         entity.setStatus("RESOLVED");
         entity.setResolutionType("GUARANTEE_PAID");
         entity.setResolutionNote(request.reason());
@@ -146,6 +156,9 @@ public class AdminDisputesController {
                 Map.of("amountCents", request.amountCents(),
                        "beneficiaryUserId", Objects.toString(request.beneficiaryUserId() != null ? request.beneficiaryUserId().toString() : null, ""),
                        "reason", Objects.toString(request.reason(), "")));
+        eventPublisher.publishEvent(new DisputeResolvedEvent(
+                id, entity.getBidId(), entity.getSenderId(), entity.getTravelerId(),
+                "GUARANTEE_PAID"));
 
         Set<UUID> gfIds = new HashSet<>();
         if (entity.getSenderId() != null) gfIds.add(entity.getSenderId());
@@ -173,6 +186,14 @@ public class AdminDisputesController {
                 cancellationRepo.save(c);
             }
         });
+    }
+
+    private void requireNotResolved(DisputeEntity entity) {
+        if ("RESOLVED".equals(entity.getStatus())) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT,
+                    "dispute-already-resolved", "Dispute Already Resolved",
+                    "Ce litige est déjà résolu");
+        }
     }
 
     // -------------------------------------------------------------------------

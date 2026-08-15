@@ -4,6 +4,7 @@ import com.yadony.api.auth.KycStatus;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
+import com.yadony.api.kyc.events.UserKycActionRequiredEvent;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.stripe.net.ApiResource;
 import com.stripe.model.Event;
@@ -115,7 +116,7 @@ class KycStripeWebhookHandlerTest {
         assertThat(user.getKycStatus()).isEqualTo(KycStatus.REJECTED);
         assertThat(kyc.getRejectionReason()).isEqualTo("verification_failed");
         verify(auditService).log(eq("kyc_verification"), any(), eq("KYC_REJECTED"), any(), any());
-        verify(eventPublisher, never()).publishEvent(any());
+        verify(eventPublisher).publishEvent(any(UserKycActionRequiredEvent.class));
     }
 
     @Test
