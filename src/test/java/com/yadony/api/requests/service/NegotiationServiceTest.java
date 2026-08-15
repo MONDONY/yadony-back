@@ -1812,6 +1812,39 @@ class NegotiationServiceTest {
 
             verifyNoInteractions(announcementRepo);
         }
+
+        @Test
+        @DisplayName("createDedicatedTrip persiste les champs dérivés et verrouillés après extraction")
+        void createDedicatedTrip_stillDerivesLockedFieldsFromRequest() {
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(commissionProperties.rate()).thenReturn(new BigDecimal("0.12"));
+            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any(), any())).thenReturn(true);
+            UUID newAnnId = UUID.randomUUID();
+            when(announcementRepo.save(any())).thenAnswer(inv -> {
+                com.yadony.api.matching.AnnouncementEntity a = inv.getArgument(0);
+                try {
+                    var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+                    idField.setAccessible(true);
+                    idField.set(a, newAnnId);
+                } catch (Exception e) { throw new RuntimeException(e); }
+                return a;
+            });
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(java.util.List.of());
+
+            service.createDedicatedTrip(TRAVELER_ID, THREAD_ID, buildRequest(request.getDesiredDate()));
+
+            ArgumentCaptor<com.yadony.api.matching.AnnouncementEntity> captor =
+                ArgumentCaptor.forClass(com.yadony.api.matching.AnnouncementEntity.class);
+            verify(announcementRepo).save(captor.capture());
+            com.yadony.api.matching.AnnouncementEntity saved = captor.getValue();
+            assertThat(saved.getAvailableKg()).isEqualByComparingTo(java.math.BigDecimal.ZERO);
+            assertThat(saved.getReservedKg()).isEqualByComparingTo(request.getWeightKg());
+            assertThat(saved.getTotalKg()).isEqualByComparingTo(request.getWeightKg());
+            assertThat(saved.getLinkedPackageRequestId()).isEqualTo(request.getId());
+            assertThat(saved.getReservedSenderId()).isEqualTo(request.getSenderId());
+        }
     }
 
     @Nested

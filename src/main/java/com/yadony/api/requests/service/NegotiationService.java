@@ -617,6 +617,57 @@ public class NegotiationService {
      * On success the thread transitions AWAITING_TRIP → AWAITING_PAYMENT and the
      * sender is notified to checkout, exactly like {@link #submitTrip}.
      */
+
+    /**
+     * Construit (sans sauvegarder) l'AnnouncementEntity d'un trajet dédié à un
+     * seul package_request : corridor, poids et prix dérivés et verrouillés,
+     * capacité réservée intégralement au sender jusqu'à openSurplus(). Partagée
+     * par {@link #createDedicatedTrip} (thread AWAITING_TRIP existant) et
+     * {@link #start} (création dédiée dès la première offre).
+     */
+    private com.yadony.api.matching.AnnouncementEntity buildDedicatedTripAnnouncement(
+            PackageRequestEntity request, UserEntity traveler, BigDecimal agreedPriceEur,
+            NegotiationCreateDedicatedTripRequest req) {
+        com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
+        ann.setTravelerId(traveler.getId());
+        ann.setTravelerIsPro(traveler.isProAccount());
+        ann.setDepartureCity(request.getDepartureCity());
+        ann.setArrivalCity(request.getArrivalCity());
+        ann.setDepartureDate(req.departureDate());
+        ann.setDepartureTime(req.departureTime());
+        ann.setArrivalTime(req.arrivalTime());
+        java.time.LocalTime handoverEnd =
+            req.departureTime() != null ? req.departureTime() : java.time.LocalTime.of(23, 59);
+        ann.setHandoverDeadline(java.time.LocalDateTime.of(req.departureDate(), handoverEnd));
+        ann.setPickupAddressLabel(req.pickupAddress().label());
+        ann.setPickupLat(BigDecimal.valueOf(req.pickupAddress().lat()));
+        ann.setPickupLng(BigDecimal.valueOf(req.pickupAddress().lng()));
+        ann.setDeliveryAddressLabel(req.deliveryAddress().label());
+        ann.setDeliveryLat(BigDecimal.valueOf(req.deliveryAddress().lat()));
+        ann.setDeliveryLng(BigDecimal.valueOf(req.deliveryAddress().lng()));
+        ann.setAvailableKg(java.math.BigDecimal.ZERO);
+        ann.setTotalKg(request.getWeightKg());
+        ann.setReservedKg(request.getWeightKg());
+        BigDecimal derivedPricePerKg = agreedPriceEur
+            .divide(request.getWeightKg(), 2, RoundingMode.HALF_UP);
+        if (derivedPricePerKg.signum() <= 0) {
+            derivedPricePerKg = new BigDecimal("0.01");
+        }
+        ann.setPricePerKg(derivedPricePerKg);
+        ann.setTransportMode(request.getTransportMode());
+        ann.setStatus(com.yadony.api.matching.AnnouncementStatus.ACTIVE);
+        ann.setDescription(req.description());
+        ann.setAcceptedContentTypes(req.acceptedContentTypes() != null
+                ? com.yadony.api.config.ContentCategoryNormalizer.normalizeList(req.acceptedContentTypes())
+                : new ArrayList<>());
+        ann.setRefusedTypes(req.refusedTypes() != null
+                ? com.yadony.api.config.ContentCategoryNormalizer.normalizeList(req.refusedTypes())
+                : new ArrayList<>());
+        ann.setLinkedPackageRequestId(request.getId());
+        ann.setReservedSenderId(request.getSenderId());
+        return ann;
+    }
+
     @Transactional
     public NegotiationThreadResponse createDedicatedTrip(UUID callerId, UUID threadId,
                                                           NegotiationCreateDedicatedTripRequest req) {
@@ -647,60 +698,8 @@ public class NegotiationService {
         }
 
         // Build the dedicated announcement with all locked fields derived server-side.
-        com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
-        ann.setTravelerId(callerId);
-        ann.setTravelerIsPro(traveler.isProAccount());
-        ann.setDepartureCity(request.getDepartureCity());
-        ann.setArrivalCity(request.getArrivalCity());
-        ann.setDepartureDate(req.departureDate());
-        ann.setDepartureTime(req.departureTime());
-        ann.setArrivalTime(req.arrivalTime());
-        // Date limite de dépôt dérivée : le jour du départ, à l'heure de départ
-        // (le bid dédié en hérite via applyHandoverFrom).
-        java.time.LocalTime handoverEnd =
-            req.departureTime() != null ? req.departureTime() : java.time.LocalTime.of(23, 59);
-        ann.setHandoverDeadline(java.time.LocalDateTime.of(req.departureDate(), handoverEnd));
-        ann.setPickupAddressLabel(req.pickupAddress().label());
-        ann.setPickupLat(BigDecimal.valueOf(req.pickupAddress().lat()));
-        ann.setPickupLng(BigDecimal.valueOf(req.pickupAddress().lng()));
-        ann.setDeliveryAddressLabel(req.deliveryAddress().label());
-        ann.setDeliveryLat(BigDecimal.valueOf(req.deliveryAddress().lat()));
-        ann.setDeliveryLng(BigDecimal.valueOf(req.deliveryAddress().lng()));
-        // Before the surplus is opened, NO capacity is available to third parties:
-        // the whole weight is reserved for the sender. availableKg must therefore be
-        // 0 (not the total weight), so the trip card shows it as fully reserved
-        // (booked = totalKg - availableKg = reservedKg) and so it stays consistent
-        // with openSurplus(), which later sets availableKg = surplusKg.
-        ann.setAvailableKg(java.math.BigDecimal.ZERO);
-        ann.setTotalKg(request.getWeightKg());
-        // The negotiated weight is locked (reserved) for the sender. Surplus capacity
-        // stays at zero until the traveler opens it after payment (see openSurplus).
-        ann.setReservedKg(request.getWeightKg());
-        // Price-per-kg is derived from the agreed total. The trip is private, so
-        // this value is never displayed — but it must be > 0 to satisfy the
-        // pricePerKg >= 0.01 validation on the entity column.
-        BigDecimal derivedPricePerKg = thread.getCurrentPriceEur()
-            .divide(request.getWeightKg(), 2, RoundingMode.HALF_UP);
-        if (derivedPricePerKg.signum() <= 0) {
-            derivedPricePerKg = new BigDecimal("0.01");
-        }
-        ann.setPricePerKg(derivedPricePerKg);
-        ann.setTransportMode(request.getTransportMode());
-        ann.setStatus(com.yadony.api.matching.AnnouncementStatus.ACTIVE);
-        ann.setDescription(req.description());
-        // Normalisation legacy→canonique à l'écriture : un vieux binaire mobile peut encore
-        // envoyer « Hi-fi »/« Nourriture » — sans ça, le refus du voyageur serait inerte face
-        // aux bids canoniques dès l'ouverture du surplus (même invariant que les 7 autres
-        // points d'écriture, cf. ContentCategoryNormalizer).
-        ann.setAcceptedContentTypes(req.acceptedContentTypes() != null
-                ? com.yadony.api.config.ContentCategoryNormalizer.normalizeList(req.acceptedContentTypes())
-                : new ArrayList<>());
-        ann.setRefusedTypes(req.refusedTypes() != null
-                ? com.yadony.api.config.ContentCategoryNormalizer.normalizeList(req.refusedTypes())
-                : new ArrayList<>());
-        ann.setLinkedPackageRequestId(request.getId());
-        // Sender réservé : il ne pourra pas re-bidder sur le surplus de ce trajet.
-        ann.setReservedSenderId(request.getSenderId());
+        com.yadony.api.matching.AnnouncementEntity ann =
+            buildDedicatedTripAnnouncement(request, traveler, thread.getCurrentPriceEur(), req);
 
         com.yadony.api.matching.AnnouncementEntity savedAnn = announcementRepo.save(ann);
 
