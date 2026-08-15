@@ -68,6 +68,10 @@ public class ResendEmailService {
     }
 
     public void sendOtp(String to, String code) {
+        if (!prodProfile) {
+            log.warn("📧 [DEV] Code OTP pour {} : {}", maskEmail(to), code);
+        }
+
         if (!emailSendingConfigured) {
             if (prodProfile) {
                 throw new YadonyBusinessException(
@@ -75,7 +79,6 @@ public class ResendEmailService {
                         "Email Service Not Configured",
                         "L'envoi des emails n'est pas configuré");
             }
-            log.warn("📧 [LOCAL] Code OTP pour {} : {}", maskEmail(to), code);
             return;
         }
 
@@ -100,8 +103,6 @@ public class ResendEmailService {
             log.error("Resend API error sending OTP to {}: {}", maskEmail(to), e.getMessage());
             if (devProfile) {
                 // En dev, l'envoi réel peut échouer (domaine Resend non vérifié).
-                // On logge le code pour permettre la connexion locale sans email réel.
-                log.warn("📧 [DEV] Code OTP pour {} : {}", to, code);
                 return;
             }
             throw new YadonyBusinessException(
