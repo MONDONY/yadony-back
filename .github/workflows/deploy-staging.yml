@@ -1,10 +1,22 @@
 name: Deploy Staging
 
+# Déploiement staging sur liste blanche : seules les branches préfixées
+# `staging/` partent sur le VPS. L'ancien filtre était `branches-ignore: [main]`,
+# c'est-à-dire « tout sauf main » : n'importe quelle branche de travail qui
+# passait la CI déployait son image ET appliquait ses migrations Flyway à la base
+# staging. Le 2026-08-15, V207 (renommage + DROP COLUMN) est ainsi partie depuis
+# une branche feature ; un déploiement ultérieur a remis l'image de `main`, dont
+# le code cherchait encore l'ancienne colonne → Schema-validation en échec,
+# crash-loop et 502 pendant une heure.
+#
+# Pour tester une branche en staging, la nommer `staging/<sujet>` (ou pousser un
+# alias : `git push origin ma-branche:staging/ma-branche`). Le déploiement
+# redevient ainsi un acte volontaire, migrations comprises.
 on:
   workflow_run:
     workflows: ["CI"]
     types: [completed]
-    branches-ignore: [main]
+    branches: ['staging/**']
 
 env:
   REGISTRY: ghcr.io
