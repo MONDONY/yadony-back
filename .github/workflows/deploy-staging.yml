@@ -4,7 +4,7 @@ on:
   workflow_run:
     workflows: ["CI"]
     types: [completed]
-    branches: [main, "feat/**"]
+    branches-ignore: [main]
 
 env:
   REGISTRY: ghcr.io
