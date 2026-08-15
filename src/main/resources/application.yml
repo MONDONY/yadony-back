@@ -107,6 +107,13 @@ logging:
 # Toutes les valeurs métier sont surchargeables par variable d'environnement
 # (${VAR:défaut}) — provisioning prod sans rebuild.
 yadony:
+  # Secret partagé avec les Cloud Functions (dony-functions) pour
+  # POST /internal/messaging/notify. Déclaré ici et non dans application-dev.yml
+  # seul : sans cette clé, `yadony.internal.secret` reste vide en staging et en
+  # prod, et MessagingNotifyController rejette *tout* appel en 401 — aucune push
+  # de nouveau message n'est jamais partie.
+  internal:
+    secret: ${INTERNAL_SHARED_SECRET:}
   admin:
     bootstrap:
       secret: ${ADMIN_BOOTSTRAP_SECRET:}
