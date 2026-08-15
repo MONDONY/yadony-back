@@ -116,6 +116,9 @@ public class BidEntity extends BaseEntity {
     @Column(name = "confirmation_code_refresh_window_start")
     private LocalDateTime confirmationCodeRefreshWindowStart;
 
+    @Column(name = "confirmation_code_public_enabled", nullable = false)
+    private boolean confirmationCodePublicEnabled = false;
+
     // Code de retour (annulation après remise, D7) — détenu par l'expéditeur,
     // saisi par le voyageur pour confirmer la restitution du colis.
     @Column(name = "return_code", length = 6)
@@ -290,6 +293,9 @@ public class BidEntity extends BaseEntity {
 
     public LocalDateTime getConfirmationCodeRefreshWindowStart() { return confirmationCodeRefreshWindowStart; }
     public void setConfirmationCodeRefreshWindowStart(LocalDateTime confirmationCodeRefreshWindowStart) { this.confirmationCodeRefreshWindowStart = confirmationCodeRefreshWindowStart; }
+
+    public boolean isConfirmationCodePublicEnabled() { return confirmationCodePublicEnabled; }
+    public void setConfirmationCodePublicEnabled(boolean confirmationCodePublicEnabled) { this.confirmationCodePublicEnabled = confirmationCodePublicEnabled; }
 
     public String getReturnCode() { return returnCode; }
     public void setReturnCode(String returnCode) { this.returnCode = returnCode; }

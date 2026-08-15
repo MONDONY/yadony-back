@@ -40,6 +40,9 @@ public class TrackingEventEntity {
     @Column(name = "gps_lon", precision = 11, scale = 8)
     private BigDecimal gpsLon;
 
+    @Column(name = "gps_label", length = 255)
+    private String gpsLabel;
+
     @Column(name = "photo_url", length = 1024)
     private String photoUrl;
 
@@ -77,6 +80,8 @@ public class TrackingEventEntity {
     public void setGpsLat(BigDecimal gpsLat) { this.gpsLat = gpsLat; }
     public BigDecimal getGpsLon() { return gpsLon; }
     public void setGpsLon(BigDecimal gpsLon) { this.gpsLon = gpsLon; }
+    public String getGpsLabel() { return gpsLabel; }
+    public void setGpsLabel(String gpsLabel) { this.gpsLabel = gpsLabel; }
     public String getPhotoUrl() { return photoUrl; }
     public void setPhotoUrl(String photoUrl) { this.photoUrl = photoUrl; }
     public LocalDateTime getOfflineTimestamp() { return offlineTimestamp; }

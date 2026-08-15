@@ -84,6 +84,16 @@ public class TrackingController {
         return ResponseEntity.ok(trackingService.refreshConfirmationCode(bidId, firebaseUid));
     }
 
+    @PostMapping("/{bidId}/confirmation-code/public")
+    @PreAuthorize("hasRole('SENDER')")
+    public ResponseEntity<ConfirmCodeResponse> setConfirmationCodePublicVisible(
+            @PathVariable UUID bidId,
+            @RequestParam(defaultValue = "true") boolean visible,
+            @AuthenticationPrincipal String firebaseUid) {
+        return ResponseEntity.ok(
+                trackingService.setConfirmationCodePublicVisible(bidId, firebaseUid, visible));
+    }
+
     @PostMapping("/{bidId}/confirm-delivery")
     @PreAuthorize("hasRole('TRAVELER')")
     public ResponseEntity<TrackingEventResponse> confirmDelivery(

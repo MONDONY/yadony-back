@@ -11,6 +11,7 @@ public record TrackingEventResponse(
         LocalDateTime scannedAt,
         BigDecimal gpsLat,
         BigDecimal gpsLon,
+        String gpsLabel,
         String photoUrl,
         LocalDateTime offlineTimestamp,
         LocalDateTime createdAt

@@ -4,274 +4,336 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="robots" content="noindex, nofollow">
-  <title>Suivi de colis — Yadony</title>
+  <title>Suivi de colis - Yadony</title>
   <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    *, *::before, *::after { box-sizing: border-box; }
+    html { -webkit-font-smoothing: antialiased; }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: #F4F6F8;
-      color: #0D1B2A;
+      margin: 0;
       min-height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      background: #f7f9fc;
+      color: #10243b;
     }
-    header {
-      background: #fff;
-      border-bottom: 1px solid #E9ECEF;
-      padding: 16px 20px;
+    .page {
+      width: min(100%, 560px);
+      margin: 0 auto;
+      padding: 20px 16px 36px;
+    }
+    .topbar {
       display: flex;
       align-items: center;
-      gap: 10px;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 18px;
     }
-    header .logo {
-      font-size: 22px;
+    .brand {
+      font-size: 20px;
+      font-weight: 850;
+      color: #1769ff;
+      letter-spacing: 0;
+    }
+    .topbar span {
+      color: #6b7788;
+      font-size: 13px;
+    }
+    .panel {
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 10px 28px rgba(16, 36, 59, 0.08), inset 0 0 0 1px #e4eaf2;
+      padding: 18px;
+    }
+    .status-panel { margin-bottom: 16px; }
+    .label {
+      display: block;
+      color: #6b7788;
+      font-size: 11px;
       font-weight: 800;
-      color: #1E88E5;
-      letter-spacing: -0.5px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
     }
-    header .subtitle {
+    h1 {
+      margin: 8px 0 8px;
+      font-size: 26px;
+      line-height: 1.12;
+      letter-spacing: 0;
+      text-wrap: balance;
+    }
+    p {
+      margin: 0;
+      color: #6b7788;
+      line-height: 1.45;
+      text-wrap: pretty;
+    }
+    .data-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 16px;
+    }
+    .data-cell {
+      min-width: 0;
+      padding: 13px 14px;
+      border-radius: 12px;
+      background: #f7f9fc;
+      box-shadow: inset 0 0 0 1px #e4eaf2;
+    }
+    .data-cell strong {
+      display: block;
+      margin-top: 5px;
       font-size: 14px;
-      color: #6B7A8D;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
     }
-    .container { max-width: 480px; margin: 0 auto; padding: 20px 16px 48px; }
-
-    /* Invalid token */
-    .invalid-card {
-      background: #fff;
-      border-radius: 16px;
-      border: 1px solid #E9ECEF;
-      padding: 32px 24px;
-      text-align: center;
-      margin-top: 24px;
+    .section {
+      margin-top: 16px;
     }
-    .invalid-icon { font-size: 48px; margin-bottom: 16px; }
-    .invalid-card h2 { font-size: 17px; font-weight: 700; margin-bottom: 8px; color: #0D1B2A; }
-    .invalid-card p  { font-size: 14px; color: #6B7A8D; line-height: 1.5; }
-
-    /* Corridor banner */
-    .corridor-banner {
-      background: linear-gradient(135deg, #0F4C75, #3282B8);
-      border-radius: 16px;
-      padding: 18px 20px;
-      color: #fff;
-      margin-bottom: 16px;
-    }
-    .corridor-banner .label { font-size: 11px; font-weight: 700; letter-spacing: 0.8px; opacity: 0.8; margin-bottom: 4px; }
-    .corridor-banner .value { font-size: 18px; font-weight: 800; }
-
-    /* Status card */
-    .status-card {
-      background: #E3F2FD;
-      border-radius: 14px;
-      border: 1px solid rgba(30,136,229,0.25);
-      padding: 16px 18px;
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      margin-bottom: 20px;
-    }
-    .status-dot {
-      width: 12px; height: 12px;
-      border-radius: 50%;
-      background: #1E88E5;
-      flex-shrink: 0;
-    }
-    .status-text { font-size: 15px; font-weight: 700; color: #1565C0; }
-
-    /* Tracking number */
-    .tracking-number {
-      background: #fff;
-      border-radius: 14px;
-      border: 1px solid #E9ECEF;
-      padding: 14px 16px;
-      margin-bottom: 20px;
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-    .tracking-number .tn-label { font-size: 11px; font-weight: 700; letter-spacing: 0.8px; color: #6B7A8D; display: block; margin-bottom: 2px; }
-    .tracking-number .tn-value { font-size: 18px; font-weight: 800; letter-spacing: 2px; color: #0D1B2A; }
-
-    /* Timeline section */
     .section-title {
-      font-size: 11px; font-weight: 700; letter-spacing: 0.8px;
-      color: #6B7A8D; margin-bottom: 14px; margin-top: 4px;
+      margin: 0 0 10px;
+      font-size: 15px;
+      font-weight: 850;
     }
-
-    .timeline { display: flex; flex-direction: column; }
-
-    .timeline-item {
-      display: flex;
-      gap: 12px;
-      position: relative;
-    }
-    .timeline-left {
-      display: flex;
-      flex-direction: column;
+    .qr-row {
+      display: grid;
+      grid-template-columns: 112px 1fr;
+      gap: 14px;
       align-items: center;
-      width: 36px;
-      flex-shrink: 0;
     }
-    .timeline-dot {
-      width: 36px; height: 36px;
-      border-radius: 50%;
-      background: rgba(30,136,229,0.12);
-      border: 2px solid #1E88E5;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 16px;
-      flex-shrink: 0;
-    }
-    .timeline-line {
-      width: 2px;
-      flex: 1;
-      background: #E9ECEF;
-      margin: 4px 0;
-      min-height: 16px;
-    }
-    .timeline-content {
-      flex: 1;
+    .qr-row img {
+      width: 112px;
+      height: 112px;
+      border-radius: 12px;
       background: #fff;
-      border: 1px solid #E9ECEF;
-      border-radius: 14px;
+      box-shadow: inset 0 0 0 1px #dfe6ef;
+    }
+    .code-panel {
+      display: none;
+      margin-top: 16px;
+    }
+    .code-panel.is-visible { display: block; }
+    .code-value {
+      margin-top: 10px;
       padding: 14px;
-      margin-bottom: 16px;
+      border-radius: 12px;
+      background: #10243b;
+      color: #fff;
+      text-align: center;
+      font-size: 26px;
+      font-weight: 850;
+      letter-spacing: 0.18em;
+      font-variant-numeric: tabular-nums;
     }
-    .timeline-content h3 { font-size: 14px; font-weight: 700; color: #0D1B2A; margin-bottom: 4px; }
-    .timeline-content .ts  { font-size: 12px; color: #6B7A8D; margin-bottom: 8px; }
-    .timeline-content img {
-      width: 100%; max-height: 140px; object-fit: cover;
-      border-radius: 8px; display: block;
+    .history-list {
+      display: grid;
+      gap: 0;
     }
-    .offline-badge {
-      display: inline-flex; align-items: center; gap: 4px;
-      font-size: 11px; font-weight: 600; color: #F59E0B;
-      margin-top: 6px;
+    .history-row {
+      display: grid;
+      grid-template-columns: 84px 1fr;
+      gap: 14px;
+      padding: 15px 0;
+      border-bottom: 1px solid #e4eaf2;
     }
-
-    /* Empty */
-    .empty-card {
+    .history-row:last-child { border-bottom: 0; }
+    .history-label {
+      color: #6b7788;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      line-height: 1.35;
+      text-transform: uppercase;
+    }
+    .history-body strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 15px;
+    }
+    .history-body time {
+      display: block;
+      color: #6b7788;
+      font-size: 13px;
+      font-variant-numeric: tabular-nums;
+    }
+    .muted {
+      display: block;
+      margin-top: 3px;
+      color: #6b7788;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+    .proof-photo {
+      width: 100%;
+      max-height: 210px;
+      margin-top: 10px;
+      object-fit: cover;
+      border-radius: 10px;
+      display: block;
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1);
+    }
+    .empty {
+      padding: 18px;
+      border-radius: 14px;
       background: #fff;
-      border-radius: 16px;
-      border: 1px solid #E9ECEF;
-      padding: 32px 20px;
+      box-shadow: inset 0 0 0 1px #e4eaf2;
+    }
+    .rating {
+      margin-top: 16px;
+    }
+    .stars {
+      display: flex;
+      gap: 8px;
+      margin: 14px 0;
+      font-size: 30px;
+      color: #adb5bd;
+      cursor: pointer;
+      user-select: none;
+    }
+    textarea {
+      width: 100%;
+      min-height: 76px;
+      resize: vertical;
+      border: 1px solid #dfe6ef;
+      border-radius: 10px;
+      padding: 11px 12px;
+      color: #10243b;
+      font: inherit;
+    }
+    button {
+      width: 100%;
+      min-height: 44px;
+      margin-top: 10px;
+      border: 0;
+      border-radius: 10px;
+      background: #1769ff;
+      color: #fff;
+      font: inherit;
+      font-weight: 800;
+      cursor: pointer;
+      transition: transform 140ms ease, opacity 140ms ease;
+    }
+    button:active { transform: scale(0.96); }
+    button:disabled { opacity: 0.55; cursor: progress; }
+    #rating-feedback {
+      display: none;
+      margin-top: 10px;
+      text-align: center;
+      font-size: 14px;
+      font-weight: 700;
+    }
+    .invalid {
+      margin-top: 24px;
+      text-align: left;
+    }
+    footer {
+      margin-top: 20px;
+      color: #8a96a8;
+      font-size: 12px;
       text-align: center;
     }
-    .empty-card .icon { font-size: 40px; margin-bottom: 14px; }
-    .empty-card h3 { font-size: 15px; font-weight: 700; margin-bottom: 6px; }
-    .empty-card p  { font-size: 13px; color: #6B7A8D; line-height: 1.5; }
-
-    footer {
-      text-align: center;
-      font-size: 12px;
-      color: #ADB5BD;
-      padding: 20px;
+    @media (max-width: 420px) {
+      .page { padding-inline: 12px; }
+      .data-grid { grid-template-columns: 1fr; }
+      .qr-row { grid-template-columns: 96px 1fr; }
+      .qr-row img { width: 96px; height: 96px; }
+      .history-row { grid-template-columns: 72px 1fr; gap: 12px; }
+      h1 { font-size: 24px; }
     }
   </style>
 </head>
 <body>
-
-<header>
-  <div>
-    <div class="logo">Yadony</div>
-    <div class="subtitle">Suivi de colis</div>
-  </div>
-</header>
-
-<div class="container">
-
-  <!-- Token invalide -->
-  <div th:if="${invalid}" class="invalid-card">
-    <div class="invalid-icon">🔍</div>
-    <h2>Lien invalide ou expiré</h2>
-    <p>Ce lien de suivi est invalide ou a expiré.<br>Vérifiez le lien reçu ou contactez l'expéditeur.</p>
+<main class="page">
+  <div class="topbar">
+    <div class="brand">Yadony</div>
+    <span>Suivi public</span>
   </div>
 
-  <!-- Contenu valide -->
+  <section th:if="${invalid}" class="panel invalid">
+    <span class="label">Lien de suivi</span>
+    <h1>Lien invalide ou expiré</h1>
+    <p>Ce lien de suivi est invalide ou a expiré. Vérifiez le lien reçu ou contactez l'expéditeur.</p>
+  </section>
+
   <th:block th:unless="${invalid}">
+    <section class="panel status-panel">
+      <span class="label">Statut</span>
+      <h1 class="status-text" th:text="${currentStep}">En attente du scan de départ</h1>
+      <p>Cette page se met à jour automatiquement quand un nouveau scan est enregistré.</p>
 
-    <!-- Corridor -->
-    <div class="corridor-banner">
-      <div class="label">TRAJET</div>
-      <div class="value" th:text="${corridor}">Paris → Dakar</div>
-    </div>
-
-    <!-- Statut actuel -->
-    <div class="status-card">
-      <div class="status-dot"></div>
-      <div class="status-text" th:text="${currentStep}">En attente du scan de départ</div>
-    </div>
-
-    <!-- Numéro de suivi -->
-    <div th:if="${trackingNumber}" class="tracking-number">
-      <div>
-        <span class="tn-label">NUMÉRO DE SUIVI</span>
-        <span class="tn-value" th:text="${trackingNumber}">DON-XXXXXX</span>
+      <div class="data-grid">
+        <div class="data-cell">
+          <span class="label">Trajet</span>
+          <strong th:text="${corridor}">Paris - Dakar</strong>
+        </div>
+        <div class="data-cell" th:if="${trackingNumber}">
+          <span class="label">Numéro</span>
+          <strong th:text="${trackingNumber}">DON-XXXXXX</strong>
+        </div>
       </div>
-    </div>
+    </section>
 
-    <!-- Timeline -->
-    <div th:if="${not #lists.isEmpty(events)}">
-      <div class="section-title">HISTORIQUE DES SCANS</div>
-      <div class="timeline">
-        <div th:each="event, iter : ${events}" class="timeline-item">
-          <div class="timeline-left">
-            <div class="timeline-dot">
-              <span th:switch="${event.label}">
-                <span th:case="'Départ confirmé'">✈️</span>
-                <span th:case="'Arrivée confirmée'">🛬</span>
-                <span th:case="*">🔄</span>
-              </span>
-            </div>
-            <div class="timeline-line" th:if="${!iter.last}"></div>
-          </div>
-          <div class="timeline-content">
-            <h3 th:text="${event.label}">Départ confirmé</h3>
-            <div class="ts" th:text="${event.scannedAt}">01/01/2025 14:30</div>
-            <img th:if="${event.photoUrl != null}"
+    <section class="panel section" th:if="${qrCodeBase64 != null and !#strings.isEmpty(qrCodeBase64)}">
+      <h2 class="section-title">QR code du colis</h2>
+      <div class="qr-row">
+        <img th:src="${'data:image/png;base64,' + qrCodeBase64}"
+             alt="QR code du colis"
+             width="112"
+             height="112">
+        <p>Ce QR code identifie ce colis dans Yadony. Gardez cette page accessible jusqu'à la livraison.</p>
+      </div>
+    </section>
+
+    <section id="public-code-panel"
+             th:classappend="${publicConfirmationCode != null and !#strings.isEmpty(publicConfirmationCode)} ? ' is-visible'"
+             class="panel code-panel">
+      <span class="label">Code de retrait</span>
+      <p>Code partagé par l'expéditeur pour confirmer la remise au destinataire.</p>
+      <div id="public-code-value" class="code-value" th:text="${publicConfirmationCode}">123456</div>
+    </section>
+
+    <section class="panel section">
+      <h2 class="section-title">Détails utiles</h2>
+      <div class="history-list" th:if="${not #lists.isEmpty(events)}">
+        <div th:each="event : ${events}" class="history-row">
+          <div class="history-label" th:text="${event.label == 'Colis remis au voyageur' ? 'Remise' : (event.label == 'Arrivée confirmée' ? 'Arrivée' : 'Étape')}">Étape</div>
+          <div class="history-body">
+            <strong th:text="${event.label}">Colis remis au voyageur</strong>
+            <time th:text="${event.scannedAt}">15/08/2026 22:46</time>
+            <span th:if="${event.gpsLabel != null and !#strings.isEmpty(event.gpsLabel)}"
+                  class="muted"
+                  th:text="${event.gpsLabel}">Paris</span>
+            <img th:if="${event.photoUrl != null and !#strings.isEmpty(event.photoUrl)}"
                  th:src="${event.photoUrl}"
-                 alt="Photo du scan"
+                 class="proof-photo"
+                 alt="Photo de preuve du scan"
                  loading="lazy">
-            <div th:if="${event.offline}" class="offline-badge">
-              📵 Scan synchronisé (mode offline)
-            </div>
           </div>
         </div>
       </div>
-    </div>
+      <div class="empty" th:if="${#lists.isEmpty(events)}">
+        <strong>En attente du premier scan</strong>
+        <p>Le voyageur scannera le colis au moment de la remise.</p>
+      </div>
+    </section>
 
-    <!-- Aucun scan -->
-    <div th:if="${#lists.isEmpty(events)}" class="empty-card">
-      <div class="icon">⏳</div>
-      <h3>En attente du premier scan</h3>
-      <p>Le voyageur scannera le colis lors de la remise.<br>Revenez sur cette page pour suivre l'avancement.</p>
-    </div>
-
-    <!-- Story 9.2 — Formulaire de notation (visible uniquement si livraison confirmée) -->
-    <div th:if="${isDelivered}" id="rating-section" style="margin-top:24px;background:#fff;border-radius:16px;border:1px solid #E9ECEF;padding:24px 20px;">
-      <h3 style="font-size:16px;font-weight:700;margin-bottom:6px;color:#0D1B2A;">Notez votre voyageur</h3>
-      <p style="font-size:13px;color:#6B7A8D;margin-bottom:16px;">Votre avis aide la communauté Yadony.</p>
-      <div id="stars-row" style="display:flex;gap:8px;margin-bottom:16px;font-size:32px;cursor:pointer;">
+    <section th:if="${isDelivered}" id="rating-section" class="panel rating">
+      <h2 class="section-title">Notez le voyageur</h2>
+      <p>Votre avis aide la communauté Yadony.</p>
+      <div id="stars-row" class="stars" aria-label="Note">
         <span data-v="1">☆</span><span data-v="2">☆</span><span data-v="3">☆</span>
         <span data-v="4">☆</span><span data-v="5">☆</span>
       </div>
-      <textarea id="comment" placeholder="Commentaire optionnel (200 caractères max)" maxlength="200"
-        style="width:100%;border:1px solid #E9ECEF;border-radius:10px;padding:10px 12px;font-size:14px;resize:none;height:80px;font-family:inherit;margin-bottom:14px;"></textarea>
-      <button id="submit-rating"
-        style="width:100%;background:#1E88E5;color:#fff;border:none;border-radius:12px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;">
-        Envoyer ma note
-      </button>
-      <div id="rating-feedback" style="display:none;margin-top:12px;text-align:center;font-size:14px;font-weight:600;color:#1E88E5;"></div>
-    </div>
-
+      <textarea id="comment" placeholder="Commentaire optionnel" maxlength="200"></textarea>
+      <button id="submit-rating">Envoyer ma note</button>
+      <div id="rating-feedback"></div>
+    </section>
   </th:block>
 
-</div>
-
-<footer>
-  Yadony — Marketplace P2P de transport de colis vers l'Afrique
-</footer>
+  <footer>Yadony - Suivi de colis</footer>
+</main>
 
 <script th:if="${!invalid}" th:inline="javascript">
   const token = [[${trackingToken}]];
-  const statusUrl = '/api/v1/tracking/public/' + token + '/status';
+  const statusUrl = '/tracking/' + token + '/status';
 
   function esc(str) {
     if (str == null) return '';
@@ -283,37 +345,49 @@
       .replace(/'/g, '&#x27;');
   }
 
-  function iconFor(label) {
-    if (label === 'Départ confirmé') return '✈️';
-    if (label === 'Arrivée confirmée') return '🛬';
-    return '🔄';
+  function railLabel(label) {
+    if (label === 'Colis remis au voyageur') return 'Remise';
+    if (label === 'Arrivée confirmée') return 'Arrivée';
+    return 'Étape';
+  }
+
+  function updatePublicCode(code) {
+    const panel = document.getElementById('public-code-panel');
+    const value = document.getElementById('public-code-value');
+    if (!panel || !value) return;
+    if (code) {
+      value.textContent = code;
+      panel.classList.add('is-visible');
+    } else {
+      value.textContent = '';
+      panel.classList.remove('is-visible');
+    }
   }
 
   function updateTimeline(data) {
     const statusEl = document.querySelector('.status-text');
     if (statusEl) statusEl.textContent = data.currentStep;
+    updatePublicCode(data.publicConfirmationCode);
 
-    const timelineEl = document.querySelector('.timeline');
-    if (!timelineEl || data.events.length === 0) return;
+    const list = document.querySelector('.history-list');
+    if (!list || !data.events || data.events.length === 0) return;
 
-    timelineEl.innerHTML = data.events.map((e, i) => {
-      const safeLabel = esc(e.label);
-      const safeScannedAt = esc(e.scannedAt);
-      const safePhotoUrl = esc(e.photoUrl);
-      const icon = iconFor(e.label);
-      const line = i < data.events.length - 1 ? '<div class="timeline-line"></div>' : '';
-      const photo = safePhotoUrl ? `<img src="${safePhotoUrl}" alt="Photo du scan" loading="lazy">` : '';
-      const offline = e.offline ? '<div class="offline-badge">📵 Scan synchronisé (mode offline)</div>' : '';
-      return `<div class="timeline-item">
-        <div class="timeline-left">
-          <div class="timeline-dot">${icon}</div>
-          ${line}
-        </div>
-        <div class="timeline-content">
-          <h3>${safeLabel}</h3>
-          <div class="ts">${safeScannedAt}</div>
+    list.innerHTML = data.events.map((event) => {
+      const label = esc(event.label);
+      const scannedAt = esc(event.scannedAt);
+      const gpsLabel = esc(event.gpsLabel);
+      const photoUrl = esc(event.photoUrl);
+      const place = gpsLabel ? `<span class="muted">${gpsLabel}</span>` : '';
+      const photo = photoUrl
+        ? `<img src="${photoUrl}" class="proof-photo" alt="Photo de preuve du scan" loading="lazy">`
+        : '';
+      return `<div class="history-row">
+        <div class="history-label">${esc(railLabel(event.label))}</div>
+        <div class="history-body">
+          <strong>${label}</strong>
+          <time>${scannedAt}</time>
+          ${place}
           ${photo}
-          ${offline}
         </div>
       </div>`;
     }).join('');
@@ -321,7 +395,7 @@
 
   setInterval(function () {
     fetch(statusUrl)
-      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (response) { return response.ok ? response.json() : null; })
       .then(function (data) { if (data) updateTimeline(data); })
       .catch(function () {});
   }, 12000);
@@ -332,54 +406,55 @@
   let selectedStars = 0;
   const stars = document.querySelectorAll('#stars-row span');
 
-  stars.forEach(function(s) {
-    s.addEventListener('click', function() {
-      selectedStars = parseInt(s.dataset.v);
-      stars.forEach(function(x) {
-        x.textContent = parseInt(x.dataset.v) <= selectedStars ? '★' : '☆';
-        x.style.color = parseInt(x.dataset.v) <= selectedStars ? '#F59E0B' : '#ADB5BD';
+  stars.forEach(function(star) {
+    star.addEventListener('click', function() {
+      selectedStars = parseInt(star.dataset.v);
+      stars.forEach(function(item) {
+        item.textContent = parseInt(item.dataset.v) <= selectedStars ? '★' : '☆';
+        item.style.color = parseInt(item.dataset.v) <= selectedStars ? '#a46413' : '#adb5bd';
       });
     });
   });
 
   document.getElementById('submit-rating').addEventListener('click', function() {
-    if (selectedStars === 0) { alert('Veuillez sélectionner une note entre 1 et 5 étoiles.'); return; }
+    if (selectedStars === 0) {
+      alert('Veuillez sélectionner une note entre 1 et 5 étoiles.');
+      return;
+    }
     const comment = document.getElementById('comment').value.trim();
-    const btn = document.getElementById('submit-rating');
-    btn.disabled = true;
-    btn.textContent = 'Envoi en cours…';
+    const button = document.getElementById('submit-rating');
+    const feedback = document.getElementById('rating-feedback');
+    button.disabled = true;
+    button.textContent = 'Envoi en cours...';
 
     fetch('/api/v1/ratings/recipient', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ trackingToken: ratingToken, stars: selectedStars, comment: comment || null })
-    }).then(function(r) {
-      const feedback = document.getElementById('rating-feedback');
-      if (r.ok || r.status === 201) {
-        feedback.textContent = 'Merci pour votre note !';
-        feedback.style.color = '#1E88E5';
-        document.getElementById('rating-section').querySelector('h3').textContent = 'Note envoyée';
-        btn.style.display = 'none';
+    }).then(function(response) {
+      if (response.ok || response.status === 201) {
+        feedback.textContent = 'Merci pour votre note.';
+        feedback.style.color = '#1769ff';
+        button.style.display = 'none';
         document.getElementById('stars-row').style.pointerEvents = 'none';
         document.getElementById('comment').style.display = 'none';
-      } else if (r.status === 409) {
+      } else if (response.status === 409) {
         feedback.textContent = 'Vous avez déjà noté ce voyageur.';
-        feedback.style.color = '#E53935';
-        btn.style.display = 'none';
+        feedback.style.color = '#b3261e';
+        button.style.display = 'none';
       } else {
         feedback.textContent = 'Une erreur est survenue. Réessayez plus tard.';
-        feedback.style.color = '#E53935';
-        btn.disabled = false;
-        btn.textContent = 'Envoyer ma note';
+        feedback.style.color = '#b3261e';
+        button.disabled = false;
+        button.textContent = 'Envoyer ma note';
       }
       feedback.style.display = 'block';
     }).catch(function() {
-      const feedback = document.getElementById('rating-feedback');
       feedback.textContent = 'Erreur réseau. Réessayez plus tard.';
-      feedback.style.color = '#E53935';
+      feedback.style.color = '#b3261e';
       feedback.style.display = 'block';
-      btn.disabled = false;
-      btn.textContent = 'Envoyer ma note';
+      button.disabled = false;
+      button.textContent = 'Envoyer ma note';
     });
   });
 </script>
