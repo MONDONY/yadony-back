@@ -1,10 +1,12 @@
 package com.yadony.api.emailotp;
 
+import com.yadony.api.common.YadonyBusinessException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.http.MediaType;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.client.RestClient.RequestBodySpec;
 import org.springframework.web.client.RestClient.RequestBodyUriSpec;
 import org.springframework.web.client.RestClient.ResponseSpec;
@@ -17,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.*;
 
 @DisplayName("ResendEmailService — tests unitaires")
@@ -55,6 +58,45 @@ class ResendEmailServiceTest {
         service.sendOtp("user@example.com", "123456");
 
         verify(mockRestClient).post();
+    }
+
+    @Test
+    @DisplayName("sendOtp — sans clé Resend hors prod logge le code local sans appel externe")
+    void sendOtp_withoutResendKeyOutsideProdSkipsExternalEmail() {
+        service = new ResendEmailService(
+                "noreply@yadony.app",
+                "Ton code : %s",
+                mockRestClient,
+                templateEngine(),
+                false,
+                false,
+                false);
+
+        service.sendOtp("user@example.com", "123456");
+
+        verify(mockRestClient, never()).post();
+    }
+
+    @Test
+    @DisplayName("sendOtp — sans clé Resend en prod échoue avec une erreur de configuration")
+    void sendOtp_withoutResendKeyInProdThrowsConfigurationError() {
+        service = new ResendEmailService(
+                "noreply@yadony.app",
+                "Ton code : %s",
+                mockRestClient,
+                templateEngine(),
+                false,
+                false,
+                true);
+
+        assertThatThrownBy(() -> service.sendOtp("user@example.com", "123456"))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> {
+                    YadonyBusinessException ex = (YadonyBusinessException) e;
+                    assertThat(ex.getErrorCode()).isEqualTo("email-service-not-configured");
+                    assertThat(ex.getStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+                });
+        verify(mockRestClient, never()).post();
     }
 
     @Test

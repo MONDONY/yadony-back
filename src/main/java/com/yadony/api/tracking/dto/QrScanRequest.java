@@ -12,6 +12,7 @@ public record QrScanRequest(
         @NotNull TrackingEventType eventType,
         BigDecimal gpsLat,
         BigDecimal gpsLon,
+        String gpsLabel,
         String photoUrl,
         LocalDateTime offlineTimestamp
 ) {}

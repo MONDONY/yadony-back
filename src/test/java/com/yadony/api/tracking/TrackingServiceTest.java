@@ -299,7 +299,7 @@ class TrackingServiceTest {
         when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
         when(userRepository.findByFirebaseUid("uid-traveler")).thenReturn(Optional.of(traveler));
 
-        QrScanRequest req = new QrScanRequest(bidId, TrackingEventType.ARRIVEE, null, null, null, null);
+        QrScanRequest req = new QrScanRequest(bidId, TrackingEventType.ARRIVEE, null, null, null, null, null);
         assertYadonyError(() -> service.processScan(req, "uid-traveler"), "use-confirm-delivery");
     }
 
@@ -313,7 +313,7 @@ class TrackingServiceTest {
         when(userRepository.findByFirebaseUid("uid-traveler")).thenReturn(Optional.of(traveler));
 
         LocalDateTime future = LocalDateTime.now(ZoneOffset.UTC).plusHours(2);
-        QrScanRequest req = new QrScanRequest(bidId, TrackingEventType.TRANSIT, null, null, null, future);
+        QrScanRequest req = new QrScanRequest(bidId, TrackingEventType.TRANSIT, null, null, null, null, future);
         assertYadonyError(() -> service.processScan(req, "uid-traveler"), "invalid-timestamp");
     }
 
@@ -330,7 +330,7 @@ class TrackingServiceTest {
             setId(e, UUID.randomUUID());
             return e;
         });
-        QrScanRequest req = new QrScanRequest(bidId, TrackingEventType.DEPART, null, null, null, null);
+        QrScanRequest req = new QrScanRequest(bidId, TrackingEventType.DEPART, null, null, null, null, null);
         TrackingEventResponse resp = service.processScan(req, "uid-traveler");
 
         assertThat(resp.eventType()).isEqualTo("DEPART");
@@ -353,7 +353,7 @@ class TrackingServiceTest {
         });
 
         when(bidRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        QrScanRequest req = new QrScanRequest(bidId, TrackingEventType.TRANSIT, null, null, null, null);
+        QrScanRequest req = new QrScanRequest(bidId, TrackingEventType.TRANSIT, null, null, null, null, null);
         TrackingEventResponse resp = service.processScan(req, "uid-traveler");
 
         assertThat(resp.eventType()).isEqualTo("TRANSIT");
@@ -452,6 +452,7 @@ class TrackingServiceTest {
         BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");
         bid.setConfirmationCode("888888");
         bid.setConfirmationCodeExpiry(LocalDateTime.now(ZoneOffset.UTC).plusDays(2));
+        bid.setConfirmationCodePublicEnabled(true);
         UserEntity sender = buildUser(senderId, "uid-sender");
         when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
         when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
@@ -460,6 +461,52 @@ class TrackingServiceTest {
 
         assertThat(resp.confirmationCode()).isEqualTo("888888");
         assertThat(resp.expiresAt()).isNotNull();
+        assertThat(resp.publicPageVisible()).isTrue();
+    }
+
+    @Test
+    void setConfirmationCodePublicVisible_senderCanPublishAndHideCurrentCode() {
+        BidEntity bid = buildBid(BidStatus.HANDED_OVER, "qt");
+        bid.setConfirmationCode("888888");
+        bid.setConfirmationCodeExpiry(LocalDateTime.now(ZoneOffset.UTC).plusDays(2));
+        UserEntity sender = buildUser(senderId, "uid-sender");
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
+
+        ConfirmCodeResponse published =
+                service.setConfirmationCodePublicVisible(bidId, "uid-sender", true);
+        ConfirmCodeResponse hidden =
+                service.setConfirmationCodePublicVisible(bidId, "uid-sender", false);
+
+        assertThat(published.publicPageVisible()).isTrue();
+        assertThat(hidden.publicPageVisible()).isFalse();
+        assertThat(bid.isConfirmationCodePublicEnabled()).isFalse();
+        verify(bidRepository, times(2)).save(bid);
+    }
+
+    @Test
+    void setConfirmationCodePublicVisible_notSender_throwsForbidden() {
+        BidEntity bid = buildBid(BidStatus.HANDED_OVER, "qt");
+        bid.setConfirmationCode("888888");
+        UserEntity other = buildUser(UUID.randomUUID(), "uid-other");
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(userRepository.findByFirebaseUid("uid-other")).thenReturn(Optional.of(other));
+
+        assertYadonyError(
+                () -> service.setConfirmationCodePublicVisible(bidId, "uid-other", true),
+                "forbidden");
+    }
+
+    @Test
+    void setConfirmationCodePublicVisible_withoutCurrentCode_throwsUnprocessable() {
+        BidEntity bid = buildBid(BidStatus.HANDED_OVER, "qt");
+        UserEntity sender = buildUser(senderId, "uid-sender");
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
+
+        assertYadonyError(
+                () -> service.setConfirmationCodePublicVisible(bidId, "uid-sender", true),
+                "code-not-generated");
     }
 
     // ── refreshConfirmationCode ───────────────────────────────────────────────
@@ -502,6 +549,7 @@ class TrackingServiceTest {
         BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");
         bid.setConfirmationCode("000000");
         bid.setConfirmationCodeAttempts(2);
+        bid.setConfirmationCodePublicEnabled(true);
         AnnouncementEntity ann = buildAnnouncement();
         UserEntity sender = buildUser(senderId, "uid-sender");
         when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
@@ -516,6 +564,8 @@ class TrackingServiceTest {
         assertThat(bid.getConfirmationCodeAttempts()).isZero();
         assertThat(bid.getConfirmationCodeRefreshCount()).isEqualTo(1);
         assertThat(bid.getConfirmationCodeRefreshWindowStart()).isNotNull();
+        assertThat(bid.isConfirmationCodePublicEnabled()).isFalse();
+        assertThat(resp.publicPageVisible()).isFalse();
         verifyNoInteractions(notificationDispatcher);
     }
 
@@ -698,7 +748,7 @@ class TrackingServiceTest {
         when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
         when(userRepository.findByFirebaseUid("uid-other")).thenReturn(Optional.of(outsider));
 
-        QrScanRequest req = new QrScanRequest(bidId, TrackingEventType.TRANSIT, null, null, null, null);
+        QrScanRequest req = new QrScanRequest(bidId, TrackingEventType.TRANSIT, null, null, null, null, null);
         assertYadonyError(() -> service.processScan(req, "uid-other"), "forbidden");
     }
 
@@ -711,7 +761,7 @@ class TrackingServiceTest {
         when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
         when(userRepository.findByFirebaseUid("uid-traveler")).thenReturn(Optional.of(traveler));
 
-        QrScanRequest req = new QrScanRequest(bidId, TrackingEventType.TRANSIT, null, null, null, null);
+        QrScanRequest req = new QrScanRequest(bidId, TrackingEventType.TRANSIT, null, null, null, null, null);
         assertYadonyError(() -> service.processScan(req, "uid-traveler"), "bid-not-accepted");
     }
 
@@ -730,7 +780,7 @@ class TrackingServiceTest {
         });
 
         LocalDateTime past = LocalDateTime.now(ZoneOffset.UTC).minusHours(2);
-        QrScanRequest req = new QrScanRequest(bidId, TrackingEventType.TRANSIT, null, null, null, past);
+        QrScanRequest req = new QrScanRequest(bidId, TrackingEventType.TRANSIT, null, null, null, null, past);
         TrackingEventResponse resp = service.processScan(req, "uid-traveler");
 
         assertThat(resp.eventType()).isEqualTo("TRANSIT");
@@ -755,7 +805,7 @@ class TrackingServiceTest {
             return e;
         });
 
-        QrScanRequest req = new QrScanRequest(bidId, TrackingEventType.DEPART, null, null, null, null);
+        QrScanRequest req = new QrScanRequest(bidId, TrackingEventType.DEPART, null, null, null, null, null);
         service.processScan(req, "uid-traveler");
 
         assertThat(bid.getConfirmationCode()).isEqualTo("123456"); // unchanged
@@ -778,7 +828,7 @@ class TrackingServiceTest {
             setId(e, UUID.randomUUID());
             return e;
         });
-        QrScanRequest req = new QrScanRequest(bidId, TrackingEventType.DEPART, null, null, null, null);
+        QrScanRequest req = new QrScanRequest(bidId, TrackingEventType.DEPART, null, null, null, null, null);
         service.processScan(req, "uid-traveler");
 
         verify(notificationDispatcher).notifyUser(eq(senderId), contains("livraison"), any(), argThat(d -> "CONFIRMATION_CODE_READY".equals(d.get("type"))));
