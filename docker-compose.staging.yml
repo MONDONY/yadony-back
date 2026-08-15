@@ -124,6 +124,7 @@ services:
     volumes:
       - ./nginx/nginx.staging.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/certs:/etc/letsencrypt:ro
+      - ./nginx/static:/var/www/static:ro
       - ./nginx/www:/var/www/certbot:ro
     depends_on:
       - api

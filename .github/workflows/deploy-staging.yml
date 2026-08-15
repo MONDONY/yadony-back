@@ -4,7 +4,7 @@ on:
   workflow_run:
     workflows: ["CI"]
     types: [completed]
-    branches: [main, "feat/**"]
+    branches-ignore: [main]
 
 env:
   REGISTRY: ghcr.io
@@ -192,7 +192,7 @@ jobs:
             mkdir -p ~/yadony
             cd ~/yadony
             echo "📁 Création des répertoires..."
-            mkdir -p nginx/certs nginx/www backups
+            mkdir -p nginx/certs nginx/static nginx/www backups
             echo "🧹 Réinitialisation du dossier monitoring (config régénérée depuis le repo)..."
             # D'anciens fichiers (ex: config Loki) ont pu être créés par des conteneurs
             # tournant en root → "Permission denied" pour l'utilisateur debian.
@@ -220,6 +220,9 @@ jobs:
 
           echo "📤 nginx.staging.conf..."
           scp $SSH_OPTS nginx/nginx.staging.conf "$DEST/nginx/"
+
+          echo "📤 nginx/static/..."
+          scp $SSH_OPTS -O -r nginx/static "$DEST/nginx/"
 
           echo "📤 monitoring/ (alloy, prometheus, grafana)..."
           # -O force le protocole SCP historique : le mode SFTP par défaut
