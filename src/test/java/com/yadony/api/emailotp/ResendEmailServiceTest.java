@@ -77,6 +77,11 @@ class ResendEmailServiceTest {
                 .contains("Vérification de compte")
                 .contains("123456")
                 .contains("Code valable 10 minutes")
+                .contains("https://whatsapp.com/channel/0029VbCfmMzAYlUE5EddiT41")
+                .contains("https://www.youtube.com/@yadony")
+                .contains("https://www.tiktok.com/@yadony26")
+                .contains("https://www.facebook.com/groups/1051558350756867")
+                .contains("https://www.instagram.com/yadony2026/")
                 .contains("© 2026 Yadony. Tous droits réservés.");
     }
 
