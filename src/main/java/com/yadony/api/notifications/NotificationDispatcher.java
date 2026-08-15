@@ -398,14 +398,20 @@ public class NotificationDispatcher {
     }
 
     // Messaging — new message notification (called by MessagingNotifyController)
-    public void sendMessageNotification(UUID senderId, UUID travelerId,
-                                         String senderFirebaseUid, String preview,
-                                         String conversationId) {
+    //
+    // Renvoie l'UID Firebase du destinataire, ou null si l'expéditeur est inconnu.
+    // La Cloud Function s'en sert pour créditer le compteur de non-lus quand elle
+    // n'a pas pu déterminer le destinataire elle-même : la base est la source de
+    // vérité des participants, le document Firestore n'en est qu'un reflet, et il
+    // peut manquer.
+    public String sendMessageNotification(UUID senderId, UUID travelerId,
+                                          String senderFirebaseUid, String preview,
+                                          String conversationId) {
         var senderUser = userRepository.findByFirebaseUid(senderFirebaseUid).orElse(null);
 
         if (senderUser == null) {
             log.warn("sendMessageNotification: unknown senderFirebaseUid={}", senderFirebaseUid);
-            return;
+            return null;
         }
 
         // publicDisplayName() : « Un utilisateur » ne permettait pas de savoir qui écrit
@@ -418,6 +424,10 @@ public class NotificationDispatcher {
                 : preview;
         notifyUser(recipientId, "Message de " + senderName, truncated,
                 Map.of("type", "NEW_MESSAGE", "conversationId", conversationId));
+
+        return userRepository.findById(recipientId)
+                .map(com.yadony.api.auth.UserEntity::getFirebaseUid)
+                .orElse(null);
     }
 
     public void sendCardExpiringNotice(com.yadony.api.auth.UserEntity user) {
