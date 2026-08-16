@@ -118,6 +118,42 @@ class NegotiationServiceTest {
         return prefs;
     }
 
+    /** UUID d'annonce par défaut utilisé par {@link #validStartReq()} pour fournir
+     *  le trajet désormais obligatoire dès start(). */
+    private final UUID TRIP_ANNOUNCEMENT_ID = UUID.randomUUID();
+
+    /** Configure {@code request} (corridor/poids/date/tolérance) et stub
+     *  announcementRepo pour que {@link #TRIP_ANNOUNCEMENT_ID} pointe une
+     *  annonce qui valide sans erreur via validateAndFetchExistingTrip. */
+    private void stubMatchingTrip() {
+        request.setWeightKg(new BigDecimal("10"));
+        request.setDesiredDate(LocalDate.now().plusDays(5));
+        request.setDateToleranceDays((short) 2);
+        com.yadony.api.matching.AnnouncementEntity ann = matchingAnnouncementFor(request, TRAVELER_ID);
+        try {
+            var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+            idField.setAccessible(true);
+            idField.set(ann, TRIP_ANNOUNCEMENT_ID);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+        lenient().when(announcementRepo.findById(TRIP_ANNOUNCEMENT_ID)).thenReturn(Optional.of(ann));
+    }
+
+    /** Construit une annonce (non persistée) dont le corridor/poids/date matchent
+     *  exactement {@code req}, pour {@code travelerId}, statut ACTIVE. */
+    private com.yadony.api.matching.AnnouncementEntity matchingAnnouncementFor(
+            PackageRequestEntity req, UUID travelerId) {
+        com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
+        ann.setTravelerId(travelerId);
+        ann.setStatus(com.yadony.api.matching.AnnouncementStatus.ACTIVE);
+        ann.setAvailableKg(req.getWeightKg() != null ? req.getWeightKg() : new BigDecimal("20"));
+        ann.setDepartureCity(req.getDepartureCity());
+        ann.setArrivalCity(req.getArrivalCity());
+        ann.setDepartureDate(req.getDesiredDate());
+        return ann;
+    }
+
     @Nested
     @DisplayName("start() — happy path")
     class StartHappyPath {
@@ -145,11 +181,12 @@ class NegotiationServiceTest {
                 }
                 return t;
             });
+            stubMatchingTrip();
 
             var req = new NegotiationStartRequest(
                 REQUEST_ID, new BigDecimal("30"),
                 LocalDate.now().plusDays(5), new BigDecimal("10"),
-                null, "Pas de problème"
+                TRIP_ANNOUNCEMENT_ID, "Pas de problème", false, null
             );
             var response = service.start(TRAVELER_ID, req);
 
@@ -186,11 +223,12 @@ class NegotiationServiceTest {
                 }
                 return t;
             });
+            stubMatchingTrip();
 
             var req = new NegotiationStartRequest(
                 REQUEST_ID, new BigDecimal("30"),
                 LocalDate.now().plusDays(5), new BigDecimal("10"),
-                null, "Pas de problème"
+                TRIP_ANNOUNCEMENT_ID, "Pas de problème", false, null
             );
             service.start(TRAVELER_ID, req);
 
@@ -214,6 +252,7 @@ class NegotiationServiceTest {
                 .thenReturn(0L);
             when(threadRepo.countCreatedBy(eq(TRAVELER_ID), any())).thenReturn(0L);
             when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            stubMatchingTrip();
 
             var response = service.start(TRAVELER_ID, validStartReq());
 
@@ -242,6 +281,7 @@ class NegotiationServiceTest {
             when(threadRepo.countCreatedBy(eq(TRAVELER_ID), any())).thenReturn(0L);
             when(activeCurrencyResolver.resolve(TRAVELER_ID)).thenReturn("CAD");
             when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            stubMatchingTrip();
 
             service.start(TRAVELER_ID, validStartReq());
 
@@ -338,12 +378,43 @@ class NegotiationServiceTest {
         }
 
         @Test
-        @DisplayName("voyageur sans Stripe peut négocier une demande card-only → blocage différé au trip-linking")
-        void start_allowsTravelerWithoutStripeOnCardOnlyRequest_blockDeferredToTripLinking() {
+        @DisplayName("voyageur sans Stripe sur une demande card-only avec trajet fourni → 422 immédiat "
+            + "(le trajet étant désormais obligatoire dès start(), le mode de paiement se calcule "
+            + "tout de suite, il n'y a plus d'étape de trip-linking différée)")
+        void start_blocksImmediately_whenNoPaymentMethodAvailableOnTripAttach() {
             // Request only accepts STRIPE
             request.setAcceptedPaymentMethods(java.util.EnumSet.of(PaymentMethod.STRIPE));
             // Traveler is NOT onboarded on Stripe (default stripeAccountStatus = NOT_CREATED)
             traveler.setStripeAccountStatus(StripeAccountStatus.NOT_CREATED);
+
+            when(config.maxOpenThreadsPerTraveler()).thenReturn(5);
+            when(config.threadsPerMinuteRateLimit()).thenReturn(1);
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(requestRepo.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(threadRepo.findActiveByPackageRequestIdAndTravelerId(any(), any()))
+                .thenReturn(Optional.empty());
+            when(threadRepo.countByTravelerIdAndStatus(any(), any())).thenReturn(0L);
+            when(threadRepo.countCreatedBy(any(), any())).thenReturn(0L);
+            stubMatchingTrip();
+
+            var req = new NegotiationStartRequest(REQUEST_ID, new BigDecimal("30"),
+                LocalDate.now().plusDays(5), new BigDecimal("10"), TRIP_ANNOUNCEMENT_ID, "x", false, null);
+
+            assertThatThrownBy(() -> service.start(TRAVELER_ID, req))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("payment-method/card-capability-required");
+            verify(threadRepo, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("voyageur sans Stripe mais avec fonds cash suffisants sur une demande STRIPE+CASH "
+            + "et trajet fourni → thread OPEN (le mode CASH reste disponible)")
+        void start_allowsTravelerWithoutStripe_whenCashAvailableAndTripProvided() {
+            // Request accepts both STRIPE and CASH
+            request.setAcceptedPaymentMethods(java.util.EnumSet.of(PaymentMethod.STRIPE, PaymentMethod.CASH));
+            // Traveler is NOT onboarded on Stripe (default stripeAccountStatus = NOT_CREATED)
+            traveler.setStripeAccountStatus(StripeAccountStatus.NOT_CREATED);
+            lenient().when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any(), any())).thenReturn(true);
 
             when(config.maxOpenThreadsPerTraveler()).thenReturn(5);
             when(config.threadsPerMinuteRateLimit()).thenReturn(1);
@@ -365,9 +436,10 @@ class NegotiationServiceTest {
                 }
                 return t;
             });
+            stubMatchingTrip();
 
             var req = new NegotiationStartRequest(REQUEST_ID, new BigDecimal("30"),
-                LocalDate.now().plusDays(5), new BigDecimal("10"), null, "x");
+                LocalDate.now().plusDays(5), new BigDecimal("10"), TRIP_ANNOUNCEMENT_ID, "x", false, null);
 
             var response = service.start(TRAVELER_ID, req);
 
@@ -403,13 +475,88 @@ class NegotiationServiceTest {
             assertThat(request.getStatus()).isEqualTo(statusBefore);
             assertThat(traveler.getRoles()).isEmpty();
         }
+
+        @Test
+        @DisplayName("ni travelerAnnouncementId ni createDedicatedTrip → 422 trip-required")
+        void start_throws422_whenNoTripProvided() {
+            when(config.maxOpenThreadsPerTraveler()).thenReturn(5);
+            when(config.threadsPerMinuteRateLimit()).thenReturn(1);
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(requestRepo.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(threadRepo.findActiveByPackageRequestIdAndTravelerId(REQUEST_ID, TRAVELER_ID))
+                .thenReturn(Optional.empty());
+            when(threadRepo.countByTravelerIdAndStatus(eq(TRAVELER_ID), eq(NegotiationThreadStatus.OPEN)))
+                .thenReturn(0L);
+            when(threadRepo.countCreatedBy(eq(TRAVELER_ID), any())).thenReturn(0L);
+
+            NegotiationStartRequest req = new NegotiationStartRequest(
+                REQUEST_ID, new BigDecimal("42.00"), LocalDate.now().plusDays(5),
+                new BigDecimal("3.0"), null, null, false, null
+            );
+
+            assertThatThrownBy(() -> service.start(TRAVELER_ID, req))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("trip-required");
+        }
+
+        @Test
+        @DisplayName("travelerAnnouncementId ET createDedicatedTrip=true → 422 trip-not-eligible-both")
+        void start_throws422_whenBothTripSourcesProvided() {
+            when(config.maxOpenThreadsPerTraveler()).thenReturn(5);
+            when(config.threadsPerMinuteRateLimit()).thenReturn(1);
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(requestRepo.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(threadRepo.findActiveByPackageRequestIdAndTravelerId(REQUEST_ID, TRAVELER_ID))
+                .thenReturn(Optional.empty());
+            when(threadRepo.countByTravelerIdAndStatus(eq(TRAVELER_ID), eq(NegotiationThreadStatus.OPEN)))
+                .thenReturn(0L);
+            when(threadRepo.countCreatedBy(eq(TRAVELER_ID), any())).thenReturn(0L);
+
+            NegotiationStartRequest req = new NegotiationStartRequest(
+                REQUEST_ID, new BigDecimal("42.00"), LocalDate.now().plusDays(5),
+                new BigDecimal("3.0"), UUID.randomUUID(), null, true, null
+            );
+
+            assertThatThrownBy(() -> service.start(TRAVELER_ID, req))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("trip-not-eligible-both");
+        }
+
+        @Test
+        @DisplayName("travelerAnnouncementId pointant un trajet valide → attaché au thread créé")
+        void start_attachesExistingValidatedTrip() {
+            when(config.maxOpenThreadsPerTraveler()).thenReturn(5);
+            when(config.threadsPerMinuteRateLimit()).thenReturn(1);
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
+            when(requestRepo.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(threadRepo.findActiveByPackageRequestIdAndTravelerId(REQUEST_ID, TRAVELER_ID))
+                .thenReturn(Optional.empty());
+            when(threadRepo.countByTravelerIdAndStatus(eq(TRAVELER_ID), eq(NegotiationThreadStatus.OPEN)))
+                .thenReturn(0L);
+            when(threadRepo.countCreatedBy(eq(TRAVELER_ID), any())).thenReturn(0L);
+            when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            stubMatchingTrip();
+
+            NegotiationStartRequest req = new NegotiationStartRequest(
+                REQUEST_ID, new BigDecimal("42.00"), LocalDate.now().plusDays(5),
+                new BigDecimal("3.0"), TRIP_ANNOUNCEMENT_ID, null, false, null
+            );
+
+            NegotiationThreadResponse response = service.start(TRAVELER_ID, req);
+
+            assertThat(response.travelerAnnouncementId()).isEqualTo(TRIP_ANNOUNCEMENT_ID);
+            ArgumentCaptor<NegotiationThreadEntity> captor = ArgumentCaptor.forClass(NegotiationThreadEntity.class);
+            verify(threadRepo).save(captor.capture());
+            assertThat(captor.getValue().getTravelerAnnouncementId()).isEqualTo(TRIP_ANNOUNCEMENT_ID);
+        }
     }
 
     private NegotiationStartRequest validStartReq() {
         return new NegotiationStartRequest(
             REQUEST_ID, new BigDecimal("30"),
             LocalDate.now().plusDays(5), new BigDecimal("10"),
-            null, null
+            TRIP_ANNOUNCEMENT_ID, null, false, null
         );
     }
 

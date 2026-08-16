@@ -175,17 +175,57 @@ public class NegotiationService {
             throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "negotiation/rate-limit");
         }
 
+        // Trajet obligatoire dès l'offre (cf. spec 2026-08-16) : soit un trajet
+        // existant validé, soit la création d'un trajet dédié. Exactement l'un des
+        // deux doit être fourni — un record ne peut pas exprimer un XOR en Bean
+        // Validation pur, la vérification se fait donc ici.
+        if (req.travelerAnnouncementId() != null && req.createDedicatedTrip()) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "trip-not-eligible-both");
+        }
+        if (req.travelerAnnouncementId() == null && !req.createDedicatedTrip()) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "trip-required");
+        }
+
+        com.yadony.api.matching.AnnouncementEntity linkedTripAnn;
+        java.util.Set<PaymentMethod> availableMethods;
+        java.time.LocalDate resolvedTravelDate;
+
+        if (req.createDedicatedTrip()) {
+            if (req.dedicatedTrip() == null) {
+                throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "dedicated-trip-invalid");
+            }
+            java.time.LocalDate from = request.getDesiredDate().minusDays(request.getDateToleranceDays());
+            java.time.LocalDate to = request.getDesiredDate().plusDays(request.getDateToleranceDays());
+            if (req.dedicatedTrip().departureDate().isBefore(from) || req.dedicatedTrip().departureDate().isAfter(to)) {
+                throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "announcement/date-mismatch");
+            }
+            availableMethods = computeAvailableMethods(
+                request, traveler, req.proposedPriceEur(), req.dedicatedTrip().useCardForCommission());
+            assertNonEmptyOrThrow(availableMethods, request.getAcceptedPaymentMethods());
+            linkedTripAnn = announcementRepo.save(
+                buildDedicatedTripAnnouncement(request, traveler, req.proposedPriceEur(), req.dedicatedTrip()));
+            resolvedTravelDate = linkedTripAnn.getDepartureDate();
+            auditService.log("ANNOUNCEMENT", linkedTripAnn.getId(), "DEDICATED_TRIP_CREATED_AT_OFFER", travelerId,
+                Map.of("packageRequestId", request.getId().toString()));
+        } else {
+            linkedTripAnn = validateAndFetchExistingTrip(req.travelerAnnouncementId(), travelerId, request);
+            availableMethods = computeAvailableMethods(request, traveler, req.proposedPriceEur(), false);
+            assertNonEmptyOrThrow(availableMethods, request.getAcceptedPaymentMethods());
+            resolvedTravelDate = linkedTripAnn.getDepartureDate();
+        }
+
         NegotiationThreadEntity thread = new NegotiationThreadEntity();
         thread.setPackageRequestId(req.packageRequestId());
         thread.setTravelerId(travelerId);
-        thread.setTravelerAnnouncementId(req.travelerAnnouncementId());
-        thread.setTravelerTravelDate(req.travelerTravelDate());
+        thread.setTravelerAnnouncementId(linkedTripAnn.getId());
+        thread.setTravelerTravelDate(resolvedTravelDate);
         thread.setTravelerAvailableKg(req.travelerAvailableKg());
         thread.setStatus(NegotiationThreadStatus.OPEN);
         thread.setCurrency(request.getCurrency());
         thread.setCurrentPriceEur(req.proposedPriceEur());
         thread.setRoundsCount((short) 1);
         thread.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC));
+        thread.setAvailablePaymentMethods(availableMethods);
         // Code promo saisi par l'expéditeur à la publication de sa demande (étape 3)
         // → appliqué automatiquement au paiement, sans re-saisie (cf. javadoc
         // NegotiationThreadEntity.promoCode).
@@ -215,7 +255,7 @@ public class NegotiationService {
         String senderName = userRepository.findById(request.getSenderId())
             .map(this::buildDisplayName)
             .orElse(UserEntity.UNKNOWN_DISPLAY_NAME);
-        return toResponse(saved, List.of(toMessageResponse(msg)), null, traveler, request, travelerId, senderName, null);
+        return toResponse(saved, List.of(toMessageResponse(msg)), null, traveler, request, travelerId, senderName, linkedTripAnn);
     }
 
     @Transactional
