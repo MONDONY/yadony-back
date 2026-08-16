@@ -531,6 +531,117 @@ public class CashCommissionService {
     }
 
     /**
+     * Règle la commission Yadony (net × taux) d'un thread de négociation CASH, à la
+     * demande du voyageur. Le montant se calcule TOUJOURS depuis le net négocié passé
+     * en paramètre, jamais depuis le prix/kg de l'annonce liée ({@link #computeBidCommission}),
+     * qui n'a aucun rapport avec le prix convenu dès que le trajet n'est pas dédié.
+     *
+     * <p>{@code WALLET_FIRST} ne bascule PAS sur la carte tout seul : un solde court
+     * renvoie {@code INSUFFICIENT_WALLET} et laisse le voyageur choisir entre
+     * recharger et payer par carte. Le débit carte n'a lieu que sur
+     * {@code CommissionSource.CARD}, choix explicite. Même contrat que
+     * {@link #acceptCashBid(UUID, UUID, CommissionSource)} pour le flux classique.
+     *
+     * <p>Ne lève jamais sur un refus normal (solde court, carte refusée, 3DS
+     * requis) : renvoie le statut correspondant. Idempotente : renvoie
+     * {@code accepted()} si {@code thread.commissionStatus} vaut déjà {@code CHARGED}.
+     *
+     * <p><b>Note migration :</b> remplace à terme {@link #chargeNegotiationCommission},
+     * conservée pour l'instant — son unique appelant ({@code CashGateAdapter} via
+     * {@code CashGatePort}) sera basculé sur cette méthode dans une tâche ultérieure,
+     * qui retirera alors l'ancienne.
+     */
+    @Transactional
+    public AcceptBidResponse settleNegotiationCommission(
+            UUID travelerId, UUID senderId, UUID threadId, BigDecimal net, CommissionSource source) {
+        com.yadony.api.requests.entity.NegotiationThreadEntity thread =
+                negotiationThreadRepository.findById(threadId).orElseThrow();
+
+        if (NEGO_COMMISSION_CHARGED.equals(thread.getCommissionStatus())) {
+            return AcceptBidResponse.accepted();
+        }
+
+        BigDecimal rate = commissionRateResolver.resolve(travelerId, senderId);
+        BigDecimal commission = net.multiply(rate).setScale(2, RoundingMode.HALF_UP);
+        if (commission.signum() <= 0) {
+            markNegotiationCommissionCharged(thread, NEGO_COMMISSION_VIA_WALLET, travelerId, commission);
+            return AcceptBidResponse.accepted();
+        }
+
+        if (source == CommissionSource.WALLET_FIRST) {
+            BigDecimal balance = walletService.getBalance(travelerId, thread.getCurrency());
+            if (balance.compareTo(commission) >= 0) {
+                try {
+                    walletService.debit(travelerId, thread.getCurrency(), commission,
+                            WalletTransactionType.COMMISSION_DEDUCTED,
+                            threadId.toString(), "nego_commission_wallet_" + threadId);
+                    markNegotiationCommissionCharged(thread, NEGO_COMMISSION_VIA_WALLET, travelerId, commission);
+                    return AcceptBidResponse.accepted();
+                } catch (InsufficientWalletBalanceException e) {
+                    // Race TOCTOU : le solde a chuté entre getBalance et debit. On ne
+                    // bascule pas sur la carte sans consentement — le voyageur relancera.
+                    balance = e.getAvailableBalance();
+                }
+            }
+            UserEntity traveler = userRepo.findById(travelerId).orElseThrow();
+            return AcceptBidResponse.insufficientWallet(
+                    balance, commission, traveler.getCommissionPaymentMethodId() != null, thread.getCurrency());
+        }
+
+        // CommissionSource.CARD : le voyageur a explicitement choisi sa carte.
+        UserEntity traveler = userRepo.findById(travelerId).orElseThrow();
+        if (traveler.getCommissionPaymentMethodId() == null) {
+            return AcceptBidResponse.failed("no-commission-card");
+        }
+        CurrencyAmount commissionAmount = CurrencyAmount.of(
+                commission, SupportedCurrency.fromCodeOrDefault(thread.getCurrency()));
+        try {
+            PaymentIntentCreateParams params = PaymentIntentCreateParams.builder()
+                    .setAmount(commissionAmount.minor())
+                    .setCurrency(commissionAmount.currency().code())
+                    .setCustomer(traveler.getStripeCustomerId())
+                    .setPaymentMethod(traveler.getCommissionPaymentMethodId())
+                    .setOffSession(true)
+                    .setConfirm(true)
+                    .setDescription("Commission cash négociation " + threadId)
+                    .putMetadata("negotiation_thread_id", threadId.toString())
+                    .putMetadata("commission_purpose", "cash_negotiation")
+                    .build();
+            RequestOptions opts = RequestOptions.builder()
+                    .setIdempotencyKey("nego_commission_" + threadId)
+                    .build();
+            PaymentIntent pi = stripeCashGateway.createPaymentIntent(params, opts);
+            if ("succeeded".equals(pi.getStatus())) {
+                thread.setCommissionPaymentIntentId(pi.getId());
+                markNegotiationCommissionCharged(thread, NEGO_COMMISSION_VIA_CARD, travelerId, commission);
+                return AcceptBidResponse.accepted();
+            }
+            auditService.log("NEGOTIATION_THREAD", threadId, "CASH_COMMISSION_FAILED", travelerId,
+                    Map.of("reason", "card-status-" + pi.getStatus()));
+            return AcceptBidResponse.failed("card-status-" + pi.getStatus());
+        } catch (CardException e) {
+            auditService.log("NEGOTIATION_THREAD", threadId, "CASH_COMMISSION_FAILED", travelerId,
+                    Map.of("reason", "card-declined", "code", e.getCode() != null ? e.getCode() : ""));
+            return AcceptBidResponse.failed("card-declined");
+        } catch (StripeException e) {
+            log.error("Commission carte négociation thread {} : erreur Stripe {}", threadId, e.getMessage());
+            auditService.log("NEGOTIATION_THREAD", threadId, "CASH_COMMISSION_FAILED", travelerId,
+                    Map.of("reason", "stripe-error"));
+            return AcceptBidResponse.failed("stripe-error");
+        }
+    }
+
+    private void markNegotiationCommissionCharged(
+            com.yadony.api.requests.entity.NegotiationThreadEntity thread,
+            String via, UUID travelerId, BigDecimal commission) {
+        thread.setCommissionStatus(NEGO_COMMISSION_CHARGED);
+        thread.setCommissionChargedVia(via);
+        negotiationThreadRepository.save(thread);
+        auditService.log("NEGOTIATION_THREAD", thread.getId(), "CASH_COMMISSION_CHARGED", travelerId,
+                Map.of("commission", commission.toPlainString(), "via", via));
+    }
+
+    /**
      * True if the traveler has a commission payment card registered. Used by the
      * negotiation trip-linking gate to let a wallet-short traveler consent to a
      * card charge (collected at finalize, wallet-first then card).
