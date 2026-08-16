@@ -21,6 +21,7 @@ import com.yadony.api.matching.events.BidExpiredOnDepartureEvent;
 import com.yadony.api.matching.events.BidRejectedEvent;
 import com.yadony.api.matching.events.HandoverAlertEvent;
 import com.yadony.api.matching.events.ParcelRefusedEvent;
+import com.yadony.api.matching.events.TripArrivedEvent;
 import com.yadony.api.matching.events.VoyageurNoShowEvent;
 import com.yadony.api.payments.events.PaymentReleasedEvent;
 import com.yadony.api.payments.mobilemoney.events.BidPaidByMobileMoneyEvent;
@@ -298,6 +299,17 @@ public class NotificationDispatcher {
         notifyCritical(event.getSenderId(), "Livraison confirmée",
                 "Votre colis est arrivé à destination",
                 Map.of("type", "DELIVERY_CONFIRMED", "bidId", event.getBidId().toString()));
+    }
+
+    // Trajet arrivé à destination — notif expéditeur par colis (instructions de retrait)
+    @EventListener @Async
+    public void onTripArrived(TripArrivedEvent event) {
+        Map<String, String> data = Map.of("type", "TRIP_ARRIVED",
+                "announcementId", event.getAnnouncementId().toString());
+        for (TripArrivedEvent.BidTarget target : event.getTargets()) {
+            notifyUser(target.senderId(), "Votre voyageur est arrivé",
+                    "Instructions de retrait disponibles dans le suivi de votre colis", data);
+        }
     }
 
     @EventListener @Async

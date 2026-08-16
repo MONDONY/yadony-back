@@ -18,6 +18,7 @@ import com.yadony.api.matching.events.BidCreatedEvent;
 import com.yadony.api.matching.events.CashBidCreatedEvent;
 import com.yadony.api.matching.events.BidRejectedEvent;
 import com.yadony.api.matching.events.HandoverAlertEvent;
+import com.yadony.api.matching.events.TripArrivedEvent;
 import com.yadony.api.payments.events.PaymentReleasedEvent;
 import com.yadony.api.payments.mobilemoney.events.BidPaidByMobileMoneyEvent;
 import com.yadony.api.tracking.events.DeliveryConfirmedEvent;
@@ -566,6 +567,27 @@ class NotificationDispatcherTest {
         var dataCaptor = ArgumentCaptor.forClass(Map.class);
         verify(fcmService).sendToUser(eq(senderId), eq("Livraison confirmée"), any(), dataCaptor.capture());
         assertThat(dataCaptor.getValue()).containsEntry("type", "DELIVERY_CONFIRMED");
+    }
+
+    // ── TripArrivedEvent ──────────────────────────────────────────────────────
+
+    @Test
+    void onTripArrived_notifiesEachSender() {
+        UUID bid1Sender = UUID.randomUUID();
+        UUID bid2Sender = UUID.randomUUID();
+        TripArrivedEvent event = new TripArrivedEvent(annId, List.of(
+                new TripArrivedEvent.BidTarget(UUID.randomUUID(), bid1Sender),
+                new TripArrivedEvent.BidTarget(UUID.randomUUID(), bid2Sender)));
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onTripArrived(event);
+
+        var dataCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(fcmService).sendToUser(eq(bid1Sender), eq("Votre voyageur est arrivé"), any(), dataCaptor.capture());
+        assertThat(dataCaptor.getValue())
+                .containsEntry("type", "TRIP_ARRIVED")
+                .containsEntry("announcementId", annId.toString());
+        verify(fcmService).sendToUser(eq(bid2Sender), eq("Votre voyageur est arrivé"), any(), any());
     }
 
     // ── PaymentReleasedEvent ──────────────────────────────────────────────────
