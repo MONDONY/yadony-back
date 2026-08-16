@@ -1103,6 +1103,32 @@ class NegotiationServiceTest {
         }
 
         @Test
+        @DisplayName("expéditeur accepte avec trajet déjà lié → AWAITING_PAYMENT direct (plus de branchement sur l'accepteur)")
+        void sender_accepts_withLinkedTrip_setsAwaitingPayment() {
+            // Le trajet est garanti présent depuis start() (Task 4) : que ce soit le
+            // voyageur OU l'expéditeur qui accepte, un thread avec travelerAnnouncementId
+            // déjà lié doit toujours sauter directement à AWAITING_PAYMENT.
+            thread.setTravelerAnnouncementId(UUID.randomUUID());
+            NegotiationMessageEntity lastMsg = NegotiationMessageEntity.create(
+                THREAD_ID, TRAVELER_ID, NegotiationMessageKind.PROPOSAL,
+                new java.math.BigDecimal("30"), null);
+
+            when(threadRepo.findById(THREAD_ID)).thenReturn(java.util.Optional.of(thread));
+            when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID))
+                .thenReturn(java.util.List.of(lastMsg));
+            when(messageRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(threadRepo.save(any())).thenReturn(thread);
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(java.util.Optional.of(traveler));
+            when(userRepository.findById(SENDER_ID)).thenReturn(java.util.Optional.of(traveler));
+
+            var response = service.accept(SENDER_ID, THREAD_ID, null);
+
+            assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.AWAITING_PAYMENT);
+            assertThat(response.status()).isEqualTo(NegotiationThreadStatus.AWAITING_PAYMENT);
+        }
+
+        @Test
         @DisplayName("accepter son propre message → 409 not-your-turn")
         void accept_ownMessage_throwsNotYourTurn() {
             NegotiationMessageEntity lastMsg = NegotiationMessageEntity.create(

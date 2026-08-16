@@ -481,8 +481,9 @@ public class NegotiationService {
     /**
      * Bilateral accept — both the sender AND the traveler can accept the other's counter-offer.
      * <ul>
-     *   <li>If the traveler accepts AND already has a trip linked → AWAITING_PAYMENT (skip trip step).</li>
-     *   <li>Otherwise → AWAITING_TRIP (traveler must still link / create a trip).</li>
+     *   <li>If the thread already has a trip linked (guaranteed since start(), Task 4) → AWAITING_PAYMENT,
+     *       regardless of who accepts.</li>
+     *   <li>Otherwise (legacy pre-migration thread without a trip) → AWAITING_TRIP.</li>
      * </ul>
      */
     @Transactional
@@ -515,10 +516,13 @@ public class NegotiationService {
             req == null ? null : req.body());
         messageRepo.save(acceptMsg);
 
-        // Si c'est le voyageur qui accepte ET qu'il a déjà un trajet lié → AWAITING_PAYMENT direct
-        boolean travelerIsAcceptor = callerId.equals(thread.getTravelerId());
-        boolean travelerHasTrip = thread.getTravelerAnnouncementId() != null;
-        NegotiationThreadStatus nextStatus = (travelerIsAcceptor && travelerHasTrip)
+        // Depuis que start() exige un trajet (cf. spec 2026-08-16), tout thread créé
+        // après ce déploiement a déjà travelerAnnouncementId non-null : on passe
+        // directement à AWAITING_PAYMENT. Le garde-fou sur travelerAnnouncementId
+        // reste nécessaire pour les threads pré-migration encore OPEN au déploiement
+        // (rares — la migration V210, Task 7, ne traite que les AWAITING_TRIP, pas
+        // les OPEN legacy sans trajet).
+        NegotiationThreadStatus nextStatus = thread.getTravelerAnnouncementId() != null
             ? NegotiationThreadStatus.AWAITING_PAYMENT
             : NegotiationThreadStatus.AWAITING_TRIP;
 
