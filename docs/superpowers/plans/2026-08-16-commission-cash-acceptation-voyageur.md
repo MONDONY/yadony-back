@@ -453,8 +453,11 @@ git commit -m "feat(negociation): statut AWAITING_COMMISSION et sa contrainte Po
 - Modify: `src/main/java/com/yadony/api/payments/cash/CashCommissionService.java`
 - Create: `src/main/java/com/yadony/api/requests/event/NegotiationCommissionPendingEvent.java`
 - Modify: `src/main/java/com/yadony/api/notifications/RequestEventsListener.java`
+- Modify: `src/main/java/com/yadony/api/requests/repository/NegotiationThreadRepository.java`
 - Test: `src/test/java/com/yadony/api/requests/service/NegotiationServiceTest.java`
 - Test: `src/test/java/com/yadony/api/notifications/RequestEventsListenerTest.java`
+
+**Trou à combler, découvert à la Task 3 :** deux requêtes du repository listent les statuts « actifs » en dur dans leur JPQL, sans passer par `NegotiationThreadStatus.isActive()` : `existsActiveByTravelerAnnouncementId` (lignes ~34) et `findActiveByPackageRequestIdAndTravelerId` (lignes ~67). Sans `AWAITING_COMMISSION` dans ces listes, un voyageur peut dépublier le trajet lié à un accord qui attend son règlement, et la détection de doublon d'offre laisse passer une seconde offre sur la même demande. Ajouter le statut aux deux listes, et un test de non-régression pour chacune. Ne pas toucher à la requête d'expiration `AWAITING_PAYMENT` (ligne ~90), qui vise un autre mécanisme.
 
 **Interfaces:**
 - Consumes: `NegotiationThreadStatus.AWAITING_COMMISSION` (Task 3).
@@ -1299,3 +1302,83 @@ git commit -m "docs: story reglement de commission a l'acceptation"
 **Cohérence des noms entre tâches :** `AWAITING_COMMISSION` (Task 3, consommé Tasks 4-7 et 10), `sealAcceptedThread` (Task 4, appelé Task 5), `settleCommission` / `confirmCommission` / `declineCommission` (Task 5-6, consommés Task 9), `commissionStatus` et `commissionDeadline` (Task 7, modèle Dart Task 8, UI Task 10), `NegotiationCommissionPendingEvent` (Task 4), `dony.negotiation.commission-window-minutes` (Task 4, lu Tasks 6-7).
 
 **Note d'exécution :** les Tasks 1, 2 et 8 ont été implémentées et relues avant ce changement de conception, et restent valides telles quelles. La Task 8 doit toutefois être complétée par `commissionDeadline` au moment de la Task 10.
+
+---
+
+## Task 13: Le fil Flutter comprend le nouveau statut, et survit à ceux qu'il ne connaît pas
+
+**Files:** (dépôt `dony_app`)
+- Modify: `lib/features/package_request/data/models/negotiation_thread.dart`
+- Test: `test/features/package_request/data/models/negotiation_thread_test.dart`
+
+**Interfaces:**
+- Produces: `NegotiationThreadStatus.awaitingCommission` (valeur de fil `'AWAITING_COMMISSION'`), incluse dans `isActive` ; `NegotiationThread.commissionDeadline` (`DateTime?`) ; un `fromJson` qui ne lève plus sur un statut inconnu.
+
+**Pourquoi cette tâche existe, et pourquoi elle doit passer AVANT le déploiement du backend.** `NegotiationThreadStatus.fromJson` fait aujourd'hui un `firstWhere` sans `orElse` : sur une valeur de statut qu'elle ne connaît pas, elle lève une `StateError` et le fil de négociation devient impossible à ouvrir. Le jour où le backend commence à renvoyer `AWAITING_COMMISSION`, toutes les versions de l'app déployées avant cette tâche cassent sur ce fil. Deux conséquences : cette valeur doit être ajoutée au modèle, et le parsing doit devenir tolérant pour que le prochain statut ajouté ne reproduise pas la panne.
+
+- [ ] **Step 1: Écrire les tests qui échouent**
+
+```dart
+    test('AWAITING_COMMISSION est reconnu et compté comme actif', () {
+      expect(
+        NegotiationThreadStatus.fromJson('AWAITING_COMMISSION'),
+        NegotiationThreadStatus.awaitingCommission,
+      );
+      expect(NegotiationThreadStatus.awaitingCommission.isActive, isTrue);
+    });
+
+    // Garde-fou de compatibilité : un statut inconnu ne doit jamais rendre un fil
+    // impossible à ouvrir. Avant ce correctif, firstWhere levait une StateError.
+    test('un statut inconnu ne lève pas et retombe sur open', () {
+      expect(NegotiationThreadStatus.fromJson('STATUT_DU_FUTUR'),
+          NegotiationThreadStatus.open);
+    });
+
+    test('fromJson lit commissionDeadline', () {
+      final thread = NegotiationThread.fromJson({
+        ...baseJson,
+        'commissionDeadline': '2026-08-16T14:30:00',
+      });
+      expect(thread.commissionDeadline, DateTime.parse('2026-08-16T14:30:00'));
+    });
+
+    test('commissionDeadline absent reste null', () {
+      expect(NegotiationThread.fromJson(baseJson).commissionDeadline, isNull);
+    });
+```
+
+- [ ] **Step 2: Lancer les tests pour vérifier qu'ils échouent**
+
+Run: `flutter test test/features/package_request/data/models/negotiation_thread_test.dart`
+Expected: FAIL.
+
+- [ ] **Step 3: Implémenter**
+
+```dart
+  awaitingCommission('AWAITING_COMMISSION'),
+```
+
+```dart
+  /// Un statut inconnu ne doit jamais empêcher d'ouvrir un fil : le backend peut
+  /// en ajouter avant que cette version de l'app ne soit installée. On retombe
+  /// sur `open`, l'état le moins engageant, plutôt que de lever.
+  static NegotiationThreadStatus fromJson(String s) =>
+      NegotiationThreadStatus.values.firstWhere(
+        (e) => e.wireName == s,
+        orElse: () => NegotiationThreadStatus.open,
+      );
+```
+
+Inclure `awaitingCommission` dans `isActive`, ajouter le champ `commissionDeadline` (`DateTime?`) au constructeur, à `fromJson` (`json['commissionDeadline'] == null ? null : DateTime.parse(json['commissionDeadline'] as String)`) et à `props`.
+
+- [ ] **Step 4: Lancer les tests**
+
+Run: `flutter test test/features/package_request/`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -A
+git commit -m "feat(negociation): le fil comprend le statut d'attente de commission"
+```
