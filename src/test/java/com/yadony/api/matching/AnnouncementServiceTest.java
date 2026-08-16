@@ -16,6 +16,7 @@ import com.yadony.api.matching.dto.AnnouncementDetailResponse;
 import com.yadony.api.matching.dto.AnnouncementRequest;
 import com.yadony.api.matching.dto.AnnouncementResponse;
 import com.yadony.api.matching.events.AnnouncementDeletedEvent;
+import com.yadony.api.matching.events.TripArrivedEvent;
 import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.settings.UserBusinessPrefsEntity;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
@@ -35,6 +36,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.http.HttpStatus;
+import org.assertj.core.api.ThrowableAssert;
 
 import java.lang.reflect.Field;
 import java.math.BigDecimal;
@@ -233,6 +235,21 @@ class AnnouncementServiceTest {
         AnnouncementEntity a = buildAnnouncement(traveler);
         a.setStatus(AnnouncementStatus.DRAFT);
         return a;
+    }
+
+    private static void assertYadonyError(ThrowableAssert.ThrowingCallable callable, String expectedErrorCode) {
+        Throwable thrown = catchThrowable(callable);
+        assertThat(thrown).isInstanceOf(YadonyBusinessException.class);
+        assertThat(((YadonyBusinessException) thrown).getErrorCode()).isEqualTo(expectedErrorCode);
+    }
+
+    private BidEntity buildBid(BidStatus status, UUID announcementId) {
+        BidEntity b = new BidEntity();
+        setId(b, UUID.randomUUID());
+        b.setAnnouncementId(announcementId);
+        b.setSenderId(UUID.randomUUID());
+        b.setStatus(status);
+        return b;
     }
 
     // ─── createAnnouncement ────────────────────────────────────────────────────
@@ -2535,6 +2552,116 @@ class AnnouncementServiceTest {
             var result = announcementService.getTravelerAnnouncements(travelerId);
 
             assertThat(result.get(0).currency()).isEqualTo("CAD");
+        }
+    }
+
+    // ─── markArrived ───────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("markArrived()")
+    class MarkArrivedTests {
+
+        @Test
+        @DisplayName("markArrived — transitionne tous les bids IN_TRANSIT vers ARRIVED et publie TripArrivedEvent")
+        void markArrived_success() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement(traveler);
+            BidEntity bidInTransit = buildBid(BidStatus.IN_TRANSIT, announcement.getId());
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+            when(announcementRepository.findByIdForUpdate(announcement.getId())).thenReturn(Optional.of(announcement));
+            when(announcementRepository.findById(announcement.getId())).thenReturn(Optional.of(announcement));
+            when(bidRepository.findByAnnouncementIdAndStatusNotIn(eq(announcement.getId()), anyCollection()))
+                    .thenReturn(List.of(bidInTransit));
+            when(bidRepository.countVisibleByAnnouncementId(announcement.getId())).thenReturn(1L);
+            when(bidRepository.countByAnnouncementIdAndStatusIn(eq(announcement.getId()), anyList())).thenReturn(0L);
+            when(announcementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            AnnouncementDetailResponse result =
+                    announcementService.markArrived(announcement.getId(), FIREBASE_UID, "Métro Châtelet, sortie 3");
+
+            assertThat(bidInTransit.getStatus()).isEqualTo(BidStatus.ARRIVED);
+            assertThat(announcement.getArrivalInstructions()).isEqualTo("Métro Châtelet, sortie 3");
+            assertThat(result.arrivalInstructions()).isEqualTo("Métro Châtelet, sortie 3");
+            verify(bidRepository).saveAll(List.of(bidInTransit));
+            ArgumentCaptor<TripArrivedEvent> captor = ArgumentCaptor.forClass(TripArrivedEvent.class);
+            verify(eventPublisher).publishEvent(captor.capture());
+            assertThat(captor.getValue().getTargets()).hasSize(1);
+            assertThat(captor.getValue().getTargets().get(0).bidId()).isEqualTo(bidInTransit.getId());
+            assertThat(captor.getValue().getTargets().get(0).senderId()).isEqualTo(bidInTransit.getSenderId());
+            verify(auditService).log(eq("ANNOUNCEMENT"), eq(announcement.getId()),
+                    eq("TRIP_ARRIVED"), eq(traveler.getId()), anyMap());
+        }
+
+        @Test
+        @DisplayName("markArrived — refuse si un bid actif n'est pas IN_TRANSIT")
+        void markArrived_notAllInTransit_throws() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement(traveler);
+            BidEntity bidHandedOver = buildBid(BidStatus.HANDED_OVER, announcement.getId());
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.findByIdForUpdate(announcement.getId())).thenReturn(Optional.of(announcement));
+            when(bidRepository.findByAnnouncementIdAndStatusNotIn(eq(announcement.getId()), anyCollection()))
+                    .thenReturn(List.of(bidHandedOver));
+
+            assertYadonyError(
+                    () -> announcementService.markArrived(announcement.getId(), FIREBASE_UID, null),
+                    "trip/not-all-in-transit");
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("markArrived — refuse si aucun colis actif")
+        void markArrived_noActiveParcel_throws() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement(traveler);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.findByIdForUpdate(announcement.getId())).thenReturn(Optional.of(announcement));
+            when(bidRepository.findByAnnouncementIdAndStatusNotIn(eq(announcement.getId()), anyCollection()))
+                    .thenReturn(List.of());
+
+            assertYadonyError(
+                    () -> announcementService.markArrived(announcement.getId(), FIREBASE_UID, null),
+                    "trip/no-active-parcel");
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("markArrived — refuse si l'appelant n'est pas le voyageur propriétaire")
+        void markArrived_notOwner_throws() {
+            UserEntity traveler = buildTraveler();
+            UserEntity someoneElse = buildTraveler();
+            setId(someoneElse, UUID.randomUUID());
+            AnnouncementEntity announcement = buildAnnouncement(traveler);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(someoneElse));
+            when(announcementRepository.findByIdForUpdate(announcement.getId())).thenReturn(Optional.of(announcement));
+
+            assertYadonyError(
+                    () -> announcementService.markArrived(announcement.getId(), FIREBASE_UID, null),
+                    "forbidden");
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("markArrived — refuse si le trajet n'existe pas")
+        void markArrived_announcementNotFound_throws() {
+            UserEntity traveler = buildTraveler();
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.findByIdForUpdate(ANNOUNCEMENT_ID)).thenReturn(Optional.empty());
+
+            assertYadonyError(
+                    () -> announcementService.markArrived(ANNOUNCEMENT_ID, FIREBASE_UID, null),
+                    "announcement-not-found");
+        }
+
+        @Test
+        @DisplayName("markArrived — refuse si l'utilisateur n'existe pas")
+        void markArrived_userNotFound_throws() {
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.empty());
+
+            assertYadonyError(
+                    () -> announcementService.markArrived(ANNOUNCEMENT_ID, FIREBASE_UID, null),
+                    "user-not-found");
         }
     }
 }

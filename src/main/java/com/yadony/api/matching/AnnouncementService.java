@@ -25,6 +25,7 @@ import com.yadony.api.matching.dto.TravelerProfileDto;
 import com.yadony.api.matching.events.AnnouncementDeletedEvent;
 import com.yadony.api.matching.events.AnnouncementInProgressEvent;
 import com.yadony.api.matching.events.BidExpiredOnDepartureEvent;
+import com.yadony.api.matching.events.TripArrivedEvent;
 import com.yadony.api.matching.AnnouncementPublishedEvent;
 import com.yadony.api.requests.entity.PackageRequestStatus;
 import com.yadony.api.requests.repository.PackageRequestRepository;
@@ -947,6 +948,68 @@ public class AnnouncementService {
         auditService.log("ANNOUNCEMENT", saved.getId(), "UNPUBLISHED", user.getId(),
                 Map.of("departureCity", saved.getDepartureCity(),
                         "arrivalCity", saved.getArrivalCity()));
+
+        return getAnnouncementDetail(saved.getId(), firebaseUid);
+    }
+
+    /**
+     * Statuts de bid exclus du calcul « colis actifs pris en charge » : jamais
+     * pris en charge (REJECTED/CANCELLED/EXPIRED), abandonné (NO_SHOW/PARCEL_REFUSED),
+     * ou déjà au bout du parcours (COMPLETED).
+     */
+    private static final Set<BidStatus> INACTIVE_BID_STATUSES = EnumSet.of(
+            BidStatus.REJECTED, BidStatus.CANCELLED, BidStatus.PARCEL_REFUSED,
+            BidStatus.EXPIRED, BidStatus.NO_SHOW, BidStatus.COMPLETED);
+
+    /**
+     * Marque tous les colis activement pris en charge sur ce trajet comme
+     * arrivés à destination (IN_TRANSIT → ARRIVED), en une action groupée par
+     * le voyageur. Refuse si un colis actif n'est pas encore IN_TRANSIT (reste
+     * à embarquer) ou si aucun colis n'est actuellement pris en charge.
+     */
+    @Transactional
+    public AnnouncementDetailResponse markArrived(UUID id, String firebaseUid, String arrivalInstructions) {
+        UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
+                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
+                        "user-not-found", "User Not Found", "Utilisateur introuvable"));
+
+        AnnouncementEntity announcement = announcementRepository.findByIdForUpdate(id)
+                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
+                        "announcement-not-found", "Announcement Not Found", "Annonce introuvable"));
+
+        if (!announcement.getTravelerId().equals(user.getId())) {
+            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
+                    "Vous n'êtes pas autorisé à modifier ce trajet");
+        }
+
+        List<BidEntity> activeBids = bidRepository.findByAnnouncementIdAndStatusNotIn(id, INACTIVE_BID_STATUSES);
+
+        if (activeBids.isEmpty()) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "trip/no-active-parcel",
+                    "No Active Parcel", "Aucun colis n'est actuellement pris en charge sur ce trajet");
+        }
+
+        boolean allInTransit = activeBids.stream().allMatch(b -> b.getStatus() == BidStatus.IN_TRANSIT);
+        if (!allInTransit) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "trip/not-all-in-transit",
+                    "Not All In Transit",
+                    "Tous les colis doivent être en transit avant de marquer l'arrivée");
+        }
+
+        announcement.setArrivalInstructions(arrivalInstructions);
+        for (BidEntity bid : activeBids) {
+            bid.setStatus(BidStatus.ARRIVED);
+        }
+        bidRepository.saveAll(activeBids);
+        AnnouncementEntity saved = announcementRepository.save(announcement);
+
+        auditService.log("ANNOUNCEMENT", saved.getId(), "TRIP_ARRIVED", user.getId(),
+                Map.of("bidCount", activeBids.size()));
+
+        List<TripArrivedEvent.BidTarget> targets = activeBids.stream()
+                .map(b -> new TripArrivedEvent.BidTarget(b.getId(), b.getSenderId()))
+                .toList();
+        eventPublisher.publishEvent(new TripArrivedEvent(saved.getId(), targets));
 
         return getAnnouncementDetail(saved.getId(), firebaseUid);
     }
