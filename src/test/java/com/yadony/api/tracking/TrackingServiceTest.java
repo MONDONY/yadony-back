@@ -434,6 +434,30 @@ class TrackingServiceTest {
         assertThat(captor.getValue().getBidId()).isEqualTo(bidId);
     }
 
+    @Test
+    void confirmDelivery_bidArrived_succeeds() {
+        BidEntity bid = buildBid(BidStatus.ARRIVED, "qt");
+        bid.setConfirmationCode("123456");
+        bid.setConfirmationCodeExpiry(LocalDateTime.now(ZoneOffset.UTC).plusHours(1));
+        bid.setConfirmationCodeAttempts(0);
+        AnnouncementEntity announcement = buildAnnouncement();
+        UserEntity traveler = buildUser(travelerId, "uid-traveler");
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(announcement));
+        when(userRepository.findByFirebaseUid("uid-traveler")).thenReturn(Optional.of(traveler));
+        when(trackingEventRepository.save(any())).thenAnswer(inv -> {
+            TrackingEventEntity e = inv.getArgument(0);
+            setId(e, UUID.randomUUID());
+            return e;
+        });
+
+        TrackingEventResponse response = service.confirmDelivery(
+                bidId, new ConfirmDeliveryRequest("123456"), "uid-traveler");
+
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.COMPLETED);
+        assertThat(response).isNotNull();
+    }
+
     // ── getConfirmationCode ───────────────────────────────────────────────────
 
     @Test

@@ -539,7 +539,8 @@ public class TrackingService {
 
         if (bid.getStatus() != BidStatus.ACCEPTED
                 && bid.getStatus() != BidStatus.HANDED_OVER
-                && bid.getStatus() != BidStatus.IN_TRANSIT) {
+                && bid.getStatus() != BidStatus.IN_TRANSIT
+                && bid.getStatus() != BidStatus.ARRIVED) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "bid-not-accepted",
                     "Bid Not Accepted", "Ce colis ne peut pas être confirmé dans son état actuel");
         }
