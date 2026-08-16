@@ -3350,6 +3350,14 @@ class NegotiationServiceTest {
         private NegotiationThreadEntity thread;
 
         @BeforeEach
+        void stubRequestProjection() {
+            // Le verrou pessimiste est pris avant toute lecture du fil : la demande est
+            // resolue par projection, sinon la garde d etat jugerait sur le cache L1.
+            lenient().when(threadRepo.findPackageRequestIdById(THREAD_ID))
+                .thenReturn(java.util.Optional.of(REQUEST_ID));
+        }
+
+        @BeforeEach
         void setupThread() {
             thread = new NegotiationThreadEntity();
             thread.setPackageRequestId(REQUEST_ID);
@@ -3618,6 +3626,14 @@ class NegotiationServiceTest {
         private NegotiationThreadEntity thread;
 
         @BeforeEach
+        void stubRequestProjection() {
+            // Le verrou pessimiste est pris avant toute lecture du fil : la demande est
+            // resolue par projection, sinon la garde d etat jugerait sur le cache L1.
+            lenient().when(threadRepo.findPackageRequestIdById(THREAD_ID))
+                .thenReturn(java.util.Optional.of(REQUEST_ID));
+        }
+
+        @BeforeEach
         void setupThread() {
             thread = new NegotiationThreadEntity();
             thread.setPackageRequestId(REQUEST_ID);
@@ -3676,7 +3692,7 @@ class NegotiationServiceTest {
             } catch (Exception e) { throw new RuntimeException(e); }
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(requestRepo.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(request));
             when(threadRepo.findByPackageRequestId(REQUEST_ID)).thenReturn(List.of(thread));
             when(announcementRepo.findById(announcementId)).thenReturn(Optional.of(dedicatedAnn));
 
@@ -3703,7 +3719,7 @@ class NegotiationServiceTest {
         @DisplayName("sans trajet dédié attaché → aucune interaction avec announcementRepo")
         void declineCommission_withoutDedicatedTrip_skipsAnnouncementCleanup() {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(requestRepo.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(request));
             when(threadRepo.findByPackageRequestId(REQUEST_ID)).thenReturn(List.of(thread));
 
             service.declineCommission(TRAVELER_ID, THREAD_ID);
@@ -3713,23 +3729,34 @@ class NegotiationServiceTest {
         }
 
         @Test
-        @DisplayName("renoncement après un débit réel → la commission est remboursée, jamais encaissée pour un accord refusé")
-        void declineCommission_refundsCommissionAlreadyCharged() {
+        @DisplayName("renoncement après un débit réel → le remboursement passe par l'événement, jamais par un appel en ligne")
+        void declineCommission_delegatesRefundToAfterCommitListener() {
             // settleCommission crée le PaymentIntent avec confirm=true et le persiste
             // quel que soit son statut. Le voyageur qui lance un règlement par carte,
             // valide sa 3DS dans son application bancaire (Stripe encaisse), ne revient
             // jamais dans dony (donc confirmCommission n'est jamais appelée) puis renonce,
             // verrait sinon Yadony garder sa commission pour un accord qu'il a refusé.
+            //
+            // Le remboursement ne doit PAS partir d'ici : cette transaction vient de
+            // muter la ligne du fil et la détient. Une transaction REQUIRES_NEW qui
+            // écrirait la même ligne bloquerait sur une connexion que l'appelant ne
+            // libérera jamais, sans cycle visible pour PostgreSQL, donc sans détection
+            // d'interblocage. C'est l'écouteur AFTER_COMMIT qui rembourse.
             thread.setCommissionStatus("REQUIRES_3DS");
             thread.setCommissionPaymentIntentId("pi_decline_after_charge");
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(requestRepo.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(request));
             when(threadRepo.findByPackageRequestId(REQUEST_ID)).thenReturn(List.of(thread));
 
             service.declineCommission(TRAVELER_ID, THREAD_ID);
 
-            verify(cashGatePort).refundNegotiationCommissionIfCharged(TRAVELER_ID, THREAD_ID);
+            verify(cashGatePort, never()).refundNegotiationCommissionIfCharged(any(), any());
+            ArgumentCaptor<com.yadony.api.requests.event.NegotiationCommissionDeclinedEvent> captor =
+                ArgumentCaptor.forClass(com.yadony.api.requests.event.NegotiationCommissionDeclinedEvent.class);
+            verify(eventPublisher).publishEvent(captor.capture());
+            assertThat(captor.getValue().threadId()).isEqualTo(THREAD_ID);
+            assertThat(captor.getValue().travelerId()).isEqualTo(TRAVELER_ID);
         }
 
         @Test
@@ -3741,7 +3768,7 @@ class NegotiationServiceTest {
             rival.setStatus(NegotiationThreadStatus.OPEN);
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(requestRepo.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(request));
             when(threadRepo.findByPackageRequestId(REQUEST_ID)).thenReturn(List.of(thread, rival));
 
             service.declineCommission(TRAVELER_ID, THREAD_ID);

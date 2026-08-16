@@ -87,6 +87,7 @@ class CommissionWindowExpiryRunnerTest {
         setId(ann, annId);
 
         when(threadRepo.findExpiredAwaitingCommission(any())).thenReturn(List.of(t));
+        lenient().when(threadRepo.findPackageRequestIdById(t.getId())).thenReturn(Optional.of(t.getPackageRequestId()));
         when(threadRepo.findById(t.getId())).thenReturn(Optional.of(t));
         when(requestRepo.findByIdForUpdate(request.getId())).thenReturn(Optional.of(request));
         when(threadRepo.findByPackageRequestId(request.getId())).thenReturn(List.of(t));
@@ -121,6 +122,7 @@ class CommissionWindowExpiryRunnerTest {
     @DisplayName("expireOne appelé deux fois sur le même thread → un seul traitement, une seule notification")
     void expire_isIdempotent_onAlreadyExpiredThread() {
         NegotiationThreadEntity t = awaitingCommissionThread(UUID.randomUUID());
+        lenient().when(threadRepo.findPackageRequestIdById(t.getId())).thenReturn(Optional.of(t.getPackageRequestId()));
         when(threadRepo.findById(t.getId())).thenReturn(Optional.of(t));
         when(requestRepo.findByIdForUpdate(t.getPackageRequestId())).thenReturn(Optional.empty());
 
@@ -140,7 +142,7 @@ class CommissionWindowExpiryRunnerTest {
     @DisplayName("expireOne — thread introuvable → no-op")
     void expireOne_notFound_noop() {
         UUID id = UUID.randomUUID();
-        when(threadRepo.findById(id)).thenReturn(Optional.empty());
+        when(threadRepo.findPackageRequestIdById(id)).thenReturn(Optional.empty());
 
         runner.expireOne(id);
 
@@ -159,6 +161,7 @@ class CommissionWindowExpiryRunnerTest {
         ann.setLinkedPackageRequestId(null); // trajet réel, jamais dédié
         setId(ann, annId);
 
+        lenient().when(threadRepo.findPackageRequestIdById(t.getId())).thenReturn(Optional.of(t.getPackageRequestId()));
         when(threadRepo.findById(t.getId())).thenReturn(Optional.of(t));
         when(requestRepo.findByIdForUpdate(request.getId())).thenReturn(Optional.of(request));
         when(announcementRepo.findById(annId)).thenReturn(Optional.of(ann));
@@ -175,7 +178,9 @@ class CommissionWindowExpiryRunnerTest {
         NegotiationThreadEntity failing = awaitingCommissionThread(UUID.randomUUID());
         NegotiationThreadEntity ok = awaitingCommissionThread(UUID.randomUUID());
         when(threadRepo.findExpiredAwaitingCommission(any())).thenReturn(List.of(failing, ok));
+        lenient().when(threadRepo.findPackageRequestIdById(failing.getId())).thenReturn(Optional.of(failing.getPackageRequestId()));
         when(threadRepo.findById(failing.getId())).thenReturn(Optional.of(failing));
+        lenient().when(threadRepo.findPackageRequestIdById(ok.getId())).thenReturn(Optional.of(ok.getPackageRequestId()));
         when(threadRepo.findById(ok.getId())).thenReturn(Optional.of(ok));
         when(requestRepo.findByIdForUpdate(any())).thenReturn(Optional.empty());
         doThrow(new ObjectOptimisticLockingFailureException("NegotiationThreadEntity", failing.getId()))
@@ -264,6 +269,7 @@ class CommissionWindowExpiryRunnerTest {
         ann.setLinkedPackageRequestId(requestId);
         setId(ann, annId);
 
+        lenient().when(threadRepo.findPackageRequestIdById(t.getId())).thenReturn(Optional.of(t.getPackageRequestId()));
         when(threadRepo.findById(t.getId())).thenReturn(Optional.of(t));
         // PackageRequestEntity porte @SQLRestriction("deleted_at IS NULL") : une
         // demande annulée par l'expéditeur pendant l'attente devient introuvable.

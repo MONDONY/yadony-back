@@ -171,8 +171,13 @@ public class RequestEventsListener {
      * le voyageur a perdu la demande, l'expéditeur peut de nouveau la conclure.
      * In-app seulement, même logique que {@link #onNegotiationExpired} : c'est une
      * absence d'action, pas un événement qui appelle une réaction immédiate.
+     *
+     * <p>{@code AFTER_COMMIT} : l'expiration entre en concurrence avec le règlement
+     * du voyageur qui paie juste à l'échéance. Une expiration qui échoue au commit
+     * (le règlement a gagné) ne doit pas avoir déjà annoncé « cette demande n'est
+     * plus disponible pour vous » à un voyageur dont l'accord est scellé en base.
      */
-    @EventListener
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
     public void onNegotiationCommissionExpired(NegotiationCommissionExpiredEvent e) {
         dispatcher.notifyUser(

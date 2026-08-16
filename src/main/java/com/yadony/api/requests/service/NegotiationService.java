@@ -1184,6 +1184,20 @@ public class NegotiationService {
      */
     @Transactional
     public AcceptBidResponse settleCommission(UUID callerId, UUID threadId, CommissionSource source) {
+        // Le verrou est pris AVANT toute lecture du fil, via une projection qui ne
+        // charge pas l'entité. Lire le fil d'abord le mettrait dans le contexte de
+        // persistance : les gardes d'état ci-dessous jugeraient alors sur l'état
+        // d'avant le verrou, et un balayage d'expiration acquérant le verrou entre
+        // les deux ferait échouer ce règlement au commit — après le débit Stripe,
+        // en rollbackant le PaymentIntent, le statut de commission et l'audit. Le
+        // voyageur serait débité sans aucune trace locale.
+        UUID packageRequestId = threadRepo.findPackageRequestIdById(threadId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "thread/not-found"));
+        // Le verrou est acquis ici, mais son absence n'est signalée qu'après les
+        // gardes du fil : une demande introuvable ne doit pas répondre 404 à un
+        // appelant qui n'est même pas le voyageur du fil.
+        PackageRequestEntity lockedRequest = requestRepo.findByIdForUpdate(packageRequestId).orElse(null);
+
         NegotiationThreadEntity thread = threadRepo.findById(threadId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "thread/not-found"));
         if (!callerId.equals(thread.getTravelerId())) {
@@ -1192,8 +1206,10 @@ public class NegotiationService {
         if (thread.getStatus() != NegotiationThreadStatus.AWAITING_COMMISSION) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "thread/not-awaiting-commission");
         }
-        PackageRequestEntity request = requestRepo.findByIdForUpdate(thread.getPackageRequestId())
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found"));
+        if (lockedRequest == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found");
+        }
+        PackageRequestEntity request = lockedRequest;
 
         // Garde de course : ne jamais débiter pour une demande déjà emportée par un
         // autre voyageur. OPEN et NEGOTIATING sont tous deux "encore disponibles" —
@@ -1300,13 +1316,31 @@ public class NegotiationService {
      * lance un règlement par carte, part authentifier sa 3DS dans son application
      * bancaire (Stripe encaisse), ne revient jamais dans dony — donc
      * {@code confirmCommission} n'est jamais appelée — puis renonce, aurait vu sa
-     * commission encaissée pour un accord qu'il a explicitement refusé. On rembourse
-     * donc systématiquement ici, et le statut {@code CANCELLED} est repris par le
-     * balayage de {@code CommissionWindowExpiryRunner} pour la course étroite où la
-     * 3DS aboutit après le commit de ce renoncement.
+     * commission encaissée pour un accord qu'il a explicitement refusé. Le
+     * remboursement n'est PAS lancé ici : il est confié à un écouteur
+     * {@code AFTER_COMMIT} de {@code NegotiationCommissionDeclinedEvent}. Appeler
+     * Stripe en ligne depuis cette méthode ouvrirait une transaction
+     * {@code REQUIRES_NEW} sur une ligne que cette transaction vient de muter et
+     * détient : elle se bloquerait sur elle-même, sans qu'aucun cycle ne soit
+     * visible pour PostgreSQL, donc sans détection d'interblocage. Même discipline
+     * que {@link #cancelNegotiation}. Le statut {@code CANCELLED} est en outre repris
+     * par le balayage de {@code CommissionWindowExpiryRunner}, filet pour la course
+     * étroite où la 3DS aboutit après le commit de ce renoncement.
      */
     @Transactional
     public void declineCommission(UUID callerId, UUID threadId) {
+        // Verrou pris avant toute mutation, et sur la demande d'abord : c'est
+        // l'ordre qu'appliquent settleCommission et le balayage d'expiration.
+        // Verrouiller dans l'ordre inverse (fil puis demande) exposerait à un
+        // interblocage avec le balayage quand un voyageur renonce à la seconde où
+        // sa fenêtre expire.
+        UUID packageRequestId = threadRepo.findPackageRequestIdById(threadId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "thread/not-found"));
+        // Verrou acquis ici, absence signalée seulement après les gardes du fil :
+        // un appelant qui n'est pas le voyageur ne doit pas recevoir 404 sur la
+        // demande avant son 403.
+        PackageRequestEntity lockedRequest = requestRepo.findByIdForUpdate(packageRequestId).orElse(null);
+
         NegotiationThreadEntity thread = threadRepo.findById(threadId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "thread/not-found"));
         if (!callerId.equals(thread.getTravelerId())) {
@@ -1315,8 +1349,10 @@ public class NegotiationService {
         if (thread.getStatus() != NegotiationThreadStatus.AWAITING_COMMISSION) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "thread/not-awaiting-commission");
         }
-        PackageRequestEntity request = requestRepo.findById(thread.getPackageRequestId())
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found"));
+        if (lockedRequest == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found");
+        }
+        PackageRequestEntity request = lockedRequest;
 
         thread.setStatus(NegotiationThreadStatus.CANCELLED);
         thread.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC));
@@ -1328,11 +1364,8 @@ public class NegotiationService {
         auditService.log("NEGOTIATION_THREAD", threadId, "COMMISSION_DECLINED", callerId,
             Map.of("packageRequestId", request.getId().toString()));
 
-        // Le voyageur a pu être débité avant de renoncer (3DS aboutie dans son app
-        // bancaire, retour dans dony jamais effectué) : le port relit Stripe et ne
-        // rembourse que s'il y a réellement eu encaissement.
-        refundIfChargedAfterLoss(callerId, threadId);
-
+        // Le remboursement éventuel est déclenché par l'écouteur AFTER_COMMIT de cet
+        // événement, jamais en ligne ici (cf. javadoc).
         eventPublisher.publishEvent(new com.yadony.api.requests.event.NegotiationCommissionDeclinedEvent(
             thread.getId(), request.getId(), request.getSenderId(), thread.getTravelerId()));
     }

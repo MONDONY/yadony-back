@@ -106,8 +106,13 @@ public class CommissionWindowExpiryRunner {
             UUID id = t.getId();
             try {
                 self.expireOne(id);
-            } catch (ObjectOptimisticLockingFailureException e) {
-                log.warn("Skipped commission-window expiry for thread {} — concurrently modified", id);
+            } catch (RuntimeException e) {
+                // Volontairement large. Un conflit de version optimiste est le cas
+                // attendu (un règlement concurrent a gagné), mais un interblocage
+                // détecté par PostgreSQL arrive en CannotAcquireLockException : le
+                // laisser remonter abandonnerait tout le reste du lot ET empêcherait
+                // refundOrphanedCommissions() de tourner pour ce tick.
+                log.warn("Skipped commission-window expiry for thread {} : {}", id, e.getMessage());
             }
         }
     }
@@ -120,20 +125,25 @@ public class CommissionWindowExpiryRunner {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void expireOne(UUID threadId) {
-        NegotiationThreadEntity peek = threadRepo.findById(threadId).orElse(null);
-        if (peek == null) {
+        // Verrou pessimiste sur la demande AVANT toute lecture du fil, même
+        // discipline que settleCommission. Sans lui, un règlement en vol (aller-retour
+        // Stripe de plusieurs centaines de ms, cas banal du voyageur qui paie à
+        // l'échéance) verrait ce balayage écrire EXPIRED entre sa lecture et son
+        // commit : le règlement échouerait alors sur un conflit de version et
+        // rollbackerait le PaymentIntent, le statut de commission ET l'audit,
+        // laissant un voyageur débité chez Stripe sur un fil EXPIRED sans
+        // commissionPaymentIntentId, donc introuvable par le rattrapage.
+        //
+        // L'identifiant de la demande vient d'une projection, jamais d'une lecture
+        // du fil : charger le fil avant le verrou le placerait dans le contexte de
+        // persistance, et la garde d'état ci-dessous jugerait alors sur l'instance
+        // en cache, c'est-à-dire sur l'état d'avant le verrou. La garde ne
+        // protégerait plus rien.
+        UUID packageRequestId = threadRepo.findPackageRequestIdById(threadId).orElse(null);
+        if (packageRequestId == null) {
             return;
         }
-        // Verrou pessimiste sur la demande AVANT de relire et muter le fil, même
-        // discipline que settleCommission/confirmCommission. Sans lui, un règlement
-        // en vol (aller-retour Stripe de plusieurs centaines de ms, cas banal du
-        // voyageur qui paie à l'échéance) verrait ce balayage écrire EXPIRED entre
-        // sa lecture et son commit : le règlement échouerait alors sur un conflit
-        // de version et rollbackerait le PaymentIntent, le statut de commission ET
-        // l'entrée d'audit — laissant un voyageur débité chez Stripe sur un fil
-        // EXPIRED sans commissionPaymentIntentId, donc introuvable par le balayage
-        // de rattrapage. Se sérialiser derrière le règlement supprime la course.
-        PackageRequestEntity request = requestRepo.findByIdForUpdate(peek.getPackageRequestId()).orElse(null);
+        PackageRequestEntity request = requestRepo.findByIdForUpdate(packageRequestId).orElse(null);
 
         NegotiationThreadEntity t = threadRepo.findById(threadId).orElse(null);
         if (t == null || t.getStatus() != NegotiationThreadStatus.AWAITING_COMMISSION) {

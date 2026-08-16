@@ -106,6 +106,18 @@ public interface NegotiationThreadRepository extends JpaRepository<NegotiationTh
     List<NegotiationThreadEntity> findExpiredAwaitingCommission(@Param("cutoff") LocalDateTime cutoff);
 
     /**
+     * Identifiant de la demande portée par un fil, sans charger l'entité.
+     *
+     * <p>Sert à prendre le verrou pessimiste sur la demande AVANT toute lecture du
+     * fil. Charger le fil d'abord le placerait dans le contexte de persistance :
+     * une « relecture » après le verrou retournerait alors l'instance déjà en
+     * cache, sans le moindre SQL, et rendrait la garde d'état illusoire — elle
+     * jugerait sur l'état d'avant le verrou, précisément celui dont on se méfie.
+     */
+    @Query("SELECT t.packageRequestId FROM NegotiationThreadEntity t WHERE t.id = :threadId")
+    Optional<UUID> findPackageRequestIdById(@Param("threadId") UUID threadId);
+
+    /**
      * Fils perdants portant un PaymentIntent de commission (cash) qui n'a encore
      * jamais été remboursé : un concurrent a scellé l'accord pendant que ce
      * voyageur réglait ({@code AUTO_REJECTED}), le délai a expiré pendant un débit
