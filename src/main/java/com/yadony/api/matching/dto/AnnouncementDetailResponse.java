@@ -41,5 +41,6 @@ public record AnnouncementDetailResponse(
         boolean surplusEligible,
         boolean surplusPublished,
         LocalDateTime handoverDeadline,
-        String currency
+        String currency,
+        String arrivalInstructions
 ) {}

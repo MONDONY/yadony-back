@@ -684,7 +684,8 @@ public class AnnouncementService {
                 announcement.isSurplusEligible(),
                 announcement.isSurplusPublished(),
                 announcement.getHandoverDeadline(),
-                announcement.getCurrency()
+                announcement.getCurrency(),
+                announcement.getArrivalInstructions()
         );
     }
 
@@ -836,7 +837,8 @@ public class AnnouncementService {
                 saved.isSurplusEligible(),
                 saved.isSurplusPublished(),
                 saved.getHandoverDeadline(),
-                saved.getCurrency()
+                saved.getCurrency(),
+                saved.getArrivalInstructions()
         );
     }
 

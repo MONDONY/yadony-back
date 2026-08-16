@@ -887,6 +887,21 @@ class AnnouncementServiceTest {
         }
 
         @Test
+        @DisplayName("détail expose les instructions d'arrivée de l'annonce")
+        void getDetail_exposesArrivalInstructions() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity a = buildAnnouncement(traveler);
+            a.setArrivalInstructions("Métro Châtelet, sortie 3");
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
+            when(bidRepository.countVisibleByAnnouncementId(ANNOUNCEMENT_ID)).thenReturn(0L);
+
+            AnnouncementDetailResponse result = announcementService.getAnnouncementDetail(
+                    ANNOUNCEMENT_ID, FIREBASE_UID);
+
+            assertThat(result.arrivalInstructions()).isEqualTo("Métro Châtelet, sortie 3");
+        }
+
+        @Test
         @DisplayName("annonce KG_FREE → capacityUnit présent dans le détail (regression)")
         void getDetail_kgFreeAnnouncement_returnsCapacityUnit() {
             UserEntity traveler = buildTraveler();

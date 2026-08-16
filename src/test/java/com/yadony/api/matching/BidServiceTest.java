@@ -2610,6 +2610,21 @@ class BidServiceTest {
         }
 
         @Test
+        @DisplayName("arrivalInstructions dénormalisé depuis l'announcement liée")
+        void toResponse_exposesArrivalInstructionsFromAnnouncement() {
+            UserEntity sender = buildSender();
+            AnnouncementEntity announcement = buildAnnouncement();
+            announcement.setArrivalInstructions("Devant la gare, portail nord");
+            BidEntity bid = buildBid();
+
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+
+            BidResponse resp = bidService.toResponse(bid, sender);
+
+            assertThat(resp.arrivalInstructions()).isEqualTo("Devant la gare, portail nord");
+        }
+
+        @Test
         @DisplayName("sender null → senderAvatarUrl null")
         void toResponse_senderNull_avatarUrlNull() {
             BidEntity bid = buildBid();

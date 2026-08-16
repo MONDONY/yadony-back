@@ -1060,6 +1060,7 @@ public class BidService {
         boolean senderKiloPro = sender != null && sender.isKiloPro();
         AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId()).orElse(null);
         String departureCity = announcement != null ? announcement.getDepartureCity() : "Inconnu";
+        String arrivalInstructions = announcement != null ? announcement.getArrivalInstructions() : null;
         String arrivalCity = announcement != null ? announcement.getArrivalCity() : "Inconnu";
         java.time.LocalDate departureDate = announcement != null ? announcement.getDepartureDate() : null;
         java.time.LocalTime departureTime = announcement != null ? announcement.getDepartureTime() : null;
@@ -1265,7 +1266,8 @@ public class BidService {
                 bidPhotoService.activePhotos(bid.getId()),
                 tripCancellationId,
                 tripCancellationRematchStatus,
-                bid.getCurrency()
+                bid.getCurrency(),
+                arrivalInstructions
         );
     }
 }
