@@ -1,10 +1,10 @@
-# Prélèvement de la commission cash à l'acceptation par le voyageur — Implementation Plan
+# Accord en espèces suspendu au règlement de la commission — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Pour un accord de négociation réglé en espèces, l'expéditeur conclut toujours sans être bloqué par le solde du voyageur ; la commission Yadony est prélevée plus tard, quand le voyageur confirme la prise en charge, avec une invitation à recharger son portefeuille s'il est court.
+**Goal:** Pour un accord de négociation réglé en espèces, l'expéditeur conclut sans jamais être bloqué par le solde du voyageur, mais l'affaire n'est scellée que lorsque le voyageur confirme en réglant la commission Yadony, en rechargeant son portefeuille s'il est court. S'il renonce ou laisse passer le délai (2 h par défaut, réglable), le thread expire et la demande reste disponible pour un autre voyageur. Le paiement par carte est inchangé : il scelle l'accord immédiatement.
 
-**Architecture:** `finalizeInternal` cesse de prélever la commission et de lever 422 ; le bid matérialisé porte `commissionStatus = PENDING`. Un nouvel endpoint voyageur `POST /negotiations/{id}/settle-commission` prélève sur le thread via une méthode dédiée qui prend le net négocié en paramètre (jamais `computeBidCommission`, qui recalculerait sur le prix/kg de l'annonce), respecte `CommissionSource` (portefeuille d'abord, carte sur choix explicite) et renvoie le contrat `AcceptBidResponse` déjà consommé par l'app. Côté Flutter, le thread accepté expose une action « Régler la commission » qui réutilise l'UX « Solde insuffisant » existante.
+**Architecture:** Un nouveau statut de thread `AWAITING_COMMISSION` sépare « conclu par l'expéditeur » de « scellé ». En espèces, `finalizeInternal` s'arrête à ce statut : la demande reste `OPEN`, les offres concurrentes restent vivantes, aucun colis n'est matérialisé. Toute la finalisation est extraite dans `sealAcceptedThread`, appelée soit par le paiement carte de l'expéditeur, soit par le règlement de la commission du voyageur. Cet règlement passe par `POST /negotiations/{id}/settle-commission`, qui prélève via une méthode prenant le net négocié en paramètre (jamais `computeBidCommission`, qui recalculerait sur le prix/kg de l'annonce), respecte `CommissionSource` (portefeuille d'abord, carte sur choix explicite) et renvoie le contrat `AcceptBidResponse` déjà consommé par l'app. La demande restant ouverte, plusieurs voyageurs peuvent être en attente simultanément : le premier qui règle emporte la demande, d'où une garde de course avant tout débit. Côté Flutter, le fil expose le compte à rebours, l'action « Confirmer et régler » et l'UX « Solde insuffisant » existante.
 
 **Tech Stack:** Spring Boot 3.4 / Java 21 / PostgreSQL 16 / Flyway (backend `dony-back`) — Flutter / flutter_bloc / GoRouter / Dio (frontend `dony_app`).
 
@@ -14,8 +14,12 @@
 - Ne jamais inclure `Co-Authored-By: Claude` dans un message de commit.
 - Toute la copie visible par l'utilisateur est en français, sans tiret cadratin (`—`) dans les textes affichés : utiliser une virgule. Les commentaires de code sont exemptés.
 - Le montant de la commission d'une négociation se calcule **toujours** depuis le net négocié (`thread.getCurrentPriceEur()`), jamais via `CashCommissionService.computeBidCommission`, qui se base sur `bid.weightKg × announcement.pricePerKg` et serait faux sur un trajet non dédié.
-- Ne jamais réutiliser `POST /bids/{bidId}/accept-with-commission` pour un bid issu de négociation : il revérifie et redécrémente la capacité de l'annonce (déjà décomptée à la matérialisation, à 0 sur un trajet dédié) et republie `BidAcceptedEvent`.
-- Aucune migration Flyway n'est nécessaire : `PENDING` est déjà autorisé par le `CHECK` posé sur `bids.commission_status` en V74, et `negotiation_threads.commission_status` n'a aucune contrainte. La dernière migration existante est V210 : si une tâche en ajoutait une malgré tout, ce serait V211.
+- Ne jamais réutiliser `POST /bids/{bidId}/accept-with-commission` pour un bid issu de négociation : il revérifie et redécrémente la capacité de l'annonce et republie `BidAcceptedEvent`.
+- **Un accord en espèces ne scelle rien tant que Yadony n'a pas encaissé sa commission.** Tant que le thread est `AWAITING_COMMISSION` : la demande reste `OPEN`, les offres concurrentes ne sont ni acceptées ni refusées, aucun colis n'est matérialisé, aucune capacité n'est décomptée. Sans cela, il n'y aurait rien à rouvrir à l'expiration.
+- **La demande reste ouverte pendant l'attente** : plusieurs threads peuvent être `AWAITING_COMMISSION` en même temps sur la même demande, et l'expéditeur peut en conclure d'autres. Le premier qui règle l'emporte. Toujours vérifier que la demande est encore `OPEN` **avant** de débiter un voyageur, jamais après.
+- **Ajouter une valeur à `NegotiationThreadStatus` exige une migration Flyway** pour la contrainte PostgreSQL `chk_neg_thread_status` (posée en V61, étendue en V179). Sans elle, toute écriture échoue en production en 500, **et les tests ne le voient pas** : le profil `test` désactive Flyway et génère le schéma H2 depuis les entités. La dernière migration existante est V210, la prochaine est donc V211.
+- **Tout chemin qui termine un thread portant un trajet dédié doit appeler `softDeleteOrphanedDedicatedTrip`**, sans quoi le trajet reste publié et inutilisable dans « Mes trajets » du voyageur. C'est le bug le plus facile à réintroduire sur cette feature.
+- Le délai de règlement est réglable via `dony.negotiation.commission-window-minutes`, valeur par défaut `120`. Jamais de délai en dur dans le code.
 - Backend : erreurs RFC 7807 via `GlobalExceptionHandler`, `@PreAuthorize` sur les endpoints, entrée `audit_log` pour toute action métier significative, listeners de paiement en `@TransactionalEventListener(AFTER_COMMIT)` + `@Transactional(REQUIRES_NEW)`.
 - Flutter : BLoC obligatoire (jamais `setState`), GoRouter (jamais `Navigator.push`), tout `DonyButton` d'un bottom sheet va dans `stickyBottom`, jamais dans le `child` scrollable.
 - Tests obligatoires dans le même commit que le code. `./mvnw -o test` et `flutter test` doivent être verts avant de marquer une tâche terminée. Ne jamais supprimer un test pour le faire passer : le réécrire s'il assertait l'ancienne règle.
@@ -346,117 +350,254 @@ git commit -m "feat(commission): le port de paiement expose le reglement de comm
 
 ---
 
-## Task 3: L'expéditeur conclut sans être bloqué par le solde du voyageur
+## Task 3: Un accord en espèces attend sa commission avant d'être scellé
 
 **Files:**
-- Modify: `src/main/java/com/yadony/api/requests/service/NegotiationService.java:987-1006`
-- Delete: `src/main/java/com/yadony/api/requests/event/NegotiationCashCommissionFailedEvent.java`
-- Create: `src/main/java/com/yadony/api/requests/event/NegotiationCashCommissionPendingEvent.java`
+- Modify: `src/main/java/com/yadony/api/requests/entity/NegotiationThreadStatus.java`
+- Create: `src/main/resources/db/migration/V211__add_awaiting_commission_to_thread_status_check.sql`
+- Test: `src/test/java/com/yadony/api/migrations/V211MigrationTest.java` (créer)
+
+**Interfaces:**
+- Produces: la valeur d'enum `NegotiationThreadStatus.AWAITING_COMMISSION`, et son autorisation dans la contrainte PostgreSQL `chk_neg_thread_status`.
+
+**PIÈGE CRITIQUE, la raison d'être de cette tâche.** La table `negotiation_threads` porte une contrainte `CHECK (status IN (...))` posée en V61 et étendue en V179. Ajouter une valeur d'enum Java sans étendre cette contrainte fait échouer toute écriture en PostgreSQL, **et les tests ne le voient pas** : le profil `test` désactive Flyway et génère le schéma H2 depuis les entités JPA, sans contrainte. Le bug n'apparaîtrait qu'en production, en 500. C'est pourquoi cette tâche est isolée et testée sur un vrai PostgreSQL.
+
+- [ ] **Step 1: Écrire le test de migration qui échoue**
+
+Créer `src/test/java/com/yadony/api/migrations/V211MigrationTest.java` en s'inspirant très exactement de `V210MigrationTest.java` (même dépôt, même package) : EmbeddedPostgres + Flyway réel, `resetAndMigrateTo("210")` puis migration vers `"211"`.
+
+```java
+    // La contrainte CHECK doit accepter le nouveau statut, sinon toute écriture
+    // échoue en production alors que les tests H2 (sans contrainte) restent verts.
+    @Test
+    void afterV211_awaitingCommissionStatusIsAccepted() {
+        // given un thread inséré avec status = 'AWAITING_COMMISSION'
+        // then l'insertion réussit
+    }
+
+    @Test
+    void afterV211_previouslyAllowedStatusesStillAccepted() {
+        // given un thread pour chacun des 8 statuts historiques
+        // then toutes les insertions réussissent
+    }
+
+    @Test
+    void afterV211_unknownStatusIsStillRejected() {
+        // given un thread avec status = 'NOT_A_STATUS'
+        // then l'insertion échoue (la contrainte protège toujours)
+    }
+```
+
+Remplacer chaque commentaire par du code réel, sur le modèle de `V210MigrationTest`.
+
+- [ ] **Step 2: Lancer le test pour vérifier qu'il échoue**
+
+Run: `./mvnw -o test -Dtest=V211MigrationTest`
+Expected: FAIL, la migration V211 n'existe pas.
+
+- [ ] **Step 3: Implémenter**
+
+Créer `src/main/resources/db/migration/V211__add_awaiting_commission_to_thread_status_check.sql` :
+
+```sql
+-- AWAITING_COMMISSION : un accord en espèces est conclu par l'expéditeur mais reste
+-- suspendu tant que le voyageur n'a pas réglé la commission Yadony. Sans cette
+-- extension de la contrainte, toute transition vers ce statut échoue en PostgreSQL
+-- alors que les tests H2 (profil test, Flyway désactivé) restent verts.
+ALTER TABLE negotiation_threads DROP CONSTRAINT chk_neg_thread_status;
+ALTER TABLE negotiation_threads ADD CONSTRAINT chk_neg_thread_status CHECK (
+  status IN ('OPEN','AWAITING_TRIP','AWAITING_PAYMENT','AWAITING_COMMISSION','ACCEPTED','REJECTED','AUTO_REJECTED','EXPIRED','CANCELLED')
+);
+```
+
+Dans `NegotiationThreadStatus`, ajouter la valeur et l'inclure dans `isActive()` :
+
+```java
+    /**
+     * Accord en espèces conclu par l'expéditeur, en attente du règlement de la
+     * commission Yadony par le voyageur. Rien n'est scellé à ce stade : la demande
+     * reste ouverte, les offres concurrentes restent vivantes, aucun colis n'est
+     * créé. Le premier voyageur qui règle emporte la demande ; passé le délai, le
+     * thread expire.
+     */
+    AWAITING_COMMISSION,
+```
+
+```java
+    public boolean isActive() {
+        return this == OPEN || this == AWAITING_TRIP || this == AWAITING_PAYMENT
+            || this == AWAITING_COMMISSION;
+    }
+```
+
+- [ ] **Step 4: Lancer les tests**
+
+Run: `./mvnw -o test -Dtest=V211MigrationTest`
+Expected: PASS, 3 tests.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -A
+git commit -m "feat(negociation): statut AWAITING_COMMISSION et sa contrainte PostgreSQL"
+```
+
+---
+
+## Task 4: Conclure en espèces suspend l'accord au lieu de le sceller
+
+**Files:**
+- Modify: `src/main/java/com/yadony/api/requests/service/NegotiationService.java` (méthode `finalizeInternal`)
+- Modify: `src/main/java/com/yadony/api/requests/CashGatePort.java`
+- Modify: `src/main/java/com/yadony/api/payments/cash/CashGateAdapter.java`
+- Modify: `src/main/java/com/yadony/api/payments/cash/CashCommissionService.java`
+- Create: `src/main/java/com/yadony/api/requests/event/NegotiationCommissionPendingEvent.java`
 - Modify: `src/main/java/com/yadony/api/notifications/RequestEventsListener.java`
 - Test: `src/test/java/com/yadony/api/requests/service/NegotiationServiceTest.java`
 - Test: `src/test/java/com/yadony/api/notifications/RequestEventsListenerTest.java`
 
 **Interfaces:**
-- Consumes: `PriceBreakdown.fromNet(net, rate).commission()`, `CommissionProperties.rate()`.
-- Produces: `NegotiationCashCommissionPendingEvent(UUID threadId, UUID packageRequestId, UUID travelerId, UUID senderId, BigDecimal commissionAmount, String currency)`, publié par `finalizeInternal` juste après le passage du thread en `ACCEPTED`, pour un thread CASH uniquement.
+- Consumes: `NegotiationThreadStatus.AWAITING_COMMISSION` (Task 3).
+- Produces: `NegotiationCommissionPendingEvent(UUID threadId, UUID packageRequestId, UUID travelerId, UUID senderId, BigDecimal commissionAmount, String currency, LocalDateTime expiresAt)` ; l'extraction de la finalisation en méthode privée réutilisable `sealAcceptedThread(thread, request, callerId, paymentIntentId)`, que la Task 5 appellera.
+
+C'est le cœur du changement. Aujourd'hui, `finalizeInternal` scelle tout d'un bloc : thread `ACCEPTED`, demande `ACCEPTED`, threads concurrents `AUTO_REJECTED`, publication de `PackageRequestAcceptedEvent` qui matérialise le colis avec son QR et décompte la capacité du trajet. Pour un accord en espèces, plus rien de tout cela ne doit se produire tant que la commission n'est pas encaissée : sinon il n'y aurait rien à rouvrir quand le délai expire, et l'expéditeur se retrouverait avec un colis créé pour un voyageur qui n'a jamais confirmé.
+
+**Le paiement par carte est strictement inchangé** : le paiement de l'expéditeur scelle l'accord immédiatement, comme aujourd'hui.
 
 - [ ] **Step 1: Écrire les tests qui échouent**
 
-Dans `NegotiationServiceTest`, classe interne `FinalizeAfterPaymentTests`, remplacer le test `finalize_cashThread_commissionFails_publishesCashCommissionFailedEvent` (ajouté au commit précédent, il assertait l'ancienne règle) par :
+Dans `NegotiationServiceTest`, classe interne `FinalizeAfterPaymentTests` :
 
 ```java
-        // L'expéditeur ne doit jamais être bloqué par le solde du voyageur : le
-        // règlement de la commission est désormais une étape ultérieure, à la main
-        // du voyageur seul.
+        // En espèces, conclure ne scelle plus rien : c'est le règlement de la
+        // commission par le voyageur qui scellera, ou le délai qui libérera.
         @Test
-        void finalize_cashThread_neverChargesCommission_andPublishesPendingEvent() {
-            // given un thread CASH en AWAITING_PAYMENT, prix négocié 100.00 EUR
-            // when finalizeAfterPayment(senderId, threadId, null, CASH)
-            // then thread.status == ACCEPTED (aucune 422),
-            //      verifyNoInteractions(cashGatePort),
-            //      un NegotiationCashCommissionPendingEvent est publié avec
-            //      commissionAmount == 100.00 × taux et currency == "EUR"
+        void finalize_cashThread_movesToAwaitingCommission_withoutSealing() {
+            // then thread.status == AWAITING_COMMISSION
+            //      && request.status reste OPEN (pas ACCEPTED)
+            //      && aucun PackageRequestAcceptedEvent publié
+            //      && les threads concurrents ne sont PAS passés AUTO_REJECTED
+            //      && verifyNoInteractions(cashGatePort)
         }
 
         @Test
-        void finalize_stripeThread_publishesNoCommissionPendingEvent() {
-            // then aucun NegotiationCashCommissionPendingEvent parmi les events publiés
+        void finalize_cashThread_publishesCommissionPendingEventWithDeadline() {
+            // then un NegotiationCommissionPendingEvent est publié, portant
+            //      commissionAmount == prix négocié × taux, currency, et un
+            //      expiresAt situé dans le futur
+        }
+
+        // Non-régression : la carte scelle toujours immédiatement.
+        @Test
+        void finalize_stripeThread_stillSealsImmediately() {
+            // then thread.status == ACCEPTED && request.status == ACCEPTED
+            //      && PackageRequestAcceptedEvent publié
+            //      && les threads concurrents passent AUTO_REJECTED
         }
 ```
 
-Dans `RequestEventsListenerTest`, remplacer `onNegotiationCashCommissionFailed_notifiesTraveler` par :
+Dans `RequestEventsListenerTest` :
 
 ```java
     @Test
-    void onNegotiationCashCommissionPending_notifiesTravelerToSettle() {
-        // then dispatcher.notifyUser appelé avec travelerId et un message
-        //      contenant "commission", data["type"] == "negotiation_commission_pending"
+    void onNegotiationCommissionPending_notifiesTravelerWithDeadline() {
+        // then dispatcher.notifyUser appelé avec travelerId, un message mentionnant
+        //      la commission, data["type"] == "negotiation_commission_pending"
     }
 ```
 
 - [ ] **Step 2: Lancer les tests pour vérifier qu'ils échouent**
 
 Run: `./mvnw -o test -Dtest='NegotiationServiceTest,RequestEventsListenerTest'`
-Expected: FAIL, `NegotiationCashCommissionPendingEvent` n'existe pas.
+Expected: FAIL.
 
 - [ ] **Step 3: Implémenter**
 
-Supprimer `NegotiationCashCommissionFailedEvent.java` et créer :
+Dans `finalizeInternal`, supprimer entièrement le bloc de prélèvement de commission (`if (thread.getPaymentMethod() == PaymentMethod.CASH) { ... chargeNegotiationCashCommission ... }`) et sa 422 `negotiation/commission-charge-failed`.
+
+Extraire tout ce qui suit le paiement (passage du thread en `ACCEPTED`, ouverture du surplus du trajet dédié, passage de la demande en `ACCEPTED`, boucle `AUTO_REJECTED` sur les threads concurrents, publication de `PackageRequestAcceptedEvent`, entrées `audit_log`) dans une méthode privée :
+
+```java
+    /**
+     * Scelle définitivement un accord : c'est ici que la demande se ferme, que les
+     * offres concurrentes tombent et que le colis est matérialisé. Appelée par le
+     * paiement carte de l'expéditeur, et par le règlement de la commission du
+     * voyageur pour les accords en espèces.
+     */
+    private void sealAcceptedThread(NegotiationThreadEntity thread, PackageRequestEntity request,
+                                    UUID callerId, String paymentIntentId) {
+        // corps repris tel quel de finalizeInternal, sans en modifier la logique
+    }
+```
+
+Puis, dans `finalizeInternal`, brancher selon le mode :
+
+```java
+        if (thread.getPaymentMethod() == PaymentMethod.CASH) {
+            // Un accord en espèces ne scelle rien : Yadony n'a pas encore encaissé sa
+            // commission, et le voyageur peut encore renoncer. La demande reste donc
+            // ouverte et les offres concurrentes vivantes, jusqu'au règlement ou à
+            // l'expiration du délai.
+            thread.setStatus(NegotiationThreadStatus.AWAITING_COMMISSION);
+            thread.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC));
+            threadRepo.save(thread);
+            BigDecimal commission = PriceBreakdown
+                .fromNet(thread.getCurrentPriceEur(), commissionProperties.rate()).commission();
+            LocalDateTime expiresAt = LocalDateTime.now(ZoneOffset.UTC)
+                .plusMinutes(negotiationProperties.commissionWindowMinutes());
+            eventPublisher.publishEvent(new NegotiationCommissionPendingEvent(
+                thread.getId(), request.getId(), thread.getTravelerId(),
+                request.getSenderId(), commission, thread.getCurrency(), expiresAt));
+            auditService.log("NEGOTIATION_THREAD", thread.getId(), "AWAITING_COMMISSION", callerId,
+                Map.of("commission", commission.toPlainString()));
+        } else {
+            sealAcceptedThread(thread, request, callerId, paymentIntentId);
+        }
+```
+
+Ajouter la propriété de configuration du délai, à l'image de celles qui existent déjà dans le projet (`dony.requests.awaiting-trip-hours` et consorts) : `dony.negotiation.commission-window-minutes`, valeur par défaut `120`, lue via un `@ConfigurationProperties` du package `requests`. Déclarer la valeur dans `application.yml` sous la forme `${DONY_NEGOTIATION_COMMISSION_WINDOW_MINUTES:120}`.
+
+Créer l'event :
 
 ```java
 package com.yadony.api.requests.event;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.UUID;
 
 /**
- * Un accord de négociation réglé en espèces vient d'être conclu : la commission
- * Yadony reste à régler par le voyageur. L'accord est acquis, rien n'est en
- * échec et rien ne s'annule ; le voyageur est simplement invité à la régler
- * depuis son fil de négociation, en rechargeant son portefeuille si besoin.
+ * L'expéditeur a conclu en espèces : le voyageur doit régler la commission Yadony
+ * avant {@code expiresAt} pour emporter la demande. Rien n'est scellé, la demande
+ * reste ouverte et un autre voyageur peut la conclure entre-temps.
  */
-public record NegotiationCashCommissionPendingEvent(
+public record NegotiationCommissionPendingEvent(
     UUID threadId,
     UUID packageRequestId,
     UUID travelerId,
     UUID senderId,
     BigDecimal commissionAmount,
-    String currency
+    String currency,
+    LocalDateTime expiresAt
 ) {}
 ```
 
-Dans `NegotiationService.finalizeInternal`, remplacer entièrement le bloc `if (thread.getPaymentMethod() == PaymentMethod.CASH) { ... }` (lignes 987-1006) par un simple `else if (verifyEscrow)` conservant la vérification d'escrow Stripe, puis, après `threadRepo.save(thread)` (ligne ~1022), publier l'event pour les threads CASH :
-
-```java
-        // Le règlement de la commission n'est plus une condition de l'accord : il
-        // appartient au voyageur, qui peut recharger son portefeuille à ce moment-là.
-        // Bloquer l'expéditeur ici reviendrait à lui faire porter un solde qui n'est
-        // pas le sien.
-        if (thread.getPaymentMethod() == PaymentMethod.CASH) {
-            BigDecimal commission = PriceBreakdown
-                .fromNet(thread.getCurrentPriceEur(), commissionProperties.rate()).commission();
-            eventPublisher.publishEvent(new NegotiationCashCommissionPendingEvent(
-                thread.getId(), request.getId(), thread.getTravelerId(),
-                request.getSenderId(), commission, thread.getCurrency()));
-        }
-```
-
-Dans `RequestEventsListener`, remplacer `onNegotiationCashCommissionFailed` par :
+Dans `RequestEventsListener`, ajouter le listener correspondant, en `@TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)` et `@Async` :
 
 ```java
     /**
-     * Accord en espèces conclu : la commission reste à régler par le voyageur.
-     * Publié depuis une transaction qui commit, d'où l'AFTER_COMMIT — notifier
-     * avant le commit exposerait à annoncer un accord qui n'existe pas.
+     * Accord en espèces conclu par l'expéditeur : le voyageur doit régler la
+     * commission pour l'emporter. AFTER_COMMIT, car annoncer un accord avant son
+     * commit exposerait à notifier une transaction qui rollback ensuite.
      */
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
-    public void onNegotiationCashCommissionPending(NegotiationCashCommissionPendingEvent e) {
+    public void onNegotiationCommissionPending(NegotiationCommissionPendingEvent e) {
         dispatcher.notifyUser(
             e.travelerId(),
-            "Commission à régler",
+            "Confirmez votre prise en charge",
             String.format(
-                "Votre accord est conclu. Réglez la commission de %.2f %s pour finaliser la prise en charge.",
+                "L'expéditeur a retenu votre offre. Réglez la commission de %.2f %s pour confirmer, sans quoi la demande repartira.",
                 e.commissionAmount(), e.currency()),
             Map.of(
                 "type", "negotiation_commission_pending",
@@ -467,96 +608,23 @@ Dans `RequestEventsListener`, remplacer `onNegotiationCashCommissionFailed` par 
     }
 ```
 
-Adapter enfin les tests existants qui référençaient `cashGatePort.chargeNegotiationCashCommission` dans `NegotiationServiceTest` : supprimer les stubs devenus inutiles plutôt que les tests.
+Enfin, l'ancien chemin de prélèvement n'a plus aucun appelant : supprimer `chargeNegotiationCashCommission` de `CashGatePort` et de `CashGateAdapter`, `chargeNegotiationCommission` de `CashCommissionService`, et les tests qui ne testaient qu'elles. Dans `NegotiationServiceTest`, supprimer les stubs Mockito devenus `UnnecessaryStubbing` — les stubs, jamais les tests.
 
 - [ ] **Step 4: Lancer les tests**
 
-Run: `./mvnw -o test -Dtest='NegotiationServiceTest,RequestEventsListenerTest,NegotiationControllerIT'`
-Expected: PASS.
+Run: `./mvnw -o test`
+Expected: PASS, suite complète verte.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add -A
-git commit -m "feat(negociation): l'accord en especes se conclut sans prelevement immediat"
+git commit -m "feat(negociation): un accord en especes attend sa commission avant d'etre scelle"
 ```
 
 ---
 
-## Task 4: Le bid matérialisé naît avec sa commission en attente
-
-**Files:**
-- Modify: `src/main/java/com/yadony/api/matching/ThreadAcceptedBidListener.java:111-124`
-- Modify: `src/main/java/com/yadony/api/payments/wallet/WalletCancellationListener.java:59-79`
-- Test: `src/test/java/com/yadony/api/matching/ThreadAcceptedBidListenerTest.java`
-
-**Interfaces:**
-- Consumes: `PackageRequestAcceptedEvent.paymentMethod()`, `CommissionStatus.PENDING`.
-- Produces: un bid CASH issu de négociation porte `commissionStatus == CommissionStatus.PENDING` et `commissionChargedVia == null` jusqu'au règlement.
-
-- [ ] **Step 1: Écrire les tests qui échouent**
-
-```java
-    // La commission n'est plus prélevée à la matérialisation : le bid naît en
-    // attente, et c'est le règlement par le voyageur qui le fera passer CHARGED.
-    @Test
-    void onPackageRequestAccepted_cashBid_isCreatedWithPendingCommission() {
-        // when onPackageRequestAccepted(event avec paymentMethod = CASH)
-        // then bid.commissionStatus == CommissionStatus.PENDING
-        //      && bid.commissionChargedVia == null
-        //      && bid.status == BidStatus.ACCEPTED
-    }
-
-    @Test
-    void onPackageRequestAccepted_stripeBid_leavesCommissionStatusUntouched() {
-        // then bid.commissionStatus == null (la commission Stripe passe par application_fee)
-    }
-```
-
-- [ ] **Step 2: Lancer les tests pour vérifier qu'ils échouent**
-
-Run: `./mvnw -o test -Dtest=ThreadAcceptedBidListenerTest`
-Expected: FAIL, le bid est créé en `CHARGED`.
-
-- [ ] **Step 3: Implémenter**
-
-Dans `ThreadAcceptedBidListener`, remplacer le bloc `if (e.paymentMethod() == CASH)` (lignes 111-124) par :
-
-```java
-        if (e.paymentMethod() == com.yadony.api.payments.cash.PaymentMethod.CASH) {
-            // La commission d'un accord négocié en espèces se règle après coup, par
-            // le voyageur. Le bid naît donc en attente : c'est le règlement qui le
-            // fera passer CHARGED, avec le canal réellement utilisé.
-            bid.setCommissionStatus(com.yadony.api.payments.cash.CommissionStatus.PENDING);
-        }
-```
-
-Dans `WalletCancellationListener.processWalletRefundForBid`, ajouter la garde qui manque avant d'appeler `refundCommissionToWallet` :
-
-```java
-        // Une commission jamais prélevée n'a rien à rembourser. Sans cette garde,
-        // chaque annulation touchant un bid en attente de règlement produit un
-        // avertissement trompeur dans les logs.
-        if (bid.getCommissionStatus() != CommissionStatus.CHARGED) {
-            return;
-        }
-```
-
-- [ ] **Step 4: Lancer les tests**
-
-Run: `./mvnw -o test -Dtest='ThreadAcceptedBidListenerTest,WalletCancellationListenerTest'`
-Expected: PASS.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add -A
-git commit -m "feat(commission): le bid negocie en especes nait avec sa commission en attente"
-```
-
----
-
-## Task 5: Le voyageur règle sa commission depuis son fil de négociation
+## Task 5: Le règlement de la commission scelle l'accord
 
 **Files:**
 - Modify: `src/main/java/com/yadony/api/requests/service/NegotiationService.java`
@@ -565,45 +633,51 @@ git commit -m "feat(commission): le bid negocie en especes nait avec sa commissi
 - Test: `src/test/java/com/yadony/api/requests/controller/NegotiationControllerIT.java`
 
 **Interfaces:**
-- Consumes: `CashGatePort.settleNegotiationCommission(...)` (Task 2), `BidRepository.findByLinkedNegotiationThreadId(UUID)`.
-- Produces: `AcceptBidResponse settleCommission(UUID callerId, UUID threadId, CommissionSource source)` sur `NegotiationService`, et l'endpoint `POST /api/v1/negotiations/{id}/settle-commission?commissionSource=WALLET_FIRST|CARD`.
-- Produces également : `ConfirmAcceptanceResponse confirmCommission(UUID callerId, UUID threadId)` et l'endpoint `POST /api/v1/negotiations/{id}/confirm-commission`, appelé par l'app après une authentification 3D Secure réussie. Il relit le PaymentIntent auprès de Stripe (`commissionPaymentIntentId` persisté sur le thread) et marque `CHARGED` s'il est `succeeded`. **Ne jamais rappeler `settle-commission` après un 3DS pour confirmer** : la clé d'idempotence Stripe `nego_commission_<threadId>` rejouerait la réponse mise en cache, encore `requires_action`, et le règlement ne serait jamais constaté. Voir `CashCommissionService.confirmCommissionAcceptance` (flux classique) pour le modèle exact.
+- Consumes: `CashGatePort.settleNegotiationCommission(...)` (Task 2), `sealAcceptedThread(...)` (Task 4).
+- Produces: `AcceptBidResponse settleCommission(UUID callerId, UUID threadId, CommissionSource source)` et `ConfirmAcceptanceResponse confirmCommission(UUID callerId, UUID threadId)` sur `NegotiationService` ; les endpoints `POST /api/v1/negotiations/{id}/settle-commission?commissionSource=WALLET_FIRST|CARD` et `POST /api/v1/negotiations/{id}/confirm-commission`, tous deux `@PreAuthorize("hasRole('TRAVELER')")`.
 
-Après un règlement réussi, le bid matérialisé doit passer `CHARGED` avec le canal utilisé : sans cela, un remboursement ultérieur (annulation, no-show) verrait `PENDING` et n'aurait rien à rembourser, alors que le voyageur a bien payé.
+**La course, à traiter avec soin.** La demande restant ouverte, plusieurs threads peuvent être en `AWAITING_COMMISSION` en même temps sur la même demande, et l'expéditeur peut même en conclure un autre entre-temps. Le premier qui règle emporte la demande. Il faut donc vérifier que la demande est encore disponible **avant** de débiter le voyageur : débiter puis découvrir que la demande est prise obligerait à rembourser, et laisserait un voyageur payer pour rien.
 
 - [ ] **Step 1: Écrire les tests qui échouent**
-
-Dans `NegotiationServiceTest` :
 
 ```java
     @Test
     void settleCommission_notTraveler_throws403() {
-        // when settleCommission(senderId, threadId, WALLET_FIRST)
-        // then ResponseStatusException 403 "negotiation/not-traveler"
+        // then 403 "negotiation/not-traveler"
     }
 
     @Test
-    void settleCommission_threadNotAccepted_throws409() {
+    void settleCommission_threadNotAwaitingCommission_throws409() {
         // given un thread OPEN
-        // then 409 "thread/not-accepted"
+        // then 409 "thread/not-awaiting-commission"
+    }
+
+    // La garde de course : on ne débite jamais un voyageur pour une demande déjà prise.
+    @Test
+    void settleCommission_requestAlreadyAccepted_throws409WithoutCharging() {
+        // given la demande est passée ACCEPTED via un thread concurrent
+        // then 409 "request/already-accepted" && verifyNoInteractions(cashGatePort)
     }
 
     @Test
-    void settleCommission_notCash_throws409() {
-        // given un thread ACCEPTED dont paymentMethod == STRIPE
-        // then 409 "commission/not-cash"
+    void settleCommission_success_sealsTheDeal() {
+        // given cashGatePort renvoie accepted()
+        // then thread.status == ACCEPTED && request.status == ACCEPTED
+        //      && PackageRequestAcceptedEvent publié
+        //      && les threads concurrents passent AUTO_REJECTED
     }
 
     @Test
-    void settleCommission_success_propagatesChargedToMaterializedBid() {
-        // given cashGatePort renvoie accepted() et thread.commissionChargedVia == "WALLET"
-        // then le bid lié passe commissionStatus CHARGED et commissionChargedVia WALLET
-    }
-
-    @Test
-    void settleCommission_insufficientWallet_leavesBidPending() {
+    void settleCommission_insufficientWallet_leavesThreadAwaitingCommission() {
         // given cashGatePort renvoie insufficientWallet(1.00, 5.00, true, "EUR")
-        // then la réponse porte INSUFFICIENT_WALLET et le bid reste PENDING
+        // then la réponse porte INSUFFICIENT_WALLET, le thread reste
+        //      AWAITING_COMMISSION et la demande reste OPEN
+    }
+
+    @Test
+    void confirmCommission_after3ds_sealsTheDeal() {
+        // given le thread porte un commissionPaymentIntentId et Stripe le dit "succeeded"
+        // then l'accord est scellé comme ci-dessus
     }
 ```
 
@@ -620,17 +694,15 @@ Dans `NegotiationControllerIT` :
 - [ ] **Step 2: Lancer les tests pour vérifier qu'ils échouent**
 
 Run: `./mvnw -o test -Dtest='NegotiationServiceTest,NegotiationControllerIT'`
-Expected: FAIL, `settleCommission` n'existe pas.
+Expected: FAIL.
 
 - [ ] **Step 3: Implémenter**
 
-Dans `NegotiationService` :
-
 ```java
     /**
-     * Le voyageur règle la commission Yadony d'un accord conclu en espèces. C'est le
-     * seul moment où son solde compte : l'accord est déjà acquis et ne peut plus être
-     * remis en cause, un solde insuffisant ne fait que retarder le règlement.
+     * Le voyageur règle la commission Yadony et emporte la demande. C'est ce
+     * règlement qui scelle l'accord : tant qu'il n'a pas eu lieu, la demande reste
+     * ouverte et un autre voyageur peut la conclure.
      */
     @Transactional
     public AcceptBidResponse settleCommission(UUID callerId, UUID threadId, CommissionSource source) {
@@ -639,55 +711,46 @@ Dans `NegotiationService` :
         if (!callerId.equals(thread.getTravelerId())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "negotiation/not-traveler");
         }
-        if (thread.getStatus() != NegotiationThreadStatus.ACCEPTED) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "thread/not-accepted");
-        }
-        if (thread.getPaymentMethod() != PaymentMethod.CASH) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "commission/not-cash");
+        if (thread.getStatus() != NegotiationThreadStatus.AWAITING_COMMISSION) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "thread/not-awaiting-commission");
         }
         PackageRequestEntity request = requestRepo.findById(thread.getPackageRequestId())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found"));
 
+        // Garde de course : ne jamais débiter pour une demande déjà emportée par un
+        // autre voyageur. Le débit d'abord obligerait à rembourser ensuite.
+        if (request.getStatus() != PackageRequestStatus.OPEN) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "request/already-accepted");
+        }
+
         AcceptBidResponse resp = cashGatePort.settleNegotiationCommission(
             thread.getTravelerId(), request.getSenderId(), threadId, thread.getCurrentPriceEur(), source);
 
-        // Report du règlement sur le bid matérialisé : les remboursements ultérieurs
-        // (annulation, no-show) se basent sur le statut du bid, pas sur celui du thread.
         if (resp.status() == AcceptanceStatusDto.ACCEPTED) {
-            bidRepository.findByLinkedNegotiationThreadId(threadId).ifPresent(bid -> {
-                bid.setCommissionStatus(CommissionStatus.CHARGED);
-                if (thread.getCommissionChargedVia() != null) {
-                    bid.setCommissionChargedVia(
-                        CommissionChargedVia.valueOf(thread.getCommissionChargedVia()));
-                }
-                bidRepository.save(bid);
-            });
+            sealAcceptedThread(thread, request, callerId, null);
             auditService.log("NEGOTIATION_THREAD", threadId, "CASH_COMMISSION_SETTLED", callerId,
                 Map.of("via", String.valueOf(thread.getCommissionChargedVia())));
         }
         return resp;
     }
-```
 
-Injecter `BidRepository bidRepository` dans le constructeur de `NegotiationService` si absent.
-
-Dans `NegotiationController` :
-
-```java
-    @PostMapping("/{id}/settle-commission")
-    @PreAuthorize("hasRole('TRAVELER')")
-    public ResponseEntity<AcceptBidResponse> settleCommission(
-            @PathVariable UUID id,
-            @RequestParam(defaultValue = "WALLET_FIRST") CommissionSource commissionSource) {
-        AcceptBidResponse resp = service.settleCommission(requireUserId(), id, commissionSource);
-        return switch (resp.status()) {
-            case ACCEPTED -> ResponseEntity.ok(resp);
-            case REQUIRES_3DS -> ResponseEntity.accepted().body(resp);
-            case INSUFFICIENT_WALLET -> ResponseEntity.status(HttpStatus.CONFLICT).body(resp);
-            case FAILED -> ResponseEntity.unprocessableEntity().body(resp);
-        };
+    /**
+     * Confirme un règlement passé par une authentification 3D Secure : relit le
+     * PaymentIntent auprès de Stripe et scelle l'accord s'il a abouti. Rappeler
+     * {@code settleCommission} ne conviendrait pas, la clé d'idempotence Stripe
+     * rejouerait la réponse « authentification requise ».
+     */
+    @Transactional
+    public ConfirmAcceptanceResponse confirmCommission(UUID callerId, UUID threadId) {
+        // mêmes gardes d'appartenance et de statut que ci-dessus, puis délégation à
+        // cashGatePort pour relire le PaymentIntent, puis sealAcceptedThread en cas
+        // de succès
     }
 ```
+
+Ajouter au port et à l'adaptateur la méthode de confirmation nécessaire, en s'inspirant de `CashCommissionService.confirmCommissionAcceptance` (flux classique).
+
+Dans `NegotiationController`, les deux endpoints, avec le mapping de statuts déjà utilisé par `CashCommissionController` : `ACCEPTED` → 200, `REQUIRES_3DS` → 202, `INSUFFICIENT_WALLET` → 409, `FAILED` → 422.
 
 - [ ] **Step 4: Lancer les tests**
 
@@ -698,12 +761,106 @@ Expected: PASS.
 
 ```bash
 git add -A
-git commit -m "feat(negociation): endpoint de reglement de commission pour le voyageur"
+git commit -m "feat(negociation): le reglement de la commission scelle l'accord"
 ```
 
 ---
 
-## Task 6: L'app sait qu'une commission reste à régler
+## Task 6: Le voyageur peut renoncer, et le délai le fait à sa place
+
+**Files:**
+- Modify: `src/main/java/com/yadony/api/requests/service/NegotiationService.java`
+- Modify: `src/main/java/com/yadony/api/requests/controller/NegotiationController.java`
+- Create: `src/main/java/com/yadony/api/requests/service/CommissionWindowExpiryRunner.java`
+- Modify: `src/main/java/com/yadony/api/requests/repository/NegotiationThreadRepository.java`
+- Modify: `src/main/java/com/yadony/api/notifications/RequestEventsListener.java`
+- Test: `src/test/java/com/yadony/api/requests/service/NegotiationServiceTest.java`
+- Test: `src/test/java/com/yadony/api/requests/service/CommissionWindowExpiryRunnerTest.java` (créer)
+
+**Interfaces:**
+- Consumes: `NegotiationThreadStatus.AWAITING_COMMISSION` (Task 3), `softDeleteOrphanedDedicatedTrip(...)` (existant dans `NegotiationService`), `dony.negotiation.commission-window-minutes` (Task 4).
+- Produces: `void declineCommission(UUID callerId, UUID threadId)` et l'endpoint `POST /api/v1/negotiations/{id}/decline-commission` (`@PreAuthorize("hasRole('TRAVELER')")`) ; le runner d'expiration ; `NegotiationThreadRepository.findExpiredAwaitingCommission(LocalDateTime cutoff)`.
+
+**Piège connu de cette feature, à ne pas rouvrir.** Un thread portant un trajet dédié qui se termine sans être scellé laisse ce trajet orphelin, publié et jamais utilisable, dans « Mes trajets » du voyageur. `softDeleteOrphanedDedicatedTrip` doit être appelée depuis les deux sorties ajoutées ici, le renoncement et l'expiration, exactement comme elle l'est déjà depuis `cancelNegotiation`, `reject`, la boucle `AUTO_REJECTED` et `NegotiationExpiryRunner`.
+
+- [ ] **Step 1: Écrire les tests qui échouent**
+
+```java
+    @Test
+    void declineCommission_notTraveler_throws403() {
+        // then 403 "negotiation/not-traveler"
+    }
+
+    @Test
+    void declineCommission_releasesRequestAndSoftDeletesDedicatedTrip() {
+        // given un thread AWAITING_COMMISSION portant un trajet dédié
+        // then thread.status == CANCELLED, la demande reste OPEN,
+        //      le trajet dédié est soft-deleted, l'expéditeur est notifié
+    }
+
+    @Test
+    void declineCommission_wrongStatus_throws409() {
+        // given un thread ACCEPTED
+        // then 409 "thread/not-awaiting-commission"
+    }
+```
+
+```java
+    // CommissionWindowExpiryRunnerTest
+    @Test
+    void expire_pastDeadline_cancelsThreadAndSoftDeletesDedicatedTrip() {
+        // given un thread AWAITING_COMMISSION dont lastActivityAt dépasse la fenêtre
+        // then thread.status == EXPIRED, demande toujours OPEN, trajet dédié soft-deleted
+    }
+
+    @Test
+    void expire_withinWindow_leavesThreadUntouched() {
+        // then aucun changement de statut
+    }
+
+    @Test
+    void expire_isIdempotent_onAlreadyExpiredThread() {
+        // then aucun second traitement, aucune seconde notification
+    }
+```
+
+- [ ] **Step 2: Lancer les tests pour vérifier qu'ils échouent**
+
+Run: `./mvnw -o test -Dtest='NegotiationServiceTest,CommissionWindowExpiryRunnerTest'`
+Expected: FAIL.
+
+- [ ] **Step 3: Implémenter**
+
+`declineCommission` : vérifier l'appartenance et le statut `AWAITING_COMMISSION`, passer le thread en `CANCELLED`, appeler `softDeleteOrphanedDedicatedTrip`, écrire l'`audit_log`, publier un event notifiant l'expéditeur que le voyageur a renoncé et que sa demande reste disponible.
+
+Le repository :
+
+```java
+    @Query("""
+        SELECT t FROM NegotiationThreadEntity t
+        WHERE t.status = com.yadony.api.requests.entity.NegotiationThreadStatus.AWAITING_COMMISSION
+          AND t.lastActivityAt < :cutoff
+    """)
+    List<NegotiationThreadEntity> findExpiredAwaitingCommission(@Param("cutoff") LocalDateTime cutoff);
+```
+
+Le runner, sur le modèle de `NegotiationExpiryRunner` (même package, mêmes annotations, même style) : `@Scheduled` à intervalle court (toutes les 5 minutes, la fenêtre étant de 2 h par défaut), calcul du `cutoff` depuis `commissionWindowMinutes`, passage des threads en `EXPIRED`, `softDeleteOrphanedDedicatedTrip`, `audit_log`, et notification aux deux parties : au voyageur que le délai est passé, à l'expéditeur que sa demande est de nouveau disponible. Le runner doit être idempotent : il ne traite que les threads encore `AWAITING_COMMISSION`.
+
+- [ ] **Step 4: Lancer les tests**
+
+Run: `./mvnw -o test`
+Expected: PASS, suite complète.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -A
+git commit -m "feat(negociation): renoncement du voyageur et expiration du delai de commission"
+```
+
+---
+
+## Task 7: L'app sait où en est l'accord
 
 **Files:**
 - Modify: `src/main/java/com/yadony/api/requests/dto/NegotiationThreadResponse.java`
@@ -711,112 +868,45 @@ git commit -m "feat(negociation): endpoint de reglement de commission pour le vo
 - Test: `src/test/java/com/yadony/api/requests/service/NegotiationServiceTest.java`
 
 **Interfaces:**
-- Produces: `NegotiationThreadResponse.commissionStatus` (`String`, dernier champ du record), valant `"PENDING"`, `"CHARGED"` ou `null`. Un constructeur de compatibilité sans ce champ est ajouté, à l'image de ceux qui existent déjà, pour ne pas retoucher tous les tests.
+- Produces: deux champs ajoutés en fin du record `NegotiationThreadResponse` : `String commissionStatus` (`"PENDING"`, `"REQUIRES_3DS"`, `"CHARGED"` ou `null`) et `LocalDateTime commissionDeadline` (échéance du règlement, `null` hors `AWAITING_COMMISSION`). Un constructeur de compatibilité sans ces deux champs est ajouté, à l'image de ceux qui existent déjà.
+
+Le statut `AWAITING_COMMISSION` transite déjà par le champ `status` existant : c'est lui que l'app lira pour savoir qu'une action est attendue. Les deux nouveaux champs servent à afficher le montant restant dû et le compte à rebours.
 
 - [ ] **Step 1: Écrire le test qui échoue**
 
 ```java
     @Test
-    void toResponse_cashAcceptedThread_exposesCommissionStatus() {
-        // given un thread ACCEPTED, CASH, commissionStatus "PENDING" en base
-        // then la réponse porte commissionStatus() == "PENDING"
+    void toResponse_awaitingCommissionThread_exposesStatusAndDeadline() {
+        // given un thread AWAITING_COMMISSION, cash, lastActivityAt connu
+        // then la réponse porte status == AWAITING_COMMISSION,
+        //      commissionStatus == "PENDING" et un commissionDeadline non nul
+    }
+
+    @Test
+    void toResponse_stripeThread_hasNoCommissionDeadline() {
+        // then commissionDeadline == null
     }
 ```
 
 - [ ] **Step 2: Lancer le test pour vérifier qu'il échoue**
 
 Run: `./mvnw -o test -Dtest=NegotiationServiceTest`
-Expected: FAIL, méthode `commissionStatus()` inexistante.
+Expected: FAIL, méthodes inexistantes.
 
 - [ ] **Step 3: Implémenter**
 
-Ajouter en dernier champ du record `NegotiationThreadResponse` :
-
-```java
-    ,
-    // État du règlement de la commission Yadony pour un accord en espèces :
-    // "PENDING" tant que le voyageur ne l'a pas réglée, "CHARGED" ensuite.
-    // Null pour les accords réglés par carte, dont la commission passe par
-    // l'application_fee Stripe.
-    String commissionStatus
-```
-
-Ajouter juste après le dernier constructeur de compatibilité existant un constructeur reprenant tous les paramètres sauf `commissionStatus`, qui délègue au canonique avec `null`. Renseigner le champ dans `toResponse` depuis `t.getCommissionStatus()`.
+Ajouter les deux champs en fin de record, documentés, plus un constructeur de compatibilité qui délègue avec `null, null`. Renseigner dans `toResponse` : `commissionStatus` depuis `t.getCommissionStatus()`, et `commissionDeadline` calculé depuis `t.getLastActivityAt()` plus `commissionWindowMinutes` uniquement quand le statut est `AWAITING_COMMISSION`.
 
 - [ ] **Step 4: Lancer les tests**
 
 Run: `./mvnw -o test`
-Expected: PASS, l'intégralité de la suite (3153 tests actuellement) reste verte.
+Expected: PASS, suite complète.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add -A
-git commit -m "feat(negociation): la reponse de fil expose l'etat de la commission"
-```
-
----
-
-## Task 7: Relance quotidienne des commissions en attente
-
-**Files:**
-- Create: `src/main/java/com/yadony/api/requests/service/CashCommissionReminderRunner.java`
-- Modify: `src/main/java/com/yadony/api/requests/repository/NegotiationThreadRepository.java`
-- Test: `src/test/java/com/yadony/api/requests/service/CashCommissionReminderRunnerTest.java` (créer)
-
-**Interfaces:**
-- Consumes: `NegotiationCashCommissionPendingEvent` (Task 3) — republié à chaque relance, ce qui réutilise la notification déjà écrite.
-- Produces: `NegotiationThreadRepository.findAcceptedCashThreadsWithUnsettledCommission()` et le runner planifié.
-
-Rien ne s'annule jamais : la relance est le seul mécanisme de rappel, conformément à la décision produit.
-
-- [ ] **Step 1: Écrire les tests qui échouent**
-
-```java
-    @Test
-    void remind_publishesPendingEventForEachUnsettledThread() {
-        // given 2 threads ACCEPTED/CASH sans commission réglée
-        // then 2 NegotiationCashCommissionPendingEvent publiés
-    }
-
-    @Test
-    void remind_skipsThreadsAlreadyCharged() {
-        // given un thread dont commissionStatus == "CHARGED"
-        // then aucun event publié
-    }
-```
-
-- [ ] **Step 2: Lancer les tests pour vérifier qu'ils échouent**
-
-Run: `./mvnw -o test -Dtest=CashCommissionReminderRunnerTest`
-Expected: FAIL, classe inexistante.
-
-- [ ] **Step 3: Implémenter**
-
-Dans `NegotiationThreadRepository` :
-
-```java
-    @Query("""
-        SELECT t FROM NegotiationThreadEntity t
-        WHERE t.status = com.yadony.api.requests.entity.NegotiationThreadStatus.ACCEPTED
-          AND t.paymentMethod = com.yadony.api.payments.cash.PaymentMethod.CASH
-          AND (t.commissionStatus IS NULL OR t.commissionStatus <> 'CHARGED')
-    """)
-    List<NegotiationThreadEntity> findAcceptedCashThreadsWithUnsettledCommission();
-```
-
-Créer le runner, sur le modèle de `NegotiationExpiryRunner` (même package, même style d'annotations) : `@Component`, méthode annotée `@Scheduled(cron = "0 0 9 * * *")` (une relance par jour à 9 h), qui parcourt les threads renvoyés par la requête, recalcule la commission via `PriceBreakdown.fromNet(...)` et republie `NegotiationCashCommissionPendingEvent`. Le runner est idempotent par construction : il ne modifie rien, il notifie.
-
-- [ ] **Step 4: Lancer les tests**
-
-Run: `./mvnw -o test -Dtest=CashCommissionReminderRunnerTest`
-Expected: PASS.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add -A
-git commit -m "feat(commission): relance quotidienne des commissions en attente"
+git commit -m "feat(negociation): la reponse de fil expose l'etat et l'echeance de la commission"
 ```
 
 ---
@@ -901,6 +991,7 @@ git commit -m "feat(negociation): le fil porte l'etat de la commission"
 **Interfaces:**
 - Consumes: `POST /negotiations/{id}/settle-commission?commissionSource=` (Task 5), `AcceptanceResponse` / `AcceptanceStatus` (`lib/features/matching/data/models/acceptance_response.dart`), déjà capables de parser ce contrat.
 - Produces: `NegotiationRepository.settleCommission(String threadId, {String commissionSource = 'WALLET_FIRST'}) → Future<AcceptanceResponse>` ; `NegotiationRepository.confirmCommission(String threadId) → Future<ConfirmResponse>` ; l'event `NegotiationSettleCommissionRequested(threadId, {useCard = false})` ; les états `NegotiationCommissionSettled` et `NegotiationCommissionInsufficientWallet(availableBalance, requiredCommission, hasCard, currency, threadId)`.
+- Ajouter également l'event `NegotiationDeclineCommissionRequested(threadId)` appelant `POST /negotiations/{id}/decline-commission`, et l'état `NegotiationCommissionDeclined` : le voyageur peut renoncer explicitement, ce qui libère immédiatement la demande de l'expéditeur au lieu de le faire attendre le délai.
 - Le statut `AcceptanceStatus.requires3ds` doit être traité, exactement comme le fait `BidAcceptanceBloc._handleResponse` (`lib/features/matching/bloc/bid_acceptance_bloc.dart:51-102`) : appeler `Stripe.instance.handleNextAction(clientSecret)` puis `confirmCommission(threadId)`, et n'émettre `NegotiationCommissionSettled` qu'ensuite. Le voyageur est devant son téléphone à cet instant, l'authentification forte est donc réalisable. Ajouter un test de bloc pour ce chemin.
 
 Le datasource doit accepter les réponses 409 et 422 comme des `AcceptanceResponse` valides, à l'image de `bid_remote_datasource.dart:205-244` : ce ne sont pas des erreurs réseau mais des issues métier porteuses des montants à afficher.
@@ -1008,10 +1099,14 @@ git commit -m "feat(negociation): reglement de commission dans le bloc"
 - Test: `test/features/notifications/notification_route_resolver_test.dart`
 
 **Interfaces:**
-- Consumes: `NegotiationThread.needsCommissionSettlement` (Task 8), `NegotiationSettleCommissionRequested` et `NegotiationCommissionInsufficientWallet` (Task 9).
+- Consumes: le statut `NegotiationThreadStatus.awaitingCommission` sur le fil, `NegotiationThread.commissionDeadline`, `NegotiationSettleCommissionRequested`, `NegotiationDeclineCommissionRequested` et `NegotiationCommissionInsufficientWallet` (Task 9).
 - Produces: `showCommissionSettlementSheet(BuildContext context, {required double requiredCommission, required double availableBalance, required bool hasCard, required String currency, required void Function({required bool useCard}) onRetry})`.
 
-Le CTA n'apparaît que pour le voyageur (`thread.travelerId == viewerUserId`) : l'expéditeur n'a rien à régler et ne doit pas voir un bouton qui ne le concerne pas.
+**Ce que chaque partie doit voir, sur un fil en attente de commission :**
+- Le **voyageur** : un bandeau lui disant que l'expéditeur a retenu son offre et qu'il doit confirmer avant l'échéance, le montant de la commission, le temps restant calculé depuis `commissionDeadline`, un bouton principal « Confirmer et régler » et une action discrète pour renoncer. Le renoncement demande une confirmation, il libère la demande.
+- L'**expéditeur** : un bandeau indiquant qu'il attend la confirmation du voyageur, et surtout que sa demande reste ouverte, qu'il peut continuer à recevoir et accepter d'autres offres entre-temps. Ne jamais lui laisser croire que l'affaire est conclue.
+
+Le statut du fil est `awaitingCommission`, pas `accepted` : c'est un cas distinct dans le `switch` de `thread_state_cta_bar.dart`, à ajouter à côté des autres, sans toucher au cas `accepted` existant qui reste celui des accords scellés.
 
 - [ ] **Step 1: Écrire les tests qui échouent**
 
@@ -1058,17 +1153,34 @@ Créer `commission_settlement_sheet.dart` en reprenant l'UX déjà éprouvée de
 Dans `thread_state_cta_bar.dart`, `case NegotiationThreadStatus.accepted`, ajouter avant le bouton « Voir mon envoi » :
 
 ```dart
-            // Le voyageur est seul concerné par la commission : l'expéditeur, lui,
-            // règle en espèces à la remise et n'a rien à faire ici.
-            if (!_isSender && thread.needsCommissionSettlement) ...[
-              const SizedBox(height: DonySpacing.sm),
-              DonyButton(
-                label: 'Régler la commission',
-                onPressed: () => context.read<NegotiationBloc>().add(
-                  NegotiationSettleCommissionRequested(thread.id),
-                ),
-              ),
-            ],
+      case NegotiationThreadStatus.awaitingCommission:
+        // Rien n'est scellé tant que la commission n'est pas réglée : le voyageur
+        // doit confirmer, et l'expéditeur doit savoir que sa demande court toujours.
+        return _isSender
+            ? ThreadStateBanner(
+                iconAsset: 'clock',
+                tint: cs.warning,
+                message: 'En attente de confirmation du voyageur',
+                subtitle: 'Votre demande reste ouverte, vous pouvez toujours recevoir d\'autres offres.',
+              )
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ThreadStateBanner(
+                    iconAsset: 'clock',
+                    tint: cs.warning,
+                    message: 'Confirmez votre prise en charge',
+                    subtitle: 'Réglez la commission avant l\'échéance pour emporter ce colis.',
+                  ),
+                  const SizedBox(height: DonySpacing.sm),
+                  DonyButton(
+                    label: 'Confirmer et régler',
+                    onPressed: () => context.read<NegotiationBloc>().add(
+                      NegotiationSettleCommissionRequested(thread.id),
+                    ),
+                  ),
+                ],
+              );
 ```
 
 Dans `negotiation_thread_screen.dart`, ajouter au `listener` du `BlocConsumer` la branche qui ouvre la sheet sur `NegotiationCommissionInsufficientWallet` et affiche un `DonySnackbar` de succès sur `NegotiationCommissionSettled`.
@@ -1175,11 +1287,15 @@ git commit -m "docs: story reglement de commission a l'acceptation"
 ## Self-Review
 
 **Couverture de la décision produit :**
-- « L'expéditeur doit pouvoir payer » → Task 3 (plus aucun prélèvement ni 422 au finalize).
-- « Le voyageur valide et accepte » → Task 5 (endpoint) + Task 10 (CTA), sans possibilité de refus, conformément au choix « confirmer seulement ».
-- « C'est au moment d'accepter qu'il recharge » → Task 1 (`INSUFFICIENT_WALLET` au lieu d'un débit carte automatique) + Task 10 (sheet de recharge).
-- « Si le voyageur ne fait rien, ça reste en attente avec relance » → Task 7, aucune expiration nulle part.
+- « L'expéditeur doit pouvoir conclure sans être bloqué par le solde du voyageur » → Task 4 (plus aucun prélèvement ni 422 au moment de conclure).
+- « Le voyageur valide derrière et recharge si besoin » → Task 5 (règlement) + Task 10 (CTA et sheet de recharge).
+- « S'il refuse ou ne paie pas sous 2 h, c'est annulé et l'expéditeur choisit quelqu'un d'autre » → Task 6 (renoncement explicite et expiration réglable).
+- « La demande ne se termine pas tant que Yadony n'a pas encaissé » → Task 3 (statut dédié) + Task 4 (la finalisation est extraite et différée) + Task 5 (c'est le règlement qui scelle).
+- « Premier arrivé premier servi » → Task 5, garde de course avant tout débit.
+- « Pour les autres modes, c'est le paiement carte de l'expéditeur qui conclut » → Task 4, branche inchangée, avec un test de non-régression explicite.
 
-**Risques identifiés à l'exploration, tous couverts :** base de calcul de la commission (contrainte globale + Task 1), réutilisation dangereuse de l'endpoint bid (contrainte globale), report sur le bid matérialisé (Task 5), avertissement de log parasite (Task 4), invisibilité côté exploitation (Task 11), absence de migration nécessaire (contrainte globale).
+**Risques couverts :** contrainte PostgreSQL sur le statut (Task 3, le piège invisible aux tests), trajet dédié orphelin sur les deux nouvelles sorties (Task 6), base de calcul de la commission (contrainte globale), débit d'un voyageur pour une demande déjà prise (Task 5), invisibilité côté exploitation (Task 11).
 
-**Cohérence des noms entre tâches :** `settleNegotiationCommission` (service et port, Tasks 1-2), `settleCommission` (service de négociation et endpoint, Task 5), `commissionStatus` (DTO Task 6, modèle Dart Task 8), `needsCommissionSettlement` (Task 8, consommé Task 10), `NegotiationCashCommissionPendingEvent` (Task 3, republié Task 7), `negotiation_commission_pending` (type de notification, Tasks 3 et 10).
+**Cohérence des noms entre tâches :** `AWAITING_COMMISSION` (Task 3, consommé Tasks 4-7 et 10), `sealAcceptedThread` (Task 4, appelé Task 5), `settleCommission` / `confirmCommission` / `declineCommission` (Task 5-6, consommés Task 9), `commissionStatus` et `commissionDeadline` (Task 7, modèle Dart Task 8, UI Task 10), `NegotiationCommissionPendingEvent` (Task 4), `dony.negotiation.commission-window-minutes` (Task 4, lu Tasks 6-7).
+
+**Note d'exécution :** les Tasks 1, 2 et 8 ont été implémentées et relues avant ce changement de conception, et restent valides telles quelles. La Task 8 doit toutefois être complétée par `commissionDeadline` au moment de la Task 10.
