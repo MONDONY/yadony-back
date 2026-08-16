@@ -98,14 +98,17 @@ public class AnnouncementCompletionListener {
         }
 
         // A trip is done only when NO bid is still in flight. "In flight" =
-        // ACCEPTED (paid, awaiting handover), HANDED_OVER or IN_TRANSIT. Checking
-        // ACCEPTED alone wrongly completed a trip whose other parcels were still
-        // HANDED_OVER/IN_TRANSIT — the trip then vanished from "À venir"/"En cours"
-        // into "Historique" with a delivery still ongoing. Mirrors the in-flight
-        // set used by AnnouncementService.applyInProgressTransition.
+        // ACCEPTED (paid, awaiting handover), HANDED_OVER, IN_TRANSIT or ARRIVED
+        // (landed, awaiting pickup). Checking ACCEPTED alone wrongly completed a
+        // trip whose other parcels were still HANDED_OVER/IN_TRANSIT — the trip
+        // then vanished from "À venir"/"En cours" into "Historique" with a delivery
+        // still ongoing. ARRIVED reopens exactly the same hole after a grouped
+        // markArrived: the first confirmed delivery would complete the trip while
+        // the other parcels are still waiting to be picked up.
         boolean stillHasInFlightBids = bidRepository.existsByAnnouncementIdAndStatusIn(
                 announcementId,
-                List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT));
+                List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT,
+                        BidStatus.ARRIVED));
         if (stillHasInFlightBids) {
             return;
         }

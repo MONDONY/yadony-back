@@ -144,7 +144,6 @@ public class RecipientController {
         return switch (type) {
             case DEPART -> "Colis remis au voyageur";
             case TRANSIT -> "En transit";
-            case ARRIVEE_DESTINATION -> "Arrivé à destination";
             case ARRIVEE -> "Arrivée confirmée";
         };
     }

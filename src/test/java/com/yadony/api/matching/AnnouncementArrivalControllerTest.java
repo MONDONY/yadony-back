@@ -21,6 +21,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
@@ -127,6 +129,54 @@ class AnnouncementArrivalControllerTest {
 
         mockMvc.perform(post("/announcements/" + announcementId + "/mark-arrived")
                         .with(authentication(traveler("uid-traveler-mark-arrived-nobody"))))
+                .andExpect(status().isOk());
+    }
+
+    /** Régression I6 : le texte était non borné ET aucun {@code @Valid} n'était posé sur
+     *  les deux endpoints qui consomment {@link com.yadony.api.matching.dto.ArrivalInstructionsRequest}
+     *  — un champ libre exposé pouvait donc écrire n'importe quelle taille en base.
+     *  {@code @Size(max = 1000)} + {@code @Valid} → 422 (convention du projet, cf.
+     *  {@code GlobalExceptionHandler#handleValidation}) et le service n'est jamais appelé. */
+    @Test
+    void markArrived_instructionsTooLong_returns422_andServiceNeverCalled() throws Exception {
+        UUID announcementId = UUID.randomUUID();
+        String tooLong = "x".repeat(1001);
+
+        mockMvc.perform(post("/announcements/" + announcementId + "/mark-arrived")
+                        .with(authentication(traveler("uid-traveler-mark-arrived-toolong")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"arrivalInstructions\":\"" + tooLong + "\"}"))
+                .andExpect(status().isUnprocessableEntity());
+
+        verify(announcementService, never()).markArrived(any(), anyString(), anyString());
+    }
+
+    @Test
+    void updateArrivalInstructions_instructionsTooLong_returns422_andServiceNeverCalled() throws Exception {
+        UUID announcementId = UUID.randomUUID();
+        String tooLong = "x".repeat(1001);
+
+        mockMvc.perform(patch("/announcements/" + announcementId + "/arrival-instructions")
+                        .with(authentication(traveler("uid-traveler-update-arrival-toolong")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"arrivalInstructions\":\"" + tooLong + "\"}"))
+                .andExpect(status().isUnprocessableEntity());
+
+        verify(announcementService, never()).updateArrivalInstructions(any(), anyString(), anyString());
+    }
+
+    /** Borne haute exactement atteinte : 1000 caractères doivent passer. */
+    @Test
+    void updateArrivalInstructions_exactlyMaxLength_isAccepted() throws Exception {
+        UUID announcementId = UUID.randomUUID();
+        String atLimit = "x".repeat(1000);
+        when(announcementService.updateArrivalInstructions(eq(announcementId), anyString(), eq(atLimit)))
+                .thenReturn(detailWithInstructions(announcementId, atLimit));
+
+        mockMvc.perform(patch("/announcements/" + announcementId + "/arrival-instructions")
+                        .with(authentication(traveler("uid-traveler-update-arrival-atlimit")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"arrivalInstructions\":\"" + atLimit + "\"}"))
                 .andExpect(status().isOk());
     }
 

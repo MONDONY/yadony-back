@@ -632,6 +632,14 @@ public class AnnouncementService {
                 List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.COMPLETED)
         );
 
+        // Les instructions de retrait décrivent une adresse / un point de rendez-vous
+        // physique : elles ne sont visibles que des parties du trajet (le voyageur
+        // propriétaire, et les expéditeurs ayant un colis actif dessus). L'endpoint
+        // reste ouvert à tout utilisateur authentifié, seul ce champ est masqué.
+        String arrivalInstructions = canSeeArrivalInstructions(announcement, firebaseUid)
+                ? announcement.getArrivalInstructions()
+                : null;
+
         UserEntity traveler = userRepository.findById(announcement.getTravelerId()).orElse(null);
         boolean kycVerified = traveler != null && traveler.getKycStatus() == KycStatus.VERIFIED;
         TravelerProfileDto travelerDto = traveler != null
@@ -686,8 +694,31 @@ public class AnnouncementService {
                 announcement.isSurplusPublished(),
                 announcement.getHandoverDeadline(),
                 announcement.getCurrency(),
-                announcement.getArrivalInstructions()
+                arrivalInstructions
         );
+    }
+
+    /**
+     * Qui a le droit de lire {@code arrivalInstructions} : le voyageur propriétaire du
+     * trajet, et tout expéditeur ayant un colis encore actif dessus (statut hors
+     * {@link #INACTIVE_BID_STATUSES}). Un expéditeur dont le colis a été refusé/annulé,
+     * comme n'importe quel autre utilisateur authentifié, n'a plus de raison légitime de
+     * connaître le point de retrait.
+     */
+    private boolean canSeeArrivalInstructions(AnnouncementEntity announcement, String firebaseUid) {
+        if (announcement.getArrivalInstructions() == null || firebaseUid == null) {
+            return false;
+        }
+        UUID viewerId = userRepository.findByFirebaseUid(firebaseUid).map(UserEntity::getId).orElse(null);
+        if (viewerId == null) {
+            return false;
+        }
+        if (viewerId.equals(announcement.getTravelerId())) {
+            return true;
+        }
+        return bidRepository.findByAnnouncementIdAndStatusNotIn(announcement.getId(), INACTIVE_BID_STATUSES)
+                .stream()
+                .anyMatch(b -> viewerId.equals(b.getSenderId()));
     }
 
     @Transactional
@@ -703,8 +734,11 @@ public class AnnouncementService {
             throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden", "Vous n'êtes pas autorisé à modifier cette annonce");
         }
 
+        // ARRIVED inclus : un colis arrivé mais pas encore retiré est toujours un
+        // engagement en cours, modifier le trajet sous ses pieds n'a pas de sens.
         boolean hasAcceptedBids = bidRepository.existsByAnnouncementIdAndStatusIn(
-                id, List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT));
+                id, List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT,
+                        BidStatus.ARRIVED));
         if (hasAcceptedBids) {
             throw new YadonyBusinessException(
                     HttpStatus.CONFLICT,
@@ -1041,6 +1075,19 @@ public class AnnouncementService {
                     "Already Delivered", "Ce trajet est totalement soldé, les instructions ne peuvent plus être modifiées");
         }
 
+        // Le trajet doit réellement être arrivé : sans cette garde, un voyageur
+        // pouvait publier des instructions de retrait à ses expéditeurs alors que
+        // les colis sont encore à embarquer ou en vol. Le marquage initial passe
+        // par markArrived(), qui accepte les instructions au moment même du
+        // basculement — cet endpoint ne sert qu'à l'édition ultérieure.
+        boolean hasArrived = bidRepository.existsByAnnouncementIdAndStatusIn(
+                id, List.of(BidStatus.ARRIVED, BidStatus.COMPLETED));
+        if (!hasArrived) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "trip/not-arrived-yet",
+                    "Not Arrived Yet",
+                    "Marquez d'abord le trajet comme arrivé avant de modifier les instructions de retrait");
+        }
+
         announcement.setArrivalInstructions(arrivalInstructions);
         AnnouncementEntity saved = announcementRepository.save(announcement);
 
@@ -1162,8 +1209,11 @@ public class AnnouncementService {
                     "Seuls les trajets actifs ou annulés peuvent être supprimés");
         }
 
+        // ARRIVED inclus : le colis est arrivé mais pas encore retiré, la
+        // transaction n'est pas soldée — supprimer le trajet la ferait disparaître.
         if (bidRepository.existsByAnnouncementIdAndStatusIn(
-                id, List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT))) {
+                id, List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT,
+                        BidStatus.ARRIVED))) {
             throw new YadonyBusinessException(HttpStatus.CONFLICT, "deletion-impossible", "Deletion Impossible", "Suppression impossible : des colis sont déjà acceptés pour ce trajet");
         }
 

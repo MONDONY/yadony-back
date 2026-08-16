@@ -1718,6 +1718,49 @@ class BidServiceTest {
                             .isEqualTo(HttpStatus.CONFLICT));
         }
 
+        /** Régression C1 (financier) : un colis ARRIVED est arrivé à destination, le
+         *  voyageur a déjà fourni la prestation. Le laisser annulable rouvrait la fenêtre
+         *  d'annulation remboursée après l'arrivée — l'expéditeur récupérait son argent
+         *  ET pouvait retirer son colis. Le voyageur non plus ne peut plus se désister. */
+        @Test
+        @DisplayName("régression C1 — expéditeur ne peut pas annuler un bid ARRIVED → 409 CONFLICT")
+        void cancelBid_sender_arrived_throwsConflict() {
+            UserEntity sender = buildSender();
+            AnnouncementEntity announcement = buildAnnouncement();
+            BidEntity bid = buildBid();
+            bid.setStatus(BidStatus.ARRIVED);
+
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+
+            assertThatThrownBy(() -> bidService.cancelBid(BID_ID, SENDER_UID))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getStatus())
+                            .isEqualTo(HttpStatus.CONFLICT));
+            verify(bidRepository, never()).save(any());
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.ARRIVED);
+        }
+
+        @Test
+        @DisplayName("régression C1 — voyageur ne peut pas annuler un bid ARRIVED → 409 CONFLICT")
+        void cancelBid_traveler_arrived_throwsConflict() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement();
+            BidEntity bid = buildBid();
+            bid.setStatus(BidStatus.ARRIVED);
+
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+
+            assertThatThrownBy(() -> bidService.cancelBid(BID_ID, TRAVELER_UID))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getStatus())
+                            .isEqualTo(HttpStatus.CONFLICT));
+            verify(bidRepository, never()).save(any());
+        }
+
         @Test
         @DisplayName("bid déjà annulé → 409 CONFLICT")
         void cancelBid_alreadyCancelled_throwsConflict() {
@@ -2622,6 +2665,66 @@ class BidServiceTest {
             BidResponse resp = bidService.toResponse(bid, sender);
 
             assertThat(resp.arrivalInstructions()).isEqualTo("Devant la gare, portail nord");
+        }
+
+        /** Régression I4 : le point de retrait était servi quel que soit le statut du bid.
+         *  Un expéditeur dont l'offre a été refusée / annulée / expirée n'a plus de raison
+         *  légitime de connaître l'adresse d'arrivée du voyageur. */
+        @Test
+        @DisplayName("régression I4 — arrivalInstructions masqué pour un bid REJECTED/CANCELLED/EXPIRED/PARCEL_REFUSED")
+        void toResponse_hidesArrivalInstructionsForDeadBidStatuses() {
+            UserEntity sender = buildSender();
+            AnnouncementEntity announcement = buildAnnouncement();
+            announcement.setArrivalInstructions("Devant la gare, portail nord");
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+
+            for (BidStatus dead : List.of(BidStatus.REJECTED, BidStatus.CANCELLED,
+                    BidStatus.PARCEL_REFUSED, BidStatus.EXPIRED)) {
+                BidEntity bid = buildBid();
+                bid.setStatus(dead);
+
+                BidResponse resp = bidService.toResponse(bid, sender);
+
+                assertThat(resp.arrivalInstructions())
+                        .as("arrivalInstructions doit être masqué pour un bid %s", dead)
+                        .isNull();
+            }
+        }
+
+        /** Régression I4, versant positif : un bid ARRIVED (celui qui a justement besoin
+         *  du point de retrait) continue de recevoir les instructions. */
+        @Test
+        @DisplayName("régression I4 — arrivalInstructions servi pour un bid ARRIVED")
+        void toResponse_exposesArrivalInstructionsForArrivedBid() {
+            UserEntity sender = buildSender();
+            AnnouncementEntity announcement = buildAnnouncement();
+            announcement.setArrivalInstructions("Devant la gare, portail nord");
+            BidEntity bid = buildBid();
+            bid.setStatus(BidStatus.ARRIVED);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+
+            BidResponse resp = bidService.toResponse(bid, sender);
+
+            assertThat(resp.arrivalInstructions()).isEqualTo("Devant la gare, portail nord");
+        }
+
+        /** Régression I1 : ARRIVED manquait dans PHONE_VISIBLE_STATUSES côté BidService
+         *  alors que ConversationService l'avait déjà. Le numéro disparaissait donc en
+         *  pleine coordination de retrait, exactement quand on en a besoin. */
+        @Test
+        @DisplayName("régression I1 — téléphone visible sur un bid ARRIVED")
+        void toResponse_phoneVisibleForArrivedBid() {
+            UserEntity sender = buildSender();
+            sender.setHidePhoneNumber(false);
+            AnnouncementEntity announcement = buildAnnouncement();
+            BidEntity bid = buildBid();
+            bid.setStatus(BidStatus.ARRIVED);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+
+            BidResponse resp = bidService.toResponse(bid, sender);
+
+            assertThat(resp.senderPhoneAvailable()).isTrue();
+            assertThat(resp.recipientPhone()).isEqualTo("+221701234567");
         }
 
         @Test

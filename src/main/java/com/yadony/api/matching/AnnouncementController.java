@@ -133,7 +133,7 @@ public class AnnouncementController {
     @PostMapping("/{id}/mark-arrived")
     public ResponseEntity<AnnouncementDetailResponse> markArrived(
             @PathVariable UUID id,
-            @RequestBody(required = false) ArrivalInstructionsRequest request) {
+            @Valid @RequestBody(required = false) ArrivalInstructionsRequest request) {
         String firebaseUid = requireFirebaseUid();
         String instructions = request != null ? request.arrivalInstructions() : null;
         return ResponseEntity.ok(announcementService.markArrived(id, firebaseUid, instructions));
@@ -142,7 +142,7 @@ public class AnnouncementController {
     @PatchMapping("/{id}/arrival-instructions")
     public ResponseEntity<AnnouncementDetailResponse> updateArrivalInstructions(
             @PathVariable UUID id,
-            @RequestBody ArrivalInstructionsRequest request) {
+            @Valid @RequestBody ArrivalInstructionsRequest request) {
         String firebaseUid = requireFirebaseUid();
         return ResponseEntity.ok(
                 announcementService.updateArrivalInstructions(id, firebaseUid, request.arrivalInstructions()));

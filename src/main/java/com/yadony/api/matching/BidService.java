@@ -756,7 +756,7 @@ public class BidService {
         }
 
         if (bid.getStatus() == BidStatus.CANCELLED || bid.getStatus() == BidStatus.REJECTED
-                || bid.getStatus() == BidStatus.COMPLETED) {
+                || bid.getStatus() == BidStatus.COMPLETED || bid.getStatus() == BidStatus.ARRIVED) {
             throw new YadonyBusinessException(HttpStatus.CONFLICT, "invalid-status", "Invalid Status",
                     "Impossible d'annuler un bid déjà terminé");
         }
@@ -794,7 +794,10 @@ public class BidService {
     }
 
     /** Si le bid était déjà accepté ou remis, on rend le kilo au voyageur
-     *  (sauf pour KG_FREE où la capacité n'est jamais décrémentée). */
+     *  (sauf pour KG_FREE où la capacité n'est jamais décrémentée).
+     *  Volontairement muet sur IN_TRANSIT/ARRIVED : ses deux appelants
+     *  ({@link #cancelBid} via CancellationGuard, {@link #cancelBidForDeletedSender}
+     *  via CANCELLABLE_BID_STATUSES) refusent déjà ces statuts en amont. */
     private void restoreCapacityIfNeeded(BidEntity bid, AnnouncementEntity announcement) {
         if (bid.getStatus() != BidStatus.ACCEPTED && bid.getStatus() != BidStatus.HANDED_OVER) {
             return;
@@ -1005,8 +1008,21 @@ public class BidService {
         return toResponse(bid, sender, null);
     }
 
+    /** Doit rester identique à {@code ConversationService.PHONE_VISIBLE_STATUSES} :
+     *  ARRIVED est justement le moment où expéditeur et voyageur coordonnent le
+     *  retrait, donc le pire moment pour masquer le numéro. */
+    /** Statuts de bid pour lesquels {@code arrivalInstructions} (adresse/point de
+     *  retrait du voyageur) est servi à l'expéditeur. Exclut les issues mortes
+     *  REJECTED / CANCELLED / PARCEL_REFUSED / EXPIRED / NO_SHOW. */
+    private static final java.util.Set<BidStatus> ARRIVAL_INSTRUCTIONS_VISIBLE_STATUSES =
+            java.util.EnumSet.of(
+                    BidStatus.AWAITING_PAYMENT, BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED,
+                    BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT,
+                    BidStatus.ARRIVED, BidStatus.COMPLETED);
+
     private static final java.util.Set<BidStatus> PHONE_VISIBLE_STATUSES = java.util.EnumSet.of(
-            BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.COMPLETED);
+            BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT,
+            BidStatus.ARRIVED, BidStatus.COMPLETED);
 
     /** Valeurs programmatiques (non-libres) de {@code CancellationEntity.reason} écrites par les
      * flux HANDOVER qui n'annulent PAS le trajet entier (no-show expéditeur, annulation après
@@ -1060,7 +1076,13 @@ public class BidService {
         boolean senderKiloPro = sender != null && sender.isKiloPro();
         AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId()).orElse(null);
         String departureCity = announcement != null ? announcement.getDepartureCity() : "Inconnu";
-        String arrivalInstructions = announcement != null ? announcement.getArrivalInstructions() : null;
+        // Le point de retrait n'est servi qu'aux colis encore dans la course : un bid
+        // refusé, annulé, expiré ou dont le colis a été refusé n'a plus de raison
+        // légitime de connaître l'adresse d'arrivée du voyageur.
+        String arrivalInstructions =
+                (announcement != null && ARRIVAL_INSTRUCTIONS_VISIBLE_STATUSES.contains(bid.getStatus()))
+                        ? announcement.getArrivalInstructions()
+                        : null;
         String arrivalCity = announcement != null ? announcement.getArrivalCity() : "Inconnu";
         java.time.LocalDate departureDate = announcement != null ? announcement.getDepartureDate() : null;
         java.time.LocalTime departureTime = announcement != null ? announcement.getDepartureTime() : null;
