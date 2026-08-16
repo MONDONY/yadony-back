@@ -32,11 +32,6 @@ public class CashGateAdapter implements CashGatePort {
     }
 
     @Override
-    public boolean chargeNegotiationCashCommission(UUID travelerId, UUID senderId, UUID threadId, BigDecimal netAmount) {
-        return cashCommissionService.chargeNegotiationCommission(travelerId, senderId, threadId, netAmount);
-    }
-
-    @Override
     public AcceptBidResponse settleNegotiationCommission(
             UUID travelerId, UUID senderId, UUID threadId, BigDecimal netAmount, CommissionSource source) {
         return cashCommissionService.settleNegotiationCommission(travelerId, senderId, threadId, netAmount, source);

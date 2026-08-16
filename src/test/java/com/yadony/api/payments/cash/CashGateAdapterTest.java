@@ -80,20 +80,4 @@ class CashGateAdapterTest {
         assertThat(adapter.hasCommissionCard(traveler)).isTrue();
         verify(cashCommissionService).hasCommissionCard(traveler);
     }
-
-    @Test
-    void chargeNegotiationCashCommission_delegatesToCommissionService() {
-        UUID traveler = UUID.randomUUID();
-        UUID sender = UUID.randomUUID();
-        UUID thread = UUID.randomUUID();
-        when(cashCommissionService.chargeNegotiationCommission(
-                traveler, sender, thread, new BigDecimal("15.00"))).thenReturn(true);
-
-        boolean charged = adapter.chargeNegotiationCashCommission(
-                traveler, sender, thread, new BigDecimal("15.00"));
-
-        assertThat(charged).isTrue();
-        verify(cashCommissionService).chargeNegotiationCommission(
-                traveler, sender, thread, new BigDecimal("15.00"));
-    }
 }

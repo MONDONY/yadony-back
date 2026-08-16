@@ -10,6 +10,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
@@ -95,16 +96,30 @@ class RequestEventsListenerTest {
     }
 
     @Test
-    void onNegotiationCashCommissionFailed_notifiesTraveler() {
+    void onNegotiationCommissionPending_notifiesTravelerWithDeadline() {
         UUID travelerId = UUID.randomUUID();
-        var event = new NegotiationCashCommissionFailedEvent(
-            UUID.randomUUID(), UUID.randomUUID(), travelerId, UUID.randomUUID(),
-            new BigDecimal("4.20"), "EUR"
+        UUID threadId = UUID.randomUUID();
+        UUID packageRequestId = UUID.randomUUID();
+        var expiresAt = java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).plusMinutes(120);
+        var event = new NegotiationCommissionPendingEvent(
+            threadId, packageRequestId, travelerId, UUID.randomUUID(),
+            new BigDecimal("4.20"), "EUR", expiresAt
         );
 
-        listener.onNegotiationCashCommissionFailed(event);
+        listener.onNegotiationCommissionPending(event);
 
-        verify(dispatcher).notifyUser(eq(travelerId), contains("portefeuille"), anyString(), anyMap());
+        ArgumentCaptor<String> bodyCaptor = ArgumentCaptor.forClass(String.class);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.Map<String, String>> dataCaptor =
+            (ArgumentCaptor<java.util.Map<String, String>>) (ArgumentCaptor<?>) ArgumentCaptor.forClass(java.util.Map.class);
+        verify(dispatcher).notifyUser(eq(travelerId), contains("Confirmez"),
+            bodyCaptor.capture(), dataCaptor.capture());
+        // Message mentionnant la commission, sans tiret cadratin (règle copie FR).
+        assertThat(bodyCaptor.getValue()).contains("commission").doesNotContain("—");
+        assertThat(dataCaptor.getValue())
+            .containsEntry("type", "negotiation_commission_pending")
+            .containsEntry("threadId", threadId.toString())
+            .containsEntry("packageRequestId", packageRequestId.toString());
     }
 
     @Test

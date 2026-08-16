@@ -15,6 +15,7 @@ import com.yadony.api.payments.currency.CurrencyMatchGuard;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.requests.CashGatePort;
 import com.yadony.api.requests.NegotiationEscrowPort;
+import com.yadony.api.requests.NegotiationProperties;
 import com.yadony.api.requests.RequestsConfig;
 import com.yadony.api.requests.dto.*;
 import com.yadony.api.requests.entity.*;
@@ -52,6 +53,7 @@ public class NegotiationService {
     private final ApplicationEventPublisher eventPublisher;
     private final AuditService auditService;
     private final RequestsConfig config;
+    private final NegotiationProperties negotiationProperties;
     private final CommissionProperties commissionProperties;
     private final CashGatePort cashGatePort;
     private final NegotiationEscrowPort escrowPort;
@@ -69,6 +71,7 @@ public class NegotiationService {
                                ApplicationEventPublisher eventPublisher,
                                AuditService auditService,
                                RequestsConfig config,
+                               NegotiationProperties negotiationProperties,
                                CommissionProperties commissionProperties,
                                CashGatePort cashGatePort,
                                NegotiationEscrowPort escrowPort,
@@ -85,6 +88,7 @@ public class NegotiationService {
         this.eventPublisher = eventPublisher;
         this.auditService = auditService;
         this.config = config;
+        this.negotiationProperties = negotiationProperties;
         this.commissionProperties = commissionProperties;
         this.cashGatePort = cashGatePort;
         this.escrowPort = escrowPort;
@@ -836,11 +840,18 @@ public class NegotiationService {
     }
 
     /**
-     * Sender confirms payment for an AWAITING_PAYMENT thread. This finalizes:
-     *  - thread → ACCEPTED
-     *  - package_request → ACCEPTED
-     *  - all competing OPEN threads on the same request → AUTO_REJECTED
-     *  - payment_intent_id stored on thread
+     * Sender confirms payment for an AWAITING_PAYMENT thread.
+     *
+     * <p>For a STRIPE (or any non-CASH) thread this finalizes immediately, via
+     * {@link #sealAcceptedThread}: thread → ACCEPTED, package_request → ACCEPTED,
+     * all competing OPEN/AWAITING_TRIP/AWAITING_PAYMENT threads on the same
+     * request → AUTO_REJECTED, payment_intent_id stored on thread.
+     *
+     * <p>For a CASH thread nothing is sealed here — Yadony hasn't collected its
+     * commission yet, and the traveler can still back out. The thread moves to
+     * {@code AWAITING_COMMISSION} instead; the package_request stays OPEN and
+     * competing threads stay alive until the traveler settles the commission
+     * ({@code settleCommission}, Task 5) or the deadline expires.
      *
      * Currently this is a synchronous placeholder — the real Stripe escrow call
      * is wired separately in {@code PaymentService.createNegotiationEscrow} (Phase 3).
@@ -984,38 +995,52 @@ public class NegotiationService {
                 "request/details-incomplete");
         }
 
-        // CASH threads : prélever la commission Yadony au voyageur (wallet puis carte) AVANT
-        // de finaliser. En échec → 422 et la tx @Transactional rollback : le thread reste
-        // AWAITING_PAYMENT (non finalisé). STRIPE : pas de prélèvement ici (application_fee
-        // déjà géré par PaymentService.createNegotiationEscrow).
-        if (thread.getPaymentMethod() == PaymentMethod.CASH) {
-            boolean charged = cashGatePort.chargeNegotiationCashCommission(
-                thread.getTravelerId(), request.getSenderId(), thread.getId(), thread.getCurrentPriceEur());
-            if (!charged) {
-                // Le voyageur doit recharger : c'est le seul moment où son solde compte,
-                // et il est le seul à pouvoir débloquer la situation. Event publié avant
-                // le throw et écouté hors transaction (@EventListener simple) pour
-                // survivre au rollback qui suit.
-                BigDecimal commission = PriceBreakdown
-                    .fromNet(thread.getCurrentPriceEur(), commissionProperties.rate()).commission();
-                eventPublisher.publishEvent(new NegotiationCashCommissionFailedEvent(
-                    thread.getId(), request.getId(), thread.getTravelerId(),
-                    request.getSenderId(), commission, thread.getCurrency()));
-                throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "negotiation/commission-charge-failed");
-            }
-        } else if (verifyEscrow) {
-            // Online /checkout (untrusted) : ne JAMAIS faire confiance au
-            // paymentIntentId fourni par le client. On confirme auprès de Stripe
-            // qu'il s'agit d'un escrow réel et autorisé (requires_capture) lié à CE
-            // thread avant de finaliser. Ferme le bypass où un expéditeur finalisait
-            // une expédition (voyageur engagé + QR + tracking) sans avoir payé.
+        // STRIPE (online /checkout non fiable uniquement — jamais le webhook, déjà
+        // vérifié par Stripe) : ne JAMAIS faire confiance au paymentIntentId fourni
+        // par le client. On confirme auprès de Stripe qu'il s'agit d'un escrow réel
+        // et autorisé (requires_capture) lié à CE thread avant de finaliser. Ferme
+        // le bypass où un expéditeur finalisait une expédition (voyageur engagé +
+        // QR + tracking) sans avoir payé. CASH n'a aucun escrow à vérifier ici —
+        // son sort se joue juste en dessous.
+        if (thread.getPaymentMethod() != PaymentMethod.CASH && verifyEscrow) {
             if (!escrowPort.verifyNegotiationEscrow(threadId, paymentIntentId)) {
                 throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "payment/escrow-not-verified");
             }
         }
 
+        if (thread.getPaymentMethod() == PaymentMethod.CASH) {
+            // Un accord en espèces ne scelle rien : Yadony n'a pas encore encaissé sa
+            // commission, et le voyageur peut encore renoncer. La demande reste donc
+            // ouverte et les offres concurrentes vivantes, jusqu'au règlement ou à
+            // l'expiration du délai.
+            thread.setStatus(NegotiationThreadStatus.AWAITING_COMMISSION);
+            thread.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC));
+            threadRepo.save(thread);
+            BigDecimal commission = PriceBreakdown
+                .fromNet(thread.getCurrentPriceEur(), commissionProperties.rate()).commission();
+            LocalDateTime expiresAt = LocalDateTime.now(ZoneOffset.UTC)
+                .plusMinutes(negotiationProperties.commissionWindowMinutes());
+            eventPublisher.publishEvent(new NegotiationCommissionPendingEvent(
+                thread.getId(), request.getId(), thread.getTravelerId(),
+                request.getSenderId(), commission, thread.getCurrency(), expiresAt));
+            auditService.log("NEGOTIATION_THREAD", thread.getId(), "AWAITING_COMMISSION", callerId,
+                Map.of("commission", commission.toPlainString()));
+        } else {
+            sealAcceptedThread(thread, request, callerId, paymentIntentId);
+        }
+
+        return buildFinalizedResponse(thread, request, callerId, paymentIntentId);
+    }
+
+    /**
+     * Scelle définitivement un accord : c'est ici que la demande se ferme, que les
+     * offres concurrentes tombent et que le colis est matérialisé. Appelée par le
+     * paiement carte de l'expéditeur, et par le règlement de la commission du
+     * voyageur pour les accords en espèces.
+     */
+    private void sealAcceptedThread(NegotiationThreadEntity thread, PackageRequestEntity request,
+                                    UUID callerId, String paymentIntentId) {
         thread.setPaymentIntentId(paymentIntentId);
         thread.setStatus(NegotiationThreadStatus.ACCEPTED);
         thread.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC));
@@ -1069,13 +1094,11 @@ public class NegotiationService {
             thread.getPromoCode(),
             thread.getCommissionRate()
         ));
-        auditService.log("NEGOTIATION_THREAD", threadId, "ACCEPTED", callerId,
+        auditService.log("NEGOTIATION_THREAD", thread.getId(), "ACCEPTED", callerId,
             Map.of("price", thread.getCurrentPriceEur().toString(),
                 "paymentIntentId", paymentIntentId));
         auditService.log("PACKAGE_REQUEST", request.getId(), "ACCEPTED", callerId,
             Map.of("threadId", thread.getId().toString()));
-
-        return buildFinalizedResponse(thread, request, callerId, paymentIntentId);
     }
 
     /**
@@ -1654,9 +1677,8 @@ public class NegotiationService {
      *
      * CASH : jamais conditionné au solde du portefeuille. Le solde n'est qu'une modalité de
      * règlement de la commission, pas une capacité : il peut être rechargé à tout moment et
-     * n'a de sens qu'à l'instant du prélèvement. Il est vérifié au paiement
-     * ({@code chargeNegotiationCashCommission}, wallet puis carte), qui demande alors au
-     * voyageur de recharger si nécessaire.
+     * n'a de sens qu'au moment où le voyageur règle lui-même la commission
+     * ({@code settleCommission}, wallet puis carte), une fois l'accord conclu.
      */
     private java.util.Set<PaymentMethod> computeAvailableMethods(
             PackageRequestEntity request, UserEntity traveler) {

@@ -63,6 +63,7 @@ class NegotiationServiceTest {
                 .thenReturn("EUR");
     }
     @Mock private RequestsConfig config;
+    @Mock private com.yadony.api.requests.NegotiationProperties negotiationProperties;
     @Mock private CommissionProperties commissionProperties;
     @Mock private CashGatePort cashGatePort;
     @Mock private com.yadony.api.requests.NegotiationEscrowPort escrowPort;
@@ -108,6 +109,9 @@ class NegotiationServiceTest {
         // Default commission rate used whenever toResponse() is called.
         // Lenient to avoid UnnecessaryStubbingException in error-path tests that never reach toResponse().
         lenient().when(commissionProperties.rate()).thenReturn(new BigDecimal("0.12"));
+        // Délai par défaut (miroir de application.yml) — lenient car seuls les tests CASH
+        // du chemin AWAITING_COMMISSION l'exercent réellement.
+        lenient().when(negotiationProperties.commissionWindowMinutes()).thenReturn(120);
         // Pass-through for presigned avatar URLs
         lenient().when(storageService.avatarUrl(any())).thenAnswer(inv -> inv.getArgument(0));
         lenient().when(activeCurrencyResolver.resolve(any())).thenReturn("EUR");
@@ -2917,75 +2921,40 @@ class NegotiationServiceTest {
             assertThat(request.getStatus()).isEqualTo(PackageRequestStatus.ACCEPTED);
         }
 
+        // En espèces, conclure ne scelle plus rien : c'est le règlement de la
+        // commission par le voyageur qui scellera, ou le délai qui libérera.
         @Test
-        @DisplayName("thread CASH — commission prélevée (port=true) → finalize OK + ACCEPTED")
-        void finalize_cashThread_commissionCharged_succeeds() {
+        @DisplayName("thread CASH — finalize suspend l'accord en AWAITING_COMMISSION sans rien sceller")
+        void finalize_cashThread_movesToAwaitingCommission_withoutSealing() {
             thread.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.CASH);
             request.setAcceptedPaymentMethods(java.util.EnumSet.of(PaymentMethod.CASH));
             request.setRecipientName("Fatou Diop");
             request.setRecipientPhone("+221771234567");
-            request.setDepartureCity("Paris");
-            request.setArrivalCity("Dakar");
-            request.setWeightKg(new BigDecimal("5"));
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
             when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             // Mode final CASH → on tente de libérer tout escrow carte en vol (ici aucun : no-op → true).
+            // Ce mécanisme est indépendant du scellement et reste inchangé par cette tâche.
             when(escrowPort.releaseEscrowForMethodSwitch(THREAD_ID)).thenReturn(true);
-            // Simule le comportement réel de CashCommissionService.chargeNegotiationCommission :
-            // stamper commissionChargedVia sur le thread en même temps que le charge réussi.
-            when(cashGatePort.chargeNegotiationCashCommission(eq(TRAVELER_ID), eq(SENDER_ID), eq(THREAD_ID), any()))
-                .thenAnswer(inv -> {
-                    thread.setCommissionChargedVia("WALLET");
-                    return true;
-                });
-            when(threadRepo.findByPackageRequestId(REQUEST_ID)).thenReturn(List.of());
             when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
-            when(requestRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(List.of());
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
             when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
 
-            service.finalizeAfterPayment(SENDER_ID, THREAD_ID, "pi_real_cash");
+            service.finalizeAfterPayment(SENDER_ID, THREAD_ID, "pi_x");
 
-            assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.ACCEPTED);
-            assertThat(request.getStatus()).isEqualTo(PackageRequestStatus.ACCEPTED);
-            verify(cashGatePort).chargeNegotiationCashCommission(eq(TRAVELER_ID), eq(SENDER_ID), eq(THREAD_ID),
-                eq(thread.getCurrentPriceEur()));
-            org.mockito.ArgumentCaptor<PackageRequestAcceptedEvent> captor =
-                org.mockito.ArgumentCaptor.forClass(PackageRequestAcceptedEvent.class);
-            verify(eventPublisher).publishEvent(captor.capture());
-            assertThat(captor.getValue().paymentMethod())
-                .isEqualTo(com.yadony.api.payments.cash.PaymentMethod.CASH);
-            // Sans cette propagation, le bid matérialisé (ThreadAcceptedBidListener) ne
-            // saurait pas comment rembourser la commission si annulé avant remise.
-            assertThat(captor.getValue().commissionChargedVia()).isEqualTo("WALLET");
-        }
-
-        @Test
-        @DisplayName("thread CASH — commission échoue (port=false) → 422 et thread reste AWAITING_PAYMENT")
-        void finalize_cashThread_commissionFails_throws422AndNotFinalized() {
-            thread.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.CASH);
-            request.setAcceptedPaymentMethods(java.util.EnumSet.of(PaymentMethod.CASH));
-            request.setRecipientName("Fatou Diop");
-            request.setRecipientPhone("+221771234567");
-            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
-            when(escrowPort.releaseEscrowForMethodSwitch(THREAD_ID)).thenReturn(true);
-            when(cashGatePort.chargeNegotiationCashCommission(eq(TRAVELER_ID), eq(SENDER_ID), eq(THREAD_ID), any()))
-                .thenReturn(false);
-
-            assertThatThrownBy(() -> service.finalizeAfterPayment(SENDER_ID, THREAD_ID, "pi_x"))
-                .isInstanceOf(ResponseStatusException.class)
-                .hasMessageContaining("negotiation/commission-charge-failed");
-
-            assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.AWAITING_PAYMENT);
+            assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.AWAITING_COMMISSION);
+            assertThat(request.getStatus()).isEqualTo(PackageRequestStatus.OPEN);
             verify(eventPublisher, never()).publishEvent(any(PackageRequestAcceptedEvent.class));
+            // sealAcceptedThread n'a jamais été appelée : ni fermeture de la demande, ni
+            // parcours (donc ni auto-rejet) des threads concurrents.
+            verify(requestRepo, never()).save(any());
+            verify(threadRepo, never()).findByPackageRequestId(any());
+            verifyNoInteractions(cashGatePort);
         }
 
         @Test
-        @DisplayName("thread CASH — commission échoue (port=false) → NegotiationCashCommissionFailedEvent "
-            + "publié AVANT le 422, pour que le voyageur soit notifié de recharger son portefeuille")
-        void finalize_cashThread_commissionFails_publishesCashCommissionFailedEvent() {
+        @DisplayName("thread CASH — publie NegotiationCommissionPendingEvent avec la commission et un délai")
+        void finalize_cashThread_publishesCommissionPendingEventWithDeadline() {
             thread.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.CASH);
             request.setAcceptedPaymentMethods(java.util.EnumSet.of(PaymentMethod.CASH));
             request.setRecipientName("Fatou Diop");
@@ -2993,26 +2962,73 @@ class NegotiationServiceTest {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
             when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(escrowPort.releaseEscrowForMethodSwitch(THREAD_ID)).thenReturn(true);
-            when(cashGatePort.chargeNegotiationCashCommission(eq(TRAVELER_ID), eq(SENDER_ID), eq(THREAD_ID), any()))
-                .thenReturn(false);
+            when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(List.of());
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
+            when(negotiationProperties.commissionWindowMinutes()).thenReturn(120);
 
-            assertThatThrownBy(() -> service.finalizeAfterPayment(SENDER_ID, THREAD_ID, "pi_x"))
-                .isInstanceOf(ResponseStatusException.class)
-                .hasMessageContaining("negotiation/commission-charge-failed");
+            java.time.LocalDateTime before = java.time.LocalDateTime.now(java.time.ZoneOffset.UTC);
+            service.finalizeAfterPayment(SENDER_ID, THREAD_ID, "pi_x");
 
-            org.mockito.ArgumentCaptor<com.yadony.api.requests.event.NegotiationCashCommissionFailedEvent> captor =
-                org.mockito.ArgumentCaptor.forClass(
-                    com.yadony.api.requests.event.NegotiationCashCommissionFailedEvent.class);
+            ArgumentCaptor<com.yadony.api.requests.event.NegotiationCommissionPendingEvent> captor =
+                ArgumentCaptor.forClass(com.yadony.api.requests.event.NegotiationCommissionPendingEvent.class);
             verify(eventPublisher).publishEvent(captor.capture());
             var published = captor.getValue();
             assertThat(published.threadId()).isEqualTo(THREAD_ID);
             assertThat(published.packageRequestId()).isEqualTo(REQUEST_ID);
             assertThat(published.travelerId()).isEqualTo(TRAVELER_ID);
             assertThat(published.senderId()).isEqualTo(SENDER_ID);
-            assertThat(published.currency()).isEqualTo(request.getCurrency());
+            assertThat(published.currency()).isEqualTo(thread.getCurrency());
             assertThat(published.commissionAmount())
                 .isEqualByComparingTo(com.yadony.api.payments.PriceBreakdown
                     .fromNet(thread.getCurrentPriceEur(), new BigDecimal("0.12")).commission());
+            // Délai réglable (dony.negotiation.commission-window-minutes, stubbé à 120 ici) —
+            // jamais en dur : l'échéance doit être strictement future.
+            assertThat(published.expiresAt()).isAfter(before);
+        }
+
+        // Non-régression : la carte scelle toujours immédiatement, via sealAcceptedThread.
+        @Test
+        @DisplayName("thread STRIPE — non-régression : la carte scelle toujours immédiatement")
+        void finalize_stripeThread_stillSealsImmediately() {
+            thread.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.STRIPE);
+            request.setAcceptedPaymentMethods(java.util.EnumSet.of(PaymentMethod.STRIPE));
+            request.setRecipientName("Fatou Diop");
+            request.setRecipientPhone("+221771234567");
+            request.setDepartureCity("Paris");
+            request.setArrivalCity("Dakar");
+            request.setWeightKg(new BigDecimal("5"));
+
+            NegotiationThreadEntity competing = new NegotiationThreadEntity();
+            competing.setPackageRequestId(REQUEST_ID);
+            competing.setTravelerId(UUID.randomUUID());
+            competing.setStatus(NegotiationThreadStatus.OPEN);
+            competing.setCurrentPriceEur(new BigDecimal("40"));
+            competing.setRoundsCount((short) 1);
+            competing.setLastActivityAt(java.time.LocalDateTime.now());
+            try {
+                var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+                idField.setAccessible(true);
+                idField.set(competing, UUID.randomUUID());
+            } catch (Exception e) { throw new RuntimeException(e); }
+
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(threadRepo.findByPackageRequestId(REQUEST_ID)).thenReturn(List.of(thread, competing));
+            when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(requestRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(List.of());
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
+
+            service.finalizeAfterPayment(SENDER_ID, THREAD_ID, "pi_real_stripe");
+
+            assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.ACCEPTED);
+            assertThat(request.getStatus()).isEqualTo(PackageRequestStatus.ACCEPTED);
+            assertThat(competing.getStatus()).isEqualTo(NegotiationThreadStatus.AUTO_REJECTED);
+            verify(eventPublisher).publishEvent(any(PackageRequestAcceptedEvent.class));
+            verifyNoInteractions(cashGatePort);
         }
 
         @Test
@@ -3914,27 +3930,23 @@ class NegotiationServiceTest {
         }
 
         @Test
-        @DisplayName("switch vers CASH → libère l'escrow Stripe puis finalise en CASH")
-        void checkout_switchToCash_releasesEscrowThenFinalizes() {
+        @DisplayName("switch vers CASH → libère l'escrow Stripe puis suspend en AWAITING_COMMISSION (ne finalise plus)")
+        void checkout_switchToCash_releasesEscrowThenAwaitsCommission() {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
             when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
-            when(threadRepo.findByPackageRequestId(REQUEST_ID)).thenReturn(List.of());
             when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
-            when(requestRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(List.of());
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
             when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
             when(escrowPort.releaseEscrowForMethodSwitch(THREAD_ID)).thenReturn(true);
-            when(cashGatePort.chargeNegotiationCashCommission(
-                    eq(TRAVELER_ID), eq(SENDER_ID), eq(THREAD_ID), any())).thenReturn(true);
 
             service.finalizeAfterPayment(SENDER_ID, THREAD_ID, "CASH", PaymentMethod.CASH);
 
             verify(escrowPort).releaseEscrowForMethodSwitch(THREAD_ID);
             assertThat(thread.getPaymentMethod()).isEqualTo(PaymentMethod.CASH);
-            assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.ACCEPTED);
-            verify(cashGatePort).chargeNegotiationCashCommission(
-                eq(TRAVELER_ID), eq(SENDER_ID), eq(THREAD_ID), any());
+            assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.AWAITING_COMMISSION);
+            assertThat(request.getStatus()).isEqualTo(PackageRequestStatus.OPEN);
+            verifyNoInteractions(cashGatePort);
         }
 
         @Test
@@ -4013,9 +4025,12 @@ class NegotiationServiceTest {
         private void stubFinalizeCollaborators() {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
             when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
-            when(threadRepo.findByPackageRequestId(REQUEST_ID)).thenReturn(List.of());
+            // Lenient : seuls les scénarios STRIPE (qui scellent via sealAcceptedThread)
+            // exercent findByPackageRequestId/requestRepo.save — les scénarios CASH
+            // suspendent en AWAITING_COMMISSION sans y toucher.
+            lenient().when(threadRepo.findByPackageRequestId(REQUEST_ID)).thenReturn(List.of());
             when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
-            when(requestRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            lenient().when(requestRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(List.of());
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
             when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
@@ -4057,26 +4072,24 @@ class NegotiationServiceTest {
         }
 
         @Test
-        @DisplayName("3. checkout CASH (chosenMethod CASH, paymentMethod null, SET={CASH}) → ACCEPTED en CASH, commission prélevée")
-        void checkoutCash_postLinking_chargesCommission() {
+        @DisplayName("3. checkout CASH (chosenMethod CASH, paymentMethod null, SET={CASH}) → AWAITING_COMMISSION, aucun prélèvement")
+        void checkoutCash_postLinking_awaitsCommission() {
             request.setAcceptedPaymentMethods(java.util.EnumSet.of(PaymentMethod.CASH));
             thread.setAvailablePaymentMethods(java.util.EnumSet.of(PaymentMethod.CASH));
             stubFinalizeCollaborators();
             // Pas d'escrow carte en vol → release no-op (true).
             when(escrowPort.releaseEscrowForMethodSwitch(THREAD_ID)).thenReturn(true);
-            when(cashGatePort.chargeNegotiationCashCommission(
-                    eq(TRAVELER_ID), eq(SENDER_ID), eq(THREAD_ID), any())).thenReturn(true);
 
             service.finalizeAfterPayment(SENDER_ID, THREAD_ID, "CASH", PaymentMethod.CASH);
 
-            assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.ACCEPTED);
+            assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.AWAITING_COMMISSION);
             assertThat(thread.getPaymentMethod()).isEqualTo(PaymentMethod.CASH);
-            verify(cashGatePort).chargeNegotiationCashCommission(
-                eq(TRAVELER_ID), eq(SENDER_ID), eq(THREAD_ID), any());
+            assertThat(request.getStatus()).isEqualTo(PackageRequestStatus.OPEN);
+            verifyNoInteractions(cashGatePort);
         }
 
         @Test
-        @DisplayName("4. bascule STRIPE→CASH (chosenMethod CASH, SET={STRIPE,CASH}) → CASH, release appelé UNE fois")
+        @DisplayName("4. bascule STRIPE→CASH (chosenMethod CASH, SET={STRIPE,CASH}) → CASH, release appelé UNE fois, AWAITING_COMMISSION")
         void switchStripeToCash_postLinking_releasesEscrowOnce() {
             request.setAcceptedPaymentMethods(
                 java.util.EnumSet.of(PaymentMethod.STRIPE, PaymentMethod.CASH));
@@ -4085,14 +4098,13 @@ class NegotiationServiceTest {
             stubFinalizeCollaborators();
             // Le sender avait initié un escrow carte puis choisi cash → hold carte annulé.
             when(escrowPort.releaseEscrowForMethodSwitch(THREAD_ID)).thenReturn(true);
-            when(cashGatePort.chargeNegotiationCashCommission(
-                    eq(TRAVELER_ID), eq(SENDER_ID), eq(THREAD_ID), any())).thenReturn(true);
 
             service.finalizeAfterPayment(SENDER_ID, THREAD_ID, "CASH", PaymentMethod.CASH);
 
-            assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.ACCEPTED);
+            assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.AWAITING_COMMISSION);
             assertThat(thread.getPaymentMethod()).isEqualTo(PaymentMethod.CASH);
             verify(escrowPort, times(1)).releaseEscrowForMethodSwitch(THREAD_ID);
+            verifyNoInteractions(cashGatePort);
         }
 
         @Test

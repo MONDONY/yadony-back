@@ -121,23 +121,21 @@ public class RequestEventsListener {
     }
 
     /**
-     * Règlement en espèces bloqué : la commission n'a pas pu être prélevée au
-     * voyageur. Lui seul peut débloquer l'accord, en rechargeant son portefeuille.
-     * Publié depuis une transaction qui rollback, d'où le {@code @EventListener}
-     * simple (un AFTER_COMMIT ne partirait jamais).
+     * Accord en espèces conclu par l'expéditeur : le voyageur doit régler la
+     * commission pour l'emporter. AFTER_COMMIT, car annoncer un accord avant son
+     * commit exposerait à notifier une transaction qui rollback ensuite.
      */
-    @EventListener
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
-    public void onNegotiationCashCommissionFailed(NegotiationCashCommissionFailedEvent e) {
+    public void onNegotiationCommissionPending(NegotiationCommissionPendingEvent e) {
         dispatcher.notifyUser(
             e.travelerId(),
-            "Rechargez votre portefeuille",
+            "Confirmez votre prise en charge",
             String.format(
-                "L'expéditeur règle en espèces : la commission de %.2f %s n'a pas pu être prélevée. "
-                    + "Rechargez votre portefeuille pour valider l'accord.",
+                "L'expéditeur a retenu votre offre. Réglez la commission de %.2f %s pour confirmer, sans quoi la demande repartira.",
                 e.commissionAmount(), e.currency()),
             Map.of(
-                "type", "negotiation_cash_commission_failed",
+                "type", "negotiation_commission_pending",
                 "threadId", e.threadId().toString(),
                 "packageRequestId", e.packageRequestId().toString()
             )

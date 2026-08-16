@@ -113,7 +113,7 @@ public class ThreadAcceptedBidListener {
             // mark the bid so the classic cash flow never re-charges and the UI shows "réglée".
             bid.setCommissionStatus(com.yadony.api.payments.cash.CommissionStatus.CHARGED);
             // Carry over HOW it was charged (WALLET/CARD, stamped on the thread by
-            // CashCommissionService.chargeNegotiationCommission) — without this,
+            // CashCommissionService.settleNegotiationCommission) — without this,
             // BidCancelledCommissionRefundListener sees commissionChargedVia=null on
             // the materialised bid and silently skips the refund if this bid is later
             // cancelled before handover, leaving the traveler's commission un-refunded.

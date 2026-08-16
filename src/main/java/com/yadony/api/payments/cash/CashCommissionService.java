@@ -69,7 +69,6 @@ public class CashCommissionService {
     // String status values stored on NegotiationThreadEntity (decoupled from the
     // payments/cash enums). Names mirror CommissionStatus / CommissionChargedVia.
     private static final String NEGO_COMMISSION_CHARGED = CommissionStatus.CHARGED.name();
-    private static final String NEGO_COMMISSION_FAILED = CommissionStatus.FAILED.name();
     private static final String NEGO_COMMISSION_REQUIRES_3DS = CommissionStatus.REQUIRES_3DS.name();
     private static final String NEGO_COMMISSION_VIA_WALLET = CommissionChargedVia.WALLET.name();
     private static final String NEGO_COMMISSION_VIA_CARD = CommissionChargedVia.CARD.name();
@@ -414,124 +413,6 @@ public class CashCommissionService {
     }
 
     /**
-     * Prélève la commission Yadony (net × taux) depuis le voyageur pour un thread de
-     * négociation CASH — wallet en priorité, carte en fallback off-session.
-     *
-     * <p>Appelée synchroniquement depuis {@code NegotiationService.finalizeAfterPayment}
-     * (via {@link com.yadony.api.requests.CashGatePort}) au moment où l'expéditeur confirme
-     * un trajet négocié en espèces.
-     *
-     * <p>Contrat strict : ne JAMAIS lever d'exception sur un refus normal (carte refusée,
-     * 3DS requis, solde insuffisant sans carte) — retourner {@code false} et poser
-     * {@code commissionStatus="FAILED"} sur le thread. Ne lever que sur erreur interne
-     * réellement inattendue. La méthode est {@code @Transactional} pour rejoindre la tx
-     * du finalize : un débit wallet réussi committe avec la finalisation.
-     *
-     * @return {@code true} si la commission a été prélevée (ou l'était déjà — idempotent),
-     *         {@code false} si elle n'a pas pu l'être.
-     */
-    @Transactional
-    public boolean chargeNegotiationCommission(UUID travelerId, UUID senderId, UUID threadId, BigDecimal net) {
-        com.yadony.api.requests.entity.NegotiationThreadEntity thread =
-                negotiationThreadRepository.findById(threadId).orElseThrow();
-
-        // Idempotence : déjà prélevé → succès sans re-débit.
-        if (NEGO_COMMISSION_CHARGED.equals(thread.getCommissionStatus())) {
-            return true;
-        }
-
-        BigDecimal rate = commissionRateResolver.resolve(travelerId, senderId);
-        BigDecimal commission = net.multiply(rate).setScale(2, RoundingMode.HALF_UP);
-        if (commission.signum() <= 0) {
-            return true; // rien à prélever
-        }
-
-        // 1) Wallet prioritaire — débit SANS bid (réf = threadId dans payment_ref/
-        // idempotency_key). On ne passe PAS le threadId dans la colonne FK bid_id.
-        BigDecimal balance = walletService.getBalance(travelerId, thread.getCurrency());
-        if (balance.compareTo(commission) >= 0) {
-            try {
-                walletService.debit(travelerId, thread.getCurrency(), commission,
-                        WalletTransactionType.COMMISSION_DEDUCTED,
-                        threadId.toString(), "nego_commission_wallet_" + threadId);
-                thread.setCommissionStatus(NEGO_COMMISSION_CHARGED);
-                thread.setCommissionChargedVia(NEGO_COMMISSION_VIA_WALLET);
-                negotiationThreadRepository.save(thread);
-                auditService.log("NEGOTIATION_THREAD", threadId, "CASH_COMMISSION_CHARGED", travelerId,
-                        Map.of("commission", commission.toPlainString(), "via", "WALLET"));
-                return true;
-            } catch (InsufficientWalletBalanceException e) {
-                // Race TOCTOU : solde a chuté entre getBalance et debit → fallback carte
-                log.warn("Race TOCTOU wallet pour thread {} — fallback carte", threadId);
-            }
-        }
-
-        // 2) Fallback carte off-session
-        UserEntity traveler = userRepo.findById(travelerId).orElseThrow();
-        if (traveler.getCommissionPaymentMethodId() != null) {
-            CurrencyAmount commissionAmount = CurrencyAmount.of(
-                    commission, SupportedCurrency.fromCodeOrDefault(thread.getCurrency()));
-            String idempotencyKey = "nego_commission_" + threadId;
-            try {
-                PaymentIntentCreateParams params = PaymentIntentCreateParams.builder()
-                        .setAmount(commissionAmount.minor())
-                        .setCurrency(commissionAmount.currency().code())
-                        .setCustomer(traveler.getStripeCustomerId())
-                        .setPaymentMethod(traveler.getCommissionPaymentMethodId())
-                        .setOffSession(true)
-                        .setConfirm(true)
-                        .setDescription("Commission cash négociation " + threadId)
-                        .putMetadata("negotiation_thread_id", threadId.toString())
-                        .putMetadata("commission_purpose", "cash_negotiation")
-                        .build();
-                RequestOptions opts = RequestOptions.builder().setIdempotencyKey(idempotencyKey).build();
-                PaymentIntent pi = stripeCashGateway.createPaymentIntent(params, opts);
-
-                if ("succeeded".equals(pi.getStatus())) {
-                    thread.setCommissionStatus(NEGO_COMMISSION_CHARGED);
-                    thread.setCommissionChargedVia(NEGO_COMMISSION_VIA_CARD);
-                    thread.setCommissionPaymentIntentId(pi.getId());
-                    negotiationThreadRepository.save(thread);
-                    auditService.log("NEGOTIATION_THREAD", threadId, "CASH_COMMISSION_CHARGED", travelerId,
-                            Map.of("commission", commission.toPlainString(), "via", "CARD",
-                                    "paymentIntentId", pi.getId()));
-                    return true;
-                }
-                // "requires_action" (3DS) ou tout autre statut : le voyageur n'est pas présent
-                // au moment de la confirmation de l'expéditeur → échec, on bloque.
-                thread.setCommissionStatus(NEGO_COMMISSION_FAILED);
-                negotiationThreadRepository.save(thread);
-                auditService.log("NEGOTIATION_THREAD", threadId, "CASH_COMMISSION_FAILED", travelerId,
-                        Map.of("reason", "card-status-" + pi.getStatus()));
-                return false;
-            } catch (CardException e) {
-                thread.setCommissionStatus(NEGO_COMMISSION_FAILED);
-                negotiationThreadRepository.save(thread);
-                auditService.log("NEGOTIATION_THREAD", threadId, "CASH_COMMISSION_FAILED", travelerId,
-                        Map.of("reason", "card-declined",
-                                "code", e.getCode() != null ? e.getCode() : ""));
-                return false;
-            } catch (StripeException e) {
-                thread.setCommissionStatus(NEGO_COMMISSION_FAILED);
-                negotiationThreadRepository.save(thread);
-                auditService.log("NEGOTIATION_THREAD", threadId, "CASH_COMMISSION_FAILED", travelerId,
-                        Map.of("reason", "stripe-error"));
-                log.error("Commission carte négociation thread {} : erreur Stripe {}", threadId, e.getMessage());
-                return false;
-            }
-        }
-
-        // 3) Ni wallet suffisant ni carte disponible → échec
-        thread.setCommissionStatus(NEGO_COMMISSION_FAILED);
-        negotiationThreadRepository.save(thread);
-        auditService.log("NEGOTIATION_THREAD", threadId, "CASH_COMMISSION_FAILED", travelerId,
-                Map.of("reason", "no-wallet-no-card"));
-        log.error("Commission cash négociation impossible pour thread {} traveler {} — ni wallet ni carte",
-                threadId, travelerId);
-        return false;
-    }
-
-    /**
      * Règle la commission Yadony (net × taux) d'un thread de négociation CASH, à la
      * demande du voyageur. Le montant se calcule TOUJOURS depuis le net négocié passé
      * en paramètre, jamais depuis le prix/kg de l'annonce liée ({@link #computeBidCommission}),
@@ -552,10 +433,11 @@ public class CashCommissionService {
      * au flux classique (déclenché par l'expéditeur, voyageur absent), c'est ici le
      * voyageur qui règle lui-même depuis son téléphone — il peut compléter le 3DS.
      *
-     * <p><b>Note migration :</b> remplace à terme {@link #chargeNegotiationCommission},
-     * conservée pour l'instant — son unique appelant ({@code CashGateAdapter} via
-     * {@code CashGatePort}) sera basculé sur cette méthode dans une tâche ultérieure,
-     * qui retirera alors l'ancienne.
+     * <p>Appelée par {@code NegotiationService.settleCommission} (via
+     * {@link com.yadony.api.requests.CashGatePort}) lorsque le voyageur règle
+     * volontairement la commission d'un thread {@code AWAITING_COMMISSION} — seul
+     * chemin de prélèvement de commission pour une négociation cash, la demande
+     * restant intacte tant qu'il n'a pas eu lieu.
      */
     @Transactional
     public AcceptBidResponse settleNegotiationCommission(

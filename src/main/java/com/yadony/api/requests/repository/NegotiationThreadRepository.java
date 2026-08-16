@@ -32,6 +32,7 @@ public interface NegotiationThreadRepository extends JpaRepository<NegotiationTh
               com.yadony.api.requests.entity.NegotiationThreadStatus.OPEN,
               com.yadony.api.requests.entity.NegotiationThreadStatus.AWAITING_TRIP,
               com.yadony.api.requests.entity.NegotiationThreadStatus.AWAITING_PAYMENT,
+              com.yadony.api.requests.entity.NegotiationThreadStatus.AWAITING_COMMISSION,
               com.yadony.api.requests.entity.NegotiationThreadStatus.ACCEPTED
           )
     """)
@@ -64,7 +65,8 @@ public interface NegotiationThreadRepository extends JpaRepository<NegotiationTh
           AND t.status IN (
               com.yadony.api.requests.entity.NegotiationThreadStatus.OPEN,
               com.yadony.api.requests.entity.NegotiationThreadStatus.AWAITING_TRIP,
-              com.yadony.api.requests.entity.NegotiationThreadStatus.AWAITING_PAYMENT
+              com.yadony.api.requests.entity.NegotiationThreadStatus.AWAITING_PAYMENT,
+              com.yadony.api.requests.entity.NegotiationThreadStatus.AWAITING_COMMISSION
           )
     """)
     boolean existsActiveByTravelerAnnouncementId(@Param("announcementId") UUID announcementId);
