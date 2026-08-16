@@ -111,4 +111,117 @@ class NegotiationThreadRepositoryAwaitingCommissionTest {
 
         assertThat(active).isFalse();
     }
+
+    @Test
+    @DisplayName("findExpiredAwaitingCommission trouve un thread AWAITING_COMMISSION dont lastActivityAt dépasse le cutoff")
+    void findExpiredAwaitingCommission_pastCutoff_isFound() {
+        PackageRequestEntity request = persistRequest(UUID.randomUUID());
+        NegotiationThreadEntity thread = persistThread(
+            request.getId(), UUID.randomUUID(), null, NegotiationThreadStatus.AWAITING_COMMISSION);
+        thread.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC).minusHours(3));
+        threadRepo.saveAndFlush(thread);
+
+        var found = threadRepo.findExpiredAwaitingCommission(LocalDateTime.now(ZoneOffset.UTC).minusHours(2));
+
+        assertThat(found).extracting(NegotiationThreadEntity::getId).containsExactly(thread.getId());
+    }
+
+    @Test
+    @DisplayName("findExpiredAwaitingCommission ignore un thread encore dans la fenêtre (lastActivityAt récent)")
+    void findExpiredAwaitingCommission_withinWindow_isExcluded() {
+        PackageRequestEntity request = persistRequest(UUID.randomUUID());
+        NegotiationThreadEntity thread = persistThread(
+            request.getId(), UUID.randomUUID(), null, NegotiationThreadStatus.AWAITING_COMMISSION);
+        thread.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(5));
+        threadRepo.saveAndFlush(thread);
+
+        var found = threadRepo.findExpiredAwaitingCommission(LocalDateTime.now(ZoneOffset.UTC).minusHours(2));
+
+        assertThat(found).isEmpty();
+    }
+
+    @Test
+    @DisplayName("findExpiredAwaitingCommission ignore les statuts autres que AWAITING_COMMISSION (même hors délai)")
+    void findExpiredAwaitingCommission_excludesOtherStatuses() {
+        PackageRequestEntity request = persistRequest(UUID.randomUUID());
+        NegotiationThreadEntity thread = persistThread(
+            request.getId(), UUID.randomUUID(), null, NegotiationThreadStatus.OPEN);
+        thread.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC).minusHours(3));
+        threadRepo.saveAndFlush(thread);
+
+        var found = threadRepo.findExpiredAwaitingCommission(LocalDateTime.now(ZoneOffset.UTC).minusHours(2));
+
+        assertThat(found).isEmpty();
+    }
+
+    @Test
+    @DisplayName("findUnrefundedChargedCommissions trouve un thread AUTO_REJECTED avec commissionPaymentIntentId non remboursé")
+    void findUnrefundedChargedCommissions_autoRejectedWithChargedPi_isFound() {
+        PackageRequestEntity request = persistRequest(UUID.randomUUID());
+        NegotiationThreadEntity thread = persistThread(
+            request.getId(), UUID.randomUUID(), null, NegotiationThreadStatus.AUTO_REJECTED);
+        thread.setCommissionPaymentIntentId("pi_orphan");
+        thread.setCommissionStatus("REQUIRES_3DS");
+        threadRepo.saveAndFlush(thread);
+
+        var found = threadRepo.findUnrefundedChargedCommissions();
+
+        assertThat(found).extracting(NegotiationThreadEntity::getId).containsExactly(thread.getId());
+    }
+
+    @Test
+    @DisplayName("findUnrefundedChargedCommissions trouve un thread EXPIRED avec commissionPaymentIntentId non remboursé")
+    void findUnrefundedChargedCommissions_expiredWithChargedPi_isFound() {
+        PackageRequestEntity request = persistRequest(UUID.randomUUID());
+        NegotiationThreadEntity thread = persistThread(
+            request.getId(), UUID.randomUUID(), null, NegotiationThreadStatus.EXPIRED);
+        thread.setCommissionPaymentIntentId("pi_orphan_2");
+        thread.setCommissionStatus("CHARGED");
+        threadRepo.saveAndFlush(thread);
+
+        var found = threadRepo.findUnrefundedChargedCommissions();
+
+        assertThat(found).extracting(NegotiationThreadEntity::getId).containsExactly(thread.getId());
+    }
+
+    @Test
+    @DisplayName("findUnrefundedChargedCommissions exclut un thread déjà REFUNDED (jamais rejoué)")
+    void findUnrefundedChargedCommissions_alreadyRefunded_isExcluded() {
+        PackageRequestEntity request = persistRequest(UUID.randomUUID());
+        NegotiationThreadEntity thread = persistThread(
+            request.getId(), UUID.randomUUID(), null, NegotiationThreadStatus.AUTO_REJECTED);
+        thread.setCommissionPaymentIntentId("pi_already_refunded");
+        thread.setCommissionStatus("REFUNDED");
+        threadRepo.saveAndFlush(thread);
+
+        var found = threadRepo.findUnrefundedChargedCommissions();
+
+        assertThat(found).isEmpty();
+    }
+
+    @Test
+    @DisplayName("findUnrefundedChargedCommissions exclut un thread sans commissionPaymentIntentId (rien n'a jamais été débité)")
+    void findUnrefundedChargedCommissions_noPaymentIntent_isExcluded() {
+        PackageRequestEntity request = persistRequest(UUID.randomUUID());
+        persistThread(request.getId(), UUID.randomUUID(), null, NegotiationThreadStatus.AUTO_REJECTED);
+
+        var found = threadRepo.findUnrefundedChargedCommissions();
+
+        assertThat(found).isEmpty();
+    }
+
+    @Test
+    @DisplayName("findUnrefundedChargedCommissions exclut un thread ACCEPTED (statut non terminal-perdant), même avec un PaymentIntent")
+    void findUnrefundedChargedCommissions_excludesNonTerminalStatus() {
+        PackageRequestEntity request = persistRequest(UUID.randomUUID());
+        NegotiationThreadEntity thread = persistThread(
+            request.getId(), UUID.randomUUID(), null, NegotiationThreadStatus.ACCEPTED);
+        thread.setCommissionPaymentIntentId("pi_sealed");
+        thread.setCommissionStatus("CHARGED");
+        threadRepo.saveAndFlush(thread);
+
+        var found = threadRepo.findUnrefundedChargedCommissions();
+
+        assertThat(found).isEmpty();
+    }
 }

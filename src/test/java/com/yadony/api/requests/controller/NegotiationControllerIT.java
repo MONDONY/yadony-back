@@ -460,6 +460,41 @@ class NegotiationControllerIT {
             .andExpect(status().isForbidden());
     }
 
+    // ── POST /negotiations/{id}/decline-commission ───────────────────────────────
+
+    @Test
+    void post_declineCommission_asTraveler_returns204() throws Exception {
+        UUID threadId = UUID.randomUUID();
+
+        mockMvc.perform(post("/negotiations/{id}/decline-commission", threadId)
+                .with(authentication(authAs("uid-traveler", "TRAVELER"))))
+            .andExpect(status().isNoContent());
+
+        verify(service).declineCommission(TRAVELER_UUID, threadId);
+    }
+
+    @Test
+    void post_declineCommission_asSender_returns403() throws Exception {
+        UUID threadId = UUID.randomUUID();
+
+        mockMvc.perform(post("/negotiations/{id}/decline-commission", threadId)
+                .with(authentication(authAs("uid-sender", "SENDER"))))
+            .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void post_declineCommission_wrongStatus_returnsProblemDetail() throws Exception {
+        UUID threadId = UUID.randomUUID();
+        org.mockito.Mockito.doThrow(new ResponseStatusException(CONFLICT, "thread/not-awaiting-commission"))
+            .when(service).declineCommission(TRAVELER_UUID, threadId);
+
+        mockMvc.perform(post("/negotiations/{id}/decline-commission", threadId)
+                .with(authentication(authAs("uid-traveler", "TRAVELER"))))
+            .andExpect(status().isConflict())
+            .andExpect(content().contentType("application/problem+json"))
+            .andExpect(jsonPath("$.type").value(org.hamcrest.Matchers.endsWith("thread/not-awaiting-commission")));
+    }
+
     @Test
     void post_refuseTrip_asSender_returns200() throws Exception {
         UUID threadId = UUID.randomUUID();

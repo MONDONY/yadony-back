@@ -178,6 +178,10 @@ yadony:
     # Délai laissé au voyageur pour régler la commission Yadony d'un accord en
     # espèces avant que le thread expire et libère la demande (AWAITING_COMMISSION).
     commission-window-minutes: ${YADONY_NEGOTIATION_COMMISSION_WINDOW_MINUTES:120}
+    # Balayage de l'expiration du délai de commission (toutes les 5 min, la
+    # fenêtre par défaut étant de 2 h) + rattrapage des commissions débitées
+    # jamais remboursées sur les fils perdants (AUTO_REJECTED/EXPIRED).
+    commission-expire-check-cron: "0 */5 * * * *"
   mobilemoney:
     wave:
       api-key: ${WAVE_API_KEY:}

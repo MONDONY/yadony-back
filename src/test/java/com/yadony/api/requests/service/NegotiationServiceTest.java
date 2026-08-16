@@ -3611,6 +3611,109 @@ class NegotiationServiceTest {
     }
 
     @Nested
+    @DisplayName("declineCommission() — le voyageur renonce à un accord cash avant de régler")
+    class DeclineCommissionTests {
+
+        private final UUID THREAD_ID = UUID.randomUUID();
+        private NegotiationThreadEntity thread;
+
+        @BeforeEach
+        void setupThread() {
+            thread = new NegotiationThreadEntity();
+            thread.setPackageRequestId(REQUEST_ID);
+            thread.setTravelerId(TRAVELER_ID);
+            thread.setStatus(NegotiationThreadStatus.AWAITING_COMMISSION);
+            thread.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.CASH);
+            thread.setCurrentPriceEur(new BigDecimal("40"));
+            thread.setRoundsCount((short) 1);
+            thread.setLastActivityAt(java.time.LocalDateTime.now());
+            try {
+                var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+                idField.setAccessible(true);
+                idField.set(thread, THREAD_ID);
+            } catch (Exception e) { throw new RuntimeException(e); }
+            // Dès la première offre, la demande passe en NEGOTIATING — jamais OPEN à ce
+            // stade en production. Même setup que SettleCommissionTests.
+            request.setStatus(PackageRequestStatus.NEGOTIATING);
+        }
+
+        @Test
+        @DisplayName("appelant n'est pas le voyageur du thread → 403 negotiation/not-traveler")
+        void declineCommission_notTraveler_throws403() {
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+
+            assertThatThrownBy(() -> service.declineCommission(SENDER_ID, THREAD_ID))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("negotiation/not-traveler");
+            verify(threadRepo, never()).save(any());
+            verify(eventPublisher, never()).publishEvent(any());
+        }
+
+        @Test
+        @DisplayName("thread pas AWAITING_COMMISSION (déjà ACCEPTED) → 409 thread/not-awaiting-commission")
+        void declineCommission_wrongStatus_throws409() {
+            thread.setStatus(NegotiationThreadStatus.ACCEPTED);
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+
+            assertThatThrownBy(() -> service.declineCommission(TRAVELER_ID, THREAD_ID))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("thread/not-awaiting-commission");
+            verify(threadRepo, never()).save(any());
+            verify(eventPublisher, never()).publishEvent(any());
+        }
+
+        @Test
+        @DisplayName("renoncement → thread CANCELLED, demande redevient OPEN, trajet dédié soft-deleted, expéditeur notifié")
+        void declineCommission_releasesRequestAndSoftDeletesDedicatedTrip() {
+            UUID announcementId = UUID.randomUUID();
+            thread.setTravelerAnnouncementId(announcementId);
+            com.yadony.api.matching.AnnouncementEntity dedicatedAnn = new com.yadony.api.matching.AnnouncementEntity();
+            dedicatedAnn.setLinkedPackageRequestId(REQUEST_ID);
+            try {
+                var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+                idField.setAccessible(true);
+                idField.set(dedicatedAnn, announcementId);
+            } catch (Exception e) { throw new RuntimeException(e); }
+
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(threadRepo.findByPackageRequestId(REQUEST_ID)).thenReturn(List.of(thread));
+            when(announcementRepo.findById(announcementId)).thenReturn(Optional.of(dedicatedAnn));
+
+            service.declineCommission(TRAVELER_ID, THREAD_ID);
+
+            assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.CANCELLED);
+            assertThat(request.getStatus()).isEqualTo(PackageRequestStatus.OPEN);
+            assertThat(dedicatedAnn.getDeletedAt()).isNotNull();
+            verify(announcementRepo).save(dedicatedAnn);
+            verify(auditService).log(eq("ANNOUNCEMENT"), eq(announcementId),
+                eq("DEDICATED_TRIP_ORPHANED_ON_COMMISSION_DECLINE"), eq(TRAVELER_ID), anyMap());
+            verify(auditService).log(eq("NEGOTIATION_THREAD"), eq(THREAD_ID),
+                eq("COMMISSION_DECLINED"), eq(TRAVELER_ID), anyMap());
+
+            ArgumentCaptor<com.yadony.api.requests.event.NegotiationCommissionDeclinedEvent> eventCaptor =
+                ArgumentCaptor.forClass(com.yadony.api.requests.event.NegotiationCommissionDeclinedEvent.class);
+            verify(eventPublisher).publishEvent(eventCaptor.capture());
+            assertThat(eventCaptor.getValue().senderId()).isEqualTo(SENDER_ID);
+            assertThat(eventCaptor.getValue().travelerId()).isEqualTo(TRAVELER_ID);
+            assertThat(eventCaptor.getValue().threadId()).isEqualTo(THREAD_ID);
+        }
+
+        @Test
+        @DisplayName("sans trajet dédié attaché → aucune interaction avec announcementRepo")
+        void declineCommission_withoutDedicatedTrip_skipsAnnouncementCleanup() {
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(threadRepo.findByPackageRequestId(REQUEST_ID)).thenReturn(List.of(thread));
+
+            service.declineCommission(TRAVELER_ID, THREAD_ID);
+
+            assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.CANCELLED);
+            verifyNoInteractions(announcementRepo);
+        }
+    }
+
+    @Nested
     @DisplayName("openSurplus()")
     class OpenSurplusTests {
 

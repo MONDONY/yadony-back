@@ -178,6 +178,18 @@ public class NegotiationController {
     }
 
     /**
+     * Le voyageur renonce explicitement à un accord en espèces avant de régler la
+     * commission Yadony. Rien n'a été scellé : la demande redevient disponible
+     * pour d'autres voyageurs, exactement comme une annulation classique.
+     */
+    @PostMapping("/{id}/decline-commission")
+    @PreAuthorize("hasRole('TRAVELER')")
+    public ResponseEntity<Void> declineCommission(@PathVariable UUID id) {
+        service.declineCommission(requireUserId(), id);
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
      * Sender refuses the linked trip — thread moves back to AWAITING_TRIP.
      * Only the sender of the package_request can call this endpoint.
      */

@@ -1288,6 +1288,50 @@ public class NegotiationService {
     }
 
     /**
+     * Le voyageur renonce explicitement à un accord en espèces avant d'avoir réglé
+     * la commission Yadony. Rien n'a été scellé (thread {@code AWAITING_COMMISSION}) :
+     * la demande n'est donc pas perdue, elle redevient disponible pour d'autres
+     * voyageurs — exactement comme {@link #cancelNegotiation}, mais restreint à ce
+     * statut précis puisque {@code cancelNegotiation} ne couvre pas AWAITING_COMMISSION.
+     *
+     * <p>Aucun débit à défaire ici via Stripe : si le voyageur avait déjà tenté un
+     * règlement resté {@code REQUIRES_3DS} (carte), la commission n'est pas encore
+     * encaissée à ce stade — et si elle l'était malgré tout (3DS aboutie après coup),
+     * {@code CommissionWindowExpiryRunner} la rattrape lors de son balayage des fils
+     * {@code AUTO_REJECTED}/{@code EXPIRED} non remboursés ; ce thread passe ici en
+     * {@code CANCELLED}, pas ces deux statuts, il n'est donc PAS repris par ce
+     * balayage — un renoncement volontaire n'a jamais pu déclencher de débit
+     * puisque seul {@code settleCommission}/{@code confirmCommission} en déclenchent,
+     * jamais {@code declineCommission}.
+     */
+    @Transactional
+    public void declineCommission(UUID callerId, UUID threadId) {
+        NegotiationThreadEntity thread = threadRepo.findById(threadId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "thread/not-found"));
+        if (!callerId.equals(thread.getTravelerId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "negotiation/not-traveler");
+        }
+        if (thread.getStatus() != NegotiationThreadStatus.AWAITING_COMMISSION) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "thread/not-awaiting-commission");
+        }
+        PackageRequestEntity request = requestRepo.findById(thread.getPackageRequestId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found"));
+
+        thread.setStatus(NegotiationThreadStatus.CANCELLED);
+        thread.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC));
+        threadRepo.save(thread);
+        reopenRequestWhenNoActiveNegotiation(request);
+        softDeleteOrphanedDedicatedTrip(thread.getTravelerAnnouncementId(), request, callerId, threadId,
+            "DEDICATED_TRIP_ORPHANED_ON_COMMISSION_DECLINE");
+
+        auditService.log("NEGOTIATION_THREAD", threadId, "COMMISSION_DECLINED", callerId,
+            Map.of("packageRequestId", request.getId().toString()));
+
+        eventPublisher.publishEvent(new com.yadony.api.requests.event.NegotiationCommissionDeclinedEvent(
+            thread.getId(), request.getId(), request.getSenderId(), thread.getTravelerId()));
+    }
+
+    /**
      * Traveler opens the remaining (surplus) capacity of a DEDICATED trip to the
      * public, AFTER the negotiating sender has paid (thread status ACCEPTED).
      *

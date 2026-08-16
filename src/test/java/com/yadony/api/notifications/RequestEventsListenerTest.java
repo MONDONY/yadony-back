@@ -123,6 +123,39 @@ class RequestEventsListenerTest {
     }
 
     @Test
+    void onNegotiationCommissionDeclined_notifiesSenderOnly() {
+        UUID senderId = UUID.randomUUID();
+        UUID travelerId = UUID.randomUUID();
+        UUID threadId = UUID.randomUUID();
+        var event = new NegotiationCommissionDeclinedEvent(
+            threadId, UUID.randomUUID(), senderId, travelerId
+        );
+
+        listener.onNegotiationCommissionDeclined(event);
+
+        verify(dispatcher).notifyUser(eq(senderId), anyString(), contains("disponible"), anyMap());
+        verify(dispatcher, never()).notifyUser(eq(travelerId), anyString(), anyString(), anyMap());
+    }
+
+    @Test
+    void onNegotiationCommissionExpired_notifiesBothPartiesInAppOnly() {
+        UUID senderId = UUID.randomUUID();
+        UUID travelerId = UUID.randomUUID();
+        var event = new NegotiationCommissionExpiredEvent(
+            UUID.randomUUID(), UUID.randomUUID(), senderId, travelerId
+        );
+
+        listener.onNegotiationCommissionExpired(event);
+
+        verify(dispatcher).notifyUser(eq(travelerId), anyString(), anyString(), anyMap(), eq(false));
+        // L'expéditeur doit apprendre que sa demande repart à d'autres voyageurs :
+        // c'est le corps du message qui le dit, le titre porte « disponible ».
+        verify(dispatcher).notifyUser(eq(senderId), contains("disponible"), contains("ouverte"),
+            anyMap(), eq(false));
+        verify(dispatcher, never()).notifyUser(any(), anyString(), anyString(), anyMap());
+    }
+
+    @Test
     void onPackageRequestExpired_notifiesSender() {
         UUID senderId = UUID.randomUUID();
         var event = new PackageRequestExpiredEvent(UUID.randomUUID(), senderId);

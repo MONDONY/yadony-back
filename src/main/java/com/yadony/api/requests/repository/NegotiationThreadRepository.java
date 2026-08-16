@@ -93,6 +93,41 @@ public interface NegotiationThreadRepository extends JpaRepository<NegotiationTh
     List<NegotiationThreadEntity> findAwaitingPaymentExpired(@Param("cutoff") LocalDateTime cutoff);
 
     /**
+     * Threads {@code AWAITING_COMMISSION} dont la fenêtre de règlement (délai
+     * configurable, cf. {@code NegotiationProperties.commissionWindowMinutes})
+     * est dépassée sans que le voyageur n'ait scellé l'accord. Consommée par
+     * {@code CommissionWindowExpiryRunner}.
+     */
+    @Query("""
+        SELECT t FROM NegotiationThreadEntity t
+        WHERE t.status = com.yadony.api.requests.entity.NegotiationThreadStatus.AWAITING_COMMISSION
+          AND t.lastActivityAt < :cutoff
+    """)
+    List<NegotiationThreadEntity> findExpiredAwaitingCommission(@Param("cutoff") LocalDateTime cutoff);
+
+    /**
+     * Threads {@code AUTO_REJECTED} ou {@code EXPIRED} portant un PaymentIntent de
+     * commission (cash) qui n'a encore jamais été remboursé. Ce sont des fils
+     * perdants : soit un concurrent a scellé l'accord pendant que ce voyageur
+     * réglait sa commission (AUTO_REJECTED), soit le délai a expiré alors qu'un
+     * débit (carte, éventuellement en attente de 3DS) était en cours (EXPIRED).
+     * Dans les deux cas, si Stripe a fini par encaisser, personne n'appelle
+     * spontanément le remboursement — {@code CommissionWindowExpiryRunner} balaie
+     * ce trou via {@code CashGatePort#refundNegotiationCommissionIfCharged}, seul
+     * chemin autorisé depuis {@code requests/} vers {@code payments/cash}.
+     */
+    @Query("""
+        SELECT t FROM NegotiationThreadEntity t
+        WHERE t.status IN (
+            com.yadony.api.requests.entity.NegotiationThreadStatus.AUTO_REJECTED,
+            com.yadony.api.requests.entity.NegotiationThreadStatus.EXPIRED
+        )
+          AND t.commissionPaymentIntentId IS NOT NULL
+          AND (t.commissionStatus IS NULL OR t.commissionStatus <> 'REFUNDED')
+    """)
+    List<NegotiationThreadEntity> findUnrefundedChargedCommissions();
+
+    /**
      * All threads where the user is participant — either traveler directly,
      * or sender via the linked package_request.
      * Used by GET /negotiations/me to power the inbox view.
