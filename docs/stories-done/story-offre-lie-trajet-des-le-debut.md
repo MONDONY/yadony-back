@@ -11,8 +11,8 @@ Inverse l'ordre dans lequel une offre du voyageur sur une demande d'envoi de col
 
 - `src/main/java/com/yadony/api/requests/dto/NegotiationChangeTripRequest.java` — DTO du nouvel endpoint de changement de trajet
 - `src/main/java/com/yadony/api/requests/event/NegotiationTripChangedEvent.java` — event notifiant l'expéditeur qu'un trajet déjà lié a changé
-- `src/main/resources/db/migration/V208__cancel_awaiting_trip_threads_pre_offer_trip_link.sql` — migration de données annulant les threads orphelins de l'ancien flux, rouvrant leurs `package_requests`, et soft-deletant leurs trajets dédiés orphelins
-- `src/test/java/com/yadony/api/migrations/V208MigrationTest.java`
+- `src/main/resources/db/migration/V210__cancel_awaiting_trip_threads_pre_offer_trip_link.sql` — migration de données annulant les threads orphelins de l'ancien flux, rouvrant leurs `package_requests`, et soft-deletant leurs trajets dédiés orphelins
+- `src/test/java/com/yadony/api/migrations/V210MigrationTest.java`
 
 ## Fichiers modifiés
 
@@ -63,18 +63,18 @@ Inverse l'ordre dans lequel une offre du voyageur sur une demande d'envoi de col
 - [x] Trajet lié dès la création de l'offre, avec ou sans négociation ultérieure — `start()` exige `travelerAnnouncementId` XOR `createDedicatedTrip`
 - [x] Trajet modifiable jusqu'au paiement, visible par l'expéditeur — `changeTrip()` + `NegotiationTripChangedEvent`
 - [x] Trajet dédié créable à la volée si aucun trajet existant ne correspond — `createDedicatedTrip` dans `start()`
-- [x] Threads `AWAITING_TRIP` pré-existants annulés au déploiement (pas migrés de force) — V208
+- [x] Threads `AWAITING_TRIP` pré-existants annulés au déploiement (pas migrés de force) — V210
 - [x] Capacité non réservée à l'offre, seulement à l'acceptation/paiement — inchangé, vérifié par tests
 
 ## Tests
 
 - `./mvnw test` → 3143 tests, 2 échecs (connus, pré-existants, sans rapport : `AnnouncementRepositoryCorridorTest`)
-- Tests ajoutés : ~90 nouveaux cas dans `NegotiationServiceTest` (start/accept/changeTrip/cancel/reject/finalizeInternal), `NegotiationControllerIT`, `NegotiationExpiryRunnerTest`, `AnnouncementServiceTest`, `V208MigrationTest` (EmbeddedPostgres + Flyway réel)
+- Tests ajoutés : ~90 nouveaux cas dans `NegotiationServiceTest` (start/accept/changeTrip/cancel/reject/finalizeInternal), `NegotiationControllerIT`, `NegotiationExpiryRunnerTest`, `AnnouncementServiceTest`, `V210MigrationTest` (EmbeddedPostgres + Flyway réel)
 - 3 scénarios Cucumber (`negociation.feature`) réécrits pour refléter le nouveau flux, dont 2 exercisant end-to-end la boucle legacy `refuseTrip`/`submitTrip`
 
 ## Décisions techniques
 
 - **`changeTrip` restreint à `OPEN`** (pas `AWAITING_TRIP`) plutôt que de dupliquer la logique de transition de `submitTrip` — évite un état mort où le trajet est lié mais le thread reste bloqué.
 - **Nouvel event `NegotiationTripChangedEvent`** plutôt que réutiliser `NegotiationAwaitingTripEvent` — ce dernier notifie le voyageur avec un message "choisissez un trajet", sémantiquement inverse du besoin ici (notifier l'expéditeur d'un changement).
-- **Migration V208 (pas V210 comme initialement prévu)** — numéro vérifié contre l'état réel du dépôt plutôt que suivre un plan écrit avant l'implémentation des tâches précédentes.
+- **Migration numérotée V210** — d'abord numérotée V208 (dernier numéro libre observé dans le worktree isolé au moment de l'écrire, plutôt que le V210 du plan, déjà obsolète). Après merge de main (qui avait entre-temps ajouté ses propres V208 et V209), collision réelle détectée seulement au démarrage local de l'app (Found more than one migration with version 208) — renumérotée en V210 après merge.
 - **`findByTravelerAnnouncementId` remplacé par une variante filtrée sur `ACCEPTED`** — la relation 1:1 trajet↔thread supposée par le code existant (`openSurplus`) est cassée dès qu'un trajet peut backer plusieurs offres concurrentes, ce que cette feature autorise désormais pour les trajets existants (pas les dédiés, toujours 1:1 par construction).

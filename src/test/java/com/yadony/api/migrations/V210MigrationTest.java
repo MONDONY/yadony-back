@@ -14,11 +14,11 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * V208 — annule les threads AWAITING_TRIP créés par l'ancien flux (trajet
+ * V210 — annule les threads AWAITING_TRIP créés par l'ancien flux (trajet
  * lié après acceptation), devenus inatteignables une fois start() exige un
  * trajet dès la création de l'offre (cf. spec 2026-08-16).
  */
-class V208MigrationTest {
+class V210MigrationTest {
 
     private static EmbeddedPostgres postgres;
     private static DataSource dataSource;
@@ -38,7 +38,7 @@ class V208MigrationTest {
     }
 
     private void resetAndMigrateTo(String target) {
-        Flyway reset = flywayUpTo("207");
+        Flyway reset = flywayUpTo("209");
         reset.clean();
         reset.migrate();
         flywayUpTo(target).migrate();
@@ -92,8 +92,8 @@ class V208MigrationTest {
     }
 
     @Test
-    void beforeV208_awaitingTripThreadStaysUntouched() throws Exception {
-        resetAndMigrateTo("207");
+    void beforeV210_awaitingTripThreadStaysUntouched() throws Exception {
+        resetAndMigrateTo("209");
         UUID threadId = seedAwaitingTripThread();
 
         try (Connection c = dataSource.getConnection(); Statement st = c.createStatement()) {
@@ -105,11 +105,11 @@ class V208MigrationTest {
     }
 
     @Test
-    void afterV208_awaitingTripThreadIsCancelled() throws Exception {
-        resetAndMigrateTo("207");
+    void afterV210_awaitingTripThreadIsCancelled() throws Exception {
+        resetAndMigrateTo("209");
         UUID threadId = seedAwaitingTripThread();
 
-        flywayUpTo("208").migrate();
+        flywayUpTo("210").migrate();
 
         try (Connection c = dataSource.getConnection(); Statement st = c.createStatement()) {
             var rs = st.executeQuery(
@@ -120,18 +120,18 @@ class V208MigrationTest {
     }
 
     @Test
-    void afterV208_auditLogEntryCreated() throws Exception {
-        resetAndMigrateTo("207");
+    void afterV210_auditLogEntryCreated() throws Exception {
+        resetAndMigrateTo("209");
         UUID threadId = seedAwaitingTripThread();
 
-        flywayUpTo("208").migrate();
+        flywayUpTo("210").migrate();
 
         try (Connection c = dataSource.getConnection(); Statement st = c.createStatement()) {
             var rs = st.executeQuery("""
                 SELECT count(*) FROM audit_log
                 WHERE entity_type = 'NEGOTIATION_THREAD'
                   AND entity_id = '%s'
-                  AND action = 'AUTO_CANCELLED_MIGRATION_V208'
+                  AND action = 'AUTO_CANCELLED_MIGRATION_V210'
                 """.formatted(threadId));
             rs.next();
             assertThat(rs.getInt(1)).isEqualTo(1);
@@ -139,8 +139,8 @@ class V208MigrationTest {
     }
 
     @Test
-    void afterV208_packageRequestReopensToOpen_whenNoOtherActiveThread() throws Exception {
-        resetAndMigrateTo("207");
+    void afterV210_packageRequestReopensToOpen_whenNoOtherActiveThread() throws Exception {
+        resetAndMigrateTo("209");
         UUID senderId = UUID.randomUUID();
         UUID travelerId = UUID.randomUUID();
         UUID requestId = UUID.randomUUID();
@@ -157,7 +157,7 @@ class V208MigrationTest {
                 """.formatted(travelerId, "uid-t3-" + travelerId.toString().substring(0, 8),
                     "user-t3-" + travelerId.toString().substring(0, 8)));
             // NEGOTIATING : le runtime ne produit cet état que s'il existe un thread actif.
-            // Ici son unique thread sera annulé par V208 — la demande doit rouvrir en OPEN.
+            // Ici son unique thread sera annulé par V210 — la demande doit rouvrir en OPEN.
             st.executeUpdate("""
                 INSERT INTO package_requests
                   (id, sender_id, departure_city, arrival_city, desired_date,
@@ -177,7 +177,7 @@ class V208MigrationTest {
                 """.formatted(threadId, requestId, travelerId));
         }
 
-        flywayUpTo("208").migrate();
+        flywayUpTo("210").migrate();
 
         try (Connection c = dataSource.getConnection(); Statement st = c.createStatement()) {
             var rs = st.executeQuery(
@@ -188,8 +188,8 @@ class V208MigrationTest {
     }
 
     @Test
-    void afterV208_orphanedDedicatedTripIsSoftDeleted() throws Exception {
-        resetAndMigrateTo("207");
+    void afterV210_orphanedDedicatedTripIsSoftDeleted() throws Exception {
+        resetAndMigrateTo("209");
         UUID senderId = UUID.randomUUID();
         UUID travelerId = UUID.randomUUID();
         UUID requestId = UUID.randomUUID();
@@ -237,7 +237,7 @@ class V208MigrationTest {
                 """.formatted(threadId, requestId, travelerId, announcementId));
         }
 
-        flywayUpTo("208").migrate();
+        flywayUpTo("210").migrate();
 
         try (Connection c = dataSource.getConnection(); Statement st = c.createStatement()) {
             var rs = st.executeQuery(
@@ -256,8 +256,8 @@ class V208MigrationTest {
     }
 
     @Test
-    void afterV208_otherStatusesUntouched() throws Exception {
-        resetAndMigrateTo("208");
+    void afterV210_otherStatusesUntouched() throws Exception {
+        resetAndMigrateTo("210");
         UUID senderId = UUID.randomUUID();
         UUID travelerId = UUID.randomUUID();
         UUID requestId = UUID.randomUUID();
@@ -283,7 +283,7 @@ class V208MigrationTest {
                    2, 3.0, 'MEDIUM', 'Documents',
                    true, 'PLANE', '{STRIPE}', 'NEGOTIATING', now(), now())
                 """.formatted(requestId, senderId));
-            // Thread OPEN seedé APRÈS la migration V208 : ne doit jamais être touché
+            // Thread OPEN seedé APRÈS la migration V210 : ne doit jamais être touché
             // (la migration ne cible que les lignes AWAITING_TRIP au moment où elle tourne).
             st.executeUpdate("""
                 INSERT INTO negotiation_threads

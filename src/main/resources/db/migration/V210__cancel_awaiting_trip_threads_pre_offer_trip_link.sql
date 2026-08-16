@@ -1,11 +1,11 @@
--- V208: threads bloqués en AWAITING_TRIP par l'ancien flux (trajet lié après
+-- V210: threads bloqués en AWAITING_TRIP par l'ancien flux (trajet lié après
 -- acceptation) deviennent inatteignables pour les nouveaux threads une fois
 -- start() exige un trajet dès la création. On les annule plutôt que de les
 -- laisser bloqués indéfiniment sans chemin de sortie côté mobile (l'écran
 -- LinkTripScreen n'y navigue plus automatiquement, cf. Task 11).
 
 INSERT INTO audit_log (entity_type, entity_id, action, actor_id, payload, created_at)
-SELECT 'NEGOTIATION_THREAD', id, 'AUTO_CANCELLED_MIGRATION_V208', traveler_id,
+SELECT 'NEGOTIATION_THREAD', id, 'AUTO_CANCELLED_MIGRATION_V210', traveler_id,
        jsonb_build_object('previousStatus', 'AWAITING_TRIP', 'reason', 'trip-now-required-at-offer'),
        NOW()
 FROM negotiation_threads
@@ -34,7 +34,7 @@ WHERE pr.status = 'NEGOTIATING'
 -- déploiement) devient orphelin une fois son thread annulé — sans ce nettoyage
 -- il reste ACTIVE pour toujours, une entrée morte dans "Mes trajets".
 INSERT INTO audit_log (entity_type, entity_id, action, actor_id, payload, created_at)
-SELECT 'ANNOUNCEMENT', a.id, 'DEDICATED_TRIP_ORPHANED_MIGRATION_V208', a.traveler_id,
+SELECT 'ANNOUNCEMENT', a.id, 'DEDICATED_TRIP_ORPHANED_MIGRATION_V210', a.traveler_id,
        jsonb_build_object('reason', 'thread-auto-cancelled-migration-v208'), NOW()
 FROM announcements a
 JOIN negotiation_threads t ON t.package_request_id = a.linked_package_request_id
