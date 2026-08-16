@@ -3711,6 +3711,46 @@ class NegotiationServiceTest {
             assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.CANCELLED);
             verifyNoInteractions(announcementRepo);
         }
+
+        @Test
+        @DisplayName("renoncement après un débit réel → la commission est remboursée, jamais encaissée pour un accord refusé")
+        void declineCommission_refundsCommissionAlreadyCharged() {
+            // settleCommission crée le PaymentIntent avec confirm=true et le persiste
+            // quel que soit son statut. Le voyageur qui lance un règlement par carte,
+            // valide sa 3DS dans son application bancaire (Stripe encaisse), ne revient
+            // jamais dans dony (donc confirmCommission n'est jamais appelée) puis renonce,
+            // verrait sinon Yadony garder sa commission pour un accord qu'il a refusé.
+            thread.setCommissionStatus("REQUIRES_3DS");
+            thread.setCommissionPaymentIntentId("pi_decline_after_charge");
+
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(threadRepo.findByPackageRequestId(REQUEST_ID)).thenReturn(List.of(thread));
+
+            service.declineCommission(TRAVELER_ID, THREAD_ID);
+
+            verify(cashGatePort).refundNegotiationCommissionIfCharged(TRAVELER_ID, THREAD_ID);
+        }
+
+        @Test
+        @DisplayName("une offre concurrente encore active → la demande reste NEGOTIATING, pas de retour à OPEN")
+        void declineCommission_withOtherActiveThread_keepsRequestNegotiating() {
+            NegotiationThreadEntity rival = new NegotiationThreadEntity();
+            rival.setPackageRequestId(REQUEST_ID);
+            rival.setTravelerId(UUID.randomUUID());
+            rival.setStatus(NegotiationThreadStatus.OPEN);
+
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(threadRepo.findByPackageRequestId(REQUEST_ID)).thenReturn(List.of(thread, rival));
+
+            service.declineCommission(TRAVELER_ID, THREAD_ID);
+
+            assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.CANCELLED);
+            assertThat(request.getStatus())
+                .as("une negociation vivante subsiste, la demande ne repart pas de zero")
+                .isEqualTo(PackageRequestStatus.NEGOTIATING);
+        }
     }
 
     @Nested

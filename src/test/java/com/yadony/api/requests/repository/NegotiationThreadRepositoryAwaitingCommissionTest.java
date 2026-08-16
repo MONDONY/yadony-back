@@ -55,6 +55,10 @@ class NegotiationThreadRepositoryAwaitingCommissionTest {
         return requestRepo.saveAndFlush(e);
     }
 
+    /** Profondeur du balayage de rattrapage, alignée sur le défaut de 7 jours. */
+    private static final LocalDateTime SWEEP_SINCE =
+        LocalDateTime.now(ZoneOffset.UTC).minusDays(7);
+
     private NegotiationThreadEntity persistThread(UUID packageRequestId, UUID travelerId,
                                                    UUID travelerAnnouncementId,
                                                    NegotiationThreadStatus status) {
@@ -164,7 +168,7 @@ class NegotiationThreadRepositoryAwaitingCommissionTest {
         thread.setCommissionStatus("REQUIRES_3DS");
         threadRepo.saveAndFlush(thread);
 
-        var found = threadRepo.findUnrefundedChargedCommissions();
+        var found = threadRepo.findUnrefundedChargedCommissions(SWEEP_SINCE);
 
         assertThat(found).extracting(NegotiationThreadEntity::getId).containsExactly(thread.getId());
     }
@@ -179,7 +183,7 @@ class NegotiationThreadRepositoryAwaitingCommissionTest {
         thread.setCommissionStatus("CHARGED");
         threadRepo.saveAndFlush(thread);
 
-        var found = threadRepo.findUnrefundedChargedCommissions();
+        var found = threadRepo.findUnrefundedChargedCommissions(SWEEP_SINCE);
 
         assertThat(found).extracting(NegotiationThreadEntity::getId).containsExactly(thread.getId());
     }
@@ -194,7 +198,7 @@ class NegotiationThreadRepositoryAwaitingCommissionTest {
         thread.setCommissionStatus("REFUNDED");
         threadRepo.saveAndFlush(thread);
 
-        var found = threadRepo.findUnrefundedChargedCommissions();
+        var found = threadRepo.findUnrefundedChargedCommissions(SWEEP_SINCE);
 
         assertThat(found).isEmpty();
     }
@@ -205,7 +209,7 @@ class NegotiationThreadRepositoryAwaitingCommissionTest {
         PackageRequestEntity request = persistRequest(UUID.randomUUID());
         persistThread(request.getId(), UUID.randomUUID(), null, NegotiationThreadStatus.AUTO_REJECTED);
 
-        var found = threadRepo.findUnrefundedChargedCommissions();
+        var found = threadRepo.findUnrefundedChargedCommissions(SWEEP_SINCE);
 
         assertThat(found).isEmpty();
     }
@@ -220,7 +224,53 @@ class NegotiationThreadRepositoryAwaitingCommissionTest {
         thread.setCommissionStatus("CHARGED");
         threadRepo.saveAndFlush(thread);
 
-        var found = threadRepo.findUnrefundedChargedCommissions();
+        var found = threadRepo.findUnrefundedChargedCommissions(SWEEP_SINCE);
+
+        assertThat(found).isEmpty();
+    }
+
+    @Test
+    @DisplayName("findUnrefundedChargedCommissions inclut un thread CANCELLED : renoncer après un débit réel ne doit pas coûter la commission")
+    void findUnrefundedChargedCommissions_cancelledAfterCharge_isFound() {
+        PackageRequestEntity request = persistRequest(UUID.randomUUID());
+        NegotiationThreadEntity thread = persistThread(
+            request.getId(), UUID.randomUUID(), null, NegotiationThreadStatus.CANCELLED);
+        thread.setCommissionPaymentIntentId("pi_declined_after_charge");
+        thread.setCommissionStatus("REQUIRES_3DS");
+        threadRepo.saveAndFlush(thread);
+
+        var found = threadRepo.findUnrefundedChargedCommissions(SWEEP_SINCE);
+
+        assertThat(found).extracting(NegotiationThreadEntity::getId).containsExactly(thread.getId());
+    }
+
+    @Test
+    @DisplayName("findUnrefundedChargedCommissions exclut REFUND_FAILED : Stripe a déjà refusé, rejouer n'a jamais remboursé personne")
+    void findUnrefundedChargedCommissions_refundFailed_isExcluded() {
+        PackageRequestEntity request = persistRequest(UUID.randomUUID());
+        NegotiationThreadEntity thread = persistThread(
+            request.getId(), UUID.randomUUID(), null, NegotiationThreadStatus.AUTO_REJECTED);
+        thread.setCommissionPaymentIntentId("pi_refund_refused");
+        thread.setCommissionStatus("REFUND_FAILED");
+        threadRepo.saveAndFlush(thread);
+
+        var found = threadRepo.findUnrefundedChargedCommissions(SWEEP_SINCE);
+
+        assertThat(found).isEmpty();
+    }
+
+    @Test
+    @DisplayName("findUnrefundedChargedCommissions exclut les fils trop anciens : sans borne, une 3DS abandonnée serait relue chez Stripe à vie")
+    void findUnrefundedChargedCommissions_beyondSweepWindow_isExcluded() {
+        PackageRequestEntity request = persistRequest(UUID.randomUUID());
+        NegotiationThreadEntity thread = persistThread(
+            request.getId(), UUID.randomUUID(), null, NegotiationThreadStatus.AUTO_REJECTED);
+        thread.setCommissionPaymentIntentId("pi_long_dead");
+        thread.setCommissionStatus("REQUIRES_3DS");
+        thread.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC).minusDays(30));
+        threadRepo.saveAndFlush(thread);
+
+        var found = threadRepo.findUnrefundedChargedCommissions(SWEEP_SINCE);
 
         assertThat(found).isEmpty();
     }

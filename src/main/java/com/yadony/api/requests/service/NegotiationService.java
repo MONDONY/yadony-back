@@ -1294,15 +1294,16 @@ public class NegotiationService {
      * voyageurs — exactement comme {@link #cancelNegotiation}, mais restreint à ce
      * statut précis puisque {@code cancelNegotiation} ne couvre pas AWAITING_COMMISSION.
      *
-     * <p>Aucun débit à défaire ici via Stripe : si le voyageur avait déjà tenté un
-     * règlement resté {@code REQUIRES_3DS} (carte), la commission n'est pas encore
-     * encaissée à ce stade — et si elle l'était malgré tout (3DS aboutie après coup),
-     * {@code CommissionWindowExpiryRunner} la rattrape lors de son balayage des fils
-     * {@code AUTO_REJECTED}/{@code EXPIRED} non remboursés ; ce thread passe ici en
-     * {@code CANCELLED}, pas ces deux statuts, il n'est donc PAS repris par ce
-     * balayage — un renoncement volontaire n'a jamais pu déclencher de débit
-     * puisque seul {@code settleCommission}/{@code confirmCommission} en déclenchent,
-     * jamais {@code declineCommission}.
+     * <p>Un renoncement peut parfaitement survenir APRÈS un débit réel, contrairement
+     * à ce qu'on croirait : {@code settleCommission} crée le PaymentIntent avec
+     * {@code confirm=true} et le persiste quel que soit son statut. Le voyageur qui
+     * lance un règlement par carte, part authentifier sa 3DS dans son application
+     * bancaire (Stripe encaisse), ne revient jamais dans dony — donc
+     * {@code confirmCommission} n'est jamais appelée — puis renonce, aurait vu sa
+     * commission encaissée pour un accord qu'il a explicitement refusé. On rembourse
+     * donc systématiquement ici, et le statut {@code CANCELLED} est repris par le
+     * balayage de {@code CommissionWindowExpiryRunner} pour la course étroite où la
+     * 3DS aboutit après le commit de ce renoncement.
      */
     @Transactional
     public void declineCommission(UUID callerId, UUID threadId) {
@@ -1326,6 +1327,11 @@ public class NegotiationService {
 
         auditService.log("NEGOTIATION_THREAD", threadId, "COMMISSION_DECLINED", callerId,
             Map.of("packageRequestId", request.getId().toString()));
+
+        // Le voyageur a pu être débité avant de renoncer (3DS aboutie dans son app
+        // bancaire, retour dans dony jamais effectué) : le port relit Stripe et ne
+        // rembourse que s'il y a réellement eu encaissement.
+        refundIfChargedAfterLoss(callerId, threadId);
 
         eventPublisher.publishEvent(new com.yadony.api.requests.event.NegotiationCommissionDeclinedEvent(
             thread.getId(), request.getId(), request.getSenderId(), thread.getTravelerId()));

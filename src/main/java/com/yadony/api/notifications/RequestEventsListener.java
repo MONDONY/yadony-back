@@ -186,17 +186,23 @@ public class RequestEventsListener {
             ),
             false
         );
-        dispatcher.notifyUser(
-            e.senderId(),
-            "Votre demande est de nouveau disponible",
-            "Le voyageur n'a pas réglé la commission à temps. Votre demande reste ouverte à d'autres voyageurs.",
-            Map.of(
-                "type", "negotiation_commission_expired",
-                "threadId", e.threadId().toString(),
-                "packageRequestId", e.packageRequestId().toString()
-            ),
-            false
-        );
+        // senderId est nul quand l'expéditeur a supprimé sa demande pendant
+        // l'attente : il n'y a alors plus personne à prévenir, et notifier null
+        // violerait la contrainte NOT NULL de notifications.user_id. Même garde
+        // que onNegotiationExpired.
+        if (e.senderId() != null) {
+            dispatcher.notifyUser(
+                e.senderId(),
+                "Votre demande est de nouveau disponible",
+                "Le voyageur n'a pas réglé la commission à temps. Votre demande reste ouverte à d'autres voyageurs.",
+                Map.of(
+                    "type", "negotiation_commission_expired",
+                    "threadId", e.threadId().toString(),
+                    "packageRequestId", e.packageRequestId().toString()
+                ),
+                false
+            );
+        }
     }
 
     /**

@@ -120,6 +120,21 @@ public class CommissionWindowExpiryRunner {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void expireOne(UUID threadId) {
+        NegotiationThreadEntity peek = threadRepo.findById(threadId).orElse(null);
+        if (peek == null) {
+            return;
+        }
+        // Verrou pessimiste sur la demande AVANT de relire et muter le fil, même
+        // discipline que settleCommission/confirmCommission. Sans lui, un règlement
+        // en vol (aller-retour Stripe de plusieurs centaines de ms, cas banal du
+        // voyageur qui paie à l'échéance) verrait ce balayage écrire EXPIRED entre
+        // sa lecture et son commit : le règlement échouerait alors sur un conflit
+        // de version et rollbackerait le PaymentIntent, le statut de commission ET
+        // l'entrée d'audit — laissant un voyageur débité chez Stripe sur un fil
+        // EXPIRED sans commissionPaymentIntentId, donc introuvable par le balayage
+        // de rattrapage. Se sérialiser derrière le règlement supprime la course.
+        PackageRequestEntity request = requestRepo.findByIdForUpdate(peek.getPackageRequestId()).orElse(null);
+
         NegotiationThreadEntity t = threadRepo.findById(threadId).orElse(null);
         if (t == null || t.getStatus() != NegotiationThreadStatus.AWAITING_COMMISSION) {
             return;
@@ -128,13 +143,12 @@ public class CommissionWindowExpiryRunner {
         t.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC));
         threadRepo.save(t);
 
-        PackageRequestEntity request = requestRepo.findById(t.getPackageRequestId()).orElse(null);
         UUID senderId = null;
         if (request != null) {
             senderId = request.getSenderId();
             reopenRequestWhenNoActiveNegotiation(request);
         }
-        softDeleteOrphanedDedicatedTrip(t, request);
+        softDeleteOrphanedDedicatedTrip(t);
 
         eventPublisher.publishEvent(new NegotiationCommissionExpiredEvent(
             t.getId(), t.getPackageRequestId(), senderId, t.getTravelerId()));
@@ -160,14 +174,20 @@ public class CommissionWindowExpiryRunner {
      * dédié devenu orphelin (créé exclusivement pour cette demande) doit être
      * soft-deleted, sinon il reste {@code ACTIVE} pour toujours dans « Mes
      * trajets » du voyageur.
+     *
+     * <p>Compare l'identifiant porté par le fil, jamais l'entité demande : celle-ci
+     * peut avoir été soft-deletée par l'expéditeur pendant l'attente ({@code
+     * PackageRequestEntity} porte {@code @SQLRestriction("deleted_at IS NULL")},
+     * donc elle devient introuvable), et c'est précisément le cas où le trajet
+     * dédié resterait orphelin pour toujours.
      */
-    private void softDeleteOrphanedDedicatedTrip(NegotiationThreadEntity thread, PackageRequestEntity request) {
+    private void softDeleteOrphanedDedicatedTrip(NegotiationThreadEntity thread) {
         UUID announcementId = thread.getTravelerAnnouncementId();
-        if (announcementId == null || request == null) {
+        if (announcementId == null) {
             return;
         }
         announcementRepo.findById(announcementId).ifPresent(ann -> {
-            if (request.getId().equals(ann.getLinkedPackageRequestId())) {
+            if (thread.getPackageRequestId().equals(ann.getLinkedPackageRequestId())) {
                 ann.softDelete();
                 announcementRepo.save(ann);
                 auditService.log("ANNOUNCEMENT", ann.getId(), "DEDICATED_TRIP_ORPHANED_ON_COMMISSION_EXPIRE", null,
@@ -182,14 +202,27 @@ public class CommissionWindowExpiryRunner {
      * sur un fil {@code AUTO_REJECTED}/{@code EXPIRED} qu'aucun {@code confirm-commission}
      * client n'est jamais venu régler — voyageur qui a fermé l'app pendant la 3DS,
      * ou perdu le réseau, après que la place a été prise ou le délai dépassé.
-     * {@link CashGatePort#refundNegotiationCommissionIfCharged} ne lève jamais et est
-     * idempotente (no-op si déjà remboursé ou jamais débité) : pas de garde
-     * supplémentaire nécessaire ici, et pas de transaction dédiée — le port ouvre
-     * lui-même sa propre {@code REQUIRES_NEW}.
+     * {@link CashGatePort#refundNegotiationCommissionIfCharged} est idempotente
+     * (no-op si déjà remboursé ou jamais débité) et n'ouvre pas de transaction ici :
+     * elle porte sa propre {@code REQUIRES_NEW}.
+     *
+     * <p>Chaque élément est protégé isolément. Le port ne laisse pas remonter
+     * d'exception Stripe, mais son {@code save} déclenche la vérification de version
+     * optimiste <em>au commit</em>, donc après son retour : un {@code
+     * confirm-commission} du voyageur sur ce même fil pendant le balayage ferait
+     * autrement sauter tous les fils suivants de la liste — et l'ordre de la requête
+     * étant stable, ce seraient toujours les mêmes.
      */
     void refundOrphanedCommissions() {
-        for (NegotiationThreadEntity t : threadRepo.findUnrefundedChargedCommissions()) {
-            cashGatePort.refundNegotiationCommissionIfCharged(t.getTravelerId(), t.getId());
+        LocalDateTime since = LocalDateTime.now(ZoneOffset.UTC)
+            .minusDays(negotiationProperties.commissionRefundSweepDays());
+        for (NegotiationThreadEntity t : threadRepo.findUnrefundedChargedCommissions(since)) {
+            UUID id = t.getId();
+            try {
+                cashGatePort.refundNegotiationCommissionIfCharged(t.getTravelerId(), id);
+            } catch (RuntimeException e) {
+                log.warn("Skipped orphaned commission refund for thread {} : {}", id, e.getMessage());
+            }
         }
     }
 }

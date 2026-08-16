@@ -45,7 +45,8 @@ class CommissionWindowExpiryRunnerTest {
     @BeforeEach
     void stubWindow() {
         lenient().when(negotiationProperties.commissionWindowMinutes()).thenReturn(120);
-        lenient().when(threadRepo.findUnrefundedChargedCommissions()).thenReturn(List.of());
+        lenient().when(negotiationProperties.commissionRefundSweepDays()).thenReturn(7);
+        lenient().when(threadRepo.findUnrefundedChargedCommissions(any())).thenReturn(List.of());
     }
 
     private static void setId(Object entity, UUID id) {
@@ -87,7 +88,7 @@ class CommissionWindowExpiryRunnerTest {
 
         when(threadRepo.findExpiredAwaitingCommission(any())).thenReturn(List.of(t));
         when(threadRepo.findById(t.getId())).thenReturn(Optional.of(t));
-        when(requestRepo.findById(request.getId())).thenReturn(Optional.of(request));
+        when(requestRepo.findByIdForUpdate(request.getId())).thenReturn(Optional.of(request));
         when(threadRepo.findByPackageRequestId(request.getId())).thenReturn(List.of(t));
         when(announcementRepo.findById(annId)).thenReturn(Optional.of(ann));
 
@@ -121,7 +122,7 @@ class CommissionWindowExpiryRunnerTest {
     void expire_isIdempotent_onAlreadyExpiredThread() {
         NegotiationThreadEntity t = awaitingCommissionThread(UUID.randomUUID());
         when(threadRepo.findById(t.getId())).thenReturn(Optional.of(t));
-        when(requestRepo.findById(t.getPackageRequestId())).thenReturn(Optional.empty());
+        when(requestRepo.findByIdForUpdate(t.getPackageRequestId())).thenReturn(Optional.empty());
 
         runner.expireOne(t.getId());
         // Second appel : le thread relu porte désormais EXPIRED (même objet muté par
@@ -159,7 +160,7 @@ class CommissionWindowExpiryRunnerTest {
         setId(ann, annId);
 
         when(threadRepo.findById(t.getId())).thenReturn(Optional.of(t));
-        when(requestRepo.findById(request.getId())).thenReturn(Optional.of(request));
+        when(requestRepo.findByIdForUpdate(request.getId())).thenReturn(Optional.of(request));
         when(announcementRepo.findById(annId)).thenReturn(Optional.of(ann));
 
         runner.expireOne(t.getId());
@@ -176,7 +177,7 @@ class CommissionWindowExpiryRunnerTest {
         when(threadRepo.findExpiredAwaitingCommission(any())).thenReturn(List.of(failing, ok));
         when(threadRepo.findById(failing.getId())).thenReturn(Optional.of(failing));
         when(threadRepo.findById(ok.getId())).thenReturn(Optional.of(ok));
-        when(requestRepo.findById(any())).thenReturn(Optional.empty());
+        when(requestRepo.findByIdForUpdate(any())).thenReturn(Optional.empty());
         doThrow(new ObjectOptimisticLockingFailureException("NegotiationThreadEntity", failing.getId()))
             .when(threadRepo).save(failing);
 
@@ -202,7 +203,7 @@ class CommissionWindowExpiryRunnerTest {
         setId(expiredMidThreeDs, UUID.randomUUID());
 
         when(threadRepo.findExpiredAwaitingCommission(any())).thenReturn(List.of());
-        when(threadRepo.findUnrefundedChargedCommissions())
+        when(threadRepo.findUnrefundedChargedCommissions(any()))
             .thenReturn(List.of(lostToCompetitor, expiredMidThreeDs));
 
         runner.run();
@@ -221,5 +222,60 @@ class CommissionWindowExpiryRunnerTest {
         runner.run();
 
         verifyNoInteractions(cashGatePort);
+    }
+
+    @Test
+    @DisplayName("refundOrphanedCommissions — un fil qui échoue n'empêche pas les suivants d'être balayés")
+    void refundOrphanedCommissions_oneFailure_doesNotSkipTheRest() {
+        NegotiationThreadEntity first = new NegotiationThreadEntity();
+        first.setTravelerId(UUID.randomUUID());
+        first.setStatus(NegotiationThreadStatus.AUTO_REJECTED);
+        setId(first, UUID.randomUUID());
+
+        NegotiationThreadEntity second = new NegotiationThreadEntity();
+        second.setTravelerId(UUID.randomUUID());
+        second.setStatus(NegotiationThreadStatus.CANCELLED);
+        setId(second, UUID.randomUUID());
+
+        when(threadRepo.findExpiredAwaitingCommission(any())).thenReturn(List.of());
+        when(threadRepo.findUnrefundedChargedCommissions(any())).thenReturn(List.of(first, second));
+        // Le port ne laisse pas remonter d'exception Stripe, mais sa vérification de
+        // version optimiste se déclenche au commit, donc après son retour : un
+        // confirm-commission concurrent sur ce fil ferait autrement sauter tous les
+        // suivants, et l'ordre de la requête étant stable, toujours les mêmes.
+        when(cashGatePort.refundNegotiationCommissionIfCharged(first.getTravelerId(), first.getId()))
+            .thenThrow(new org.springframework.orm.ObjectOptimisticLockingFailureException(
+                NegotiationThreadEntity.class, first.getId()));
+
+        runner.run();
+
+        verify(cashGatePort).refundNegotiationCommissionIfCharged(
+            second.getTravelerId(), second.getId());
+    }
+
+    @Test
+    @DisplayName("expireOne — demande supprimée par l'expéditeur : le trajet dédié est quand même soft-deleted")
+    void expire_requestSoftDeleted_stillReleasesDedicatedTrip() {
+        UUID requestId = UUID.randomUUID();
+        NegotiationThreadEntity t = awaitingCommissionThread(requestId);
+        UUID annId = UUID.randomUUID();
+        t.setTravelerAnnouncementId(annId);
+        com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
+        ann.setLinkedPackageRequestId(requestId);
+        setId(ann, annId);
+
+        when(threadRepo.findById(t.getId())).thenReturn(Optional.of(t));
+        // PackageRequestEntity porte @SQLRestriction("deleted_at IS NULL") : une
+        // demande annulée par l'expéditeur pendant l'attente devient introuvable.
+        // Le trajet dédié doit malgré tout être libéré, sinon il reste ACTIVE pour
+        // toujours dans « Mes trajets » du voyageur, avec 0 kg disponible.
+        when(requestRepo.findByIdForUpdate(requestId)).thenReturn(Optional.empty());
+        when(announcementRepo.findById(annId)).thenReturn(Optional.of(ann));
+
+        runner.expireOne(t.getId());
+
+        assertThat(t.getStatus()).isEqualTo(NegotiationThreadStatus.EXPIRED);
+        assertThat(ann.getDeletedAt()).isNotNull();
+        verify(announcementRepo).save(ann);
     }
 }

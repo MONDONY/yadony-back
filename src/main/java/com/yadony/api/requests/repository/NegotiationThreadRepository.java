@@ -106,26 +106,40 @@ public interface NegotiationThreadRepository extends JpaRepository<NegotiationTh
     List<NegotiationThreadEntity> findExpiredAwaitingCommission(@Param("cutoff") LocalDateTime cutoff);
 
     /**
-     * Threads {@code AUTO_REJECTED} ou {@code EXPIRED} portant un PaymentIntent de
-     * commission (cash) qui n'a encore jamais été remboursé. Ce sont des fils
-     * perdants : soit un concurrent a scellé l'accord pendant que ce voyageur
-     * réglait sa commission (AUTO_REJECTED), soit le délai a expiré alors qu'un
-     * débit (carte, éventuellement en attente de 3DS) était en cours (EXPIRED).
-     * Dans les deux cas, si Stripe a fini par encaisser, personne n'appelle
-     * spontanément le remboursement — {@code CommissionWindowExpiryRunner} balaie
-     * ce trou via {@code CashGatePort#refundNegotiationCommissionIfCharged}, seul
-     * chemin autorisé depuis {@code requests/} vers {@code payments/cash}.
+     * Fils perdants portant un PaymentIntent de commission (cash) qui n'a encore
+     * jamais été remboursé : un concurrent a scellé l'accord pendant que ce
+     * voyageur réglait ({@code AUTO_REJECTED}), le délai a expiré pendant un débit
+     * en cours ({@code EXPIRED}), ou le voyageur a renoncé après que sa 3DS a
+     * abouti ({@code CANCELLED}). Si Stripe a fini par encaisser, personne
+     * n'appelle spontanément le remboursement — {@code CommissionWindowExpiryRunner}
+     * balaie ce trou via {@code CashGatePort#refundNegotiationCommissionIfCharged},
+     * seul chemin autorisé depuis {@code requests/} vers {@code payments/cash}.
+     *
+     * <p>Deux filtres sont indispensables, sans quoi le balayage devient une fuite
+     * d'appels Stripe qui grossit avec l'historique de la plateforme :
+     * <ul>
+     *   <li>{@code REFUND_FAILED} est exclu : Stripe a déjà refusé le remboursement
+     *       automatique, le rejouer toutes les 5 minutes n'a jamais remboursé
+     *       personne. L'entrée d'audit {@code CASH_COMMISSION_REFUND_FAILED} existe
+     *       précisément pour le traitement manuel.</li>
+     *   <li>La borne temporelle élimine le cas dominant : une 3DS abandonnée laisse
+     *       un PaymentIntent qui n'atteint jamais {@code succeeded}, donc un fil
+     *       qui ne passera jamais {@code REFUNDED} et resterait éligible à vie.</li>
+     * </ul>
      */
     @Query("""
         SELECT t FROM NegotiationThreadEntity t
         WHERE t.status IN (
             com.yadony.api.requests.entity.NegotiationThreadStatus.AUTO_REJECTED,
-            com.yadony.api.requests.entity.NegotiationThreadStatus.EXPIRED
+            com.yadony.api.requests.entity.NegotiationThreadStatus.EXPIRED,
+            com.yadony.api.requests.entity.NegotiationThreadStatus.CANCELLED
         )
           AND t.commissionPaymentIntentId IS NOT NULL
-          AND (t.commissionStatus IS NULL OR t.commissionStatus <> 'REFUNDED')
+          AND (t.commissionStatus IS NULL
+               OR t.commissionStatus NOT IN ('REFUNDED', 'REFUND_FAILED'))
+          AND t.lastActivityAt > :since
     """)
-    List<NegotiationThreadEntity> findUnrefundedChargedCommissions();
+    List<NegotiationThreadEntity> findUnrefundedChargedCommissions(@Param("since") LocalDateTime since);
 
     /**
      * All threads where the user is participant — either traveler directly,
