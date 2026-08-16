@@ -9,5 +9,6 @@ public record TrackingSearchResponse(
         String arrivalCity,
         String currentStep,
         String stepLabel,
-        String paymentStatus
+        String paymentStatus,
+        String arrivalInstructions
 ) {}

@@ -253,6 +253,37 @@ class TrackingServiceTest {
         assertThat(resp.currentStep()).isEqualTo("DELIVERED");
     }
 
+    @Test
+    void searchByTrackingNumber_arrivedWithInstructions_returnsArrivalInstructions() {
+        BidEntity bid = buildBid(BidStatus.ARRIVED, "qt");
+        AnnouncementEntity ann = buildAnnouncement();
+        ann.setArrivalInstructions("Retrait au comptoir 3, aéroport Blaise Diagne, de 8h à 18h");
+        PaymentEntity payment = new PaymentEntity();
+        payment.setStatus(PaymentStatus.ESCROW);
+        when(bidRepository.findByTrackingNumber("TRK000001")).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.of(payment));
+        when(trackingEventRepository.findByBidIdOrderByScannedAtAsc(bidId)).thenReturn(List.of());
+
+        TrackingSearchResponse resp = service.searchByTrackingNumber("TRK000001");
+
+        assertThat(resp.arrivalInstructions())
+                .isEqualTo("Retrait au comptoir 3, aéroport Blaise Diagne, de 8h à 18h");
+    }
+
+    @Test
+    void searchByTrackingNumber_noArrivalInstructions_returnsNull() {
+        BidEntity bid = buildBid(BidStatus.PENDING, "qt");
+        AnnouncementEntity ann = buildAnnouncement();
+        when(bidRepository.findByTrackingNumber("TRK000001")).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.empty());
+
+        TrackingSearchResponse resp = service.searchByTrackingNumber("TRK000001");
+
+        assertThat(resp.arrivalInstructions()).isNull();
+    }
+
     // ── getEvents ─────────────────────────────────────────────────────────────
 
     @Test

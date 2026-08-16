@@ -191,7 +191,8 @@ public class TrackingService {
                 announcement.getArrivalCity(),
                 currentStep,
                 stepLabel,
-                paymentStatus
+                paymentStatus,
+                announcement.getArrivalInstructions()
         );
     }
 
