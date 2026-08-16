@@ -94,4 +94,17 @@ class CashGateAdapterTest {
         assertThat(resp.accepted()).isTrue();
         verify(cashCommissionService).confirmNegotiationCommissionAcceptance(thread, traveler);
     }
+
+    @Test
+    void refundNegotiationCommissionIfCharged_delegatesToCommissionServiceWithSwappedArgOrder() {
+        UUID traveler = UUID.randomUUID();
+        UUID thread = UUID.randomUUID();
+        when(cashCommissionService.refundNegotiationCommissionIfCharged(thread, traveler))
+            .thenReturn(true);
+
+        boolean refunded = adapter.refundNegotiationCommissionIfCharged(traveler, thread);
+
+        assertThat(refunded).isTrue();
+        verify(cashCommissionService).refundNegotiationCommissionIfCharged(thread, traveler);
+    }
 }

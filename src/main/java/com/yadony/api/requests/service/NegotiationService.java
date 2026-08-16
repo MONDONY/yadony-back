@@ -1171,6 +1171,16 @@ public class NegotiationService {
      * premier voyageur qui règle l'emporte. La demande est donc vérifiée encore
      * disponible AVANT tout débit : débiter puis découvrir qu'elle est prise
      * obligerait à rembourser un voyageur qui n'a rien à se reprocher.
+     *
+     * <p>Verrou pessimiste ({@link PackageRequestRepository#findByIdForUpdate})
+     * plutôt qu'une simple lecture : {@code PackageRequestEntity} ne porte aucun
+     * {@code @Version}, donc sans ce verrou, deux voyageurs tous deux {@code
+     * AWAITING_COMMISSION} sur la même demande peuvent tous deux lire "disponible"
+     * avant que l'un ou l'autre n'ait débité, débiter chacun, puis sceller chacun
+     * — deux fils {@code ACCEPTED}, deux colis matérialisés pour un seul colis
+     * physique. Le verrou sérialise : le second lecteur bloque jusqu'au commit du
+     * premier, puis relit "déjà pris" avant tout débit. Même mécanisme que {@link
+     * #start}.
      */
     @Transactional
     public AcceptBidResponse settleCommission(UUID callerId, UUID threadId, CommissionSource source) {
@@ -1182,7 +1192,7 @@ public class NegotiationService {
         if (thread.getStatus() != NegotiationThreadStatus.AWAITING_COMMISSION) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "thread/not-awaiting-commission");
         }
-        PackageRequestEntity request = requestRepo.findById(thread.getPackageRequestId())
+        PackageRequestEntity request = requestRepo.findByIdForUpdate(thread.getPackageRequestId())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found"));
 
         // Garde de course : ne jamais débiter pour une demande déjà emportée par un
@@ -1213,6 +1223,21 @@ public class NegotiationService {
      * rappelle jamais {@link #settleCommission} : la clé d'idempotence Stripe
      * rejouerait la réponse "authentification requise" en boucle et le voyageur ne
      * pourrait jamais aboutir.
+     *
+     * <p>La 3DS est asynchrone : le voyageur peut mettre plusieurs secondes (ou
+     * plus, entre deux ouvertures d'app) à la compléter dans son app bancaire,
+     * pendant lesquelles un concurrent peut très bien avoir scellé la même
+     * demande. Deux issues à traiter sans perdre l'argent du voyageur :
+     * <ul>
+     *   <li>ce thread a déjà scellé par le passé (double appel) → succès
+     *       idempotent, rien à rembourser, c'est LUI qui a gagné ;</li>
+     *   <li>un AUTRE thread a scellé entre temps (ce thread n'est plus {@code
+     *       AWAITING_COMMISSION}, ou la demande n'est plus disponible malgré le
+     *       verrou) → la 3DS a pu réussir quand même : on relit Stripe et on
+     *       rembourse plutôt que de laisser Yadony encaisser une commission sans
+     *       contrepartie, et le voyageur reçoit "place déjà prise", pas une
+     *       erreur technique de concurrence.
+     * </ul>
      */
     @Transactional
     public ConfirmAcceptanceResponse confirmCommission(UUID callerId, UUID threadId) {
@@ -1221,11 +1246,26 @@ public class NegotiationService {
         if (!callerId.equals(thread.getTravelerId())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "negotiation/not-traveler");
         }
-        if (thread.getStatus() != NegotiationThreadStatus.AWAITING_COMMISSION) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "thread/not-awaiting-commission");
+        if (thread.getStatus() == NegotiationThreadStatus.ACCEPTED) {
+            // Idempotent : CE thread a déjà scellé l'accord (double appel/relance).
+            // Rien à refaire, rien à rembourser — c'est lui qui a gagné.
+            return ConfirmAcceptanceResponse.ok();
         }
-        PackageRequestEntity request = requestRepo.findById(thread.getPackageRequestId())
+        if (thread.getStatus() != NegotiationThreadStatus.AWAITING_COMMISSION) {
+            refundIfChargedAfterLoss(callerId, threadId);
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "request/already-accepted");
+        }
+
+        // Même verrou pessimiste que settleCommission, pour la même raison : sans
+        // lui, cette confirmation pourrait sceller une demande déjà emportée par un
+        // concurrent pendant l'attente de la 3DS.
+        PackageRequestEntity request = requestRepo.findByIdForUpdate(thread.getPackageRequestId())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found"));
+        if (request.getStatus() != PackageRequestStatus.OPEN
+                && request.getStatus() != PackageRequestStatus.NEGOTIATING) {
+            refundIfChargedAfterLoss(callerId, threadId);
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "request/already-accepted");
+        }
 
         ConfirmAcceptanceResponse resp = cashGatePort.confirmNegotiationCommission(callerId, threadId);
         if (resp.accepted()) {
@@ -1234,6 +1274,17 @@ public class NegotiationService {
                 Map.of("via", String.valueOf(thread.getCommissionChargedVia())));
         }
         return resp;
+    }
+
+    /**
+     * Rembourse une commission qui a fini par être débitée (3DS aboutie après
+     * coup, côté Stripe) alors que la place est déjà partie à un concurrent —
+     * jamais laisser Yadony encaisser pour un accord qui n'a pas eu lieu. No-op
+     * silencieux si rien n'a été débité par carte (le port relit Stripe lui-même
+     * pour trancher, jamais d'exception qui remonte).
+     */
+    private void refundIfChargedAfterLoss(UUID travelerId, UUID threadId) {
+        cashGatePort.refundNegotiationCommissionIfCharged(travelerId, threadId);
     }
 
     /**

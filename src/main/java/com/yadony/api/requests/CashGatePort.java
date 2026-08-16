@@ -42,4 +42,14 @@ public interface CashGatePort {
      * "authentification requise".
      */
     ConfirmAcceptanceResponse confirmNegotiationCommission(UUID travelerId, UUID threadId);
+
+    /**
+     * Rembourse une commission de négociation débitée par carte alors que le
+     * thread n'est plus éligible au scellement (place prise par un concurrent
+     * pendant l'authentification 3D Secure, asynchrone par nature). Relit
+     * systématiquement Stripe : jamais d'exception qui remonte, jamais de
+     * remboursement en double. Retourne {@code true} si un remboursement a
+     * effectivement eu lieu.
+     */
+    boolean refundNegotiationCommissionIfCharged(UUID travelerId, UUID threadId);
 }

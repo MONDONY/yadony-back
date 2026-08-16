@@ -42,4 +42,9 @@ public class CashGateAdapter implements CashGatePort {
     public ConfirmAcceptanceResponse confirmNegotiationCommission(UUID travelerId, UUID threadId) {
         return cashCommissionService.confirmNegotiationCommissionAcceptance(threadId, travelerId);
     }
+
+    @Override
+    public boolean refundNegotiationCommissionIfCharged(UUID travelerId, UUID threadId) {
+        return cashCommissionService.refundNegotiationCommissionIfCharged(threadId, travelerId);
+    }
 }

@@ -3400,12 +3400,32 @@ class NegotiationServiceTest {
         void settleCommission_requestAlreadyAccepted_throws409WithoutCharging() {
             request.setStatus(PackageRequestStatus.ACCEPTED);
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(requestRepo.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(request));
 
             assertThatThrownBy(() -> service.settleCommission(TRAVELER_ID, THREAD_ID, CommissionSource.WALLET_FIRST))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("request/already-accepted");
             verifyNoInteractions(cashGatePort);
+        }
+
+        // Revue task 5, critique 1 : sans verrou pessimiste, deux voyageurs
+        // AWAITING_COMMISSION sur la même demande peuvent tous deux lire
+        // "disponible" avant que l'un n'ait débité — PackageRequestEntity n'a pas
+        // de @Version pour rattraper la double écriture au commit. Preuve directe
+        // que la garde s'appuie sur findByIdForUpdate, pas sur un simple findById.
+        @Test
+        @DisplayName("la garde de course verrouille la demande via findByIdForUpdate, jamais findById")
+        void settleCommission_locksRequestViaFindByIdForUpdate() {
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            when(requestRepo.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(cashGatePort.settleNegotiationCommission(any(), any(), any(), any(), any()))
+                .thenReturn(AcceptBidResponse.insufficientWallet(
+                    new BigDecimal("1.00"), new BigDecimal("5.00"), true, "EUR"));
+
+            service.settleCommission(TRAVELER_ID, THREAD_ID, CommissionSource.WALLET_FIRST);
+
+            verify(requestRepo).findByIdForUpdate(REQUEST_ID);
+            verify(requestRepo, never()).findById(any());
         }
 
         @Test
@@ -3425,7 +3445,7 @@ class NegotiationServiceTest {
             } catch (Exception e) { throw new RuntimeException(e); }
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(requestRepo.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(request));
             when(threadRepo.findByPackageRequestId(REQUEST_ID)).thenReturn(List.of(thread, competing));
             when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
             when(requestRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -3454,7 +3474,7 @@ class NegotiationServiceTest {
         @DisplayName("cashGatePort renvoie INSUFFICIENT_WALLET → thread reste AWAITING_COMMISSION, demande dispo")
         void settleCommission_insufficientWallet_leavesThreadAwaitingCommission() {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(requestRepo.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(request));
             when(cashGatePort.settleNegotiationCommission(
                     eq(TRAVELER_ID), eq(SENDER_ID), eq(THREAD_ID), eq(new BigDecimal("40")),
                     eq(CommissionSource.WALLET_FIRST)))
@@ -3480,7 +3500,7 @@ class NegotiationServiceTest {
             thread.setCommissionPaymentIntentId("pi_nego_3ds");
             thread.setCommissionStatus("REQUIRES_3DS");
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(requestRepo.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(request));
             when(threadRepo.findByPackageRequestId(REQUEST_ID)).thenReturn(List.of(thread));
             when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
             when(requestRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -3513,23 +3533,69 @@ class NegotiationServiceTest {
             verifyNoInteractions(cashGatePort);
         }
 
+        // Revue task 5, critique 2 : contrairement à l'ancienne règle (409 générique
+        // pour tout statut non-AWAITING_COMMISSION), un thread déjà ACCEPTED par
+        // LUI-MÊME (double appel/relance) doit être un succès idempotent — c'est ce
+        // thread qui a gagné, rien à rembourser, jamais d'appel au port.
         @Test
-        @DisplayName("confirmCommission — thread pas AWAITING_COMMISSION (déjà ACCEPTED) → 409")
-        void confirmCommission_threadNotAwaitingCommission_throws409() {
+        @DisplayName("confirmCommission — thread déjà ACCEPTED par lui-même → succès idempotent, aucun remboursement")
+        void confirmCommission_alreadyAcceptedBySelf_isIdempotentNoRefund() {
             thread.setStatus(NegotiationThreadStatus.ACCEPTED);
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
 
-            assertThatThrownBy(() -> service.confirmCommission(TRAVELER_ID, THREAD_ID))
-                .isInstanceOf(ResponseStatusException.class)
-                .hasMessageContaining("thread/not-awaiting-commission");
+            ConfirmAcceptanceResponse resp = service.confirmCommission(TRAVELER_ID, THREAD_ID);
+
+            assertThat(resp.accepted()).isTrue();
             verifyNoInteractions(cashGatePort);
         }
 
+        // Revue task 5, critique 2 (chemin « la place a été prise pendant la 3DS ») :
+        // un concurrent a scellé pendant que ce thread attendait encore
+        // l'authentification — il est désormais AUTO_REJECTED. La 3DS a pu réussir
+        // quand même côté Stripe : il faut rembourser plutôt que de laisser Yadony
+        // encaisser sans contrepartie, et répondre "place déjà prise", pas une
+        // erreur technique.
         @Test
-        @DisplayName("confirmCommission — 3DS toujours pas confirmée → ne scelle rien, thread inchangé")
+        @DisplayName("confirmCommission — place prise par un concurrent (AUTO_REJECTED) → rembourse et 409 place-prise")
+        void confirmCommission_spotTakenByCompetitor_refundsAndThrows409() {
+            thread.setStatus(NegotiationThreadStatus.AUTO_REJECTED);
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            when(cashGatePort.refundNegotiationCommissionIfCharged(TRAVELER_ID, THREAD_ID)).thenReturn(true);
+
+            assertThatThrownBy(() -> service.confirmCommission(TRAVELER_ID, THREAD_ID))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("request/already-accepted");
+
+            verify(cashGatePort).refundNegotiationCommissionIfCharged(TRAVELER_ID, THREAD_ID);
+            verify(cashGatePort, never()).confirmNegotiationCommission(any(), any());
+            verify(requestRepo, never()).findByIdForUpdate(any());
+        }
+
+        // Revue task 5, critique 2/3 : le thread lit encore AWAITING_COMMISSION,
+        // mais le verrou pessimiste sur la demande révèle qu'un concurrent a scellé
+        // entre-temps (course fermée par le verrou, pas par le statut du thread).
+        // Même traitement : remboursement puis "place déjà prise".
+        @Test
+        @DisplayName("confirmCommission — course fermée par le verrou (demande déjà ACCEPTED) → rembourse et 409")
+        void confirmCommission_requestRaceClosedByLock_refundsAndThrows409() {
+            request.setStatus(PackageRequestStatus.ACCEPTED);
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            when(requestRepo.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(cashGatePort.refundNegotiationCommissionIfCharged(TRAVELER_ID, THREAD_ID)).thenReturn(true);
+
+            assertThatThrownBy(() -> service.confirmCommission(TRAVELER_ID, THREAD_ID))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("request/already-accepted");
+
+            verify(cashGatePort).refundNegotiationCommissionIfCharged(TRAVELER_ID, THREAD_ID);
+            verify(cashGatePort, never()).confirmNegotiationCommission(any(), any());
+        }
+
+        @Test
+        @DisplayName("confirmCommission — 3DS toujours pas confirmée → ne scelle rien, thread inchangé, pas de remboursement")
         void confirmCommission_stillFailing_doesNotSeal() {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(requestRepo.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(request));
             when(cashGatePort.confirmNegotiationCommission(TRAVELER_ID, THREAD_ID))
                 .thenReturn(ConfirmAcceptanceResponse.fail("PaymentIntent status: requires_payment_method"));
 
@@ -3540,6 +3606,7 @@ class NegotiationServiceTest {
             assertThat(request.getStatus()).isEqualTo(PackageRequestStatus.NEGOTIATING);
             verify(threadRepo, never()).save(any());
             verify(eventPublisher, never()).publishEvent(any());
+            verify(cashGatePort, never()).refundNegotiationCommissionIfCharged(any(), any());
         }
     }
 

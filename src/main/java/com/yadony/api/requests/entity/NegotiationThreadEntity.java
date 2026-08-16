@@ -116,6 +116,18 @@ public class NegotiationThreadEntity extends BaseEntity {
     @Column(name = "commission_charged_via", length = 20)
     private String commissionChargedVia;
 
+    /**
+     * Discriminant de réessai pour la clé d'idempotence Stripe du règlement carte
+     * ({@code "nego_commission_" + threadId + "_v" + commissionRetryCount}). Sans
+     * lui, un échec (carte refusée, 3DS jamais complétée) fige la clé pour
+     * toujours : Stripe rejoue la première réponse en cache au lieu de retenter un
+     * débit réel. Même convention que {@code BidEntity.commissionRetryCount}
+     * (V74), incrémenté uniquement sur un échec (jamais sur un simple retry réseau
+     * transparent, qui doit rester idempotent avec la même clé).
+     */
+    @Column(name = "commission_retry_count", nullable = false)
+    private int commissionRetryCount = 0;
+
     // Bid matérialisé une fois le thread ACCEPTED (créé par matching/ via
     // BidMaterializedEvent). Permet au mobile d'ouvrir le détail du bid
     // (suivi, no-show…) directement depuis le thread. Null tant que la
@@ -171,6 +183,8 @@ public class NegotiationThreadEntity extends BaseEntity {
 
     public String getCommissionChargedVia() { return commissionChargedVia; }
 
+    public int getCommissionRetryCount() { return commissionRetryCount; }
+
     public UUID getMaterializedBidId() { return materializedBidId; }
 
     // === SETTERS ===
@@ -216,6 +230,8 @@ public class NegotiationThreadEntity extends BaseEntity {
     public void setCommissionPaymentIntentId(String commissionPaymentIntentId) { this.commissionPaymentIntentId = commissionPaymentIntentId; }
 
     public void setCommissionChargedVia(String commissionChargedVia) { this.commissionChargedVia = commissionChargedVia; }
+
+    public void setCommissionRetryCount(int commissionRetryCount) { this.commissionRetryCount = commissionRetryCount; }
 
     public void setMaterializedBidId(UUID materializedBidId) { this.materializedBidId = materializedBidId; }
 }

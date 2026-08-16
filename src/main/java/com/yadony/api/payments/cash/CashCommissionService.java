@@ -71,6 +71,8 @@ public class CashCommissionService {
     private static final String NEGO_COMMISSION_CHARGED = CommissionStatus.CHARGED.name();
     private static final String NEGO_COMMISSION_REQUIRES_3DS = CommissionStatus.REQUIRES_3DS.name();
     private static final String NEGO_COMMISSION_FAILED = CommissionStatus.FAILED.name();
+    private static final String NEGO_COMMISSION_REFUNDED = CommissionStatus.REFUNDED.name();
+    private static final String NEGO_COMMISSION_REFUND_FAILED = CommissionStatus.REFUND_FAILED.name();
     private static final String NEGO_COMMISSION_VIA_WALLET = CommissionChargedVia.WALLET.name();
     private static final String NEGO_COMMISSION_VIA_CARD = CommissionChargedVia.CARD.name();
 
@@ -498,8 +500,13 @@ public class CashCommissionService {
                     .putMetadata("negotiation_thread_id", threadId.toString())
                     .putMetadata("commission_purpose", "cash_negotiation")
                     .build();
+            // Discriminant de réessai (commissionRetryCount) : sans lui, la clé reste
+            // figée pour toujours après un échec et Stripe rejoue la première réponse
+            // en cache (ex. "requires_action" mort) au lieu de retenter un débit réel —
+            // le voyageur ne pourrait alors plus jamais régler sa commission (cf. revue
+            // task 5, critique 4). Même convention que chargeCommission (bid cash).
             RequestOptions opts = RequestOptions.builder()
-                    .setIdempotencyKey("nego_commission_" + threadId)
+                    .setIdempotencyKey("nego_commission_" + threadId + "_v" + thread.getCommissionRetryCount())
                     .build();
             PaymentIntent pi = stripeCashGateway.createPaymentIntent(params, opts);
             // Persisté quel que soit le statut (comme chargeCommission pour le flux
@@ -514,16 +521,23 @@ public class CashCommissionService {
                 // Contrairement au flux classique où l'expéditeur déclenche le débit à
                 // l'insu du voyageur (absent, 3DS impossible), ici c'est le voyageur
                 // lui-même qui règle depuis son téléphone : il est présent et peut
-                // compléter l'authentification. Ne PAS bloquer en FAILED.
+                // compléter l'authentification. Ne PAS bloquer en FAILED, ne PAS
+                // incrémenter le compteur de réessai — l'attente de la 3DS n'est pas un
+                // échec, {@link #confirmNegotiationCommissionAcceptance} tranchera.
                 thread.setCommissionStatus(NEGO_COMMISSION_REQUIRES_3DS);
                 negotiationThreadRepository.save(thread);
                 return AcceptBidResponse.requires3ds(pi.getClientSecret(), pi.getId());
             }
+            thread.setCommissionStatus(NEGO_COMMISSION_FAILED);
+            thread.setCommissionRetryCount(thread.getCommissionRetryCount() + 1);
             negotiationThreadRepository.save(thread);
             auditService.log("NEGOTIATION_THREAD", threadId, "CASH_COMMISSION_FAILED", travelerId,
                     Map.of("reason", "card-status-" + pi.getStatus()));
             return AcceptBidResponse.failed("card-status-" + pi.getStatus());
         } catch (CardException e) {
+            thread.setCommissionStatus(NEGO_COMMISSION_FAILED);
+            thread.setCommissionRetryCount(thread.getCommissionRetryCount() + 1);
+            negotiationThreadRepository.save(thread);
             auditService.log("NEGOTIATION_THREAD", threadId, "CASH_COMMISSION_FAILED", travelerId,
                     Map.of("reason", "card-declined", "code", e.getCode() != null ? e.getCode() : ""));
             return AcceptBidResponse.failed("card-declined");
@@ -573,11 +587,94 @@ public class CashCommissionService {
                 markNegotiationCommissionCharged(thread, NEGO_COMMISSION_VIA_CARD, travelerId, commission);
                 return ConfirmAcceptanceResponse.ok();
             }
+            // La 3DS n'a pas abouti (refusée, abandonnée, statut inattendu) : marquer
+            // l'échec ET incrémenter le compteur de réessai, sinon un nouveau règlement
+            // (settleCommission) réutiliserait la même clé d'idempotence Stripe et
+            // rejouerait indéfiniment ce PaymentIntent mort (critique 4).
             thread.setCommissionStatus(NEGO_COMMISSION_FAILED);
+            thread.setCommissionRetryCount(thread.getCommissionRetryCount() + 1);
             negotiationThreadRepository.save(thread);
+            auditService.log("NEGOTIATION_THREAD", threadId, "CASH_COMMISSION_FAILED", travelerId,
+                    Map.of("reason", "card-status-" + pi.getStatus()));
             return ConfirmAcceptanceResponse.fail("PaymentIntent status: " + pi.getStatus());
         } catch (StripeException e) {
+            auditService.log("NEGOTIATION_THREAD", threadId, "CASH_COMMISSION_FAILED", travelerId,
+                    Map.of("reason", "stripe-error"));
             return ConfirmAcceptanceResponse.fail("Erreur Stripe : " + e.getMessage());
+        }
+    }
+
+    /**
+     * Rembourse via Stripe une commission de négociation qui a fini par être
+     * débitée (PaymentIntent {@code succeeded}, 3DS aboutie) alors que le thread
+     * n'est plus éligible au scellement — la demande a été emportée par un
+     * concurrent pendant que le voyageur complétait l'authentification. Appelée
+     * par {@code NegotiationService.confirmCommission} quand elle détecte que la
+     * place est déjà prise (cf. revue task 5, critique 2).
+     *
+     * <p>Relit systématiquement le PaymentIntent auprès de Stripe plutôt que de se
+     * fier au {@code commissionStatus} local du thread : ce dernier peut encore
+     * porter {@code REQUIRES_3DS} alors que la 3DS a très bien pu réussir entre
+     * temps côté Stripe. No-op (retourne {@code false}) si rien n'a jamais été
+     * débité par carte, ou si un remboursement a déjà eu lieu. En cas d'échec du
+     * remboursement lui-même, une entrée {@code audit_log} dédiée (paymentIntentId,
+     * montant, motif) rend le cas traçable pour un remboursement manuel — jamais
+     * d'exception qui remonte, l'appelant doit toujours pouvoir répondre au
+     * voyageur.
+     */
+    @Transactional
+    public boolean refundNegotiationCommissionIfCharged(UUID threadId, UUID travelerId) {
+        com.yadony.api.requests.entity.NegotiationThreadEntity thread =
+                negotiationThreadRepository.findById(threadId).orElseThrow();
+        if (NEGO_COMMISSION_REFUNDED.equals(thread.getCommissionStatus())) {
+            return false;
+        }
+        String paymentIntentId = thread.getCommissionPaymentIntentId();
+        if (paymentIntentId == null) {
+            return false;
+        }
+        PaymentIntent pi;
+        try {
+            pi = stripeCashGateway.retrievePaymentIntent(paymentIntentId);
+        } catch (StripeException e) {
+            log.error("Impossible de relire le PaymentIntent {} du thread {} pour décider d'un remboursement : {}",
+                    paymentIntentId, threadId, e.getMessage());
+            auditService.log("NEGOTIATION_THREAD", threadId, "CASH_COMMISSION_REFUND_CHECK_FAILED", travelerId,
+                    Map.of("paymentIntentId", paymentIntentId,
+                            "reason", e.getMessage() != null ? e.getMessage() : "stripe-read-error"));
+            return false;
+        }
+        if (!"succeeded".equals(pi.getStatus())) {
+            // Rien n'a été réellement débité (3DS jamais complétée, ou refusée) —
+            // rien à rembourser, le voyageur n'a rien perdu.
+            return false;
+        }
+        SupportedCurrency currency = SupportedCurrency.fromCodeOrDefault(thread.getCurrency());
+        BigDecimal amount = BigDecimal.valueOf(pi.getAmount()).movePointLeft(currency.minorUnit());
+        try {
+            RefundCreateParams params = RefundCreateParams.builder()
+                    .setPaymentIntent(paymentIntentId)
+                    .build();
+            RequestOptions opts = RequestOptions.builder()
+                    .setIdempotencyKey("nego_commission_refund_" + threadId)
+                    .build();
+            stripeCashGateway.createRefund(params, opts);
+            thread.setCommissionStatus(NEGO_COMMISSION_REFUNDED);
+            negotiationThreadRepository.save(thread);
+            auditService.log("NEGOTIATION_THREAD", threadId, "CASH_COMMISSION_REFUNDED_SPOT_TAKEN", travelerId,
+                    Map.of("paymentIntentId", paymentIntentId, "amount", amount.toPlainString(),
+                            "reason", "request-already-accepted-by-competitor"));
+            return true;
+        } catch (StripeException e) {
+            thread.setCommissionStatus(NEGO_COMMISSION_REFUND_FAILED);
+            negotiationThreadRepository.save(thread);
+            log.error("Remboursement commission négociation thread {} échoué : {}", threadId, e.getMessage());
+            // Traçabilité obligatoire pour un remboursement manuel : le voyageur a bien
+            // été débité, Stripe refuse le remboursement automatique.
+            auditService.log("NEGOTIATION_THREAD", threadId, "CASH_COMMISSION_REFUND_FAILED", travelerId,
+                    Map.of("paymentIntentId", paymentIntentId, "amount", amount.toPlainString(),
+                            "reason", e.getMessage() != null ? e.getMessage() : "stripe-error"));
+            return false;
         }
     }
 
