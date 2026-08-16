@@ -594,6 +594,26 @@ class TrackingServiceTest {
     }
 
     @Test
+    void refreshConfirmationCode_bidArrived_succeeds() {
+        BidEntity bid = buildBid(BidStatus.ARRIVED, "qt");
+        bid.setConfirmationCode("000000");
+        bid.setConfirmationCodeAttempts(2);
+        AnnouncementEntity ann = buildAnnouncement();
+        UserEntity sender = buildUser(senderId, "uid-sender");
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+
+        ConfirmCodeResponse resp = service.refreshConfirmationCode(bidId, "uid-sender");
+
+        assertThat(resp.confirmationCode()).hasSize(6);
+        assertThat(resp.confirmationCode()).isNotEqualTo("000000");
+        assertThat(resp.expiresAt()).isAfter(LocalDateTime.now(ZoneOffset.UTC));
+        assertThat(bid.getConfirmationCodeAttempts()).isZero();
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.ARRIVED);
+    }
+
+    @Test
     void refreshCode_withinWindow_incrementsCount() {
         BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");
         bid.setConfirmationCode("111111");
