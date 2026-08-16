@@ -271,6 +271,12 @@
       </div>
     </section>
 
+    <section class="panel section arrival-instructions"
+             th:if="${arrivalInstructions != null and !#strings.isEmpty(arrivalInstructions)}">
+      <h2 class="section-title">Instructions de retrait</h2>
+      <p th:text="${arrivalInstructions}"></p>
+    </section>
+
     <section class="panel section" th:if="${qrCodeBase64 != null and !#strings.isEmpty(qrCodeBase64)}">
       <h2 class="section-title">QR code du colis</h2>
       <div class="qr-row">

@@ -214,4 +214,18 @@ class RecipientControllerIntegrationTest {
         mockMvc.perform(get("/tracking/public/{token}/status", "token-inconnu"))
                 .andExpect(status().isNotFound());
     }
+
+    @Test
+    void trackingStatus_exposesArrivalInstructions() throws Exception {
+        AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId()).orElseThrow();
+        announcement.setArrivalInstructions("Métro Châtelet, sortie 3");
+        announcementRepository.save(announcement);
+
+        bid.setStatus(BidStatus.ARRIVED);
+        bidRepository.save(bid);
+
+        mockMvc.perform(get("/tracking/public/" + trackingToken + "/status"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.arrivalInstructions").value("Métro Châtelet, sortie 3"));
+    }
 }
