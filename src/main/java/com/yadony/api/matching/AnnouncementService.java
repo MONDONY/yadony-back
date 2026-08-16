@@ -1015,6 +1015,39 @@ public class AnnouncementService {
     }
 
     /**
+     * Édite le texte d'instructions de retrait après le marquage initial.
+     * Refuse une fois le trajet totalement soldé (plus aucun colis actif —
+     * tout est livré/annulé/refusé), pour éviter de modifier une information
+     * qui n'a plus personne à qui s'adresser.
+     */
+    @Transactional
+    public AnnouncementDetailResponse updateArrivalInstructions(UUID id, String firebaseUid, String arrivalInstructions) {
+        UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
+                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
+                        "user-not-found", "User Not Found", "Utilisateur introuvable"));
+
+        AnnouncementEntity announcement = announcementRepository.findByIdForUpdate(id)
+                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
+                        "announcement-not-found", "Announcement Not Found", "Annonce introuvable"));
+
+        if (!announcement.getTravelerId().equals(user.getId())) {
+            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
+                    "Vous n'êtes pas autorisé à modifier ce trajet");
+        }
+
+        List<BidEntity> activeBids = bidRepository.findByAnnouncementIdAndStatusNotIn(id, INACTIVE_BID_STATUSES);
+        if (activeBids.isEmpty()) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "trip/already-delivered",
+                    "Already Delivered", "Ce trajet est totalement soldé, les instructions ne peuvent plus être modifiées");
+        }
+
+        announcement.setArrivalInstructions(arrivalInstructions);
+        AnnouncementEntity saved = announcementRepository.save(announcement);
+
+        return getAnnouncementDetail(saved.getId(), firebaseUid);
+    }
+
+    /**
      * Contrôles de publication partagés entre {@link #createAnnouncement} (chemin non-brouillon)
      * et {@link #publishAnnouncement} (DRAFT→ACTIVE) : suspension de publication, KYC vérifié,
      * limite mensuelle d'annonces (hors PRO).

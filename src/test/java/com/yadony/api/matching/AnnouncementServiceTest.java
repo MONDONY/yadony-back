@@ -2664,4 +2664,86 @@ class AnnouncementServiceTest {
                     "user-not-found");
         }
     }
+
+    // ─── updateArrivalInstructions ─────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("updateArrivalInstructions()")
+    class UpdateArrivalInstructionsTests {
+
+        @Test
+        @DisplayName("updateArrivalInstructions — met à jour le texte tant qu'un colis actif reste")
+        void updateArrivalInstructions_success() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement(traveler);
+            BidEntity bidArrived = buildBid(BidStatus.ARRIVED, announcement.getId());
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+            when(announcementRepository.findByIdForUpdate(announcement.getId())).thenReturn(Optional.of(announcement));
+            when(announcementRepository.findById(announcement.getId())).thenReturn(Optional.of(announcement));
+            when(bidRepository.findByAnnouncementIdAndStatusNotIn(eq(announcement.getId()), anyCollection()))
+                    .thenReturn(List.of(bidArrived));
+            when(bidRepository.countVisibleByAnnouncementId(announcement.getId())).thenReturn(1L);
+            when(bidRepository.countByAnnouncementIdAndStatusIn(eq(announcement.getId()), anyList())).thenReturn(0L);
+            when(announcementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            announcementService.updateArrivalInstructions(announcement.getId(), FIREBASE_UID, "Nouveau point de RDV");
+
+            assertThat(announcement.getArrivalInstructions()).isEqualTo("Nouveau point de RDV");
+        }
+
+        @Test
+        @DisplayName("updateArrivalInstructions — refuse si le trajet est totalement livré")
+        void updateArrivalInstructions_alreadyDelivered_throws() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement(traveler);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.findByIdForUpdate(announcement.getId())).thenReturn(Optional.of(announcement));
+            when(bidRepository.findByAnnouncementIdAndStatusNotIn(eq(announcement.getId()), anyCollection()))
+                    .thenReturn(List.of());
+
+            assertYadonyError(
+                    () -> announcementService.updateArrivalInstructions(announcement.getId(), FIREBASE_UID, "x"),
+                    "trip/already-delivered");
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("updateArrivalInstructions — refuse si l'appelant n'est pas le voyageur propriétaire")
+        void updateArrivalInstructions_notOwner_throws() {
+            UserEntity traveler = buildTraveler();
+            UserEntity someoneElse = buildTraveler();
+            setId(someoneElse, UUID.randomUUID());
+            AnnouncementEntity announcement = buildAnnouncement(traveler);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(someoneElse));
+            when(announcementRepository.findByIdForUpdate(announcement.getId())).thenReturn(Optional.of(announcement));
+
+            assertYadonyError(
+                    () -> announcementService.updateArrivalInstructions(announcement.getId(), FIREBASE_UID, "x"),
+                    "forbidden");
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("updateArrivalInstructions — refuse si le trajet n'existe pas")
+        void updateArrivalInstructions_announcementNotFound_throws() {
+            UserEntity traveler = buildTraveler();
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.findByIdForUpdate(ANNOUNCEMENT_ID)).thenReturn(Optional.empty());
+
+            assertYadonyError(
+                    () -> announcementService.updateArrivalInstructions(ANNOUNCEMENT_ID, FIREBASE_UID, "x"),
+                    "announcement-not-found");
+        }
+
+        @Test
+        @DisplayName("updateArrivalInstructions — refuse si l'utilisateur n'existe pas")
+        void updateArrivalInstructions_userNotFound_throws() {
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.empty());
+
+            assertYadonyError(
+                    () -> announcementService.updateArrivalInstructions(ANNOUNCEMENT_ID, FIREBASE_UID, "x"),
+                    "user-not-found");
+        }
+    }
 }
