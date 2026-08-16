@@ -233,6 +233,13 @@ Dans `CashCommissionService`, remplacer la méthode `chargeNegotiationCommission
             auditService.log("NEGOTIATION_THREAD", threadId, "CASH_COMMISSION_FAILED", travelerId,
                     Map.of("reason", "card-status-" + pi.getStatus()));
             return AcceptBidResponse.failed("card-status-" + pi.getStatus());
+            // NOTE (corrigée après revue de la Task 1) : le statut "requires_action"
+            // doit être intercepté AVANT ce cas d'échec et renvoyer
+            // AcceptBidResponse.requires3ds(pi.getClientSecret(), pi.getId()), comme
+            // le fait chargeCommission pour le flux classique. Dans ce flux, c'est le
+            // voyageur lui-même qui déclenche le règlement depuis son téléphone : il
+            // est présent et peut authentifier, ce qui était impossible quand
+            // l'expéditeur déclenchait tout.
         } catch (CardException e) {
             auditService.log("NEGOTIATION_THREAD", threadId, "CASH_COMMISSION_FAILED", travelerId,
                     Map.of("reason", "card-declined", "code", e.getCode() != null ? e.getCode() : ""));
@@ -560,6 +567,7 @@ git commit -m "feat(commission): le bid negocie en especes nait avec sa commissi
 **Interfaces:**
 - Consumes: `CashGatePort.settleNegotiationCommission(...)` (Task 2), `BidRepository.findByLinkedNegotiationThreadId(UUID)`.
 - Produces: `AcceptBidResponse settleCommission(UUID callerId, UUID threadId, CommissionSource source)` sur `NegotiationService`, et l'endpoint `POST /api/v1/negotiations/{id}/settle-commission?commissionSource=WALLET_FIRST|CARD`.
+- Produces également : `ConfirmAcceptanceResponse confirmCommission(UUID callerId, UUID threadId)` et l'endpoint `POST /api/v1/negotiations/{id}/confirm-commission`, appelé par l'app après une authentification 3D Secure réussie. Il relit le PaymentIntent auprès de Stripe (`commissionPaymentIntentId` persisté sur le thread) et marque `CHARGED` s'il est `succeeded`. **Ne jamais rappeler `settle-commission` après un 3DS pour confirmer** : la clé d'idempotence Stripe `nego_commission_<threadId>` rejouerait la réponse mise en cache, encore `requires_action`, et le règlement ne serait jamais constaté. Voir `CashCommissionService.confirmCommissionAcceptance` (flux classique) pour le modèle exact.
 
 Après un règlement réussi, le bid matérialisé doit passer `CHARGED` avec le canal utilisé : sans cela, un remboursement ultérieur (annulation, no-show) verrait `PENDING` et n'aurait rien à rembourser, alors que le voyageur a bien payé.
 
@@ -892,7 +900,8 @@ git commit -m "feat(negociation): le fil porte l'etat de la commission"
 
 **Interfaces:**
 - Consumes: `POST /negotiations/{id}/settle-commission?commissionSource=` (Task 5), `AcceptanceResponse` / `AcceptanceStatus` (`lib/features/matching/data/models/acceptance_response.dart`), déjà capables de parser ce contrat.
-- Produces: `NegotiationRepository.settleCommission(String threadId, {String commissionSource = 'WALLET_FIRST'}) → Future<AcceptanceResponse>` ; l'event `NegotiationSettleCommissionRequested(threadId, {useCard = false})` ; les états `NegotiationCommissionSettled` et `NegotiationCommissionInsufficientWallet(availableBalance, requiredCommission, hasCard, currency, threadId)`.
+- Produces: `NegotiationRepository.settleCommission(String threadId, {String commissionSource = 'WALLET_FIRST'}) → Future<AcceptanceResponse>` ; `NegotiationRepository.confirmCommission(String threadId) → Future<ConfirmResponse>` ; l'event `NegotiationSettleCommissionRequested(threadId, {useCard = false})` ; les états `NegotiationCommissionSettled` et `NegotiationCommissionInsufficientWallet(availableBalance, requiredCommission, hasCard, currency, threadId)`.
+- Le statut `AcceptanceStatus.requires3ds` doit être traité, exactement comme le fait `BidAcceptanceBloc._handleResponse` (`lib/features/matching/bloc/bid_acceptance_bloc.dart:51-102`) : appeler `Stripe.instance.handleNextAction(clientSecret)` puis `confirmCommission(threadId)`, et n'émettre `NegotiationCommissionSettled` qu'ensuite. Le voyageur est devant son téléphone à cet instant, l'authentification forte est donc réalisable. Ajouter un test de bloc pour ce chemin.
 
 Le datasource doit accepter les réponses 409 et 422 comme des `AcceptanceResponse` valides, à l'image de `bid_remote_datasource.dart:205-244` : ce ne sont pas des erreurs réseau mais des issues métier porteuses des montants à afficher.
 
