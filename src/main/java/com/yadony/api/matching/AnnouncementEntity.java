@@ -156,6 +156,17 @@ public class AnnouncementEntity extends BaseEntity {
     private boolean surplusPublished = false;
 
     /**
+     * Nombre de consultations de la page publique de partage (l'affiche générée
+     * dans l'app et postée par le voyageur sur ses propres canaux).
+     *
+     * Nullable à dessein : une colonne NOT NULL ajoutée en V213 casserait les
+     * tests de migration sur H2, dont le DDL est dérivé de JPA sans reprendre
+     * le DEFAULT déclaré côté Flyway. Toutes les lectures passent par COALESCE.
+     */
+    @Column(name = "share_view_count")
+    private Long shareViewCount = 0L;
+
+    /**
      * Sender « réservé » d'un trajet dédié : l'expéditeur de la négociation pour
      * qui ce trajet a été créé. NULL pour les trajets non dédiés. Sert à empêcher
      * ce sender de re-bidder sur le surplus de son propre trajet (il a déjà son
@@ -194,6 +205,10 @@ public class AnnouncementEntity extends BaseEntity {
     public void setSurplusEligible(boolean surplusEligible) { this.surplusEligible = surplusEligible; }
     public boolean isSurplusPublished() { return surplusPublished; }
     public void setSurplusPublished(boolean surplusPublished) { this.surplusPublished = surplusPublished; }
+
+    /** Jamais null pour l'appelant : les lignes antérieures à V213 valent NULL en base. */
+    public long getShareViewCount() { return shareViewCount == null ? 0L : shareViewCount; }
+    public void setShareViewCount(Long shareViewCount) { this.shareViewCount = shareViewCount; }
 
     /**
      * A dedicated trip (linkedPackageRequestId != null) is tied to a private

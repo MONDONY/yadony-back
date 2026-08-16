@@ -133,6 +133,21 @@ public interface AnnouncementRepository extends JpaRepository<AnnouncementEntity
     List<AnnouncementEntity> findActiveByTravelerId(@Param("travelerId") UUID travelerId);
 
     /**
+     * Incremente le compteur de vues de la page publique de partage (affiche).
+     *
+     * Volontairement une requete de mise a jour directe et non un load + save :
+     * la page est publique et anonyme, un compteur ne doit ni declencher le
+     * versioning optimiste de l'entite ni repousser {@code updated_at}, qui
+     * porte une semantique metier (derniere modification par le voyageur).
+     * COALESCE couvre les lignes anterieures a la migration V213, ou la colonne
+     * vaut NULL.
+     */
+    @Modifying
+    @Query("UPDATE AnnouncementEntity a SET a.shareViewCount = COALESCE(a.shareViewCount, 0) + 1 "
+           + "WHERE a.id = :id")
+    int incrementShareViewCount(@Param("id") UUID id);
+
+    /**
      * Returns the next upcoming announcement for a given traveler on a specific corridor
      * (departureCity → arrivalCity) with a departure date >= fromDate.
      * Only ACTIVE or FULL announcements are considered (not COMPLETED, CANCELLED, ARCHIVED).

@@ -208,6 +208,13 @@ app:
   encryption:
     key: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required (32-byte base64 or strong passphrase)}
   base-url: ${APP_BASE_URL:http://localhost:8080}
+  # Fiches stores, affichées sur la page publique d'une annonce (/public/annonce/{id}).
+  # Vides par défaut : l'application n'est pas encore publiée, et un bouton
+  # pointant vers une fiche inexistante coûte plus cher qu'un bouton absent.
+  # Le gabarit ne rend chaque bouton que si l'URL correspondante est renseignée.
+  store:
+    android: ${STORE_URL_ANDROID:}
+    ios: ${STORE_URL_IOS:}
   sms:
     enabled: ${SMS_ENABLED:false}
     africastalking:

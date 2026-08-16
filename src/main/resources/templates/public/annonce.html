@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="fr" xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <title th:text="${pageTitle}">Yadony</title>
+
+  <!--
+    Balises Open Graph : quand le voyageur colle ce lien dans le texte de son
+    post Facebook ou WhatsApp, c'est ce bloc qui fabrique l'aperçu. Sans lui,
+    le lien s'affiche nu et convertit nettement moins.
+    Les libellés sont assemblés côté contrôleur, cf. PublicAnnouncementPageController.
+  -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Yadony">
+  <meta property="og:title" th:content="${ogTitle}" content="Yadony">
+  <meta property="og:description" th:content="${ogDescription}" content="Yadony">
+  <meta property="og:url" th:content="${shareUrl}" content="">
+  <meta name="twitter:card" content="summary">
+
+  <style>
+    :root {
+      --blue: #0B5FFF;
+      --blue-dark: #083CAB;
+      --ink: #0A2540;
+      --muted: #54504A;
+      --bg: #FAFAF8;
+      --surface: #FFFFFF;
+      --border: #E8E5DF;
+      --terra: #D96A3A;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 24px 16px 48px;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .wrap { max-width: 480px; margin: 0 auto; }
+
+    .brand {
+      display: flex; align-items: center; gap: 8px;
+      font-weight: 800; font-size: 20px; letter-spacing: -0.4px;
+      color: var(--blue); margin-bottom: 24px;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 16px;
+    }
+
+    .corridor {
+      font-size: 30px; font-weight: 800; letter-spacing: -0.8px;
+      line-height: 1.15; margin: 0 0 4px;
+      text-wrap: balance;
+    }
+
+    .corridor .arrow { color: var(--blue); }
+
+    .rows { margin-top: 20px; border-top: 1px solid var(--border); }
+
+    .row {
+      display: flex; justify-content: space-between; align-items: baseline;
+      gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--border);
+    }
+
+    .row dt { color: var(--muted); font-size: 14px; margin: 0; }
+    .row dd { margin: 0; font-weight: 700; font-size: 15px; text-align: right; }
+    .row.deadline dd { color: var(--terra); }
+
+    .price {
+      display: flex; align-items: baseline; gap: 6px;
+      margin-top: 20px; padding-top: 20px; border-top: 2px solid var(--ink);
+    }
+    .price .amount { font-size: 34px; font-weight: 800; letter-spacing: -1px; }
+    .price .unit { color: var(--muted); font-size: 15px; font-weight: 600; }
+
+    .btn {
+      display: block; width: 100%; padding: 16px;
+      border-radius: 14px; border: 1px solid transparent;
+      font-size: 16px; font-weight: 700; text-align: center;
+      text-decoration: none; margin-bottom: 10px;
+    }
+    .btn-primary { background: var(--blue); color: #fff; }
+    .btn-secondary { background: var(--surface); color: var(--ink); border-color: var(--border); }
+
+    .trust {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
+      margin-top: 24px; text-align: center;
+    }
+    .trust div { font-size: 12px; color: var(--muted); font-weight: 600; }
+    .trust span { display: block; font-size: 20px; margin-bottom: 4px; }
+
+    .note { font-size: 13px; color: var(--muted); text-align: center; margin-top: 20px; }
+
+    .empty { text-align: center; padding: 16px 0; }
+    .empty h1 { font-size: 22px; margin: 0 0 8px; }
+    .empty p { color: var(--muted); margin: 0 0 24px; }
+  </style>
+</head>
+
+<body>
+<div class="wrap">
+
+  <div class="brand">Yadony</div>
+
+  <!-- Annonce retirée, terminée, annulée, ou identifiant illisible -->
+  <div th:if="${unavailable}">
+    <div class="card empty">
+      <h1>Ce trajet n'est plus disponible</h1>
+      <p>Il a été retiré, ou son départ est passé. D'autres voyageurs partent chaque semaine.</p>
+      <a class="btn btn-primary" th:if="${!#strings.isEmpty(storeUrlAndroid)}"
+         th:href="${storeUrlAndroid}">Voir les autres trajets</a>
+      <a class="btn btn-primary" th:if="${#strings.isEmpty(storeUrlAndroid)} and ${!#strings.isEmpty(storeUrlIos)}"
+         th:href="${storeUrlIos}">Voir les autres trajets</a>
+    </div>
+  </div>
+
+  <!-- Annonce réservable -->
+  <div th:unless="${unavailable}">
+    <div class="card">
+      <h1 class="corridor">
+        <span th:text="${departureCity}">Paris</span>
+        <span class="arrow">&rarr;</span>
+        <span th:text="${arrivalCity}">Dakar</span>
+      </h1>
+
+      <dl class="rows">
+        <div class="row">
+          <dt>Départ</dt>
+          <dd th:text="${departureDate}">jeudi 20 août 2026</dd>
+        </div>
+        <div class="row deadline" th:if="${handoverDeadline != null}">
+          <dt>Date limite de dépôt</dt>
+          <dd th:text="${handoverDeadline}">mercredi 19 août à 19h00</dd>
+        </div>
+        <div class="row" th:if="${availableKg != null}">
+          <dt>Place disponible</dt>
+          <dd><span th:text="${availableKg}">12</span> kg</dd>
+        </div>
+      </dl>
+
+      <div class="price" th:if="${pricePerKg != null}">
+        <span class="amount">
+          <span th:text="${pricePerKg}">8</span><span th:text="${currency}">€</span>
+        </span>
+        <span class="unit">par kilo</span>
+      </div>
+    </div>
+
+    <!--
+      Pas de redirection automatique vers le schéma dony:// : sur un navigateur
+      sans l'application installée, elle produit une erreur visible, et sur iOS
+      une boîte de dialogue système qui gèle la page. Deux boutons explicites
+      laissent la main à la personne, ce qui est aussi plus lisible.
+    -->
+    <a class="btn btn-primary" th:href="${deepLink}">Ouvrir dans l'application</a>
+
+    <a class="btn btn-secondary" th:if="${!#strings.isEmpty(storeUrlAndroid)}"
+       th:href="${storeUrlAndroid}">Télécharger Yadony pour Android</a>
+    <a class="btn btn-secondary" th:if="${!#strings.isEmpty(storeUrlIos)}"
+       th:href="${storeUrlIos}">Télécharger Yadony pour iPhone</a>
+
+    <div class="trust">
+      <div><span>&#128274;</span>Paiement sécurisé</div>
+      <div><span>&#128241;</span>Suivi du colis</div>
+      <div><span>&#9989;</span>Voyageurs vérifiés</div>
+    </div>
+
+    <p class="note">
+      Votre paiement est conservé par Yadony et n'est versé au voyageur qu'après
+      la livraison confirmée.
+    </p>
+  </div>
+
+</div>
+</body>
+</html>
