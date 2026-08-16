@@ -266,6 +266,7 @@ public class TrackingService {
         event.setScannedAt(LocalDateTime.now(ZoneOffset.UTC));
         event.setGpsLat(request.gpsLat());
         event.setGpsLon(request.gpsLon());
+        event.setGpsLabel(cleanGpsLabel(request.gpsLabel()));
         event.setPhotoUrl(photoKey);
         if (request.offlineTimestamp() != null) {
             event.setOfflineTimestamp(request.offlineTimestamp());
@@ -375,9 +376,15 @@ public class TrackingService {
     private TrackingEventResponse toEventResponse(TrackingEventEntity e, String resolvedPhotoUrl) {
         return new TrackingEventResponse(
                 e.getId(), e.getBidId(), e.getEventType().name(),
-                e.getScannedAt(), e.getGpsLat(), e.getGpsLon(),
+                e.getScannedAt(), e.getGpsLat(), e.getGpsLon(), e.getGpsLabel(),
                 resolvedPhotoUrl != null ? resolvedPhotoUrl : e.getPhotoUrl(),
                 e.getOfflineTimestamp(), e.getCreatedAt());
+    }
+
+    private String cleanGpsLabel(String label) {
+        if (label == null || label.isBlank()) return null;
+        String trimmed = label.trim();
+        return trimmed.length() > 255 ? trimmed.substring(0, 255) : trimmed;
     }
 
     private String resolvePhotoUrl(String photoKey) {
@@ -401,7 +408,46 @@ public class TrackingService {
                     "Seul l'expéditeur peut consulter le code de confirmation");
         }
 
-        return new ConfirmCodeResponse(bid.getConfirmationCode(), bid.getConfirmationCodeExpiry());
+        return new ConfirmCodeResponse(
+                bid.getConfirmationCode(),
+                bid.getConfirmationCodeExpiry(),
+                bid.isConfirmationCodePublicEnabled());
+    }
+
+    @Transactional
+    public ConfirmCodeResponse setConfirmationCodePublicVisible(UUID bidId, String firebaseUid, boolean visible) {
+        BidEntity bid = bidRepository.findById(bidId)
+                .orElseThrow(() -> new YadonyBusinessException(
+                        HttpStatus.NOT_FOUND, "bid-not-found", "Bid Not Found",
+                        "Transaction introuvable"));
+
+        UserEntity currentUser = userRepository.findByFirebaseUid(firebaseUid)
+                .orElseThrow(() -> new YadonyBusinessException(
+                        HttpStatus.UNAUTHORIZED, "user-not-found", "User Not Found",
+                        "Utilisateur introuvable"));
+
+        if (!currentUser.getId().equals(bid.getSenderId())) {
+            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
+                    "Seul l'expéditeur peut publier le code de confirmation");
+        }
+
+        if (bid.getConfirmationCode() == null) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "code-not-generated",
+                    "Code Not Generated",
+                    "Le code de confirmation n'est pas encore disponible — le voyageur doit d'abord scanner le départ");
+        }
+
+        bid.setConfirmationCodePublicEnabled(visible);
+        bidRepository.save(bid);
+
+        auditService.log("TRACKING_CONFIRMATION_CODE", bidId,
+                visible ? "CODE_PUBLIC_ENABLED" : "CODE_PUBLIC_DISABLED",
+                currentUser.getId(), Map.of("bidId", bidId.toString()));
+
+        return new ConfirmCodeResponse(
+                bid.getConfirmationCode(),
+                bid.getConfirmationCodeExpiry(),
+                bid.isConfirmationCodePublicEnabled());
     }
 
     @Transactional
@@ -459,12 +505,13 @@ public class TrackingService {
         bid.setConfirmationCode(newCode);
         bid.setConfirmationCodeAttempts(0);
         bid.setConfirmationCodeExpiry(newExpiry);
+        bid.setConfirmationCodePublicEnabled(false);
         bidRepository.save(bid);
 
         auditService.log("TRACKING_CONFIRMATION_CODE", bidId, "CODE_REFRESHED",
                 currentUser.getId(), Map.of("bidId", bidId.toString()));
 
-        return new ConfirmCodeResponse(newCode, newExpiry);
+        return new ConfirmCodeResponse(newCode, newExpiry, bid.isConfirmationCodePublicEnabled());
     }
 
     @Transactional
@@ -508,6 +555,7 @@ public class TrackingService {
             bid.setConfirmationCode(null);
             bid.setConfirmationCodeExpiry(null);
             bid.setConfirmationCodeAttempts(0);
+            bid.setConfirmationCodePublicEnabled(false);
             bidRepository.save(bid);
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "code-expired",
                     "Code Expired",
@@ -517,6 +565,7 @@ public class TrackingService {
         if (bid.getConfirmationCodeAttempts() >= MAX_CODE_ATTEMPTS) {
             bid.setConfirmationCode(null);
             bid.setConfirmationCodeAttempts(0);
+            bid.setConfirmationCodePublicEnabled(false);
             bidRepository.save(bid);
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "too-many-attempts",
                     "Too Many Attempts",
@@ -537,6 +586,7 @@ public class TrackingService {
         bid.setConfirmationCode(null);
         bid.setConfirmationCodeExpiry(null);
         bid.setConfirmationCodeAttempts(0);
+        bid.setConfirmationCodePublicEnabled(false);
         bid.setStatus(BidStatus.COMPLETED);
         bidRepository.save(bid);
 

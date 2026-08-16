@@ -1234,6 +1234,7 @@ public class BidService {
                 bid.getTrackingNumber(),
                 bid.getTrackingToken(),
                 confirmationCode,
+                bid.isConfirmationCodePublicEnabled(),
                 travelerId,
                 travelerName,
                 travelerPhoneAvailable,

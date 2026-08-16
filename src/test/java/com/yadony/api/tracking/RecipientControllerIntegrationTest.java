@@ -100,7 +100,7 @@ class RecipientControllerIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("Paris")))
                 .andExpect(content().string(containsString("Abidjan")))
-                .andExpect(content().string(containsString("Départ confirmé")))
+                .andExpect(content().string(containsString("Colis remis au voyageur")))
                 .andExpect(content().string(containsString("En transit")))
                 .andExpect(content().string(containsString("DNY123456789")))
                 .andExpect(content().string(not(containsString("invalide ou a expiré"))));
@@ -136,6 +136,48 @@ class RecipientControllerIntegrationTest {
                 .andExpect(content().string(containsString("https://cdn.example/scan-depart.jpg")));
     }
 
+    @Test
+    void publicPage_rendersQrCodeAndProofPhotos() throws Exception {
+        event(TrackingEventType.DEPART, LocalDateTime.now().minusHours(8),
+                "https://cdn.example/remise.jpg");
+        event(TrackingEventType.ARRIVEE, LocalDateTime.now().minusHours(1),
+                "https://cdn.example/arrivee.jpg");
+
+        mockMvc.perform(get("/tracking/public/{token}", trackingToken))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("QR code du colis")))
+                .andExpect(content().string(containsString("Colis remis au voyageur")))
+                .andExpect(content().string(containsString("Arrivée confirmée")))
+                .andExpect(content().string(containsString("https://cdn.example/remise.jpg")))
+                .andExpect(content().string(containsString("https://cdn.example/arrivee.jpg")))
+                .andExpect(content().string(containsString("data:image/png;base64,")));
+    }
+
+    @Test
+    void publicPage_hidesConfirmationCodeUnlessSenderPublishedIt() throws Exception {
+        bid.setConfirmationCode("123456");
+        bid.setConfirmationCodePublicEnabled(false);
+        bid = bidRepository.save(bid);
+
+        mockMvc.perform(get("/tracking/public/{token}", trackingToken))
+                .andExpect(status().isOk())
+                .andExpect(content().string(not(containsString(">123456<"))))
+                .andExpect(content().string(not(containsString("is-visible\">\n      <span class=\"label\">Code de retrait"))));
+    }
+
+    @Test
+    void publicPage_showsConfirmationCodeWhenSenderPublishedIt() throws Exception {
+        bid.setConfirmationCode("123456");
+        bid.setConfirmationCodePublicEnabled(true);
+        bid.setConfirmationCodeExpiry(LocalDateTime.now().plusDays(1));
+        bid = bidRepository.save(bid);
+
+        mockMvc.perform(get("/tracking/public/{token}", trackingToken))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("Code de retrait")))
+                .andExpect(content().string(containsString("123456")));
+    }
+
     // ── Critère 3 : token invalide → message français, jamais de 500 ──────────
 
     @Test
@@ -163,8 +205,8 @@ class RecipientControllerIntegrationTest {
 
         mockMvc.perform(get("/tracking/public/{token}/status", trackingToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.currentStep").value("Départ confirmé — en route"))
-                .andExpect(jsonPath("$.events[0].label").value("Départ confirmé"));
+                .andExpect(jsonPath("$.currentStep").value("Colis remis au voyageur — en route"))
+                .andExpect(jsonPath("$.events[0].label").value("Colis remis au voyageur"));
     }
 
     @Test

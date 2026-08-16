@@ -27,14 +27,19 @@ public class ResendEmailService {
     private final TemplateEngine templateEngine;
     private final String fromAddress;
     private final String otpTemplate;
+    private final boolean emailSendingConfigured;
     private final boolean devProfile;
+    private final boolean prodProfile;
 
     @Autowired
     public ResendEmailService(EmailOtpProperties props, Environment env, TemplateEngine templateEngine) {
         this.fromAddress = props.getFromAddress();
         this.otpTemplate = props.getOtpTemplate();
         this.templateEngine = templateEngine;
-        this.devProfile = Arrays.asList(env.getActiveProfiles()).contains("dev");
+        this.emailSendingConfigured = props.getResendApiKey() != null && !props.getResendApiKey().isBlank();
+        var profiles = Arrays.asList(env.getActiveProfiles());
+        this.devProfile = profiles.contains("dev");
+        this.prodProfile = profiles.contains("prod");
         this.restClient = RestClient.builder()
                 .baseUrl("https://api.resend.com")
                 .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + props.getResendApiKey())
@@ -42,14 +47,41 @@ public class ResendEmailService {
     }
 
     ResendEmailService(String fromAddress, String otpTemplate, RestClient restClient, TemplateEngine templateEngine) {
+        this(fromAddress, otpTemplate, restClient, templateEngine, true, false, false);
+    }
+
+    ResendEmailService(
+            String fromAddress,
+            String otpTemplate,
+            RestClient restClient,
+            TemplateEngine templateEngine,
+            boolean emailSendingConfigured,
+            boolean devProfile,
+            boolean prodProfile) {
         this.fromAddress = fromAddress;
         this.otpTemplate = otpTemplate;
         this.restClient = restClient;
         this.templateEngine = templateEngine;
-        this.devProfile = false;
+        this.emailSendingConfigured = emailSendingConfigured;
+        this.devProfile = devProfile;
+        this.prodProfile = prodProfile;
     }
 
     public void sendOtp(String to, String code) {
+        if (!prodProfile) {
+            log.warn("📧 [DEV] Code OTP pour {} : {}", maskEmail(to), code);
+        }
+
+        if (!emailSendingConfigured) {
+            if (prodProfile) {
+                throw new YadonyBusinessException(
+                        HttpStatus.SERVICE_UNAVAILABLE, "email-service-not-configured",
+                        "Email Service Not Configured",
+                        "L'envoi des emails n'est pas configuré");
+            }
+            return;
+        }
+
         String textBody = String.format(otpTemplate, code);
         Map<String, Object> payload = Map.of(
                 "from", fromAddress,
@@ -71,8 +103,6 @@ public class ResendEmailService {
             log.error("Resend API error sending OTP to {}: {}", maskEmail(to), e.getMessage());
             if (devProfile) {
                 // En dev, l'envoi réel peut échouer (domaine Resend non vérifié).
-                // On logge le code pour permettre la connexion locale sans email réel.
-                log.warn("📧 [DEV] Code OTP pour {} : {}", to, code);
                 return;
             }
             throw new YadonyBusinessException(

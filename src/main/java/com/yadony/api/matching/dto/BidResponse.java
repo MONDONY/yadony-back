@@ -47,6 +47,7 @@ public record BidResponse(
         String trackingNumber,
         String trackingToken,
         String confirmationCode,
+        boolean confirmationCodePublicEnabled,
         UUID travelerId,
         String travelerName,
         /** Idem {@code senderPhoneAvailable}, côté voyageur. */
