@@ -12,6 +12,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -193,6 +194,8 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
     Optional<BidEntity> findBySenderIdAndAnnouncementIdAndStatus(UUID senderId, UUID announcementId, BidStatus status);
 
     List<BidEntity> findByAnnouncementId(UUID announcementId);
+
+    List<BidEntity> findByAnnouncementIdAndStatusNotIn(UUID announcementId, Collection<BidStatus> statuses);
 
     List<BidEntity> findByAnnouncementIdAndStatus(UUID announcementId, BidStatus status);
 
