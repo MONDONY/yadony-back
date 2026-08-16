@@ -660,6 +660,8 @@ git commit -m "feat(negociation): un accord en especes attend sa commission avan
     void settleCommission_requestAlreadyAccepted_throws409WithoutCharging() {
         // given la demande est passée ACCEPTED via un thread concurrent
         // then 409 "request/already-accepted" && verifyNoInteractions(cashGatePort)
+        // Ajouter aussi le cas nominal : une demande en NEGOTIATING (l'état réel
+        // d'une demande ayant reçu des offres) doit laisser passer le règlement.
     }
 
     @Test
@@ -722,8 +724,16 @@ Expected: FAIL.
 
         // Garde de course : ne jamais débiter pour une demande déjà emportée par un
         // autre voyageur. Le débit d'abord obligerait à rembourser ensuite.
-        if (request.getStatus() != PackageRequestStatus.OPEN) {
+        // PIÈGE : tester `== OPEN` ne marcherait JAMAIS en production. Dès la
+        // première offre reçue, la demande passe en NEGOTIATING (cf.
+        // NegotiationService ligne ~246) et n'est donc plus OPEN au moment où un
+        // voyageur règle. C'est bien « pas encore emportée » qu'il faut tester.
+        if (request.getStatus() == PackageRequestStatus.ACCEPTED) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "request/already-accepted");
+        }
+        if (request.getStatus() != PackageRequestStatus.OPEN
+                && request.getStatus() != PackageRequestStatus.NEGOTIATING) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "request/not-available");
         }
 
         AcceptBidResponse resp = cashGatePort.settleNegotiationCommission(
