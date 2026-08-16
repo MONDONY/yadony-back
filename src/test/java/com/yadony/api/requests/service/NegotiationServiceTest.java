@@ -4076,6 +4076,71 @@ class NegotiationServiceTest {
         }
     }
 
+    @Nested
+    @DisplayName("toResponse() — état et échéance de la commission cash (Task 7)")
+    class ToResponseCommissionTests {
+
+        @Test
+        @DisplayName("thread AWAITING_COMMISSION → commissionStatus et commissionDeadline exposés")
+        void toResponse_awaitingCommissionThread_exposesStatusAndDeadline() {
+            NegotiationThreadEntity thread = new NegotiationThreadEntity();
+            thread.setPackageRequestId(REQUEST_ID);
+            thread.setTravelerId(TRAVELER_ID);
+            thread.setStatus(NegotiationThreadStatus.AWAITING_COMMISSION);
+            thread.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.CASH);
+            thread.setCommissionStatus("PENDING");
+            thread.setCurrentPriceEur(new BigDecimal("30"));
+            thread.setRoundsCount((short) 1);
+            java.time.LocalDateTime lastActivityAt = java.time.LocalDateTime.now().minusMinutes(10);
+            thread.setLastActivityAt(lastActivityAt);
+            try {
+                var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+                idField.setAccessible(true);
+                idField.set(thread, UUID.randomUUID());
+            } catch (Exception e) { throw new RuntimeException(e); }
+
+            request.setDepartureCity("Paris");
+            request.setArrivalCity("Dakar");
+            request.setWeightKg(new BigDecimal("5"));
+
+            NegotiationThreadResponse response = service.toResponse(
+                thread, List.of(), null, traveler, request, TRAVELER_ID, "Expéditeur", null);
+
+            assertThat(response.status()).isEqualTo(NegotiationThreadStatus.AWAITING_COMMISSION);
+            assertThat(response.commissionStatus()).isEqualTo("PENDING");
+            // 120 min stubbé en @BeforeEach — même calcul que CommissionWindowExpiryRunner.
+            assertThat(response.commissionDeadline()).isEqualTo(lastActivityAt.plusMinutes(120));
+        }
+
+        @Test
+        @DisplayName("thread Stripe (hors AWAITING_COMMISSION) → commissionDeadline null")
+        void toResponse_stripeThread_hasNoCommissionDeadline() {
+            NegotiationThreadEntity thread = new NegotiationThreadEntity();
+            thread.setPackageRequestId(REQUEST_ID);
+            thread.setTravelerId(TRAVELER_ID);
+            thread.setStatus(NegotiationThreadStatus.ACCEPTED);
+            thread.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.STRIPE);
+            thread.setCurrentPriceEur(new BigDecimal("30"));
+            thread.setRoundsCount((short) 1);
+            thread.setLastActivityAt(java.time.LocalDateTime.now());
+            try {
+                var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+                idField.setAccessible(true);
+                idField.set(thread, UUID.randomUUID());
+            } catch (Exception e) { throw new RuntimeException(e); }
+
+            request.setDepartureCity("Paris");
+            request.setArrivalCity("Dakar");
+            request.setWeightKg(new BigDecimal("5"));
+
+            NegotiationThreadResponse response = service.toResponse(
+                thread, List.of(), null, traveler, request, TRAVELER_ID, "Expéditeur", null);
+
+            assertThat(response.commissionStatus()).isNull();
+            assertThat(response.commissionDeadline()).isNull();
+        }
+    }
+
     // ─── Task 13 — tests supplémentaires pour couvrir listMine, listForRequest,
     //              finalizeAfterPayment happy-path, et NegotiationPaymentAuthorizedEvent ─────────
 

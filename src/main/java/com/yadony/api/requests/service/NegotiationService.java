@@ -1817,6 +1817,14 @@ public class NegotiationService {
                     || message.createdAt() == null
                     || message.createdAt().isAfter(lastReadAt)));
 
+        // Échéance calculée exactement comme CommissionWindowExpiryRunner détermine
+        // l'expiration (lastActivityAt + fenêtre configurée), sinon le compte à rebours
+        // affiché par l'app ne correspondrait pas au moment réel où le fil expire.
+        LocalDateTime commissionDeadline = t.getStatus() == NegotiationThreadStatus.AWAITING_COMMISSION
+                && t.getLastActivityAt() != null
+            ? t.getLastActivityAt().plusMinutes(negotiationProperties.commissionWindowMinutes())
+            : null;
+
         return new NegotiationThreadResponse(
             t.getId(), t.getPackageRequestId(), t.getTravelerId(),
             t.getTravelerAnnouncementId(), t.getTravelerTravelDate(), t.getTravelerAvailableKg(),
@@ -1840,7 +1848,9 @@ public class NegotiationService {
             hasUnread,
             t.getPromoCode(),
             t.getCommissionRate(),
-            t.getCurrency()
+            t.getCurrency(),
+            t.getCommissionStatus(),
+            commissionDeadline
         );
     }
 

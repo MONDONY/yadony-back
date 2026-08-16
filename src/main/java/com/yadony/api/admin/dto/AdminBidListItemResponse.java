@@ -14,5 +14,9 @@ public record AdminBidListItemResponse(
     BigDecimal weightKg,
     BigDecimal netEur,
     String paymentMethod,
-    LocalDateTime createdAt
+    LocalDateTime createdAt,
+    // Statut du règlement de la commission Yadony (PENDING, REQUIRES_3DS, CHARGED,
+    // FAILED, REFUNDED, REFUND_FAILED, ou null si non applicable) — expose une
+    // commission cash jamais réglée qui resterait sinon invisible côté exploitation.
+    String commissionStatus
 ) {}

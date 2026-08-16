@@ -57,8 +57,52 @@ public record NegotiationThreadResponse(
     // initiation de paiement réussie.
     BigDecimal commissionRate,
     // Devise persistée sur le thread, source serveur du paiement de négociation.
-    String currency
+    String currency,
+    // Statut du règlement de la commission Yadony sur un accord en espèces :
+    // "PENDING", "REQUIRES_3DS", "CHARGED", "FAILED", "REFUNDED", "REFUND_FAILED",
+    // ou null (aucune tentative de règlement, ou thread non-cash).
+    String commissionStatus,
+    // Échéance du règlement de la commission (lastActivityAt + fenêtre configurée),
+    // calculée exactement comme CommissionWindowExpiryRunner détermine l'expiration.
+    // Non nul uniquement quand status == AWAITING_COMMISSION.
+    LocalDateTime commissionDeadline
 ) {
+    /** Constructeur de compatibilité (sans commissionStatus/commissionDeadline) — contrat Task 7 round 1. */
+    public NegotiationThreadResponse(
+            UUID id, UUID packageRequestId, UUID travelerId,
+            UUID travelerAnnouncementId, LocalDate travelerTravelDate, BigDecimal travelerAvailableKg,
+            String travelerCapacityUnit,
+            NegotiationThreadStatus status, BigDecimal currentPriceEur, int roundsCount,
+            LocalDateTime lastActivityAt, LocalDateTime createdAt,
+            List<NegotiationMessageResponse> messages,
+            String paymentIntentClientSecret,
+            String travelerName, BigDecimal travelerRating, Integer travelerTripsCount, String travelerPhotoUrl,
+            String departureCity, String arrivalCity, BigDecimal weightKg,
+            String senderName,
+            String senderPhotoUrl,
+            boolean isMyTurn,
+            boolean canAccept,
+            boolean canCounter,
+            int roundsRemaining,
+            LinkedTripSummary linkedTrip,
+            BigDecimal grossPriceEur,
+            PaymentMethod paymentMethod,
+            UUID materializedBidId,
+            boolean cashCommissionAvailable,
+            Set<PaymentMethod> availablePaymentMethods,
+            boolean canNudge,
+            boolean hasUnread,
+            String promoCode,
+            BigDecimal commissionRate,
+            String currency) {
+        this(id, packageRequestId, travelerId, travelerAnnouncementId, travelerTravelDate, travelerAvailableKg,
+            travelerCapacityUnit, status, currentPriceEur, roundsCount, lastActivityAt, createdAt, messages,
+            paymentIntentClientSecret, travelerName, travelerRating, travelerTripsCount, travelerPhotoUrl,
+            departureCity, arrivalCity, weightKg, senderName, senderPhotoUrl, isMyTurn, canAccept, canCounter,
+            roundsRemaining, linkedTrip, grossPriceEur, paymentMethod, materializedBidId, cashCommissionAvailable,
+            availablePaymentMethods, canNudge, hasUnread, promoCode, commissionRate, currency, null, null);
+    }
+
     /** Constructeur de compatibilité (sans promoCode) — évite de retoucher tous les tests. */
     public NegotiationThreadResponse(
             UUID id, UUID packageRequestId, UUID travelerId,
