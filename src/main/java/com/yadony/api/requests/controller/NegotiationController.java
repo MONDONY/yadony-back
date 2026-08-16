@@ -2,6 +2,9 @@ package com.yadony.api.requests.controller;
 
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.payments.cash.CommissionSource;
+import com.yadony.api.payments.cash.dto.AcceptBidResponse;
+import com.yadony.api.payments.cash.dto.ConfirmAcceptanceResponse;
 import com.yadony.api.requests.dto.*;
 import com.yadony.api.requests.service.NegotiationService;
 import jakarta.validation.Valid;
@@ -140,6 +143,38 @@ public class NegotiationController {
             @RequestBody @Valid NegotiationCheckoutRequest req
     ) {
         return service.checkout(requireUserId(), id, req.paymentIntentId(), req.paymentMethod());
+    }
+
+    /**
+     * Le voyageur règle la commission Yadony d'un thread {@code AWAITING_COMMISSION}
+     * (accord cash conclu par l'expéditeur) et emporte ainsi la demande. Mapping de
+     * statuts identique à {@code CashCommissionController.acceptCashBid} :
+     * ACCEPTED → 200, REQUIRES_3DS → 202, INSUFFICIENT_WALLET → 409, FAILED → 422.
+     */
+    @PostMapping("/{id}/settle-commission")
+    @PreAuthorize("hasRole('TRAVELER')")
+    public ResponseEntity<AcceptBidResponse> settleCommission(
+            @PathVariable UUID id,
+            @RequestParam(defaultValue = "WALLET_FIRST") CommissionSource commissionSource) {
+        AcceptBidResponse resp = service.settleCommission(requireUserId(), id, commissionSource);
+        return switch (resp.status()) {
+            case ACCEPTED -> ResponseEntity.ok(resp);
+            case REQUIRES_3DS -> ResponseEntity.accepted().body(resp);
+            case INSUFFICIENT_WALLET -> ResponseEntity.status(HttpStatus.CONFLICT).body(resp);
+            case FAILED -> ResponseEntity.unprocessableEntity().body(resp);
+        };
+    }
+
+    /**
+     * Confirme un règlement de commission après authentification 3D Secure : relit
+     * le PaymentIntent auprès de Stripe plutôt que de rejouer le règlement (la clé
+     * d'idempotence Stripe rejouerait sinon "authentification requise" en boucle).
+     */
+    @PostMapping("/{id}/confirm-commission")
+    @PreAuthorize("hasRole('TRAVELER')")
+    public ResponseEntity<ConfirmAcceptanceResponse> confirmCommission(@PathVariable UUID id) {
+        ConfirmAcceptanceResponse resp = service.confirmCommission(requireUserId(), id);
+        return resp.accepted() ? ResponseEntity.ok(resp) : ResponseEntity.unprocessableEntity().body(resp);
     }
 
     /**

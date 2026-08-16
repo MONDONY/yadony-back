@@ -333,6 +333,133 @@ class NegotiationControllerIT {
             eq(com.yadony.api.payments.cash.PaymentMethod.CASH));
     }
 
+    // ── POST /negotiations/{id}/settle-commission ────────────────────────────────
+
+    @Test
+    void post_settleCommission_accepted_returns200() throws Exception {
+        UUID threadId = UUID.randomUUID();
+        when(service.settleCommission(eq(TRAVELER_UUID), eq(threadId),
+                eq(com.yadony.api.payments.cash.CommissionSource.WALLET_FIRST)))
+            .thenReturn(com.yadony.api.payments.cash.dto.AcceptBidResponse.accepted());
+
+        mockMvc.perform(post("/negotiations/{id}/settle-commission", threadId)
+                .with(authentication(authAs("uid-traveler", "TRAVELER"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.status").value("ACCEPTED"));
+    }
+
+    @Test
+    void post_settleCommission_withCardSource_delegatesCommissionSource() throws Exception {
+        UUID threadId = UUID.randomUUID();
+        when(service.settleCommission(eq(TRAVELER_UUID), eq(threadId),
+                eq(com.yadony.api.payments.cash.CommissionSource.CARD)))
+            .thenReturn(com.yadony.api.payments.cash.dto.AcceptBidResponse.accepted());
+
+        mockMvc.perform(post("/negotiations/{id}/settle-commission", threadId)
+                .param("commissionSource", "CARD")
+                .with(authentication(authAs("uid-traveler", "TRAVELER"))))
+            .andExpect(status().isOk());
+
+        verify(service).settleCommission(eq(TRAVELER_UUID), eq(threadId),
+            eq(com.yadony.api.payments.cash.CommissionSource.CARD));
+    }
+
+    @Test
+    void post_settleCommission_asSender_returns403() throws Exception {
+        UUID threadId = UUID.randomUUID();
+
+        mockMvc.perform(post("/negotiations/{id}/settle-commission", threadId)
+                .with(authentication(authAs("uid-sender", "SENDER"))))
+            .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void post_settleCommission_requires3ds_returns202() throws Exception {
+        UUID threadId = UUID.randomUUID();
+        when(service.settleCommission(eq(TRAVELER_UUID), eq(threadId), any()))
+            .thenReturn(com.yadony.api.payments.cash.dto.AcceptBidResponse
+                .requires3ds("pi_secret", "pi_id"));
+
+        mockMvc.perform(post("/negotiations/{id}/settle-commission", threadId)
+                .with(authentication(authAs("uid-traveler", "TRAVELER"))))
+            .andExpect(status().isAccepted())
+            .andExpect(jsonPath("$.clientSecret").value("pi_secret"));
+    }
+
+    @Test
+    void post_settleCommission_failed_returns422() throws Exception {
+        UUID threadId = UUID.randomUUID();
+        when(service.settleCommission(eq(TRAVELER_UUID), eq(threadId), any()))
+            .thenReturn(com.yadony.api.payments.cash.dto.AcceptBidResponse.failed("card-declined"));
+
+        mockMvc.perform(post("/negotiations/{id}/settle-commission", threadId)
+                .with(authentication(authAs("uid-traveler", "TRAVELER"))))
+            .andExpect(status().isUnprocessableEntity());
+    }
+
+    @Test
+    void post_settleCommission_insufficientWallet_returns409WithAmounts() throws Exception {
+        UUID threadId = UUID.randomUUID();
+        when(service.settleCommission(eq(TRAVELER_UUID), eq(threadId), any()))
+            .thenReturn(com.yadony.api.payments.cash.dto.AcceptBidResponse.insufficientWallet(
+                new BigDecimal("1.00"), new BigDecimal("5.00"), true, "EUR"));
+
+        mockMvc.perform(post("/negotiations/{id}/settle-commission", threadId)
+                .with(authentication(authAs("uid-traveler", "TRAVELER"))))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.status").value("INSUFFICIENT_WALLET"))
+            .andExpect(jsonPath("$.requiredCommission").value(5.00))
+            .andExpect(jsonPath("$.hasCard").value(true));
+    }
+
+    @Test
+    void post_settleCommission_threadNotAwaitingCommission_returnsProblemDetail() throws Exception {
+        UUID threadId = UUID.randomUUID();
+        when(service.settleCommission(eq(TRAVELER_UUID), eq(threadId), any()))
+            .thenThrow(new ResponseStatusException(CONFLICT, "thread/not-awaiting-commission"));
+
+        mockMvc.perform(post("/negotiations/{id}/settle-commission", threadId)
+                .with(authentication(authAs("uid-traveler", "TRAVELER"))))
+            .andExpect(status().isConflict())
+            .andExpect(content().contentType("application/problem+json"))
+            .andExpect(jsonPath("$.type").value(org.hamcrest.Matchers.endsWith("thread/not-awaiting-commission")));
+    }
+
+    // ── POST /negotiations/{id}/confirm-commission ───────────────────────────────
+
+    @Test
+    void post_confirmCommission_accepted_returns200() throws Exception {
+        UUID threadId = UUID.randomUUID();
+        when(service.confirmCommission(eq(TRAVELER_UUID), eq(threadId)))
+            .thenReturn(com.yadony.api.payments.cash.dto.ConfirmAcceptanceResponse.ok());
+
+        mockMvc.perform(post("/negotiations/{id}/confirm-commission", threadId)
+                .with(authentication(authAs("uid-traveler", "TRAVELER"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.accepted").value(true));
+    }
+
+    @Test
+    void post_confirmCommission_failed_returns422() throws Exception {
+        UUID threadId = UUID.randomUUID();
+        when(service.confirmCommission(eq(TRAVELER_UUID), eq(threadId)))
+            .thenReturn(com.yadony.api.payments.cash.dto.ConfirmAcceptanceResponse.fail("PaymentIntent status: requires_payment_method"));
+
+        mockMvc.perform(post("/negotiations/{id}/confirm-commission", threadId)
+                .with(authentication(authAs("uid-traveler", "TRAVELER"))))
+            .andExpect(status().isUnprocessableEntity())
+            .andExpect(jsonPath("$.accepted").value(false));
+    }
+
+    @Test
+    void post_confirmCommission_asSender_returns403() throws Exception {
+        UUID threadId = UUID.randomUUID();
+
+        mockMvc.perform(post("/negotiations/{id}/confirm-commission", threadId)
+                .with(authentication(authAs("uid-sender", "SENDER"))))
+            .andExpect(status().isForbidden());
+    }
+
     @Test
     void post_refuseTrip_asSender_returns200() throws Exception {
         UUID threadId = UUID.randomUUID();

@@ -9,7 +9,11 @@ import com.yadony.api.common.CommissionRateResolver;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.payments.PriceBreakdown;
 import com.yadony.api.payments.cash.CommissionProperties;
+import com.yadony.api.payments.cash.CommissionSource;
 import com.yadony.api.payments.cash.PaymentMethod;
+import com.yadony.api.payments.cash.dto.AcceptBidResponse;
+import com.yadony.api.payments.cash.dto.AcceptanceStatusDto;
+import com.yadony.api.payments.cash.dto.ConfirmAcceptanceResponse;
 import com.yadony.api.payments.currency.CurrencyBounds;
 import com.yadony.api.payments.currency.CurrencyMatchGuard;
 import com.yadony.api.payments.currency.SupportedCurrency;
@@ -1122,9 +1126,13 @@ public class NegotiationService {
             thread.getPromoCode(),
             thread.getCommissionRate()
         ));
+        // paymentIntentId est null pour un accord cash scellé par settleCommission/
+        // confirmCommission (aucun escrow Stripe pour ce fil) — Map.of() rejette les
+        // valeurs null, d'où la substitution par "" (même convention que ailleurs
+        // dans cette classe, cf. cancelNegotiation/reject).
         auditService.log("NEGOTIATION_THREAD", thread.getId(), "ACCEPTED", callerId,
             Map.of("price", thread.getCurrentPriceEur().toString(),
-                "paymentIntentId", paymentIntentId));
+                "paymentIntentId", paymentIntentId != null ? paymentIntentId : ""));
         auditService.log("PACKAGE_REQUEST", request.getId(), "ACCEPTED", callerId,
             Map.of("threadId", thread.getId().toString()));
     }
@@ -1148,6 +1156,84 @@ public class NegotiationService {
             ? announcementRepo.findById(thread.getTravelerAnnouncementId()).orElse(null)
             : null;
         return toResponse(thread, allMsgs, paymentIntentId, finalTraveler, request, callerId, senderName, linkedAnn);
+    }
+
+    /**
+     * Le voyageur règle la commission Yadony et emporte ainsi la demande. C'est ce
+     * règlement qui scelle l'accord : tant qu'il n'a pas eu lieu, la demande reste
+     * ouverte et un autre voyageur peut la conclure.
+     *
+     * <p>La course, traitée avec soin : la demande reste disponible tant qu'aucun
+     * accord cash n'est scellé (elle passe en {@code NEGOTIATING} dès la première
+     * offre, jamais en {@code OPEN} à ce stade en production), donc plusieurs
+     * threads peuvent être {@code AWAITING_COMMISSION} en même temps sur la même
+     * demande, et l'expéditeur peut même en conclure un autre entre-temps. Le
+     * premier voyageur qui règle l'emporte. La demande est donc vérifiée encore
+     * disponible AVANT tout débit : débiter puis découvrir qu'elle est prise
+     * obligerait à rembourser un voyageur qui n'a rien à se reprocher.
+     */
+    @Transactional
+    public AcceptBidResponse settleCommission(UUID callerId, UUID threadId, CommissionSource source) {
+        NegotiationThreadEntity thread = threadRepo.findById(threadId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "thread/not-found"));
+        if (!callerId.equals(thread.getTravelerId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "negotiation/not-traveler");
+        }
+        if (thread.getStatus() != NegotiationThreadStatus.AWAITING_COMMISSION) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "thread/not-awaiting-commission");
+        }
+        PackageRequestEntity request = requestRepo.findById(thread.getPackageRequestId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found"));
+
+        // Garde de course : ne jamais débiter pour une demande déjà emportée par un
+        // autre voyageur. OPEN et NEGOTIATING sont tous deux "encore disponibles" —
+        // exiger OPEN seul refuserait tous les règlements en production, la demande
+        // étant déjà passée en NEGOTIATING dès la toute première offre (start()).
+        if (request.getStatus() != PackageRequestStatus.OPEN
+                && request.getStatus() != PackageRequestStatus.NEGOTIATING) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "request/already-accepted");
+        }
+
+        AcceptBidResponse resp = cashGatePort.settleNegotiationCommission(
+            thread.getTravelerId(), request.getSenderId(), threadId, thread.getCurrentPriceEur(), source);
+
+        if (resp.status() == AcceptanceStatusDto.ACCEPTED) {
+            sealAcceptedThread(thread, request, callerId, null);
+            auditService.log("NEGOTIATION_THREAD", threadId, "CASH_COMMISSION_SETTLED", callerId,
+                Map.of("via", String.valueOf(thread.getCommissionChargedVia())));
+        }
+        return resp;
+    }
+
+    /**
+     * Confirme un règlement de commission passé par une authentification 3D
+     * Secure : relit le PaymentIntent auprès de Stripe (via {@link CashGatePort},
+     * {@code CashCommissionService.confirmCommissionAcceptance} en miroir pour le
+     * flux classique) et scelle l'accord si Stripe confirme "succeeded". Ne
+     * rappelle jamais {@link #settleCommission} : la clé d'idempotence Stripe
+     * rejouerait la réponse "authentification requise" en boucle et le voyageur ne
+     * pourrait jamais aboutir.
+     */
+    @Transactional
+    public ConfirmAcceptanceResponse confirmCommission(UUID callerId, UUID threadId) {
+        NegotiationThreadEntity thread = threadRepo.findById(threadId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "thread/not-found"));
+        if (!callerId.equals(thread.getTravelerId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "negotiation/not-traveler");
+        }
+        if (thread.getStatus() != NegotiationThreadStatus.AWAITING_COMMISSION) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "thread/not-awaiting-commission");
+        }
+        PackageRequestEntity request = requestRepo.findById(thread.getPackageRequestId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found"));
+
+        ConfirmAcceptanceResponse resp = cashGatePort.confirmNegotiationCommission(callerId, threadId);
+        if (resp.accepted()) {
+            sealAcceptedThread(thread, request, callerId, null);
+            auditService.log("NEGOTIATION_THREAD", threadId, "CASH_COMMISSION_SETTLED", callerId,
+                Map.of("via", String.valueOf(thread.getCommissionChargedVia())));
+        }
+        return resp;
     }
 
     /**

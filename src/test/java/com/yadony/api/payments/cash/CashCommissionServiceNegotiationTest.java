@@ -5,11 +5,13 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.CommissionRateResolver;
+import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidGridItemRepository;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.payments.cash.dto.AcceptBidResponse;
 import com.yadony.api.payments.cash.dto.AcceptanceStatusDto;
+import com.yadony.api.payments.cash.dto.ConfirmAcceptanceResponse;
 import com.yadony.api.payments.wallet.WalletService;
 import com.yadony.api.payments.wallet.WalletTransactionRepository;
 import com.yadony.api.payments.wallet.WalletTransactionType;
@@ -25,6 +27,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
@@ -32,6 +35,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
@@ -293,5 +297,135 @@ class CashCommissionServiceNegotiationTest {
         verifyNoInteractions(stripeCashGateway);
         assertThat(thread.getCommissionStatus()).isEqualTo("CHARGED");
         verify(negotiationThreadRepository).save(thread);
+    }
+
+    // --- confirmNegotiationCommissionAcceptance() : relecture post-3DS ---
+
+    @Test
+    void confirmNegotiationCommissionAcceptance_stripeSucceeded_marksChargedAndReturnsOk() throws StripeException {
+        // given un thread REQUIRES_3DS avec un PaymentIntent qui revient "succeeded"
+        UUID travelerId = UUID.randomUUID();
+        UUID threadId = UUID.randomUUID();
+        NegotiationThreadEntity thread = threadWithId(threadId);
+        thread.setTravelerId(travelerId);
+        thread.setCurrency("EUR");
+        thread.setCommissionStatus("REQUIRES_3DS");
+        thread.setCommissionPaymentIntentId("pi_nego_3ds");
+
+        when(negotiationThreadRepository.findById(threadId)).thenReturn(Optional.of(thread));
+        PaymentIntent pi = mock(PaymentIntent.class);
+        when(pi.getStatus()).thenReturn("succeeded");
+        when(pi.getAmount()).thenReturn(500L);
+        when(stripeCashGateway.retrievePaymentIntent("pi_nego_3ds")).thenReturn(pi);
+
+        // when confirmNegotiationCommissionAcceptance(threadId, travelerId)
+        ConfirmAcceptanceResponse response =
+                service.confirmNegotiationCommissionAcceptance(threadId, travelerId);
+
+        // then accepted() == true, thread.commissionStatus == CHARGED,
+        //      thread.commissionChargedVia == CARD
+        assertThat(response.accepted()).isTrue();
+        assertThat(thread.getCommissionStatus()).isEqualTo("CHARGED");
+        assertThat(thread.getCommissionChargedVia()).isEqualTo("CARD");
+        verify(negotiationThreadRepository).save(thread);
+        verify(auditService).log(eq("NEGOTIATION_THREAD"), eq(threadId), eq("CASH_COMMISSION_CHARGED"),
+                eq(travelerId), any());
+    }
+
+    // Idempotence : rejouer une confirmation déjà aboutie ne relit jamais Stripe.
+    @Test
+    void confirmNegotiationCommissionAcceptance_alreadyCharged_isIdempotent() {
+        UUID travelerId = UUID.randomUUID();
+        UUID threadId = UUID.randomUUID();
+        NegotiationThreadEntity thread = threadWithId(threadId);
+        thread.setTravelerId(travelerId);
+        thread.setCommissionStatus("CHARGED");
+
+        when(negotiationThreadRepository.findById(threadId)).thenReturn(Optional.of(thread));
+
+        ConfirmAcceptanceResponse response =
+                service.confirmNegotiationCommissionAcceptance(threadId, travelerId);
+
+        assertThat(response.accepted()).isTrue();
+        verifyNoInteractions(stripeCashGateway);
+        verify(negotiationThreadRepository, never()).save(any());
+    }
+
+    // Ownership : seul le voyageur du thread peut confirmer sa propre commission.
+    @Test
+    void confirmNegotiationCommissionAcceptance_notOwner_throwsForbidden() {
+        UUID travelerId = UUID.randomUUID();
+        UUID otherUserId = UUID.randomUUID();
+        UUID threadId = UUID.randomUUID();
+        NegotiationThreadEntity thread = threadWithId(threadId);
+        thread.setTravelerId(travelerId);
+
+        when(negotiationThreadRepository.findById(threadId)).thenReturn(Optional.of(thread));
+
+        assertThatThrownBy(() -> service.confirmNegotiationCommissionAcceptance(threadId, otherUserId))
+                .isInstanceOf(YadonyBusinessException.class)
+                .hasFieldOrPropertyWithValue("status", HttpStatus.FORBIDDEN);
+        verifyNoInteractions(stripeCashGateway);
+    }
+
+    // Aucun PaymentIntent à confirmer (settleCommission jamais appelé côté carte) : échec propre.
+    @Test
+    void confirmNegotiationCommissionAcceptance_noPaymentIntent_returnsFail() {
+        UUID travelerId = UUID.randomUUID();
+        UUID threadId = UUID.randomUUID();
+        NegotiationThreadEntity thread = threadWithId(threadId);
+        thread.setTravelerId(travelerId);
+
+        when(negotiationThreadRepository.findById(threadId)).thenReturn(Optional.of(thread));
+
+        ConfirmAcceptanceResponse response =
+                service.confirmNegotiationCommissionAcceptance(threadId, travelerId);
+
+        assertThat(response.accepted()).isFalse();
+        assertThat(response.error()).isNotNull();
+        verifyNoInteractions(stripeCashGateway);
+    }
+
+    // La 3DS n'a toujours pas abouti (état encore requires_action, ou refusée) :
+    // le thread passe FAILED, la réponse porte l'échec — jamais de scellement.
+    @Test
+    void confirmNegotiationCommissionAcceptance_stripeStillNotSucceeded_marksFailedAndReturnsFail() throws StripeException {
+        UUID travelerId = UUID.randomUUID();
+        UUID threadId = UUID.randomUUID();
+        NegotiationThreadEntity thread = threadWithId(threadId);
+        thread.setTravelerId(travelerId);
+        thread.setCommissionStatus("REQUIRES_3DS");
+        thread.setCommissionPaymentIntentId("pi_nego_3ds");
+
+        when(negotiationThreadRepository.findById(threadId)).thenReturn(Optional.of(thread));
+        PaymentIntent pi = mock(PaymentIntent.class);
+        when(pi.getStatus()).thenReturn("requires_payment_method");
+        when(stripeCashGateway.retrievePaymentIntent("pi_nego_3ds")).thenReturn(pi);
+
+        ConfirmAcceptanceResponse response =
+                service.confirmNegotiationCommissionAcceptance(threadId, travelerId);
+
+        assertThat(response.accepted()).isFalse();
+        assertThat(thread.getCommissionStatus()).isEqualTo("FAILED");
+        verify(negotiationThreadRepository).save(thread);
+    }
+
+    // Erreur Stripe transitoire à la relecture : échec propre, jamais d'exception qui remonte.
+    @Test
+    void confirmNegotiationCommissionAcceptance_stripeErrorOnRetrieve_returnsFail() throws StripeException {
+        UUID travelerId = UUID.randomUUID();
+        UUID threadId = UUID.randomUUID();
+        NegotiationThreadEntity thread = threadWithId(threadId);
+        thread.setTravelerId(travelerId);
+        thread.setCommissionPaymentIntentId("pi_nego_3ds");
+
+        when(negotiationThreadRepository.findById(threadId)).thenReturn(Optional.of(thread));
+        when(stripeCashGateway.retrievePaymentIntent("pi_nego_3ds")).thenThrow(mock(StripeException.class));
+
+        ConfirmAcceptanceResponse response =
+                service.confirmNegotiationCommissionAcceptance(threadId, travelerId);
+
+        assertThat(response.accepted()).isFalse();
+        verify(negotiationThreadRepository, never()).save(any());
     }
 }

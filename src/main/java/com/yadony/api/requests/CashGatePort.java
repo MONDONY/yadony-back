@@ -2,6 +2,7 @@ package com.yadony.api.requests;
 
 import com.yadony.api.payments.cash.CommissionSource;
 import com.yadony.api.payments.cash.dto.AcceptBidResponse;
+import com.yadony.api.payments.cash.dto.ConfirmAcceptanceResponse;
 
 import java.math.BigDecimal;
 import java.util.UUID;
@@ -31,4 +32,14 @@ public interface CashGatePort {
     AcceptBidResponse settleNegotiationCommission(
             UUID travelerId, UUID senderId, UUID threadId,
             BigDecimal netAmount, CommissionSource source);
+
+    /**
+     * Relit auprès de Stripe le PaymentIntent de commission d'un thread après
+     * authentification 3D Secure, et scelle la charge si Stripe confirme
+     * "succeeded". Ne déclenche jamais un nouveau débit : {@link
+     * #settleNegotiationCommission} a déjà créé le PaymentIntent, le rappeler
+     * rejouerait la même clé d'idempotence Stripe et renverrait indéfiniment
+     * "authentification requise".
+     */
+    ConfirmAcceptanceResponse confirmNegotiationCommission(UUID travelerId, UUID threadId);
 }

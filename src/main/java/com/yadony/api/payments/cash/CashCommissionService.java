@@ -70,6 +70,7 @@ public class CashCommissionService {
     // payments/cash enums). Names mirror CommissionStatus / CommissionChargedVia.
     private static final String NEGO_COMMISSION_CHARGED = CommissionStatus.CHARGED.name();
     private static final String NEGO_COMMISSION_REQUIRES_3DS = CommissionStatus.REQUIRES_3DS.name();
+    private static final String NEGO_COMMISSION_FAILED = CommissionStatus.FAILED.name();
     private static final String NEGO_COMMISSION_VIA_WALLET = CommissionChargedVia.WALLET.name();
     private static final String NEGO_COMMISSION_VIA_CARD = CommissionChargedVia.CARD.name();
 
@@ -531,6 +532,52 @@ public class CashCommissionService {
             auditService.log("NEGOTIATION_THREAD", threadId, "CASH_COMMISSION_FAILED", travelerId,
                     Map.of("reason", "stripe-error"));
             return AcceptBidResponse.failed("stripe-error");
+        }
+    }
+
+    /**
+     * Confirme, après authentification 3D Secure, le règlement de commission d'un
+     * thread de négociation CASH : relit le PaymentIntent auprès de Stripe plutôt
+     * que de rappeler {@link #settleNegotiationCommission} — la clé d'idempotence
+     * Stripe ("nego_commission_" + threadId) rejouerait sinon indéfiniment la
+     * réponse "requires_action" au lieu de refléter l'issue réelle de la 3DS.
+     * Miroir de {@link #confirmCommissionAcceptance(UUID, UUID)} pour le flux
+     * classique (bid cash).
+     *
+     * <p>Ownership vérifiée avant toute lecture Stripe, même si {@code
+     * NegotiationService.confirmCommission} l'a déjà fait — défense en profondeur,
+     * même contrat que {@link #confirmCommissionAcceptance(UUID, UUID)}.
+     *
+     * <p>Idempotente : renvoie {@code ok()} si {@code thread.commissionStatus} vaut
+     * déjà {@code CHARGED}.
+     */
+    @Transactional
+    public ConfirmAcceptanceResponse confirmNegotiationCommissionAcceptance(UUID threadId, UUID travelerId) {
+        com.yadony.api.requests.entity.NegotiationThreadEntity thread =
+                negotiationThreadRepository.findById(threadId).orElseThrow();
+        if (!thread.getTravelerId().equals(travelerId)) {
+            throw new YadonyBusinessException(HttpStatus.FORBIDDEN,
+                    "forbidden", "Forbidden", "Ce fil de négociation ne vous appartient pas");
+        }
+        if (NEGO_COMMISSION_CHARGED.equals(thread.getCommissionStatus())) {
+            return ConfirmAcceptanceResponse.ok();
+        }
+        if (thread.getCommissionPaymentIntentId() == null) {
+            return ConfirmAcceptanceResponse.fail("Aucun PaymentIntent à confirmer.");
+        }
+        try {
+            PaymentIntent pi = stripeCashGateway.retrievePaymentIntent(thread.getCommissionPaymentIntentId());
+            if ("succeeded".equals(pi.getStatus())) {
+                SupportedCurrency currency = SupportedCurrency.fromCodeOrDefault(thread.getCurrency());
+                BigDecimal commission = BigDecimal.valueOf(pi.getAmount()).movePointLeft(currency.minorUnit());
+                markNegotiationCommissionCharged(thread, NEGO_COMMISSION_VIA_CARD, travelerId, commission);
+                return ConfirmAcceptanceResponse.ok();
+            }
+            thread.setCommissionStatus(NEGO_COMMISSION_FAILED);
+            negotiationThreadRepository.save(thread);
+            return ConfirmAcceptanceResponse.fail("PaymentIntent status: " + pi.getStatus());
+        } catch (StripeException e) {
+            return ConfirmAcceptanceResponse.fail("Erreur Stripe : " + e.getMessage());
         }
     }
 

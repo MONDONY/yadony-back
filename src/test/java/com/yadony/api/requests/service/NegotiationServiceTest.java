@@ -9,7 +9,11 @@ import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.payments.currency.CurrencyMatchGuard;
 import com.yadony.api.payments.cash.CommissionProperties;
+import com.yadony.api.payments.cash.CommissionSource;
 import com.yadony.api.payments.cash.PaymentMethod;
+import com.yadony.api.payments.cash.dto.AcceptBidResponse;
+import com.yadony.api.payments.cash.dto.AcceptanceStatusDto;
+import com.yadony.api.payments.cash.dto.ConfirmAcceptanceResponse;
 import com.yadony.api.requests.CashGatePort;
 import com.yadony.api.requests.RequestsConfig;
 import com.yadony.api.requests.dto.NegotiationStartRequest;
@@ -3335,6 +3339,207 @@ class NegotiationServiceTest {
             assertThatThrownBy(() -> service.checkout(SENDER_ID, THREAD_ID, "pi_real", null))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("not-awaiting-payment");
+        }
+    }
+
+    @Nested
+    @DisplayName("settleCommission() / confirmCommission() — le voyageur règle la commission cash")
+    class SettleCommissionTests {
+
+        private final UUID THREAD_ID = UUID.randomUUID();
+        private NegotiationThreadEntity thread;
+
+        @BeforeEach
+        void setupThread() {
+            thread = new NegotiationThreadEntity();
+            thread.setPackageRequestId(REQUEST_ID);
+            thread.setTravelerId(TRAVELER_ID);
+            thread.setStatus(NegotiationThreadStatus.AWAITING_COMMISSION);
+            thread.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.CASH);
+            thread.setCurrentPriceEur(new BigDecimal("40"));
+            thread.setRoundsCount((short) 1);
+            thread.setLastActivityAt(java.time.LocalDateTime.now());
+            try {
+                var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+                idField.setAccessible(true);
+                idField.set(thread, THREAD_ID);
+            } catch (Exception e) { throw new RuntimeException(e); }
+            // Dès la première offre, la demande passe en NEGOTIATING (start()) — jamais
+            // OPEN à ce stade en production. La garde de course doit accepter les deux.
+            request.setStatus(PackageRequestStatus.NEGOTIATING);
+            request.setRecipientName("Fatou Diop");
+            request.setRecipientPhone("+221771234567");
+        }
+
+        @Test
+        @DisplayName("appelant n'est pas le voyageur du thread → 403 negotiation/not-traveler")
+        void settleCommission_notTraveler_throws403() {
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+
+            assertThatThrownBy(() -> service.settleCommission(SENDER_ID, THREAD_ID, CommissionSource.WALLET_FIRST))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("negotiation/not-traveler");
+            verifyNoInteractions(cashGatePort);
+        }
+
+        @Test
+        @DisplayName("thread pas AWAITING_COMMISSION (encore OPEN) → 409 thread/not-awaiting-commission")
+        void settleCommission_threadNotAwaitingCommission_throws409() {
+            thread.setStatus(NegotiationThreadStatus.OPEN);
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+
+            assertThatThrownBy(() -> service.settleCommission(TRAVELER_ID, THREAD_ID, CommissionSource.WALLET_FIRST))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("thread/not-awaiting-commission");
+            verifyNoInteractions(cashGatePort);
+        }
+
+        // La garde de course : on ne débite jamais un voyageur pour une demande déjà prise.
+        @Test
+        @DisplayName("demande déjà emportée par un thread concurrent (ACCEPTED) → 409 sans débiter")
+        void settleCommission_requestAlreadyAccepted_throws409WithoutCharging() {
+            request.setStatus(PackageRequestStatus.ACCEPTED);
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+
+            assertThatThrownBy(() -> service.settleCommission(TRAVELER_ID, THREAD_ID, CommissionSource.WALLET_FIRST))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("request/already-accepted");
+            verifyNoInteractions(cashGatePort);
+        }
+
+        @Test
+        @DisplayName("cashGatePort renvoie ACCEPTED → scelle l'accord, ferme la demande, rejette les concurrents")
+        void settleCommission_success_sealsTheDeal() {
+            NegotiationThreadEntity competing = new NegotiationThreadEntity();
+            competing.setPackageRequestId(REQUEST_ID);
+            competing.setTravelerId(UUID.randomUUID());
+            competing.setStatus(NegotiationThreadStatus.OPEN);
+            competing.setCurrentPriceEur(new BigDecimal("35"));
+            competing.setRoundsCount((short) 1);
+            competing.setLastActivityAt(java.time.LocalDateTime.now());
+            try {
+                var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+                idField.setAccessible(true);
+                idField.set(competing, UUID.randomUUID());
+            } catch (Exception e) { throw new RuntimeException(e); }
+
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(threadRepo.findByPackageRequestId(REQUEST_ID)).thenReturn(List.of(thread, competing));
+            when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(requestRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(cashGatePort.settleNegotiationCommission(
+                    eq(TRAVELER_ID), eq(SENDER_ID), eq(THREAD_ID), eq(new BigDecimal("40")),
+                    eq(CommissionSource.WALLET_FIRST)))
+                .thenAnswer(inv -> {
+                    // Même transaction en production : CashCommissionService mute la MÊME
+                    // entité thread (persistence context partagé) — on le simule ici.
+                    thread.setCommissionChargedVia("WALLET");
+                    return AcceptBidResponse.accepted();
+                });
+
+            AcceptBidResponse resp = service.settleCommission(TRAVELER_ID, THREAD_ID, CommissionSource.WALLET_FIRST);
+
+            assertThat(resp.status()).isEqualTo(AcceptanceStatusDto.ACCEPTED);
+            assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.ACCEPTED);
+            assertThat(request.getStatus()).isEqualTo(PackageRequestStatus.ACCEPTED);
+            assertThat(competing.getStatus()).isEqualTo(NegotiationThreadStatus.AUTO_REJECTED);
+            verify(eventPublisher).publishEvent(any(PackageRequestAcceptedEvent.class));
+            verify(auditService).log(eq("NEGOTIATION_THREAD"), eq(THREAD_ID), eq("CASH_COMMISSION_SETTLED"),
+                eq(TRAVELER_ID), any());
+        }
+
+        @Test
+        @DisplayName("cashGatePort renvoie INSUFFICIENT_WALLET → thread reste AWAITING_COMMISSION, demande dispo")
+        void settleCommission_insufficientWallet_leavesThreadAwaitingCommission() {
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(cashGatePort.settleNegotiationCommission(
+                    eq(TRAVELER_ID), eq(SENDER_ID), eq(THREAD_ID), eq(new BigDecimal("40")),
+                    eq(CommissionSource.WALLET_FIRST)))
+                .thenReturn(AcceptBidResponse.insufficientWallet(
+                    new BigDecimal("1.00"), new BigDecimal("5.00"), true, "EUR"));
+
+            AcceptBidResponse resp = service.settleCommission(TRAVELER_ID, THREAD_ID, CommissionSource.WALLET_FIRST);
+
+            assertThat(resp.status()).isEqualTo(AcceptanceStatusDto.INSUFFICIENT_WALLET);
+            assertThat(resp.requiredCommission()).isEqualByComparingTo("5.00");
+            assertThat(resp.availableBalance()).isEqualByComparingTo("1.00");
+            assertThat(resp.hasCard()).isTrue();
+            assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.AWAITING_COMMISSION);
+            assertThat(request.getStatus()).isEqualTo(PackageRequestStatus.NEGOTIATING);
+            verify(threadRepo, never()).save(any());
+            verify(requestRepo, never()).save(any());
+            verify(eventPublisher, never()).publishEvent(any());
+        }
+
+        @Test
+        @DisplayName("confirmCommission après 3DS réussi (relecture Stripe) → scelle l'accord")
+        void confirmCommission_after3ds_sealsTheDeal() {
+            thread.setCommissionPaymentIntentId("pi_nego_3ds");
+            thread.setCommissionStatus("REQUIRES_3DS");
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(threadRepo.findByPackageRequestId(REQUEST_ID)).thenReturn(List.of(thread));
+            when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(requestRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(cashGatePort.confirmNegotiationCommission(TRAVELER_ID, THREAD_ID))
+                .thenAnswer(inv -> {
+                    thread.setCommissionStatus("CHARGED");
+                    thread.setCommissionChargedVia("CARD");
+                    return ConfirmAcceptanceResponse.ok();
+                });
+
+            ConfirmAcceptanceResponse resp = service.confirmCommission(TRAVELER_ID, THREAD_ID);
+
+            assertThat(resp.accepted()).isTrue();
+            assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.ACCEPTED);
+            assertThat(request.getStatus()).isEqualTo(PackageRequestStatus.ACCEPTED);
+            verify(eventPublisher).publishEvent(any(PackageRequestAcceptedEvent.class));
+            verify(auditService).log(eq("NEGOTIATION_THREAD"), eq(THREAD_ID), eq("CASH_COMMISSION_SETTLED"),
+                eq(TRAVELER_ID), any());
+        }
+
+        // Mêmes gardes d'appartenance et de statut que settleCommission.
+        @Test
+        @DisplayName("confirmCommission — appelant n'est pas le voyageur → 403")
+        void confirmCommission_notTraveler_throws403() {
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+
+            assertThatThrownBy(() -> service.confirmCommission(SENDER_ID, THREAD_ID))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("negotiation/not-traveler");
+            verifyNoInteractions(cashGatePort);
+        }
+
+        @Test
+        @DisplayName("confirmCommission — thread pas AWAITING_COMMISSION (déjà ACCEPTED) → 409")
+        void confirmCommission_threadNotAwaitingCommission_throws409() {
+            thread.setStatus(NegotiationThreadStatus.ACCEPTED);
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+
+            assertThatThrownBy(() -> service.confirmCommission(TRAVELER_ID, THREAD_ID))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("thread/not-awaiting-commission");
+            verifyNoInteractions(cashGatePort);
+        }
+
+        @Test
+        @DisplayName("confirmCommission — 3DS toujours pas confirmée → ne scelle rien, thread inchangé")
+        void confirmCommission_stillFailing_doesNotSeal() {
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(cashGatePort.confirmNegotiationCommission(TRAVELER_ID, THREAD_ID))
+                .thenReturn(ConfirmAcceptanceResponse.fail("PaymentIntent status: requires_payment_method"));
+
+            ConfirmAcceptanceResponse resp = service.confirmCommission(TRAVELER_ID, THREAD_ID);
+
+            assertThat(resp.accepted()).isFalse();
+            assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.AWAITING_COMMISSION);
+            assertThat(request.getStatus()).isEqualTo(PackageRequestStatus.NEGOTIATING);
+            verify(threadRepo, never()).save(any());
+            verify(eventPublisher, never()).publishEvent(any());
         }
     }
 

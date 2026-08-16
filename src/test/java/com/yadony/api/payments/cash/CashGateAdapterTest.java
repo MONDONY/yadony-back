@@ -6,6 +6,7 @@ import static org.mockito.Mockito.when;
 
 import com.yadony.api.payments.cash.dto.AcceptBidResponse;
 import com.yadony.api.payments.cash.dto.AcceptanceStatusDto;
+import com.yadony.api.payments.cash.dto.ConfirmAcceptanceResponse;
 import com.yadony.api.payments.wallet.WalletService;
 import com.yadony.api.requests.CashGatePort;
 import org.junit.jupiter.api.BeforeEach;
@@ -79,5 +80,18 @@ class CashGateAdapterTest {
 
         assertThat(adapter.hasCommissionCard(traveler)).isTrue();
         verify(cashCommissionService).hasCommissionCard(traveler);
+    }
+
+    @Test
+    void confirmNegotiationCommission_delegatesToCommissionServiceWithSwappedArgOrder() {
+        UUID traveler = UUID.randomUUID();
+        UUID thread = UUID.randomUUID();
+        when(cashCommissionService.confirmNegotiationCommissionAcceptance(thread, traveler))
+            .thenReturn(ConfirmAcceptanceResponse.ok());
+
+        ConfirmAcceptanceResponse resp = adapter.confirmNegotiationCommission(traveler, thread);
+
+        assertThat(resp.accepted()).isTrue();
+        verify(cashCommissionService).confirmNegotiationCommissionAcceptance(thread, traveler);
     }
 }
