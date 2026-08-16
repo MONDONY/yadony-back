@@ -2988,6 +2988,32 @@ class NegotiationServiceTest {
             assertThat(published.expiresAt()).isAfter(before);
         }
 
+        // Idempotence : un double tap de l'expéditeur (ou une relance après timeout réseau)
+        // ne doit jamais lui montrer une erreur pour une action qui a déjà réussi.
+        @Test
+        @DisplayName("thread CASH déjà AWAITING_COMMISSION — un second checkout est idempotent, pas de 409")
+        void finalize_cashThread_retryWhileAwaitingCommission_isIdempotent() {
+            thread.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.CASH);
+            thread.setStatus(NegotiationThreadStatus.AWAITING_COMMISSION);
+            request.setRecipientName("Fatou Diop");
+            request.setRecipientPhone("+221771234567");
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(List.of());
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
+
+            var response = service.finalizeAfterPayment(SENDER_ID, THREAD_ID, "pi_x");
+
+            assertThat(response.status()).isEqualTo(NegotiationThreadStatus.AWAITING_COMMISSION);
+            // Retour immédiat par la garde d'idempotence : aucune re-mutation, aucun
+            // ré-appel des ports de paiement.
+            verify(threadRepo, never()).save(any());
+            verify(eventPublisher, never()).publishEvent(any());
+            verifyNoInteractions(cashGatePort);
+            verifyNoInteractions(escrowPort);
+        }
+
         // Non-régression : la carte scelle toujours immédiatement, via sealAcceptedThread.
         @Test
         @DisplayName("thread STRIPE — non-régression : la carte scelle toujours immédiatement")
@@ -2999,6 +3025,12 @@ class NegotiationServiceTest {
             request.setDepartureCity("Paris");
             request.setArrivalCity("Dakar");
             request.setWeightKg(new BigDecimal("5"));
+            // Posé avant l'appel pour prouver que sealAcceptedThread propage bien cette
+            // valeur dans PackageRequestAcceptedEvent (comportement vivant, consommé par
+            // ThreadAcceptedBidListener pour rembourser la commission si le colis
+            // matérialisé est annulé avant remise — sans elle le remboursement est
+            // silencieusement sauté).
+            thread.setCommissionChargedVia("CARD");
 
             NegotiationThreadEntity competing = new NegotiationThreadEntity();
             competing.setPackageRequestId(REQUEST_ID);
@@ -3027,8 +3059,76 @@ class NegotiationServiceTest {
             assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.ACCEPTED);
             assertThat(request.getStatus()).isEqualTo(PackageRequestStatus.ACCEPTED);
             assertThat(competing.getStatus()).isEqualTo(NegotiationThreadStatus.AUTO_REJECTED);
-            verify(eventPublisher).publishEvent(any(PackageRequestAcceptedEvent.class));
+            org.mockito.ArgumentCaptor<PackageRequestAcceptedEvent> sealedCaptor =
+                org.mockito.ArgumentCaptor.forClass(PackageRequestAcceptedEvent.class);
+            verify(eventPublisher).publishEvent(sealedCaptor.capture());
+            // Sans cette propagation, ThreadAcceptedBidListener ne saurait pas comment
+            // rembourser la commission si le bid matérialisé est annulé avant remise.
+            assertThat(sealedCaptor.getValue().commissionChargedVia()).isEqualTo("CARD");
             verifyNoInteractions(cashGatePort);
+        }
+
+        @Test
+        @DisplayName("un accord scellé balaie aussi les threads concurrents AWAITING_COMMISSION (cash en attente)")
+        void finalize_stripeThread_autoRejectsCompetingAwaitingCommissionThread() {
+            thread.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.STRIPE);
+            request.setAcceptedPaymentMethods(
+                java.util.EnumSet.of(PaymentMethod.STRIPE, PaymentMethod.CASH));
+            request.setRecipientName("Fatou Diop");
+            request.setRecipientPhone("+221771234567");
+            request.setDepartureCity("Paris");
+            request.setArrivalCity("Dakar");
+            request.setWeightKg(new BigDecimal("5"));
+
+            // Un autre voyageur a conclu en espèces et attend encore le règlement de sa
+            // commission (Task 4) — cette demande vient d'être emportée par le paiement
+            // carte de l'expéditeur pendant cette attente.
+            NegotiationThreadEntity competingCash = new NegotiationThreadEntity();
+            competingCash.setPackageRequestId(REQUEST_ID);
+            competingCash.setTravelerId(UUID.randomUUID());
+            competingCash.setStatus(NegotiationThreadStatus.AWAITING_COMMISSION);
+            competingCash.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.CASH);
+            competingCash.setCurrentPriceEur(new BigDecimal("40"));
+            competingCash.setRoundsCount((short) 1);
+            competingCash.setLastActivityAt(java.time.LocalDateTime.now());
+            UUID competingCashDedicatedAnnId = UUID.randomUUID();
+            competingCash.setTravelerAnnouncementId(competingCashDedicatedAnnId);
+            UUID competingCashId = UUID.randomUUID();
+            try {
+                var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+                idField.setAccessible(true);
+                idField.set(competingCash, competingCashId);
+            } catch (Exception e) { throw new RuntimeException(e); }
+
+            com.yadony.api.matching.AnnouncementEntity competingCashDedicatedAnn =
+                new com.yadony.api.matching.AnnouncementEntity();
+            competingCashDedicatedAnn.setLinkedPackageRequestId(REQUEST_ID);
+            try {
+                var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+                idField.setAccessible(true);
+                idField.set(competingCashDedicatedAnn, competingCashDedicatedAnnId);
+            } catch (Exception e) { throw new RuntimeException(e); }
+
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(threadRepo.findByPackageRequestId(REQUEST_ID)).thenReturn(List.of(thread, competingCash));
+            when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(requestRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(List.of());
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
+            when(announcementRepo.findById(competingCashDedicatedAnnId))
+                .thenReturn(Optional.of(competingCashDedicatedAnn));
+
+            service.finalizeAfterPayment(SENDER_ID, THREAD_ID, "pi_real_stripe_2");
+
+            assertThat(competingCash.getStatus()).isEqualTo(NegotiationThreadStatus.AUTO_REJECTED);
+            assertThat(competingCashDedicatedAnn.getDeletedAt()).isNotNull();
+            verify(announcementRepo).save(competingCashDedicatedAnn);
+            verify(auditService).log(eq("NEGOTIATION_THREAD"), eq(competingCashId), eq("AUTO_REJECTED"),
+                eq(SENDER_ID), anyMap());
+            verify(auditService).log(eq("ANNOUNCEMENT"), eq(competingCashDedicatedAnnId),
+                eq("DEDICATED_TRIP_ORPHANED_ON_AUTO_REJECT"), eq(SENDER_ID), anyMap());
         }
 
         @Test
@@ -3177,6 +3277,32 @@ class NegotiationServiceTest {
             var resp = service.checkout(SENDER_ID, THREAD_ID, "pi_real", null);
 
             assertThat(resp.status()).isEqualTo(NegotiationThreadStatus.ACCEPTED);
+        }
+
+        @Test
+        @DisplayName("CASH — un finalize concurrent gagne la course du @Version → succès AWAITING_COMMISSION, pas de 409")
+        void checkout_cashOptimisticLockLoser_returnsAwaitingCommissionSuccess() {
+            thread.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.CASH);
+            request.setAcceptedPaymentMethods(java.util.EnumSet.of(PaymentMethod.CASH));
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(escrowPort.releaseEscrowForMethodSwitch(THREAD_ID)).thenReturn(true);
+            // Le finalize concurrent (autre onglet, relance réseau) a déjà commité →
+            // notre premier save (passage à AWAITING_COMMISSION) perd la course du
+            // @Version. La relecture (getById) qui suit re-sauvegarde juste la marque de
+            // lecture — sur l'entité déjà mutée en mémoire, comme si on relisait l'état
+            // que le gagnant a effectivement commité — donc réussit.
+            when(threadRepo.save(any()))
+                .thenThrow(new org.springframework.orm.ObjectOptimisticLockingFailureException(
+                    NegotiationThreadEntity.class, THREAD_ID))
+                .thenAnswer(inv -> inv.getArgument(0));
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(List.of());
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
+
+            var resp = service.checkout(SENDER_ID, THREAD_ID, "CASH", PaymentMethod.CASH);
+
+            assertThat(resp.status()).isEqualTo(NegotiationThreadStatus.AWAITING_COMMISSION);
         }
 
         @Test

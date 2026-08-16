@@ -844,8 +844,8 @@ public class NegotiationService {
      *
      * <p>For a STRIPE (or any non-CASH) thread this finalizes immediately, via
      * {@link #sealAcceptedThread}: thread → ACCEPTED, package_request → ACCEPTED,
-     * all competing OPEN/AWAITING_TRIP/AWAITING_PAYMENT threads on the same
-     * request → AUTO_REJECTED, payment_intent_id stored on thread.
+     * all competing OPEN/AWAITING_TRIP/AWAITING_PAYMENT/AWAITING_COMMISSION threads
+     * on the same request → AUTO_REJECTED, payment_intent_id stored on thread.
      *
      * <p>For a CASH thread nothing is sealed here — Yadony hasn't collected its
      * commission yet, and the traveler can still back out. The thread moves to
@@ -901,6 +901,12 @@ public class NegotiationService {
      * user-facing twin. Calls {@link #finalizeAfterPayment} via {@code self} (the
      * Spring proxy) so the transaction commits inside this method and the
      * commit-time optimistic-lock exception is catchable here.
+     *
+     * <p>Same race for CASH, different resting state: a concurrent finalize can win
+     * the {@code @Version} race or land just after the thread flipped to
+     * {@code AWAITING_COMMISSION} — that transition is this method's own success
+     * state (nothing is sealed yet), so it is treated as idempotent success exactly
+     * like {@code ACCEPTED} is for the card path. See {@link #resolveConcurrentCheckout}.
      */
     public NegotiationThreadResponse checkout(UUID callerId, UUID threadId,
                                               String paymentIntentId, PaymentMethod chosenMethod) {
@@ -919,14 +925,17 @@ public class NegotiationService {
     }
 
     /**
-     * Returns the finalized thread when a concurrent webhook already accepted it
-     * (idempotent success), otherwise rethrows the original conflict — the thread
-     * is in a genuinely unexpected state and the caller must hear about it.
+     * Returns the finalized thread when a concurrent webhook already accepted it, or
+     * when a concurrent CASH finalize already suspended it in
+     * {@code AWAITING_COMMISSION} — both idempotent successes, nothing left to do —
+     * otherwise rethrows the original conflict — the thread is in a genuinely
+     * unexpected state and the caller must hear about it.
      */
     private NegotiationThreadResponse resolveConcurrentCheckout(UUID callerId, UUID threadId,
                                                                 RuntimeException original) {
         NegotiationThreadResponse current = self.getById(callerId, threadId);
-        if (current.status() == NegotiationThreadStatus.ACCEPTED) {
+        if (current.status() == NegotiationThreadStatus.ACCEPTED
+                || current.status() == NegotiationThreadStatus.AWAITING_COMMISSION) {
             return current;
         }
         throw original;
@@ -951,6 +960,17 @@ public class NegotiationService {
         if (thread.getStatus() == NegotiationThreadStatus.ACCEPTED
                 && paymentIntentId != null
                 && paymentIntentId.equals(thread.getPaymentIntentId())) {
+            return buildFinalizedResponse(thread, request, callerId, paymentIntentId);
+        }
+        // Idempotent (CASH) : le premier appel a déjà suspendu ce thread en
+        // AWAITING_COMMISSION (double tap de l'expéditeur, relance après timeout
+        // réseau). Rien n'est scellé à ce stade donc il n'y a pas de PaymentIntent à
+        // comparer comme pour la carte — le statut du thread suffit à prouver que le
+        // premier appel a déjà réussi. Sans ce garde-fou, le second appel retombe sur
+        // la 409 ci-dessous et l'expéditeur voit une erreur pour une action qui a
+        // pourtant fonctionné.
+        if (thread.getStatus() == NegotiationThreadStatus.AWAITING_COMMISSION
+                && thread.getPaymentMethod() == PaymentMethod.CASH) {
             return buildFinalizedResponse(thread, request, callerId, paymentIntentId);
         }
         if (thread.getStatus() != NegotiationThreadStatus.AWAITING_PAYMENT) {
@@ -1060,11 +1080,19 @@ public class NegotiationService {
         request.setStatus(PackageRequestStatus.ACCEPTED);
         requestRepo.save(request);
 
+        // AWAITING_COMMISSION balayé au même titre que les autres statuts en attente :
+        // la demande reste disponible tant qu'un accord cash n'est pas scellé, donc un
+        // autre voyageur peut très bien avoir conclu entre-temps. Sans ce statut ici,
+        // un thread cash resterait AWAITING_COMMISSION sur une demande déjà emportée —
+        // le voyageur perdant ne serait jamais prévenu, son trajet dédié resterait
+        // bloqué, et il pourrait tenter de régler la commission d'une demande qui n'est
+        // plus libre (Task 5 s'appuie sur ce statut pour refuser ce règlement).
         threadRepo.findByPackageRequestId(request.getId()).stream()
             .filter(t -> !t.getId().equals(thread.getId())
                       && (t.getStatus() == NegotiationThreadStatus.OPEN
                           || t.getStatus() == NegotiationThreadStatus.AWAITING_TRIP
-                          || t.getStatus() == NegotiationThreadStatus.AWAITING_PAYMENT))
+                          || t.getStatus() == NegotiationThreadStatus.AWAITING_PAYMENT
+                          || t.getStatus() == NegotiationThreadStatus.AWAITING_COMMISSION))
             .forEach(t -> {
                 t.setStatus(NegotiationThreadStatus.AUTO_REJECTED);
                 t.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC));
