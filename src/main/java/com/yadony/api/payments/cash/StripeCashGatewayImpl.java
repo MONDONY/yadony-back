@@ -52,6 +52,11 @@ public class StripeCashGatewayImpl implements StripeCashGateway {
     }
 
     @Override
+    public PaymentIntent cancelPaymentIntent(String paymentIntentId) throws StripeException {
+        return PaymentIntent.retrieve(paymentIntentId).cancel();
+    }
+
+    @Override
     public Refund createRefund(RefundCreateParams params, RequestOptions options) throws StripeException {
         return Refund.create(params, options);
     }

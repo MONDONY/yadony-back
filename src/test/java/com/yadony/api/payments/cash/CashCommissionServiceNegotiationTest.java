@@ -30,6 +30,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -488,6 +490,63 @@ class CashCommissionServiceNegotiationTest {
         verify(negotiationThreadRepository).save(thread);
         verify(auditService).log(eq("NEGOTIATION_THREAD"), eq(threadId), eq("CASH_COMMISSION_FAILED"),
                 eq(travelerId), eq(java.util.Map.of("reason", "card-status-requires_payment_method")));
+        // Le PaymentIntent abandonné doit être annulé chez Stripe. Sans cela, le
+        // compteur de réessai autoriserait un second PaymentIntent pendant que le
+        // premier reste vivant : si la banque finalisait le challenge après coup,
+        // ce débit ne serait ni scellé, ni remboursé, ni tracé.
+        verify(stripeCashGateway).cancelPaymentIntent("pi_nego_3ds");
+    }
+
+    // Re-revue task 5 : l'annulation du PaymentIntent abandonné ne doit jamais
+    // empêcher le voyageur de retenter. Un PaymentIntent déjà annulé ou expiré
+    // fait lever Stripe — le règlement suivant doit rester possible.
+    @Test
+    void confirmNegotiationCommissionAcceptance_cancelFails_stillMarksFailedAndIncrementsRetry()
+            throws StripeException {
+        UUID travelerId = UUID.randomUUID();
+        UUID threadId = UUID.randomUUID();
+        NegotiationThreadEntity thread = threadWithId(threadId);
+        thread.setTravelerId(travelerId);
+        thread.setCommissionStatus("REQUIRES_3DS");
+        thread.setCommissionPaymentIntentId("pi_nego_dead");
+
+        when(negotiationThreadRepository.findById(threadId)).thenReturn(Optional.of(thread));
+        PaymentIntent pi = mock(PaymentIntent.class);
+        when(pi.getStatus()).thenReturn("requires_action");
+        when(stripeCashGateway.retrievePaymentIntent("pi_nego_dead")).thenReturn(pi);
+        when(stripeCashGateway.cancelPaymentIntent("pi_nego_dead")).thenThrow(mock(StripeException.class));
+
+        ConfirmAcceptanceResponse response =
+                service.confirmNegotiationCommissionAcceptance(threadId, travelerId);
+
+        assertThat(response.accepted()).isFalse();
+        assertThat(thread.getCommissionStatus()).isEqualTo("FAILED");
+        assertThat(thread.getCommissionRetryCount()).isEqualTo(1);
+        verify(negotiationThreadRepository).save(thread);
+    }
+
+    /**
+     * Garde-fou de propagation transactionnelle, pas un test de comportement.
+     *
+     * <p>L'appelant ({@code NegotiationService.confirmCommission}) lève un 409
+     * immédiatement après ce remboursement, pour dire au voyageur que sa place a
+     * été prise. En propagation {@code REQUIRED}, ce rollback effacerait le statut
+     * {@code REFUNDED} et l'entrée d'audit, alors que le remboursement Stripe est
+     * un appel HTTP externe déjà parti : il resterait un remboursement sans trace,
+     * et sur la branche d'échec, plus rien pour déclencher le remboursement manuel.
+     * Aucun test de comportement ne peut voir cette régression (les mocks Mockito
+     * n'ouvrent pas de transaction), d'où cette assertion sur l'annotation.
+     */
+    @Test
+    void refundNegotiationCommissionIfCharged_runsInItsOwnTransaction() throws NoSuchMethodException {
+        Transactional tx = CashCommissionService.class
+                .getMethod("refundNegotiationCommissionIfCharged", UUID.class, UUID.class)
+                .getAnnotation(Transactional.class);
+
+        assertThat(tx).isNotNull();
+        assertThat(tx.propagation())
+                .as("le remboursement doit survivre au rollback du 409 de l'appelant")
+                .isEqualTo(Propagation.REQUIRES_NEW);
     }
 
     // Erreur Stripe transitoire à la relecture : échec propre, jamais d'exception qui remonte.

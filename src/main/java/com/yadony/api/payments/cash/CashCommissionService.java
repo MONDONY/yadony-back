@@ -46,6 +46,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -591,6 +592,14 @@ public class CashCommissionService {
             // l'échec ET incrémenter le compteur de réessai, sinon un nouveau règlement
             // (settleCommission) réutiliserait la même clé d'idempotence Stripe et
             // rejouerait indéfiniment ce PaymentIntent mort (critique 4).
+            //
+            // Annuler d'abord ce PaymentIntent, sinon on l'abandonne vivant tout en
+            // autorisant son successeur : deux PaymentIntents coexisteraient sur le
+            // thread, et si la banque finalisait le challenge du premier après coup,
+            // ce débit ne serait ni scellé, ni remboursé, ni tracé — le champ
+            // commissionPaymentIntentId ayant déjà été écrasé. Même convention que
+            // OrphanedPaymentIntentCleanupJob pour le flux bid classique.
+            cancelOrphanedCommissionPaymentIntent(threadId, thread.getCommissionPaymentIntentId());
             thread.setCommissionStatus(NEGO_COMMISSION_FAILED);
             thread.setCommissionRetryCount(thread.getCommissionRetryCount() + 1);
             negotiationThreadRepository.save(thread);
@@ -621,8 +630,17 @@ public class CashCommissionService {
      * montant, motif) rend le cas traçable pour un remboursement manuel — jamais
      * d'exception qui remonte, l'appelant doit toujours pouvoir répondre au
      * voyageur.
+     *
+     * <p>{@code REQUIRES_NEW} est vital, pas cosmétique : l'appelant ({@code
+     * NegotiationService.confirmCommission}) lève un 409 juste après nous avoir
+     * appelés, pour dire au voyageur que sa place a été prise. En propagation
+     * {@code REQUIRED}, ce rollback effacerait le {@code REFUNDED} et l'entrée
+     * d'audit — alors que le remboursement Stripe, lui, est un appel HTTP externe
+     * bien parti. Il resterait un remboursement sans aucune trace applicative, et
+     * surtout, sur la branche d'échec, plus rien pour déclencher le remboursement
+     * manuel. Même pattern que {@code BidCancelledCommissionRefundListener}.
      */
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public boolean refundNegotiationCommissionIfCharged(UUID threadId, UUID travelerId) {
         com.yadony.api.requests.entity.NegotiationThreadEntity thread =
                 negotiationThreadRepository.findById(threadId).orElseThrow();
@@ -675,6 +693,24 @@ public class CashCommissionService {
                     Map.of("paymentIntentId", paymentIntentId, "amount", amount.toPlainString(),
                             "reason", e.getMessage() != null ? e.getMessage() : "stripe-error"));
             return false;
+        }
+    }
+
+    /**
+     * Annule chez Stripe un PaymentIntent de commission de négociation qu'on
+     * s'apprête à abandonner, pour qu'il ne puisse plus jamais aboutir dans le dos
+     * de la plateforme. N'échoue jamais : un PaymentIntent déjà annulé, expiré ou
+     * inaccessible ne doit pas empêcher le voyageur de retenter son règlement.
+     */
+    private void cancelOrphanedCommissionPaymentIntent(UUID threadId, String paymentIntentId) {
+        if (paymentIntentId == null) {
+            return;
+        }
+        try {
+            stripeCashGateway.cancelPaymentIntent(paymentIntentId);
+        } catch (StripeException e) {
+            log.warn("Annulation du PaymentIntent commission {} (thread {}) échouée : {}",
+                    paymentIntentId, threadId, e.getMessage());
         }
     }
 
