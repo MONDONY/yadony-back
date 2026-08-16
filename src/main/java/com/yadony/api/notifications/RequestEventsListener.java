@@ -102,6 +102,25 @@ public class RequestEventsListener {
     }
 
     /**
+     * Traveler changed the linked trip before payment. Notify the sender —
+     * they may want to review the new trip details before accepting/paying.
+     */
+    @EventListener
+    @Async
+    public void onNegotiationTripChanged(com.yadony.api.requests.event.NegotiationTripChangedEvent e) {
+        dispatcher.notifyUser(
+            e.senderId(),
+            "Trajet mis à jour",
+            "Le voyageur a changé le trajet associé à votre demande.",
+            Map.of(
+                "type", "negotiation_trip_changed",
+                "threadId", e.threadId().toString(),
+                "packageRequestId", e.packageRequestId().toString()
+            )
+        );
+    }
+
+    /**
      * Final ACCEPTED state — fires only after payment is captured (escrow active).
      * Notify both parties that the deal is sealed.
      */

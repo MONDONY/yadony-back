@@ -616,6 +616,52 @@ public class NegotiationService {
     }
 
     /**
+     * Le voyageur change le trajet lié tant que la négociation n'est pas encore
+     * AWAITING_PAYMENT (paiement possible à tout moment ensuite). Contrairement
+     * à submitTrip, cette méthode n'exige aucun état particulier de départ —
+     * elle marche depuis OPEN ou AWAITING_TRIP. Notifie l'expéditeur (et non le
+     * voyageur) via {@link com.yadony.api.requests.event.NegotiationTripChangedEvent} :
+     * NegotiationAwaitingTripEvent est réservé au cas "aucun trajet encore lié,
+     * le voyageur doit choisir" et notifie le voyageur — sémantique inverse ici.
+     */
+    @Transactional
+    public NegotiationThreadResponse changeTrip(UUID callerId, UUID threadId, NegotiationChangeTripRequest req) {
+        NegotiationThreadEntity thread = threadRepo.findById(threadId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "thread/not-found"));
+        if (!callerId.equals(thread.getTravelerId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "negotiation/not-traveler");
+        }
+        if (thread.getStatus() != NegotiationThreadStatus.OPEN
+                && thread.getStatus() != NegotiationThreadStatus.AWAITING_TRIP) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "negotiation-trip-locked");
+        }
+        PackageRequestEntity request = requestRepo.findById(thread.getPackageRequestId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found"));
+
+        com.yadony.api.matching.AnnouncementEntity ann =
+            validateAndFetchExistingTrip(req.travelerAnnouncementId(), callerId, request);
+
+        thread.setTravelerAnnouncementId(ann.getId());
+        thread.setTravelerTravelDate(ann.getDepartureDate());
+        thread.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC));
+        threadRepo.save(thread);
+
+        auditService.log("NEGOTIATION_THREAD", threadId, "TRIP_CHANGED", callerId,
+            Map.of("announcementId", ann.getId().toString()));
+
+        eventPublisher.publishEvent(new com.yadony.api.requests.event.NegotiationTripChangedEvent(
+            thread.getId(), request.getId(), request.getSenderId(), thread.getTravelerId(), ann.getId()));
+
+        List<NegotiationMessageResponse> messages = messageRepo.findByThreadIdOrderByCreatedAtAsc(threadId)
+            .stream().map(this::toMessageResponse).toList();
+        UserEntity traveler = userRepository.findById(callerId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "user/not-found"));
+        String senderName = userRepository.findById(request.getSenderId())
+            .map(this::buildDisplayName).orElse(UserEntity.UNKNOWN_DISPLAY_NAME);
+        return toResponse(thread, messages, null, traveler, request, callerId, senderName, ann);
+    }
+
+    /**
      * Traveler creates a brand-new "dedicated trip" announcement that is linked
      * exclusively to this package_request. Used when none of the traveler's
      * existing trips match the corridor/date.

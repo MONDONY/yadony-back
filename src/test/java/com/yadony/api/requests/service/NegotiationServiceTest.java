@@ -2021,6 +2021,79 @@ class NegotiationServiceTest {
     }
 
     @Nested
+    @DisplayName("changeTrip()")
+    class ChangeTripTests {
+
+        private final UUID THREAD_ID = UUID.randomUUID();
+        private NegotiationThreadEntity thread;
+
+        @BeforeEach
+        void setupThread() {
+            request.setDepartureCity("Paris");
+            request.setArrivalCity("Dakar");
+            request.setDesiredDate(LocalDate.now().plusDays(10));
+            request.setDateToleranceDays((short) 2);
+            request.setWeightKg(new BigDecimal("5"));
+
+            thread = new NegotiationThreadEntity();
+            thread.setPackageRequestId(REQUEST_ID);
+            thread.setTravelerId(TRAVELER_ID);
+            thread.setStatus(NegotiationThreadStatus.OPEN);
+            thread.setCurrentPriceEur(new BigDecimal("80"));
+            thread.setRoundsCount((short) 1);
+            thread.setLastActivityAt(java.time.LocalDateTime.now());
+            try {
+                var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+                idField.setAccessible(true);
+                idField.set(thread, THREAD_ID);
+            } catch (Exception e) { throw new RuntimeException(e); }
+        }
+
+        @Test
+        @DisplayName("thread AWAITING_PAYMENT → 409 negotiation-trip-locked")
+        void changeTrip_throws409_whenThreadAwaitingPayment() {
+            thread.setStatus(NegotiationThreadStatus.AWAITING_PAYMENT);
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+
+            UUID newAnnId = UUID.randomUUID();
+            assertThatThrownBy(() -> service.changeTrip(
+                TRAVELER_ID, THREAD_ID, new com.yadony.api.requests.dto.NegotiationChangeTripRequest(newAnnId)))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("negotiation-trip-locked");
+        }
+
+        @Test
+        @DisplayName("thread OPEN → trajet remplacé, event émis, réponse à jour")
+        void changeTrip_updatesLinkedTrip_whenThreadOpen() {
+            com.yadony.api.matching.AnnouncementEntity newAnn = matchingAnnouncementFor(request, TRAVELER_ID);
+            UUID newAnnId = UUID.randomUUID();
+            try {
+                var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+                idField.setAccessible(true);
+                idField.set(newAnn, newAnnId);
+            } catch (Exception e) { throw new RuntimeException(e); }
+
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(announcementRepo.findById(newAnnId)).thenReturn(Optional.of(newAnn));
+            when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(List.of());
+
+            var response = service.changeTrip(
+                TRAVELER_ID, THREAD_ID, new com.yadony.api.requests.dto.NegotiationChangeTripRequest(newAnnId));
+
+            assertThat(response.travelerAnnouncementId()).isEqualTo(newAnnId);
+            assertThat(thread.getTravelerAnnouncementId()).isEqualTo(newAnnId);
+            verify(eventPublisher).publishEvent(
+                any(com.yadony.api.requests.event.NegotiationTripChangedEvent.class));
+            verify(auditService).log(eq("NEGOTIATION_THREAD"), eq(THREAD_ID), eq("TRIP_CHANGED"),
+                eq(TRAVELER_ID), any());
+        }
+    }
+
+    @Nested
     @DisplayName("submitTrip() — payment method validation")
     class SubmitTripPaymentMethodTests {
 

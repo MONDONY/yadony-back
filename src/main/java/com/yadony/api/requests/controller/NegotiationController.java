@@ -96,6 +96,15 @@ public class NegotiationController {
         return service.submitTrip(requireUserId(), id, req);
     }
 
+    /** Traveler changes the linked trip before payment (OPEN or AWAITING_TRIP). */
+    @PatchMapping("/{id}/trip")
+    @PreAuthorize("hasRole('TRAVELER')")
+    public NegotiationThreadResponse changeTrip(
+            @PathVariable UUID id,
+            @RequestBody @Valid NegotiationChangeTripRequest req) {
+        return service.changeTrip(requireUserId(), id, req);
+    }
+
     /**
      * Traveler creates a brand-new "dedicated trip" announcement to satisfy
      * an AWAITING_TRIP thread (used when no existing trip matches). The trip

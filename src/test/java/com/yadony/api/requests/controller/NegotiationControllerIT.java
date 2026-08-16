@@ -368,6 +368,39 @@ class NegotiationControllerIT {
     }
 
     @Test
+    void patch_changeTrip_returns200() throws Exception {
+        UUID threadId = UUID.randomUUID();
+        when(service.changeTrip(eq(TRAVELER_UUID), eq(threadId), any()))
+            .thenReturn(fakeThread(threadId, NegotiationThreadStatus.OPEN, null));
+
+        var req = new com.yadony.api.requests.dto.NegotiationChangeTripRequest(UUID.randomUUID());
+
+        mockMvc.perform(patch("/negotiations/{id}/trip", threadId)
+                .with(authentication(authAs("uid-traveler", "TRAVELER")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(req)))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.status").value("OPEN"));
+    }
+
+    @Test
+    void patch_changeTrip_returns409_whenThreadAwaitingPayment() throws Exception {
+        UUID threadId = UUID.randomUUID();
+        when(service.changeTrip(eq(TRAVELER_UUID), eq(threadId), any()))
+            .thenThrow(new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.CONFLICT, "negotiation-trip-locked"));
+
+        var req = new com.yadony.api.requests.dto.NegotiationChangeTripRequest(UUID.randomUUID());
+
+        mockMvc.perform(patch("/negotiations/{id}/trip", threadId)
+                .with(authentication(authAs("uid-traveler", "TRAVELER")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(req)))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.detail").value(org.hamcrest.Matchers.containsString("negotiation-trip-locked")));
+    }
+
+    @Test
     void post_initiatePayment_withAwaitingPaymentThread_returns200() throws Exception {
         UUID threadId = UUID.randomUUID();
         NegotiationThreadResponse awaitingPaymentThread = new NegotiationThreadResponse(
