@@ -948,10 +948,24 @@ public class NegotiationService {
     private NegotiationThreadResponse finalizeInternal(UUID callerId, UUID threadId,
                                                        String paymentIntentId, PaymentMethod chosenMethod,
                                                        boolean verifyEscrow) {
+        // Verrou pessimiste sur la demande AVANT toute lecture du fil : c'est le
+        // quatrième chemin qui scelle un accord, il doit suivre le même ordre que
+        // settleCommission, declineCommission et l'expiration. Sans lui, ce
+        // paiement verrouille le fil puis attend la demande pendant qu'un
+        // règlement de commission concurrent détient la demande et attend le fil :
+        // interblocage réel, détecté par PostgreSQL, qui tue l'une des deux
+        // transactions. Si c'est celle du règlement, son rollback efface le
+        // PaymentIntent, le statut de commission et l'audit alors que le débit
+        // Stripe est bien parti, et le fil se retrouve sans
+        // commissionPaymentIntentId, donc invisible pour le balayage de
+        // rattrapage. Voyageur débité, aucune contrepartie, aucune trace.
+        UUID lockedRequestId = threadRepo.findPackageRequestIdById(threadId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "thread/not-found"));
+        PackageRequestEntity request = requestRepo.findByIdForUpdate(lockedRequestId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found"));
+
         NegotiationThreadEntity thread = threadRepo.findById(threadId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "thread/not-found"));
-        PackageRequestEntity request = requestRepo.findById(thread.getPackageRequestId())
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found"));
         if (!callerId.equals(request.getSenderId())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "negotiation/not-thread-participant");
         }

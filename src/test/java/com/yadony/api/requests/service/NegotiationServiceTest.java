@@ -110,6 +110,15 @@ class NegotiationServiceTest {
             throw new RuntimeException(e);
         }
 
+        // Les chemins qui scellent un accord (finalize, règlement, renoncement)
+        // résolvent la demande par projection puis la verrouillent, avant toute
+        // lecture du fil : charger le fil d'abord le mettrait dans le contexte de
+        // persistance et rendrait leurs gardes d'état aveugles au verrou.
+        lenient().when(threadRepo.findPackageRequestIdById(any()))
+            .thenReturn(Optional.of(REQUEST_ID));
+        lenient().when(requestRepo.findByIdForUpdate(REQUEST_ID))
+            .thenReturn(Optional.of(request));
+
         // Default commission rate used whenever toResponse() is called.
         // Lenient to avoid UnnecessaryStubbingException in error-path tests that never reach toResponse().
         lenient().when(commissionProperties.rate()).thenReturn(new BigDecimal("0.12"));
@@ -724,7 +733,7 @@ class NegotiationServiceTest {
         void counter_validAlternance_savesAndIncrementsRounds() {
             when(config.maxNegotiationRounds()).thenReturn(5);
             when(threadRepo.findById(THREAD_ID)).thenReturn(java.util.Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(java.util.Optional.of(traveler));
 
             // Last message was PROPOSAL by traveler
@@ -749,7 +758,7 @@ class NegotiationServiceTest {
         void counter_sameSideTwice_throws409() {
             when(config.maxNegotiationRounds()).thenReturn(5);
             when(threadRepo.findById(THREAD_ID)).thenReturn(java.util.Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
 
             var lastMsg = NegotiationMessageEntity.create(THREAD_ID, SENDER_ID,
                 NegotiationMessageKind.COUNTER, new BigDecimal("28"), null);
@@ -770,7 +779,7 @@ class NegotiationServiceTest {
             when(config.maxNegotiationRounds()).thenReturn(5);
             thread.setRoundsCount((short) 5);
             when(threadRepo.findById(THREAD_ID)).thenReturn(java.util.Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
 
             var req = new com.yadony.api.requests.dto.NegotiationCounterRequest(
                 new BigDecimal("25"), null);
@@ -798,7 +807,7 @@ class NegotiationServiceTest {
         @DisplayName("non-participant → 403")
         void counter_outsider_throws403() {
             when(threadRepo.findById(THREAD_ID)).thenReturn(java.util.Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
 
             UUID OUTSIDER = UUID.randomUUID();
             var req = new com.yadony.api.requests.dto.NegotiationCounterRequest(
@@ -836,7 +845,7 @@ class NegotiationServiceTest {
         @DisplayName("traveler reject → thread REJECTED, message REJECT")
         void reject_byTraveler_marksRejected() {
             when(threadRepo.findById(THREAD_ID)).thenReturn(java.util.Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
 
             var req = new com.yadony.api.requests.dto.NegotiationRejectRequest("Trop cher pour moi");
             service.reject(TRAVELER_ID, THREAD_ID, req);
@@ -852,7 +861,7 @@ class NegotiationServiceTest {
         void reject_lastActiveThread_reopensRequest() {
             request.setStatus(PackageRequestStatus.NEGOTIATING);
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(threadRepo.findByPackageRequestId(REQUEST_ID)).thenReturn(List.of(thread));
 
             service.reject(TRAVELER_ID, THREAD_ID,
@@ -866,7 +875,7 @@ class NegotiationServiceTest {
         @DisplayName("non-participant → 403")
         void reject_outsider_throws403() {
             when(threadRepo.findById(THREAD_ID)).thenReturn(java.util.Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
 
             UUID OUTSIDER = UUID.randomUUID();
             var req = new com.yadony.api.requests.dto.NegotiationRejectRequest("nope");
@@ -902,7 +911,7 @@ class NegotiationServiceTest {
             } catch (Exception e) { throw new RuntimeException(e); }
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(announcementRepo.findById(announcementId)).thenReturn(Optional.of(dedicatedAnn));
 
             service.reject(SENDER_ID, THREAD_ID,
@@ -941,7 +950,7 @@ class NegotiationServiceTest {
         @DisplayName("non-participant → 403 negotiation/not-thread-participant")
         void cancel_nonParticipant_throws403() {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
 
             UUID outsider = UUID.randomUUID();
             assertThatThrownBy(() -> service.cancelNegotiation(outsider, THREAD_ID, "nope"))
@@ -954,7 +963,7 @@ class NegotiationServiceTest {
         void cancel_statusAccepted_throws409NotCancellable() {
             thread.setStatus(NegotiationThreadStatus.ACCEPTED);
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
 
             assertThatThrownBy(() -> service.cancelNegotiation(SENDER_ID, THREAD_ID, "nope"))
                 .isInstanceOf(ResponseStatusException.class)
@@ -965,7 +974,7 @@ class NegotiationServiceTest {
         @DisplayName("status OPEN, caller = sender → CANCELLED, event vers traveler, audit, escrowPort jamais appelé")
         void cancel_open_setsCancelled_publishesEventToOtherParty_audits() {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
 
             service.cancelNegotiation(SENDER_ID, THREAD_ID, "Je change d'avis");
@@ -992,7 +1001,7 @@ class NegotiationServiceTest {
             NegotiationThreadEntity other = new NegotiationThreadEntity();
             other.setStatus(NegotiationThreadStatus.OPEN);
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(threadRepo.findByPackageRequestId(REQUEST_ID)).thenReturn(List.of(thread, other));
 
             service.cancelNegotiation(SENDER_ID, THREAD_ID, null);
@@ -1017,7 +1026,7 @@ class NegotiationServiceTest {
             } catch (Exception e) { throw new RuntimeException(e); }
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
             when(announcementRepo.findById(announcementId)).thenReturn(Optional.of(dedicatedAnn));
 
@@ -1043,7 +1052,7 @@ class NegotiationServiceTest {
         void cancel_awaitingTrip_setsCancelled() {
             thread.setStatus(NegotiationThreadStatus.AWAITING_TRIP);
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
 
             service.cancelNegotiation(TRAVELER_ID, THREAD_ID, null);
@@ -1072,7 +1081,7 @@ class NegotiationServiceTest {
             } catch (Exception e) { throw new RuntimeException(e); }
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
             when(announcementRepo.findById(announcementId)).thenReturn(Optional.of(dedicatedAnn));
 
@@ -1130,7 +1139,7 @@ class NegotiationServiceTest {
                 new java.math.BigDecimal("30"), null);
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(java.util.Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(java.util.Optional.of(traveler));
             when(userRepository.findById(SENDER_ID)).thenReturn(java.util.Optional.of(traveler));
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID))
@@ -1165,7 +1174,7 @@ class NegotiationServiceTest {
                 new java.math.BigDecimal("30"), null);
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(java.util.Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(java.util.Optional.of(traveler));
             when(userRepository.findById(SENDER_ID)).thenReturn(java.util.Optional.of(traveler));
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID))
@@ -1183,7 +1192,7 @@ class NegotiationServiceTest {
         @DisplayName("non-sender → 403")
         void accept_nonSender_throws403() {
             when(threadRepo.findById(THREAD_ID)).thenReturn(java.util.Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
 
             UUID OUTSIDER = UUID.randomUUID();
             var req = new com.yadony.api.requests.dto.NegotiationAcceptRequest(null);
@@ -1197,7 +1206,7 @@ class NegotiationServiceTest {
         @DisplayName("voyageur accepte sans messages → 409 inconsistent-thread (contrat bilatéral)")
         void traveler_accepts_noMessages_throwsInconsistent() {
             when(threadRepo.findById(THREAD_ID)).thenReturn(java.util.Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID))
                 .thenReturn(java.util.List.of());
 
@@ -1213,7 +1222,7 @@ class NegotiationServiceTest {
         void accept_alreadyAccepted_throws409() {
             thread.setStatus(NegotiationThreadStatus.ACCEPTED);
             when(threadRepo.findById(THREAD_ID)).thenReturn(java.util.Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
 
             var req = new com.yadony.api.requests.dto.NegotiationAcceptRequest(null);
 
@@ -1230,7 +1239,7 @@ class NegotiationServiceTest {
                 new java.math.BigDecimal("30"), null);
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(java.util.Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID))
                 .thenReturn(java.util.List.of(lastMsg));
             when(messageRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -1254,7 +1263,7 @@ class NegotiationServiceTest {
                 new java.math.BigDecimal("28"), null);
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(java.util.Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID))
                 .thenReturn(java.util.List.of(lastMsg));
             when(messageRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -1277,7 +1286,7 @@ class NegotiationServiceTest {
                 new java.math.BigDecimal("28"), null);
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(java.util.Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID))
                 .thenReturn(java.util.List.of(lastMsg));
             when(messageRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -1303,7 +1312,7 @@ class NegotiationServiceTest {
                 new java.math.BigDecimal("30"), null);
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(java.util.Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID))
                 .thenReturn(java.util.List.of(lastMsg));
             when(messageRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -1325,7 +1334,7 @@ class NegotiationServiceTest {
                 new java.math.BigDecimal("28"), null);
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(java.util.Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID))
                 .thenReturn(java.util.List.of(lastMsg));
 
@@ -1338,7 +1347,7 @@ class NegotiationServiceTest {
         @DisplayName("tiers non participant → 403 not-thread-participant")
         void accept_thirdParty_throwsForbidden() {
             when(threadRepo.findById(THREAD_ID)).thenReturn(java.util.Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
 
             UUID stranger = UUID.randomUUID();
             assertThatThrownBy(() -> service.accept(stranger, THREAD_ID, null))
@@ -1370,7 +1379,7 @@ class NegotiationServiceTest {
             } catch (Exception e) { throw new RuntimeException(e); }
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(java.util.Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(java.util.Optional.of(traveler));
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(java.util.List.of());
 
@@ -1402,7 +1411,7 @@ class NegotiationServiceTest {
             } catch (Exception e) { throw new RuntimeException(e); }
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(java.util.Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
 
             UUID OUTSIDER = UUID.randomUUID();
             assertThatThrownBy(() -> service.getById(OUTSIDER, THREAD_ID))
@@ -1433,7 +1442,7 @@ class NegotiationServiceTest {
             var thread = threadFor(THREAD_ID);
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(java.util.Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(java.util.Optional.of(traveler));
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(java.util.List.of());
             when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any(), any())).thenReturn(true);
@@ -1450,7 +1459,7 @@ class NegotiationServiceTest {
             var thread = threadFor(THREAD_ID);
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(java.util.Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(java.util.Optional.of(traveler));
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(java.util.List.of());
             when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any(), any())).thenReturn(false);
@@ -1468,7 +1477,7 @@ class NegotiationServiceTest {
             var thread = threadFor(THREAD_ID);
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(java.util.Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(java.util.Optional.of(traveler));
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(java.util.List.of());
             when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any(), any())).thenReturn(false);
@@ -1505,7 +1514,7 @@ class NegotiationServiceTest {
             UUID threadId = UUID.randomUUID();
             var thread = threadFor(threadId, new BigDecimal("40.00"));
             when(threadRepo.findById(threadId)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(commissionRateResolver.resolve(TRAVELER_ID, SENDER_ID)).thenReturn(new BigDecimal("0.05"));
 
             var quote = service.quote(SENDER_ID, threadId, null);
@@ -1523,7 +1532,7 @@ class NegotiationServiceTest {
             UUID threadId = UUID.randomUUID();
             var thread = threadFor(threadId, new BigDecimal("40.00"));
             when(threadRepo.findById(threadId)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(commissionRateResolver.resolve(TRAVELER_ID, SENDER_ID, "WELCOME6"))
                     .thenReturn(new BigDecimal("0.06"));
             when(commissionRateResolver.resolve(TRAVELER_ID, SENDER_ID)).thenReturn(new BigDecimal("0.12"));
@@ -1543,7 +1552,7 @@ class NegotiationServiceTest {
             UUID threadId = UUID.randomUUID();
             var thread = threadFor(threadId, new BigDecimal("40.00"));
             when(threadRepo.findById(threadId)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(commissionRateResolver.resolve(TRAVELER_ID, SENDER_ID, "BADCODE"))
                     .thenThrow(new com.yadony.api.common.YadonyBusinessException(
                             HttpStatus.NOT_FOUND, "promo-not-found", "Promo Not Found", "Introuvable"));
@@ -1558,7 +1567,7 @@ class NegotiationServiceTest {
             UUID threadId = UUID.randomUUID();
             var thread = threadFor(threadId, new BigDecimal("40.00"));
             when(threadRepo.findById(threadId)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
 
             assertThatThrownBy(() -> service.quote(TRAVELER_ID, threadId, null))
                     .isInstanceOf(ResponseStatusException.class)
@@ -1572,7 +1581,7 @@ class NegotiationServiceTest {
             var thread = threadFor(threadId, new BigDecimal("40.00"));
             thread.setPromoCode("AUTOCODE");
             when(threadRepo.findById(threadId)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(commissionRateResolver.resolve(TRAVELER_ID, SENDER_ID, "AUTOCODE"))
                     .thenReturn(new BigDecimal("0.06"));
             when(commissionRateResolver.resolve(TRAVELER_ID, SENDER_ID)).thenReturn(new BigDecimal("0.12"));
@@ -1642,7 +1651,7 @@ class NegotiationServiceTest {
 
         private void stubCommonLookups(UUID threadId, NegotiationThreadEntity thread) {
             when(threadRepo.findById(threadId)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
         }
 
@@ -1797,7 +1806,7 @@ class NegotiationServiceTest {
             com.yadony.api.matching.AnnouncementEntity existingAnn = new com.yadony.api.matching.AnnouncementEntity();
 
             when(threadRepo.findById(threadId)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
             when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
             when(config.maxNegotiationRounds()).thenReturn(5);
@@ -1849,7 +1858,7 @@ class NegotiationServiceTest {
             } catch (Exception e) { throw new RuntimeException(e); }
 
             when(threadRepo.findById(threadId)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
             when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
             when(config.maxNegotiationRounds()).thenReturn(5);
@@ -1884,7 +1893,7 @@ class NegotiationServiceTest {
             thread.setLastActivityAt(java.time.LocalDateTime.now());
 
             when(threadRepo.findById(threadId)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
 
             assertThatThrownBy(() -> service.refuseTrip(TRAVELER_ID, threadId, null))
                 .isInstanceOf(ResponseStatusException.class)
@@ -1911,7 +1920,7 @@ class NegotiationServiceTest {
             thread.setLastActivityAt(java.time.LocalDateTime.now());
 
             when(threadRepo.findById(threadId)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
 
             assertThatThrownBy(() -> service.refuseTrip(SENDER_ID, threadId, null))
                 .isInstanceOf(ResponseStatusException.class)
@@ -1938,7 +1947,7 @@ class NegotiationServiceTest {
             thread.setLastActivityAt(java.time.LocalDateTime.now());
 
             when(threadRepo.findById(threadId)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
 
             assertThatThrownBy(() -> service.refuseTrip(SENDER_ID, threadId, null))
                 .isInstanceOf(ResponseStatusException.class)
@@ -1994,7 +2003,7 @@ class NegotiationServiceTest {
         @DisplayName("happy path — date dans la fenêtre → annonce dédiée créée + thread → AWAITING_PAYMENT + event")
         void createDedicatedTrip_valid_createsAnnouncementAndTransitionsThread() {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
             when(commissionProperties.rate()).thenReturn(new BigDecimal("0.12"));
             UUID newAnnId = UUID.randomUUID();
@@ -2049,7 +2058,7 @@ class NegotiationServiceTest {
         @DisplayName("types acceptés/refusés legacy normalisés vers le vocabulaire canonique, texte libre préservé")
         void createDedicatedTrip_normalisesLegacyContentTypes() {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
             when(commissionProperties.rate()).thenReturn(new BigDecimal("0.12"));
             when(announcementRepo.save(any())).thenAnswer(inv -> {
@@ -2089,7 +2098,7 @@ class NegotiationServiceTest {
         @DisplayName("date avant la fenêtre de tolérance → 422 date-mismatch")
         void createDedicatedTrip_dateBeforeWindow_throws422() {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
 
             var req = buildRequest(request.getDesiredDate().minusDays(3));
@@ -2103,7 +2112,7 @@ class NegotiationServiceTest {
         @DisplayName("date après la fenêtre de tolérance → 422 date-mismatch")
         void createDedicatedTrip_dateAfterWindow_throws422() {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
 
             var req = buildRequest(request.getDesiredDate().plusDays(3));
@@ -2155,7 +2164,7 @@ class NegotiationServiceTest {
             + "(le solde n'est plus une condition de disponibilité, il n'est vérifié qu'au paiement)")
         void createDedicatedTrip_allowsCashEvenWhenWalletShort() {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
             when(commissionProperties.rate()).thenReturn(new BigDecimal("0.12"));
             when(announcementRepo.save(any())).thenAnswer(inv -> {
@@ -2183,7 +2192,7 @@ class NegotiationServiceTest {
         @DisplayName("createDedicatedTrip persiste les champs dérivés et verrouillés après extraction")
         void createDedicatedTrip_stillDerivesLockedFieldsFromRequest() {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
             when(commissionProperties.rate()).thenReturn(new BigDecimal("0.12"));
             UUID newAnnId = UUID.randomUUID();
@@ -2266,7 +2275,7 @@ class NegotiationServiceTest {
             } catch (Exception e) { throw new RuntimeException(e); }
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(announcementRepo.findById(newAnnId)).thenReturn(Optional.of(newAnn));
             when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
@@ -2362,7 +2371,7 @@ class NegotiationServiceTest {
             } catch (Exception e) { throw new RuntimeException(e); }
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(announcementRepo.findById(newAnnId)).thenReturn(Optional.of(newAnn));
             when(announcementRepo.findById(oldDedicatedAnnId)).thenReturn(Optional.of(oldDedicatedAnn));
             when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -2424,7 +2433,7 @@ class NegotiationServiceTest {
             ann.setAvailableKg(new BigDecimal("5"));
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(announcementRepo.findById(annId)).thenReturn(Optional.of(ann));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
             when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
@@ -2457,7 +2466,7 @@ class NegotiationServiceTest {
             ann.setAvailableKg(new BigDecimal("5"));
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(announcementRepo.findById(annId)).thenReturn(Optional.of(ann));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
             when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
@@ -2487,7 +2496,7 @@ class NegotiationServiceTest {
             ann.setAvailableKg(new BigDecimal("5")); // request weight is 5 → linkable
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(announcementRepo.findById(annId)).thenReturn(Optional.of(ann));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
             when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
@@ -2519,7 +2528,7 @@ class NegotiationServiceTest {
             ann.setAvailableKg(new BigDecimal("5"));
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(announcementRepo.findById(annId)).thenReturn(Optional.of(ann));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
             when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
@@ -2548,7 +2557,7 @@ class NegotiationServiceTest {
             ann.setStatus(com.yadony.api.matching.AnnouncementStatus.COMPLETED);
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(announcementRepo.findById(annId)).thenReturn(Optional.of(ann));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
 
@@ -2572,7 +2581,7 @@ class NegotiationServiceTest {
             ann.setAvailableKg(new BigDecimal("2")); // request weight is 5 → too small
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(announcementRepo.findById(annId)).thenReturn(Optional.of(ann));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
 
@@ -2843,7 +2852,7 @@ class NegotiationServiceTest {
             thread.setRoundsCount((short) 1);
             request.setNegotiable(false);
             when(threadRepo.findById(any())).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
 
             assertThatThrownBy(() -> service.counter(SENDER_ID, UUID.randomUUID(),
                     new com.yadony.api.requests.dto.NegotiationCounterRequest(new BigDecimal("33"), "non")))
@@ -2881,7 +2890,7 @@ class NegotiationServiceTest {
             request.setRecipientName(null); // détails incomplets intentionnellement
             request.setRecipientPhone("+221771234567");
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
 
             assertThatThrownBy(() -> service.finalizeAfterPayment(SENDER_ID, THREAD_ID, "pi_x"))
                 .isInstanceOf(ResponseStatusException.class)
@@ -2894,7 +2903,7 @@ class NegotiationServiceTest {
             request.setRecipientName("Fatou Diop");
             request.setRecipientPhone(null);
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
 
             assertThatThrownBy(() -> service.finalizeAfterPayment(SENDER_ID, THREAD_ID, "pi_x"))
                 .isInstanceOf(ResponseStatusException.class)
@@ -2911,7 +2920,7 @@ class NegotiationServiceTest {
             request.setArrivalCity("Dakar");
             request.setWeightKg(new BigDecimal("5"));
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(threadRepo.findByPackageRequestId(REQUEST_ID)).thenReturn(List.of());
             when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
             when(requestRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -2935,7 +2944,7 @@ class NegotiationServiceTest {
             request.setRecipientName("Fatou Diop");
             request.setRecipientPhone("+221771234567");
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             // Mode final CASH → on tente de libérer tout escrow carte en vol (ici aucun : no-op → true).
             // Ce mécanisme est indépendant du scellement et reste inchangé par cette tâche.
             when(escrowPort.releaseEscrowForMethodSwitch(THREAD_ID)).thenReturn(true);
@@ -2964,7 +2973,7 @@ class NegotiationServiceTest {
             request.setRecipientName("Fatou Diop");
             request.setRecipientPhone("+221771234567");
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(escrowPort.releaseEscrowForMethodSwitch(THREAD_ID)).thenReturn(true);
             when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(List.of());
@@ -3002,7 +3011,7 @@ class NegotiationServiceTest {
             request.setRecipientName("Fatou Diop");
             request.setRecipientPhone("+221771234567");
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(List.of());
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
             when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
@@ -3050,7 +3059,7 @@ class NegotiationServiceTest {
             } catch (Exception e) { throw new RuntimeException(e); }
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(threadRepo.findByPackageRequestId(REQUEST_ID)).thenReturn(List.of(thread, competing));
             when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
             when(requestRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -3114,7 +3123,7 @@ class NegotiationServiceTest {
             } catch (Exception e) { throw new RuntimeException(e); }
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(threadRepo.findByPackageRequestId(REQUEST_ID)).thenReturn(List.of(thread, competingCash));
             when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
             when(requestRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -3146,7 +3155,7 @@ class NegotiationServiceTest {
             request.setRecipientName("Fatou Diop");
             request.setRecipientPhone("+221771234567");
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(List.of());
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
             when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
@@ -3165,7 +3174,7 @@ class NegotiationServiceTest {
             request.setRecipientName("Fatou Diop");
             request.setRecipientPhone("+221771234567");
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
 
             assertThatThrownBy(() -> service.finalizeAfterPayment(SENDER_ID, THREAD_ID, "pi_x"))
                 .isInstanceOf(ResponseStatusException.class)
@@ -3188,7 +3197,7 @@ class NegotiationServiceTest {
             dedicatedAnn.setReservedKg(new BigDecimal("5"));
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(threadRepo.findByPackageRequestId(REQUEST_ID)).thenReturn(List.of());
             when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
             when(requestRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -3219,7 +3228,7 @@ class NegotiationServiceTest {
             publicAnn.setLinkedPackageRequestId(null); // trajet public/existant
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(threadRepo.findByPackageRequestId(REQUEST_ID)).thenReturn(List.of());
             when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
             when(requestRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -3266,7 +3275,7 @@ class NegotiationServiceTest {
         @DisplayName("webhook gagne la course du @Version (optimistic lock) → succès ACCEPTED, pas de 409")
         void checkout_optimisticLockLoser_returnsAcceptedSuccess() {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(escrowPort.verifyNegotiationEscrow(eq(THREAD_ID), any())).thenReturn(true);
             // Le webhook concurrent a déjà commité → notre save perd la course du @Version.
             when(threadRepo.save(any())).thenThrow(
@@ -3289,7 +3298,7 @@ class NegotiationServiceTest {
             thread.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.CASH);
             request.setAcceptedPaymentMethods(java.util.EnumSet.of(PaymentMethod.CASH));
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(escrowPort.releaseEscrowForMethodSwitch(THREAD_ID)).thenReturn(true);
             // Le finalize concurrent (autre onglet, relance réseau) a déjà commité →
             // notre premier save (passage à AWAITING_COMMISSION) perd la course du
@@ -3314,7 +3323,7 @@ class NegotiationServiceTest {
         void checkout_threadAlreadyAccepted_returnsSuccess() {
             thread.setStatus(NegotiationThreadStatus.ACCEPTED);
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(List.of());
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
             when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
@@ -3331,7 +3340,7 @@ class NegotiationServiceTest {
         void checkout_genuineConflict_rethrows() {
             thread.setStatus(NegotiationThreadStatus.REJECTED);
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(List.of());
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
             when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
@@ -4200,7 +4209,7 @@ class NegotiationServiceTest {
             when(announcementRepo.findAllById(any())).thenReturn(List.of());
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(threadId)).thenReturn(List.of());
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler)); // reuse as sender
 
             List<com.yadony.api.requests.dto.NegotiationThreadResponse> result = service.listMine(TRAVELER_ID);
@@ -4262,7 +4271,7 @@ class NegotiationServiceTest {
             request.setArrivalCity("Abidjan");
             request.setWeightKg(new BigDecimal("3"));
 
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
             when(threadRepo.findByPackageRequestId(REQUEST_ID)).thenReturn(List.of(thread));
             when(announcementRepo.findAllById(any())).thenReturn(List.of());
@@ -4278,7 +4287,7 @@ class NegotiationServiceTest {
         @Test
         @DisplayName("listForRequest() throws 403 si le caller n'est pas le sender")
         void listForRequest_throwsForbiddenForNonSender() {
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
 
             assertThatThrownBy(() -> service.listForRequest(TRAVELER_ID, REQUEST_ID))
                 .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
@@ -4288,7 +4297,7 @@ class NegotiationServiceTest {
         @Test
         @DisplayName("listForRequest() throws 404 si la request n'existe pas")
         void listForRequest_throwsNotFoundForMissingRequest() {
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.empty());
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.empty());
 
             assertThatThrownBy(() -> service.listForRequest(SENDER_ID, REQUEST_ID))
                 .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
@@ -4333,7 +4342,7 @@ class NegotiationServiceTest {
         @DisplayName("finalize avec détails complets → thread ACCEPTED, request ACCEPTED, event publié")
         void finalize_completeDetails_acceptsThread() {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(threadRepo.findByPackageRequestId(REQUEST_ID)).thenReturn(List.of()); // no competing
             when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
             when(requestRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -4387,7 +4396,7 @@ class NegotiationServiceTest {
             } catch (Exception e) { throw new RuntimeException(e); }
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(threadRepo.findByPackageRequestId(REQUEST_ID)).thenReturn(List.of(thread, competing));
             when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
             when(requestRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -4411,7 +4420,7 @@ class NegotiationServiceTest {
         void finalize_wrongStatus_throws409() {
             thread.setStatus(NegotiationThreadStatus.OPEN);
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
 
             assertThatThrownBy(() -> service.finalizeAfterPayment(SENDER_ID, THREAD_ID, "pi_x"))
                 .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
@@ -4422,7 +4431,7 @@ class NegotiationServiceTest {
         @DisplayName("finalize throws 403 si le caller n'est pas le sender")
         void finalize_nonSender_throws403() {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
 
             assertThatThrownBy(() -> service.finalizeAfterPayment(TRAVELER_ID, THREAD_ID, "pi_x"))
                 .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
@@ -4434,7 +4443,7 @@ class NegotiationServiceTest {
         void finalize_chosenMethodNotAccepted_throws422() {
             request.setAcceptedPaymentMethods(java.util.EnumSet.of(PaymentMethod.STRIPE));
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
 
             assertThatThrownBy(() ->
                     service.finalizeAfterPayment(SENDER_ID, THREAD_ID, "pi_x", PaymentMethod.CASH))
@@ -4453,7 +4462,7 @@ class NegotiationServiceTest {
             thread.setPaymentMethod(null);
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
 
             org.springframework.web.server.ResponseStatusException ex = assertThrows(
                 org.springframework.web.server.ResponseStatusException.class,
@@ -4470,7 +4479,7 @@ class NegotiationServiceTest {
             thread.setPaymentMethod(PaymentMethod.CASH);
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(threadRepo.findByPackageRequestId(REQUEST_ID)).thenReturn(List.of());
             when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
             when(requestRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -4530,7 +4539,7 @@ class NegotiationServiceTest {
         @DisplayName("PaymentIntent non vérifié par Stripe → 422, thread reste AWAITING_PAYMENT, aucun event")
         void checkout_stripeUnverifiedEscrow_throws422_doesNotFinalize() {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(escrowPort.verifyNegotiationEscrow(THREAD_ID, "x")).thenReturn(false);
 
             assertThatThrownBy(() ->
@@ -4547,7 +4556,7 @@ class NegotiationServiceTest {
         @DisplayName("PaymentIntent vérifié (requires_capture) → thread ACCEPTED + event")
         void checkout_stripeVerifiedEscrow_finalizes() {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(threadRepo.findByPackageRequestId(REQUEST_ID)).thenReturn(List.of());
             when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
             when(requestRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -4566,7 +4575,7 @@ class NegotiationServiceTest {
         @DisplayName("switch vers CASH → libère l'escrow Stripe puis suspend en AWAITING_COMMISSION (ne finalise plus)")
         void checkout_switchToCash_releasesEscrowThenAwaitsCommission() {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(List.of());
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
@@ -4586,7 +4595,7 @@ class NegotiationServiceTest {
         @DisplayName("switch vers CASH mais escrow Stripe impossible à libérer → 409, pas de bascule ni de finalize")
         void checkout_switchToCash_releaseFails_throws409() {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(escrowPort.releaseEscrowForMethodSwitch(THREAD_ID)).thenReturn(false);
 
             assertThatThrownBy(() ->
@@ -4604,7 +4613,7 @@ class NegotiationServiceTest {
         @DisplayName("webhook (3-arg) finalise un thread STRIPE sans appeler escrowPort (déjà vérifié par Stripe)")
         void webhookFinalize_stripe_doesNotCallEscrowPort() {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(threadRepo.findByPackageRequestId(REQUEST_ID)).thenReturn(List.of());
             when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
             when(requestRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -4657,7 +4666,7 @@ class NegotiationServiceTest {
 
         private void stubFinalizeCollaborators() {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             // Lenient : seuls les scénarios STRIPE (qui scellent via sealAcceptedThread)
             // exercent findByPackageRequestId/requestRepo.save — les scénarios CASH
             // suspendent en AWAITING_COMMISSION sans y toucher.
@@ -4747,7 +4756,7 @@ class NegotiationServiceTest {
                 java.util.EnumSet.of(PaymentMethod.STRIPE, PaymentMethod.CASH));
             thread.setAvailablePaymentMethods(java.util.EnumSet.of(PaymentMethod.CASH));
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
 
             ResponseStatusException ex = assertThrows(ResponseStatusException.class,
                 () -> service.finalizeAfterPayment(SENDER_ID, THREAD_ID, "pi_x", PaymentMethod.STRIPE));
@@ -4790,7 +4799,7 @@ class NegotiationServiceTest {
 
             when(config.maxNegotiationRounds()).thenReturn(5);
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(List.of());
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
             when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler)); // sender returns same user
@@ -4810,7 +4819,7 @@ class NegotiationServiceTest {
 
             when(config.maxNegotiationRounds()).thenReturn(5);
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(List.of());
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
             when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
@@ -4828,7 +4837,7 @@ class NegotiationServiceTest {
 
             when(config.maxNegotiationRounds()).thenReturn(5);
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(List.of());
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
             when(userRepository.findById(SENDER_ID)).thenReturn(Optional.empty());
@@ -4870,7 +4879,7 @@ class NegotiationServiceTest {
             NegotiationThreadEntity thread = buildThread(NegotiationThreadStatus.OPEN,
                 java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(2), null);
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
 
             UUID stranger = UUID.randomUUID();
             var ex = assertThrows(ResponseStatusException.class, () -> service.nudge(stranger, THREAD_ID));
@@ -4885,7 +4894,7 @@ class NegotiationServiceTest {
             NegotiationThreadEntity thread = buildThread(NegotiationThreadStatus.AWAITING_PAYMENT,
                 java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(2), null);
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
 
             var ex = assertThrows(ResponseStatusException.class, () -> service.nudge(SENDER_ID, THREAD_ID));
 
@@ -4899,7 +4908,7 @@ class NegotiationServiceTest {
             NegotiationThreadEntity thread = buildThread(NegotiationThreadStatus.AWAITING_TRIP,
                 java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(2), null);
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
 
             // Le voyageur doit agir en AWAITING_TRIP -> il ne peut pas relancer.
             var ex = assertThrows(ResponseStatusException.class, () -> service.nudge(TRAVELER_ID, THREAD_ID));
@@ -4914,7 +4923,7 @@ class NegotiationServiceTest {
             NegotiationThreadEntity thread = buildThread(NegotiationThreadStatus.AWAITING_TRIP,
                 java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusMinutes(20), null);
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
 
             // Le sender attend (le voyageur doit agir) mais l'activité est trop récente.
             var ex = assertThrows(ResponseStatusException.class, () -> service.nudge(SENDER_ID, THREAD_ID));
@@ -4930,7 +4939,7 @@ class NegotiationServiceTest {
                 java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(2),
                 java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusMinutes(20));
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
 
             var ex = assertThrows(ResponseStatusException.class, () -> service.nudge(SENDER_ID, THREAD_ID));
 
@@ -4945,7 +4954,7 @@ class NegotiationServiceTest {
                 java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(2);
             NegotiationThreadEntity thread = buildThread(NegotiationThreadStatus.AWAITING_TRIP, oldActivity, null);
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(List.of());
             when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
