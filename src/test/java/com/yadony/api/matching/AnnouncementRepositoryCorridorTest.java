@@ -26,7 +26,7 @@ class AnnouncementRepositoryCorridorTest {
         a.setTravelerId(UUID.randomUUID());
         a.setDepartureCity(departure);
         a.setArrivalCity(arrival);
-        a.setDepartureDate(LocalDate.of(2026, 8, 15));
+        a.setDepartureDate(LocalDate.now().plusDays(1));
         a.setTransportMode(TransportMode.PLANE);
         a.setPickupAddressLabel("Gare du Nord, Paris");
         a.setPickupLat(new BigDecimal("48.880756"));
