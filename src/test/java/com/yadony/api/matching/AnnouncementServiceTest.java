@@ -2902,4 +2902,32 @@ class AnnouncementServiceTest {
                     "user-not-found");
         }
     }
+
+    /** Régression : jumeau de C2 pour le chemin scheduler/inline (triggerInProgressTransitions).
+     *  Avant le fix, applyInProgressTransition interrogeait (ACCEPTED, HANDED_OVER, IN_TRANSIT)
+     *  sans ARRIVED : un trajet déjà parti dont tous les colis étaient ARRIVED (retirés du
+     *  vol mais pas encore livrés) était forcé à COMPLETED avec l'audit
+     *  DEPARTURE_NO_ACCEPTED_BIDS, alors que la livraison n'avait pas eu lieu. */
+    @Test
+    @DisplayName("régression : trigger inline in-progress — un colis ARRIVED empêche la complétion forcée au départ")
+    void triggerInProgressTransitions_arrivedBid_doesNotForceCompletion() {
+        UserEntity traveler = buildTraveler();
+        AnnouncementEntity announcement = buildAnnouncement(traveler);
+        announcement.setStatus(AnnouncementStatus.ACTIVE);
+        announcement.setDepartureDate(LocalDate.now().minusDays(1));
+
+        when(announcementRepository.findActiveOrFullDepartingOnOrBefore(any()))
+                .thenReturn(List.of(announcement));
+        when(bidRepository.existsByAnnouncementIdAndStatusIn(eq(ANNOUNCEMENT_ID),
+                argThat(statuses -> statuses != null && statuses.contains(BidStatus.ARRIVED))))
+                .thenReturn(true);
+
+        announcementService.triggerInProgressTransitions();
+
+        assertThat(announcement.getStatus()).isNotEqualTo(AnnouncementStatus.COMPLETED);
+        verify(announcementRepository, never()).save(argThat(a ->
+                a != null && a.getStatus() == AnnouncementStatus.COMPLETED));
+        verify(bidRepository).existsByAnnouncementIdAndStatusIn(eq(ANNOUNCEMENT_ID),
+                argThat(statuses -> statuses.contains(BidStatus.ARRIVED)));
+    }
 }

@@ -131,7 +131,7 @@ class AnnouncementInProgressTransitionTest {
         when(announcementRepository.findActiveOrFullDepartingOnOrBefore(any(LocalDate.class)))
                 .thenReturn(List.of(ann));
         when(bidRepository.existsByAnnouncementIdAndStatusIn(announcementId,
-                List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT)))
+                List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED)))
                 .thenReturn(true);
         when(bidRepository.findByAnnouncementIdAndStatusIn(announcementId, List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED)))
                 .thenReturn(List.of(pending));
@@ -159,7 +159,7 @@ class AnnouncementInProgressTransitionTest {
         when(announcementRepository.findActiveOrFullDepartingOnOrBefore(any(LocalDate.class)))
                 .thenReturn(List.of(ann));
         when(bidRepository.existsByAnnouncementIdAndStatusIn(announcementId,
-                List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT)))
+                List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED)))
                 .thenReturn(false);
         when(bidRepository.findByAnnouncementIdAndStatusIn(announcementId, List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED)))
                 .thenReturn(List.of());
@@ -198,10 +198,10 @@ class AnnouncementInProgressTransitionTest {
         when(announcementRepository.findActiveOrFullDepartingOnOrBefore(any(LocalDate.class)))
                 .thenReturn(List.of(ann1, ann2));
         when(bidRepository.existsByAnnouncementIdAndStatusIn(eq(announcementId),
-                eq(List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT))))
+                eq(List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED))))
                 .thenThrow(new RuntimeException("DB error"));
         when(bidRepository.existsByAnnouncementIdAndStatusIn(eq(ann2Id),
-                eq(List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT))))
+                eq(List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED))))
                 .thenReturn(false);
         when(bidRepository.findByAnnouncementIdAndStatusIn(eq(ann2Id), eq(List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED))))
                 .thenReturn(List.of());

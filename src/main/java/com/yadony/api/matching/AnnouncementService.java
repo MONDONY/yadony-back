@@ -572,7 +572,8 @@ public class AnnouncementService {
     private void applyInProgressTransition(AnnouncementEntity announcement) {
         AnnouncementStatus previous = announcement.getStatus();
         boolean hasAcceptedBids = bidRepository.existsByAnnouncementIdAndStatusIn(
-                announcement.getId(), List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT));
+                announcement.getId(), List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT,
+                        BidStatus.ARRIVED));
 
         if (!hasAcceptedBids) {
             announcement.setStatus(AnnouncementStatus.COMPLETED);
