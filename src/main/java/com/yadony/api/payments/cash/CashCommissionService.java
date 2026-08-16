@@ -70,6 +70,7 @@ public class CashCommissionService {
     // payments/cash enums). Names mirror CommissionStatus / CommissionChargedVia.
     private static final String NEGO_COMMISSION_CHARGED = CommissionStatus.CHARGED.name();
     private static final String NEGO_COMMISSION_FAILED = CommissionStatus.FAILED.name();
+    private static final String NEGO_COMMISSION_REQUIRES_3DS = CommissionStatus.REQUIRES_3DS.name();
     private static final String NEGO_COMMISSION_VIA_WALLET = CommissionChargedVia.WALLET.name();
     private static final String NEGO_COMMISSION_VIA_CARD = CommissionChargedVia.CARD.name();
 
@@ -546,6 +547,11 @@ public class CashCommissionService {
      * requis) : renvoie le statut correspondant. Idempotente : renvoie
      * {@code accepted()} si {@code thread.commissionStatus} vaut déjà {@code CHARGED}.
      *
+     * <p>Un statut Stripe {@code requires_action} renvoie {@code REQUIRES_3DS}
+     * (client secret + paymentIntentId) plutôt qu'un échec définitif : contrairement
+     * au flux classique (déclenché par l'expéditeur, voyageur absent), c'est ici le
+     * voyageur qui règle lui-même depuis son téléphone — il peut compléter le 3DS.
+     *
      * <p><b>Note migration :</b> remplace à terme {@link #chargeNegotiationCommission},
      * conservée pour l'instant — son unique appelant ({@code CashGateAdapter} via
      * {@code CashGatePort}) sera basculé sur cette méthode dans une tâche ultérieure,
@@ -591,6 +597,8 @@ public class CashCommissionService {
         // CommissionSource.CARD : le voyageur a explicitement choisi sa carte.
         UserEntity traveler = userRepo.findById(travelerId).orElseThrow();
         if (traveler.getCommissionPaymentMethodId() == null) {
+            auditService.log("NEGOTIATION_THREAD", threadId, "CASH_COMMISSION_FAILED", travelerId,
+                    Map.of("reason", "no-commission-card"));
             return AcceptBidResponse.failed("no-commission-card");
         }
         CurrencyAmount commissionAmount = CurrencyAmount.of(
@@ -611,11 +619,24 @@ public class CashCommissionService {
                     .setIdempotencyKey("nego_commission_" + threadId)
                     .build();
             PaymentIntent pi = stripeCashGateway.createPaymentIntent(params, opts);
+            // Persisté quel que soit le statut (comme chargeCommission pour le flux
+            // classique) : une confirmation ultérieure doit pouvoir retrouver ce PI,
+            // notamment pour compléter le 3DS.
+            thread.setCommissionPaymentIntentId(pi.getId());
             if ("succeeded".equals(pi.getStatus())) {
-                thread.setCommissionPaymentIntentId(pi.getId());
                 markNegotiationCommissionCharged(thread, NEGO_COMMISSION_VIA_CARD, travelerId, commission);
                 return AcceptBidResponse.accepted();
             }
+            if ("requires_action".equals(pi.getStatus())) {
+                // Contrairement au flux classique où l'expéditeur déclenche le débit à
+                // l'insu du voyageur (absent, 3DS impossible), ici c'est le voyageur
+                // lui-même qui règle depuis son téléphone : il est présent et peut
+                // compléter l'authentification. Ne PAS bloquer en FAILED.
+                thread.setCommissionStatus(NEGO_COMMISSION_REQUIRES_3DS);
+                negotiationThreadRepository.save(thread);
+                return AcceptBidResponse.requires3ds(pi.getClientSecret(), pi.getId());
+            }
+            negotiationThreadRepository.save(thread);
             auditService.log("NEGOTIATION_THREAD", threadId, "CASH_COMMISSION_FAILED", travelerId,
                     Map.of("reason", "card-status-" + pi.getStatus()));
             return AcceptBidResponse.failed("card-status-" + pi.getStatus());

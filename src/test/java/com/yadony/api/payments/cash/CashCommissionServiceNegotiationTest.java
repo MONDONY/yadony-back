@@ -190,6 +190,40 @@ class CashCommissionServiceNegotiationTest {
         verify(negotiationThreadRepository).save(thread);
     }
 
+    // 3DS requis : le voyageur règle lui-même depuis son téléphone (contrairement au
+    // flux classique où l'expéditeur déclenche à l'insu du voyageur) → REQUIRES_3DS,
+    // pas un échec définitif. Le PaymentIntent est persisté pour la confirmation à venir.
+    @Test
+    void settleNegotiationCommission_cardSourceRequires3ds_returnsRequires3ds() throws StripeException {
+        UUID travelerId = UUID.randomUUID();
+        UUID senderId = UUID.randomUUID();
+        UUID threadId = UUID.randomUUID();
+        NegotiationThreadEntity thread = threadWithId(threadId);
+        UserEntity traveler = travelerWithCard(travelerId, true);
+
+        when(negotiationThreadRepository.findById(threadId)).thenReturn(Optional.of(thread));
+        when(commissionRateResolver.resolve(travelerId, senderId)).thenReturn(new BigDecimal("0.05"));
+        when(userRepo.findById(travelerId)).thenReturn(Optional.of(traveler));
+
+        PaymentIntent pi = mock(PaymentIntent.class);
+        when(pi.getStatus()).thenReturn("requires_action");
+        when(pi.getId()).thenReturn("pi_nego_3ds");
+        when(pi.getClientSecret()).thenReturn("pi_nego_3ds_secret");
+        when(stripeCashGateway.createPaymentIntent(any(PaymentIntentCreateParams.class), any(RequestOptions.class)))
+                .thenReturn(pi);
+
+        AcceptBidResponse response = service.settleNegotiationCommission(
+                travelerId, senderId, threadId, new BigDecimal("100.00"), CommissionSource.CARD);
+
+        assertThat(response.status()).isEqualTo(AcceptanceStatusDto.REQUIRES_3DS);
+        assertThat(response.clientSecret()).isEqualTo("pi_nego_3ds_secret");
+        assertThat(response.paymentIntentId()).isEqualTo("pi_nego_3ds");
+        assertThat(thread.getCommissionStatus()).isEqualTo("REQUIRES_3DS");
+        assertThat(thread.getCommissionPaymentIntentId()).isEqualTo("pi_nego_3ds");
+        verifyNoInteractions(walletService);
+        verify(negotiationThreadRepository).save(thread);
+    }
+
     // Carte demandée mais aucune carte enregistrée : échec explicite, pas de NPE.
     @Test
     void settleNegotiationCommission_cardSourceWithoutCard_returnsFailed() {
@@ -212,6 +246,8 @@ class CashCommissionServiceNegotiationTest {
         verifyNoInteractions(stripeCashGateway);
         verifyNoInteractions(walletService);
         assertThat(thread.getCommissionStatus()).isNull();
+        verify(auditService).log(eq("NEGOTIATION_THREAD"), eq(threadId), eq("CASH_COMMISSION_FAILED"),
+                eq(travelerId), eq(java.util.Map.of("reason", "no-commission-card")));
     }
 
     // Idempotence : rejouer un règlement déjà effectué ne redébite pas.
