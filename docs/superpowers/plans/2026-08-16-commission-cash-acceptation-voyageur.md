@@ -1076,8 +1076,16 @@ Dans `NegotiationRepository` :
       );
       return AcceptanceResponse.fromJson(response.data!);
     } on DioException catch (e) {
+      // PIÈGE : ne JAMAIS détecter une issue métier par la présence d'un champ
+      // `status` dans le corps. Le backend répond en RFC 7807, et toute erreur
+      // générique (403, 404, 409 de la garde de course) porte un `status`
+      // NUMÉRIQUE. Le parser comme une réponse métier ferait planter le cast en
+      // String et masquerait le vrai motif derrière une erreur réseau opaque,
+      // précisément dans le cas de course que le backend signale proprement.
+      // Se fier au code HTTP, comme le fait bid_remote_datasource.dart.
+      final code = e.response?.statusCode;
       final data = e.response?.data;
-      if (data is Map<String, dynamic> && data['status'] != null) {
+      if ((code == 409 || code == 422) && data is Map<String, dynamic>) {
         return AcceptanceResponse.fromJson(data);
       }
       rethrow;
@@ -1120,6 +1128,12 @@ git commit -m "feat(negociation): reglement de commission dans le bloc"
 - L'**expéditeur** : un bandeau indiquant qu'il attend la confirmation du voyageur, et surtout que sa demande reste ouverte, qu'il peut continuer à recevoir et accepter d'autres offres entre-temps. Ne jamais lui laisser croire que l'affaire est conclue.
 
 Le statut du fil est `awaitingCommission`, pas `accepted` : c'est un cas distinct dans le `switch` de `thread_state_cta_bar.dart`, à ajouter à côté des autres, sans toucher au cas `accepted` existant qui reste celui des accords scellés.
+
+**À reprendre, signalé par les tâches précédentes :**
+- `thread_state_cta_bar.dart` et `thread_hero_card.dart` ont reçu un traitement minimal du nouveau statut, juste de quoi ne pas casser la compilation. C'est ici qu'ils reçoivent leur vraie UX : le bandeau, le compte à rebours, les actions. `thread_hero_card.dart` mappe aujourd'hui le nouveau statut sur la variante visuelle du paiement en attente, à revoir si une variante propre est plus juste.
+- `my_negotiations_screen.dart`, `package_request_detail_body.dart` et `negotiation_filter_cubit.dart` ne traitent pas encore `awaitingCommission` dans leurs filtres et leurs libellés. Un fil en attente de commission doit y apparaître avec un libellé exact, pas retomber dans une catégorie par défaut trompeuse. Vérifier chacun.
+- Le compte à rebours se calcule depuis `commissionDeadline`, que le backend émet en UTC suffixé (le sérialiseur du projet ajoute le `Z`) : comparer à `DateTime.now().toUtc()`, jamais à une heure locale. Afficher un temps restant, pas une heure absolue.
+- Quand l'échéance est dépassée alors que l'app est ouverte, ne pas laisser un compte à rebours négatif : afficher que le délai est écoulé et laisser le rafraîchissement du fil rendre l'état réel.
 
 - [ ] **Step 1: Écrire les tests qui échouent**
 
