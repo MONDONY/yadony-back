@@ -562,8 +562,7 @@ class NegotiationServiceTest {
                 new com.yadony.api.matching.dto.AddressDto("DSS Diass", 14.6708, -17.0734),
                 "Bagage en soute",
                 java.util.List.of("vetements", "documents"),
-                java.util.List.of("liquides"),
-                com.yadony.api.payments.cash.PaymentMethod.CASH
+                java.util.List.of("liquides")
             );
         }
 
@@ -591,7 +590,6 @@ class NegotiationServiceTest {
             when(threadRepo.countByTravelerIdAndStatus(eq(TRAVELER_ID), eq(NegotiationThreadStatus.OPEN)))
                 .thenReturn(0L);
             when(threadRepo.countCreatedBy(eq(TRAVELER_ID), any())).thenReturn(0L);
-            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any(), any())).thenReturn(true);
             UUID newAnnId = UUID.randomUUID();
             when(announcementRepo.save(any())).thenAnswer(inv -> {
                 com.yadony.api.matching.AnnouncementEntity a = inv.getArgument(0);
@@ -1980,8 +1978,7 @@ class NegotiationServiceTest {
                 new com.yadony.api.matching.dto.AddressDto("DSS Diass", 14.6708, -17.0734),
                 "Bagage en soute",
                 java.util.List.of("vetements", "documents"),
-                java.util.List.of("liquides"),
-                com.yadony.api.payments.cash.PaymentMethod.CASH
+                java.util.List.of("liquides")
             );
         }
 
@@ -1992,7 +1989,6 @@ class NegotiationServiceTest {
             when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
             when(commissionProperties.rate()).thenReturn(new BigDecimal("0.12"));
-            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any(), any())).thenReturn(true);
             UUID newAnnId = UUID.randomUUID();
             when(announcementRepo.save(any())).thenAnswer(inv -> {
                 com.yadony.api.matching.AnnouncementEntity a = inv.getArgument(0);
@@ -2048,7 +2044,6 @@ class NegotiationServiceTest {
             when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
             when(commissionProperties.rate()).thenReturn(new BigDecimal("0.12"));
-            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any(), any())).thenReturn(true);
             when(announcementRepo.save(any())).thenAnswer(inv -> {
                 com.yadony.api.matching.AnnouncementEntity a = inv.getArgument(0);
                 try {
@@ -2068,8 +2063,7 @@ class NegotiationServiceTest {
                 new com.yadony.api.matching.dto.AddressDto("DSS Diass", 14.6708, -17.0734),
                 "Bagage en soute",
                 java.util.List.of("Hi-fi", "Vêtements"),
-                java.util.List.of("Nourriture", "Poissons"),
-                com.yadony.api.payments.cash.PaymentMethod.CASH
+                java.util.List.of("Nourriture", "Poissons")
             );
 
             service.createDedicatedTrip(TRAVELER_ID, THREAD_ID, req);
@@ -2089,7 +2083,6 @@ class NegotiationServiceTest {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
             when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
-            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any(), any())).thenReturn(true);
 
             var req = buildRequest(request.getDesiredDate().minusDays(3));
             assertThatThrownBy(() -> service.createDedicatedTrip(TRAVELER_ID, THREAD_ID, req))
@@ -2104,7 +2097,6 @@ class NegotiationServiceTest {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
             when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
-            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any(), any())).thenReturn(true);
 
             var req = buildRequest(request.getDesiredDate().plusDays(3));
             assertThatThrownBy(() -> service.createDedicatedTrip(TRAVELER_ID, THREAD_ID, req))
@@ -2151,22 +2143,32 @@ class NegotiationServiceTest {
         }
 
         @Test
-        @DisplayName("voyageur choisit CASH avec fonds insuffisants → 422 discriminant cash-funds-required")
-        void createDedicatedTrip_rejectsCashWhenInsufficientFunds() {
+        @DisplayName("voyageur choisit CASH avec wallet vide → liaison OK quand même "
+            + "(le solde n'est plus une condition de disponibilité, il n'est vérifié qu'au paiement)")
+        void createDedicatedTrip_allowsCashEvenWhenWalletShort() {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
             when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
             when(commissionProperties.rate()).thenReturn(new BigDecimal("0.12"));
-            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any(), any())).thenReturn(false);
+            when(announcementRepo.save(any())).thenAnswer(inv -> {
+                com.yadony.api.matching.AnnouncementEntity a = inv.getArgument(0);
+                try {
+                    var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+                    idField.setAccessible(true);
+                    idField.set(a, UUID.randomUUID());
+                } catch (Exception e) { throw new RuntimeException(e); }
+                return a;
+            });
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(java.util.List.of());
 
-            // buildRequest uses CASH as payment method (now ignored — request only accepts CASH,
-            // and the wallet has insufficient funds with no card consent → SET is empty).
-            assertThatThrownBy(() -> service.createDedicatedTrip(TRAVELER_ID, THREAD_ID,
-                buildRequest(request.getDesiredDate())))
-                .isInstanceOf(ResponseStatusException.class)
-                .hasMessageContaining("payment-method/cash-funds-required");
+            // request only accepts CASH — CASH is now unconditionally in the available SET,
+            // regardless of the traveler's wallet balance or commission card.
+            var resp = service.createDedicatedTrip(TRAVELER_ID, THREAD_ID,
+                buildRequest(request.getDesiredDate()));
 
-            verifyNoInteractions(announcementRepo);
+            assertThat(resp.status()).isEqualTo(NegotiationThreadStatus.AWAITING_PAYMENT);
+            verify(announcementRepo).save(any());
+            verifyNoInteractions(cashGatePort);
         }
 
         @Test
@@ -2176,7 +2178,6 @@ class NegotiationServiceTest {
             when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
             when(commissionProperties.rate()).thenReturn(new BigDecimal("0.12"));
-            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any(), any())).thenReturn(true);
             UUID newAnnId = UUID.randomUUID();
             when(announcementRepo.save(any())).thenAnswer(inv -> {
                 com.yadony.api.matching.AnnouncementEntity a = inv.getArgument(0);
@@ -2432,29 +2433,40 @@ class NegotiationServiceTest {
         }
 
         @Test
-        @DisplayName("voyageur CASH avec fonds insuffisants et sans consentement carte → 422 discriminant cash-funds-required")
-        void submitTrip_rejectsCashWhenInsufficientFunds() {
-            // Request accepts CASH — SET computation fails (no funds, no card consent) before
-            // the announcement is ever looked up.
+        @DisplayName("voyageur CASH avec wallet vide et sans consentement carte → liaison OK quand même "
+            + "(le solde n'est vérifié qu'au paiement, pas au trip-linking)")
+        void submitTrip_allowsCashEvenWhenWalletShort() {
+            // Request accepts CASH only — CASH is now unconditionally in the SET, no wallet/card
+            // lookup happens at trip-linking time.
             request.setAcceptedPaymentMethods(java.util.EnumSet.of(PaymentMethod.CASH));
             UUID annId = UUID.randomUUID();
 
+            com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
+            ann.setTravelerId(TRAVELER_ID);
+            ann.setDepartureCity("Paris");
+            ann.setArrivalCity("Dakar");
+            ann.setDepartureDate(request.getDesiredDate());
+            ann.setAvailableKg(new BigDecimal("5"));
+
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
             when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(announcementRepo.findById(annId)).thenReturn(Optional.of(ann));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
-            when(commissionProperties.rate()).thenReturn(new java.math.BigDecimal("0.12"));
-            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any(), any())).thenReturn(false);
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(List.of());
 
             var req = new com.yadony.api.requests.dto.NegotiationSubmitTripRequest(annId, PaymentMethod.CASH);
+            var resp = service.submitTrip(TRAVELER_ID, THREAD_ID, req);
 
-            assertThatThrownBy(() -> service.submitTrip(TRAVELER_ID, THREAD_ID, req))
-                .isInstanceOf(ResponseStatusException.class)
-                .hasMessageContaining("payment-method/cash-funds-required");
-            verifyNoInteractions(announcementRepo);
+            assertThat(resp.status()).isEqualTo(NegotiationThreadStatus.AWAITING_PAYMENT);
+            assertThat(thread.getAvailablePaymentMethods()).isEqualTo(java.util.EnumSet.of(PaymentMethod.CASH));
+            assertThat(thread.getPaymentMethod()).isNull();
+            verifyNoInteractions(cashGatePort);
         }
 
         @Test
-        @DisplayName("CASH + consentement carte + carte enregistrée → liaison OK même wallet vide")
+        @DisplayName("CASH + consentement carte demandé mais aucune carte enregistrée ni fonds → "
+            + "liaison OK quand même (le champ useCardForCommission est ignoré au trip-linking)")
         void submitTrip_cashWithCardConsent_linksEvenIfWalletShort() {
             request.setAcceptedPaymentMethods(java.util.EnumSet.of(PaymentMethod.CASH));
             UUID annId = UUID.randomUUID();
@@ -2469,7 +2481,6 @@ class NegotiationServiceTest {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
             when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(announcementRepo.findById(annId)).thenReturn(Optional.of(ann));
-            when(cashGatePort.hasCommissionCard(eq(TRAVELER_ID))).thenReturn(true);
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
             when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(List.of());
@@ -2481,28 +2492,38 @@ class NegotiationServiceTest {
             assertThat(resp.status()).isEqualTo(NegotiationThreadStatus.AWAITING_PAYMENT);
             assertThat(thread.getAvailablePaymentMethods()).isEqualTo(java.util.EnumSet.of(PaymentMethod.CASH));
             assertThat(thread.getPaymentMethod()).isNull();
+            verifyNoInteractions(cashGatePort);
         }
 
         @Test
-        @DisplayName("CASH + consentement carte mais aucune carte enregistrée (et wallet vide) → 422 discriminant cash-funds-required")
-        void submitTrip_cashWithCardConsentButNoCard_throws422() {
-            // SET computation fails (no funds, card consent but no card registered) before
-            // the announcement is ever looked up.
-            request.setAcceptedPaymentMethods(java.util.EnumSet.of(PaymentMethod.CASH));
+        @DisplayName("colis STRIPE+CASH, voyageur non onboardé Stripe, sans consentement carte ni fonds → "
+            + "SET={CASH} quand même (STRIPE exclu par incapacité voyageur, CASH jamais conditionné)")
+        void submitTrip_cashAvailable_evenWithoutCardConsentOrFunds() {
+            request.setAcceptedPaymentMethods(java.util.EnumSet.of(PaymentMethod.STRIPE, PaymentMethod.CASH));
+            traveler.setStripeAccountStatus(StripeAccountStatus.NOT_CREATED);
             UUID annId = UUID.randomUUID();
+
+            com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
+            ann.setTravelerId(TRAVELER_ID);
+            ann.setDepartureCity("Paris");
+            ann.setArrivalCity("Dakar");
+            ann.setDepartureDate(request.getDesiredDate());
+            ann.setAvailableKg(new BigDecimal("5"));
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
             when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(announcementRepo.findById(annId)).thenReturn(Optional.of(ann));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
-            when(cashGatePort.hasCommissionCard(eq(TRAVELER_ID))).thenReturn(false);
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(List.of());
 
             var req = new com.yadony.api.requests.dto.NegotiationSubmitTripRequest(
-                annId, PaymentMethod.CASH, true);
+                annId, PaymentMethod.CASH, false);
+            var resp = service.submitTrip(TRAVELER_ID, THREAD_ID, req);
 
-            assertThatThrownBy(() -> service.submitTrip(TRAVELER_ID, THREAD_ID, req))
-                .isInstanceOf(ResponseStatusException.class)
-                .hasMessageContaining("payment-method/cash-funds-required");
-            verifyNoInteractions(announcementRepo);
+            assertThat(resp.status()).isEqualTo(NegotiationThreadStatus.AWAITING_PAYMENT);
+            assertThat(thread.getAvailablePaymentMethods()).isEqualTo(java.util.EnumSet.of(PaymentMethod.CASH));
+            verifyNoInteractions(cashGatePort);
         }
 
         @Test
@@ -2599,8 +2620,9 @@ class NegotiationServiceTest {
         }
 
         @Test
-        @DisplayName("colis cash-only, voyageur sans fonds ni consentement carte → 422 discriminant cash-funds-required")
-        void submitTrip_cashOnlyRequest_noFundsNoConsent_throws422CashFunds() {
+        @DisplayName("colis cash-only, voyageur sans fonds ni consentement carte → liaison OK quand même "
+            + "(le solde n'est vérifié qu'au paiement, pas au trip-linking)")
+        void submitTrip_cashOnlyRequest_noFundsNoConsent_linksAnyway() {
             UUID threadId = UUID.randomUUID();
             UUID travelerId = UUID.randomUUID();
             UUID annId = UUID.randomUUID();
@@ -2610,32 +2632,49 @@ class NegotiationServiceTest {
             thread.setTravelerId(travelerId);
             thread.setStatus(NegotiationThreadStatus.AWAITING_TRIP);
             thread.setCurrentPriceEur(new BigDecimal("100.00"));
+            thread.setRoundsCount((short) 1);
 
             PackageRequestEntity request = new PackageRequestEntity();
+            request.setSenderId(SENDER_ID);
             request.setAcceptedPaymentMethods(java.util.EnumSet.of(PaymentMethod.CASH));
+            request.setDepartureCity("Paris");
+            request.setArrivalCity("Dakar");
+            request.setDesiredDate(LocalDate.now().plusDays(10));
+            request.setDateToleranceDays((short) 2);
+            request.setWeightKg(new BigDecimal("5"));
 
             UserEntity traveler = new UserEntity();
             setEntityId(traveler, travelerId);
             traveler.setStripeAccountStatus(StripeAccountStatus.NOT_CREATED);
 
+            com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
+            ann.setTravelerId(travelerId);
+            ann.setDepartureCity("Paris");
+            ann.setArrivalCity("Dakar");
+            ann.setDepartureDate(request.getDesiredDate());
+            ann.setAvailableKg(new BigDecimal("5"));
+
             when(threadRepo.findById(threadId)).thenReturn(java.util.Optional.of(thread));
             when(requestRepo.findById(any())).thenReturn(java.util.Optional.of(request));
             when(userRepository.findById(travelerId)).thenReturn(java.util.Optional.of(traveler));
-            when(commissionProperties.rate()).thenReturn(new BigDecimal("0.05"));
-            when(cashGatePort.hasSufficientFunds(eq(travelerId), any(), any())).thenReturn(false);
+            when(userRepository.findById(SENDER_ID)).thenReturn(java.util.Optional.of(traveler));
+            when(announcementRepo.findById(annId)).thenReturn(java.util.Optional.of(ann));
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(threadId)).thenReturn(List.of());
 
             com.yadony.api.requests.dto.NegotiationSubmitTripRequest req =
                 new com.yadony.api.requests.dto.NegotiationSubmitTripRequest(annId, PaymentMethod.CASH, false); // pas de consentement
 
-            ResponseStatusException ex = assertThrows(ResponseStatusException.class,
-                () -> service.submitTrip(travelerId, threadId, req));
-            assertEquals(HttpStatus.UNPROCESSABLE_ENTITY, ex.getStatusCode());
-            assertEquals("payment-method/cash-funds-required", ex.getReason());
+            var resp = service.submitTrip(travelerId, threadId, req);
+
+            assertThat(resp.status()).isEqualTo(NegotiationThreadStatus.AWAITING_PAYMENT);
+            assertThat(thread.getAvailablePaymentMethods()).isEqualTo(java.util.EnumSet.of(PaymentMethod.CASH));
+            verifyNoInteractions(cashGatePort);
         }
 
         @Test
-        @DisplayName("colis STRIPE+CASH, voyageur STRIPE seulement → SET={STRIPE} persisté, champ paymentMethod requête ignoré")
-        void submitTrip_bothAccepted_travelerStripeOnly_persistsStripeSet() {
+        @DisplayName("colis STRIPE+CASH, voyageur onboardé Stripe → SET={STRIPE, CASH} persisté "
+            + "(CASH n'est plus conditionné à la capacité du voyageur), champ paymentMethod requête ignoré")
+        void submitTrip_bothAccepted_travelerStripeOnboarded_persistsBothInSet() {
             UUID threadId = UUID.randomUUID();
             UUID travelerId = UUID.randomUUID();
             UUID annId = UUID.randomUUID();
@@ -2672,15 +2711,15 @@ class NegotiationServiceTest {
             when(userRepository.findById(travelerId)).thenReturn(java.util.Optional.of(traveler));
             when(userRepository.findById(SENDER_ID)).thenReturn(java.util.Optional.of(traveler));
             when(announcementRepo.findById(annId)).thenReturn(java.util.Optional.of(ann));
-            when(commissionProperties.rate()).thenReturn(new BigDecimal("0.05"));
-            when(cashGatePort.hasSufficientFunds(eq(travelerId), any(), any())).thenReturn(false);
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(threadId)).thenReturn(List.of());
 
             service.submitTrip(travelerId, threadId,
                 new com.yadony.api.requests.dto.NegotiationSubmitTripRequest(annId, PaymentMethod.STRIPE, false));
 
-            assertEquals(java.util.EnumSet.of(PaymentMethod.STRIPE), thread.getAvailablePaymentMethods());
+            assertEquals(java.util.EnumSet.of(PaymentMethod.STRIPE, PaymentMethod.CASH),
+                thread.getAvailablePaymentMethods());
             assertNull(thread.getPaymentMethod());
+            verifyNoInteractions(cashGatePort);
         }
 
         @Test
@@ -2722,14 +2761,14 @@ class NegotiationServiceTest {
             when(userRepository.findById(travelerId)).thenReturn(java.util.Optional.of(traveler));
             when(userRepository.findById(SENDER_ID)).thenReturn(java.util.Optional.of(traveler));
             when(announcementRepo.findById(annId)).thenReturn(java.util.Optional.of(ann));
-            when(commissionProperties.rate()).thenReturn(new BigDecimal("0.05"));
-            when(cashGatePort.hasSufficientFunds(eq(travelerId), any(), any())).thenReturn(false);
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(threadId)).thenReturn(List.of());
 
             NegotiationThreadResponse res = service.submitTrip(travelerId, threadId,
                 new com.yadony.api.requests.dto.NegotiationSubmitTripRequest(annId, PaymentMethod.STRIPE, false));
 
-            assertEquals(java.util.EnumSet.of(PaymentMethod.STRIPE), res.availablePaymentMethods());
+            assertEquals(java.util.EnumSet.of(PaymentMethod.STRIPE, PaymentMethod.CASH),
+                res.availablePaymentMethods());
+            verifyNoInteractions(cashGatePort);
         }
     }
 
@@ -2941,6 +2980,39 @@ class NegotiationServiceTest {
 
             assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.AWAITING_PAYMENT);
             verify(eventPublisher, never()).publishEvent(any(PackageRequestAcceptedEvent.class));
+        }
+
+        @Test
+        @DisplayName("thread CASH — commission échoue (port=false) → NegotiationCashCommissionFailedEvent "
+            + "publié AVANT le 422, pour que le voyageur soit notifié de recharger son portefeuille")
+        void finalize_cashThread_commissionFails_publishesCashCommissionFailedEvent() {
+            thread.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.CASH);
+            request.setAcceptedPaymentMethods(java.util.EnumSet.of(PaymentMethod.CASH));
+            request.setRecipientName("Fatou Diop");
+            request.setRecipientPhone("+221771234567");
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(escrowPort.releaseEscrowForMethodSwitch(THREAD_ID)).thenReturn(true);
+            when(cashGatePort.chargeNegotiationCashCommission(eq(TRAVELER_ID), eq(SENDER_ID), eq(THREAD_ID), any()))
+                .thenReturn(false);
+
+            assertThatThrownBy(() -> service.finalizeAfterPayment(SENDER_ID, THREAD_ID, "pi_x"))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("negotiation/commission-charge-failed");
+
+            org.mockito.ArgumentCaptor<com.yadony.api.requests.event.NegotiationCashCommissionFailedEvent> captor =
+                org.mockito.ArgumentCaptor.forClass(
+                    com.yadony.api.requests.event.NegotiationCashCommissionFailedEvent.class);
+            verify(eventPublisher).publishEvent(captor.capture());
+            var published = captor.getValue();
+            assertThat(published.threadId()).isEqualTo(THREAD_ID);
+            assertThat(published.packageRequestId()).isEqualTo(REQUEST_ID);
+            assertThat(published.travelerId()).isEqualTo(TRAVELER_ID);
+            assertThat(published.senderId()).isEqualTo(SENDER_ID);
+            assertThat(published.currency()).isEqualTo(request.getCurrency());
+            assertThat(published.commissionAmount())
+                .isEqualByComparingTo(com.yadony.api.payments.PriceBreakdown
+                    .fromNet(thread.getCurrentPriceEur(), new BigDecimal("0.12")).commission());
         }
 
         @Test

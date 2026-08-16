@@ -199,8 +199,7 @@ public class NegotiationService {
             if (req.dedicatedTrip().departureDate().isBefore(from) || req.dedicatedTrip().departureDate().isAfter(to)) {
                 throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "announcement/date-mismatch");
             }
-            availableMethods = computeAvailableMethods(
-                request, traveler, req.proposedPriceEur(), req.dedicatedTrip().useCardForCommission());
+            availableMethods = computeAvailableMethods(request, traveler);
             assertNonEmptyOrThrow(availableMethods, request.getAcceptedPaymentMethods());
             linkedTripAnn = announcementRepo.save(
                 buildDedicatedTripAnnouncement(request, traveler, req.proposedPriceEur(), req.dedicatedTrip()));
@@ -209,7 +208,7 @@ public class NegotiationService {
                 Map.of("packageRequestId", request.getId().toString()));
         } else {
             linkedTripAnn = validateAndFetchExistingTrip(req.travelerAnnouncementId(), travelerId, request);
-            availableMethods = computeAvailableMethods(request, traveler, req.proposedPriceEur(), false);
+            availableMethods = computeAvailableMethods(request, traveler);
             assertNonEmptyOrThrow(availableMethods, request.getAcceptedPaymentMethods());
             resolvedTravelDate = linkedTripAnn.getDepartureDate();
         }
@@ -586,8 +585,7 @@ public class NegotiationService {
 
         UserEntity traveler = userRepository.findById(callerId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "user/not-found"));
-        java.util.Set<PaymentMethod> available = computeAvailableMethods(
-            request, traveler, thread.getCurrentPriceEur(), req.useCardForCommission());
+        java.util.Set<PaymentMethod> available = computeAvailableMethods(request, traveler);
         assertNonEmptyOrThrow(available, request.getAcceptedPaymentMethods());
 
         com.yadony.api.matching.AnnouncementEntity ann = validateAndFetchExistingTrip(travelerAnnouncementId, callerId, request);
@@ -793,8 +791,7 @@ public class NegotiationService {
 
         UserEntity traveler = userRepository.findById(callerId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "user/not-found"));
-        java.util.Set<PaymentMethod> available = computeAvailableMethods(
-            request, traveler, thread.getCurrentPriceEur(), req.useCardForCommission());
+        java.util.Set<PaymentMethod> available = computeAvailableMethods(request, traveler);
         assertNonEmptyOrThrow(available, request.getAcceptedPaymentMethods());
 
         // Validate the chosen date falls within the sender's tolerance window.
@@ -995,6 +992,15 @@ public class NegotiationService {
             boolean charged = cashGatePort.chargeNegotiationCashCommission(
                 thread.getTravelerId(), request.getSenderId(), thread.getId(), thread.getCurrentPriceEur());
             if (!charged) {
+                // Le voyageur doit recharger : c'est le seul moment où son solde compte,
+                // et il est le seul à pouvoir débloquer la situation. Event publié avant
+                // le throw et écouté hors transaction (@EventListener simple) pour
+                // survivre au rollback qui suit.
+                BigDecimal commission = PriceBreakdown
+                    .fromNet(thread.getCurrentPriceEur(), commissionProperties.rate()).commission();
+                eventPublisher.publishEvent(new NegotiationCashCommissionFailedEvent(
+                    thread.getId(), request.getId(), thread.getTravelerId(),
+                    request.getSenderId(), commission, thread.getCurrency()));
                 throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "negotiation/commission-charge-failed");
             }
@@ -1642,12 +1648,18 @@ public class NegotiationService {
 
     /**
      * SET des modes réellement fournissables = colis.acceptedPaymentMethods ∩ capacité voyageur.
-     * STRIPE : compte Connect onboardé. CASH : fonds wallet suffisants OU (consentement carte
-     * ET carte de commission enregistrée) — la commission est fonction du prix négocié.
+     *
+     * STRIPE : exige un compte Connect onboardé — sans lui le voyageur ne peut structurellement
+     * pas être payé, le blocage doit donc tomber ici, avant tout engagement.
+     *
+     * CASH : jamais conditionné au solde du portefeuille. Le solde n'est qu'une modalité de
+     * règlement de la commission, pas une capacité : il peut être rechargé à tout moment et
+     * n'a de sens qu'à l'instant du prélèvement. Il est vérifié au paiement
+     * ({@code chargeNegotiationCashCommission}, wallet puis carte), qui demande alors au
+     * voyageur de recharger si nécessaire.
      */
     private java.util.Set<PaymentMethod> computeAvailableMethods(
-            PackageRequestEntity request, UserEntity traveler,
-            BigDecimal negotiatedPrice, boolean useCardForCommission) {
+            PackageRequestEntity request, UserEntity traveler) {
         java.util.Set<PaymentMethod> set = java.util.EnumSet.noneOf(PaymentMethod.class);
         java.util.Set<PaymentMethod> accepted = request.getAcceptedPaymentMethods();
 
@@ -1655,13 +1667,7 @@ public class NegotiationService {
             set.add(PaymentMethod.STRIPE);
         }
         if (accepted.contains(PaymentMethod.CASH)) {
-            BigDecimal commission = PriceBreakdown
-                .fromNet(negotiatedPrice, commissionProperties.rate()).commission();
-            boolean cashOk = cashGatePort.hasSufficientFunds(traveler.getId(), commission, request.getCurrency())
-                || (useCardForCommission && cashGatePort.hasCommissionCard(traveler.getId()));
-            if (cashOk) {
-                set.add(PaymentMethod.CASH);
-            }
+            set.add(PaymentMethod.CASH);
         }
         return set;
     }

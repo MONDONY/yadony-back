@@ -121,6 +121,30 @@ public class RequestEventsListener {
     }
 
     /**
+     * Règlement en espèces bloqué : la commission n'a pas pu être prélevée au
+     * voyageur. Lui seul peut débloquer l'accord, en rechargeant son portefeuille.
+     * Publié depuis une transaction qui rollback, d'où le {@code @EventListener}
+     * simple (un AFTER_COMMIT ne partirait jamais).
+     */
+    @EventListener
+    @Async
+    public void onNegotiationCashCommissionFailed(NegotiationCashCommissionFailedEvent e) {
+        dispatcher.notifyUser(
+            e.travelerId(),
+            "Rechargez votre portefeuille",
+            String.format(
+                "L'expéditeur règle en espèces : la commission de %.2f %s n'a pas pu être prélevée. "
+                    + "Rechargez votre portefeuille pour valider l'accord.",
+                e.commissionAmount(), e.currency()),
+            Map.of(
+                "type", "negotiation_cash_commission_failed",
+                "threadId", e.threadId().toString(),
+                "packageRequestId", e.packageRequestId().toString()
+            )
+        );
+    }
+
+    /**
      * Final ACCEPTED state — fires only after payment is captured (escrow active).
      * Notify both parties that the deal is sealed.
      */

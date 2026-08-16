@@ -674,8 +674,7 @@ class NegotiationControllerIT {
         var delivery = new com.yadony.api.matching.dto.AddressDto("Plateau, Dakar", 14.69, -17.44);
         var req = new NegotiationCreateDedicatedTripRequest(
             LocalDate.now().plusDays(7), null, null,
-            pickup, delivery, null, null, null,
-            com.yadony.api.payments.cash.PaymentMethod.STRIPE
+            pickup, delivery, null, null, null
         );
 
         mockMvc.perform(post("/negotiations/{id}/create-dedicated-trip", threadId)

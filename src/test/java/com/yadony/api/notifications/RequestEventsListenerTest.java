@@ -95,6 +95,19 @@ class RequestEventsListenerTest {
     }
 
     @Test
+    void onNegotiationCashCommissionFailed_notifiesTraveler() {
+        UUID travelerId = UUID.randomUUID();
+        var event = new NegotiationCashCommissionFailedEvent(
+            UUID.randomUUID(), UUID.randomUUID(), travelerId, UUID.randomUUID(),
+            new BigDecimal("4.20"), "EUR"
+        );
+
+        listener.onNegotiationCashCommissionFailed(event);
+
+        verify(dispatcher).notifyUser(eq(travelerId), contains("portefeuille"), anyString(), anyMap());
+    }
+
+    @Test
     void onPackageRequestExpired_notifiesSender() {
         UUID senderId = UUID.randomUUID();
         var event = new PackageRequestExpiredEvent(UUID.randomUUID(), senderId);

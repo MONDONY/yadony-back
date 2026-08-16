@@ -1,7 +1,6 @@
 package com.yadony.api.requests.dto;
 
 import com.yadony.api.matching.dto.AddressDto;
-import com.yadony.api.payments.cash.PaymentMethod;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -27,7 +26,7 @@ class NegotiationStartRequestTest {
         NegotiationCreateDedicatedTripRequest dedicated = new NegotiationCreateDedicatedTripRequest(
             LocalDate.now().plusDays(5), null, null,
             new AddressDto("Pickup", 48.8, 2.3), new AddressDto("Delivery", 5.3, -4.0),
-            null, null, null, PaymentMethod.STRIPE, false
+            null, null, null, false
         );
         NegotiationStartRequest req = new NegotiationStartRequest(
             UUID.randomUUID(), new BigDecimal("42.00"), LocalDate.now().plusDays(5),
