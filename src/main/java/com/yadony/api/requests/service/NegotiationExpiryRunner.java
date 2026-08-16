@@ -1,6 +1,7 @@
 package com.yadony.api.requests.service;
 
 import com.yadony.api.common.AuditService;
+import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.requests.entity.NegotiationThreadEntity;
 import com.yadony.api.requests.entity.NegotiationThreadStatus;
 import com.yadony.api.requests.entity.PackageRequestEntity;
@@ -35,15 +36,18 @@ public class NegotiationExpiryRunner {
 
     private final PackageRequestRepository requestRepo;
     private final NegotiationThreadRepository threadRepo;
+    private final AnnouncementRepository announcementRepo;
     private final ApplicationEventPublisher eventPublisher;
     private final AuditService auditService;
 
     public NegotiationExpiryRunner(PackageRequestRepository requestRepo,
                                    NegotiationThreadRepository threadRepo,
+                                   AnnouncementRepository announcementRepo,
                                    ApplicationEventPublisher eventPublisher,
                                    AuditService auditService) {
         this.requestRepo = requestRepo;
         this.threadRepo = threadRepo;
+        this.announcementRepo = announcementRepo;
         this.eventPublisher = eventPublisher;
         this.auditService = auditService;
     }
@@ -60,10 +64,32 @@ public class NegotiationExpiryRunner {
         t.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC));
         threadRepo.save(t);
         reopenRequestWhenNoActiveNegotiation(t.getPackageRequestId());
+        softDeleteOrphanedDedicatedTrip(t);
         eventPublisher.publishEvent(new NegotiationExpiredEvent(
             t.getId(), t.getPackageRequestId(), null, t.getTravelerId()));
         auditService.log("NEGOTIATION_THREAD", t.getId(), "EXPIRED", null,
             Map.of("source", "SYSTEM", "reason", reason));
+    }
+
+    /**
+     * Miroir de {@code NegotiationService#softDeleteOrphanedDedicatedTrip} pour le
+     * chemin d'expiration système : un trajet dédié (créé exclusivement pour cette
+     * demande via createDedicatedTrip) devenu orphelin doit être soft-deleted,
+     * sinon il reste ACTIVE pour toujours dans "Mes trajets" du voyageur.
+     */
+    private void softDeleteOrphanedDedicatedTrip(NegotiationThreadEntity thread) {
+        UUID announcementId = thread.getTravelerAnnouncementId();
+        if (announcementId == null) {
+            return;
+        }
+        announcementRepo.findById(announcementId).ifPresent(ann -> {
+            if (thread.getPackageRequestId().equals(ann.getLinkedPackageRequestId())) {
+                ann.softDelete();
+                announcementRepo.save(ann);
+                auditService.log("ANNOUNCEMENT", ann.getId(), "DEDICATED_TRIP_ORPHANED_ON_EXPIRE", null,
+                    Map.of("threadId", thread.getId().toString()));
+            }
+        });
     }
 
     private void reopenRequestWhenNoActiveNegotiation(UUID requestId) {

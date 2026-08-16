@@ -139,6 +139,123 @@ class V208MigrationTest {
     }
 
     @Test
+    void afterV208_packageRequestReopensToOpen_whenNoOtherActiveThread() throws Exception {
+        resetAndMigrateTo("207");
+        UUID senderId = UUID.randomUUID();
+        UUID travelerId = UUID.randomUUID();
+        UUID requestId = UUID.randomUUID();
+        UUID threadId = UUID.randomUUID();
+        try (Connection c = dataSource.getConnection(); Statement st = c.createStatement()) {
+            st.executeUpdate("""
+                INSERT INTO users (id, firebase_uid, username, status, created_at, updated_at)
+                VALUES ('%s', '%s', '%s', 'ACTIVE', now(), now())
+                """.formatted(senderId, "uid-s3-" + senderId.toString().substring(0, 8),
+                    "user-s3-" + senderId.toString().substring(0, 8)));
+            st.executeUpdate("""
+                INSERT INTO users (id, firebase_uid, username, status, created_at, updated_at)
+                VALUES ('%s', '%s', '%s', 'ACTIVE', now(), now())
+                """.formatted(travelerId, "uid-t3-" + travelerId.toString().substring(0, 8),
+                    "user-t3-" + travelerId.toString().substring(0, 8)));
+            // NEGOTIATING : le runtime ne produit cet état que s'il existe un thread actif.
+            // Ici son unique thread sera annulé par V208 — la demande doit rouvrir en OPEN.
+            st.executeUpdate("""
+                INSERT INTO package_requests
+                  (id, sender_id, departure_city, arrival_city, desired_date,
+                   date_tolerance_days, weight_kg, parcel_size, content_category,
+                   negotiable, transport_mode, accepted_payment_methods, status, created_at, updated_at)
+                VALUES
+                  ('%s', '%s', 'Paris', 'Dakar', CURRENT_DATE + 10,
+                   2, 3.0, 'MEDIUM', 'Documents',
+                   true, 'PLANE', '{STRIPE}', 'NEGOTIATING', now(), now())
+                """.formatted(requestId, senderId));
+            st.executeUpdate("""
+                INSERT INTO negotiation_threads
+                  (id, package_request_id, traveler_id, traveler_travel_date,
+                   traveler_available_kg, status, current_price_eur, created_at, updated_at)
+                VALUES
+                  ('%s', '%s', '%s', CURRENT_DATE + 10, 5.0, 'AWAITING_TRIP', 42.0, now(), now())
+                """.formatted(threadId, requestId, travelerId));
+        }
+
+        flywayUpTo("208").migrate();
+
+        try (Connection c = dataSource.getConnection(); Statement st = c.createStatement()) {
+            var rs = st.executeQuery(
+                    "SELECT status FROM package_requests WHERE id = '" + requestId + "'");
+            rs.next();
+            assertThat(rs.getString(1)).isEqualTo("OPEN");
+        }
+    }
+
+    @Test
+    void afterV208_orphanedDedicatedTripIsSoftDeleted() throws Exception {
+        resetAndMigrateTo("207");
+        UUID senderId = UUID.randomUUID();
+        UUID travelerId = UUID.randomUUID();
+        UUID requestId = UUID.randomUUID();
+        UUID threadId = UUID.randomUUID();
+        UUID announcementId;
+        try (Connection c = dataSource.getConnection(); Statement st = c.createStatement()) {
+            st.executeUpdate("""
+                INSERT INTO users (id, firebase_uid, username, status, created_at, updated_at)
+                VALUES ('%s', '%s', '%s', 'ACTIVE', now(), now())
+                """.formatted(senderId, "uid-s4-" + senderId.toString().substring(0, 8),
+                    "user-s4-" + senderId.toString().substring(0, 8)));
+            st.executeUpdate("""
+                INSERT INTO users (id, firebase_uid, username, status, created_at, updated_at)
+                VALUES ('%s', '%s', '%s', 'ACTIVE', now(), now())
+                """.formatted(travelerId, "uid-t4-" + travelerId.toString().substring(0, 8),
+                    "user-t4-" + travelerId.toString().substring(0, 8)));
+            st.executeUpdate("""
+                INSERT INTO package_requests
+                  (id, sender_id, departure_city, arrival_city, desired_date,
+                   date_tolerance_days, weight_kg, parcel_size, content_category,
+                   negotiable, transport_mode, accepted_payment_methods, status, created_at, updated_at)
+                VALUES
+                  ('%s', '%s', 'Paris', 'Dakar', CURRENT_DATE + 10,
+                   2, 3.0, 'MEDIUM', 'Documents',
+                   true, 'PLANE', '{STRIPE}', 'NEGOTIATING', now(), now())
+                """.formatted(requestId, senderId));
+            announcementId = UUID.fromString(insertReturningId(c, """
+                INSERT INTO announcements (traveler_id, departure_city, arrival_city, departure_date,
+                  available_kg, price_per_kg, transport_mode, total_kg,
+                  pickup_address_label, pickup_lat, pickup_lng,
+                  delivery_address_label, delivery_lat, delivery_lng,
+                  linked_package_request_id) VALUES (
+                  '%s', 'Paris', 'Dakar', CURRENT_DATE + 10,
+                  0.00, 15.00, 'PLANE', 3.00,
+                  '12 rue de Paris', 48.8566, 2.3522,
+                  'Plateau, Dakar', 14.6928, -17.4467,
+                  '%s') RETURNING id
+                """.formatted(travelerId, requestId)));
+            st.executeUpdate("""
+                INSERT INTO negotiation_threads
+                  (id, package_request_id, traveler_id, traveler_announcement_id, traveler_travel_date,
+                   traveler_available_kg, status, current_price_eur, created_at, updated_at)
+                VALUES
+                  ('%s', '%s', '%s', '%s', CURRENT_DATE + 10, 5.0, 'AWAITING_TRIP', 42.0, now(), now())
+                """.formatted(threadId, requestId, travelerId, announcementId));
+        }
+
+        flywayUpTo("208").migrate();
+
+        try (Connection c = dataSource.getConnection(); Statement st = c.createStatement()) {
+            var rs = st.executeQuery(
+                    "SELECT deleted_at FROM announcements WHERE id = '" + announcementId + "'");
+            rs.next();
+            assertThat(rs.getTimestamp(1)).isNotNull();
+        }
+    }
+
+    private String insertReturningId(Connection c, String sql) throws Exception {
+        try (Statement st = c.createStatement()) {
+            var rs = st.executeQuery(sql);
+            rs.next();
+            return rs.getString(1);
+        }
+    }
+
+    @Test
     void afterV208_otherStatusesUntouched() throws Exception {
         resetAndMigrateTo("208");
         UUID senderId = UUID.randomUUID();

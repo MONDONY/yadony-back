@@ -2384,14 +2384,14 @@ class AnnouncementServiceTest {
         }
 
         @Test
-        @DisplayName("trajet référencé par une négociation sans bid → 409 announcement/has-negotiations")
-        void unpublish_withNegotiationThreadButNoBid_throws409() {
+        @DisplayName("trajet référencé par une négociation active sans bid → 409 announcement/has-negotiations")
+        void unpublish_withActiveNegotiationThreadButNoBid_throws409() {
             UserEntity user = standardUser();
             AnnouncementEntity active = buildAnnouncement(user);
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
             when(announcementRepository.findByIdForUpdate(active.getId())).thenReturn(Optional.of(active));
             when(bidRepository.countVisibleByAnnouncementId(active.getId())).thenReturn(0L);
-            when(negotiationThreadRepository.existsByTravelerAnnouncementId(active.getId())).thenReturn(true);
+            when(negotiationThreadRepository.existsActiveByTravelerAnnouncementId(active.getId())).thenReturn(true);
 
             assertThatThrownBy(() -> announcementService.unpublishAnnouncement(active.getId(), FIREBASE_UID))
                     .isInstanceOf(YadonyBusinessException.class)
@@ -2401,6 +2401,28 @@ class AnnouncementServiceTest {
                         assertThat(ex.getErrorCode()).isEqualTo("announcement/has-negotiations");
                     });
             verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("trajet référencé par une négociation REJECTED (morte) → dépublication autorisée")
+        void unpublish_withOnlyRejectedNegotiationThread_succeeds() {
+            UserEntity user = standardUser();
+            AnnouncementEntity active = buildAnnouncement(user);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+            when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
+            when(announcementRepository.findByIdForUpdate(active.getId())).thenReturn(Optional.of(active));
+            when(announcementRepository.findById(active.getId())).thenReturn(Optional.of(active));
+            when(announcementRepository.countByTravelerIdAndStatus(user.getId(), AnnouncementStatus.DRAFT))
+                    .thenReturn(0L);
+            when(bidRepository.countVisibleByAnnouncementId(active.getId())).thenReturn(0L);
+            when(bidRepository.countByAnnouncementIdAndStatusIn(eq(active.getId()), anyList())).thenReturn(0L);
+            when(negotiationThreadRepository.existsActiveByTravelerAnnouncementId(active.getId())).thenReturn(false);
+            when(announcementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            AnnouncementDetailResponse result = announcementService.unpublishAnnouncement(active.getId(), FIREBASE_UID);
+
+            assertThat(result.status()).isEqualTo("DRAFT");
+            verify(announcementRepository).save(active);
         }
 
         @Test

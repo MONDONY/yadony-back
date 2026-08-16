@@ -369,6 +369,8 @@ public class NegotiationService {
         thread.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC));
         threadRepo.save(thread);
         reopenRequestWhenNoActiveNegotiation(request);
+        softDeleteOrphanedDedicatedTrip(thread.getTravelerAnnouncementId(), request, callerId, threadId,
+            "DEDICATED_TRIP_ORPHANED_ON_REJECT");
 
         auditService.log("NEGOTIATION_THREAD", threadId, "REJECTED", callerId,
             Map.of("reason", req.reason() != null ? req.reason() : ""));
@@ -414,13 +416,13 @@ public class NegotiationService {
         // AFTER_COMMIT + REQUIRES_NEW via ce drapeau.
         boolean releaseEscrow = (st == NegotiationThreadStatus.AWAITING_PAYMENT);
 
-        if (st == NegotiationThreadStatus.AWAITING_PAYMENT) {
-            // Soft-delete du trajet DÉDIÉ orphelin (créé exclusivement pour cette
-            // demande via createDedicatedTrip) — miroir exact de refuseTrip. C'est
-            // du travail DB transactionnel, donc il reste inline.
-            softDeleteOrphanedDedicatedTrip(thread.getTravelerAnnouncementId(), request, callerId, threadId,
-                "DEDICATED_TRIP_ORPHANED_ON_CANCEL");
-        }
+        // Soft-delete du trajet DÉDIÉ orphelin (créé exclusivement pour cette
+        // demande via createDedicatedTrip) — miroir exact de refuseTrip. C'est
+        // du travail DB transactionnel, donc il reste inline. Depuis que start()
+        // attache le trajet dès la création (Task 4), un trajet dédié peut exister
+        // dès OPEN, pas seulement AWAITING_PAYMENT — donc pas de garde de statut ici.
+        softDeleteOrphanedDedicatedTrip(thread.getTravelerAnnouncementId(), request, callerId, threadId,
+            "DEDICATED_TRIP_ORPHANED_ON_CANCEL");
 
         thread.setStatus(NegotiationThreadStatus.CANCELLED);
         thread.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC));
@@ -617,10 +619,14 @@ public class NegotiationService {
 
     /**
      * Le voyageur change le trajet lié tant que la négociation n'est pas encore
-     * AWAITING_PAYMENT (paiement possible à tout moment ensuite). Contrairement
-     * à submitTrip, cette méthode n'exige aucun état particulier de départ —
-     * elle marche depuis OPEN ou AWAITING_TRIP. Notifie l'expéditeur (et non le
-     * voyageur) via {@link com.yadony.api.requests.event.NegotiationTripChangedEvent} :
+     * AWAITING_PAYMENT (paiement possible à tout moment ensuite). Restreint à
+     * OPEN : AWAITING_TRIP est l'état du flux legacy (thread rouvert par
+     * refuseTrip) et reste géré exclusivement par submitTrip, qui transitionne
+     * vers AWAITING_PAYMENT et recalcule availablePaymentMethods — changeTrip
+     * ne fait ni l'un ni l'autre, l'autoriser depuis AWAITING_TRIP laisserait
+     * le thread bloqué avec un trajet lié mais aucun chemin vers le paiement.
+     * Notifie l'expéditeur (et non le voyageur) via
+     * {@link com.yadony.api.requests.event.NegotiationTripChangedEvent} :
      * NegotiationAwaitingTripEvent est réservé au cas "aucun trajet encore lié,
      * le voyageur doit choisir" et notifie le voyageur — sémantique inverse ici.
      */
@@ -631,13 +637,13 @@ public class NegotiationService {
         if (!callerId.equals(thread.getTravelerId())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "negotiation/not-traveler");
         }
-        if (thread.getStatus() != NegotiationThreadStatus.OPEN
-                && thread.getStatus() != NegotiationThreadStatus.AWAITING_TRIP) {
+        if (thread.getStatus() != NegotiationThreadStatus.OPEN) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "negotiation-trip-locked");
         }
         PackageRequestEntity request = requestRepo.findById(thread.getPackageRequestId())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found"));
 
+        UUID previousAnnouncementId = thread.getTravelerAnnouncementId();
         com.yadony.api.matching.AnnouncementEntity ann =
             validateAndFetchExistingTrip(req.travelerAnnouncementId(), callerId, request);
 
@@ -645,6 +651,13 @@ public class NegotiationService {
         thread.setTravelerTravelDate(ann.getDepartureDate());
         thread.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC));
         threadRepo.save(thread);
+
+        // Si le trajet précédent était un trajet dédié créé pour CETTE demande,
+        // il devient orphelin une fois détaché — même nettoyage que cancel/reject.
+        if (previousAnnouncementId != null && !previousAnnouncementId.equals(ann.getId())) {
+            softDeleteOrphanedDedicatedTrip(previousAnnouncementId, request, callerId, threadId,
+                "DEDICATED_TRIP_ORPHANED_ON_TRIP_CHANGE");
+        }
 
         auditService.log("NEGOTIATION_THREAD", threadId, "TRIP_CHANGED", callerId,
             Map.of("announcementId", ann.getId().toString()));
@@ -1025,6 +1038,8 @@ public class NegotiationService {
                 t.setStatus(NegotiationThreadStatus.AUTO_REJECTED);
                 t.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC));
                 threadRepo.save(t);
+                softDeleteOrphanedDedicatedTrip(t.getTravelerAnnouncementId(), request, callerId, t.getId(),
+                    "DEDICATED_TRIP_ORPHANED_ON_AUTO_REJECT");
                 auditService.log("NEGOTIATION_THREAD", t.getId(), "AUTO_REJECTED", callerId,
                     Map.of("reason", "competing-accepted",
                         "winningThreadId", thread.getId().toString()));
@@ -1117,11 +1132,8 @@ public class NegotiationService {
         if (pricePerKg == null || pricePerKg.signum() <= 0) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "surplus/invalid-price");
         }
-        NegotiationThreadEntity thread = threadRepo.findByTravelerAnnouncementId(announcementId)
+        threadRepo.findByTravelerAnnouncementIdAndStatus(announcementId, NegotiationThreadStatus.ACCEPTED)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "surplus/negotiation-not-accepted"));
-        if (thread.getStatus() != NegotiationThreadStatus.ACCEPTED) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "surplus/negotiation-not-accepted");
-        }
 
         ann.setAvailableKg(surplusKg);
         ann.setTotalKg(ann.getReservedKg().add(surplusKg));

@@ -43,13 +43,31 @@ public interface NegotiationThreadRepository extends JpaRepository<NegotiationTh
     List<NegotiationThreadEntity> findByPackageRequestId(UUID packageRequestId);
 
     /**
-     * The single thread that created a given dedicated trip (1:1 — one thread
-     * creates exactly one dedicated announcement). Used by {@code openSurplus}
-     * to re-check the negotiation reached ACCEPTED before opening surplus.
+     * The single ACCEPTED thread for a given dedicated trip. Since Task 4, a trip can be
+     * linked to multiple concurrent OPEN offers (spec §3.8), so the 1:1 relation only holds
+     * for the ACCEPTED status — filtering by it is required, otherwise multiple linked
+     * threads would make this throw IncorrectResultSizeDataAccessException. Used by
+     * {@code openSurplus} to re-check the negotiation reached ACCEPTED before opening surplus.
      */
-    Optional<NegotiationThreadEntity> findByTravelerAnnouncementId(UUID travelerAnnouncementId);
+    Optional<NegotiationThreadEntity> findByTravelerAnnouncementIdAndStatus(
+        UUID travelerAnnouncementId, NegotiationThreadStatus status);
 
-    boolean existsByTravelerAnnouncementId(UUID travelerAnnouncementId);
+    /**
+     * True iff at least one non-terminal (active) thread is linked to this trip announcement.
+     * Used to block unpublishing a trip that is still in play on a negotiation — restricted to
+     * the active set so a REJECTED/CANCELLED/AUTO_REJECTED/EXPIRED thread (dead, no longer
+     * blocking anything) doesn't permanently prevent the traveler from unpublishing.
+     */
+    @Query("""
+        SELECT COUNT(t) > 0 FROM NegotiationThreadEntity t
+        WHERE t.travelerAnnouncementId = :announcementId
+          AND t.status IN (
+              com.yadony.api.requests.entity.NegotiationThreadStatus.OPEN,
+              com.yadony.api.requests.entity.NegotiationThreadStatus.AWAITING_TRIP,
+              com.yadony.api.requests.entity.NegotiationThreadStatus.AWAITING_PAYMENT
+          )
+    """)
+    boolean existsActiveByTravelerAnnouncementId(@Param("announcementId") UUID announcementId);
 
     long countByTravelerIdAndStatus(UUID travelerId, NegotiationThreadStatus status);
 

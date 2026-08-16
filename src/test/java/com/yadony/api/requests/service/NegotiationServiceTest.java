@@ -23,6 +23,8 @@ import com.yadony.api.settings.UserBusinessPrefsEntity;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.*;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
@@ -550,6 +552,135 @@ class NegotiationServiceTest {
             verify(threadRepo).save(captor.capture());
             assertThat(captor.getValue().getTravelerAnnouncementId()).isEqualTo(TRIP_ANNOUNCEMENT_ID);
         }
+
+        private com.yadony.api.requests.dto.NegotiationCreateDedicatedTripRequest dedicatedTripPayload(LocalDate date) {
+            return new com.yadony.api.requests.dto.NegotiationCreateDedicatedTripRequest(
+                date,
+                java.time.LocalTime.of(8, 0),
+                java.time.LocalTime.of(14, 30),
+                new com.yadony.api.matching.dto.AddressDto("CDG T2E", 49.0097, 2.5479),
+                new com.yadony.api.matching.dto.AddressDto("DSS Diass", 14.6708, -17.0734),
+                "Bagage en soute",
+                java.util.List.of("vetements", "documents"),
+                java.util.List.of("liquides"),
+                com.yadony.api.payments.cash.PaymentMethod.CASH
+            );
+        }
+
+        private void stubDedicatedTripRequestFields() {
+            request.setDepartureCity("Paris");
+            request.setArrivalCity("Dakar");
+            request.setDesiredDate(LocalDate.now().plusDays(10));
+            request.setDateToleranceDays((short) 2);
+            request.setWeightKg(new BigDecimal("5"));
+            request.setTransportMode(com.yadony.api.matching.TransportMode.PLANE);
+            request.setAcceptedPaymentMethods(java.util.EnumSet.of(com.yadony.api.payments.cash.PaymentMethod.CASH));
+        }
+
+        @Test
+        @DisplayName("createDedicatedTrip=true → annonce dédiée créée et attachée au thread OPEN + audit DEDICATED_TRIP_CREATED_AT_OFFER")
+        void start_createsDedicatedTripAndAttachesIt() {
+            stubDedicatedTripRequestFields();
+            when(config.maxOpenThreadsPerTraveler()).thenReturn(5);
+            when(config.threadsPerMinuteRateLimit()).thenReturn(1);
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
+            when(requestRepo.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(threadRepo.findActiveByPackageRequestIdAndTravelerId(REQUEST_ID, TRAVELER_ID))
+                .thenReturn(Optional.empty());
+            when(threadRepo.countByTravelerIdAndStatus(eq(TRAVELER_ID), eq(NegotiationThreadStatus.OPEN)))
+                .thenReturn(0L);
+            when(threadRepo.countCreatedBy(eq(TRAVELER_ID), any())).thenReturn(0L);
+            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any(), any())).thenReturn(true);
+            UUID newAnnId = UUID.randomUUID();
+            when(announcementRepo.save(any())).thenAnswer(inv -> {
+                com.yadony.api.matching.AnnouncementEntity a = inv.getArgument(0);
+                try {
+                    var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+                    idField.setAccessible(true);
+                    idField.set(a, newAnnId);
+                } catch (Exception e) { throw new RuntimeException(e); }
+                return a;
+            });
+            when(threadRepo.save(any())).thenAnswer(inv -> {
+                NegotiationThreadEntity t = inv.getArgument(0);
+                try {
+                    var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+                    idField.setAccessible(true);
+                    idField.set(t, UUID.randomUUID());
+                } catch (Exception e) { throw new RuntimeException(e); }
+                return t;
+            });
+
+            NegotiationStartRequest req = new NegotiationStartRequest(
+                REQUEST_ID, new BigDecimal("80"), request.getDesiredDate(),
+                new BigDecimal("5"), null, null, true, dedicatedTripPayload(request.getDesiredDate())
+            );
+
+            NegotiationThreadResponse response = service.start(TRAVELER_ID, req);
+
+            assertThat(response.status()).isEqualTo(NegotiationThreadStatus.OPEN);
+            assertThat(response.travelerAnnouncementId()).isEqualTo(newAnnId);
+            verify(announcementRepo).save(any());
+            ArgumentCaptor<NegotiationThreadEntity> threadCaptor = ArgumentCaptor.forClass(NegotiationThreadEntity.class);
+            verify(threadRepo).save(threadCaptor.capture());
+            assertThat(threadCaptor.getValue().getTravelerAnnouncementId()).isEqualTo(newAnnId);
+            verify(auditService).log(eq("ANNOUNCEMENT"), eq(newAnnId), eq("DEDICATED_TRIP_CREATED_AT_OFFER"),
+                eq(TRAVELER_ID), anyMap());
+        }
+
+        @Test
+        @DisplayName("createDedicatedTrip=true sans dedicatedTrip → 422 dedicated-trip-invalid")
+        void start_throws422_whenDedicatedTripPayloadMissing() {
+            stubDedicatedTripRequestFields();
+            when(config.maxOpenThreadsPerTraveler()).thenReturn(5);
+            when(config.threadsPerMinuteRateLimit()).thenReturn(1);
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(requestRepo.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(threadRepo.findActiveByPackageRequestIdAndTravelerId(REQUEST_ID, TRAVELER_ID))
+                .thenReturn(Optional.empty());
+            when(threadRepo.countByTravelerIdAndStatus(eq(TRAVELER_ID), eq(NegotiationThreadStatus.OPEN)))
+                .thenReturn(0L);
+            when(threadRepo.countCreatedBy(eq(TRAVELER_ID), any())).thenReturn(0L);
+
+            NegotiationStartRequest req = new NegotiationStartRequest(
+                REQUEST_ID, new BigDecimal("80"), request.getDesiredDate(),
+                new BigDecimal("5"), null, null, true, null
+            );
+
+            assertThatThrownBy(() -> service.start(TRAVELER_ID, req))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("dedicated-trip-invalid");
+            verify(announcementRepo, never()).save(any());
+            verify(threadRepo, never()).save(any(NegotiationThreadEntity.class));
+        }
+
+        @Test
+        @DisplayName("createDedicatedTrip=true, date hors fenêtre de tolérance → 422 announcement/date-mismatch")
+        void start_throws422_whenDedicatedDateOutsideToleranceWindow() {
+            stubDedicatedTripRequestFields();
+            when(config.maxOpenThreadsPerTraveler()).thenReturn(5);
+            when(config.threadsPerMinuteRateLimit()).thenReturn(1);
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(requestRepo.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(threadRepo.findActiveByPackageRequestIdAndTravelerId(REQUEST_ID, TRAVELER_ID))
+                .thenReturn(Optional.empty());
+            when(threadRepo.countByTravelerIdAndStatus(eq(TRAVELER_ID), eq(NegotiationThreadStatus.OPEN)))
+                .thenReturn(0L);
+            when(threadRepo.countCreatedBy(eq(TRAVELER_ID), any())).thenReturn(0L);
+
+            LocalDate outOfWindow = request.getDesiredDate().plusDays(30);
+            NegotiationStartRequest req = new NegotiationStartRequest(
+                REQUEST_ID, new BigDecimal("80"), outOfWindow,
+                new BigDecimal("5"), null, null, true, dedicatedTripPayload(outOfWindow)
+            );
+
+            assertThatThrownBy(() -> service.start(TRAVELER_ID, req))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("announcement/date-mismatch");
+            verify(announcementRepo, never()).save(any());
+            verify(threadRepo, never()).save(any(NegotiationThreadEntity.class));
+        }
     }
 
     private NegotiationStartRequest validStartReq() {
@@ -750,6 +881,32 @@ class NegotiationServiceTest {
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("already-finalized");
         }
+
+        @Test
+        @DisplayName("thread OPEN avec trajet dédié déjà attaché (offre atomique) → rejeté par le sender → trajet soft-deleted")
+        void reject_withDedicatedTripAttachedFromStart_softDeletesIt() {
+            UUID announcementId = UUID.randomUUID();
+            thread.setTravelerAnnouncementId(announcementId);
+            com.yadony.api.matching.AnnouncementEntity dedicatedAnn = new com.yadony.api.matching.AnnouncementEntity();
+            dedicatedAnn.setLinkedPackageRequestId(REQUEST_ID);
+            try {
+                var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+                idField.setAccessible(true);
+                idField.set(dedicatedAnn, announcementId);
+            } catch (Exception e) { throw new RuntimeException(e); }
+
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(announcementRepo.findById(announcementId)).thenReturn(Optional.of(dedicatedAnn));
+
+            service.reject(SENDER_ID, THREAD_ID,
+                new com.yadony.api.requests.dto.NegotiationRejectRequest("Pas intéressé"));
+
+            assertThat(dedicatedAnn.getDeletedAt()).isNotNull();
+            verify(announcementRepo).save(dedicatedAnn);
+            verify(auditService).log(eq("ANNOUNCEMENT"), eq(announcementId),
+                eq("DEDICATED_TRIP_ORPHANED_ON_REJECT"), eq(SENDER_ID), anyMap());
+        }
     }
 
     @Nested
@@ -893,6 +1050,32 @@ class NegotiationServiceTest {
             assertThat(eventCaptor.getValue().byUserId()).isEqualTo(TRAVELER_ID);
             assertThat(eventCaptor.getValue().releaseEscrow()).isFalse();
             verify(escrowPort, never()).releaseEscrowForMethodSwitch(any());
+        }
+
+        @Test
+        @DisplayName("status OPEN avec trajet dédié attaché dès l'offre → soft-deleted à l'annulation (pas seulement AWAITING_PAYMENT)")
+        void cancel_open_withDedicatedTripAttachedFromStart_softDeletesIt() {
+            UUID announcementId = UUID.randomUUID();
+            thread.setTravelerAnnouncementId(announcementId);
+            com.yadony.api.matching.AnnouncementEntity dedicatedAnn = new com.yadony.api.matching.AnnouncementEntity();
+            dedicatedAnn.setLinkedPackageRequestId(REQUEST_ID);
+            try {
+                var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+                idField.setAccessible(true);
+                idField.set(dedicatedAnn, announcementId);
+            } catch (Exception e) { throw new RuntimeException(e); }
+
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
+            when(announcementRepo.findById(announcementId)).thenReturn(Optional.of(dedicatedAnn));
+
+            service.cancelNegotiation(SENDER_ID, THREAD_ID, null);
+
+            assertThat(dedicatedAnn.getDeletedAt()).isNotNull();
+            verify(announcementRepo).save(dedicatedAnn);
+            verify(auditService).log(eq("ANNOUNCEMENT"), eq(announcementId),
+                eq("DEDICATED_TRIP_ORPHANED_ON_CANCEL"), eq(SENDER_ID), anyMap());
         }
     }
 
@@ -2091,6 +2274,101 @@ class NegotiationServiceTest {
             verify(auditService).log(eq("NEGOTIATION_THREAD"), eq(THREAD_ID), eq("TRIP_CHANGED"),
                 eq(TRAVELER_ID), any());
         }
+
+        @Test
+        @DisplayName("thread AWAITING_TRIP (flux legacy) → 409 negotiation-trip-locked, réservé à submitTrip")
+        void changeTrip_throws409_whenThreadAwaitingTrip() {
+            thread.setStatus(NegotiationThreadStatus.AWAITING_TRIP);
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+
+            UUID newAnnId = UUID.randomUUID();
+            assertThatThrownBy(() -> service.changeTrip(
+                TRAVELER_ID, THREAD_ID, new com.yadony.api.requests.dto.NegotiationChangeTripRequest(newAnnId)))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("negotiation-trip-locked");
+            verify(threadRepo, never()).save(any());
+        }
+
+        @ParameterizedTest
+        @EnumSource(value = NegotiationThreadStatus.class,
+            names = {"ACCEPTED", "REJECTED", "CANCELLED", "AUTO_REJECTED", "EXPIRED"})
+        @DisplayName("statut terminal → 409 negotiation-trip-locked")
+        void changeTrip_throws409_whenThreadTerminal(NegotiationThreadStatus status) {
+            thread.setStatus(status);
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+
+            UUID newAnnId = UUID.randomUUID();
+            assertThatThrownBy(() -> service.changeTrip(
+                TRAVELER_ID, THREAD_ID, new com.yadony.api.requests.dto.NegotiationChangeTripRequest(newAnnId)))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("negotiation-trip-locked");
+        }
+
+        @Test
+        @DisplayName("caller ≠ voyageur du thread → 403 negotiation/not-traveler")
+        void changeTrip_throws403_whenCallerNotTraveler() {
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+
+            UUID newAnnId = UUID.randomUUID();
+            assertThatThrownBy(() -> service.changeTrip(
+                SENDER_ID, THREAD_ID, new com.yadony.api.requests.dto.NegotiationChangeTripRequest(newAnnId)))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("negotiation/not-traveler");
+            verify(threadRepo, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("thread introuvable → 404 thread/not-found")
+        void changeTrip_throws404_whenThreadNotFound() {
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.empty());
+
+            UUID newAnnId = UUID.randomUUID();
+            assertThatThrownBy(() -> service.changeTrip(
+                TRAVELER_ID, THREAD_ID, new com.yadony.api.requests.dto.NegotiationChangeTripRequest(newAnnId)))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("thread/not-found");
+        }
+
+        @Test
+        @DisplayName("ancien trajet dédié détaché → soft-deleted (orphelin), nouveau trajet non touché")
+        void changeTrip_softDeletesOrphanedPreviousDedicatedTrip() {
+            UUID oldDedicatedAnnId = UUID.randomUUID();
+            thread.setTravelerAnnouncementId(oldDedicatedAnnId);
+
+            com.yadony.api.matching.AnnouncementEntity oldDedicatedAnn = new com.yadony.api.matching.AnnouncementEntity();
+            oldDedicatedAnn.setTravelerId(TRAVELER_ID);
+            oldDedicatedAnn.setLinkedPackageRequestId(REQUEST_ID); // dédié à CETTE demande
+            try {
+                var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+                idField.setAccessible(true);
+                idField.set(oldDedicatedAnn, oldDedicatedAnnId);
+            } catch (Exception e) { throw new RuntimeException(e); }
+
+            com.yadony.api.matching.AnnouncementEntity newAnn = matchingAnnouncementFor(request, TRAVELER_ID);
+            UUID newAnnId = UUID.randomUUID();
+            try {
+                var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+                idField.setAccessible(true);
+                idField.set(newAnn, newAnnId);
+            } catch (Exception e) { throw new RuntimeException(e); }
+
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(announcementRepo.findById(newAnnId)).thenReturn(Optional.of(newAnn));
+            when(announcementRepo.findById(oldDedicatedAnnId)).thenReturn(Optional.of(oldDedicatedAnn));
+            when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(List.of());
+
+            service.changeTrip(
+                TRAVELER_ID, THREAD_ID, new com.yadony.api.requests.dto.NegotiationChangeTripRequest(newAnnId));
+
+            assertThat(oldDedicatedAnn.getDeletedAt()).isNotNull();
+            verify(announcementRepo).save(oldDedicatedAnn);
+            verify(auditService).log(eq("ANNOUNCEMENT"), eq(oldDedicatedAnnId),
+                eq("DEDICATED_TRIP_ORPHANED_ON_TRIP_CHANGE"), eq(TRAVELER_ID), anyMap());
+        }
     }
 
     @Nested
@@ -2879,7 +3157,8 @@ class NegotiationServiceTest {
         @DisplayName("succès → availableKg=surplus, totalKg=reserved+surplus, pricePerKg=surplusPrice, surplusPublished")
         void openSurplus_success() {
             when(announcementRepo.findById(ANN_ID)).thenReturn(Optional.of(ann));
-            when(threadRepo.findByTravelerAnnouncementId(ANN_ID)).thenReturn(Optional.of(thread));
+            when(threadRepo.findByTravelerAnnouncementIdAndStatus(ANN_ID, NegotiationThreadStatus.ACCEPTED))
+                .thenReturn(Optional.of(thread));
             when(announcementRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
             service.openSurplus(TRAVELER_ID, ANN_ID, new BigDecimal("8"), new BigDecimal("7"));
@@ -2979,7 +3258,8 @@ class NegotiationServiceTest {
         @DisplayName("aucun thread pour le trajet → 409 surplus/negotiation-not-accepted")
         void openSurplus_noThread_throws409() {
             when(announcementRepo.findById(ANN_ID)).thenReturn(Optional.of(ann));
-            when(threadRepo.findByTravelerAnnouncementId(ANN_ID)).thenReturn(Optional.empty());
+            when(threadRepo.findByTravelerAnnouncementIdAndStatus(ANN_ID, NegotiationThreadStatus.ACCEPTED))
+                .thenReturn(Optional.empty());
             assertThatThrownBy(() -> service.openSurplus(TRAVELER_ID, ANN_ID,
                 new BigDecimal("8"), new BigDecimal("7")))
                 .isInstanceOf(ResponseStatusException.class)
@@ -2992,7 +3272,8 @@ class NegotiationServiceTest {
         void openSurplus_threadNotAccepted_throws409() {
             thread.setStatus(NegotiationThreadStatus.AWAITING_PAYMENT);
             when(announcementRepo.findById(ANN_ID)).thenReturn(Optional.of(ann));
-            when(threadRepo.findByTravelerAnnouncementId(ANN_ID)).thenReturn(Optional.of(thread));
+            when(threadRepo.findByTravelerAnnouncementIdAndStatus(ANN_ID, NegotiationThreadStatus.ACCEPTED))
+                .thenReturn(Optional.empty());
             assertThatThrownBy(() -> service.openSurplus(TRAVELER_ID, ANN_ID,
                 new BigDecimal("8"), new BigDecimal("7")))
                 .isInstanceOf(ResponseStatusException.class)
@@ -3357,7 +3638,7 @@ class NegotiationServiceTest {
         }
 
         @Test
-        @DisplayName("finalize auto-rejette les threads concurrents OPEN/AWAITING_TRIP/AWAITING_PAYMENT")
+        @DisplayName("finalize auto-rejette les threads concurrents OPEN/AWAITING_TRIP/AWAITING_PAYMENT et soft-delete leurs trajets dédiés orphelins")
         void finalize_autoRejectsCompetingThreads() {
             NegotiationThreadEntity competing = new NegotiationThreadEntity();
             competing.setPackageRequestId(REQUEST_ID);
@@ -3367,10 +3648,21 @@ class NegotiationServiceTest {
             competing.setRoundsCount((short) 1);
             competing.setLastActivityAt(java.time.LocalDateTime.now());
             UUID competingId = UUID.randomUUID();
+            UUID competingDedicatedAnnId = UUID.randomUUID();
+            competing.setTravelerAnnouncementId(competingDedicatedAnnId);
             try {
                 var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
                 idField.setAccessible(true);
                 idField.set(competing, competingId);
+            } catch (Exception e) { throw new RuntimeException(e); }
+
+            com.yadony.api.matching.AnnouncementEntity competingDedicatedAnn =
+                new com.yadony.api.matching.AnnouncementEntity();
+            competingDedicatedAnn.setLinkedPackageRequestId(REQUEST_ID);
+            try {
+                var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+                idField.setAccessible(true);
+                idField.set(competingDedicatedAnn, competingDedicatedAnnId);
             } catch (Exception e) { throw new RuntimeException(e); }
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
@@ -3381,11 +3673,16 @@ class NegotiationServiceTest {
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(List.of());
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
             when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
-            // thread.getTravelerAnnouncementId() is null → announcementRepo not called
+            when(announcementRepo.findById(competingDedicatedAnnId)).thenReturn(Optional.of(competingDedicatedAnn));
+            // thread.getTravelerAnnouncementId() is null → announcementRepo not called for the winner
 
             service.finalizeAfterPayment(SENDER_ID, THREAD_ID, "pi_real_456");
 
             assertThat(competing.getStatus()).isEqualTo(NegotiationThreadStatus.AUTO_REJECTED);
+            assertThat(competingDedicatedAnn.getDeletedAt()).isNotNull();
+            verify(announcementRepo).save(competingDedicatedAnn);
+            verify(auditService).log(eq("ANNOUNCEMENT"), eq(competingDedicatedAnnId),
+                eq("DEDICATED_TRIP_ORPHANED_ON_AUTO_REJECT"), eq(SENDER_ID), anyMap());
         }
 
         @Test
