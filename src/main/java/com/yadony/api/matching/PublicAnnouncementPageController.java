@@ -1,5 +1,6 @@
 package com.yadony.api.matching;
 
+import com.yadony.api.matching.dto.AnnouncementPriceGridItemResponse;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Value;
@@ -12,6 +13,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import java.math.BigDecimal;
 import java.time.format.DateTimeFormatter;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -128,9 +130,14 @@ public class PublicAnnouncementPageController {
         model.addAttribute("ogDescription",
                 "Départ le " + departureDate + ". Réservez vos kilos sur Yadony.");
         model.addAttribute("handoverDeadline", formatDeadline(announcement));
-        model.addAttribute("availableKg", formatDecimal(announcement.getAvailableKg()));
-        model.addAttribute("pricePerKg", formatDecimal(senderPricePerKg(announcement)));
+        model.addAttribute("capacity", capacityLabel(announcement));
+        model.addAttribute("pricePerKg", formatDecimal(kgPrice(announcement)));
+        model.addAttribute("cheapestGridPrice",
+                formatDecimal(cheapestGridPrice(announcement)));
         model.addAttribute("currency", SupportedCurrency.symbolOf(announcement.getCurrency()));
+        // Lieux de remise et de récupération, tels que le voyageur les a saisis.
+        model.addAttribute("pickupAddress", announcement.getPickupAddressLabel());
+        model.addAttribute("deliveryAddress", announcement.getDeliveryAddressLabel());
         model.addAttribute("deepLink", "dony://annonce/" + announcementId);
         model.addAttribute("shareUrl", publicBaseUrl + "/public/annonce/" + announcementId);
 
@@ -150,6 +157,60 @@ public class PublicAnnouncementPageController {
         return net == null
                 ? null
                 : priceGridService.displayPrice(net, announcement.getTravelerId());
+    }
+
+    /**
+     * Prix au kilo, ou {@code null} lorsque le trajet n'en a pas.
+     *
+     * <p>En mode {@link PricingMode#MIXED} le tarif au kilo est facultatif, mais
+     * la colonne est {@code NOT NULL} et le formulaire de création y écrit
+     * {@code 0}. Ni {@code pricePerKg} ni le prix affiché ne valent donc jamais
+     * {@code null} : tester la nullité laissait passer un « 0 € par kilo » sur
+     * la page qu'un voyageur diffuse publiquement. C'est la valeur qui tranche,
+     * pas la présence.
+     */
+    private BigDecimal kgPrice(AnnouncementEntity announcement) {
+        BigDecimal net = announcement.getPricePerKg();
+        if (net == null || net.signum() <= 0) {
+            return null;
+        }
+        return senderPricePerKg(announcement);
+    }
+
+    /**
+     * Prix expéditeur de l'article le moins cher, pour une accroche « dès X ».
+     *
+     * <p>{@code null} hors mode {@link PricingMode#MIXED}. Le service garantit
+     * une grille non vide dans ce mode (422 {@code price-grid-empty} sinon),
+     * mais une annonce plus ancienne peut en être dépourvue, d'où le repli.
+     */
+    private BigDecimal cheapestGridPrice(AnnouncementEntity announcement) {
+        if (announcement.getPricingMode() != PricingMode.MIXED) {
+            return null;
+        }
+        return priceGridService
+                .getAnnouncementGridItems(announcement.getId(), announcement.getTravelerId())
+                .stream()
+                .map(AnnouncementPriceGridItemResponse::unitPriceDisplay)
+                .filter(Objects::nonNull)
+                .min(BigDecimal::compareTo)
+                .orElse(null);
+    }
+
+    /**
+     * Capacité telle qu'elle doit être annoncée.
+     *
+     * <p>{@link CapacityUnit#KG_FREE} signifie « pas de plafond déclaré » :
+     * {@code availableKg} n'est alors qu'une valeur de forme, et l'imprimer
+     * comme une limite tromperait l'expéditeur. Le reste de l'application dit
+     * « Kg libre » dans ce cas.
+     */
+    private String capacityLabel(AnnouncementEntity announcement) {
+        if (announcement.getCapacityUnit() == CapacityUnit.KG_FREE) {
+            return "Kg libre";
+        }
+        String kg = formatDecimal(announcement.getAvailableKg());
+        return kg == null ? null : kg + " kg";
     }
 
     /**

@@ -74,9 +74,14 @@
       gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--border);
     }
 
-    .row dt { color: var(--muted); font-size: 14px; margin: 0; }
+    .row dt { color: var(--muted); font-size: 14px; margin: 0; white-space: nowrap; }
     .row dd { margin: 0; font-weight: 700; font-size: 15px; text-align: right; }
     .row.deadline dd { color: var(--terra); }
+
+    /* Les adresses sont saisies librement : elles doivent pouvoir revenir à la
+       ligne, y compris au milieu d'un mot très long, plutôt que d'élargir la
+       page au point de la faire défiler horizontalement sur un téléphone. */
+    .row dd.address { font-weight: 600; font-size: 14px; overflow-wrap: anywhere; }
 
     .price {
       display: flex; align-items: baseline; gap: 6px;
@@ -84,6 +89,8 @@
     }
     .price .amount { font-size: 34px; font-weight: 800; letter-spacing: -1px; }
     .price .unit { color: var(--muted); font-size: 15px; font-weight: 600; }
+
+    .price-alt { margin: 6px 0 0; color: var(--muted); font-size: 14px; font-weight: 600; }
 
     .btn {
       display: block; width: 100%; padding: 16px;
@@ -142,18 +149,41 @@
           <dt>Date limite de dépôt</dt>
           <dd th:text="${handoverDeadline}">mercredi 19 août à 19h00</dd>
         </div>
-        <div class="row" th:if="${availableKg != null}">
+        <div class="row" th:if="${capacity != null}">
           <dt>Place disponible</dt>
-          <dd><span th:text="${availableKg}">12</span> kg</dd>
+          <dd th:text="${capacity}">12 kg</dd>
+        </div>
+        <div class="row" th:if="${pickupAddress != null}">
+          <dt>Remise du colis</dt>
+          <dd class="address" th:text="${pickupAddress}">12 rue de Tombouctou, 75018 Paris</dd>
+        </div>
+        <div class="row" th:if="${deliveryAddress != null}">
+          <dt>Récupération</dt>
+          <dd class="address" th:text="${deliveryAddress}">Sacré-Cœur 3, Dakar</dd>
         </div>
       </dl>
 
-      <div class="price" th:if="${pricePerKg != null}">
+      <!--
+        Trois formes de prix, jamais deux à la fois en vedette. Un trajet vendu
+        à l'article n'a pas forcément de tarif au kilo : la colonne étant NOT
+        NULL et remplie avec 0 par le formulaire, un simple test de nullité
+        affichait « 0€ par kilo » sur la page que le voyageur diffuse.
+      -->
+      <div class="price" th:if="${cheapestGridPrice != null}">
+        <span class="amount">
+          dès <span th:text="${cheapestGridPrice}">25</span><span th:text="${currency}">€</span>
+        </span>
+        <span class="unit">l'article</span>
+      </div>
+      <div class="price" th:if="${cheapestGridPrice == null and pricePerKg != null}">
         <span class="amount">
           <span th:text="${pricePerKg}">8</span><span th:text="${currency}">€</span>
         </span>
         <span class="unit">par kilo</span>
       </div>
+      <p class="price-alt" th:if="${cheapestGridPrice != null and pricePerKg != null}">
+        et <span th:text="${pricePerKg}">8</span><span th:text="${currency}">€</span> par kilo
+      </p>
     </div>
 
     <!--

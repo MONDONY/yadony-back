@@ -35,6 +35,16 @@ class PublicAnnouncementPageControllerIntegrationTest {
 
     @Autowired MockMvc mockMvc;
     @Autowired AnnouncementRepository announcementRepository;
+    @Autowired AnnouncementPriceGridItemRepository gridItemRepository;
+
+    private void persistGridItem(UUID announcementId, String label, String net, int position) {
+        AnnouncementPriceGridItemEntity item = new AnnouncementPriceGridItemEntity();
+        item.setAnnouncementId(announcementId);
+        item.setLabel(label);
+        item.setUnitPriceNet(new BigDecimal(net));
+        item.setPosition(position);
+        gridItemRepository.saveAndFlush(item);
+    }
 
     private AnnouncementEntity persistAnnouncement(AnnouncementStatus status) {
         return persistAnnouncement(status, null, false);
@@ -249,5 +259,82 @@ class PublicAnnouncementPageControllerIntegrationTest {
                 .andExpect(content().string(
                         org.hamcrest.Matchers.not(
                                 org.hamcrest.Matchers.containsString(">8<"))));
+    }
+
+    /**
+     * En mode MIXED le prix au kilo est facultatif, mais la colonne est NOT NULL
+     * et le formulaire de création y écrit 0. Tester la nullité laissait donc
+     * passer un « 0€ par kilo » sur la page que le voyageur diffuse.
+     */
+    @Test
+    void gridPricedTrip_neverAdvertisesAZeroPricePerKilo() throws Exception {
+        AnnouncementEntity a = persistAnnouncement(AnnouncementStatus.ACTIVE);
+        a.setPricingMode(PricingMode.MIXED);
+        a.setPricePerKg(BigDecimal.ZERO);
+        announcementRepository.saveAndFlush(a);
+        persistGridItem(a.getId(), "Carton", "20.00", 0);
+        persistGridItem(a.getId(), "Valise", "35.00", 1);
+
+        mockMvc.perform(get("/public/annonce/" + a.getId()).header("User-Agent", BROWSER_UA))
+                .andExpect(status().isOk())
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.not(
+                                org.hamcrest.Matchers.containsString(">par kilo<"))))
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString(">l'article<")));
+    }
+
+    /**
+     * Sans grille exploitable et sans tarif au kilo, mieux vaut ne rien annoncer
+     * qu'annoncer zéro : le bloc prix disparaît entièrement.
+     */
+    @Test
+    void tripWithoutAnyUsablePrice_showsNoPriceBlockAtAll() throws Exception {
+        AnnouncementEntity a = persistAnnouncement(AnnouncementStatus.ACTIVE);
+        a.setPricingMode(PricingMode.MIXED);
+        a.setPricePerKg(BigDecimal.ZERO);
+        announcementRepository.saveAndFlush(a);
+
+        mockMvc.perform(get("/public/annonce/" + a.getId()).header("User-Agent", BROWSER_UA))
+                .andExpect(status().isOk())
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.not(
+                                org.hamcrest.Matchers.containsString(">par kilo<"))))
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.not(
+                                org.hamcrest.Matchers.containsString(">l'article<"))));
+    }
+
+    /**
+     * KG_FREE veut dire « pas de plafond déclaré » : availableKg n'est alors
+     * qu'une valeur de forme, et l'imprimer comme une limite tromperait
+     * l'expéditeur.
+     */
+    @Test
+    void unboundedCapacity_isAnnouncedAsFreeKilosNotAsALimit() throws Exception {
+        AnnouncementEntity a = persistAnnouncement(AnnouncementStatus.ACTIVE);
+        a.setCapacityUnit(CapacityUnit.KG_FREE);
+        announcementRepository.saveAndFlush(a);
+
+        mockMvc.perform(get("/public/annonce/" + a.getId()).header("User-Agent", BROWSER_UA))
+                .andExpect(status().isOk())
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("Kg libre")))
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.not(
+                                org.hamcrest.Matchers.containsString("12 kg"))));
+    }
+
+    /** Les lieux de remise et de récupération sont ce qui décide l'expéditeur. */
+    @Test
+    void publicPage_showsHandoverAndCollectionPlaces() throws Exception {
+        AnnouncementEntity a = persistAnnouncement(AnnouncementStatus.ACTIVE);
+
+        mockMvc.perform(get("/public/annonce/" + a.getId()).header("User-Agent", BROWSER_UA))
+                .andExpect(status().isOk())
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("Paris 18e")))
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("Dakar Plateau")));
     }
 }
