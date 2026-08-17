@@ -41,8 +41,10 @@ public class TrackingController {
     }
 
     @GetMapping("/search")
-    public ResponseEntity<TrackingSearchResponse> search(@RequestParam String number) {
-        return ResponseEntity.ok(trackingService.searchByTrackingNumber(number));
+    public ResponseEntity<TrackingSearchResponse> search(
+            @RequestParam String number,
+            @AuthenticationPrincipal String firebaseUid) {
+        return ResponseEntity.ok(trackingService.searchByTrackingNumber(number, firebaseUid));
     }
 
     @PostMapping("/events")

@@ -21,6 +21,7 @@ Fonctionnalité: Suivi de colis
 
   @error-case
   Scénario: Numéro de suivi inexistant
+    Etant donné un utilisateur EXPÉDITEUR enregistré avec l'uid "sender-track-404" et le téléphone "+33688000099"
     Quand je recherche le colis avec le numéro "DON-XXXXXX"
     Alors la réponse HTTP est 404
     Et le code d'erreur de la réponse est "tracking-not-found"

@@ -115,7 +115,7 @@ public class TrackingService {
         return new QrCodeResponse(bidId, scanUrl, qrBase64);
     }
 
-    public TrackingSearchResponse searchByTrackingNumber(String trackingNumber) {
+    public TrackingSearchResponse searchByTrackingNumber(String trackingNumber, String firebaseUid) {
         String normalized = trackingNumber.trim().toUpperCase();
         BidEntity bid = bidRepository.findByTrackingNumber(normalized)
                 .orElseThrow(() -> new YadonyBusinessException(
@@ -126,6 +126,22 @@ public class TrackingService {
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND, "announcement-not-found", "Announcement Not Found",
                         "Annonce introuvable"));
+
+        // Le numéro de suivi n'est pas un secret : sans contrôle de propriété, n'importe
+        // qui pourrait lire le statut du colis et les instructions de retrait (adresse
+        // physique). Seuls l'expéditeur et le voyageur qui transporte y ont droit.
+        UserEntity currentUser = userRepository.findByFirebaseUid(firebaseUid)
+                .orElseThrow(() -> new YadonyBusinessException(
+                        HttpStatus.NOT_FOUND, "user-not-found", "User Not Found",
+                        "Utilisateur introuvable"));
+
+        boolean isSender = bid.getSenderId().equals(currentUser.getId());
+        boolean isTraveler = announcement.getTravelerId().equals(currentUser.getId());
+        if (!isSender && !isTraveler) {
+            throw new YadonyBusinessException(
+                    HttpStatus.FORBIDDEN, "tracking/forbidden", "Forbidden",
+                    "Ce colis n'est pas le vôtre");
+        }
 
         java.util.Optional<PaymentEntity> paymentOpt = paymentRepository.findByBidId(bid.getId());
 

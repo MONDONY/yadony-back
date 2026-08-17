@@ -93,7 +93,11 @@ public class SecurityConfig {
                     "/payments/stripe/webhook",
                     "/ratings/recipient",
                     "/ratings/user/**",
-                    "/tracking/search",
+                    // /tracking/search n'est PAS public : il expose le statut du colis et
+                    // les instructions de retrait (adresse physique du voyageur). Il exige
+                    // une authentification et le service vérifie que l'appelant est
+                    // l'expéditeur ou le voyageur du colis. Le destinataire, lui, passe par
+                    // /tracking/public/** qui s'authentifie par le token de suivi.
                     "/tracking/public/**",
                     "/v3/api-docs/**",
                     "/swagger-ui/**",

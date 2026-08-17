@@ -15,14 +15,18 @@ public class TrackingSteps extends AbstractSteps {
 
     @Quand("je recherche le colis avec le numéro {string}")
     public void whenSearchByTrackingNumber(String number) {
-        store(asPublic().queryParam("number", number).get("/tracking/search"));
+        // /tracking/search exige une authentification : l'endpoint expose le statut du
+        // colis et l'adresse de retrait, réservés à l'expéditeur et au voyageur.
+        store(asCurrentUser().queryParam("number", number).get("/tracking/search"));
     }
 
     @Quand("je recherche le colis avec le numéro de suivi de l'offre {string}")
     public void whenSearchByTrackingNumberFromBid(String bidAlias) {
         // First get the bid to retrieve the tracking number
         String trackingNumber = ctx.getString("tracking-number-" + bidAlias);
-        store(asPublic().queryParam("number", trackingNumber).get("/tracking/search"));
+        // /tracking/search contrôle désormais la propriété du colis : la recherche doit
+        // être faite par l'expéditeur ou le voyageur, pas en anonyme.
+        store(asCurrentUser().queryParam("number", trackingNumber).get("/tracking/search"));
     }
 
     @Quand("je scanne un événement {string} sur l'offre {string}")
