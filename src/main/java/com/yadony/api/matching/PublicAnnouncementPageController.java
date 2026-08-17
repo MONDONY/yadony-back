@@ -85,6 +85,20 @@ public class PublicAnnouncementPageController {
     @Value("${app.public-base-url}")
     private String publicBaseUrl;
 
+    /**
+     * Repli si {@link #publicBaseUrl} arrive vide.
+     *
+     * <p>Nécessaire car le défaut YAML {@code ${PUBLIC_BASE_URL:...}} ne
+     * s'applique que si la variable est <em>absente</em>, pas si elle est
+     * <em>définie mais vide</em> — et c'est exactement ce que produit le
+     * workflow de déploiement, qui écrit {@code PUBLIC_BASE_URL=} dans le
+     * {@code .env} tant que la variable GitHub correspondante n'existe pas.
+     * Sans ce repli, un déploiement fait avant sa création publierait un
+     * {@code og:url} vide sur toutes les affiches.
+     */
+    @Value("${app.base-url:}")
+    private String appBaseUrl;
+
     @Value("${app.store.android:}")
     private String storeUrlAndroid;
 
@@ -98,9 +112,25 @@ public class PublicAnnouncementPageController {
      * {@code app.store.android}/{@code .ios} restent vides. Le comportement
      * est écrit et testé maintenant ; l'activer plus tard n'est qu'un
      * changement de configuration, pas de code.
+     *
+     * <p><strong>Injecté en {@code String}, converti par {@link #isStoreOsRedirectEnabled}.</strong>
+     * Injecté en {@code boolean}, une valeur <em>définie mais vide</em> fait
+     * échouer la conversion et l'application <em>refuse de démarrer</em>
+     * ({@code Invalid boolean value []}). Or c'est exactement ce que le
+     * workflow de déploiement écrit dans le {@code .env}
+     * ({@code STORE_OS_REDIRECT_ENABLED=}) tant que la variable GitHub
+     * correspondante n'existe pas. Le défaut YAML ne protège pas : il ne
+     * couvre que la variable absente.
      */
     @Value("${app.store.os-redirect-enabled:false}")
-    private boolean storeOsRedirectEnabled;
+    private String storeOsRedirectEnabledRaw;
+
+    /** Vrai uniquement sur une valeur explicitement vraie ; vide ⇒ désactivé. */
+    private boolean isStoreOsRedirectEnabled() {
+        return Boolean.parseBoolean(storeOsRedirectEnabledRaw == null
+                ? "false"
+                : storeOsRedirectEnabledRaw.trim());
+    }
 
     public PublicAnnouncementPageController(AnnouncementRepository announcementRepository,
                                             PriceGridService priceGridService) {
@@ -165,7 +195,7 @@ public class PublicAnnouncementPageController {
     }
 
     /**
-     * Bouton principal : le store du bon système si {@link #storeOsRedirectEnabled}
+     * Bouton principal : le store du bon système si {@link #isStoreOsRedirectEnabled()}
      * et que l'appareil est identifié, sinon le lien {@code dony://} historique.
      *
      * <p>Une majorité écrasante des visiteurs de cette page n'a pas encore
@@ -186,7 +216,7 @@ public class PublicAnnouncementPageController {
         String deepLink = "dony://annonce/" + announcementId;
         String osStoreUrl = null;
 
-        if (storeOsRedirectEnabled) {
+        if (isStoreOsRedirectEnabled()) {
             osStoreUrl = switch (detectMobileOs(request)) {
                 case ANDROID -> blankToNull(storeUrlAndroid);
                 case IOS -> blankToNull(storeUrlIos);
@@ -197,7 +227,7 @@ public class PublicAnnouncementPageController {
         model.addAttribute("primaryCtaUrl", osStoreUrl != null ? osStoreUrl : deepLink);
         model.addAttribute("primaryCtaLabel",
                 osStoreUrl != null ? "Télécharger l'application" : "Ouvrir dans l'application");
-        model.addAttribute("showGenericStoreButton", !storeOsRedirectEnabled);
+        model.addAttribute("showGenericStoreButton", !isStoreOsRedirectEnabled());
     }
 
     private enum MobileOs { ANDROID, IOS, OTHER }
@@ -237,7 +267,28 @@ public class PublicAnnouncementPageController {
      * API.
      */
     private String buildShareUrl(UUID announcementId) {
-        return publicBaseUrl + "/annonce/" + announcementId;
+        return resolvedPublicBaseUrl() + "/annonce/" + announcementId;
+    }
+
+    /**
+     * Base publique effective, avec repli en cascade sur {@code app.base-url}
+     * puis sur l'origine locale. Cf. {@link #appBaseUrl} pour la raison : une
+     * variable d'environnement vide n'active pas le défaut YAML.
+     */
+    private String resolvedPublicBaseUrl() {
+        String configured = blankToNull(publicBaseUrl);
+        if (configured != null) {
+            return trimTrailingSlash(configured);
+        }
+        String fallback = blankToNull(appBaseUrl);
+        return fallback == null
+                ? "http://localhost:8080/api/v1"
+                : trimTrailingSlash(fallback) + "/api/v1";
+    }
+
+    /** Une base terminée par « / » produirait « //annonce/… ». */
+    private String trimTrailingSlash(String value) {
+        return value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
     }
 
     /**

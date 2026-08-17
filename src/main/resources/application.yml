@@ -235,6 +235,13 @@ app:
     # Faux par défaut — l'application n'est pas encore publiée, un bouton
     # store pointerait vers rien. À activer le jour du lancement, en même
     # temps que les deux URL ci-dessus.
+    #
+    # Lu en String, pas en boolean, et converti côté Java : le défaut YAML ne
+    # couvre que la variable ABSENTE. Le workflow de déploiement écrit
+    # `STORE_OS_REDIRECT_ENABLED=` dans le .env tant que la variable GitHub
+    # n'existe pas — définie mais vide. Spring échouerait alors à convertir
+    # «  » en booléen et l'application REFUSERAIT DE DÉMARRER
+    # (Invalid boolean value []). Cf. PublicAnnouncementPageController.
     os-redirect-enabled: ${STORE_OS_REDIRECT_ENABLED:false}
   sms:
     enabled: ${SMS_ENABLED:false}

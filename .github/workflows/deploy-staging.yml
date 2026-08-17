@@ -148,6 +148,18 @@ jobs:
           # Config métier (non sensible) — modifiable dans Settings > Environments > staging > Variables
           CORS_ALLOWED_ORIGINS=${{ vars.CORS_ALLOWED_ORIGINS }}
           APP_BASE_URL=${{ vars.APP_BASE_URL }}
+          # Domaine NU (sans /api/v1) servant les URL publiques partageables :
+          # yadony.com/annonce/{id} plutôt que api-staging.yadony.com/api/v1/annonce/{id}.
+          # Exige la règle de réécriture nginx correspondante (nginx/nginx.staging.conf,
+          # bloc « Public trip poster page »). Non renseignée, le backend retombe
+          # sur APP_BASE_URL + /api/v1 : URL plus longue, jamais cassée.
+          PUBLIC_BASE_URL=${{ vars.PUBLIC_BASE_URL }}
+          # Fiches stores + bascule du bouton principal de la page publique vers
+          # le store du système détecté. Les trois vont ENSEMBLE : activer la
+          # bascule sans les deux URL laisse le bouton retomber sur dony://.
+          STORE_URL_ANDROID=${{ vars.STORE_URL_ANDROID }}
+          STORE_URL_IOS=${{ vars.STORE_URL_IOS }}
+          STORE_OS_REDIRECT_ENABLED=${{ vars.STORE_OS_REDIRECT_ENABLED }}
           STORAGE_PUBLIC_BASE_URL=${{ vars.STORAGE_PUBLIC_BASE_URL }}
           SWAGGER_ENABLED=${{ vars.SWAGGER_ENABLED }}
           SMS_ENABLED=${{ vars.SMS_ENABLED }}
