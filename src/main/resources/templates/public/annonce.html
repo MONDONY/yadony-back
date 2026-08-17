@@ -19,189 +19,191 @@
   <meta property="og:url" th:content="${shareUrl}" content="">
   <meta name="twitter:card" content="summary">
 
+  <!--
+    Mêmes familles que l'application (lib/core/design/tokens/typography_tokens.dart) :
+    Hanken Grotesk pour les titres, Plus Jakarta Sans pour le corps. Une page
+    qui redirige vers l'app doit se lire comme son prolongement, pas comme une
+    landing page générique.
+  -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
   <style>
+    /*
+      Palette reprise telle quelle de DonyColors (lib/core/design/tokens/color_tokens.dart) :
+      ink900, blue500, neutral500, neutral200. Le bleu n'apparaît qu'une seule
+      fois, sur le bouton principal — c'est la seule décision qui a besoin
+      d'attirer l'œil sur cette page. Tout le reste est noir, gris, blanc.
+    */
     :root {
-      --blue: #0B5FFF;
-      --blue-dark: #083CAB;
-      --ink: #0A2540;
-      --muted: #54504A;
-      --bg: #FAFAF8;
-      --surface: #FFFFFF;
+      --ink: #061833;
+      --muted: #797367;
       --border: #E8E5DF;
-      --terra: #D96A3A;
+      --blue: #0B5FFF;
+      --blue-press: #083CAB;
     }
 
     * { box-sizing: border-box; }
 
     body {
       margin: 0;
-      padding: 24px 16px 48px;
-      background: var(--bg);
+      padding: 32px 20px 48px;
+      background: #fff;
       color: var(--ink);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
       line-height: 1.5;
       -webkit-font-smoothing: antialiased;
     }
 
-    .wrap { max-width: 480px; margin: 0 auto; }
+    .wrap { max-width: 420px; margin: 0 auto; }
 
-    .brand {
-      display: flex; align-items: center; gap: 8px;
-      font-weight: 800; font-size: 20px; letter-spacing: -0.4px;
-      color: var(--blue); margin-bottom: 24px;
-    }
-
-    .card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 24px;
-      margin-bottom: 16px;
-    }
+    .logo { height: 26px; width: auto; display: block; margin-bottom: 32px; }
 
     .corridor {
-      font-size: 30px; font-weight: 800; letter-spacing: -0.8px;
-      line-height: 1.15; margin: 0 0 4px;
+      font-family: 'Hanken Grotesk', sans-serif;
+      font-size: 28px; font-weight: 800; letter-spacing: -0.6px;
+      line-height: 1.2; margin: 0 0 24px;
       text-wrap: balance;
     }
+    .corridor .arrow { color: var(--muted); font-weight: 400; margin: 0 4px; }
 
-    .corridor .arrow { color: var(--blue); }
-
-    .rows { margin-top: 20px; border-top: 1px solid var(--border); }
+    .rows { margin: 0 0 20px; }
 
     .row {
       display: flex; justify-content: space-between; align-items: baseline;
-      gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--border);
+      gap: 16px; padding: 11px 0; border-bottom: 1px solid var(--border);
     }
+    .row:first-child { border-top: 1px solid var(--border); }
 
     .row dt { color: var(--muted); font-size: 14px; margin: 0; white-space: nowrap; }
-    .row dd { margin: 0; font-weight: 700; font-size: 15px; text-align: right; }
-    .row.deadline dd { color: var(--terra); }
+    .row dd { margin: 0; font-weight: 600; font-size: 14px; text-align: right; }
 
     /* Les adresses sont saisies librement : elles doivent pouvoir revenir à la
        ligne, y compris au milieu d'un mot très long, plutôt que d'élargir la
        page au point de la faire défiler horizontalement sur un téléphone. */
-    .row dd.address { font-weight: 600; font-size: 14px; overflow-wrap: anywhere; }
+    .row dd.address { overflow-wrap: anywhere; }
 
     .price {
       display: flex; align-items: baseline; gap: 6px;
-      margin-top: 20px; padding-top: 20px; border-top: 2px solid var(--ink);
+      padding-top: 16px; margin-bottom: 28px;
     }
-    .price .amount { font-size: 34px; font-weight: 800; letter-spacing: -1px; }
-    .price .unit { color: var(--muted); font-size: 15px; font-weight: 600; }
+    .price .amount {
+      font-family: 'Hanken Grotesk', sans-serif;
+      font-size: 28px; font-weight: 800; letter-spacing: -0.5px;
+      font-variant-numeric: tabular-nums;
+    }
+    .price .unit { color: var(--muted); font-size: 14px; font-weight: 500; }
 
-    .price-alt { margin: 6px 0 0; color: var(--muted); font-size: 14px; font-weight: 600; }
+    .price-alt { margin: -20px 0 28px; color: var(--muted); font-size: 13px; font-weight: 500; }
 
     .btn {
-      display: block; width: 100%; padding: 16px;
+      display: block; width: 100%; padding: 15px;
       border-radius: 14px; border: 1px solid transparent;
-      font-size: 16px; font-weight: 700; text-align: center;
+      font-size: 15px; font-weight: 700; text-align: center;
       text-decoration: none; margin-bottom: 10px;
+      transition-property: transform;
+      transition-duration: 120ms;
     }
+    .btn:active { transform: scale(0.96); }
     .btn-primary { background: var(--blue); color: #fff; }
-    .btn-secondary { background: var(--surface); color: var(--ink); border-color: var(--border); }
+    .btn-primary:active { background: var(--blue-press); }
+    .btn-secondary { background: #fff; color: var(--ink); border-color: var(--border); }
 
     .trust {
-      display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
       margin-top: 24px; text-align: center;
+      font-size: 12px; color: var(--muted); font-weight: 500;
     }
-    .trust div { font-size: 12px; color: var(--muted); font-weight: 600; }
-    .trust span { display: block; font-size: 20px; margin-bottom: 4px; }
 
-    .note { font-size: 13px; color: var(--muted); text-align: center; margin-top: 20px; }
+    .note { font-size: 12px; color: var(--muted); text-align: center; margin-top: 16px; }
 
-    .empty { text-align: center; padding: 16px 0; }
-    .empty h1 { font-size: 22px; margin: 0 0 8px; }
-    .empty p { color: var(--muted); margin: 0 0 24px; }
+    .empty h1 {
+      font-family: 'Hanken Grotesk', sans-serif;
+      font-size: 22px; font-weight: 800; margin: 0 0 8px;
+    }
+    .empty p { color: var(--muted); margin: 0 0 28px; }
   </style>
 </head>
 
 <body>
 <div class="wrap">
 
-  <div class="brand">Yadony</div>
+  <img class="logo" src="/logo.png" alt="Yadony">
 
   <!-- Annonce retirée, terminée, annulée, ou identifiant illisible -->
-  <div th:if="${unavailable}">
-    <div class="card empty">
-      <h1>Ce trajet n'est plus disponible</h1>
-      <p>Il a été retiré, ou son départ est passé. D'autres voyageurs partent chaque semaine.</p>
-      <a class="btn btn-primary" th:if="${!#strings.isEmpty(storeUrl)}"
-         th:href="${storeUrl}">Voir les autres trajets</a>
-    </div>
+  <div th:if="${unavailable}" class="empty">
+    <h1>Ce trajet n'est plus disponible</h1>
+    <p>Il a été retiré, ou son départ est passé. D'autres voyageurs partent chaque semaine.</p>
+    <a class="btn btn-primary" th:if="${!#strings.isEmpty(storeUrl)}"
+       th:href="${storeUrl}">Voir les autres trajets</a>
   </div>
 
   <!-- Annonce réservable -->
   <div th:unless="${unavailable}">
-    <div class="card">
-      <h1 class="corridor">
-        <span th:text="${departureCity}">Paris</span>
-        <span class="arrow">&rarr;</span>
-        <span th:text="${arrivalCity}">Dakar</span>
-      </h1>
+    <h1 class="corridor">
+      <span th:text="${departureCity}">Paris</span><span class="arrow">→</span><span th:text="${arrivalCity}">Dakar</span>
+    </h1>
 
-      <dl class="rows">
-        <div class="row">
-          <dt>Départ</dt>
-          <dd th:text="${departureDate}">jeudi 20 août 2026</dd>
-        </div>
-        <div class="row deadline" th:if="${handoverDeadline != null}">
-          <dt>Date limite de dépôt</dt>
-          <dd th:text="${handoverDeadline}">mercredi 19 août à 19h00</dd>
-        </div>
-        <div class="row" th:if="${capacity != null}">
-          <dt>Place disponible</dt>
-          <dd th:text="${capacity}">12 kg</dd>
-        </div>
-        <div class="row" th:if="${pickupAddress != null}">
-          <dt>Remise du colis</dt>
-          <dd class="address" th:text="${pickupAddress}">12 rue de Tombouctou, 75018 Paris</dd>
-        </div>
-        <div class="row" th:if="${deliveryAddress != null}">
-          <dt>Récupération</dt>
-          <dd class="address" th:text="${deliveryAddress}">Sacré-Cœur 3, Dakar</dd>
-        </div>
-      </dl>
-
-      <!--
-        Trois formes de prix, jamais deux à la fois en vedette. Un trajet vendu
-        à l'article n'a pas forcément de tarif au kilo : la colonne étant NOT
-        NULL et remplie avec 0 par le formulaire, un simple test de nullité
-        affichait « 0€ par kilo » sur la page que le voyageur diffuse.
-      -->
-      <div class="price" th:if="${cheapestGridPrice != null}">
-        <span class="amount">
-          dès <span th:text="${cheapestGridPrice}">25</span><span th:text="${currency}">€</span>
-        </span>
-        <span class="unit">l'article</span>
+    <dl class="rows">
+      <div class="row">
+        <dt>Départ</dt>
+        <dd th:text="${departureDate}">jeudi 20 août 2026</dd>
       </div>
-      <div class="price" th:if="${cheapestGridPrice == null and pricePerKg != null}">
-        <span class="amount">
-          <span th:text="${pricePerKg}">8</span><span th:text="${currency}">€</span>
-        </span>
-        <span class="unit">par kilo</span>
+      <div class="row" th:if="${handoverDeadline != null}">
+        <dt>Date limite de dépôt</dt>
+        <dd th:text="${handoverDeadline}">mercredi 19 août à 19h00</dd>
       </div>
-      <p class="price-alt" th:if="${cheapestGridPrice != null and pricePerKg != null}">
-        et <span th:text="${pricePerKg}">8</span><span th:text="${currency}">€</span> par kilo
-      </p>
-    </div>
+      <div class="row" th:if="${capacity != null}">
+        <dt>Place disponible</dt>
+        <dd th:text="${capacity}">12 kg</dd>
+      </div>
+      <div class="row" th:if="${pickupAddress != null}">
+        <dt>Remise du colis</dt>
+        <dd class="address" th:text="${pickupAddress}">12 rue de Tombouctou, 75018 Paris</dd>
+      </div>
+      <div class="row" th:if="${deliveryAddress != null}">
+        <dt>Récupération</dt>
+        <dd class="address" th:text="${deliveryAddress}">Sacré-Cœur 3, Dakar</dd>
+      </div>
+    </dl>
 
     <!--
-      Pas de redirection automatique vers le schéma dony:// : sur un navigateur
-      sans l'application installée, elle produit une erreur visible, et sur iOS
-      une boîte de dialogue système qui gèle la page. Deux boutons explicites
-      laissent la main à la personne, ce qui est aussi plus lisible.
+      Trois formes de prix, jamais deux à la fois en vedette. Un trajet vendu
+      à l'article n'a pas forcément de tarif au kilo : la colonne étant NOT
+      NULL et remplie avec 0 par le formulaire, un simple test de nullité
+      affichait « 0€ par kilo » sur la page que le voyageur diffuse.
     -->
-    <a class="btn btn-primary" th:href="${deepLink}">Ouvrir dans l'application</a>
+    <div class="price" th:if="${cheapestGridPrice != null}">
+      <span class="amount">
+        dès <span th:text="${cheapestGridPrice}">25</span><span th:text="${currency}">€</span>
+      </span>
+      <span class="unit">l'article</span>
+    </div>
+    <div class="price" th:if="${cheapestGridPrice == null and pricePerKg != null}">
+      <span class="amount">
+        <span th:text="${pricePerKg}">8</span><span th:text="${currency}">€</span>
+      </span>
+      <span class="unit">par kilo</span>
+    </div>
+    <p class="price-alt" th:if="${cheapestGridPrice != null and pricePerKg != null}">
+      et <span th:text="${pricePerKg}">8</span><span th:text="${currency}">€</span> par kilo
+    </p>
 
-    <a class="btn btn-secondary" th:if="${!#strings.isEmpty(storeUrl)}"
+    <!--
+      Pas de redirection automatique : sur un navigateur sans l'application
+      installée, une tentative dony:// produit une erreur visible, et sur iOS
+      une boîte de dialogue système qui gèle la page. Un bouton explicite
+      laisse la main à la personne. Sa destination (dony:// ou le store du bon
+      système) est résolue côté contrôleur, cf. applyPrimaryCta.
+    -->
+    <!-- th:utext, pas th:text : le libellé vient d'une chaîne Java fixe (jamais
+         de donnée utilisateur), et th:text échapperait l'apostrophe en &#39;. -->
+    <a class="btn btn-primary" th:href="${primaryCtaUrl}" th:utext="${primaryCtaLabel}">Ouvrir dans l'application</a>
+
+    <a class="btn btn-secondary" th:if="${showGenericStoreButton and !#strings.isEmpty(storeUrl)}"
        th:href="${storeUrl}">Télécharger Yadony</a>
 
-    <div class="trust">
-      <div><span>&#128274;</span>Paiement sécurisé</div>
-      <div><span>&#128241;</span>Suivi du colis</div>
-      <div><span>&#9989;</span>Voyageurs vérifiés</div>
-    </div>
+    <p class="trust">Paiement sécurisé · Suivi du colis · Voyageurs vérifiés</p>
 
     <p class="note">
       Votre paiement est conservé par Yadony et n'est versé au voyageur qu'après

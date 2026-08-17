@@ -91,6 +91,17 @@ public class PublicAnnouncementPageController {
     @Value("${app.store.ios:}")
     private String storeUrlIos;
 
+    /**
+     * Bouton principal orienté store selon l'appareil, plutôt que le lien
+     * {@code dony://}. Faux par défaut : l'application n'est pas encore
+     * publiée, et un bouton orienté store pointerait vers rien tant que
+     * {@code app.store.android}/{@code .ios} restent vides. Le comportement
+     * est écrit et testé maintenant ; l'activer plus tard n'est qu'un
+     * changement de configuration, pas de code.
+     */
+    @Value("${app.store.os-redirect-enabled:false}")
+    private boolean storeOsRedirectEnabled;
+
     public PublicAnnouncementPageController(AnnouncementRepository announcementRepository,
                                             PriceGridService priceGridService) {
         this.announcementRepository = announcementRepository;
@@ -148,8 +159,71 @@ public class PublicAnnouncementPageController {
         model.addAttribute("deliveryAddress", announcement.getDeliveryAddressLabel());
         model.addAttribute("deepLink", "dony://annonce/" + announcementId);
         model.addAttribute("shareUrl", buildShareUrl(announcementId));
+        applyPrimaryCta(model, announcementId, request);
 
         return VIEW;
+    }
+
+    /**
+     * Bouton principal : le store du bon système si {@link #storeOsRedirectEnabled}
+     * et que l'appareil est identifié, sinon le lien {@code dony://} historique.
+     *
+     * <p>Une majorité écrasante des visiteurs de cette page n'a pas encore
+     * l'application — c'est toute la raison d'être de la page. Pour eux, le
+     * lien {@code dony://} ne fait rien d'utile ; les envoyer directement vers
+     * le store correspondant à leur téléphone les convertit au lieu de les
+     * laisser cliquer dans le vide. Repli sur {@code dony://} si le système
+     * n'est pas reconnu (ordinateur) ou si son store n'est pas configuré — un
+     * bouton qui ne mène nulle part coûte plus cher qu'un bouton absent.
+     *
+     * <p>Le bouton secondaire générique (attribut {@code storeUrl}, résolu par
+     * {@link #firstNonBlank} sans égard au système du visiteur) disparaît dès
+     * que le flag est actif : une fois le bouton principal fiable, exposer en
+     * plus un lien vers <em>l'autre</em> store à un visiteur iPhone serait pire
+     * que ne rien montrer.
+     */
+    private void applyPrimaryCta(Model model, UUID announcementId, HttpServletRequest request) {
+        String deepLink = "dony://annonce/" + announcementId;
+        String osStoreUrl = null;
+
+        if (storeOsRedirectEnabled) {
+            osStoreUrl = switch (detectMobileOs(request)) {
+                case ANDROID -> blankToNull(storeUrlAndroid);
+                case IOS -> blankToNull(storeUrlIos);
+                case OTHER -> null;
+            };
+        }
+
+        model.addAttribute("primaryCtaUrl", osStoreUrl != null ? osStoreUrl : deepLink);
+        model.addAttribute("primaryCtaLabel",
+                osStoreUrl != null ? "Télécharger l'application" : "Ouvrir dans l'application");
+        model.addAttribute("showGenericStoreButton", !storeOsRedirectEnabled);
+    }
+
+    private enum MobileOs { ANDROID, IOS, OTHER }
+
+    /**
+     * Détection best-effort par User-Agent, comme {@link #isPreviewCrawler}.
+     * Elle n'a pas besoin d'être infaillible : au pire un visiteur mal
+     * identifié retombe sur le lien {@code dony://}, sans jamais casser rien.
+     */
+    private MobileOs detectMobileOs(HttpServletRequest request) {
+        String agent = request.getHeader("User-Agent");
+        if (agent == null || agent.isBlank()) {
+            return MobileOs.OTHER;
+        }
+        String lower = agent.toLowerCase(Locale.ROOT);
+        if (lower.contains("android")) {
+            return MobileOs.ANDROID;
+        }
+        if (lower.contains("iphone") || lower.contains("ipad") || lower.contains("ipod")) {
+            return MobileOs.IOS;
+        }
+        return MobileOs.OTHER;
+    }
+
+    private String blankToNull(String value) {
+        return (value == null || value.isBlank()) ? null : value;
     }
 
     /**

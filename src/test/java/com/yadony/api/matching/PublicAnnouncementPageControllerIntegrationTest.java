@@ -364,4 +364,33 @@ class PublicAnnouncementPageControllerIntegrationTest {
                         org.hamcrest.Matchers.containsString("Dakar Plateau")));
     }
 
+    /** Le logo réel, pas un mot-logo en texte : la page circule hors de l'app. */
+    @Test
+    void publicPage_showsTheRealLogo() throws Exception {
+        AnnouncementEntity a = persistAnnouncement(AnnouncementStatus.ACTIVE);
+
+        mockMvc.perform(get("/public/annonce/" + a.getId()).header("User-Agent", BROWSER_UA))
+                .andExpect(status().isOk())
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("src=\"/logo.png\"")));
+    }
+
+    /**
+     * Flag {@code app.store.os-redirect-enabled} faux par défaut (repli des
+     * tests) : le bouton principal reste le lien {@code dony://} historique,
+     * quel que soit l'appareil qui visite la page.
+     */
+    @Test
+    void primaryCta_staysOnDeepLinkWhenStoreRedirectFlagIsOff() throws Exception {
+        AnnouncementEntity a = persistAnnouncement(AnnouncementStatus.ACTIVE);
+
+        mockMvc.perform(get("/public/annonce/" + a.getId())
+                        .header("User-Agent", "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("dony://annonce/" + a.getId())))
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("Ouvrir dans l'application")));
+    }
+
 }

@@ -230,6 +230,12 @@ app:
   store:
     android: ${STORE_URL_ANDROID:}
     ios: ${STORE_URL_IOS:}
+    # Feature flag : le bouton principal de la page ouvre le store du bon
+    # système (Android/iOS détecté au User-Agent) plutôt que le lien dony://.
+    # Faux par défaut — l'application n'est pas encore publiée, un bouton
+    # store pointerait vers rien. À activer le jour du lancement, en même
+    # temps que les deux URL ci-dessus.
+    os-redirect-enabled: ${STORE_OS_REDIRECT_ENABLED:false}
   sms:
     enabled: ${SMS_ENABLED:false}
     africastalking:
