@@ -1106,11 +1106,7 @@ public class NegotiationService {
         // bloqué, et il pourrait tenter de régler la commission d'une demande qui n'est
         // plus libre (Task 5 s'appuie sur ce statut pour refuser ce règlement).
         threadRepo.findByPackageRequestId(request.getId()).stream()
-            .filter(t -> !t.getId().equals(thread.getId())
-                      && (t.getStatus() == NegotiationThreadStatus.OPEN
-                          || t.getStatus() == NegotiationThreadStatus.AWAITING_TRIP
-                          || t.getStatus() == NegotiationThreadStatus.AWAITING_PAYMENT
-                          || t.getStatus() == NegotiationThreadStatus.AWAITING_COMMISSION))
+            .filter(t -> !t.getId().equals(thread.getId()) && t.getStatus().isActive())
             .forEach(t -> {
                 t.setStatus(NegotiationThreadStatus.AUTO_REJECTED);
                 t.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC));
@@ -1198,32 +1194,9 @@ public class NegotiationService {
      */
     @Transactional
     public AcceptBidResponse settleCommission(UUID callerId, UUID threadId, CommissionSource source) {
-        // Le verrou est pris AVANT toute lecture du fil, via une projection qui ne
-        // charge pas l'entité. Lire le fil d'abord le mettrait dans le contexte de
-        // persistance : les gardes d'état ci-dessous jugeraient alors sur l'état
-        // d'avant le verrou, et un balayage d'expiration acquérant le verrou entre
-        // les deux ferait échouer ce règlement au commit — après le débit Stripe,
-        // en rollbackant le PaymentIntent, le statut de commission et l'audit. Le
-        // voyageur serait débité sans aucune trace locale.
-        UUID packageRequestId = threadRepo.findPackageRequestIdById(threadId)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "thread/not-found"));
-        // Le verrou est acquis ici, mais son absence n'est signalée qu'après les
-        // gardes du fil : une demande introuvable ne doit pas répondre 404 à un
-        // appelant qui n'est même pas le voyageur du fil.
-        PackageRequestEntity lockedRequest = requestRepo.findByIdForUpdate(packageRequestId).orElse(null);
-
-        NegotiationThreadEntity thread = threadRepo.findById(threadId)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "thread/not-found"));
-        if (!callerId.equals(thread.getTravelerId())) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "negotiation/not-traveler");
-        }
-        if (thread.getStatus() != NegotiationThreadStatus.AWAITING_COMMISSION) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "thread/not-awaiting-commission");
-        }
-        if (lockedRequest == null) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found");
-        }
-        PackageRequestEntity request = lockedRequest;
+        LockedCommissionThread locked = lockAwaitingCommissionThread(callerId, threadId);
+        NegotiationThreadEntity thread = locked.thread();
+        PackageRequestEntity request = locked.request();
 
         // Garde de course : ne jamais débiter pour une demande déjà emportée par un
         // autre voyageur. OPEN et NEGOTIATING sont tous deux "encore disponibles" —
@@ -1343,30 +1316,9 @@ public class NegotiationService {
      */
     @Transactional
     public void declineCommission(UUID callerId, UUID threadId) {
-        // Verrou pris avant toute mutation, et sur la demande d'abord : c'est
-        // l'ordre qu'appliquent settleCommission et le balayage d'expiration.
-        // Verrouiller dans l'ordre inverse (fil puis demande) exposerait à un
-        // interblocage avec le balayage quand un voyageur renonce à la seconde où
-        // sa fenêtre expire.
-        UUID packageRequestId = threadRepo.findPackageRequestIdById(threadId)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "thread/not-found"));
-        // Verrou acquis ici, absence signalée seulement après les gardes du fil :
-        // un appelant qui n'est pas le voyageur ne doit pas recevoir 404 sur la
-        // demande avant son 403.
-        PackageRequestEntity lockedRequest = requestRepo.findByIdForUpdate(packageRequestId).orElse(null);
-
-        NegotiationThreadEntity thread = threadRepo.findById(threadId)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "thread/not-found"));
-        if (!callerId.equals(thread.getTravelerId())) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "negotiation/not-traveler");
-        }
-        if (thread.getStatus() != NegotiationThreadStatus.AWAITING_COMMISSION) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "thread/not-awaiting-commission");
-        }
-        if (lockedRequest == null) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found");
-        }
-        PackageRequestEntity request = lockedRequest;
+        LockedCommissionThread locked = lockAwaitingCommissionThread(callerId, threadId);
+        NegotiationThreadEntity thread = locked.thread();
+        PackageRequestEntity request = locked.request();
 
         thread.setStatus(NegotiationThreadStatus.CANCELLED);
         thread.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC));
@@ -1382,6 +1334,51 @@ public class NegotiationService {
         // événement, jamais en ligne ici (cf. javadoc).
         eventPublisher.publishEvent(new com.yadony.api.requests.event.NegotiationCommissionDeclinedEvent(
             thread.getId(), request.getId(), request.getSenderId(), thread.getTravelerId()));
+    }
+
+    /** Fil en attente de commission, avec sa demande déjà verrouillée. */
+    private record LockedCommissionThread(NegotiationThreadEntity thread, PackageRequestEntity request) {}
+
+    /**
+     * Verrouille la demande, puis charge le fil et vérifie qu'il attend bien sa
+     * commission au nom de l'appelant. Partagé par {@link #settleCommission} et
+     * {@link #declineCommission} : les deux doivent verrouiller dans le même ordre
+     * et refuser dans le même ordre, et une divergence entre les deux ne se verrait
+     * qu'en production.
+     *
+     * <p>Le verrou est pris AVANT toute lecture du fil, via une projection qui ne
+     * charge pas l'entité. Lire le fil d'abord le mettrait dans le contexte de
+     * persistance : les gardes d'état ci-dessous jugeraient alors sur l'état
+     * d'avant le verrou, et un balayage d'expiration acquérant le verrou entre les
+     * deux ferait échouer le règlement au commit — après le débit Stripe, en
+     * rollbackant le PaymentIntent, le statut de commission et l'audit. Le voyageur
+     * serait débité sans aucune trace locale.
+     *
+     * <p>Verrouiller dans l'ordre inverse (fil puis demande) exposerait à un
+     * interblocage avec le balayage d'expiration quand un voyageur agit à la
+     * seconde où sa fenêtre expire.
+     *
+     * <p>L'absence de la demande n'est signalée qu'APRÈS les gardes du fil : un
+     * appelant qui n'est même pas le voyageur du fil ne doit pas apprendre par un
+     * 404 qu'une demande a disparu, il doit recevoir son 403.
+     */
+    private LockedCommissionThread lockAwaitingCommissionThread(UUID callerId, UUID threadId) {
+        UUID packageRequestId = threadRepo.findPackageRequestIdById(threadId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "thread/not-found"));
+        PackageRequestEntity lockedRequest = requestRepo.findByIdForUpdate(packageRequestId).orElse(null);
+
+        NegotiationThreadEntity thread = threadRepo.findById(threadId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "thread/not-found"));
+        if (!callerId.equals(thread.getTravelerId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "negotiation/not-traveler");
+        }
+        if (thread.getStatus() != NegotiationThreadStatus.AWAITING_COMMISSION) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "thread/not-awaiting-commission");
+        }
+        if (lockedRequest == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found");
+        }
+        return new LockedCommissionThread(thread, lockedRequest);
     }
 
     /**

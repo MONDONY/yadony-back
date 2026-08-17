@@ -529,25 +529,48 @@ public class CashCommissionService {
                 negotiationThreadRepository.save(thread);
                 return AcceptBidResponse.requires3ds(pi.getClientSecret(), pi.getId());
             }
-            thread.setCommissionStatus(NEGO_COMMISSION_FAILED);
-            thread.setCommissionRetryCount(thread.getCommissionRetryCount() + 1);
-            negotiationThreadRepository.save(thread);
-            auditService.log("NEGOTIATION_THREAD", threadId, "CASH_COMMISSION_FAILED", travelerId,
-                    Map.of("reason", "card-status-" + pi.getStatus()));
+            recordCommissionFailure(thread, travelerId, Map.of("reason", "card-status-" + pi.getStatus()));
             return AcceptBidResponse.failed("card-status-" + pi.getStatus());
         } catch (CardException e) {
-            thread.setCommissionStatus(NEGO_COMMISSION_FAILED);
-            thread.setCommissionRetryCount(thread.getCommissionRetryCount() + 1);
-            negotiationThreadRepository.save(thread);
-            auditService.log("NEGOTIATION_THREAD", threadId, "CASH_COMMISSION_FAILED", travelerId,
+            // La carte a été refusée : la clé d'idempotence a bien été consommée par
+            // Stripe, qui rejouerait ce refus à l'identique. Il FAUT donc incrémenter
+            // le compteur pour que la prochaine tentative parte sur une clé neuve.
+            recordCommissionFailure(thread, travelerId,
                     Map.of("reason", "card-declined", "code", e.getCode() != null ? e.getCode() : ""));
             return AcceptBidResponse.failed("card-declined");
         } catch (StripeException e) {
+            // Volontairement SANS recordCommissionFailure : sur une erreur réseau/API,
+            // on ne sait pas si Stripe a reçu la demande. Réutiliser la MÊME clé
+            // d'idempotence est la conduite recommandée — elle laisse Stripe reprendre
+            // l'appel plutôt que d'ouvrir un second PaymentIntent, donc un second débit.
+            // Incrémenter le compteur ici échangerait une erreur transitoire contre un
+            // risque de double prélèvement. Le statut local reste donc inchangé : rien
+            // n'a été durablement débité, le voyageur peut relancer tel quel.
             log.error("Commission carte négociation thread {} : erreur Stripe {}", threadId, e.getMessage());
             auditService.log("NEGOTIATION_THREAD", threadId, "CASH_COMMISSION_FAILED", travelerId,
                     Map.of("reason", "stripe-error"));
             return AcceptBidResponse.failed("stripe-error");
         }
+    }
+
+    /**
+     * Marque un règlement de commission de négociation comme échoué : statut
+     * {@code FAILED}, compteur de réessai incrémenté, puis trace d'audit.
+     *
+     * <p>L'incrément du compteur est le cœur de la méthode : il alimente le suffixe
+     * {@code _v&lt;n&gt;} de la clé d'idempotence Stripe. Sans lui, la clé reste figée
+     * après un échec et Stripe rejoue indéfiniment sa première réponse en cache au
+     * lieu de retenter un débit réel — le voyageur ne pourrait alors plus jamais
+     * régler sa commission. À n'appeler que sur un échec où la clé courante a
+     * réellement été consommée par Stripe (refus de carte, statut terminal
+     * inattendu), jamais sur une erreur de transport.
+     */
+    private void recordCommissionFailure(com.yadony.api.requests.entity.NegotiationThreadEntity thread,
+                                         UUID travelerId, Map<String, Object> auditPayload) {
+        thread.setCommissionStatus(NEGO_COMMISSION_FAILED);
+        thread.setCommissionRetryCount(thread.getCommissionRetryCount() + 1);
+        negotiationThreadRepository.save(thread);
+        auditService.log("NEGOTIATION_THREAD", thread.getId(), "CASH_COMMISSION_FAILED", travelerId, auditPayload);
     }
 
     /**
@@ -600,13 +623,11 @@ public class CashCommissionService {
             // commissionPaymentIntentId ayant déjà été écrasé. Même convention que
             // OrphanedPaymentIntentCleanupJob pour le flux bid classique.
             cancelOrphanedCommissionPaymentIntent(threadId, thread.getCommissionPaymentIntentId());
-            thread.setCommissionStatus(NEGO_COMMISSION_FAILED);
-            thread.setCommissionRetryCount(thread.getCommissionRetryCount() + 1);
-            negotiationThreadRepository.save(thread);
-            auditService.log("NEGOTIATION_THREAD", threadId, "CASH_COMMISSION_FAILED", travelerId,
-                    Map.of("reason", "card-status-" + pi.getStatus()));
+            recordCommissionFailure(thread, travelerId, Map.of("reason", "card-status-" + pi.getStatus()));
             return ConfirmAcceptanceResponse.fail("PaymentIntent status: " + pi.getStatus());
         } catch (StripeException e) {
+            // Voir settleNegotiationCommission : pas de recordCommissionFailure sur une
+            // erreur de transport, la clé d'idempotence doit rester réutilisable.
             auditService.log("NEGOTIATION_THREAD", threadId, "CASH_COMMISSION_FAILED", travelerId,
                     Map.of("reason", "stripe-error"));
             return ConfirmAcceptanceResponse.fail("Erreur Stripe : " + e.getMessage());
