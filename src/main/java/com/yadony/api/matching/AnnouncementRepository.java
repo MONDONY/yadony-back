@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -131,6 +132,22 @@ public interface AnnouncementRepository extends JpaRepository<AnnouncementEntity
     @Query("SELECT a FROM AnnouncementEntity a WHERE a.travelerId = :travelerId " +
            "AND a.status IN (com.yadony.api.matching.AnnouncementStatus.ACTIVE, com.yadony.api.matching.AnnouncementStatus.FULL)")
     List<AnnouncementEntity> findActiveByTravelerId(@Param("travelerId") UUID travelerId);
+
+    /**
+     * Incremente le compteur de vues de la page publique de partage (affiche).
+     *
+     * Volontairement une requete de mise a jour directe et non un load + save :
+     * la page est publique et anonyme, un compteur ne doit ni declencher le
+     * versioning optimiste de l'entite ni repousser {@code updated_at}, qui
+     * porte une semantique metier (derniere modification par le voyageur).
+     * COALESCE couvre les lignes anterieures a la migration V213, ou la colonne
+     * vaut NULL.
+     */
+    @Modifying
+    @Transactional
+    @Query("UPDATE AnnouncementEntity a SET a.shareViewCount = COALESCE(a.shareViewCount, 0) + 1 "
+           + "WHERE a.id = :id")
+    int incrementShareViewCount(@Param("id") UUID id);
 
     /**
      * Returns the next upcoming announcement for a given traveler on a specific corridor

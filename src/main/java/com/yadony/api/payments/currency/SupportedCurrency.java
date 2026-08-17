@@ -3,13 +3,13 @@ package com.yadony.api.payments.currency;
 import java.util.Locale;
 
 public enum SupportedCurrency {
-    EUR("eur", 2, "1"),
-    USD("usd", 2, "1.08"),
-    CAD("cad", 2, "1.47"),
-    GBP("gbp", 2, "0.86"),
-    CHF("chf", 2, "0.95"),
-    XOF("xof", 0, "655.957"),
-    XAF("xaf", 0, "655.957");
+    EUR("eur", 2, "1", "\u20AC"),
+    USD("usd", 2, "1.08", "$"),
+    CAD("cad", 2, "1.47", "CA$"),
+    GBP("gbp", 2, "0.86", "\u00A3"),
+    CHF("chf", 2, "0.95", "CHF"),
+    XOF("xof", 0, "655.957", "F CFA"),
+    XAF("xaf", 0, "655.957", "FCFA");
 
     private static final java.util.Map<String, SupportedCurrency> BY_CODE;
 
@@ -24,8 +24,10 @@ public enum SupportedCurrency {
     private final String code;
     private final int minorUnit;
     private final java.math.BigDecimal unitsPerEur;
+    private final String symbol;
 
-    SupportedCurrency(String code, int minorUnit, String unitsPerEur) {
+    SupportedCurrency(String code, int minorUnit, String unitsPerEur, String symbol) {
+        this.symbol = symbol;
         this.code = code;
         this.minorUnit = minorUnit;
         this.unitsPerEur = new java.math.BigDecimal(unitsPerEur);
@@ -33,6 +35,21 @@ public enum SupportedCurrency {
 
     public String code() {
         return code;
+    }
+
+    /**
+     * Symbole court, pour les libelles ou formater un montant complet n'a pas de sens
+     * (affiche partageable, page publique). Aligne sur le catalogue Dart
+     * {@code lib/core/currency/supported_currency.dart} : les deux surfaces montrent le
+     * meme trajet et ne doivent pas diverger.
+     */
+    public String symbol() {
+        return symbol;
+    }
+
+    /** Symbole d'un code libre, avec le repli EUR unique de {@link #fromCodeOrDefault}. */
+    public static String symbolOf(String code) {
+        return fromCodeOrDefault(code).symbol();
     }
 
     public int minorUnit() {
