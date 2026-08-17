@@ -88,6 +88,46 @@ class CancellationServiceDeliveryNoShowTest {
                         .isEqualTo(HttpStatus.CONFLICT));
     }
 
+    /** Régression C3 : les signalements d'absence à la livraison ne se déclenchent
+     *  qu'à destination, donc sur un bid que le voyageur vient de marquer ARRIVED.
+     *  La garde stricte {@code == IN_TRANSIT} bloquait donc TOUS les signalements réels. */
+    @Test
+    void reportDeliveryNoShow_acceptsArrivedBid() {
+        BidEntity bid = inTransitBid(null);
+        bid.setStatus(BidStatus.ARRIVED);
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(ANNOUNCEMENT_ID))
+                .thenReturn(Optional.of(announcement(java.time.LocalDate.now().minusDays(1))));
+        when(cancellationRepository.existsByBidIdAndScopeAndNoShowStatusIn(any(), any(), any()))
+                .thenReturn(false);
+        when(cancellationRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        CancellationEntity result = service.reportDeliveryNoShow(BID_ID, TRAVELER_ID);
+
+        assertThat(result.getScope()).isEqualTo(CancellationScope.DELIVERY);
+        assertThat(result.getNoShowStatus()).isEqualTo(CancellationStatus.PENDING_CONFIRMATION);
+        verify(eventPublisher).publishEvent(any(DeliveryNoShowReportedEvent.class));
+    }
+
+    /** Régression C3, versant expéditeur : « voyageur absent à la livraison » se
+     *  signale lui aussi sur un bid ARRIVED. */
+    @Test
+    void reportTravelerDeliveryNoShow_acceptsArrivedBid() {
+        BidEntity bid = inTransitBid(null);
+        bid.setStatus(BidStatus.ARRIVED);
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(ANNOUNCEMENT_ID))
+                .thenReturn(Optional.of(announcement(java.time.LocalDate.now().minusDays(1))));
+        when(cancellationRepository.existsByBidIdAndScopeAndNoShowStatusIn(any(), any(), any()))
+                .thenReturn(false);
+        when(cancellationRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        CancellationEntity result = service.reportTravelerDeliveryNoShow(BID_ID, SENDER_ID);
+
+        assertThat(result.getScope()).isEqualTo(CancellationScope.DELIVERY);
+        assertThat(result.getNoShowStatus()).isEqualTo(CancellationStatus.PENDING_CONFIRMATION);
+    }
+
     @Test
     void reportDeliveryNoShow_rejectsIfTripNotYetDeparted() {
         when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(inTransitBid(null)));

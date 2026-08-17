@@ -47,6 +47,25 @@ class CancellationGuardTest {
                 .isInstanceOf(YadonyBusinessException.class);
     }
 
+    /** Régression C1 : ARRIVED est la suite de IN_TRANSIT, il doit être aussi verrouillé.
+     *  Sans ARRIVED dans le verrou, la fenêtre d'annulation remboursée se rouvrait
+     *  au moment même où le colis est arrivé (trou financier). */
+    @Test
+    void arrived_is_always_locked() {
+        assertThatThrownBy(() -> CancellationGuard.assertCancellable(
+                bid(BidStatus.ARRIVED), announcement(OffsetDateTime.now().plusHours(5))))
+                .isInstanceOf(YadonyBusinessException.class);
+    }
+
+    /** Régression C1 : verrouillé même sans departureAt renseigné sur l'annonce —
+     *  le statut ARRIVED se suffit à lui-même, il ne dépend pas du backstop de départ. */
+    @Test
+    void arrived_is_locked_even_without_departure_at() {
+        assertThatThrownBy(() -> CancellationGuard.assertCancellable(
+                bid(BidStatus.ARRIVED), announcement(null)))
+                .isInstanceOf(YadonyBusinessException.class);
+    }
+
     @Test
     void handed_over_without_departure_at_is_cancellable() {
         assertThatCode(() -> CancellationGuard.assertCancellable(

@@ -6,6 +6,7 @@ import com.yadony.api.matching.dto.AnnouncementDetailResponse;
 import com.yadony.api.matching.dto.AnnouncementRequest;
 import com.yadony.api.matching.dto.AnnouncementResponse;
 import com.yadony.api.matching.dto.AnnouncementSearchResponse;
+import com.yadony.api.matching.dto.ArrivalInstructionsRequest;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -16,6 +17,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -126,6 +128,24 @@ public class AnnouncementController {
     public ResponseEntity<AnnouncementDetailResponse> unpublishAnnouncement(@PathVariable UUID id) {
         String firebaseUid = requireFirebaseUid();
         return ResponseEntity.ok(announcementService.unpublishAnnouncement(id, firebaseUid));
+    }
+
+    @PostMapping("/{id}/mark-arrived")
+    public ResponseEntity<AnnouncementDetailResponse> markArrived(
+            @PathVariable UUID id,
+            @Valid @RequestBody(required = false) ArrivalInstructionsRequest request) {
+        String firebaseUid = requireFirebaseUid();
+        String instructions = request != null ? request.arrivalInstructions() : null;
+        return ResponseEntity.ok(announcementService.markArrived(id, firebaseUid, instructions));
+    }
+
+    @PatchMapping("/{id}/arrival-instructions")
+    public ResponseEntity<AnnouncementDetailResponse> updateArrivalInstructions(
+            @PathVariable UUID id,
+            @Valid @RequestBody ArrivalInstructionsRequest request) {
+        String firebaseUid = requireFirebaseUid();
+        return ResponseEntity.ok(
+                announcementService.updateArrivalInstructions(id, firebaseUid, request.arrivalInstructions()));
     }
 
     @DeleteMapping("/{id}")

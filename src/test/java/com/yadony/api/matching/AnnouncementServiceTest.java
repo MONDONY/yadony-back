@@ -16,6 +16,7 @@ import com.yadony.api.matching.dto.AnnouncementDetailResponse;
 import com.yadony.api.matching.dto.AnnouncementRequest;
 import com.yadony.api.matching.dto.AnnouncementResponse;
 import com.yadony.api.matching.events.AnnouncementDeletedEvent;
+import com.yadony.api.matching.events.TripArrivedEvent;
 import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.settings.UserBusinessPrefsEntity;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
@@ -35,6 +36,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.http.HttpStatus;
+import org.assertj.core.api.ThrowableAssert;
 
 import java.lang.reflect.Field;
 import java.math.BigDecimal;
@@ -233,6 +235,21 @@ class AnnouncementServiceTest {
         AnnouncementEntity a = buildAnnouncement(traveler);
         a.setStatus(AnnouncementStatus.DRAFT);
         return a;
+    }
+
+    private static void assertYadonyError(ThrowableAssert.ThrowingCallable callable, String expectedErrorCode) {
+        Throwable thrown = catchThrowable(callable);
+        assertThat(thrown).isInstanceOf(YadonyBusinessException.class);
+        assertThat(((YadonyBusinessException) thrown).getErrorCode()).isEqualTo(expectedErrorCode);
+    }
+
+    private BidEntity buildBid(BidStatus status, UUID announcementId) {
+        BidEntity b = new BidEntity();
+        setId(b, UUID.randomUUID());
+        b.setAnnouncementId(announcementId);
+        b.setSenderId(UUID.randomUUID());
+        b.setStatus(status);
+        return b;
     }
 
     // ─── createAnnouncement ────────────────────────────────────────────────────
@@ -887,6 +904,70 @@ class AnnouncementServiceTest {
         }
 
         @Test
+        @DisplayName("détail expose les instructions d'arrivée au voyageur propriétaire")
+        void getDetail_exposesArrivalInstructions() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity a = buildAnnouncement(traveler);
+            a.setArrivalInstructions("Métro Châtelet, sortie 3");
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(bidRepository.countVisibleByAnnouncementId(ANNOUNCEMENT_ID)).thenReturn(0L);
+
+            AnnouncementDetailResponse result = announcementService.getAnnouncementDetail(
+                    ANNOUNCEMENT_ID, FIREBASE_UID);
+
+            assertThat(result.arrivalInstructions()).isEqualTo("Métro Châtelet, sortie 3");
+        }
+
+        /** Régression I4 : les instructions décrivent un point de rendez-vous physique.
+         *  GET /announcements/{id} étant ouvert à tout utilisateur authentifié, le champ
+         *  fuitait à n'importe quel curieux. Seules les parties du trajet y ont droit. */
+        @Test
+        @DisplayName("régression I4 — instructions d'arrivée masquées pour un tiers authentifié")
+        void getDetail_hidesArrivalInstructionsFromStranger() {
+            UserEntity traveler = buildTraveler();
+            UserEntity stranger = buildTraveler();
+            setId(stranger, UUID.randomUUID());
+            AnnouncementEntity a = buildAnnouncement(traveler);
+            a.setArrivalInstructions("Métro Châtelet, sortie 3");
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(stranger));
+            when(bidRepository.countVisibleByAnnouncementId(ANNOUNCEMENT_ID)).thenReturn(0L);
+            when(bidRepository.existsByAnnouncementIdAndSenderIdAndStatusNotIn(
+                    eq(ANNOUNCEMENT_ID), any(UUID.class), anyCollection()))
+                    .thenReturn(false);
+
+            AnnouncementDetailResponse result = announcementService.getAnnouncementDetail(
+                    ANNOUNCEMENT_ID, FIREBASE_UID);
+
+            assertThat(result.arrivalInstructions()).isNull();
+        }
+
+        /** Régression I4, versant positif : un expéditeur ayant un colis actif sur le
+         *  trajet doit continuer à voir le point de retrait. */
+        @Test
+        @DisplayName("régression I4 — instructions d'arrivée visibles par un expéditeur avec colis actif")
+        void getDetail_exposesArrivalInstructionsToActiveSender() {
+            UserEntity traveler = buildTraveler();
+            UserEntity sender = buildTraveler();
+            UUID senderId = UUID.randomUUID();
+            setId(sender, senderId);
+            AnnouncementEntity a = buildAnnouncement(traveler);
+            a.setArrivalInstructions("Métro Châtelet, sortie 3");
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(sender));
+            when(bidRepository.countVisibleByAnnouncementId(ANNOUNCEMENT_ID)).thenReturn(1L);
+            when(bidRepository.existsByAnnouncementIdAndSenderIdAndStatusNotIn(
+                    eq(ANNOUNCEMENT_ID), eq(senderId), anyCollection()))
+                    .thenReturn(true);
+
+            AnnouncementDetailResponse result = announcementService.getAnnouncementDetail(
+                    ANNOUNCEMENT_ID, FIREBASE_UID);
+
+            assertThat(result.arrivalInstructions()).isEqualTo("Métro Châtelet, sortie 3");
+        }
+
+        @Test
         @DisplayName("annonce KG_FREE → capacityUnit présent dans le détail (regression)")
         void getDetail_kgFreeAnnouncement_returnsCapacityUnit() {
             UserEntity traveler = buildTraveler();
@@ -1015,7 +1096,7 @@ class AnnouncementServiceTest {
             when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
             when(bidRepository.existsByAnnouncementIdAndStatusIn(ANNOUNCEMENT_ID,
-                    List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT)))
+                    List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED)))
                     .thenReturn(false);
             when(announcementRepository.save(any())).thenReturn(a);
             when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
@@ -1041,6 +1122,39 @@ class AnnouncementServiceTest {
             verify(auditService).log(eq("USER"), any(), eq("ANNOUNCEMENT_UPDATED"), any(), any());
         }
 
+        /** Régression I3 : même trou côté modification — un trajet dont un colis est
+         *  ARRIVED ne doit plus pouvoir être réécrit (villes, dates, tarifs). */
+        @Test
+        @DisplayName("régression I3 — modification refusée si un colis est ARRIVED")
+        void update_withArrivedBid_isRefused() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity a = buildAnnouncement(traveler);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(bidRepository.existsByAnnouncementIdAndStatusIn(eq(ANNOUNCEMENT_ID),
+                    argThat(statuses -> statuses != null && statuses.contains(BidStatus.ARRIVED))))
+                    .thenReturn(true);
+
+            LocalDate departure = LocalDate.now().plusDays(15);
+            AnnouncementRequest req = new AnnouncementRequest(
+                    "Lyon", "Abidjan", departure,
+                    null, null,
+                    new AddressDto("Gare Part-Dieu, Lyon", 45.760, 4.860),
+                    new AddressDto("Aéroport FHB, Abidjan", 5.261, -3.927),
+                    BigDecimal.valueOf(25), BigDecimal.valueOf(6),
+                    TransportMode.PLANE,
+                    null, null, null,
+                    null, null, null, null, null,
+                    departure.atTime(18, 0),
+                    null
+            );
+
+            assertYadonyError(
+                    () -> announcementService.updateAnnouncement(ANNOUNCEMENT_ID, FIREBASE_UID, req),
+                    "modification-impossible");
+            verify(announcementRepository, never()).save(any());
+        }
+
         // C2 : normalisation à l'écriture — s'applique aussi à updateAnnouncement().
         @Test
         @DisplayName("acceptedContentTypes/refusedTypes legacy → persistés normalisés")
@@ -1050,7 +1164,7 @@ class AnnouncementServiceTest {
             when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
             when(bidRepository.existsByAnnouncementIdAndStatusIn(ANNOUNCEMENT_ID,
-                    List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT)))
+                    List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED)))
                     .thenReturn(false);
             when(announcementRepository.save(any())).thenReturn(a);
             when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
@@ -1085,7 +1199,7 @@ class AnnouncementServiceTest {
             when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
             when(bidRepository.existsByAnnouncementIdAndStatusIn(ANNOUNCEMENT_ID,
-                    List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT)))
+                    List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED)))
                     .thenReturn(true);
 
             assertThatThrownBy(() -> announcementService.updateAnnouncement(
@@ -1109,7 +1223,7 @@ class AnnouncementServiceTest {
             when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
             when(bidRepository.existsByAnnouncementIdAndStatusIn(ANNOUNCEMENT_ID,
-                    List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT)))
+                    List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED)))
                     .thenReturn(false);
             when(announcementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
             when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
@@ -1161,6 +1275,27 @@ class AnnouncementServiceTest {
     @DisplayName("deleteAnnouncement()")
     class DeleteTests {
 
+        /** Régression I3 : un colis ARRIVED (arrivé, pas encore retiré) est un engagement
+         *  encore ouvert. La garde ne listait que ACCEPTED/HANDED_OVER/IN_TRANSIT, donc le
+         *  voyageur pouvait supprimer le trajet sous les pieds d'expéditeurs non servis. */
+        @Test
+        @DisplayName("régression I3 — suppression refusée si un colis est ARRIVED")
+        void delete_withArrivedBid_isRefused() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity a = buildAnnouncement(traveler);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(bidRepository.existsByAnnouncementIdAndStatusIn(eq(ANNOUNCEMENT_ID),
+                    argThat(statuses -> statuses != null && statuses.contains(BidStatus.ARRIVED))))
+                    .thenReturn(true);
+
+            assertYadonyError(
+                    () -> announcementService.deleteAnnouncement(ANNOUNCEMENT_ID, FIREBASE_UID),
+                    "deletion-impossible");
+            assertThat(a.getDeletedAt()).isNull();
+            verify(announcementRepository, never()).save(any());
+        }
+
         @Test
         @DisplayName("annonce active sans bids → soft-delete + audit")
         void delete_activeNoBids_softDeletes() {
@@ -1169,7 +1304,7 @@ class AnnouncementServiceTest {
             when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
             when(bidRepository.existsByAnnouncementIdAndStatusIn(ANNOUNCEMENT_ID,
-                    List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT)))
+                    List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED)))
                     .thenReturn(false);
             when(bidRepository.findByAnnouncementIdAndStatusIn(ANNOUNCEMENT_ID, List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED)))
                     .thenReturn(List.of());
@@ -1196,7 +1331,7 @@ class AnnouncementServiceTest {
             when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
             when(bidRepository.existsByAnnouncementIdAndStatusIn(ANNOUNCEMENT_ID,
-                    List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT)))
+                    List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED)))
                     .thenReturn(false);
             when(bidRepository.findByAnnouncementIdAndStatusIn(ANNOUNCEMENT_ID, List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED)))
                     .thenReturn(List.of(bid));
@@ -1218,7 +1353,7 @@ class AnnouncementServiceTest {
             when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
             when(bidRepository.existsByAnnouncementIdAndStatusIn(ANNOUNCEMENT_ID,
-                    List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT)))
+                    List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED)))
                     .thenReturn(true);
 
             assertThatThrownBy(() -> announcementService.deleteAnnouncement(ANNOUNCEMENT_ID, FIREBASE_UID))
@@ -2543,5 +2678,278 @@ class AnnouncementServiceTest {
 
             assertThat(result.get(0).currency()).isEqualTo("CAD");
         }
+    }
+
+    // ─── markArrived ───────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("markArrived()")
+    class MarkArrivedTests {
+
+        @Test
+        @DisplayName("markArrived — transitionne tous les bids IN_TRANSIT vers ARRIVED et publie TripArrivedEvent")
+        void markArrived_success() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement(traveler);
+            BidEntity bidInTransit = buildBid(BidStatus.IN_TRANSIT, announcement.getId());
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+            when(announcementRepository.findByIdForUpdate(announcement.getId())).thenReturn(Optional.of(announcement));
+            when(announcementRepository.findById(announcement.getId())).thenReturn(Optional.of(announcement));
+            when(bidRepository.findByAnnouncementIdAndStatusNotIn(eq(announcement.getId()), anyCollection()))
+                    .thenReturn(List.of(bidInTransit));
+            when(bidRepository.countVisibleByAnnouncementId(announcement.getId())).thenReturn(1L);
+            when(bidRepository.countByAnnouncementIdAndStatusIn(eq(announcement.getId()), anyList())).thenReturn(0L);
+            when(announcementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            AnnouncementDetailResponse result =
+                    announcementService.markArrived(announcement.getId(), FIREBASE_UID, "Métro Châtelet, sortie 3");
+
+            assertThat(bidInTransit.getStatus()).isEqualTo(BidStatus.ARRIVED);
+            assertThat(announcement.getArrivalInstructions()).isEqualTo("Métro Châtelet, sortie 3");
+            assertThat(result.arrivalInstructions()).isEqualTo("Métro Châtelet, sortie 3");
+            verify(bidRepository).saveAll(List.of(bidInTransit));
+            ArgumentCaptor<TripArrivedEvent> captor = ArgumentCaptor.forClass(TripArrivedEvent.class);
+            verify(eventPublisher).publishEvent(captor.capture());
+            assertThat(captor.getValue().getTargets()).hasSize(1);
+            assertThat(captor.getValue().getTargets().get(0).bidId()).isEqualTo(bidInTransit.getId());
+            assertThat(captor.getValue().getTargets().get(0).senderId()).isEqualTo(bidInTransit.getSenderId());
+            verify(auditService).log(eq("ANNOUNCEMENT"), eq(announcement.getId()),
+                    eq("TRIP_ARRIVED"), eq(traveler.getId()), anyMap());
+        }
+
+        @Test
+        @DisplayName("markArrived — refuse si un bid actif n'est pas IN_TRANSIT")
+        void markArrived_notAllInTransit_throws() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement(traveler);
+            BidEntity bidHandedOver = buildBid(BidStatus.HANDED_OVER, announcement.getId());
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.findByIdForUpdate(announcement.getId())).thenReturn(Optional.of(announcement));
+            when(bidRepository.findByAnnouncementIdAndStatusNotIn(eq(announcement.getId()), anyCollection()))
+                    .thenReturn(List.of(bidHandedOver));
+
+            assertYadonyError(
+                    () -> announcementService.markArrived(announcement.getId(), FIREBASE_UID, null),
+                    "trip/not-all-in-transit");
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("markArrived — refuse si aucun colis actif")
+        void markArrived_noActiveParcel_throws() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement(traveler);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.findByIdForUpdate(announcement.getId())).thenReturn(Optional.of(announcement));
+            when(bidRepository.findByAnnouncementIdAndStatusNotIn(eq(announcement.getId()), anyCollection()))
+                    .thenReturn(List.of());
+
+            assertYadonyError(
+                    () -> announcementService.markArrived(announcement.getId(), FIREBASE_UID, null),
+                    "trip/no-active-parcel");
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("markArrived — refuse si l'appelant n'est pas le voyageur propriétaire")
+        void markArrived_notOwner_throws() {
+            UserEntity traveler = buildTraveler();
+            UserEntity someoneElse = buildTraveler();
+            setId(someoneElse, UUID.randomUUID());
+            AnnouncementEntity announcement = buildAnnouncement(traveler);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(someoneElse));
+            when(announcementRepository.findByIdForUpdate(announcement.getId())).thenReturn(Optional.of(announcement));
+
+            assertYadonyError(
+                    () -> announcementService.markArrived(announcement.getId(), FIREBASE_UID, null),
+                    "forbidden");
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("markArrived — refuse si le trajet n'existe pas")
+        void markArrived_announcementNotFound_throws() {
+            UserEntity traveler = buildTraveler();
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.findByIdForUpdate(ANNOUNCEMENT_ID)).thenReturn(Optional.empty());
+
+            assertYadonyError(
+                    () -> announcementService.markArrived(ANNOUNCEMENT_ID, FIREBASE_UID, null),
+                    "announcement-not-found");
+        }
+
+        @Test
+        @DisplayName("markArrived — refuse si l'utilisateur n'existe pas")
+        void markArrived_userNotFound_throws() {
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.empty());
+
+            assertYadonyError(
+                    () -> announcementService.markArrived(ANNOUNCEMENT_ID, FIREBASE_UID, null),
+                    "user-not-found");
+        }
+    }
+
+    // ─── updateArrivalInstructions ─────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("updateArrivalInstructions()")
+    class UpdateArrivalInstructionsTests {
+
+        @Test
+        @DisplayName("updateArrivalInstructions — met à jour le texte tant qu'un colis actif reste")
+        void updateArrivalInstructions_success() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement(traveler);
+            BidEntity bidArrived = buildBid(BidStatus.ARRIVED, announcement.getId());
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+            when(announcementRepository.findByIdForUpdate(announcement.getId())).thenReturn(Optional.of(announcement));
+            when(announcementRepository.findById(announcement.getId())).thenReturn(Optional.of(announcement));
+            when(bidRepository.findByAnnouncementIdAndStatusNotIn(eq(announcement.getId()), anyCollection()))
+                    .thenReturn(List.of(bidArrived));
+            when(bidRepository.countVisibleByAnnouncementId(announcement.getId())).thenReturn(1L);
+            when(bidRepository.countByAnnouncementIdAndStatusIn(eq(announcement.getId()), anyList())).thenReturn(0L);
+            when(bidRepository.existsByAnnouncementIdAndStatusIn(
+                    announcement.getId(), List.of(BidStatus.ARRIVED, BidStatus.COMPLETED)))
+                    .thenReturn(true);
+            when(announcementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            announcementService.updateArrivalInstructions(announcement.getId(), FIREBASE_UID, "Nouveau point de RDV");
+
+            assertThat(announcement.getArrivalInstructions()).isEqualTo("Nouveau point de RDV");
+        }
+
+        /** Régression I5 : la seule garde était « au moins un colis actif », donc un
+         *  voyageur pouvait publier des instructions de retrait à ses expéditeurs alors
+         *  que les colis sont encore ACCEPTED/IN_TRANSIT — trajet pas encore arrivé. */
+        @Test
+        @DisplayName("régression I5 — updateArrivalInstructions refuse si aucun colis n'est encore arrivé")
+        void updateArrivalInstructions_notArrivedYet_throws() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement(traveler);
+            BidEntity bidInTransit = buildBid(BidStatus.IN_TRANSIT, announcement.getId());
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.findByIdForUpdate(announcement.getId())).thenReturn(Optional.of(announcement));
+            when(bidRepository.findByAnnouncementIdAndStatusNotIn(eq(announcement.getId()), anyCollection()))
+                    .thenReturn(List.of(bidInTransit));
+            when(bidRepository.existsByAnnouncementIdAndStatusIn(
+                    announcement.getId(), List.of(BidStatus.ARRIVED, BidStatus.COMPLETED)))
+                    .thenReturn(false);
+
+            assertYadonyError(
+                    () -> announcementService.updateArrivalInstructions(
+                            announcement.getId(), FIREBASE_UID, "Devant la gare"),
+                    "trip/not-arrived-yet");
+            verify(announcementRepository, never()).save(any());
+        }
+
+        /** Régression I5 : un trajet partiellement soldé (un colis livré, un autre encore
+         *  ARRIVED) reste éditable — COMPLETED compte comme « arrivé ou au-delà ». */
+        @Test
+        @DisplayName("régression I5 — updateArrivalInstructions accepté si un colis est déjà COMPLETED")
+        void updateArrivalInstructions_completedBidCountsAsArrived() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement(traveler);
+            BidEntity bidArrived = buildBid(BidStatus.ARRIVED, announcement.getId());
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+            when(announcementRepository.findByIdForUpdate(announcement.getId())).thenReturn(Optional.of(announcement));
+            when(announcementRepository.findById(announcement.getId())).thenReturn(Optional.of(announcement));
+            when(bidRepository.findByAnnouncementIdAndStatusNotIn(eq(announcement.getId()), anyCollection()))
+                    .thenReturn(List.of(bidArrived));
+            when(bidRepository.countVisibleByAnnouncementId(announcement.getId())).thenReturn(1L);
+            when(bidRepository.countByAnnouncementIdAndStatusIn(eq(announcement.getId()), anyList())).thenReturn(0L);
+            when(bidRepository.existsByAnnouncementIdAndStatusIn(
+                    announcement.getId(), List.of(BidStatus.ARRIVED, BidStatus.COMPLETED)))
+                    .thenReturn(true);
+            when(announcementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            announcementService.updateArrivalInstructions(announcement.getId(), FIREBASE_UID, "Hall B");
+
+            assertThat(announcement.getArrivalInstructions()).isEqualTo("Hall B");
+        }
+
+        @Test
+        @DisplayName("updateArrivalInstructions — refuse si le trajet est totalement livré")
+        void updateArrivalInstructions_alreadyDelivered_throws() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement(traveler);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.findByIdForUpdate(announcement.getId())).thenReturn(Optional.of(announcement));
+            when(bidRepository.findByAnnouncementIdAndStatusNotIn(eq(announcement.getId()), anyCollection()))
+                    .thenReturn(List.of());
+
+            assertYadonyError(
+                    () -> announcementService.updateArrivalInstructions(announcement.getId(), FIREBASE_UID, "x"),
+                    "trip/already-delivered");
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("updateArrivalInstructions — refuse si l'appelant n'est pas le voyageur propriétaire")
+        void updateArrivalInstructions_notOwner_throws() {
+            UserEntity traveler = buildTraveler();
+            UserEntity someoneElse = buildTraveler();
+            setId(someoneElse, UUID.randomUUID());
+            AnnouncementEntity announcement = buildAnnouncement(traveler);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(someoneElse));
+            when(announcementRepository.findByIdForUpdate(announcement.getId())).thenReturn(Optional.of(announcement));
+
+            assertYadonyError(
+                    () -> announcementService.updateArrivalInstructions(announcement.getId(), FIREBASE_UID, "x"),
+                    "forbidden");
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("updateArrivalInstructions — refuse si le trajet n'existe pas")
+        void updateArrivalInstructions_announcementNotFound_throws() {
+            UserEntity traveler = buildTraveler();
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.findByIdForUpdate(ANNOUNCEMENT_ID)).thenReturn(Optional.empty());
+
+            assertYadonyError(
+                    () -> announcementService.updateArrivalInstructions(ANNOUNCEMENT_ID, FIREBASE_UID, "x"),
+                    "announcement-not-found");
+        }
+
+        @Test
+        @DisplayName("updateArrivalInstructions — refuse si l'utilisateur n'existe pas")
+        void updateArrivalInstructions_userNotFound_throws() {
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.empty());
+
+            assertYadonyError(
+                    () -> announcementService.updateArrivalInstructions(ANNOUNCEMENT_ID, FIREBASE_UID, "x"),
+                    "user-not-found");
+        }
+    }
+
+    /** Régression : jumeau de C2 pour le chemin scheduler/inline (triggerInProgressTransitions).
+     *  Avant le fix, applyInProgressTransition interrogeait (ACCEPTED, HANDED_OVER, IN_TRANSIT)
+     *  sans ARRIVED : un trajet déjà parti dont tous les colis étaient ARRIVED (retirés du
+     *  vol mais pas encore livrés) était forcé à COMPLETED avec l'audit
+     *  DEPARTURE_NO_ACCEPTED_BIDS, alors que la livraison n'avait pas eu lieu. */
+    @Test
+    @DisplayName("régression : trigger inline in-progress — un colis ARRIVED empêche la complétion forcée au départ")
+    void triggerInProgressTransitions_arrivedBid_doesNotForceCompletion() {
+        UserEntity traveler = buildTraveler();
+        AnnouncementEntity announcement = buildAnnouncement(traveler);
+        announcement.setStatus(AnnouncementStatus.ACTIVE);
+        announcement.setDepartureDate(LocalDate.now().minusDays(1));
+
+        when(announcementRepository.findActiveOrFullDepartingOnOrBefore(any()))
+                .thenReturn(List.of(announcement));
+        when(bidRepository.existsByAnnouncementIdAndStatusIn(eq(ANNOUNCEMENT_ID),
+                argThat(statuses -> statuses != null && statuses.contains(BidStatus.ARRIVED))))
+                .thenReturn(true);
+
+        announcementService.triggerInProgressTransitions();
+
+        assertThat(announcement.getStatus()).isNotEqualTo(AnnouncementStatus.COMPLETED);
+        verify(announcementRepository, never()).save(argThat(a ->
+                a != null && a.getStatus() == AnnouncementStatus.COMPLETED));
+        verify(bidRepository).existsByAnnouncementIdAndStatusIn(eq(ANNOUNCEMENT_ID),
+                argThat(statuses -> statuses.contains(BidStatus.ARRIVED)));
     }
 }

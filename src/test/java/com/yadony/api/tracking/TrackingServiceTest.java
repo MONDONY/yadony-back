@@ -101,6 +101,15 @@ class TrackingServiceTest {
         return b;
     }
 
+    /**
+     * Stubbe l'expéditeur du colis comme utilisateur courant : searchByTrackingNumber
+     * exige désormais que l'appelant soit expéditeur ou voyageur du colis.
+     */
+    private void stubSenderAsCurrentUser() {
+        when(userRepository.findByFirebaseUid("uid-sender"))
+                .thenReturn(Optional.of(buildUser(senderId, "uid-sender")));
+    }
+
     private AnnouncementEntity buildAnnouncement() {
         AnnouncementEntity a = new AnnouncementEntity();
         setId(a, annId);
@@ -190,7 +199,7 @@ class TrackingServiceTest {
     @Test
     void searchByTrackingNumber_notFound_throwsNotFound() {
         when(bidRepository.findByTrackingNumber("TRK999")).thenReturn(Optional.empty());
-        assertYadonyError(() -> service.searchByTrackingNumber("TRK999"), "tracking-not-found");
+        assertYadonyError(() -> service.searchByTrackingNumber("TRK999", "uid-sender"), "tracking-not-found");
     }
 
     @Test
@@ -201,7 +210,9 @@ class TrackingServiceTest {
         when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
         when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.empty());
 
-        TrackingSearchResponse resp = service.searchByTrackingNumber("TRK000001");
+        stubSenderAsCurrentUser();
+
+        TrackingSearchResponse resp = service.searchByTrackingNumber("TRK000001", "uid-sender");
 
         assertThat(resp.currentStep()).isEqualTo("PENDING");
     }
@@ -214,7 +225,9 @@ class TrackingServiceTest {
         when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
         when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.empty());
 
-        TrackingSearchResponse resp = service.searchByTrackingNumber("TRK000001");
+        stubSenderAsCurrentUser();
+
+        TrackingSearchResponse resp = service.searchByTrackingNumber("TRK000001", "uid-sender");
 
         assertThat(resp.currentStep()).isEqualTo("REJECTED");
     }
@@ -230,7 +243,9 @@ class TrackingServiceTest {
         when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.of(payment));
         when(trackingEventRepository.findByBidIdOrderByScannedAtAsc(bidId)).thenReturn(List.of());
 
-        TrackingSearchResponse resp = service.searchByTrackingNumber("TRK000001");
+        stubSenderAsCurrentUser();
+
+        TrackingSearchResponse resp = service.searchByTrackingNumber("TRK000001", "uid-sender");
 
         assertThat(resp.currentStep()).isEqualTo("PAYMENT_SECURED");
     }
@@ -248,9 +263,114 @@ class TrackingServiceTest {
         when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.of(payment));
         when(trackingEventRepository.findByBidIdOrderByScannedAtAsc(bidId)).thenReturn(List.of(arriveeEvent));
 
-        TrackingSearchResponse resp = service.searchByTrackingNumber("TRK000001");
+        stubSenderAsCurrentUser();
+
+        TrackingSearchResponse resp = service.searchByTrackingNumber("TRK000001", "uid-sender");
 
         assertThat(resp.currentStep()).isEqualTo("DELIVERED");
+    }
+
+    @Test
+    void searchByTrackingNumber_arrivedWithInstructions_returnsArrivalInstructions() {
+        BidEntity bid = buildBid(BidStatus.ARRIVED, "qt");
+        AnnouncementEntity ann = buildAnnouncement();
+        ann.setArrivalInstructions("Retrait au comptoir 3, aéroport Blaise Diagne, de 8h à 18h");
+        PaymentEntity payment = new PaymentEntity();
+        payment.setStatus(PaymentStatus.ESCROW);
+        when(bidRepository.findByTrackingNumber("TRK000001")).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.of(payment));
+        when(trackingEventRepository.findByBidIdOrderByScannedAtAsc(bidId)).thenReturn(List.of());
+
+        stubSenderAsCurrentUser();
+
+        TrackingSearchResponse resp = service.searchByTrackingNumber("TRK000001", "uid-sender");
+
+        assertThat(resp.arrivalInstructions())
+                .isEqualTo("Retrait au comptoir 3, aéroport Blaise Diagne, de 8h à 18h");
+    }
+
+    @Test
+    void searchByTrackingNumber_noArrivalInstructions_returnsNull() {
+        BidEntity bid = buildBid(BidStatus.PENDING, "qt");
+        AnnouncementEntity ann = buildAnnouncement();
+        when(bidRepository.findByTrackingNumber("TRK000001")).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.empty());
+
+        stubSenderAsCurrentUser();
+
+        TrackingSearchResponse resp = service.searchByTrackingNumber("TRK000001", "uid-sender");
+
+        assertThat(resp.arrivalInstructions()).isNull();
+    }
+
+    // ── searchByTrackingNumber : contrôle de propriété ────────────────────────
+
+    @Test
+    void searchByTrackingNumber_senderOfBid_returnsResponse() {
+        BidEntity bid = buildBid(BidStatus.ARRIVED, "qt");
+        AnnouncementEntity ann = buildAnnouncement();
+        ann.setArrivalInstructions("Retrait au comptoir 3, aéroport Blaise Diagne");
+        when(bidRepository.findByTrackingNumber("TRK000001")).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.empty());
+        when(userRepository.findByFirebaseUid("uid-sender"))
+                .thenReturn(Optional.of(buildUser(senderId, "uid-sender")));
+
+        TrackingSearchResponse resp = service.searchByTrackingNumber("TRK000001", "uid-sender");
+
+        assertThat(resp.trackingNumber()).isEqualTo("TRK000001");
+        assertThat(resp.arrivalInstructions()).isEqualTo("Retrait au comptoir 3, aéroport Blaise Diagne");
+    }
+
+    @Test
+    void searchByTrackingNumber_travelerOfAnnouncement_returnsResponse() {
+        BidEntity bid = buildBid(BidStatus.ARRIVED, "qt");
+        AnnouncementEntity ann = buildAnnouncement();
+        ann.setArrivalInstructions("Retrait au comptoir 3, aéroport Blaise Diagne");
+        when(bidRepository.findByTrackingNumber("TRK000001")).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.empty());
+        when(userRepository.findByFirebaseUid("uid-traveler"))
+                .thenReturn(Optional.of(buildUser(travelerId, "uid-traveler")));
+
+        TrackingSearchResponse resp = service.searchByTrackingNumber("TRK000001", "uid-traveler");
+
+        assertThat(resp.trackingNumber()).isEqualTo("TRK000001");
+        assertThat(resp.arrivalInstructions()).isEqualTo("Retrait au comptoir 3, aéroport Blaise Diagne");
+    }
+
+    @Test
+    void searchByTrackingNumber_thirdParty_throwsForbiddenAndLeaksNoInstructions() {
+        BidEntity bid = buildBid(BidStatus.ARRIVED, "qt");
+        AnnouncementEntity ann = buildAnnouncement();
+        ann.setArrivalInstructions("Retrait au comptoir 3, aéroport Blaise Diagne");
+        UserEntity outsider = buildUser(UUID.randomUUID(), "uid-other");
+        when(bidRepository.findByTrackingNumber("TRK000001")).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+        when(userRepository.findByFirebaseUid("uid-other")).thenReturn(Optional.of(outsider));
+
+        Throwable thrown = catchThrowable(() -> service.searchByTrackingNumber("TRK000001", "uid-other"));
+
+        assertThat(thrown).isInstanceOf(YadonyBusinessException.class);
+        YadonyBusinessException ex = (YadonyBusinessException) thrown;
+        assertThat(ex.getErrorCode()).isEqualTo("tracking/forbidden");
+        assertThat(ex.getStatus()).isEqualTo(org.springframework.http.HttpStatus.FORBIDDEN);
+        assertThat(ex.getMessage()).isEqualTo("Ce colis n'est pas le vôtre");
+        assertThat(ex.getMessage()).doesNotContain("comptoir 3");
+        verify(paymentRepository, never()).findByBidId(any());
+    }
+
+    @Test
+    void searchByTrackingNumber_userNotFound_throwsNotFound() {
+        BidEntity bid = buildBid(BidStatus.ARRIVED, "qt");
+        AnnouncementEntity ann = buildAnnouncement();
+        when(bidRepository.findByTrackingNumber("TRK000001")).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+        when(userRepository.findByFirebaseUid("uid-unknown")).thenReturn(Optional.empty());
+
+        assertYadonyError(() -> service.searchByTrackingNumber("TRK000001", "uid-unknown"), "user-not-found");
     }
 
     // ── getEvents ─────────────────────────────────────────────────────────────
@@ -434,6 +554,30 @@ class TrackingServiceTest {
         assertThat(captor.getValue().getBidId()).isEqualTo(bidId);
     }
 
+    @Test
+    void confirmDelivery_bidArrived_succeeds() {
+        BidEntity bid = buildBid(BidStatus.ARRIVED, "qt");
+        bid.setConfirmationCode("123456");
+        bid.setConfirmationCodeExpiry(LocalDateTime.now(ZoneOffset.UTC).plusHours(1));
+        bid.setConfirmationCodeAttempts(0);
+        AnnouncementEntity announcement = buildAnnouncement();
+        UserEntity traveler = buildUser(travelerId, "uid-traveler");
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(announcement));
+        when(userRepository.findByFirebaseUid("uid-traveler")).thenReturn(Optional.of(traveler));
+        when(trackingEventRepository.save(any())).thenAnswer(inv -> {
+            TrackingEventEntity e = inv.getArgument(0);
+            setId(e, UUID.randomUUID());
+            return e;
+        });
+
+        TrackingEventResponse response = service.confirmDelivery(
+                bidId, new ConfirmDeliveryRequest("123456"), "uid-traveler");
+
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.COMPLETED);
+        assertThat(response).isNotNull();
+    }
+
     // ── getConfirmationCode ───────────────────────────────────────────────────
 
     @Test
@@ -570,6 +714,26 @@ class TrackingServiceTest {
     }
 
     @Test
+    void refreshConfirmationCode_bidArrived_succeeds() {
+        BidEntity bid = buildBid(BidStatus.ARRIVED, "qt");
+        bid.setConfirmationCode("000000");
+        bid.setConfirmationCodeAttempts(2);
+        AnnouncementEntity ann = buildAnnouncement();
+        UserEntity sender = buildUser(senderId, "uid-sender");
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+
+        ConfirmCodeResponse resp = service.refreshConfirmationCode(bidId, "uid-sender");
+
+        assertThat(resp.confirmationCode()).hasSize(6);
+        assertThat(resp.confirmationCode()).isNotEqualTo("000000");
+        assertThat(resp.expiresAt()).isAfter(LocalDateTime.now(ZoneOffset.UTC));
+        assertThat(bid.getConfirmationCodeAttempts()).isZero();
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.ARRIVED);
+    }
+
+    @Test
     void refreshCode_withinWindow_incrementsCount() {
         BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");
         bid.setConfirmationCode("111111");
@@ -666,7 +830,9 @@ class TrackingServiceTest {
         when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
         when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.empty());
 
-        TrackingSearchResponse resp = service.searchByTrackingNumber("TRK000001");
+        stubSenderAsCurrentUser();
+
+        TrackingSearchResponse resp = service.searchByTrackingNumber("TRK000001", "uid-sender");
 
         assertThat(resp.currentStep()).isEqualTo("CANCELLED");
     }
@@ -679,7 +845,9 @@ class TrackingServiceTest {
         when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
         when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.empty());
 
-        TrackingSearchResponse resp = service.searchByTrackingNumber("TRK000001");
+        stubSenderAsCurrentUser();
+
+        TrackingSearchResponse resp = service.searchByTrackingNumber("TRK000001", "uid-sender");
 
         assertThat(resp.currentStep()).isEqualTo("ACCEPTED");
     }
@@ -696,7 +864,9 @@ class TrackingServiceTest {
         when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.of(payment));
         when(trackingEventRepository.findByBidIdOrderByScannedAtAsc(bidId)).thenReturn(List.of());
 
-        TrackingSearchResponse resp = service.searchByTrackingNumber("TRK000001");
+        stubSenderAsCurrentUser();
+
+        TrackingSearchResponse resp = service.searchByTrackingNumber("TRK000001", "uid-sender");
 
         assertThat(resp.currentStep()).isEqualTo("IN_TRANSIT");
     }
@@ -714,7 +884,9 @@ class TrackingServiceTest {
         when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.of(payment));
         when(trackingEventRepository.findByBidIdOrderByScannedAtAsc(bidId)).thenReturn(List.of(transitEvent));
 
-        TrackingSearchResponse resp = service.searchByTrackingNumber("TRK000001");
+        stubSenderAsCurrentUser();
+
+        TrackingSearchResponse resp = service.searchByTrackingNumber("TRK000001", "uid-sender");
 
         assertThat(resp.currentStep()).isEqualTo("IN_TRANSIT");
     }
@@ -732,7 +904,9 @@ class TrackingServiceTest {
         when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.of(payment));
         when(trackingEventRepository.findByBidIdOrderByScannedAtAsc(bidId)).thenReturn(List.of(departEvent));
 
-        TrackingSearchResponse resp = service.searchByTrackingNumber("TRK000001");
+        stubSenderAsCurrentUser();
+
+        TrackingSearchResponse resp = service.searchByTrackingNumber("TRK000001", "uid-sender");
 
         assertThat(resp.currentStep()).isEqualTo("DEPARTED");
     }

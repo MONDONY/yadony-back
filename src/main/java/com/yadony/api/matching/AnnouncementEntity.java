@@ -106,6 +106,9 @@ public class AnnouncementEntity extends BaseEntity {
     @Column(name = "description", length = 500)
     private String description;
 
+    @Column(name = "arrival_instructions", columnDefinition = "TEXT")
+    private String arrivalInstructions;
+
     @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(
             name = "announcement_accepted_types",
@@ -329,6 +332,9 @@ public class AnnouncementEntity extends BaseEntity {
 
     public String getDescription() { return description; }
     public void setDescription(String description) { this.description = description; }
+
+    public String getArrivalInstructions() { return arrivalInstructions; }
+    public void setArrivalInstructions(String arrivalInstructions) { this.arrivalInstructions = arrivalInstructions; }
 
     public List<String> getAcceptedContentTypes() { return acceptedContentTypes; }
     public void setAcceptedContentTypes(List<String> acceptedContentTypes) { this.acceptedContentTypes = acceptedContentTypes; }

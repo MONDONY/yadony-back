@@ -64,6 +64,20 @@ class BlockServiceTest {
         verify(blockRepo, never()).save(any());
     }
 
+    /** Régression I2 : ARRIVED doit figurer dans ACTIVE_STATUSES. Le colis est arrivé
+     *  mais pas encore retiré — c'est exactement le moment où les deux parties
+     *  coordonnent le retrait, donc le pire moment pour autoriser un blocage. */
+    @Test
+    void block_ACTIVE_STATUSES_inclutArrived() {
+        when(blockRepo.existsByBlockerIdAndBlockedId(me, other)).thenReturn(false);
+        when(bidRepository.hasActiveTransactionBetween(eq(me), eq(other), anyList())).thenReturn(false);
+
+        service.block(me, other);
+
+        verify(bidRepository).hasActiveTransactionBetween(eq(me), eq(other),
+                argThat(statuses -> statuses.contains(com.yadony.api.matching.BidStatus.ARRIVED)));
+    }
+
     @Test
     void unblock_supprimeLaRelation() {
         when(blockRepo.deleteByBlockerIdAndBlockedId(me, other)).thenReturn(1);

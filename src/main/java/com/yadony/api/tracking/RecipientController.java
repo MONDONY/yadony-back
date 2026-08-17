@@ -70,6 +70,7 @@ public class RecipientController {
             return ResponseEntity.notFound().build();
         }
         BidEntity bid = bidOpt.get();
+        Optional<AnnouncementEntity> announcementOpt = announcementRepository.findById(bid.getAnnouncementId());
         List<TrackingEventEntity> rawEvents =
                 trackingEventRepository.findByBidIdOrderByScannedAtAsc(bid.getId());
 
@@ -87,8 +88,15 @@ public class RecipientController {
         return ResponseEntity.ok(Map.of(
                 "currentStep", currentStep,
                 "events", events,
-                "publicConfirmationCode", publicConfirmationCode(bid)
+                "publicConfirmationCode", publicConfirmationCode(bid),
+                "arrivalInstructions", arrivalInstructionsOrEmpty(announcementOpt)
         ));
+    }
+
+    private static String arrivalInstructionsOrEmpty(Optional<AnnouncementEntity> announcementOpt) {
+        return announcementOpt.map(AnnouncementEntity::getArrivalInstructions)
+                .filter(s -> s != null)
+                .orElse("");
     }
 
     private String buildTrackingPage(String trackingToken, Model model) {
@@ -129,6 +137,7 @@ public class RecipientController {
         model.addAttribute("events", events);
         model.addAttribute("qrCodeBase64", generateQrBase64(scanUrl(bid)));
         model.addAttribute("publicConfirmationCode", publicConfirmationCode(bid));
+        model.addAttribute("arrivalInstructions", arrivalInstructionsOrEmpty(announcementOpt));
         model.addAttribute("invalid", false);
         model.addAttribute("trackingToken", trackingToken);
         model.addAttribute("isDelivered", bid.getStatus() == BidStatus.COMPLETED);

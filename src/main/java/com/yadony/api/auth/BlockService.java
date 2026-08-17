@@ -16,9 +16,11 @@ import java.util.stream.Collectors;
 @Service
 public class BlockService {
 
+    /** Transaction encore en cours : bloquer la contrepartie couperait la
+     *  coordination. ARRIVED (colis arrivé, retrait à organiser) en fait partie. */
     private static final List<BidStatus> ACTIVE_STATUSES = List.of(
             BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED,
-            BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT);
+            BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED);
 
     private final UserBlockJpaRepository blockRepo;
     private final UserRepository userRepository;

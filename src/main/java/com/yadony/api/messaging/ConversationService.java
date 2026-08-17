@@ -279,9 +279,6 @@ public class ConversationService {
         return firestoreService.getConversationMeta(firestoreConversationIds);
     }
 
-    private static final java.util.Set<BidStatus> PHONE_VISIBLE_STATUSES = java.util.EnumSet.of(
-            BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.COMPLETED);
-
     /** Convenience : fait son propre aller-retour Firestore pour une conversation seule. */
     public ConversationResponse toResponse(ConversationEntity conv, UUID currentUserId) {
         Map<String, Object> meta = firestoreService
@@ -324,7 +321,7 @@ public class ConversationService {
             // Téléphone révélé seulement quand le deal est actif (même règle que
             // BidService), et jamais si l'intéressé a masqué son numéro dans ses
             // réglages de confidentialité — le chat reste alors son seul canal.
-            revealPhone  = PHONE_VISIBLE_STATUSES.contains(bid.getStatus())
+            revealPhone  = BidStatus.PHONE_VISIBLE_STATUSES.contains(bid.getStatus())
                     && other != null && !other.isHidePhoneNumber();
 
             Optional<AnnouncementEntity> annOpt = announcementRepository.findById(bid.getAnnouncementId());
@@ -399,6 +396,7 @@ public class ConversationService {
         if (status == null) return null;
         return switch (status) {
             case ACCEPTED -> "BID_ACCEPTED";
+            case ARRIVED -> "TRIP_ARRIVED";
             case COMPLETED -> "DELIVERY_CONFIRMED";
             case CANCELLED, NO_SHOW, PARCEL_REFUSED -> "TRIP_CANCELLED";
             default -> null;
