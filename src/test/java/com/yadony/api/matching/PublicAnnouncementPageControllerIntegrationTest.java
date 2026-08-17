@@ -101,7 +101,7 @@ class PublicAnnouncementPageControllerIntegrationTest {
                 .andExpect(content().string(
                         org.hamcrest.Matchers.containsString("dony://annonce/" + a.getId())))
                 .andExpect(content().string(
-                        org.hamcrest.Matchers.containsString("/public/annonce/" + a.getId())));
+                        org.hamcrest.Matchers.containsString("/annonce/" + a.getId())));
     }
 
     @Test
@@ -233,6 +233,13 @@ class PublicAnnouncementPageControllerIntegrationTest {
      * déclaré dans la carte de partage Facebook pointe sur un 404 : l'application
      * est servie sous {@code /api/v1}, comme le recollent déjà TrackingService et
      * RecipientController.
+     *
+     * <p>Forme courte {@code /annonce/{id}} par défaut, sans {@code /public} :
+     * elle résout dans TOUS les environnements grâce à l'alias de mapping du
+     * contrôleur, cf. {@link #newAliasPath_alsoServesTheSamePage}. Sans
+     * {@code PUBLIC_BASE_URL} configuré (le cas ici), elle reste techniquement
+     * exacte mais encore adossée à l'origine API — la lisibilité complète
+     * n'arrive qu'avec le domaine nu, cf. {@link #shareUrl_isPrettyOnceThePublicDomainIsConfigured}.
      */
     @Test
     void shareUrl_carriesTheApplicationContextPath() throws Exception {
@@ -241,7 +248,26 @@ class PublicAnnouncementPageControllerIntegrationTest {
         mockMvc.perform(get("/public/annonce/" + a.getId()).header("User-Agent", BROWSER_UA))
                 .andExpect(status().isOk())
                 .andExpect(content().string(org.hamcrest.Matchers.containsString(
-                        "/api/v1/public/annonce/" + a.getId())));
+                        "/api/v1/annonce/" + a.getId())))
+                .andExpect(content().string(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("/public/annonce/" + a.getId()))));
+    }
+
+    /**
+     * L'alias {@code /annonce/{id}} — celui que nginx expose derrière le domaine
+     * public — doit rendre exactement la même page que la forme historique. Sans
+     * ce test, un refactor du {@code @RequestMapping} de classe pourrait retirer
+     * l'un des deux chemins sans qu'aucun autre test ne le remarque.
+     */
+    @Test
+    void newAliasPath_alsoServesTheSamePage() throws Exception {
+        AnnouncementEntity a = persistAnnouncement(AnnouncementStatus.ACTIVE);
+
+        mockMvc.perform(get("/annonce/" + a.getId()).header("User-Agent", BROWSER_UA))
+                .andExpect(status().isOk())
+                .andExpect(view().name("public/annonce"))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("Paris")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("Dakar")));
     }
 
     /**
@@ -337,4 +363,5 @@ class PublicAnnouncementPageControllerIntegrationTest {
                 .andExpect(content().string(
                         org.hamcrest.Matchers.containsString("Dakar Plateau")));
     }
+
 }

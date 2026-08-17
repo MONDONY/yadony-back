@@ -33,12 +33,20 @@ import java.util.UUID;
  * est donc déjà la forme définitive : activer les App Links plus tard
  * n'invalidera aucune affiche déjà publiée.
  *
- * <p>Exposée sous {@code /public/**}, déjà couvert par la liste
- * {@code permitAll} de {@code SecurityConfig} — aucune ouverture nouvelle dans
- * la configuration de sécurité n'est nécessaire.
+ * <p>Deux chemins mènent ici, tous deux en {@code permitAll} dans
+ * {@code SecurityConfig} : {@code /public/annonce/{id}}, la forme historique,
+ * directement joignable sans nginx (utilisée en dev et tant qu'aucun domaine
+ * court n'est configuré) ; et {@code /annonce/{id}}, l'alias pensé pour l'URL
+ * visible par le public. Le second n'existe que derrière le passage de nginx
+ * qui réécrit {@code yadony.com/annonce/{id}} vers {@code .../api/v1/annonce/{id}}
+ * (voir {@code nginx/nginx.conf}) — sans lui, seule la forme longue résout.
+ * {@link #buildShareUrl} choisit systématiquement la forme courte : tant que
+ * {@code app.public-base-url} pointe encore sur l'origine API (repli par
+ * défaut), la forme courte y résout quand même grâce à cet alias ; le jour où
+ * elle pointera sur le domaine nu, elle devient la véritable URL publique.
  */
 @Controller
-@RequestMapping("/public/annonce")
+@RequestMapping({"/public/annonce", "/annonce"})
 public class PublicAnnouncementPageController {
 
     private static final DateTimeFormatter DATE_FMT =
@@ -139,9 +147,23 @@ public class PublicAnnouncementPageController {
         model.addAttribute("pickupAddress", announcement.getPickupAddressLabel());
         model.addAttribute("deliveryAddress", announcement.getDeliveryAddressLabel());
         model.addAttribute("deepLink", "dony://annonce/" + announcementId);
-        model.addAttribute("shareUrl", publicBaseUrl + "/public/annonce/" + announcementId);
+        model.addAttribute("shareUrl", buildShareUrl(announcementId));
 
         return VIEW;
+    }
+
+    /**
+     * URL canonique de la page, publiée dans {@code og:url} et affichable telle
+     * quelle. Forme courte systématique : {@code /annonce/{id}}, sans
+     * {@code /public}. Elle reste valide dans tous les environnements car
+     * {@code /annonce} est mappée sur le même contrôleur que {@code /public/annonce}
+     * (voir la classe) — seule sa <em>lisibilité</em> dépend de la configuration :
+     * derrière nginx et un domaine nu, c'est la véritable URL publique ; sans eux,
+     * elle reste une URL techniquement correcte mais qui expose encore l'origine
+     * API.
+     */
+    private String buildShareUrl(UUID announcementId) {
+        return publicBaseUrl + "/annonce/" + announcementId;
     }
 
     /**

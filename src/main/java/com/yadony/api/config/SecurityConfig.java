@@ -113,6 +113,11 @@ public class SecurityConfig {
                     "/webhooks/mobile-money/**",
                     // Public shareable traveler profile (minimal, no-auth)
                     "/public/**",
+                    // Alias court de /public/annonce/{id}, pensé pour l'URL visible par le
+                    // public (yadony.com/annonce/{id} plutôt que .../api/v1/public/annonce/{id}).
+                    // Même donnée, même contrôleur, aucune capacité nouvelle : c'est un
+                    // deuxième chemin vers la page déjà couverte par /public/** ci-dessus.
+                    "/annonce/**",
                     // Admin bootstrap: initial configuration without auth
                     "/admin/bootstrap"
                 ).permitAll()
