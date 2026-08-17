@@ -532,9 +532,28 @@ public class PackageRequestService {
 
     // ─── cancel ──────────────────────────────────────────────────────────────────
 
+    /**
+     * L'expéditeur annule sa demande. Tous les fils encore actifs meurent avec
+     * elle, quel que soit leur stade.
+     *
+     * <p>Le verrou pessimiste n'est pas décoratif : sans lui, un règlement de
+     * commission concurrent (qui verrouille la demande puis vérifie qu'elle est
+     * toujours disponible) pourrait débiter le voyageur et sceller l'accord
+     * pendant que cette transaction annule et soft-delete la même demande. Avec
+     * le verrou les deux se sérialisent : soit le règlement voit CANCELLED et
+     * refuse avant tout appel Stripe, soit l'annulation voit ACCEPTED et rend
+     * 409.
+     *
+     * <p>La demande est soft-deletée, donc introuvable ensuite ({@code
+     * @SQLRestriction("deleted_at IS NULL")}). Tout ce qui reste attaché à un fil
+     * doit donc être soldé ICI, pendant qu'on tient encore la demande : ne
+     * traiter que les fils {@code OPEN}, comme avant, laissait un voyageur en
+     * AWAITING_COMMISSION débité pour une demande évaporée, son trajet dédié
+     * bloqué en « Mes trajets », et aucune notification pour l'en informer.
+     */
     @Transactional
     public void cancel(UUID callerUid, UUID requestId) {
-        PackageRequestEntity entity = repository.findById(requestId)
+        PackageRequestEntity entity = repository.findByIdForUpdate(requestId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found"));
 
         if (!entity.getSenderId().equals(callerUid)) {
@@ -549,16 +568,57 @@ public class PackageRequestService {
         entity.softDelete();
         repository.save(entity);
 
-        // Auto-reject any open threads
-        threadRepository.findByPackageRequestId(requestId).forEach(t -> {
-            if (t.getStatus() == NegotiationThreadStatus.OPEN) {
+        String senderName = userRepository.findById(callerUid)
+            .map(UserEntity::publicDisplayName)
+            .orElse(UserEntity.UNKNOWN_DISPLAY_NAME);
+
+        threadRepository.findByPackageRequestId(requestId).stream()
+            .filter(t -> t.getStatus().isActive())
+            .forEach(t -> {
+                NegotiationThreadStatus previous = t.getStatus();
                 t.setStatus(NegotiationThreadStatus.AUTO_REJECTED);
+                t.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC));
                 threadRepository.save(t);
-            }
-        });
+                softDeleteOrphanedDedicatedTrip(t, callerUid);
+
+                // Les deux effets financiers partent d'écouteurs AFTER_COMMIT,
+                // pilotés par ces drapeaux : le stade d'avant l'annulation n'est
+                // connu que d'ici. Un rollback ne déclenche aucun AFTER_COMMIT,
+                // donc aucune fuite d'argent sur une annulation qui n'a pas eu lieu.
+                eventPublisher.publishEvent(new NegotiationCancelledEvent(
+                    t.getId(), requestId, callerUid, t.getTravelerId(), senderName,
+                    previous == NegotiationThreadStatus.AWAITING_PAYMENT,
+                    previous == NegotiationThreadStatus.AWAITING_COMMISSION));
+            });
 
         auditService.log("PACKAGE_REQUEST", requestId, "CANCELLED", callerUid,
             Map.of("status", "CANCELLED"));
+    }
+
+    /**
+     * Soft-delete du trajet DÉDIÉ devenu orphelin — créé exclusivement pour
+     * cette demande, sa capacité disponible reste à 0 tant que le surplus n'est
+     * pas ouvert après paiement : une fois orphelin, plus personne ne peut le
+     * réserver et il resterait {@code ACTIVE} pour toujours dans « Mes trajets »
+     * du voyageur, capacité réservée bloquée.
+     *
+     * <p>Compare l'identifiant porté par le fil, jamais l'entité demande : elle
+     * vient d'être soft-deletée par l'appelant, donc déjà introuvable.
+     */
+    private void softDeleteOrphanedDedicatedTrip(NegotiationThreadEntity thread, UUID callerUid) {
+        UUID announcementId = thread.getTravelerAnnouncementId();
+        if (announcementId == null) {
+            return;
+        }
+        announcementRepository.findById(announcementId).ifPresent(ann -> {
+            if (thread.getPackageRequestId().equals(ann.getLinkedPackageRequestId())) {
+                ann.softDelete();
+                announcementRepository.save(ann);
+                auditService.log("ANNOUNCEMENT", ann.getId(),
+                    "DEDICATED_TRIP_ORPHANED_ON_REQUEST_CANCEL", callerUid,
+                    Map.of("threadId", thread.getId().toString()));
+            }
+        });
     }
 
     // ─── completeDetails ─────────────────────────────────────────────────────────

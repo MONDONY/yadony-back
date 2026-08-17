@@ -958,6 +958,51 @@ class NegotiationServiceTest {
                 .hasMessageContaining("not-thread-participant");
         }
 
+        /**
+         * declineCommission est la sortie du voyageur ; sans ce statut ici,
+         * l'expéditeur n'avait aucun moyen de fermer un fil dont le voyageur s'est
+         * simplement tu, sinon attendre toute la fenêtre de commission. Le drapeau
+         * de remboursement est ce qui rend l'ouverture sûre : une commission déjà
+         * débitée doit repartir, sinon on facture un accord qui n'aura pas lieu.
+         */
+        @Test
+        @DisplayName("status AWAITING_COMMISSION → annulable, et le remboursement est demandé")
+        void cancel_statusAwaitingCommission_cancellableAndRefunds() {
+            thread.setStatus(NegotiationThreadStatus.AWAITING_COMMISSION);
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
+
+            service.cancelNegotiation(SENDER_ID, THREAD_ID, "le voyageur ne règle pas");
+
+            assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.CANCELLED);
+            ArgumentCaptor<com.yadony.api.requests.event.NegotiationCancelledEvent> captor =
+                ArgumentCaptor.forClass(com.yadony.api.requests.event.NegotiationCancelledEvent.class);
+            verify(eventPublisher).publishEvent(captor.capture());
+            assertThat(captor.getValue().refundCommission()).isTrue();
+            assertThat(captor.getValue().releaseEscrow()).isFalse();
+        }
+
+        /**
+         * Le remboursement ne doit partir QUE depuis AWAITING_COMMISSION : le
+         * déclencher sur une annulation ordinaire ferait relire Stripe pour rien
+         * à chaque fin de négociation.
+         */
+        @Test
+        @DisplayName("status OPEN → aucun remboursement demandé")
+        void cancel_statusOpen_doesNotAskForRefund() {
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
+
+            service.cancelNegotiation(SENDER_ID, THREAD_ID, null);
+
+            ArgumentCaptor<com.yadony.api.requests.event.NegotiationCancelledEvent> captor =
+                ArgumentCaptor.forClass(com.yadony.api.requests.event.NegotiationCancelledEvent.class);
+            verify(eventPublisher).publishEvent(captor.capture());
+            assertThat(captor.getValue().refundCommission()).isFalse();
+        }
+
         @Test
         @DisplayName("status ACCEPTED → 409 negotiation/not-cancellable")
         void cancel_statusAccepted_throws409NotCancellable() {

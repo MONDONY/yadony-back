@@ -385,8 +385,16 @@ public class NegotiationService {
 
     /**
      * Either participant (sender or traveler) ends the negotiation before payment.
-     * Allowed while the thread is still OPEN, AWAITING_TRIP or AWAITING_PAYMENT —
-     * once ACCEPTED (paid) the thread can no longer be cancelled this way.
+     * Allowed while the thread is still OPEN, AWAITING_TRIP, AWAITING_PAYMENT or
+     * AWAITING_COMMISSION — once ACCEPTED (paid) the thread can no longer be
+     * cancelled this way.
+     *
+     * <p>AWAITING_COMMISSION is cancellable here on purpose: {@code declineCommission}
+     * is the traveler's own way out, but it leaves the sender with no way to end a
+     * thread whose traveler has simply gone quiet, other than waiting out the whole
+     * commission window. A commission already paid on that thread is refunded — see
+     * {@code refundCommission} on {@link NegotiationCancelledEvent}.
+     *
      * If a Stripe escrow hold is in flight (AWAITING_PAYMENT), it is released
      * (idempotent, best-effort) and any orphaned DEDICATED trip announcement
      * created exclusively for this request is soft-deleted, mirroring
@@ -397,10 +405,17 @@ public class NegotiationService {
      */
     @Transactional
     public void cancelNegotiation(UUID callerId, UUID threadId, String reason) {
+        // Demande verrouillée AVANT la lecture du fil, comme settleCommission,
+        // declineCommission, finalizeInternal et le balayage d'expiration. Un fil
+        // AWAITING_COMMISSION est annulable ici, donc cette méthode court
+        // désormais contre un règlement de commission concurrent : sans le même
+        // ordre de verrouillage, les deux transactions s'attendraient en croix.
+        UUID packageRequestId = threadRepo.findPackageRequestIdById(threadId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "thread/not-found"));
+        PackageRequestEntity request = requestRepo.findByIdForUpdate(packageRequestId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found"));
         NegotiationThreadEntity thread = threadRepo.findById(threadId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "thread/not-found"));
-        PackageRequestEntity request = requestRepo.findById(thread.getPackageRequestId())
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found"));
 
         boolean isTraveler = callerId.equals(thread.getTravelerId());
         boolean isSender = callerId.equals(request.getSenderId());
@@ -411,7 +426,8 @@ public class NegotiationService {
         NegotiationThreadStatus st = thread.getStatus();
         if (st != NegotiationThreadStatus.OPEN
                 && st != NegotiationThreadStatus.AWAITING_TRIP
-                && st != NegotiationThreadStatus.AWAITING_PAYMENT) {
+                && st != NegotiationThreadStatus.AWAITING_PAYMENT
+                && st != NegotiationThreadStatus.AWAITING_COMMISSION) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "negotiation/not-cancellable");
         }
 
@@ -422,6 +438,15 @@ public class NegotiationService {
         // arrière (CLAUDE.md règle #18). On délègue donc à un listener paiements
         // AFTER_COMMIT + REQUIRES_NEW via ce drapeau.
         boolean releaseEscrow = (st == NegotiationThreadStatus.AWAITING_PAYMENT);
+
+        // Même discipline pour la commission d'un accord en espèces : en
+        // AWAITING_COMMISSION le voyageur a pu déjà payer sa commission pour un
+        // accord qui n'aura jamais lieu. La garder reviendrait à facturer du
+        // vide. Le remboursement part d'un écouteur AFTER_COMMIT, jamais en
+        // ligne : ouvrir ici une transaction REQUIRES_NEW sur une ligne que
+        // cette transaction détient déjà la bloquerait sur elle-même, sans
+        // cycle visible pour PostgreSQL donc sans détection d'interblocage.
+        boolean refundCommission = (st == NegotiationThreadStatus.AWAITING_COMMISSION);
 
         // Soft-delete du trajet DÉDIÉ orphelin (créé exclusivement pour cette
         // demande via createDedicatedTrip) — miroir exact de refuseTrip. C'est
@@ -439,7 +464,7 @@ public class NegotiationService {
         UUID otherParty = isSender ? thread.getTravelerId() : request.getSenderId();
         String byName = userRepository.findById(callerId).map(this::buildDisplayName).orElse(UserEntity.UNKNOWN_DISPLAY_NAME);
         eventPublisher.publishEvent(new NegotiationCancelledEvent(
-            thread.getId(), request.getId(), callerId, otherParty, byName, releaseEscrow));
+            thread.getId(), request.getId(), callerId, otherParty, byName, releaseEscrow, refundCommission));
         auditService.log("NEGOTIATION_THREAD", threadId, "CANCELLED", callerId,
             Map.of("reason", reason == null ? "" : reason));
     }

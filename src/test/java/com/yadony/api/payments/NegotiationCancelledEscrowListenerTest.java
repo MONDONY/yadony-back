@@ -35,7 +35,7 @@ class NegotiationCancelledEscrowListenerTest {
     }
 
     private NegotiationCancelledEvent event(boolean releaseEscrow) {
-        return new NegotiationCancelledEvent(threadId, requestId, byUserId, toUserId, "Alice", releaseEscrow);
+        return new NegotiationCancelledEvent(threadId, requestId, byUserId, toUserId, "Alice", releaseEscrow, false);
     }
 
     @Test
