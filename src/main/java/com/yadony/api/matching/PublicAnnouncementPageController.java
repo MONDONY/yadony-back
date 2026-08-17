@@ -1,8 +1,9 @@
 package com.yadony.api.matching;
 
+import com.yadony.api.payments.currency.SupportedCurrency;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Controller;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -45,10 +46,34 @@ public class PublicAnnouncementPageController {
 
     private static final String VIEW = "public/annonce";
 
-    private final AnnouncementRepository announcementRepository;
+    /**
+     * Robots d'aperçu de lien. Ils frappent cette page à chaque fois que
+     * quelqu'un colle l'URL dans un post, précisément parce que les balises
+     * Open Graph existent pour être moissonnées. Les compter reviendrait à
+     * mesurer les collages plutôt que les visiteurs : la statistique
+     * d'attribution serait structurellement fausse.
+     */
+    private static final String[] PREVIEW_CRAWLERS = {
+        "facebookexternalhit", "facebookcatalog", "meta-externalagent",
+        "whatsapp", "twitterbot", "telegrambot", "slackbot",
+        "linkedinbot", "discordbot", "bot", "crawler", "spider"
+    };
 
-    @Value("${app.base-url}")
-    private String appBaseUrl;
+    private final AnnouncementRepository announcementRepository;
+    private final PriceGridService priceGridService;
+
+    /**
+     * Base des URL publiques servies par cette application.
+     *
+     * <p>Distincte de {@code app.base-url}, qui ne porte pas le
+     * {@code context-path} {@code /api/v1}. Les appelants existants le
+     * recollent à la main ({@code TrackingService}, {@code RecipientController})
+     * ; ici la valeur est complète et configurable d'un bloc, pour qu'un
+     * domaine court se substitue plus tard par une seule variable
+     * d'environnement, sans invalider les affiches déjà publiées.
+     */
+    @Value("${app.public-base-url}")
+    private String publicBaseUrl;
 
     @Value("${app.store.android:}")
     private String storeUrlAndroid;
@@ -56,43 +81,42 @@ public class PublicAnnouncementPageController {
     @Value("${app.store.ios:}")
     private String storeUrlIos;
 
-    public PublicAnnouncementPageController(AnnouncementRepository announcementRepository) {
+    public PublicAnnouncementPageController(AnnouncementRepository announcementRepository,
+                                            PriceGridService priceGridService) {
         this.announcementRepository = announcementRepository;
+        this.priceGridService = priceGridService;
     }
 
     @GetMapping("/{id}")
-    @Transactional
-    public String announcementPage(@PathVariable String id, Model model) {
-        model.addAttribute("appBaseUrl", appBaseUrl);
-        model.addAttribute("storeUrlAndroid", storeUrlAndroid);
-        model.addAttribute("storeUrlIos", storeUrlIos);
+    public String announcementPage(@PathVariable String id,
+                                   HttpServletRequest request,
+                                   Model model) {
+        // Un seul bouton store, resolu ici : le gabarit n'a plus a arbitrer
+        // entre deux liens avec une condition composee.
+        model.addAttribute("storeUrl", firstNonBlank(storeUrlAndroid, storeUrlIos));
 
-        UUID announcementId = parseUuid(id);
-        if (announcementId == null) {
-            return unavailable(model);
-        }
+        Optional<AnnouncementEntity> found = parseUuid(id)
+                .flatMap(announcementRepository::findById)
+                .filter(this::isPubliclyVisible);
 
-        // @Where(deleted_at IS NULL) sur l'entité écarte déjà les annonces supprimées.
-        Optional<AnnouncementEntity> found = announcementRepository.findById(announcementId);
         if (found.isEmpty()) {
             return unavailable(model);
         }
 
         AnnouncementEntity announcement = found.get();
-        if (!isPubliclyVisible(announcement)) {
-            return unavailable(model);
-        }
+        UUID announcementId = announcement.getId();
 
-        // Compteur d'attribution : mesure le trafic réellement ramené par l'affiche.
-        // Volontairement hors du chemin d'erreur — une annonce introuvable ou
-        // retirée ne doit pas gonfler la statistique.
-        announcementRepository.incrementShareViewCount(announcementId);
+        // Compteur d'attribution : mesure le trafic réellement ramené par
+        // l'affiche. Hors du chemin d'erreur — une annonce retirée ne doit pas
+        // gonfler la statistique — et hors des robots d'aperçu.
+        if (!isPreviewCrawler(request)) {
+            announcementRepository.incrementShareViewCount(announcementId);
+        }
 
         String corridor = announcement.getDepartureCity() + " vers " + announcement.getArrivalCity();
         String departureDate = announcement.getDepartureDate().format(DATE_FMT);
 
         model.addAttribute("unavailable", false);
-        model.addAttribute("announcementId", announcementId.toString());
         model.addAttribute("departureCity", announcement.getDepartureCity());
         model.addAttribute("arrivalCity", announcement.getArrivalCity());
         model.addAttribute("departureDate", departureDate);
@@ -104,25 +128,63 @@ public class PublicAnnouncementPageController {
         model.addAttribute("ogDescription",
                 "Départ le " + departureDate + ". Réservez vos kilos sur Yadony.");
         model.addAttribute("handoverDeadline", formatDeadline(announcement));
-        model.addAttribute("availableKg", formatKg(announcement.getAvailableKg()));
-        model.addAttribute("pricePerKg", formatPrice(announcement.getPricePerKg()));
-        model.addAttribute("currency", currencySymbol(announcement.getCurrency()));
+        model.addAttribute("availableKg", formatDecimal(announcement.getAvailableKg()));
+        model.addAttribute("pricePerKg", formatDecimal(senderPricePerKg(announcement)));
+        model.addAttribute("currency", SupportedCurrency.symbolOf(announcement.getCurrency()));
         model.addAttribute("deepLink", "dony://annonce/" + announcementId);
-        model.addAttribute("shareUrl", appBaseUrl + "/public/annonce/" + announcementId);
+        model.addAttribute("shareUrl", publicBaseUrl + "/public/annonce/" + announcementId);
 
         return VIEW;
     }
 
     /**
-     * Seules les annonces réellement réservables sont montrées. Une annonce
-     * annulée, terminée, archivée ou encore en brouillon afficherait un trajet
-     * sur lequel personne ne peut plus se positionner : on renvoie l'état
-     * « indisponible », qui garde un appel à l'action vers le reste de
-     * l'application plutôt qu'une page morte.
+     * Prix affiché à l'expéditeur, commission Yadony comprise.
+     *
+     * <p>{@code pricePerKg} est le net voyageur : l'afficher annoncerait un
+     * tarif que personne ne paiera, et surtout un tarif <em>différent</em> de
+     * celui imprimé sur l'affiche qui pointe vers cette page. Le multiplicateur
+     * vient de {@link PriceGridService#displayPrice}, source unique du taux.
+     */
+    private BigDecimal senderPricePerKg(AnnouncementEntity announcement) {
+        BigDecimal net = announcement.getPricePerKg();
+        return net == null
+                ? null
+                : priceGridService.displayPrice(net, announcement.getTravelerId());
+    }
+
+    /**
+     * Visibilité publique de l'annonce.
+     *
+     * <p>Déléguée à {@link AnnouncementEntity#isPubliclyListable()} plutôt que
+     * redécidée ici : la règle vit déjà sur l'entité, dont le javadoc prévient
+     * qu'un futur point d'entrée ne doit pas en dériver. Cette page en était
+     * justement un, et elle avait dérivé de deux façons — elle acceptait
+     * {@code FULL}, donc un trajet sans place restante présenté comme
+     * réservable, et elle ignorait le verrou des trajets dédiés, exposant
+     * publiquement le corridor, la date et le prix d'une négociation privée.
      */
     private boolean isPubliclyVisible(AnnouncementEntity announcement) {
-        AnnouncementStatus status = announcement.getStatus();
-        return status == AnnouncementStatus.ACTIVE || status == AnnouncementStatus.FULL;
+        return announcement.isPubliclyListable();
+    }
+
+    /**
+     * Les robots d'aperçu s'annoncent dans leur User-Agent. Le filtre est
+     * volontairement large : un humain compté en moins vaut mieux qu'une
+     * statistique gonflée par un collage de lien.
+     */
+    private boolean isPreviewCrawler(HttpServletRequest request) {
+        String agent = request.getHeader("User-Agent");
+        if (agent == null || agent.isBlank()) {
+            // Un client sans User-Agent n'est pas un navigateur.
+            return true;
+        }
+        String lower = agent.toLowerCase(Locale.ROOT);
+        for (String marker : PREVIEW_CRAWLERS) {
+            if (lower.contains(marker)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private String unavailable(Model model) {
@@ -135,13 +197,15 @@ public class PublicAnnouncementPageController {
         return VIEW;
     }
 
-    private UUID parseUuid(String raw) {
+    /**
+     * Un identifiant malformé vient d'un lien tronqué au copier-coller depuis un
+     * post, pas d'une erreur serveur : il retombe sur la page « indisponible ».
+     */
+    private Optional<UUID> parseUuid(String raw) {
         try {
-            return UUID.fromString(raw);
+            return Optional.of(UUID.fromString(raw));
         } catch (IllegalArgumentException ex) {
-            // Un identifiant malformé vient d'un lien tronqué au copier-coller,
-            // pas d'une erreur serveur : on retombe sur la page « indisponible ».
-            return null;
+            return Optional.empty();
         }
     }
 
@@ -151,24 +215,14 @@ public class PublicAnnouncementPageController {
                 : announcement.getHandoverDeadline().format(DEADLINE_FMT);
     }
 
-    private String formatKg(BigDecimal kg) {
-        return kg == null ? null : kg.stripTrailingZeros().toPlainString();
+    private String formatDecimal(BigDecimal value) {
+        return value == null ? null : value.stripTrailingZeros().toPlainString();
     }
 
-    private String formatPrice(BigDecimal price) {
-        return price == null ? null : price.stripTrailingZeros().toPlainString();
-    }
-
-    private String currencySymbol(String currency) {
-        if (currency == null) {
-            return "€";
+    private String firstNonBlank(String first, String second) {
+        if (first != null && !first.isBlank()) {
+            return first;
         }
-        return switch (currency) {
-            case "EUR" -> "€";
-            case "USD" -> "$";
-            case "GBP" -> "£";
-            case "CAD" -> "$ CA";
-            default -> currency;
-        };
+        return second == null ? "" : second;
     }
 }

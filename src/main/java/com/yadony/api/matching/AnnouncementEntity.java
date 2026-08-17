@@ -206,9 +206,14 @@ public class AnnouncementEntity extends BaseEntity {
     public boolean isSurplusPublished() { return surplusPublished; }
     public void setSurplusPublished(boolean surplusPublished) { this.surplusPublished = surplusPublished; }
 
-    /** Jamais null pour l'appelant : les lignes antérieures à V213 valent NULL en base. */
+    /**
+     * Jamais null pour l'appelant : les lignes antérieures à V213 valent NULL en base.
+     *
+     * <p>Pas de setter : la colonne n'est écrite que par
+     * {@code AnnouncementRepository.incrementShareViewCount}, qui incrémente sans
+     * charger l'entité. Un setter n'aurait aucun appelant.
+     */
     public long getShareViewCount() { return shareViewCount == null ? 0L : shareViewCount; }
-    public void setShareViewCount(Long shareViewCount) { this.shareViewCount = shareViewCount; }
 
     /**
      * A dedicated trip (linkedPackageRequestId != null) is tied to a private
@@ -224,6 +229,26 @@ public class AnnouncementEntity extends BaseEntity {
      */
     public boolean isClosedToThirdPartyBids() {
         return linkedPackageRequestId != null && !surplusPublished;
+    }
+
+    /**
+     * L'annonce peut-elle être montrée à un tiers non authentifié.
+     *
+     * <p>Pendant en mémoire de {@code AnnouncementSpecification.hasStatus(ACTIVE)
+     * .and(publicOrOpenSurplus())}, la règle du feed de recherche : mêmes deux
+     * conditions, exprimées ici pour les surfaces qui tiennent déjà l'entité et
+     * n'ont donc pas de Specification à composer — au premier chef la page
+     * publique de partage d'une affiche.
+     *
+     * <p>Centralisé pour la même raison que {@link #isClosedToThirdPartyBids()} :
+     * une surface publique qui redécide « status == ACTIVE » de son côté finit
+     * par exposer un trajet dédié, dont la capacité est réservée à une
+     * négociation privée. {@code FULL} est exclu à dessein — sans place
+     * restante, présenter le trajet comme réservable envoie du trafic vers un
+     * appel à l'action que le backend refusera.
+     */
+    public boolean isPubliclyListable() {
+        return status == AnnouncementStatus.ACTIVE && !isClosedToThirdPartyBids();
     }
 
     public UUID getReservedSenderId() { return reservedSenderId; }

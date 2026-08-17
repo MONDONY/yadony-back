@@ -119,10 +119,8 @@
     <div class="card empty">
       <h1>Ce trajet n'est plus disponible</h1>
       <p>Il a été retiré, ou son départ est passé. D'autres voyageurs partent chaque semaine.</p>
-      <a class="btn btn-primary" th:if="${!#strings.isEmpty(storeUrlAndroid)}"
-         th:href="${storeUrlAndroid}">Voir les autres trajets</a>
-      <a class="btn btn-primary" th:if="${#strings.isEmpty(storeUrlAndroid)} and ${!#strings.isEmpty(storeUrlIos)}"
-         th:href="${storeUrlIos}">Voir les autres trajets</a>
+      <a class="btn btn-primary" th:if="${!#strings.isEmpty(storeUrl)}"
+         th:href="${storeUrl}">Voir les autres trajets</a>
     </div>
   </div>
 
@@ -166,10 +164,8 @@
     -->
     <a class="btn btn-primary" th:href="${deepLink}">Ouvrir dans l'application</a>
 
-    <a class="btn btn-secondary" th:if="${!#strings.isEmpty(storeUrlAndroid)}"
-       th:href="${storeUrlAndroid}">Télécharger Yadony pour Android</a>
-    <a class="btn btn-secondary" th:if="${!#strings.isEmpty(storeUrlIos)}"
-       th:href="${storeUrlIos}">Télécharger Yadony pour iPhone</a>
+    <a class="btn btn-secondary" th:if="${!#strings.isEmpty(storeUrl)}"
+       th:href="${storeUrl}">Télécharger Yadony</a>
 
     <div class="trust">
       <div><span>&#128274;</span>Paiement sécurisé</div>

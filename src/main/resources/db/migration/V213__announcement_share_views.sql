@@ -2,8 +2,9 @@
 --
 -- Sert l'attribution : une affiche générée depuis l'app est postée par le
 -- voyageur sur ses propres canaux (Facebook, WhatsApp, TikTok) et pointe vers
--- /public/annonce/{id}. Ce compteur mesure le trafic réellement ramené par
--- l'affiche, indépendamment des installations.
+-- /public/annonce/{id}. Ce compteur mesure les consultations humaines de cette
+-- page, les robots d'aperçu de lien étant écartés côté contrôleur (ils frappent
+-- l'URL à chaque collage, à cause des balises Open Graph).
 --
 -- Colonne volontairement NULLABLE : une colonne NOT NULL ajoutée ici casse les
 -- tests de migration sur H2, où le DDL est généré depuis JPA sans reprendre le

@@ -208,6 +208,15 @@ app:
   encryption:
     key: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required (32-byte base64 or strong passphrase)}
   base-url: ${APP_BASE_URL:http://localhost:8080}
+  # Base des URL publiques partageables, context-path inclus.
+  #
+  # Distincte de base-url ci-dessus, qui s'arrête à l'hôte : les appelants
+  # existants (TrackingService, RecipientController) recollent « /api/v1 » à la
+  # main. Une URL imprimée sur une affiche postée sur Facebook n'est plus
+  # rappelable, elle doit donc être correcte du premier coup et déplaçable d'un
+  # bloc — d'où une variable dédiée, que le jour du domaine court on surcharge
+  # seule, sans invalider les affiches déjà publiées.
+  public-base-url: ${PUBLIC_BASE_URL:${APP_BASE_URL:http://localhost:8080}/api/v1}
   # Fiches stores, affichées sur la page publique d'une annonce (/public/annonce/{id}).
   # Vides par défaut : l'application n'est pas encore publiée, et un bouton
   # pointant vers une fiche inexistante coûte plus cher qu'un bouton absent.

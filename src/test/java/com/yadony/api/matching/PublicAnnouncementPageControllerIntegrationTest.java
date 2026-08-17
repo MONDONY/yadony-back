@@ -29,10 +29,20 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @AutoConfigureMockMvc
 class PublicAnnouncementPageControllerIntegrationTest {
 
+    /** Navigateur ordinaire : le controleur n'incremente pas pour les robots d'apercu. */
+    private static final String BROWSER_UA =
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15";
+
     @Autowired MockMvc mockMvc;
     @Autowired AnnouncementRepository announcementRepository;
 
     private AnnouncementEntity persistAnnouncement(AnnouncementStatus status) {
+        return persistAnnouncement(status, null, false);
+    }
+
+    private AnnouncementEntity persistAnnouncement(AnnouncementStatus status,
+                                                   UUID linkedPackageRequestId,
+                                                   boolean surplusPublished) {
         AnnouncementEntity a = new AnnouncementEntity();
         a.setTravelerId(UUID.randomUUID());
         a.setDepartureCity("Paris");
@@ -50,6 +60,8 @@ class PublicAnnouncementPageControllerIntegrationTest {
         a.setTotalKg(new BigDecimal("23.00"));
         a.setPricePerKg(new BigDecimal("8.00"));
         a.setStatus(status);
+        a.setLinkedPackageRequestId(linkedPackageRequestId);
+        a.setSurplusPublished(surplusPublished);
         return announcementRepository.saveAndFlush(a);
     }
 
@@ -57,7 +69,7 @@ class PublicAnnouncementPageControllerIntegrationTest {
     void activeAnnouncement_isServedWithoutAuthentication() throws Exception {
         AnnouncementEntity a = persistAnnouncement(AnnouncementStatus.ACTIVE);
 
-        mockMvc.perform(get("/public/annonce/" + a.getId()))
+        mockMvc.perform(get("/public/annonce/" + a.getId()).header("User-Agent", BROWSER_UA))
                 .andExpect(status().isOk())
                 .andExpect(view().name("public/annonce"))
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("Paris")))
@@ -74,7 +86,7 @@ class PublicAnnouncementPageControllerIntegrationTest {
     void activeAnnouncement_exposesDeepLinkAndCanonicalShareUrl() throws Exception {
         AnnouncementEntity a = persistAnnouncement(AnnouncementStatus.ACTIVE);
 
-        mockMvc.perform(get("/public/annonce/" + a.getId()))
+        mockMvc.perform(get("/public/annonce/" + a.getId()).header("User-Agent", BROWSER_UA))
                 .andExpect(status().isOk())
                 .andExpect(content().string(
                         org.hamcrest.Matchers.containsString("dony://annonce/" + a.getId())))
@@ -87,8 +99,8 @@ class PublicAnnouncementPageControllerIntegrationTest {
         AnnouncementEntity a = persistAnnouncement(AnnouncementStatus.ACTIVE);
         assertThat(a.getShareViewCount()).isZero();
 
-        mockMvc.perform(get("/public/annonce/" + a.getId())).andExpect(status().isOk());
-        mockMvc.perform(get("/public/annonce/" + a.getId())).andExpect(status().isOk());
+        mockMvc.perform(get("/public/annonce/" + a.getId()).header("User-Agent", BROWSER_UA)).andExpect(status().isOk());
+        mockMvc.perform(get("/public/annonce/" + a.getId()).header("User-Agent", BROWSER_UA)).andExpect(status().isOk());
 
         AnnouncementEntity reloaded = announcementRepository.findById(a.getId()).orElseThrow();
         assertThat(reloaded.getShareViewCount()).isEqualTo(2L);
@@ -98,7 +110,7 @@ class PublicAnnouncementPageControllerIntegrationTest {
     void cancelledAnnouncement_rendersUnavailableStateInsteadOfTheTrip() throws Exception {
         AnnouncementEntity a = persistAnnouncement(AnnouncementStatus.CANCELLED);
 
-        mockMvc.perform(get("/public/annonce/" + a.getId()))
+        mockMvc.perform(get("/public/annonce/" + a.getId()).header("User-Agent", BROWSER_UA))
                 .andExpect(status().isOk())
                 .andExpect(content().string(
                         org.hamcrest.Matchers.containsString("n'est plus disponible")));
@@ -108,7 +120,7 @@ class PublicAnnouncementPageControllerIntegrationTest {
     void draftAnnouncement_isNotExposedPublicly() throws Exception {
         AnnouncementEntity a = persistAnnouncement(AnnouncementStatus.DRAFT);
 
-        mockMvc.perform(get("/public/annonce/" + a.getId()))
+        mockMvc.perform(get("/public/annonce/" + a.getId()).header("User-Agent", BROWSER_UA))
                 .andExpect(status().isOk())
                 .andExpect(content().string(
                         org.hamcrest.Matchers.containsString("n'est plus disponible")));
@@ -116,7 +128,7 @@ class PublicAnnouncementPageControllerIntegrationTest {
 
     @Test
     void unknownAnnouncement_rendersUnavailableState() throws Exception {
-        mockMvc.perform(get("/public/annonce/" + UUID.randomUUID()))
+        mockMvc.perform(get("/public/annonce/" + UUID.randomUUID()).header("User-Agent", BROWSER_UA))
                 .andExpect(status().isOk())
                 .andExpect(content().string(
                         org.hamcrest.Matchers.containsString("n'est plus disponible")));
@@ -130,7 +142,7 @@ class PublicAnnouncementPageControllerIntegrationTest {
      */
     @Test
     void malformedIdentifier_doesNotFailTheRequest() throws Exception {
-        mockMvc.perform(get("/public/annonce/pas-un-uuid"))
+        mockMvc.perform(get("/public/annonce/pas-un-uuid").header("User-Agent", BROWSER_UA))
                 .andExpect(status().isOk())
                 .andExpect(content().string(
                         org.hamcrest.Matchers.containsString("n'est plus disponible")));
@@ -140,9 +152,102 @@ class PublicAnnouncementPageControllerIntegrationTest {
     void unavailablePage_doesNotIncrementTheAttributionCounter() throws Exception {
         AnnouncementEntity a = persistAnnouncement(AnnouncementStatus.CANCELLED);
 
-        mockMvc.perform(get("/public/annonce/" + a.getId())).andExpect(status().isOk());
+        mockMvc.perform(get("/public/annonce/" + a.getId()).header("User-Agent", BROWSER_UA)).andExpect(status().isOk());
 
         AnnouncementEntity reloaded = announcementRepository.findById(a.getId()).orElseThrow();
         assertThat(reloaded.getShareViewCount()).isZero();
+    }
+
+    /**
+     * Un trajet dédié réserve sa capacité à une négociation privée. Le servir ici
+     * exposerait publiquement le corridor, la date et le prix de cette
+     * négociation, et enverrait des expéditeurs vers un appel à l'action que
+     * {@code BidService} refuserait de toute façon.
+     */
+    @Test
+    void dedicatedTripWithoutOpenSurplus_isNeverExposedPublicly() throws Exception {
+        AnnouncementEntity a =
+                persistAnnouncement(AnnouncementStatus.ACTIVE, UUID.randomUUID(), false);
+
+        mockMvc.perform(get("/public/annonce/" + a.getId()).header("User-Agent", BROWSER_UA))
+                .andExpect(status().isOk())
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("n'est plus disponible")));
+    }
+
+    /** Surplus ouvert : la capacité excédentaire est bien offerte à des tiers. */
+    @Test
+    void dedicatedTripWithOpenSurplus_isExposedPublicly() throws Exception {
+        AnnouncementEntity a =
+                persistAnnouncement(AnnouncementStatus.ACTIVE, UUID.randomUUID(), true);
+
+        mockMvc.perform(get("/public/annonce/" + a.getId()).header("User-Agent", BROWSER_UA))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("Dakar")));
+    }
+
+    /**
+     * FULL veut dire zéro kilo restant. La page annoncerait « place disponible :
+     * 0 kg » à côté d'un bouton de réservation, alors que le feed de recherche
+     * exclut déjà ce statut.
+     */
+    @Test
+    void fullAnnouncement_isNotExposedPublicly() throws Exception {
+        AnnouncementEntity a = persistAnnouncement(AnnouncementStatus.FULL);
+
+        mockMvc.perform(get("/public/annonce/" + a.getId()).header("User-Agent", BROWSER_UA))
+                .andExpect(status().isOk())
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("n'est plus disponible")));
+    }
+
+    /**
+     * Les balises Open Graph existent pour être moissonnées : chaque collage du
+     * lien dans un post déclenche une visite de robot. Les compter mesurerait les
+     * collages, pas les visiteurs.
+     */
+    @Test
+    void previewCrawler_doesNotIncrementTheAttributionCounter() throws Exception {
+        AnnouncementEntity a = persistAnnouncement(AnnouncementStatus.ACTIVE);
+
+        mockMvc.perform(get("/public/annonce/" + a.getId())
+                        .header("User-Agent", "facebookexternalhit/1.1"))
+                .andExpect(status().isOk());
+
+        AnnouncementEntity reloaded = announcementRepository.findById(a.getId()).orElseThrow();
+        assertThat(reloaded.getShareViewCount()).isZero();
+    }
+
+    /**
+     * L'URL canonique doit porter le context-path. Sans lui, le {@code og:url}
+     * déclaré dans la carte de partage Facebook pointe sur un 404 : l'application
+     * est servie sous {@code /api/v1}, comme le recollent déjà TrackingService et
+     * RecipientController.
+     */
+    @Test
+    void shareUrl_carriesTheApplicationContextPath() throws Exception {
+        AnnouncementEntity a = persistAnnouncement(AnnouncementStatus.ACTIVE);
+
+        mockMvc.perform(get("/public/annonce/" + a.getId()).header("User-Agent", BROWSER_UA))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString(
+                        "/api/v1/public/annonce/" + a.getId())));
+    }
+
+    /**
+     * La page s'adresse aux expéditeurs, comme l'affiche qui pointe vers elle.
+     * Afficher le net voyageur annoncerait un tarif que personne ne paie, et
+     * surtout un tarif différent de celui imprimé sur l'affiche.
+     */
+    @Test
+    void publicPage_showsSenderPriceNotTravelerNet() throws Exception {
+        AnnouncementEntity a = persistAnnouncement(AnnouncementStatus.ACTIVE);
+
+        mockMvc.perform(get("/public/annonce/" + a.getId()).header("User-Agent", BROWSER_UA))
+                .andExpect(status().isOk())
+                // 8,00 est le net voyageur : la page doit afficher strictement plus.
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.not(
+                                org.hamcrest.Matchers.containsString(">8<"))));
     }
 }

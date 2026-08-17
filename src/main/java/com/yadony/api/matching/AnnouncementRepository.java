@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -143,6 +144,7 @@ public interface AnnouncementRepository extends JpaRepository<AnnouncementEntity
      * vaut NULL.
      */
     @Modifying
+    @Transactional
     @Query("UPDATE AnnouncementEntity a SET a.shareViewCount = COALESCE(a.shareViewCount, 0) + 1 "
            + "WHERE a.id = :id")
     int incrementShareViewCount(@Param("id") UUID id);
