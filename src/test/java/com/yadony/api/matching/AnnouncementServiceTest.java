@@ -933,8 +933,9 @@ class AnnouncementServiceTest {
             when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(stranger));
             when(bidRepository.countVisibleByAnnouncementId(ANNOUNCEMENT_ID)).thenReturn(0L);
-            when(bidRepository.findByAnnouncementIdAndStatusNotIn(eq(ANNOUNCEMENT_ID), anyCollection()))
-                    .thenReturn(List.of());
+            when(bidRepository.existsByAnnouncementIdAndSenderIdAndStatusNotIn(
+                    eq(ANNOUNCEMENT_ID), any(UUID.class), anyCollection()))
+                    .thenReturn(false);
 
             AnnouncementDetailResponse result = announcementService.getAnnouncementDetail(
                     ANNOUNCEMENT_ID, FIREBASE_UID);
@@ -953,13 +954,12 @@ class AnnouncementServiceTest {
             setId(sender, senderId);
             AnnouncementEntity a = buildAnnouncement(traveler);
             a.setArrivalInstructions("Métro Châtelet, sortie 3");
-            BidEntity activeBid = buildBid(BidStatus.ARRIVED, ANNOUNCEMENT_ID);
-            activeBid.setSenderId(senderId);
             when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(sender));
             when(bidRepository.countVisibleByAnnouncementId(ANNOUNCEMENT_ID)).thenReturn(1L);
-            when(bidRepository.findByAnnouncementIdAndStatusNotIn(eq(ANNOUNCEMENT_ID), anyCollection()))
-                    .thenReturn(List.of(activeBid));
+            when(bidRepository.existsByAnnouncementIdAndSenderIdAndStatusNotIn(
+                    eq(ANNOUNCEMENT_ID), eq(senderId), anyCollection()))
+                    .thenReturn(true);
 
             AnnouncementDetailResponse result = announcementService.getAnnouncementDetail(
                     ANNOUNCEMENT_ID, FIREBASE_UID);

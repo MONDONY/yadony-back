@@ -106,9 +106,7 @@ public class AnnouncementCompletionListener {
         // markArrived: the first confirmed delivery would complete the trip while
         // the other parcels are still waiting to be picked up.
         boolean stillHasInFlightBids = bidRepository.existsByAnnouncementIdAndStatusIn(
-                announcementId,
-                List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT,
-                        BidStatus.ARRIVED));
+                announcementId, List.copyOf(BidStatus.IN_FLIGHT));
         if (stillHasInFlightBids) {
             return;
         }

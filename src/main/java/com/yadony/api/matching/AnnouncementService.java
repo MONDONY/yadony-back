@@ -572,8 +572,7 @@ public class AnnouncementService {
     private void applyInProgressTransition(AnnouncementEntity announcement) {
         AnnouncementStatus previous = announcement.getStatus();
         boolean hasAcceptedBids = bidRepository.existsByAnnouncementIdAndStatusIn(
-                announcement.getId(), List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT,
-                        BidStatus.ARRIVED));
+                announcement.getId(), List.copyOf(BidStatus.IN_FLIGHT));
 
         if (!hasAcceptedBids) {
             announcement.setStatus(AnnouncementStatus.COMPLETED);
@@ -717,9 +716,8 @@ public class AnnouncementService {
         if (viewerId.equals(announcement.getTravelerId())) {
             return true;
         }
-        return bidRepository.findByAnnouncementIdAndStatusNotIn(announcement.getId(), INACTIVE_BID_STATUSES)
-                .stream()
-                .anyMatch(b -> viewerId.equals(b.getSenderId()));
+        return bidRepository.existsByAnnouncementIdAndSenderIdAndStatusNotIn(
+                announcement.getId(), viewerId, INACTIVE_BID_STATUSES);
     }
 
     @Transactional
@@ -738,8 +736,7 @@ public class AnnouncementService {
         // ARRIVED inclus : un colis arrivé mais pas encore retiré est toujours un
         // engagement en cours, modifier le trajet sous ses pieds n'a pas de sens.
         boolean hasAcceptedBids = bidRepository.existsByAnnouncementIdAndStatusIn(
-                id, List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT,
-                        BidStatus.ARRIVED));
+                id, List.copyOf(BidStatus.IN_FLIGHT));
         if (hasAcceptedBids) {
             throw new YadonyBusinessException(
                     HttpStatus.CONFLICT,
@@ -996,14 +993,14 @@ public class AnnouncementService {
             BidStatus.REJECTED, BidStatus.CANCELLED, BidStatus.PARCEL_REFUSED,
             BidStatus.EXPIRED, BidStatus.NO_SHOW, BidStatus.COMPLETED);
 
+    private record OwnedAnnouncement(UserEntity user, AnnouncementEntity announcement) {}
+
     /**
-     * Marque tous les colis activement pris en charge sur ce trajet comme
-     * arrivés à destination (IN_TRANSIT → ARRIVED), en une action groupée par
-     * le voyageur. Refuse si un colis actif n'est pas encore IN_TRANSIT (reste
-     * à embarquer) ou si aucun colis n'est actuellement pris en charge.
+     * Charge le trajet verrouillé pour mise à jour et vérifie que l'appelant en
+     * est le voyageur propriétaire. Commun à {@link #markArrived} et
+     * {@link #updateArrivalInstructions}.
      */
-    @Transactional
-    public AnnouncementDetailResponse markArrived(UUID id, String firebaseUid, String arrivalInstructions) {
+    private OwnedAnnouncement loadOwnedAnnouncementForUpdate(UUID id, String firebaseUid) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
                         "user-not-found", "User Not Found", "Utilisateur introuvable"));
@@ -1016,6 +1013,21 @@ public class AnnouncementService {
             throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
                     "Vous n'êtes pas autorisé à modifier ce trajet");
         }
+
+        return new OwnedAnnouncement(user, announcement);
+    }
+
+    /**
+     * Marque tous les colis activement pris en charge sur ce trajet comme
+     * arrivés à destination (IN_TRANSIT → ARRIVED), en une action groupée par
+     * le voyageur. Refuse si un colis actif n'est pas encore IN_TRANSIT (reste
+     * à embarquer) ou si aucun colis n'est actuellement pris en charge.
+     */
+    @Transactional
+    public AnnouncementDetailResponse markArrived(UUID id, String firebaseUid, String arrivalInstructions) {
+        OwnedAnnouncement owned = loadOwnedAnnouncementForUpdate(id, firebaseUid);
+        UserEntity user = owned.user();
+        AnnouncementEntity announcement = owned.announcement();
 
         List<BidEntity> activeBids = bidRepository.findByAnnouncementIdAndStatusNotIn(id, INACTIVE_BID_STATUSES);
 
@@ -1057,18 +1069,7 @@ public class AnnouncementService {
      */
     @Transactional
     public AnnouncementDetailResponse updateArrivalInstructions(UUID id, String firebaseUid, String arrivalInstructions) {
-        UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "user-not-found", "User Not Found", "Utilisateur introuvable"));
-
-        AnnouncementEntity announcement = announcementRepository.findByIdForUpdate(id)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "announcement-not-found", "Announcement Not Found", "Annonce introuvable"));
-
-        if (!announcement.getTravelerId().equals(user.getId())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Vous n'êtes pas autorisé à modifier ce trajet");
-        }
+        AnnouncementEntity announcement = loadOwnedAnnouncementForUpdate(id, firebaseUid).announcement();
 
         List<BidEntity> activeBids = bidRepository.findByAnnouncementIdAndStatusNotIn(id, INACTIVE_BID_STATUSES);
         if (activeBids.isEmpty()) {
@@ -1213,8 +1214,7 @@ public class AnnouncementService {
         // ARRIVED inclus : le colis est arrivé mais pas encore retiré, la
         // transaction n'est pas soldée — supprimer le trajet la ferait disparaître.
         if (bidRepository.existsByAnnouncementIdAndStatusIn(
-                id, List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT,
-                        BidStatus.ARRIVED))) {
+                id, List.copyOf(BidStatus.IN_FLIGHT))) {
             throw new YadonyBusinessException(HttpStatus.CONFLICT, "deletion-impossible", "Deletion Impossible", "Suppression impossible : des colis sont déjà acceptés pour ce trajet");
         }
 

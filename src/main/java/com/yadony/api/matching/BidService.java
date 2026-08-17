@@ -469,7 +469,7 @@ public class BidService {
             throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
                     "Accès non autorisé à ce colis");
         }
-        if (!PHONE_VISIBLE_STATUSES.contains(bid.getStatus())) {
+        if (!BidStatus.PHONE_VISIBLE_STATUSES.contains(bid.getStatus())) {
             throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "phone-not-revealable",
                     "Phone Not Revealable",
                     "Le numéro n'est communiqué qu'une fois le colis accepté");
@@ -1008,21 +1008,20 @@ public class BidService {
         return toResponse(bid, sender, null);
     }
 
-    /** Doit rester identique à {@code ConversationService.PHONE_VISIBLE_STATUSES} :
-     *  ARRIVED est justement le moment où expéditeur et voyageur coordonnent le
-     *  retrait, donc le pire moment pour masquer le numéro. */
     /** Statuts de bid pour lesquels {@code arrivalInstructions} (adresse/point de
      *  retrait du voyageur) est servi à l'expéditeur. Exclut les issues mortes
-     *  REJECTED / CANCELLED / PARCEL_REFUSED / EXPIRED / NO_SHOW. */
-    private static final java.util.Set<BidStatus> ARRIVAL_INSTRUCTIONS_VISIBLE_STATUSES =
-            java.util.EnumSet.of(
-                    BidStatus.AWAITING_PAYMENT, BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED,
-                    BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT,
-                    BidStatus.ARRIVED, BidStatus.COMPLETED);
+     *  REJECTED / CANCELLED / PARCEL_REFUSED / EXPIRED / NO_SHOW. Reprend
+     *  {@link BidStatus#PHONE_VISIBLE_STATUSES} en y ajoutant les statuts
+     *  antérieurs à l'acceptation (pas encore de numéro à révéler, mais le point
+     *  de retrait n'a pas de raison d'être masqué plus tôt). */
+    private static final java.util.Set<BidStatus> ARRIVAL_INSTRUCTIONS_VISIBLE_STATUSES;
 
-    private static final java.util.Set<BidStatus> PHONE_VISIBLE_STATUSES = java.util.EnumSet.of(
-            BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT,
-            BidStatus.ARRIVED, BidStatus.COMPLETED);
+    static {
+        java.util.EnumSet<BidStatus> arrivalVisible = java.util.EnumSet.of(
+                BidStatus.AWAITING_PAYMENT, BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED);
+        arrivalVisible.addAll(BidStatus.PHONE_VISIBLE_STATUSES);
+        ARRIVAL_INSTRUCTIONS_VISIBLE_STATUSES = arrivalVisible;
+    }
 
     /** Valeurs programmatiques (non-libres) de {@code CancellationEntity.reason} écrites par les
      * flux HANDOVER qui n'annulent PAS le trajet entier (no-show expéditeur, annulation après
@@ -1048,7 +1047,7 @@ public class BidService {
     /** Numéro révélé en clair seulement si l'offre est acceptée ou au-delà, sinon null. */
     static String phoneForStatus(String phone, BidStatus status) {
         if (phone == null) return null;
-        return PHONE_VISIBLE_STATUSES.contains(status) ? phone : null;
+        return BidStatus.PHONE_VISIBLE_STATUSES.contains(status) ? phone : null;
     }
 
     /**
@@ -1063,7 +1062,7 @@ public class BidService {
      * indice d'affichage.
      */
     private static boolean phoneAvailableForStatus(UserEntity user, BidStatus status) {
-        return user != null && !user.isHidePhoneNumber() && PHONE_VISIBLE_STATUSES.contains(status);
+        return user != null && !user.isHidePhoneNumber() && BidStatus.PHONE_VISIBLE_STATUSES.contains(status);
     }
 
     BidResponse toResponse(BidEntity bid, UserEntity sender, UUID callerId) {

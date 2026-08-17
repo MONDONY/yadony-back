@@ -89,8 +89,14 @@ public class RecipientController {
                 "currentStep", currentStep,
                 "events", events,
                 "publicConfirmationCode", publicConfirmationCode(bid),
-                "arrivalInstructions", announcementOpt.map(AnnouncementEntity::getArrivalInstructions).map(s -> s == null ? "" : s).orElse("")
+                "arrivalInstructions", arrivalInstructionsOrEmpty(announcementOpt)
         ));
+    }
+
+    private static String arrivalInstructionsOrEmpty(Optional<AnnouncementEntity> announcementOpt) {
+        return announcementOpt.map(AnnouncementEntity::getArrivalInstructions)
+                .filter(s -> s != null)
+                .orElse("");
     }
 
     private String buildTrackingPage(String trackingToken, Model model) {
@@ -131,8 +137,7 @@ public class RecipientController {
         model.addAttribute("events", events);
         model.addAttribute("qrCodeBase64", generateQrBase64(scanUrl(bid)));
         model.addAttribute("publicConfirmationCode", publicConfirmationCode(bid));
-        model.addAttribute("arrivalInstructions",
-                announcementOpt.map(AnnouncementEntity::getArrivalInstructions).map(s -> s == null ? "" : s).orElse(""));
+        model.addAttribute("arrivalInstructions", arrivalInstructionsOrEmpty(announcementOpt));
         model.addAttribute("invalid", false);
         model.addAttribute("trackingToken", trackingToken);
         model.addAttribute("isDelivered", bid.getStatus() == BidStatus.COMPLETED);
