@@ -1166,21 +1166,25 @@ public class BidService {
         java.math.BigDecimal totalNetAmountEur = gridNet.add(kgNet)
                 .setScale(2, java.math.RoundingMode.HALF_UP);
 
-        // Montant total payé par l'EXPÉDITEUR. Modèle B (cf. PriceBreakdown) :
-        // STRIPE → gross = net*(1+rate) (l'expéditeur paie net + commission) ;
-        // CASH   → net (la commission est prélevée au voyageur, pas à l'expéditeur).
+        // Montant total payé par l'EXPÉDITEUR = net + commission, dans les DEUX
+        // modes de paiement. En carte, il règle le brut à Yadony. En espèces, il
+        // remet ce même brut en main propre au voyageur, et Yadony prélève ensuite
+        // la commission sur le solde de ce dernier : c'est donc bien l'expéditeur
+        // qui la paie, indirectement, et le voyageur conserve le net.
+        //
+        // Ne JAMAIS retomber sur le net pour le mode CASH : cela annonçait à
+        // l'expéditeur un montant inférieur à celui qu'il doit réellement remettre,
+        // et à l'endroit le plus sensible du parcours.
+        //
         // Le taux figé (commissionRate) n'existe qu'après création du paiement ;
-        // avant (PENDING, pas de rate) on retombe sur le net.
-        // Taux effectif : snapshot figé au paiement, sinon résolu en direct (bid
-        // PENDING) — ainsi le brut est toujours calculable côté serveur, sans que
-        // l'app n'ait besoin du net pour le dériver.
+        // avant (PENDING, pas de rate) on résout en direct — ainsi le brut est
+        // toujours calculable côté serveur, sans que l'app n'ait besoin du net
+        // pour le dériver.
         java.math.BigDecimal effectiveRate = bid.getCommissionRate();
         if (effectiveRate == null && announcement != null) {
             effectiveRate = commissionRateResolver.resolve(announcement.getTravelerId(), bid.getSenderId());
         }
-        boolean isStripe = bid.getPaymentMethod() == null
-                || bid.getPaymentMethod() == com.yadony.api.payments.cash.PaymentMethod.STRIPE;
-        java.math.BigDecimal totalSenderAmountEur = (isStripe && effectiveRate != null)
+        java.math.BigDecimal totalSenderAmountEur = (effectiveRate != null)
                 ? com.yadony.api.payments.PriceBreakdown.fromNet(totalNetAmountEur, effectiveRate).gross()
                 : totalNetAmountEur;
         // Tarif/kg affiché à l'expéditeur (brut), dérivé du total brut.

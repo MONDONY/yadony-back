@@ -2096,6 +2096,58 @@ class BidServiceTest {
         assertThat(result.totalSenderAmountEur()).isNotNull();
     }
 
+    /**
+     * En espèces l'expéditeur remet le brut (net + commission) en main propre au
+     * voyageur, et Yadony prélève ensuite la commission sur le solde de celui-ci :
+     * c'est donc bien l'expéditeur qui la paie, indirectement, et le voyageur
+     * conserve le net. Annoncer le net à l'expéditeur lui sous-estimait la somme à
+     * remettre, à l'endroit le plus sensible du parcours.
+     */
+    @Test
+    @DisplayName("espèces : l'expéditeur voit le brut, comme en carte — jamais le net")
+    void getBidById_cashBid_senderStillSeesGross() {
+        UserEntity sender = buildSender();
+        BidEntity bid = buildBid();
+        bid.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.CASH);
+        AnnouncementEntity announcement = buildAnnouncement();
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+        when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
+        when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+        when(commissionRateResolver.resolve(any(), any())).thenReturn(new BigDecimal("0.12"));
+
+        BidResponse result = bidService.getBidById(BID_ID, SENDER_UID);
+
+        // 5 kg × 5 € = 25 € net → 28 € brut à 12 %.
+        assertThat(result.totalSenderAmountEur()).isEqualByComparingTo("28.00");
+        assertThat(result.pricePerKgSenderEur()).isEqualByComparingTo("5.60");
+        assertThat(result.totalNetAmountEur()).isNull();
+        assertThat(result.pricePerKg()).isNull();
+    }
+
+    /**
+     * Le voyageur, lui, doit voir exactement le net qu'il conservera : la commission
+     * lui sera prélevée sur son solde.
+     */
+    @Test
+    @DisplayName("espèces : le voyageur voit son net, pas le brut remis par l'expéditeur")
+    void getBidById_cashBid_travelerSeesNet() {
+        UserEntity traveler = buildTraveler();
+        BidEntity bid = buildBid();
+        bid.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.CASH);
+        AnnouncementEntity announcement = buildAnnouncement();
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+        when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+        when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(buildSender()));
+        when(commissionRateResolver.resolve(any(), any())).thenReturn(new BigDecimal("0.12"));
+
+        BidResponse result = bidService.getBidById(BID_ID, TRAVELER_UID);
+
+        assertThat(result.totalNetAmountEur()).isEqualByComparingTo("25.00");
+        assertThat(result.pricePerKg()).isEqualByComparingTo("5");
+    }
+
     @Test
     @DisplayName("tiers → 403 FORBIDDEN")
     void getBidById_foreignerForbidden() {
