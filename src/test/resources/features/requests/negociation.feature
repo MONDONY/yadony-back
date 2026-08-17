@@ -31,13 +31,10 @@ Fonctionnalité: Demandes de colis et négociation
     Etant donné l'utilisateur "req-sender-001" est authentifié en tant qu'EXPÉDITEUR
     Quand j'accepte le prix de la négociation "nego-1"
     Alors la réponse HTTP est 200
-    Et le statut de la négociation est "AWAITING_TRIP"
-    Etant donné l'utilisateur "req-traveler-001" est authentifié en tant que VOYAGEUR
-    Et il existe une annonce de "Paris" à "Dakar" avec 20 kg disponibles à 5.0 €/kg sauvegardée sous "annonce-nego"
-    Quand je soumets le trajet "annonce-nego" sur la négociation "nego-1"
-    Alors la réponse HTTP est 200
+    # Le trajet dédié est déjà lié depuis le démarrage de la négociation (createDedicatedTrip
+    # obligatoire dès start() — cf. spec 2026-08-16) : accept() saute directement à
+    # AWAITING_PAYMENT, quel que soit l'accepteur.
     Et le statut de la négociation est "AWAITING_PAYMENT"
-    Etant donné l'utilisateur "req-sender-001" est authentifié en tant qu'EXPÉDITEUR
     Quand je complète les informations du destinataire de la demande "demande-1"
     Alors la réponse HTTP est 200
     Quand j'initie le paiement séquestre de la négociation "nego-1"
@@ -45,7 +42,7 @@ Fonctionnalité: Demandes de colis et négociation
     Et la réponse contient le champ "clientSecret"
 
   @happy-path
-  Scénario: Acceptation immédiate puis création d'un trajet dédié
+  Scénario: Acceptation immédiate puis refus et recréation d'un trajet dédié
     Etant donné un utilisateur EXPÉDITEUR enregistré avec l'uid "req-sender-002" et le téléphone "+33688000003"
     Et le KYC de "req-sender-002" est vérifié
     Etant donné un utilisateur VOYAGEUR enregistré avec l'uid "req-traveler-002" et le téléphone "+33688000004"
@@ -58,6 +55,10 @@ Fonctionnalité: Demandes de colis et négociation
     Alors la réponse HTTP est 201
     Etant donné l'utilisateur "req-sender-002" est authentifié en tant qu'EXPÉDITEUR
     Quand j'accepte le prix de la négociation "nego-2"
+    Alors la réponse HTTP est 200
+    # Trajet dédié déjà lié dès start() → accept() saute directement à AWAITING_PAYMENT.
+    Et le statut de la négociation est "AWAITING_PAYMENT"
+    Quand je refuse le trajet de la négociation "nego-2"
     Alors la réponse HTTP est 200
     Et le statut de la négociation est "AWAITING_TRIP"
     Etant donné l'utilisateur "req-traveler-002" est authentifié en tant que VOYAGEUR
@@ -161,6 +162,10 @@ Fonctionnalité: Demandes de colis et négociation
     Alors la réponse HTTP est 201
     Etant donné l'utilisateur "req-sender-009" est authentifié en tant qu'EXPÉDITEUR
     Quand j'accepte le prix de la négociation "nego-9"
+    Alors la réponse HTTP est 200
+    # Trajet dédié déjà lié dès start() → accept() saute directement à AWAITING_PAYMENT.
+    Et le statut de la négociation est "AWAITING_PAYMENT"
+    Quand je refuse le trajet de la négociation "nego-9"
     Alors la réponse HTTP est 200
     Et le statut de la négociation est "AWAITING_TRIP"
     Etant donné l'utilisateur "req-traveler-009" est authentifié en tant que VOYAGEUR

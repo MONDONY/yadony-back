@@ -4,6 +4,6 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Configuration;
 
 @Configuration
-@EnableConfigurationProperties(RequestsConfig.class)
+@EnableConfigurationProperties({RequestsConfig.class, NegotiationProperties.class})
 public class RequestsAutoConfig {
 }

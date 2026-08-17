@@ -32,6 +32,7 @@ public interface NegotiationThreadRepository extends JpaRepository<NegotiationTh
               com.yadony.api.requests.entity.NegotiationThreadStatus.OPEN,
               com.yadony.api.requests.entity.NegotiationThreadStatus.AWAITING_TRIP,
               com.yadony.api.requests.entity.NegotiationThreadStatus.AWAITING_PAYMENT,
+              com.yadony.api.requests.entity.NegotiationThreadStatus.AWAITING_COMMISSION,
               com.yadony.api.requests.entity.NegotiationThreadStatus.ACCEPTED
           )
     """)
@@ -43,13 +44,32 @@ public interface NegotiationThreadRepository extends JpaRepository<NegotiationTh
     List<NegotiationThreadEntity> findByPackageRequestId(UUID packageRequestId);
 
     /**
-     * The single thread that created a given dedicated trip (1:1 — one thread
-     * creates exactly one dedicated announcement). Used by {@code openSurplus}
-     * to re-check the negotiation reached ACCEPTED before opening surplus.
+     * The single ACCEPTED thread for a given dedicated trip. Since Task 4, a trip can be
+     * linked to multiple concurrent OPEN offers (spec §3.8), so the 1:1 relation only holds
+     * for the ACCEPTED status — filtering by it is required, otherwise multiple linked
+     * threads would make this throw IncorrectResultSizeDataAccessException. Used by
+     * {@code openSurplus} to re-check the negotiation reached ACCEPTED before opening surplus.
      */
-    Optional<NegotiationThreadEntity> findByTravelerAnnouncementId(UUID travelerAnnouncementId);
+    Optional<NegotiationThreadEntity> findByTravelerAnnouncementIdAndStatus(
+        UUID travelerAnnouncementId, NegotiationThreadStatus status);
 
-    boolean existsByTravelerAnnouncementId(UUID travelerAnnouncementId);
+    /**
+     * True iff at least one non-terminal (active) thread is linked to this trip announcement.
+     * Used to block unpublishing a trip that is still in play on a negotiation — restricted to
+     * the active set so a REJECTED/CANCELLED/AUTO_REJECTED/EXPIRED thread (dead, no longer
+     * blocking anything) doesn't permanently prevent the traveler from unpublishing.
+     */
+    @Query("""
+        SELECT COUNT(t) > 0 FROM NegotiationThreadEntity t
+        WHERE t.travelerAnnouncementId = :announcementId
+          AND t.status IN (
+              com.yadony.api.requests.entity.NegotiationThreadStatus.OPEN,
+              com.yadony.api.requests.entity.NegotiationThreadStatus.AWAITING_TRIP,
+              com.yadony.api.requests.entity.NegotiationThreadStatus.AWAITING_PAYMENT,
+              com.yadony.api.requests.entity.NegotiationThreadStatus.AWAITING_COMMISSION
+          )
+    """)
+    boolean existsActiveByTravelerAnnouncementId(@Param("announcementId") UUID announcementId);
 
     long countByTravelerIdAndStatus(UUID travelerId, NegotiationThreadStatus status);
 
@@ -71,6 +91,67 @@ public interface NegotiationThreadRepository extends JpaRepository<NegotiationTh
 
     @Query("SELECT t FROM NegotiationThreadEntity t WHERE t.status = 'AWAITING_PAYMENT' AND t.lastActivityAt < :cutoff")
     List<NegotiationThreadEntity> findAwaitingPaymentExpired(@Param("cutoff") LocalDateTime cutoff);
+
+    /**
+     * Threads {@code AWAITING_COMMISSION} dont la fenêtre de règlement (délai
+     * configurable, cf. {@code NegotiationProperties.commissionWindowMinutes})
+     * est dépassée sans que le voyageur n'ait scellé l'accord. Consommée par
+     * {@code CommissionWindowExpiryRunner}.
+     */
+    @Query("""
+        SELECT t FROM NegotiationThreadEntity t
+        WHERE t.status = com.yadony.api.requests.entity.NegotiationThreadStatus.AWAITING_COMMISSION
+          AND t.lastActivityAt < :cutoff
+    """)
+    List<NegotiationThreadEntity> findExpiredAwaitingCommission(@Param("cutoff") LocalDateTime cutoff);
+
+    /**
+     * Identifiant de la demande portée par un fil, sans charger l'entité.
+     *
+     * <p>Sert à prendre le verrou pessimiste sur la demande AVANT toute lecture du
+     * fil. Charger le fil d'abord le placerait dans le contexte de persistance :
+     * une « relecture » après le verrou retournerait alors l'instance déjà en
+     * cache, sans le moindre SQL, et rendrait la garde d'état illusoire — elle
+     * jugerait sur l'état d'avant le verrou, précisément celui dont on se méfie.
+     */
+    @Query("SELECT t.packageRequestId FROM NegotiationThreadEntity t WHERE t.id = :threadId")
+    Optional<UUID> findPackageRequestIdById(@Param("threadId") UUID threadId);
+
+    /**
+     * Fils perdants portant un PaymentIntent de commission (cash) qui n'a encore
+     * jamais été remboursé : un concurrent a scellé l'accord pendant que ce
+     * voyageur réglait ({@code AUTO_REJECTED}), le délai a expiré pendant un débit
+     * en cours ({@code EXPIRED}), ou le voyageur a renoncé après que sa 3DS a
+     * abouti ({@code CANCELLED}). Si Stripe a fini par encaisser, personne
+     * n'appelle spontanément le remboursement — {@code CommissionWindowExpiryRunner}
+     * balaie ce trou via {@code CashGatePort#refundNegotiationCommissionIfCharged},
+     * seul chemin autorisé depuis {@code requests/} vers {@code payments/cash}.
+     *
+     * <p>Deux filtres sont indispensables, sans quoi le balayage devient une fuite
+     * d'appels Stripe qui grossit avec l'historique de la plateforme :
+     * <ul>
+     *   <li>{@code REFUND_FAILED} est exclu : Stripe a déjà refusé le remboursement
+     *       automatique, le rejouer toutes les 5 minutes n'a jamais remboursé
+     *       personne. L'entrée d'audit {@code CASH_COMMISSION_REFUND_FAILED} existe
+     *       précisément pour le traitement manuel.</li>
+     *   <li>La borne temporelle élimine le cas dominant : une 3DS abandonnée laisse
+     *       un PaymentIntent qui n'atteint jamais {@code succeeded}, donc un fil
+     *       qui ne passera jamais {@code REFUNDED} et resterait éligible à vie.</li>
+     * </ul>
+     */
+    @Query("""
+        SELECT t FROM NegotiationThreadEntity t
+        WHERE t.status IN (
+            com.yadony.api.requests.entity.NegotiationThreadStatus.AUTO_REJECTED,
+            com.yadony.api.requests.entity.NegotiationThreadStatus.EXPIRED,
+            com.yadony.api.requests.entity.NegotiationThreadStatus.CANCELLED
+        )
+          AND t.commissionPaymentIntentId IS NOT NULL
+          AND (t.commissionStatus IS NULL
+               OR t.commissionStatus NOT IN ('REFUNDED', 'REFUND_FAILED'))
+          AND t.lastActivityAt > :since
+    """)
+    List<NegotiationThreadEntity> findUnrefundedChargedCommissions(@Param("since") LocalDateTime since);
 
     /**
      * All threads where the user is participant — either traveler directly,

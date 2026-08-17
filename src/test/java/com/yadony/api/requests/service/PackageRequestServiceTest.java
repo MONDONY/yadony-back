@@ -8,12 +8,14 @@ import com.yadony.api.common.StorageService;
 import com.yadony.api.config.YadonyConfigProperties;
 import com.yadony.api.favorites.FavoriteRepository;
 import com.yadony.api.favorites.FavoriteTargetType;
+import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.TransportMode;
 import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.requests.RequestsConfig;
 import com.yadony.api.requests.dto.PackageRequestCompleteDetailsRequest;
 import com.yadony.api.requests.dto.PackageRequestCreateRequest;
 import com.yadony.api.requests.entity.*;
+import com.yadony.api.requests.event.NegotiationCancelledEvent;
 import com.yadony.api.requests.event.PackageRequestCreatedEvent;
 import com.yadony.api.requests.repository.NegotiationThreadRepository;
 import com.yadony.api.requests.repository.PackageRequestRepository;
@@ -35,6 +37,8 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+
+import org.mockito.ArgumentCaptor;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -760,7 +764,7 @@ class PackageRequestServiceTest {
             setId(entity, reqId);
             entity.setSenderId(SENDER_ID);
             entity.setStatus(PackageRequestStatus.OPEN);
-            when(repository.findById(reqId)).thenReturn(Optional.of(entity));
+            when(repository.findByIdForUpdate(reqId)).thenReturn(Optional.of(entity));
             when(threadRepository.findByPackageRequestId(reqId)).thenReturn(List.of());
 
             service.cancel(SENDER_ID, reqId);
@@ -776,11 +780,89 @@ class PackageRequestServiceTest {
             setId(entity, reqId);
             entity.setSenderId(SENDER_ID);
             entity.setStatus(PackageRequestStatus.ACCEPTED);
-            when(repository.findById(reqId)).thenReturn(Optional.of(entity));
+            when(repository.findByIdForUpdate(reqId)).thenReturn(Optional.of(entity));
 
             assertThatThrownBy(() -> service.cancel(SENDER_ID, reqId))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("already-accepted");
+        }
+
+        /**
+         * La demande est soft-deletée donc introuvable ensuite : tout fil laissé
+         * actif est perdu avec elle. Un voyageur en AWAITING_COMMISSION peut déjà
+         * avoir payé sa commission — sans ce traitement il restait débité pour une
+         * demande évaporée, sans notification, son trajet dédié bloqué en
+         * « Mes trajets ».
+         */
+        @Test @DisplayName("fil en attente de commission → auto-rejeté, remboursement demandé, trajet dédié libéré")
+        void cancel_awaitingCommissionThread_refundsAndCleansUp() {
+            UUID reqId = UUID.randomUUID();
+            UUID threadId = UUID.randomUUID();
+            UUID travelerId = UUID.randomUUID();
+            UUID announcementId = UUID.randomUUID();
+
+            PackageRequestEntity entity = new PackageRequestEntity();
+            setId(entity, reqId);
+            entity.setSenderId(SENDER_ID);
+            entity.setStatus(PackageRequestStatus.NEGOTIATING);
+
+            NegotiationThreadEntity thread = new NegotiationThreadEntity();
+            setId(thread, threadId);
+            thread.setPackageRequestId(reqId);
+            thread.setTravelerId(travelerId);
+            thread.setTravelerAnnouncementId(announcementId);
+            thread.setStatus(NegotiationThreadStatus.AWAITING_COMMISSION);
+
+            AnnouncementEntity dedicated = new AnnouncementEntity();
+            setId(dedicated, announcementId);
+            dedicated.setLinkedPackageRequestId(reqId);
+
+            when(repository.findByIdForUpdate(reqId)).thenReturn(Optional.of(entity));
+            when(threadRepository.findByPackageRequestId(reqId)).thenReturn(List.of(thread));
+            when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(dedicated));
+
+            service.cancel(SENDER_ID, reqId);
+
+            assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.AUTO_REJECTED);
+            assertThat(dedicated.getDeletedAt()).isNotNull();
+
+            ArgumentCaptor<NegotiationCancelledEvent> captor =
+                ArgumentCaptor.forClass(NegotiationCancelledEvent.class);
+            verify(eventPublisher, atLeastOnce()).publishEvent(captor.capture());
+            NegotiationCancelledEvent published = captor.getAllValues().stream()
+                .filter(e -> e.threadId().equals(threadId))
+                .findFirst()
+                .orElseThrow();
+            assertThat(published.refundCommission()).isTrue();
+            assertThat(published.releaseEscrow()).isFalse();
+            assertThat(published.toUserId()).isEqualTo(travelerId);
+        }
+
+        /**
+         * Un fil déjà terminal ne doit pas être ressuscité en AUTO_REJECTED, ni
+         * déclencher un remboursement pour une commission qui a déjà été soldée.
+         */
+        @Test @DisplayName("fil déjà terminal → laissé intact, aucun événement")
+        void cancel_terminalThread_leftUntouched() {
+            UUID reqId = UUID.randomUUID();
+            PackageRequestEntity entity = new PackageRequestEntity();
+            setId(entity, reqId);
+            entity.setSenderId(SENDER_ID);
+            entity.setStatus(PackageRequestStatus.NEGOTIATING);
+
+            NegotiationThreadEntity thread = new NegotiationThreadEntity();
+            setId(thread, UUID.randomUUID());
+            thread.setPackageRequestId(reqId);
+            thread.setTravelerId(UUID.randomUUID());
+            thread.setStatus(NegotiationThreadStatus.REJECTED);
+
+            when(repository.findByIdForUpdate(reqId)).thenReturn(Optional.of(entity));
+            when(threadRepository.findByPackageRequestId(reqId)).thenReturn(List.of(thread));
+
+            service.cancel(SENDER_ID, reqId);
+
+            assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.REJECTED);
+            verify(eventPublisher, never()).publishEvent(any(NegotiationCancelledEvent.class));
         }
     }
 

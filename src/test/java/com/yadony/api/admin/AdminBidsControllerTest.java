@@ -45,6 +45,21 @@ class AdminBidsControllerTest {
     }
 
     @Test
+    void list_exposesCommissionStatus_soUnsettledCashBidsAreVisible() {
+        BidEntity bid = new BidEntity();
+        bid.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.CASH);
+        bid.setCommissionStatus(com.yadony.api.payments.cash.CommissionStatus.PENDING);
+        Page<BidEntity> page = new PageImpl<>(List.of(bid));
+        when(bidRepo.findAdminFiltered(isNull(), isNull(), isNull(), isNull(), isNull(), any())).thenReturn(page);
+        when(announcementRepo.findAllById(any())).thenReturn(List.of());
+
+        ResponseEntity<Page<AdminBidListItemResponse>> resp = controller().listBids(null, null, null, null, null, 0, 20);
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(resp.getBody().getContent().get(0).commissionStatus()).isEqualTo("PENDING");
+    }
+
+    @Test
     void getBid_notFound_throws404() {
         UUID id = UUID.randomUUID();
         when(bidRepo.findById(id)).thenReturn(Optional.empty());

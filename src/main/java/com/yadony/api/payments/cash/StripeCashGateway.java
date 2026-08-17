@@ -31,5 +31,7 @@ public interface StripeCashGateway {
 
     PaymentIntent retrievePaymentIntent(String paymentIntentId) throws StripeException;
 
+    PaymentIntent cancelPaymentIntent(String paymentIntentId) throws StripeException;
+
     Refund createRefund(RefundCreateParams params, RequestOptions options) throws StripeException;
 }

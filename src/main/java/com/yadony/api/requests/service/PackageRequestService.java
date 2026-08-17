@@ -532,9 +532,28 @@ public class PackageRequestService {
 
     // ─── cancel ──────────────────────────────────────────────────────────────────
 
+    /**
+     * L'expéditeur annule sa demande. Tous les fils encore actifs meurent avec
+     * elle, quel que soit leur stade.
+     *
+     * <p>Le verrou pessimiste n'est pas décoratif : sans lui, un règlement de
+     * commission concurrent (qui verrouille la demande puis vérifie qu'elle est
+     * toujours disponible) pourrait débiter le voyageur et sceller l'accord
+     * pendant que cette transaction annule et soft-delete la même demande. Avec
+     * le verrou les deux se sérialisent : soit le règlement voit CANCELLED et
+     * refuse avant tout appel Stripe, soit l'annulation voit ACCEPTED et rend
+     * 409.
+     *
+     * <p>La demande est soft-deletée, donc introuvable ensuite ({@code
+     * @SQLRestriction("deleted_at IS NULL")}). Tout ce qui reste attaché à un fil
+     * doit donc être soldé ICI, pendant qu'on tient encore la demande : ne
+     * traiter que les fils {@code OPEN}, comme avant, laissait un voyageur en
+     * AWAITING_COMMISSION débité pour une demande évaporée, son trajet dédié
+     * bloqué en « Mes trajets », et aucune notification pour l'en informer.
+     */
     @Transactional
     public void cancel(UUID callerUid, UUID requestId) {
-        PackageRequestEntity entity = repository.findById(requestId)
+        PackageRequestEntity entity = repository.findByIdForUpdate(requestId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found"));
 
         if (!entity.getSenderId().equals(callerUid)) {
@@ -549,16 +568,69 @@ public class PackageRequestService {
         entity.softDelete();
         repository.save(entity);
 
-        // Auto-reject any open threads
-        threadRepository.findByPackageRequestId(requestId).forEach(t -> {
-            if (t.getStatus() == NegotiationThreadStatus.OPEN) {
+        String senderName = userRepository.findById(callerUid)
+            .map(UserEntity::publicDisplayName)
+            .orElse(UserEntity.UNKNOWN_DISPLAY_NAME);
+
+        threadRepository.findByPackageRequestId(requestId).stream()
+            .filter(t -> t.getStatus().isActive())
+            .forEach(t -> {
+                NegotiationThreadStatus previous = t.getStatus();
                 t.setStatus(NegotiationThreadStatus.AUTO_REJECTED);
+                t.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC));
                 threadRepository.save(t);
-            }
-        });
+                softDeleteOrphanedDedicatedTrip(t, callerUid);
+                // Chaque fil tué laisse sa propre trace, comme sur tous les
+                // autres chemins de mort d'un fil : c'est précisément ici qu'on
+                // en aura besoin, la demande étant soft-deletée donc introuvable.
+                auditService.log("NEGOTIATION_THREAD", t.getId(), "AUTO_REJECTED", callerUid,
+                    Map.of("reason", "request-cancelled", "previousStatus", previous.name()));
+
+                // Le statut d'avant l'annulation part dans l'événement — seul ce
+                // point du code le connaît. Les effets financiers (hold Stripe à
+                // annuler, commission à rembourser) en sont dérivés par le record
+                // et exécutés par des écouteurs AFTER_COMMIT : un rollback ne
+                // déclenche rien, donc aucune fuite d'argent sur une annulation
+                // qui n'a pas eu lieu.
+                eventPublisher.publishEvent(new NegotiationCancelledEvent(
+                    t.getId(), requestId, callerUid, t.getTravelerId(), senderName, previous));
+            });
 
         auditService.log("PACKAGE_REQUEST", requestId, "CANCELLED", callerUid,
             Map.of("status", "CANCELLED"));
+    }
+
+    /**
+     * Soft-delete du trajet DÉDIÉ devenu orphelin — créé exclusivement pour
+     * cette demande, sa capacité disponible reste à 0 tant que le surplus n'est
+     * pas ouvert après paiement : une fois orphelin, plus personne ne peut le
+     * réserver et il resterait {@code ACTIVE} pour toujours dans « Mes trajets »
+     * du voyageur, capacité réservée bloquée.
+     *
+     * <p>Compare l'identifiant porté par le fil, jamais l'entité demande : elle
+     * vient d'être soft-deletée par l'appelant, donc déjà introuvable.
+     *
+     * <p>Miroir de {@code NegotiationService#softDeleteOrphanedDedicatedTrip},
+     * {@code NegotiationExpiryRunner#softDeleteOrphanedDedicatedTrip} et
+     * {@code CommissionWindowExpiryRunner#softDeleteOrphanedDedicatedTrip} —
+     * quatrième copie assumée : leur extraction en collaborateur commun casserait
+     * les assertions de tests de chantiers antérieurs, dette actée dans le ledger.
+     * Toute correction de cette règle doit être répercutée aux quatre endroits.
+     */
+    private void softDeleteOrphanedDedicatedTrip(NegotiationThreadEntity thread, UUID callerUid) {
+        UUID announcementId = thread.getTravelerAnnouncementId();
+        if (announcementId == null) {
+            return;
+        }
+        announcementRepository.findById(announcementId).ifPresent(ann -> {
+            if (thread.getPackageRequestId().equals(ann.getLinkedPackageRequestId())) {
+                ann.softDelete();
+                announcementRepository.save(ann);
+                auditService.log("ANNOUNCEMENT", ann.getId(),
+                    "DEDICATED_TRIP_ORPHANED_ON_REQUEST_CANCEL", callerUid,
+                    Map.of("threadId", thread.getId().toString()));
+            }
+        });
     }
 
     // ─── completeDetails ─────────────────────────────────────────────────────────
@@ -848,12 +920,6 @@ public class PackageRequestService {
      */
     public PackageRequestSearchResponse toSearchResponse(PackageRequestEntity e, boolean isFavorite) {
         return packageRequestSearchMapper.toSearchResponse(e, isFavorite);
-    }
-
-    /** Délègue à {@link UserEntity#publicDisplayName()} : repli sur le username du compte. */
-    private String buildSenderDisplayName(UserEntity user) {
-        if (user == null) return UserEntity.UNKNOWN_DISPLAY_NAME;
-        return user.publicDisplayName();
     }
 
     /**

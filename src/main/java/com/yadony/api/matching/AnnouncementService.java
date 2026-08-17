@@ -921,7 +921,7 @@ public class AnnouncementService {
             throw new YadonyBusinessException(HttpStatus.CONFLICT, "announcement/has-bids",
                     "Has Bids", "Ce trajet a déjà reçu des demandes et ne peut plus être dépublié");
         }
-        if (negotiationThreadRepository.existsByTravelerAnnouncementId(id)) {
+        if (negotiationThreadRepository.existsActiveByTravelerAnnouncementId(id)) {
             throw new YadonyBusinessException(HttpStatus.CONFLICT, "announcement/has-negotiations",
                     "Has Negotiations", "Ce trajet est lié à une négociation et ne peut plus être dépublié");
         }

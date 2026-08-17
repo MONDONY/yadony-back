@@ -1,5 +1,9 @@
 package com.yadony.api.requests;
 
+import com.yadony.api.payments.cash.CommissionSource;
+import com.yadony.api.payments.cash.dto.AcceptBidResponse;
+import com.yadony.api.payments.cash.dto.ConfirmAcceptanceResponse;
+
 import java.math.BigDecimal;
 import java.util.UUID;
 
@@ -21,10 +25,31 @@ public interface CashGatePort {
     boolean hasCommissionCard(UUID travelerId);
 
     /**
-     * Charges Yadony's commission (netAmount × rate) from the traveler for a CASH
-     * negotiated thread, wallet-first then card. Returns true if successfully
-     * charged (or already charged — idempotent), false if it could not be charged.
-     * Implementations MUST NOT throw on a normal decline — return false instead.
+     * Règle la commission Yadony d'un thread de négociation CASH à la demande du
+     * voyageur. Le montant dérive du net négocié passé en paramètre. Ne lève jamais
+     * sur un refus normal : le statut de la réponse porte l'issue.
      */
-    boolean chargeNegotiationCashCommission(java.util.UUID travelerId, java.util.UUID senderId, java.util.UUID threadId, java.math.BigDecimal netAmount);
+    AcceptBidResponse settleNegotiationCommission(
+            UUID travelerId, UUID senderId, UUID threadId,
+            BigDecimal netAmount, CommissionSource source);
+
+    /**
+     * Relit auprès de Stripe le PaymentIntent de commission d'un thread après
+     * authentification 3D Secure, et scelle la charge si Stripe confirme
+     * "succeeded". Ne déclenche jamais un nouveau débit : {@link
+     * #settleNegotiationCommission} a déjà créé le PaymentIntent, le rappeler
+     * rejouerait la même clé d'idempotence Stripe et renverrait indéfiniment
+     * "authentification requise".
+     */
+    ConfirmAcceptanceResponse confirmNegotiationCommission(UUID travelerId, UUID threadId);
+
+    /**
+     * Rembourse une commission de négociation débitée par carte alors que le
+     * thread n'est plus éligible au scellement (place prise par un concurrent
+     * pendant l'authentification 3D Secure, asynchrone par nature). Relit
+     * systématiquement Stripe : jamais d'exception qui remonte, jamais de
+     * remboursement en double. Retourne {@code true} si un remboursement a
+     * effectivement eu lieu.
+     */
+    boolean refundNegotiationCommissionIfCharged(UUID travelerId, UUID threadId);
 }

@@ -94,6 +94,18 @@ public class RequestsSteps extends AbstractSteps {
         body.put("travelerTravelDate", LocalDate.now().plusDays(30).toString());
         body.put("travelerAvailableKg", 25.0);
         body.put("body", "J'ai de la place sur mon vol");
+        // Trajet obligatoire dès l'offre (cf. spec 2026-08-16) : aucune annonce n'existe
+        // encore à ce stade dans les scénarios e2e, donc on fournit systématiquement un
+        // trajet dédié (createDedicatedTrip) plutôt qu'un travelerAnnouncementId.
+        body.put("createDedicatedTrip", true);
+        Map<String, Object> dedicatedTrip = new HashMap<>();
+        dedicatedTrip.put("departureDate", LocalDate.now().plusDays(30).toString());
+        dedicatedTrip.put("departureTime", "14:30");
+        dedicatedTrip.put("arrivalTime", "20:15");
+        dedicatedTrip.put("pickupAddress", Map.of("label", "Aéroport CDG", "lat", 49.0097, "lng", 2.5479));
+        dedicatedTrip.put("deliveryAddress", Map.of("label", "Aéroport Dakar", "lat", 14.7397, "lng", -17.4902));
+        dedicatedTrip.put("paymentMethod", "STRIPE");
+        body.put("dedicatedTrip", dedicatedTrip);
         Response resp = asCurrentUser().body(body).post("/negotiations");
         store(resp);
         saveIfPresent(threadAlias);

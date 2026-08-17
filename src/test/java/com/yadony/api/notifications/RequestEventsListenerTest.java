@@ -10,6 +10,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
@@ -92,6 +93,66 @@ class RequestEventsListenerTest {
         listener.onNegotiationAwaitingPayment(event);
 
         verify(dispatcher).notifyUser(eq(senderId), contains("paiement"), anyString(), anyMap());
+    }
+
+    @Test
+    void onNegotiationCommissionPending_notifiesTravelerWithDeadline() {
+        UUID travelerId = UUID.randomUUID();
+        UUID threadId = UUID.randomUUID();
+        UUID packageRequestId = UUID.randomUUID();
+        var expiresAt = java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).plusMinutes(120);
+        var event = new NegotiationCommissionPendingEvent(
+            threadId, packageRequestId, travelerId, UUID.randomUUID(),
+            new BigDecimal("4.20"), "EUR", expiresAt
+        );
+
+        listener.onNegotiationCommissionPending(event);
+
+        ArgumentCaptor<String> bodyCaptor = ArgumentCaptor.forClass(String.class);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.Map<String, String>> dataCaptor =
+            (ArgumentCaptor<java.util.Map<String, String>>) (ArgumentCaptor<?>) ArgumentCaptor.forClass(java.util.Map.class);
+        verify(dispatcher).notifyUser(eq(travelerId), contains("Confirmez"),
+            bodyCaptor.capture(), dataCaptor.capture());
+        // Message mentionnant la commission, sans tiret cadratin (règle copie FR).
+        assertThat(bodyCaptor.getValue()).contains("commission").doesNotContain("—");
+        assertThat(dataCaptor.getValue())
+            .containsEntry("type", "negotiation_commission_pending")
+            .containsEntry("threadId", threadId.toString())
+            .containsEntry("packageRequestId", packageRequestId.toString());
+    }
+
+    @Test
+    void onNegotiationCommissionDeclined_notifiesSenderOnly() {
+        UUID senderId = UUID.randomUUID();
+        UUID travelerId = UUID.randomUUID();
+        UUID threadId = UUID.randomUUID();
+        var event = new NegotiationCommissionDeclinedEvent(
+            threadId, UUID.randomUUID(), senderId, travelerId
+        );
+
+        listener.onNegotiationCommissionDeclined(event);
+
+        verify(dispatcher).notifyUser(eq(senderId), anyString(), contains("disponible"), anyMap());
+        verify(dispatcher, never()).notifyUser(eq(travelerId), anyString(), anyString(), anyMap());
+    }
+
+    @Test
+    void onNegotiationCommissionExpired_notifiesBothPartiesInAppOnly() {
+        UUID senderId = UUID.randomUUID();
+        UUID travelerId = UUID.randomUUID();
+        var event = new NegotiationCommissionExpiredEvent(
+            UUID.randomUUID(), UUID.randomUUID(), senderId, travelerId
+        );
+
+        listener.onNegotiationCommissionExpired(event);
+
+        verify(dispatcher).notifyUser(eq(travelerId), anyString(), anyString(), anyMap(), eq(false));
+        // L'expéditeur doit apprendre que sa demande repart à d'autres voyageurs :
+        // c'est le corps du message qui le dit, le titre porte « disponible ».
+        verify(dispatcher).notifyUser(eq(senderId), contains("disponible"), contains("ouverte"),
+            anyMap(), eq(false));
+        verify(dispatcher, never()).notifyUser(any(), anyString(), anyString(), anyMap());
     }
 
     @Test

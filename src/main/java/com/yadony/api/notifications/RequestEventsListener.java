@@ -102,6 +102,115 @@ public class RequestEventsListener {
     }
 
     /**
+     * Traveler changed the linked trip before payment. Notify the sender —
+     * they may want to review the new trip details before accepting/paying.
+     */
+    @EventListener
+    @Async
+    public void onNegotiationTripChanged(com.yadony.api.requests.event.NegotiationTripChangedEvent e) {
+        dispatcher.notifyUser(
+            e.senderId(),
+            "Trajet mis à jour",
+            "Le voyageur a changé le trajet associé à votre demande.",
+            Map.of(
+                "type", "negotiation_trip_changed",
+                "threadId", e.threadId().toString(),
+                "packageRequestId", e.packageRequestId().toString()
+            )
+        );
+    }
+
+    /**
+     * Accord en espèces conclu par l'expéditeur : le voyageur doit régler la
+     * commission pour l'emporter. AFTER_COMMIT, car annoncer un accord avant son
+     * commit exposerait à notifier une transaction qui rollback ensuite.
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
+    public void onNegotiationCommissionPending(NegotiationCommissionPendingEvent e) {
+        dispatcher.notifyUser(
+            e.travelerId(),
+            "Confirmez votre prise en charge",
+            String.format(
+                "L'expéditeur a retenu votre offre. Réglez la commission de %.2f %s pour confirmer, sans quoi la demande repartira.",
+                e.commissionAmount(), e.currency()),
+            Map.of(
+                "type", "negotiation_commission_pending",
+                "threadId", e.threadId().toString(),
+                "packageRequestId", e.packageRequestId().toString()
+            )
+        );
+    }
+
+    /**
+     * Le voyageur a renoncé à l'accord en espèces avant de régler la commission.
+     * Rien n'était scellé — notifie l'expéditeur que sa demande reste disponible.
+     *
+     * <p>{@code AFTER_COMMIT} : même raison que {@link #onNegotiationCancelled} —
+     * aucun push « le voyageur a renoncé » ne doit partir si la transaction du
+     * renoncement finit par rollback.
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
+    public void onNegotiationCommissionDeclined(NegotiationCommissionDeclinedEvent e) {
+        dispatcher.notifyUser(
+            e.senderId(),
+            "Le voyageur a renoncé",
+            "Le voyageur a renoncé à l'accord en espèces. Votre demande reste disponible pour d'autres voyageurs.",
+            Map.of(
+                "type", "negotiation_commission_declined",
+                "threadId", e.threadId().toString(),
+                "packageRequestId", e.packageRequestId().toString()
+            )
+        );
+    }
+
+    /**
+     * Le voyageur n'a pas réglé la commission dans le délai imparti. Rien n'était
+     * scellé — les deux parties sont notifiées, chacune avec son propre message :
+     * le voyageur a perdu la demande, l'expéditeur peut de nouveau la conclure.
+     * In-app seulement, même logique que {@link #onNegotiationExpired} : c'est une
+     * absence d'action, pas un événement qui appelle une réaction immédiate.
+     *
+     * <p>{@code AFTER_COMMIT} : l'expiration entre en concurrence avec le règlement
+     * du voyageur qui paie juste à l'échéance. Une expiration qui échoue au commit
+     * (le règlement a gagné) ne doit pas avoir déjà annoncé « cette demande n'est
+     * plus disponible pour vous » à un voyageur dont l'accord est scellé en base.
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
+    public void onNegotiationCommissionExpired(NegotiationCommissionExpiredEvent e) {
+        dispatcher.notifyUser(
+            e.travelerId(),
+            "Délai de commission dépassé",
+            "Vous n'avez pas réglé la commission à temps, cette demande n'est plus disponible pour vous.",
+            Map.of(
+                "type", "negotiation_commission_expired",
+                "threadId", e.threadId().toString(),
+                "packageRequestId", e.packageRequestId().toString()
+            ),
+            false
+        );
+        // senderId est nul quand l'expéditeur a supprimé sa demande pendant
+        // l'attente : il n'y a alors plus personne à prévenir, et notifier null
+        // violerait la contrainte NOT NULL de notifications.user_id. Même garde
+        // que onNegotiationExpired.
+        if (e.senderId() != null) {
+            dispatcher.notifyUser(
+                e.senderId(),
+                "Votre demande est de nouveau disponible",
+                "Le voyageur n'a pas réglé la commission à temps. Votre demande reste ouverte à d'autres voyageurs.",
+                Map.of(
+                    "type", "negotiation_commission_expired",
+                    "threadId", e.threadId().toString(),
+                    "packageRequestId", e.packageRequestId().toString()
+                ),
+                false
+            );
+        }
+    }
+
+    /**
      * Final ACCEPTED state — fires only after payment is captured (escrow active).
      * Notify both parties that the deal is sealed.
      */

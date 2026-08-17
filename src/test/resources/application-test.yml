@@ -89,6 +89,8 @@ yadony:
     awaiting-trip-hours: 24
     awaiting-payment-hours: 24
     auto-expire-check-cron: "-"
+  negotiation:
+    commission-expire-check-cron: "-"
   mobilemoney:
     wave:
       api-key: test-wave-key

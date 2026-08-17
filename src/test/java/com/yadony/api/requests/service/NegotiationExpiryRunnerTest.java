@@ -29,6 +29,7 @@ class NegotiationExpiryRunnerTest {
 
     @Mock private PackageRequestRepository requestRepo;
     @Mock private NegotiationThreadRepository threadRepo;
+    @Mock private com.yadony.api.matching.AnnouncementRepository announcementRepo;
     @Mock private ApplicationEventPublisher eventPublisher;
     @Mock private AuditService auditService;
     @InjectMocks private NegotiationExpiryRunner runner;
@@ -99,6 +100,46 @@ class NegotiationExpiryRunnerTest {
         assertThat(t.getStatus()).isEqualTo(NegotiationThreadStatus.ACCEPTED); // inchangé
         verify(threadRepo, never()).save(any());
         verifyNoInteractions(eventPublisher);
+    }
+
+    @Test
+    @DisplayName("expireThread — trajet dédié orphelin (lié à cette demande) → soft-deleted")
+    void expireThread_orphansDedicatedTrip() {
+        NegotiationThreadEntity t = thread(NegotiationThreadStatus.OPEN);
+        UUID annId = UUID.randomUUID();
+        t.setTravelerAnnouncementId(annId);
+        com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
+        ann.setLinkedPackageRequestId(t.getPackageRequestId()); // dédié à CETTE demande
+        setId(ann, annId);
+
+        when(threadRepo.findById(t.getId())).thenReturn(Optional.of(t));
+        when(announcementRepo.findById(annId)).thenReturn(Optional.of(ann));
+
+        runner.expireThread(t.getId(), NegotiationThreadStatus.OPEN, "INACTIVE_OPEN");
+
+        assertThat(ann.getDeletedAt()).isNotNull();
+        verify(announcementRepo).save(ann);
+        verify(auditService).log(eq("ANNOUNCEMENT"), eq(annId),
+            eq("DEDICATED_TRIP_ORPHANED_ON_EXPIRE"), isNull(), anyMap());
+    }
+
+    @Test
+    @DisplayName("expireThread — trajet existant (non dédié à cette demande) → jamais touché")
+    void expireThread_doesNotTouchReusableTrip() {
+        NegotiationThreadEntity t = thread(NegotiationThreadStatus.OPEN);
+        UUID annId = UUID.randomUUID();
+        t.setTravelerAnnouncementId(annId);
+        com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
+        ann.setLinkedPackageRequestId(null); // trajet réel, lié via submitTrip — jamais dédié
+        setId(ann, annId);
+
+        when(threadRepo.findById(t.getId())).thenReturn(Optional.of(t));
+        when(announcementRepo.findById(annId)).thenReturn(Optional.of(ann));
+
+        runner.expireThread(t.getId(), NegotiationThreadStatus.OPEN, "INACTIVE_OPEN");
+
+        assertThat(ann.getDeletedAt()).isNull();
+        verify(announcementRepo, never()).save(any());
     }
 
     @Test

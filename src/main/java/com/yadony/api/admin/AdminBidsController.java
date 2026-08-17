@@ -147,11 +147,12 @@ public class AdminBidsController {
         String corridor = ann != null
                 ? MatchingTextUtil.corridorLabel(ann.getDepartureCity(), ann.getArrivalCity()) : "";
         String paymentMethod = b.getPaymentMethod() != null ? b.getPaymentMethod().name() : null;
+        String commissionStatus = b.getCommissionStatus() != null ? b.getCommissionStatus().name() : null;
         return new AdminBidListItemResponse(
                 b.getId(), b.getStatus().name(), b.getAnnouncementId(),
                 senderName, travelerName, corridor,
                 b.getWeightKg(), b.getNegotiatedNetEur(),
-                paymentMethod, b.getCreatedAt());
+                paymentMethod, b.getCreatedAt(), commissionStatus);
     }
 
     private AdminBidDetailResponse toBidDetail(BidEntity b, AnnouncementEntity ann,

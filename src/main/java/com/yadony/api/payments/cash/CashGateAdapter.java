@@ -1,5 +1,7 @@
 package com.yadony.api.payments.cash;
 
+import com.yadony.api.payments.cash.dto.AcceptBidResponse;
+import com.yadony.api.payments.cash.dto.ConfirmAcceptanceResponse;
 import com.yadony.api.payments.wallet.WalletService;
 import com.yadony.api.requests.CashGatePort;
 import org.springframework.stereotype.Service;
@@ -31,7 +33,18 @@ public class CashGateAdapter implements CashGatePort {
     }
 
     @Override
-    public boolean chargeNegotiationCashCommission(UUID travelerId, UUID senderId, UUID threadId, BigDecimal netAmount) {
-        return cashCommissionService.chargeNegotiationCommission(travelerId, senderId, threadId, netAmount);
+    public AcceptBidResponse settleNegotiationCommission(
+            UUID travelerId, UUID senderId, UUID threadId, BigDecimal netAmount, CommissionSource source) {
+        return cashCommissionService.settleNegotiationCommission(travelerId, senderId, threadId, netAmount, source);
+    }
+
+    @Override
+    public ConfirmAcceptanceResponse confirmNegotiationCommission(UUID travelerId, UUID threadId) {
+        return cashCommissionService.confirmNegotiationCommissionAcceptance(threadId, travelerId);
+    }
+
+    @Override
+    public boolean refundNegotiationCommissionIfCharged(UUID travelerId, UUID threadId) {
+        return cashCommissionService.refundNegotiationCommissionIfCharged(threadId, travelerId);
     }
 }

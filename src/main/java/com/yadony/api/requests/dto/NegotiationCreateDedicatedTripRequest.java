@@ -1,7 +1,6 @@
 package com.yadony.api.requests.dto;
 
 import com.yadony.api.matching.dto.AddressDto;
-import com.yadony.api.payments.cash.PaymentMethod;
 import com.fasterxml.jackson.annotation.JsonFormat;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.FutureOrPresent;
@@ -20,6 +19,9 @@ import java.util.List;
  * Locked fields (corridor, weight, transport mode, total agreed price) are NOT
  * in this DTO — they are derived server-side from the negotiating thread and
  * its underlying package_request. Only fields the traveler can edit are listed.
+ *
+ * Le mode de paiement n'y figure pas non plus : il est défini par l'expéditeur
+ * (package_request.acceptedPaymentMethods) et arrêté par lui au checkout.
  */
 public record NegotiationCreateDedicatedTripRequest(
         @NotNull(message = "La date de départ est obligatoire")
@@ -45,9 +47,6 @@ public record NegotiationCreateDedicatedTripRequest(
 
         List<String> refusedTypes,
 
-        @NotNull(message = "Le mode de paiement est obligatoire")
-        PaymentMethod paymentMethod,
-
         // CASH uniquement : si true, le voyageur consent à payer la commission sur
         // sa carte quand son wallet est insuffisant. Absent du JSON → false.
         boolean useCardForCommission
@@ -55,9 +54,8 @@ public record NegotiationCreateDedicatedTripRequest(
     public NegotiationCreateDedicatedTripRequest(
             LocalDate departureDate, LocalTime departureTime, LocalTime arrivalTime,
             AddressDto pickupAddress, AddressDto deliveryAddress, String description,
-            List<String> acceptedContentTypes, List<String> refusedTypes,
-            PaymentMethod paymentMethod) {
+            List<String> acceptedContentTypes, List<String> refusedTypes) {
         this(departureDate, departureTime, arrivalTime, pickupAddress, deliveryAddress,
-             description, acceptedContentTypes, refusedTypes, paymentMethod, false);
+             description, acceptedContentTypes, refusedTypes, false);
     }
 }

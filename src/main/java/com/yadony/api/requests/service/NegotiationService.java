@@ -9,12 +9,17 @@ import com.yadony.api.common.CommissionRateResolver;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.payments.PriceBreakdown;
 import com.yadony.api.payments.cash.CommissionProperties;
+import com.yadony.api.payments.cash.CommissionSource;
 import com.yadony.api.payments.cash.PaymentMethod;
+import com.yadony.api.payments.cash.dto.AcceptBidResponse;
+import com.yadony.api.payments.cash.dto.AcceptanceStatusDto;
+import com.yadony.api.payments.cash.dto.ConfirmAcceptanceResponse;
 import com.yadony.api.payments.currency.CurrencyBounds;
 import com.yadony.api.payments.currency.CurrencyMatchGuard;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.requests.CashGatePort;
 import com.yadony.api.requests.NegotiationEscrowPort;
+import com.yadony.api.requests.NegotiationProperties;
 import com.yadony.api.requests.RequestsConfig;
 import com.yadony.api.requests.dto.*;
 import com.yadony.api.requests.entity.*;
@@ -52,6 +57,7 @@ public class NegotiationService {
     private final ApplicationEventPublisher eventPublisher;
     private final AuditService auditService;
     private final RequestsConfig config;
+    private final NegotiationProperties negotiationProperties;
     private final CommissionProperties commissionProperties;
     private final CashGatePort cashGatePort;
     private final NegotiationEscrowPort escrowPort;
@@ -69,6 +75,7 @@ public class NegotiationService {
                                ApplicationEventPublisher eventPublisher,
                                AuditService auditService,
                                RequestsConfig config,
+                               NegotiationProperties negotiationProperties,
                                CommissionProperties commissionProperties,
                                CashGatePort cashGatePort,
                                NegotiationEscrowPort escrowPort,
@@ -85,6 +92,7 @@ public class NegotiationService {
         this.eventPublisher = eventPublisher;
         this.auditService = auditService;
         this.config = config;
+        this.negotiationProperties = negotiationProperties;
         this.commissionProperties = commissionProperties;
         this.cashGatePort = cashGatePort;
         this.escrowPort = escrowPort;
@@ -175,17 +183,56 @@ public class NegotiationService {
             throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "negotiation/rate-limit");
         }
 
+        // Trajet obligatoire dès l'offre (cf. spec 2026-08-16) : soit un trajet
+        // existant validé, soit la création d'un trajet dédié. Exactement l'un des
+        // deux doit être fourni — un record ne peut pas exprimer un XOR en Bean
+        // Validation pur, la vérification se fait donc ici.
+        if (req.travelerAnnouncementId() != null && req.createDedicatedTrip()) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "trip-not-eligible-both");
+        }
+        if (req.travelerAnnouncementId() == null && !req.createDedicatedTrip()) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "trip-required");
+        }
+
+        com.yadony.api.matching.AnnouncementEntity linkedTripAnn;
+        java.util.Set<PaymentMethod> availableMethods;
+        java.time.LocalDate resolvedTravelDate;
+
+        if (req.createDedicatedTrip()) {
+            if (req.dedicatedTrip() == null) {
+                throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "dedicated-trip-invalid");
+            }
+            java.time.LocalDate from = request.getDesiredDate().minusDays(request.getDateToleranceDays());
+            java.time.LocalDate to = request.getDesiredDate().plusDays(request.getDateToleranceDays());
+            if (req.dedicatedTrip().departureDate().isBefore(from) || req.dedicatedTrip().departureDate().isAfter(to)) {
+                throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "announcement/date-mismatch");
+            }
+            availableMethods = computeAvailableMethods(request, traveler);
+            assertNonEmptyOrThrow(availableMethods, request.getAcceptedPaymentMethods());
+            linkedTripAnn = announcementRepo.save(
+                buildDedicatedTripAnnouncement(request, traveler, req.proposedPriceEur(), req.dedicatedTrip()));
+            resolvedTravelDate = linkedTripAnn.getDepartureDate();
+            auditService.log("ANNOUNCEMENT", linkedTripAnn.getId(), "DEDICATED_TRIP_CREATED_AT_OFFER", travelerId,
+                Map.of("packageRequestId", request.getId().toString()));
+        } else {
+            linkedTripAnn = validateAndFetchExistingTrip(req.travelerAnnouncementId(), travelerId, request);
+            availableMethods = computeAvailableMethods(request, traveler);
+            assertNonEmptyOrThrow(availableMethods, request.getAcceptedPaymentMethods());
+            resolvedTravelDate = linkedTripAnn.getDepartureDate();
+        }
+
         NegotiationThreadEntity thread = new NegotiationThreadEntity();
         thread.setPackageRequestId(req.packageRequestId());
         thread.setTravelerId(travelerId);
-        thread.setTravelerAnnouncementId(req.travelerAnnouncementId());
-        thread.setTravelerTravelDate(req.travelerTravelDate());
+        thread.setTravelerAnnouncementId(linkedTripAnn.getId());
+        thread.setTravelerTravelDate(resolvedTravelDate);
         thread.setTravelerAvailableKg(req.travelerAvailableKg());
         thread.setStatus(NegotiationThreadStatus.OPEN);
         thread.setCurrency(request.getCurrency());
         thread.setCurrentPriceEur(req.proposedPriceEur());
         thread.setRoundsCount((short) 1);
         thread.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC));
+        thread.setAvailablePaymentMethods(availableMethods);
         // Code promo saisi par l'expéditeur à la publication de sa demande (étape 3)
         // → appliqué automatiquement au paiement, sans re-saisie (cf. javadoc
         // NegotiationThreadEntity.promoCode).
@@ -215,7 +262,7 @@ public class NegotiationService {
         String senderName = userRepository.findById(request.getSenderId())
             .map(this::buildDisplayName)
             .orElse(UserEntity.UNKNOWN_DISPLAY_NAME);
-        return toResponse(saved, List.of(toMessageResponse(msg)), null, traveler, request, travelerId, senderName, null);
+        return toResponse(saved, List.of(toMessageResponse(msg)), null, traveler, request, travelerId, senderName, linkedTripAnn);
     }
 
     @Transactional
@@ -329,6 +376,8 @@ public class NegotiationService {
         thread.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC));
         threadRepo.save(thread);
         reopenRequestWhenNoActiveNegotiation(request);
+        softDeleteOrphanedDedicatedTrip(thread.getTravelerAnnouncementId(), request, callerId, threadId,
+            "DEDICATED_TRIP_ORPHANED_ON_REJECT");
 
         auditService.log("NEGOTIATION_THREAD", threadId, "REJECTED", callerId,
             Map.of("reason", req.reason() != null ? req.reason() : ""));
@@ -336,8 +385,16 @@ public class NegotiationService {
 
     /**
      * Either participant (sender or traveler) ends the negotiation before payment.
-     * Allowed while the thread is still OPEN, AWAITING_TRIP or AWAITING_PAYMENT —
-     * once ACCEPTED (paid) the thread can no longer be cancelled this way.
+     * Allowed while the thread is still OPEN, AWAITING_TRIP, AWAITING_PAYMENT or
+     * AWAITING_COMMISSION — once ACCEPTED (paid) the thread can no longer be
+     * cancelled this way.
+     *
+     * <p>AWAITING_COMMISSION is cancellable here on purpose: {@code declineCommission}
+     * is the traveler's own way out, but it leaves the sender with no way to end a
+     * thread whose traveler has simply gone quiet, other than waiting out the whole
+     * commission window. A commission already paid on that thread is refunded — see
+     * {@code refundCommission} on {@link NegotiationCancelledEvent}.
+     *
      * If a Stripe escrow hold is in flight (AWAITING_PAYMENT), it is released
      * (idempotent, best-effort) and any orphaned DEDICATED trip announcement
      * created exclusively for this request is soft-deleted, mirroring
@@ -348,10 +405,17 @@ public class NegotiationService {
      */
     @Transactional
     public void cancelNegotiation(UUID callerId, UUID threadId, String reason) {
+        // Demande verrouillée AVANT la lecture du fil, comme settleCommission,
+        // declineCommission, finalizeInternal et le balayage d'expiration. Un fil
+        // AWAITING_COMMISSION est annulable ici, donc cette méthode court
+        // désormais contre un règlement de commission concurrent : sans le même
+        // ordre de verrouillage, les deux transactions s'attendraient en croix.
+        UUID packageRequestId = threadRepo.findPackageRequestIdById(threadId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "thread/not-found"));
+        PackageRequestEntity request = requestRepo.findByIdForUpdate(packageRequestId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found"));
         NegotiationThreadEntity thread = threadRepo.findById(threadId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "thread/not-found"));
-        PackageRequestEntity request = requestRepo.findById(thread.getPackageRequestId())
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found"));
 
         boolean isTraveler = callerId.equals(thread.getTravelerId());
         boolean isSender = callerId.equals(request.getSenderId());
@@ -359,28 +423,21 @@ public class NegotiationService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "negotiation/not-thread-participant");
         }
 
+        // Tout fil actif est annulable par un participant ; une fois scellé
+        // (ACCEPTED) ou déjà mort, il ne l'est plus. isActive() fait autorité
+        // sur cet ensemble, comme dans sealAcceptedThread et cancel().
         NegotiationThreadStatus st = thread.getStatus();
-        if (st != NegotiationThreadStatus.OPEN
-                && st != NegotiationThreadStatus.AWAITING_TRIP
-                && st != NegotiationThreadStatus.AWAITING_PAYMENT) {
+        if (!st.isActive()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "negotiation/not-cancellable");
         }
 
-        // Un hold Stripe en vol n'existe qu'en AWAITING_PAYMENT. Son annulation
-        // (side-effect non-transactionnel) NE doit PAS être exécutée inline avant
-        // le commit : un rollback ultérieur (contrainte, race, webhook concurrent)
-        // voiderait le hold de façon irréversible pendant que la DB revient en
-        // arrière (CLAUDE.md règle #18). On délègue donc à un listener paiements
-        // AFTER_COMMIT + REQUIRES_NEW via ce drapeau.
-        boolean releaseEscrow = (st == NegotiationThreadStatus.AWAITING_PAYMENT);
-
-        if (st == NegotiationThreadStatus.AWAITING_PAYMENT) {
-            // Soft-delete du trajet DÉDIÉ orphelin (créé exclusivement pour cette
-            // demande via createDedicatedTrip) — miroir exact de refuseTrip. C'est
-            // du travail DB transactionnel, donc il reste inline.
-            softDeleteOrphanedDedicatedTrip(thread.getTravelerAnnouncementId(), request, callerId, threadId,
-                "DEDICATED_TRIP_ORPHANED_ON_CANCEL");
-        }
+        // Soft-delete du trajet DÉDIÉ orphelin (créé exclusivement pour cette
+        // demande via createDedicatedTrip) — miroir exact de refuseTrip. C'est
+        // du travail DB transactionnel, donc il reste inline. Depuis que start()
+        // attache le trajet dès la création (Task 4), un trajet dédié peut exister
+        // dès OPEN, pas seulement AWAITING_PAYMENT — donc pas de garde de statut ici.
+        softDeleteOrphanedDedicatedTrip(thread.getTravelerAnnouncementId(), request, callerId, threadId,
+            "DEDICATED_TRIP_ORPHANED_ON_CANCEL");
 
         thread.setStatus(NegotiationThreadStatus.CANCELLED);
         thread.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC));
@@ -389,8 +446,16 @@ public class NegotiationService {
 
         UUID otherParty = isSender ? thread.getTravelerId() : request.getSenderId();
         String byName = userRepository.findById(callerId).map(this::buildDisplayName).orElse(UserEntity.UNKNOWN_DISPLAY_NAME);
+        // Le statut d'AVANT la mutation part dans l'événement : les effets
+        // financiers (annuler un hold Stripe en vol, rembourser une commission
+        // déjà débitée) en sont DÉRIVÉS par le record lui-même et exécutés par
+        // des écouteurs AFTER_COMMIT + REQUIRES_NEW — jamais en ligne ici, un
+        // rollback ultérieur voiderait sinon un side-effect Stripe irréversible
+        // (CLAUDE.md règle #18), et une transaction REQUIRES_NEW sur une ligne
+        // que celle-ci détient se bloquerait sur elle-même sans détection
+        // d'interblocage possible.
         eventPublisher.publishEvent(new NegotiationCancelledEvent(
-            thread.getId(), request.getId(), callerId, otherParty, byName, releaseEscrow));
+            thread.getId(), request.getId(), callerId, otherParty, byName, st));
         auditService.log("NEGOTIATION_THREAD", threadId, "CANCELLED", callerId,
             Map.of("reason", reason == null ? "" : reason));
     }
@@ -441,8 +506,9 @@ public class NegotiationService {
     /**
      * Bilateral accept — both the sender AND the traveler can accept the other's counter-offer.
      * <ul>
-     *   <li>If the traveler accepts AND already has a trip linked → AWAITING_PAYMENT (skip trip step).</li>
-     *   <li>Otherwise → AWAITING_TRIP (traveler must still link / create a trip).</li>
+     *   <li>If the thread already has a trip linked (guaranteed since start(), Task 4) → AWAITING_PAYMENT,
+     *       regardless of who accepts.</li>
+     *   <li>Otherwise (legacy pre-migration thread without a trip) → AWAITING_TRIP.</li>
      * </ul>
      */
     @Transactional
@@ -475,10 +541,13 @@ public class NegotiationService {
             req == null ? null : req.body());
         messageRepo.save(acceptMsg);
 
-        // Si c'est le voyageur qui accepte ET qu'il a déjà un trajet lié → AWAITING_PAYMENT direct
-        boolean travelerIsAcceptor = callerId.equals(thread.getTravelerId());
-        boolean travelerHasTrip = thread.getTravelerAnnouncementId() != null;
-        NegotiationThreadStatus nextStatus = (travelerIsAcceptor && travelerHasTrip)
+        // Depuis que start() exige un trajet (cf. spec 2026-08-16), tout thread créé
+        // après ce déploiement a déjà travelerAnnouncementId non-null : on passe
+        // directement à AWAITING_PAYMENT. Le garde-fou sur travelerAnnouncementId
+        // reste nécessaire pour les threads pré-migration encore OPEN au déploiement
+        // (rares — la migration V210, Task 7, ne traite que les AWAITING_TRIP, pas
+        // les OPEN legacy sans trajet).
+        NegotiationThreadStatus nextStatus = thread.getTravelerAnnouncementId() != null
             ? NegotiationThreadStatus.AWAITING_PAYMENT
             : NegotiationThreadStatus.AWAITING_TRIP;
 
@@ -540,45 +609,13 @@ public class NegotiationService {
 
         UserEntity traveler = userRepository.findById(callerId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "user/not-found"));
-        java.util.Set<PaymentMethod> available = computeAvailableMethods(
-            request, traveler, thread.getCurrentPriceEur(), req.useCardForCommission());
+        java.util.Set<PaymentMethod> available = computeAvailableMethods(request, traveler);
         assertNonEmptyOrThrow(available, request.getAcceptedPaymentMethods());
 
-        // Validate the announcement belongs to caller and matches corridor + date window
-        com.yadony.api.matching.AnnouncementEntity ann = announcementRepo.findById(travelerAnnouncementId)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "announcement/not-found"));
-        if (!ann.getTravelerId().equals(callerId)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "announcement/not-yours");
-        }
-        // Only an ACTIVE trip with enough remaining capacity can carry this parcel.
-        // A terminal/in-progress trip (COMPLETED/CANCELLED/IN_PROGRESS) would stay
-        // out of the traveler's "À venir" list after linking, and a full trip would
-        // overbook. Reject both here — the traveler should create a dedicated trip.
-        if (ann.getStatus() != com.yadony.api.matching.AnnouncementStatus.ACTIVE) {
-            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
-                "announcement/not-active");
-        }
-        if (ann.getAvailableKg().compareTo(request.getWeightKg()) < 0) {
-            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
-                "announcement/insufficient-capacity");
-        }
-        // Normalize city names before comparison: "Paris, France" and "Paris" both
-        // reduce to "paris". Legacy announcements were stored with country suffix.
-        if (!cityKey(ann.getDepartureCity()).equals(cityKey(request.getDepartureCity()))
-            || !cityKey(ann.getArrivalCity()).equals(cityKey(request.getArrivalCity()))) {
-            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
-                "announcement/corridor-mismatch");
-        }
-        java.time.LocalDate annDate = ann.getDepartureDate();
-        java.time.LocalDate from = request.getDesiredDate().minusDays(request.getDateToleranceDays());
-        java.time.LocalDate to = request.getDesiredDate().plusDays(request.getDateToleranceDays());
-        if (annDate.isBefore(from) || annDate.isAfter(to)) {
-            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
-                "announcement/date-mismatch");
-        }
+        com.yadony.api.matching.AnnouncementEntity ann = validateAndFetchExistingTrip(travelerAnnouncementId, callerId, request);
 
         thread.setTravelerAnnouncementId(travelerAnnouncementId);
-        thread.setTravelerTravelDate(annDate);
+        thread.setTravelerTravelDate(ann.getDepartureDate());
         thread.setAvailablePaymentMethods(available);
         thread.setPaymentMethod(null); // l'expéditeur choisit au checkout parmi le SET
         thread.setStatus(NegotiationThreadStatus.AWAITING_PAYMENT);
@@ -603,6 +640,63 @@ public class NegotiationService {
     }
 
     /**
+     * Le voyageur change le trajet lié tant que la négociation n'est pas encore
+     * AWAITING_PAYMENT (paiement possible à tout moment ensuite). Restreint à
+     * OPEN : AWAITING_TRIP est l'état du flux legacy (thread rouvert par
+     * refuseTrip) et reste géré exclusivement par submitTrip, qui transitionne
+     * vers AWAITING_PAYMENT et recalcule availablePaymentMethods — changeTrip
+     * ne fait ni l'un ni l'autre, l'autoriser depuis AWAITING_TRIP laisserait
+     * le thread bloqué avec un trajet lié mais aucun chemin vers le paiement.
+     * Notifie l'expéditeur (et non le voyageur) via
+     * {@link com.yadony.api.requests.event.NegotiationTripChangedEvent} :
+     * NegotiationAwaitingTripEvent est réservé au cas "aucun trajet encore lié,
+     * le voyageur doit choisir" et notifie le voyageur — sémantique inverse ici.
+     */
+    @Transactional
+    public NegotiationThreadResponse changeTrip(UUID callerId, UUID threadId, NegotiationChangeTripRequest req) {
+        NegotiationThreadEntity thread = threadRepo.findById(threadId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "thread/not-found"));
+        if (!callerId.equals(thread.getTravelerId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "negotiation/not-traveler");
+        }
+        if (thread.getStatus() != NegotiationThreadStatus.OPEN) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "negotiation-trip-locked");
+        }
+        PackageRequestEntity request = requestRepo.findById(thread.getPackageRequestId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found"));
+
+        UUID previousAnnouncementId = thread.getTravelerAnnouncementId();
+        com.yadony.api.matching.AnnouncementEntity ann =
+            validateAndFetchExistingTrip(req.travelerAnnouncementId(), callerId, request);
+
+        thread.setTravelerAnnouncementId(ann.getId());
+        thread.setTravelerTravelDate(ann.getDepartureDate());
+        thread.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC));
+        threadRepo.save(thread);
+
+        // Si le trajet précédent était un trajet dédié créé pour CETTE demande,
+        // il devient orphelin une fois détaché — même nettoyage que cancel/reject.
+        if (previousAnnouncementId != null && !previousAnnouncementId.equals(ann.getId())) {
+            softDeleteOrphanedDedicatedTrip(previousAnnouncementId, request, callerId, threadId,
+                "DEDICATED_TRIP_ORPHANED_ON_TRIP_CHANGE");
+        }
+
+        auditService.log("NEGOTIATION_THREAD", threadId, "TRIP_CHANGED", callerId,
+            Map.of("announcementId", ann.getId().toString()));
+
+        eventPublisher.publishEvent(new com.yadony.api.requests.event.NegotiationTripChangedEvent(
+            thread.getId(), request.getId(), request.getSenderId(), thread.getTravelerId(), ann.getId()));
+
+        List<NegotiationMessageResponse> messages = messageRepo.findByThreadIdOrderByCreatedAtAsc(threadId)
+            .stream().map(this::toMessageResponse).toList();
+        UserEntity traveler = userRepository.findById(callerId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "user/not-found"));
+        String senderName = userRepository.findById(request.getSenderId())
+            .map(this::buildDisplayName).orElse(UserEntity.UNKNOWN_DISPLAY_NAME);
+        return toResponse(thread, messages, null, traveler, request, callerId, senderName, ann);
+    }
+
+    /**
      * Traveler creates a brand-new "dedicated trip" announcement that is linked
      * exclusively to this package_request. Used when none of the traveler's
      * existing trips match the corridor/date.
@@ -617,6 +711,93 @@ public class NegotiationService {
      * On success the thread transitions AWAITING_TRIP → AWAITING_PAYMENT and the
      * sender is notified to checkout, exactly like {@link #submitTrip}.
      */
+
+    /**
+     * Valide qu'une announcement existante peut porter ce package_request :
+     * appartient à l'appelant, ACTIVE, capacité suffisante, corridor et fenêtre
+     * de dates compatibles. Partagée par {@link #submitTrip} (thread
+     * AWAITING_TRIP) et {@link #start} (trajet fourni dès la première offre) et
+     * par le futur endpoint de changement de trajet.
+     */
+    com.yadony.api.matching.AnnouncementEntity validateAndFetchExistingTrip(
+            UUID travelerAnnouncementId, UUID callerId, PackageRequestEntity request) {
+        com.yadony.api.matching.AnnouncementEntity ann = announcementRepo.findById(travelerAnnouncementId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "announcement/not-found"));
+        if (!ann.getTravelerId().equals(callerId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "announcement/not-yours");
+        }
+        if (ann.getStatus() != com.yadony.api.matching.AnnouncementStatus.ACTIVE) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "announcement/not-active");
+        }
+        if (ann.getAvailableKg().compareTo(request.getWeightKg()) < 0) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                "announcement/insufficient-capacity");
+        }
+        if (!cityKey(ann.getDepartureCity()).equals(cityKey(request.getDepartureCity()))
+            || !cityKey(ann.getArrivalCity()).equals(cityKey(request.getArrivalCity()))) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                "announcement/corridor-mismatch");
+        }
+        java.time.LocalDate annDate = ann.getDepartureDate();
+        java.time.LocalDate from = request.getDesiredDate().minusDays(request.getDateToleranceDays());
+        java.time.LocalDate to = request.getDesiredDate().plusDays(request.getDateToleranceDays());
+        if (annDate.isBefore(from) || annDate.isAfter(to)) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                "announcement/date-mismatch");
+        }
+        return ann;
+    }
+
+    /**
+     * Construit (sans sauvegarder) l'AnnouncementEntity d'un trajet dédié à un
+     * seul package_request : corridor, poids et prix dérivés et verrouillés,
+     * capacité réservée intégralement au sender jusqu'à openSurplus(). Partagée
+     * par {@link #createDedicatedTrip} (thread AWAITING_TRIP existant) et
+     * {@link #start} (création dédiée dès la première offre).
+     */
+    private com.yadony.api.matching.AnnouncementEntity buildDedicatedTripAnnouncement(
+            PackageRequestEntity request, UserEntity traveler, BigDecimal agreedPriceEur,
+            NegotiationCreateDedicatedTripRequest req) {
+        com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
+        ann.setTravelerId(traveler.getId());
+        ann.setTravelerIsPro(traveler.isProAccount());
+        ann.setDepartureCity(request.getDepartureCity());
+        ann.setArrivalCity(request.getArrivalCity());
+        ann.setDepartureDate(req.departureDate());
+        ann.setDepartureTime(req.departureTime());
+        ann.setArrivalTime(req.arrivalTime());
+        java.time.LocalTime handoverEnd =
+            req.departureTime() != null ? req.departureTime() : java.time.LocalTime.of(23, 59);
+        ann.setHandoverDeadline(java.time.LocalDateTime.of(req.departureDate(), handoverEnd));
+        ann.setPickupAddressLabel(req.pickupAddress().label());
+        ann.setPickupLat(BigDecimal.valueOf(req.pickupAddress().lat()));
+        ann.setPickupLng(BigDecimal.valueOf(req.pickupAddress().lng()));
+        ann.setDeliveryAddressLabel(req.deliveryAddress().label());
+        ann.setDeliveryLat(BigDecimal.valueOf(req.deliveryAddress().lat()));
+        ann.setDeliveryLng(BigDecimal.valueOf(req.deliveryAddress().lng()));
+        ann.setAvailableKg(java.math.BigDecimal.ZERO);
+        ann.setTotalKg(request.getWeightKg());
+        ann.setReservedKg(request.getWeightKg());
+        BigDecimal derivedPricePerKg = agreedPriceEur
+            .divide(request.getWeightKg(), 2, RoundingMode.HALF_UP);
+        if (derivedPricePerKg.signum() <= 0) {
+            derivedPricePerKg = new BigDecimal("0.01");
+        }
+        ann.setPricePerKg(derivedPricePerKg);
+        ann.setTransportMode(request.getTransportMode());
+        ann.setStatus(com.yadony.api.matching.AnnouncementStatus.ACTIVE);
+        ann.setDescription(req.description());
+        ann.setAcceptedContentTypes(req.acceptedContentTypes() != null
+                ? com.yadony.api.config.ContentCategoryNormalizer.normalizeList(req.acceptedContentTypes())
+                : new ArrayList<>());
+        ann.setRefusedTypes(req.refusedTypes() != null
+                ? com.yadony.api.config.ContentCategoryNormalizer.normalizeList(req.refusedTypes())
+                : new ArrayList<>());
+        ann.setLinkedPackageRequestId(request.getId());
+        ann.setReservedSenderId(request.getSenderId());
+        return ann;
+    }
+
     @Transactional
     public NegotiationThreadResponse createDedicatedTrip(UUID callerId, UUID threadId,
                                                           NegotiationCreateDedicatedTripRequest req) {
@@ -634,8 +815,7 @@ public class NegotiationService {
 
         UserEntity traveler = userRepository.findById(callerId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "user/not-found"));
-        java.util.Set<PaymentMethod> available = computeAvailableMethods(
-            request, traveler, thread.getCurrentPriceEur(), req.useCardForCommission());
+        java.util.Set<PaymentMethod> available = computeAvailableMethods(request, traveler);
         assertNonEmptyOrThrow(available, request.getAcceptedPaymentMethods());
 
         // Validate the chosen date falls within the sender's tolerance window.
@@ -647,60 +827,8 @@ public class NegotiationService {
         }
 
         // Build the dedicated announcement with all locked fields derived server-side.
-        com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
-        ann.setTravelerId(callerId);
-        ann.setTravelerIsPro(traveler.isProAccount());
-        ann.setDepartureCity(request.getDepartureCity());
-        ann.setArrivalCity(request.getArrivalCity());
-        ann.setDepartureDate(req.departureDate());
-        ann.setDepartureTime(req.departureTime());
-        ann.setArrivalTime(req.arrivalTime());
-        // Date limite de dépôt dérivée : le jour du départ, à l'heure de départ
-        // (le bid dédié en hérite via applyHandoverFrom).
-        java.time.LocalTime handoverEnd =
-            req.departureTime() != null ? req.departureTime() : java.time.LocalTime.of(23, 59);
-        ann.setHandoverDeadline(java.time.LocalDateTime.of(req.departureDate(), handoverEnd));
-        ann.setPickupAddressLabel(req.pickupAddress().label());
-        ann.setPickupLat(BigDecimal.valueOf(req.pickupAddress().lat()));
-        ann.setPickupLng(BigDecimal.valueOf(req.pickupAddress().lng()));
-        ann.setDeliveryAddressLabel(req.deliveryAddress().label());
-        ann.setDeliveryLat(BigDecimal.valueOf(req.deliveryAddress().lat()));
-        ann.setDeliveryLng(BigDecimal.valueOf(req.deliveryAddress().lng()));
-        // Before the surplus is opened, NO capacity is available to third parties:
-        // the whole weight is reserved for the sender. availableKg must therefore be
-        // 0 (not the total weight), so the trip card shows it as fully reserved
-        // (booked = totalKg - availableKg = reservedKg) and so it stays consistent
-        // with openSurplus(), which later sets availableKg = surplusKg.
-        ann.setAvailableKg(java.math.BigDecimal.ZERO);
-        ann.setTotalKg(request.getWeightKg());
-        // The negotiated weight is locked (reserved) for the sender. Surplus capacity
-        // stays at zero until the traveler opens it after payment (see openSurplus).
-        ann.setReservedKg(request.getWeightKg());
-        // Price-per-kg is derived from the agreed total. The trip is private, so
-        // this value is never displayed — but it must be > 0 to satisfy the
-        // pricePerKg >= 0.01 validation on the entity column.
-        BigDecimal derivedPricePerKg = thread.getCurrentPriceEur()
-            .divide(request.getWeightKg(), 2, RoundingMode.HALF_UP);
-        if (derivedPricePerKg.signum() <= 0) {
-            derivedPricePerKg = new BigDecimal("0.01");
-        }
-        ann.setPricePerKg(derivedPricePerKg);
-        ann.setTransportMode(request.getTransportMode());
-        ann.setStatus(com.yadony.api.matching.AnnouncementStatus.ACTIVE);
-        ann.setDescription(req.description());
-        // Normalisation legacy→canonique à l'écriture : un vieux binaire mobile peut encore
-        // envoyer « Hi-fi »/« Nourriture » — sans ça, le refus du voyageur serait inerte face
-        // aux bids canoniques dès l'ouverture du surplus (même invariant que les 7 autres
-        // points d'écriture, cf. ContentCategoryNormalizer).
-        ann.setAcceptedContentTypes(req.acceptedContentTypes() != null
-                ? com.yadony.api.config.ContentCategoryNormalizer.normalizeList(req.acceptedContentTypes())
-                : new ArrayList<>());
-        ann.setRefusedTypes(req.refusedTypes() != null
-                ? com.yadony.api.config.ContentCategoryNormalizer.normalizeList(req.refusedTypes())
-                : new ArrayList<>());
-        ann.setLinkedPackageRequestId(request.getId());
-        // Sender réservé : il ne pourra pas re-bidder sur le surplus de ce trajet.
-        ann.setReservedSenderId(request.getSenderId());
+        com.yadony.api.matching.AnnouncementEntity ann =
+            buildDedicatedTripAnnouncement(request, traveler, thread.getCurrentPriceEur(), req);
 
         com.yadony.api.matching.AnnouncementEntity savedAnn = announcementRepo.save(ann);
 
@@ -732,11 +860,18 @@ public class NegotiationService {
     }
 
     /**
-     * Sender confirms payment for an AWAITING_PAYMENT thread. This finalizes:
-     *  - thread → ACCEPTED
-     *  - package_request → ACCEPTED
-     *  - all competing OPEN threads on the same request → AUTO_REJECTED
-     *  - payment_intent_id stored on thread
+     * Sender confirms payment for an AWAITING_PAYMENT thread.
+     *
+     * <p>For a STRIPE (or any non-CASH) thread this finalizes immediately, via
+     * {@link #sealAcceptedThread}: thread → ACCEPTED, package_request → ACCEPTED,
+     * all competing OPEN/AWAITING_TRIP/AWAITING_PAYMENT/AWAITING_COMMISSION threads
+     * on the same request → AUTO_REJECTED, payment_intent_id stored on thread.
+     *
+     * <p>For a CASH thread nothing is sealed here — Yadony hasn't collected its
+     * commission yet, and the traveler can still back out. The thread moves to
+     * {@code AWAITING_COMMISSION} instead; the package_request stays OPEN and
+     * competing threads stay alive until the traveler settles the commission
+     * ({@code settleCommission}, Task 5) or the deadline expires.
      *
      * Currently this is a synchronous placeholder — the real Stripe escrow call
      * is wired separately in {@code PaymentService.createNegotiationEscrow} (Phase 3).
@@ -786,6 +921,12 @@ public class NegotiationService {
      * user-facing twin. Calls {@link #finalizeAfterPayment} via {@code self} (the
      * Spring proxy) so the transaction commits inside this method and the
      * commit-time optimistic-lock exception is catchable here.
+     *
+     * <p>Same race for CASH, different resting state: a concurrent finalize can win
+     * the {@code @Version} race or land just after the thread flipped to
+     * {@code AWAITING_COMMISSION} — that transition is this method's own success
+     * state (nothing is sealed yet), so it is treated as idempotent success exactly
+     * like {@code ACCEPTED} is for the card path. See {@link #resolveConcurrentCheckout}.
      */
     public NegotiationThreadResponse checkout(UUID callerId, UUID threadId,
                                               String paymentIntentId, PaymentMethod chosenMethod) {
@@ -804,14 +945,17 @@ public class NegotiationService {
     }
 
     /**
-     * Returns the finalized thread when a concurrent webhook already accepted it
-     * (idempotent success), otherwise rethrows the original conflict — the thread
-     * is in a genuinely unexpected state and the caller must hear about it.
+     * Returns the finalized thread when a concurrent webhook already accepted it, or
+     * when a concurrent CASH finalize already suspended it in
+     * {@code AWAITING_COMMISSION} — both idempotent successes, nothing left to do —
+     * otherwise rethrows the original conflict — the thread is in a genuinely
+     * unexpected state and the caller must hear about it.
      */
     private NegotiationThreadResponse resolveConcurrentCheckout(UUID callerId, UUID threadId,
                                                                 RuntimeException original) {
         NegotiationThreadResponse current = self.getById(callerId, threadId);
-        if (current.status() == NegotiationThreadStatus.ACCEPTED) {
+        if (current.status() == NegotiationThreadStatus.ACCEPTED
+                || current.status() == NegotiationThreadStatus.AWAITING_COMMISSION) {
             return current;
         }
         throw original;
@@ -820,10 +964,24 @@ public class NegotiationService {
     private NegotiationThreadResponse finalizeInternal(UUID callerId, UUID threadId,
                                                        String paymentIntentId, PaymentMethod chosenMethod,
                                                        boolean verifyEscrow) {
+        // Verrou pessimiste sur la demande AVANT toute lecture du fil : c'est le
+        // quatrième chemin qui scelle un accord, il doit suivre le même ordre que
+        // settleCommission, declineCommission et l'expiration. Sans lui, ce
+        // paiement verrouille le fil puis attend la demande pendant qu'un
+        // règlement de commission concurrent détient la demande et attend le fil :
+        // interblocage réel, détecté par PostgreSQL, qui tue l'une des deux
+        // transactions. Si c'est celle du règlement, son rollback efface le
+        // PaymentIntent, le statut de commission et l'audit alors que le débit
+        // Stripe est bien parti, et le fil se retrouve sans
+        // commissionPaymentIntentId, donc invisible pour le balayage de
+        // rattrapage. Voyageur débité, aucune contrepartie, aucune trace.
+        UUID lockedRequestId = threadRepo.findPackageRequestIdById(threadId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "thread/not-found"));
+        PackageRequestEntity request = requestRepo.findByIdForUpdate(lockedRequestId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found"));
+
         NegotiationThreadEntity thread = threadRepo.findById(threadId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "thread/not-found"));
-        PackageRequestEntity request = requestRepo.findById(thread.getPackageRequestId())
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found"));
         if (!callerId.equals(request.getSenderId())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "negotiation/not-thread-participant");
         }
@@ -836,6 +994,17 @@ public class NegotiationService {
         if (thread.getStatus() == NegotiationThreadStatus.ACCEPTED
                 && paymentIntentId != null
                 && paymentIntentId.equals(thread.getPaymentIntentId())) {
+            return buildFinalizedResponse(thread, request, callerId, paymentIntentId);
+        }
+        // Idempotent (CASH) : le premier appel a déjà suspendu ce thread en
+        // AWAITING_COMMISSION (double tap de l'expéditeur, relance après timeout
+        // réseau). Rien n'est scellé à ce stade donc il n'y a pas de PaymentIntent à
+        // comparer comme pour la carte — le statut du thread suffit à prouver que le
+        // premier appel a déjà réussi. Sans ce garde-fou, le second appel retombe sur
+        // la 409 ci-dessous et l'expéditeur voit une erreur pour une action qui a
+        // pourtant fonctionné.
+        if (thread.getStatus() == NegotiationThreadStatus.AWAITING_COMMISSION
+                && thread.getPaymentMethod() == PaymentMethod.CASH) {
             return buildFinalizedResponse(thread, request, callerId, paymentIntentId);
         }
         if (thread.getStatus() != NegotiationThreadStatus.AWAITING_PAYMENT) {
@@ -880,29 +1049,52 @@ public class NegotiationService {
                 "request/details-incomplete");
         }
 
-        // CASH threads : prélever la commission Yadony au voyageur (wallet puis carte) AVANT
-        // de finaliser. En échec → 422 et la tx @Transactional rollback : le thread reste
-        // AWAITING_PAYMENT (non finalisé). STRIPE : pas de prélèvement ici (application_fee
-        // déjà géré par PaymentService.createNegotiationEscrow).
-        if (thread.getPaymentMethod() == PaymentMethod.CASH) {
-            boolean charged = cashGatePort.chargeNegotiationCashCommission(
-                thread.getTravelerId(), request.getSenderId(), thread.getId(), thread.getCurrentPriceEur());
-            if (!charged) {
-                throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "negotiation/commission-charge-failed");
-            }
-        } else if (verifyEscrow) {
-            // Online /checkout (untrusted) : ne JAMAIS faire confiance au
-            // paymentIntentId fourni par le client. On confirme auprès de Stripe
-            // qu'il s'agit d'un escrow réel et autorisé (requires_capture) lié à CE
-            // thread avant de finaliser. Ferme le bypass où un expéditeur finalisait
-            // une expédition (voyageur engagé + QR + tracking) sans avoir payé.
+        // STRIPE (online /checkout non fiable uniquement — jamais le webhook, déjà
+        // vérifié par Stripe) : ne JAMAIS faire confiance au paymentIntentId fourni
+        // par le client. On confirme auprès de Stripe qu'il s'agit d'un escrow réel
+        // et autorisé (requires_capture) lié à CE thread avant de finaliser. Ferme
+        // le bypass où un expéditeur finalisait une expédition (voyageur engagé +
+        // QR + tracking) sans avoir payé. CASH n'a aucun escrow à vérifier ici —
+        // son sort se joue juste en dessous.
+        if (thread.getPaymentMethod() != PaymentMethod.CASH && verifyEscrow) {
             if (!escrowPort.verifyNegotiationEscrow(threadId, paymentIntentId)) {
                 throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "payment/escrow-not-verified");
             }
         }
 
+        if (thread.getPaymentMethod() == PaymentMethod.CASH) {
+            // Un accord en espèces ne scelle rien : Yadony n'a pas encore encaissé sa
+            // commission, et le voyageur peut encore renoncer. La demande reste donc
+            // ouverte et les offres concurrentes vivantes, jusqu'au règlement ou à
+            // l'expiration du délai.
+            thread.setStatus(NegotiationThreadStatus.AWAITING_COMMISSION);
+            thread.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC));
+            threadRepo.save(thread);
+            BigDecimal commission = PriceBreakdown
+                .fromNet(thread.getCurrentPriceEur(), commissionProperties.rate()).commission();
+            LocalDateTime expiresAt = LocalDateTime.now(ZoneOffset.UTC)
+                .plusMinutes(negotiationProperties.commissionWindowMinutes());
+            eventPublisher.publishEvent(new NegotiationCommissionPendingEvent(
+                thread.getId(), request.getId(), thread.getTravelerId(),
+                request.getSenderId(), commission, thread.getCurrency(), expiresAt));
+            auditService.log("NEGOTIATION_THREAD", thread.getId(), "AWAITING_COMMISSION", callerId,
+                Map.of("commission", commission.toPlainString()));
+        } else {
+            sealAcceptedThread(thread, request, callerId, paymentIntentId);
+        }
+
+        return buildFinalizedResponse(thread, request, callerId, paymentIntentId);
+    }
+
+    /**
+     * Scelle définitivement un accord : c'est ici que la demande se ferme, que les
+     * offres concurrentes tombent et que le colis est matérialisé. Appelée par le
+     * paiement carte de l'expéditeur, et par le règlement de la commission du
+     * voyageur pour les accords en espèces.
+     */
+    private void sealAcceptedThread(NegotiationThreadEntity thread, PackageRequestEntity request,
+                                    UUID callerId, String paymentIntentId) {
         thread.setPaymentIntentId(paymentIntentId);
         thread.setStatus(NegotiationThreadStatus.ACCEPTED);
         thread.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC));
@@ -922,15 +1114,21 @@ public class NegotiationService {
         request.setStatus(PackageRequestStatus.ACCEPTED);
         requestRepo.save(request);
 
+        // AWAITING_COMMISSION balayé au même titre que les autres statuts en attente :
+        // la demande reste disponible tant qu'un accord cash n'est pas scellé, donc un
+        // autre voyageur peut très bien avoir conclu entre-temps. Sans ce statut ici,
+        // un thread cash resterait AWAITING_COMMISSION sur une demande déjà emportée —
+        // le voyageur perdant ne serait jamais prévenu, son trajet dédié resterait
+        // bloqué, et il pourrait tenter de régler la commission d'une demande qui n'est
+        // plus libre (Task 5 s'appuie sur ce statut pour refuser ce règlement).
         threadRepo.findByPackageRequestId(request.getId()).stream()
-            .filter(t -> !t.getId().equals(thread.getId())
-                      && (t.getStatus() == NegotiationThreadStatus.OPEN
-                          || t.getStatus() == NegotiationThreadStatus.AWAITING_TRIP
-                          || t.getStatus() == NegotiationThreadStatus.AWAITING_PAYMENT))
+            .filter(t -> !t.getId().equals(thread.getId()) && t.getStatus().isActive())
             .forEach(t -> {
                 t.setStatus(NegotiationThreadStatus.AUTO_REJECTED);
                 t.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC));
                 threadRepo.save(t);
+                softDeleteOrphanedDedicatedTrip(t.getTravelerAnnouncementId(), request, callerId, t.getId(),
+                    "DEDICATED_TRIP_ORPHANED_ON_AUTO_REJECT");
                 auditService.log("NEGOTIATION_THREAD", t.getId(), "AUTO_REJECTED", callerId,
                     Map.of("reason", "competing-accepted",
                         "winningThreadId", thread.getId().toString()));
@@ -954,13 +1152,15 @@ public class NegotiationService {
             thread.getPromoCode(),
             thread.getCommissionRate()
         ));
-        auditService.log("NEGOTIATION_THREAD", threadId, "ACCEPTED", callerId,
+        // paymentIntentId est null pour un accord cash scellé par settleCommission/
+        // confirmCommission (aucun escrow Stripe pour ce fil) — Map.of() rejette les
+        // valeurs null, d'où la substitution par "" (même convention que ailleurs
+        // dans cette classe, cf. cancelNegotiation/reject).
+        auditService.log("NEGOTIATION_THREAD", thread.getId(), "ACCEPTED", callerId,
             Map.of("price", thread.getCurrentPriceEur().toString(),
-                "paymentIntentId", paymentIntentId));
+                "paymentIntentId", paymentIntentId != null ? paymentIntentId : ""));
         auditService.log("PACKAGE_REQUEST", request.getId(), "ACCEPTED", callerId,
             Map.of("threadId", thread.getId().toString()));
-
-        return buildFinalizedResponse(thread, request, callerId, paymentIntentId);
     }
 
     /**
@@ -982,6 +1182,219 @@ public class NegotiationService {
             ? announcementRepo.findById(thread.getTravelerAnnouncementId()).orElse(null)
             : null;
         return toResponse(thread, allMsgs, paymentIntentId, finalTraveler, request, callerId, senderName, linkedAnn);
+    }
+
+    /**
+     * Le voyageur règle la commission Yadony et emporte ainsi la demande. C'est ce
+     * règlement qui scelle l'accord : tant qu'il n'a pas eu lieu, la demande reste
+     * ouverte et un autre voyageur peut la conclure.
+     *
+     * <p>La course, traitée avec soin : la demande reste disponible tant qu'aucun
+     * accord cash n'est scellé (elle passe en {@code NEGOTIATING} dès la première
+     * offre, jamais en {@code OPEN} à ce stade en production), donc plusieurs
+     * threads peuvent être {@code AWAITING_COMMISSION} en même temps sur la même
+     * demande, et l'expéditeur peut même en conclure un autre entre-temps. Le
+     * premier voyageur qui règle l'emporte. La demande est donc vérifiée encore
+     * disponible AVANT tout débit : débiter puis découvrir qu'elle est prise
+     * obligerait à rembourser un voyageur qui n'a rien à se reprocher.
+     *
+     * <p>Verrou pessimiste ({@link PackageRequestRepository#findByIdForUpdate})
+     * plutôt qu'une simple lecture : {@code PackageRequestEntity} ne porte aucun
+     * {@code @Version}, donc sans ce verrou, deux voyageurs tous deux {@code
+     * AWAITING_COMMISSION} sur la même demande peuvent tous deux lire "disponible"
+     * avant que l'un ou l'autre n'ait débité, débiter chacun, puis sceller chacun
+     * — deux fils {@code ACCEPTED}, deux colis matérialisés pour un seul colis
+     * physique. Le verrou sérialise : le second lecteur bloque jusqu'au commit du
+     * premier, puis relit "déjà pris" avant tout débit. Même mécanisme que {@link
+     * #start}.
+     */
+    @Transactional
+    public AcceptBidResponse settleCommission(UUID callerId, UUID threadId, CommissionSource source) {
+        LockedCommissionThread locked = lockAwaitingCommissionThread(callerId, threadId);
+        NegotiationThreadEntity thread = locked.thread();
+        PackageRequestEntity request = locked.request();
+
+        // Garde de course : ne jamais débiter pour une demande déjà emportée par un
+        // autre voyageur. OPEN et NEGOTIATING sont tous deux "encore disponibles" —
+        // exiger OPEN seul refuserait tous les règlements en production, la demande
+        // étant déjà passée en NEGOTIATING dès la toute première offre (start()).
+        if (request.getStatus() != PackageRequestStatus.OPEN
+                && request.getStatus() != PackageRequestStatus.NEGOTIATING) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "request/already-accepted");
+        }
+
+        AcceptBidResponse resp = cashGatePort.settleNegotiationCommission(
+            thread.getTravelerId(), request.getSenderId(), threadId, thread.getCurrentPriceEur(), source);
+
+        if (resp.status() == AcceptanceStatusDto.ACCEPTED) {
+            sealAcceptedThread(thread, request, callerId, null);
+            auditService.log("NEGOTIATION_THREAD", threadId, "CASH_COMMISSION_SETTLED", callerId,
+                Map.of("via", String.valueOf(thread.getCommissionChargedVia())));
+        }
+        return resp;
+    }
+
+    /**
+     * Confirme un règlement de commission passé par une authentification 3D
+     * Secure : relit le PaymentIntent auprès de Stripe (via {@link CashGatePort},
+     * {@code CashCommissionService.confirmCommissionAcceptance} en miroir pour le
+     * flux classique) et scelle l'accord si Stripe confirme "succeeded". Ne
+     * rappelle jamais {@link #settleCommission} : la clé d'idempotence Stripe
+     * rejouerait la réponse "authentification requise" en boucle et le voyageur ne
+     * pourrait jamais aboutir.
+     *
+     * <p>La 3DS est asynchrone : le voyageur peut mettre plusieurs secondes (ou
+     * plus, entre deux ouvertures d'app) à la compléter dans son app bancaire,
+     * pendant lesquelles un concurrent peut très bien avoir scellé la même
+     * demande. Deux issues à traiter sans perdre l'argent du voyageur :
+     * <ul>
+     *   <li>ce thread a déjà scellé par le passé (double appel) → succès
+     *       idempotent, rien à rembourser, c'est LUI qui a gagné ;</li>
+     *   <li>un AUTRE thread a scellé entre temps (ce thread n'est plus {@code
+     *       AWAITING_COMMISSION}, ou la demande n'est plus disponible malgré le
+     *       verrou) → la 3DS a pu réussir quand même : on relit Stripe et on
+     *       rembourse plutôt que de laisser Yadony encaisser une commission sans
+     *       contrepartie, et le voyageur reçoit "place déjà prise", pas une
+     *       erreur technique de concurrence.
+     * </ul>
+     */
+    @Transactional
+    public ConfirmAcceptanceResponse confirmCommission(UUID callerId, UUID threadId) {
+        NegotiationThreadEntity thread = threadRepo.findById(threadId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "thread/not-found"));
+        if (!callerId.equals(thread.getTravelerId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "negotiation/not-traveler");
+        }
+        if (thread.getStatus() == NegotiationThreadStatus.ACCEPTED) {
+            // Idempotent : CE thread a déjà scellé l'accord (double appel/relance).
+            // Rien à refaire, rien à rembourser — c'est lui qui a gagné.
+            return ConfirmAcceptanceResponse.ok();
+        }
+        if (thread.getStatus() != NegotiationThreadStatus.AWAITING_COMMISSION) {
+            refundIfChargedAfterLoss(callerId, threadId);
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "request/already-accepted");
+        }
+
+        // Même verrou pessimiste que settleCommission, pour la même raison : sans
+        // lui, cette confirmation pourrait sceller une demande déjà emportée par un
+        // concurrent pendant l'attente de la 3DS.
+        PackageRequestEntity request = requestRepo.findByIdForUpdate(thread.getPackageRequestId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found"));
+        if (request.getStatus() != PackageRequestStatus.OPEN
+                && request.getStatus() != PackageRequestStatus.NEGOTIATING) {
+            refundIfChargedAfterLoss(callerId, threadId);
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "request/already-accepted");
+        }
+
+        ConfirmAcceptanceResponse resp = cashGatePort.confirmNegotiationCommission(callerId, threadId);
+        if (resp.accepted()) {
+            sealAcceptedThread(thread, request, callerId, null);
+            auditService.log("NEGOTIATION_THREAD", threadId, "CASH_COMMISSION_SETTLED", callerId,
+                Map.of("via", String.valueOf(thread.getCommissionChargedVia())));
+        }
+        return resp;
+    }
+
+    /**
+     * Rembourse une commission qui a fini par être débitée (3DS aboutie après
+     * coup, côté Stripe) alors que la place est déjà partie à un concurrent —
+     * jamais laisser Yadony encaisser pour un accord qui n'a pas eu lieu. No-op
+     * silencieux si rien n'a été débité par carte (le port relit Stripe lui-même
+     * pour trancher, jamais d'exception qui remonte).
+     */
+    private void refundIfChargedAfterLoss(UUID travelerId, UUID threadId) {
+        cashGatePort.refundNegotiationCommissionIfCharged(travelerId, threadId);
+    }
+
+    /**
+     * Le voyageur renonce explicitement à un accord en espèces avant d'avoir réglé
+     * la commission Yadony. Rien n'a été scellé (thread {@code AWAITING_COMMISSION}) :
+     * la demande n'est donc pas perdue, elle redevient disponible pour d'autres
+     * voyageurs — exactement comme {@link #cancelNegotiation}, mais restreint à ce
+     * statut précis puisque {@code cancelNegotiation} ne couvre pas AWAITING_COMMISSION.
+     *
+     * <p>Un renoncement peut parfaitement survenir APRÈS un débit réel, contrairement
+     * à ce qu'on croirait : {@code settleCommission} crée le PaymentIntent avec
+     * {@code confirm=true} et le persiste quel que soit son statut. Le voyageur qui
+     * lance un règlement par carte, part authentifier sa 3DS dans son application
+     * bancaire (Stripe encaisse), ne revient jamais dans dony — donc
+     * {@code confirmCommission} n'est jamais appelée — puis renonce, aurait vu sa
+     * commission encaissée pour un accord qu'il a explicitement refusé. Le
+     * remboursement n'est PAS lancé ici : il est confié à un écouteur
+     * {@code AFTER_COMMIT} de {@code NegotiationCommissionDeclinedEvent}. Appeler
+     * Stripe en ligne depuis cette méthode ouvrirait une transaction
+     * {@code REQUIRES_NEW} sur une ligne que cette transaction vient de muter et
+     * détient : elle se bloquerait sur elle-même, sans qu'aucun cycle ne soit
+     * visible pour PostgreSQL, donc sans détection d'interblocage. Même discipline
+     * que {@link #cancelNegotiation}. Le statut {@code CANCELLED} est en outre repris
+     * par le balayage de {@code CommissionWindowExpiryRunner}, filet pour la course
+     * étroite où la 3DS aboutit après le commit de ce renoncement.
+     */
+    @Transactional
+    public void declineCommission(UUID callerId, UUID threadId) {
+        LockedCommissionThread locked = lockAwaitingCommissionThread(callerId, threadId);
+        NegotiationThreadEntity thread = locked.thread();
+        PackageRequestEntity request = locked.request();
+
+        thread.setStatus(NegotiationThreadStatus.CANCELLED);
+        thread.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC));
+        threadRepo.save(thread);
+        reopenRequestWhenNoActiveNegotiation(request);
+        softDeleteOrphanedDedicatedTrip(thread.getTravelerAnnouncementId(), request, callerId, threadId,
+            "DEDICATED_TRIP_ORPHANED_ON_COMMISSION_DECLINE");
+
+        auditService.log("NEGOTIATION_THREAD", threadId, "COMMISSION_DECLINED", callerId,
+            Map.of("packageRequestId", request.getId().toString()));
+
+        // Le remboursement éventuel est déclenché par l'écouteur AFTER_COMMIT de cet
+        // événement, jamais en ligne ici (cf. javadoc).
+        eventPublisher.publishEvent(new com.yadony.api.requests.event.NegotiationCommissionDeclinedEvent(
+            thread.getId(), request.getId(), request.getSenderId(), thread.getTravelerId()));
+    }
+
+    /** Fil en attente de commission, avec sa demande déjà verrouillée. */
+    private record LockedCommissionThread(NegotiationThreadEntity thread, PackageRequestEntity request) {}
+
+    /**
+     * Verrouille la demande, puis charge le fil et vérifie qu'il attend bien sa
+     * commission au nom de l'appelant. Partagé par {@link #settleCommission} et
+     * {@link #declineCommission} : les deux doivent verrouiller dans le même ordre
+     * et refuser dans le même ordre, et une divergence entre les deux ne se verrait
+     * qu'en production.
+     *
+     * <p>Le verrou est pris AVANT toute lecture du fil, via une projection qui ne
+     * charge pas l'entité. Lire le fil d'abord le mettrait dans le contexte de
+     * persistance : les gardes d'état ci-dessous jugeraient alors sur l'état
+     * d'avant le verrou, et un balayage d'expiration acquérant le verrou entre les
+     * deux ferait échouer le règlement au commit — après le débit Stripe, en
+     * rollbackant le PaymentIntent, le statut de commission et l'audit. Le voyageur
+     * serait débité sans aucune trace locale.
+     *
+     * <p>Verrouiller dans l'ordre inverse (fil puis demande) exposerait à un
+     * interblocage avec le balayage d'expiration quand un voyageur agit à la
+     * seconde où sa fenêtre expire.
+     *
+     * <p>L'absence de la demande n'est signalée qu'APRÈS les gardes du fil : un
+     * appelant qui n'est même pas le voyageur du fil ne doit pas apprendre par un
+     * 404 qu'une demande a disparu, il doit recevoir son 403.
+     */
+    private LockedCommissionThread lockAwaitingCommissionThread(UUID callerId, UUID threadId) {
+        UUID packageRequestId = threadRepo.findPackageRequestIdById(threadId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "thread/not-found"));
+        PackageRequestEntity lockedRequest = requestRepo.findByIdForUpdate(packageRequestId).orElse(null);
+
+        NegotiationThreadEntity thread = threadRepo.findById(threadId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "thread/not-found"));
+        if (!callerId.equals(thread.getTravelerId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "negotiation/not-traveler");
+        }
+        if (thread.getStatus() != NegotiationThreadStatus.AWAITING_COMMISSION) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "thread/not-awaiting-commission");
+        }
+        if (lockedRequest == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found");
+        }
+        return new LockedCommissionThread(thread, lockedRequest);
     }
 
     /**
@@ -1023,11 +1436,8 @@ public class NegotiationService {
         if (pricePerKg == null || pricePerKg.signum() <= 0) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "surplus/invalid-price");
         }
-        NegotiationThreadEntity thread = threadRepo.findByTravelerAnnouncementId(announcementId)
+        threadRepo.findByTravelerAnnouncementIdAndStatus(announcementId, NegotiationThreadStatus.ACCEPTED)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "surplus/negotiation-not-accepted"));
-        if (thread.getStatus() != NegotiationThreadStatus.ACCEPTED) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "surplus/negotiation-not-accepted");
-        }
 
         ann.setAvailableKg(surplusKg);
         ann.setTotalKg(ann.getReservedKg().add(surplusKg));
@@ -1467,6 +1877,14 @@ public class NegotiationService {
                     || message.createdAt() == null
                     || message.createdAt().isAfter(lastReadAt)));
 
+        // Échéance calculée exactement comme CommissionWindowExpiryRunner détermine
+        // l'expiration (lastActivityAt + fenêtre configurée), sinon le compte à rebours
+        // affiché par l'app ne correspondrait pas au moment réel où le fil expire.
+        LocalDateTime commissionDeadline = t.getStatus() == NegotiationThreadStatus.AWAITING_COMMISSION
+                && t.getLastActivityAt() != null
+            ? t.getLastActivityAt().plusMinutes(negotiationProperties.commissionWindowMinutes())
+            : null;
+
         return new NegotiationThreadResponse(
             t.getId(), t.getPackageRequestId(), t.getTravelerId(),
             t.getTravelerAnnouncementId(), t.getTravelerTravelDate(), t.getTravelerAvailableKg(),
@@ -1490,7 +1908,9 @@ public class NegotiationService {
             hasUnread,
             t.getPromoCode(),
             t.getCommissionRate(),
-            t.getCurrency()
+            t.getCurrency(),
+            t.getCommissionStatus(),
+            commissionDeadline
         );
     }
 
@@ -1536,12 +1956,17 @@ public class NegotiationService {
 
     /**
      * SET des modes réellement fournissables = colis.acceptedPaymentMethods ∩ capacité voyageur.
-     * STRIPE : compte Connect onboardé. CASH : fonds wallet suffisants OU (consentement carte
-     * ET carte de commission enregistrée) — la commission est fonction du prix négocié.
+     *
+     * STRIPE : exige un compte Connect onboardé — sans lui le voyageur ne peut structurellement
+     * pas être payé, le blocage doit donc tomber ici, avant tout engagement.
+     *
+     * CASH : jamais conditionné au solde du portefeuille. Le solde n'est qu'une modalité de
+     * règlement de la commission, pas une capacité : il peut être rechargé à tout moment et
+     * n'a de sens qu'au moment où le voyageur règle lui-même la commission
+     * ({@code settleCommission}, wallet puis carte), une fois l'accord conclu.
      */
     private java.util.Set<PaymentMethod> computeAvailableMethods(
-            PackageRequestEntity request, UserEntity traveler,
-            BigDecimal negotiatedPrice, boolean useCardForCommission) {
+            PackageRequestEntity request, UserEntity traveler) {
         java.util.Set<PaymentMethod> set = java.util.EnumSet.noneOf(PaymentMethod.class);
         java.util.Set<PaymentMethod> accepted = request.getAcceptedPaymentMethods();
 
@@ -1549,13 +1974,7 @@ public class NegotiationService {
             set.add(PaymentMethod.STRIPE);
         }
         if (accepted.contains(PaymentMethod.CASH)) {
-            BigDecimal commission = PriceBreakdown
-                .fromNet(negotiatedPrice, commissionProperties.rate()).commission();
-            boolean cashOk = cashGatePort.hasSufficientFunds(traveler.getId(), commission, request.getCurrency())
-                || (useCardForCommission && cashGatePort.hasCommissionCard(traveler.getId()));
-            if (cashOk) {
-                set.add(PaymentMethod.CASH);
-            }
+            set.add(PaymentMethod.CASH);
         }
         return set;
     }
