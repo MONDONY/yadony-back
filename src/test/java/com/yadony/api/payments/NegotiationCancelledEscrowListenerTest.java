@@ -1,5 +1,6 @@
 package com.yadony.api.payments;
 
+import com.yadony.api.requests.entity.NegotiationThreadStatus;
 import com.yadony.api.requests.event.NegotiationCancelledEvent;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -34,8 +35,12 @@ class NegotiationCancelledEscrowListenerTest {
         listener = new NegotiationCancelledEscrowListener(paymentService);
     }
 
+    // releaseEscrow n'est plus un drapeau posé par le publieur : il est dérivé
+    // par le record du statut d'avant l'annulation. Seul AWAITING_PAYMENT peut
+    // porter un hold Stripe en vol.
     private NegotiationCancelledEvent event(boolean releaseEscrow) {
-        return new NegotiationCancelledEvent(threadId, requestId, byUserId, toUserId, "Alice", releaseEscrow, false);
+        return new NegotiationCancelledEvent(threadId, requestId, byUserId, toUserId, "Alice",
+            releaseEscrow ? NegotiationThreadStatus.AWAITING_PAYMENT : NegotiationThreadStatus.OPEN);
     }
 
     @Test

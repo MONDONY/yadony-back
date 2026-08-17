@@ -423,30 +423,13 @@ public class NegotiationService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "negotiation/not-thread-participant");
         }
 
+        // Tout fil actif est annulable par un participant ; une fois scellé
+        // (ACCEPTED) ou déjà mort, il ne l'est plus. isActive() fait autorité
+        // sur cet ensemble, comme dans sealAcceptedThread et cancel().
         NegotiationThreadStatus st = thread.getStatus();
-        if (st != NegotiationThreadStatus.OPEN
-                && st != NegotiationThreadStatus.AWAITING_TRIP
-                && st != NegotiationThreadStatus.AWAITING_PAYMENT
-                && st != NegotiationThreadStatus.AWAITING_COMMISSION) {
+        if (!st.isActive()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "negotiation/not-cancellable");
         }
-
-        // Un hold Stripe en vol n'existe qu'en AWAITING_PAYMENT. Son annulation
-        // (side-effect non-transactionnel) NE doit PAS être exécutée inline avant
-        // le commit : un rollback ultérieur (contrainte, race, webhook concurrent)
-        // voiderait le hold de façon irréversible pendant que la DB revient en
-        // arrière (CLAUDE.md règle #18). On délègue donc à un listener paiements
-        // AFTER_COMMIT + REQUIRES_NEW via ce drapeau.
-        boolean releaseEscrow = (st == NegotiationThreadStatus.AWAITING_PAYMENT);
-
-        // Même discipline pour la commission d'un accord en espèces : en
-        // AWAITING_COMMISSION le voyageur a pu déjà payer sa commission pour un
-        // accord qui n'aura jamais lieu. La garder reviendrait à facturer du
-        // vide. Le remboursement part d'un écouteur AFTER_COMMIT, jamais en
-        // ligne : ouvrir ici une transaction REQUIRES_NEW sur une ligne que
-        // cette transaction détient déjà la bloquerait sur elle-même, sans
-        // cycle visible pour PostgreSQL donc sans détection d'interblocage.
-        boolean refundCommission = (st == NegotiationThreadStatus.AWAITING_COMMISSION);
 
         // Soft-delete du trajet DÉDIÉ orphelin (créé exclusivement pour cette
         // demande via createDedicatedTrip) — miroir exact de refuseTrip. C'est
@@ -463,8 +446,16 @@ public class NegotiationService {
 
         UUID otherParty = isSender ? thread.getTravelerId() : request.getSenderId();
         String byName = userRepository.findById(callerId).map(this::buildDisplayName).orElse(UserEntity.UNKNOWN_DISPLAY_NAME);
+        // Le statut d'AVANT la mutation part dans l'événement : les effets
+        // financiers (annuler un hold Stripe en vol, rembourser une commission
+        // déjà débitée) en sont DÉRIVÉS par le record lui-même et exécutés par
+        // des écouteurs AFTER_COMMIT + REQUIRES_NEW — jamais en ligne ici, un
+        // rollback ultérieur voiderait sinon un side-effect Stripe irréversible
+        // (CLAUDE.md règle #18), et une transaction REQUIRES_NEW sur une ligne
+        // que celle-ci détient se bloquerait sur elle-même sans détection
+        // d'interblocage possible.
         eventPublisher.publishEvent(new NegotiationCancelledEvent(
-            thread.getId(), request.getId(), callerId, otherParty, byName, releaseEscrow, refundCommission));
+            thread.getId(), request.getId(), callerId, otherParty, byName, st));
         auditService.log("NEGOTIATION_THREAD", threadId, "CANCELLED", callerId,
             Map.of("reason", reason == null ? "" : reason));
     }

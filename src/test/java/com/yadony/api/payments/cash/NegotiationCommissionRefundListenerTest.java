@@ -1,5 +1,6 @@
 package com.yadony.api.payments.cash;
 
+import com.yadony.api.requests.entity.NegotiationThreadStatus;
 import com.yadony.api.requests.event.NegotiationCancelledEvent;
 import com.yadony.api.requests.event.NegotiationCommissionDeclinedEvent;
 import org.junit.jupiter.api.DisplayName;
@@ -84,9 +85,12 @@ class NegotiationCommissionRefundListenerTest {
                 .isEqualTo(Propagation.REQUIRES_NEW);
     }
 
+    // Le drapeau de remboursement est dérivé par le record : seul un fil qui
+    // était AWAITING_COMMISSION peut devoir un remboursement de commission.
     private static NegotiationCancelledEvent cancelled(UUID threadId, UUID byUserId, UUID toUserId) {
         return new NegotiationCancelledEvent(
-                threadId, UUID.randomUUID(), byUserId, toUserId, "Alice", false, true);
+                threadId, UUID.randomUUID(), byUserId, toUserId, "Alice",
+                NegotiationThreadStatus.AWAITING_COMMISSION);
     }
 
     @Test

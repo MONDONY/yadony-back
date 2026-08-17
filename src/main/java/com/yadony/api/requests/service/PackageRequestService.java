@@ -580,15 +580,20 @@ public class PackageRequestService {
                 t.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC));
                 threadRepository.save(t);
                 softDeleteOrphanedDedicatedTrip(t, callerUid);
+                // Chaque fil tué laisse sa propre trace, comme sur tous les
+                // autres chemins de mort d'un fil : c'est précisément ici qu'on
+                // en aura besoin, la demande étant soft-deletée donc introuvable.
+                auditService.log("NEGOTIATION_THREAD", t.getId(), "AUTO_REJECTED", callerUid,
+                    Map.of("reason", "request-cancelled", "previousStatus", previous.name()));
 
-                // Les deux effets financiers partent d'écouteurs AFTER_COMMIT,
-                // pilotés par ces drapeaux : le stade d'avant l'annulation n'est
-                // connu que d'ici. Un rollback ne déclenche aucun AFTER_COMMIT,
-                // donc aucune fuite d'argent sur une annulation qui n'a pas eu lieu.
+                // Le statut d'avant l'annulation part dans l'événement — seul ce
+                // point du code le connaît. Les effets financiers (hold Stripe à
+                // annuler, commission à rembourser) en sont dérivés par le record
+                // et exécutés par des écouteurs AFTER_COMMIT : un rollback ne
+                // déclenche rien, donc aucune fuite d'argent sur une annulation
+                // qui n'a pas eu lieu.
                 eventPublisher.publishEvent(new NegotiationCancelledEvent(
-                    t.getId(), requestId, callerUid, t.getTravelerId(), senderName,
-                    previous == NegotiationThreadStatus.AWAITING_PAYMENT,
-                    previous == NegotiationThreadStatus.AWAITING_COMMISSION));
+                    t.getId(), requestId, callerUid, t.getTravelerId(), senderName, previous));
             });
 
         auditService.log("PACKAGE_REQUEST", requestId, "CANCELLED", callerUid,
@@ -604,6 +609,13 @@ public class PackageRequestService {
      *
      * <p>Compare l'identifiant porté par le fil, jamais l'entité demande : elle
      * vient d'être soft-deletée par l'appelant, donc déjà introuvable.
+     *
+     * <p>Miroir de {@code NegotiationService#softDeleteOrphanedDedicatedTrip},
+     * {@code NegotiationExpiryRunner#softDeleteOrphanedDedicatedTrip} et
+     * {@code CommissionWindowExpiryRunner#softDeleteOrphanedDedicatedTrip} —
+     * quatrième copie assumée : leur extraction en collaborateur commun casserait
+     * les assertions de tests de chantiers antérieurs, dette actée dans le ledger.
+     * Toute correction de cette règle doit être répercutée aux quatre endroits.
      */
     private void softDeleteOrphanedDedicatedTrip(NegotiationThreadEntity thread, UUID callerUid) {
         UUID announcementId = thread.getTravelerAnnouncementId();
@@ -908,12 +920,6 @@ public class PackageRequestService {
      */
     public PackageRequestSearchResponse toSearchResponse(PackageRequestEntity e, boolean isFavorite) {
         return packageRequestSearchMapper.toSearchResponse(e, isFavorite);
-    }
-
-    /** Délègue à {@link UserEntity#publicDisplayName()} : repli sur le username du compte. */
-    private String buildSenderDisplayName(UserEntity user) {
-        if (user == null) return UserEntity.UNKNOWN_DISPLAY_NAME;
-        return user.publicDisplayName();
     }
 
     /**
