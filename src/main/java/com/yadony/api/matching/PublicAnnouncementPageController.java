@@ -252,8 +252,29 @@ public class PublicAnnouncementPageController {
         return MobileOs.OTHER;
     }
 
+    /**
+     * Normalise une valeur venue d'une variable d'environnement.
+     *
+     * <p>Traite comme absentes, en plus du vide : les espaces de bord, et les
+     * littéraux {@code "null"} / {@code "none"} / {@code "-"}. Ce ne sont pas
+     * des cas théoriques — l'interface GitHub refusant d'enregistrer une
+     * variable vide, on y saisit naturellement {@code null} pour dire « pas
+     * encore de valeur ». Sans ce filtre, la chaîne {@code "null"} passe pour
+     * une URL et produit un bouton {@code href="null"} bien visible sur la
+     * page publique.
+     */
     private String blankToNull(String value) {
-        return (value == null || value.isBlank()) ? null : value;
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        if (trimmed.isEmpty()
+                || trimmed.equalsIgnoreCase("null")
+                || trimmed.equalsIgnoreCase("none")
+                || trimmed.equals("-")) {
+            return null;
+        }
+        return trimmed;
     }
 
     /**
@@ -427,10 +448,20 @@ public class PublicAnnouncementPageController {
         return value == null ? null : value.stripTrailingZeros().toPlainString();
     }
 
+    /**
+     * Première valeur exploitable des deux, ou chaîne vide.
+     *
+     * <p>Passe par {@link #blankToNull} et non par {@code isBlank} : le gabarit
+     * n'affiche le bouton que si cette valeur est non vide, donc un littéral
+     * {@code "null"} venu d'une variable d'environnement produirait un bouton
+     * pointant vers {@code href="null"}.
+     */
     private String firstNonBlank(String first, String second) {
-        if (first != null && !first.isBlank()) {
-            return first;
+        String firstUsable = blankToNull(first);
+        if (firstUsable != null) {
+            return firstUsable;
         }
-        return second == null ? "" : second;
+        String secondUsable = blankToNull(second);
+        return secondUsable == null ? "" : secondUsable;
     }
 }
