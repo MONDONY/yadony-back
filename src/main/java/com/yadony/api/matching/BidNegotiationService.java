@@ -273,6 +273,13 @@ public class BidNegotiationService {
         if (cash) {
             ctx.bid().setStatus(BidStatus.PENDING);
             ctx.bid().setAwaitingPaymentExpiresAt(null);
+            // L'accord entre MAINTENANT dans la file d'attente du voyageur : c'est
+            // d'ici que court le délai de BidTimeoutScheduler, et non de la création
+            // du fil. Sans ce repère, un fil de plus de 24 h — le cas nominal, la
+            // fenêtre d'inactivité étant de 72 h — voyait son accord annulé en
+            // TRAVELER_NO_RESPONSE au tick suivant, avant même que le voyageur ait
+            // pu régler la commission.
+            ctx.bid().setPendingSince(LocalDateTime.now(ZoneOffset.UTC));
         } else {
             ctx.bid().setStatus(BidStatus.AWAITING_PAYMENT);
             ctx.bid().setAwaitingPaymentExpiresAt(

@@ -646,6 +646,56 @@ class BidNegotiationServiceTest {
             assertThat(response.status()).isEqualTo("PENDING");
         }
 
+        /**
+         * L'accord entre dans la file d'attente du voyageur à l'instant de
+         * l'acceptation, pas à l'ouverture du fil. Sans ce repère, un fil de plus de
+         * 24 h — le cas nominal, la fenêtre d'inactivité étant de 72 h — voyait son
+         * accord annulé par {@code BidTimeoutScheduler} au tick suivant.
+         */
+        @Test
+        @DisplayName("accord en espèces → l'horloge du timeout voyageur repart de l'accord")
+        void accept_cashBid_restartsTravelerResponseClock() {
+            BidEntity bid = buildNegotiatingBid();
+            bid.setPaymentMethod(PaymentMethod.CASH);
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(buildTraveler()));
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID))
+                    .thenReturn(Optional.of(buildAnnouncement()));
+            when(messageRepository.findFirstByBidIdOrderByCreatedAtDesc(BID_ID))
+                    .thenReturn(Optional.of(lastMessageFrom(SENDER_ID, "45.00")));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(buildSender()));
+            stubSavedBid();
+
+            LocalDateTime before = LocalDateTime.now(ZoneOffset.UTC).minusSeconds(1);
+            service.accept(BID_ID, TRAVELER_UID);
+
+            assertThat(bid.getPendingSince())
+                    .describedAs("le compte à rebours « demande sans réponse » repart de l'accord")
+                    .isAfter(before);
+        }
+
+        @Test
+        @DisplayName("accord par carte → aucune entrée dans la file du voyageur")
+        void accept_cardBid_doesNotEnterTravelerQueue() {
+            BidEntity bid = buildNegotiatingBid();
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(buildTraveler()));
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID))
+                    .thenReturn(Optional.of(buildAnnouncement()));
+            when(messageRepository.findFirstByBidIdOrderByCreatedAtDesc(BID_ID))
+                    .thenReturn(Optional.of(lastMessageFrom(SENDER_ID, "45.00")));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(buildSender()));
+            stubSavedBid();
+
+            service.accept(BID_ID, TRAVELER_UID);
+
+            // AWAITING_PAYMENT n'est pas ramassé par BidTimeoutScheduler (qui ne
+            // regarde que PENDING) : c'est AwaitingPaymentCleanupScheduler qui s'en
+            // charge, sur awaitingPaymentExpiresAt.
+            assertThat(bid.getPendingSince()).isNull();
+            assertThat(bid.getAwaitingPaymentExpiresAt()).isNotNull();
+        }
+
         @Test
         @DisplayName("accord en espèces → le voyageur est notifié comme pour une demande cash")
         void accept_cashBid_notifiesTravelerLikeAFreshCashBid() {

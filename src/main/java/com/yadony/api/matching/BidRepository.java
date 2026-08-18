@@ -263,13 +263,23 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
             @Param("q") String q,
             Pageable pageable);
 
+    /**
+     * Demandes PENDING que le voyageur a laissées sans réponse au-delà du délai.
+     *
+     * <p>L'horloge est {@code COALESCE(pendingSince, createdAt)}, pas {@code createdAt} :
+     * un accord de négociation entre dans la file du voyageur à l'acceptation, très
+     * longtemps après la création du fil (jusqu'à 72 h d'échanges). Sur {@code createdAt}
+     * seul, le cas NOMINAL — un fil de plus de 24 h — voyait son accord détruit au tick
+     * suivant, avant même que le voyageur ait pu régler la commission.
+     * Cf. {@code BidEntity.pendingSince}.
+     */
     @Query("""
         SELECT b FROM BidEntity b, AnnouncementEntity a
         WHERE b.announcementId = a.id
           AND b.status = com.yadony.api.matching.BidStatus.PENDING
-          AND b.createdAt < :minGraceThreshold
+          AND COALESCE(b.pendingSince, b.createdAt) < :minGraceThreshold
           AND (
-                b.createdAt < :twentyFourHoursAgo
+                COALESCE(b.pendingSince, b.createdAt) < :twentyFourHoursAgo
              OR a.departureDate <= :halfDayThresholdDate
           )
         """)

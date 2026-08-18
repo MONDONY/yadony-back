@@ -182,6 +182,20 @@ public class BidEntity extends BaseEntity {
     @Column(name = "awaiting_payment_expires_at")
     private LocalDateTime awaitingPaymentExpiresAt;
 
+    /**
+     * Instant où le bid est entré dans la file d'attente du voyageur, c'est-à-dire
+     * où le compte à rebours « demande sans réponse » de {@link BidTimeoutScheduler}
+     * commence à courir.
+     *
+     * <p>{@code null} pour une demande ferme, qui naît PENDING : son horloge est
+     * alors {@code createdAt}, et la requête les confond par un {@code COALESCE}.
+     * Un accord de négociation, lui, entre dans cette file bien après sa création —
+     * le fil ayant pu vivre jusqu'à 72 h — et doit donc repartir de l'accord, sinon
+     * le cas nominal (fil de plus de 24 h) serait annulé au tick suivant.
+     */
+    @Column(name = "pending_since")
+    private LocalDateTime pendingSince;
+
     @Column(name = "shipment_counted", nullable = false)
     private boolean shipmentCounted = false;
 
@@ -367,6 +381,9 @@ public class BidEntity extends BaseEntity {
 
     public LocalDateTime getAwaitingPaymentExpiresAt() { return awaitingPaymentExpiresAt; }
     public void setAwaitingPaymentExpiresAt(LocalDateTime awaitingPaymentExpiresAt) { this.awaitingPaymentExpiresAt = awaitingPaymentExpiresAt; }
+
+    public LocalDateTime getPendingSince() { return pendingSince; }
+    public void setPendingSince(LocalDateTime pendingSince) { this.pendingSince = pendingSince; }
 
     public boolean isShipmentCounted() { return shipmentCounted; }
     public void setShipmentCounted(boolean shipmentCounted) { this.shipmentCounted = shipmentCounted; }
