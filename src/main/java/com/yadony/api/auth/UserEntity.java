@@ -136,6 +136,12 @@ public class UserEntity extends BaseEntity {
     @Column(name = "publishing_suspended_reason", length = 255)
     private String publishingSuspendedReason;
 
+    // Coupure de la messagerie (Lot B, modération) — échéance décidée par l'admin.
+    // NULL = pas de coupure. Distincte de publishingSuspended : coupe les échanges,
+    // pas la publication de trajets/annonces.
+    @Column(name = "messaging_muted_until")
+    private Instant messagingMutedUntil;
+
     @Column(name = "stripe_account_id", length = 64)
     private String stripeAccountId;
 
@@ -335,6 +341,14 @@ public class UserEntity extends BaseEntity {
 
     public String getPublishingSuspendedReason() { return publishingSuspendedReason; }
     public void setPublishingSuspendedReason(String publishingSuspendedReason) { this.publishingSuspendedReason = publishingSuspendedReason; }
+
+    public Instant getMessagingMutedUntil() { return messagingMutedUntil; }
+    public void setMessagingMutedUntil(Instant messagingMutedUntil) { this.messagingMutedUntil = messagingMutedUntil; }
+
+    /** Vrai si la messagerie est coupée à l'instant donné. */
+    public boolean isMessagingMuted(Instant now) {
+        return messagingMutedUntil != null && messagingMutedUntil.isAfter(now);
+    }
 
     public String getStripeAccountId() { return stripeAccountId; }
     public void setStripeAccountId(String stripeAccountId) { this.stripeAccountId = stripeAccountId; }
