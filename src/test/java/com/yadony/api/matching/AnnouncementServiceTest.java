@@ -77,6 +77,7 @@ class AnnouncementServiceTest {
     }
     @Mock private com.yadony.api.requests.repository.PackageRequestRepository packageRequestRepository;
     @Mock private com.yadony.api.requests.repository.NegotiationThreadRepository negotiationThreadRepository;
+    @Mock private com.yadony.api.notifications.NotificationDispatcher notificationDispatcher;
 
     private AnnouncementService announcementService;
 
@@ -93,7 +94,7 @@ class AnnouncementServiceTest {
                 announcementRepository, bidRepository, userRepository,
                 auditService, eventPublisher, config, priceGridService, flagService,
                 storageService, favoriteRepository, activeCurrencyResolver, realMapper, packageRequestRepository,
-                negotiationThreadRepository);
+                negotiationThreadRepository, notificationDispatcher);
     }
 
     private static final String FIREBASE_UID = "uid-traveler-001";
@@ -2115,7 +2116,7 @@ class AnnouncementServiceTest {
                     announcementRepository, bidRepository, userRepository,
                     auditService, eventPublisher, configWithLimits, priceGridService, flagService,
                     storageService, favoriteRepository, activeCurrencyResolver, mapperWithLimits, packageRequestRepository,
-                    negotiationThreadRepository);
+                    negotiationThreadRepository, notificationDispatcher);
 
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
             // le nouveau count (hors DRAFT) renvoie 1 => sous la limite (2) => création OK
@@ -2447,7 +2448,7 @@ class AnnouncementServiceTest {
                     announcementRepository, bidRepository, userRepository,
                     auditService, eventPublisher, configWithLimits, priceGridService, flagService,
                     storageService, favoriteRepository, activeCurrencyResolver, mapperWithLimits, packageRequestRepository,
-                    negotiationThreadRepository);
+                    negotiationThreadRepository, notificationDispatcher);
 
             AnnouncementEntity draft = draftEntityOwnedBy(user);
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));

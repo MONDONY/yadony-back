@@ -27,6 +27,7 @@ import com.yadony.api.matching.events.AnnouncementInProgressEvent;
 import com.yadony.api.matching.events.BidExpiredOnDepartureEvent;
 import com.yadony.api.matching.events.TripArrivedEvent;
 import com.yadony.api.matching.AnnouncementPublishedEvent;
+import com.yadony.api.notifications.NotificationDispatcher;
 import com.yadony.api.requests.entity.PackageRequestStatus;
 import com.yadony.api.requests.repository.PackageRequestRepository;
 import com.yadony.api.requests.repository.NegotiationThreadRepository;
@@ -101,6 +102,7 @@ public class AnnouncementService {
     private final AnnouncementSearchMapper announcementSearchMapper;
     private final PackageRequestRepository packageRequestRepository;
     private final NegotiationThreadRepository negotiationThreadRepository;
+    private final NotificationDispatcher notificationDispatcher;
 
     @Value("${yadony.kyc.enforce:true}")
     private boolean enforceKyc;
@@ -122,7 +124,8 @@ public class AnnouncementService {
             ActiveCurrencyResolver activeCurrencyResolver,
             AnnouncementSearchMapper announcementSearchMapper,
             PackageRequestRepository packageRequestRepository,
-            NegotiationThreadRepository negotiationThreadRepository
+            NegotiationThreadRepository negotiationThreadRepository,
+            NotificationDispatcher notificationDispatcher
     ) {
         this.announcementRepository = announcementRepository;
         this.bidRepository = bidRepository;
@@ -138,6 +141,7 @@ public class AnnouncementService {
         this.announcementSearchMapper = announcementSearchMapper;
         this.packageRequestRepository = packageRequestRepository;
         this.negotiationThreadRepository = negotiationThreadRepository;
+        this.notificationDispatcher = notificationDispatcher;
     }
 
     @Transactional(readOnly = true)
@@ -1190,6 +1194,64 @@ public class AnnouncementService {
                     "Publishing Suspended",
                     "La publication de trajets est suspendue. Contactez le support.");
         }
+    }
+
+    /**
+     * Lot B — Retrait d'une annonce par la modération (contenu frauduleux, litige,
+     * signalement…). Refusé si un colis est déjà accepté ou au-delà (ACCEPTED,
+     * HANDED_OVER, IN_TRANSIT, ARRIVED — {@link BidStatus#IN_FLIGHT}) : une livraison
+     * engagée ne doit jamais être interrompue par une action de modération.
+     *
+     * <p>La recherche publique filtre déjà sur {@code AnnouncementStatus.ACTIVE}
+     * ({@link AnnouncementSpecification#hasStatus}) : l'annonce disparaît des résultats
+     * sans changement supplémentaire côté recherche.
+     */
+    @Transactional
+    @CacheEvict(value = "announcements-search", allEntries = true)
+    public AnnouncementEntity removeByAdmin(UUID announcementId, UUID adminId, String reason) {
+        AnnouncementEntity ann = announcementRepository.findById(announcementId)
+                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
+                        "announcement-not-found", "Announcement Not Found", "Annonce introuvable"));
+
+        if (bidRepository.existsByAnnouncementIdAndStatusIn(announcementId, List.copyOf(BidStatus.IN_FLIGHT))) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT,
+                    "announcement-has-accepted-bids", "Announcement Has Accepted Bids",
+                    "Des colis acceptés sont en cours sur cette annonce.");
+        }
+
+        ann.setStatus(AnnouncementStatus.REMOVED_BY_ADMIN);
+        AnnouncementEntity saved = announcementRepository.save(ann);
+
+        auditService.log("ANNOUNCEMENT", announcementId, "ANNOUNCEMENT_REMOVED_BY_ADMIN", adminId,
+                Map.of("reason", reason));
+        notificationDispatcher.notifyUser(ann.getTravelerId(),
+                "Annonce retirée",
+                "Votre annonce a été retirée par la modération. Motif : " + reason,
+                Map.of("type", "ANNOUNCEMENT_REMOVED", "announcementId", announcementId.toString()));
+
+        return saved;
+    }
+
+    /** Lot B — Restauration d'une annonce retirée par la modération, vers ACTIVE. */
+    @Transactional
+    @CacheEvict(value = "announcements-search", allEntries = true)
+    public AnnouncementEntity restoreByAdmin(UUID announcementId, UUID adminId) {
+        AnnouncementEntity ann = announcementRepository.findById(announcementId)
+                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
+                        "announcement-not-found", "Announcement Not Found", "Annonce introuvable"));
+
+        if (ann.getStatus() != AnnouncementStatus.REMOVED_BY_ADMIN) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT,
+                    "announcement-not-removed", "Announcement Not Removed",
+                    "Cette annonce n'a pas été retirée par la modération.");
+        }
+
+        ann.setStatus(AnnouncementStatus.ACTIVE);
+        AnnouncementEntity saved = announcementRepository.save(ann);
+
+        auditService.log("ANNOUNCEMENT", announcementId, "ANNOUNCEMENT_RESTORED_BY_ADMIN", adminId, Map.of());
+
+        return saved;
     }
 
     @Transactional

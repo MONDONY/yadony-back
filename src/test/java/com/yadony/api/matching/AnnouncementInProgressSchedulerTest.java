@@ -87,7 +87,8 @@ class AnnouncementInProgressTransitionTest {
                 mock(com.yadony.api.payments.currency.ActiveCurrencyResolver.class, inv -> "EUR"),
                 mock(AnnouncementSearchMapper.class),
                 mock(com.yadony.api.requests.repository.PackageRequestRepository.class),
-                mock(com.yadony.api.requests.repository.NegotiationThreadRepository.class));
+                mock(com.yadony.api.requests.repository.NegotiationThreadRepository.class),
+                mock(com.yadony.api.notifications.NotificationDispatcher.class));
     }
 
     private static void setId(Object entity, UUID id) {

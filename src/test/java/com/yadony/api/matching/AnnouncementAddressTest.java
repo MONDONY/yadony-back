@@ -95,7 +95,8 @@ class AnnouncementServiceAddressTest {
                 activeCurrencyResolver,
                 mock(AnnouncementSearchMapper.class),
                 mock(com.yadony.api.requests.repository.PackageRequestRepository.class),
-                mock(com.yadony.api.requests.repository.NegotiationThreadRepository.class));
+                mock(com.yadony.api.requests.repository.NegotiationThreadRepository.class),
+                mock(com.yadony.api.notifications.NotificationDispatcher.class));
     }
 
     private static final String TRAVELER_UID = "firebase-uid-123";

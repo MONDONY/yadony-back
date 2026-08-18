@@ -6,5 +6,7 @@ public enum AnnouncementStatus {
     FULL,
     IN_PROGRESS,
     COMPLETED,
-    CANCELLED
+    CANCELLED,
+    /** Retirée par un administrateur (modération). Restaurable vers ACTIVE. */
+    REMOVED_BY_ADMIN
 }
