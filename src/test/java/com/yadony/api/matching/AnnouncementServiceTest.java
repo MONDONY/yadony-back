@@ -3031,5 +3031,61 @@ class AnnouncementServiceTest {
             assertThat(captor.getValue().isNegotiable()).isFalse();
             assertThat(response.negotiable()).isFalse();
         }
+
+        /**
+         * Le drapeau doit voyager jusqu'à CHAQUE surface que l'expéditeur consulte.
+         * Exposé sur la seule {@code AnnouncementResponse} (réponse de création et
+         * « Mes trajets », deux écrans du VOYAGEUR), il reste invisible de l'expéditeur :
+         * le bouton « Proposer un prix » ne s'affiche alors nulle part et la
+         * négociation est morte côté produit.
+         */
+        @Test
+        @DisplayName("le détail du trajet porte le drapeau (écran où l'expéditeur propose)")
+        void detail_exposesNegotiable() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity a = buildAnnouncement(traveler);
+            a.setNegotiable(true);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
+            when(bidRepository.countVisibleByAnnouncementId(ANNOUNCEMENT_ID)).thenReturn(0L);
+
+            AnnouncementDetailResponse result =
+                    announcementService.getAnnouncementDetail(ANNOUNCEMENT_ID, FIREBASE_UID);
+
+            assertThat(result.negotiable()).isTrue();
+        }
+
+        @Test
+        @DisplayName("le détail d'un trajet à prix ferme rend false")
+        void detail_exposesNegotiableFalse() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity a = buildAnnouncement(traveler);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
+            when(bidRepository.countVisibleByAnnouncementId(ANNOUNCEMENT_ID)).thenReturn(0L);
+
+            AnnouncementDetailResponse result =
+                    announcementService.getAnnouncementDetail(ANNOUNCEMENT_ID, FIREBASE_UID);
+
+            assertThat(result.negotiable()).isFalse();
+        }
+
+        @Test
+        @DisplayName("la vue compacte du profil voyageur porte le drapeau")
+        void travelerAnnouncements_exposeNegotiable() {
+            UUID travelerId = UUID.randomUUID();
+            UserEntity traveler = buildTraveler();
+            setId(traveler, travelerId);
+            AnnouncementEntity active = buildAnnouncement(traveler);
+            active.setStatus(AnnouncementStatus.ACTIVE);
+            active.setNegotiable(true);
+
+            when(announcementRepository.findByTravelerIdAndStatus(eq(travelerId), eq(AnnouncementStatus.ACTIVE), any()))
+                    .thenReturn(new PageImpl<>(List.of(active)));
+            when(announcementRepository.findByTravelerIdAndStatus(eq(travelerId), eq(AnnouncementStatus.FULL), any()))
+                    .thenReturn(new PageImpl<>(List.of()));
+
+            var result = announcementService.getTravelerAnnouncements(travelerId);
+
+            assertThat(result.get(0).negotiable()).isTrue();
+        }
     }
 }

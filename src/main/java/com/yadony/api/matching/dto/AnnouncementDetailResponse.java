@@ -42,5 +42,9 @@ public record AnnouncementDetailResponse(
         boolean surplusPublished,
         LocalDateTime handoverDeadline,
         String currency,
-        String arrivalInstructions
+        String arrivalInstructions,
+        /** Le voyageur accepte les propositions de prix : c'est ce drapeau qui autorise
+         *  l'expéditeur à ouvrir un fil via {@code POST /announcements/{id}/bids/negotiation}
+         *  (sinon 422 {@code announcement-not-negotiable}). */
+        boolean negotiable
 ) {}

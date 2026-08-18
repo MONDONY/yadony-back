@@ -94,4 +94,37 @@ class AnnouncementSearchMapperTest {
 
         assertThat(result.currency()).isEqualTo("CAD");
     }
+
+    /**
+     * Le feed de recherche est la première (et souvent la seule) surface où
+     * l'expéditeur voit un trajet. Sans le drapeau ici, aucun badge « prix
+     * négociable » n'est affichable et la fonctionnalité n'est jamais découverte.
+     */
+    @Test
+    @DisplayName("toSearchResponse expose le drapeau negotiable (variante unitaire)")
+    void toSearchResponse_exposesNegotiable() {
+        when(userRepository.findById(TRAVELER_ID)).thenReturn(java.util.Optional.empty());
+        when(bidRepository.countVisibleByAnnouncementId(ANNOUNCEMENT_ID)).thenReturn(0L);
+        AnnouncementEntity a = buildAnnouncement();
+        a.setNegotiable(true);
+
+        assertThat(mapper.toSearchResponse(a, false).negotiable()).isTrue();
+    }
+
+    /**
+     * La variante batch est celle réellement utilisée par {@code GET /announcements} :
+     * les deux corps sont des jumeaux copiés-collés, un champ ajouté à l'un seulement
+     * produirait un feed où le drapeau existe en détail mais jamais en liste.
+     */
+    @Test
+    @DisplayName("la variante batch expose aussi le drapeau negotiable")
+    void toSearchResponseBatch_exposesNegotiable() {
+        AnnouncementEntity a = buildAnnouncement();
+        a.setNegotiable(true);
+
+        AnnouncementSearchResponse result = mapper.toSearchResponse(
+                a, false, java.util.Map.of(), java.util.Map.of(), java.util.Map.of());
+
+        assertThat(result.negotiable()).isTrue();
+    }
 }

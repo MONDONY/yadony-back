@@ -117,7 +117,8 @@ public class AnnouncementSearchMapper {
                 entity.getHandoverDeadline(),
                 isFavorite,
                 computeUrgent(entity.getDepartureDate()),
-                entity.getCurrency()
+                entity.getCurrency(),
+                entity.isNegotiable()
         );
     }
 
@@ -172,7 +173,8 @@ public class AnnouncementSearchMapper {
                 entity.getHandoverDeadline(),
                 isFavorite,
                 computeUrgent(entity.getDepartureDate()),
-                entity.getCurrency()
+                entity.getCurrency(),
+                entity.isNegotiable()
         );
     }
 

@@ -698,7 +698,8 @@ public class AnnouncementService {
                 announcement.isSurplusPublished(),
                 announcement.getHandoverDeadline(),
                 announcement.getCurrency(),
-                arrivalInstructions
+                arrivalInstructions,
+                announcement.isNegotiable()
         );
     }
 
@@ -876,7 +877,8 @@ public class AnnouncementService {
                 saved.isSurplusPublished(),
                 saved.getHandoverDeadline(),
                 saved.getCurrency(),
-                saved.getArrivalInstructions()
+                saved.getArrivalInstructions(),
+                saved.isNegotiable()
         );
     }
 
@@ -1324,7 +1326,7 @@ public class AnnouncementService {
             .map(a -> new com.yadony.api.matching.dto.TravelerAnnouncementResponse(
                 a.getId(), a.getDepartureCity(), a.getArrivalCity(),
                 a.getDepartureDate(), a.getPricePerKg(), a.getAvailableKg(), a.getStatus().name(),
-                a.getCurrency()))
+                a.getCurrency(), a.isNegotiable()))
             .toList();
     }
 
