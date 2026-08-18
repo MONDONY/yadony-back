@@ -566,9 +566,22 @@ public class BidNegotiationService {
                 announcement.getDepartureCity(),
                 announcement.getArrivalCity(),
                 announcement.getDepartureDate(),
-                open && bid.getUpdatedAt() != null
-                        ? bid.getUpdatedAt().plusHours(config.inactivityHours()) : null,
+                expiresAt(bid, last, open),
                 messages);
+    }
+
+    /**
+     * Échéance d'inactivité, comptée depuis le dernier message et non depuis la
+     * dernière écriture sur le bid : c'est exactement le critère du scheduler, et une
+     * simple lecture du fil ne doit pas repousser sa date d'expiration.
+     */
+    private LocalDateTime expiresAt(BidEntity bid, BidNegotiationMessageEntity last, boolean open) {
+        if (!open) {
+            return null;
+        }
+        LocalDateTime reference = last != null && last.getCreatedAt() != null
+                ? last.getCreatedAt() : bid.getUpdatedAt();
+        return reference != null ? reference.plusHours(config.inactivityHours()) : null;
     }
 
     /**

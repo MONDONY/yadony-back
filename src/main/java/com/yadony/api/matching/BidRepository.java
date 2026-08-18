@@ -427,12 +427,20 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
     """)
     List<BidEntity> findNegotiationsForUser(@Param("userId") UUID userId);
 
-    /** Fils inactifs depuis le seuil : plus aucun message échangé. */
+    /**
+     * Fils inactifs depuis le seuil : plus aucun message échangé.
+     *
+     * <p>Le critère est la date du dernier message, PAS {@code updatedAt} du bid :
+     * marquer un fil comme lu écrit sur le bid, et l'horloge d'inactivité repartirait
+     * alors de zéro à chaque ouverture de l'écran — un fil abandonné mais consulté
+     * n'expirerait jamais.
+     */
     @Query("""
         SELECT b FROM BidEntity b
         WHERE b.status = com.yadony.api.matching.BidStatus.NEGOTIATING
-          AND b.updatedAt < :threshold
           AND b.deletedAt IS NULL
+          AND (SELECT MAX(m.createdAt) FROM BidNegotiationMessageEntity m
+               WHERE m.bidId = b.id) < :threshold
     """)
     List<BidEntity> findStaleNegotiations(@Param("threshold") LocalDateTime threshold);
 
