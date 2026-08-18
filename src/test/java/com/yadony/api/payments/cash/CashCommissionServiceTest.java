@@ -661,6 +661,27 @@ class CashCommissionServiceTest {
         }
 
         @Test
+        // Lot C : le même rétrécissement existait dans finalizeBidAcceptance, atteint par
+        // confirmCommissionAcceptance (chemin 3DS) SANS repasser par la garde d'entrée
+        // d'acceptCashBid. Restreinte à REMOVED_BY_ADMIN, elle laissait un trajet annulé
+        // ressusciter en FULL, statut qui réapparaît dans les allowlists ACTIVE/FULL.
+        void announcementCancelled_stillFinalizesButDoesNotResurrectToFull() {
+            bid.setCommissionStatus(CommissionStatus.CHARGED);
+            bid.setWeightKg(new java.math.BigDecimal("5"));
+            announcement.setStatus(AnnouncementStatus.CANCELLED);
+            announcement.setAvailableKg(new java.math.BigDecimal("5")); // exactement plein après ce bid
+
+            try (MockedStatic<PaymentIntent> pi = mockStatic(PaymentIntent.class)) {
+                ConfirmAcceptanceResponse resp = service.confirmCommissionAcceptance(bid.getId(), travelerId);
+
+                assertThat(resp.accepted()).isTrue();
+                assertThat(bid.getStatus()).isEqualTo(BidStatus.ACCEPTED);
+                assertThat(announcement.getStatus()).isEqualTo(AnnouncementStatus.CANCELLED);
+                pi.verifyNoInteractions();
+            }
+        }
+
+        @Test
         void setsFailedWhenPINotSucceeded() throws StripeException {
             PaymentIntent mockPi = new PaymentIntent();
             mockPi.setStatus("requires_payment_method");
@@ -814,6 +835,41 @@ class CashCommissionServiceTest {
                             .isEqualTo("announcement-not-accepting"));
 
             assertThat(bid.getStatus()).isEqualTo(BidStatus.PENDING);
+        }
+
+        @Test
+        // Lot C : la garde ne visait que REMOVED_BY_ADMIN. Un trajet annulé par son
+        // voyageur n'accepte pas davantage un nouvel engagement d'argent.
+        void announcementCancelled_rejectsBeforeAnyDebit() {
+            announcement.setStatus(AnnouncementStatus.CANCELLED);
+
+            assertThatThrownBy(() -> service.acceptCashBid(
+                    bid.getId(), travelerId, com.yadony.api.payments.cash.CommissionSource.WALLET_FIRST))
+                    .isInstanceOf(com.yadony.api.common.YadonyBusinessException.class)
+                    .satisfies(e -> {
+                        var y = (com.yadony.api.common.YadonyBusinessException) e;
+                        assertThat(y.getStatus()).isEqualTo(org.springframework.http.HttpStatus.CONFLICT);
+                        assertThat(y.getErrorCode()).isEqualTo("announcement-not-accepting");
+                    });
+
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.PENDING);
+            verify(walletService, never()).debit(any(), any(), any(), any(), any());
+            verify(announcementRepo, never()).save(any());
+        }
+
+        @Test
+        // Lot C : idem pour un trajet déjà livré — la course est terminée.
+        void announcementCompleted_rejectsBeforeAnyDebit() {
+            announcement.setStatus(AnnouncementStatus.COMPLETED);
+
+            assertThatThrownBy(() -> service.acceptCashBid(
+                    bid.getId(), travelerId, com.yadony.api.payments.cash.CommissionSource.WALLET_FIRST))
+                    .isInstanceOf(com.yadony.api.common.YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((com.yadony.api.common.YadonyBusinessException) e).getErrorCode())
+                            .isEqualTo("announcement-not-accepting"));
+
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.PENDING);
+            verify(walletService, never()).debit(any(), any(), any(), any(), any());
         }
 
         @Test

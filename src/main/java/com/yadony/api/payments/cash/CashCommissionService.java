@@ -815,10 +815,13 @@ public class CashCommissionService {
         // prélevé à rembourser. Placée après le early-return d'idempotence ci-dessus : un
         // second appel sur une acceptation déjà réglée (CHARGED) avant le retrait doit
         // rester un no-op réussi, pas un 409.
-        if (announcement.getStatus() == AnnouncementStatus.REMOVED_BY_ADMIN) {
+        // Lot C : élargi de REMOVED_BY_ADMIN à tout OUT_OF_MARKET. Un trajet annulé par
+        // son voyageur ou déjà livré n'accepte pas davantage un nouvel engagement d'argent
+        // — c'est déjà la garde employée par BidCheckoutService et PaymentService.
+        if (AnnouncementStatus.OUT_OF_MARKET.contains(announcement.getStatus())) {
             throw new YadonyBusinessException(HttpStatus.CONFLICT,
                     "announcement-not-accepting", "Announcement Not Accepting",
-                    "Ce trajet a été retiré par la modération, il n'accepte plus de colis");
+                    "Ce trajet n'accepte plus de colis");
         }
         // « Kilo libre » (KG_FREE) : capacité non bornée — pas de rejet de capacité.
         // Un bid grille pure n'a pas de poids (weightKg null) → aucun contrôle de
@@ -979,8 +982,12 @@ public class CashCommissionService {
             // par la modération — sinon cette finalisation (déclenchée par un paiement déjà
             // engagé, qu'on ne bloque pas ici) ressusciterait le trajet en FULL, qui réapparaît
             // dans les allowlists ACTIVE/FULL (recherche par corridor, alertes, etc.).
+            // Lot C : élargi à tout OUT_OF_MARKET. confirmCommissionAcceptance (chemin 3DS)
+            // atteint cette méthode SANS repasser par la garde d'entrée d'acceptCashBid :
+            // restreinte à REMOVED_BY_ADMIN, elle laissait un trajet CANCELLED/COMPLETED
+            // ressusciter en FULL.
             if (announcement.getAvailableKg().compareTo(BigDecimal.ZERO) <= 0
-                    && announcement.getStatus() != AnnouncementStatus.REMOVED_BY_ADMIN) {
+                    && !AnnouncementStatus.OUT_OF_MARKET.contains(announcement.getStatus())) {
                 announcement.setStatus(AnnouncementStatus.FULL);
             }
         }
