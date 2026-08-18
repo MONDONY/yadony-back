@@ -847,6 +847,40 @@ class BidNegotiationServiceTest {
             assertThat(senderView.proposedGrossEur()).isEqualByComparingTo("45.00");
             assertThat(senderView.commissionEur()).isEqualByComparingTo("2.14");
             assertThat(senderView.myTurn()).isFalse();
+
+            assertThat(travelerView.role()).isEqualTo("TRAVELER");
+            assertThat(senderView.role()).isEqualTo("SENDER");
+        }
+
+        /**
+         * Le rôle ne se déduit pas de la présence d'un montant.
+         *
+         * <p>Le client lisait {@code netEur != null} pour savoir s'il affichait la vue
+         * voyageur. Or les deux montants sont tus tant qu'aucun brut n'a été proposé :
+         * le même {@code null} disait alors « tu es l'expéditeur ». Un voyageur ouvrant
+         * un fil sans montant se voyait servir la vue d'en face.
+         */
+        @Test
+        @DisplayName("le rôle reste juste même sans aucun montant proposé")
+        void thread_roleIsExplicit_evenWithoutAnyAmount() {
+            BidEntity bid = buildNegotiatingBid();
+            bid.setNegotiatedGrossEur(null);
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID))
+                    .thenReturn(Optional.of(buildAnnouncement()));
+            // Aucun message : rien ne porte de brut, donc netEur ET commissionEur sont nuls.
+            when(messageRepository.findFirstByBidIdOrderByCreatedAtDesc(BID_ID))
+                    .thenReturn(Optional.empty());
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(buildTraveler()));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(buildSender()));
+
+            BidNegotiationResponse travelerView = service.thread(BID_ID, TRAVELER_UID);
+
+            assertThat(travelerView.netEur()).isNull();
+            assertThat(travelerView.commissionEur()).isNull();
+            assertThat(travelerView.role())
+                    .describedAs("netEur nul ne veut pas dire « expéditeur »")
+                    .isEqualTo("TRAVELER");
         }
 
         @Test

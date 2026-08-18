@@ -602,6 +602,7 @@ public class BidNegotiationService {
                 bid.getId(),
                 announcement.getId(),
                 bid.getStatus().name(),
+                viewerIsTraveler ? "TRAVELER" : "SENDER",
                 bid.getNegotiationRound(),
                 config.maxRounds(),
                 myTurn,

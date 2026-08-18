@@ -58,7 +58,8 @@ class BidNegotiationControllerIntegrationTest {
 
     private static BidNegotiationResponse response(String status) {
         return new BidNegotiationResponse(
-                BID_ID, ANNOUNCEMENT_ID, status, 1, 3, true, true, "EUR",
+                // Vue EXPÉDITEUR : commissionEur renseigné, netEur tu.
+                BID_ID, ANNOUNCEMENT_ID, status, "SENDER", 1, 3, true, true, "EUR",
                 new BigDecimal("45.00"), null, new BigDecimal("2.14"), new BigDecimal("26.25"),
                 new BigDecimal("5.0"), "Vêtements", "CLOTHING",
                 List.of(), List.of(), List.of(), "Moussa D.", "Paris", "Dakar",

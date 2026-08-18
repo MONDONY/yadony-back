@@ -215,6 +215,42 @@ class CashCommissionServiceTest {
             assertThat(bid.getCommissionRate()).isEqualByComparingTo("0.05");
             verifyNoInteractions(commissionRateResolver);
         }
+
+        /**
+         * Le voyageur doit garder son net AU CENTIME.
+         *
+         * <p>En espèces l'expéditeur remet le brut en main propre : la plateforme ne
+         * peut prélever que la différence exacte brut − net. Un {@code net × taux}
+         * recalculé rompt l'invariant dès que l'arrondi du net s'écarte, soit ~4,8 %
+         * des montants — dont 40,00 € pile. Le fil affichait alors 1,90 € et le
+         * prélèvement en réclamait 1,91 €, un centime pris au voyageur.
+         *
+         * <p>Le cas de 45,00 € du test précédent ne pouvait pas le montrer : les deux
+         * formules y tombent sur le même centime.
+         */
+        @Test
+        void computeBidCommission_onNegotiatedBid_isTheExactGrossMinusNet() {
+            BidEntity bid = new BidEntity();
+            ReflectionTestUtils.setField(bid, "id", UUID.randomUUID());
+            bid.setSenderId(UUID.randomUUID());
+            bid.setWeightKg(new BigDecimal("10"));
+            bid.setNegotiatedGrossEur(new BigDecimal("40.00"));
+            bid.setNegotiatedNetEur(new BigDecimal("38.10"));
+            bid.setCommissionRate(new BigDecimal("0.05"));
+            AnnouncementEntity ann = new AnnouncementEntity();
+            ReflectionTestUtils.setField(ann, "id", UUID.randomUUID());
+            ann.setTravelerId(UUID.randomUUID());
+            ann.setPricePerKg(new BigDecimal("20"));
+
+            BigDecimal commission = service.computeBidCommission(bid, ann);
+
+            // 38,10 × 5 % arrondi donnerait 1,91 : ce test échoue sur l'ancien calcul.
+            assertThat(commission).isEqualByComparingTo("1.90");
+            assertThat(bid.getNegotiatedNetEur().add(commission))
+                    .describedAs("net + commission doit redonner le brut marchandé")
+                    .isEqualByComparingTo(bid.getNegotiatedGrossEur());
+            verifyNoInteractions(commissionRateResolver);
+        }
     }
 
     // ===================== setupCommissionMethod =====================

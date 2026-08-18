@@ -149,8 +149,20 @@ public class CashCommissionService {
      * {@link #settleNegotiationCommission} pour les fils de demande d'envoi. Sans
      * cela, un voyageur ayant accepté 45 € pour un colis tarifé 200 € au barème se
      * verrait prélever la commission des 200 €.
+     *
+     * <p><b>Négociation de trajet</b> ({@code negotiatedGrossEur} figé) : la commission
+     * est la SOUSTRACTION brut − net, jamais un {@code net × taux} recalculé. C'est le
+     * brut qui a été marchandé et que l'expéditeur remet en main propre ; le voyageur ne
+     * garde son net au centime que si la plateforme prélève exactement la différence.
+     * Recalculer le pourcentage rompait cet invariant dans ~4,8 % des montants — pour un
+     * brut de 1,15 €, le fil annonçait 0,05 € et le prélèvement en réclamait 0,06 €.
+     * Le fil de demande d'envoi, lui, ne fige que le net et garde donc le calcul au taux.
      */
     public BigDecimal computeBidCommission(BidEntity bid, AnnouncementEntity announcement) {
+        if (bid.getNegotiatedNetEur() != null && bid.getNegotiatedGrossEur() != null) {
+            return bid.getNegotiatedGrossEur().subtract(bid.getNegotiatedNetEur())
+                    .setScale(2, RoundingMode.HALF_UP);
+        }
         if (bid.getNegotiatedNetEur() != null && bid.getCommissionRate() != null) {
             return computeCommission(bid.getNegotiatedNetEur(), bid.getCommissionRate());
         }
