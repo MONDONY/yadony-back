@@ -7,6 +7,7 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.CommissionRateResolver;
 import com.yadony.api.common.StorageService;
+import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.PriceBreakdown;
 import com.yadony.api.payments.cash.CommissionProperties;
 import com.yadony.api.payments.cash.CommissionSource;
@@ -119,6 +120,22 @@ public class NegotiationService {
         this.self = self;
     }
 
+    /**
+     * D4 : voyageur suspendu de publication (retour de colis non rendu, décision
+     * admin). Ferme le contournement du trajet dédié — le seul chemin qui créait
+     * une annonce sans passer par {@code AnnouncementService.assertPublishingNotSuspended}.
+     * Ne s'applique qu'à la création d'un nouveau trajet ({@link #start} quand
+     * {@code req.createDedicatedTrip()} est vrai, et {@link #createDedicatedTrip}) :
+     * faire une offre sur un trajet déjà publié n'est pas un acte de publication.
+     */
+    private void assertPublishingNotSuspended(UserEntity traveler) {
+        if (traveler.isPublishingSuspended()) {
+            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "publishing-suspended",
+                    "Publishing Suspended",
+                    "La publication de trajets est suspendue. Contactez le support.");
+        }
+    }
+
     @Transactional
     public NegotiationThreadResponse start(UUID travelerId, NegotiationStartRequest req) {
         UserEntity traveler = userRepository.findById(travelerId)
@@ -199,6 +216,7 @@ public class NegotiationService {
         java.time.LocalDate resolvedTravelDate;
 
         if (req.createDedicatedTrip()) {
+            assertPublishingNotSuspended(traveler);
             if (req.dedicatedTrip() == null) {
                 throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "dedicated-trip-invalid");
             }
@@ -815,6 +833,7 @@ public class NegotiationService {
 
         UserEntity traveler = userRepository.findById(callerId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "user/not-found"));
+        assertPublishingNotSuspended(traveler);
         java.util.Set<PaymentMethod> available = computeAvailableMethods(request, traveler);
         assertNonEmptyOrThrow(available, request.getAcceptedPaymentMethods());
 
