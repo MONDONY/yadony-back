@@ -2194,6 +2194,66 @@ class BidServiceTest {
         assertThat(result.pricePerKg()).isEqualByComparingTo("5");
     }
 
+    /**
+     * Bid issu d'une négociation de prix : l'accord figé remplace intégralement le
+     * barème du trajet. Le recomposer en « articles de grille + poids × prix/kg »
+     * double-comptait les articles (le prix négocié les couvre déjà) et ignorait
+     * complètement les articles hors grille — l'expéditeur voyait alors dans
+     * « Mes envois » un total différent de celui du fil, et différent encore de ce
+     * qui lui serait débité.
+     */
+    private BidEntity buildNegotiatedBidWithGridItem() {
+        BidEntity bid = buildBid();
+        bid.setNegotiatedGrossEur(new BigDecimal("45.00"));
+        bid.setNegotiatedNetEur(new BigDecimal("42.86"));
+        bid.setCommissionRate(new BigDecimal("0.05"));
+        BidGridItemEntity item = new BidGridItemEntity();
+        item.setBidId(BID_ID);
+        item.setLabelSnapshot("Valise");
+        item.setUnitPriceNetSnapshot(new BigDecimal("30.00"));
+        item.setQuantity(1);
+        // lenient : le bid PORTE bien cet article, mais l'accord le couvre déjà —
+        // le total ne doit justement plus consulter la grille (cf. never() ci-dessous).
+        org.mockito.Mockito.lenient()
+                .when(bidGridItemRepository.findByBidId(BID_ID)).thenReturn(List.of(item));
+        return bid;
+    }
+
+    @Test
+    @DisplayName("bid négocié : l'expéditeur voit le brut convenu, pas le barème recomposé")
+    void getBidById_negotiatedBid_senderSeesTheAgreedGross() {
+        UserEntity sender = buildSender();
+        BidEntity bid = buildNegotiatedBidWithGridItem();
+        AnnouncementEntity announcement = buildAnnouncement();
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+        when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
+        when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+
+        BidResponse result = bidService.getBidById(BID_ID, SENDER_UID);
+
+        // 45,00 € = l'accord. Le barème recomposé aurait donné (30,00 + 42,86) × 1,05.
+        assertThat(result.totalSenderAmountEur()).isEqualByComparingTo("45.00");
+        assertThat(result.totalNetAmountEur()).isNull();
+        verify(bidGridItemRepository, never()).findByBidId(BID_ID);
+    }
+
+    @Test
+    @DisplayName("bid négocié : le voyageur voit le net convenu, pas le barème recomposé")
+    void getBidById_negotiatedBid_travelerSeesTheAgreedNet() {
+        UserEntity traveler = buildTraveler();
+        BidEntity bid = buildNegotiatedBidWithGridItem();
+        AnnouncementEntity announcement = buildAnnouncement();
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+        when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+        when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(buildSender()));
+
+        BidResponse result = bidService.getBidById(BID_ID, TRAVELER_UID);
+
+        assertThat(result.totalNetAmountEur()).isEqualByComparingTo("42.86");
+    }
+
     @Test
     @DisplayName("tiers → 403 FORBIDDEN")
     void getBidById_foreignerForbidden() {

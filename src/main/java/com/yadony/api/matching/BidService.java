@@ -1218,14 +1218,25 @@ public class BidService {
                 : null;
 
         // Compute total net: sum of grid items + KG part (for display in Flutter)
-        java.math.BigDecimal gridNet = bidGridItemRepository.findByBidId(bid.getId()).stream()
-                .map(i -> i.getUnitPriceNetSnapshot().multiply(java.math.BigDecimal.valueOf(i.getQuantity())))
-                .reduce(java.math.BigDecimal.ZERO, java.math.BigDecimal::add);
-        java.math.BigDecimal kgNet = (bid.getWeightKg() != null && pricePerKg != null)
-                ? bid.getWeightKg().multiply(pricePerKg)
-                : java.math.BigDecimal.ZERO;
-        java.math.BigDecimal totalNetAmountEur = gridNet.add(kgNet)
-                .setScale(2, java.math.RoundingMode.HALF_UP);
+        //
+        // Bid issu d'une négociation : l'accord figé EST le total, on ne le recompose
+        // pas. Le recomposer double-compterait les articles de grille (le prix négocié
+        // les couvre déjà, et le prix/kg vient d'être réécrit depuis ce même prix) et
+        // ignorerait complètement les articles hors grille, que le voyageur n'a jamais
+        // tarifés. L'expéditeur verrait alors dans « Mes envois » un total différent de
+        // celui du fil, et différent encore de ce qui lui est réellement débité.
+        java.math.BigDecimal totalNetAmountEur;
+        if (bid.getNegotiatedNetEur() != null) {
+            totalNetAmountEur = bid.getNegotiatedNetEur().setScale(2, java.math.RoundingMode.HALF_UP);
+        } else {
+            java.math.BigDecimal gridNet = bidGridItemRepository.findByBidId(bid.getId()).stream()
+                    .map(i -> i.getUnitPriceNetSnapshot().multiply(java.math.BigDecimal.valueOf(i.getQuantity())))
+                    .reduce(java.math.BigDecimal.ZERO, java.math.BigDecimal::add);
+            java.math.BigDecimal kgNet = (bid.getWeightKg() != null && pricePerKg != null)
+                    ? bid.getWeightKg().multiply(pricePerKg)
+                    : java.math.BigDecimal.ZERO;
+            totalNetAmountEur = gridNet.add(kgNet).setScale(2, java.math.RoundingMode.HALF_UP);
+        }
 
         // Montant total payé par l'EXPÉDITEUR = net + commission, dans les DEUX
         // modes de paiement. En carte, il règle le brut à Yadony. En espèces, il
@@ -1245,9 +1256,18 @@ public class BidService {
         if (effectiveRate == null && announcement != null) {
             effectiveRate = commissionRateResolver.resolve(announcement.getTravelerId(), bid.getSenderId());
         }
-        java.math.BigDecimal totalSenderAmountEur = (effectiveRate != null)
-                ? com.yadony.api.payments.PriceBreakdown.fromNet(totalNetAmountEur, effectiveRate).gross()
-                : totalNetAmountEur;
+        // Brut négocié : le nombre exact sur lequel les deux parties se sont mises
+        // d'accord, et exactement celui que débitera l'escrow. Le redériver du net
+        // par (1 + taux) pourrait dériver d'un centime après arrondi.
+        java.math.BigDecimal totalSenderAmountEur;
+        if (bid.getNegotiatedGrossEur() != null) {
+            totalSenderAmountEur = bid.getNegotiatedGrossEur().setScale(2, java.math.RoundingMode.HALF_UP);
+        } else if (effectiveRate != null) {
+            totalSenderAmountEur =
+                    com.yadony.api.payments.PriceBreakdown.fromNet(totalNetAmountEur, effectiveRate).gross();
+        } else {
+            totalSenderAmountEur = totalNetAmountEur;
+        }
         // Tarif/kg affiché à l'expéditeur (brut), dérivé du total brut.
         java.math.BigDecimal pricePerKgSenderEur =
                 (totalSenderAmountEur != null && bid.getWeightKg() != null
