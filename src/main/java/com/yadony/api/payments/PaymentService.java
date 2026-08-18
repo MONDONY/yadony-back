@@ -395,15 +395,29 @@ public class PaymentService {
         // montant serveur, sinon c'est une tentative de falsification (HTTP 422).
         // Sans ce recoupement, un expéditeur pouvait payer un bid 0,01 € et faire
         // sous-payer le voyageur / sous-encaisser la commission.
-        BigDecimal gridNet = BigDecimal.ZERO;
-        for (BidGridItemEntity item : bidGridItemRepository.findByBidId(bidId)) {
-            gridNet = gridNet.add(
-                item.getUnitPriceNetSnapshot().multiply(BigDecimal.valueOf(item.getQuantity())));
+        //
+        // Bid NÉGOCIÉ (fil de prix sur un trajet, cf. BidNegotiationService) : le barème
+        // ci-dessous ne décrit plus rien de ce que les deux parties ont convenu. Le
+        // montant reste calculé côté serveur — mais depuis l'accord figé à l'acceptation
+        // (negotiated_gross_eur / negotiated_net_eur), et non depuis la grille. Le
+        // recoupement du totalNetEur client garde donc tout son sens : il est simplement
+        // recoupé contre l'accord. Sans cette branche, l'expéditeur serait débité du
+        // tarif catalogue et le 422 amount-mismatch tomberait à chaque paiement négocié.
+        boolean negotiated = bid.getNegotiatedGrossEur() != null && bid.getNegotiatedNetEur() != null;
+        BigDecimal totalNet;
+        if (negotiated) {
+            totalNet = bid.getNegotiatedNetEur().setScale(2, RoundingMode.HALF_UP);
+        } else {
+            BigDecimal gridNet = BigDecimal.ZERO;
+            for (BidGridItemEntity item : bidGridItemRepository.findByBidId(bidId)) {
+                gridNet = gridNet.add(
+                    item.getUnitPriceNetSnapshot().multiply(BigDecimal.valueOf(item.getQuantity())));
+            }
+            BigDecimal kgNet = (bid.getWeightKg() != null && announcement.getPricePerKg() != null)
+                    ? bid.getWeightKg().multiply(announcement.getPricePerKg())
+                    : BigDecimal.ZERO;
+            totalNet = gridNet.add(kgNet).setScale(2, RoundingMode.HALF_UP);
         }
-        BigDecimal kgNet = (bid.getWeightKg() != null && announcement.getPricePerKg() != null)
-                ? bid.getWeightKg().multiply(announcement.getPricePerKg())
-                : BigDecimal.ZERO;
-        BigDecimal totalNet = gridNet.add(kgNet).setScale(2, RoundingMode.HALF_UP);
         if (totalNet.compareTo(BigDecimal.ZERO) <= 0) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
                 "invalid-amount", "Invalid Amount",
@@ -411,7 +425,16 @@ public class PaymentService {
         }
         BigDecimal rate;
         boolean promoApplied = false;
-        if (existing.isPresent()) {
+        if (negotiated) {
+            // Taux figé à l'ouverture du fil : le prix affiché pendant la discussion
+            // doit rester exact même si un override ou une promo change entre-temps.
+            rate = bid.getCommissionRate();
+            if (rate == null) {
+                throw new YadonyBusinessException(HttpStatus.CONFLICT,
+                        "payment-pricing-context-missing", "Payment Pricing Context Missing",
+                        "Le taux de commission figé de cette négociation est introuvable");
+            }
+        } else if (existing.isPresent()) {
             // A payment row means pricing was already committed server-side. Never
             // revalidate a consumed promo or current overrides on retries: both may
             // legitimately have changed since the first PaymentIntent was created.
@@ -437,8 +460,17 @@ public class PaymentService {
                 rate = commissionRateResolver.resolve(announcement.getTravelerId(), sender.getId());
             }
         }
-        BigDecimal amount = totalNet.multiply(BigDecimal.ONE.add(rate)).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal commission = totalNet.multiply(rate).setScale(2, RoundingMode.HALF_UP);
+        // Sur un accord négocié, le brut est le nombre que l'expéditeur a tapé et vu :
+        // on le prend tel quel et on en déduit la commission par soustraction, exactement
+        // comme BidNegotiationPricing. Le recalculer en net × (1 + taux) pourrait dériver
+        // d'un centime après arrondi, et l'expéditeur serait débité d'autre chose que le
+        // montant sur lequel il s'est engagé.
+        BigDecimal amount = negotiated
+                ? bid.getNegotiatedGrossEur().setScale(2, RoundingMode.HALF_UP)
+                : totalNet.multiply(BigDecimal.ONE.add(rate)).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal commission = negotiated
+                ? amount.subtract(totalNet)
+                : totalNet.multiply(rate).setScale(2, RoundingMode.HALF_UP);
         CurrencyAmount localAmount = CurrencyAmount.of(amount, currency);
         CurrencyAmount localCommission = CurrencyAmount.of(commission, currency);
 

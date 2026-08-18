@@ -1,6 +1,7 @@
 package com.yadony.api.matching;
 
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.matching.dto.BidCheckoutResponse;
 import com.yadony.api.matching.dto.BidNegotiationCounterRequest;
 import com.yadony.api.matching.dto.BidNegotiationResponse;
 import com.yadony.api.matching.dto.BidNegotiationStartRequest;
@@ -32,9 +33,12 @@ import java.util.UUID;
 public class BidNegotiationController {
 
     private final BidNegotiationService negotiationService;
+    private final BidCheckoutService bidCheckoutService;
 
-    public BidNegotiationController(BidNegotiationService negotiationService) {
+    public BidNegotiationController(BidNegotiationService negotiationService,
+                                    BidCheckoutService bidCheckoutService) {
         this.negotiationService = negotiationService;
+        this.bidCheckoutService = bidCheckoutService;
     }
 
     @PostMapping("/announcements/{announcementId}/bids/negotiation")
@@ -72,6 +76,23 @@ public class BidNegotiationController {
     public ResponseEntity<BidNegotiationResponse> cancel(@PathVariable UUID bidId) {
         String firebaseUid = requireFirebaseUid();
         return ResponseEntity.ok(negotiationService.cancel(bidId, firebaseUid));
+    }
+
+    /**
+     * Ouvre l'escrow Stripe d'un accord de prix conclu en CARTE, sur le bid existant.
+     *
+     * <p>Sans corps : le montant est celui figé à l'accord, relu côté serveur. La
+     * réponse a exactement la forme de {@code POST /bids/checkout}
+     * ({@code BidCheckoutResponse}) pour que le client rejoue la même sheet Stripe,
+     * puis le même {@code POST /bids/{bidId}/confirm-payment}.
+     *
+     * <p>Un accord en ESPÈCES n'a rien à encaisser en ligne : il vit en {@code PENDING}
+     * et cet appel lui répond 409 {@code bid-not-awaiting-payment}.
+     */
+    @PostMapping("/bids/{bidId}/negotiation/checkout")
+    public ResponseEntity<BidCheckoutResponse> checkout(@PathVariable UUID bidId) {
+        String firebaseUid = requireFirebaseUid();
+        return ResponseEntity.ok(bidCheckoutService.negotiationCheckout(firebaseUid, bidId));
     }
 
     @PostMapping("/bids/{bidId}/negotiation/read")

@@ -46,6 +46,7 @@ class BidNegotiationControllerIntegrationTest {
     @Autowired private ObjectMapper objectMapper;
 
     @MockitoBean private BidNegotiationService negotiationService;
+    @MockitoBean private BidCheckoutService bidCheckoutService;
 
     private static final UUID ANNOUNCEMENT_ID = UUID.randomUUID();
     private static final UUID BID_ID = UUID.randomUUID();
@@ -217,5 +218,48 @@ class BidNegotiationControllerIntegrationTest {
                         .content(objectMapper.writeValueAsString(startRequest(new BigDecimal("45.00")))))
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.code").value("announcement-not-negotiable"));
+    }
+
+    // ── checkout d'un accord carte ──────────────────────────────────────────────
+
+    @Test
+    @DisplayName("POST /bids/{id}/negotiation/checkout → 200 avec la forme d'un BidCheckoutResponse")
+    void negotiationCheckout_returnsCheckoutPayload() throws Exception {
+        LocalDateTime expiresAt = LocalDateTime.now().plusHours(24).withNano(0);
+        when(bidCheckoutService.negotiationCheckout(anyString(), eq(BID_ID)))
+                .thenReturn(new com.yadony.api.matching.dto.BidCheckoutResponse(
+                        BID_ID, "pi_secret_xyz", "pk_test_123", expiresAt,
+                        "eur", List.of("card", "paypal")));
+
+        mockMvc.perform(post("/bids/" + BID_ID + "/negotiation/checkout")
+                        .with(authentication(authenticatedAs("uid-sender", "ROLE_SENDER"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bidId").value(BID_ID.toString()))
+                .andExpect(jsonPath("$.clientSecret").value("pi_secret_xyz"))
+                .andExpect(jsonPath("$.publishableKey").value("pk_test_123"))
+                .andExpect(jsonPath("$.expiresAt").exists())
+                .andExpect(jsonPath("$.currency").value("eur"))
+                .andExpect(jsonPath("$.paymentMethodTypes[0]").value("card"));
+    }
+
+    @Test
+    @DisplayName("le checkout exige une authentification")
+    void negotiationCheckout_withoutAuth_is4xx() throws Exception {
+        mockMvc.perform(post("/bids/" + BID_ID + "/negotiation/checkout"))
+                .andExpect(status().is4xxClientError());
+    }
+
+    @Test
+    @DisplayName("un accord en espèces n'a pas de checkout → 409 bid-not-awaiting-payment")
+    void negotiationCheckout_onCashAgreement_isRfc7807Conflict() throws Exception {
+        when(bidCheckoutService.negotiationCheckout(anyString(), eq(BID_ID)))
+                .thenThrow(new YadonyBusinessException(HttpStatus.CONFLICT,
+                        "bid-not-awaiting-payment", "Bid Not Awaiting Payment",
+                        "Cette demande n'attend pas de paiement"));
+
+        mockMvc.perform(post("/bids/" + BID_ID + "/negotiation/checkout")
+                        .with(authentication(authenticatedAs("uid-sender", "ROLE_SENDER"))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("bid-not-awaiting-payment"));
     }
 }
