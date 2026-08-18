@@ -416,6 +416,9 @@ public class AnnouncementService {
         validateHandoverDeadline(request.handoverDeadline(),
                 request.departureDate(), request.departureTime());
         announcement.setHandoverDeadline(request.handoverDeadline());
+        // Absent = prix ferme : un client pas encore à jour ne doit jamais ouvrir
+        // un trajet à la négociation sans que le voyageur l'ait demandé.
+        announcement.setNegotiable(request.isNegotiable());
 
         AnnouncementEntity saved = announcementRepository.save(announcement);
 
@@ -597,7 +600,8 @@ public class AnnouncementService {
 
     private void expirePendingBids(AnnouncementEntity announcement) {
         List<BidEntity> pendingBids = bidRepository.findByAnnouncementIdAndStatusIn(
-                announcement.getId(), List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED));
+                announcement.getId(),
+                List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.NEGOTIATING));
         for (BidEntity bid : pendingBids) {
             bid.setStatus(BidStatus.EXPIRED);
             bidRepository.save(bid);
@@ -694,7 +698,8 @@ public class AnnouncementService {
                 announcement.isSurplusPublished(),
                 announcement.getHandoverDeadline(),
                 announcement.getCurrency(),
-                arrivalInstructions
+                arrivalInstructions,
+                announcement.isNegotiable()
         );
     }
 
@@ -772,6 +777,7 @@ public class AnnouncementService {
         announcement.setDepartureAt(deriveDepartureAt(
                 request.departureDate(), request.departureTime(), announcement.getTimezone()));
         announcement.setHandoverDeadline(request.handoverDeadline());
+        announcement.setNegotiable(request.isNegotiable());
         announcement.setPickupAddressLabel(request.pickupAddress().label());
         announcement.setPickupLat(java.math.BigDecimal.valueOf(request.pickupAddress().lat()));
         announcement.setPickupLng(java.math.BigDecimal.valueOf(request.pickupAddress().lng()));
@@ -871,7 +877,8 @@ public class AnnouncementService {
                 saved.isSurplusPublished(),
                 saved.getHandoverDeadline(),
                 saved.getCurrency(),
-                saved.getArrivalInstructions()
+                saved.getArrivalInstructions(),
+                saved.isNegotiable()
         );
     }
 
@@ -987,11 +994,38 @@ public class AnnouncementService {
     /**
      * Statuts de bid exclus du calcul « colis actifs pris en charge » : jamais
      * pris en charge (REJECTED/CANCELLED/EXPIRED), abandonné (NO_SHOW/PARCEL_REFUSED),
-     * ou déjà au bout du parcours (COMPLETED).
+     * déjà au bout du parcours (COMPLETED), ou pas encore réservé (NEGOTIATING).
+     *
+     * <p>NEGOTIATING en fait partie parce que les TROIS usages de cette constante
+     * demandent « ce colis est-il pris en charge par le voyageur ? », et un fil de
+     * négociation ouvert n'est pas un colis pris en charge :
+     * <ul>
+     *   <li>{@code canSeeArrivalInstructions} — un expéditeur qui discute encore le
+     *       prix n'a aucune raison légitime de connaître le point de retrait ;</li>
+     *   <li>{@code markArrived} — un bid en négociation ne doit jamais basculer en
+     *       ARRIVED, ni bloquer le marquage d'arrivée par la garde « tous IN_TRANSIT » ;</li>
+     *   <li>{@code updateArrivalInstructions} — un fil ouvert ne doit pas faire croire
+     *       que le trajet n'est pas soldé.</li>
+     * </ul>
+     * La garde « cet expéditeur a-t-il déjà une demande sur ce trajet ? » ne passe
+     * PAS par cette constante : elle vit dans {@code BidService#createBid} et
+     * {@code BidCheckoutService}, via {@code existsBySenderIdAndAnnouncementIdAndStatusIn},
+     * qui liste NEGOTIATING explicitement. Les deux sémantiques restent donc séparées.
+     *
+     * <p><b>Aucun effet sur l'affichage.</b> On pourrait craindre que la présence de
+     * NEGOTIATING ici fasse proposer « Proposer un prix » à un expéditeur qui a déjà un
+     * fil ouvert, pour lui répondre 409 {@code already-bid} au clic. Ce n'est pas le cas :
+     * {@code existsByAnnouncementIdAndSenderIdAndStatusNotIn} n'a qu'un seul appelant, la
+     * lecture de {@code arrivalInstructions} ci-dessus, et aucun DTO de trajet ne porte
+     * de drapeau « j'ai déjà une demande ici » (le seul champ dépendant du spectateur est
+     * {@code isFavorite}). Le client apprend ses fils ouverts par
+     * {@code GET /bids/negotiations/me}, exactement comme il apprend ses offres fermes par
+     * {@code GET /bids/me} — la négociation ne crée donc aucune asymétrie d'affichage.
      */
     private static final Set<BidStatus> INACTIVE_BID_STATUSES = EnumSet.of(
             BidStatus.REJECTED, BidStatus.CANCELLED, BidStatus.PARCEL_REFUSED,
-            BidStatus.EXPIRED, BidStatus.NO_SHOW, BidStatus.COMPLETED);
+            BidStatus.EXPIRED, BidStatus.NO_SHOW, BidStatus.COMPLETED,
+            BidStatus.NEGOTIATING);
 
     private record OwnedAnnouncement(UserEntity user, AnnouncementEntity announcement) {}
 
@@ -1287,7 +1321,8 @@ public class AnnouncementService {
                 flagService.getFlag(entity.getDepartureCountryCode()),
                 flagService.getFlag(entity.getArrivalCountryCode()),
                 entity.getHandoverDeadline(),
-                entity.getCurrency()
+                entity.getCurrency(),
+                entity.isNegotiable()
         );
     }
 
@@ -1301,7 +1336,7 @@ public class AnnouncementService {
             .map(a -> new com.yadony.api.matching.dto.TravelerAnnouncementResponse(
                 a.getId(), a.getDepartureCity(), a.getArrivalCity(),
                 a.getDepartureDate(), a.getPricePerKg(), a.getAvailableKg(), a.getStatus().name(),
-                a.getCurrency()))
+                a.getCurrency(), a.isNegotiable()))
             .toList();
     }
 

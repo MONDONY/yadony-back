@@ -125,7 +125,8 @@ class CancellationServiceTest {
             when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
             when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
             when(bidRepository.findByAnnouncementIdAndStatusIn(ANNOUNCEMENT_ID,
-                    List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED)))
+                    List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED,
+                            BidStatus.NEGOTIATING)))
                     .thenReturn(List.of());
             when(userRepository.save(any())).thenReturn(traveler);
 
@@ -155,7 +156,8 @@ class CancellationServiceTest {
             when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
             when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
             when(bidRepository.findByAnnouncementIdAndStatusIn(ANNOUNCEMENT_ID,
-                    List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED)))
+                    List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED,
+                            BidStatus.NEGOTIATING)))
                     .thenReturn(List.of(acceptedBid));
             when(userRepository.save(any())).thenReturn(traveler);
             when(cancellationRepository.save(any(CancellationEntity.class))).thenAnswer(inv -> {
@@ -187,7 +189,8 @@ class CancellationServiceTest {
             when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
             when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
             when(bidRepository.findByAnnouncementIdAndStatusIn(ANNOUNCEMENT_ID,
-                    List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED)))
+                    List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED,
+                            BidStatus.NEGOTIATING)))
                     .thenReturn(affectedBidsList);
             when(userRepository.save(any())).thenReturn(traveler);
             when(cancellationRepository.save(any(CancellationEntity.class))).thenAnswer(inv -> {
@@ -270,7 +273,8 @@ class CancellationServiceTest {
             when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
             when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
             when(bidRepository.findByAnnouncementIdAndStatusIn(ANNOUNCEMENT_ID,
-                    List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED)))
+                    List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED,
+                            BidStatus.NEGOTIATING)))
                     .thenReturn(List.of(pendingBid, escrowedBid));
             when(userRepository.save(any())).thenReturn(traveler);
             when(cancellationRepository.save(any(CancellationEntity.class))).thenAnswer(inv -> {
@@ -313,7 +317,8 @@ class CancellationServiceTest {
             when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
             when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
             when(bidRepository.findByAnnouncementIdAndStatusIn(ANNOUNCEMENT_ID,
-                    List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED)))
+                    List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED,
+                            BidStatus.NEGOTIATING)))
                     .thenReturn(List.of());
             when(userRepository.save(any())).thenReturn(traveler);
 
@@ -340,7 +345,8 @@ class CancellationServiceTest {
             when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
             when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
             when(bidRepository.findByAnnouncementIdAndStatusIn(ANNOUNCEMENT_ID,
-                    List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED)))
+                    List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED,
+                            BidStatus.NEGOTIATING)))
                     .thenReturn(List.of());
             when(userRepository.save(any())).thenReturn(traveler);
 
@@ -432,7 +438,8 @@ class CancellationServiceTest {
 
             when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
             when(bidRepository.findByAnnouncementIdAndStatusIn(ANNOUNCEMENT_ID,
-                    List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED)))
+                    List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED,
+                            BidStatus.NEGOTIATING)))
                     .thenReturn(List.of());
 
             cancellationService.cancelAnnouncementForDeletedTraveler(ANNOUNCEMENT_ID);
@@ -457,7 +464,8 @@ class CancellationServiceTest {
 
             when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
             when(bidRepository.findByAnnouncementIdAndStatusIn(ANNOUNCEMENT_ID,
-                    List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED)))
+                    List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED,
+                            BidStatus.NEGOTIATING)))
                     .thenReturn(List.of());
 
             cancellationService.cancelAnnouncementForDeletedTraveler(ANNOUNCEMENT_ID);
@@ -474,7 +482,8 @@ class CancellationServiceTest {
 
             when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
             when(bidRepository.findByAnnouncementIdAndStatusIn(ANNOUNCEMENT_ID,
-                    List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED)))
+                    List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED,
+                            BidStatus.NEGOTIATING)))
                     .thenReturn(List.of(acceptedBid));
             when(cancellationRepository.save(any(CancellationEntity.class))).thenAnswer(inv -> {
                 CancellationEntity c = inv.getArgument(0);

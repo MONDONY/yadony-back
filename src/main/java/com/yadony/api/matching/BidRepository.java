@@ -248,9 +248,21 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
            "WHERE a.travelerId = :travelerId AND b.status = 'COMPLETED'")
     List<BidEntity> findCompletedBidsByTravelerId(@Param("travelerId") UUID travelerId);
 
+    /**
+     * Colis d'un voyageur, paginés et filtrés côté SQL.
+     *
+     * <p>{@code hiddenStatuses} n'est pas une commodité d'appelant : cette surface
+     * filtre en JPQL, là où ses deux sœurs ({@code getMyBids}, liste par trajet)
+     * filtrent en flux Java après lecture. Elle n'avait donc jamais reçu leur
+     * exclusion des discussions de prix, et laissait remonter les fils dans
+     * {@code GET /bids/traveler/me}. Le paramètre porte l'ensemble nommé plutôt
+     * qu'un littéral pour que la requête suive {@link BidStatus#NEGOTIATION_STATUSES}
+     * si celui-ci s'étend.
+     */
     @Query("""
         SELECT b FROM BidEntity b JOIN AnnouncementEntity a ON b.announcementId = a.id
         WHERE a.travelerId = :travelerId
+          AND b.status NOT IN :hiddenStatuses
           AND (:status IS NULL OR b.status = :status)
           AND (:announcementId IS NULL OR b.announcementId = :announcementId)
           AND (:q IS NULL OR UPPER(b.trackingNumber) LIKE UPPER(CONCAT('%', CAST(:q AS string), '%')))
@@ -261,15 +273,26 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
             @Param("status") BidStatus status,
             @Param("announcementId") UUID announcementId,
             @Param("q") String q,
+            @Param("hiddenStatuses") Collection<BidStatus> hiddenStatuses,
             Pageable pageable);
 
+    /**
+     * Demandes PENDING que le voyageur a laissées sans réponse au-delà du délai.
+     *
+     * <p>L'horloge est {@code COALESCE(pendingSince, createdAt)}, pas {@code createdAt} :
+     * un accord de négociation entre dans la file du voyageur à l'acceptation, très
+     * longtemps après la création du fil (jusqu'à 72 h d'échanges). Sur {@code createdAt}
+     * seul, le cas NOMINAL — un fil de plus de 24 h — voyait son accord détruit au tick
+     * suivant, avant même que le voyageur ait pu régler la commission.
+     * Cf. {@code BidEntity.pendingSince}.
+     */
     @Query("""
         SELECT b FROM BidEntity b, AnnouncementEntity a
         WHERE b.announcementId = a.id
           AND b.status = com.yadony.api.matching.BidStatus.PENDING
-          AND b.createdAt < :minGraceThreshold
+          AND COALESCE(b.pendingSince, b.createdAt) < :minGraceThreshold
           AND (
-                b.createdAt < :twentyFourHoursAgo
+                COALESCE(b.pendingSince, b.createdAt) < :twentyFourHoursAgo
              OR a.departureDate <= :halfDayThresholdDate
           )
         """)
@@ -415,4 +438,46 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
     List<UUID> findLoyalSenderIds(@Param("travelerId") UUID travelerId,
                                   @Param("departureCity") String departureCity,
                                   @Param("arrivalCity") String arrivalCity);
+
+    /** Fils de négociation où l'utilisateur est expéditeur ou voyageur du trajet. */
+    @Query("""
+        SELECT b FROM BidEntity b
+        JOIN AnnouncementEntity a ON b.announcementId = a.id
+        WHERE b.status = com.yadony.api.matching.BidStatus.NEGOTIATING
+          AND (b.senderId = :userId OR a.travelerId = :userId)
+          AND b.deletedAt IS NULL
+        ORDER BY b.updatedAt DESC
+    """)
+    List<BidEntity> findNegotiationsForUser(@Param("userId") UUID userId);
+
+    /**
+     * Fils inactifs depuis le seuil : plus aucun message échangé.
+     *
+     * <p>Le critère est la date du dernier message, PAS {@code updatedAt} du bid :
+     * marquer un fil comme lu écrit sur le bid, et l'horloge d'inactivité repartirait
+     * alors de zéro à chaque ouverture de l'écran — un fil abandonné mais consulté
+     * n'expirerait jamais.
+     */
+    @Query("""
+        SELECT b FROM BidEntity b
+        WHERE b.status = com.yadony.api.matching.BidStatus.NEGOTIATING
+          AND b.deletedAt IS NULL
+          AND (SELECT MAX(m.createdAt) FROM BidNegotiationMessageEntity m
+               WHERE m.bidId = b.id) < :threshold
+    """)
+    List<BidEntity> findStaleNegotiations(@Param("threshold") LocalDateTime threshold);
+
+    /**
+     * Fils encore ouverts sur un trajet déjà parti. Complète
+     * {@link #findStaleNegotiations} : un fil actif jusqu'à la veille du départ
+     * n'est jamais « inactif », mais il n'a plus d'objet une fois l'avion parti.
+     */
+    @Query("""
+        SELECT b FROM BidEntity b
+        JOIN AnnouncementEntity a ON b.announcementId = a.id
+        WHERE b.status = com.yadony.api.matching.BidStatus.NEGOTIATING
+          AND a.departureDate < :today
+          AND b.deletedAt IS NULL
+    """)
+    List<BidEntity> findNegotiationsOnDepartedTrips(@Param("today") java.time.LocalDate today);
 }

@@ -164,6 +164,7 @@ class AnnouncementServiceTest {
                 null, null, null, null, null, null,
                 null, null,
                 departure.atTime(9, 0),
+                null,
                 null
         );
     }
@@ -181,7 +182,8 @@ class AnnouncementServiceTest {
                 null, null, null, null, null, null,
                 null, null,
                 departure.atTime(9, 0),
-                true
+                true,
+                null
         );
     }
 
@@ -203,6 +205,7 @@ class AnnouncementServiceTest {
                 null, null, null, methods, null, null,
                 null, null,
                 departure.atTime(9, 0),
+                null,
                 null
         );
     }
@@ -354,6 +357,7 @@ class AnnouncementServiceTest {
                     List.of("Nourriture"),
                     null, null, null, null, null,
                     departure.atTime(9, 0),
+                    null,
                     null
             );
 
@@ -392,6 +396,7 @@ class AnnouncementServiceTest {
                     null, null, null, null, null, null,
                     "US", "SN",
                     LocalDate.now().plusDays(10).atTime(9, 0),
+                    null,
                     null
             );
 
@@ -664,6 +669,7 @@ class AnnouncementServiceTest {
                     null, null, null, java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.STRIPE, com.yadony.api.payments.cash.PaymentMethod.CASH), null, null,
                     null, null,
                     LocalDate.now().plusDays(10).atTime(18, 0),
+                    null,
                     null
             );
 
@@ -697,6 +703,7 @@ class AnnouncementServiceTest {
                     null, null, null, java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.STRIPE, com.yadony.api.payments.cash.PaymentMethod.CASH), null, null,
                     null, null,
                     LocalDate.now().plusDays(10).atTime(18, 0),
+                    null,
                     null
             );
 
@@ -735,6 +742,7 @@ class AnnouncementServiceTest {
                     null, null, null, null, null, PricingMode.MIXED,
                     null, null,
                     LocalDate.now().plusDays(10).atTime(9, 0),
+                    null,
                     null
             );
 
@@ -772,6 +780,7 @@ class AnnouncementServiceTest {
                     null, null, null, null, null, PricingMode.MIXED,
                     null, null,
                     LocalDate.now().plusDays(10).atTime(9, 0),
+                    null,
                     null
             );
 
@@ -1111,6 +1120,7 @@ class AnnouncementServiceTest {
                     null, null, null, null, null, null,
                     null, null,
                     LocalDate.now().plusDays(15).atTime(18, 0),
+                    null,
                     null
             );
 
@@ -1146,6 +1156,7 @@ class AnnouncementServiceTest {
                     null, null, null,
                     null, null, null, null, null,
                     departure.atTime(18, 0),
+                    null,
                     null
             );
 
@@ -1182,6 +1193,7 @@ class AnnouncementServiceTest {
                     List.of("Nourriture", "Nourriture"),
                     null, null, null, null, null,
                     departure.atTime(18, 0),
+                    null,
                     null
             );
 
@@ -1238,6 +1250,7 @@ class AnnouncementServiceTest {
                     null, null, null, null, null, null,
                     null, null,
                     LocalDate.now().plusDays(15).atTime(18, 0),
+                    null,
                     null
             );
 
@@ -1960,6 +1973,7 @@ class AnnouncementServiceTest {
                     null, null, null, null, CapacityUnit.SUITCASE_32KG, null,
                     null, null,
                     LocalDate.now().plusDays(10).atTime(9, 0),
+                    null,
                     null
             );
 
@@ -2004,6 +2018,7 @@ class AnnouncementServiceTest {
                     null, null, null, null, null, null,
                     null, null,
                     LocalDate.now().minusDays(1).atTime(18, 0),
+                    null,
                     null
             );
 
@@ -2180,6 +2195,7 @@ class AnnouncementServiceTest {
                     null, null, null, null, null, null,
                     null, null,
                     deadline,
+                    null,
                     null
             );
         }
@@ -2244,6 +2260,7 @@ class AnnouncementServiceTest {
                     null, null, null, null, null, null,
                     null, null,
                     deadline,
+                    null,
                     null
             );
 
@@ -2951,5 +2968,124 @@ class AnnouncementServiceTest {
                 a != null && a.getStatus() == AnnouncementStatus.COMPLETED));
         verify(bidRepository).existsByAnnouncementIdAndStatusIn(eq(ANNOUNCEMENT_ID),
                 argThat(statuses -> statuses.contains(BidStatus.ARRIVED)));
+    }
+
+    // ─── Drapeau « négociable » (Task 8) ────────────────────────────────────
+
+    @Nested
+    @DisplayName("drapeau negotiable")
+    class Negotiable {
+
+        private AnnouncementRequest requestWithNegotiable(Boolean negotiable) {
+            LocalDate departure = LocalDate.now().plusDays(10);
+            return new AnnouncementRequest(
+                    "Paris", "Dakar",
+                    departure,
+                    LocalTime.of(10, 0), LocalTime.of(22, 0),
+                    new AddressDto("CDG Terminal 2E", 49.009, 2.547),
+                    new AddressDto("Aéroport LSS", 14.739, -17.490),
+                    BigDecimal.valueOf(20), BigDecimal.valueOf(5),
+                    TransportMode.PLANE,
+                    null, null, null, null, null, null,
+                    null, null,
+                    departure.atTime(9, 0),
+                    null,
+                    negotiable
+            );
+        }
+
+        private ArgumentCaptor<AnnouncementEntity> stubCreate() {
+            UserEntity traveler = buildTraveler();
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            ArgumentCaptor<AnnouncementEntity> captor = ArgumentCaptor.forClass(AnnouncementEntity.class);
+            when(announcementRepository.save(captor.capture())).thenAnswer(inv -> {
+                AnnouncementEntity a = inv.getArgument(0);
+                setId(a, ANNOUNCEMENT_ID);
+                return a;
+            });
+            when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
+            when(bidRepository.countByAnnouncementIdAndStatusIn(any(), any())).thenReturn(0L);
+            return captor;
+        }
+
+        @Test
+        @DisplayName("negotiable = true → persisté sur l'annonce et rendu dans la réponse")
+        void create_withNegotiableTrue_persistsFlag() {
+            ArgumentCaptor<AnnouncementEntity> captor = stubCreate();
+
+            AnnouncementResponse response =
+                    announcementService.createAnnouncement(FIREBASE_UID, requestWithNegotiable(true));
+
+            assertThat(captor.getValue().isNegotiable()).isTrue();
+            assertThat(response.negotiable()).isTrue();
+        }
+
+        @Test
+        @DisplayName("champ absent → le trajet reste à prix ferme")
+        void create_withoutNegotiable_defaultsToFalse() {
+            ArgumentCaptor<AnnouncementEntity> captor = stubCreate();
+
+            AnnouncementResponse response =
+                    announcementService.createAnnouncement(FIREBASE_UID, requestWithNegotiable(null));
+
+            assertThat(captor.getValue().isNegotiable()).isFalse();
+            assertThat(response.negotiable()).isFalse();
+        }
+
+        /**
+         * Le drapeau doit voyager jusqu'à CHAQUE surface que l'expéditeur consulte.
+         * Exposé sur la seule {@code AnnouncementResponse} (réponse de création et
+         * « Mes trajets », deux écrans du VOYAGEUR), il reste invisible de l'expéditeur :
+         * le bouton « Proposer un prix » ne s'affiche alors nulle part et la
+         * négociation est morte côté produit.
+         */
+        @Test
+        @DisplayName("le détail du trajet porte le drapeau (écran où l'expéditeur propose)")
+        void detail_exposesNegotiable() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity a = buildAnnouncement(traveler);
+            a.setNegotiable(true);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
+            when(bidRepository.countVisibleByAnnouncementId(ANNOUNCEMENT_ID)).thenReturn(0L);
+
+            AnnouncementDetailResponse result =
+                    announcementService.getAnnouncementDetail(ANNOUNCEMENT_ID, FIREBASE_UID);
+
+            assertThat(result.negotiable()).isTrue();
+        }
+
+        @Test
+        @DisplayName("le détail d'un trajet à prix ferme rend false")
+        void detail_exposesNegotiableFalse() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity a = buildAnnouncement(traveler);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
+            when(bidRepository.countVisibleByAnnouncementId(ANNOUNCEMENT_ID)).thenReturn(0L);
+
+            AnnouncementDetailResponse result =
+                    announcementService.getAnnouncementDetail(ANNOUNCEMENT_ID, FIREBASE_UID);
+
+            assertThat(result.negotiable()).isFalse();
+        }
+
+        @Test
+        @DisplayName("la vue compacte du profil voyageur porte le drapeau")
+        void travelerAnnouncements_exposeNegotiable() {
+            UUID travelerId = UUID.randomUUID();
+            UserEntity traveler = buildTraveler();
+            setId(traveler, travelerId);
+            AnnouncementEntity active = buildAnnouncement(traveler);
+            active.setStatus(AnnouncementStatus.ACTIVE);
+            active.setNegotiable(true);
+
+            when(announcementRepository.findByTravelerIdAndStatus(eq(travelerId), eq(AnnouncementStatus.ACTIVE), any()))
+                    .thenReturn(new PageImpl<>(List.of(active)));
+            when(announcementRepository.findByTravelerIdAndStatus(eq(travelerId), eq(AnnouncementStatus.FULL), any()))
+                    .thenReturn(new PageImpl<>(List.of()));
+
+            var result = announcementService.getTravelerAnnouncements(travelerId);
+
+            assertThat(result.get(0).negotiable()).isTrue();
+        }
     }
 }

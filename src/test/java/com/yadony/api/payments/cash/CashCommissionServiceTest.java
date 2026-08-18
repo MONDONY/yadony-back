@@ -183,6 +183,74 @@ class CashCommissionServiceTest {
             assertThat(commission).isEqualByComparingTo("16.00");
             assertThat(bid.getCommissionRate()).isEqualByComparingTo("0.08");
         }
+
+        /**
+         * Sur un bid issu d'une négociation de prix, le barème de l'annonce (prix/kg,
+         * grille) n'a plus aucun rapport avec ce que les deux parties ont convenu :
+         * c'est {@code negotiatedNetEur} qui fait foi, et le taux figé à l'ouverture
+         * du fil qui s'applique — le même raisonnement que
+         * {@code settleNegotiationCommission} pour les fils de demande d'envoi.
+         */
+        @Test
+        void computeBidCommission_onNegotiatedBid_usesAgreedNetAndFrozenRate() {
+            UUID travelerId = UUID.randomUUID();
+            UUID senderId = UUID.randomUUID();
+
+            BidEntity bid = new BidEntity();
+            ReflectionTestUtils.setField(bid, "id", UUID.randomUUID());
+            bid.setSenderId(senderId);
+            bid.setWeightKg(new BigDecimal("10"));
+            bid.setNegotiatedNetEur(new BigDecimal("42.86"));
+            bid.setNegotiatedGrossEur(new BigDecimal("45.00"));
+            bid.setCommissionRate(new BigDecimal("0.05"));
+            AnnouncementEntity ann = new AnnouncementEntity();
+            ReflectionTestUtils.setField(ann, "id", UUID.randomUUID());
+            ann.setTravelerId(travelerId);
+            ann.setPricePerKg(new BigDecimal("20"));
+
+            // Barème : 10 × 20 = 200 → 24,00 au taux global. Accord : 42,86 × 5 % = 2,14.
+            BigDecimal commission = service.computeBidCommission(bid, ann);
+
+            assertThat(commission).isEqualByComparingTo("2.14");
+            assertThat(bid.getCommissionRate()).isEqualByComparingTo("0.05");
+            verifyNoInteractions(commissionRateResolver);
+        }
+
+        /**
+         * Le voyageur doit garder son net AU CENTIME.
+         *
+         * <p>En espèces l'expéditeur remet le brut en main propre : la plateforme ne
+         * peut prélever que la différence exacte brut − net. Un {@code net × taux}
+         * recalculé rompt l'invariant dès que l'arrondi du net s'écarte, soit ~4,8 %
+         * des montants — dont 40,00 € pile. Le fil affichait alors 1,90 € et le
+         * prélèvement en réclamait 1,91 €, un centime pris au voyageur.
+         *
+         * <p>Le cas de 45,00 € du test précédent ne pouvait pas le montrer : les deux
+         * formules y tombent sur le même centime.
+         */
+        @Test
+        void computeBidCommission_onNegotiatedBid_isTheExactGrossMinusNet() {
+            BidEntity bid = new BidEntity();
+            ReflectionTestUtils.setField(bid, "id", UUID.randomUUID());
+            bid.setSenderId(UUID.randomUUID());
+            bid.setWeightKg(new BigDecimal("10"));
+            bid.setNegotiatedGrossEur(new BigDecimal("40.00"));
+            bid.setNegotiatedNetEur(new BigDecimal("38.10"));
+            bid.setCommissionRate(new BigDecimal("0.05"));
+            AnnouncementEntity ann = new AnnouncementEntity();
+            ReflectionTestUtils.setField(ann, "id", UUID.randomUUID());
+            ann.setTravelerId(UUID.randomUUID());
+            ann.setPricePerKg(new BigDecimal("20"));
+
+            BigDecimal commission = service.computeBidCommission(bid, ann);
+
+            // 38,10 × 5 % arrondi donnerait 1,91 : ce test échoue sur l'ancien calcul.
+            assertThat(commission).isEqualByComparingTo("1.90");
+            assertThat(bid.getNegotiatedNetEur().add(commission))
+                    .describedAs("net + commission doit redonner le brut marchandé")
+                    .isEqualByComparingTo(bid.getNegotiatedGrossEur());
+            verifyNoInteractions(commissionRateResolver);
+        }
     }
 
     // ===================== setupCommissionMethod =====================

@@ -190,6 +190,11 @@ public class AnnouncementEntity extends BaseEntity {
     @Column(name = "pricing_mode", nullable = false, length = 10)
     private PricingMode pricingMode = PricingMode.KG;
 
+    /** Le voyageur accepte les propositions de prix. Défaut false : un trajet
+     *  publié avant cette fonctionnalité reste à prix ferme. */
+    @Column(name = "negotiable", nullable = false, columnDefinition = "boolean default false")
+    private boolean negotiable = false;
+
     public String getTimezone() { return timezone; }
     public void setTimezone(String timezone) { this.timezone = timezone; }
 
@@ -350,6 +355,9 @@ public class AnnouncementEntity extends BaseEntity {
 
     public PricingMode getPricingMode() { return pricingMode; }
     public void setPricingMode(PricingMode pricingMode) { this.pricingMode = pricingMode; }
+
+    public boolean isNegotiable() { return negotiable; }
+    public void setNegotiable(boolean negotiable) { this.negotiable = negotiable; }
 
     public LocalDateTime getHandoverDeadline() { return handoverDeadline; }
     public void setHandoverDeadline(LocalDateTime handoverDeadline) { this.handoverDeadline = handoverDeadline; }

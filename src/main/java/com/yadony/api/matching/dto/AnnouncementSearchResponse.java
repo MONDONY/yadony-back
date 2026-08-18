@@ -38,5 +38,8 @@ public record AnnouncementSearchResponse(
         LocalDateTime handoverDeadline,
         boolean isFavorite,
         boolean urgent,
-        String currency
+        String currency,
+        /** Le voyageur accepte les propositions de prix : pilote le badge « prix
+         *  négociable » du feed et l'entrée vers le fil de négociation. */
+        boolean negotiable
 ) {}

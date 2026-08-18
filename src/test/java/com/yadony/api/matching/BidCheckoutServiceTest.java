@@ -332,4 +332,111 @@ class BidCheckoutServiceTest {
         verify(bidRepository, atLeastOnce()).save(captor.capture());
         assertThat(captor.getAllValues().get(0).getDisclaimerSignedIp()).isEqualTo("9.10.11.12");
     }
+
+    // ── negotiationCheckout : payer un accord de prix déjà conclu ────────────────
+    //
+    // POST /bids/checkout crée toujours un bid neuf. Un accord négocié porte sur un bid
+    // qui EXISTE déjà (il a porté toute la discussion), et le repasser par checkout en
+    // créerait un doublon tout en perdant le prix convenu. D'où ce second chemin, qui
+    // n'ouvre l'escrow que sur le bid existant.
+
+    private BidEntity negotiatedBid() {
+        BidEntity b = new BidEntity();
+        ReflectionTestUtils.setField(b, "id", UUID.randomUUID());
+        b.setAnnouncementId(announcement.getId());
+        b.setSenderId(sender.getId());
+        b.setStatus(BidStatus.AWAITING_PAYMENT);
+        b.setNegotiatedGrossEur(new BigDecimal("45.00"));
+        b.setNegotiatedNetEur(new BigDecimal("42.86"));
+        b.setCommissionRate(new BigDecimal("0.05"));
+        b.setAwaitingPaymentExpiresAt(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).plusHours(24));
+        return b;
+    }
+
+    @Test
+    void negotiationCheckout_opensEscrowOnTheExistingBid_withoutCreatingANewOne() {
+        BidEntity bid = negotiatedBid();
+        when(bidRepository.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
+        when(bidRepository.save(any(BidEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        ArgumentCaptor<CreatePaymentRequest> payReq = ArgumentCaptor.forClass(CreatePaymentRequest.class);
+        when(paymentService.createEscrow(payReq.capture(), eq("uid-sender")))
+                .thenReturn(stubPaymentResponse());
+
+        BidCheckoutResponse resp = service.negotiationCheckout("uid-sender", bid.getId());
+
+        assertThat(payReq.getValue().getBidId()).isEqualTo(bid.getId());
+        // Aucun montant client : le serveur relit l'accord figé sur le bid.
+        assertThat(payReq.getValue().getTotalNetEur()).isNull();
+        assertThat(resp.bidId()).isEqualTo(bid.getId());
+        assertThat(resp.clientSecret()).isEqualTo("secret_xyz");
+        assertThat(resp.expiresAt()).isEqualTo(bid.getAwaitingPaymentExpiresAt());
+        // Le PaymentIntent est reporté sur le bid, sans quoi ni confirm-payment ni
+        // AwaitingPaymentCleanupScheduler ne sauraient le retrouver.
+        assertThat(bid.getPaymentIntentId()).isEqualTo("pi_test123");
+    }
+
+    @Test
+    void negotiationCheckout_byAnotherUser_isForbidden() {
+        BidEntity bid = negotiatedBid();
+        bid.setSenderId(UUID.randomUUID());
+        when(bidRepository.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
+
+        assertThatThrownBy(() -> service.negotiationCheckout("uid-sender", bid.getId()))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                        .isEqualTo("forbidden"));
+        verify(paymentService, never()).createEscrow(any(), anyString());
+    }
+
+    @Test
+    void negotiationCheckout_onAnOrdinaryBid_isRejected() {
+        BidEntity bid = negotiatedBid();
+        bid.setNegotiatedGrossEur(null);
+        bid.setNegotiatedNetEur(null);
+        when(bidRepository.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
+
+        assertThatThrownBy(() -> service.negotiationCheckout("uid-sender", bid.getId()))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                        .isEqualTo("bid-not-negotiated"));
+        verify(paymentService, never()).createEscrow(any(), anyString());
+    }
+
+    @Test
+    void negotiationCheckout_whenTheThreadIsStillOpen_isRejected() {
+        BidEntity bid = negotiatedBid();
+        bid.setStatus(BidStatus.NEGOTIATING);
+        when(bidRepository.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
+
+        assertThatThrownBy(() -> service.negotiationCheckout("uid-sender", bid.getId()))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                        .isEqualTo("bid-not-awaiting-payment"));
+        verify(paymentService, never()).createEscrow(any(), anyString());
+    }
+
+    /** Un accord en espèces vit en PENDING : il n'y a rien à encaisser en ligne. */
+    @Test
+    void negotiationCheckout_onACashAgreement_isRejected() {
+        BidEntity bid = negotiatedBid();
+        bid.setStatus(BidStatus.PENDING);
+        bid.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.CASH);
+        when(bidRepository.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
+
+        assertThatThrownBy(() -> service.negotiationCheckout("uid-sender", bid.getId()))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                        .isEqualTo("bid-not-awaiting-payment"));
+    }
+
+    @Test
+    void negotiationCheckout_unknownBid_isNotFound() {
+        UUID unknown = UUID.randomUUID();
+        when(bidRepository.findByIdForUpdate(unknown)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.negotiationCheckout("uid-sender", unknown))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                        .isEqualTo("bid-not-found"));
+    }
 }

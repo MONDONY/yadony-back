@@ -20,7 +20,8 @@ public class BlockService {
      *  coordination. ARRIVED (colis arrivé, retrait à organiser) en fait partie. */
     private static final List<BidStatus> ACTIVE_STATUSES = List.of(
             BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED,
-            BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED);
+            BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED,
+            BidStatus.NEGOTIATING);
 
     private final UserBlockJpaRepository blockRepo;
     private final UserRepository userRepository;

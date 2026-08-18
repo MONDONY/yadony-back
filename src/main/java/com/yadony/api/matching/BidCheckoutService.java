@@ -25,6 +25,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 @Service
 public class BidCheckoutService {
@@ -137,7 +138,8 @@ public class BidCheckoutService {
 
         boolean alreadyHasBid = bidRepository.existsBySenderIdAndAnnouncementIdAndStatusIn(
             sender.getId(), announcement.getId(),
-            List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED));
+            List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED,
+                    BidStatus.NEGOTIATING));
         if (alreadyHasBid) {
             throw new YadonyBusinessException(HttpStatus.CONFLICT,
                 "already-bid", "Demande existante",
@@ -235,6 +237,79 @@ public class BidCheckoutService {
             paymentResp.getClientSecret(),
             stripePublishableKey,
             saved.getAwaitingPaymentExpiresAt(),
+            paymentResp.getCurrency(),
+            paymentResp.getPaymentMethodTypes()
+        );
+    }
+
+    /**
+     * Ouvre l'escrow Stripe sur un bid <b>existant</b> dont la négociation de prix a
+     * abouti ({@code BidNegotiationService.accept}).
+     *
+     * <p>{@link #checkout} ne convient pas : il crée toujours un bid neuf. Le bid
+     * négocié existe déjà — c'est lui qui a porté toute la discussion, ses articles,
+     * ses photos et le prix convenu — et le repasser par {@code checkout} produirait
+     * un doublon au tarif catalogue.
+     *
+     * <p>Aucun montant ne transite : {@code PaymentService.createEscrow} relit
+     * {@code negotiatedGrossEur} / {@code negotiatedNetEur} figés sur le bid. Cette
+     * méthode ne fait qu'en vérifier l'éligibilité et reporter le {@code paymentIntentId}
+     * sur le bid, sans quoi ni {@code POST /bids/{id}/confirm-payment} ni
+     * {@code AwaitingPaymentCleanupScheduler} ne sauraient le retrouver.
+     *
+     * <p>La suite est celle d'un paiement carte ordinaire : l'expéditeur confirme dans
+     * la sheet Stripe, {@code confirm-payment} (ou le webhook) promeut le bid en
+     * {@code PAYMENT_ESCROWED}, puis le voyageur l'accepte.
+     */
+    @Transactional
+    @CacheEvict(value = "announcements-search", allEntries = true)
+    public BidCheckoutResponse negotiationCheckout(String firebaseUid, UUID bidId) {
+        UserEntity sender = userRepository.findByFirebaseUid(firebaseUid)
+            .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
+                "user-not-found", "User Not Found", "Utilisateur introuvable"));
+
+        BidEntity bid = bidRepository.findByIdForUpdate(bidId)
+            .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
+                "bid-not-found", "Bid Not Found", "Demande introuvable"));
+
+        // Seul l'expéditeur paie. Le voyageur, lui, n'a rien à régler ici.
+        if (!bid.getSenderId().equals(sender.getId())) {
+            throw new YadonyBusinessException(HttpStatus.FORBIDDEN,
+                "forbidden", "Forbidden", "Cette demande ne vous appartient pas");
+        }
+
+        if (bid.getNegotiatedGrossEur() == null || bid.getNegotiatedNetEur() == null) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT,
+                "bid-not-negotiated", "Bid Not Negotiated",
+                "Cette demande n'est pas issue d'une négociation de prix");
+        }
+
+        // Filtre à la fois le fil encore ouvert (NEGOTIATING), le fil refusé/annulé et
+        // l'accord en espèces (PENDING) — ce dernier n'a aucun paiement en ligne à ouvrir.
+        if (bid.getStatus() != BidStatus.AWAITING_PAYMENT) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT,
+                "bid-not-awaiting-payment", "Bid Not Awaiting Payment",
+                "Cette demande n'attend pas de paiement (statut : " + bid.getStatus() + ")");
+        }
+
+        CreatePaymentRequest paymentReq = new CreatePaymentRequest();
+        paymentReq.setBidId(bid.getId());
+        PaymentResponse paymentResp = paymentService.createEscrow(paymentReq, firebaseUid);
+
+        bid.setPaymentIntentId(paymentResp.getStripePaymentIntentId());
+        bidRepository.save(bid);
+
+        auditService.log("BID", bid.getId(), "BID_NEGOTIATION_CHECKOUT", sender.getId(),
+            java.util.Map.of(
+                "announcementId", String.valueOf(bid.getAnnouncementId()),
+                "grossEur", bid.getNegotiatedGrossEur().toPlainString(),
+                "piId", String.valueOf(paymentResp.getStripePaymentIntentId())));
+
+        return new BidCheckoutResponse(
+            bid.getId(),
+            paymentResp.getClientSecret(),
+            stripePublishableKey,
+            bid.getAwaitingPaymentExpiresAt(),
             paymentResp.getCurrency(),
             paymentResp.getPaymentMethodTypes()
         );

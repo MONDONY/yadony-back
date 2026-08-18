@@ -141,6 +141,7 @@ class AnnouncementServiceAddressTest {
             null, java.util.List.of(), java.util.List.of(), null, null, null,
             null, null,
             departure.atTime(18, 0),
+            null,
             null
         );
     }

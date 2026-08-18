@@ -36,6 +36,22 @@ public class BidEntity extends BaseEntity {
     @Column(name = "negotiated_net_eur", precision = 10, scale = 2)
     private BigDecimal negotiatedNetEur;
 
+    /** Brut figé à l'accord : ce que l'expéditeur paie. Le net voyageur vit dans
+     *  {@link #negotiatedNetEur}. L'invariant net + commission = brut est garanti
+     *  au centime par {@code BidNegotiationPricing}. Null hors négociation. */
+    @Column(name = "negotiated_gross_eur", precision = 10, scale = 2)
+    private BigDecimal negotiatedGrossEur;
+
+    /** Nombre de propositions échangées sur ce fil (PROPOSAL + COUNTER). */
+    @Column(name = "negotiation_round", nullable = false, columnDefinition = "int default 0")
+    private int negotiationRound = 0;
+
+    @Column(name = "sender_last_read_at")
+    private LocalDateTime senderLastReadAt;
+
+    @Column(name = "traveler_last_read_at")
+    private LocalDateTime travelerLastReadAt;
+
     /**
      * If non-null, this bid was created from the package_request marketplace
      * flow (NegotiationThread → ACCEPTED) rather than the classic announce-bid flow.
@@ -166,6 +182,20 @@ public class BidEntity extends BaseEntity {
     @Column(name = "awaiting_payment_expires_at")
     private LocalDateTime awaitingPaymentExpiresAt;
 
+    /**
+     * Instant où le bid est entré dans la file d'attente du voyageur, c'est-à-dire
+     * où le compte à rebours « demande sans réponse » de {@link BidTimeoutScheduler}
+     * commence à courir.
+     *
+     * <p>{@code null} pour une demande ferme, qui naît PENDING : son horloge est
+     * alors {@code createdAt}, et la requête les confond par un {@code COALESCE}.
+     * Un accord de négociation, lui, entre dans cette file bien après sa création —
+     * le fil ayant pu vivre jusqu'à 72 h — et doit donc repartir de l'accord, sinon
+     * le cas nominal (fil de plus de 24 h) serait annulé au tick suivant.
+     */
+    @Column(name = "pending_since")
+    private LocalDateTime pendingSince;
+
     @Column(name = "shipment_counted", nullable = false)
     private boolean shipmentCounted = false;
 
@@ -220,6 +250,14 @@ public class BidEntity extends BaseEntity {
 
     public BigDecimal getNegotiatedNetEur() { return negotiatedNetEur; }
     public void setNegotiatedNetEur(BigDecimal negotiatedNetEur) { this.negotiatedNetEur = negotiatedNetEur; }
+    public BigDecimal getNegotiatedGrossEur() { return negotiatedGrossEur; }
+    public void setNegotiatedGrossEur(BigDecimal negotiatedGrossEur) { this.negotiatedGrossEur = negotiatedGrossEur; }
+    public int getNegotiationRound() { return negotiationRound; }
+    public void setNegotiationRound(int negotiationRound) { this.negotiationRound = negotiationRound; }
+    public LocalDateTime getSenderLastReadAt() { return senderLastReadAt; }
+    public void setSenderLastReadAt(LocalDateTime senderLastReadAt) { this.senderLastReadAt = senderLastReadAt; }
+    public LocalDateTime getTravelerLastReadAt() { return travelerLastReadAt; }
+    public void setTravelerLastReadAt(LocalDateTime travelerLastReadAt) { this.travelerLastReadAt = travelerLastReadAt; }
 
     public UUID getLinkedNegotiationThreadId() { return linkedNegotiationThreadId; }
     public void setLinkedNegotiationThreadId(UUID id) { this.linkedNegotiationThreadId = id; }
@@ -343,6 +381,9 @@ public class BidEntity extends BaseEntity {
 
     public LocalDateTime getAwaitingPaymentExpiresAt() { return awaitingPaymentExpiresAt; }
     public void setAwaitingPaymentExpiresAt(LocalDateTime awaitingPaymentExpiresAt) { this.awaitingPaymentExpiresAt = awaitingPaymentExpiresAt; }
+
+    public LocalDateTime getPendingSince() { return pendingSince; }
+    public void setPendingSince(LocalDateTime pendingSince) { this.pendingSince = pendingSince; }
 
     public boolean isShipmentCounted() { return shipmentCounted; }
     public void setShipmentCounted(boolean shipmentCounted) { this.shipmentCounted = shipmentCounted; }

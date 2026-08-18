@@ -16,7 +16,27 @@ public enum BidStatus {
     COMPLETED,
     NO_SHOW,
     PARCEL_REFUSED,
-    EXPIRED;
+    EXPIRED,
+    /** Fil de négociation ouvert par l'expéditeur sur un trajet négociable.
+     *  Ce n'est PAS une réservation : ce statut doit rester invisible de toutes
+     *  les listes, compteurs et statistiques de colis. */
+    NEGOTIATING,
+
+    /**
+     * Fil de négociation éteint sans accord — refusé, retiré, ou périmé.
+     *
+     * <p>Statut à part entière plutôt que REJECTED / CANCELLED réutilisés, parce
+     * qu'un fil clos n'a JAMAIS été une réservation : le recycler dans un statut
+     * de colis le faisait réapparaître partout sous les traits d'une demande de
+     * colis refusée — dans « Mes envois », dans la liste voyageur du trajet, et
+     * jusque dans le dénominateur du taux d'acceptation du voyageur, qu'un simple
+     * refus de prix par l'expéditeur suffisait alors à dégrader.
+     *
+     * <p>Aucun ensemble d'exclusion ne pouvait porter cette distinction : une fois
+     * le fil en REJECTED, plus rien dans le statut ne le séparait d'un vrai refus.
+     * Cf. {@link #NEGOTIATION_STATUSES}.
+     */
+    NEGOTIATION_CLOSED;
 
     /**
      * Bids que le voyageur a effectivement acceptés — le statut a dépassé le
@@ -62,4 +82,21 @@ public enum BidStatus {
         inFlight.addAll(EN_ROUTE);
         IN_FLIGHT = inFlight;
     }
+
+    /**
+     * Fils de négociation encore ouverts. Source unique du filtre d'invisibilité :
+     * toute liste destinée au voyageur ou à l'expéditeur doit exclure cet ensemble,
+     * un bid en négociation n'étant pas un colis réservé.
+     */
+    public static final Set<BidStatus> NEGOTIATION_ACTIVE = EnumSet.of(NEGOTIATING);
+
+    /**
+     * Le bid est une DISCUSSION DE PRIX, ouverte ou éteinte — jamais un colis.
+     *
+     * <p>Contrairement à {@link #NEGOTIATION_ACTIVE}, cet ensemble survit à la
+     * fermeture du fil : c'est lui qui porte « ce bid n'a jamais engagé personne »
+     * une fois la discussion terminée.
+     */
+    public static final Set<BidStatus> NEGOTIATION_STATUSES =
+            EnumSet.of(NEGOTIATING, NEGOTIATION_CLOSED);
 }

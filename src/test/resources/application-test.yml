@@ -57,6 +57,12 @@ yadony:
     otp-template: "Test code: %s"
   urgency:
     threshold-days: 3
+  matching:
+    negotiation:
+      max-rounds: 3
+      inactivity-hours: 1
+      awaiting-payment-hours: 24
+      expire-check-cron: "-"
   kyc:
     enforce: false
   stripe:

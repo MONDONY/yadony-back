@@ -133,7 +133,7 @@ class AnnouncementInProgressTransitionTest {
         when(bidRepository.existsByAnnouncementIdAndStatusIn(announcementId,
                 List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED)))
                 .thenReturn(true);
-        when(bidRepository.findByAnnouncementIdAndStatusIn(announcementId, List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED)))
+        when(bidRepository.findByAnnouncementIdAndStatusIn(announcementId, List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.NEGOTIATING)))
                 .thenReturn(List.of(pending));
 
         service.triggerInProgressTransitions();
@@ -161,7 +161,7 @@ class AnnouncementInProgressTransitionTest {
         when(bidRepository.existsByAnnouncementIdAndStatusIn(announcementId,
                 List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED)))
                 .thenReturn(false);
-        when(bidRepository.findByAnnouncementIdAndStatusIn(announcementId, List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED)))
+        when(bidRepository.findByAnnouncementIdAndStatusIn(announcementId, List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.NEGOTIATING)))
                 .thenReturn(List.of());
 
         service.triggerInProgressTransitions();
@@ -203,7 +203,7 @@ class AnnouncementInProgressTransitionTest {
         when(bidRepository.existsByAnnouncementIdAndStatusIn(eq(ann2Id),
                 eq(List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED))))
                 .thenReturn(false);
-        when(bidRepository.findByAnnouncementIdAndStatusIn(eq(ann2Id), eq(List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED))))
+        when(bidRepository.findByAnnouncementIdAndStatusIn(eq(ann2Id), eq(List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.NEGOTIATING))))
                 .thenReturn(List.of());
 
         service.triggerInProgressTransitions();

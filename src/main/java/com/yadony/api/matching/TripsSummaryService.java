@@ -31,7 +31,8 @@ public class TripsSummaryService {
             BidStatus.AWAITING_PAYMENT,
             BidStatus.REJECTED,
             BidStatus.CANCELLED,
-            BidStatus.EXPIRED);
+            BidStatus.EXPIRED,
+            BidStatus.NEGOTIATING);
 
     private final AnnouncementRepository announcementRepository;
     private final BidRepository bidRepository;

@@ -44,5 +44,7 @@ public record AnnouncementResponse(
         String departureFlag,
         String arrivalFlag,
         LocalDateTime handoverDeadline,
-        String currency
+        String currency,
+        /** Le voyageur accepte les propositions de prix sur ce trajet. */
+        boolean negotiable
 ) {}

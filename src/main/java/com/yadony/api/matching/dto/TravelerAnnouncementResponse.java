@@ -12,5 +12,7 @@ public record TravelerAnnouncementResponse(
     BigDecimal pricePerKg,
     BigDecimal availableKg,
     String status,
-    String currency
+    String currency,
+    /** Le voyageur accepte les propositions de prix. */
+    boolean negotiable
 ) {}
