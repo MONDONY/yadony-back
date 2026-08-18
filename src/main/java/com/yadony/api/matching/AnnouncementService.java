@@ -597,7 +597,8 @@ public class AnnouncementService {
 
     private void expirePendingBids(AnnouncementEntity announcement) {
         List<BidEntity> pendingBids = bidRepository.findByAnnouncementIdAndStatusIn(
-                announcement.getId(), List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED));
+                announcement.getId(),
+                List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.NEGOTIATING));
         for (BidEntity bid : pendingBids) {
             bid.setStatus(BidStatus.EXPIRED);
             bidRepository.save(bid);
@@ -987,11 +988,28 @@ public class AnnouncementService {
     /**
      * Statuts de bid exclus du calcul « colis actifs pris en charge » : jamais
      * pris en charge (REJECTED/CANCELLED/EXPIRED), abandonné (NO_SHOW/PARCEL_REFUSED),
-     * ou déjà au bout du parcours (COMPLETED).
+     * déjà au bout du parcours (COMPLETED), ou pas encore réservé (NEGOTIATING).
+     *
+     * <p>NEGOTIATING en fait partie parce que les TROIS usages de cette constante
+     * demandent « ce colis est-il pris en charge par le voyageur ? », et un fil de
+     * négociation ouvert n'est pas un colis pris en charge :
+     * <ul>
+     *   <li>{@code canSeeArrivalInstructions} — un expéditeur qui discute encore le
+     *       prix n'a aucune raison légitime de connaître le point de retrait ;</li>
+     *   <li>{@code markArrived} — un bid en négociation ne doit jamais basculer en
+     *       ARRIVED, ni bloquer le marquage d'arrivée par la garde « tous IN_TRANSIT » ;</li>
+     *   <li>{@code updateArrivalInstructions} — un fil ouvert ne doit pas faire croire
+     *       que le trajet n'est pas soldé.</li>
+     * </ul>
+     * La garde « cet expéditeur a-t-il déjà une demande sur ce trajet ? » ne passe
+     * PAS par cette constante : elle vit dans {@code BidService#createBid} et
+     * {@code BidCheckoutService}, via {@code existsBySenderIdAndAnnouncementIdAndStatusIn},
+     * qui liste NEGOTIATING explicitement. Les deux sémantiques restent donc séparées.
      */
     private static final Set<BidStatus> INACTIVE_BID_STATUSES = EnumSet.of(
             BidStatus.REJECTED, BidStatus.CANCELLED, BidStatus.PARCEL_REFUSED,
-            BidStatus.EXPIRED, BidStatus.NO_SHOW, BidStatus.COMPLETED);
+            BidStatus.EXPIRED, BidStatus.NO_SHOW, BidStatus.COMPLETED,
+            BidStatus.NEGOTIATING);
 
     private record OwnedAnnouncement(UserEntity user, AnnouncementEntity announcement) {}
 

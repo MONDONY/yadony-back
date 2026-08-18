@@ -192,7 +192,8 @@ public class CancellationService {
         // (sans paiement) est simplement annulé.
         List<BidEntity> affectedBids = bidRepository.findByAnnouncementIdAndStatusIn(
                 announcement.getId(),
-                List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED));
+                List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED,
+                        BidStatus.NEGOTIATING));
 
         List<UUID> affectedSenderIds = new ArrayList<>();
         List<UUID> affectedBidIds = new ArrayList<>();

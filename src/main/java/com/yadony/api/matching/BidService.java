@@ -277,7 +277,8 @@ public class BidService {
 
         boolean alreadyHasBid = bidRepository.existsBySenderIdAndAnnouncementIdAndStatusIn(
                 sender.getId(), announcementId,
-                List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED));
+                List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED,
+                        BidStatus.NEGOTIATING));
         if (alreadyHasBid) {
             throw new YadonyBusinessException(
                     HttpStatus.CONFLICT, "already-bid", "Demande existante",
@@ -514,7 +515,8 @@ public class BidService {
         List<BidEntity> visible = bidRepository.findByAnnouncementId(announcementId)
                 .stream()
                 .filter(b -> !b.isDeletedByTraveler())
-                .filter(b -> b.getStatus() != BidStatus.AWAITING_PAYMENT)
+                .filter(b -> b.getStatus() != BidStatus.AWAITING_PAYMENT
+                          && !BidStatus.NEGOTIATION_ACTIVE.contains(b.getStatus()))
                 .toList();
         return visible.stream()
                 .map(b -> {
@@ -539,6 +541,7 @@ public class BidService {
                 .filter(b -> !b.isDeletedBySender())
                 .toList();
         return mine.stream()
+                .filter(b -> !BidStatus.NEGOTIATION_ACTIVE.contains(b.getStatus()))
                 .map(b -> toResponse(b, user))
                 .toList();
     }
@@ -819,7 +822,8 @@ public class BidService {
      *  {@link AccountDeletionListener} sélectionne EXACTEMENT les bids que ce service traitera —
      *  deux listes séparées divergeraient en silence (bids chargés puis ignorés, ou l'inverse). */
     static final List<BidStatus> CANCELLABLE_BID_STATUSES = List.of(
-            BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED, BidStatus.AWAITING_PAYMENT);
+            BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED,
+            BidStatus.AWAITING_PAYMENT, BidStatus.NEGOTIATING);
 
     /**
      * Annulation système d'un bid suite à la suppression du compte de son expéditeur

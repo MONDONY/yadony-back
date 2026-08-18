@@ -16,7 +16,11 @@ public enum BidStatus {
     COMPLETED,
     NO_SHOW,
     PARCEL_REFUSED,
-    EXPIRED;
+    EXPIRED,
+    /** Fil de négociation ouvert par l'expéditeur sur un trajet négociable.
+     *  Ce n'est PAS une réservation : ce statut doit rester invisible de toutes
+     *  les listes, compteurs et statistiques de colis. */
+    NEGOTIATING;
 
     /**
      * Bids que le voyageur a effectivement acceptés — le statut a dépassé le
@@ -62,4 +66,11 @@ public enum BidStatus {
         inFlight.addAll(EN_ROUTE);
         IN_FLIGHT = inFlight;
     }
+
+    /**
+     * Fils de négociation encore ouverts. Source unique du filtre d'invisibilité :
+     * toute liste destinée au voyageur ou à l'expéditeur doit exclure cet ensemble,
+     * un bid en négociation n'étant pas un colis réservé.
+     */
+    public static final Set<BidStatus> NEGOTIATION_ACTIVE = EnumSet.of(NEGOTIATING);
 }

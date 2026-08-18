@@ -207,7 +207,8 @@ class BidServiceTest {
             when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
             when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
             when(bidRepository.existsBySenderIdAndAnnouncementIdAndStatusIn(
-                    SENDER_ID, ANNOUNCEMENT_ID, List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED)))
+                    SENDER_ID, ANNOUNCEMENT_ID, List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED,
+                            BidStatus.ACCEPTED, BidStatus.NEGOTIATING)))
                     .thenReturn(false);
             when(bidRepository.save(any(BidEntity.class))).thenAnswer(inv -> {
                 BidEntity b = inv.getArgument(0);
@@ -272,7 +273,8 @@ class BidServiceTest {
             when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
             when(activeCurrencyResolver.resolve(SENDER_ID)).thenReturn("CAD");
             when(bidRepository.existsBySenderIdAndAnnouncementIdAndStatusIn(
-                    SENDER_ID, ANNOUNCEMENT_ID, List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED)))
+                    SENDER_ID, ANNOUNCEMENT_ID, List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED,
+                            BidStatus.ACCEPTED, BidStatus.NEGOTIATING)))
                     .thenReturn(false);
             when(bidRepository.save(any(BidEntity.class))).thenAnswer(inv -> {
                 BidEntity b = inv.getArgument(0);
@@ -300,7 +302,8 @@ class BidServiceTest {
             when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
             when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
             when(bidRepository.existsBySenderIdAndAnnouncementIdAndStatusIn(
-                    SENDER_ID, ANNOUNCEMENT_ID, List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED)))
+                    SENDER_ID, ANNOUNCEMENT_ID, List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED,
+                            BidStatus.ACCEPTED, BidStatus.NEGOTIATING)))
                     .thenReturn(false);
             when(bidRepository.save(any(BidEntity.class))).thenAnswer(inv -> {
                 BidEntity b = inv.getArgument(0);

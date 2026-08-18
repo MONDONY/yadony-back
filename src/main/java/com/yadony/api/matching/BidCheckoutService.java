@@ -137,7 +137,8 @@ public class BidCheckoutService {
 
         boolean alreadyHasBid = bidRepository.existsBySenderIdAndAnnouncementIdAndStatusIn(
             sender.getId(), announcement.getId(),
-            List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED));
+            List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED,
+                    BidStatus.NEGOTIATING));
         if (alreadyHasBid) {
             throw new YadonyBusinessException(HttpStatus.CONFLICT,
                 "already-bid", "Demande existante",
