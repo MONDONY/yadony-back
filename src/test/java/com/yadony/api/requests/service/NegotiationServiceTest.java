@@ -5021,4 +5021,47 @@ class NegotiationServiceTest {
             assertThat(response.canNudge()).isFalse();
         }
     }
+
+    @Nested
+    @DisplayName("assertTravelerAnnouncementActive() — Lot B (correction 2, round 2)")
+    class AssertTravelerAnnouncementActiveTests {
+
+        @Test
+        @DisplayName("annonce REMOVED_BY_ADMIN → 422 announcement/not-active, avant tout appel escrow")
+        void removedByAdmin_throwsUnprocessableEntity() {
+            UUID announcementId = UUID.randomUUID();
+            com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
+            ann.setStatus(com.yadony.api.matching.AnnouncementStatus.REMOVED_BY_ADMIN);
+            when(announcementRepo.findById(announcementId)).thenReturn(Optional.of(ann));
+
+            assertThatThrownBy(() -> service.assertTravelerAnnouncementActive(announcementId))
+                    .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                    .satisfies(e -> {
+                        var rse = (org.springframework.web.server.ResponseStatusException) e;
+                        assertThat(rse.getStatusCode())
+                                .isEqualTo(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY);
+                        assertThat(rse.getReason()).isEqualTo("announcement/not-active");
+                    });
+        }
+
+        @Test
+        @DisplayName("annonce ACTIVE → aucune exception")
+        void active_doesNotThrow() {
+            UUID announcementId = UUID.randomUUID();
+            com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
+            ann.setStatus(com.yadony.api.matching.AnnouncementStatus.ACTIVE);
+            when(announcementRepo.findById(announcementId)).thenReturn(Optional.of(ann));
+
+            assertThatCode(() -> service.assertTravelerAnnouncementActive(announcementId))
+                    .doesNotThrowAnyException();
+        }
+
+        @Test
+        @DisplayName("travelerAnnouncementId null (fil pas encore lié à un trajet) → no-op")
+        void nullAnnouncementId_doesNotThrow() {
+            assertThatCode(() -> service.assertTravelerAnnouncementActive(null))
+                    .doesNotThrowAnyException();
+            verifyNoInteractions(announcementRepo);
+        }
+    }
 }

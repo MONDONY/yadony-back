@@ -25,6 +25,7 @@ import com.yadony.api.matching.dto.TravelerProfileDto;
 import com.yadony.api.matching.events.AnnouncementDeletedEvent;
 import com.yadony.api.matching.events.AnnouncementInProgressEvent;
 import com.yadony.api.matching.events.BidExpiredOnDepartureEvent;
+import com.yadony.api.matching.events.BidRejectedEvent;
 import com.yadony.api.matching.events.TripArrivedEvent;
 import com.yadony.api.matching.AnnouncementPublishedEvent;
 import com.yadony.api.notifications.NotificationDispatcher;
@@ -1206,11 +1207,16 @@ public class AnnouncementService {
      * l'admin garde la main via un refus explicite qu'il peut instruire autrement.
      *
      * <p>Les bids encore ouverts et sans livraison engagée (PENDING, PAYMENT_ESCROWED) sont
-     * en revanche liquidés — même patron que {@link #deleteAnnouncement} : passage à
-     * REJECTED avec le motif technique {@link BidEntity#REJECTION_ANNOUNCEMENT_DELETED}
-     * (exclu du taux d'acceptation du voyageur) et une entrée d'audit par bid. Un
-     * PAYMENT_ESCROWED laissé PENDING après retrait laisserait l'argent de l'expéditeur
-     * bloqué en escrow sans perspective de remboursement.
+     * en revanche liquidés — statut REJECTED avec le motif technique
+     * {@link BidEntity#REJECTION_ANNOUNCEMENT_DELETED} (exclu du taux d'acceptation du
+     * voyageur), une entrée d'audit par bid, et la publication de {@link BidRejectedEvent}
+     * (même patron que {@link #deleteAnnouncement}) : {@code setStatus(REJECTED)} seul ne
+     * rembourse rien — seul {@code RefundProcessor}, déclenché par cet événement via
+     * {@code BidRejectedEventListener}, libère l'escrow. Sans lui, un PAYMENT_ESCROWED
+     * resterait bloqué sans aucun chemin de remboursement (il ne repasse plus par
+     * {@link #expirePendingBids} une fois REJECTED). {@code rematchEligible = false} ici
+     * (contrairement à {@code deleteAnnouncement}, où c'est {@code true}) : pas de
+     * proposition de rematch automatique après une décision de modération.
      *
      * <p>La recherche publique filtre déjà sur {@code AnnouncementStatus.ACTIVE}
      * ({@link AnnouncementSpecification#hasStatus}) : l'annonce disparaît des résultats
@@ -1242,6 +1248,12 @@ public class AnnouncementService {
             bidRepository.save(bid);
             auditService.log("BID", bid.getId(), "BID_REJECTED_ANNOUNCEMENT_REMOVED_BY_ADMIN", adminId,
                     Map.of("announcementId", announcementId.toString(), "senderId", bid.getSenderId().toString()));
+            // Correction 2 (revue round 2) : setStatus(REJECTED) seul ne rembourse rien —
+            // seul BidRejectedEventListener (déclenché par cet event) → RefundProcessor
+            // libère l'escrow. rematchEligible=false : pas de rematch après modération.
+            eventPublisher.publishEvent(new BidRejectedEvent(
+                    bid.getId(), bid.getSenderId(), BidEntity.REJECTION_ANNOUNCEMENT_DELETED,
+                    announcementId, false));
         }
 
         auditService.log("ANNOUNCEMENT", announcementId, "ANNOUNCEMENT_REMOVED_BY_ADMIN", adminId,
@@ -1346,6 +1358,19 @@ public class AnnouncementService {
             bidRepository.save(bid);
             auditService.log("BID", bid.getId(), "BID_REJECTED_ANNOUNCEMENT_DELETED", user.getId(),
                     Map.of("announcementId", id.toString(), "senderId", bid.getSenderId().toString()));
+            // Correction round 2 (levée sur demande utilisateur) : setStatus(REJECTED) seul
+            // ne rembourse rien — même défaut que removeByAdmin avant son propre correctif
+            // (seul RefundProcessor, déclenché par BidRejectedEvent via
+            // BidRejectedEventListener, libère l'escrow). rematchEligible=true ICI,
+            // contrairement à removeByAdmin : ce n'est pas une décision de modération mais
+            // le voyageur qui supprime lui-même son trajet — même nature d'événement que
+            // CancellationService.cancelOpenBidsAndPublish, qui tente TOUJOURS un rematch
+            // (PENDING/PAYMENT_ESCROWED/ACCEPTED/NEGOTIATING confondus) pour ce type de
+            // disruption. Un expéditeur dont le trajet disparaît mérite qu'on lui propose
+            // une alternative, à la différence d'un retrait pour fraude.
+            eventPublisher.publishEvent(new BidRejectedEvent(
+                    bid.getId(), bid.getSenderId(), BidEntity.REJECTION_ANNOUNCEMENT_DELETED,
+                    id, true));
         }
 
         announcement.softDelete();

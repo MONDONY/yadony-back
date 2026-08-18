@@ -1360,6 +1360,43 @@ class AnnouncementServiceTest {
         }
 
         @Test
+        @DisplayName("round 2 (arbitrage utilisateur) : bid escrowé liquidé → BidRejectedEvent " +
+                "publié, motif ANNOUNCEMENT_DELETED, rematchEligible=true (le voyageur supprime " +
+                "lui-même son trajet — pas une décision de modération)")
+        void delete_activeWithEscrowedBid_publishesBidRejectedEventWithRematchEligible() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity a = buildAnnouncement(traveler);
+
+            UUID senderId = UUID.randomUUID();
+            UUID bidId = UUID.randomUUID();
+            BidEntity bid = new BidEntity();
+            bid.setAnnouncementId(ANNOUNCEMENT_ID);
+            bid.setSenderId(senderId);
+            bid.setStatus(BidStatus.PAYMENT_ESCROWED);
+            setId(bid, bidId);
+
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(bidRepository.existsByAnnouncementIdAndStatusIn(ANNOUNCEMENT_ID,
+                    List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED)))
+                    .thenReturn(false);
+            when(bidRepository.findByAnnouncementIdAndStatusIn(ANNOUNCEMENT_ID, List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED)))
+                    .thenReturn(List.of(bid));
+
+            announcementService.deleteAnnouncement(ANNOUNCEMENT_ID, FIREBASE_UID);
+
+            ArgumentCaptor<com.yadony.api.matching.events.BidRejectedEvent> captor =
+                    ArgumentCaptor.forClass(com.yadony.api.matching.events.BidRejectedEvent.class);
+            verify(eventPublisher).publishEvent(captor.capture());
+            var published = captor.getValue();
+            assertThat(published.getBidId()).isEqualTo(bidId);
+            assertThat(published.getSenderId()).isEqualTo(senderId);
+            assertThat(published.getReason()).isEqualTo(BidEntity.REJECTION_ANNOUNCEMENT_DELETED);
+            assertThat(published.getAnnouncementId()).isEqualTo(ANNOUNCEMENT_ID);
+            assertThat(published.isRematchEligible()).isTrue();
+        }
+
+        @Test
         @DisplayName("annonce active avec bids ACCEPTED → 409 CONFLICT")
         void delete_activeWithAcceptedBids_throwsConflict() {
             UserEntity traveler = buildTraveler();

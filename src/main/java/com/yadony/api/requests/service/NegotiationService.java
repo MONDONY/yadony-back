@@ -767,6 +767,29 @@ public class NegotiationService {
     }
 
     /**
+     * Lot B (correction 2, round 2) — garde posée juste avant la création de l'escrow
+     * Stripe de l'expéditeur ({@code NegotiationController#initiatePayment}), donc avant
+     * tout débit : {@link #validateAndFetchExistingTrip} ne s'exécute qu'à l'attachement
+     * du trajet (submission), pas au paiement. Une annonce peut être retirée par la
+     * modération entre les deux — et {@code AnnouncementService.removeByAdmin} ne peut pas
+     * détecter ce fil de négociation en cours via {@code BidRepository} : aucun
+     * {@code BidEntity} n'existe encore pour lui, il n'est matérialisé qu'après paiement
+     * par {@code ThreadAcceptedBidListener}. Sans cette garde, l'expéditeur pouvait encore
+     * engager son argent sur un trajet déjà déclaré frauduleux.
+     */
+    public void assertTravelerAnnouncementActive(UUID travelerAnnouncementId) {
+        if (travelerAnnouncementId == null) {
+            return;
+        }
+        announcementRepo.findById(travelerAnnouncementId).ifPresent(ann -> {
+            if (ann.getStatus() != com.yadony.api.matching.AnnouncementStatus.ACTIVE) {
+                throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "announcement/not-active");
+            }
+        });
+    }
+
+    /**
      * Construit (sans sauvegarder) l'AnnouncementEntity d'un trajet dédié à un
      * seul package_request : corridor, poids et prix dérivés et verrouillés,
      * capacité réservée intégralement au sender jusqu'à openSurplus(). Partagée

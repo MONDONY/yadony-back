@@ -2,6 +2,7 @@ package com.yadony.api.matching;
 
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.matching.events.BidRejectedEvent;
 import com.yadony.api.notifications.NotificationDispatcher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -11,6 +12,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 
 import java.lang.reflect.Field;
@@ -33,6 +35,7 @@ class AnnouncementModerationServiceTest {
     @Mock private BidRepository bidRepository;
     @Mock private AuditService auditService;
     @Mock private NotificationDispatcher notificationDispatcher;
+    @Mock private ApplicationEventPublisher eventPublisher;
 
     @InjectMocks private AnnouncementService service;
 
@@ -124,6 +127,38 @@ class AnnouncementModerationServiceTest {
                 eq("BID_REJECTED_ANNOUNCEMENT_REMOVED_BY_ADMIN"), eq(ADMIN_ID), anyMap());
         verify(auditService).log(eq("BID"), eq(escrowedBidId),
                 eq("BID_REJECTED_ANNOUNCEMENT_REMOVED_BY_ADMIN"), eq(ADMIN_ID), anyMap());
+    }
+
+    @Test
+    @DisplayName("removeByAdmin : publie BidRejectedEvent pour chaque bid liquidé — " +
+            "setStatus(REJECTED) seul ne rembourse rien, seul l'event déclenche RefundProcessor (Critical, round 2)")
+    void removeByAdmin_publishesBidRejectedEventForLiquidatedBids() throws Exception {
+        UUID escrowedSenderId = UUID.randomUUID();
+        UUID escrowedBidId = UUID.randomUUID();
+
+        BidEntity escrowedBid = new BidEntity();
+        setId(escrowedBid, escrowedBidId);
+        setField(escrowedBid, "senderId", escrowedSenderId);
+        setField(escrowedBid, "status", BidStatus.PAYMENT_ESCROWED);
+
+        when(announcementRepository.findById(ANN_ID)).thenReturn(Optional.of(announcement));
+        when(bidRepository.existsByAnnouncementIdAndStatusIn(eq(ANN_ID), anyList())).thenReturn(false);
+        when(bidRepository.findByAnnouncementIdAndStatusIn(
+                eq(ANN_ID), eq(List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED))))
+                .thenReturn(List.of(escrowedBid));
+        when(announcementRepository.save(any())).thenReturn(announcement);
+
+        service.removeByAdmin(ANN_ID, ADMIN_ID, "contenu frauduleux");
+
+        ArgumentCaptor<BidRejectedEvent> eventCaptor = ArgumentCaptor.forClass(BidRejectedEvent.class);
+        verify(eventPublisher).publishEvent(eventCaptor.capture());
+        BidRejectedEvent published = eventCaptor.getValue();
+        assertThat(published.getBidId()).isEqualTo(escrowedBidId);
+        assertThat(published.getSenderId()).isEqualTo(escrowedSenderId);
+        assertThat(published.getReason()).isEqualTo(BidEntity.REJECTION_ANNOUNCEMENT_DELETED);
+        assertThat(published.getAnnouncementId()).isEqualTo(ANN_ID);
+        // Délibéré : pas de rematch automatique après une décision de modération.
+        assertThat(published.isRematchEligible()).isFalse();
     }
 
     @Test

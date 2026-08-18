@@ -220,6 +220,10 @@ public class NegotiationController {
                 org.springframework.http.HttpStatus.CONFLICT,
                 "thread/not-awaiting-payment");
         }
+        // Lot B (correction 2, round 2) : garde AVANT toute création d'escrow Stripe —
+        // aucun bid n'existe encore pour ce fil (matérialisé seulement après paiement),
+        // donc removeByAdmin ne peut pas le voir via BidRepository.
+        service.assertTravelerAnnouncementActive(thread.travelerAnnouncementId());
         // Auto-appliqué : le code a été saisi par l'expéditeur à la publication de
         // sa demande (étape budget) et porté sur le thread dès sa création — jamais
         // resaisi ici. Le param reste un override défensif tant qu'aucun contexte

@@ -807,6 +807,19 @@ public class CashCommissionService {
                 && bid.getCommissionStatus() == CommissionStatus.CHARGED) {
             return AcceptBidResponse.accepted();
         }
+        // Lot B (correction 2, round 2) : garde posée AVANT tout débit (wallet ou carte) —
+        // une annonce retirée par la modération ne doit plus jamais transformer un bid en
+        // ACCEPTED. Posée ici, pas seulement dans finalizeBidAcceptance (qui protège
+        // uniquement contre la résurrection du statut FULL) : à ce point du flux aucun
+        // argent n'est encore engagé, donc un rejet dur est sûr et ne laisse rien de
+        // prélevé à rembourser. Placée après le early-return d'idempotence ci-dessus : un
+        // second appel sur une acceptation déjà réglée (CHARGED) avant le retrait doit
+        // rester un no-op réussi, pas un 409.
+        if (announcement.getStatus() == AnnouncementStatus.REMOVED_BY_ADMIN) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT,
+                    "announcement-not-accepting", "Announcement Not Accepting",
+                    "Ce trajet a été retiré par la modération, il n'accepte plus de colis");
+        }
         // « Kilo libre » (KG_FREE) : capacité non bornée — pas de rejet de capacité.
         // Un bid grille pure n'a pas de poids (weightKg null) → aucun contrôle de
         // capacité kilo à faire (sinon NPE).
