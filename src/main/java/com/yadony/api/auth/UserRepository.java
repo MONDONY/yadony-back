@@ -89,6 +89,15 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
      */
     List<UserEntity> findByStatusAndDeletionRequestedAtBefore(UserStatus status, Instant cutoff);
 
+    /**
+     * Lot C — file des demandes de suppression RGPD, les plus anciennes d'abord.
+     *
+     * <p>Requête dérivée délibérée : elle hérite du {@code @Where(deleted_at IS NULL)} de
+     * {@link UserEntity}, ce qui exclut d'office les comptes déjà finalisés — la file ne
+     * montre donc que les demandes encore à traiter, sans filtre supplémentaire.
+     */
+    Page<UserEntity> findByDeletionRequestedAtIsNotNullOrderByDeletionRequestedAtAsc(Pageable pageable);
+
     @Query("SELECT u FROM UserEntity u WHERE u.commissionPaymentMethodId IS NOT NULL AND " +
            "(u.commissionCardExpYear < :year OR " +
            "(u.commissionCardExpYear = :year AND u.commissionCardExpMonth <= :month))")
