@@ -38,6 +38,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class BidNegotiationLifecycleIntegrationTest {
 
     @Autowired private BidNegotiationService negotiationService;
+    @Autowired private BidService bidService;
     @Autowired private BidTimeoutScheduler bidTimeoutScheduler;
     @Autowired private BidRepository bidRepository;
     @Autowired private AnnouncementRepository announcementRepository;
@@ -155,6 +156,26 @@ class BidNegotiationLifecycleIntegrationTest {
         assertThat(bidRepository.countExplicitRejectionsForTraveler(traveler.getId())).isZero();
     }
 
+    // ── D3 : la liste paginée du voyageur ne doit pas laisser fuiter les fils ─
+
+    @Test
+    @DisplayName("GET /bids/traveler/me ne contient aucun fil de négociation")
+    void travelerPagedList_neverContainsNegotiationThreads() {
+        UserEntity sender = persistUser("uid-list-sender-" + UUID.randomUUID());
+        UserEntity traveler = persistUser("uid-list-traveler-" + UUID.randomUUID());
+        AnnouncementEntity announcement = persistNegotiableAnnouncement(traveler.getId());
+        persistNegotiatingBid(announcement.getId(), sender.getId());
+        persistPendingParcel(announcement.getId(), sender.getId());
+
+        var page = bidService.getTravelerBids(traveler.getFirebaseUid(), null, null, null, 0, 20);
+
+        assertThat(page.getContent())
+                .describedAs("cette surface filtre en JPQL et non en flux Java : "
+                        + "elle n'avait jamais reçu le filtre de ses deux surfaces sœurs")
+                .extracting(com.yadony.api.matching.dto.BidResponse::status)
+                .containsExactly("PENDING");
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private UserEntity persistUser(String firebaseUid) {
@@ -199,6 +220,16 @@ class BidNegotiationLifecycleIntegrationTest {
         bid.setNegotiationRound(1);
         bid.setCommissionRate(new BigDecimal("0.05"));
         bid.setPaymentMethod(PaymentMethod.CASH);
+        return bidRepository.save(bid);
+    }
+
+    /** Une vraie demande de colis, celle qui doit rester visible partout. */
+    private BidEntity persistPendingParcel(UUID announcementId, UUID senderId) {
+        BidEntity bid = new BidEntity();
+        bid.setAnnouncementId(announcementId);
+        bid.setSenderId(senderId);
+        bid.setWeightKg(new BigDecimal("3.00"));
+        bid.setStatus(BidStatus.PENDING);
         return bidRepository.save(bid);
     }
 

@@ -3047,7 +3047,10 @@ class BidServiceTest {
         BidEntity bid = buildBid(); // senderId = SENDER_ID
 
         when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
-        when(bidRepository.findByTravelerIdFiltered(eq(TRAVELER_ID), isNull(), isNull(), isNull(), any()))
+        // L'ensemble exclu est figé et non `any()` : c'est la seule des trois surfaces
+        // voyageur qui filtre en SQL, et l'oubli du paramètre y laissait fuiter les fils.
+        when(bidRepository.findByTravelerIdFiltered(eq(TRAVELER_ID), isNull(), isNull(), isNull(),
+                eq(BidStatus.NEGOTIATION_STATUSES), any()))
                 .thenReturn(new PageImpl<>(List.of(bid)));
         when(userRepository.findAllById(any())).thenReturn(List.of(sender));
 

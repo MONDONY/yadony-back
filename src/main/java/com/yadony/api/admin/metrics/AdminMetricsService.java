@@ -117,8 +117,23 @@ public class AdminMetricsService {
                 countBids(BidStatus.IN_TRANSIT),
                 countBids(BidStatus.COMPLETED),
                 countBids(BidStatus.CANCELLED),
-                em.createQuery("SELECT COUNT(b) FROM BidEntity b", Long.class).getSingleResult()
+                countRealBids()
         );
+    }
+
+    /**
+     * Total des colis, discussions de prix exclues.
+     *
+     * <p>Un bid en {@link BidStatus#NEGOTIATING} ou {@link BidStatus#NEGOTIATION_CLOSED}
+     * n'est pas un colis : le compter gonflait le total du tableau de bord de fils de
+     * négociation, dont aucun n'apparaît pourtant dans les cinq compteurs par statut
+     * juste au-dessus. Le total ne serait alors comparable à aucun d'entre eux.
+     */
+    private long countRealBids() {
+        return em.createQuery(
+                        "SELECT COUNT(b) FROM BidEntity b WHERE b.status NOT IN :excluded", Long.class)
+                .setParameter("excluded", BidStatus.NEGOTIATION_STATUSES)
+                .getSingleResult();
     }
 
     private long countBids(BidStatus status) {

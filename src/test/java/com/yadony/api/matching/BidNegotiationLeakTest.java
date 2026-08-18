@@ -8,6 +8,8 @@ import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collection;
+import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -118,6 +120,81 @@ class BidNegotiationLeakTest {
                 .describedAs("un nouvel appelant de cette requête change la portée de "
                         + "INACTIVE_BID_STATUSES : relire la Javadoc de la constante")
                 .isEqualTo(1);
+    }
+
+    /**
+     * Le pendant du test ci-dessus pour un fil ÉTEINT.
+     *
+     * <p>{@code NEGOTIATION_ACTIVE} ne protège que tant que la discussion est ouverte.
+     * À la fermeture, un statut de colis (REJECTED, CANCELLED, EXPIRED) rendait le bid
+     * indiscernable d'une vraie demande refusée : il ressurgissait dans « Mes envois »,
+     * dans la liste voyageur du trajet, et jusque dans le dénominateur du taux
+     * d'acceptation. D'où un statut terminal propre à la négociation.
+     */
+    @Test
+    @DisplayName("un fil éteint reste une discussion de prix, jamais un colis")
+    void closedThreadIsNeverAParcel() {
+        assertThat(BidStatus.NEGOTIATION_STATUSES)
+                .containsExactlyInAnyOrder(BidStatus.NEGOTIATING, BidStatus.NEGOTIATION_CLOSED);
+        assertThat(BidStatus.ACCEPTED_OR_BEYOND).doesNotContain(BidStatus.NEGOTIATION_CLOSED);
+        assertThat(BidStatus.EN_ROUTE).doesNotContain(BidStatus.NEGOTIATION_CLOSED);
+        assertThat(BidStatus.IN_FLIGHT).doesNotContain(BidStatus.NEGOTIATION_CLOSED);
+        assertThat(BidStatus.PHONE_VISIBLE_STATUSES).doesNotContain(BidStatus.NEGOTIATION_CLOSED);
+    }
+
+    /**
+     * Garde de portée, et non de valeur : les tests précédents vérifient les ensembles
+     * qu'on a pensé à nommer, celui-ci vérifie qu'aucun chemin de fermeture ne pose
+     * directement un statut de colis. C'est la seule formulation qui attrape un
+     * quatrième chemin ajouté plus tard — le troisième, l'expiration, avait justement
+     * échappé au correctif des deux premiers en posant {@code EXPIRED}.
+     */
+    @Test
+    @DisplayName("aucun chemin de fermeture ne pose un statut de colis")
+    void noClosurePathAssignsAParcelStatus() throws Exception {
+        Set<String> parcelTerminals = Set.of("REJECTED", "CANCELLED", "EXPIRED",
+                "NO_SHOW", "PARCEL_REFUSED", "COMPLETED");
+
+        for (String file : List.of("BidNegotiationService.java", "BidNegotiationExpiryRunner.java")) {
+            Path source = Path.of("src/main/java/com/yadony/api/matching/" + file);
+            List<String> offending = Files.readAllLines(source).stream()
+                    .map(String::strip)
+                    .filter(l -> !l.startsWith("*") && !l.startsWith("//") && !l.startsWith("/*"))
+                    .filter(l -> l.contains("setStatus(BidStatus."))
+                    .filter(l -> parcelTerminals.stream().anyMatch(s -> l.contains("BidStatus." + s)))
+                    .toList();
+
+            assertThat(offending)
+                    .describedAs("%s éteint un fil avec un statut de colis : le bid "
+                            + "réapparaîtra en demande refusée. Utiliser NEGOTIATION_CLOSED.", file)
+                    .isEmpty();
+        }
+    }
+
+    /**
+     * Le tableau de bord admin comptait les bids sans distinction. Son total incluait
+     * donc les discussions de prix, qu'aucun des cinq compteurs par statut affichés
+     * à côté ne reprend : le total n'était comparable à aucun d'eux.
+     *
+     * <p>Vérifié sur le source faute de test sur cette classe, qui interroge
+     * l'{@code EntityManager} directement. Le comptage large est justement ce qui
+     * ne lève aucune erreur — il rend un nombre, simplement faux.
+     */
+    @Test
+    @DisplayName("le total admin des colis ne compte pas les discussions de prix")
+    void adminTotalExcludesNegotiations() throws Exception {
+        Path service = Path.of("src/main/java/com/yadony/api/admin/metrics/AdminMetricsService.java");
+        List<String> unscopedCounts = Files.readAllLines(service).stream()
+                .map(String::strip)
+                .filter(l -> !l.startsWith("*") && !l.startsWith("//") && !l.startsWith("/*"))
+                .filter(l -> l.contains("COUNT(b) FROM BidEntity b"))
+                .filter(l -> !l.contains("WHERE"))
+                .toList();
+
+        assertThat(unscopedCounts)
+                .describedAs("un COUNT sans clause WHERE gonfle le total de fils de "
+                        + "négociation : filtrer sur NEGOTIATION_STATUSES")
+                .isEmpty();
     }
 
     @Test

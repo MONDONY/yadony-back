@@ -588,7 +588,8 @@ public class BidService {
         BidStatus bidStatus = (status != null && !status.isBlank()) ? BidStatus.valueOf(status) : null;
         String qParam = (q != null && !q.isBlank()) ? q.trim() : null;
         Page<BidEntity> bids = bidRepository.findByTravelerIdFiltered(
-                traveler.getId(), bidStatus, announcementId, qParam, PageRequest.of(page, size));
+                traveler.getId(), bidStatus, announcementId, qParam,
+                BidStatus.NEGOTIATION_STATUSES, PageRequest.of(page, size));
         // Chaque colis doit afficher son EXPÉDITEUR réel (les champs sender.* du DTO),
         // pas le voyageur connecté. On résout les expéditeurs en une seule requête.
         Map<UUID, UserEntity> sendersById = userRepository.findAllById(

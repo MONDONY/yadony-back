@@ -248,9 +248,21 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
            "WHERE a.travelerId = :travelerId AND b.status = 'COMPLETED'")
     List<BidEntity> findCompletedBidsByTravelerId(@Param("travelerId") UUID travelerId);
 
+    /**
+     * Colis d'un voyageur, paginés et filtrés côté SQL.
+     *
+     * <p>{@code hiddenStatuses} n'est pas une commodité d'appelant : cette surface
+     * filtre en JPQL, là où ses deux sœurs ({@code getMyBids}, liste par trajet)
+     * filtrent en flux Java après lecture. Elle n'avait donc jamais reçu leur
+     * exclusion des discussions de prix, et laissait remonter les fils dans
+     * {@code GET /bids/traveler/me}. Le paramètre porte l'ensemble nommé plutôt
+     * qu'un littéral pour que la requête suive {@link BidStatus#NEGOTIATION_STATUSES}
+     * si celui-ci s'étend.
+     */
     @Query("""
         SELECT b FROM BidEntity b JOIN AnnouncementEntity a ON b.announcementId = a.id
         WHERE a.travelerId = :travelerId
+          AND b.status NOT IN :hiddenStatuses
           AND (:status IS NULL OR b.status = :status)
           AND (:announcementId IS NULL OR b.announcementId = :announcementId)
           AND (:q IS NULL OR UPPER(b.trackingNumber) LIKE UPPER(CONCAT('%', CAST(:q AS string), '%')))
@@ -261,6 +273,7 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
             @Param("status") BidStatus status,
             @Param("announcementId") UUID announcementId,
             @Param("q") String q,
+            @Param("hiddenStatuses") Collection<BidStatus> hiddenStatuses,
             Pageable pageable);
 
     /**

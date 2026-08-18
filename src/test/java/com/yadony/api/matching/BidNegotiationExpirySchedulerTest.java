@@ -148,7 +148,7 @@ class BidNegotiationExpirySchedulerTest {
     }
 
     @Test
-    @DisplayName("le runner passe le fil en EXPIRED, journalise et prévient les deux parties")
+    @DisplayName("le runner éteint le fil sans le transformer en colis expiré")
     void runnerExpiresThread() {
         BidEntity bid = negotiatingBid();
         when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
@@ -156,7 +156,10 @@ class BidNegotiationExpirySchedulerTest {
 
         realRunner.expire(BID_ID, "INACTIVE");
 
-        assertThat(bid.getStatus()).isEqualTo(BidStatus.EXPIRED);
+        // EXPIRED est un statut de COLIS : le poser ici faisait réapparaître le fil
+        // périmé dans « Mes envois » comme une demande de colis expirée.
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.NEGOTIATION_CLOSED);
+        assertThat(BidStatus.NEGOTIATION_STATUSES).contains(bid.getStatus());
         verify(bidRepository).save(bid);
         verify(auditService).log(eq("BID"), eq(BID_ID), eq("BID_NEGOTIATION_EXPIRED"), eq(null), anyMap());
 
@@ -178,7 +181,7 @@ class BidNegotiationExpirySchedulerTest {
         realRunner.expire(BID_ID, "INACTIVE");
         realRunner.expire(BID_ID, "INACTIVE");
 
-        assertThat(bid.getStatus()).isEqualTo(BidStatus.EXPIRED);
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.NEGOTIATION_CLOSED);
         verify(bidRepository, times(1)).save(bid);
         verify(eventPublisher, times(1)).publishEvent(any(BidNegotiationExpiredEvent.class));
         verify(auditService, times(1)).log(eq("BID"), eq(BID_ID), eq("BID_NEGOTIATION_EXPIRED"),
