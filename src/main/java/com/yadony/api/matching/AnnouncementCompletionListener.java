@@ -93,7 +93,12 @@ public class AnnouncementCompletionListener {
         AnnouncementEntity announcement = announcementOpt.get();
 
         if (announcement.getStatus() == AnnouncementStatus.COMPLETED
-                || announcement.getStatus() == AnnouncementStatus.CANCELLED) {
+                || announcement.getStatus() == AnnouncementStatus.CANCELLED
+                // Lot B (correction 4) : une annonce retirée par la modération ne doit jamais
+                // être réécrite en COMPLETED — sinon un événement de livraison asynchrone
+                // écraserait REMOVED_BY_ADMIN et laisserait une entrée fallacieuse dans
+                // audit_log (immuable).
+                || announcement.getStatus() == AnnouncementStatus.REMOVED_BY_ADMIN) {
             return;
         }
 

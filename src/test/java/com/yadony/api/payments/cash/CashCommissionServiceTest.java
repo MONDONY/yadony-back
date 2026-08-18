@@ -987,6 +987,25 @@ class CashCommissionServiceTest {
             }
         }
 
+        @Test
+        // Lot B (correction 2) : annonce REMOVED_BY_ADMIN — le bid cash est finalisé
+        // (argent déjà engagé) mais l'annonce n'est pas ressuscitée en FULL
+        void announcementRemovedByAdmin_doesNotResurrectToFull() {
+            announcement.setStatus(AnnouncementStatus.REMOVED_BY_ADMIN);
+            announcement.setAvailableKg(bid.getWeightKg()); // exactement plein après ce bid
+            java.math.BigDecimal commission = new java.math.BigDecimal("12.00"); // 5kg × 20€ × 12%
+            when(walletService.getBalance(travelerId, "EUR")).thenReturn(commission.add(java.math.BigDecimal.ONE));
+            when(walletTransactionRepository.existsByUserIdAndBidIdAndType(eq(travelerId), any(), any()))
+                    .thenReturn(false);
+
+            AcceptBidResponse resp = service.acceptCashBid(
+                    bid.getId(), travelerId, com.yadony.api.payments.cash.CommissionSource.WALLET_FIRST);
+
+            assertThat(resp.status()).isEqualTo(AcceptanceStatusDto.ACCEPTED);
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.ACCEPTED);
+            assertThat(announcement.getStatus()).isEqualTo(AnnouncementStatus.REMOVED_BY_ADMIN);
+        }
+
         // --- handover window inheritance ---
 
         @Test

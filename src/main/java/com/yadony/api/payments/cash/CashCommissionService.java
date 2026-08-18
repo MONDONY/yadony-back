@@ -962,7 +962,12 @@ public class CashCommissionService {
         // la capacité kilo et ne passe pas l'annonce FULL (cohérent avec BidService).
         if (!isKgFree && bid.getWeightKg() != null) {
             announcement.setAvailableKg(announcement.getAvailableKg().subtract(bid.getWeightKg()));
-            if (announcement.getAvailableKg().compareTo(BigDecimal.ZERO) <= 0) {
+            // Lot B (correction 2) : ne jamais réécrire le statut d'une annonce retirée
+            // par la modération — sinon cette finalisation (déclenchée par un paiement déjà
+            // engagé, qu'on ne bloque pas ici) ressusciterait le trajet en FULL, qui réapparaît
+            // dans les allowlists ACTIVE/FULL (recherche par corridor, alertes, etc.).
+            if (announcement.getAvailableKg().compareTo(BigDecimal.ZERO) <= 0
+                    && announcement.getStatus() != AnnouncementStatus.REMOVED_BY_ADMIN) {
                 announcement.setStatus(AnnouncementStatus.FULL);
             }
         }

@@ -1200,7 +1200,17 @@ public class AnnouncementService {
      * Lot B — Retrait d'une annonce par la modération (contenu frauduleux, litige,
      * signalement…). Refusé si un colis est déjà accepté ou au-delà (ACCEPTED,
      * HANDED_OVER, IN_TRANSIT, ARRIVED — {@link BidStatus#IN_FLIGHT}) : une livraison
-     * engagée ne doit jamais être interrompue par une action de modération.
+     * engagée ne doit jamais être interrompue par une action de modération. On refuse le
+     * retrait plutôt que de forcer une annulation, délibérément : un fraudeur qui maintient
+     * un bid engagé sur sa propre annonce ne doit pas pouvoir la rendre irretirable —
+     * l'admin garde la main via un refus explicite qu'il peut instruire autrement.
+     *
+     * <p>Les bids encore ouverts et sans livraison engagée (PENDING, PAYMENT_ESCROWED) sont
+     * en revanche liquidés — même patron que {@link #deleteAnnouncement} : passage à
+     * REJECTED avec le motif technique {@link BidEntity#REJECTION_ANNOUNCEMENT_DELETED}
+     * (exclu du taux d'acceptation du voyageur) et une entrée d'audit par bid. Un
+     * PAYMENT_ESCROWED laissé PENDING après retrait laisserait l'argent de l'expéditeur
+     * bloqué en escrow sans perspective de remboursement.
      *
      * <p>La recherche publique filtre déjà sur {@code AnnouncementStatus.ACTIVE}
      * ({@link AnnouncementSpecification#hasStatus}) : l'annonce disparaît des résultats
@@ -1222,8 +1232,20 @@ public class AnnouncementService {
         ann.setStatus(AnnouncementStatus.REMOVED_BY_ADMIN);
         AnnouncementEntity saved = announcementRepository.save(ann);
 
+        // Correction 1 (revue) : liquider les bids PENDING/PAYMENT_ESCROWED encore ouverts —
+        // sans ça, un PAYMENT_ESCROWED reste orphelin (argent bloqué, jamais remboursé).
+        List<BidEntity> pendingBids = bidRepository.findByAnnouncementIdAndStatusIn(
+                announcementId, List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED));
+        for (BidEntity bid : pendingBids) {
+            bid.setStatus(BidStatus.REJECTED);
+            bid.setRejectionReason(BidEntity.REJECTION_ANNOUNCEMENT_DELETED);
+            bidRepository.save(bid);
+            auditService.log("BID", bid.getId(), "BID_REJECTED_ANNOUNCEMENT_REMOVED_BY_ADMIN", adminId,
+                    Map.of("announcementId", announcementId.toString(), "senderId", bid.getSenderId().toString()));
+        }
+
         auditService.log("ANNOUNCEMENT", announcementId, "ANNOUNCEMENT_REMOVED_BY_ADMIN", adminId,
-                Map.of("reason", reason));
+                Map.of("reason", reason, "rejectedBidsCount", String.valueOf(pendingBids.size())));
         notificationDispatcher.notifyUser(ann.getTravelerId(),
                 "Annonce retirée",
                 "Votre annonce a été retirée par la modération. Motif : " + reason,

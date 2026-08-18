@@ -133,7 +133,11 @@ public class ThreadAcceptedBidListener {
             boolean isDedicatedTrip = announcement.getLinkedPackageRequestId() != null;
             if (!isKgFree && !isDedicatedTrip && bid.getWeightKg() != null && announcement.getAvailableKg() != null) {
                 announcement.setAvailableKg(announcement.getAvailableKg().subtract(bid.getWeightKg()));
-                if (announcement.getAvailableKg().compareTo(BigDecimal.ZERO) <= 0) {
+                // Lot B (correction 2) : ne jamais réécrire le statut d'une annonce retirée par
+                // la modération — le paiement de l'expéditeur est déjà acquis à ce stade (AFTER_COMMIT),
+                // on matérialise donc quand même le bid, mais sans ressusciter le trajet en FULL.
+                if (announcement.getAvailableKg().compareTo(BigDecimal.ZERO) <= 0
+                        && announcement.getStatus() != AnnouncementStatus.REMOVED_BY_ADMIN) {
                     announcement.setStatus(AnnouncementStatus.FULL);
                 }
             }

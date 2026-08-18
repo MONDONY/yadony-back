@@ -217,6 +217,20 @@ class AnnouncementCompletionListenerTest {
     }
 
     @Test
+    @DisplayName("Lot B (correction 4) : annonce REMOVED_BY_ADMIN → on ne l'écrase pas en COMPLETED")
+    void removedByAdmin_doesNothing() {
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(completedBid()));
+        AnnouncementEntity ann = announcement(AnnouncementStatus.REMOVED_BY_ADMIN);
+        when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(ann));
+
+        listener.onDeliveryConfirmed(deliveryEvent());
+
+        assertThat(ann.getStatus()).isEqualTo(AnnouncementStatus.REMOVED_BY_ADMIN);
+        verify(announcementRepository, never()).save(any());
+        verify(auditService, never()).log(any(), any(), any(), any(), any());
+    }
+
+    @Test
     @DisplayName("bid inconnu → log warn, no-op")
     void unknownBid_skips() {
         when(bidRepository.findById(bidId)).thenReturn(Optional.empty());

@@ -265,6 +265,32 @@ class FavoriteServiceTest {
     }
 
     @Test
+    // Lot B (correction 3) : un trajet retiré par la modération n'apparaît plus dans les favoris
+    void getFavoriteTrips_skipsRemovedByAdmin() {
+        UUID t1 = UUID.randomUUID(); // ACTIVE — kept
+        UUID t2 = UUID.randomUUID(); // REMOVED_BY_ADMIN — filtered out
+        when(favoriteRepository.findTargetIds(userId, FavoriteTargetType.TRIP))
+                .thenReturn(List.of(t1, t2));
+
+        AnnouncementEntity a1 = mock(AnnouncementEntity.class);
+        when(a1.getId()).thenReturn(t1);
+        when(a1.getStatus()).thenReturn(AnnouncementStatus.ACTIVE);
+
+        AnnouncementEntity a2 = mock(AnnouncementEntity.class);
+        when(a2.getId()).thenReturn(t2);
+        when(a2.getStatus()).thenReturn(AnnouncementStatus.REMOVED_BY_ADMIN);
+
+        when(announcementRepository.findAllById(anyCollection())).thenReturn(List.of(a1, a2));
+        AnnouncementSearchResponse dto = mock(AnnouncementSearchResponse.class);
+        when(announcementSearchMapper.toSearchResponseList(eq(List.of(a1)), anySet())).thenReturn(List.of(dto));
+
+        var res = service.getFavoriteTrips(UID);
+
+        assertThat(res).hasSize(1);
+        verify(announcementSearchMapper).toSearchResponseList(eq(List.of(a1)), anySet());
+    }
+
+    @Test
     void getFavoriteTrips_isFavoriteTruePassedToMapper() {
         UUID t1 = UUID.randomUUID();
         when(favoriteRepository.findTargetIds(userId, FavoriteTargetType.TRIP))
