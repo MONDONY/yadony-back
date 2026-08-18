@@ -2,7 +2,7 @@ package com.yadony.api.admin.account;
 
 /**
  * Admin permissions enum (Task 2).
- * 25 granular permissions for role-based access control.
+ * 26 granular permissions for role-based access control.
  */
 public enum AdminPermission {
     // Account management
@@ -36,6 +36,8 @@ public enum AdminPermission {
     ALERT_RESOLVE,
     MODERATION_VIEW,
     MESSAGE_DELETE,
+    CONTENT_REMOVE,
+    USER_MESSAGE_MUTE,
 
     // Reporting & ratings
     REPORT_VIEW,
