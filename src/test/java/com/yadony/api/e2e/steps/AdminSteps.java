@@ -16,7 +16,7 @@ public class AdminSteps extends AbstractSteps {
 
     @Etantdonné("l'utilisateur {string} est authentifié en tant qu'ADMIN")
     public void givenAuthenticatedAdmin(String uid) {
-        ctx.setCurrentUser(uid, "ROLE_ADMIN,PROMO_MANAGE");
+        ctx.setCurrentUser(uid, "ROLE_ADMIN,PROMO_MANAGE,DISPUTE_RESOLVE");
     }
 
     @Quand("je crée un code promo {string} sauvegardé sous {string}")
