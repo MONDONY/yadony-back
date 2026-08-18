@@ -5,6 +5,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Field;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Collection;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -91,6 +93,31 @@ class BidNegotiationLeakTest {
     void negotiatingIsNotAnActiveParcelOnTheTrip() throws Exception {
         assertThat(readStatusSet(AnnouncementService.class, "INACTIVE_BID_STATUSES"))
                 .contains(BidStatus.NEGOTIATING);
+    }
+
+    /**
+     * Verrou du raisonnement ci-dessus : tant que
+     * {@code existsByAnnouncementIdAndSenderIdAndStatusNotIn} n'a qu'un seul appelant
+     * — la lecture de {@code arrivalInstructions} — la présence de NEGOTIATING dans
+     * {@code INACTIVE_BID_STATUSES} ne peut pas déborder sur une autre décision. Un
+     * second appelant, lui, devrait être relu avec cette sémantique en tête.
+     */
+    @Test
+    @DisplayName("le filtre INACTIVE ne pilote qu'une seule décision : le point de retrait")
+    void inactiveStatusesDriveOnlyTheArrivalInstructionsGate() throws Exception {
+        Path service = Path.of("src/main/java/com/yadony/api/matching/AnnouncementService.java");
+        long callSites = Files.readAllLines(service).stream()
+                .map(String::strip)
+                // La constante est documentée en Javadoc, qui cite la requête par son
+                // nom : on ne compte que le code, pas les commentaires.
+                .filter(l -> !l.startsWith("*") && !l.startsWith("//") && !l.startsWith("/*"))
+                .filter(l -> l.contains("existsByAnnouncementIdAndSenderIdAndStatusNotIn"))
+                .count();
+
+        assertThat(callSites)
+                .describedAs("un nouvel appelant de cette requête change la portée de "
+                        + "INACTIVE_BID_STATUSES : relire la Javadoc de la constante")
+                .isEqualTo(1);
     }
 
     @Test

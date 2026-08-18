@@ -1011,6 +1011,16 @@ public class AnnouncementService {
      * PAS par cette constante : elle vit dans {@code BidService#createBid} et
      * {@code BidCheckoutService}, via {@code existsBySenderIdAndAnnouncementIdAndStatusIn},
      * qui liste NEGOTIATING explicitement. Les deux sémantiques restent donc séparées.
+     *
+     * <p><b>Aucun effet sur l'affichage.</b> On pourrait craindre que la présence de
+     * NEGOTIATING ici fasse proposer « Proposer un prix » à un expéditeur qui a déjà un
+     * fil ouvert, pour lui répondre 409 {@code already-bid} au clic. Ce n'est pas le cas :
+     * {@code existsByAnnouncementIdAndSenderIdAndStatusNotIn} n'a qu'un seul appelant, la
+     * lecture de {@code arrivalInstructions} ci-dessus, et aucun DTO de trajet ne porte
+     * de drapeau « j'ai déjà une demande ici » (le seul champ dépendant du spectateur est
+     * {@code isFavorite}). Le client apprend ses fils ouverts par
+     * {@code GET /bids/negotiations/me}, exactement comme il apprend ses offres fermes par
+     * {@code GET /bids/me} — la négociation ne crée donc aucune asymétrie d'affichage.
      */
     private static final Set<BidStatus> INACTIVE_BID_STATUSES = EnumSet.of(
             BidStatus.REJECTED, BidStatus.CANCELLED, BidStatus.PARCEL_REFUSED,
