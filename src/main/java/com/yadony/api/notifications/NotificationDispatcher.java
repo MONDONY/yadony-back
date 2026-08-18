@@ -18,6 +18,7 @@ import com.yadony.api.matching.events.BidAcceptedEvent;
 import com.yadony.api.matching.events.BidCreatedEvent;
 import com.yadony.api.matching.events.CashBidCreatedEvent;
 import com.yadony.api.matching.events.BidExpiredOnDepartureEvent;
+import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.events.BidRejectedEvent;
 import com.yadony.api.matching.events.HandoverAlertEvent;
 import com.yadony.api.matching.events.ParcelRefusedEvent;
@@ -215,6 +216,17 @@ public class NotificationDispatcher {
     @EventListener @Async
     public void onBidRejected(BidRejectedEvent event) {
         if (event.isRematchEligible()) return; // relayé par onBidLostRematchPrepared (X2/X3)
+        // Lot B (revue round 3) : le motif technique ANNOUNCEMENT_DELETED (posé par
+        // AnnouncementService#removeByAdmin, rematchEligible=false car décision de
+        // modération) n'est PAS un refus du voyageur — le libellé générique « Demande
+        // refusée » accusait à tort un voyageur qui n'avait rien fait, et ne mentionnait
+        // jamais que l'expéditeur allait être remboursé.
+        if (BidEntity.REJECTION_ANNOUNCEMENT_DELETED.equals(event.getReason())) {
+            notifyUser(event.getSenderId(), "Trajet retiré",
+                    "Ce trajet n'est plus disponible — votre remboursement est en cours",
+                    Map.of("type", "BID_REJECTED", "bidId", event.getBidId().toString()));
+            return;
+        }
         notifyUser(event.getSenderId(), "Demande refusée",
                 "Le voyageur a refusé votre demande",
                 Map.of("type", "BID_REJECTED", "bidId", event.getBidId().toString()));
@@ -227,10 +239,21 @@ public class NotificationDispatcher {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
     public void onBidLostRematchPrepared(BidLostRematchPreparedEvent event) {
-        String title = event.cancelledByTraveler() ? "Transport annulé" : "Demande refusée";
-        String prefix = event.cancelledByTraveler()
-                ? "Le voyageur a annulé le transport de votre colis"
-                : "Le voyageur a refusé votre demande";
+        // Lot B (revue round 3) : au sein des motifs « initiés par le voyageur »
+        // (cancelledByTraveler=true), une suppression de trajet (deleteAnnouncement) n'est
+        // pas une annulation de transport — libellé dédié plutôt que le texte générique.
+        String title;
+        String prefix;
+        if (BidEntity.REJECTION_ANNOUNCEMENT_DELETED.equals(event.reason())) {
+            title = "Trajet supprimé";
+            prefix = "Le voyageur a supprimé son trajet";
+        } else if (event.cancelledByTraveler()) {
+            title = "Transport annulé";
+            prefix = "Le voyageur a annulé le transport de votre colis";
+        } else {
+            title = "Demande refusée";
+            prefix = "Le voyageur a refusé votre demande";
+        }
         int n = event.suggestionCount();
         // Défense : count > 0 avec cancellationId null ne devrait pas arriver (contrat X2 garantit
         // cancellationId non-null dès que suggestionCount > 0), mais si ça survient on retombe

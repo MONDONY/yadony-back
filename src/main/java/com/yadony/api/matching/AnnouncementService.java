@@ -1206,17 +1206,28 @@ public class AnnouncementService {
      * un bid engagé sur sa propre annonce ne doit pas pouvoir la rendre irretirable —
      * l'admin garde la main via un refus explicite qu'il peut instruire autrement.
      *
-     * <p>Les bids encore ouverts et sans livraison engagée (PENDING, PAYMENT_ESCROWED) sont
-     * en revanche liquidés — statut REJECTED avec le motif technique
-     * {@link BidEntity#REJECTION_ANNOUNCEMENT_DELETED} (exclu du taux d'acceptation du
-     * voyageur), une entrée d'audit par bid, et la publication de {@link BidRejectedEvent}
-     * (même patron que {@link #deleteAnnouncement}) : {@code setStatus(REJECTED)} seul ne
-     * rembourse rien — seul {@code RefundProcessor}, déclenché par cet événement via
-     * {@code BidRejectedEventListener}, libère l'escrow. Sans lui, un PAYMENT_ESCROWED
-     * resterait bloqué sans aucun chemin de remboursement (il ne repasse plus par
-     * {@link #expirePendingBids} une fois REJECTED). {@code rematchEligible = false} ici
-     * (contrairement à {@code deleteAnnouncement}, où c'est {@code true}) : pas de
-     * proposition de rematch automatique après une décision de modération.
+     * <p>Les bids encore ouverts et sans livraison engagée (PENDING, PAYMENT_ESCROWED,
+     * AWAITING_PAYMENT, NEGOTIATING) sont en revanche liquidés — statut REJECTED avec le
+     * motif technique {@link BidEntity#REJECTION_ANNOUNCEMENT_DELETED} (exclu du taux
+     * d'acceptation du voyageur), une entrée d'audit par bid, et la publication de
+     * {@link BidRejectedEvent} (même patron que {@link #deleteAnnouncement}) :
+     * {@code setStatus(REJECTED)} seul ne rembourse rien — seul {@code RefundProcessor},
+     * déclenché par cet événement via {@code BidRejectedEventListener}, libère l'escrow.
+     * AWAITING_PAYMENT compte : son {@code PaymentEntity} est déjà en statut Stripe
+     * {@code PENDING} (PaymentIntent créé, en attente de confirmation carte) dès
+     * {@code BidCheckoutService.checkout}/{@code negotiationCheckout} —
+     * {@code RefundProcessor} l'annule via la même branche que PAYMENT_ESCROWED, sur le
+     * statut du paiement, pas celui du bid. Sans ce correctif (revue round 3), un bid
+     * AWAITING_PAYMENT restait orphelin : ni bloqué par {@code IN_FLIGHT} (il n'y est pas),
+     * ni liquidé — l'expéditeur pouvait ensuite confirmer son paiement et voir son argent
+     * partir en escrow sur un trajet déjà retiré pour fraude. Aucun filet de rattrapage
+     * n'existe : {@link #expirePendingBids} n'est déclenché que pour des annonces
+     * ACTIVE/FULL ({@code findActiveOrFullDepartingOnOrBefore}), jamais REMOVED_BY_ADMIN —
+     * il ne l'a d'ailleurs jamais été, y compris avant ce correctif (ce n'est pas une
+     * régression du round 1, contrairement à ce qu'affirmait le rapport précédent).
+     * {@code rematchEligible = false} ici (contrairement à {@code deleteAnnouncement}, où
+     * c'est {@code true}) : pas de proposition de rematch automatique après une décision
+     * de modération.
      *
      * <p>La recherche publique filtre déjà sur {@code AnnouncementStatus.ACTIVE}
      * ({@link AnnouncementSpecification#hasStatus}) : l'annonce disparaît des résultats
@@ -1238,19 +1249,34 @@ public class AnnouncementService {
         ann.setStatus(AnnouncementStatus.REMOVED_BY_ADMIN);
         AnnouncementEntity saved = announcementRepository.save(ann);
 
-        // Correction 1 (revue) : liquider les bids PENDING/PAYMENT_ESCROWED encore ouverts —
-        // sans ça, un PAYMENT_ESCROWED reste orphelin (argent bloqué, jamais remboursé).
+        // Correction 1 (revue), élargie round 3 : liquider tous les bids encore ouverts et
+        // sans livraison engagée — PENDING/PAYMENT_ESCROWED (round 1) + AWAITING_PAYMENT/
+        // NEGOTIATING (round 3, oubliés initialement) — sans ça, l'argent déjà engagé
+        // (PaymentIntent créé pour AWAITING_PAYMENT) reste bloqué, jamais remboursé.
         List<BidEntity> pendingBids = bidRepository.findByAnnouncementIdAndStatusIn(
-                announcementId, List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED));
+                announcementId, List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED,
+                        BidStatus.AWAITING_PAYMENT, BidStatus.NEGOTIATING));
         for (BidEntity bid : pendingBids) {
-            bid.setStatus(BidStatus.REJECTED);
-            bid.setRejectionReason(BidEntity.REJECTION_ANNOUNCEMENT_DELETED);
+            // NEGOTIATING n'est JAMAIS une réservation (cf. BidNegotiationService#closeThread) :
+            // le fermer en REJECTED le ferait ressurgir dans « Mes envois » et dégraderait à
+            // tort le taux d'acceptation du voyageur. On ferme donc le fil proprement, comme le
+            // fait déjà BidNegotiationService pour un refus/retrait explicite.
+            if (bid.getStatus() == BidStatus.NEGOTIATING) {
+                bid.setStatus(BidStatus.NEGOTIATION_CLOSED);
+            } else {
+                bid.setStatus(BidStatus.REJECTED);
+                bid.setRejectionReason(BidEntity.REJECTION_ANNOUNCEMENT_DELETED);
+            }
             bidRepository.save(bid);
             auditService.log("BID", bid.getId(), "BID_REJECTED_ANNOUNCEMENT_REMOVED_BY_ADMIN", adminId,
-                    Map.of("announcementId", announcementId.toString(), "senderId", bid.getSenderId().toString()));
+                    Map.of("announcementId", announcementId.toString(), "senderId", bid.getSenderId().toString(),
+                            "finalStatus", bid.getStatus().name()));
             // Correction 2 (revue round 2) : setStatus(REJECTED) seul ne rembourse rien —
             // seul BidRejectedEventListener (déclenché par cet event) → RefundProcessor
-            // libère l'escrow. rematchEligible=false : pas de rematch après modération.
+            // libère l'escrow. rematchEligible=false : pas de rematch après modération. Publié
+            // aussi pour un ex-NEGOTIATING (aucun paiement à ce stade — RefundProcessor
+            // no-op proprement, cf. PaymentRepository.findByBidId absent) : l'expéditeur est
+            // quand même notifié que le trajet a disparu.
             eventPublisher.publishEvent(new BidRejectedEvent(
                     bid.getId(), bid.getSenderId(), BidEntity.REJECTION_ANNOUNCEMENT_DELETED,
                     announcementId, false));

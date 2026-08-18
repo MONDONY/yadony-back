@@ -43,6 +43,11 @@ class AnnouncementModerationServiceTest {
     private static final UUID ADMIN_ID = UUID.randomUUID();
     private static final UUID OWNER_ID = UUID.randomUUID();
 
+    /** Statuts liquidés par removeByAdmin (round 3 : + AWAITING_PAYMENT/NEGOTIATING). */
+    private static final List<BidStatus> LIQUIDATABLE_STATUSES = List.of(
+            BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED,
+            BidStatus.AWAITING_PAYMENT, BidStatus.NEGOTIATING);
+
     private AnnouncementEntity announcement;
 
     @BeforeEach
@@ -108,7 +113,7 @@ class AnnouncementModerationServiceTest {
         when(announcementRepository.findById(ANN_ID)).thenReturn(Optional.of(announcement));
         when(bidRepository.existsByAnnouncementIdAndStatusIn(eq(ANN_ID), anyList())).thenReturn(false);
         when(bidRepository.findByAnnouncementIdAndStatusIn(
-                eq(ANN_ID), eq(List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED))))
+                eq(ANN_ID), eq(LIQUIDATABLE_STATUSES)))
                 .thenReturn(List.of(pendingBid, escrowedBid));
         when(announcementRepository.save(any())).thenReturn(announcement);
 
@@ -130,6 +135,59 @@ class AnnouncementModerationServiceTest {
     }
 
     @Test
+    @DisplayName("removeByAdmin (Critical A, round 3) : liquide aussi AWAITING_PAYMENT " +
+            "(PaymentIntent Stripe déjà créé) et NEGOTIATING (fermé en NEGOTIATION_CLOSED, " +
+            "jamais REJECTED — sinon réapparaît dans « Mes envois » et fausse le taux " +
+            "d'acceptation du voyageur, cf. BidNegotiationService#closeThread)")
+    void removeByAdmin_liquidatesAwaitingPaymentAndNegotiatingBids() throws Exception {
+        UUID awaitingPaymentBidId = UUID.randomUUID();
+        UUID awaitingPaymentSenderId = UUID.randomUUID();
+        UUID negotiatingBidId = UUID.randomUUID();
+        UUID negotiatingSenderId = UUID.randomUUID();
+
+        BidEntity awaitingPaymentBid = new BidEntity();
+        setId(awaitingPaymentBid, awaitingPaymentBidId);
+        setField(awaitingPaymentBid, "senderId", awaitingPaymentSenderId);
+        setField(awaitingPaymentBid, "status", BidStatus.AWAITING_PAYMENT);
+
+        BidEntity negotiatingBid = new BidEntity();
+        setId(negotiatingBid, negotiatingBidId);
+        setField(negotiatingBid, "senderId", negotiatingSenderId);
+        setField(negotiatingBid, "status", BidStatus.NEGOTIATING);
+
+        when(announcementRepository.findById(ANN_ID)).thenReturn(Optional.of(announcement));
+        when(bidRepository.existsByAnnouncementIdAndStatusIn(eq(ANN_ID), anyList())).thenReturn(false);
+        when(bidRepository.findByAnnouncementIdAndStatusIn(eq(ANN_ID), eq(LIQUIDATABLE_STATUSES)))
+                .thenReturn(List.of(awaitingPaymentBid, negotiatingBid));
+        when(announcementRepository.save(any())).thenReturn(announcement);
+
+        service.removeByAdmin(ANN_ID, ADMIN_ID, "contenu frauduleux");
+
+        // AWAITING_PAYMENT : un vrai "colis" (le PaymentIntent Stripe existe déjà côté
+        // BidCheckoutService.checkout) → REJECTED, motif technique, comme PENDING/ESCROWED.
+        assertThat(awaitingPaymentBid.getStatus()).isEqualTo(BidStatus.REJECTED);
+        assertThat(awaitingPaymentBid.getRejectionReason()).isEqualTo(BidEntity.REJECTION_ANNOUNCEMENT_DELETED);
+
+        // NEGOTIATING : jamais une réservation → NEGOTIATION_CLOSED, PAS REJECTED, et PAS
+        // de rejectionReason (même contrat que BidNegotiationService#closeThread).
+        assertThat(negotiatingBid.getStatus()).isEqualTo(BidStatus.NEGOTIATION_CLOSED);
+        assertThat(negotiatingBid.getRejectionReason()).isNull();
+
+        verify(bidRepository).save(awaitingPaymentBid);
+        verify(bidRepository).save(negotiatingBid);
+
+        // BidRejectedEvent publié pour les deux — RefundProcessor no-op proprement pour
+        // NEGOTIATING (aucun PaymentEntity encore créé), mais l'expéditeur est notifié.
+        ArgumentCaptor<BidRejectedEvent> eventCaptor = ArgumentCaptor.forClass(BidRejectedEvent.class);
+        verify(eventPublisher, times(2)).publishEvent(eventCaptor.capture());
+        assertThat(eventCaptor.getAllValues())
+                .extracting(BidRejectedEvent::getBidId)
+                .containsExactlyInAnyOrder(awaitingPaymentBidId, negotiatingBidId);
+        assertThat(eventCaptor.getAllValues())
+                .allSatisfy(e -> assertThat(e.isRematchEligible()).isFalse());
+    }
+
+    @Test
     @DisplayName("removeByAdmin : publie BidRejectedEvent pour chaque bid liquidé — " +
             "setStatus(REJECTED) seul ne rembourse rien, seul l'event déclenche RefundProcessor (Critical, round 2)")
     void removeByAdmin_publishesBidRejectedEventForLiquidatedBids() throws Exception {
@@ -144,7 +202,7 @@ class AnnouncementModerationServiceTest {
         when(announcementRepository.findById(ANN_ID)).thenReturn(Optional.of(announcement));
         when(bidRepository.existsByAnnouncementIdAndStatusIn(eq(ANN_ID), anyList())).thenReturn(false);
         when(bidRepository.findByAnnouncementIdAndStatusIn(
-                eq(ANN_ID), eq(List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED))))
+                eq(ANN_ID), eq(LIQUIDATABLE_STATUSES)))
                 .thenReturn(List.of(escrowedBid));
         when(announcementRepository.save(any())).thenReturn(announcement);
 
