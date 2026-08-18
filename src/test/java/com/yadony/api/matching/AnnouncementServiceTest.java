@@ -1289,6 +1289,12 @@ class AnnouncementServiceTest {
     @DisplayName("deleteAnnouncement()")
     class DeleteTests {
 
+        /** Statuts liquidés par deleteAnnouncement (round 4 : alignée sur removeByAdmin,
+         *  + AWAITING_PAYMENT/NEGOTIATING). */
+        private final List<BidStatus> LIQUIDATABLE_STATUSES = List.of(
+                BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED,
+                BidStatus.AWAITING_PAYMENT, BidStatus.NEGOTIATING);
+
         /** Régression I3 : un colis ARRIVED (arrivé, pas encore retiré) est un engagement
          *  encore ouvert. La garde ne listait que ACCEPTED/HANDED_OVER/IN_TRANSIT, donc le
          *  voyageur pouvait supprimer le trajet sous les pieds d'expéditeurs non servis. */
@@ -1320,7 +1326,7 @@ class AnnouncementServiceTest {
             when(bidRepository.existsByAnnouncementIdAndStatusIn(ANNOUNCEMENT_ID,
                     List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED)))
                     .thenReturn(false);
-            when(bidRepository.findByAnnouncementIdAndStatusIn(ANNOUNCEMENT_ID, List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED)))
+            when(bidRepository.findByAnnouncementIdAndStatusIn(ANNOUNCEMENT_ID, LIQUIDATABLE_STATUSES))
                     .thenReturn(List.of());
 
             announcementService.deleteAnnouncement(ANNOUNCEMENT_ID, FIREBASE_UID);
@@ -1347,7 +1353,7 @@ class AnnouncementServiceTest {
             when(bidRepository.existsByAnnouncementIdAndStatusIn(ANNOUNCEMENT_ID,
                     List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED)))
                     .thenReturn(false);
-            when(bidRepository.findByAnnouncementIdAndStatusIn(ANNOUNCEMENT_ID, List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED)))
+            when(bidRepository.findByAnnouncementIdAndStatusIn(ANNOUNCEMENT_ID, LIQUIDATABLE_STATUSES))
                     .thenReturn(List.of(bid));
 
             announcementService.deleteAnnouncement(ANNOUNCEMENT_ID, FIREBASE_UID);
@@ -1357,6 +1363,62 @@ class AnnouncementServiceTest {
             assertThat(bid.getRejectionReason()).isEqualTo(BidEntity.REJECTION_ANNOUNCEMENT_DELETED);
             verify(bidRepository).save(bid);
             assertThat(a.getDeletedAt()).isNotNull();
+        }
+
+        @Test
+        @DisplayName("round 4 (revue) : liquide aussi AWAITING_PAYMENT (sans quoi confirmer le " +
+                "paiement dans la fenêtre lève IllegalStateException sur l'annonce soft-deleted) " +
+                "et NEGOTIATING (fermé en NEGOTIATION_CLOSED, jamais REJECTED)")
+        void delete_activeWithAwaitingPaymentAndNegotiatingBids_liquidatesBoth() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity a = buildAnnouncement(traveler);
+
+            UUID awaitingPaymentBidId = UUID.randomUUID();
+            UUID awaitingPaymentSenderId = UUID.randomUUID();
+            BidEntity awaitingPaymentBid = new BidEntity();
+            awaitingPaymentBid.setAnnouncementId(ANNOUNCEMENT_ID);
+            awaitingPaymentBid.setSenderId(awaitingPaymentSenderId);
+            awaitingPaymentBid.setStatus(BidStatus.AWAITING_PAYMENT);
+            setId(awaitingPaymentBid, awaitingPaymentBidId);
+
+            UUID negotiatingBidId = UUID.randomUUID();
+            UUID negotiatingSenderId = UUID.randomUUID();
+            BidEntity negotiatingBid = new BidEntity();
+            negotiatingBid.setAnnouncementId(ANNOUNCEMENT_ID);
+            negotiatingBid.setSenderId(negotiatingSenderId);
+            negotiatingBid.setStatus(BidStatus.NEGOTIATING);
+            setId(negotiatingBid, negotiatingBidId);
+
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(bidRepository.existsByAnnouncementIdAndStatusIn(ANNOUNCEMENT_ID,
+                    List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED)))
+                    .thenReturn(false);
+            when(bidRepository.findByAnnouncementIdAndStatusIn(ANNOUNCEMENT_ID, LIQUIDATABLE_STATUSES))
+                    .thenReturn(List.of(awaitingPaymentBid, negotiatingBid));
+
+            announcementService.deleteAnnouncement(ANNOUNCEMENT_ID, FIREBASE_UID);
+
+            assertThat(awaitingPaymentBid.getStatus()).isEqualTo(BidStatus.REJECTED);
+            assertThat(awaitingPaymentBid.getRejectionReason()).isEqualTo(BidEntity.REJECTION_ANNOUNCEMENT_DELETED);
+
+            assertThat(negotiatingBid.getStatus()).isEqualTo(BidStatus.NEGOTIATION_CLOSED);
+            assertThat(negotiatingBid.getRejectionReason()).isNull();
+
+            verify(bidRepository).save(awaitingPaymentBid);
+            verify(bidRepository).save(negotiatingBid);
+            assertThat(a.getDeletedAt()).isNotNull();
+
+            ArgumentCaptor<com.yadony.api.matching.events.BidRejectedEvent> captor =
+                    ArgumentCaptor.forClass(com.yadony.api.matching.events.BidRejectedEvent.class);
+            verify(eventPublisher, times(2)).publishEvent(captor.capture());
+            assertThat(captor.getAllValues())
+                    .extracting(com.yadony.api.matching.events.BidRejectedEvent::getBidId)
+                    .containsExactlyInAnyOrder(awaitingPaymentBidId, negotiatingBidId);
+            // rematchEligible=true ici (voyageur qui supprime son propre trajet), contrairement
+            // à removeByAdmin (décision de modération).
+            assertThat(captor.getAllValues())
+                    .allSatisfy(e -> assertThat(e.isRematchEligible()).isTrue());
         }
 
         @Test
@@ -1380,7 +1442,7 @@ class AnnouncementServiceTest {
             when(bidRepository.existsByAnnouncementIdAndStatusIn(ANNOUNCEMENT_ID,
                     List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED)))
                     .thenReturn(false);
-            when(bidRepository.findByAnnouncementIdAndStatusIn(ANNOUNCEMENT_ID, List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED)))
+            when(bidRepository.findByAnnouncementIdAndStatusIn(ANNOUNCEMENT_ID, LIQUIDATABLE_STATUSES))
                     .thenReturn(List.of(bid));
 
             announcementService.deleteAnnouncement(ANNOUNCEMENT_ID, FIREBASE_UID);

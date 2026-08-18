@@ -1374,16 +1374,37 @@ public class AnnouncementService {
             throw new YadonyBusinessException(HttpStatus.CONFLICT, "deletion-impossible", "Deletion Impossible", "Suppression impossible : des colis sont déjà acceptés pour ce trajet");
         }
 
+        // Correction round 4 (revue) : alignée sur removeByAdmin — PENDING/PAYMENT_ESCROWED
+        // (round 1) + AWAITING_PAYMENT/NEGOTIATING (oubliés initialement ici aussi, même
+        // défaut que removeByAdmin avant son propre correctif round 3). Un bid
+        // AWAITING_PAYMENT laissé en place après le soft-delete de l'annonce est un mode
+        // de défaillance réel, pas seulement théorique : si l'expéditeur confirme son
+        // paiement dans la fenêtre des 15 minutes, PaymentService.promoteBidOnPaymentAuthorized
+        // lève une IllegalStateException (l'annonce, soft-deleted, est invisible via le
+        // filtre d'entité @Where) — rollback, hold Stripe autorisé et bloqué, puis le
+        // scheduler relève la même exception à chaque tick, cassant aussi le nettoyage des
+        // autres bids. Le nettoyage automatique (AwaitingPaymentCleanupScheduler, 15 min)
+        // rattrape le cas nominal où l'expéditeur ne confirme jamais — ce n'est donc pas
+        // « argent bloqué à vie », mais la fenêtre de course reste un vrai risque.
         List<BidEntity> pendingBids = bidRepository.findByAnnouncementIdAndStatusIn(
-                id, List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED));
+                id, List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED,
+                        BidStatus.AWAITING_PAYMENT, BidStatus.NEGOTIATING));
         for (BidEntity bid : pendingBids) {
-            bid.setStatus(BidStatus.REJECTED);
-            // Rejet « technique » (annonce supprimée), pas un refus du voyageur :
-            // marqué pour être exclu du taux d'acceptation.
-            bid.setRejectionReason(BidEntity.REJECTION_ANNOUNCEMENT_DELETED);
+            // NEGOTIATING n'est JAMAIS une réservation (cf. BidNegotiationService#closeThread,
+            // et removeByAdmin ci-dessus) : le fermer en REJECTED le ferait ressurgir dans
+            // « Mes envois » et dégraderait à tort le taux d'acceptation du voyageur.
+            if (bid.getStatus() == BidStatus.NEGOTIATING) {
+                bid.setStatus(BidStatus.NEGOTIATION_CLOSED);
+            } else {
+                bid.setStatus(BidStatus.REJECTED);
+                // Rejet « technique » (annonce supprimée), pas un refus du voyageur :
+                // marqué pour être exclu du taux d'acceptation.
+                bid.setRejectionReason(BidEntity.REJECTION_ANNOUNCEMENT_DELETED);
+            }
             bidRepository.save(bid);
             auditService.log("BID", bid.getId(), "BID_REJECTED_ANNOUNCEMENT_DELETED", user.getId(),
-                    Map.of("announcementId", id.toString(), "senderId", bid.getSenderId().toString()));
+                    Map.of("announcementId", id.toString(), "senderId", bid.getSenderId().toString(),
+                            "finalStatus", bid.getStatus().name()));
             // Correction round 2 (levée sur demande utilisateur) : setStatus(REJECTED) seul
             // ne rembourse rien — même défaut que removeByAdmin avant son propre correctif
             // (seul RefundProcessor, déclenché par BidRejectedEvent via
