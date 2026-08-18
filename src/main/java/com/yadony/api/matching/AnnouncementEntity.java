@@ -100,6 +100,15 @@ public class AnnouncementEntity extends BaseEntity {
     @Enumerated(EnumType.STRING)
     private AnnouncementStatus status = AnnouncementStatus.ACTIVE;
 
+    /**
+     * Lot C — statut porté par l'annonce juste avant un retrait par la modération.
+     * {@code null} tant qu'aucun retrait n'a eu lieu, et pour les lignes retirées avant
+     * la migration V220 : {@code restoreByAdmin} retombe alors sur {@code ACTIVE}.
+     */
+    @Column(name = "status_before_removal", length = 20)
+    @Enumerated(EnumType.STRING)
+    private AnnouncementStatus statusBeforeRemoval;
+
     @Column(name = "currency", nullable = false, length = 3)
     private String currency = "EUR";
 
@@ -331,6 +340,11 @@ public class AnnouncementEntity extends BaseEntity {
 
     public AnnouncementStatus getStatus() { return status; }
     public void setStatus(AnnouncementStatus status) { this.status = status; }
+
+    public AnnouncementStatus getStatusBeforeRemoval() { return statusBeforeRemoval; }
+    public void setStatusBeforeRemoval(AnnouncementStatus statusBeforeRemoval) {
+        this.statusBeforeRemoval = statusBeforeRemoval;
+    }
 
     public String getCurrency() { return currency; }
     public void setCurrency(String currency) { this.currency = currency; }

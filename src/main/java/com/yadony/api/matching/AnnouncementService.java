@@ -1246,6 +1246,12 @@ public class AnnouncementService {
                     "Des colis acceptés sont en cours sur cette annonce.");
         }
 
+        // Lot C — mémorisé AVANT l'écrasement, et seulement si l'annonce n'était pas déjà
+        // retirée : un second retrait ne doit pas mémoriser REMOVED_BY_ADMIN comme statut
+        // « d'origine », ce qui rendrait la restauration impossible.
+        if (ann.getStatus() != AnnouncementStatus.REMOVED_BY_ADMIN) {
+            ann.setStatusBeforeRemoval(ann.getStatus());
+        }
         ann.setStatus(AnnouncementStatus.REMOVED_BY_ADMIN);
         AnnouncementEntity saved = announcementRepository.save(ann);
 
@@ -1306,10 +1312,18 @@ public class AnnouncementService {
                     "Cette annonce n'a pas été retirée par la modération.");
         }
 
-        ann.setStatus(AnnouncementStatus.ACTIVE);
+        // Lot C — restitution du statut d'origine. Forcer ACTIVE remettait sur le marché
+        // un trajet COMPLETED/CANCELLED, réservable avec une date de départ passée.
+        // Fallback ACTIVE pour les lignes retirées avant la migration V220 (colonne NULL).
+        AnnouncementStatus target = ann.getStatusBeforeRemoval() != null
+                ? ann.getStatusBeforeRemoval()
+                : AnnouncementStatus.ACTIVE;
+        ann.setStatus(target);
+        ann.setStatusBeforeRemoval(null);
         AnnouncementEntity saved = announcementRepository.save(ann);
 
-        auditService.log("ANNOUNCEMENT", announcementId, "ANNOUNCEMENT_RESTORED_BY_ADMIN", adminId, Map.of());
+        auditService.log("ANNOUNCEMENT", announcementId, "ANNOUNCEMENT_RESTORED_BY_ADMIN", adminId,
+                Map.of("restoredStatus", target.name()));
 
         return saved;
     }

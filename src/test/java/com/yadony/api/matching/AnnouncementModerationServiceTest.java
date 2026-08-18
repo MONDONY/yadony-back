@@ -278,6 +278,47 @@ class AnnouncementModerationServiceTest {
                 });
     }
 
+    @Test
+    @DisplayName("removeByAdmin : mémorise le statut d'origine avant de retirer")
+    void removeByAdmin_memorizesPreviousStatus() throws Exception {
+        setField(announcement, "status", AnnouncementStatus.COMPLETED);
+        when(announcementRepository.findById(ANN_ID)).thenReturn(Optional.of(announcement));
+        when(bidRepository.existsByAnnouncementIdAndStatusIn(eq(ANN_ID), anyList())).thenReturn(false);
+        when(announcementRepository.save(any())).thenReturn(announcement);
+
+        service.removeByAdmin(ANN_ID, ADMIN_ID, "signalement");
+
+        assertThat(announcement.getStatus()).isEqualTo(AnnouncementStatus.REMOVED_BY_ADMIN);
+        assertThat(announcement.getStatusBeforeRemoval()).isEqualTo(AnnouncementStatus.COMPLETED);
+    }
+
+    @Test
+    @DisplayName("restoreByAdmin : une annonce COMPLETED retirée redevient COMPLETED, jamais ACTIVE")
+    void restoreByAdmin_restoresMemorizedStatus() throws Exception {
+        setField(announcement, "status", AnnouncementStatus.REMOVED_BY_ADMIN);
+        announcement.setStatusBeforeRemoval(AnnouncementStatus.COMPLETED);
+        when(announcementRepository.findById(ANN_ID)).thenReturn(Optional.of(announcement));
+        when(announcementRepository.save(any())).thenReturn(announcement);
+
+        AnnouncementEntity result = service.restoreByAdmin(ANN_ID, ADMIN_ID);
+
+        assertThat(result.getStatus()).isEqualTo(AnnouncementStatus.COMPLETED);
+        assertThat(result.getStatusBeforeRemoval()).isNull();
+    }
+
+    @Test
+    @DisplayName("restoreByAdmin : statut d'origine inconnu (ligne retirée avant V220) → ACTIVE")
+    void restoreByAdmin_withoutMemorizedStatus_fallsBackToActive() throws Exception {
+        setField(announcement, "status", AnnouncementStatus.REMOVED_BY_ADMIN);
+        announcement.setStatusBeforeRemoval(null);
+        when(announcementRepository.findById(ANN_ID)).thenReturn(Optional.of(announcement));
+        when(announcementRepository.save(any())).thenReturn(announcement);
+
+        AnnouncementEntity result = service.restoreByAdmin(ANN_ID, ADMIN_ID);
+
+        assertThat(result.getStatus()).isEqualTo(AnnouncementStatus.ACTIVE);
+    }
+
     // ─── Helpers ────────────────────────────────────────────────────────────────
 
     private static void setId(Object obj, UUID id) throws Exception {
