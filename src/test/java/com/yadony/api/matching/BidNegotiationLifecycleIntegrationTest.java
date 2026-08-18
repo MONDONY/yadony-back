@@ -105,6 +105,56 @@ class BidNegotiationLifecycleIntegrationTest {
         assertThat(after.getRejectionReason()).isEqualTo("TRAVELER_NO_RESPONSE");
     }
 
+    // ── D2 : fermer un fil ne doit rien coûter au voyageur ────────────────────
+
+    @Test
+    @DisplayName("un expéditeur qui refuse un prix ne dégrade pas le taux d'acceptation du voyageur")
+    void senderRejectingAPrice_doesNotCountAsAnExplicitTravelerRejection() {
+        UserEntity sender = persistUser("uid-reject-sender-" + UUID.randomUUID());
+        UserEntity traveler = persistUser("uid-reject-traveler-" + UUID.randomUUID());
+        AnnouncementEntity announcement = persistNegotiableAnnouncement(traveler.getId());
+        BidEntity thread = persistNegotiatingBid(announcement.getId(), sender.getId());
+        persistProposal(thread.getId(), traveler.getId());
+
+        negotiationService.reject(thread.getId(), sender.getFirebaseUid());
+
+        assertThat(bidRepository.countExplicitRejectionsForTraveler(traveler.getId()))
+                .describedAs("c'est l'expéditeur qui a refusé un PRIX, le voyageur n'a "
+                        + "refusé aucun colis")
+                .isZero();
+    }
+
+    @Test
+    @DisplayName("un voyageur qui refuse un prix ne dégrade pas non plus son taux d'acceptation")
+    void travelerRejectingAPrice_doesNotCountAsAnExplicitTravelerRejection() {
+        UserEntity sender = persistUser("uid-reject2-sender-" + UUID.randomUUID());
+        UserEntity traveler = persistUser("uid-reject2-traveler-" + UUID.randomUUID());
+        AnnouncementEntity announcement = persistNegotiableAnnouncement(traveler.getId());
+        BidEntity thread = persistNegotiatingBid(announcement.getId(), sender.getId());
+        persistProposal(thread.getId(), sender.getId());
+
+        negotiationService.reject(thread.getId(), traveler.getFirebaseUid());
+
+        assertThat(bidRepository.countExplicitRejectionsForTraveler(traveler.getId()))
+                .describedAs("refuser un prix n'est pas refuser un colis : le fil n'a "
+                        + "jamais été une réservation")
+                .isZero();
+    }
+
+    @Test
+    @DisplayName("un fil annulé par l'expéditeur ne compte pas davantage")
+    void cancellingAThread_doesNotCountAsAnExplicitTravelerRejection() {
+        UserEntity sender = persistUser("uid-cancel-sender-" + UUID.randomUUID());
+        UserEntity traveler = persistUser("uid-cancel-traveler-" + UUID.randomUUID());
+        AnnouncementEntity announcement = persistNegotiableAnnouncement(traveler.getId());
+        BidEntity thread = persistNegotiatingBid(announcement.getId(), sender.getId());
+        persistProposal(thread.getId(), sender.getId());
+
+        negotiationService.cancel(thread.getId(), sender.getFirebaseUid());
+
+        assertThat(bidRepository.countExplicitRejectionsForTraveler(traveler.getId())).isZero();
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private UserEntity persistUser(String firebaseUid) {

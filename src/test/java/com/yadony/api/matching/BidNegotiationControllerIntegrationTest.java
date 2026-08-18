@@ -136,23 +136,25 @@ class BidNegotiationControllerIntegrationTest {
     @Test
     @DisplayName("POST reject → 200")
     void reject_returns200() throws Exception {
-        when(negotiationService.reject(eq(BID_ID), anyString())).thenReturn(response("REJECTED"));
+        when(negotiationService.reject(eq(BID_ID), anyString()))
+                .thenReturn(response("NEGOTIATION_CLOSED"));
 
         mockMvc.perform(post("/bids/" + BID_ID + "/negotiation/reject")
                         .with(authentication(authenticatedAs("uid-traveler", "ROLE_TRAVELER"))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("REJECTED"));
+                .andExpect(jsonPath("$.status").value("NEGOTIATION_CLOSED"));
     }
 
     @Test
     @DisplayName("POST cancel → 200")
     void cancel_returns200() throws Exception {
-        when(negotiationService.cancel(eq(BID_ID), anyString())).thenReturn(response("CANCELLED"));
+        when(negotiationService.cancel(eq(BID_ID), anyString()))
+                .thenReturn(response("NEGOTIATION_CLOSED"));
 
         mockMvc.perform(post("/bids/" + BID_ID + "/negotiation/cancel")
                         .with(authentication(authenticatedAs("uid-sender", "ROLE_SENDER"))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("CANCELLED"));
+                .andExpect(jsonPath("$.status").value("NEGOTIATION_CLOSED"));
     }
 
     @Test

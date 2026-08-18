@@ -315,27 +315,39 @@ public class BidNegotiationService {
 
     @Transactional
     public BidNegotiationResponse reject(UUID bidId, String firebaseUid) {
-        return closeThread(bidId, firebaseUid, BidStatus.REJECTED, "BID_NEGOTIATION_REJECTED");
+        return closeThread(bidId, firebaseUid, "BID_NEGOTIATION_REJECTED");
     }
 
     @Transactional
     public BidNegotiationResponse cancel(UUID bidId, String firebaseUid) {
-        return closeThread(bidId, firebaseUid, BidStatus.CANCELLED, "BID_NEGOTIATION_CANCELLED");
+        return closeThread(bidId, firebaseUid, "BID_NEGOTIATION_CANCELLED");
     }
 
+    /**
+     * Éteint le fil, quel que soit le geste (refus ou retrait) et quel que soit son
+     * auteur. Le statut posé est toujours {@link BidStatus#NEGOTIATION_CLOSED} : la
+     * nuance refus/retrait est une information d'historique, portée par l'action
+     * d'audit, pas par un statut de colis.
+     *
+     * <p>Poser REJECTED / CANCELLED ici, comme au premier jet, sortait le bid de
+     * {@code NEGOTIATION_ACTIVE} et le faisait ressurgir dans « Mes envois » et dans
+     * la liste voyageur du trajet en demande de colis refusée — et, pour REJECTED,
+     * jusque dans le dénominateur du taux d'acceptation du voyageur, qu'un refus de
+     * prix par l'EXPÉDITEUR suffisait à dégrader.
+     */
     private BidNegotiationResponse closeThread(UUID bidId, String firebaseUid,
-                                               BidStatus finalStatus, String auditAction) {
+                                               String auditAction) {
         Participant ctx = loadParticipant(bidId, firebaseUid);
         assertThreadOpen(ctx);
 
-        ctx.bid().setStatus(finalStatus);
+        ctx.bid().setStatus(BidStatus.NEGOTIATION_CLOSED);
         BidEntity saved = bidRepository.save(ctx.bid());
 
         BidNegotiationMessageEntity message = postMessage(ctx.bid(), ctx.userId(),
                 BidNegotiationMessageKind.REJECT, null, null);
 
         auditService.log("BID", bidId, auditAction, ctx.userId(),
-                Map.of("finalStatus", finalStatus.name(),
+                Map.of("finalStatus", BidStatus.NEGOTIATION_CLOSED.name(),
                         "round", String.valueOf(ctx.bid().getNegotiationRound())));
 
         publishPosted(ctx.bid(), ctx.announcement(), ctx.userId(),

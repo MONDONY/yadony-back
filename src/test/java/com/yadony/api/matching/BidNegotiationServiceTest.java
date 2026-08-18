@@ -755,7 +755,7 @@ class BidNegotiationServiceTest {
     class RejectAndCancel {
 
         @Test
-        @DisplayName("reject → statut REJECTED et message REJECT")
+        @DisplayName("reject → statut NEGOTIATION_CLOSED et message REJECT")
         void reject_closesThread() {
             BidEntity bid = buildNegotiatingBid();
             when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(buildTraveler()));
@@ -767,18 +767,23 @@ class BidNegotiationServiceTest {
 
             BidNegotiationResponse response = service.reject(BID_ID, TRAVELER_UID);
 
-            assertThat(bid.getStatus()).isEqualTo(BidStatus.REJECTED);
+            // NEGOTIATION_CLOSED et pas REJECTED : un fil refusé n'a jamais été une
+            // réservation. Sous REJECTED il comptait comme un refus de colis du
+            // voyageur dans son taux d'acceptation, même quand c'est l'expéditeur
+            // qui refusait le prix.
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.NEGOTIATION_CLOSED);
             ArgumentCaptor<BidNegotiationMessageEntity> msgCaptor =
                     ArgumentCaptor.forClass(BidNegotiationMessageEntity.class);
             verify(messageRepository).save(msgCaptor.capture());
             assertThat(msgCaptor.getValue().getKind()).isEqualTo(BidNegotiationMessageKind.REJECT);
+            // Le geste (refus / retrait) reste distingué par l'action d'audit.
             verify(auditService).log(eq("BID"), eq(BID_ID), eq("BID_NEGOTIATION_REJECTED"),
                     eq(TRAVELER_ID), anyMap());
-            assertThat(response.status()).isEqualTo("REJECTED");
+            assertThat(response.status()).isEqualTo("NEGOTIATION_CLOSED");
         }
 
         @Test
-        @DisplayName("cancel par l'expéditeur → statut CANCELLED et audit")
+        @DisplayName("cancel par l'expéditeur → statut NEGOTIATION_CLOSED et audit")
         void cancel_bySender_cancelsThread() {
             BidEntity bid = buildNegotiatingBid();
             when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(buildSender()));
@@ -790,7 +795,7 @@ class BidNegotiationServiceTest {
 
             service.cancel(BID_ID, SENDER_UID);
 
-            assertThat(bid.getStatus()).isEqualTo(BidStatus.CANCELLED);
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.NEGOTIATION_CLOSED);
             verify(auditService).log(eq("BID"), eq(BID_ID), eq("BID_NEGOTIATION_CANCELLED"),
                     eq(SENDER_ID), anyMap());
         }
