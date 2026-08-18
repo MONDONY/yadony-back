@@ -141,8 +141,19 @@ public class CashCommissionService {
      * (promo > overrides > global via {@link CommissionRateResolver}) et fige ce taux
      * en snapshot sur le bid ({@code bids.commission_rate}) — même sémantique que l'escrow.
      * Si un promoCode est présent mais invalide (expiré, épuisé), fallback silencieux.
+     *
+     * <p><b>Bid négocié</b> ({@code negotiatedNetEur} renseigné) : le barème de
+     * l'annonce n'a plus aucun rapport avec ce que les deux parties ont convenu, et le
+     * taux a été figé à l'ouverture du fil. On lit donc l'accord, on ne recalcule ni
+     * l'assiette ni le taux — même raisonnement que
+     * {@link #settleNegotiationCommission} pour les fils de demande d'envoi. Sans
+     * cela, un voyageur ayant accepté 45 € pour un colis tarifé 200 € au barème se
+     * verrait prélever la commission des 200 €.
      */
     public BigDecimal computeBidCommission(BidEntity bid, AnnouncementEntity announcement) {
+        if (bid.getNegotiatedNetEur() != null && bid.getCommissionRate() != null) {
+            return computeCommission(bid.getNegotiatedNetEur(), bid.getCommissionRate());
+        }
         BigDecimal rate;
         if (bid.getPromoCode() != null) {
             try {

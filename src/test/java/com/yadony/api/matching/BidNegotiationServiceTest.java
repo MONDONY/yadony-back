@@ -13,6 +13,8 @@ import com.yadony.api.matching.dto.BidNegotiationResponse;
 import com.yadony.api.matching.dto.BidNegotiationStartRequest;
 import com.yadony.api.matching.dto.BidNegotiationSummaryResponse;
 import com.yadony.api.matching.events.BidNegotiationMessagePostedEvent;
+import com.yadony.api.matching.events.CashBidCreatedEvent;
+import com.yadony.api.payments.cash.PaymentMethod;
 import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -39,6 +41,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -610,6 +613,88 @@ class BidNegotiationServiceTest {
             // que le résolveur n'a pas été rappelé après la première proposition.
             assertThat(bid.getNegotiatedNetEur()).isEqualByComparingTo("42.86");
             verifyNoInteractions(commissionRateResolver);
+        }
+
+        /**
+         * Un accord en ESPÈCES n'a aucun paiement en ligne à attendre : le laisser en
+         * {@code AWAITING_PAYMENT} le condamnait à être soft-deleté par
+         * {@code AwaitingPaymentCleanupScheduler} sans qu'aucun écran ne puisse le
+         * débloquer. Il rejoint donc le chemin d'un bid cash ordinaire : {@code PENDING},
+         * puis {@code POST /bids/{id}/accept-with-commission} côté voyageur.
+         */
+        @Test
+        @DisplayName("accord en espèces → PENDING, pas d'attente de paiement en ligne")
+        void accept_cashBid_joinsClassicCashPath() {
+            BidEntity bid = buildNegotiatingBid();
+            bid.setPaymentMethod(PaymentMethod.CASH);
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(buildTraveler()));
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID))
+                    .thenReturn(Optional.of(buildAnnouncement()));
+            when(messageRepository.findFirstByBidIdOrderByCreatedAtDesc(BID_ID))
+                    .thenReturn(Optional.of(lastMessageFrom(SENDER_ID, "45.00")));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(buildSender()));
+            stubSavedBid();
+
+            BidNegotiationResponse response = service.accept(BID_ID, TRAVELER_UID);
+
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.PENDING);
+            assertThat(bid.getAwaitingPaymentExpiresAt()).isNull();
+            // Le prix reste figé : c'est lui qui sert de base à la commission voyageur.
+            assertThat(bid.getNegotiatedGrossEur()).isEqualByComparingTo("45.00");
+            assertThat(bid.getNegotiatedNetEur()).isEqualByComparingTo("42.86");
+            assertThat(response.status()).isEqualTo("PENDING");
+        }
+
+        @Test
+        @DisplayName("accord en espèces → le voyageur est notifié comme pour une demande cash")
+        void accept_cashBid_notifiesTravelerLikeAFreshCashBid() {
+            BidEntity bid = buildNegotiatingBid();
+            bid.setPaymentMethod(PaymentMethod.CASH);
+            when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(buildSender()));
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID))
+                    .thenReturn(Optional.of(buildAnnouncement()));
+            when(messageRepository.findFirstByBidIdOrderByCreatedAtDesc(BID_ID))
+                    .thenReturn(Optional.of(lastMessageFrom(TRAVELER_ID, "45.00")));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(buildSender()));
+            stubSavedBid();
+
+            service.accept(BID_ID, SENDER_UID);
+
+            ArgumentCaptor<Object> events = ArgumentCaptor.forClass(Object.class);
+            verify(eventPublisher, atLeastOnce()).publishEvent(events.capture());
+            assertThat(events.getAllValues())
+                    .filteredOn(CashBidCreatedEvent.class::isInstance)
+                    .singleElement()
+                    .satisfies(e -> {
+                        CashBidCreatedEvent cash = (CashBidCreatedEvent) e;
+                        assertThat(cash.bidId()).isEqualTo(BID_ID);
+                        assertThat(cash.travelerId()).isEqualTo(TRAVELER_ID);
+                        assertThat(cash.senderId()).isEqualTo(SENDER_ID);
+                    });
+        }
+
+        @Test
+        @DisplayName("accord par carte → aucun événement cash, on reste en AWAITING_PAYMENT")
+        void accept_cardBid_publishesNoCashEvent() {
+            BidEntity bid = buildNegotiatingBid();
+            bid.setPaymentMethod(PaymentMethod.STRIPE);
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(buildTraveler()));
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID))
+                    .thenReturn(Optional.of(buildAnnouncement()));
+            when(messageRepository.findFirstByBidIdOrderByCreatedAtDesc(BID_ID))
+                    .thenReturn(Optional.of(lastMessageFrom(SENDER_ID, "45.00")));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(buildSender()));
+            stubSavedBid();
+
+            service.accept(BID_ID, TRAVELER_UID);
+
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.AWAITING_PAYMENT);
+            ArgumentCaptor<Object> events = ArgumentCaptor.forClass(Object.class);
+            verify(eventPublisher, atLeastOnce()).publishEvent(events.capture());
+            assertThat(events.getAllValues()).noneMatch(CashBidCreatedEvent.class::isInstance);
         }
     }
 

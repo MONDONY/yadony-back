@@ -183,6 +183,38 @@ class CashCommissionServiceTest {
             assertThat(commission).isEqualByComparingTo("16.00");
             assertThat(bid.getCommissionRate()).isEqualByComparingTo("0.08");
         }
+
+        /**
+         * Sur un bid issu d'une négociation de prix, le barème de l'annonce (prix/kg,
+         * grille) n'a plus aucun rapport avec ce que les deux parties ont convenu :
+         * c'est {@code negotiatedNetEur} qui fait foi, et le taux figé à l'ouverture
+         * du fil qui s'applique — le même raisonnement que
+         * {@code settleNegotiationCommission} pour les fils de demande d'envoi.
+         */
+        @Test
+        void computeBidCommission_onNegotiatedBid_usesAgreedNetAndFrozenRate() {
+            UUID travelerId = UUID.randomUUID();
+            UUID senderId = UUID.randomUUID();
+
+            BidEntity bid = new BidEntity();
+            ReflectionTestUtils.setField(bid, "id", UUID.randomUUID());
+            bid.setSenderId(senderId);
+            bid.setWeightKg(new BigDecimal("10"));
+            bid.setNegotiatedNetEur(new BigDecimal("42.86"));
+            bid.setNegotiatedGrossEur(new BigDecimal("45.00"));
+            bid.setCommissionRate(new BigDecimal("0.05"));
+            AnnouncementEntity ann = new AnnouncementEntity();
+            ReflectionTestUtils.setField(ann, "id", UUID.randomUUID());
+            ann.setTravelerId(travelerId);
+            ann.setPricePerKg(new BigDecimal("20"));
+
+            // Barème : 10 × 20 = 200 → 24,00 au taux global. Accord : 42,86 × 5 % = 2,14.
+            BigDecimal commission = service.computeBidCommission(bid, ann);
+
+            assertThat(commission).isEqualByComparingTo("2.14");
+            assertThat(bid.getCommissionRate()).isEqualByComparingTo("0.05");
+            verifyNoInteractions(commissionRateResolver);
+        }
     }
 
     // ===================== setupCommissionMethod =====================

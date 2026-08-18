@@ -15,6 +15,7 @@ import com.yadony.api.matching.dto.BidNegotiationResponse;
 import com.yadony.api.matching.dto.BidNegotiationStartRequest;
 import com.yadony.api.matching.dto.BidNegotiationSummaryResponse;
 import com.yadony.api.matching.events.BidNegotiationMessagePostedEvent;
+import com.yadony.api.matching.events.CashBidCreatedEvent;
 import com.yadony.api.payments.cash.PaymentMethod;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.context.ApplicationEventPublisher;
@@ -250,9 +251,33 @@ public class BidNegotiationService {
 
         ctx.bid().setNegotiatedGrossEur(split.grossEur());
         ctx.bid().setNegotiatedNetEur(split.netEur());
-        ctx.bid().setStatus(BidStatus.AWAITING_PAYMENT);
-        ctx.bid().setAwaitingPaymentExpiresAt(
-                LocalDateTime.now(ZoneOffset.UTC).plusHours(config.awaitingPaymentHours()));
+
+        // Deux aval possibles, et un seul des deux comporte un paiement en ligne.
+        //
+        // ESPÈCES : rien à encaisser auprès de l'expéditeur, il réglera le voyageur de
+        // la main à la main. Le laisser en AWAITING_PAYMENT était une impasse — aucun
+        // écran n'aurait pu l'en sortir et AwaitingPaymentCleanupScheduler l'aurait
+        // soft-delété au bout de awaiting-payment-hours. Le bid rejoint donc l'état
+        // exact d'une demande cash fraîchement créée (PENDING + CashBidCreatedEvent),
+        // d'où le voyageur le mène à ACCEPTED par le chemin existant et inchangé :
+        // POST /bids/{id}/accept-with-commission → CashCommissionService.acceptCashBid,
+        // qui prélève la commission Yadony (wallet puis carte) avant de sceller.
+        // Ce second geste n'est pas une seconde acceptation du prix : c'est le
+        // règlement de la commission, qui exige une source de fonds et peut demander
+        // un 3DS — il ne peut donc pas être court-circuité ici, où le voyageur n'est
+        // pas nécessairement l'auteur de l'acceptation.
+        //
+        // CARTE : l'expéditeur doit encore autoriser l'escrow, sur le bid EXISTANT,
+        // via POST /bids/{id}/negotiation/checkout.
+        boolean cash = ctx.bid().getPaymentMethod() == PaymentMethod.CASH;
+        if (cash) {
+            ctx.bid().setStatus(BidStatus.PENDING);
+            ctx.bid().setAwaitingPaymentExpiresAt(null);
+        } else {
+            ctx.bid().setStatus(BidStatus.AWAITING_PAYMENT);
+            ctx.bid().setAwaitingPaymentExpiresAt(
+                    LocalDateTime.now(ZoneOffset.UTC).plusHours(config.awaitingPaymentHours()));
+        }
         BidEntity saved = bidRepository.save(ctx.bid());
 
         BidNegotiationMessageEntity message = postMessage(ctx.bid(), ctx.userId(),
@@ -266,6 +291,17 @@ public class BidNegotiationService {
 
         publishPosted(ctx.bid(), ctx.announcement(), ctx.userId(),
                 BidNegotiationMessageKind.ACCEPT, split.grossEur());
+
+        if (cash) {
+            // Même événement que BidService.createBid pour une demande cash : le
+            // voyageur reçoit la notification « demande à traiter » et retrouve le
+            // colis là où il traite les autres, sans écran ni notification dédiés.
+            eventPublisher.publishEvent(new CashBidCreatedEvent(
+                    ctx.bid().getId(), ctx.announcement().getId(), ctx.announcement().getTravelerId(),
+                    ctx.bid().getSenderId(), displayName(ctx.bid().getSenderId()),
+                    ctx.bid().getWeightKg(),
+                    ctx.announcement().getDepartureCity() + " → " + ctx.announcement().getArrivalCity()));
+        }
 
         return buildResponse(saved != null ? saved : ctx.bid(), ctx.announcement(), ctx.userId(), message);
     }
