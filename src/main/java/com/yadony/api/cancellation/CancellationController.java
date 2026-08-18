@@ -60,7 +60,7 @@ public class CancellationController {
     }
 
     @PostMapping("/bids/{bidId}/confirm-noshow")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('DISPUTE_RESOLVE')")
     public ResponseEntity<Void> confirmNoShow(@PathVariable UUID bidId) {
         cancellationService.confirmSenderNoShow(bidId);
         return ResponseEntity.ok().build();

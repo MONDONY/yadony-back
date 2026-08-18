@@ -6,6 +6,7 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.CommissionRateResolver;
 import com.yadony.api.common.StorageService;
+import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.config.ContentCategoryNormalizer;
 import com.yadony.api.config.YadonyConfigProperties;
 import com.yadony.api.favorites.FavoriteRepository;
@@ -183,6 +184,24 @@ public class PackageRequestService {
         }
     }
 
+    /**
+     * D4 : expéditeur suspendu de publication (décision admin). Même format d'erreur
+     * RFC 7807 que {@code AnnouncementService.assertPublishingNotSuspended} (code
+     * {@code publishing-suspended}, catalogue d'erreurs app mobile partagé) — c'est
+     * là que s'arrête la parité. Côté colis, le brouillon reste délibérément
+     * autorisé pour un expéditeur suspendu : seule la publication (création directe
+     * ou {@link #publish}) est bloquée, contrairement aux annonces où la garde
+     * bloque aussi la création de brouillon. Ne pas « rétablir la parité » en
+     * bloquant le brouillon ici — l'asymétrie est un choix assumé, pas un oubli.
+     */
+    private static void assertPublishingNotSuspended(UserEntity sender) {
+        if (sender.isPublishingSuspended()) {
+            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "publishing-suspended",
+                    "Publishing Suspended",
+                    "La publication est suspendue. Contactez le support.");
+        }
+    }
+
     @Transactional
     public PackageRequestEntity createAndReturnEntity(UUID senderId, PackageRequestCreateRequest req) {
         UserEntity sender = userRepository.findById(senderId)
@@ -201,6 +220,9 @@ public class PackageRequestService {
         // par défaut → 409 déclenché avant la validation attendue).
         if (!isDraft && sender.getKycStatus() != KycStatus.VERIFIED) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "kyc/not-verified");
+        }
+        if (!isDraft) {
+            assertPublishingNotSuspended(sender);
         }
         rejectMobileMoneyMethods(req.acceptedPaymentMethods());
         if (req.departureCity().equalsIgnoreCase(req.arrivalCity())) {
@@ -404,6 +426,7 @@ public class PackageRequestService {
 
         UserEntity sender = userRepository.findById(callerUid)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "user/not-found"));
+        assertPublishingNotSuspended(sender);
         if (sender.getKycStatus() != KycStatus.VERIFIED) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "kyc/not-verified");
         }
