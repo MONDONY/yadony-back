@@ -416,6 +416,9 @@ public class AnnouncementService {
         validateHandoverDeadline(request.handoverDeadline(),
                 request.departureDate(), request.departureTime());
         announcement.setHandoverDeadline(request.handoverDeadline());
+        // Absent = prix ferme : un client pas encore à jour ne doit jamais ouvrir
+        // un trajet à la négociation sans que le voyageur l'ait demandé.
+        announcement.setNegotiable(request.isNegotiable());
 
         AnnouncementEntity saved = announcementRepository.save(announcement);
 
@@ -773,6 +776,7 @@ public class AnnouncementService {
         announcement.setDepartureAt(deriveDepartureAt(
                 request.departureDate(), request.departureTime(), announcement.getTimezone()));
         announcement.setHandoverDeadline(request.handoverDeadline());
+        announcement.setNegotiable(request.isNegotiable());
         announcement.setPickupAddressLabel(request.pickupAddress().label());
         announcement.setPickupLat(java.math.BigDecimal.valueOf(request.pickupAddress().lat()));
         announcement.setPickupLng(java.math.BigDecimal.valueOf(request.pickupAddress().lng()));
@@ -1305,7 +1309,8 @@ public class AnnouncementService {
                 flagService.getFlag(entity.getDepartureCountryCode()),
                 flagService.getFlag(entity.getArrivalCountryCode()),
                 entity.getHandoverDeadline(),
-                entity.getCurrency()
+                entity.getCurrency(),
+                entity.isNegotiable()
         );
     }
 

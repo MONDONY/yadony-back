@@ -75,9 +75,18 @@ public record AnnouncementRequest(
 
         // Brouillon : si true, l'annonce est créée en statut DRAFT (skip KYC + limite mensuelle,
         // soumise au quota de brouillons — cf AnnouncementService.createAnnouncement).
-        Boolean saveAsDraft
+        Boolean saveAsDraft,
+
+        // Le voyageur ouvre son trajet aux propositions de prix. Nullable pour les
+        // clients pas encore à jour : absent = prix ferme, le comportement historique.
+        // Doit rester en DERNIER (record construit positionnellement dans les tests).
+        Boolean negotiable
 ) {
     public boolean isDraft() {
         return Boolean.TRUE.equals(saveAsDraft);
+    }
+
+    public boolean isNegotiable() {
+        return Boolean.TRUE.equals(negotiable);
     }
 }
