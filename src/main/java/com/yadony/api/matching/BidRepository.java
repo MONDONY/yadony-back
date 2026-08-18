@@ -415,4 +415,38 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
     List<UUID> findLoyalSenderIds(@Param("travelerId") UUID travelerId,
                                   @Param("departureCity") String departureCity,
                                   @Param("arrivalCity") String arrivalCity);
+
+    /** Fils de négociation où l'utilisateur est expéditeur ou voyageur du trajet. */
+    @Query("""
+        SELECT b FROM BidEntity b
+        JOIN AnnouncementEntity a ON b.announcementId = a.id
+        WHERE b.status = com.yadony.api.matching.BidStatus.NEGOTIATING
+          AND (b.senderId = :userId OR a.travelerId = :userId)
+          AND b.deletedAt IS NULL
+        ORDER BY b.updatedAt DESC
+    """)
+    List<BidEntity> findNegotiationsForUser(@Param("userId") UUID userId);
+
+    /** Fils inactifs depuis le seuil : plus aucun message échangé. */
+    @Query("""
+        SELECT b FROM BidEntity b
+        WHERE b.status = com.yadony.api.matching.BidStatus.NEGOTIATING
+          AND b.updatedAt < :threshold
+          AND b.deletedAt IS NULL
+    """)
+    List<BidEntity> findStaleNegotiations(@Param("threshold") LocalDateTime threshold);
+
+    /**
+     * Fils encore ouverts sur un trajet déjà parti. Complète
+     * {@link #findStaleNegotiations} : un fil actif jusqu'à la veille du départ
+     * n'est jamais « inactif », mais il n'a plus d'objet une fois l'avion parti.
+     */
+    @Query("""
+        SELECT b FROM BidEntity b
+        JOIN AnnouncementEntity a ON b.announcementId = a.id
+        WHERE b.status = com.yadony.api.matching.BidStatus.NEGOTIATING
+          AND a.departureDate < :today
+          AND b.deletedAt IS NULL
+    """)
+    List<BidEntity> findNegotiationsOnDepartedTrips(@Param("today") java.time.LocalDate today);
 }

@@ -205,85 +205,8 @@ public class BidService {
                         HttpStatus.NOT_FOUND, "announcement-not-found", "Announcement Not Found",
                         "Annonce introuvable"));
 
-        if (announcement.getStatus() != AnnouncementStatus.ACTIVE) {
-            throw new YadonyBusinessException(
-                    HttpStatus.CONFLICT, "announcement-not-active", "Announcement Not Active",
-                    "Cette annonce n'est plus disponible");
-        }
-
-        String senderCurrency = activeCurrencyResolver.resolve(sender.getId());
-        currencyMatchGuard.assertMatches(announcement.getCurrency(), senderCurrency);
-
-        if (!sender.getRoles().contains(Role.SENDER)) {
-            sender.getRoles().add(Role.SENDER);
-            userRepository.save(sender);
-        }
-
-        // Dedicated trip (tied to a negotiation): other senders can only bid on the
-        // surplus capacity once the traveler has opened it (after the negotiating
-        // sender paid). The weight cap is enforced by the weight-exceeds-capacity
-        // check below since availableKg == surplus once published.
-        if (announcement.isClosedToThirdPartyBids()) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "surplus-not-open",
-                    "Surplus Not Open",
-                    "La capacité supplémentaire de ce trajet n'est pas ouverte aux autres expéditeurs");
-        }
-
-        // Le sender réservé (celui pour qui le trajet dédié a été créé) a déjà son
-        // colis dessus : il ne peut pas bidder sur le surplus de son propre trajet,
-        // même une fois le surplus publié (sinon deux colis du même sender sur un trajet).
-        if (announcement.isReservedSender(sender.getId())) {
-            throw new YadonyBusinessException(
-                    HttpStatus.CONFLICT, "reserved-sender-cannot-bid", "Reserved Sender Cannot Bid",
-                    "Vous avez déjà un colis réservé sur ce trajet");
-        }
-
-        if (announcement.getTravelerId().equals(sender.getId())) {
-            throw new YadonyBusinessException(
-                    HttpStatus.CONFLICT, "cannot-bid-own-announcement", "Cannot Bid Own Announcement",
-                    "Vous ne pouvez pas faire une demande sur votre propre annonce");
-        }
-
-        // Normalisé AVANT le contrôle de refus (C2) : announcement.refusedTypes est déjà
-        // normalisé (V171 + écriture normalisée dans AnnouncementService). Comparer un
-        // libellé/code legacy encore non normalisé ("Hi-fi") le ferait passer à travers
-        // un refus explicite ("Téléphone & électronique") — inversion silencieuse du refus.
-        String normalizedContentCategory = ContentCategoryNormalizer.normalizeJoined(request.contentCategory());
-        BidContentRules.assertNotRefused(announcement, normalizedContentCategory);
-
-        UUID travelerId = announcement.getTravelerId();
-
-        // Confidentialité v2 — blocage : 404 masque délibérément le blocage
-        if (blockService.isBlockedEitherWay(sender.getId(), travelerId)) {
-            throw new YadonyBusinessException(
-                    HttpStatus.NOT_FOUND, "announcement-not-found", "Announcement Not Found",
-                    "Annonce introuvable");
-        }
-
-        // Seule garde KYC de la création d'offre : le voyageur décide. Tant qu'il
-        // laisse « profils vérifiés uniquement » actif (défaut de tous les comptes),
-        // seuls les expéditeurs vérifiés peuvent lui écrire ; s'il le désactive, il
-        // accepte sciemment les profils non vérifiés et l'app l'en avertit avant.
-        // On ne charge le voyageur que si nécessaire (expéditeur non vérifié).
-        if (sender.getKycStatus() != KycStatus.VERIFIED) {
-            UserEntity traveler = userRepository.findById(travelerId).orElse(null);
-            // traveler null (suppression/race) => on laisse passer : la FK garantit normalement sa présence.
-            if (traveler != null && traveler.isContactKycOnly()) {
-                throw new YadonyBusinessException(
-                        HttpStatus.FORBIDDEN, "contact-kyc-required", "KYC Required",
-                        "Cet utilisateur n'accepte que les profils vérifiés");
-            }
-        }
-
-        boolean alreadyHasBid = bidRepository.existsBySenderIdAndAnnouncementIdAndStatusIn(
-                sender.getId(), announcementId,
-                List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED,
-                        BidStatus.NEGOTIATING));
-        if (alreadyHasBid) {
-            throw new YadonyBusinessException(
-                    HttpStatus.CONFLICT, "already-bid", "Demande existante",
-                    "Vous avez déjà une demande en cours ou acceptée pour ce trajet");
-        }
+        String normalizedContentCategory =
+                assertCanBidOn(sender, announcement, request.contentCategory());
 
         boolean isKgFreeCreate = announcement.getCapacityUnit() == CapacityUnit.KG_FREE;
         if (!isKgFreeCreate && request.weightKg() != null
@@ -313,37 +236,7 @@ public class BidService {
                                : hasGrid          ? BidPricingMode.GRID
                                :                    BidPricingMode.KG;
 
-        PaymentMethod pm;
-        try {
-            pm = request.paymentMethod() != null
-                    ? PaymentMethod.valueOf(request.paymentMethod().toUpperCase())
-                    : PaymentMethod.STRIPE;
-        } catch (IllegalArgumentException e) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "invalid-payment-method", "Invalid Payment Method",
-                    "Méthode de paiement inconnue : " + request.paymentMethod());
-        }
-
-        if (pm == PaymentMethod.CASH
-                && !announcement.getAcceptedPaymentMethods().contains(pm)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "cash-not-accepted", "Cash Not Accepted",
-                    "Cette annonce n'accepte pas le paiement en espèces");
-        }
-
-        if (pm == PaymentMethod.STRIPE
-                && !announcement.getAcceptedPaymentMethods().contains(pm)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "card-not-accepted", "Card Not Accepted",
-                    "Cette annonce n'accepte pas le paiement par carte");
-        }
-
-        if (pm == PaymentMethod.WAVE || pm == PaymentMethod.ORANGE_MONEY) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "mobile-money-bid-payment-retired", "Mobile Money Bid Payment Retired",
-                    "Le paiement mobile money direct par l'expéditeur n'est plus disponible "
-                    + "pour les nouveaux envois. Choisissez Cash ou Carte bancaire.");
-        }
+        PaymentMethod pm = resolvePaymentMethodFor(announcement, request.paymentMethod());
 
         String clientIp = resolveClientIp(httpRequest);
 
@@ -414,6 +307,146 @@ public class BidService {
         }
 
         return toResponse(saved, sender);
+    }
+
+    /**
+     * Gardes d'éligibilité communes à la création d'une offre ferme
+     * ({@link #createBid}) et à l'ouverture d'un fil de négociation
+     * ({@code BidNegotiationService#propose}) : annonce active, devise compatible,
+     * capacité non fermée aux tiers, expéditeur réservé, trajet du demandeur,
+     * catégorie refusée, blocage mutuel, exigence de profil vérifié du voyageur,
+     * et unicité de la demande sur ce trajet.
+     *
+     * <p>Extraite plutôt que dupliquée : la négociation doit appliquer exactement
+     * les mêmes contrôles que l'offre ferme, et deux copies finiraient par diverger
+     * (un statut ajouté d'un côté et pas de l'autre rouvrirait une faille déjà fermée).
+     *
+     * @return la catégorie de contenu normalisée, que l'appelant doit persister
+     */
+    String assertCanBidOn(UserEntity sender, AnnouncementEntity announcement, String contentCategory) {
+        if (announcement.getStatus() != AnnouncementStatus.ACTIVE) {
+            throw new YadonyBusinessException(
+                    HttpStatus.CONFLICT, "announcement-not-active", "Announcement Not Active",
+                    "Cette annonce n'est plus disponible");
+        }
+
+        String senderCurrency = activeCurrencyResolver.resolve(sender.getId());
+        currencyMatchGuard.assertMatches(announcement.getCurrency(), senderCurrency);
+
+        if (!sender.getRoles().contains(Role.SENDER)) {
+            sender.getRoles().add(Role.SENDER);
+            userRepository.save(sender);
+        }
+
+        // Dedicated trip (tied to a negotiation): other senders can only bid on the
+        // surplus capacity once the traveler has opened it (after the negotiating
+        // sender paid). The weight cap is enforced by the weight-exceeds-capacity
+        // check below since availableKg == surplus once published.
+        if (announcement.isClosedToThirdPartyBids()) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "surplus-not-open",
+                    "Surplus Not Open",
+                    "La capacité supplémentaire de ce trajet n'est pas ouverte aux autres expéditeurs");
+        }
+
+        // Le sender réservé (celui pour qui le trajet dédié a été créé) a déjà son
+        // colis dessus : il ne peut pas bidder sur le surplus de son propre trajet,
+        // même une fois le surplus publié (sinon deux colis du même sender sur un trajet).
+        if (announcement.isReservedSender(sender.getId())) {
+            throw new YadonyBusinessException(
+                    HttpStatus.CONFLICT, "reserved-sender-cannot-bid", "Reserved Sender Cannot Bid",
+                    "Vous avez déjà un colis réservé sur ce trajet");
+        }
+
+        if (announcement.getTravelerId().equals(sender.getId())) {
+            throw new YadonyBusinessException(
+                    HttpStatus.CONFLICT, "cannot-bid-own-announcement", "Cannot Bid Own Announcement",
+                    "Vous ne pouvez pas faire une demande sur votre propre annonce");
+        }
+
+        // Normalisé AVANT le contrôle de refus (C2) : announcement.refusedTypes est déjà
+        // normalisé (V171 + écriture normalisée dans AnnouncementService). Comparer un
+        // libellé/code legacy encore non normalisé ("Hi-fi") le ferait passer à travers
+        // un refus explicite ("Téléphone & électronique") — inversion silencieuse du refus.
+        String normalizedContentCategory = ContentCategoryNormalizer.normalizeJoined(contentCategory);
+        BidContentRules.assertNotRefused(announcement, normalizedContentCategory);
+
+        UUID travelerId = announcement.getTravelerId();
+
+        // Confidentialité v2 — blocage : 404 masque délibérément le blocage
+        if (blockService.isBlockedEitherWay(sender.getId(), travelerId)) {
+            throw new YadonyBusinessException(
+                    HttpStatus.NOT_FOUND, "announcement-not-found", "Announcement Not Found",
+                    "Annonce introuvable");
+        }
+
+        // Seule garde KYC de la création d'offre : le voyageur décide. Tant qu'il
+        // laisse « profils vérifiés uniquement » actif (défaut de tous les comptes),
+        // seuls les expéditeurs vérifiés peuvent lui écrire ; s'il le désactive, il
+        // accepte sciemment les profils non vérifiés et l'app l'en avertit avant.
+        // On ne charge le voyageur que si nécessaire (expéditeur non vérifié).
+        if (sender.getKycStatus() != KycStatus.VERIFIED) {
+            UserEntity traveler = userRepository.findById(travelerId).orElse(null);
+            // traveler null (suppression/race) => on laisse passer : la FK garantit normalement sa présence.
+            if (traveler != null && traveler.isContactKycOnly()) {
+                throw new YadonyBusinessException(
+                        HttpStatus.FORBIDDEN, "contact-kyc-required", "KYC Required",
+                        "Cet utilisateur n'accepte que les profils vérifiés");
+            }
+        }
+
+        boolean alreadyHasBid = bidRepository.existsBySenderIdAndAnnouncementIdAndStatusIn(
+                sender.getId(), announcement.getId(),
+                List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED,
+                        BidStatus.NEGOTIATING));
+        if (alreadyHasBid) {
+            throw new YadonyBusinessException(
+                    HttpStatus.CONFLICT, "already-bid", "Demande existante",
+                    "Vous avez déjà une demande en cours ou acceptée pour ce trajet");
+        }
+
+        return normalizedContentCategory;
+    }
+
+    /**
+     * Traduit le mode de paiement demandé et vérifie que l'annonce l'accepte.
+     * Partagé avec le fil de négociation : le mode choisi à l'ouverture du fil doit
+     * obéir aux mêmes règles qu'une offre ferme, sinon un accord pourrait aboutir
+     * sur un moyen de paiement que le voyageur a explicitement refusé.
+     */
+    PaymentMethod resolvePaymentMethodFor(AnnouncementEntity announcement, String rawPaymentMethod) {
+        PaymentMethod pm;
+        try {
+            pm = rawPaymentMethod != null
+                    ? PaymentMethod.valueOf(rawPaymentMethod.toUpperCase())
+                    : PaymentMethod.STRIPE;
+        } catch (IllegalArgumentException e) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "invalid-payment-method", "Invalid Payment Method",
+                    "Méthode de paiement inconnue : " + rawPaymentMethod);
+        }
+
+        if (pm == PaymentMethod.CASH
+                && !announcement.getAcceptedPaymentMethods().contains(pm)) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "cash-not-accepted", "Cash Not Accepted",
+                    "Cette annonce n'accepte pas le paiement en espèces");
+        }
+
+        if (pm == PaymentMethod.STRIPE
+                && !announcement.getAcceptedPaymentMethods().contains(pm)) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "card-not-accepted", "Card Not Accepted",
+                    "Cette annonce n'accepte pas le paiement par carte");
+        }
+
+        if (pm == PaymentMethod.WAVE || pm == PaymentMethod.ORANGE_MONEY) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "mobile-money-bid-payment-retired", "Mobile Money Bid Payment Retired",
+                    "Le paiement mobile money direct par l'expéditeur n'est plus disponible "
+                    + "pour les nouveaux envois. Choisissez Cash ou Carte bancaire.");
+        }
+
+        return pm;
     }
 
     @Transactional(readOnly = true)
@@ -987,7 +1020,9 @@ public class BidService {
         }
     }
 
-    private String resolveClientIp(HttpServletRequest request) {
+    /** Package-private : réutilisé par {@link BidNegotiationService} pour horodater
+     *  la signature du disclaimer à l'ouverture d'un fil de négociation. */
+    String resolveClientIp(HttpServletRequest request) {
         String forwarded = request.getHeader("X-Forwarded-For");
         if (forwarded != null && !forwarded.isBlank()) {
             String[] parts = forwarded.split(",");
