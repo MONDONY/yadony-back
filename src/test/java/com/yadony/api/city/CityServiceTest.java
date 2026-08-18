@@ -74,6 +74,15 @@ class CityServiceTest {
         verify(cityRepository).searchByName("Dak", 15);
     }
 
+    @Test
+    void search_clampsLimitAtOne() {
+        when(cityRepository.searchByName("Dak", 1)).thenReturn(List.of());
+
+        cityService.search("Dak", -10);
+
+        verify(cityRepository).searchByName("Dak", 1);
+    }
+
     private CityEntity makeCity(Long id, String name, String code, String country,
                                  Long pop, BigDecimal lat, BigDecimal lng) {
         CityEntity e = new CityEntity();

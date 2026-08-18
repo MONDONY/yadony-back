@@ -20,7 +20,8 @@ public class CacheConfig {
         // Default spec: 5-minute TTL, max 500 entries
         manager.setCaffeine(Caffeine.newBuilder()
                 .maximumSize(500)
-                .expireAfterWrite(5, TimeUnit.MINUTES));
+                .expireAfterWrite(5, TimeUnit.MINUTES)
+                .recordStats());
 
         // Per-cache overrides
         // adminAuthz: short-lived (30 s), small (200 entries) — auth hot path
@@ -28,6 +29,7 @@ public class CacheConfig {
                 Caffeine.newBuilder()
                         .maximumSize(200)
                         .expireAfterWrite(30, TimeUnit.SECONDS)
+                        .recordStats()
                         .build());
 
         // bids-me / traveler-bids-me / negotiations-me: TTL très courte (8 s),
@@ -44,8 +46,26 @@ public class CacheConfig {
                     Caffeine.newBuilder()
                             .maximumSize(2000)
                             .expireAfterWrite(8, TimeUnit.SECONDS)
+                            .recordStats()
                             .build());
         }
+
+        // City autocomplete and popular corridors are hot read-mostly endpoints
+        // during onboarding/search. Data changes only when city data is reloaded
+        // or a corridor is used, so short bounded caches protect Postgres without
+        // introducing cross-node consistency concerns.
+        manager.registerCustomCache("city-search",
+                Caffeine.newBuilder()
+                        .maximumSize(5000)
+                        .expireAfterWrite(30, TimeUnit.MINUTES)
+                        .recordStats()
+                        .build());
+        manager.registerCustomCache("popular-corridors",
+                Caffeine.newBuilder()
+                        .maximumSize(100)
+                        .expireAfterWrite(1, TimeUnit.MINUTES)
+                        .recordStats()
+                        .build());
 
         // Standard caches that use the default spec
         manager.setCacheNames(java.util.List.of(

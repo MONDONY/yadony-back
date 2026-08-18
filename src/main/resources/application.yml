@@ -98,6 +98,8 @@ springdoc:
 
 # Logging
 logging:
+  pattern:
+    level: "%5p [requestId:%X{requestId:-}]"
   level:
     com.yadony.api: INFO
     org.springframework.security: WARN

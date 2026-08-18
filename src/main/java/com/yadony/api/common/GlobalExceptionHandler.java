@@ -8,6 +8,7 @@ import io.sentry.Sentry;
 import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
@@ -290,12 +291,21 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ProblemDetail> handleGeneric(Exception ex) {
-        log.error("Unexpected error", ex);
-        Sentry.captureException(ex);
+        String requestId = MDC.get("requestId");
+        log.error("Unexpected error requestId={}", requestId, ex);
+        Sentry.withScope(scope -> {
+            if (requestId != null && !requestId.isBlank()) {
+                scope.setTag("request_id", requestId);
+            }
+            Sentry.captureException(ex);
+        });
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(
                 HttpStatus.INTERNAL_SERVER_ERROR, "An unexpected error occurred");
         problem.setType(URI.create(BASE_TYPE + "internal-error"));
         problem.setTitle("Internal Server Error");
+        if (requestId != null && !requestId.isBlank()) {
+            problem.setProperty("requestId", requestId);
+        }
         return ResponseEntity.internalServerError().body(problem);
     }
 }
