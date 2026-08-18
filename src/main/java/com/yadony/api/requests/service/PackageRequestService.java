@@ -715,9 +715,8 @@ public class PackageRequestService {
      * <p>La règle de match vit dans {@link MatchingService} et n'est pas exprimable
      * en SQL sans la dupliquer : on récupère donc l'ensemble des ids compatibles,
      * on applique la recherche filtrée dessus, puis on trie et pagine en mémoire.
-     * L'ensemble est borné par le nombre de matchs du voyageur, du même ordre de
-     * grandeur que ce que renvoie déjà {@code GET /travelers/me/matching-requests}
-     * sans pagination.
+     * L'ensemble est borné par le nombre de matchs du voyageur, puis réduit par
+     * la pagination de {@code GET /package-requests?matchingMyTrips=true}.
      *
      * <p>Injection {@code requests → matching} assumée : lecture synchrone
      * unidirectionnelle nécessaire à la construction de la réponse, sans cycle.

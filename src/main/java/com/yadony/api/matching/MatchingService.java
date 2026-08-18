@@ -2,8 +2,6 @@ package com.yadony.api.matching;
 
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
-import com.yadony.api.common.MatchingTextUtil;
-import com.yadony.api.matching.dto.MatchingRequestDto;
 import com.yadony.api.requests.entity.PackageRequestEntity;
 import com.yadony.api.requests.entity.PackageRequestStatus;
 import com.yadony.api.requests.repository.PackageRequestRepository;
@@ -18,7 +16,6 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -39,31 +36,6 @@ public class MatchingService {
         this.userRepository = userRepository;
     }
 
-    public List<MatchingRequestDto> findMatchingRequests(UUID travelerId) {
-        List<AnnouncementEntity> activeAnnouncements =
-                announcementRepository.findActiveByTravelerId(travelerId);
-
-        List<MatchingRequestDto> results = new ArrayList<>();
-
-        for (AnnouncementEntity announcement : activeAnnouncements) {
-            List<PackageRequestEntity> candidates = packageRequestRepository
-                    .findOpenByCorridor(announcement.getDepartureCity(), announcement.getArrivalCity());
-
-            for (PackageRequestEntity request : candidates) {
-                if (!matches(request, announcement)) continue;
-
-                Optional<UserEntity> senderOpt = userRepository.findById(request.getSenderId());
-                if (senderOpt.isEmpty()) continue;
-
-                UserEntity sender = senderOpt.get();
-                results.add(toDto(request, announcement, sender));
-            }
-        }
-
-        results.sort((a, b) -> Integer.compare(b.matchScore(), a.matchScore()));
-        return results;
-    }
-
     /**
      * Meilleur match par demande pour un voyageur : identifiant du trajet retenu,
      * sa date de départ, et le score de compatibilité.
@@ -71,15 +43,15 @@ public class MatchingService {
     public record MatchInfo(UUID requestId, UUID tripId, LocalDate tripDepartureDate, int matchScore) {}
 
     /**
-     * Variante dédupliquée de {@link #findMatchingRequests} destinée à la recherche
+     * Variante dédupliquée destinée à la recherche
      * paginée de demandes (paramètre {@code matchingMyTrips}).
      *
-     * <p>{@link #findMatchingRequests} produit un DTO par couple (trajet, demande) :
-     * une demande compatible avec deux trajets du voyageur y figure deux fois. Ici
+     * <p>Le chemin historique produisait un DTO par couple (trajet, demande) :
+     * une demande compatible avec deux trajets du voyageur y figurait deux fois. Ici
      * on ne conserve qu'une entrée par demande, celle du meilleur score, et la map
      * est ordonnée par score décroissant, cet ordre porte le tri de la page.
      *
-     * <p>Contrairement à {@link #findMatchingRequests}, les expéditeurs sont chargés
+     * <p>Les expéditeurs sont chargés
      * en une seule requête ({@code findAllById}) : cette méthode est appelée à chaque
      * page de recherche et un {@code findById} par candidat saturerait le pool de
      * connexions dès qu'un voyageur cumule plusieurs corridors. Seule l'existence de
@@ -152,7 +124,7 @@ public class MatchingService {
     private record Candidate(PackageRequestEntity request, AnnouncementEntity announcement) {}
 
     /**
-     * Inverse de {@link #findMatchingRequests} : pour une demande de colis donnée,
+     * Pour une demande de colis donnée,
      * retourne les ids des voyageurs dont au moins un trajet ACTIVE/FULL matche
      * (même règle corridor + poids + fenêtre de date). Utilisé par la notification
      * temps réel à la création d'une demande. Une demande non OPEN ne matche rien.
@@ -172,8 +144,7 @@ public class MatchingService {
     }
 
     /**
-     * Règle de match commune à {@link #findMatchingRequests} et
-     * {@link #findBestMatchByRequestId} : corridor déjà filtré en SQL, restent le
+     * Règle de match commune aux chemins de matching : corridor déjà filtré en SQL, restent le
      * poids et la fenêtre de date. Point d'extension unique — ajouter un critère
      * ici le propage aux deux chemins.
      */
@@ -189,41 +160,6 @@ public class MatchingService {
         long daysDiff = Math.abs(ChronoUnit.DAYS.between(
                 request.getDesiredDate(), announcement.getDepartureDate()));
         return daysDiff <= request.getDateToleranceDays();
-    }
-
-    private MatchingRequestDto toDto(PackageRequestEntity request,
-                                     AnnouncementEntity announcement,
-                                     UserEntity sender) {
-        String corridor = MatchingTextUtil.corridorLabel(announcement.getDepartureCity(), announcement.getArrivalCity());
-        String senderName = MatchingTextUtil.buildPublicName(sender);
-        String senderInitials = MatchingTextUtil.buildInitials(sender);
-        double senderRating = sender.getAverageRating() != null
-                ? sender.getAverageRating().doubleValue() : 0.0;
-
-        double budgetPerKg = computeBudgetPerKg(request);
-        int matchScore = computeMatchScore(request, announcement, budgetPerKg);
-        String messageExcerpt = MatchingTextUtil.truncate(request.getDescription(), 100);
-
-        return new MatchingRequestDto(
-                request.getId().toString(),
-                announcement.getId().toString(),
-                corridor,
-                announcement.getDepartureDate().toString(),
-                announcement.getAvailableKg().doubleValue(),
-                sender.getId().toString(),
-                senderName,
-                senderInitials,
-                senderRating,
-                sender.getTotalShipments(),
-                request.getWeightKg().doubleValue(),
-                request.getContentCategory(),
-                budgetPerKg,
-                request.getPhotoUrl(),
-                messageExcerpt,
-                matchScore,
-                request.getCreatedAt().toString(),
-                request.getCurrency()
-        );
     }
 
     private int computeMatchScore(PackageRequestEntity request,

@@ -7,7 +7,6 @@ import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.matching.dto.BidResponse;
 import com.yadony.api.matching.dto.CalendarStatsResponse;
 import com.yadony.api.matching.dto.InviteRequest;
-import com.yadony.api.matching.dto.MatchingRequestDto;
 import com.yadony.api.matching.dto.ProAnalyticsResponse;
 import com.yadony.api.matching.dto.TravelerStatsDto;
 import com.yadony.api.notifications.NotificationDispatcher;
@@ -42,7 +41,6 @@ public class TravelerStatsController {
     private final UserRepository userRepository;
     private final ProAnalyticsService analyticsService;
     private final AnnouncementRepository announcementRepository;
-    private final MatchingService matchingService;
     private final PackageRequestRepository packageRequestRepository;
     private final NotificationDispatcher notificationDispatcher;
     private final BidService bidService;
@@ -53,7 +51,6 @@ public class TravelerStatsController {
             UserRepository userRepository,
             ProAnalyticsService analyticsService,
             AnnouncementRepository announcementRepository,
-            MatchingService matchingService,
             PackageRequestRepository packageRequestRepository,
             NotificationDispatcher notificationDispatcher,
             BidService bidService,
@@ -62,7 +59,6 @@ public class TravelerStatsController {
         this.userRepository = userRepository;
         this.analyticsService = analyticsService;
         this.announcementRepository = announcementRepository;
-        this.matchingService = matchingService;
         this.packageRequestRepository = packageRequestRepository;
         this.notificationDispatcher = notificationDispatcher;
         this.bidService = bidService;
@@ -123,27 +119,6 @@ public class TravelerStatsController {
         long activeTrips = announcementRepository.countByTravelerIdAndStatus(user.getId(), AnnouncementStatus.ACTIVE);
         long totalMonth = announcementRepository.countByTravelerIdAndCreatedAtBetween(user.getId(), from, to);
         return ResponseEntity.ok(new CalendarStatsResponse(activeTrips, totalMonth));
-    }
-
-    /**
-     * @deprecated Remplacé par {@code GET /package-requests?matchingMyTrips=true},
-     * qui apporte la pagination, la combinaison avec les autres filtres et la
-     * déduplication par demande. Conservé le temps que les clients installés
-     * migrent. Ne pas supprimer sans vérifier les versions d'app en circulation.
-     */
-    @Deprecated(since = "2026-07-22")
-    @GetMapping("/me/matching-requests")
-    public ResponseEntity<List<MatchingRequestDto>> getMatchingRequests() {
-        String firebaseUid = requireFirebaseUid();
-        UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "User Not Found", "Utilisateur introuvable"));
-        if (!user.getRoles().contains(Role.TRAVELER)) {
-            throw new YadonyBusinessException(
-                    HttpStatus.FORBIDDEN, "traveler-required",
-                    "Traveler role required", "Réservé aux voyageurs.");
-        }
-        return ResponseEntity.ok(matchingService.findMatchingRequests(user.getId()));
     }
 
     @PostMapping("/me/invite")

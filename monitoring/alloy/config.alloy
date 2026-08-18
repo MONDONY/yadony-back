@@ -1,25 +1,84 @@
-// ── Sortie métriques : Prometheus local ─────────────────────────────────────
+// ── Sorties métriques : Prometheus local + Grafana Cloud ─────────────────────
 prometheus.remote_write "local_prometheus" {
-  external_labels = {
-    env = "staging",
-  }
-  endpoint {
-    url = "http://prometheus:9090/api/v1/write"
-  }
+	external_labels = {
+		env = sys.env("YADONY_ENV"),
+	}
+
+	endpoint {
+		url = "http://prometheus:9090/api/v1/write"
+	}
+}
+
+prometheus.remote_write "grafana_cloud" {
+	endpoint {
+		url = sys.env("GRAFANA_PROM_URL")
+
+		basic_auth {
+			username = sys.env("GRAFANA_PROM_USER")
+			password = sys.env("GRAFANA_CLOUD_TOKEN")
+		}
+	}
+	external_labels = {
+		env = sys.env("YADONY_ENV"),
+	}
 }
 
 // ── Métriques de l'hôte (CPU, RAM, disque) → Prometheus ───────────────────
-// L'API est scrapée directement par Prometheus (voir prometheus.yml).
-// Alloy ne collecte ici que les métriques système (node_*).
+// Alloy collecte les métriques système et applicatives, puis les envoie aux
+// deux backends de métriques.
 prometheus.exporter.unix "host" {
-  rootfs_path = "/host/root"
-  procfs_path = "/host/proc"
-  sysfs_path  = "/host/sys"
+	rootfs_path = "/host/root"
+	procfs_path = "/host/proc"
+	sysfs_path  = "/host/sys"
 }
 
 prometheus.scrape "host" {
-  targets         = prometheus.exporter.unix.host.targets
-  forward_to      = [prometheus.remote_write.local_prometheus.receiver]
-  scrape_interval = "30s"
-  job_name        = "host"
+	targets    = prometheus.exporter.unix.host.targets
+	forward_to = [
+		prometheus.remote_write.local_prometheus.receiver,
+		prometheus.remote_write.grafana_cloud.receiver,
+	]
+	scrape_interval = "30s"
+	job_name        = "host"
+}
+
+prometheus.scrape "api" {
+	targets = [{
+		__address__ = "api:8080",
+	}]
+	metrics_path = "/api/v1/actuator/prometheus"
+	forward_to   = [
+		prometheus.remote_write.local_prometheus.receiver,
+		prometheus.remote_write.grafana_cloud.receiver,
+	]
+	scrape_interval = "30s"
+	job_name        = "yadony-api"
+}
+
+// ── Logs Docker → Grafana Cloud Loki ─────────────────────────────────────────
+discovery.docker "containers" {
+	host = "unix:///var/run/docker.sock"
+}
+
+loki.write "grafana_cloud" {
+	endpoint {
+		url = sys.env("GRAFANA_LOKI_URL")
+
+		basic_auth {
+			username = sys.env("GRAFANA_LOKI_USER")
+			password = sys.env("GRAFANA_CLOUD_TOKEN")
+		}
+	}
+	external_labels = {
+		env = sys.env("YADONY_ENV"),
+	}
+}
+
+loki.source.docker "containers" {
+	host       = "unix:///var/run/docker.sock"
+	targets    = discovery.docker.containers.targets
+	forward_to = [loki.write.grafana_cloud.receiver]
+	labels     = {
+		job = "docker",
+	}
 }

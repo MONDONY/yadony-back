@@ -24,6 +24,9 @@ export default function (data) {
     '/favorites/ids',
     '/package-requests',
     '/auth/me',
+    '/cities/search?query=Par&limit=10',
+    '/cities/corridors/popular?limit=10',
+    '/notifications/unread-count',
   ];
   for (const p of paths) {
     const r = http.get(`${BASE}${p}`, h);

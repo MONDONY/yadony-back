@@ -1,5 +1,10 @@
 # Monitoring yadony — Grafana Cloud
 
+La stack de production combine Prometheus, Grafana Cloud, Loki, Grafana Alloy,
+Alertmanager et Sentry. Prometheus évalue les règles versionnées dans
+`monitoring/prometheus/rules/`; Alertmanager groupe les alertes et les transmet
+au relais Discord interne.
+
 ## 1. Compte et tokens
 
 1. Créer un compte sur https://grafana.com (free tier) et une stack.
@@ -9,21 +14,44 @@
 4. Générer un token d'accès (`GRAFANA_CLOUD_TOKEN`) avec les scopes
    `metrics:write` et `logs:write`.
 5. Renseigner ces 5 variables + `YADONY_ENV` dans le `.env` de chaque VPS.
+6. Créer un webhook dans le salon Discord `#alertes-prod` et renseigner
+   `DISCORD_WEBHOOK_URL` dans le même `.env`.
 
 ## 2. Agent Alloy
 
 L'agent tourne en conteneur sur chaque VPS (service `alloy` des fichiers
-Compose). Vérifier après déploiement : `docker logs yadony_alloy` ne doit pas
-afficher d'erreur d'authentification, et les cibles doivent être `up` dans
-Grafana (Explore → `up{job="yadony-api"}`).
+Compose). Il collecte les métriques API et VPS, puis les envoie à Prometheus
+local et Grafana Cloud. Il collecte aussi les logs Docker et les pousse vers
+Loki. Vérifier après déploiement :
 
-## 3. Dashboard technique
+```bash
+docker logs yadony_alloy
+docker logs yadony_alertmanager
+docker logs yadony_discord_alerts
+```
+
+Les cibles doivent être `up` dans Grafana (Explore → `up{job="yadony-api"}`).
+
+## 3.1 Alertes Discord
+
+Prometheus évalue les règles dans `monitoring/prometheus/rules/yadony-alerts.yml`.
+Les alertes sont regroupées pendant 30 secondes, répétées au maximum toutes les
+4 heures, et une notification de résolution est envoyée à Discord.
+
+Seuils inclus : API indisponible, erreurs 5xx, latence p95, heap JVM, pool
+PostgreSQL, CPU VPS, mémoire VPS et espace disque.
+
+Le webhook Discord est uniquement injecté dans le conteneur relais via
+`DISCORD_WEBHOOK_URL`; il n'est jamais écrit dans les fichiers de configuration
+committés.
+
+## 4. Dashboard technique
 
 Importer le dashboard communautaire **JVM (Micrometer)** : Grafana →
 Dashboards → New → Import → ID `4701`. Source de données : le Prometheus de
 la stack. Il couvre heap, GC, threads, et les requêtes HTTP.
 
-## 4. Dashboard métier
+## 5. Dashboard métier
 
 Créer un nouveau dashboard « yadony — Métier » avec un panneau par métrique.
 Type de panneau : « Time series », sauf mention contraire. Requêtes PromQL
@@ -49,14 +77,14 @@ Type de panneau : « Time series », sauf mention contraire. Requêtes PromQL
 Après création, exporter le JSON (Dashboard settings → JSON Model) et le
 committer dans `monitoring/dashboards/yadony-metier.json`.
 
-## 5. Contact point Discord
+## 6. Contact point Discord Grafana Cloud
 
 Grafana → Alerting → Contact points → Add :
 - Type : Discord.
 - Webhook URL : celle du salon `#alertes-prod`.
 - Tester avec « Test ».
 
-## 6. Règles d'alerte
+## 7. Règles d'alerte Grafana Cloud
 
 Grafana → Alerting → Alert rules → New. Pour chaque règle : source de données
 Prometheus, condition `IS ABOVE`/`IS BELOW` selon le seuil, `for` = durée de
@@ -72,7 +100,7 @@ persistance, contact point = Discord.
 | Pool DB épuisé | `hikaricp_connections_pending{env="prod"}` | `IS ABOVE 5` | 5m |
 | Échecs de paiement anormaux | `sum(increase(yadony_disputes_opened_total{env="prod"}[1h]))` | `IS ABOVE 10` | 5m |
 
-## 7. Monitoring uptime externe
+## 8. Monitoring uptime externe
 
 Grafana → Testing & synthetics → Synthetic Monitoring → Create check :
 - Type : HTTP.
