@@ -183,6 +183,13 @@ public class PackageRequestService {
         }
     }
 
+    /** D4 : expéditeur suspendu de publication (décision admin) — parité avec AnnouncementService. */
+    private static void assertPublishingNotSuspended(UserEntity sender) {
+        if (sender.isPublishingSuspended()) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "user/publishing-suspended");
+        }
+    }
+
     @Transactional
     public PackageRequestEntity createAndReturnEntity(UUID senderId, PackageRequestCreateRequest req) {
         UserEntity sender = userRepository.findById(senderId)
@@ -201,6 +208,9 @@ public class PackageRequestService {
         // par défaut → 409 déclenché avant la validation attendue).
         if (!isDraft && sender.getKycStatus() != KycStatus.VERIFIED) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "kyc/not-verified");
+        }
+        if (!isDraft) {
+            assertPublishingNotSuspended(sender);
         }
         rejectMobileMoneyMethods(req.acceptedPaymentMethods());
         if (req.departureCity().equalsIgnoreCase(req.arrivalCity())) {
@@ -404,6 +414,7 @@ public class PackageRequestService {
 
         UserEntity sender = userRepository.findById(callerUid)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "user/not-found"));
+        assertPublishingNotSuspended(sender);
         if (sender.getKycStatus() != KycStatus.VERIFIED) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "kyc/not-verified");
         }
