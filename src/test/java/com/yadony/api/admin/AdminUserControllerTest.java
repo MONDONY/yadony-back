@@ -61,6 +61,64 @@ class AdminUserControllerTest {
         verify(userService).setCommissionRateOverride(userId, null);
     }
 
+    // ── Lot B : coupure de messagerie ────────────────────────────────────────
+
+    @Test
+    void muteMessaging_delegatesToService_andReturnsDetail() {
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact);
+        when(firebaseContact.getContact(any())).thenReturn(
+                com.yadony.api.auth.FirebaseContactService.Contact.EMPTY);
+        UUID userId = UUID.randomUUID();
+        com.yadony.api.auth.UserEntity user = new com.yadony.api.auth.UserEntity();
+        when(userService.muteMessaging(userId, 24, "harcèlement")).thenReturn(user);
+
+        var resp = controller.muteMessaging(userId, new com.yadony.api.admin.dto.MuteMessagingRequest(24, "harcèlement"));
+
+        assertThat(resp).isNotNull();
+        verify(userService).muteMessaging(userId, 24, "harcèlement");
+    }
+
+    @Test
+    void muteMessaging_nullDuration_delegatesNull_forIndefiniteMute() {
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact);
+        when(firebaseContact.getContact(any())).thenReturn(
+                com.yadony.api.auth.FirebaseContactService.Contact.EMPTY);
+        UUID userId = UUID.randomUUID();
+        when(userService.muteMessaging(userId, null, "fraude"))
+                .thenReturn(new com.yadony.api.auth.UserEntity());
+
+        controller.muteMessaging(userId, new com.yadony.api.admin.dto.MuteMessagingRequest(null, "fraude"));
+
+        verify(userService).muteMessaging(userId, null, "fraude");
+    }
+
+    @Test
+    void unmuteMessaging_delegatesToService_andReturnsDetail() {
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact);
+        when(firebaseContact.getContact(any())).thenReturn(
+                com.yadony.api.auth.FirebaseContactService.Contact.EMPTY);
+        UUID userId = UUID.randomUUID();
+        com.yadony.api.auth.UserEntity user = new com.yadony.api.auth.UserEntity();
+        when(userService.unmuteMessaging(userId)).thenReturn(user);
+
+        var resp = controller.unmuteMessaging(userId);
+
+        assertThat(resp).isNotNull();
+        verify(userService).unmuteMessaging(userId);
+    }
+
+    @Test
+    void muteMessagingRequest_blankReason_isRejected() {
+        assertThat(validator().validate(new com.yadony.api.admin.dto.MuteMessagingRequest(24, "  ")))
+                .isNotEmpty();
+    }
+
+    @Test
+    void muteMessagingRequest_validReason_hasNoViolations() {
+        assertThat(validator().validate(new com.yadony.api.admin.dto.MuteMessagingRequest(24, "harcèlement")))
+                .isEmpty();
+    }
+
     // ── Recherche : téléphone et email ne sont plus en base ─────────────────
 
     @Test

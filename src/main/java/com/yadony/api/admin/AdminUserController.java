@@ -2,6 +2,7 @@ package com.yadony.api.admin;
 
 import com.yadony.api.admin.dto.AdminUserDetailResponse;
 import com.yadony.api.admin.dto.AdminUserListItemResponse;
+import com.yadony.api.admin.dto.MuteMessagingRequest;
 import com.yadony.api.auth.FirebaseContactService;
 import com.yadony.api.auth.KycStatus;
 import com.yadony.api.auth.Role;
@@ -149,6 +150,20 @@ public class AdminUserController {
             @PathVariable UUID userId,
             @RequestBody @jakarta.validation.Valid CommissionRateOverrideRequest request) {
         return detail(userService.setCommissionRateOverride(userId, request.rate()));
+    }
+
+    // Lot B — Coupure de messagerie. SUPPORT ne reçoit pas USER_MESSAGE_MUTE.
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('USER_MESSAGE_MUTE')")
+    @PostMapping("/{userId}/mute-messaging")
+    public AdminUserDetailResponse muteMessaging(@PathVariable UUID userId,
+            @RequestBody @jakarta.validation.Valid MuteMessagingRequest request) {
+        return detail(userService.muteMessaging(userId, request.durationHours(), request.reason()));
+    }
+
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('USER_MESSAGE_MUTE')")
+    @PostMapping("/{userId}/unmute-messaging")
+    public AdminUserDetailResponse unmuteMessaging(@PathVariable UUID userId) {
+        return detail(userService.unmuteMessaging(userId));
     }
 
     private AdminUserDetailResponse detail(UserEntity user) {
