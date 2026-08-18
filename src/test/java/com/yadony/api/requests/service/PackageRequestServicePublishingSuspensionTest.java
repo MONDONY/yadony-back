@@ -5,6 +5,7 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.StorageService;
+import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.config.YadonyConfigProperties;
 import com.yadony.api.favorites.FavoriteRepository;
 import com.yadony.api.payments.cash.CommissionProperties;
@@ -23,7 +24,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.lang.reflect.Field;
 import java.math.BigDecimal;
@@ -40,8 +40,13 @@ import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 /**
- * D4 côté colis : un utilisateur suspendu de publication ne peut ni créer
- * une demande publiée ni publier un brouillon (parité avec AnnouncementService).
+ * D4 côté colis : un utilisateur suspendu de publication ne peut ni créer une
+ * demande publiée ni publier un brouillon existant, avec le même format d'erreur
+ * RFC 7807 ({@link YadonyBusinessException}, code {@code publishing-suspended})
+ * que {@code AnnouncementService}. La parité s'arrête au format d'erreur : un
+ * brouillon reste créable pour un expéditeur suspendu (voir
+ * {@code create_draft_allowedWhenPublishingSuspended} ci-dessous) — contrairement
+ * aux annonces, qui bloquent aussi la création de brouillon.
  *
  * <p>Setup (mocks + construction du service + builder de requête valide) repris
  * de {@link PackageRequestServiceTest} — même package, même mécanique.
@@ -164,11 +169,11 @@ class PackageRequestServicePublishingSuspensionTest {
         when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
 
         assertThatThrownBy(() -> service.createAndReturnEntity(SENDER_ID, validNonDraftRequest()))
-                .isInstanceOf(ResponseStatusException.class)
+                .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(e -> {
-                    ResponseStatusException rse = (ResponseStatusException) e;
-                    org.assertj.core.api.Assertions.assertThat(rse.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
-                    org.assertj.core.api.Assertions.assertThat(rse.getReason()).isEqualTo("user/publishing-suspended");
+                    YadonyBusinessException ybe = (YadonyBusinessException) e;
+                    org.assertj.core.api.Assertions.assertThat(ybe.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+                    org.assertj.core.api.Assertions.assertThat(ybe.getErrorCode()).isEqualTo("publishing-suspended");
                 });
     }
 
@@ -194,9 +199,9 @@ class PackageRequestServicePublishingSuspensionTest {
         when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
 
         assertThatThrownBy(() -> service.publish(SENDER_ID, draftId))
-                .isInstanceOf(ResponseStatusException.class)
+                .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(e -> org.assertj.core.api.Assertions
-                        .assertThat(((ResponseStatusException) e).getReason())
-                        .isEqualTo("user/publishing-suspended"));
+                        .assertThat(((YadonyBusinessException) e).getErrorCode())
+                        .isEqualTo("publishing-suspended"));
     }
 }

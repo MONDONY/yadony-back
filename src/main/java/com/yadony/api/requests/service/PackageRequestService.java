@@ -6,6 +6,7 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.CommissionRateResolver;
 import com.yadony.api.common.StorageService;
+import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.config.ContentCategoryNormalizer;
 import com.yadony.api.config.YadonyConfigProperties;
 import com.yadony.api.favorites.FavoriteRepository;
@@ -183,10 +184,21 @@ public class PackageRequestService {
         }
     }
 
-    /** D4 : expéditeur suspendu de publication (décision admin) — parité avec AnnouncementService. */
+    /**
+     * D4 : expéditeur suspendu de publication (décision admin). Même format d'erreur
+     * RFC 7807 que {@code AnnouncementService.assertPublishingNotSuspended} (code
+     * {@code publishing-suspended}, catalogue d'erreurs app mobile partagé) — c'est
+     * là que s'arrête la parité. Côté colis, le brouillon reste délibérément
+     * autorisé pour un expéditeur suspendu : seule la publication (création directe
+     * ou {@link #publish}) est bloquée, contrairement aux annonces où la garde
+     * bloque aussi la création de brouillon. Ne pas « rétablir la parité » en
+     * bloquant le brouillon ici — l'asymétrie est un choix assumé, pas un oubli.
+     */
     private static void assertPublishingNotSuspended(UserEntity sender) {
         if (sender.isPublishingSuspended()) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "user/publishing-suspended");
+            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "publishing-suspended",
+                    "Publishing Suspended",
+                    "La publication est suspendue. Contactez le support.");
         }
     }
 
