@@ -8,10 +8,13 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * Source unique des quatre parametres plateforme.
@@ -84,6 +87,43 @@ public class PlatformSettingsService {
                 mostRecent == null ? null : mostRecent.getUpdatedBy());
     }
 
+    /**
+     * Vue cle par cle pour le back-office, dans l'ordre de declaration de l'enum — ordre
+     * d'affichage stable, la liste n'etant triee nulle part cote interface.
+     *
+     * <p>La liste est pilotee par l'enum, pas par la table : une cle dont la ligne manque
+     * (base restauree d'avant la migration, amorcage non encore joue) est servie avec sa
+     * valeur effective plutot qu'omise — l'ecran resterait sinon silencieusement incomplet.
+     */
+    @Transactional(readOnly = true)
+    public List<PlatformSettingView> listByKey() {
+        Map<String, PlatformSettingEntity> rows = repository.findAll().stream()
+                .collect(Collectors.toMap(PlatformSettingEntity::getSettingKey, Function.identity()));
+        return Arrays.stream(PlatformSettingKey.values())
+                .map(key -> {
+                    PlatformSettingEntity row = rows.get(key.key());
+                    if (row == null) {
+                        return new PlatformSettingView(key, effectiveValue(key), null, null);
+                    }
+                    // La date n'est exposee QUE s'il y a un auteur : BaseEntity horodate des
+                    // l'amorcage, l'afficher seule ferait passer le seed pour une modification.
+                    boolean edited = row.getUpdatedBy() != null;
+                    return new PlatformSettingView(key, row.getSettingValue(),
+                            edited ? row.getUpdatedAt() : null, row.getUpdatedBy());
+                })
+                .toList();
+    }
+
+    /** Valeur servie quand la ligne manque : la meme que celle lue par le contrat public. */
+    private String effectiveValue(PlatformSettingKey key) {
+        return switch (key) {
+            case COMMISSION_RATE -> commissionRate().toPlainString();
+            case URGENCY_THRESHOLD_DAYS -> String.valueOf(urgencyThresholdDays());
+            case REIMBURSEMENT_CAP_EUR -> reimbursementCapEur().toPlainString();
+            case SMS_ENABLED -> String.valueOf(smsEnabled());
+        };
+    }
+
     // ── Ecriture ─────────────────────────────────────────────────────────────
 
     /**
@@ -122,6 +162,23 @@ public class PlatformSettingsService {
             cache.evict();
         }
         return snapshot();
+    }
+
+    /**
+     * Ecrit UNE cle et renvoie la ligne resultante — la forme attendue par le back-office,
+     * qui enregistre reglage par reglage.
+     *
+     * <p>Delegue a {@link #update(Map, UUID)} plutot que de reimplementer l'ecriture : bornes,
+     * audit et invalidation de cache restent en un seul endroit.
+     */
+    @Transactional
+    public PlatformSettingView updateOne(PlatformSettingKey key, String value, UUID adminId) {
+        update(Map.of(key, value), adminId);
+        return listByKey().stream()
+                .filter(view -> view.key() == key)
+                .findFirst()
+                // Inatteignable : listByKey parcourt toutes les valeurs de l'enum.
+                .orElseThrow(() -> new IllegalStateException("Reglage absent de la vue : " + key));
     }
 
     /** Valide les bornes ET normalise la forme, pour que « 0.10 » et « 0.1 » ne divergent pas. */
