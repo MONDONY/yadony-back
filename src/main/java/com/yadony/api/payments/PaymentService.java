@@ -180,6 +180,11 @@ public class PaymentService {
             log.info("Stripe Express account created for user {} : {}", user.getId(), account.getId());
             return new ConnectAccountResponse(account.getId(), StripeAccountStatus.PENDING_ONBOARDING);
 
+        } catch (YadonyBusinessException e) {
+            // Erreur métier déjà qualifiée (ex. 422 country-required levé par
+            // ConnectAccountProvisioner.provision) : la laisser remonter telle quelle
+            // vers le GlobalExceptionHandler plutôt que de la réemballer en 500 générique.
+            throw e;
         } catch (Exception e) {
             log.error("Failed to create Stripe account for user {}", user.getId(), e);
             throw new YadonyBusinessException(HttpStatus.INTERNAL_SERVER_ERROR,

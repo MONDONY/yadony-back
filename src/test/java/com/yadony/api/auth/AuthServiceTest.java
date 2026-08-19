@@ -704,6 +704,10 @@ class AuthServiceTest {
             user.setCity("Lyon");
             user.setKycStatus(KycStatus.VERIFIED);
             user.setStatus(UserStatus.ACTIVE);
+            // Le défaut "FR" en dur a été retiré de UserEntity (V225, le pays est
+            // désormais une donnée saisie) : cette fixture "entité complète" doit
+            // le renseigner explicitement pour continuer à couvrir le mapping.
+            user.setCountry("FR");
 
             UserResponse resp = authService.toResponse(user);
 
