@@ -3,7 +3,7 @@ package com.yadony.api.common;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
-import com.yadony.api.config.YadonyConfigProperties;
+import com.yadony.api.config.PlatformSettingsTestFactory;
 import com.yadony.api.promo.PromoCodeTarget;
 import com.yadony.api.promo.PromoService;
 import com.yadony.api.voucher.CommissionVoucherEntity;
@@ -34,9 +34,7 @@ class CommissionRateResolverTest {
 
     private CommissionRateResolver resolver() {
         return new CommissionRateResolver(userRepository,
-                new YadonyConfigProperties(
-                        new YadonyConfigProperties.Commission(new BigDecimal("0.12")), null,
-                        new YadonyConfigProperties.Urgency(3), null),
+                PlatformSettingsTestFactory.withCommissionRate(new BigDecimal("0.12")),
                 promoService, voucherService);
     }
 

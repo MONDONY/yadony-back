@@ -1,5 +1,7 @@
 package com.yadony.api.messaging;
 
+import com.yadony.api.auth.UserEntity;
+import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.messaging.dto.NotifyMessageRequest;
 import com.yadony.api.messaging.dto.NotifyMessageResponse;
@@ -12,6 +14,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Instant;
 
 @RestController
 @RequestMapping("/internal/messaging")
@@ -23,13 +26,16 @@ public class MessagingNotifyController {
     private final ConversationRepository conversationRepository;
     private final ConversationService conversationService;
     private final NotificationDispatcher notificationDispatcher;
+    private final UserRepository userRepository;
 
     public MessagingNotifyController(ConversationRepository conversationRepository,
                                       ConversationService conversationService,
-                                      NotificationDispatcher notificationDispatcher) {
+                                      NotificationDispatcher notificationDispatcher,
+                                      UserRepository userRepository) {
         this.conversationRepository = conversationRepository;
         this.conversationService = conversationService;
         this.notificationDispatcher = notificationDispatcher;
+        this.userRepository = userRepository;
     }
 
     @PostMapping("/notify")
@@ -56,6 +62,16 @@ public class MessagingNotifyController {
         // sous-collection `messages` : la Cloud Function ne peut alors pas y lire
         // les participants, et l'aperçu du dernier message reste figé côté liste.
         conversationService.ensureFirestoreDocument(conv);
+
+        // Défense en profondeur : le blocage réel de l'écriture d'un message par un
+        // expéditeur muté est la règle de sécurité Firestore (moderation/{firebaseUid}),
+        // les clients écrivant directement dans Firestore sans passer par ce backend.
+        // Ce filet évite seulement de notifier le destinataire si, malgré tout, un
+        // message d'un expéditeur muté est arrivé jusqu'ici.
+        UserEntity sender = userRepository.findByFirebaseUid(request.senderFirebaseUid()).orElse(null);
+        if (sender != null && sender.isMessagingMuted(Instant.now())) {
+            return ResponseEntity.ok(new NotifyMessageResponse(null));
+        }
 
         String preview = request.messagePreview() != null ? request.messagePreview() : "[Image]";
         String recipientFirebaseUid = notificationDispatcher.sendMessageNotification(

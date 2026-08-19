@@ -1,6 +1,6 @@
 services:
   api:
-    image: ghcr.io/mondony/yadony-back:staging
+    image: ghcr.io/mondony/yadony-back:${YADONY_IMAGE_TAG:-staging}
     container_name: yadony_api
     restart: unless-stopped
     # Secrets provisionnés via .env.staging (déposé par le workflow de déploiement) :

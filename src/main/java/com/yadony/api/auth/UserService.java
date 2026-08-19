@@ -6,6 +6,8 @@ import com.yadony.api.auth.events.AccountDeletionRequestedEvent;
 import com.yadony.api.auth.events.UserSuspendedEvent;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.messaging.FirestoreService;
+import com.yadony.api.notifications.NotificationDispatcher;
 import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.wallet.WalletAccountRepository;
 import org.slf4j.Logger;
@@ -17,6 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Map;
 import java.util.UUID;
 
@@ -25,6 +28,10 @@ public class UserService {
 
     private static final Logger log = LoggerFactory.getLogger(UserService.class);
     private static final int SUSPENSION_REFUSED_THRESHOLD = 2;
+    // Coupure « indéfinie » : une échéance très lointaine plutôt qu'un null/cas
+    // particulier, pour que la règle Firestore n'ait qu'une seule comparaison
+    // (messagingMutedUntil > request.time) à faire, mute temporaire ou pas.
+    private static final long INDEFINITE_MUTE_DAYS = 36500L;
 
     private final UserRepository userRepository;
     private final PaymentRepository paymentRepository;
@@ -32,19 +39,25 @@ public class UserService {
     private final AuditService auditService;
     private final ApplicationEventPublisher eventPublisher;
     private final AccountFinalizationService accountFinalizationService;
+    private final FirestoreService firestoreService;
+    private final NotificationDispatcher notificationDispatcher;
 
     public UserService(UserRepository userRepository,
                        PaymentRepository paymentRepository,
                        WalletAccountRepository walletAccountRepository,
                        AuditService auditService,
                        ApplicationEventPublisher eventPublisher,
-                       AccountFinalizationService accountFinalizationService) {
+                       AccountFinalizationService accountFinalizationService,
+                       FirestoreService firestoreService,
+                       NotificationDispatcher notificationDispatcher) {
         this.userRepository = userRepository;
         this.paymentRepository = paymentRepository;
         this.walletAccountRepository = walletAccountRepository;
         this.auditService = auditService;
         this.eventPublisher = eventPublisher;
         this.accountFinalizationService = accountFinalizationService;
+        this.firestoreService = firestoreService;
+        this.notificationDispatcher = notificationDispatcher;
     }
 
     /** Un solde wallet réel (rechargé par carte, cf. WalletTopupOrchestrator) non dépensé bloque
@@ -241,13 +254,13 @@ public class UserService {
     }
 
     @Transactional
-    public UserEntity suspendUser(UUID userId, String reason) {
+    public UserEntity suspendUser(UUID userId, String reason, UUID adminId) {
         UserEntity user = userRepository.findById(userId)
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
         user.setStatus(UserStatus.SUSPENDED);
         UserEntity saved = userRepository.save(user);
-        auditService.log("USER", userId, "USER_SUSPENDED_BY_ADMIN", userId,
+        auditService.log("USER", userId, "USER_SUSPENDED_BY_ADMIN", adminId,
                 Map.of("reason", reason != null ? reason : ""));
         eventPublisher.publishEvent(new UserSuspendedEvent(userId, reason));
         log.info("User {} suspended by admin", userId);
@@ -255,13 +268,13 @@ public class UserService {
     }
 
     @Transactional
-    public UserEntity banUser(UUID userId, String reason) {
+    public UserEntity banUser(UUID userId, String reason, UUID adminId) {
         UserEntity user = userRepository.findById(userId)
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
         user.setStatus(UserStatus.BANNED);
         UserEntity saved = userRepository.save(user);
-        auditService.log("USER", userId, "USER_BANNED_BY_ADMIN", userId,
+        auditService.log("USER", userId, "USER_BANNED_BY_ADMIN", adminId,
                 Map.of("reason", reason != null ? reason : ""));
         log.info("User {} banned by admin", userId);
         return saved;
@@ -316,5 +329,65 @@ public class UserService {
 
         auditService.log("USER", userId, "TRAVELER_PUBLISHING_SUSPENSION_LIFTED", userId, Map.of());
         log.info("User {} publishing suspension lifted by admin", userId);
+    }
+
+    /**
+     * Lot B — Coupure de messagerie décidée par l'admin. La base PostgreSQL reste la
+     * source de vérité ; l'état est aussi publié dans Firestore
+     * ({@code moderation/{firebaseUid}}), seul point d'application réel côté client
+     * (règle de sécurité Firestore).
+     *
+     * @param durationHours {@code null} = coupure indéfinie jusqu'à levée manuelle
+     *                      (matérialisée par une échéance à +100 ans, cf.
+     *                      {@link #INDEFINITE_MUTE_DAYS}).
+     */
+    @Transactional
+    public UserEntity muteMessaging(UUID userId, Integer durationHours, String reason, UUID adminId) {
+        UserEntity user = userRepository.findById(userId)
+                .orElseThrow(() -> new YadonyBusinessException(
+                        HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
+
+        Instant until = durationHours != null
+                ? Instant.now().plusSeconds(durationHours * 3600L)
+                : Instant.now().plus(INDEFINITE_MUTE_DAYS, ChronoUnit.DAYS);
+
+        user.setMessagingMutedUntil(until);
+        UserEntity saved = userRepository.save(user);
+
+        auditService.log("USER", userId, "USER_MESSAGING_MUTED", adminId,
+                Map.of("reason", reason != null ? reason : "", "until", until.toString()));
+
+        notificationDispatcher.notifyUser(userId, "Messagerie suspendue",
+                "Votre accès à la messagerie a été suspendu par un administrateur.",
+                Map.of("type", "MESSAGING_MUTED"));
+
+        // En dernier, délibérément : un échec de l'audit ou de la notification annulerait la
+        // transaction, mais l'écriture Firestore, elle, n'est pas transactionnelle. La faire
+        // avant laisserait un utilisateur muet dans Firestore alors que PostgreSQL le dit
+        // libre — état invisible pour l'admin, donc impossible à lever.
+        // UID Firebase, jamais l'UUID PostgreSQL : la règle Firestore ne voit que
+        // request.auth.uid.
+        firestoreService.setMessagingMute(user.getFirebaseUid(), until);
+
+        log.info("User {} messaging muted until {} by admin", userId, until);
+        return saved;
+    }
+
+    /** Lève la coupure de messagerie (Lot B) — supprime aussi le document Firestore. */
+    @Transactional
+    public UserEntity unmuteMessaging(UUID userId, UUID adminId) {
+        UserEntity user = userRepository.findById(userId)
+                .orElseThrow(() -> new YadonyBusinessException(
+                        HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
+
+        user.setMessagingMutedUntil(null);
+        UserEntity saved = userRepository.save(user);
+
+        auditService.log("USER", userId, "USER_MESSAGING_UNMUTED", adminId, Map.of());
+
+        // Même ordre que muteMessaging : l'écriture Firestore ferme la marche.
+        firestoreService.clearMessagingMute(user.getFirebaseUid());
+        log.info("User {} messaging unmuted by admin", userId);
+        return saved;
     }
 }

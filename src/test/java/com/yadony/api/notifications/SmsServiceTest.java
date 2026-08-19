@@ -1,5 +1,6 @@
 package com.yadony.api.notifications;
 
+import com.yadony.api.config.PlatformSettingsTestFactory;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -25,8 +26,8 @@ class SmsServiceTest {
 
     @BeforeEach
     void setUp() {
-        smsService = new SmsService(restTemplate);
-        ReflectionTestUtils.setField(smsService, "smsEnabled", true);
+        smsService = new SmsService(restTemplate, PlatformSettingsTestFactory.withSmsEnabled(true));
+        // L etat des SMS vient desormais de PlatformSettingsService, pas d un champ @Value.
         ReflectionTestUtils.setField(smsService, "atApiKey", "test-at-key");
         ReflectionTestUtils.setField(smsService, "atUsername", "sandbox");
         ReflectionTestUtils.setField(smsService, "atCorridorCallingCodes",
@@ -37,10 +38,15 @@ class SmsServiceTest {
     }
 
     @Test
-    void isEnabled_reflectsSmsEnabledField() {
+    void isEnabled_followsThePlatformSetting() {
+        // L'etat des SMS est un reglage plateforme editable, plus une property figee au
+        // demarrage : le couper depuis le back-office doit couper le service lui-meme.
         assertThat(smsService.isEnabled()).isTrue();
-        ReflectionTestUtils.setField(smsService, "smsEnabled", false);
-        assertThat(smsService.isEnabled()).isFalse();
+        assertThat(disabledService().isEnabled()).isFalse();
+    }
+
+    private SmsService disabledService() {
+        return new SmsService(restTemplate, PlatformSettingsTestFactory.withSmsEnabled(false));
     }
 
     @Test
@@ -67,8 +73,9 @@ class SmsServiceTest {
 
     @Test
     void devMode_logsAndSkipsHttpCall() {
-        ReflectionTestUtils.setField(smsService, "smsEnabled", false);
-        smsService.send("+221701234567", "Test message");
+        // Une coupure decidee depuis le back-office doit arreter l'envoi REEL, pas seulement
+        // masquer un bouton : aucun appel au transporteur ne doit partir.
+        disabledService().send("+221701234567", "Test message");
         verifyNoInteractions(restTemplate);
     }
 

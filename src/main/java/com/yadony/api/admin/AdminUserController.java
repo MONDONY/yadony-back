@@ -1,7 +1,9 @@
 package com.yadony.api.admin;
 
+import com.yadony.api.admin.account.AdminPrincipal;
 import com.yadony.api.admin.dto.AdminUserDetailResponse;
 import com.yadony.api.admin.dto.AdminUserListItemResponse;
+import com.yadony.api.admin.dto.MuteMessagingRequest;
 import com.yadony.api.auth.FirebaseContactService;
 import com.yadony.api.auth.KycStatus;
 import com.yadony.api.auth.Role;
@@ -15,6 +17,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -111,15 +114,15 @@ public class AdminUserController {
     @PreAuthorize("hasAuthority('USER_SUSPEND')")
     @PostMapping("/{userId}/suspend")
     public AdminUserDetailResponse suspendUser(@PathVariable UUID userId,
-            @RequestBody SuspendBanRequest request) {
-        return detail(userService.suspendUser(userId, request.reason()));
+            @RequestBody SuspendBanRequest request, Authentication authentication) {
+        return detail(userService.suspendUser(userId, request.reason(), adminId(authentication)));
     }
 
     @PreAuthorize("hasAuthority('USER_BAN')")
     @PostMapping("/{userId}/ban")
     public AdminUserDetailResponse banUser(@PathVariable UUID userId,
-            @RequestBody SuspendBanRequest request) {
-        return detail(userService.banUser(userId, request.reason()));
+            @RequestBody SuspendBanRequest request, Authentication authentication) {
+        return detail(userService.banUser(userId, request.reason(), adminId(authentication)));
     }
 
     @PreAuthorize("hasAuthority('USER_SUSPEND')")
@@ -151,8 +154,42 @@ public class AdminUserController {
         return detail(userService.setCommissionRateOverride(userId, request.rate()));
     }
 
+    // Lot B — Coupure de messagerie. SUPPORT REÇOIT USER_MESSAGE_MUTE (arbitrage produit du
+    // Lot C : il peut déjà bannir, geste bien plus sévère). Voir AdminRole.SUPPORT.
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('USER_MESSAGE_MUTE')")
+    @PostMapping("/{userId}/mute-messaging")
+    public AdminUserDetailResponse muteMessaging(@PathVariable UUID userId,
+            @RequestBody @jakarta.validation.Valid MuteMessagingRequest request,
+            Authentication authentication) {
+        return detail(userService.muteMessaging(userId, request.durationHours(), request.reason(),
+                adminId(authentication)));
+    }
+
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('USER_MESSAGE_MUTE')")
+    @PostMapping("/{userId}/unmute-messaging")
+    public AdminUserDetailResponse unmuteMessaging(@PathVariable UUID userId,
+            Authentication authentication) {
+        return detail(userService.unmuteMessaging(userId, adminId(authentication)));
+    }
+
     private AdminUserDetailResponse detail(UserEntity user) {
         return AdminUserDetailResponse.from(user, firebaseContact.getContact(user.getFirebaseUid()));
+    }
+
+    /**
+     * Identifiant de l'administrateur qui agit, pour la trace d'audit.
+     *
+     * <p>{@code audit_log} est immuable : une trace qui designe la CIBLE comme acteur — ce
+     * qui etait le cas ici — ne pourra jamais etre corrigee, et l'administrateur responsable
+     * resterait introuvable.
+     */
+    private UUID adminId(Authentication authentication) {
+        if (authentication != null && authentication.getPrincipal() instanceof AdminPrincipal principal) {
+            return principal.adminId();
+        }
+        throw new YadonyBusinessException(HttpStatus.FORBIDDEN,
+                "admin-principal-required", "Admin Principal Required",
+                "Authentification administrateur requise");
     }
 
     record SuspendBanRequest(String reason) {}

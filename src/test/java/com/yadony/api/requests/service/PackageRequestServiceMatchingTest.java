@@ -160,7 +160,8 @@ class PackageRequestServiceMatchingTest {
         lenient().when(favoriteRepository.findTargetIds(any(), any())).thenReturn(List.of());
 
         PackageRequestSearchMapper realMapper = new PackageRequestSearchMapper(
-                userRepository, cityRepository, storageService, photoService, yadonyConfig);
+                userRepository, cityRepository, storageService, photoService,
+                com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3));
         service = new PackageRequestService(
                 repository, userRepository, eventPublisher, auditService, config,
                 threadRepository, cityRepository, commissionProperties,

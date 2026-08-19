@@ -2,7 +2,7 @@ package com.yadony.api.requests.controller;
 
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
-import com.yadony.api.config.YadonyConfigProperties;
+import com.yadony.api.config.PlatformSettingsService;
 import com.yadony.api.requests.dto.*;
 import com.yadony.api.requests.entity.ParcelSize;
 import com.yadony.api.requests.entity.PackageRequestEntity;
@@ -34,20 +34,20 @@ public class PackageRequestController {
     private final com.yadony.api.requests.service.NegotiationService negotiationService;
     private final com.yadony.api.requests.service.PackageRequestReportService reportService;
     private final UserRepository userRepository;
-    private final YadonyConfigProperties config;
+    private final PlatformSettingsService settings;
 
     public PackageRequestController(PackageRequestService service,
                                     PriceEstimationService estimationService,
                                     com.yadony.api.requests.service.NegotiationService negotiationService,
                                     com.yadony.api.requests.service.PackageRequestReportService reportService,
                                     UserRepository userRepository,
-                                    YadonyConfigProperties config) {
+                                    PlatformSettingsService settings) {
         this.service = service;
         this.estimationService = estimationService;
         this.negotiationService = negotiationService;
         this.reportService = reportService;
         this.userRepository = userRepository;
-        this.config = config;
+        this.settings = settings;
     }
 
     @PostMapping
@@ -156,7 +156,7 @@ public class PackageRequestController {
                 .and(PackageRequestSpecifications.maxWeight(maxWeight))
                 .and(PackageRequestSpecifications.parcelSize(parcelSize));
         if (Boolean.TRUE.equals(urgent)) {
-            spec = spec.and(PackageRequestSpecifications.urgent(config.urgency().thresholdDays()));
+            spec = spec.and(PackageRequestSpecifications.urgent(settings.urgencyThresholdDays()));
         }
         UUID callerId = requireUserId();
         Pageable pageable = PageRequest.of(page, size);

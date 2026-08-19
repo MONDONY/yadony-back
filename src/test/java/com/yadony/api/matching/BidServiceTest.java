@@ -1182,6 +1182,30 @@ class BidServiceTest {
         }
 
         @Test
+        @DisplayName("annonce REMOVED_BY_ADMIN → un bid escrowé ne peut plus être accepté → 409 CONFLICT")
+        void acceptBid_announcementRemovedByAdmin_throwsConflict() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement();
+            announcement.setStatus(AnnouncementStatus.REMOVED_BY_ADMIN);
+            BidEntity bid = buildBid(); // status = PAYMENT_ESCROWED
+
+            when(bidRepository.findByIdForUpdate(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findByIdForUpdate(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+
+            assertThatThrownBy(() -> bidService.acceptBid(BID_ID, TRAVELER_UID))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> {
+                        YadonyBusinessException y = (YadonyBusinessException) e;
+                        assertThat(y.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                        assertThat(y.getErrorCode()).isEqualTo("announcement-not-accepting");
+                    });
+
+            verify(bidRepository, never()).save(any());
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
         @DisplayName("acceptBid — bid hérite de la date limite de dépôt de l'annonce")
         void acceptBid_copiesHandoverWindowFromAnnouncement() {
             UserEntity traveler = buildTraveler();

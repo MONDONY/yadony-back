@@ -1,5 +1,6 @@
 package com.yadony.api.notifications;
 
+import com.yadony.api.config.PlatformSettingsService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -20,8 +21,9 @@ public class SmsService {
     private static final Logger log = LoggerFactory.getLogger(SmsService.class);
     private static final String AT_URL = "https://api.africastalking.com/version1/messaging";
 
-    @Value("${app.sms.enabled:false}")
-    private boolean smsEnabled;
+    // La property n'est plus lue ici : PlatformSettingsService en est le seul lecteur, et
+    // s'en sert comme valeur de repli quand la ligne de table manque. Deux lecteurs
+    // indépendants de la même property rouvriraient précisément la divergence corrigée.
 
     @Value("${app.sms.africastalking.api-key:}")
     private String atApiKey;
@@ -47,17 +49,32 @@ public class SmsService {
     private String twilioFrom;
 
     private final RestTemplate restTemplate;
+    private final PlatformSettingsService settings;
 
-    public SmsService(RestTemplate restTemplate) {
+    public SmsService(RestTemplate restTemplate, PlatformSettingsService settings) {
         this.restTemplate = restTemplate;
+        this.settings = settings;
     }
 
+    /**
+     * Source unique de l'état des SMS, la table d'abord.
+     *
+     * <p>Lu depuis {@code platform_settings} et non depuis la property : {@code SmsOtpService}
+     * garde l'envoi des codes de connexion sur cette valeur. Si elle restait sur la property,
+     * couper les SMS depuis le back-office pendant un incident ne couperait rien, et les
+     * réactiver proposerait un parcours de connexion qui échouerait systématiquement — alors
+     * que {@code /config/sms-enabled} annoncerait l'inverse à l'application mobile.
+     *
+     * <p>{@code PlatformSettingsService} retombe sur la property quand la ligne manque.
+     */
     public boolean isEnabled() {
-        return smsEnabled;
+        return settings.smsEnabled();
     }
 
     public void send(String phoneNumber, String message) {
-        if (!smsEnabled) {
+        // Même source que isEnabled() : une coupure décidée depuis le back-office doit
+        // arrêter l'envoi réel, pas seulement masquer un bouton.
+        if (!isEnabled()) {
             log.info("[SMS-DEV] To=*** | [message redacted]");
             return;
         }

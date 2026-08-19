@@ -767,6 +767,37 @@ public class NegotiationService {
     }
 
     /**
+     * Lot B (correction 2, round 2 ; restreinte round 3) — garde posée juste avant la
+     * création de l'escrow Stripe de l'expéditeur
+     * ({@code NegotiationController#initiatePayment}), donc avant tout débit :
+     * {@link #validateAndFetchExistingTrip} ne s'exécute qu'à l'attachement du trajet
+     * (submission), pas au paiement. Une annonce peut être retirée par la modération entre
+     * les deux — et {@code AnnouncementService.removeByAdmin} ne peut pas détecter ce fil
+     * de négociation en cours via {@code BidRepository} : aucun {@code BidEntity} n'existe
+     * encore pour lui, il n'est matérialisé qu'après paiement par
+     * {@code ThreadAcceptedBidListener}. Sans cette garde, l'expéditeur pouvait encore
+     * engager son argent sur un trajet déjà déclaré frauduleux.
+     *
+     * <p>Restreinte à {@link com.yadony.api.matching.AnnouncementStatus#OUT_OF_MARKET}
+     * (round 3) — pas un simple {@code != ACTIVE} : un trajet partagé peut légitimement
+     * passer FULL entre l'attachement et le paiement (un autre expéditeur a rempli la
+     * capacité entretemps), et ce lot de modération ne doit pas changer silencieusement le
+     * comportement de paiement des trajets partagés. Le sur-booking éventuel est un sujet
+     * préexistant, hors périmètre.
+     */
+    public void assertTravelerAnnouncementActive(UUID travelerAnnouncementId) {
+        if (travelerAnnouncementId == null) {
+            return;
+        }
+        announcementRepo.findById(travelerAnnouncementId).ifPresent(ann -> {
+            if (com.yadony.api.matching.AnnouncementStatus.OUT_OF_MARKET.contains(ann.getStatus())) {
+                throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "announcement/not-active");
+            }
+        });
+    }
+
+    /**
      * Construit (sans sauvegarder) l'AnnouncementEntity d'un trajet dédié à un
      * seul package_request : corridor, poids et prix dérivés et verrouillés,
      * capacité réservée intégralement au sender jusqu'à openSurplus(). Partagée
@@ -1241,6 +1272,15 @@ public class NegotiationService {
                 && request.getStatus() != PackageRequestStatus.NEGOTIATING) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "request/already-accepted");
         }
+
+        // Lot B (revue round 3 — inventaire, trouvaille non pointée explicitement) : même
+        // exposition que initiatePayment, côté voyageur cette fois. settleCommission ne
+        // débite pas l'expéditeur (aucun escrow en cash) mais engage l'argent DU VOYAGEUR
+        // (wallet ou carte) pour sceller un accord sur SON PROPRE trajet — qui peut avoir
+        // été retiré par la modération entre l'accord de prix et ce règlement, sans que
+        // removeByAdmin ait pu le voir (même raison : aucun BidEntity n'existe encore pour
+        // ce fil). Même garde, avant tout débit.
+        assertTravelerAnnouncementActive(thread.getTravelerAnnouncementId());
 
         AcceptBidResponse resp = cashGatePort.settleNegotiationCommission(
             thread.getTravelerId(), request.getSenderId(), threadId, thread.getCurrentPriceEur(), source);

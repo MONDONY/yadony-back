@@ -179,6 +179,44 @@ class BidLostRematchListenerTest {
         assertThat(preparedCaptor.getValue().cancelledByTraveler()).isFalse();
     }
 
+    // Lot B (revue round 3) : ANNOUNCEMENT_DELETED (removeByAdmin rematchEligible=false ne
+    // passe jamais ici — seul deleteAnnouncement, rematchEligible=true, l'atteint) rejoint
+    // désormais l'ensemble « motifs initiés par le voyageur » — même traitement rematch que
+    // CANCELLED_BY_TRAVELER, mais le motif brut doit être propagé pour que
+    // NotificationDispatcher choisisse le bon libellé (« Trajet supprimé », pas « Transport
+    // annulé »).
+    @Test
+    @DisplayName("event éligible, reason ANNOUNCEMENT_DELETED (suppression de trajet) → " +
+            "traité comme « initié par le voyageur », reason propagé sur l'event publié")
+    void onBidRejected_announcementDeleted_treatedAsTravelerInitiated() {
+        BidEntity bid = buildBid();
+        AnnouncementEntity announcement = buildAnnouncement();
+        BidRejectedEvent event = new BidRejectedEvent(
+                BID_ID, SENDER_ID, BidEntity.REJECTION_ANNOUNCEMENT_DELETED, ANNOUNCEMENT_ID, true);
+
+        when(cancellationRepository.findByBidId(BID_ID)).thenReturn(Optional.empty());
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+
+        UUID cancellationId = UUID.randomUUID();
+        when(cancellationRepository.save(any(CancellationEntity.class))).thenAnswer(inv -> {
+            CancellationEntity c = inv.getArgument(0);
+            setId(c, cancellationId);
+            return c;
+        });
+        when(rematchService.generateForCancellations(any(), any(), any()))
+                .thenReturn(Map.of(SENDER_ID, new RematchService.RematchInfo(cancellationId, 2)));
+
+        listener.onBidRejected(event);
+
+        ArgumentCaptor<BidLostRematchPreparedEvent> preparedCaptor =
+                ArgumentCaptor.forClass(BidLostRematchPreparedEvent.class);
+        verify(eventPublisher).publishEvent(preparedCaptor.capture());
+        BidLostRematchPreparedEvent published = preparedCaptor.getValue();
+        assertThat(published.cancelledByTraveler()).isTrue();
+        assertThat(published.reason()).isEqualTo(BidEntity.REJECTION_ANNOUNCEMENT_DELETED);
+    }
+
     @Test
     @DisplayName("event non éligible → aucune interaction avec repositories/rematchService, aucun event publié")
     void onBidRejected_notEligible_doesNothing() {

@@ -10,6 +10,10 @@ services:
       - .env
     environment:
       SPRING_PROFILES_ACTIVE: prod
+      # Le fichier est bien monté ci-dessous, mais rien ne le désignait :
+      # SecurityStartupValidator refuse alors de démarrer en prod, et
+      # l'authentification Firebase échouerait de toute façon à l'exécution.
+      GOOGLE_APPLICATION_CREDENTIALS: /app/firebase-service-account.json
     volumes:
       - ./firebase-service-account.json:/app/firebase-service-account.json:ro
     depends_on:
@@ -95,6 +99,29 @@ services:
     depends_on:
       db:
         condition: service_healthy
+
+  # Sans ce service, les certificats de production expiraient sans jamais
+  # être renouvelés : le compose prod n'en déclarait aucun, alors que le
+  # compose staging en a un depuis le début.
+  certbot:
+    image: certbot/certbot:latest
+    container_name: yadony_certbot
+    restart: unless-stopped
+    volumes:
+      - ./nginx/certs:/etc/letsencrypt
+      - ./nginx/www:/var/www/certbot
+    entrypoint: >
+      sh -c "
+        certbot certonly --webroot -w /var/www/certbot -d api.yadony.com --non-interactive --agree-tos --email ops@yadony.com --keep-until-expiring --quiet;
+        certbot certonly --webroot -w /var/www/certbot -d yadony.com -d www.yadony.com --non-interactive --agree-tos --email ops@yadony.com --keep-until-expiring --quiet;
+        while true; do
+          sleep 86400 &
+          wait $$!
+          certbot renew --webroot -w /var/www/certbot --quiet
+        done
+      "
+    depends_on:
+      - nginx
 
   nginx:
     image: nginx:1.27-alpine

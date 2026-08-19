@@ -416,6 +416,25 @@ class ThreadAcceptedBidListenerTest {
         }
 
         @Test
+        @DisplayName("Lot B (correction 2) : annonce REMOVED_BY_ADMIN — le bid est quand même " +
+                "matérialisé (paiement déjà acquis) mais l'annonce n'est pas ressuscitée en FULL")
+        void doesNotResurrectRemovedByAdminAnnouncementToFull() {
+            AnnouncementEntity ann = new AnnouncementEntity();
+            ann.setCapacityUnit(CapacityUnit.SUITCASE_23KG);
+            ann.setAvailableKg(BigDecimal.valueOf(5)); // exactement le poids du bid
+            ann.setStatus(AnnouncementStatus.REMOVED_BY_ADMIN);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(ann));
+
+            listener.onPackageRequestAccepted(buildEvent()); // weightKg = 5
+
+            ArgumentCaptor<AnnouncementEntity> captor = ArgumentCaptor.forClass(AnnouncementEntity.class);
+            verify(announcementRepository).save(captor.capture());
+            assertThat(captor.getValue().getStatus()).isEqualTo(AnnouncementStatus.REMOVED_BY_ADMIN);
+            // Le bid est bien créé malgré le statut de l'annonce (argent déjà engagé côté sender)
+            verify(bidRepository).save(any(BidEntity.class));
+        }
+
+        @Test
         @DisplayName("trajet dédié (linkedPackageRequestId != null) → availableKg non décrémenté")
         void dedicatedTripSkipsKgDecrement() {
             AnnouncementEntity ann = new AnnouncementEntity();

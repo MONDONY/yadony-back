@@ -9,6 +9,7 @@ import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.config.StripeConnectProperties;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
+import com.yadony.api.matching.AnnouncementStatus;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
@@ -202,6 +203,33 @@ class PaymentServiceTest {
 
         assertYadonyError(() -> service.createEscrow(request, "uid-sender"), "payment-already-completed");
     }
+
+    // Lot B (revue round 3 — inventaire) : POST /payments (PaymentController.createEscrow)
+    // appelle ce chemin DIRECTEMENT, sans passer par BidCheckoutService — c'était le seul
+    // des trois appelants sans aucune garde de statut d'annonce. Garde centralisée ici,
+    // sur OUT_OF_MARKET (REMOVED_BY_ADMIN, CANCELLED, COMPLETED) plutôt que != ACTIVE, pour
+    // rester compatible avec negotiationCheckout sur un trajet partagé passé FULL.
+    @Test
+    void createEscrow_announcementRemovedByAdmin_throwsConflict() {
+        UserEntity sender = buildUser(senderId, "uid-sender");
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
+        BidEntity bid = buildBid(BidStatus.PENDING);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.empty());
+        AnnouncementEntity ann = buildAnnouncement();
+        ann.setStatus(AnnouncementStatus.REMOVED_BY_ADMIN);
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+
+        var request = mock(com.yadony.api.payments.dto.CreatePaymentRequest.class);
+        when(request.getBidId()).thenReturn(bidId);
+
+        assertYadonyError(() -> service.createEscrow(request, "uid-sender"), "announcement-not-active");
+    }
+
+    // FULL ne doit PAS être bloqué ici — preuve apportée côté BidCheckoutServiceTest
+    // (negotiationCheckout_announcementFull_isNotBlocked), où PaymentService est mocké :
+    // laisser ce test-ci dépasser la garde appellerait le vrai StripeGatewayImpl (aucune
+    // clé API en test), un aller-réseau non déterministe à éviter dans ce fichier.
 
     @Test
     void createEscrow_travelerNotOnboarded_throwsTravelerNotEligible() {

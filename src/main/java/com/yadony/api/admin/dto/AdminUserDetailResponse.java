@@ -33,7 +33,8 @@ public record AdminUserDetailResponse(
         int refusedCount,
         int senderHandoverIncidentCount,
         int ratingCount,
-        LocalDateTime deletionRequestedAt
+        LocalDateTime deletionRequestedAt,
+        LocalDateTime messagingMutedUntil
 ) {
     /** Téléphone et email proviennent de Firebase : ils ne sont plus stockés en base. */
     public static AdminUserDetailResponse from(UserEntity u, FirebaseContactService.Contact contact) {
@@ -64,6 +65,9 @@ public record AdminUserDetailResponse(
                 u.getRatingCount(),
                 u.getDeletionRequestedAt() != null
                         ? java.time.LocalDateTime.ofInstant(u.getDeletionRequestedAt(), java.time.ZoneOffset.UTC)
+                        : null,
+                u.getMessagingMutedUntil() != null
+                        ? java.time.LocalDateTime.ofInstant(u.getMessagingMutedUntil(), java.time.ZoneOffset.UTC)
                         : null
         );
     }

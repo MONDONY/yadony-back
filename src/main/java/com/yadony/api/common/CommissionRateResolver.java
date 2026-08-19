@@ -2,7 +2,7 @@ package com.yadony.api.common;
 
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
-import com.yadony.api.config.YadonyConfigProperties;
+import com.yadony.api.config.PlatformSettingsService;
 import com.yadony.api.promo.PromoCodeTarget;
 import com.yadony.api.promo.PromoService;
 import com.yadony.api.voucher.CommissionVoucherService;
@@ -40,23 +40,34 @@ public class CommissionRateResolver {
     private static final Logger log = LoggerFactory.getLogger(CommissionRateResolver.class);
 
     private final UserRepository userRepository;
-    private final YadonyConfigProperties config;
+    private final PlatformSettingsService settings;
     private final PromoService promoService;
     private final CommissionVoucherService voucherService;
 
     public CommissionRateResolver(UserRepository userRepository,
-                                  YadonyConfigProperties config,
+                                  PlatformSettingsService settings,
                                   PromoService promoService,
                                   CommissionVoucherService voucherService) {
         this.userRepository = userRepository;
-        this.config = config;
+        this.settings = settings;
         this.promoService = promoService;
         this.voucherService = voucherService;
     }
 
-    /** Taux global par défaut ({@code yadony.commission.rate}). */
+    /**
+     * Taux global par défaut.
+     *
+     * <p>Lu depuis la table {@code platform_settings}, pas depuis la property : c'est ce
+     * taux qui calcule l'escrow et l'{@code application_fee_amount} envoyé à Stripe. S'il
+     * restait sur la property, une modification faite depuis le back-office changerait le
+     * montant ANNONCÉ à l'expéditeur (via {@code /config/commission-rate}) sans changer le
+     * montant PRÉLEVÉ — l'application annoncerait un prix et Stripe en débiterait un autre.
+     *
+     * <p>{@code PlatformSettingsService} retombe lui-même sur la property quand la ligne
+     * manque : le filet de sécurité est conservé.
+     */
     public BigDecimal globalRate() {
-        return config.commission().rate();
+        return settings.commissionRate();
     }
 
     /** Taux effectif à la navigation : seul le voyageur est connu (pas de promo). */

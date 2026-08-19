@@ -13,6 +13,7 @@ import com.yadony.api.disputes.events.DisputeResolvedEvent;
 import com.yadony.api.disputes.events.DisputeUpdatedEvent;
 import com.yadony.api.kyc.events.UserKycVerifiedEvent;
 import com.yadony.api.kyc.events.UserKycActionRequiredEvent;
+import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.events.BidAcceptedEvent;
 import com.yadony.api.matching.events.BidCreatedEvent;
 import com.yadony.api.matching.events.CashBidCreatedEvent;
@@ -358,6 +359,24 @@ class NotificationDispatcherTest {
         verifyNoInteractions(fcmService, notificationService);
     }
 
+    // Lot B (revue round 3) : removeByAdmin publie ANNOUNCEMENT_DELETED avec
+    // rematchEligible=false — le libellé générique « Demande refusée » accusait à tort le
+    // voyageur (c'est la modération qui a retiré le trajet) et ne mentionnait jamais le
+    // remboursement.
+    @Test
+    void onBidRejected_announcementDeletedByModeration_usesDedicatedLabelMentioningRefund() {
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onBidRejected(new BidRejectedEvent(
+                bidId, senderId, BidEntity.REJECTION_ANNOUNCEMENT_DELETED, annId, false));
+
+        var dataCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(fcmService).sendToUser(eq(senderId), eq("Trajet retiré"),
+                eq("Ce trajet n'est plus disponible — votre remboursement est en cours"),
+                dataCaptor.capture());
+        assertThat(dataCaptor.getValue()).containsEntry("type", "BID_REJECTED");
+    }
+
     // ── BidLostRematchPreparedEvent ───────────────────────────────────────────
 
     @Test
@@ -366,7 +385,7 @@ class NotificationDispatcherTest {
         when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
 
         dispatcher.onBidLostRematchPrepared(
-                new BidLostRematchPreparedEvent(senderId, bidId, cancellationId, 3, true));
+                new BidLostRematchPreparedEvent(senderId, bidId, cancellationId, 3, true, "CANCELLED_BY_TRAVELER"));
 
         var dataCaptor = ArgumentCaptor.forClass(Map.class);
         verify(fcmService).sendToUser(eq(senderId), eq("Transport annulé"),
@@ -384,7 +403,7 @@ class NotificationDispatcherTest {
         when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
 
         dispatcher.onBidLostRematchPrepared(
-                new BidLostRematchPreparedEvent(senderId, bidId, cancellationId, 1, true));
+                new BidLostRematchPreparedEvent(senderId, bidId, cancellationId, 1, true, "CANCELLED_BY_TRAVELER"));
 
         var dataCaptor = ArgumentCaptor.forClass(Map.class);
         verify(fcmService).sendToUser(eq(senderId), eq("Transport annulé"),
@@ -399,7 +418,7 @@ class NotificationDispatcherTest {
         when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
 
         dispatcher.onBidLostRematchPrepared(
-                new BidLostRematchPreparedEvent(senderId, bidId, null, 0, true));
+                new BidLostRematchPreparedEvent(senderId, bidId, null, 0, true, "CANCELLED_BY_TRAVELER"));
 
         var dataCaptor = ArgumentCaptor.forClass(Map.class);
         verify(fcmService).sendToUser(eq(senderId), eq("Transport annulé"),
@@ -416,7 +435,7 @@ class NotificationDispatcherTest {
         when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
 
         dispatcher.onBidLostRematchPrepared(
-                new BidLostRematchPreparedEvent(senderId, bidId, cancellationId, 2, false));
+                new BidLostRematchPreparedEvent(senderId, bidId, cancellationId, 2, false, "BID_REJECTED_AFTER_PAYMENT"));
 
         var dataCaptor = ArgumentCaptor.forClass(Map.class);
         verify(fcmService).sendToUser(eq(senderId), eq("Demande refusée"),
@@ -431,7 +450,7 @@ class NotificationDispatcherTest {
         when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
 
         dispatcher.onBidLostRematchPrepared(
-                new BidLostRematchPreparedEvent(senderId, bidId, null, 0, false));
+                new BidLostRematchPreparedEvent(senderId, bidId, null, 0, false, "BID_REJECTED_AFTER_PAYMENT"));
 
         var dataCaptor = ArgumentCaptor.forClass(Map.class);
         verify(fcmService).sendToUser(eq(senderId), eq("Demande refusée"),
@@ -447,13 +466,32 @@ class NotificationDispatcherTest {
         when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
 
         dispatcher.onBidLostRematchPrepared(
-                new BidLostRematchPreparedEvent(senderId, bidId, null, 2, true));
+                new BidLostRematchPreparedEvent(senderId, bidId, null, 2, true, "CANCELLED_BY_TRAVELER"));
 
         var dataCaptor = ArgumentCaptor.forClass(Map.class);
         verify(fcmService).sendToUser(eq(senderId), eq("Transport annulé"),
                 eq("Le voyageur a annulé le transport de votre colis — votre remboursement est en cours"),
                 dataCaptor.capture());
         assertThat(dataCaptor.getValue()).doesNotContainKey("cancellationId");
+    }
+
+    // Lot B (revue round 3) : deleteAnnouncement publie ANNOUNCEMENT_DELETED avec
+    // cancelledByTraveler=true (motif « initié par le voyageur », cf. BidLostRematchListener)
+    // — mais le libellé générique "Transport annulé" ne convient pas à une suppression de
+    // trajet. Le motif doit primer sur cancelledByTraveler pour le choix du libellé.
+    @Test
+    void onBidLostRematchPrepared_announcementDeleted_usesDedicatedLabel() {
+        UUID cancellationId = UUID.randomUUID();
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onBidLostRematchPrepared(new BidLostRematchPreparedEvent(
+                senderId, bidId, cancellationId, 0, true, BidEntity.REJECTION_ANNOUNCEMENT_DELETED));
+
+        var dataCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(fcmService).sendToUser(eq(senderId), eq("Trajet supprimé"),
+                eq("Le voyageur a supprimé son trajet — votre remboursement est en cours"),
+                dataCaptor.capture());
+        assertThat(dataCaptor.getValue()).containsEntry("type", "BID_REJECTED");
     }
 
     // ── TripCancelledEvent ────────────────────────────────────────────────────

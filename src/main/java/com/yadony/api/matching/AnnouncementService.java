@@ -14,6 +14,7 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.config.ContentCategoryNormalizer;
+import com.yadony.api.config.PlatformSettingsService;
 import com.yadony.api.config.YadonyConfigProperties;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import com.yadony.api.matching.dto.AnnouncementDetailResponse;
@@ -25,8 +26,10 @@ import com.yadony.api.matching.dto.TravelerProfileDto;
 import com.yadony.api.matching.events.AnnouncementDeletedEvent;
 import com.yadony.api.matching.events.AnnouncementInProgressEvent;
 import com.yadony.api.matching.events.BidExpiredOnDepartureEvent;
+import com.yadony.api.matching.events.BidRejectedEvent;
 import com.yadony.api.matching.events.TripArrivedEvent;
 import com.yadony.api.matching.AnnouncementPublishedEvent;
+import com.yadony.api.notifications.NotificationDispatcher;
 import com.yadony.api.requests.entity.PackageRequestStatus;
 import com.yadony.api.requests.repository.PackageRequestRepository;
 import com.yadony.api.requests.repository.NegotiationThreadRepository;
@@ -93,6 +96,9 @@ public class AnnouncementService {
     private final AuditService auditService;
     private final ApplicationEventPublisher eventPublisher;
     private final YadonyConfigProperties config;
+    /** Uniquement pour le seuil d'urgence, éditable depuis le back-office. Les limites de
+     *  publication restent des properties : elles ne sont pas exposées à l'administration. */
+    private final PlatformSettingsService settings;
     private final PriceGridService priceGridService;
     private final com.yadony.api.country.FlagService flagService;
     private final StorageService storageService;
@@ -101,6 +107,7 @@ public class AnnouncementService {
     private final AnnouncementSearchMapper announcementSearchMapper;
     private final PackageRequestRepository packageRequestRepository;
     private final NegotiationThreadRepository negotiationThreadRepository;
+    private final NotificationDispatcher notificationDispatcher;
 
     @Value("${yadony.kyc.enforce:true}")
     private boolean enforceKyc;
@@ -115,6 +122,7 @@ public class AnnouncementService {
             AuditService auditService,
             ApplicationEventPublisher eventPublisher,
             YadonyConfigProperties config,
+            PlatformSettingsService settings,
             PriceGridService priceGridService,
             com.yadony.api.country.FlagService flagService,
             StorageService storageService,
@@ -122,7 +130,8 @@ public class AnnouncementService {
             ActiveCurrencyResolver activeCurrencyResolver,
             AnnouncementSearchMapper announcementSearchMapper,
             PackageRequestRepository packageRequestRepository,
-            NegotiationThreadRepository negotiationThreadRepository
+            NegotiationThreadRepository negotiationThreadRepository,
+            NotificationDispatcher notificationDispatcher
     ) {
         this.announcementRepository = announcementRepository;
         this.bidRepository = bidRepository;
@@ -130,6 +139,7 @@ public class AnnouncementService {
         this.auditService = auditService;
         this.eventPublisher = eventPublisher;
         this.config = config;
+        this.settings = settings;
         this.priceGridService = priceGridService;
         this.flagService = flagService;
         this.storageService = storageService;
@@ -138,6 +148,7 @@ public class AnnouncementService {
         this.announcementSearchMapper = announcementSearchMapper;
         this.packageRequestRepository = packageRequestRepository;
         this.negotiationThreadRepository = negotiationThreadRepository;
+        this.notificationDispatcher = notificationDispatcher;
     }
 
     @Transactional(readOnly = true)
@@ -180,7 +191,7 @@ public class AnnouncementService {
         LocalDate effectiveTo = departureDateTo;
         if (Boolean.TRUE.equals(urgent)) {
             LocalDate today = LocalDate.now(java.time.ZoneOffset.UTC);
-            LocalDate urgentTo = today.plusDays(config.urgency().thresholdDays());
+            LocalDate urgentTo = today.plusDays(settings.urgencyThresholdDays());
             effectiveFrom = (effectiveFrom == null || effectiveFrom.isBefore(today)) ? today : effectiveFrom;
             effectiveTo = (effectiveTo == null || effectiveTo.isAfter(urgentTo)) ? urgentTo : effectiveTo;
         }
@@ -1192,6 +1203,155 @@ public class AnnouncementService {
         }
     }
 
+    /**
+     * Lot B — Retrait d'une annonce par la modération (contenu frauduleux, litige,
+     * signalement…). Refusé si un colis est déjà accepté ou au-delà (ACCEPTED,
+     * HANDED_OVER, IN_TRANSIT, ARRIVED — {@link BidStatus#IN_FLIGHT}) : une livraison
+     * engagée ne doit jamais être interrompue par une action de modération. On refuse le
+     * retrait plutôt que de forcer une annulation, délibérément : un fraudeur qui maintient
+     * un bid engagé sur sa propre annonce ne doit pas pouvoir la rendre irretirable —
+     * l'admin garde la main via un refus explicite qu'il peut instruire autrement.
+     *
+     * <p>Les bids encore ouverts et sans livraison engagée (PENDING, PAYMENT_ESCROWED,
+     * AWAITING_PAYMENT, NEGOTIATING) sont en revanche liquidés — statut REJECTED avec le
+     * motif technique {@link BidEntity#REJECTION_ANNOUNCEMENT_DELETED} (exclu du taux
+     * d'acceptation du voyageur), une entrée d'audit par bid, et la publication de
+     * {@link BidRejectedEvent} (même patron que {@link #deleteAnnouncement}) :
+     * {@code setStatus(REJECTED)} seul ne rembourse rien — seul {@code RefundProcessor},
+     * déclenché par cet événement via {@code BidRejectedEventListener}, libère l'escrow.
+     * AWAITING_PAYMENT compte : son {@code PaymentEntity} est déjà en statut Stripe
+     * {@code PENDING} (PaymentIntent créé, en attente de confirmation carte) dès
+     * {@code BidCheckoutService.checkout}/{@code negotiationCheckout} —
+     * {@code RefundProcessor} l'annule via la même branche que PAYMENT_ESCROWED, sur le
+     * statut du paiement, pas celui du bid. Sans ce correctif (revue round 3), un bid
+     * AWAITING_PAYMENT restait orphelin : ni bloqué par {@code IN_FLIGHT} (il n'y est pas),
+     * ni liquidé — l'expéditeur pouvait ensuite confirmer son paiement et voir son argent
+     * partir en escrow sur un trajet déjà retiré pour fraude. Aucun filet de rattrapage
+     * n'existe : {@link #expirePendingBids} n'est déclenché que pour des annonces
+     * ACTIVE/FULL ({@code findActiveOrFullDepartingOnOrBefore}), jamais REMOVED_BY_ADMIN —
+     * il ne l'a d'ailleurs jamais été, y compris avant ce correctif (ce n'est pas une
+     * régression du round 1, contrairement à ce qu'affirmait le rapport précédent).
+     * {@code rematchEligible = false} ici (contrairement à {@code deleteAnnouncement}, où
+     * c'est {@code true}) : pas de proposition de rematch automatique après une décision
+     * de modération.
+     *
+     * <p>La recherche publique filtre déjà sur {@code AnnouncementStatus.ACTIVE}
+     * ({@link AnnouncementSpecification#hasStatus}) : l'annonce disparaît des résultats
+     * sans changement supplémentaire côté recherche.
+     */
+    @Transactional
+    @CacheEvict(value = "announcements-search", allEntries = true)
+    public AnnouncementEntity removeByAdmin(UUID announcementId, UUID adminId,
+                                            AnnouncementRemovalReason publicReason,
+                                            String internalNote) {
+        // Verrou pessimiste, et non un simple findById : BidCheckoutService.checkout() detient
+        // ce meme verrou pendant tout son appel reseau a Stripe. Sans lui, un retrait pouvait
+        // s'intercaler, lire la liste des bids AVANT que le checkout ne commite, puis marquer
+        // l'annonce retiree — laissant un bid AWAITING_PAYMENT avec un PaymentIntent vivant sur
+        // un trajet retire pour fraude. Rien ne le rattrapait ensuite :
+        // promoteBidOnPaymentAuthorized n'a aucune garde de statut d'annonce, et
+        // expirePendingBids ne balaie que les annonces ACTIVE/FULL.
+        // Aucune inversion d'ordre possible : cette methode ne verrouille aucun bid.
+        AnnouncementEntity ann = announcementRepository.findByIdForUpdate(announcementId)
+                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
+                        "announcement-not-found", "Announcement Not Found", "Annonce introuvable"));
+
+        if (bidRepository.existsByAnnouncementIdAndStatusIn(announcementId, List.copyOf(BidStatus.IN_FLIGHT))) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT,
+                    "announcement-has-accepted-bids", "Announcement Has Accepted Bids",
+                    "Des colis acceptés sont en cours sur cette annonce.");
+        }
+
+        // Lot C — mémorisé AVANT l'écrasement, et seulement si l'annonce n'était pas déjà
+        // retirée : un second retrait ne doit pas mémoriser REMOVED_BY_ADMIN comme statut
+        // « d'origine », ce qui rendrait la restauration impossible.
+        if (ann.getStatus() != AnnouncementStatus.REMOVED_BY_ADMIN) {
+            ann.setStatusBeforeRemoval(ann.getStatus());
+        }
+        ann.setStatus(AnnouncementStatus.REMOVED_BY_ADMIN);
+        AnnouncementEntity saved = announcementRepository.save(ann);
+
+        // Correction 1 (revue), élargie round 3 : liquider tous les bids encore ouverts et
+        // sans livraison engagée — PENDING/PAYMENT_ESCROWED (round 1) + AWAITING_PAYMENT/
+        // NEGOTIATING (round 3, oubliés initialement) — sans ça, l'argent déjà engagé
+        // (PaymentIntent créé pour AWAITING_PAYMENT) reste bloqué, jamais remboursé.
+        List<BidEntity> pendingBids = bidRepository.findByAnnouncementIdAndStatusIn(
+                announcementId, List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED,
+                        BidStatus.AWAITING_PAYMENT, BidStatus.NEGOTIATING));
+        for (BidEntity bid : pendingBids) {
+            // NEGOTIATING n'est JAMAIS une réservation (cf. BidNegotiationService#closeThread) :
+            // le fermer en REJECTED le ferait ressurgir dans « Mes envois » et dégraderait à
+            // tort le taux d'acceptation du voyageur. On ferme donc le fil proprement, comme le
+            // fait déjà BidNegotiationService pour un refus/retrait explicite.
+            if (bid.getStatus() == BidStatus.NEGOTIATING) {
+                bid.setStatus(BidStatus.NEGOTIATION_CLOSED);
+            } else {
+                bid.setStatus(BidStatus.REJECTED);
+                bid.setRejectionReason(BidEntity.REJECTION_ANNOUNCEMENT_DELETED);
+            }
+            bidRepository.save(bid);
+            auditService.log("BID", bid.getId(), "BID_REJECTED_ANNOUNCEMENT_REMOVED_BY_ADMIN", adminId,
+                    Map.of("announcementId", announcementId.toString(), "senderId", bid.getSenderId().toString(),
+                            "finalStatus", bid.getStatus().name()));
+            // Correction 2 (revue round 2) : setStatus(REJECTED) seul ne rembourse rien —
+            // seul BidRejectedEventListener (déclenché par cet event) → RefundProcessor
+            // libère l'escrow. rematchEligible=false : pas de rematch après modération. Publié
+            // aussi pour un ex-NEGOTIATING (aucun paiement à ce stade — RefundProcessor
+            // no-op proprement, cf. PaymentRepository.findByBidId absent) : l'expéditeur est
+            // quand même notifié que le trajet a disparu.
+            eventPublisher.publishEvent(new BidRejectedEvent(
+                    bid.getId(), bid.getSenderId(), BidEntity.REJECTION_ANNOUNCEMENT_DELETED,
+                    announcementId, false));
+        }
+
+        // L'audit reçoit les DEUX : le motif catalogué et la note interne complète. Celle-ci
+        // n'a plus à être auto-censurée pour protéger le signalant, puisqu'elle ne sort pas.
+        auditService.log("ANNOUNCEMENT", announcementId, "ANNOUNCEMENT_REMOVED_BY_ADMIN", adminId,
+                Map.of("publicReason", publicReason.name(),
+                        "internalNote", internalNote != null ? internalNote : "",
+                        "rejectedBidsCount", String.valueOf(pendingBids.size())));
+
+        // ⚠️ SEUL le libellé catalogué part au voyageur. La note interne ne doit JAMAIS entrer
+        // ici : le même champ servait auparavant aux deux usages, si bien qu'un modérateur
+        // écrivant « signalé par X, ticket #4821 » nommait le signalant auprès du sanctionné.
+        notificationDispatcher.notifyUser(ann.getTravelerId(),
+                "Annonce retirée",
+                "Votre annonce a été retirée par la modération. Motif : " + publicReason.publicLabel(),
+                Map.of("type", "ANNOUNCEMENT_REMOVED", "announcementId", announcementId.toString()));
+
+        return saved;
+    }
+
+    /** Lot B — Restauration d'une annonce retirée par la modération, vers ACTIVE. */
+    @Transactional
+    @CacheEvict(value = "announcements-search", allEntries = true)
+    public AnnouncementEntity restoreByAdmin(UUID announcementId, UUID adminId) {
+        AnnouncementEntity ann = announcementRepository.findById(announcementId)
+                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
+                        "announcement-not-found", "Announcement Not Found", "Annonce introuvable"));
+
+        if (ann.getStatus() != AnnouncementStatus.REMOVED_BY_ADMIN) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT,
+                    "announcement-not-removed", "Announcement Not Removed",
+                    "Cette annonce n'a pas été retirée par la modération.");
+        }
+
+        // Lot C — restitution du statut d'origine. Forcer ACTIVE remettait sur le marché
+        // un trajet COMPLETED/CANCELLED, réservable avec une date de départ passée.
+        // Fallback ACTIVE pour les lignes retirées avant la migration V220 (colonne NULL).
+        AnnouncementStatus target = ann.getStatusBeforeRemoval() != null
+                ? ann.getStatusBeforeRemoval()
+                : AnnouncementStatus.ACTIVE;
+        ann.setStatus(target);
+        ann.setStatusBeforeRemoval(null);
+        AnnouncementEntity saved = announcementRepository.save(ann);
+
+        auditService.log("ANNOUNCEMENT", announcementId, "ANNOUNCEMENT_RESTORED_BY_ADMIN", adminId,
+                Map.of("restoredStatus", target.name()));
+
+        return saved;
+    }
+
     @Transactional
     @CacheEvict(value = "announcements-search", allEntries = true)
     public void deleteAnnouncement(UUID id, String firebaseUid) {
@@ -1252,16 +1412,50 @@ public class AnnouncementService {
             throw new YadonyBusinessException(HttpStatus.CONFLICT, "deletion-impossible", "Deletion Impossible", "Suppression impossible : des colis sont déjà acceptés pour ce trajet");
         }
 
+        // Correction round 4 (revue) : alignée sur removeByAdmin — PENDING/PAYMENT_ESCROWED
+        // (round 1) + AWAITING_PAYMENT/NEGOTIATING (oubliés initialement ici aussi, même
+        // défaut que removeByAdmin avant son propre correctif round 3). Un bid
+        // AWAITING_PAYMENT laissé en place après le soft-delete de l'annonce est un mode
+        // de défaillance réel, pas seulement théorique : si l'expéditeur confirme son
+        // paiement dans la fenêtre des 15 minutes, PaymentService.promoteBidOnPaymentAuthorized
+        // lève une IllegalStateException (l'annonce, soft-deleted, est invisible via le
+        // filtre d'entité @Where) — rollback, hold Stripe autorisé et bloqué, puis le
+        // scheduler relève la même exception à chaque tick, cassant aussi le nettoyage des
+        // autres bids. Le nettoyage automatique (AwaitingPaymentCleanupScheduler, 15 min)
+        // rattrape le cas nominal où l'expéditeur ne confirme jamais — ce n'est donc pas
+        // « argent bloqué à vie », mais la fenêtre de course reste un vrai risque.
         List<BidEntity> pendingBids = bidRepository.findByAnnouncementIdAndStatusIn(
-                id, List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED));
+                id, List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED,
+                        BidStatus.AWAITING_PAYMENT, BidStatus.NEGOTIATING));
         for (BidEntity bid : pendingBids) {
-            bid.setStatus(BidStatus.REJECTED);
-            // Rejet « technique » (annonce supprimée), pas un refus du voyageur :
-            // marqué pour être exclu du taux d'acceptation.
-            bid.setRejectionReason(BidEntity.REJECTION_ANNOUNCEMENT_DELETED);
+            // NEGOTIATING n'est JAMAIS une réservation (cf. BidNegotiationService#closeThread,
+            // et removeByAdmin ci-dessus) : le fermer en REJECTED le ferait ressurgir dans
+            // « Mes envois » et dégraderait à tort le taux d'acceptation du voyageur.
+            if (bid.getStatus() == BidStatus.NEGOTIATING) {
+                bid.setStatus(BidStatus.NEGOTIATION_CLOSED);
+            } else {
+                bid.setStatus(BidStatus.REJECTED);
+                // Rejet « technique » (annonce supprimée), pas un refus du voyageur :
+                // marqué pour être exclu du taux d'acceptation.
+                bid.setRejectionReason(BidEntity.REJECTION_ANNOUNCEMENT_DELETED);
+            }
             bidRepository.save(bid);
             auditService.log("BID", bid.getId(), "BID_REJECTED_ANNOUNCEMENT_DELETED", user.getId(),
-                    Map.of("announcementId", id.toString(), "senderId", bid.getSenderId().toString()));
+                    Map.of("announcementId", id.toString(), "senderId", bid.getSenderId().toString(),
+                            "finalStatus", bid.getStatus().name()));
+            // Correction round 2 (levée sur demande utilisateur) : setStatus(REJECTED) seul
+            // ne rembourse rien — même défaut que removeByAdmin avant son propre correctif
+            // (seul RefundProcessor, déclenché par BidRejectedEvent via
+            // BidRejectedEventListener, libère l'escrow). rematchEligible=true ICI,
+            // contrairement à removeByAdmin : ce n'est pas une décision de modération mais
+            // le voyageur qui supprime lui-même son trajet — même nature d'événement que
+            // CancellationService.cancelOpenBidsAndPublish, qui tente TOUJOURS un rematch
+            // (PENDING/PAYMENT_ESCROWED/ACCEPTED/NEGOTIATING confondus) pour ce type de
+            // disruption. Un expéditeur dont le trajet disparaît mérite qu'on lui propose
+            // une alternative, à la différence d'un retrait pour fraude.
+            eventPublisher.publishEvent(new BidRejectedEvent(
+                    bid.getId(), bid.getSenderId(), BidEntity.REJECTION_ANNOUNCEMENT_DELETED,
+                    id, true));
         }
 
         announcement.softDelete();

@@ -95,9 +95,9 @@ public class FavoriteService {
     /**
      * Returns the caller's favorite trips as enriched DTOs, with {@code isFavorite=true}.
      * Soft-deleted announcements are automatically excluded (via {@code @Where} on the entity).
-     * Announcements with status {@code CANCELLED} or {@code COMPLETED} are also filtered out
-     * (masquage immédiat à la lecture ; le nettoyage effectif en base est fait par
-     * {@link FavoriteCleanupScheduler}).
+     * Announcements with status {@code CANCELLED}, {@code COMPLETED}, {@code DRAFT} or
+     * {@code REMOVED_BY_ADMIN} are also filtered out (masquage immédiat à la lecture ; le
+     * nettoyage effectif en base est fait par {@link FavoriteCleanupScheduler}).
      * Batch-loads users, bid counts, and grid items in 3 queries total (no N+1).
      */
     @Transactional(readOnly = true)
@@ -108,7 +108,10 @@ public class FavoriteService {
         List<AnnouncementEntity> active = announcementRepository.findAllById(ids).stream()
                 .filter(a -> a.getStatus() != AnnouncementStatus.CANCELLED
                         && a.getStatus() != AnnouncementStatus.COMPLETED
-                        && a.getStatus() != AnnouncementStatus.DRAFT)
+                        && a.getStatus() != AnnouncementStatus.DRAFT
+                        // Lot B (correction 3) : un trajet retiré par la modération ne doit pas
+                        // rester visible dans les favoris de l'utilisateur.
+                        && a.getStatus() != AnnouncementStatus.REMOVED_BY_ADMIN)
                 .toList();
         if (active.isEmpty()) return List.of();
         Set<UUID> favIdSet = new HashSet<>(ids); // all are favorites
