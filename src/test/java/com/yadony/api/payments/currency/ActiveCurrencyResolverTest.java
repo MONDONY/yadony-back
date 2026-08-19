@@ -1,7 +1,7 @@
 package com.yadony.api.payments.currency;
 
-import com.yadony.api.settings.UserBusinessPrefsEntity;
-import com.yadony.api.settings.UserBusinessPrefsRepository;
+import com.yadony.api.auth.UserEntity;
+import com.yadony.api.auth.UserRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -18,36 +18,40 @@ import static org.mockito.Mockito.when;
 
 /**
  * La politique de repli doit rester à un seul endroit : chaque paquet métier passe
- * par ce composant plutôt que de refaire la recherche en préférences utilisateur.
+ * par ce composant plutôt que de refaire la derivation pays -> devise.
  */
 @ExtendWith(MockitoExtension.class)
 @DisplayName("ActiveCurrencyResolver — devise de travail de l'utilisateur")
 class ActiveCurrencyResolverTest {
 
     @Mock
-    UserBusinessPrefsRepository repository;
+    UserRepository userRepository;
 
     ActiveCurrencyResolver resolver() {
-        return new ActiveCurrencyResolver(repository);
+        return new ActiveCurrencyResolver(userRepository);
     }
 
     @Test
-    void returnsTheCurrencyStoredInUserPreferences() {
+    @DisplayName("La devise derive du pays de l'utilisateur")
+    void derivesCurrencyFromCountry() {
         UUID userId = UUID.randomUUID();
-        UserBusinessPrefsEntity prefs = new UserBusinessPrefsEntity();
-        prefs.setCurrencyCode("XOF");
-        when(repository.findById(userId)).thenReturn(Optional.of(prefs));
+        UserEntity user = new UserEntity();
+        user.setCountry("CA");
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
 
-        assertThat(resolver().resolve(userId)).isEqualTo("XOF");
+        assertThat(resolver().resolve(userId)).isEqualTo("CAD");
     }
 
     @Test
-    @DisplayName("un utilisateur sans préférences retombe sur la devise par défaut")
-    void fallsBackToDefaultWhenNoPreferencesExist() {
+    @DisplayName("Un pays absent ou hors catalogue retombe sur l'euro")
+    void fallsBackToEurWhenCountryUnknown() {
         UUID userId = UUID.randomUUID();
-        when(repository.findById(userId)).thenReturn(Optional.empty());
+        UserEntity user = new UserEntity();
+        user.setCountry(null);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
 
-        assertThat(resolver().resolve(userId)).isEqualTo(ActiveCurrencyResolver.DEFAULT_CURRENCY);
+        assertThat(resolver().resolve(userId)).isEqualTo("EUR");
+        assertThat(resolver().resolve(null)).isEqualTo("EUR");
     }
 
     @Test
@@ -56,7 +60,7 @@ class ActiveCurrencyResolverTest {
         // Les chemins de recherche appellent le résolveur sans visiteur authentifié :
         // interroger la base avec un identifiant nul lèverait une exception.
         assertThat(resolver().resolve(null)).isEqualTo(ActiveCurrencyResolver.DEFAULT_CURRENCY);
-        verify(repository, never()).findById(org.mockito.ArgumentMatchers.any());
+        verify(userRepository, never()).findById(org.mockito.ArgumentMatchers.any());
     }
 
     @Test
@@ -65,5 +69,25 @@ class ActiveCurrencyResolverTest {
         // un défaut en minuscules aurait été rejeté à l'insertion.
         assertThat(ActiveCurrencyResolver.DEFAULT_CURRENCY)
                 .isEqualTo(ActiveCurrencyResolver.DEFAULT_CURRENCY.toUpperCase());
+    }
+
+    @Test
+    @DisplayName("un pays hors catalogue retombe sur l'euro")
+    void unsupportedCountryFallsBackToEur() {
+        UUID userId = UUID.randomUUID();
+        UserEntity user = new UserEntity();
+        user.setCountry("ZZ");
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+
+        assertThat(resolver().resolve(userId)).isEqualTo(ActiveCurrencyResolver.DEFAULT_CURRENCY);
+    }
+
+    @Test
+    @DisplayName("un utilisateur introuvable retombe sur l'euro")
+    void unknownUserFallsBackToEur() {
+        UUID userId = UUID.randomUUID();
+        when(userRepository.findById(userId)).thenReturn(Optional.empty());
+
+        assertThat(resolver().resolve(userId)).isEqualTo(ActiveCurrencyResolver.DEFAULT_CURRENCY);
     }
 }

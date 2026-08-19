@@ -1,9 +1,10 @@
 package com.yadony.api.payments.currency;
 
-import com.yadony.api.settings.UserBusinessPrefsEntity;
-import com.yadony.api.settings.UserBusinessPrefsRepository;
+import com.yadony.api.auth.UserEntity;
+import com.yadony.api.auth.UserRepository;
 import org.springframework.stereotype.Component;
 
+import java.util.Locale;
 import java.util.UUID;
 
 /**
@@ -16,26 +17,34 @@ import java.util.UUID;
  *
  * <p>Every caller must go through this component: the fallback policy has to stay in
  * one place, and copying the repository lookup around means five feature packages end
- * up injecting {@code UserBusinessPrefsRepository} directly.
+ * up injecting {@code UserRepository} directly.
  */
 @Component
 public class ActiveCurrencyResolver {
 
     public static final String DEFAULT_CURRENCY = "EUR";
 
-    private final UserBusinessPrefsRepository userBusinessPrefsRepository;
+    private final UserRepository userRepository;
 
-    public ActiveCurrencyResolver(UserBusinessPrefsRepository userBusinessPrefsRepository) {
-        this.userBusinessPrefsRepository = userBusinessPrefsRepository;
+    public ActiveCurrencyResolver(UserRepository userRepository) {
+        this.userRepository = userRepository;
     }
 
-    /** Returns the user's active currency code, or {@link #DEFAULT_CURRENCY} if unknown. */
+    /**
+     * Devise active de l'utilisateur, derivee de son pays. Le repli euro couvre
+     * deux cas legitimes : l'utilisateur n'a pas encore renseigne son pays, ou son
+     * pays a disparu du catalogue.
+     */
     public String resolve(UUID userId) {
         if (userId == null) {
             return DEFAULT_CURRENCY;
         }
-        return userBusinessPrefsRepository.findById(userId)
-                .map(UserBusinessPrefsEntity::getCurrencyCode)
-                .orElse(DEFAULT_CURRENCY);
+        SupportedCurrency currency = userRepository.findById(userId)
+                .map(UserEntity::getCountry)
+                .map(CountryCatalog::currencyOf)
+                .orElse(null);
+        return currency != null
+                ? currency.code().toUpperCase(Locale.ROOT)
+                : DEFAULT_CURRENCY;
     }
 }
