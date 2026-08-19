@@ -94,8 +94,16 @@ class CashSenderVoucherConsumptionTest {
                     return (ref.equals(voucher.getConsumedOnBidId()) && userId.equals(voucher.getUserId()))
                             ? Optional.of(voucher) : Optional.empty();
                 });
-        lenient().when(voucherRepository.findByIdForUpdate(voucher.getId()))
-                .thenReturn(Optional.of(voucher));
+        lenient().when(voucherRepository.consumeIfAvailable(any(), any(), any())).thenAnswer(inv -> {
+            UUID id = inv.getArgument(0);
+            if (!id.equals(voucher.getId()) || voucher.getConsumedAt() != null) {
+                return 0;
+            }
+            voucher.setConsumedAt(inv.getArgument(1));
+            voucher.setConsumedOnBidId(inv.getArgument(2));
+            return 1;
+        });
+        lenient().when(voucherRepository.findById(voucher.getId())).thenReturn(Optional.of(voucher));
         lenient().when(voucherRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         CommissionVoucherService voucherService = new CommissionVoucherService(

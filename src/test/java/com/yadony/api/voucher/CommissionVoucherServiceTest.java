@@ -95,8 +95,13 @@ class CommissionVoucherServiceTest {
     void consume_activeVoucherExists_marksConsumedAndAudits() {
         CommissionVoucherEntity v = voucher(userId, invitationId, false, false);
         when(repository.findActiveByUserId(any(), any())).thenReturn(List.of(v));
-        when(repository.findByIdForUpdate(v.getId())).thenReturn(Optional.of(v));
-        when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        // L'UPDATE conditionnel affecte la ligne, puis le service la relit depuis la base.
+        when(repository.consumeIfAvailable(eq(v.getId()), any(), eq(bidId))).thenAnswer(inv -> {
+            v.setConsumedAt(inv.getArgument(1));
+            v.setConsumedOnBidId(inv.getArgument(2));
+            return 1;
+        });
+        when(repository.findById(v.getId())).thenReturn(Optional.of(v));
 
         Optional<CommissionVoucherEntity> result = service.consume(userId, bidId);
 
@@ -113,7 +118,7 @@ class CommissionVoucherServiceTest {
         Optional<CommissionVoucherEntity> result = service.consume(userId, bidId);
 
         assertThat(result).isEmpty();
-        verify(repository, never()).findByIdForUpdate(any());
+        verify(repository, never()).consumeIfAvailable(any(), any(), any());
         verify(repository, never()).save(any());
     }
 
@@ -132,20 +137,34 @@ class CommissionVoucherServiceTest {
     }
 
     @Test
-    void consume_raceWhereLockedVoucherAlreadyConsumedMeanwhile_returnsEmpty() {
-        // Un autre thread a consommé le même bon entre le peek et le verrou.
+    void consume_raceWhereVoucherWasConsumedMeanwhile_returnsEmpty() {
+        // Un autre thread a consommé le même bon entre le peek et l'écriture : la garde
+        // consumed_at IS NULL est évaluée par la BASE au moment de l'UPDATE, le perdant
+        // de la course voit 0 ligne affectée. Le service ne relit donc jamais une version
+        // périmée du bon depuis le contexte de persistance (régression revue finale).
         CommissionVoucherEntity v = voucher(userId, invitationId, false, false);
-        CommissionVoucherEntity lockedButAlreadyConsumed = voucher(userId, invitationId, false, false);
-        lockedButAlreadyConsumed.setConsumedAt(LocalDateTime.now(ZoneOffset.UTC));
-        lockedButAlreadyConsumed.setConsumedOnBidId(UUID.randomUUID());
         when(repository.findByConsumedOnBidIdAndUserId(bidId, userId)).thenReturn(Optional.empty());
         when(repository.findActiveByUserId(any(), any())).thenReturn(List.of(v));
-        when(repository.findByIdForUpdate(v.getId())).thenReturn(Optional.of(lockedButAlreadyConsumed));
+        when(repository.consumeIfAvailable(eq(v.getId()), any(), eq(bidId))).thenReturn(0);
 
         Optional<CommissionVoucherEntity> result = service.consume(userId, bidId);
 
         assertThat(result).isEmpty();
         verify(repository, never()).save(any());
+        verify(auditService, never()).log(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void consume_expiredVoucherSlipsThroughThePeek_updateAffectsNoRow_returnsEmpty() {
+        // La validité est reverifiee par la meme instruction que la prise
+        // (expires_at > :now dans le WHERE) : un bon expire entre le peek et l'ecriture
+        // n'est pas consomme.
+        CommissionVoucherEntity v = voucher(userId, invitationId, false, false);
+        when(repository.findByConsumedOnBidIdAndUserId(bidId, userId)).thenReturn(Optional.empty());
+        when(repository.findActiveByUserId(any(), any())).thenReturn(List.of(v));
+        when(repository.consumeIfAvailable(eq(v.getId()), any(), eq(bidId))).thenReturn(0);
+
+        assertThat(service.consume(userId, bidId)).isEmpty();
     }
 
     @Test
@@ -158,8 +177,8 @@ class CommissionVoucherServiceTest {
         CommissionVoucherEntity senderVoucher = voucher(userId, invitationId, false, false);
         when(repository.findByConsumedOnBidIdAndUserId(bidId, userId)).thenReturn(Optional.empty());
         when(repository.findActiveByUserId(eq(userId), any())).thenReturn(List.of(senderVoucher));
-        when(repository.findByIdForUpdate(senderVoucher.getId())).thenReturn(Optional.of(senderVoucher));
-        when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(repository.consumeIfAvailable(eq(senderVoucher.getId()), any(), eq(bidId))).thenReturn(1);
+        when(repository.findById(senderVoucher.getId())).thenReturn(Optional.of(senderVoucher));
 
         Optional<CommissionVoucherEntity> senderResult = service.consume(userId, bidId);
         assertThat(senderResult).isPresent();
@@ -168,7 +187,8 @@ class CommissionVoucherServiceTest {
         CommissionVoucherEntity travelerVoucher = voucher(travelerId, travelerInvitationId, false, false);
         when(repository.findByConsumedOnBidIdAndUserId(bidId, travelerId)).thenReturn(Optional.empty());
         when(repository.findActiveByUserId(eq(travelerId), any())).thenReturn(List.of(travelerVoucher));
-        when(repository.findByIdForUpdate(travelerVoucher.getId())).thenReturn(Optional.of(travelerVoucher));
+        when(repository.consumeIfAvailable(eq(travelerVoucher.getId()), any(), eq(bidId))).thenReturn(1);
+        when(repository.findById(travelerVoucher.getId())).thenReturn(Optional.of(travelerVoucher));
 
         Optional<CommissionVoucherEntity> travelerResult = service.consume(travelerId, bidId);
         assertThat(travelerResult).isPresent();

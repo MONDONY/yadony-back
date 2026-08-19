@@ -19,7 +19,7 @@ import java.util.UUID;
  *
  * <p>Miroir volontaire de {@link com.yadony.api.promo.PromoService} : {@link #peekActive}
  * valide/lit sans effet de bord (devis, résolution de taux), {@link #consume} est le
- * seul point d'écriture, verrouillé pessimiste pour éviter la double consommation.
+ * seul point d'écriture, un UPDATE conditionnel unique pour éviter la double consommation.
  */
 @Service
 public class CommissionVoucherService {
@@ -116,28 +116,23 @@ public class CommissionVoucherService {
             return alreadyConsumedForThisBid;
         }
 
-        List<CommissionVoucherEntity> active =
-                repository.findActiveByUserId(userId, LocalDateTime.now(ZoneOffset.UTC));
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        List<CommissionVoucherEntity> active = repository.findActiveByUserId(userId, now);
         if (active.isEmpty()) {
             return Optional.empty();
         }
 
-        CommissionVoucherEntity locked = repository.findByIdForUpdate(active.get(0).getId())
-                .orElseThrow();
-        // Reverifier sous verrou : un autre thread a pu consommer ce même bon entre le
-        // peek ci-dessus et l'acquisition du verrou.
-        if (locked.getConsumedAt() != null) {
+        // UPDATE conditionnel plutot que lecture-puis-ecriture sous verrou pessimiste :
+        // Hibernate posait bien le verrou mais rendait l'instance deja geree par le
+        // contexte de persistance, sans rafraichir son etat depuis la base — le test
+        // consumedAt != null pouvait donc porter sur une version anterieure au commit
+        // d'un thread concurrent, et le bon etre consomme deux fois. Ici la garde est
+        // evaluee par la base au moment de l'ecriture : le perdant de la course voit
+        // 0 ligne affectee et facture au taux plein.
+        if (repository.consumeIfAvailable(active.get(0).getId(), now, bidId) == 0) {
             return Optional.empty();
         }
-
-        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
-        if (!locked.getExpiresAt().isAfter(now)) {
-            return Optional.empty();
-        }
-
-        locked.setConsumedAt(now);
-        locked.setConsumedOnBidId(bidId);
-        CommissionVoucherEntity saved = repository.save(locked);
+        CommissionVoucherEntity saved = repository.findById(active.get(0).getId()).orElseThrow();
 
         auditService.log("COMMISSION_VOUCHER", saved.getId(), "COMMISSION_VOUCHER_CONSUMED",
                 userId, Map.of("bidId", bidId.toString(), "factor", saved.getFactor().toPlainString()));
