@@ -36,13 +36,14 @@ class DeliveryEventListenerChargebackTest {
     @Mock private ApplicationEventPublisher eventPublisher;
     @Mock private BidRepository bidRepository;
     @Mock private AdminAlertService adminAlert;
+    @Mock private com.yadony.api.voucher.CommissionVoucherService voucherService;
 
     private DeliveryEventListener listener;
 
     @BeforeEach
     void setUp() {
         listener = new DeliveryEventListener(paymentRepository, userRepository,
-                auditService, eventPublisher, bidRepository, adminAlert);
+                auditService, eventPublisher, bidRepository, adminAlert, voucherService);
     }
 
     private static void setId(Object entity, UUID id) throws Exception {

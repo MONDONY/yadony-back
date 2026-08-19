@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 import com.yadony.api.auth.UserEntity;
@@ -80,6 +81,7 @@ class CashCommissionServiceTest {
     @Mock private CommissionRateResolver commissionRateResolver;
     @Mock private com.yadony.api.requests.repository.NegotiationThreadRepository negotiationThreadRepository;
     @Mock private com.yadony.api.matching.BidGridItemRepository bidGridItemRepository;
+    @Mock private com.yadony.api.voucher.CommissionVoucherService voucherService;
 
     private final CommissionProperties props =
             new CommissionProperties(new BigDecimal("0.12"), new BigDecimal("1.00"), 24);
@@ -94,7 +96,7 @@ class CashCommissionServiceTest {
         service = new CashCommissionService(props, userRepo, bidRepo, announcementRepo, events,
                 walletService, walletTransactionRepository, auditService, commissionRateResolver,
                 negotiationThreadRepository, new StripeCashGatewayImpl(), bidGridItemRepository,
-                stubbedContacts()
+                stubbedContacts(), voucherService
 );
         service.setClock(Clock.fixed(Instant.parse("2026-06-01T00:00:00Z"), ZoneOffset.UTC));
     }
@@ -1159,6 +1161,38 @@ class CashCommissionServiceTest {
             verify(walletService, never()).debit(any(), anyString(), any(), any(), any());
             verify(bidRepo, never()).save(any());
             verifyNoInteractions(auditService);
+        }
+
+        @Test
+        void travelerHoldsActiveVoucher_debitsHalfAndConsumesIt() {
+            // Piège central du lot 3 : le bon du voyageur agit sur le PRÉLÈVEMENT, pas
+            // sur le taux — le brut payé par l'expéditeur ne change pas, seul ce que le
+            // voyageur reverse à yadony est réduit.
+            when(walletTransactionRepository.existsByUserIdAndBidIdAndType(
+                    travelerId, bid.getId(), com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED))
+                    .thenReturn(false);
+            com.yadony.api.voucher.CommissionVoucherEntity voucher =
+                    mock(com.yadony.api.voucher.CommissionVoucherEntity.class);
+            lenient().when(voucher.getFactor()).thenReturn(new BigDecimal("0.50"));
+            when(voucherService.consume(travelerId, bid.getId())).thenReturn(Optional.of(voucher));
+
+            service.chargeCommissionFromWallet(bid, travelerId, new BigDecimal("12.00"));
+
+            verify(walletService).debit(eq(travelerId), eq("EUR"), eq(new BigDecimal("6.00")),
+                    eq(com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED), eq(bid.getId()));
+        }
+
+        @Test
+        void travelerHoldsNoVoucher_debitsFullCommission() {
+            when(walletTransactionRepository.existsByUserIdAndBidIdAndType(
+                    travelerId, bid.getId(), com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED))
+                    .thenReturn(false);
+            when(voucherService.consume(travelerId, bid.getId())).thenReturn(Optional.empty());
+
+            service.chargeCommissionFromWallet(bid, travelerId, new BigDecimal("12.00"));
+
+            verify(walletService).debit(eq(travelerId), eq("EUR"), eq(new BigDecimal("12.00")),
+                    eq(com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED), eq(bid.getId()));
         }
 
         @Test

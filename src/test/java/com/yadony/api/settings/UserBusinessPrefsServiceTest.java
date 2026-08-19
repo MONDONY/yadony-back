@@ -26,6 +26,7 @@ class UserBusinessPrefsServiceTest {
 
     @Mock UserBusinessPrefsRepository repository;
     @Mock UserRepository userRepository;
+    @Mock CurrencyLockService currencyLockService;
     @InjectMocks UserBusinessPrefsService service;
 
     private static final String FIREBASE_UID = "uid-test";
@@ -37,6 +38,7 @@ class UserBusinessPrefsServiceTest {
         user.setFirebaseUid(FIREBASE_UID);
         ReflectionTestUtils.setField(user, "id", USER_ID);
         lenient().when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+        lenient().when(currencyLockService.isLocked(USER_ID)).thenReturn(false);
     }
 
     // -------------------------------------------------------------------------
@@ -78,6 +80,17 @@ class UserBusinessPrefsServiceTest {
         assertThat(result.responseDelayHours()).isEqualTo(6);
     }
 
+    @Test
+    void getPrefs_reportsCurrencyLockedFromCurrencyLockService() {
+        UserBusinessPrefsEntity entity = buildEntity("kg", "EUR", 10, 23, 0, null, null);
+        when(repository.findById(USER_ID)).thenReturn(Optional.of(entity));
+        when(currencyLockService.isLocked(USER_ID)).thenReturn(true);
+
+        UserBusinessPrefsDto result = service.getPrefs(FIREBASE_UID);
+
+        assertThat(result.currencyLocked()).isTrue();
+    }
+
     // -------------------------------------------------------------------------
     // getPrefs — user not found → YadonyBusinessException NOT_FOUND
     // -------------------------------------------------------------------------
@@ -104,7 +117,7 @@ class UserBusinessPrefsServiceTest {
         when(repository.findById(USER_ID)).thenReturn(Optional.empty());
         when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        UserBusinessPrefsDto input = new UserBusinessPrefsDto("lbs", "XAF", 15, 10, 3, "call", 2);
+        UserBusinessPrefsDto input = new UserBusinessPrefsDto("lbs", "XAF", 15, 10, 3, "call", 2, null);
         UserBusinessPrefsDto result = service.upsert(FIREBASE_UID, input);
 
         ArgumentCaptor<UserBusinessPrefsEntity> captor = ArgumentCaptor.forClass(UserBusinessPrefsEntity.class);
@@ -140,7 +153,7 @@ class UserBusinessPrefsServiceTest {
         when(repository.findById(USER_ID)).thenReturn(Optional.of(existing));
         when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        UserBusinessPrefsDto input = new UserBusinessPrefsDto("lbs", "XOF", 25, 5, 10, "message", 4);
+        UserBusinessPrefsDto input = new UserBusinessPrefsDto("lbs", "XOF", 25, 5, 10, "message", 4, null);
         UserBusinessPrefsDto result = service.upsert(FIREBASE_UID, input);
 
         ArgumentCaptor<UserBusinessPrefsEntity> captor = ArgumentCaptor.forClass(UserBusinessPrefsEntity.class);
@@ -160,6 +173,74 @@ class UserBusinessPrefsServiceTest {
 
         assertThat(result.weightUnit()).isEqualTo("lbs");
         assertThat(result.responseDelayHours()).isEqualTo(4);
+    }
+
+    // -------------------------------------------------------------------------
+    // upsert — lot 2 : gel de la devise au premier mouvement d'argent
+    // -------------------------------------------------------------------------
+
+    @Test
+    void upsert_currencyUnchanged_neverGuardsButStillReportsLockStatus() {
+        // Le taux de gel n'est jamais consulté pour BLOQUER une devise inchangée,
+        // mais la réponse renseigne quand même currencyLocked() : c'est ce champ que
+        // le front grise après coup, indépendamment de ce qui vient d'être modifié.
+        UserBusinessPrefsEntity existing = buildEntity("kg", "EUR", 10, 23, 0, null, null);
+        when(repository.findById(USER_ID)).thenReturn(Optional.of(existing));
+        when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(currencyLockService.isLocked(USER_ID)).thenReturn(true);
+
+        UserBusinessPrefsDto input = new UserBusinessPrefsDto("kg", "EUR", 20, 23, 0, null, null, null);
+        UserBusinessPrefsDto result = service.upsert(FIREBASE_UID, input);
+
+        assertThat(result.currencyCode()).isEqualTo("EUR");
+        assertThat(result.pickupRadiusKm()).isEqualTo(20);
+        assertThat(result.currencyLocked()).isTrue();
+        verify(currencyLockService, times(1)).isLocked(USER_ID);
+    }
+
+    @Test
+    void upsert_currencyChanged_notLocked_isAllowed() {
+        UserBusinessPrefsEntity existing = buildEntity("kg", "EUR", 10, 23, 0, null, null);
+        when(repository.findById(USER_ID)).thenReturn(Optional.of(existing));
+        when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(currencyLockService.isLocked(USER_ID)).thenReturn(false);
+
+        UserBusinessPrefsDto input = new UserBusinessPrefsDto("kg", "XAF", 10, 23, 0, null, null, null);
+        UserBusinessPrefsDto result = service.upsert(FIREBASE_UID, input);
+
+        assertThat(result.currencyCode()).isEqualTo("XAF");
+    }
+
+    @Test
+    void upsert_currencyChanged_locked_throws422CurrencyLocked() {
+        UserBusinessPrefsEntity existing = buildEntity("kg", "EUR", 10, 23, 0, null, null);
+        when(repository.findById(USER_ID)).thenReturn(Optional.of(existing));
+        when(currencyLockService.isLocked(USER_ID)).thenReturn(true);
+
+        UserBusinessPrefsDto input = new UserBusinessPrefsDto("kg", "XAF", 10, 23, 0, null, null, null);
+
+        assertThatThrownBy(() -> service.upsert(FIREBASE_UID, input))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(ex -> {
+                    YadonyBusinessException dbe = (YadonyBusinessException) ex;
+                    assertThat(dbe.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(dbe.getErrorCode()).isEqualTo("currency-locked");
+                });
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void upsert_noExistingRow_currencyChoiceIsFree() {
+        // Premier choix de devise (onboarding) : aucune ligne n'existe encore, donc
+        // rien à figer — la garde 422 ne se déclenche jamais ici, même si
+        // currencyLockService est quand même consulté pour peupler la réponse.
+        when(repository.findById(USER_ID)).thenReturn(Optional.empty());
+        when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        UserBusinessPrefsDto input = new UserBusinessPrefsDto("kg", "XOF", 10, 23, 0, null, null, null);
+        UserBusinessPrefsDto result = service.upsert(FIREBASE_UID, input);
+
+        assertThat(result.currencyCode()).isEqualTo("XOF");
     }
 
     // -------------------------------------------------------------------------

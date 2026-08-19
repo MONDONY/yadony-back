@@ -1,7 +1,15 @@
 package com.yadony.api.referral;
 
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+
 /**
  * Response DTO for GET /me/referral.
+ *
+ * <p>Lot 3 (2026-08-19/20) : le parrainage ne verse plus d'argent — il octroie un
+ * bon de réduction de commission. Les anciens champs {@code totalEarnedCents} /
+ * {@code currency} / {@code rewardAmountCents} n'ont donc plus de sens (aucune devise
+ * n'entre en jeu) et sont remplacés par l'état des bons.
  */
 public record MyReferralResponse(
         String code,
@@ -9,21 +17,16 @@ public record MyReferralResponse(
         int totalInvited,
         int signedUp,
         int rewarded,
-        int totalEarnedCents,
         boolean hasBeenReferred,
+        /** Nombre de bons octroyés et pas encore consommés ni expirés. */
+        int activeVoucherCount,
         /**
-         * Devise du total ci-dessus. Les crédits sont versés dans la devise active
-         * du parrain au moment du versement : sans ce champ, le client ne pourrait
-         * pas légender le montant, et cumuler toutes devises confondues donnerait
-         * un total dépourvu de sens.
+         * Facteur multiplicatif appliqué par un bon (0.50 = moitié prix), tel que
+         * configuré par {@code yadony.voucher.factor}. Toujours renseigné (barème
+         * courant), même sans bon actif — c'est la promesse faite au prochain
+         * parrainage, pas une propriété d'un bon en particulier.
          */
-        String currency,
-        /**
-         * Montant unitaire de la récompense, en centimes, tel que configuré par
-         * {@code yadony.referral.reward-amount-cents}. Exposé pour que le client
-         * annonce le bon montant dans la bonne devise : les libellés d'invitation
-         * portaient « 5 € » en dur, ce qui devenait faux dès que le parrain
-         * travaillait dans une autre devise.
-         */
-        int rewardAmountCents
+        BigDecimal voucherFactor,
+        /** Expiration du bon actif le plus proche, {@code null} si aucun bon actif. */
+        LocalDateTime nextVoucherExpiresAt
 ) {}

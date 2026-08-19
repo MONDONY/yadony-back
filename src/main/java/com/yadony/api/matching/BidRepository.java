@@ -206,6 +206,8 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
 
     List<BidEntity> findBySenderIdAndStatusIn(UUID senderId, List<BidStatus> statuses);
 
+    boolean existsBySenderIdAndStatusIn(UUID senderId, List<BidStatus> statuses);
+
     // For H-2 alert scheduler: ACCEPTED bids with handover starting in ≤ 2h, not yet alerted, not confirmed
     Optional<BidEntity> findByTrackingNumber(String trackingNumber);
 

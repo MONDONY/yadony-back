@@ -17,12 +17,9 @@ import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidGridItemRepository;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
-import com.yadony.api.payments.currency.CurrencyMatchGuard;
 import com.yadony.api.payments.dto.CreatePaymentRequest;
 import com.yadony.api.payments.dto.PaymentResponse;
 import com.yadony.api.promo.PromoService;
-import com.yadony.api.settings.UserBusinessPrefsEntity;
-import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -61,14 +58,6 @@ class PaymentServiceLegacyIntentRecoveryTest {
     @Mock CommissionRateResolver commissionRateResolver;
     @Mock PromoService promoService;
     @Mock StripeGateway stripeGateway;
-    @Mock ActiveCurrencyResolver activeCurrencyResolver;
-
-    @org.junit.jupiter.api.BeforeEach
-    void stubDefaultActiveCurrency() {
-        org.mockito.Mockito.lenient()
-                .when(activeCurrencyResolver.resolve(org.mockito.ArgumentMatchers.any()))
-                .thenReturn("EUR");
-    }
 
     private PaymentService service;
 
@@ -95,14 +84,12 @@ class PaymentServiceLegacyIntentRecoveryTest {
                 commissionRateResolver,
                 promoService,
                 stripeGateway,
-                PaymentServiceTestFactory.stubbedContacts(),
-                activeCurrencyResolver,
-                new CurrencyMatchGuard());
+                PaymentServiceTestFactory.stubbedContacts(), mock(com.yadony.api.voucher.CommissionVoucherService.class), mock(com.yadony.api.payments.ConnectAccountProvisioner.class));
     }
 
     @Test
     void bidRetrieveFailure_propagatesWithoutMutationRecycleOrCreate() throws Exception {
-        PaymentEntity existing = bidPayment("pi_legacy", "28.00", "cad");
+        PaymentEntity existing = bidPayment("pi_legacy", "28.00", "eur");
         stubExistingBid(existing, new BigDecimal("0.12"), null);
         StripeException stripeFailure = mock(StripeException.class);
         when(stripeGateway.retrievePaymentIntent("pi_legacy")).thenThrow(stripeFailure);
@@ -198,7 +185,7 @@ class PaymentServiceLegacyIntentRecoveryTest {
     @Test
     void existingBidWithConsumedPromoAndChangedOverride_reusesPersistedRate() throws Exception {
         BidEntity bid = stubExistingBid(
-                bidPayment("pi_existing", "26.50", "cad"),
+                bidPayment("pi_existing", "26.50", "eur"),
                 new BigDecimal("0.06"),
                 "ONEUSE");
         UUID promoId = UUID.randomUUID();
@@ -215,7 +202,7 @@ class PaymentServiceLegacyIntentRecoveryTest {
         PaymentIntent compatible = mock(PaymentIntent.class);
         when(compatible.getStatus()).thenReturn("requires_payment_method");
         when(compatible.getAmount()).thenReturn(2650L);
-        when(compatible.getCurrency()).thenReturn("cad");
+        when(compatible.getCurrency()).thenReturn("eur");
         when(compatible.getClientSecret()).thenReturn("pi_existing_secret");
         when(compatible.getPaymentMethodTypes()).thenReturn(java.util.List.of("card"));
         when(stripeGateway.retrievePaymentIntent("pi_existing")).thenReturn(compatible);
@@ -235,7 +222,7 @@ class PaymentServiceLegacyIntentRecoveryTest {
 
     @Test
     void existingBidWithoutPersistedCommissionRate_failsClosedWithoutSideEffects() throws Exception {
-        PaymentEntity existing = bidPayment("pi_existing", "26.50", "cad");
+        PaymentEntity existing = bidPayment("pi_existing", "26.50", "eur");
         BidEntity bid = stubExistingBid(existing, null, "WELCOME6");
         UUID promoId = UUID.randomUUID();
         bid.setPromoCodeId(promoId);
@@ -338,7 +325,6 @@ class PaymentServiceLegacyIntentRecoveryTest {
         lenient().when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler));
         when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
         when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(announcement()));
-        when(activeCurrencyResolver.resolve(senderId)).thenReturn("CAD");
         when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.of(payment));
         Account account = activeAccount();
         lenient().when(stripeGateway.retrieveAccount("acct_traveler")).thenReturn(account);
@@ -348,7 +334,6 @@ class PaymentServiceLegacyIntentRecoveryTest {
     private void stubExistingNegotiation(UUID threadId, PaymentEntity payment) throws StripeException {
         when(userRepository.findById(senderId)).thenReturn(Optional.of(sender()));
         when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler()));
-        when(activeCurrencyResolver.resolve(senderId)).thenReturn("EUR");
         when(paymentRepository.findByNegotiationThreadId(threadId)).thenReturn(Optional.of(payment));
         Account account = activeAccount();
         lenient().when(stripeGateway.retrieveAccount("acct_traveler")).thenReturn(account);
@@ -400,7 +385,10 @@ class PaymentServiceLegacyIntentRecoveryTest {
         bid.setSenderId(senderId);
         bid.setWeightKg(new BigDecimal("5.00"));
         bid.setStatus(BidStatus.ACCEPTED);
-        bid.setCurrency("CAD");
+        // Catalogue réduit à EUR/XOF/XAF le 2026-08-19 (lot 1) — EUR remplace l'ancien
+        // exemple CAD, retiré du catalogue. Devise incidente à ces tests de mécanique
+        // de reprise/recyclage Stripe, pas leur sujet.
+        bid.setCurrency("EUR");
         bid.setCommissionRate(persistedRate);
         bid.setPromoCode(promoCode);
         return bid;
@@ -435,13 +423,6 @@ class PaymentServiceLegacyIntentRecoveryTest {
         payment.setCurrency(currency);
         payment.setStatus(PaymentStatus.PENDING);
         return payment;
-    }
-
-    private UserBusinessPrefsEntity prefs(String currency) {
-        UserBusinessPrefsEntity prefs = new UserBusinessPrefsEntity();
-        prefs.setUserId(senderId);
-        prefs.setCurrencyCode(currency);
-        return prefs;
     }
 
     private PaymentIntent incompatibleIntent(String status, long amount, String currency) {

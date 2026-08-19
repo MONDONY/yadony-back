@@ -6,6 +6,7 @@ import com.yadony.api.matching.events.BidMaterializedEvent;
 import com.yadony.api.promo.PromoService;
 import com.yadony.api.requests.event.PackageRequestAcceptedEvent;
 import com.yadony.api.requests.event.PackageRequestDetailsCompletedEvent;
+import com.yadony.api.voucher.CommissionVoucherService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
@@ -44,6 +45,7 @@ public class ThreadAcceptedBidListener {
     private final StorageService storageService;
     private final BidPhotoService bidPhotoService;
     private final PromoService promoService;
+    private final CommissionVoucherService voucherService;
 
     public ThreadAcceptedBidListener(BidRepository bidRepository,
                                      AnnouncementRepository announcementRepository,
@@ -51,7 +53,8 @@ public class ThreadAcceptedBidListener {
                                      ApplicationEventPublisher eventPublisher,
                                      StorageService storageService,
                                      BidPhotoService bidPhotoService,
-                                     PromoService promoService) {
+                                     PromoService promoService,
+                                     CommissionVoucherService voucherService) {
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.auditService = auditService;
@@ -59,6 +62,7 @@ public class ThreadAcceptedBidListener {
         this.storageService = storageService;
         this.bidPhotoService = bidPhotoService;
         this.promoService = promoService;
+        this.voucherService = voucherService;
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -155,6 +159,17 @@ public class ThreadAcceptedBidListener {
                 log.error("Échec rachat promo {} pour bid {} (thread {}): {}",
                     e.promoCode(), saved.getId(), e.threadId(), ex.toString());
             }
+        }
+
+        // Consommation du bon de parrainage (lot 3) — même best-effort que le rachat
+        // promo ci-dessus. Contrairement au promo, aucun code à propager sur l'event :
+        // automatique dès qu'un bon est disponible, consume() est un no-op silencieux
+        // si l'expéditeur n'en détient aucun.
+        try {
+            voucherService.consume(e.senderId(), saved.getId());
+        } catch (Exception ex) {
+            log.error("Échec consommation bon parrainage pour bid {} (thread {}): {}",
+                saved.getId(), e.threadId(), ex.toString());
         }
 
         // Les photos colis de la demande (package_requests/…) sont copiées vers bids/ pour

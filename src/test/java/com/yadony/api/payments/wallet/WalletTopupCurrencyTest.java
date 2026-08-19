@@ -25,9 +25,13 @@ import static org.mockito.Mockito.when;
 
 class WalletTopupCurrencyTest {
 
+    // Catalogue réduit à EUR/XOF/XAF le 2026-08-19 (lot 1) — EUR remplace l'ancien
+    // exemple CAD. La recharge portefeuille est une simple collection (jamais un
+    // versement Connect), donc reste ouverte à toute devise du catalogue y compris
+    // XOF/XAF — contrairement à createEscrow/createNegotiationEscrow.
     @ParameterizedTest
     @CsvSource({
-            "CAD, 20.00, 2000, cad",
+            "EUR, 20.00, 2000, eur",
             "XOF, 5000.00, 5000, xof"
     })
     void initiate_chargesRequestedCurrencyMinorUnits_withoutFxMetadata(

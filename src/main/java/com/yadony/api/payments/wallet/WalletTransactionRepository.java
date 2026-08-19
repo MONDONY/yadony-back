@@ -15,5 +15,7 @@ public interface WalletTransactionRepository extends JpaRepository<WalletTransac
 
     boolean existsByUserIdAndBidIdAndType(UUID userId, UUID bidId, WalletTransactionType type);
 
+    boolean existsByUserId(UUID userId);
+
     Optional<WalletTransactionEntity> findByUserIdAndBidIdAndType(UUID userId, UUID bidId, WalletTransactionType type);
 }

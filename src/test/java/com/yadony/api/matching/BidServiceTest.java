@@ -792,6 +792,44 @@ class BidServiceTest {
         }
 
         @Test
+        @DisplayName("paymentMethod=STRIPE + annonce en XOF → 422 payment-method-unavailable-for-currency")
+        void resolvePaymentMethodFor_stripeOnCfaCurrency_throwsUnprocessable() {
+            // La zone CFA n'est pas un pays Stripe Connect : le versement au voyageur y
+            // est structurellement impossible (cf. docs/specs/2026-08-19-multidevise-etat-des-lieux.md
+            // section 2.5, country_unsupported empirique sur SN). La carte est retirée
+            // AVANT card-not-accepted : une annonce XOF a beau accepter STRIPE dans son
+            // EnumSet, le rail reste refusé. Testé directement sur resolvePaymentMethodFor
+            // pour isoler cette règle de la garde currency-mismatch sender/annonce, qui
+            // intercepterait plus tôt dans createBid.
+            AnnouncementEntity announcement = buildAnnouncement();
+            announcement.setCurrency("XOF");
+            announcement.setAcceptedPaymentMethods(
+                    java.util.EnumSet.of(com.yadony.api.payments.cash.PaymentMethod.STRIPE,
+                                         com.yadony.api.payments.cash.PaymentMethod.CASH));
+
+            assertThatThrownBy(() -> bidService.resolvePaymentMethodFor(announcement, "STRIPE"))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> {
+                        YadonyBusinessException ex = (YadonyBusinessException) e;
+                        assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                        assertThat(ex.getErrorCode()).isEqualTo("payment-method-unavailable-for-currency");
+                    });
+        }
+
+        @Test
+        @DisplayName("paymentMethod=CASH + annonce en XOF → accepté, cash reste le rail commun")
+        void createBid_cashOnCfaCurrencyAnnouncement_isAccepted() {
+            UserEntity sender = buildSender();
+            AnnouncementEntity announcement = buildAnnouncement();
+            announcement.setCurrency("XOF");
+            announcement.setAcceptedPaymentMethods(
+                    java.util.EnumSet.of(com.yadony.api.payments.cash.PaymentMethod.CASH));
+
+            assertThat(bidService.resolvePaymentMethodFor(announcement, "CASH"))
+                    .isEqualTo(com.yadony.api.payments.cash.PaymentMethod.CASH);
+        }
+
+        @Test
         @DisplayName("paymentMethod=WAVE → 422 mobile-money-bid-payment-retired (retiré)")
         void createBid_wave_isRejectedAsRetired() {
             UserEntity sender = buildSender();

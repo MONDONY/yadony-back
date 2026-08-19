@@ -15,27 +15,46 @@ public class UserBusinessPrefsService {
 
     private final UserBusinessPrefsRepository repository;
     private final UserRepository userRepository;
+    private final CurrencyLockService currencyLockService;
 
     public UserBusinessPrefsService(UserBusinessPrefsRepository repository,
-                                    UserRepository userRepository) {
+                                    UserRepository userRepository,
+                                    CurrencyLockService currencyLockService) {
         this.repository = repository;
         this.userRepository = userRepository;
+        this.currencyLockService = currencyLockService;
     }
 
     @Transactional(readOnly = true)
     public UserBusinessPrefsDto getPrefs(String firebaseUid) {
         UUID userId = resolveUserId(firebaseUid);
-        return repository.findById(userId).map(this::toDto).orElse(UserBusinessPrefsDto.defaults());
+        UserBusinessPrefsDto dto = repository.findById(userId)
+                .map(this::toDto)
+                .orElse(UserBusinessPrefsDto.defaults());
+        return withLockStatus(dto, userId);
     }
 
     @CacheEvict(value = "announcements-search", allEntries = true)
     public UserBusinessPrefsDto upsert(String firebaseUid, UserBusinessPrefsDto dto) {
         UUID userId = resolveUserId(firebaseUid);
-        UserBusinessPrefsEntity e = repository.findById(userId).orElseGet(() -> {
+        java.util.Optional<UserBusinessPrefsEntity> existing = repository.findById(userId);
+        UserBusinessPrefsEntity e = existing.orElseGet(() -> {
             UserBusinessPrefsEntity x = new UserBusinessPrefsEntity();
             x.setUserId(userId);
             return x;
         });
+        // Gel au premier mouvement d'argent (lot 2) : changer de devise n'est plus
+        // permis une fois un envoi engagé ou un portefeuille entamé, sinon la devise
+        // figée d'un bid déjà en cours divergerait silencieusement de ce compte. Un
+        // premier choix (aucune ligne persistée) n'a jamais rien à figer.
+        if (existing.isPresent()
+                && !e.getCurrencyCode().equalsIgnoreCase(dto.currencyCode())
+                && currencyLockService.isLocked(userId)) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "currency-locked", "Currency Locked",
+                    "Impossible de changer de devise : un envoi est en cours ou le "
+                            + "portefeuille n'est pas vide.");
+        }
         e.setWeightUnit(dto.weightUnit());
         e.setCurrencyCode(dto.currencyCode());
         e.setPickupRadiusKm(dto.pickupRadiusKm());
@@ -43,7 +62,7 @@ public class UserBusinessPrefsService {
         e.setMinBidPriceEur(dto.minBidPriceEur());
         e.setContactMode(dto.contactMode());
         e.setResponseDelayHours(dto.responseDelayHours());
-        return toDto(repository.save(e));
+        return withLockStatus(toDto(repository.save(e)), userId);
     }
 
     private UUID resolveUserId(String firebaseUid) {
@@ -62,7 +81,21 @@ public class UserBusinessPrefsService {
                 e.getDefaultPackageWeightKg(),
                 e.getMinBidPriceEur(),
                 e.getContactMode(),
-                e.getResponseDelayHours()
+                e.getResponseDelayHours(),
+                null
+        );
+    }
+
+    private UserBusinessPrefsDto withLockStatus(UserBusinessPrefsDto dto, UUID userId) {
+        return new UserBusinessPrefsDto(
+                dto.weightUnit(),
+                dto.currencyCode(),
+                dto.pickupRadiusKm(),
+                dto.defaultPackageWeightKg(),
+                dto.minBidPriceEur(),
+                dto.contactMode(),
+                dto.responseDelayHours(),
+                currencyLockService.isLocked(userId)
         );
     }
 }

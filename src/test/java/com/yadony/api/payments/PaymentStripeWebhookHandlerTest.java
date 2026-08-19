@@ -144,14 +144,17 @@ class PaymentStripeWebhookHandlerTest {
 
     @Test
     void handle_paymentIntentSucceeded_walletTopup_creditsMetadataCurrencyOneToOne() {
+        // Catalogue réduit à EUR/XOF/XAF le 2026-08-19 (lot 1) — EUR remplace l'ancien
+        // exemple CAD, retiré du catalogue. Le passthrough 0-décimale reste couvert
+        // par usesCurrencyMinorUnits (XOF) juste en dessous.
         PaymentIntent pi = mock(PaymentIntent.class);
         when(pi.getId()).thenReturn("pi_test");
         when(pi.getAmount()).thenReturn(5000L);
-        when(pi.getCurrency()).thenReturn("cad");
+        when(pi.getCurrency()).thenReturn("eur");
         when(pi.getMetadata()).thenReturn(Map.of(
                 "wallet_topup", "true",
                 "user_id", TEST_USER_ID,
-                "wallet_currency", "cad",
+                "wallet_currency", "eur",
                 "wallet_credit_eur", "33.33"));
 
         EventDataObjectDeserializer deserializer = mock(EventDataObjectDeserializer.class);
@@ -165,7 +168,7 @@ class PaymentStripeWebhookHandlerTest {
 
         verify(walletService).credit(
             eq(UUID.fromString(TEST_USER_ID)),
-            eq("CAD"),
+            eq("EUR"),
             eq(new BigDecimal("50.00")),
             eq(WalletTransactionType.TOP_UP),
             eq("pi_test"),
@@ -225,12 +228,15 @@ class PaymentStripeWebhookHandlerTest {
 
     @Test
     void handle_paymentIntentSucceeded_walletTopup_rejectsChargeAndMetadataCurrencyMismatch() {
+        // Catalogue réduit à EUR/XOF/XAF le 2026-08-19 (lot 1) — les deux devises du
+        // mismatch doivent chacune rester valides individuellement (sinon c'est
+        // unsupported-currency qui se déclenche en premier, pas le mismatch).
         PaymentIntent pi = mock(PaymentIntent.class);
-        when(pi.getCurrency()).thenReturn("usd");
+        when(pi.getCurrency()).thenReturn("eur");
         when(pi.getMetadata()).thenReturn(Map.of(
                 "wallet_topup", "true",
                 "user_id", TEST_USER_ID,
-                "wallet_currency", "cad"));
+                "wallet_currency", "xof"));
 
         assertThatThrownBy(() -> handler.handle(eventWith(pi)))
                 .isInstanceOfSatisfying(YadonyBusinessException.class,

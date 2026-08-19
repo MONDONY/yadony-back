@@ -44,13 +44,14 @@ class DeliveryEventListenerTest {
     @Mock private ApplicationEventPublisher eventPublisher;
     @Mock private BidRepository bidRepository;
     @Mock private AdminAlertService adminAlert;
+    @Mock private com.yadony.api.voucher.CommissionVoucherService voucherService;
 
     private DeliveryEventListener listener;
 
     @BeforeEach
     void setUp() {
         listener = new DeliveryEventListener(paymentRepository, userRepository,
-                auditService, eventPublisher, bidRepository, adminAlert);
+                auditService, eventPublisher, bidRepository, adminAlert, voucherService);
     }
 
     private PaymentEntity payment(boolean legacy, PaymentStatus status, String chargeId) {
@@ -134,6 +135,55 @@ class DeliveryEventListenerTest {
         verify(paymentRepository).markReleasedIfEscrow(any(), any());
         verify(auditService).log(eq("PAYMENT"), any(), eq("ESCROW_RELEASED_TRANSFER"), any(), any());
         verify(eventPublisher).publishEvent(any(PaymentReleasedEvent.class));
+    }
+
+    @Test
+    void v2_path_travelerHoldsVoucher_transfersToppedUpByHalfCommission() {
+        // Bon de parrainage (lot 3) : commission 3.60, facteur 0.5 → 1.80 rendus au
+        // voyageur. net = (30 - 3.60) + 1.80 = 28.20. Le brut expéditeur ne bouge pas.
+        PaymentEntity p = payment(false, PaymentStatus.ESCROW, "ch_new");
+        UUID travelerId = UUID.randomUUID();
+        when(paymentRepository.findByBidId(p.getBidId())).thenReturn(Optional.of(p));
+        when(paymentRepository.markReleasedIfEscrow(any(), any())).thenReturn(1);
+        when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler()));
+        com.yadony.api.voucher.CommissionVoucherEntity voucher =
+                mock(com.yadony.api.voucher.CommissionVoucherEntity.class);
+        lenient().when(voucher.getFactor()).thenReturn(new BigDecimal("0.50"));
+        when(voucherService.consume(travelerId, p.getBidId())).thenReturn(Optional.of(voucher));
+
+        try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class);
+             MockedStatic<Transfer> transferStatic = mockStatic(Transfer.class)) {
+            Transfer transfer = mock(Transfer.class);
+            ArgumentCaptor<TransferCreateParams> captor = ArgumentCaptor.forClass(TransferCreateParams.class);
+            transferStatic.when(() -> Transfer.create(captor.capture(), any(RequestOptions.class)))
+                    .thenReturn(transfer);
+
+            listener.handleDeliveryConfirmed(event(p.getBidId(), travelerId));
+
+            assertThat(captor.getValue().getAmount()).isEqualTo(2820L); // 28.20 * 100
+        }
+    }
+
+    @Test
+    void v2_path_noVoucher_transfersUnchangedNetAmount() {
+        PaymentEntity p = payment(false, PaymentStatus.ESCROW, "ch_new");
+        UUID travelerId = UUID.randomUUID();
+        when(paymentRepository.findByBidId(p.getBidId())).thenReturn(Optional.of(p));
+        when(paymentRepository.markReleasedIfEscrow(any(), any())).thenReturn(1);
+        when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler()));
+        when(voucherService.consume(travelerId, p.getBidId())).thenReturn(Optional.empty());
+
+        try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class);
+             MockedStatic<Transfer> transferStatic = mockStatic(Transfer.class)) {
+            Transfer transfer = mock(Transfer.class);
+            ArgumentCaptor<TransferCreateParams> captor = ArgumentCaptor.forClass(TransferCreateParams.class);
+            transferStatic.when(() -> Transfer.create(captor.capture(), any(RequestOptions.class)))
+                    .thenReturn(transfer);
+
+            listener.handleDeliveryConfirmed(event(p.getBidId(), travelerId));
+
+            assertThat(captor.getValue().getAmount()).isEqualTo(2640L);
+        }
     }
 
     @Test

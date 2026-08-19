@@ -86,7 +86,7 @@ class UserBusinessPrefsAnnouncementsCacheIntegrationTest {
     }
 
     private UserBusinessPrefsDto prefs(String currencyCode) {
-        return new UserBusinessPrefsDto("kg", currencyCode, 10, 23, 0, null, null);
+        return new UserBusinessPrefsDto("kg", currencyCode, 10, 23, 0, null, null, null);
     }
 
     private UserEntity persistUser(String firebaseUid, String firstName) {

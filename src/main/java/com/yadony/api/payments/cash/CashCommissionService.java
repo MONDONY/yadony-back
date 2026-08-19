@@ -90,6 +90,7 @@ public class CashCommissionService {
     private final StripeCashGateway stripeCashGateway;
     private final FirebaseContactService firebaseContact;
     private final com.yadony.api.matching.BidGridItemRepository bidGridItemRepository;
+    private final com.yadony.api.voucher.CommissionVoucherService voucherService;
     private Clock clock = Clock.systemUTC();
 
     public CashCommissionService(CommissionProperties props,
@@ -104,7 +105,8 @@ public class CashCommissionService {
                                  com.yadony.api.requests.repository.NegotiationThreadRepository negotiationThreadRepository,
                                  StripeCashGateway stripeCashGateway,
                                  com.yadony.api.matching.BidGridItemRepository bidGridItemRepository,
-                                 FirebaseContactService firebaseContact) {
+                                 FirebaseContactService firebaseContact,
+                                 com.yadony.api.voucher.CommissionVoucherService voucherService) {
         this.props = props;
         this.userRepo = userRepo;
         this.bidRepo = bidRepo;
@@ -118,6 +120,7 @@ public class CashCommissionService {
         this.stripeCashGateway = stripeCashGateway;
         this.bidGridItemRepository = bidGridItemRepository;
         this.firebaseContact = firebaseContact;
+        this.voucherService = voucherService;
     }
 
     /** Visible for testing — injects a fixed clock. */
@@ -306,7 +309,8 @@ public class CashCommissionService {
         }
 
         AnnouncementEntity announcement = announcementRepo.findById(bid.getAnnouncementId()).orElseThrow();
-        BigDecimal commission = computeBidCommission(bid, announcement);
+        BigDecimal commission = applyTravelerVoucher(
+                travelerId, bid.getId(), computeBidCommission(bid, announcement));
         // La commission est libellée dans la devise snapshottée du bid : convertir en
         // unités mineures avec un x100 fixe fausserait XOF/XAF (minorUnit = 0) d'un
         // facteur 100, et un PaymentIntent en "eur" débiterait la mauvaise devise.
@@ -379,12 +383,25 @@ public class CashCommissionService {
             log.info("Commission wallet déjà prélevée pour bid {}, idempotent skip", bid.getId());
             return;
         }
-        walletService.debit(travelerId, bid.getCurrency(), commission, WalletTransactionType.COMMISSION_DEDUCTED, bid.getId());
+        BigDecimal effectiveCommission = applyTravelerVoucher(travelerId, bid.getId(), commission);
+        walletService.debit(travelerId, bid.getCurrency(), effectiveCommission, WalletTransactionType.COMMISSION_DEDUCTED, bid.getId());
         bid.setCommissionStatus(CommissionStatus.CHARGED);
         bid.setCommissionChargedVia(CommissionChargedVia.WALLET);
         bidRepo.save(bid);
         auditService.log("payment", bid.getId(), "COMMISSION_CHARGED_WALLET",
-                travelerId, Map.of("commission", commission.toPlainString()));
+                travelerId, Map.of("commission", effectiveCommission.toPlainString()));
+    }
+
+    /**
+     * Applique le bon de parrainage du voyageur, s'il en détient un actif : moitié
+     * moins prélevé (facteur multiplicatif), sur le PRÉLÈVEMENT et non sur le taux —
+     * le brut payé par l'expéditeur ne change jamais ici. Consomme le bon dans le même
+     * geste ; best-effort côté disponibilité (aucun bon → montant plein, inchangé).
+     */
+    private BigDecimal applyTravelerVoucher(UUID travelerId, UUID bidId, BigDecimal fullCommission) {
+        return voucherService.consume(travelerId, bidId)
+                .map(v -> fullCommission.multiply(v.getFactor()).setScale(2, RoundingMode.HALF_UP))
+                .orElse(fullCommission);
     }
 
     /**

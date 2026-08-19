@@ -3,11 +3,11 @@ package com.yadony.api.referral;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
-import com.yadony.api.referral.events.ReferralRewardGrantedEvent;
 import com.yadony.api.tracking.events.DeliveryConfirmedEvent;
+import com.yadony.api.voucher.CommissionVoucherEntity;
+import com.yadony.api.voucher.CommissionVoucherService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,6 +26,13 @@ import java.util.UUID;
  *
  * <p>Uses {@code @TransactionalEventListener(phase = AFTER_COMMIT)} + a new transaction
  * so we read data that is guaranteed to be committed (CLAUDE.md rule #18).
+ *
+ * <p>Lot 3 (2026-08-19/20) : la récompense n'est plus un crédit portefeuille — c'est un
+ * bon de réduction de commission (50 % par défaut, 6 mois de validité, voir
+ * {@link CommissionVoucherService}). Injection directe plutôt qu'un event : ce n'est pas
+ * un domaine métier propre (comme {@code payments/wallet} l'était), c'est une règle de
+ * tarification partagée, exactement comme {@code common/CommissionRateResolver} injecte
+ * directement {@code promo/PromoService}.
  */
 @Component
 public class DeliveryConfirmedReferralListener {
@@ -33,27 +40,18 @@ public class DeliveryConfirmedReferralListener {
     private static final Logger log = LoggerFactory.getLogger(DeliveryConfirmedReferralListener.class);
 
     private final ReferralInvitationRepository referralInvitationRepository;
-    private final UserCreditRepository userCreditRepository;
     private final BidRepository bidRepository;
     private final AuditService auditService;
-    private final ReferralConfig config;
-    private final ApplicationEventPublisher eventPublisher;
-    private final com.yadony.api.payments.currency.ActiveCurrencyResolver activeCurrencyResolver;
+    private final CommissionVoucherService voucherService;
 
     public DeliveryConfirmedReferralListener(ReferralInvitationRepository referralInvitationRepository,
-                                              UserCreditRepository userCreditRepository,
                                               BidRepository bidRepository,
                                               AuditService auditService,
-                                              ReferralConfig config,
-                                              ApplicationEventPublisher eventPublisher,
-                                              com.yadony.api.payments.currency.ActiveCurrencyResolver activeCurrencyResolver) {
+                                              CommissionVoucherService voucherService) {
         this.referralInvitationRepository = referralInvitationRepository;
-        this.userCreditRepository = userCreditRepository;
         this.bidRepository = bidRepository;
         this.auditService = auditService;
-        this.config = config;
-        this.eventPublisher = eventPublisher;
-        this.activeCurrencyResolver = activeCurrencyResolver;
+        this.voucherService = voucherService;
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -101,37 +99,9 @@ public class DeliveryConfirmedReferralListener {
         ReferralInvitationEntity inv = invOpt.get();
         inv.setStatus("REWARDED");
         inv.setRewardedAt(LocalDateTime.now(ZoneOffset.UTC));
-        inv.setCreditAmountCents(config.getRewardAmountCents());
         referralInvitationRepository.save(inv);
 
-        // La récompense suit la devise active du parrain au moment du versement.
-        // Elle n'est pas convertie : le montant nominal est repris tel quel, si
-        // bien qu'un parrain en dollar reçoit 5 USD et non l'équivalent de 5 EUR.
-        // La devise est stockée sur le crédit, faute de quoi le cumul
-        // additionnerait des devises différentes en un total illégendable.
-        String referrerCurrency = activeCurrencyResolver.resolve(inv.getReferrerUserId());
-        var currency = com.yadony.api.payments.currency.SupportedCurrency
-                .fromCodeOrDefault(referrerCurrency);
-
-        // reward-amount-cents est un barème en centimes d'euro. amount_cents se lit
-        // dans les unités mineures de la devise du crédit : il doit donc porter le
-        // MÊME montant que celui versé au portefeuille, sans quoi le total affiché
-        // ne correspondrait pas au solde.
-        java.math.BigDecimal nominalEur = java.math.BigDecimal
-                .valueOf(config.getRewardAmountCents())
-                .movePointLeft(2);
-        java.math.BigDecimal converted = com.yadony.api.payments.currency.CurrencyBounds
-                .scaleFromEur(nominalEur, currency);
-        long amountInMinorUnits = com.yadony.api.payments.currency.CurrencyAmount
-                .of(converted, currency).minor();
-
-        UserCreditEntity credit = new UserCreditEntity();
-        credit.setUserId(inv.getReferrerUserId());
-        credit.setAmountCents((int) amountInMinorUnits);
-        credit.setCurrency(referrerCurrency);
-        credit.setSource("REFERRAL_REWARD");
-        credit.setReferenceId(inv.getId());
-        userCreditRepository.save(credit);
+        CommissionVoucherEntity voucher = voucherService.grant(inv.getReferrerUserId(), inv.getId());
 
         auditService.log(
                 "REFERRAL_INVITATION",
@@ -141,17 +111,13 @@ public class DeliveryConfirmedReferralListener {
                 Map.of(
                         "referrerId", inv.getReferrerUserId().toString(),
                         "refereeId", senderId.toString(),
-                        "amountCents", config.getRewardAmountCents(),
+                        "voucherId", voucher.getId().toString(),
+                        "factor", voucher.getFactor().toPlainString(),
                         "bidId", event.getBidId().toString()
                 )
         );
 
-        log.info("Referral reward granted: referrer={} referee={} amountCents={}",
-                inv.getReferrerUserId(), senderId, config.getRewardAmountCents());
-
-        // Credit the referrer's spendable wallet via an event (cross-package = events only).
-        // Published inside this REQUIRES_NEW transaction → the wallet listener fires AFTER_COMMIT.
-        eventPublisher.publishEvent(new ReferralRewardGrantedEvent(
-                inv.getReferrerUserId(), config.getRewardAmountCents(), inv.getId()));
+        log.info("Referral voucher granted: referrer={} referee={} voucher={} factor={}",
+                inv.getReferrerUserId(), senderId, voucher.getId(), voucher.getFactor());
     }
 }
