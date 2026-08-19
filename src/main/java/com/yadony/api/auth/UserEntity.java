@@ -193,8 +193,8 @@ public class UserEntity extends BaseEntity {
     @Column(name = "language", length = 32)
     private Set<String> languages = new HashSet<>();
 
-    @Column(name = "country", nullable = false, length = 2)
-    private String country = "FR";
+    @Column(name = "country", length = 2)
+    private String country;
 
     @Column(name = "average_rating", precision = 3, scale = 2)
     private BigDecimal averageRating;

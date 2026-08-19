@@ -50,12 +50,14 @@ class V89MigrationTest {
     void seedData() {
         // Insert users using positional parameters — H2 accepts UUID objects directly.
         // All NOT NULL columns must be provided explicitly (H2 DDL from JPA, no defaults from SQL).
+        // country n'est plus posé ici : depuis V225 il est nullable et sans defaut,
+        // aucun INSERT ne doit plus le renseigner artificiellement (voir v225MakesCountryNullable).
         String insertUser =
                 "INSERT INTO users (id, firebase_uid, username, status, kyc_status, stripe_account_status, " +
-                "cancellation_count, is_pro_account, contact_kyc_only, hide_phone_number, country, " +
+                "cancellation_count, is_pro_account, contact_kyc_only, hide_phone_number, " +
                 "kilo_pro, total_trips, total_shipments, no_show_count, refused_count, rating_count, " +
                 "version, created_at, updated_at) " +
-                "VALUES (?, ?, ?, 'ACTIVE', ?, ?, 0, false, true, false, 'FR', false, 0, 0, 0, 0, 0, 0, NOW(), NOW())";
+                "VALUES (?, ?, ?, 'ACTIVE', ?, ?, 0, false, true, false, false, 0, 0, 0, 0, 0, 0, NOW(), NOW())";
 
         jdbc.update(insertUser, user1Id, "uid-v89-user1", "userv89one",   "VERIFIED",  "ONBOARDING_COMPLETE");
         jdbc.update(insertUser, user2Id, "uid-v89-user2", "userv89two",   "PENDING",   "NOT_CREATED");
@@ -155,6 +157,14 @@ class V89MigrationTest {
         assertThat(count)
                 .as("Seul user1 doit conserver TRAVELER")
                 .isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("V225 rend le pays nullable et vide les FR poses par defaut")
+    void v225MakesCountryNullable() {
+        Integer remaining = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM users WHERE country IS NOT NULL", Integer.class);
+        assertThat(remaining).isZero();
     }
 
     // ─── Migration logic (H2-compatible) ──────────────────────────────────────
