@@ -80,6 +80,7 @@ class AnnouncementInProgressTransitionTest {
                 announcementRepository, bidRepository,
                 mock(com.yadony.api.auth.UserRepository.class),
                 auditService, eventPublisher, config,
+                com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3),
                 mock(PriceGridService.class),
                 mock(com.yadony.api.country.FlagService.class),
                 mock(com.yadony.api.common.StorageService.class),

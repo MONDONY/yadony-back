@@ -14,6 +14,7 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.config.ContentCategoryNormalizer;
+import com.yadony.api.config.PlatformSettingsService;
 import com.yadony.api.config.YadonyConfigProperties;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import com.yadony.api.matching.dto.AnnouncementDetailResponse;
@@ -95,6 +96,9 @@ public class AnnouncementService {
     private final AuditService auditService;
     private final ApplicationEventPublisher eventPublisher;
     private final YadonyConfigProperties config;
+    /** Uniquement pour le seuil d'urgence, éditable depuis le back-office. Les limites de
+     *  publication restent des properties : elles ne sont pas exposées à l'administration. */
+    private final PlatformSettingsService settings;
     private final PriceGridService priceGridService;
     private final com.yadony.api.country.FlagService flagService;
     private final StorageService storageService;
@@ -118,6 +122,7 @@ public class AnnouncementService {
             AuditService auditService,
             ApplicationEventPublisher eventPublisher,
             YadonyConfigProperties config,
+            PlatformSettingsService settings,
             PriceGridService priceGridService,
             com.yadony.api.country.FlagService flagService,
             StorageService storageService,
@@ -134,6 +139,7 @@ public class AnnouncementService {
         this.auditService = auditService;
         this.eventPublisher = eventPublisher;
         this.config = config;
+        this.settings = settings;
         this.priceGridService = priceGridService;
         this.flagService = flagService;
         this.storageService = storageService;
@@ -185,7 +191,7 @@ public class AnnouncementService {
         LocalDate effectiveTo = departureDateTo;
         if (Boolean.TRUE.equals(urgent)) {
             LocalDate today = LocalDate.now(java.time.ZoneOffset.UTC);
-            LocalDate urgentTo = today.plusDays(config.urgency().thresholdDays());
+            LocalDate urgentTo = today.plusDays(settings.urgencyThresholdDays());
             effectiveFrom = (effectiveFrom == null || effectiveFrom.isBefore(today)) ? today : effectiveFrom;
             effectiveTo = (effectiveTo == null || effectiveTo.isAfter(urgentTo)) ? urgentTo : effectiveTo;
         }

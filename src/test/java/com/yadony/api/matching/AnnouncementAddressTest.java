@@ -89,7 +89,9 @@ class AnnouncementServiceAddressTest {
                 new com.yadony.api.config.YadonyConfigProperties.Urgency(3), null);
         announcementService = new AnnouncementService(
                 announcementRepository, bidRepository, userRepository,
-                auditService, eventPublisher, cfg, priceGridService, flagService,
+                auditService, eventPublisher, cfg,
+                com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3),
+                priceGridService, flagService,
                 mock(com.yadony.api.common.StorageService.class),
                 mock(com.yadony.api.favorites.FavoriteRepository.class),
                 activeCurrencyResolver,

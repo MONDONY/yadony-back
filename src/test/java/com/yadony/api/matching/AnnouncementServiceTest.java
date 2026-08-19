@@ -89,10 +89,13 @@ class AnnouncementServiceTest {
         lenient().when(storageService.avatarUrl(any())).thenAnswer(inv -> inv.getArgument(0));
         // Real mapper wired to the same mocks so SearchTests assertions remain valid
         AnnouncementSearchMapper realMapper = new AnnouncementSearchMapper(
-                userRepository, bidRepository, priceGridService, storageService, config);
+                userRepository, bidRepository, priceGridService, storageService,
+                com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3));
         announcementService = new AnnouncementService(
                 announcementRepository, bidRepository, userRepository,
-                auditService, eventPublisher, config, priceGridService, flagService,
+                auditService, eventPublisher, config,
+                com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3),
+                priceGridService, flagService,
                 storageService, favoriteRepository, activeCurrencyResolver, realMapper, packageRequestRepository,
                 negotiationThreadRepository, notificationDispatcher);
     }
@@ -2210,10 +2213,13 @@ class AnnouncementServiceTest {
             YadonyConfigProperties configWithLimits = new YadonyConfigProperties(null, limits,
                     new YadonyConfigProperties.Urgency(3), null);
             AnnouncementSearchMapper mapperWithLimits = new AnnouncementSearchMapper(
-                    userRepository, bidRepository, priceGridService, storageService, configWithLimits);
+                    userRepository, bidRepository, priceGridService, storageService,
+                    com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3));
             AnnouncementService serviceWithLimits = new AnnouncementService(
                     announcementRepository, bidRepository, userRepository,
-                    auditService, eventPublisher, configWithLimits, priceGridService, flagService,
+                    auditService, eventPublisher, configWithLimits,
+                    com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3),
+                    priceGridService, flagService,
                     storageService, favoriteRepository, activeCurrencyResolver, mapperWithLimits, packageRequestRepository,
                     negotiationThreadRepository, notificationDispatcher);
 
@@ -2542,10 +2548,13 @@ class AnnouncementServiceTest {
             YadonyConfigProperties configWithLimits = new YadonyConfigProperties(null, limits,
                     new YadonyConfigProperties.Urgency(3), null);
             AnnouncementSearchMapper mapperWithLimits = new AnnouncementSearchMapper(
-                    userRepository, bidRepository, priceGridService, storageService, configWithLimits);
+                    userRepository, bidRepository, priceGridService, storageService,
+                    com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3));
             AnnouncementService serviceWithLimits = new AnnouncementService(
                     announcementRepository, bidRepository, userRepository,
-                    auditService, eventPublisher, configWithLimits, priceGridService, flagService,
+                    auditService, eventPublisher, configWithLimits,
+                    com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3),
+                    priceGridService, flagService,
                     storageService, favoriteRepository, activeCurrencyResolver, mapperWithLimits, packageRequestRepository,
                     negotiationThreadRepository, notificationDispatcher);
 

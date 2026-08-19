@@ -115,7 +115,8 @@ class PackageRequestServicePublishingSuspensionTest {
         lenient().when(cityRepository.findByNamesIgnoreCaseBatch(any())).thenReturn(java.util.Map.of());
         // Real mapper wired to the same mocks so SearchTests assertions remain valid
         PackageRequestSearchMapper realMapper = new PackageRequestSearchMapper(
-                userRepository, cityRepository, storageService, photoService, yadonyConfig);
+                userRepository, cityRepository, storageService, photoService,
+                com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3));
         service = new PackageRequestService(
                 repository, userRepository, eventPublisher, auditService, config,
                 threadRepository, cityRepository, commissionProperties,
