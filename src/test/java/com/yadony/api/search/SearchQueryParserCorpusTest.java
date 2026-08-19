@@ -33,7 +33,7 @@ class SearchQueryParserCorpusTest {
 
     private static final List<String> KNOWN_CITIES =
             List.of("Paris", "Lyon", "Marseille", "Dakar", "Bamako", "Abidjan",
-                    "Douala", "Kolda", "Ziguinchor", "Nkongsamba", "Kédougou");
+                    "Douala", "Kolda", "Ziguinchor", "Nkongsamba", "Kédougou", "Mars");
 
     @Mock
     private SearchCityRepository cityRepository;
