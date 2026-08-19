@@ -64,4 +64,17 @@ class SearchTokenizerTest {
     void tokenize_onBlankText_returnsEmptyList() {
         assertThat(SearchTokenizer.tokenize("   ")).isEmpty();
     }
+
+    @Test
+    void tokenize_keepsValiseAndCartonButDropsColisAndPaquet() {
+        // « valise » (23 kg) et « carton » (15 kg) portent un poids conventionnel exploité
+        // par la passe quantités (Task 2) : ils ne doivent jamais rejoindre NOISE, contrairement
+        // à « colis » et « paquet » qui ne portent aucune valeur de filtre.
+        List<Token> tokens = SearchTokenizer.tokenize(
+                "je veux envoyer une valise et un carton, pas un colis ni un paquet");
+
+        assertThat(tokens).extracting(Token::normalized)
+                .contains("valise", "carton")
+                .doesNotContain("colis", "paquet");
+    }
 }
