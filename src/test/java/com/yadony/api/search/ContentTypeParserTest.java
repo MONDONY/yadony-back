@@ -105,12 +105,11 @@ class ContentTypeParserTest {
 
     @Test
     void accentRemovalWorksCorrectly() {
-        // Le tokeniseur retire les accents, donc "plantes" est reconnu (MEDICAMENTS_TRADITIONNELS)
-        ParseState s = state("plantes");
+        // Le tokeniseur retire les accents : "épices" → "epices" → reconnu (ALIMENTATION_SECHE)
+        ParseState s = state("épices");
 
         ContentTypeParser.apply(s);
 
-        // "plantes" reconnu (MEDICAMENTS_TRADITIONNELS)
-        assertThat(s.values()).containsEntry("contentType", "Médicaments traditionnels");
+        assertThat(s.values()).containsEntry("contentType", "Alimentation sèche");
     }
 }
