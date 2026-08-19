@@ -104,7 +104,10 @@ class SearchParseControllerIT {
     @Test
     void parse_withExplicitToday_forwardsItToTheParserInsteadOfServerDate() throws Exception {
         when(parser.parse(anyString(), any(), any())).thenReturn(sample());
-        LocalDate given = LocalDate.of(2026, 8, 19);
+        // Date volontairement très éloignée du jour d'exécution : si elle
+        // coïncidait avec « aujourd'hui », un LocalDate.now() inconditionnel dans
+        // le controller ferait passer le verify() ci-dessous par pur hasard.
+        LocalDate given = LocalDate.of(1999, 5, 12);
 
         mockMvc.perform(post("/search/parse")
                 .contentType(MediaType.APPLICATION_JSON)
