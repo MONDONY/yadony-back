@@ -64,7 +64,7 @@ class WalletServiceIT {
 
     @Test
     void currencyScopedOperations_persistIsolatedBalancesAndTransactionCurrencies() {
-        // Catalogue réduit à EUR/XOF/XAF le 2026-08-19 (lot 1, migration V221) — XAF
+        // Catalogue réduit à EUR/XOF/XAF le 2026-08-19 (lot 1, migration V223) — XAF
         // remplace l'ancien exemple CAD, retiré du catalogue et donc désormais rejeté
         // par la contrainte CHECK chk_wallet_accounts_currency (exactement ce que ce
         // test vérifie en creusant jusqu'à la vraie base).
