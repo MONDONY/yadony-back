@@ -9,6 +9,7 @@ public record AdminReportResponse(
         UUID id,
         String targetType,
         UUID targetId,
+        String targetLabel,
         String reporterName,
         String reason,
         String description,

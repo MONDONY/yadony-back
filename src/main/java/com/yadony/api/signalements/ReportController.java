@@ -2,7 +2,6 @@ package com.yadony.api.signalements;
 
 import com.yadony.api.common.YadonyBusinessException;
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import org.springframework.http.HttpStatus;
@@ -65,7 +64,7 @@ public class ReportController {
     public record CreateReportRequest(
             @NotNull ReportTargetType targetType,
             UUID targetId,
-            @NotBlank @Size(max = 100) String reason,
+            @NotNull ReportReason reason,
             @Size(max = 4000) String description,
             @Size(max = 4) List<String> photoKeys
     ) {}
