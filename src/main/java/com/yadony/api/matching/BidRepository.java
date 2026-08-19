@@ -21,6 +21,20 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
 
     long countByAnnouncementId(UUID announcementId);
 
+    /**
+     * Lot D — les demandes reglees en especes portant une commission suivie, pour la vue
+     * financiere du back-office. Le filtre sur {@code commissionStatus} n'est pas redondant :
+     * une demande CASH dont la commission n'a jamais ete initiee n'a rien a montrer dans un
+     * ecran de suivi des commissions.
+     */
+    @Query("""
+        SELECT b FROM BidEntity b
+        WHERE b.paymentMethod = com.yadony.api.payments.cash.PaymentMethod.CASH
+          AND b.commissionStatus IS NOT NULL
+        ORDER BY b.createdAt DESC
+        """)
+    Page<BidEntity> findCashCommissions(Pageable pageable);
+
     /** Bids dont le délai de retour (J+3) est dépassé sans retour confirmé (tranche D). */
     List<BidEntity> findByReturnDeadlineBeforeAndReturnedAtIsNullAndReturnExpiredNotifiedAtIsNull(
             LocalDateTime now);

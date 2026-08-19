@@ -7,7 +7,7 @@ import java.util.Set;
  * Admin roles enum with permission mapping (Task 2).
  * - SUPER_ADMIN: all permissions
  * - ADMIN: all except ADMIN_MANAGE
- * - SUPPORT: limited read + action permissions (15 total)
+ * - SUPPORT: limited read + action permissions (16 total)
  */
 public enum AdminRole {
     SUPER_ADMIN,
