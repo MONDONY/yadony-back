@@ -3,7 +3,9 @@ package com.yadony.api.settings;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -26,7 +28,8 @@ class UserBusinessPrefsServiceTest {
 
     @Mock UserBusinessPrefsRepository repository;
     @Mock UserRepository userRepository;
-    @Mock CountryLockService currencyLockService;
+    @Mock CountryLockService countryLockService;
+    @Mock ActiveCurrencyResolver activeCurrencyResolver;
     @InjectMocks UserBusinessPrefsService service;
 
     private static final String FIREBASE_UID = "uid-test";
@@ -38,7 +41,16 @@ class UserBusinessPrefsServiceTest {
         user.setFirebaseUid(FIREBASE_UID);
         ReflectionTestUtils.setField(user, "id", USER_ID);
         lenient().when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
-        lenient().when(currencyLockService.isLocked(USER_ID)).thenReturn(false);
+        // Meme reference d'objet : muter `user` (ex. setCountry) dans le service se
+        // reflete immediatement dans ce stub, comme dans un vrai contexte JPA ou la
+        // meme entite reste geree par la persistence context de la transaction.
+        lenient().when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        lenient().when(countryLockService.isLocked(USER_ID)).thenReturn(false);
+        lenient().when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+    }
+
+    private void existingUserHasCountry(String iso2) {
+        user.setCountry(iso2);
     }
 
     // -------------------------------------------------------------------------
@@ -58,6 +70,7 @@ class UserBusinessPrefsServiceTest {
         assertThat(result.minBidPriceEur()).isEqualTo(0);
         assertThat(result.contactMode()).isNull();
         assertThat(result.responseDelayHours()).isNull();
+        assertThat(result.country()).isNull();
     }
 
     // -------------------------------------------------------------------------
@@ -81,14 +94,17 @@ class UserBusinessPrefsServiceTest {
     }
 
     @Test
-    void getPrefs_reportsCurrencyLockedFromCurrencyLockService() {
+    void getPrefs_reportsLockStatusAndCountryFromUser() {
         UserBusinessPrefsEntity entity = buildEntity("kg", "EUR", 10, 23, 0, null, null);
         when(repository.findById(USER_ID)).thenReturn(Optional.of(entity));
-        when(currencyLockService.isLocked(USER_ID)).thenReturn(true);
+        when(countryLockService.isLocked(USER_ID)).thenReturn(true);
+        existingUserHasCountry("FR");
 
         UserBusinessPrefsDto result = service.getPrefs(FIREBASE_UID);
 
         assertThat(result.currencyLocked()).isTrue();
+        assertThat(result.countryLocked()).isTrue();
+        assertThat(result.country()).isEqualTo("FR");
     }
 
     // -------------------------------------------------------------------------
@@ -115,9 +131,10 @@ class UserBusinessPrefsServiceTest {
     @Test
     void upsert_noRowExists_savesNewEntityWithAllFields() {
         when(repository.findById(USER_ID)).thenReturn(Optional.empty());
-        when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(activeCurrencyResolver.resolve(USER_ID)).thenReturn("XAF");
 
-        UserBusinessPrefsDto input = new UserBusinessPrefsDto("lbs", "XAF", 15, 10, 3, "call", 2, null);
+        UserBusinessPrefsDto input = new UserBusinessPrefsDto(
+                "lbs", "XAF", 15, 10, 3, "call", 2, null, null, null);
         UserBusinessPrefsDto result = service.upsert(FIREBASE_UID, input);
 
         ArgumentCaptor<UserBusinessPrefsEntity> captor = ArgumentCaptor.forClass(UserBusinessPrefsEntity.class);
@@ -126,6 +143,9 @@ class UserBusinessPrefsServiceTest {
         UserBusinessPrefsEntity saved = captor.getValue();
         assertThat(saved.getUserId()).isEqualTo(USER_ID);
         assertThat(saved.getWeightUnit()).isEqualTo("lbs");
+        // La devise sauvegardee vient du resolveur, pas du champ currencyCode de la
+        // requete (ignore) : ils coincident ici uniquement parce que le stub renvoie
+        // la meme valeur, pour garder les assertions simples.
         assertThat(saved.getCurrencyCode()).isEqualTo("XAF");
         assertThat(saved.getPickupRadiusKm()).isEqualTo(15);
         assertThat(saved.getDefaultPackageWeightKg()).isEqualTo(10);
@@ -151,9 +171,10 @@ class UserBusinessPrefsServiceTest {
     void upsert_rowExists_updatesExistingEntityFields() {
         UserBusinessPrefsEntity existing = buildEntity("kg", "EUR", 10, 23, 0, null, null);
         when(repository.findById(USER_ID)).thenReturn(Optional.of(existing));
-        when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(activeCurrencyResolver.resolve(USER_ID)).thenReturn("XOF");
 
-        UserBusinessPrefsDto input = new UserBusinessPrefsDto("lbs", "XOF", 25, 5, 10, "message", 4, null);
+        UserBusinessPrefsDto input = new UserBusinessPrefsDto(
+                "lbs", "XOF", 25, 5, 10, "message", 4, null, null, null);
         UserBusinessPrefsDto result = service.upsert(FIREBASE_UID, input);
 
         ArgumentCaptor<UserBusinessPrefsEntity> captor = ArgumentCaptor.forClass(UserBusinessPrefsEntity.class);
@@ -162,7 +183,6 @@ class UserBusinessPrefsServiceTest {
         UserBusinessPrefsEntity saved = captor.getValue();
         // same entity instance — userId unchanged
         assertThat(saved.getUserId()).isEqualTo(USER_ID);
-        // all 7 fields updated
         assertThat(saved.getWeightUnit()).isEqualTo("lbs");
         assertThat(saved.getCurrencyCode()).isEqualTo("XOF");
         assertThat(saved.getPickupRadiusKm()).isEqualTo(25);
@@ -176,71 +196,125 @@ class UserBusinessPrefsServiceTest {
     }
 
     // -------------------------------------------------------------------------
-    // upsert — lot 2 : gel de la devise au premier mouvement d'argent
+    // upsert — un client qui renvoie l'ancienne devise n'a plus aucun effet
     // -------------------------------------------------------------------------
 
     @Test
-    void upsert_currencyUnchanged_neverGuardsButStillReportsLockStatus() {
-        // Le taux de gel n'est jamais consulté pour BLOQUER une devise inchangée,
-        // mais la réponse renseigne quand même currencyLocked() : c'est ce champ que
-        // le front grise après coup, indépendamment de ce qui vient d'être modifié.
-        UserBusinessPrefsEntity existing = buildEntity("kg", "EUR", 10, 23, 0, null, null);
+    @DisplayName("Un client qui renvoie l'ancienne devise dans son PUT ne provoque pas d'erreur, elle est ignoree")
+    void upsert_staleCurrencyCodeFromClient_isIgnored() {
+        existingUserHasCountry("FR");
+        UserBusinessPrefsEntity existing = buildEntity("kg", "XOF", 10, 23, 0, null, null);
         when(repository.findById(USER_ID)).thenReturn(Optional.of(existing));
-        when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(currencyLockService.isLocked(USER_ID)).thenReturn(true);
+        when(activeCurrencyResolver.resolve(USER_ID)).thenReturn("EUR");
 
-        UserBusinessPrefsDto input = new UserBusinessPrefsDto("kg", "EUR", 20, 23, 0, null, null, null);
+        // Le client renvoie une devise perimee ("XOF") sans changer de pays : elle
+        // est purement et simplement ignoree, la devise reste celle derivee du pays.
+        UserBusinessPrefsDto input = new UserBusinessPrefsDto(
+                "kg", "XOF", 10, 23, 0, null, null, null, null, null);
         UserBusinessPrefsDto result = service.upsert(FIREBASE_UID, input);
 
         assertThat(result.currencyCode()).isEqualTo("EUR");
-        assertThat(result.pickupRadiusKm()).isEqualTo(20);
-        assertThat(result.currencyLocked()).isTrue();
-        verify(currencyLockService, times(1)).isLocked(USER_ID);
+    }
+
+    // -------------------------------------------------------------------------
+    // upsert — pays : derivation, verrou, catalogue
+    // -------------------------------------------------------------------------
+
+    @Test
+    @DisplayName("Choisir un pays ecrit le pays et derive la devise")
+    void savingCountryDerivesCurrency() {
+        when(activeCurrencyResolver.resolve(USER_ID)).thenReturn("CAD");
+
+        UserBusinessPrefsDto dto = UserBusinessPrefsDto.defaults().withCountry("CA");
+
+        UserBusinessPrefsDto saved = service.upsert(FIREBASE_UID, dto);
+
+        assertThat(saved.country()).isEqualTo("CA");
+        assertThat(saved.currencyCode()).isEqualTo("CAD");
+        verify(userRepository, times(1)).save(user);
+        assertThat(user.getCountry()).isEqualTo("CA");
     }
 
     @Test
-    void upsert_currencyChanged_notLocked_isAllowed() {
-        UserBusinessPrefsEntity existing = buildEntity("kg", "EUR", 10, 23, 0, null, null);
-        when(repository.findById(USER_ID)).thenReturn(Optional.of(existing));
-        when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(currencyLockService.isLocked(USER_ID)).thenReturn(false);
+    @DisplayName("Changer de pays est refuse une fois verrouille")
+    void rejectsCountryChangeWhenLocked() {
+        when(countryLockService.isLocked(USER_ID)).thenReturn(true);
+        existingUserHasCountry("FR");
 
-        UserBusinessPrefsDto input = new UserBusinessPrefsDto("kg", "XAF", 10, 23, 0, null, null, null);
-        UserBusinessPrefsDto result = service.upsert(FIREBASE_UID, input);
-
-        assertThat(result.currencyCode()).isEqualTo("XAF");
+        assertThatThrownBy(() -> service.upsert(FIREBASE_UID,
+                    UserBusinessPrefsDto.defaults().withCountry("CA")))
+                .isInstanceOf(YadonyBusinessException.class)
+                // NB : YadonyBusinessException#getMessage() renvoie le `detail` (texte
+                // francais affiche a l'utilisateur), pas le code d'erreur — on verifie
+                // donc le code via getErrorCode() plutot que hasMessageContaining.
+                .satisfies(ex -> {
+                    YadonyBusinessException dbe = (YadonyBusinessException) ex;
+                    assertThat(dbe.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(dbe.getErrorCode()).isEqualTo("country-locked");
+                });
+        verify(repository, never()).save(any());
+        verify(userRepository, never()).save(any());
     }
 
     @Test
-    void upsert_currencyChanged_locked_throws422CurrencyLocked() {
-        UserBusinessPrefsEntity existing = buildEntity("kg", "EUR", 10, 23, 0, null, null);
-        when(repository.findById(USER_ID)).thenReturn(Optional.of(existing));
-        when(currencyLockService.isLocked(USER_ID)).thenReturn(true);
-
-        UserBusinessPrefsDto input = new UserBusinessPrefsDto("kg", "XAF", 10, 23, 0, null, null, null);
-
-        assertThatThrownBy(() -> service.upsert(FIREBASE_UID, input))
+    @DisplayName("Un pays hors catalogue est refuse")
+    void rejectsUnsupportedCountry() {
+        assertThatThrownBy(() -> service.upsert(FIREBASE_UID,
+                    UserBusinessPrefsDto.defaults().withCountry("ZZ")))
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(ex -> {
                     YadonyBusinessException dbe = (YadonyBusinessException) ex;
                     assertThat(dbe.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
-                    assertThat(dbe.getErrorCode()).isEqualTo("currency-locked");
+                    assertThat(dbe.getErrorCode()).isEqualTo("country-unsupported");
                 });
         verify(repository, never()).save(any());
+        verify(userRepository, never()).save(any());
     }
 
     @Test
-    void upsert_noExistingRow_currencyChoiceIsFree() {
-        // Premier choix de devise (onboarding) : aucune ligne n'existe encore, donc
-        // rien à figer — la garde 422 ne se déclenche jamais ici, même si
-        // currencyLockService est quand même consulté pour peupler la réponse.
-        when(repository.findById(USER_ID)).thenReturn(Optional.empty());
-        when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+    @DisplayName("Un premier choix de pays n'est jamais verrouille, meme si isLocked repondrait true")
+    void firstCountryChoiceNeverLocked() {
+        // user.getCountry() est null (jamais renseigne) : la garde ne doit meme pas
+        // consulter countryLockService pour bloquer, peu importe ce qu'il repondrait.
+        when(countryLockService.isLocked(USER_ID)).thenReturn(true);
+        when(activeCurrencyResolver.resolve(USER_ID)).thenReturn("XOF");
 
-        UserBusinessPrefsDto input = new UserBusinessPrefsDto("kg", "XOF", 10, 23, 0, null, null, null);
+        UserBusinessPrefsDto result = service.upsert(FIREBASE_UID,
+                UserBusinessPrefsDto.defaults().withCountry("SN"));
+
+        assertThat(result.country()).isEqualTo("SN");
+        assertThat(result.currencyCode()).isEqualTo("XOF");
+    }
+
+    @Test
+    @DisplayName("Changer de pays est permis quand ce n'est pas verrouille")
+    void upsert_countryChanges_notLocked_isAllowed() {
+        existingUserHasCountry("FR");
+        when(countryLockService.isLocked(USER_ID)).thenReturn(false);
+        when(activeCurrencyResolver.resolve(USER_ID)).thenReturn("CAD");
+
+        UserBusinessPrefsDto result = service.upsert(FIREBASE_UID,
+                UserBusinessPrefsDto.defaults().withCountry("CA"));
+
+        assertThat(result.country()).isEqualTo("CA");
+        assertThat(user.getCountry()).isEqualTo("CA");
+        verify(userRepository, times(1)).save(user);
+    }
+
+    @Test
+    @DisplayName("Ne pas envoyer de pays laisse le pays existant inchange")
+    void upsert_countryOmitted_leavesExistingCountryUntouched() {
+        existingUserHasCountry("FR");
+        UserBusinessPrefsEntity existing = buildEntity("kg", "EUR", 10, 23, 0, null, null);
+        when(repository.findById(USER_ID)).thenReturn(Optional.of(existing));
+        when(activeCurrencyResolver.resolve(USER_ID)).thenReturn("EUR");
+
+        UserBusinessPrefsDto input = UserBusinessPrefsDto.defaults(); // country() == null
+
         UserBusinessPrefsDto result = service.upsert(FIREBASE_UID, input);
 
-        assertThat(result.currencyCode()).isEqualTo("XOF");
+        assertThat(result.country()).isEqualTo("FR");
+        verify(userRepository, never()).save(any());
     }
 
     // -------------------------------------------------------------------------

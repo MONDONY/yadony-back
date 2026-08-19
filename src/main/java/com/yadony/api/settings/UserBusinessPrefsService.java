@@ -1,12 +1,16 @@
 package com.yadony.api.settings;
 
+import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.payments.currency.ActiveCurrencyResolver;
+import com.yadony.api.payments.currency.CountryCatalog;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Locale;
 import java.util.UUID;
 
 @Service
@@ -15,54 +19,76 @@ public class UserBusinessPrefsService {
 
     private final UserBusinessPrefsRepository repository;
     private final UserRepository userRepository;
-    private final CountryLockService currencyLockService;
+    private final CountryLockService countryLockService;
+    private final ActiveCurrencyResolver activeCurrencyResolver;
 
     public UserBusinessPrefsService(UserBusinessPrefsRepository repository,
                                     UserRepository userRepository,
-                                    CountryLockService currencyLockService) {
+                                    CountryLockService countryLockService,
+                                    ActiveCurrencyResolver activeCurrencyResolver) {
         this.repository = repository;
         this.userRepository = userRepository;
-        this.currencyLockService = currencyLockService;
+        this.countryLockService = countryLockService;
+        this.activeCurrencyResolver = activeCurrencyResolver;
     }
 
     @Transactional(readOnly = true)
     public UserBusinessPrefsDto getPrefs(String firebaseUid) {
         UUID userId = resolveUserId(firebaseUid);
+        UserEntity user = findUserOrThrow(userId);
         UserBusinessPrefsDto dto = repository.findById(userId)
                 .map(this::toDto)
                 .orElse(UserBusinessPrefsDto.defaults());
-        return withLockStatus(dto, userId);
+        return withLockStatus(dto, user);
     }
 
     @CacheEvict(value = "announcements-search", allEntries = true)
     public UserBusinessPrefsDto upsert(String firebaseUid, UserBusinessPrefsDto dto) {
         UUID userId = resolveUserId(firebaseUid);
+        UserEntity user = findUserOrThrow(userId);
         java.util.Optional<UserBusinessPrefsEntity> existing = repository.findById(userId);
         UserBusinessPrefsEntity e = existing.orElseGet(() -> {
             UserBusinessPrefsEntity x = new UserBusinessPrefsEntity();
             x.setUserId(userId);
             return x;
         });
-        // Gel au premier mouvement d'argent (lot 2) : changer de devise n'est plus
-        // permis une fois un envoi engagé ou un portefeuille entamé, sinon la devise
-        // figée d'un bid déjà en cours divergerait silencieusement de ce compte. Un
-        // premier choix (aucune ligne persistée) n'a jamais rien à figer.
-        if (existing.isPresent()
-                && !e.getCurrencyCode().equalsIgnoreCase(dto.currencyCode())
-                && currencyLockService.isLocked(userId)) {
+
+        // Gel au premier mouvement d'argent (lot 2, désormais porté par le pays) :
+        // changer de pays n'est plus permis une fois un envoi engagé ou un
+        // portefeuille entamé, sinon la devise dérivée d'un bid déjà en cours
+        // divergerait silencieusement de ce compte. Un premier choix (pays jamais
+        // renseigné) n'a jamais rien à figer.
+        String requestedCountry = dto.country();
+        if (requestedCountry != null && !CountryCatalog.isSupported(requestedCountry)) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "currency-locked", "Currency Locked",
-                    "Impossible de changer de devise : un envoi est en cours ou le "
-                            + "portefeuille n'est pas vide.");
+                    "country-unsupported", "Country Unsupported",
+                    "Ce pays n'est pas encore desservi par yadony.");
         }
+        boolean countryChanges = requestedCountry != null
+                && !requestedCountry.equalsIgnoreCase(user.getCountry());
+        if (countryChanges && user.getCountry() != null
+                && countryLockService.isLocked(userId)) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "country-locked", "Country Locked",
+                    "Impossible de changer de pays : un envoi est en cours, le "
+                            + "portefeuille n'est pas vide, ou votre compte de "
+                            + "paiement est deja cree.");
+        }
+        if (countryChanges) {
+            user.setCountry(requestedCountry.toUpperCase(Locale.ROOT));
+            userRepository.save(user);
+        }
+
         e.setWeightUnit(dto.weightUnit());
-        e.setCurrencyCode(dto.currencyCode());
+        // La devise n'est plus choisie : elle est recalculee depuis le pays et
+        // stockee comme cache, les annonces et bids continuant de la lire ici.
+        e.setCurrencyCode(activeCurrencyResolver.resolve(userId));
         e.setPickupRadiusKm(dto.pickupRadiusKm());
         e.setDefaultPackageWeightKg(dto.defaultPackageWeightKg());
         e.setMinBidPriceEur(dto.minBidPriceEur());
         e.setContactMode(dto.contactMode());
         e.setResponseDelayHours(dto.responseDelayHours());
-        return withLockStatus(toDto(repository.save(e)), userId);
+        return withLockStatus(toDto(repository.save(e)), user);
     }
 
     private UUID resolveUserId(String firebaseUid) {
@@ -70,6 +96,12 @@ public class UserBusinessPrefsService {
                 .map(u -> u.getId())
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND, "user_not_found",
+                        "User not found", "Utilisateur introuvable"));
+    }
+
+    private UserEntity findUserOrThrow(UUID userId) {
+        return userRepository.findById(userId).orElseThrow(
+                () -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "user_not_found",
                         "User not found", "Utilisateur introuvable"));
     }
 
@@ -82,11 +114,14 @@ public class UserBusinessPrefsService {
                 e.getMinBidPriceEur(),
                 e.getContactMode(),
                 e.getResponseDelayHours(),
+                null,
+                null,
                 null
         );
     }
 
-    private UserBusinessPrefsDto withLockStatus(UserBusinessPrefsDto dto, UUID userId) {
+    private UserBusinessPrefsDto withLockStatus(UserBusinessPrefsDto dto, UserEntity user) {
+        boolean locked = countryLockService.isLocked(user.getId());
         return new UserBusinessPrefsDto(
                 dto.weightUnit(),
                 dto.currencyCode(),
@@ -95,7 +130,9 @@ public class UserBusinessPrefsService {
                 dto.minBidPriceEur(),
                 dto.contactMode(),
                 dto.responseDelayHours(),
-                currencyLockService.isLocked(userId)
+                locked,
+                user.getCountry(),
+                locked
         );
     }
 }

@@ -56,7 +56,9 @@ class UserBusinessPrefsAnnouncementsCacheIntegrationTest {
         UserEntity cadTraveler = persistUser("traveler-cad-" + UUID.randomUUID(), "Cad");
         UserEntity eurTraveler = persistUser("traveler-eur-" + UUID.randomUUID(), "Eur");
 
-        userBusinessPrefsService.upsert(viewer.getFirebaseUid(), prefs("CAD"));
+        // La devise n'est plus reçue directement : on la fait dériver du pays choisi
+        // (CA -> CAD, FR -> EUR via CountryCatalog), le reste du scénario est inchangé.
+        userBusinessPrefsService.upsert(viewer.getFirebaseUid(), prefsForCountry("CA"));
 
         AnnouncementEntity cadAnnouncement = persistAnnouncement(cadTraveler.getId(), "CAD", "Montreal");
         AnnouncementEntity eurAnnouncement = persistAnnouncement(eurTraveler.getId(), "EUR", "Paris");
@@ -71,7 +73,7 @@ class UserBusinessPrefsAnnouncementsCacheIntegrationTest {
         assertThat(cachedSearch.getContent()).extracting(AnnouncementSearchResponse::id)
                 .containsExactly(cadAnnouncement.getId());
 
-        userBusinessPrefsService.upsert(viewer.getFirebaseUid(), prefs("EUR"));
+        userBusinessPrefsService.upsert(viewer.getFirebaseUid(), prefsForCountry("FR"));
 
         Page<AnnouncementSearchResponse> afterEviction = search(viewer.getFirebaseUid());
         assertThat(afterEviction.getContent()).extracting(AnnouncementSearchResponse::id)
@@ -85,8 +87,8 @@ class UserBusinessPrefsAnnouncementsCacheIntegrationTest {
                 "date", "asc", PageRequest.of(0, 10), viewerFirebaseUid, null);
     }
 
-    private UserBusinessPrefsDto prefs(String currencyCode) {
-        return new UserBusinessPrefsDto("kg", currencyCode, 10, 23, 0, null, null, null);
+    private UserBusinessPrefsDto prefsForCountry(String countryIso2) {
+        return UserBusinessPrefsDto.defaults().withCountry(countryIso2);
     }
 
     private UserEntity persistUser(String firebaseUid, String firstName) {
