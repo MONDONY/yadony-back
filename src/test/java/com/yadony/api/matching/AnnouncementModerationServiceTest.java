@@ -61,7 +61,7 @@ class AnnouncementModerationServiceTest {
     @Test
     @DisplayName("removeByAdmin : annonce ACTIVE sans bid accepté → REMOVED_BY_ADMIN + audit avec le motif")
     void removeByAdmin_setsStatusAndAudits() {
-        when(announcementRepository.findById(ANN_ID)).thenReturn(Optional.of(announcement));
+        when(announcementRepository.findByIdForUpdate(ANN_ID)).thenReturn(Optional.of(announcement));
         when(bidRepository.existsByAnnouncementIdAndStatusIn(eq(ANN_ID), anyList())).thenReturn(false);
         when(announcementRepository.save(any())).thenReturn(announcement);
 
@@ -81,7 +81,7 @@ class AnnouncementModerationServiceTest {
     @Test
     @DisplayName("removeByAdmin : notifie le propriétaire de l'annonce avec le motif")
     void removeByAdmin_notifiesOwner() {
-        when(announcementRepository.findById(ANN_ID)).thenReturn(Optional.of(announcement));
+        when(announcementRepository.findByIdForUpdate(ANN_ID)).thenReturn(Optional.of(announcement));
         when(bidRepository.existsByAnnouncementIdAndStatusIn(eq(ANN_ID), anyList())).thenReturn(false);
         when(announcementRepository.save(any())).thenReturn(announcement);
 
@@ -110,7 +110,7 @@ class AnnouncementModerationServiceTest {
         setField(escrowedBid, "senderId", escrowedSenderId);
         setField(escrowedBid, "status", BidStatus.PAYMENT_ESCROWED);
 
-        when(announcementRepository.findById(ANN_ID)).thenReturn(Optional.of(announcement));
+        when(announcementRepository.findByIdForUpdate(ANN_ID)).thenReturn(Optional.of(announcement));
         when(bidRepository.existsByAnnouncementIdAndStatusIn(eq(ANN_ID), anyList())).thenReturn(false);
         when(bidRepository.findByAnnouncementIdAndStatusIn(
                 eq(ANN_ID), eq(LIQUIDATABLE_STATUSES)))
@@ -155,7 +155,7 @@ class AnnouncementModerationServiceTest {
         setField(negotiatingBid, "senderId", negotiatingSenderId);
         setField(negotiatingBid, "status", BidStatus.NEGOTIATING);
 
-        when(announcementRepository.findById(ANN_ID)).thenReturn(Optional.of(announcement));
+        when(announcementRepository.findByIdForUpdate(ANN_ID)).thenReturn(Optional.of(announcement));
         when(bidRepository.existsByAnnouncementIdAndStatusIn(eq(ANN_ID), anyList())).thenReturn(false);
         when(bidRepository.findByAnnouncementIdAndStatusIn(eq(ANN_ID), eq(LIQUIDATABLE_STATUSES)))
                 .thenReturn(List.of(awaitingPaymentBid, negotiatingBid));
@@ -199,7 +199,7 @@ class AnnouncementModerationServiceTest {
         setField(escrowedBid, "senderId", escrowedSenderId);
         setField(escrowedBid, "status", BidStatus.PAYMENT_ESCROWED);
 
-        when(announcementRepository.findById(ANN_ID)).thenReturn(Optional.of(announcement));
+        when(announcementRepository.findByIdForUpdate(ANN_ID)).thenReturn(Optional.of(announcement));
         when(bidRepository.existsByAnnouncementIdAndStatusIn(eq(ANN_ID), anyList())).thenReturn(false);
         when(bidRepository.findByAnnouncementIdAndStatusIn(
                 eq(ANN_ID), eq(LIQUIDATABLE_STATUSES)))
@@ -222,7 +222,7 @@ class AnnouncementModerationServiceTest {
     @Test
     @DisplayName("removeByAdmin : refusé si des bids acceptés (ou au-delà) sont en cours")
     void removeByAdmin_rejectedWhenAcceptedBidsExist() {
-        when(announcementRepository.findById(ANN_ID)).thenReturn(Optional.of(announcement));
+        when(announcementRepository.findByIdForUpdate(ANN_ID)).thenReturn(Optional.of(announcement));
         when(bidRepository.existsByAnnouncementIdAndStatusIn(eq(ANN_ID), anyList())).thenReturn(true);
 
         assertThatThrownBy(() -> service.removeByAdmin(ANN_ID, ADMIN_ID, "peu importe"))
@@ -267,7 +267,7 @@ class AnnouncementModerationServiceTest {
     @Test
     @DisplayName("removeByAdmin : annonce introuvable → 404")
     void removeByAdmin_announcementNotFound() {
-        when(announcementRepository.findById(ANN_ID)).thenReturn(Optional.empty());
+        when(announcementRepository.findByIdForUpdate(ANN_ID)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.removeByAdmin(ANN_ID, ADMIN_ID, "motif"))
                 .isInstanceOf(YadonyBusinessException.class)
@@ -282,7 +282,7 @@ class AnnouncementModerationServiceTest {
     @DisplayName("removeByAdmin : mémorise le statut d'origine avant de retirer")
     void removeByAdmin_memorizesPreviousStatus() throws Exception {
         setField(announcement, "status", AnnouncementStatus.COMPLETED);
-        when(announcementRepository.findById(ANN_ID)).thenReturn(Optional.of(announcement));
+        when(announcementRepository.findByIdForUpdate(ANN_ID)).thenReturn(Optional.of(announcement));
         when(bidRepository.existsByAnnouncementIdAndStatusIn(eq(ANN_ID), anyList())).thenReturn(false);
         when(announcementRepository.save(any())).thenReturn(announcement);
 
