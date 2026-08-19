@@ -223,13 +223,15 @@ STRIPE_WEBHOOK_SECRET=whsec_YOUR_SECRET_HERE
 # Obtenir de: https://sentry.io/settings/auth/tokens/
 SENTRY_DSN=https://xxxxx@sentry.io/xxxxx
 
-# ========== HETZNER S3 ==========
-# Obtenir de: Hetzner Console → Storage
-HETZNER_S3_ENDPOINT=https://storage.fr-fsn1.example.com
-HETZNER_S3_REGION=fr-fsn1
-HETZNER_S3_BUCKET=yadony-prod
-HETZNER_S3_ACCESS_KEY=YOUR_ACCESS_KEY
-HETZNER_S3_SECRET_KEY=YOUR_SECRET_KEY
+# ========== STOCKAGE OBJET (Cloudflare R2) ==========
+# Obtenir de: Cloudflare Dashboard → R2 → Manage API Tokens
+# Le code lit ces variables via aws.s3.* : le SDK AWS S3 pointe sur
+# l'endpoint R2, il n'existe aucune propriété hetzner.*.
+AWS_S3_ENDPOINT=https://<account_id>.r2.cloudflarestorage.com
+AWS_S3_REGION=auto
+AWS_S3_BUCKET=yadony-prod
+AWS_S3_ACCESS_KEY=YOUR_ACCESS_KEY
+AWS_S3_SECRET_KEY=YOUR_SECRET_KEY
 
 # ========== JAVA SETTINGS ==========
 # 75% de la RAM disponible (VPS Pro = 8GB → 6GB pour JVM)
@@ -338,7 +340,7 @@ nano ~/yadony/.env
 # - STRIPE_SECRET_KEY (de Stripe Dashboard)
 # - STRIPE_WEBHOOK_SECRET (de Stripe Dashboard → Webhooks)
 # - SENTRY_DSN (de Sentry Project Settings)
-# - HETZNER_S3_* (de Hetzner Console)
+# - AWS_S3_* (de Cloudflare Dashboard → R2)
 
 # Sauvegarder (Ctrl+O, Enter, Ctrl+X)
 
