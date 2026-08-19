@@ -66,7 +66,8 @@ public class CacheConfig {
         manager.setCacheNames(java.util.List.of(
                 "announcements-search",
                 "estimation-corridor",
-                "trips-summary"
+                "trips-summary",
+                "exchange-rates"
         ));
 
         return manager;
