@@ -50,14 +50,16 @@ class V89MigrationTest {
     void seedData() {
         // Insert users using positional parameters — H2 accepts UUID objects directly.
         // All NOT NULL columns must be provided explicitly (H2 DDL from JPA, no defaults from SQL).
-        // country n'est plus posé ici : depuis V225 il est nullable et sans defaut,
-        // aucun INSERT ne doit plus le renseigner artificiellement (voir v225MakesCountryNullable).
+        // country est seedé à 'FR' ici pour reproduire l'état réel d'avant la migration V225
+        // (tous les users avaient 'FR' en dur) ; v225MakesCountryNullable reproduit ensuite le
+        // backfill de V225 avant d'asserter, au lieu d'omettre la colonne — l'omettre rendait
+        // l'assertion vraie par construction, sans jamais exercer la logique du backfill.
         String insertUser =
                 "INSERT INTO users (id, firebase_uid, username, status, kyc_status, stripe_account_status, " +
-                "cancellation_count, is_pro_account, contact_kyc_only, hide_phone_number, " +
+                "cancellation_count, is_pro_account, contact_kyc_only, hide_phone_number, country, " +
                 "kilo_pro, total_trips, total_shipments, no_show_count, refused_count, rating_count, " +
                 "version, created_at, updated_at) " +
-                "VALUES (?, ?, ?, 'ACTIVE', ?, ?, 0, false, true, false, false, 0, 0, 0, 0, 0, 0, NOW(), NOW())";
+                "VALUES (?, ?, ?, 'ACTIVE', ?, ?, 0, false, true, false, 'FR', false, 0, 0, 0, 0, 0, 0, NOW(), NOW())";
 
         jdbc.update(insertUser, user1Id, "uid-v89-user1", "userv89one",   "VERIFIED",  "ONBOARDING_COMPLETE");
         jdbc.update(insertUser, user2Id, "uid-v89-user2", "userv89two",   "PENDING",   "NOT_CREATED");
@@ -162,9 +164,26 @@ class V89MigrationTest {
     @Test
     @DisplayName("V225 rend le pays nullable et vide les FR poses par defaut")
     void v225MakesCountryNullable() {
+        // Cette classe tourne sans Flyway (flyway.enabled=false, ddl-auto=create) :
+        // V225__users_country_nullable.sql n'est donc jamais exécuté ici. Ce test ne garantit
+        // pas que le fichier SQL s'applique correctement en production — il reproduit
+        // uniquement le backfill (UPDATE users SET country = NULL) en H2, sur des users
+        // seedés avec 'FR' pour représenter l'état pré-migration, comme runMigrationLogic()
+        // le fait plus bas pour V89.
+        runV225BackfillLogic();
+
         Integer remaining = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM users WHERE country IS NOT NULL", Integer.class);
         assertThat(remaining).isZero();
+    }
+
+    /**
+     * Reproduces V225's backfill in H2-compatible SQL: {@code UPDATE users SET country = NULL}.
+     * Identical to the production statement — no PostgreSQL-specific syntax involved here,
+     * unlike {@link #runMigrationLogic()} for V89.
+     */
+    private void runV225BackfillLogic() {
+        jdbc.update("UPDATE users SET country = NULL");
     }
 
     // ─── Migration logic (H2-compatible) ──────────────────────────────────────
