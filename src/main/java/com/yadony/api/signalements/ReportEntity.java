@@ -16,14 +16,15 @@ public class ReportEntity extends BaseEntity {
     @Column(name = "target_type", nullable = false, length = 20)
     private ReportTargetType targetType;
 
-    @Column(name = "target_id", nullable = false)
+    @Column(name = "target_id")
     private UUID targetId;
 
     @Column(name = "reporter_id")
     private UUID reporterId;
 
+    @Enumerated(EnumType.STRING)
     @Column(name = "reason", nullable = false, length = 100)
-    private String reason;
+    private ReportReason reason;
 
     @Column(name = "description", columnDefinition = "TEXT")
     private String description;
@@ -32,8 +33,9 @@ public class ReportEntity extends BaseEntity {
     @Column(name = "status", nullable = false, length = 20)
     private ReportStatus status = ReportStatus.OPEN;
 
+    @Enumerated(EnumType.STRING)
     @Column(name = "action_taken", length = 40)
-    private String actionTaken;
+    private ReportAction actionTaken;
 
     @Column(name = "resolution_note", columnDefinition = "TEXT")
     private String resolutionNote;
@@ -50,8 +52,8 @@ public class ReportEntity extends BaseEntity {
     public UUID getReporterId() { return reporterId; }
     public void setReporterId(UUID reporterId) { this.reporterId = reporterId; }
 
-    public String getReason() { return reason; }
-    public void setReason(String reason) { this.reason = reason; }
+    public ReportReason getReason() { return reason; }
+    public void setReason(ReportReason reason) { this.reason = reason; }
 
     public String getDescription() { return description; }
     public void setDescription(String description) { this.description = description; }
@@ -59,8 +61,8 @@ public class ReportEntity extends BaseEntity {
     public ReportStatus getStatus() { return status; }
     public void setStatus(ReportStatus status) { this.status = status; }
 
-    public String getActionTaken() { return actionTaken; }
-    public void setActionTaken(String actionTaken) { this.actionTaken = actionTaken; }
+    public ReportAction getActionTaken() { return actionTaken; }
+    public void setActionTaken(ReportAction actionTaken) { this.actionTaken = actionTaken; }
 
     public String getResolutionNote() { return resolutionNote; }
     public void setResolutionNote(String resolutionNote) { this.resolutionNote = resolutionNote; }

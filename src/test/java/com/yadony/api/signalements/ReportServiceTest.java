@@ -5,6 +5,9 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
+import com.yadony.api.matching.AnnouncementRepository;
+import com.yadony.api.matching.BidRepository;
+import com.yadony.api.ratings.RatingRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -36,6 +39,9 @@ class ReportServiceTest {
     @Mock ReportRepository reportRepository;
     @Mock ReportPhotoRepository photoRepository;
     @Mock UserRepository userRepository;
+    @Mock AnnouncementRepository announcementRepository;
+    @Mock BidRepository bidRepository;
+    @Mock RatingRepository ratingRepository;
     @Mock StorageService storageService;
     @Mock AuditService auditService;
 
@@ -43,7 +49,8 @@ class ReportServiceTest {
     private UUID reporterId;
 
     private ReportService service() {
-        return new ReportService(reportRepository, photoRepository, userRepository, storageService, auditService);
+        return new ReportService(reportRepository, photoRepository, userRepository,
+                announcementRepository, bidRepository, ratingRepository, storageService, auditService);
     }
 
     @BeforeEach
@@ -112,10 +119,11 @@ class ReportServiceTest {
         });
 
         ReportEntity report = service().createReport("uid-1", ReportTargetType.APP, null,
-                "Bug paiement", "L'écran de paiement crash", List.of());
+                ReportReason.PAYMENT_ISSUE, "L'écran de paiement crash", List.of());
 
         assertThat(report.getStatus()).isEqualTo(ReportStatus.OPEN);
         assertThat(report.getReporterId()).isEqualTo(reporterId);
+        assertThat(report.getReason()).isEqualTo(ReportReason.PAYMENT_ISSUE);
         verify(auditService).log(eq("REPORT"), any(), eq("REPORT_CREATED"), eq(reporterId), any());
     }
 
@@ -123,20 +131,115 @@ class ReportServiceTest {
     void createReport_nonApp_withoutTargetId_throws400() {
         stubUser();
         assertThatThrownBy(() -> service().createReport("uid-1", ReportTargetType.BID, null,
-                "Colis endommagé", null, List.of()))
+                ReportReason.OTHER, null, List.of()))
                 .isInstanceOf(YadonyBusinessException.class)
                 .extracting(e -> ((YadonyBusinessException) e).getStatus())
                 .isEqualTo(HttpStatus.BAD_REQUEST);
     }
 
     @Test
-    void createReport_blankReason_throws400() {
+    void createReport_nullReason_throws400() {
         stubUser();
         assertThatThrownBy(() -> service().createReport("uid-1", ReportTargetType.APP, null,
-                "  ", null, List.of()))
+                null, null, List.of()))
                 .isInstanceOf(YadonyBusinessException.class)
                 .extracting(e -> ((YadonyBusinessException) e).getStatus())
                 .isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void createReport_reasonNotApplicableToTargetType_throws422() {
+        stubUser();
+        // APP_BUG n'est catalogué que pour APP — pas pour signaler un utilisateur. La règle
+        // rejette avant toute vérification d'existence de la cible : pas de stub à poser.
+        UUID targetId = UUID.randomUUID();
+
+        assertThatThrownBy(() -> service().createReport("uid-1", ReportTargetType.USER, targetId,
+                ReportReason.APP_BUG, null, List.of()))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getStatus())
+                .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+    }
+
+    @Test
+    void createReport_targetUserDoesNotExist_throws404() {
+        stubUser();
+        UUID targetId = UUID.randomUUID();
+        when(userRepository.existsById(targetId)).thenReturn(false);
+
+        assertThatThrownBy(() -> service().createReport("uid-1", ReportTargetType.USER, targetId,
+                ReportReason.HARASSMENT, null, List.of()))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getStatus())
+                .isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void createReport_selfReport_throws422() {
+        // L'auto-signalement est rejeté avant la vérification d'existence — pas de stub à poser.
+        stubUser();
+
+        assertThatThrownBy(() -> service().createReport("uid-1", ReportTargetType.USER, reporterId,
+                ReportReason.HARASSMENT, null, List.of()))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getStatus())
+                .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+    }
+
+    @Test
+    void createReport_targetAnnouncementDoesNotExist_throws404() {
+        stubUser();
+        UUID targetId = UUID.randomUUID();
+        when(announcementRepository.existsById(targetId)).thenReturn(false);
+
+        assertThatThrownBy(() -> service().createReport("uid-1", ReportTargetType.ANNOUNCEMENT, targetId,
+                ReportReason.PROHIBITED_ITEM, null, List.of()))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getStatus())
+                .isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void createReport_targetBidDoesNotExist_throws404() {
+        stubUser();
+        UUID targetId = UUID.randomUUID();
+        when(bidRepository.existsById(targetId)).thenReturn(false);
+
+        assertThatThrownBy(() -> service().createReport("uid-1", ReportTargetType.BID, targetId,
+                ReportReason.SCAM_ATTEMPT, null, List.of()))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getStatus())
+                .isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void createReport_targetRatingDoesNotExist_throws404() {
+        stubUser();
+        UUID targetId = UUID.randomUUID();
+        when(ratingRepository.existsById(targetId)).thenReturn(false);
+
+        assertThatThrownBy(() -> service().createReport("uid-1", ReportTargetType.RATING, targetId,
+                ReportReason.SPAM, null, List.of()))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getStatus())
+                .isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void createReport_announcementTarget_existingId_ok() throws Exception {
+        stubUser();
+        UUID targetId = UUID.randomUUID();
+        when(announcementRepository.existsById(targetId)).thenReturn(true);
+        when(reportRepository.save(any())).thenAnswer(inv -> {
+            ReportEntity r = inv.getArgument(0);
+            setId(r, UUID.randomUUID());
+            return r;
+        });
+
+        ReportEntity report = service().createReport("uid-1", ReportTargetType.ANNOUNCEMENT, targetId,
+                ReportReason.PROHIBITED_ITEM, null, List.of());
+
+        assertThat(report.getTargetId()).isEqualTo(targetId);
     }
 
     @Test
@@ -146,7 +249,7 @@ class ReportServiceTest {
         List<String> five = List.of(p + "1", p + "2", p + "3", p + "4", p + "5");
 
         assertThatThrownBy(() -> service().createReport("uid-1", ReportTargetType.APP, null,
-                "Bug", null, five))
+                ReportReason.APP_BUG, null, five))
                 .isInstanceOf(YadonyBusinessException.class)
                 .extracting(e -> ((YadonyBusinessException) e).getStatus())
                 .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
@@ -158,7 +261,7 @@ class ReportServiceTest {
         List<String> foreign = List.of("reports/" + UUID.randomUUID() + "/x.png");
 
         assertThatThrownBy(() -> service().createReport("uid-1", ReportTargetType.APP, null,
-                "Bug", null, foreign))
+                ReportReason.APP_BUG, null, foreign))
                 .isInstanceOf(YadonyBusinessException.class)
                 .extracting(e -> ((YadonyBusinessException) e).getStatus())
                 .isEqualTo(HttpStatus.FORBIDDEN);
@@ -174,7 +277,7 @@ class ReportServiceTest {
         });
         String prefix = "reports/" + reporterId + "/";
 
-        service().createReport("uid-1", ReportTargetType.APP, null, "Bug", null,
+        service().createReport("uid-1", ReportTargetType.APP, null, ReportReason.APP_BUG, null,
                 List.of(prefix + "a.png", prefix + "b.png"));
 
         ArgumentCaptor<ReportPhotoEntity> captor = ArgumentCaptor.forClass(ReportPhotoEntity.class);
