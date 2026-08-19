@@ -211,8 +211,12 @@ class AdminFinanceControllerIT {
     }
 
     @Test
-    @DisplayName("GET /admin/cash-commissions — un bid sans montant negocie ne fait pas tomber la page")
-    void cashCommissions_toleratesMissingAmounts() throws Exception {
+    @DisplayName("GET /admin/cash-commissions — un bid hors negociation n'invente pas un montant de zero")
+    void cashCommissions_reportsUnknownAmountsAsAbsent() throws Exception {
+        // Cas MAJORITAIRE, pas un cas limite : une demande cash ordinaire calcule sa
+        // commission depuis kgNet + gridNet sans jamais renseigner brut ni net. Exposer 0 se
+        // lirait « aucune commission prelevee » — faux : elle l'a bien ete, c'est son montant
+        // que cette vue ne sait pas reconstituer. Absent est la seule reponse honnete.
         BidEntity bare = new BidEntity();
         ReflectionTestUtils.setField(bare, "id", BID_ID);
         bare.setCommissionStatus(CommissionStatus.PENDING);
@@ -223,8 +227,8 @@ class AdminFinanceControllerIT {
 
         mockMvc.perform(get("/admin/cash-commissions").with(authentication(supportAuth())))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.content[0].amountCents").value(0))
-                .andExpect(jsonPath("$.content[0].commissionCents").value(0))
+                .andExpect(jsonPath("$.content[0].amountCents").doesNotExist())
+                .andExpect(jsonPath("$.content[0].commissionCents").doesNotExist())
                 .andExpect(jsonPath("$.content[0].status").value("PENDING"))
                 .andExpect(jsonPath("$.content[0].chargedVia").doesNotExist());
     }

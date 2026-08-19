@@ -138,9 +138,14 @@ public class PlatformSettingsService {
             PlatformSettingKey key = entry.getKey();
             String newValue = normalize(key, entry.getValue());
 
+            // La ligne manquante est creee avec la valeur EFFECTIVE COURANTE, jamais avec la
+            // valeur neuve : sinon oldValue.equals(newValue) serait vrai, le continue plus bas
+            // sauterait l'attribution, l'audit ET l'eviction de cache. Le reglage changerait
+            // alors sans laisser la moindre trace — et audit_log etant immuable, elle ne
+            // pourrait jamais etre ajoutee apres coup.
             PlatformSettingEntity row = repository.findBySettingKey(key.key())
                     .orElseGet(() -> repository.save(
-                            new PlatformSettingEntity(key.key(), newValue, key.type())));
+                            new PlatformSettingEntity(key.key(), effectiveValue(key), key.type())));
             String oldValue = row.getSettingValue();
             if (oldValue.equals(newValue)) {
                 continue;
