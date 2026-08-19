@@ -39,6 +39,13 @@ public class UserBusinessPrefsService {
         UserBusinessPrefsDto dto = repository.findById(userId)
                 .map(this::toDto)
                 .orElse(UserBusinessPrefsDto.defaults());
+        // La colonne currency_code n'est qu'un cache, reecrit uniquement dans upsert().
+        // La rendre telle quelle ferait mentir les Reglages : apres V225 (pays remis a
+        // NULL), un compte senegalais dont la colonne vaut encore XOF lirait « XOF »
+        // pendant que tout le reste de l'application le traite en EUR, jusqu'au 422 au
+        // moment d'encherir sur une annonce XOF. On derive donc a la lecture, exactement
+        // comme a l'ecriture : devise lue et devise appliquee ne peuvent plus diverger.
+        dto = dto.withCurrencyCode(activeCurrencyResolver.resolve(userId));
         return withLockStatus(dto, user);
     }
 

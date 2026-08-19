@@ -46,6 +46,8 @@ class UserBusinessPrefsServiceTest {
         // meme entite reste geree par la persistence context de la transaction.
         lenient().when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
         lenient().when(countryLockService.isLocked(USER_ID)).thenReturn(false);
+        // getPrefs derive desormais la devise au lieu de rendre le cache currency_code.
+        lenient().when(activeCurrencyResolver.resolve(USER_ID)).thenReturn("EUR");
         lenient().when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
     }
 
@@ -81,6 +83,7 @@ class UserBusinessPrefsServiceTest {
     void getPrefs_rowExists_returnsMappedValues() {
         UserBusinessPrefsEntity entity = buildEntity("lbs", "XOF", 20, 30, 5, "both", 6);
         when(repository.findById(USER_ID)).thenReturn(Optional.of(entity));
+        when(activeCurrencyResolver.resolve(USER_ID)).thenReturn("XOF");
 
         UserBusinessPrefsDto result = service.getPrefs(FIREBASE_UID);
 
@@ -105,6 +108,33 @@ class UserBusinessPrefsServiceTest {
         assertThat(result.currencyLocked()).isTrue();
         assertThat(result.countryLocked()).isTrue();
         assertThat(result.country()).isEqualTo("FR");
+    }
+
+    @Test
+    @DisplayName("Regression : un cache currency_code perime ne s'affiche plus dans les Reglages")
+    void getPrefs_staleCurrencyCache_isOverriddenByDerivedCurrency() {
+        // currency_code n'est reecrit que dans upsert(). Apres V225 (pays remis a NULL),
+        // la colonne d'un compte senegalais vaut encore XOF alors que la devise active
+        // derivee est EUR : les Reglages affichaient XOF pendant que tout le reste de
+        // l'application facturait en EUR, jusqu'au 422 a la premiere enchere XOF.
+        UserBusinessPrefsEntity stale = buildEntity("kg", "XOF", 10, 23, 0, null, null);
+        when(repository.findById(USER_ID)).thenReturn(Optional.of(stale));
+        when(activeCurrencyResolver.resolve(USER_ID)).thenReturn("EUR");
+
+        UserBusinessPrefsDto result = service.getPrefs(FIREBASE_UID);
+
+        assertThat(result.currencyCode()).isEqualTo("EUR");
+    }
+
+    @Test
+    @DisplayName("La devise lue est toujours celle qui sera appliquee")
+    void getPrefs_derivedCurrencyMatchesTheAppliedOne() {
+        UserBusinessPrefsEntity entity = buildEntity("kg", "EUR", 10, 23, 0, null, null);
+        when(repository.findById(USER_ID)).thenReturn(Optional.of(entity));
+        when(activeCurrencyResolver.resolve(USER_ID)).thenReturn("XOF");
+        existingUserHasCountry("SN");
+
+        assertThat(service.getPrefs(FIREBASE_UID).currencyCode()).isEqualTo("XOF");
     }
 
     // -------------------------------------------------------------------------

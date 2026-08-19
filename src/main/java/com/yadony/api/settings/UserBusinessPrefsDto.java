@@ -30,6 +30,13 @@ public record UserBusinessPrefsDto(
                 "kg", "EUR", 10, 23, 0, null, null, false, null, false);
     }
 
+    /** Devise derivee (activeCurrencyResolver), substituee au cache currency_code. */
+    public UserBusinessPrefsDto withCurrencyCode(String code) {
+        return new UserBusinessPrefsDto(weightUnit, code, pickupRadiusKm,
+                defaultPackageWeightKg, minBidPriceEur, contactMode,
+                responseDelayHours, currencyLocked, country, countryLocked);
+    }
+
     public UserBusinessPrefsDto withCountry(String iso2) {
         return new UserBusinessPrefsDto(weightUnit, currencyCode, pickupRadiusKm,
                 defaultPackageWeightKg, minBidPriceEur, contactMode,
