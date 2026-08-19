@@ -90,7 +90,7 @@ class AdminGdprServiceTest {
         when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
         when(userService.hasActiveEscrow(user.getId())).thenReturn(false);
 
-        service.executeDeletion(user.getId(), ADMIN_ID, "demande utilisateur confirmée");
+        service.executeDeletion(user.getId(), ADMIN_ID, "demande utilisateur confirmée", false);
 
         verify(accountFinalizationService).finalize(user, FinalizationReason.ADMIN_INITIATED);
     }
@@ -102,7 +102,7 @@ class AdminGdprServiceTest {
         when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
         when(userService.hasActiveEscrow(user.getId())).thenReturn(false);
 
-        service.executeDeletion(user.getId(), ADMIN_ID, "demande utilisateur confirmée");
+        service.executeDeletion(user.getId(), ADMIN_ID, "demande utilisateur confirmée", false);
 
         verify(auditService).log(eq("USER"), eq(user.getId()), eq("USER_GDPR_EXECUTED"),
                 eq(ADMIN_ID), any());
@@ -115,7 +115,7 @@ class AdminGdprServiceTest {
         when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
         when(userService.hasActiveEscrow(user.getId())).thenReturn(true);
 
-        assertThatThrownBy(() -> service.executeDeletion(user.getId(), ADMIN_ID, "motif"))
+        assertThatThrownBy(() -> service.executeDeletion(user.getId(), ADMIN_ID, "motif", false))
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(e -> {
                     YadonyBusinessException y = (YadonyBusinessException) e;
@@ -137,7 +137,7 @@ class AdminGdprServiceTest {
                 "wallet-balance-not-empty", "Unprocessable", "Solde wallet non nul"))
                 .when(userService).assertNoWalletBalance(user.getId());
 
-        assertThatThrownBy(() -> service.executeDeletion(user.getId(), ADMIN_ID, "motif"))
+        assertThatThrownBy(() -> service.executeDeletion(user.getId(), ADMIN_ID, "motif", false))
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
                         .isEqualTo("wallet-balance-not-empty"));
@@ -151,7 +151,7 @@ class AdminGdprServiceTest {
         UUID unknown = UUID.randomUUID();
         when(userRepository.findById(unknown)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.executeDeletion(unknown, ADMIN_ID, "motif"))
+        assertThatThrownBy(() -> service.executeDeletion(unknown, ADMIN_ID, "motif", false))
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(e -> {
                     YadonyBusinessException y = (YadonyBusinessException) e;

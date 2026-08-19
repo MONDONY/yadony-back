@@ -75,7 +75,8 @@ public class AdminGdprController {
     public ResponseEntity<Void> execute(@PathVariable UUID userId,
                                         @RequestBody @Valid GdprExecuteRequest request,
                                         Authentication authentication) {
-        adminGdprService.executeDeletion(userId, adminId(authentication), request.reason());
+        adminGdprService.executeDeletion(userId, adminId(authentication), request.reason(),
+                request.withoutUserRequestOrFalse());
         return ResponseEntity.noContent().build();
     }
 

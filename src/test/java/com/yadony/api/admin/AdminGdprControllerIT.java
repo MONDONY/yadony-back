@@ -32,6 +32,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
@@ -121,7 +122,7 @@ class AdminGdprControllerIT {
     void execute_withSupportRole_returns403() throws Exception {
         mockMvc.perform(post("/admin/users/{userId}/gdpr-execute", USER_ID)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new GdprExecuteRequest("motif")))
+                        .content(objectMapper.writeValueAsString(new GdprExecuteRequest("motif", null)))
                         .with(authentication(supportAuth())))
                 .andExpect(status().isForbidden());
     }
@@ -132,11 +133,11 @@ class AdminGdprControllerIT {
         mockMvc.perform(post("/admin/users/{userId}/gdpr-execute", USER_ID)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new GdprExecuteRequest("demande utilisateur confirmée")))
+                                new GdprExecuteRequest("demande utilisateur confirmée", null)))
                         .with(authentication(adminAuth())))
                 .andExpect(status().isNoContent());
 
-        verify(adminGdprService).executeDeletion(eq(USER_ID), any(), eq("demande utilisateur confirmée"));
+        verify(adminGdprService).executeDeletion(eq(USER_ID), any(), eq("demande utilisateur confirmée"), eq(false));
     }
 
     @Test
@@ -144,11 +145,11 @@ class AdminGdprControllerIT {
     void execute_activeEscrow_returns422() throws Exception {
         doThrow(new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "active-transactions",
                 "Unprocessable", "Impossible — cet utilisateur a des transactions en cours"))
-                .when(adminGdprService).executeDeletion(eq(USER_ID), any(), any());
+                .when(adminGdprService).executeDeletion(eq(USER_ID), any(), any(), anyBoolean());
 
         mockMvc.perform(post("/admin/users/{userId}/gdpr-execute", USER_ID)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new GdprExecuteRequest("motif")))
+                        .content(objectMapper.writeValueAsString(new GdprExecuteRequest("motif", null)))
                         .with(authentication(adminAuth())))
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.code").value("active-transactions"));
@@ -159,11 +160,11 @@ class AdminGdprControllerIT {
     void execute_walletBalance_returns422() throws Exception {
         doThrow(new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-balance-not-empty",
                 "Unprocessable", "Solde wallet non nul"))
-                .when(adminGdprService).executeDeletion(eq(USER_ID), any(), any());
+                .when(adminGdprService).executeDeletion(eq(USER_ID), any(), any(), anyBoolean());
 
         mockMvc.perform(post("/admin/users/{userId}/gdpr-execute", USER_ID)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new GdprExecuteRequest("motif")))
+                        .content(objectMapper.writeValueAsString(new GdprExecuteRequest("motif", null)))
                         .with(authentication(adminAuth())))
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.code").value("wallet-balance-not-empty"));
@@ -174,7 +175,7 @@ class AdminGdprControllerIT {
     void execute_blankReason_returns422() throws Exception {
         mockMvc.perform(post("/admin/users/{userId}/gdpr-execute", USER_ID)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new GdprExecuteRequest("")))
+                        .content(objectMapper.writeValueAsString(new GdprExecuteRequest("", null)))
                         .with(authentication(adminAuth())))
                 .andExpect(status().isUnprocessableEntity());
     }

@@ -62,10 +62,22 @@ public class AdminGdprService {
      * un second appel répond 404, ce qui est l'issue attendue pour un geste irréversible.
      */
     @Transactional
-    public void executeDeletion(UUID userId, UUID adminId, String reason) {
+    public void executeDeletion(UUID userId, UUID adminId, String reason, boolean withoutUserRequest) {
         UserEntity user = userRepository.findById(userId)
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
                         "user-not-found", "Not Found", "Utilisateur introuvable"));
+
+        // Garde le plus important de cette méthode, et le premier à s'exécuter : le geste est
+        // irréversible. La file GET /gdpr-requests ne liste que les comptes portant un
+        // deletionRequestedAt, mais rien ne la reliait TECHNIQUEMENT à l'exécution — l'API
+        // acceptait n'importe quel identifiant. Une demande reçue par courrier ou par mail
+        // reste possible : elle exige seulement un aveu explicite, consigné dans l'audit.
+        if (user.getDeletionRequestedAt() == null && !withoutUserRequest) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "gdpr-no-request",
+                    "Unprocessable",
+                    "Cet utilisateur n'a pas demandé la suppression de son compte. Si la demande "
+                            + "a été reçue hors application, confirmez-le explicitement.");
+        }
 
         if (userService.hasActiveEscrow(user.getId())) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "active-transactions",
@@ -76,8 +88,12 @@ public class AdminGdprService {
         // Écrit AVANT finalize() : celui-ci journalise USER_GDPR_DELETION avec l'utilisateur
         // comme acteur. Sans cette entrée, l'administrateur à l'origine du geste ne serait
         // tracé nulle part — audit_log étant immuable, la trace ne pourrait plus être ajoutée.
+        // withoutUserRequest est consigné : sans lui, on ne pourrait plus distinguer après coup
+        // une exécution régulière d'une exécution décidée hors application.
         auditService.log("USER", user.getId(), "USER_GDPR_EXECUTED", adminId,
-                Map.of("initiatedBy", "admin", "reason", reason != null ? reason : ""));
+                Map.of("initiatedBy", "admin",
+                        "reason", reason != null ? reason : "",
+                        "withoutUserRequest", String.valueOf(withoutUserRequest)));
 
         accountFinalizationService.finalize(user, FinalizationReason.ADMIN_INITIATED);
         log.info("GDPR deletion executed for user {} by admin {}", userId, adminId);
