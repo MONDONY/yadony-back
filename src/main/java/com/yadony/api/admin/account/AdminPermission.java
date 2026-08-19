@@ -43,6 +43,11 @@ public enum AdminPermission {
     REPORT_VIEW,
     REPORT_RESOLVE,
     RATING_MODERATE,
+    /**
+     * Lot C — suppression definitive d'un avis, detachee de RATING_MODERATE.
+     * Le support consulte et exclut ; effacer pour de bon reste a ADMIN et SUPER_ADMIN.
+     */
+    RATING_DELETE,
 
     // Content & operations
     PROMO_MANAGE,

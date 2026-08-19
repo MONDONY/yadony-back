@@ -30,6 +30,9 @@ public enum AdminRole {
                     AdminPermission.USER_SUSPEND,
                     AdminPermission.USER_BAN,
                     AdminPermission.USER_KYC,
+                    // Lot C : le support peut deja bannir, geste bien plus severe — couper
+                    // la messagerie en est l'alternative proportionnee.
+                    AdminPermission.USER_MESSAGE_MUTE,
                     AdminPermission.PAYMENT_VIEW,
                     AdminPermission.BID_VIEW,
                     AdminPermission.DISPUTE_VIEW,

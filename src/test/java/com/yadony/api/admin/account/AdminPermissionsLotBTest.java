@@ -23,9 +23,12 @@ class AdminPermissionsLotBTest {
     }
 
     @Test
-    void support_hasNeitherNewPermission() {
+    // Lot C : USER_MESSAGE_MUTE a ete accordee au support sur decision du proprietaire du
+    // produit — il peut deja bannir, la coupure de messagerie en est l'alternative
+    // proportionnee. CONTENT_REMOVE, elle, lui reste fermee.
+    void support_hasNoContentRemove() {
         Set<AdminPermission> perms = AdminPermissions.effective(AdminRole.SUPPORT, Map.of());
-        assertThat(perms).doesNotContain(AdminPermission.CONTENT_REMOVE, AdminPermission.USER_MESSAGE_MUTE);
+        assertThat(perms).doesNotContain(AdminPermission.CONTENT_REMOVE);
     }
 
     @Test
@@ -36,7 +39,8 @@ class AdminPermissionsLotBTest {
     }
 
     @Test
-    void enumHasExactlyTwentySixValues() {
-        assertThat(AdminPermission.values()).hasSize(26);
+    // 27 depuis le Lot C, qui detache RATING_DELETE de RATING_MODERATE.
+    void enumHasExactlyTwentySevenValues() {
+        assertThat(AdminPermission.values()).hasSize(27);
     }
 }
