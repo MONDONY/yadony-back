@@ -254,13 +254,13 @@ public class UserService {
     }
 
     @Transactional
-    public UserEntity suspendUser(UUID userId, String reason) {
+    public UserEntity suspendUser(UUID userId, String reason, UUID adminId) {
         UserEntity user = userRepository.findById(userId)
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
         user.setStatus(UserStatus.SUSPENDED);
         UserEntity saved = userRepository.save(user);
-        auditService.log("USER", userId, "USER_SUSPENDED_BY_ADMIN", userId,
+        auditService.log("USER", userId, "USER_SUSPENDED_BY_ADMIN", adminId,
                 Map.of("reason", reason != null ? reason : ""));
         eventPublisher.publishEvent(new UserSuspendedEvent(userId, reason));
         log.info("User {} suspended by admin", userId);
@@ -268,13 +268,13 @@ public class UserService {
     }
 
     @Transactional
-    public UserEntity banUser(UUID userId, String reason) {
+    public UserEntity banUser(UUID userId, String reason, UUID adminId) {
         UserEntity user = userRepository.findById(userId)
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
         user.setStatus(UserStatus.BANNED);
         UserEntity saved = userRepository.save(user);
-        auditService.log("USER", userId, "USER_BANNED_BY_ADMIN", userId,
+        auditService.log("USER", userId, "USER_BANNED_BY_ADMIN", adminId,
                 Map.of("reason", reason != null ? reason : ""));
         log.info("User {} banned by admin", userId);
         return saved;
@@ -342,7 +342,7 @@ public class UserService {
      *                      {@link #INDEFINITE_MUTE_DAYS}).
      */
     @Transactional
-    public UserEntity muteMessaging(UUID userId, Integer durationHours, String reason) {
+    public UserEntity muteMessaging(UUID userId, Integer durationHours, String reason, UUID adminId) {
         UserEntity user = userRepository.findById(userId)
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
@@ -354,7 +354,7 @@ public class UserService {
         user.setMessagingMutedUntil(until);
         UserEntity saved = userRepository.save(user);
 
-        auditService.log("USER", userId, "USER_MESSAGING_MUTED", userId,
+        auditService.log("USER", userId, "USER_MESSAGING_MUTED", adminId,
                 Map.of("reason", reason != null ? reason : "", "until", until.toString()));
 
         notificationDispatcher.notifyUser(userId, "Messagerie suspendue",
@@ -375,7 +375,7 @@ public class UserService {
 
     /** Lève la coupure de messagerie (Lot B) — supprime aussi le document Firestore. */
     @Transactional
-    public UserEntity unmuteMessaging(UUID userId) {
+    public UserEntity unmuteMessaging(UUID userId, UUID adminId) {
         UserEntity user = userRepository.findById(userId)
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
@@ -383,7 +383,7 @@ public class UserService {
         user.setMessagingMutedUntil(null);
         UserEntity saved = userRepository.save(user);
 
-        auditService.log("USER", userId, "USER_MESSAGING_UNMUTED", userId, Map.of());
+        auditService.log("USER", userId, "USER_MESSAGING_UNMUTED", adminId, Map.of());
 
         // Même ordre que muteMessaging : l'écriture Firestore ferme la marche.
         firestoreService.clearMessagingMute(user.getFirebaseUid());

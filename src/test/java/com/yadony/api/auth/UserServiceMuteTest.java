@@ -41,6 +41,7 @@ class UserServiceMuteTest {
     @InjectMocks private UserService service;
 
     private static final UUID USER_ID = UUID.randomUUID();
+    private static final UUID ADMIN_ID = UUID.randomUUID();
     private static final String FIREBASE_UID = "uid-mute-001";
 
     private UserEntity user;
@@ -61,7 +62,7 @@ class UserServiceMuteTest {
     @Test
     @DisplayName("mute avec durée : fixe l'échéance et propage à Firestore avec l'UID Firebase")
     void muteMessaging_withDuration_setsDeadlineAndPropagatesToFirestore() {
-        UserEntity saved = service.muteMessaging(USER_ID, 24, "harcèlement");
+        UserEntity saved = service.muteMessaging(USER_ID, 24, "harcèlement", ADMIN_ID);
 
         assertThat(saved.getMessagingMutedUntil()).isAfter(Instant.now().plusSeconds(23 * 3600));
         verify(firestoreService).setMessagingMute(eq(FIREBASE_UID), any(Instant.class));
@@ -72,7 +73,7 @@ class UserServiceMuteTest {
     @Test
     @DisplayName("mute indéfini (durationHours null) : échéance à +100 ans")
     void muteMessaging_indefinite_setsFarFutureDeadline() {
-        UserEntity saved = service.muteMessaging(USER_ID, null, "fraude");
+        UserEntity saved = service.muteMessaging(USER_ID, null, "fraude", ADMIN_ID);
 
         // Une échéance très lointaine matérialise l'indéfini et garde la règle
         // Firestore à une seule comparaison.
@@ -85,7 +86,7 @@ class UserServiceMuteTest {
     void unmuteMessaging_clearsDeadlineAndDeletesFirestoreDoc() throws Exception {
         setField(user, "messagingMutedUntil", Instant.now().plusSeconds(3600));
 
-        UserEntity saved = service.unmuteMessaging(USER_ID);
+        UserEntity saved = service.unmuteMessaging(USER_ID, ADMIN_ID);
 
         assertThat(saved.getMessagingMutedUntil()).isNull();
         verify(firestoreService).clearMessagingMute(FIREBASE_UID);
@@ -97,7 +98,7 @@ class UserServiceMuteTest {
     void muteMessaging_userNotFound_throws404() {
         when(userRepository.findById(USER_ID)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.muteMessaging(USER_ID, 24, "spam"))
+        assertThatThrownBy(() -> service.muteMessaging(USER_ID, 24, "spam", ADMIN_ID))
                 .isInstanceOf(com.yadony.api.common.YadonyBusinessException.class)
                 .satisfies(e -> assertThat(((com.yadony.api.common.YadonyBusinessException) e).getStatus())
                         .isEqualTo(org.springframework.http.HttpStatus.NOT_FOUND));
@@ -109,7 +110,7 @@ class UserServiceMuteTest {
     void unmuteMessaging_userNotFound_throws404() {
         when(userRepository.findById(USER_ID)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.unmuteMessaging(USER_ID))
+        assertThatThrownBy(() -> service.unmuteMessaging(USER_ID, ADMIN_ID))
                 .isInstanceOf(com.yadony.api.common.YadonyBusinessException.class)
                 .satisfies(e -> assertThat(((com.yadony.api.common.YadonyBusinessException) e).getStatus())
                         .isEqualTo(org.springframework.http.HttpStatus.NOT_FOUND));

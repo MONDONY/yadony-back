@@ -63,6 +63,21 @@ class AdminUserControllerTest {
 
     // ── Lot B : coupure de messagerie ────────────────────────────────────────
 
+    private static final UUID ADMIN_ID = UUID.randomUUID();
+
+    /**
+     * L'identifiant de l'administrateur doit atteindre le service : c'est lui qui part dans
+     * {@code audit_log} comme acteur. Une trace qui designe la CIBLE ne pourra jamais etre
+     * corrigee, la table etant immuable.
+     */
+    private static org.springframework.security.core.Authentication adminAuth() {
+        var principal = new com.yadony.api.admin.account.AdminPrincipal(
+                ADMIN_ID, "admin@yadony.test",
+                com.yadony.api.admin.account.AdminRole.ADMIN, false, "uid-admin");
+        return new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                principal, null, java.util.List.of());
+    }
+
     @Test
     void muteMessaging_delegatesToService_andReturnsDetail() {
         AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact);
@@ -70,12 +85,13 @@ class AdminUserControllerTest {
                 com.yadony.api.auth.FirebaseContactService.Contact.EMPTY);
         UUID userId = UUID.randomUUID();
         com.yadony.api.auth.UserEntity user = new com.yadony.api.auth.UserEntity();
-        when(userService.muteMessaging(userId, 24, "harcèlement")).thenReturn(user);
+        when(userService.muteMessaging(userId, 24, "harcèlement", ADMIN_ID)).thenReturn(user);
 
-        var resp = controller.muteMessaging(userId, new com.yadony.api.admin.dto.MuteMessagingRequest(24, "harcèlement"));
+        var resp = controller.muteMessaging(userId,
+                new com.yadony.api.admin.dto.MuteMessagingRequest(24, "harcèlement"), adminAuth());
 
         assertThat(resp).isNotNull();
-        verify(userService).muteMessaging(userId, 24, "harcèlement");
+        verify(userService).muteMessaging(userId, 24, "harcèlement", ADMIN_ID);
     }
 
     @Test
@@ -84,12 +100,13 @@ class AdminUserControllerTest {
         when(firebaseContact.getContact(any())).thenReturn(
                 com.yadony.api.auth.FirebaseContactService.Contact.EMPTY);
         UUID userId = UUID.randomUUID();
-        when(userService.muteMessaging(userId, null, "fraude"))
+        when(userService.muteMessaging(userId, null, "fraude", ADMIN_ID))
                 .thenReturn(new com.yadony.api.auth.UserEntity());
 
-        controller.muteMessaging(userId, new com.yadony.api.admin.dto.MuteMessagingRequest(null, "fraude"));
+        controller.muteMessaging(userId,
+                new com.yadony.api.admin.dto.MuteMessagingRequest(null, "fraude"), adminAuth());
 
-        verify(userService).muteMessaging(userId, null, "fraude");
+        verify(userService).muteMessaging(userId, null, "fraude", ADMIN_ID);
     }
 
     @Test
@@ -99,12 +116,12 @@ class AdminUserControllerTest {
                 com.yadony.api.auth.FirebaseContactService.Contact.EMPTY);
         UUID userId = UUID.randomUUID();
         com.yadony.api.auth.UserEntity user = new com.yadony.api.auth.UserEntity();
-        when(userService.unmuteMessaging(userId)).thenReturn(user);
+        when(userService.unmuteMessaging(userId, ADMIN_ID)).thenReturn(user);
 
-        var resp = controller.unmuteMessaging(userId);
+        var resp = controller.unmuteMessaging(userId, adminAuth());
 
         assertThat(resp).isNotNull();
-        verify(userService).unmuteMessaging(userId);
+        verify(userService).unmuteMessaging(userId, ADMIN_ID);
     }
 
     @Test
