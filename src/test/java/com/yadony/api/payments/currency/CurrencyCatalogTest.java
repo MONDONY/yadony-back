@@ -12,7 +12,7 @@ class CurrencyCatalogTest {
 
     @Test
     void resolves_a_supported_preference_whatever_its_case() {
-        assertThat(catalog.resolve("xaf")).isEqualTo(SupportedCurrency.XAF);
+        assertThat(catalog.resolve("cad")).isEqualTo(SupportedCurrency.CAD);
         assertThat(catalog.resolve("XOF")).isEqualTo(SupportedCurrency.XOF);
         assertThat(catalog.resolve(" eur ")).isEqualTo(SupportedCurrency.EUR);
     }
@@ -43,7 +43,10 @@ class CurrencyCatalogTest {
     @Test
     void exposes_iso_codes_and_stripe_minor_units() {
         assertThat(SupportedCurrency.EUR.code()).isEqualTo("eur");
-        assertThat(SupportedCurrency.EUR.minorUnit()).isEqualTo(2);
+        assertThat(SupportedCurrency.USD.minorUnit()).isEqualTo(2);
+        assertThat(SupportedCurrency.CAD.minorUnit()).isEqualTo(2);
+        assertThat(SupportedCurrency.GBP.minorUnit()).isEqualTo(2);
+        assertThat(SupportedCurrency.CHF.minorUnit()).isEqualTo(2);
         assertThat(SupportedCurrency.XOF.minorUnit()).isZero();
         assertThat(SupportedCurrency.XAF.minorUnit()).isZero();
     }

@@ -9,20 +9,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 class SupportedCurrencyTest {
 
     @Test
-    @DisplayName("le catalogue est fermé à EUR, XOF, XAF depuis le 2026-08-19")
-    void catalogIsClosedToThreeCurrencies() {
-        // USD/CAD/GBP/CHF retirés (zéro compte réel en prod à cette date) — voir
-        // docs/specs/2026-08-19-plan-implementation-multidevise.md, lot 1.
+    @DisplayName("Le catalogue porte les sept devises derivees d'un pays")
+    void catalogHasSevenCurrencies() {
         assertThat(SupportedCurrency.values())
                 .containsExactlyInAnyOrder(
-                        SupportedCurrency.EUR, SupportedCurrency.XOF, SupportedCurrency.XAF);
-    }
-
-    @Test
-    @DisplayName("un code retiré du catalogue (ex. usd) retombe sur EUR sans exception")
-    void removedCodeFallsBackToEur() {
-        assertThat(SupportedCurrency.fromCode("usd")).isNull();
-        assertThat(SupportedCurrency.fromCodeOrDefault("usd")).isEqualTo(SupportedCurrency.EUR);
+                        SupportedCurrency.EUR,
+                        SupportedCurrency.USD,
+                        SupportedCurrency.CAD,
+                        SupportedCurrency.GBP,
+                        SupportedCurrency.CHF,
+                        SupportedCurrency.XOF,
+                        SupportedCurrency.XAF);
     }
 
     @Test

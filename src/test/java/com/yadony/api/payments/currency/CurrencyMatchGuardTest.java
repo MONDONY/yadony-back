@@ -19,7 +19,7 @@ class CurrencyMatchGuardTest {
 
     @Test
     void throwsCurrencyMismatchWhenDifferent() {
-        assertCurrencyMismatch("EUR", "XAF", "EUR", "XAF");
+        assertCurrencyMismatch("EUR", "CAD", "EUR", "CAD");
     }
 
     @Test

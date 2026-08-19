@@ -7,7 +7,7 @@ import jakarta.validation.constraints.Pattern;
 
 public record UserBusinessPrefsDto(
     @NotNull @Pattern(regexp = "kg|lbs") String weightUnit,
-    @NotNull @Pattern(regexp = "EUR|XOF|XAF") String currencyCode,
+    @NotNull @Pattern(regexp = "EUR|USD|CAD|GBP|CHF|XOF|XAF") String currencyCode,
     @NotNull @Min(1) @Max(50) Integer pickupRadiusKm,
     @NotNull @Min(1) @Max(50) Integer defaultPackageWeightKg,
     @NotNull @Min(0) @Max(50) Integer minBidPriceEur,

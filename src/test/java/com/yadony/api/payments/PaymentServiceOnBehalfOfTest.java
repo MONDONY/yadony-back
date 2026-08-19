@@ -207,24 +207,53 @@ class PaymentServiceOnBehalfOfTest {
     }
 
     @Test
-    void createEscrow_bidInCfaCurrency_rejectsBeforeTouchingStripe() {
-        // XOF/XAF ne paient jamais Stripe (zone CFA = pas un pays Connect, versement
-        // impossible — docs/specs/2026-08-19-multidevise-etat-des-lieux.md section 2.5).
-        // Remplace l'ancien test "usesBidCadOneToOne" : CAD retiré du catalogue le
-        // 2026-08-19 supprimait déjà la seule devise non-EUR compatible Stripe, mais
-        // XAF ne pouvait de toute façon jamais servir de remplaçant one-to-one puisque
-        // la carte lui est désormais interdite par construction (lot 1).
+    void success_usesBidCadOneToOne_ignoresDivergentRequestCurrency_withoutFxQuote() {
         UserEntity sender = buildSender();
+        UserEntity traveler = buildTraveler("acct_traveler_123", StripeAccountStatus.ONBOARDING_COMPLETE);
         when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
-        when(bidRepository.findById(bidId)).thenReturn(Optional.of(buildBid("XAF")));
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(buildBid("CAD")));
+        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.empty());
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(buildAnnouncement()));
+        when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler));
+        when(paymentRepository.save(any())).thenAnswer(inv -> {
+            PaymentEntity payment = inv.getArgument(0);
+            setId(payment, UUID.randomUUID());
+            return payment;
+        });
 
-        Throwable thrown = catchThrowable(
-                () -> service.createEscrow(buildRequest("EUR"), "uid-sender"));
+        try (MockedStatic<com.stripe.model.Account> accountStatic = mockStatic(com.stripe.model.Account.class);
+             MockedStatic<PaymentIntent> paymentIntentStatic = mockStatic(PaymentIntent.class)) {
+            com.stripe.model.Account account = mock(com.stripe.model.Account.class);
+            com.stripe.model.Account.Capabilities capabilities = mock(com.stripe.model.Account.Capabilities.class);
+            when(capabilities.getCardPayments()).thenReturn("active");
+            when(account.getCapabilities()).thenReturn(capabilities);
+            accountStatic.when(() -> com.stripe.model.Account.retrieve("acct_traveler_123"))
+                    .thenReturn(account);
 
-        assertThat(thrown).isInstanceOf(com.yadony.api.common.YadonyBusinessException.class);
-        assertThat(((com.yadony.api.common.YadonyBusinessException) thrown).getErrorCode())
-                .isEqualTo("payment-method-unavailable-for-currency");
-        verifyNoInteractions(paymentRepository, announcementRepository);
+            ArgumentCaptor<PaymentIntentCreateParams> paramsCaptor =
+                    ArgumentCaptor.forClass(PaymentIntentCreateParams.class);
+            PaymentIntent paymentIntent = mock(PaymentIntent.class);
+            when(paymentIntent.getId()).thenReturn("pi_cad");
+            when(paymentIntent.getClientSecret()).thenReturn("pi_cad_secret");
+            paymentIntentStatic.when(() -> PaymentIntent.create(paramsCaptor.capture()))
+                    .thenReturn(paymentIntent);
+
+            PaymentResponse response = service.createEscrow(buildRequest("EUR"), "uid-sender");
+
+            PaymentIntentCreateParams params = paramsCaptor.getValue();
+            assertThat(params.getAmount()).isEqualTo(2800L);
+            assertThat(params.getCurrency()).isEqualTo("cad");
+            assertThat(params.getExtraParams()).isNullOrEmpty();
+            assertThat(params.getMetadata()).doesNotContainKeys("fx_quote_id", "fx_exchange_rate");
+            assertThat(response.getAmount()).isEqualByComparingTo("28.00");
+            assertThat(response.getCommissionAmount()).isEqualByComparingTo("3.00");
+            assertThat(response.getCurrency()).isEqualTo("cad");
+
+            ArgumentCaptor<PaymentEntity> paymentCaptor = ArgumentCaptor.forClass(PaymentEntity.class);
+            verify(paymentRepository).save(paymentCaptor.capture());
+            assertThat(paymentCaptor.getValue().getCurrency()).isEqualTo("cad");
+            assertThat(paymentCaptor.getValue().getStripeFxQuoteId()).isNull();
+        }
     }
 
     @Test
@@ -249,13 +278,10 @@ class PaymentServiceOnBehalfOfTest {
     @Test
     void pendingLegacyEntityFxAmountAndCurrency_cancelsAndRecyclesEvenWhenStripeIntentMatchesServer()
             throws Exception {
-        // Catalogue réduit à EUR/XOF/XAF le 2026-08-19 (lot 1) — EUR remplace l'ancien
-        // exemple CAD, retiré du catalogue. Devise incidente à ce test de mécanique de
-        // recyclage d'un legacy FX quote, pas son sujet.
         UserEntity sender = buildSender();
         UserEntity traveler = buildTraveler("acct_traveler_123", StripeAccountStatus.ONBOARDING_COMPLETE);
         when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
-        BidEntity bid = buildBid("EUR");
+        BidEntity bid = buildBid("CAD");
         bid.setCommissionRate(new BigDecimal("0.12"));
         when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
         when(announcementRepository.findById(annId)).thenReturn(Optional.of(buildAnnouncement()));
@@ -280,7 +306,7 @@ class PaymentServiceOnBehalfOfTest {
             PaymentIntent legacyPi = mock(PaymentIntent.class);
             when(legacyPi.getStatus()).thenReturn("requires_payment_method", "canceled");
             when(legacyPi.getAmount()).thenReturn(2800L);
-            when(legacyPi.getCurrency()).thenReturn("eur");
+            when(legacyPi.getCurrency()).thenReturn("cad");
             when(legacyPi.cancel(any(PaymentIntentCancelParams.class))).thenReturn(legacyPi);
             paymentIntentStatic.when(() -> PaymentIntent.retrieve("pi_legacy_fx"))
                     .thenReturn(legacyPi);
@@ -295,21 +321,21 @@ class PaymentServiceOnBehalfOfTest {
             ArgumentCaptor<PaymentIntentCreateParams> paramsCaptor =
                     ArgumentCaptor.forClass(PaymentIntentCreateParams.class);
             PaymentIntent freshPi = mock(PaymentIntent.class);
-            when(freshPi.getId()).thenReturn("pi_fresh_eur");
-            when(freshPi.getClientSecret()).thenReturn("pi_fresh_eur_secret");
+            when(freshPi.getId()).thenReturn("pi_fresh_cad");
+            when(freshPi.getClientSecret()).thenReturn("pi_fresh_cad_secret");
             paymentIntentStatic.when(() -> PaymentIntent.create(paramsCaptor.capture()))
                     .thenReturn(freshPi);
 
             PaymentResponse response = service.createEscrow(buildRequest(), "uid-sender");
 
-            assertThat(response.getStripePaymentIntentId()).isEqualTo("pi_fresh_eur");
+            assertThat(response.getStripePaymentIntentId()).isEqualTo("pi_fresh_cad");
             assertThat(paramsCaptor.getValue().getAmount()).isEqualTo(2800L);
-            assertThat(paramsCaptor.getValue().getCurrency()).isEqualTo("eur");
+            assertThat(paramsCaptor.getValue().getCurrency()).isEqualTo("cad");
             verify(legacyPi).cancel(any(PaymentIntentCancelParams.class));
             verify(paymentRepository).save(legacy);
-            assertThat(legacy.getStripePaymentIntentId()).isEqualTo("pi_fresh_eur");
+            assertThat(legacy.getStripePaymentIntentId()).isEqualTo("pi_fresh_cad");
             assertThat(legacy.getAmount()).isEqualByComparingTo("28.00");
-            assertThat(legacy.getCurrency()).isEqualTo("eur");
+            assertThat(legacy.getCurrency()).isEqualTo("cad");
             assertThat(legacy.getStripeFxQuoteId()).isNull();
             assertThat(legacy.getFxExchangeRate()).isNull();
             assertThat(legacy.getFxQuoteExpiresAt()).isNull();

@@ -762,23 +762,81 @@ class PaymentServiceTest {
     // ── createNegotiationEscrow (Model B) ─────────────────────────────────────
 
     @Test
-    void createNegotiationEscrow_cfaCurrency_rejectsBeforeTouchingStripe() {
-        // XOF/XAF ne paient jamais Stripe (zone CFA = pas un pays Connect, versement
-        // impossible — docs/specs/2026-08-19-multidevise-etat-des-lieux.md section 2.5).
-        // Remplace l'ancien test "usesServerCadOneToOne" : le catalogue réduit le
-        // 2026-08-19 (lot 1) ne laisse plus aucune devise non-EUR compatible Stripe,
-        // donc plus aucun scénario "passthrough 1:1 sans FX" valide pour ce test.
+    void createNegotiationEscrow_usesServerCadOneToOne_withoutFxQuote() throws Exception {
         UUID threadId = UUID.randomUUID();
+
+        // sender and traveler
         UserEntity sender = buildUser(senderId, "uid-sender");
+        sender.setStripeCustomerId("cus_existing"); // évite Customer.create (statique non mocké)
+        UserEntity traveler = buildUser(travelerId, "uid-traveler");
+        traveler.setStripeAccountId("acct_traveler");
+        traveler.setStripeAccountStatus(StripeAccountStatus.ONBOARDING_COMPLETE);
+
         when(userRepository.findById(senderId)).thenReturn(Optional.of(sender));
+        when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler));
+        when(paymentRepository.findByNegotiationThreadId(threadId)).thenReturn(Optional.empty());
+        when(paymentRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        Throwable thrown = catchThrowable(() -> service.createNegotiationEscrow(
-                threadId, senderId, travelerId, new BigDecimal("35.00"), null, "XAF"));
+        // net = 35 €, rate = 0.12 → gross = 39.20 €, commission = 4.20 €
+        BigDecimal netAmount = new BigDecimal("35.00");
 
-        assertThat(thrown).isInstanceOf(com.yadony.api.common.YadonyBusinessException.class);
-        assertThat(((com.yadony.api.common.YadonyBusinessException) thrown).getErrorCode())
-                .isEqualTo("payment-method-unavailable-for-currency");
-        verifyNoInteractions(paymentRepository);
+        try (MockedStatic<Account> acctStatic = mockStatic(Account.class);
+             MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class)) {
+
+            // ensureCardPaymentsCapability calls Account.retrieve
+            Account mockAccount = mock(Account.class);
+            com.stripe.model.Account.Capabilities caps = mock(com.stripe.model.Account.Capabilities.class);
+            when(caps.getCardPayments()).thenReturn("active");
+            when(mockAccount.getCapabilities()).thenReturn(caps);
+            acctStatic.when(() -> Account.retrieve("acct_traveler")).thenReturn(mockAccount);
+
+            // PaymentIntent.create — capture the params
+            PaymentIntent mockPi = mock(PaymentIntent.class);
+            when(mockPi.getId()).thenReturn("pi_negotiation_123");
+            when(mockPi.getClientSecret()).thenReturn("pi_negotiation_123_secret");
+
+            java.util.concurrent.atomic.AtomicReference<PaymentIntentCreateParams> capturedParams =
+                    new java.util.concurrent.atomic.AtomicReference<>();
+            piStatic.when(() -> PaymentIntent.create(any(PaymentIntentCreateParams.class)))
+                    .thenAnswer(inv -> {
+                        capturedParams.set(inv.getArgument(0));
+                        return mockPi;
+                    });
+
+            PaymentResponse resp = service.createNegotiationEscrow(
+                    threadId, senderId, travelerId, netAmount, null, "CAD");
+
+            // Modèle "separate charges and transfers" : on encaisse le gross sur la
+            // plateforme, SANS application_fee_amount ni transfer_data (Stripe rejette
+            // application_fee_amount sans transfer_data). La commission est versée
+            // implicitement via le Transfer(net) à la livraison (DeliveryEventListener).
+            PaymentIntentCreateParams params = capturedParams.get();
+            assertThat(params).isNotNull();
+            assertThat(params.getAmount()).isEqualTo(3920L);               // 39.20 CAD, sans conversion
+            assertThat(params.getCurrency()).isEqualTo("cad");
+            assertThat(params.getExtraParams()).isNullOrEmpty();
+            assertThat(params.getMetadata()).doesNotContainKeys("fx_quote_id", "fx_exchange_rate");
+            assertThat(params.getApplicationFeeAmount()).isNull();         // PAS de fee ici
+            assertThat(params.getTransferData()).isNull();                 // pas de destination charge
+            assertThat(params.getOnBehalfOf()).isNull();                   // retiré (incompatible PayPal)
+            assertThat(params.getPaymentMethodTypes()).containsExactly("card", "paypal");
+
+            // L'entité paiement enregistre toujours gross + commission : la commission
+            // sert au calcul du Transfer(net = gross - commission) à la livraison.
+            assertThat(resp.getAmount()).isEqualByComparingTo(new BigDecimal("39.20"));
+            assertThat(resp.getCommissionAmount()).isEqualByComparingTo(new BigDecimal("4.20"));
+            assertThat(resp.getCurrency()).isEqualTo("cad");
+
+            var paymentCaptor = org.mockito.ArgumentCaptor.forClass(PaymentEntity.class);
+            verify(paymentRepository).save(paymentCaptor.capture());
+            PaymentEntity saved = paymentCaptor.getValue();
+            assertThat(saved.getAmount()).isEqualByComparingTo("39.20");
+            assertThat(saved.getCommissionAmount()).isEqualByComparingTo("4.20");
+            assertThat(saved.getCurrency()).isEqualTo("cad");
+            assertThat(saved.getStripeFxQuoteId()).isNull();
+            assertThat(saved.getFxExchangeRate()).isNull();
+            assertThat(saved.getFxQuoteExpiresAt()).isNull();
+        }
     }
 
     @Test
@@ -1034,9 +1092,6 @@ class PaymentServiceTest {
 
     @Test
     void createNegotiationEscrow_pendingLegacyStripeFxAmountAndCurrency_cancelsAndRecycles() throws Exception {
-        // Catalogue réduit à EUR/XOF/XAF le 2026-08-19 (lot 1) — EUR remplace l'ancien
-        // exemple CAD, retiré du catalogue. Devise incidente à ce test de mécanique de
-        // recyclage d'un legacy FX quote, pas son sujet.
         UUID threadId = UUID.randomUUID();
         UserEntity sender = buildUser(senderId, "uid-sender");
         sender.setStripeCustomerId("cus_existing");
@@ -1052,7 +1107,7 @@ class PaymentServiceTest {
         legacy.setStripePaymentIntentId("pi_legacy_fx");
         legacy.setAmount(new BigDecimal("39.20"));
         legacy.setCommissionAmount(new BigDecimal("4.20"));
-        legacy.setCurrency("EUR");
+        legacy.setCurrency("CAD");
         legacy.setStripeFxQuoteId("fxq_legacy");
         legacy.setFxExchangeRate(new BigDecimal("0.6800000000"));
         legacy.setFxQuoteExpiresAt(java.time.Instant.parse("2026-08-09T10:00:00Z"));
@@ -1076,18 +1131,18 @@ class PaymentServiceTest {
             acctStatic.when(() -> Account.retrieve("acct_traveler")).thenReturn(mockAccount);
 
             PaymentIntent freshPi = mock(PaymentIntent.class);
-            when(freshPi.getId()).thenReturn("pi_fresh_eur");
-            when(freshPi.getClientSecret()).thenReturn("pi_fresh_eur_secret");
+            when(freshPi.getId()).thenReturn("pi_fresh_cad");
+            when(freshPi.getClientSecret()).thenReturn("pi_fresh_cad_secret");
             piStatic.when(() -> PaymentIntent.create(any(PaymentIntentCreateParams.class)))
                     .thenReturn(freshPi);
 
             PaymentResponse response = service.createNegotiationEscrow(
-                    threadId, senderId, travelerId, new BigDecimal("35.00"), null, "EUR");
+                    threadId, senderId, travelerId, new BigDecimal("35.00"), null, "CAD");
 
-            assertThat(response.getStripePaymentIntentId()).isEqualTo("pi_fresh_eur");
+            assertThat(response.getStripePaymentIntentId()).isEqualTo("pi_fresh_cad");
             verify(legacyPi).cancel(any(PaymentIntentCancelParams.class));
             verify(paymentRepository).save(legacy);
-            assertThat(legacy.getStripePaymentIntentId()).isEqualTo("pi_fresh_eur");
+            assertThat(legacy.getStripePaymentIntentId()).isEqualTo("pi_fresh_cad");
             assertThat(legacy.getStripeFxQuoteId()).isNull();
             assertThat(legacy.getFxExchangeRate()).isNull();
             assertThat(legacy.getFxQuoteExpiresAt()).isNull();

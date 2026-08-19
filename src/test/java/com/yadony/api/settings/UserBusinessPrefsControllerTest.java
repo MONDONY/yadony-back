@@ -73,17 +73,16 @@ class UserBusinessPrefsControllerTest {
     }
 
     @Test
-    void putPrefs_rejectsCurrencyRemovedFromCatalog() throws Exception {
-        // Catalogue réduit à EUR/XOF/XAF le 2026-08-19 (zéro compte réel en prod à
-        // cette date) — voir docs/specs/2026-08-19-plan-implementation-multidevise.md,
-        // lot 1. CAD était accepté avant cette réduction.
+    void putPrefs_acceptsNorthAmericanCurrency() throws Exception {
         UserBusinessPrefsDto dto = new UserBusinessPrefsDto("kg", "CAD", 20, 30, 5, "call", 2, null);
+        when(service.upsert(eq(FIREBASE_UID), any())).thenReturn(dto);
 
         mockMvc.perform(put("/users/me/business-preferences")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(dto))
                         .with(authentication(asUser())))
-                .andExpect(status().isUnprocessableEntity());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.currencyCode").value("CAD"));
     }
 
     @Test

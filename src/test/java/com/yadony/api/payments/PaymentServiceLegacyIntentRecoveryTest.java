@@ -89,7 +89,7 @@ class PaymentServiceLegacyIntentRecoveryTest {
 
     @Test
     void bidRetrieveFailure_propagatesWithoutMutationRecycleOrCreate() throws Exception {
-        PaymentEntity existing = bidPayment("pi_legacy", "28.00", "eur");
+        PaymentEntity existing = bidPayment("pi_legacy", "28.00", "cad");
         stubExistingBid(existing, new BigDecimal("0.12"), null);
         StripeException stripeFailure = mock(StripeException.class);
         when(stripeGateway.retrievePaymentIntent("pi_legacy")).thenThrow(stripeFailure);
@@ -185,7 +185,7 @@ class PaymentServiceLegacyIntentRecoveryTest {
     @Test
     void existingBidWithConsumedPromoAndChangedOverride_reusesPersistedRate() throws Exception {
         BidEntity bid = stubExistingBid(
-                bidPayment("pi_existing", "26.50", "eur"),
+                bidPayment("pi_existing", "26.50", "cad"),
                 new BigDecimal("0.06"),
                 "ONEUSE");
         UUID promoId = UUID.randomUUID();
@@ -202,7 +202,7 @@ class PaymentServiceLegacyIntentRecoveryTest {
         PaymentIntent compatible = mock(PaymentIntent.class);
         when(compatible.getStatus()).thenReturn("requires_payment_method");
         when(compatible.getAmount()).thenReturn(2650L);
-        when(compatible.getCurrency()).thenReturn("eur");
+        when(compatible.getCurrency()).thenReturn("cad");
         when(compatible.getClientSecret()).thenReturn("pi_existing_secret");
         when(compatible.getPaymentMethodTypes()).thenReturn(java.util.List.of("card"));
         when(stripeGateway.retrievePaymentIntent("pi_existing")).thenReturn(compatible);
@@ -222,7 +222,7 @@ class PaymentServiceLegacyIntentRecoveryTest {
 
     @Test
     void existingBidWithoutPersistedCommissionRate_failsClosedWithoutSideEffects() throws Exception {
-        PaymentEntity existing = bidPayment("pi_existing", "26.50", "eur");
+        PaymentEntity existing = bidPayment("pi_existing", "26.50", "cad");
         BidEntity bid = stubExistingBid(existing, null, "WELCOME6");
         UUID promoId = UUID.randomUUID();
         bid.setPromoCodeId(promoId);
@@ -385,10 +385,7 @@ class PaymentServiceLegacyIntentRecoveryTest {
         bid.setSenderId(senderId);
         bid.setWeightKg(new BigDecimal("5.00"));
         bid.setStatus(BidStatus.ACCEPTED);
-        // Catalogue réduit à EUR/XOF/XAF le 2026-08-19 (lot 1) — EUR remplace l'ancien
-        // exemple CAD, retiré du catalogue. Devise incidente à ces tests de mécanique
-        // de reprise/recyclage Stripe, pas leur sujet.
-        bid.setCurrency("EUR");
+        bid.setCurrency("CAD");
         bid.setCommissionRate(persistedRate);
         bid.setPromoCode(promoCode);
         return bid;

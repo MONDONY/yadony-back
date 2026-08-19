@@ -24,6 +24,18 @@ class CurrencyPaymentRailsTest {
                 .containsExactlyInAnyOrder(PaymentMethod.STRIPE, PaymentMethod.CASH);
     }
 
+    @Test
+    @DisplayName("Les devises hors zone CFA acceptent la carte et les especes")
+    void connectCurrenciesAllowStripeAndCash() {
+        for (SupportedCurrency currency : new SupportedCurrency[] {
+                SupportedCurrency.EUR, SupportedCurrency.USD, SupportedCurrency.CAD,
+                SupportedCurrency.GBP, SupportedCurrency.CHF }) {
+            assertThat(CurrencyPaymentRails.allowedFor(currency))
+                    .as("rails de %s", currency)
+                    .containsExactlyInAnyOrder(PaymentMethod.STRIPE, PaymentMethod.CASH);
+        }
+    }
+
     @ParameterizedTest
     @EnumSource(value = SupportedCurrency.class, names = {"XOF", "XAF"})
     @DisplayName("La zone CFA refuse Stripe et garde especes + mobile money")

@@ -10,11 +10,11 @@ class CurrencyAmountTest {
 
     @Test
     void converts_two_decimal_currency_to_minor_units_with_half_up_rounding() {
-        CurrencyAmount amount = CurrencyAmount.of(new BigDecimal("12.345"), SupportedCurrency.EUR);
+        CurrencyAmount amount = CurrencyAmount.of(new BigDecimal("12.345"), SupportedCurrency.CAD);
 
         assertThat(amount.major()).isEqualByComparingTo("12.35");
         assertThat(amount.minor()).isEqualTo(1235L);
-        assertThat(amount.currency()).isEqualTo(SupportedCurrency.EUR);
+        assertThat(amount.currency()).isEqualTo(SupportedCurrency.CAD);
     }
 
     @Test

@@ -4,6 +4,10 @@ import java.util.Locale;
 
 public enum SupportedCurrency {
     EUR("eur", 2, "1", "\u20AC"),
+    USD("usd", 2, "1.08", "$"),
+    CAD("cad", 2, "1.47", "CA$"),
+    GBP("gbp", 2, "0.86", "\u00A3"),
+    CHF("chf", 2, "0.95", "CHF"),
     XOF("xof", 0, "655.957", "F CFA"),
     XAF("xaf", 0, "655.957", "FCFA");
 

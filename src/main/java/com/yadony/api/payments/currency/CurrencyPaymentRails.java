@@ -26,8 +26,13 @@ public final class CurrencyPaymentRails {
 
     private static Map<SupportedCurrency, Set<PaymentMethod>> buildTable() {
         Map<SupportedCurrency, Set<PaymentMethod>> table = new EnumMap<>(SupportedCurrency.class);
-        table.put(SupportedCurrency.EUR,
-                EnumSet.of(PaymentMethod.STRIPE, PaymentMethod.CASH));
+        EnumSet<PaymentMethod> connectRails =
+                EnumSet.of(PaymentMethod.STRIPE, PaymentMethod.CASH);
+        table.put(SupportedCurrency.EUR, connectRails);
+        table.put(SupportedCurrency.USD, connectRails);
+        table.put(SupportedCurrency.CAD, connectRails);
+        table.put(SupportedCurrency.GBP, connectRails);
+        table.put(SupportedCurrency.CHF, connectRails);
         Set<PaymentMethod> cfaRails =
                 EnumSet.of(PaymentMethod.CASH, PaymentMethod.WAVE, PaymentMethod.ORANGE_MONEY);
         table.put(SupportedCurrency.XOF, cfaRails);

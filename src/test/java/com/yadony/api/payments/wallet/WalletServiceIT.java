@@ -64,16 +64,12 @@ class WalletServiceIT {
 
     @Test
     void currencyScopedOperations_persistIsolatedBalancesAndTransactionCurrencies() {
-        // Catalogue réduit à EUR/XOF/XAF le 2026-08-19 (lot 1, migration V223) — XAF
-        // remplace l'ancien exemple CAD, retiré du catalogue et donc désormais rejeté
-        // par la contrainte CHECK chk_wallet_accounts_currency (exactement ce que ce
-        // test vérifie en creusant jusqu'à la vraie base).
         UUID userId = persistUser();
 
         walletService.credit(userId, "EUR", new BigDecimal("20.00"),
                 WalletTransactionType.TOP_UP, "pi-eur", "wallet-it-eur");
-        walletService.credit(userId, "XAF", new BigDecimal("15.00"),
-                WalletTransactionType.TOP_UP, "pi-xaf", "wallet-it-xaf");
+        walletService.credit(userId, "CAD", new BigDecimal("15.00"),
+                WalletTransactionType.TOP_UP, "pi-cad", "wallet-it-cad");
         walletService.debit(userId, "EUR", new BigDecimal("5.00"),
                 WalletTransactionType.BID_PAYMENT, null);
 
@@ -84,18 +80,18 @@ class WalletServiceIT {
         WalletAccountEntity eurWallet = walletAccountRepository
                 .findByUserIdAndCurrency(userId, "EUR")
                 .orElseThrow();
-        WalletAccountEntity xafWallet = walletAccountRepository
-                .findByUserIdAndCurrency(userId, "XAF")
+        WalletAccountEntity cadWallet = walletAccountRepository
+                .findByUserIdAndCurrency(userId, "CAD")
                 .orElseThrow();
         List<WalletTransactionEntity> transactions = walletTransactionRepository
                 .findByUserIdOrderByCreatedAtDesc(userId, PageRequest.of(0, 10))
                 .getContent();
 
         assertThat(eurWallet.getBalance()).isEqualByComparingTo("15.00");
-        assertThat(xafWallet.getBalance()).isEqualByComparingTo("15.00");
+        assertThat(cadWallet.getBalance()).isEqualByComparingTo("15.00");
         assertThat(transactions)
                 .extracting(WalletTransactionEntity::getCurrency)
-                .containsExactlyInAnyOrder("EUR", "XAF", "EUR");
+                .containsExactlyInAnyOrder("EUR", "CAD", "EUR");
     }
 
     private UUID persistUser() {
