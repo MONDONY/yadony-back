@@ -11,17 +11,16 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class ReferralConfig {
 
-    /** Amount credited to the referrer on the referee's first delivery (in euro cents). */
-    private int rewardAmountCents = 500;
+    // Le montant versé au premier envoi du filleul (rewardAmountCents) n'a plus
+    // d'objet depuis le lot 3 (2026-08-19/20) : le parrainage octroie un bon de
+    // réduction de commission, configuré séparément sous yadony.voucher.* — voir
+    // com.yadony.api.voucher.VoucherConfig.
 
     /** Maximum number of invitations a user may send. */
     private int maxInvitationsPerUser = 50;
 
     /** Minimum days between two consecutive code regenerations. */
     private int codeRegenerationCooldownDays = 30;
-
-    public int getRewardAmountCents() { return rewardAmountCents; }
-    public void setRewardAmountCents(int rewardAmountCents) { this.rewardAmountCents = rewardAmountCents; }
 
     public int getMaxInvitationsPerUser() { return maxInvitationsPerUser; }
     public void setMaxInvitationsPerUser(int maxInvitationsPerUser) { this.maxInvitationsPerUser = maxInvitationsPerUser; }

@@ -6,6 +6,8 @@ import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.config.PlatformSettingsTestFactory;
 import com.yadony.api.promo.PromoCodeTarget;
 import com.yadony.api.promo.PromoService;
+import com.yadony.api.voucher.CommissionVoucherEntity;
+import com.yadony.api.voucher.CommissionVoucherService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -28,11 +30,18 @@ class CommissionRateResolverTest {
 
     @Mock UserRepository userRepository;
     @Mock PromoService promoService;
+    @Mock CommissionVoucherService voucherService;
 
     private CommissionRateResolver resolver() {
         return new CommissionRateResolver(userRepository,
                 PlatformSettingsTestFactory.withCommissionRate(new BigDecimal("0.12")),
-                promoService);
+                promoService, voucherService);
+    }
+
+    private CommissionVoucherEntity activeVoucher(BigDecimal factor) {
+        CommissionVoucherEntity v = mock(CommissionVoucherEntity.class);
+        lenient().when(v.getFactor()).thenReturn(factor);
+        return v;
     }
 
     private UserEntity withOverride(BigDecimal rate) {
@@ -155,5 +164,51 @@ class CommissionRateResolverTest {
     private static org.assertj.core.api.AbstractThrowableAssert<?, ? extends Throwable>
             assertThatThrownBy(org.assertj.core.api.ThrowableAssert.ThrowingCallable code) {
         return org.assertj.core.api.Assertions.assertThatThrownBy(code);
+    }
+
+    // ── Phase 3 : bon de réduction (lot 3) — multiplicatif, après le promo ────
+
+    @Test
+    void voucher_multipliesRateAfterPromo() {
+        UUID t = UUID.randomUUID();
+        UUID s = UUID.randomUUID();
+        // Base = min(global 0.12, aucun override) = 0.12 ; bon × 0.5 → 0.06.
+        lenient().when(userRepository.findById(any())).thenReturn(Optional.of(withOverride(null)));
+        CommissionVoucherEntity voucher = activeVoucher(new BigDecimal("0.50"));
+        when(voucherService.peekActive(s)).thenReturn(Optional.of(voucher));
+
+        assertThat(resolver().resolve(t, s)).isEqualByComparingTo("0.06");
+    }
+
+    @Test
+    void voucher_appliesAfterPromoSubtraction_multiplicativeOnRemainder() {
+        UUID t = UUID.randomUUID();
+        UUID s = UUID.randomUUID();
+        // Base 0.12 - promo 0.02 = 0.10 ; bon × 0.5 → 0.05 (pas 0.12×0.5 - 0.02).
+        lenient().when(userRepository.findById(any())).thenReturn(Optional.of(withOverride(null)));
+        when(promoService.validateAndGetRate(eq("SMALL2"), eq(s), any())).thenReturn(new BigDecimal("0.02"));
+        CommissionVoucherEntity voucher = activeVoucher(new BigDecimal("0.50"));
+        when(voucherService.peekActive(s)).thenReturn(Optional.of(voucher));
+
+        assertThat(resolver().resolve(t, s, "SMALL2")).isEqualByComparingTo("0.05");
+    }
+
+    @Test
+    void noVoucher_rateUnchanged() {
+        UUID t = UUID.randomUUID();
+        UUID s = UUID.randomUUID();
+        lenient().when(userRepository.findById(any())).thenReturn(Optional.of(withOverride(null)));
+        when(voucherService.peekActive(s)).thenReturn(Optional.empty());
+
+        assertThat(resolver().resolve(t, s)).isEqualByComparingTo("0.12");
+    }
+
+    @Test
+    void voucher_neverConsultedWhenSenderUnknown() {
+        UUID t = UUID.randomUUID();
+        lenient().when(userRepository.findById(any())).thenReturn(Optional.of(withOverride(null)));
+
+        assertThat(resolver().resolve(t)).isEqualByComparingTo("0.12");
+        org.mockito.Mockito.verifyNoInteractions(voucherService);
     }
 }

@@ -5,6 +5,7 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.config.PlatformSettingsService;
 import com.yadony.api.promo.PromoCodeTarget;
 import com.yadony.api.promo.PromoService;
+import com.yadony.api.voucher.CommissionVoucherService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -26,6 +27,11 @@ import java.util.UUID;
  *       taux égale ou dépasse le taux de base annule donc entièrement la commission au lieu
  *       de rester sans effet (régression WELCOME05 : 5 % de promo = 5 % de taux global
  *       depuis le passage 12 %→5 % ne faisait auparavant gagner aucune remise réelle).</li>
+ *   <li><b>Phase 3</b> (lot 3) — si l'expéditeur détient un bon de parrainage actif : son
+ *       facteur (0,5 par défaut) est appliqué en MULTIPLICATION sur ce qui reste après le
+ *       promo, jamais avant. Contrairement au promo, aucun code à saisir : c'est automatique
+ *       dès qu'un bon est disponible. Ne consomme rien ici — {@link CommissionVoucherService#peekActive}
+ *       est une lecture pure, la consommation a lieu à la charge effective de la commission.</li>
  * </ol>
  */
 @Service
@@ -36,13 +42,16 @@ public class CommissionRateResolver {
     private final UserRepository userRepository;
     private final PlatformSettingsService settings;
     private final PromoService promoService;
+    private final CommissionVoucherService voucherService;
 
     public CommissionRateResolver(UserRepository userRepository,
                                   PlatformSettingsService settings,
-                                  PromoService promoService) {
+                                  PromoService promoService,
+                                  CommissionVoucherService voucherService) {
         this.userRepository = userRepository;
         this.settings = settings;
         this.promoService = promoService;
+        this.voucherService = voucherService;
     }
 
     /**
@@ -98,6 +107,21 @@ public class CommissionRateResolver {
      * la commission négative).
      */
     public BigDecimal resolve(UUID travelerId, UUID senderId, String promoCode, UUID promoUserId) {
+        return resolve(travelerId, senderId, promoCode, promoUserId, null);
+    }
+
+    /**
+     * Même résolution, rattachée à une transaction identifiée.
+     *
+     * @param reference bid ou fil de négociation auquel se rattache le prélèvement. Quand
+     *                  il est fourni, le bon pris en compte est celui DÉJÀ consommé pour
+     *                  cette référence s'il existe, sinon le plus ancien disponible : un
+     *                  réessai de prélèvement ne peut donc plus faire remonter le taux
+     *                  après que le bon a été consommé. Toujours une lecture pure — la
+     *                  consommation reste à la charge du point d'engagement financier.
+     */
+    public BigDecimal resolve(UUID travelerId, UUID senderId, String promoCode, UUID promoUserId,
+                              UUID reference) {
         BigDecimal rate = globalRate();
         rate = minNullable(rate, overrideOf(travelerId));
         rate = minNullable(rate, overrideOf(senderId));
@@ -106,7 +130,16 @@ public class CommissionRateResolver {
                     promoCode, promoUserId, PromoCodeTarget.SENDER);
             rate = rate.subtract(promoRate).max(BigDecimal.ZERO);
         }
-        return rate;
+        if (senderId != null) {
+            BigDecimal beforeVoucher = rate;
+            var voucher = reference == null
+                    ? voucherService.peekActive(senderId)
+                    : voucherService.peekForReference(senderId, reference);
+            rate = voucher
+                    .map(v -> beforeVoucher.multiply(v.getFactor()))
+                    .orElse(beforeVoucher);
+        }
+        return rate.max(BigDecimal.ZERO);
     }
 
     private BigDecimal overrideOf(UUID userId) {

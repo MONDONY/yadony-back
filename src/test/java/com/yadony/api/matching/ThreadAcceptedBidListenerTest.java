@@ -6,6 +6,7 @@ import com.yadony.api.matching.events.BidMaterializedEvent;
 import com.yadony.api.promo.PromoService;
 import com.yadony.api.requests.event.PackageRequestAcceptedEvent;
 import com.yadony.api.requests.event.PackageRequestDetailsCompletedEvent;
+import com.yadony.api.voucher.CommissionVoucherService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -39,6 +40,7 @@ class ThreadAcceptedBidListenerTest {
     @Mock StorageService storageService;
     @Mock BidPhotoService bidPhotoService;
     @Mock PromoService promoService;
+    @Mock CommissionVoucherService voucherService;
     @InjectMocks ThreadAcceptedBidListener listener;
 
     private static final UUID THREAD_ID = UUID.randomUUID();
@@ -159,6 +161,29 @@ class ThreadAcceptedBidListenerTest {
 
             listener.onPackageRequestAccepted(
                     buildEvent(com.yadony.api.payments.cash.PaymentMethod.STRIPE, null, "WELCOME6", new BigDecimal("0.06")));
+
+            verify(bidRepository, atLeastOnce()).save(any());
+        }
+
+        @Test
+        @DisplayName("bon de parrainage (lot 3) : consume() toujours tenté avec le bid_id fraîchement matérialisé")
+        void voucherConsumeAlwaysAttempted() {
+            UUID bidId = UUID.randomUUID();
+            saveSetsId(bidId);
+
+            listener.onPackageRequestAccepted(buildEvent());
+
+            verify(voucherService).consume(SENDER_ID, bidId);
+        }
+
+        @Test
+        @DisplayName("consommation du bon échoue → matérialisation du bid non impactée (best-effort)")
+        void voucherConsumeFailure_doesNotBreakMaterialization() {
+            UUID bidId = UUID.randomUUID();
+            saveSetsId(bidId);
+            when(voucherService.consume(any(), any())).thenThrow(new RuntimeException("boom"));
+
+            listener.onPackageRequestAccepted(buildEvent());
 
             verify(bidRepository, atLeastOnce()).save(any());
         }

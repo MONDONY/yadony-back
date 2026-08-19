@@ -44,6 +44,7 @@ Fonctionnalité: Gestion des paiements en escrow
   Scénario: Onboarding Stripe Connect — création, lien et rafraîchissement
     Etant donné un utilisateur VOYAGEUR enregistré avec l'uid "connect-001" et le téléphone "+33699000007"
     Et le voyageur "connect-001" n'a pas encore de compte Stripe
+    Et le voyageur "connect-001" a pour pays "FR"
     Etant donné l'utilisateur "connect-001" est authentifié en tant que VOYAGEUR
     Quand je consulte le statut de mon compte Stripe Connect
     Alors la réponse HTTP est 200

@@ -58,19 +58,22 @@ public class DeliveryEventListener {
     private final ApplicationEventPublisher eventPublisher;
     private final BidRepository bidRepository;
     private final AdminAlertService adminAlert;
+    private final com.yadony.api.voucher.CommissionVoucherService voucherService;
 
     public DeliveryEventListener(PaymentRepository paymentRepository,
                                  UserRepository userRepository,
                                  AuditService auditService,
                                  ApplicationEventPublisher eventPublisher,
                                  BidRepository bidRepository,
-                                 AdminAlertService adminAlert) {
+                                 AdminAlertService adminAlert,
+                                 com.yadony.api.voucher.CommissionVoucherService voucherService) {
         this.paymentRepository = paymentRepository;
         this.userRepository = userRepository;
         this.auditService = auditService;
         this.eventPublisher = eventPublisher;
         this.bidRepository = bidRepository;
         this.adminAlert = adminAlert;
+        this.voucherService = voucherService;
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -205,6 +208,11 @@ public class DeliveryEventListener {
         //     net = total - commission - transferFees
         // Pour l'instant on assume Transfers EUR gratuits (zone SEPA / hypothèse MVP).
         BigDecimal net = payment.getAmount().subtract(payment.getCommissionAmount());
+        // Bon de parrainage du voyageur (lot 3) : majore le versement de la part de
+        // commission que le bon lui épargne. Le brut payé par l'expéditeur ne change
+        // pas — seul ce que yadony retient diminue. Best-effort : un souci côté bon ne
+        // doit jamais bloquer la libération de l'escrow.
+        net = net.add(travelerVoucherTopUp(event.getTravelerId(), event.getBidId(), payment.getCommissionAmount()));
         SupportedCurrency currency = SupportedCurrency.fromCode(payment.getCurrency());
         if (currency == null) {
             currency = SupportedCurrency.EUR;
@@ -228,5 +236,24 @@ public class DeliveryEventListener {
                 RequestOptions.builder()
                         .setIdempotencyKey("transfer-" + payment.getId())
                         .build());
+    }
+
+    /**
+     * Part de {@code commissionAmount} rendue au voyageur s'il détient un bon actif
+     * (consommé dans le même geste) — {@code commissionAmount × (1 − facteur)}, donc
+     * la moitié avec le facteur par défaut de 0,5. yadony perçoit alors exactement
+     * la moitié de la commission, jamais moins.
+     */
+    private BigDecimal travelerVoucherTopUp(java.util.UUID travelerId, java.util.UUID bidId,
+                                             BigDecimal commissionAmount) {
+        try {
+            return voucherService.consume(travelerId, bidId)
+                    .map(v -> commissionAmount.multiply(BigDecimal.ONE.subtract(v.getFactor()))
+                            .setScale(2, java.math.RoundingMode.HALF_UP))
+                    .orElse(BigDecimal.ZERO);
+        } catch (Exception ex) {
+            log.error("Échec consommation bon parrainage voyageur={} bid={}: {}", travelerId, bidId, ex.toString());
+            return BigDecimal.ZERO;
+        }
     }
 }

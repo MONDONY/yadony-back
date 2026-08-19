@@ -90,6 +90,7 @@ public class CashCommissionService {
     private final StripeCashGateway stripeCashGateway;
     private final FirebaseContactService firebaseContact;
     private final com.yadony.api.matching.BidGridItemRepository bidGridItemRepository;
+    private final com.yadony.api.voucher.CommissionVoucherService voucherService;
     private Clock clock = Clock.systemUTC();
 
     public CashCommissionService(CommissionProperties props,
@@ -104,7 +105,8 @@ public class CashCommissionService {
                                  com.yadony.api.requests.repository.NegotiationThreadRepository negotiationThreadRepository,
                                  StripeCashGateway stripeCashGateway,
                                  com.yadony.api.matching.BidGridItemRepository bidGridItemRepository,
-                                 FirebaseContactService firebaseContact) {
+                                 FirebaseContactService firebaseContact,
+                                 com.yadony.api.voucher.CommissionVoucherService voucherService) {
         this.props = props;
         this.userRepo = userRepo;
         this.bidRepo = bidRepo;
@@ -118,6 +120,7 @@ public class CashCommissionService {
         this.stripeCashGateway = stripeCashGateway;
         this.bidGridItemRepository = bidGridItemRepository;
         this.firebaseContact = firebaseContact;
+        this.voucherService = voucherService;
     }
 
     /** Visible for testing — injects a fixed clock. */
@@ -170,13 +173,16 @@ public class CashCommissionService {
         if (bid.getPromoCode() != null) {
             try {
                 rate = commissionRateResolver.resolve(
-                        announcement.getTravelerId(), bid.getSenderId(), bid.getPromoCode());
+                        announcement.getTravelerId(), bid.getSenderId(), bid.getPromoCode(),
+                        bid.getSenderId(), bid.getId());
             } catch (com.yadony.api.common.YadonyBusinessException e) {
                 log.warn("Promo {} invalid for cash bid {} — fallback", bid.getPromoCode(), bid.getId());
-                rate = commissionRateResolver.resolve(announcement.getTravelerId(), bid.getSenderId());
+                rate = commissionRateResolver.resolve(
+                        announcement.getTravelerId(), bid.getSenderId(), null, null, bid.getId());
             }
         } else {
-            rate = commissionRateResolver.resolve(announcement.getTravelerId(), bid.getSenderId());
+            rate = commissionRateResolver.resolve(
+                    announcement.getTravelerId(), bid.getSenderId(), null, null, bid.getId());
         }
         bid.setCommissionRate(rate);
         // Base de commission = part kilo (poids × prix/kg, null en mode GRID pur)
@@ -306,7 +312,11 @@ public class CashCommissionService {
         }
 
         AnnouncementEntity announcement = announcementRepo.findById(bid.getAnnouncementId()).orElseThrow();
-        BigDecimal commission = computeBidCommission(bid, announcement);
+        BigDecimal fullCommission = computeBidCommission(bid, announcement);
+        // Consommation APRES le calcul du taux : peekActive filtre sur consumedAt IS NULL,
+        // consommer avant ferait perdre la remise au taux qu'on vient de figer.
+        consumeSenderVoucher(bid.getSenderId(), bid.getId());
+        BigDecimal commission = applyTravelerVoucher(travelerId, bid.getId(), fullCommission);
         // La commission est libellée dans la devise snapshottée du bid : convertir en
         // unités mineures avec un x100 fixe fausserait XOF/XAF (minorUnit = 0) d'un
         // facteur 100, et un PaymentIntent en "eur" débiterait la mauvaise devise.
@@ -379,12 +389,50 @@ public class CashCommissionService {
             log.info("Commission wallet déjà prélevée pour bid {}, idempotent skip", bid.getId());
             return;
         }
-        walletService.debit(travelerId, bid.getCurrency(), commission, WalletTransactionType.COMMISSION_DEDUCTED, bid.getId());
+        consumeSenderVoucher(bid.getSenderId(), bid.getId());
+        BigDecimal effectiveCommission = applyTravelerVoucher(travelerId, bid.getId(), commission);
+        walletService.debit(travelerId, bid.getCurrency(), effectiveCommission, WalletTransactionType.COMMISSION_DEDUCTED, bid.getId());
         bid.setCommissionStatus(CommissionStatus.CHARGED);
         bid.setCommissionChargedVia(CommissionChargedVia.WALLET);
         bidRepo.save(bid);
         auditService.log("payment", bid.getId(), "COMMISSION_CHARGED_WALLET",
-                travelerId, Map.of("commission", commission.toPlainString()));
+                travelerId, Map.of("commission", effectiveCommission.toPlainString()));
+    }
+
+    /**
+     * Applique le bon de parrainage du voyageur, s'il en détient un actif : moitié
+     * moins prélevé (facteur multiplicatif), sur le PRÉLÈVEMENT et non sur le taux —
+     * le brut payé par l'expéditeur ne change jamais ici. Consomme le bon dans le même
+     * geste ; best-effort côté disponibilité (aucun bon → montant plein, inchangé).
+     */
+    private BigDecimal applyTravelerVoucher(UUID travelerId, UUID bidId, BigDecimal fullCommission) {
+        return voucherService.consume(travelerId, bidId)
+                .map(v -> fullCommission.multiply(v.getFactor()).setScale(2, RoundingMode.HALF_UP))
+                .orElse(fullCommission);
+    }
+
+    /**
+     * Consomme le bon de parrainage de l'EXPÉDITEUR au point d'engagement du flux espèces.
+     *
+     * <p>Son facteur a déjà été appliqué au TAUX par {@link CommissionRateResolver}, via
+     * {@code peekActive} qui est une LECTURE PURE. Les chemins carte consomment déjà
+     * ({@code PaymentService.createEscrow}, {@code ThreadAcceptedBidListener}) ; aucun
+     * chemin espèces ne le faisait, si bien qu'un même bon rabattait la commission d'un
+     * nombre illimité d'envois en espèces avant d'être finalement consommé en carte.
+     *
+     * <p>Placé exactement là où {@link #applyTravelerVoucher} l'est : au moment où l'argent
+     * est réellement engagé, jamais au devis ni sur un solde insuffisant. Appelé APRÈS le
+     * calcul du taux, sans quoi la consommation ferait disparaître la remise du taux qu'on
+     * fige. Idempotent par (référence, utilisateur) : rejouer le même bid ou le même fil ne
+     * reconsomme rien, et le taux refiguré reste celui du bon grâce à
+     * {@code peekForReference}. Best-effort : aucun bon disponible = no-op silencieux, on
+     * ne bloque jamais un règlement pour ça.
+     */
+    private void consumeSenderVoucher(UUID senderId, UUID reference) {
+        if (senderId == null || reference == null) {
+            return;
+        }
+        voucherService.consume(senderId, reference);
     }
 
     /**
@@ -476,7 +524,9 @@ public class CashCommissionService {
             return AcceptBidResponse.accepted();
         }
 
-        BigDecimal rate = commissionRateResolver.resolve(travelerId, senderId);
+        // Taux rattaché au fil : un réessai (solde court puis carte, 3DS complétée plus
+        // tard) doit retrouver le bon déjà consommé et non repartir au plein tarif.
+        BigDecimal rate = commissionRateResolver.resolve(travelerId, senderId, null, null, threadId);
         BigDecimal commission = net.multiply(rate).setScale(2, RoundingMode.HALF_UP);
         if (commission.signum() <= 0) {
             markNegotiationCommissionCharged(thread, NEGO_COMMISSION_VIA_WALLET, travelerId, commission);
@@ -490,6 +540,7 @@ public class CashCommissionService {
                     walletService.debit(travelerId, thread.getCurrency(), commission,
                             WalletTransactionType.COMMISSION_DEDUCTED,
                             threadId.toString(), "nego_commission_wallet_" + threadId);
+                    consumeSenderVoucher(senderId, threadId);
                     markNegotiationCommissionCharged(thread, NEGO_COMMISSION_VIA_WALLET, travelerId, commission);
                     return AcceptBidResponse.accepted();
                 } catch (InsufficientWalletBalanceException e) {
@@ -512,6 +563,9 @@ public class CashCommissionService {
         }
         CurrencyAmount commissionAmount = CurrencyAmount.of(
                 commission, SupportedCurrency.fromCodeOrDefault(thread.getCurrency()));
+        // Même point d'engagement que le débit portefeuille ci-dessus : le taux vient
+        // d'être calculé avec le bon, on le consomme avant d'appeler Stripe.
+        consumeSenderVoucher(senderId, threadId);
         try {
             PaymentIntentCreateParams params = PaymentIntentCreateParams.builder()
                     .setAmount(commissionAmount.minor())

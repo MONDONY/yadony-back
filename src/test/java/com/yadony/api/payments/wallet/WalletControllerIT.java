@@ -53,6 +53,10 @@ class WalletControllerIT {
             throw new RuntimeException(e);
         }
         when(userRepository.findByFirebaseUid(anyString())).thenReturn(Optional.of(testUser));
+        // UserBusinessPrefsService.getPrefs charge désormais l'utilisateur par id
+        // (pour lire son pays et calculer le verrou) — WalletController.getBalance
+        // en dépend indirectement, donc findById doit être doublé lui aussi.
+        when(userRepository.findById(USER_UUID)).thenReturn(Optional.of(testUser));
     }
 
     private static UsernamePasswordAuthenticationToken authAs(String uid, String role) {

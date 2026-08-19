@@ -29,6 +29,7 @@ import com.yadony.api.cancellation.CancellationRepository;
 import com.yadony.api.cancellation.CancellationScope;
 import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.payments.currency.CurrencyMatchGuard;
+import com.yadony.api.payments.currency.CurrencyPaymentRails;
 import com.yadony.api.ratings.RatingRepository;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import jakarta.servlet.http.HttpServletRequest;
@@ -425,6 +426,24 @@ public class BidService {
                     "Méthode de paiement inconnue : " + rawPaymentMethod);
         }
 
+        if (pm == PaymentMethod.WAVE || pm == PaymentMethod.ORANGE_MONEY) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "mobile-money-bid-payment-retired", "Mobile Money Bid Payment Retired",
+                    "Le paiement mobile money direct par l'expéditeur n'est plus disponible "
+                    + "pour les nouveaux envois. Choisissez Cash ou Carte bancaire.");
+        }
+
+        // Zone CFA = pas un pays Stripe Connect (country_unsupported empirique) : le
+        // versement au voyageur y est impossible, donc la carte est retirée avant même
+        // de regarder les préférences de paiement de l'annonce. WAVE/ORANGE_MONEY sont
+        // déjà tranchés au-dessus (retirés globalement, pas une question de devise).
+        if (!CurrencyPaymentRails.allowsCode(announcement.getCurrency(), pm)) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "payment-method-unavailable-for-currency", "Payment Method Unavailable For Currency",
+                    "La zone CFA n'accepte pas ce moyen de paiement pour un colis. "
+                    + "Choisissez Cash.");
+        }
+
         if (pm == PaymentMethod.CASH
                 && !announcement.getAcceptedPaymentMethods().contains(pm)) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
@@ -437,13 +456,6 @@ public class BidService {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "card-not-accepted", "Card Not Accepted",
                     "Cette annonce n'accepte pas le paiement par carte");
-        }
-
-        if (pm == PaymentMethod.WAVE || pm == PaymentMethod.ORANGE_MONEY) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "mobile-money-bid-payment-retired", "Mobile Money Bid Payment Retired",
-                    "Le paiement mobile money direct par l'expéditeur n'est plus disponible "
-                    + "pour les nouveaux envois. Choisissez Cash ou Carte bancaire.");
         }
 
         return pm;

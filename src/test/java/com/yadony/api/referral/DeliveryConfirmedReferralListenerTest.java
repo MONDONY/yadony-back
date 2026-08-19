@@ -3,8 +3,9 @@ package com.yadony.api.referral;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
-import com.yadony.api.referral.events.ReferralRewardGrantedEvent;
 import com.yadony.api.tracking.events.DeliveryConfirmedEvent;
+import com.yadony.api.voucher.CommissionVoucherEntity;
+import com.yadony.api.voucher.CommissionVoucherService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -12,9 +13,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.context.ApplicationEventPublisher;
 
 import java.lang.reflect.Field;
+import java.math.BigDecimal;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -27,12 +28,10 @@ import static org.mockito.Mockito.*;
 class DeliveryConfirmedReferralListenerTest {
 
     @Mock private ReferralInvitationRepository referralInvitationRepository;
-    @Mock private UserCreditRepository userCreditRepository;
     @Mock private BidRepository bidRepository;
     @Mock private AuditService auditService;
-    @Mock private ApplicationEventPublisher eventPublisher;
+    @Mock private CommissionVoucherService voucherService;
 
-    private ReferralConfig config;
     private DeliveryConfirmedReferralListener listener;
 
     private static final UUID SENDER_ID   = UUID.randomUUID();
@@ -43,13 +42,8 @@ class DeliveryConfirmedReferralListenerTest {
 
     @BeforeEach
     void setUp() {
-        config = new ReferralConfig();
-        config.setRewardAmountCents(500);
-        config.setCodeRegenerationCooldownDays(30);
         listener = new DeliveryConfirmedReferralListener(
-                referralInvitationRepository, userCreditRepository,
-                bidRepository, auditService, config, eventPublisher,
-                resolverReturning("EUR"));
+                referralInvitationRepository, bidRepository, auditService, voucherService);
     }
 
     private static void setId(Object entity, UUID id) {
@@ -84,6 +78,13 @@ class DeliveryConfirmedReferralListenerTest {
         return new DeliveryConfirmedEvent(BID_ID, SENDER_ID, TRAVELER_ID);
     }
 
+    private CommissionVoucherEntity grantedVoucher() {
+        CommissionVoucherEntity v = mock(CommissionVoucherEntity.class);
+        lenient().when(v.getId()).thenReturn(UUID.randomUUID());
+        lenient().when(v.getFactor()).thenReturn(new BigDecimal("0.50"));
+        return v;
+    }
+
     // ── 1. noInvitation_doesNothing ───────────────────────────────────────────
 
     @Test
@@ -94,21 +95,22 @@ class DeliveryConfirmedReferralListenerTest {
 
         listener.onDeliveryConfirmed(event());
 
-        verifyNoInteractions(bidRepository, userCreditRepository, eventPublisher);
+        verifyNoInteractions(bidRepository, voucherService);
         verify(referralInvitationRepository, never()).save(any());
     }
 
     // ── 2. firstDelivery_rewards ──────────────────────────────────────────────
 
     @Test
-    @DisplayName("firstDelivery_rewards — first COMPLETED bid triggers reward and credit")
+    @DisplayName("firstDelivery_rewards — first COMPLETED bid triggers a voucher grant")
     void firstDelivery_rewards() {
         ReferralInvitationEntity inv = buildSignedUpInvitation();
         when(referralInvitationRepository.findByRefereeUserIdAndStatus(SENDER_ID, "SIGNED_UP"))
                 .thenReturn(Optional.of(inv));
         when(bidRepository.countByStatusAndSenderId(BidStatus.COMPLETED, SENDER_ID)).thenReturn(1L);
         when(referralInvitationRepository.save(any())).thenAnswer(i -> i.getArgument(0));
-        when(userCreditRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+        CommissionVoucherEntity voucher = grantedVoucher();
+        when(voucherService.grant(REFERRER_ID, INV_ID)).thenReturn(voucher);
 
         listener.onDeliveryConfirmed(event());
 
@@ -118,27 +120,10 @@ class DeliveryConfirmedReferralListenerTest {
         verify(referralInvitationRepository).save(invCaptor.capture());
         ReferralInvitationEntity saved = invCaptor.getValue();
         assertThat(saved.getStatus()).isEqualTo("REWARDED");
-        assertThat(saved.getCreditAmountCents()).isEqualTo(500);
         assertThat(saved.getRewardedAt()).isNotNull();
 
-        // Credit entry must be created for the referrer
-        ArgumentCaptor<UserCreditEntity> creditCaptor =
-                ArgumentCaptor.forClass(UserCreditEntity.class);
-        verify(userCreditRepository).save(creditCaptor.capture());
-        UserCreditEntity credit = creditCaptor.getValue();
-        assertThat(credit.getUserId()).isEqualTo(REFERRER_ID);
-        assertThat(credit.getAmountCents()).isEqualTo(500);
-        assertThat(credit.getSource()).isEqualTo("REFERRAL_REWARD");
-        assertThat(credit.getReferenceId()).isEqualTo(INV_ID);
-
-        // A wallet-credit event must be published for the referrer
-        ArgumentCaptor<ReferralRewardGrantedEvent> evCaptor =
-                ArgumentCaptor.forClass(ReferralRewardGrantedEvent.class);
-        verify(eventPublisher).publishEvent(evCaptor.capture());
-        ReferralRewardGrantedEvent ev = evCaptor.getValue();
-        assertThat(ev.referrerUserId()).isEqualTo(REFERRER_ID);
-        assertThat(ev.amountCents()).isEqualTo(500);
-        assertThat(ev.invitationId()).isEqualTo(INV_ID);
+        // A voucher must be granted to the referrer, tied to this invitation
+        verify(voucherService).grant(REFERRER_ID, INV_ID);
     }
 
     // ── 3. secondDelivery_doesNotReward ───────────────────────────────────────
@@ -154,31 +139,10 @@ class DeliveryConfirmedReferralListenerTest {
         listener.onDeliveryConfirmed(event());
 
         verify(referralInvitationRepository, never()).save(any());
-        verifyNoInteractions(userCreditRepository);
-        // No wallet credit event when no reward is granted
-        verifyNoInteractions(eventPublisher);
+        verifyNoInteractions(voucherService);
     }
 
-    // ── 4. rewardCreatesUserCredit ────────────────────────────────────────────
-
-    @Test
-    @DisplayName("rewardCreatesUserCredit — credit has correct referenceId = invitationId")
-    void rewardCreatesUserCredit() {
-        ReferralInvitationEntity inv = buildSignedUpInvitation();
-        when(referralInvitationRepository.findByRefereeUserIdAndStatus(SENDER_ID, "SIGNED_UP"))
-                .thenReturn(Optional.of(inv));
-        when(bidRepository.countByStatusAndSenderId(BidStatus.COMPLETED, SENDER_ID)).thenReturn(1L);
-        when(referralInvitationRepository.save(any())).thenReturn(inv);
-        when(userCreditRepository.save(any())).thenAnswer(i -> i.getArgument(0));
-
-        listener.onDeliveryConfirmed(event());
-
-        ArgumentCaptor<UserCreditEntity> cap = ArgumentCaptor.forClass(UserCreditEntity.class);
-        verify(userCreditRepository).save(cap.capture());
-        assertThat(cap.getValue().getReferenceId()).isEqualTo(INV_ID);
-    }
-
-    // ── 5. zeroBidCount_doesNotReward ─────────────────────────────────────────
+    // ── 4. zeroBidCount_doesNotReward ─────────────────────────────────────────
 
     @Test
     @DisplayName("zeroBidCount_doesNotReward — count=0 edge case skips reward (no NPE, no double)")
@@ -192,35 +156,23 @@ class DeliveryConfirmedReferralListenerTest {
         listener.onDeliveryConfirmed(event());
 
         verify(referralInvitationRepository, never()).save(any());
-        verifyNoInteractions(userCreditRepository, eventPublisher);
+        verifyNoInteractions(voucherService);
     }
 
-    // ── 6. exceptionInCredit_propagates ──────────────────────────────────────
+    // ── 5. exceptionInGrant_propagates ────────────────────────────────────────
 
     @Test
-    @DisplayName("exceptionInCredit_propagates — credit save failure is visible (not swallowed)")
-    void exceptionInCredit_propagates() {
+    @DisplayName("exceptionInGrant_propagates — voucher grant failure is visible (not swallowed)")
+    void exceptionInGrant_propagates() {
         ReferralInvitationEntity inv = buildSignedUpInvitation();
         when(referralInvitationRepository.findByRefereeUserIdAndStatus(SENDER_ID, "SIGNED_UP"))
                 .thenReturn(Optional.of(inv));
         when(bidRepository.countByStatusAndSenderId(BidStatus.COMPLETED, SENDER_ID)).thenReturn(1L);
         when(referralInvitationRepository.save(any())).thenReturn(inv);
-        when(userCreditRepository.save(any())).thenThrow(new RuntimeException("DB constraint violation"));
+        when(voucherService.grant(any(), any())).thenThrow(new RuntimeException("DB constraint violation"));
 
         assertThatThrownBy(() -> listener.onDeliveryConfirmed(event()))
                 .isInstanceOf(RuntimeException.class)
                 .hasMessageContaining("DB constraint violation");
     }
-
-    // Mockito renvoie null pour un retour String non stubé (et non Optional.empty()) :
-    // sans ce stub la devise résolue serait nulle et le repli ne serait pas testé.
-    private static com.yadony.api.payments.currency.ActiveCurrencyResolver resolverReturning(String code) {
-        var resolver = org.mockito.Mockito.mock(
-                com.yadony.api.payments.currency.ActiveCurrencyResolver.class);
-        org.mockito.Mockito.lenient()
-                .when(resolver.resolve(org.mockito.ArgumentMatchers.any()))
-                .thenReturn(code);
-        return resolver;
-    }
-
 }

@@ -29,10 +29,9 @@ import com.yadony.api.payments.dto.OnboardingLinkResponse;
 import com.yadony.api.payments.dto.PaymentMethodResponse;
 import com.yadony.api.payments.dto.PaymentResponse;
 import com.yadony.api.payments.currency.CurrencyAmount;
-import com.yadony.api.payments.currency.CurrencyMatchGuard;
+import com.yadony.api.payments.currency.CurrencyPaymentRails;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.events.StripeOnboardingCompletedEvent;
-import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import com.stripe.exception.StripeException;
 import com.stripe.model.Account;
 import com.stripe.model.AccountLink;
@@ -42,7 +41,6 @@ import com.stripe.model.EphemeralKey;
 import com.stripe.model.Event;
 import com.stripe.model.PaymentIntent;
 import com.stripe.model.PaymentMethod;
-import com.stripe.param.AccountCreateParams;
 import com.stripe.param.AccountLinkCreateParams;
 import com.stripe.param.AccountUpdateParams;
 import com.stripe.param.CustomerCreateParams;
@@ -86,8 +84,8 @@ public class PaymentService {
     private final PromoService promoService;
     private final StripeGateway stripeGateway;
     private final FirebaseContactService firebaseContact;
-    private final ActiveCurrencyResolver activeCurrencyResolver;
-    private final CurrencyMatchGuard currencyMatchGuard;
+    private final com.yadony.api.voucher.CommissionVoucherService voucherService;
+    private final ConnectAccountProvisioner connectAccountProvisioner;
 
     public PaymentService(UserRepository userRepository,
                           BidRepository bidRepository,
@@ -103,8 +101,8 @@ public class PaymentService {
                           PromoService promoService,
                           StripeGateway stripeGateway,
                           FirebaseContactService firebaseContact,
-                          ActiveCurrencyResolver activeCurrencyResolver,
-                          CurrencyMatchGuard currencyMatchGuard) {
+                          com.yadony.api.voucher.CommissionVoucherService voucherService,
+                          ConnectAccountProvisioner connectAccountProvisioner) {
         this.userRepository = userRepository;
         this.bidRepository = bidRepository;
         this.bidGridItemRepository = bidGridItemRepository;
@@ -119,8 +117,8 @@ public class PaymentService {
         this.promoService = promoService;
         this.stripeGateway = stripeGateway;
         this.firebaseContact = firebaseContact;
-        this.activeCurrencyResolver = activeCurrencyResolver;
-        this.currencyMatchGuard = currencyMatchGuard;
+        this.voucherService = voucherService;
+        this.connectAccountProvisioner = connectAccountProvisioner;
     }
 
     // ── Story 6.2 : Onboarding Stripe Connect ────────────────────────────────
@@ -161,54 +159,10 @@ public class PaymentService {
         }
 
         try {
-            AccountCreateParams params = AccountCreateParams.builder()
-                    .setType(AccountCreateParams.Type.EXPRESS)
-                    .setCountry(user.getCountry())
-                    .setEmail(firebaseContact.getContact(user.getFirebaseUid()).email())
-                    .setBusinessType(
-                            user.isProAccount()
-                                    ? AccountCreateParams.BusinessType.COMPANY
-                                    : AccountCreateParams.BusinessType.INDIVIDUAL
-                    )
-                    .setCapabilities(
-                            AccountCreateParams.Capabilities.builder()
-                                    .setCardPayments(
-                                            AccountCreateParams.Capabilities.CardPayments.builder()
-                                                    .setRequested(true) // historiquement requis pour on_behalf_of (retiré) — conservé, no-op
-                                                    .build()
-                                    )
-                                    .setTransfers(
-                                            AccountCreateParams.Capabilities.Transfers.builder()
-                                                    .setRequested(true)
-                                                    .build()
-                                    )
-                                    .build()
-                    )
-                    .setBusinessProfile(
-                            AccountCreateParams.BusinessProfile.builder()
-                                    // TODO: validate MCC 4215 vs 4214 in Stripe sandbox for Express FR individual accounts before prod
-                                    .setMcc(stripeConnectProperties.mcc())
-                                    .setProductDescription(stripeConnectProperties.productDescription())
-                                    .setUrl(stripeConnectProperties.businessUrl())
-                                    .build()
-                    )
-                    .setSettings(
-                            AccountCreateParams.Settings.builder()
-                                    .setPayouts(
-                                            AccountCreateParams.Settings.Payouts.builder()
-                                                    .setSchedule(
-                                                            AccountCreateParams.Settings.Payouts.Schedule.builder()
-                                                                    .setInterval(AccountCreateParams.Settings.Payouts.Schedule.Interval.DAILY)
-                                                                    .build()
-                                                    )
-                                                    .build()
-                                    )
-                                    .build()
-                    )
-                    .putMetadata("user_id", user.getId().toString())
-                    .build();
-
-            Account account = stripeGateway.createAccount(params);
+            // Lot 4 (préparation Accounts v2) : la construction des paramètres et l'appel
+            // Stripe sont isolés derrière ConnectAccountProvisioner. Basculer d'implémentation
+            // (v1 EXPRESS → v2) ne touchera plus cette méthode, seulement le bean injecté.
+            Account account = connectAccountProvisioner.provision(user);
             user.setStripeAccountId(account.getId());
             user.setStripeAccountStatus(StripeAccountStatus.PENDING_ONBOARDING);
             user.setStripeAccountCreatedAt(java.time.Instant.now());
@@ -226,6 +180,11 @@ public class PaymentService {
             log.info("Stripe Express account created for user {} : {}", user.getId(), account.getId());
             return new ConnectAccountResponse(account.getId(), StripeAccountStatus.PENDING_ONBOARDING);
 
+        } catch (YadonyBusinessException e) {
+            // Erreur métier déjà qualifiée (ex. 422 country-required levé par
+            // ConnectAccountProvisioner.provision) : la laisser remonter telle quelle
+            // vers le GlobalExceptionHandler plutôt que de la réemballer en 500 générique.
+            throw e;
         } catch (Exception e) {
             log.error("Failed to create Stripe account for user {}", user.getId(), e);
             throw new YadonyBusinessException(HttpStatus.INTERNAL_SERVER_ERROR,
@@ -369,9 +328,21 @@ public class PaymentService {
                     "Cette demande ne peut plus être payée (statut : " + bid.getStatus() + ")");
         }
 
-        String senderCurrency = activeCurrencyResolver.resolve(sender.getId());
-        currencyMatchGuard.assertMatches(bid.getCurrency(), senderCurrency);
+        // Devise figée au bid, pas la préférence courante de l'expéditeur : elle a pu
+        // changer depuis la création du bid (lot 2 — gel au premier mouvement d'argent).
+        // Comparer les deux ici renvoyait 422 à un expéditeur payant son propre colis.
         SupportedCurrency currency = SupportedCurrency.fromCode(bid.getCurrency());
+
+        // Zone CFA = pas un pays Stripe Connect (country_unsupported empirique) : le
+        // versement au voyageur y est impossible, donc aucun PaymentIntent ne doit
+        // jamais être créé dans cette devise. BidService.resolvePaymentMethodFor
+        // referme déjà cette porte à la création du bid, mais createEscrow est un
+        // endpoint atteignable indépendamment — la garde doit être répétée ici.
+        if (!CurrencyPaymentRails.allows(currency, com.yadony.api.payments.cash.PaymentMethod.STRIPE)) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "payment-method-unavailable-for-currency", "Payment Method Unavailable For Currency",
+                    "La zone CFA n'accepte pas le paiement par carte pour un colis.");
+        }
 
         // Currency ownership is checked before idempotency and any persistent/Stripe effect.
         Optional<PaymentEntity> existing = paymentRepository.findByBidId(bidId);
@@ -547,6 +518,9 @@ public class PaymentService {
                 bid.setPromoCodeId(redemption.getPromoCodeId());
                 bidRepository.save(bid);
             }
+            // Consommation du bon de parrainage (lot 3) — même tx, best-effort : sans
+            // effet si l'expéditeur n'en détient aucun (déjà pris en compte, ou jamais eu).
+            voucherService.consume(sender.getId(), bidId);
         }
 
         try {
@@ -1528,9 +1502,16 @@ public class PaymentService {
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
                         "user-not-found", "User Not Found", "Sender introuvable"));
 
-        String senderCurrency = activeCurrencyResolver.resolve(sender.getId());
-        currencyMatchGuard.assertMatches(serverCurrency, senderCurrency);
+        // Même raison que createEscrow : plus de garde contre la préférence courante,
+        // la devise du fil de négociation est déjà figée (serverCurrency).
         SupportedCurrency currency = SupportedCurrency.fromCode(serverCurrency);
+
+        // Même garde que createEscrow : zone CFA = versement Stripe impossible.
+        if (!CurrencyPaymentRails.allows(currency, com.yadony.api.payments.cash.PaymentMethod.STRIPE)) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "payment-method-unavailable-for-currency", "Payment Method Unavailable For Currency",
+                    "La zone CFA n'accepte pas le paiement par carte pour un colis.");
+        }
 
         UserEntity traveler = userRepository.findById(travelerId)
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,

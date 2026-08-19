@@ -30,9 +30,9 @@ class ReferralServiceTest {
 
     @Mock private ReferralCodeRepository referralCodeRepository;
     @Mock private ReferralInvitationRepository referralInvitationRepository;
-    @Mock private UserCreditRepository userCreditRepository;
     @Mock private UserRepository userRepository;
     @Mock private AuditService auditService;
+    @Mock private com.yadony.api.voucher.CommissionVoucherService voucherService;
 
     private ReferralConfig config;
 
@@ -47,13 +47,14 @@ class ReferralServiceTest {
     @BeforeEach
     void setUp() {
         config = new ReferralConfig();
-        config.setRewardAmountCents(500);
         config.setMaxInvitationsPerUser(50);
         config.setCodeRegenerationCooldownDays(30);
+        com.yadony.api.voucher.VoucherConfig voucherConfig = new com.yadony.api.voucher.VoucherConfig();
+        voucherConfig.setFactor(new java.math.BigDecimal("0.50"));
+        voucherConfig.setValidityMonths(6);
         referralService = new ReferralService(
                 referralCodeRepository, referralInvitationRepository,
-                userCreditRepository, userRepository, auditService, config,
-                resolverReturning("EUR"));
+                userRepository, auditService, config, voucherService, voucherConfig);
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
@@ -147,7 +148,7 @@ class ReferralServiceTest {
         when(referralInvitationRepository.countByReferrerUserId(USER_ID)).thenReturn(3L);
         when(referralInvitationRepository.countByReferrerUserIdAndStatus(USER_ID, "SIGNED_UP")).thenReturn(2L);
         when(referralInvitationRepository.countByReferrerUserIdAndStatus(USER_ID, "REWARDED")).thenReturn(1L);
-        when(userCreditRepository.sumAmountCentsByUserIdAndCurrency(USER_ID, "EUR")).thenReturn(500);
+        when(voucherService.listActive(USER_ID)).thenReturn(java.util.List.of());
         when(referralInvitationRepository.findByRefereeUserIdAndStatus(USER_ID, "SIGNED_UP")).thenReturn(Optional.empty());
         when(referralInvitationRepository.findByRefereeUserIdAndStatus(USER_ID, "REWARDED")).thenReturn(Optional.empty());
 
@@ -158,8 +159,39 @@ class ReferralServiceTest {
         assertThat(response.totalInvited()).isEqualTo(3);
         assertThat(response.signedUp()).isEqualTo(2);
         assertThat(response.rewarded()).isEqualTo(1);
-        assertThat(response.totalEarnedCents()).isEqualTo(500);
+        assertThat(response.activeVoucherCount()).isZero();
+        // Le facteur reste annoncé même sans bon actif : c'est le barème courant.
+        assertThat(response.voucherFactor()).isEqualByComparingTo("0.50");
         assertThat(response.hasBeenReferred()).isFalse();
+    }
+
+    @Test
+    @DisplayName("getMyReferral_reportsActiveVoucher — count/expiry from the voucher, factor from the current barème")
+    void getMyReferral_reportsActiveVoucher() {
+        UserEntity user = userWithName(USER_ID, FIREBASE_UID, "Jean", "Dupont");
+        when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+        ReferralCodeEntity code = codeEntity(USER_ID, "JEAN9999");
+        when(referralCodeRepository.findByUserId(USER_ID)).thenReturn(Optional.of(code));
+        when(referralInvitationRepository.countByReferrerUserId(USER_ID)).thenReturn(1L);
+        when(referralInvitationRepository.countByReferrerUserIdAndStatus(USER_ID, "SIGNED_UP")).thenReturn(0L);
+        when(referralInvitationRepository.countByReferrerUserIdAndStatus(USER_ID, "REWARDED")).thenReturn(1L);
+        when(referralInvitationRepository.findByRefereeUserIdAndStatus(USER_ID, "SIGNED_UP")).thenReturn(Optional.empty());
+        when(referralInvitationRepository.findByRefereeUserIdAndStatus(USER_ID, "REWARDED")).thenReturn(Optional.empty());
+        // Le bon a été octroyé sous un ancien barème (0.30) : la réponse doit annoncer
+        // le barème COURANT (0.50, celui de VoucherConfig dans setUp), pas celui figé
+        // sur ce bon précis — c'est la promesse pour le PROCHAIN parrainage.
+        com.yadony.api.voucher.CommissionVoucherEntity voucher =
+                mock(com.yadony.api.voucher.CommissionVoucherEntity.class);
+        java.time.LocalDateTime expiresAt = java.time.LocalDateTime.now().plusMonths(5);
+        lenient().when(voucher.getFactor()).thenReturn(new java.math.BigDecimal("0.30"));
+        lenient().when(voucher.getExpiresAt()).thenReturn(expiresAt);
+        when(voucherService.listActive(USER_ID)).thenReturn(java.util.List.of(voucher));
+
+        MyReferralResponse response = referralService.getMyReferral(FIREBASE_UID);
+
+        assertThat(response.activeVoucherCount()).isEqualTo(1);
+        assertThat(response.voucherFactor()).isEqualByComparingTo("0.50");
+        assertThat(response.nextVoucherExpiresAt()).isEqualTo(expiresAt);
     }
 
     @Test
@@ -172,7 +204,7 @@ class ReferralServiceTest {
         when(referralInvitationRepository.countByReferrerUserId(USER_ID)).thenReturn(0L);
         when(referralInvitationRepository.countByReferrerUserIdAndStatus(USER_ID, "SIGNED_UP")).thenReturn(0L);
         when(referralInvitationRepository.countByReferrerUserIdAndStatus(USER_ID, "REWARDED")).thenReturn(0L);
-        when(userCreditRepository.sumAmountCentsByUserIdAndCurrency(USER_ID, "EUR")).thenReturn(0);
+        when(voucherService.listActive(USER_ID)).thenReturn(java.util.List.of());
         ReferralInvitationEntity invitation = new ReferralInvitationEntity();
         when(referralInvitationRepository.findByRefereeUserIdAndStatus(USER_ID, "SIGNED_UP"))
                 .thenReturn(Optional.of(invitation));
@@ -281,17 +313,6 @@ class ReferralServiceTest {
                     assertThat(dbe.getStatus()).isEqualTo(HttpStatus.CONFLICT);
                     assertThat(dbe.getErrorCode()).isEqualTo("already-referred");
                 });
-    }
-
-    // Mockito renvoie null pour un retour String non stubé (et non Optional.empty()) :
-    // sans ce stub la devise résolue serait nulle et le repli ne serait pas testé.
-    private static com.yadony.api.payments.currency.ActiveCurrencyResolver resolverReturning(String code) {
-        var resolver = org.mockito.Mockito.mock(
-                com.yadony.api.payments.currency.ActiveCurrencyResolver.class);
-        org.mockito.Mockito.lenient()
-                .when(resolver.resolve(org.mockito.ArgumentMatchers.any()))
-                .thenReturn(code);
-        return resolver;
     }
 
 }

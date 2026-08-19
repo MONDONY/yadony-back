@@ -76,6 +76,17 @@ public class TestDataSteps extends AbstractSteps {
                 uid);
     }
 
+    /**
+     * Le pays est désormais une donnée saisie (défaut "FR" retiré de UserEntity,
+     * V225) : StripeExpressAccountProvisioner.provision refuse un compte Connect
+     * sans pays (422 country-required). Bridge SQL équivalent à un utilisateur
+     * ayant déjà renseigné son pays dans les réglages avant de demander un compte.
+     */
+    @Etantdonné("le voyageur {string} a pour pays {string}")
+    public void givenTravelerCountry(String uid, String country) {
+        jdbcTemplate.update("UPDATE users SET country = ? WHERE firebase_uid = ?", country, uid);
+    }
+
     @Etantdonné("l'offre {string} est marquée comme livrée")
     public void givenBidCompleted(String bidAlias) {
         jdbcTemplate.update("UPDATE bids SET status = 'COMPLETED' WHERE id = ?", ctx.getId(bidAlias));

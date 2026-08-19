@@ -60,7 +60,7 @@ class UserBusinessPrefsControllerTest {
 
     @Test
     void putPrefs_valid_returns200() throws Exception {
-        UserBusinessPrefsDto dto = new UserBusinessPrefsDto("lbs", "XOF", 20, 30, 5, "call", 2);
+        UserBusinessPrefsDto dto = new UserBusinessPrefsDto("lbs", "XOF", 20, 30, 5, "call", 2, null, null, null);
         when(service.upsert(eq(FIREBASE_UID), any())).thenReturn(dto);
         mockMvc.perform(put("/users/me/business-preferences")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -74,7 +74,7 @@ class UserBusinessPrefsControllerTest {
 
     @Test
     void putPrefs_acceptsNorthAmericanCurrency() throws Exception {
-        UserBusinessPrefsDto dto = new UserBusinessPrefsDto("kg", "CAD", 20, 30, 5, "call", 2);
+        UserBusinessPrefsDto dto = new UserBusinessPrefsDto("kg", "CAD", 20, 30, 5, "call", 2, null, null, null);
         when(service.upsert(eq(FIREBASE_UID), any())).thenReturn(dto);
 
         mockMvc.perform(put("/users/me/business-preferences")

@@ -155,9 +155,11 @@ yadony:
       retry-backoff-base: 30s
       scheduler-enabled: true
   referral:
-    reward-amount-cents: ${YADONY_REFERRAL_REWARD_AMOUNT_CENTS:500}
     max-invitations-per-user: ${YADONY_REFERRAL_MAX_INVITATIONS_PER_USER:50}
     code-regeneration-cooldown-days: ${YADONY_REFERRAL_CODE_REGENERATION_COOLDOWN_DAYS:30}
+  voucher:
+    factor: ${YADONY_VOUCHER_FACTOR:0.50}
+    validity-months: ${YADONY_VOUCHER_VALIDITY_MONTHS:6}
   requests:
     max-negotiation-rounds: ${YADONY_REQUESTS_MAX_NEGOTIATION_ROUNDS:5}
     thread-inactivity-hours: ${YADONY_REQUESTS_THREAD_INACTIVITY_HOURS:72}

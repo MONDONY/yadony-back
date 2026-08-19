@@ -17,12 +17,9 @@ import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidGridItemRepository;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
-import com.yadony.api.payments.currency.CurrencyMatchGuard;
 import com.yadony.api.payments.dto.CreatePaymentRequest;
 import com.yadony.api.payments.dto.PaymentResponse;
 import com.yadony.api.promo.PromoService;
-import com.yadony.api.settings.UserBusinessPrefsEntity;
-import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -61,14 +58,6 @@ class PaymentServiceLegacyIntentRecoveryTest {
     @Mock CommissionRateResolver commissionRateResolver;
     @Mock PromoService promoService;
     @Mock StripeGateway stripeGateway;
-    @Mock ActiveCurrencyResolver activeCurrencyResolver;
-
-    @org.junit.jupiter.api.BeforeEach
-    void stubDefaultActiveCurrency() {
-        org.mockito.Mockito.lenient()
-                .when(activeCurrencyResolver.resolve(org.mockito.ArgumentMatchers.any()))
-                .thenReturn("EUR");
-    }
 
     private PaymentService service;
 
@@ -95,9 +84,7 @@ class PaymentServiceLegacyIntentRecoveryTest {
                 commissionRateResolver,
                 promoService,
                 stripeGateway,
-                PaymentServiceTestFactory.stubbedContacts(),
-                activeCurrencyResolver,
-                new CurrencyMatchGuard());
+                PaymentServiceTestFactory.stubbedContacts(), mock(com.yadony.api.voucher.CommissionVoucherService.class), mock(com.yadony.api.payments.ConnectAccountProvisioner.class));
     }
 
     @Test
@@ -338,7 +325,6 @@ class PaymentServiceLegacyIntentRecoveryTest {
         lenient().when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler));
         when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
         when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(announcement()));
-        when(activeCurrencyResolver.resolve(senderId)).thenReturn("CAD");
         when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.of(payment));
         Account account = activeAccount();
         lenient().when(stripeGateway.retrieveAccount("acct_traveler")).thenReturn(account);
@@ -348,7 +334,6 @@ class PaymentServiceLegacyIntentRecoveryTest {
     private void stubExistingNegotiation(UUID threadId, PaymentEntity payment) throws StripeException {
         when(userRepository.findById(senderId)).thenReturn(Optional.of(sender()));
         when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler()));
-        when(activeCurrencyResolver.resolve(senderId)).thenReturn("EUR");
         when(paymentRepository.findByNegotiationThreadId(threadId)).thenReturn(Optional.of(payment));
         Account account = activeAccount();
         lenient().when(stripeGateway.retrieveAccount("acct_traveler")).thenReturn(account);
@@ -435,13 +420,6 @@ class PaymentServiceLegacyIntentRecoveryTest {
         payment.setCurrency(currency);
         payment.setStatus(PaymentStatus.PENDING);
         return payment;
-    }
-
-    private UserBusinessPrefsEntity prefs(String currency) {
-        UserBusinessPrefsEntity prefs = new UserBusinessPrefsEntity();
-        prefs.setUserId(senderId);
-        prefs.setCurrencyCode(currency);
-        return prefs;
     }
 
     private PaymentIntent incompatibleIntent(String status, long amount, String currency) {

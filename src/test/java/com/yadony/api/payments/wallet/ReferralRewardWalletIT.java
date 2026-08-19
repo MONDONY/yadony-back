@@ -1,12 +1,9 @@
 package com.yadony.api.payments.wallet;
 
-import com.yadony.api.referral.events.ReferralRewardGrantedEvent;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.util.UUID;
@@ -14,17 +11,18 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Integration test: proves the referral reward actually lands in the spendable wallet,
- * exercising the V121 CHECK-constraint update (REFERRAL_REWARD type) against the real
- * (H2/PostgreSQL-mode) schema, plus the AFTER_COMMIT event listener wiring.
+ * Lot 3 (2026-08-19/20) : le parrainage ne crédite plus le wallet — il octroie un bon
+ * de réduction de commission (voir {@code com.yadony.api.voucher}). REFERRAL_REWARD
+ * reste une valeur valide de {@link WalletTransactionType} et de la contrainte CHECK
+ * V121 (lignes historiques déjà écrites), mais plus rien ne l'émet. Ce test garde
+ * uniquement la preuve que la contrainte CHECK accepte toujours ce type — le reste
+ * (listener, event) a été retiré avec son test dédié.
  */
 @SpringBootTest
 @ActiveProfiles("test")
 class ReferralRewardWalletIT {
 
     @Autowired private WalletService walletService;
-    @Autowired private ApplicationEventPublisher eventPublisher;
-    @Autowired private TransactionTemplate transactionTemplate;
 
     @Test
     void credit_withReferralRewardType_passesDbCheckConstraint() {
@@ -35,31 +33,5 @@ class ReferralRewardWalletIT {
                 WalletTransactionType.REFERRAL_REWARD, "ref-1", "referral-reward-it-1");
 
         assertThat(walletService.getBalance(userId, "EUR")).isEqualByComparingTo(new BigDecimal("5.00"));
-    }
-
-    @Test
-    void referralRewardGrantedEvent_creditsWalletAfterCommit() {
-        UUID referrerId = UUID.randomUUID();
-        UUID invitationId = UUID.randomUUID();
-
-        // Publish inside a committed transaction so the AFTER_COMMIT listener fires
-        transactionTemplate.executeWithoutResult(status ->
-                eventPublisher.publishEvent(
-                        new ReferralRewardGrantedEvent(referrerId, 500, invitationId)));
-
-        assertThat(walletService.getBalance(referrerId, "EUR")).isEqualByComparingTo(new BigDecimal("5.00"));
-    }
-
-    @Test
-    void referralRewardGrantedEvent_isIdempotentPerInvitation() {
-        UUID referrerId = UUID.randomUUID();
-        UUID invitationId = UUID.randomUUID();
-        ReferralRewardGrantedEvent ev = new ReferralRewardGrantedEvent(referrerId, 500, invitationId);
-
-        transactionTemplate.executeWithoutResult(s -> eventPublisher.publishEvent(ev));
-        transactionTemplate.executeWithoutResult(s -> eventPublisher.publishEvent(ev));
-
-        // Same invitation → credited exactly once (idempotency key referral-reward-{invitationId})
-        assertThat(walletService.getBalance(referrerId, "EUR")).isEqualByComparingTo(new BigDecimal("5.00"));
     }
 }

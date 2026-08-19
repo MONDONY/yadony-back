@@ -9,6 +9,20 @@ import static org.assertj.core.api.Assertions.assertThat;
 class SupportedCurrencyTest {
 
     @Test
+    @DisplayName("Le catalogue porte les sept devises derivees d'un pays")
+    void catalogHasSevenCurrencies() {
+        assertThat(SupportedCurrency.values())
+                .containsExactlyInAnyOrder(
+                        SupportedCurrency.EUR,
+                        SupportedCurrency.USD,
+                        SupportedCurrency.CAD,
+                        SupportedCurrency.GBP,
+                        SupportedCurrency.CHF,
+                        SupportedCurrency.XOF,
+                        SupportedCurrency.XAF);
+    }
+
+    @Test
     @DisplayName("les codes exposés sont ceux qu'attend Stripe, en minuscules")
     void codesAreLowercaseForStripe() {
         for (SupportedCurrency currency : SupportedCurrency.values()) {

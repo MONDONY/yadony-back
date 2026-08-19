@@ -44,6 +44,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -71,6 +72,7 @@ class CashCommissionServiceNegotiationTest {
     @Mock private NegotiationThreadRepository negotiationThreadRepository;
     @Mock private StripeCashGateway stripeCashGateway;
     @Mock private BidGridItemRepository bidGridItemRepository;
+    @Mock private com.yadony.api.voucher.CommissionVoucherService voucherService;
 
     private final CommissionProperties props =
             new CommissionProperties(new BigDecimal("0.12"), new BigDecimal("1.00"), 24);
@@ -81,7 +83,8 @@ class CashCommissionServiceNegotiationTest {
     void setUp() {
         service = new CashCommissionService(props, userRepo, bidRepo, announcementRepo, events,
                 walletService, walletTransactionRepository, auditService, commissionRateResolver,
-                negotiationThreadRepository, stripeCashGateway, bidGridItemRepository, stubbedContacts());
+                negotiationThreadRepository, stripeCashGateway, bidGridItemRepository, stubbedContacts(),
+                voucherService);
     }
 
     // --- helpers ---
@@ -112,7 +115,7 @@ class CashCommissionServiceNegotiationTest {
         NegotiationThreadEntity thread = threadWithId(threadId);
 
         when(negotiationThreadRepository.findById(threadId)).thenReturn(Optional.of(thread));
-        when(commissionRateResolver.resolve(travelerId, senderId)).thenReturn(new BigDecimal("0.05"));
+        when(commissionRateResolver.resolve(eq(travelerId), eq(senderId), isNull(), isNull(), any())).thenReturn(new BigDecimal("0.05"));
         when(walletService.getBalance(travelerId, "EUR")).thenReturn(new BigDecimal("20.00"));
 
         // when settleNegotiationCommission(..., WALLET_FIRST)
@@ -144,7 +147,7 @@ class CashCommissionServiceNegotiationTest {
         UserEntity traveler = travelerWithCard(travelerId, true);
 
         when(negotiationThreadRepository.findById(threadId)).thenReturn(Optional.of(thread));
-        when(commissionRateResolver.resolve(travelerId, senderId)).thenReturn(new BigDecimal("0.05"));
+        when(commissionRateResolver.resolve(eq(travelerId), eq(senderId), isNull(), isNull(), any())).thenReturn(new BigDecimal("0.05"));
         when(walletService.getBalance(travelerId, "EUR")).thenReturn(new BigDecimal("1.00"));
         when(userRepo.findById(travelerId)).thenReturn(Optional.of(traveler));
 
@@ -178,7 +181,7 @@ class CashCommissionServiceNegotiationTest {
         UserEntity traveler = travelerWithCard(travelerId, true);
 
         when(negotiationThreadRepository.findById(threadId)).thenReturn(Optional.of(thread));
-        when(commissionRateResolver.resolve(travelerId, senderId)).thenReturn(new BigDecimal("0.05"));
+        when(commissionRateResolver.resolve(eq(travelerId), eq(senderId), isNull(), isNull(), any())).thenReturn(new BigDecimal("0.05"));
         when(userRepo.findById(travelerId)).thenReturn(Optional.of(traveler));
 
         PaymentIntent pi = mock(PaymentIntent.class);
@@ -212,7 +215,7 @@ class CashCommissionServiceNegotiationTest {
         UserEntity traveler = travelerWithCard(travelerId, true);
 
         when(negotiationThreadRepository.findById(threadId)).thenReturn(Optional.of(thread));
-        when(commissionRateResolver.resolve(travelerId, senderId)).thenReturn(new BigDecimal("0.05"));
+        when(commissionRateResolver.resolve(eq(travelerId), eq(senderId), isNull(), isNull(), any())).thenReturn(new BigDecimal("0.05"));
         when(userRepo.findById(travelerId)).thenReturn(Optional.of(traveler));
 
         PaymentIntent pi = mock(PaymentIntent.class);
@@ -244,7 +247,7 @@ class CashCommissionServiceNegotiationTest {
         UserEntity traveler = travelerWithCard(travelerId, false);
 
         when(negotiationThreadRepository.findById(threadId)).thenReturn(Optional.of(thread));
-        when(commissionRateResolver.resolve(travelerId, senderId)).thenReturn(new BigDecimal("0.05"));
+        when(commissionRateResolver.resolve(eq(travelerId), eq(senderId), isNull(), isNull(), any())).thenReturn(new BigDecimal("0.05"));
         when(userRepo.findById(travelerId)).thenReturn(Optional.of(traveler));
 
         AcceptBidResponse response = service.settleNegotiationCommission(
@@ -292,7 +295,7 @@ class CashCommissionServiceNegotiationTest {
         NegotiationThreadEntity thread = threadWithId(threadId);
 
         when(negotiationThreadRepository.findById(threadId)).thenReturn(Optional.of(thread));
-        when(commissionRateResolver.resolve(travelerId, senderId)).thenReturn(new BigDecimal("0.05"));
+        when(commissionRateResolver.resolve(eq(travelerId), eq(senderId), isNull(), isNull(), any())).thenReturn(new BigDecimal("0.05"));
 
         AcceptBidResponse response = service.settleNegotiationCommission(
                 travelerId, senderId, threadId, BigDecimal.ZERO, CommissionSource.WALLET_FIRST);
@@ -317,7 +320,7 @@ class CashCommissionServiceNegotiationTest {
         UserEntity traveler = travelerWithCard(travelerId, true);
 
         when(negotiationThreadRepository.findById(threadId)).thenReturn(Optional.of(thread));
-        when(commissionRateResolver.resolve(travelerId, senderId)).thenReturn(new BigDecimal("0.05"));
+        when(commissionRateResolver.resolve(eq(travelerId), eq(senderId), isNull(), isNull(), any())).thenReturn(new BigDecimal("0.05"));
         when(userRepo.findById(travelerId)).thenReturn(Optional.of(traveler));
         when(stripeCashGateway.createPaymentIntent(any(PaymentIntentCreateParams.class), any(RequestOptions.class)))
                 .thenThrow(new CardException("Card declined", null, "card_declined", null, null, null, null, null));
@@ -344,7 +347,7 @@ class CashCommissionServiceNegotiationTest {
         UserEntity traveler = travelerWithCard(travelerId, true);
 
         when(negotiationThreadRepository.findById(threadId)).thenReturn(Optional.of(thread));
-        when(commissionRateResolver.resolve(travelerId, senderId)).thenReturn(new BigDecimal("0.05"));
+        when(commissionRateResolver.resolve(eq(travelerId), eq(senderId), isNull(), isNull(), any())).thenReturn(new BigDecimal("0.05"));
         when(userRepo.findById(travelerId)).thenReturn(Optional.of(traveler));
 
         PaymentIntent successPi = mock(PaymentIntent.class);

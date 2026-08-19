@@ -36,27 +36,27 @@ public class ReferralService {
 
     private final ReferralCodeRepository referralCodeRepository;
     private final ReferralInvitationRepository referralInvitationRepository;
-    private final UserCreditRepository userCreditRepository;
     private final UserRepository userRepository;
     private final AuditService auditService;
     private final ReferralConfig config;
-    private final com.yadony.api.payments.currency.ActiveCurrencyResolver activeCurrencyResolver;
+    private final com.yadony.api.voucher.CommissionVoucherService voucherService;
+    private final com.yadony.api.voucher.VoucherConfig voucherConfig;
     private final Random random = new Random();
 
     public ReferralService(ReferralCodeRepository referralCodeRepository,
                            ReferralInvitationRepository referralInvitationRepository,
-                           UserCreditRepository userCreditRepository,
                            UserRepository userRepository,
                            AuditService auditService,
                            ReferralConfig config,
-                           com.yadony.api.payments.currency.ActiveCurrencyResolver activeCurrencyResolver) {
+                           com.yadony.api.voucher.CommissionVoucherService voucherService,
+                           com.yadony.api.voucher.VoucherConfig voucherConfig) {
         this.referralCodeRepository = referralCodeRepository;
         this.referralInvitationRepository = referralInvitationRepository;
-        this.userCreditRepository = userCreditRepository;
         this.userRepository = userRepository;
         this.auditService = auditService;
         this.config = config;
-        this.activeCurrencyResolver = activeCurrencyResolver;
+        this.voucherService = voucherService;
+        this.voucherConfig = voucherConfig;
     }
 
     // ── Code generation ──────────────────────────────────────────────────────
@@ -100,24 +100,18 @@ public class ReferralService {
         long totalInvited = referralInvitationRepository.countByReferrerUserId(user.getId());
         long signedUp = referralInvitationRepository.countByReferrerUserIdAndStatus(user.getId(), "SIGNED_UP");
         long rewarded = referralInvitationRepository.countByReferrerUserIdAndStatus(user.getId(), "REWARDED");
-        // Total de la seule devise active : additionner toutes devises confondues
-        // mêlerait dollars et euros en un chiffre qu'aucun symbole ne peut légender.
-        String currency = activeCurrencyResolver.resolve(user.getId());
-        int totalEarnedCents =
-                userCreditRepository.sumAmountCentsByUserIdAndCurrency(user.getId(), currency);
 
-        // Le montant annoncé doit être exactement celui qui sera versé : même
-        // barème, même conversion, mêmes unités mineures. Toute divergence ferait
-        // promettre à l'écran une somme que le parrain ne recevrait pas.
-        var rewardCurrency = com.yadony.api.payments.currency.SupportedCurrency
-                .fromCodeOrDefault(currency);
-        java.math.BigDecimal rewardEur = java.math.BigDecimal
-                .valueOf(config.getRewardAmountCents())
-                .movePointLeft(2);
-        int rewardAmountInMinorUnits = (int) com.yadony.api.payments.currency.CurrencyAmount
-                .of(com.yadony.api.payments.currency.CurrencyBounds
-                        .scaleFromEur(rewardEur, rewardCurrency), rewardCurrency)
-                .minor();
+        // Lot 3 : ce n'est plus un montant crédité mais des bons de réduction de
+        // commission — le premier à expirer est celui qui presse le plus l'écran.
+        java.util.List<com.yadony.api.voucher.CommissionVoucherEntity> activeVouchers =
+                voucherService.listActive(user.getId());
+        java.time.LocalDateTime nextVoucherExpiresAt = activeVouchers.isEmpty()
+                ? null
+                : activeVouchers.get(0).getExpiresAt();
+        // Le facteur affiché est toujours le barème courant, pas celui d'un bon
+        // particulier : la promesse « invite et gagne X % » doit rester correcte
+        // même pour un parrain qui n'a encore aucun bon actif.
+        java.math.BigDecimal voucherFactor = voucherConfig.getFactor();
 
         boolean hasBeenReferred =
                 referralInvitationRepository.findByRefereeUserIdAndStatus(user.getId(), "SIGNED_UP").isPresent() ||
@@ -126,7 +120,7 @@ public class ReferralService {
         return new MyReferralResponse(
                 code, shareUrl,
                 (int) totalInvited, (int) signedUp, (int) rewarded,
-                totalEarnedCents, hasBeenReferred, currency, rewardAmountInMinorUnits
+                hasBeenReferred, activeVouchers.size(), voucherFactor, nextVoucherExpiresAt
         );
     }
 

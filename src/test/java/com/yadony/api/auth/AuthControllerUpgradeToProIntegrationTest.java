@@ -57,6 +57,10 @@ class AuthControllerUpgradeToProIntegrationTest {
         plainUser.setKycStatus(KycStatus.PENDING);
         plainUser.setRoles(Set.of(Role.SENDER, Role.TRAVELER));
         plainUser.setStripeAccountStatus(StripeAccountStatus.NOT_CREATED);
+        // Le défaut "FR" en dur a été retiré de UserEntity (V225, le pays est
+        // désormais une donnée saisie) : ce test vérifie explicitement le mapping
+        // du champ country dans la réponse, donc la fixture doit le renseigner.
+        plainUser.setCountry("FR");
         userRepository.save(plainUser);
 
         // Seed a user who already has a Stripe account

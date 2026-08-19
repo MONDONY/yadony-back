@@ -86,9 +86,11 @@ yadony:
     non-pro:
       monthly-announcements: 2
   referral:
-    reward-amount-cents: 500
     max-invitations-per-user: 50
     code-regeneration-cooldown-days: 30
+  voucher:
+    factor: 0.50
+    validity-months: 6
   requests:
     max-negotiation-rounds: 3
     thread-inactivity-hours: 1

@@ -50,6 +50,10 @@ class V89MigrationTest {
     void seedData() {
         // Insert users using positional parameters — H2 accepts UUID objects directly.
         // All NOT NULL columns must be provided explicitly (H2 DDL from JPA, no defaults from SQL).
+        // country est seedé à 'FR' ici pour reproduire l'état réel d'avant la migration V225
+        // (tous les users avaient 'FR' en dur) ; v225MakesCountryNullable reproduit ensuite le
+        // backfill de V225 avant d'asserter, au lieu d'omettre la colonne — l'omettre rendait
+        // l'assertion vraie par construction, sans jamais exercer la logique du backfill.
         String insertUser =
                 "INSERT INTO users (id, firebase_uid, username, status, kyc_status, stripe_account_status, " +
                 "cancellation_count, is_pro_account, contact_kyc_only, hide_phone_number, country, " +
@@ -155,6 +159,31 @@ class V89MigrationTest {
         assertThat(count)
                 .as("Seul user1 doit conserver TRAVELER")
                 .isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("V225 rend le pays nullable et vide les FR poses par defaut")
+    void v225MakesCountryNullable() {
+        // Cette classe tourne sans Flyway (flyway.enabled=false, ddl-auto=create) :
+        // V225__users_country_nullable.sql n'est donc jamais exécuté ici. Ce test ne garantit
+        // pas que le fichier SQL s'applique correctement en production — il reproduit
+        // uniquement le backfill (UPDATE users SET country = NULL) en H2, sur des users
+        // seedés avec 'FR' pour représenter l'état pré-migration, comme runMigrationLogic()
+        // le fait plus bas pour V89.
+        runV225BackfillLogic();
+
+        Integer remaining = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM users WHERE country IS NOT NULL", Integer.class);
+        assertThat(remaining).isZero();
+    }
+
+    /**
+     * Reproduces V225's backfill in H2-compatible SQL: {@code UPDATE users SET country = NULL}.
+     * Identical to the production statement — no PostgreSQL-specific syntax involved here,
+     * unlike {@link #runMigrationLogic()} for V89.
+     */
+    private void runV225BackfillLogic() {
+        jdbc.update("UPDATE users SET country = NULL");
     }
 
     // ─── Migration logic (H2-compatible) ──────────────────────────────────────

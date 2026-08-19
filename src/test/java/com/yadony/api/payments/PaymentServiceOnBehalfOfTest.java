@@ -13,9 +13,6 @@ import com.yadony.api.matching.BidStatus;
 import com.yadony.api.payments.dto.CreatePaymentRequest;
 import com.yadony.api.payments.dto.PaymentResponse;
 import com.yadony.api.payments.exceptions.TravelerNotEligibleForPaymentException;
-import com.yadony.api.payments.currency.CurrencyMatchGuard;
-import com.yadony.api.settings.UserBusinessPrefsEntity;
-import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import com.stripe.model.PaymentIntent;
 import com.stripe.param.PaymentIntentCancelParams;
 import com.stripe.param.PaymentIntentCreateParams;
@@ -54,14 +51,6 @@ class PaymentServiceOnBehalfOfTest {
     @Mock PaymentRepository paymentRepository;
     @Mock AuditService auditService;
     @Mock ApplicationEventPublisher eventPublisher;
-    @Mock ActiveCurrencyResolver activeCurrencyResolver;
-
-    @org.junit.jupiter.api.BeforeEach
-    void stubDefaultActiveCurrency() {
-        org.mockito.Mockito.lenient()
-                .when(activeCurrencyResolver.resolve(org.mockito.ArgumentMatchers.any()))
-                .thenReturn("EUR");
-    }
 
     PaymentService service;
     com.yadony.api.common.CommissionRateResolver commissionRateResolver;
@@ -89,8 +78,7 @@ class PaymentServiceOnBehalfOfTest {
                 props,
                 new com.fasterxml.jackson.databind.ObjectMapper(),
                 org.mockito.Mockito.mock(com.yadony.api.common.stripe.AdminAlertService.class), commissionRateResolver, org.mockito.Mockito.mock(com.yadony.api.promo.PromoService.class), new StripeGatewayImpl(),
-                PaymentServiceTestFactory.stubbedContacts(),
-                activeCurrencyResolver, new CurrencyMatchGuard()
+                PaymentServiceTestFactory.stubbedContacts(), mock(com.yadony.api.voucher.CommissionVoucherService.class), mock(com.yadony.api.payments.ConnectAccountProvisioner.class)
 );
     }
 
@@ -165,13 +153,6 @@ class PaymentServiceOnBehalfOfTest {
         return req;
     }
 
-    private UserBusinessPrefsEntity prefsWithCurrency(String currency) {
-        UserBusinessPrefsEntity prefs = new UserBusinessPrefsEntity();
-        prefs.setUserId(senderId);
-        prefs.setCurrencyCode(currency);
-        return prefs;
-    }
-
     private void stubCommonRepositories(UserEntity traveler) {
         when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(buildSender()));
         when(bidRepository.findById(bidId)).thenReturn(Optional.of(buildBid()));
@@ -231,7 +212,6 @@ class PaymentServiceOnBehalfOfTest {
         UserEntity traveler = buildTraveler("acct_traveler_123", StripeAccountStatus.ONBOARDING_COMPLETE);
         when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
         when(bidRepository.findById(bidId)).thenReturn(Optional.of(buildBid("CAD")));
-        when(activeCurrencyResolver.resolve(senderId)).thenReturn("CAD");
         when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.empty());
         when(announcementRepository.findById(annId)).thenReturn(Optional.of(buildAnnouncement()));
         when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler));
@@ -277,57 +257,22 @@ class PaymentServiceOnBehalfOfTest {
     }
 
     @Test
-    void success_zeroDecimalCurrency_keepsCommissionMetadataAlignedWithPersistedAmount() {
+    void createEscrow_xofBid_rejectsBeforeTouchingStripe() {
+        // Même règle que le test XAF ci-dessus, sur l'autre franc CFA. L'ancienne
+        // couverture "0-decimal via Stripe" n'a plus de scénario valide : XOF ne peut
+        // plus atteindre createEscrow avec succès. Le calcul 0-décimale lui-même reste
+        // couvert au niveau unitaire par CurrencyAmountTest/CurrencyBoundsTest.
         UserEntity sender = buildSender();
-        UserEntity traveler = buildTraveler("acct_traveler_123", StripeAccountStatus.ONBOARDING_COMPLETE);
-        AnnouncementEntity announcement = buildAnnouncement();
-        announcement.setPricePerKg(new BigDecimal("5.25"));
-
         when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
         when(bidRepository.findById(bidId)).thenReturn(Optional.of(buildBid("XOF")));
-        when(activeCurrencyResolver.resolve(senderId)).thenReturn("XOF");
-        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.empty());
-        when(announcementRepository.findById(annId)).thenReturn(Optional.of(announcement));
-        when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler));
-        when(paymentRepository.save(any())).thenAnswer(inv -> {
-            PaymentEntity payment = inv.getArgument(0);
-            setId(payment, UUID.randomUUID());
-            return payment;
-        });
 
-        try (MockedStatic<com.stripe.model.Account> accountStatic = mockStatic(com.stripe.model.Account.class);
-             MockedStatic<PaymentIntent> paymentIntentStatic = mockStatic(PaymentIntent.class)) {
-            com.stripe.model.Account account = mock(com.stripe.model.Account.class);
-            com.stripe.model.Account.Capabilities capabilities = mock(com.stripe.model.Account.Capabilities.class);
-            when(capabilities.getCardPayments()).thenReturn("active");
-            when(account.getCapabilities()).thenReturn(capabilities);
-            accountStatic.when(() -> com.stripe.model.Account.retrieve("acct_traveler_123"))
-                    .thenReturn(account);
+        Throwable thrown = catchThrowable(
+                () -> service.createEscrow(buildRequest("EUR"), "uid-sender"));
 
-            ArgumentCaptor<PaymentIntentCreateParams> paramsCaptor =
-                    ArgumentCaptor.forClass(PaymentIntentCreateParams.class);
-            PaymentIntent paymentIntent = mock(PaymentIntent.class);
-            when(paymentIntent.getId()).thenReturn("pi_xof");
-            when(paymentIntent.getClientSecret()).thenReturn("pi_xof_secret");
-            paymentIntentStatic.when(() -> PaymentIntent.create(paramsCaptor.capture()))
-                    .thenReturn(paymentIntent);
-
-            PaymentResponse response = service.createEscrow(buildRequest("CAD"), "uid-sender");
-
-            PaymentIntentCreateParams params = paramsCaptor.getValue();
-            assertThat(params.getAmount()).isEqualTo(29L);
-            assertThat(params.getCurrency()).isEqualTo("xof");
-            assertThat(params.getMetadata())
-                    .containsEntry("commission_amount", "3")
-                    .containsEntry("commission_minor", "3");
-            assertThat(response.getAmount()).isEqualByComparingTo("29");
-            assertThat(response.getCommissionAmount()).isEqualByComparingTo("3");
-
-            ArgumentCaptor<PaymentEntity> paymentCaptor = ArgumentCaptor.forClass(PaymentEntity.class);
-            verify(paymentRepository).save(paymentCaptor.capture());
-            assertThat(paymentCaptor.getValue().getAmount()).isEqualByComparingTo("29");
-            assertThat(paymentCaptor.getValue().getCommissionAmount()).isEqualByComparingTo("3");
-        }
+        assertThat(thrown).isInstanceOf(com.yadony.api.common.YadonyBusinessException.class);
+        assertThat(((com.yadony.api.common.YadonyBusinessException) thrown).getErrorCode())
+                .isEqualTo("payment-method-unavailable-for-currency");
+        verifyNoInteractions(paymentRepository, announcementRepository);
     }
 
     @Test
@@ -339,7 +284,6 @@ class PaymentServiceOnBehalfOfTest {
         BidEntity bid = buildBid("CAD");
         bid.setCommissionRate(new BigDecimal("0.12"));
         when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
-        when(activeCurrencyResolver.resolve(senderId)).thenReturn("CAD");
         when(announcementRepository.findById(annId)).thenReturn(Optional.of(buildAnnouncement()));
         when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler));
 
@@ -399,21 +343,38 @@ class PaymentServiceOnBehalfOfTest {
     }
 
     @Test
-    void currencyMismatchFailsBeforeIdempotencyCommissionPromoAndPersistence() {
-        UserEntity sender = buildSender();
-        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
-        when(bidRepository.findById(bidId)).thenReturn(Optional.of(buildBid("EUR")));
-        when(activeCurrencyResolver.resolve(senderId)).thenReturn("CAD");
+    void createEscrow_paysBidFrozenCurrency_evenIfSendersCurrentPreferenceDiffers() {
+        // Lot 2 (gel devise au premier mouvement) : createEscrow ne compare plus la
+        // devise figée du bid à la préférence *courante* de l'expéditeur. Basculer de
+        // devise après la création du bid ne doit plus jamais bloquer le paiement de
+        // ses propres colis en cours (l'ancienne garde le faisait à tort).
+        UserEntity traveler = buildTraveler("acct_traveler_123", StripeAccountStatus.ONBOARDING_COMPLETE);
+        stubCommonRepositories(traveler);
+        when(paymentRepository.save(any())).thenAnswer(inv -> {
+            PaymentEntity p = inv.getArgument(0);
+            setId(p, UUID.randomUUID());
+            return p;
+        });
 
-        Throwable thrown = catchThrowable(
-                () -> service.createEscrow(buildRequest("EUR"), "uid-sender"));
+        try (MockedStatic<com.stripe.model.Account> acctStatic = mockStatic(com.stripe.model.Account.class);
+             MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class)) {
+            com.stripe.model.Account mockAcct = mock(com.stripe.model.Account.class);
+            com.stripe.model.Account.Capabilities caps = mock(com.stripe.model.Account.Capabilities.class);
+            when(caps.getCardPayments()).thenReturn("active");
+            when(mockAcct.getCapabilities()).thenReturn(caps);
+            acctStatic.when(() -> com.stripe.model.Account.retrieve(any(String.class))).thenReturn(mockAcct);
 
-        assertThat(thrown).isInstanceOf(com.yadony.api.common.YadonyBusinessException.class);
-        assertThat(((com.yadony.api.common.YadonyBusinessException) thrown).getErrorCode())
-                .isEqualTo("currency-mismatch");
-        verifyNoInteractions(paymentRepository, announcementRepository, auditService);
-        verify(bidRepository, never()).save(any());
-        verifyNoInteractions(commissionRateResolver);
+            PaymentIntent mockPi = mock(PaymentIntent.class);
+            when(mockPi.getId()).thenReturn("pi_test_new");
+            when(mockPi.getClientSecret()).thenReturn("pi_secret");
+            piStatic.when(() -> PaymentIntent.create(any(PaymentIntentCreateParams.class))).thenReturn(mockPi);
+
+            // buildBid() (via stubCommonRepositories) est en EUR ; aucune préférence
+            // "courante" n'entre plus en jeu — il n'y a même plus de resolver à stuber.
+            PaymentResponse resp = service.createEscrow(buildRequest(), "uid-sender");
+
+            assertThat(resp.getStatus()).isEqualTo("PENDING");
+        }
     }
 
     // ── TravelerNotEligibleForPaymentException for all ineligible states ──────
