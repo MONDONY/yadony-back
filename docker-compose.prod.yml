@@ -10,6 +10,10 @@ services:
       - .env
     environment:
       SPRING_PROFILES_ACTIVE: prod
+      # Le fichier est bien monté ci-dessous, mais rien ne le désignait :
+      # SecurityStartupValidator refuse alors de démarrer en prod, et
+      # l'authentification Firebase échouerait de toute façon à l'exécution.
+      GOOGLE_APPLICATION_CREDENTIALS: /app/firebase-service-account.json
     volumes:
       - ./firebase-service-account.json:/app/firebase-service-account.json:ro
     depends_on:
