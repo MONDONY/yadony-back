@@ -26,7 +26,7 @@ class UserBusinessPrefsServiceTest {
 
     @Mock UserBusinessPrefsRepository repository;
     @Mock UserRepository userRepository;
-    @Mock CurrencyLockService currencyLockService;
+    @Mock CountryLockService currencyLockService;
     @InjectMocks UserBusinessPrefsService service;
 
     private static final String FIREBASE_UID = "uid-test";

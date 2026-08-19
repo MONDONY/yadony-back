@@ -15,11 +15,11 @@ public class UserBusinessPrefsService {
 
     private final UserBusinessPrefsRepository repository;
     private final UserRepository userRepository;
-    private final CurrencyLockService currencyLockService;
+    private final CountryLockService currencyLockService;
 
     public UserBusinessPrefsService(UserBusinessPrefsRepository repository,
                                     UserRepository userRepository,
-                                    CurrencyLockService currencyLockService) {
+                                    CountryLockService currencyLockService) {
         this.repository = repository;
         this.userRepository = userRepository;
         this.currencyLockService = currencyLockService;
