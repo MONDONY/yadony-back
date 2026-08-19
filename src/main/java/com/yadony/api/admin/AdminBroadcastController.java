@@ -42,6 +42,9 @@ import java.util.UUID;
 @PreAuthorize("hasRole('ADMIN') and hasAuthority('NOTIFICATION_SEND')")
 public class AdminBroadcastController {
 
+    /** Borne haute de pagination, comme {@code AdminFinanceController}. */
+    private static final int MAX_PAGE_SIZE = 100;
+
     private final BroadcastService broadcastService;
     private final BroadcastAudienceService audienceService;
     private final AdminBroadcastRepository broadcastRepository;
@@ -98,7 +101,11 @@ public class AdminBroadcastController {
     @GetMapping("/admin/notifications/broadcasts")
     public Page<AdminBroadcastResponse> history(@RequestParam(defaultValue = "0") int page,
                                                 @RequestParam(defaultValue = "20") int size) {
-        return broadcastRepository.findAllByOrderByCreatedAtDesc(PageRequest.of(page, size))
+        // Borne : une page d'ecran, pas un export deguise. Et un page negatif ferait lever
+        // IllegalArgumentException a PageRequest.of, sans handler dedie — 500 au lieu d'un
+        // 4xx RFC 7807.
+        return broadcastRepository.findAllByOrderByCreatedAtDesc(
+                        PageRequest.of(Math.max(page, 0), Math.min(Math.max(size, 1), MAX_PAGE_SIZE)))
                 .map(AdminBroadcastResponse::from);
     }
 

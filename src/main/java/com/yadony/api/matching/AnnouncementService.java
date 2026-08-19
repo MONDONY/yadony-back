@@ -1242,7 +1242,15 @@ public class AnnouncementService {
     @Transactional
     @CacheEvict(value = "announcements-search", allEntries = true)
     public AnnouncementEntity removeByAdmin(UUID announcementId, UUID adminId, String reason) {
-        AnnouncementEntity ann = announcementRepository.findById(announcementId)
+        // Verrou pessimiste, et non un simple findById : BidCheckoutService.checkout() detient
+        // ce meme verrou pendant tout son appel reseau a Stripe. Sans lui, un retrait pouvait
+        // s'intercaler, lire la liste des bids AVANT que le checkout ne commite, puis marquer
+        // l'annonce retiree — laissant un bid AWAITING_PAYMENT avec un PaymentIntent vivant sur
+        // un trajet retire pour fraude. Rien ne le rattrapait ensuite :
+        // promoteBidOnPaymentAuthorized n'a aucune garde de statut d'annonce, et
+        // expirePendingBids ne balaie que les annonces ACTIVE/FULL.
+        // Aucune inversion d'ordre possible : cette methode ne verrouille aucun bid.
+        AnnouncementEntity ann = announcementRepository.findByIdForUpdate(announcementId)
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
                         "announcement-not-found", "Announcement Not Found", "Annonce introuvable"));
 

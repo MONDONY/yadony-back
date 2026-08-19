@@ -38,6 +38,9 @@ import java.util.UUID;
 @PreAuthorize("hasRole('ADMIN')")
 public class AdminGdprController {
 
+    /** Borne haute de pagination, comme {@code AdminFinanceController}. */
+    private static final int MAX_PAGE_SIZE = 100;
+
     private final AdminGdprService adminGdprService;
     private final FirebaseContactService firebaseContact;
 
@@ -53,7 +56,12 @@ public class AdminGdprController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
 
-        Page<UserEntity> users = adminGdprService.listDeletionRequests(PageRequest.of(page, size));
+        // Borne : un size demesure enchainerait autant d'appels Firebase sequentiels
+        // (getContacts decoupe par lots de 100) dans un seul thread de requete. Et un page
+        // negatif ferait lever IllegalArgumentException par PageRequest.of, sans handler
+        // dedie : 500 au lieu d'un 4xx RFC 7807.
+        Page<UserEntity> users = adminGdprService.listDeletionRequests(
+                PageRequest.of(Math.max(page, 0), Math.min(Math.max(size, 1), MAX_PAGE_SIZE)));
         // Un seul aller-retour Firebase pour toute la page, comme AdminUserController.listUsers.
         Map<String, FirebaseContactService.Contact> contacts = firebaseContact.getContacts(
                 users.getContent().stream().map(UserEntity::getFirebaseUid).toList());
