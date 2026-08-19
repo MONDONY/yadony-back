@@ -1241,7 +1241,9 @@ public class AnnouncementService {
      */
     @Transactional
     @CacheEvict(value = "announcements-search", allEntries = true)
-    public AnnouncementEntity removeByAdmin(UUID announcementId, UUID adminId, String reason) {
+    public AnnouncementEntity removeByAdmin(UUID announcementId, UUID adminId,
+                                            AnnouncementRemovalReason publicReason,
+                                            String internalNote) {
         // Verrou pessimiste, et non un simple findById : BidCheckoutService.checkout() detient
         // ce meme verrou pendant tout son appel reseau a Stripe. Sans lui, un retrait pouvait
         // s'intercaler, lire la liste des bids AVANT que le checkout ne commite, puis marquer
@@ -1302,11 +1304,19 @@ public class AnnouncementService {
                     announcementId, false));
         }
 
+        // L'audit reçoit les DEUX : le motif catalogué et la note interne complète. Celle-ci
+        // n'a plus à être auto-censurée pour protéger le signalant, puisqu'elle ne sort pas.
         auditService.log("ANNOUNCEMENT", announcementId, "ANNOUNCEMENT_REMOVED_BY_ADMIN", adminId,
-                Map.of("reason", reason, "rejectedBidsCount", String.valueOf(pendingBids.size())));
+                Map.of("publicReason", publicReason.name(),
+                        "internalNote", internalNote != null ? internalNote : "",
+                        "rejectedBidsCount", String.valueOf(pendingBids.size())));
+
+        // ⚠️ SEUL le libellé catalogué part au voyageur. La note interne ne doit JAMAIS entrer
+        // ici : le même champ servait auparavant aux deux usages, si bien qu'un modérateur
+        // écrivant « signalé par X, ticket #4821 » nommait le signalant auprès du sanctionné.
         notificationDispatcher.notifyUser(ann.getTravelerId(),
                 "Annonce retirée",
-                "Votre annonce a été retirée par la modération. Motif : " + reason,
+                "Votre annonce a été retirée par la modération. Motif : " + publicReason.publicLabel(),
                 Map.of("type", "ANNOUNCEMENT_REMOVED", "announcementId", announcementId.toString()));
 
         return saved;

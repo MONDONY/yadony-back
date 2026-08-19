@@ -65,31 +65,55 @@ class AnnouncementModerationServiceTest {
         when(bidRepository.existsByAnnouncementIdAndStatusIn(eq(ANN_ID), anyList())).thenReturn(false);
         when(announcementRepository.save(any())).thenReturn(announcement);
 
-        AnnouncementEntity result = service.removeByAdmin(ANN_ID, ADMIN_ID, "contenu frauduleux");
+        AnnouncementEntity result = service.removeByAdmin(ANN_ID, ADMIN_ID,
+                AnnouncementRemovalReason.SUSPECTED_FRAUD, "signalé par Awa Ndiaye, ticket #4821");
 
         assertThat(result.getStatus()).isEqualTo(AnnouncementStatus.REMOVED_BY_ADMIN);
 
-        // Correction mineure (revue) : anyMap() resterait vert même si le motif n'était
-        // plus transmis — on capture donc le payload réel pour vérifier son contenu.
+        // anyMap() resterait vert même si le motif n'était plus transmis — on capture donc le
+        // payload réel. L'audit reçoit les DEUX : le motif catalogué et la note interne
+        // complète, celle-ci n'ayant plus à être auto-censurée pour protéger le signalant.
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, Object>> payloadCaptor = ArgumentCaptor.forClass(Map.class);
         verify(auditService).log(eq("ANNOUNCEMENT"), eq(ANN_ID),
                 eq("ANNOUNCEMENT_REMOVED_BY_ADMIN"), eq(ADMIN_ID), payloadCaptor.capture());
-        assertThat(payloadCaptor.getValue()).containsEntry("reason", "contenu frauduleux");
+        assertThat(payloadCaptor.getValue())
+                .containsEntry("publicReason", "SUSPECTED_FRAUD")
+                .containsEntry("internalNote", "signalé par Awa Ndiaye, ticket #4821");
     }
 
     @Test
-    @DisplayName("removeByAdmin : notifie le propriétaire de l'annonce avec le motif")
-    void removeByAdmin_notifiesOwner() {
+    @DisplayName("removeByAdmin : le voyageur reçoit le motif catalogué, JAMAIS la note interne")
+    void removeByAdmin_notifiesOwnerWithoutLeakingTheInternalNote() {
         when(announcementRepository.findByIdForUpdate(ANN_ID)).thenReturn(Optional.of(announcement));
         when(bidRepository.existsByAnnouncementIdAndStatusIn(eq(ANN_ID), anyList())).thenReturn(false);
         when(announcementRepository.save(any())).thenReturn(announcement);
 
-        service.removeByAdmin(ANN_ID, ADMIN_ID, "contenu frauduleux");
+        service.removeByAdmin(ANN_ID, ADMIN_ID, AnnouncementRemovalReason.SUSPECTED_FRAUD,
+                "signalé par Awa Ndiaye, ticket #4821");
 
         ArgumentCaptor<String> bodyCaptor = ArgumentCaptor.forClass(String.class);
         verify(notificationDispatcher).notifyUser(eq(OWNER_ID), anyString(), bodyCaptor.capture(), anyMap());
-        assertThat(bodyCaptor.getValue()).contains("contenu frauduleux");
+        assertThat(bodyCaptor.getValue())
+                .contains(AnnouncementRemovalReason.SUSPECTED_FRAUD.publicLabel())
+                // Le cœur du test : la personne sanctionnée ne doit apprendre ni qui l'a
+                // signalée, ni le numéro du ticket support.
+                .doesNotContain("Awa Ndiaye")
+                .doesNotContain("4821");
+    }
+
+    @Test
+    @DisplayName("removeByAdmin : une note interne absente ne casse rien")
+    void removeByAdmin_withoutInternalNote() {
+        when(announcementRepository.findByIdForUpdate(ANN_ID)).thenReturn(Optional.of(announcement));
+        when(bidRepository.existsByAnnouncementIdAndStatusIn(eq(ANN_ID), anyList())).thenReturn(false);
+        when(announcementRepository.save(any())).thenReturn(announcement);
+
+        service.removeByAdmin(ANN_ID, ADMIN_ID, AnnouncementRemovalReason.DUPLICATE, null);
+
+        ArgumentCaptor<String> bodyCaptor = ArgumentCaptor.forClass(String.class);
+        verify(notificationDispatcher).notifyUser(eq(OWNER_ID), anyString(), bodyCaptor.capture(), anyMap());
+        assertThat(bodyCaptor.getValue()).contains(AnnouncementRemovalReason.DUPLICATE.publicLabel());
     }
 
     @Test
@@ -117,7 +141,7 @@ class AnnouncementModerationServiceTest {
                 .thenReturn(List.of(pendingBid, escrowedBid));
         when(announcementRepository.save(any())).thenReturn(announcement);
 
-        service.removeByAdmin(ANN_ID, ADMIN_ID, "contenu frauduleux");
+        service.removeByAdmin(ANN_ID, ADMIN_ID, AnnouncementRemovalReason.SUSPECTED_FRAUD, "note interne");
 
         // Le bid escrowé (argent expéditeur déjà bloqué) est bien liquidé — c'est le cas
         // critique : sans ça, l'argent restait bloqué en escrow sans remboursement possible.
@@ -161,7 +185,7 @@ class AnnouncementModerationServiceTest {
                 .thenReturn(List.of(awaitingPaymentBid, negotiatingBid));
         when(announcementRepository.save(any())).thenReturn(announcement);
 
-        service.removeByAdmin(ANN_ID, ADMIN_ID, "contenu frauduleux");
+        service.removeByAdmin(ANN_ID, ADMIN_ID, AnnouncementRemovalReason.SUSPECTED_FRAUD, "note interne");
 
         // AWAITING_PAYMENT : un vrai "colis" (le PaymentIntent Stripe existe déjà côté
         // BidCheckoutService.checkout) → REJECTED, motif technique, comme PENDING/ESCROWED.
@@ -206,7 +230,7 @@ class AnnouncementModerationServiceTest {
                 .thenReturn(List.of(escrowedBid));
         when(announcementRepository.save(any())).thenReturn(announcement);
 
-        service.removeByAdmin(ANN_ID, ADMIN_ID, "contenu frauduleux");
+        service.removeByAdmin(ANN_ID, ADMIN_ID, AnnouncementRemovalReason.SUSPECTED_FRAUD, "note interne");
 
         ArgumentCaptor<BidRejectedEvent> eventCaptor = ArgumentCaptor.forClass(BidRejectedEvent.class);
         verify(eventPublisher).publishEvent(eventCaptor.capture());
@@ -225,7 +249,7 @@ class AnnouncementModerationServiceTest {
         when(announcementRepository.findByIdForUpdate(ANN_ID)).thenReturn(Optional.of(announcement));
         when(bidRepository.existsByAnnouncementIdAndStatusIn(eq(ANN_ID), anyList())).thenReturn(true);
 
-        assertThatThrownBy(() -> service.removeByAdmin(ANN_ID, ADMIN_ID, "peu importe"))
+        assertThatThrownBy(() -> service.removeByAdmin(ANN_ID, ADMIN_ID, AnnouncementRemovalReason.SUSPECTED_FRAUD, "note interne"))
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(e -> {
                     YadonyBusinessException y = (YadonyBusinessException) e;
@@ -269,7 +293,7 @@ class AnnouncementModerationServiceTest {
     void removeByAdmin_announcementNotFound() {
         when(announcementRepository.findByIdForUpdate(ANN_ID)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.removeByAdmin(ANN_ID, ADMIN_ID, "motif"))
+        assertThatThrownBy(() -> service.removeByAdmin(ANN_ID, ADMIN_ID, AnnouncementRemovalReason.SUSPECTED_FRAUD, "note interne"))
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(e -> {
                     YadonyBusinessException y = (YadonyBusinessException) e;
@@ -286,7 +310,7 @@ class AnnouncementModerationServiceTest {
         when(bidRepository.existsByAnnouncementIdAndStatusIn(eq(ANN_ID), anyList())).thenReturn(false);
         when(announcementRepository.save(any())).thenReturn(announcement);
 
-        service.removeByAdmin(ANN_ID, ADMIN_ID, "signalement");
+        service.removeByAdmin(ANN_ID, ADMIN_ID, AnnouncementRemovalReason.SUSPECTED_FRAUD, "note interne");
 
         assertThat(announcement.getStatus()).isEqualTo(AnnouncementStatus.REMOVED_BY_ADMIN);
         assertThat(announcement.getStatusBeforeRemoval()).isEqualTo(AnnouncementStatus.COMPLETED);

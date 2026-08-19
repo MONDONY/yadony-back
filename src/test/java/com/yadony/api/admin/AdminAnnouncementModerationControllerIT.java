@@ -3,6 +3,7 @@ package com.yadony.api.admin;
 import com.yadony.api.admin.account.AdminPrincipal;
 import com.yadony.api.admin.account.AdminRole;
 import com.yadony.api.admin.dto.RemoveAnnouncementRequest;
+import com.yadony.api.matching.AnnouncementRemovalReason;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.matching.AnnouncementEntity;
@@ -109,7 +110,7 @@ class AdminAnnouncementModerationControllerIT {
     void remove_withSupportRole_returns403() throws Exception {
         mockMvc.perform(post("/admin/announcements/{id}/remove", ANNOUNCEMENT_ID)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new RemoveAnnouncementRequest("contenu frauduleux")))
+                        .content(objectMapper.writeValueAsString(new RemoveAnnouncementRequest(AnnouncementRemovalReason.SUSPECTED_FRAUD, "ticket #4821")))
                         .with(authentication(supportAuth())))
                 .andExpect(status().isForbidden());
     }
@@ -118,11 +119,11 @@ class AdminAnnouncementModerationControllerIT {
     @DisplayName("POST /remove — rôle ADMIN (CONTENT_REMOVE) → 200 + ligne de table à jour")
     void remove_withAdminRole_returns200() throws Exception {
         AnnouncementEntity removed = buildAnnouncement(AnnouncementStatus.REMOVED_BY_ADMIN);
-        when(announcementService.removeByAdmin(eq(ANNOUNCEMENT_ID), any(), anyString())).thenReturn(removed);
+        when(announcementService.removeByAdmin(eq(ANNOUNCEMENT_ID), any(), any(AnnouncementRemovalReason.class), any())).thenReturn(removed);
 
         mockMvc.perform(post("/admin/announcements/{id}/remove", ANNOUNCEMENT_ID)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new RemoveAnnouncementRequest("contenu frauduleux")))
+                        .content(objectMapper.writeValueAsString(new RemoveAnnouncementRequest(AnnouncementRemovalReason.SUSPECTED_FRAUD, "ticket #4821")))
                         .with(authentication(adminAuth())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(ANNOUNCEMENT_ID.toString()))
@@ -132,25 +133,25 @@ class AdminAnnouncementModerationControllerIT {
     @Test
     @DisplayName("POST /remove — rôle ADMIN mais bids acceptés en cours → 409")
     void remove_withAcceptedBids_returns409() throws Exception {
-        when(announcementService.removeByAdmin(eq(ANNOUNCEMENT_ID), any(), anyString()))
+        when(announcementService.removeByAdmin(eq(ANNOUNCEMENT_ID), any(), any(AnnouncementRemovalReason.class), any()))
                 .thenThrow(new YadonyBusinessException(HttpStatus.CONFLICT,
                         "announcement-has-accepted-bids", "Announcement Has Accepted Bids",
                         "Des colis acceptés sont en cours sur cette annonce."));
 
         mockMvc.perform(post("/admin/announcements/{id}/remove", ANNOUNCEMENT_ID)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new RemoveAnnouncementRequest("peu importe")))
+                        .content(objectMapper.writeValueAsString(new RemoveAnnouncementRequest(AnnouncementRemovalReason.OTHER, "peu importe")))
                         .with(authentication(adminAuth())))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("announcement-has-accepted-bids"));
     }
 
     @Test
-    @DisplayName("POST /remove — motif vide → 422 (bean validation @NotBlank, cf. GlobalExceptionHandler)")
-    void remove_blankReason_returns422() throws Exception {
+    @DisplayName("POST /remove — motif catalogué absent → 422 (bean validation @NotNull)")
+    void remove_missingPublicReason_returns422() throws Exception {
         mockMvc.perform(post("/admin/announcements/{id}/remove", ANNOUNCEMENT_ID)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new RemoveAnnouncementRequest("")))
+                        .content(objectMapper.writeValueAsString(new RemoveAnnouncementRequest(null, "note sans motif")))
                         .with(authentication(adminAuth())))
                 .andExpect(status().isUnprocessableEntity());
     }

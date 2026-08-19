@@ -40,7 +40,7 @@ public class AdminAnnouncementModerationController {
     public AdminAnnouncementListItemResponse remove(@PathVariable UUID id,
             @RequestBody @Valid RemoveAnnouncementRequest request, Authentication authentication) {
         AnnouncementEntity announcement = announcementService.removeByAdmin(
-                id, adminId(authentication), request.reason());
+                id, adminId(authentication), request.publicReason(), request.internalNote());
         return toListItem(announcement);
     }
 
