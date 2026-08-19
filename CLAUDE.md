@@ -15,7 +15,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Migrations: Flyway
 - Auth: Firebase Authentication (token validation)
 - Payments: Stripe Connect Marketplace + Stripe Identity
-- Storage: Hetzner Object Storage (S3-compatible)
+- Storage: Cloudflare R2 (S3-compatible)
 - Cache: Caffeine (in-memory)
 - Notifications: Firebase FCM + SMS (Africa's Talking / Twilio)
 - Monitoring: Sentry
@@ -100,7 +100,7 @@ com.yadony.api/
 │   ├── SecurityConfig.java          # Spring Security configuration
 │   ├── FirebaseConfig.java          # Firebase Admin SDK initialization
 │   ├── CacheConfig.java             # Caffeine cache configuration
-│   ├── StorageConfig.java           # Hetzner S3 configuration
+│   ├── StorageConfig.java           # Configuration du client S3 (Cloudflare R2)
 │   └── StripeConfig.java            # Stripe API configuration
 ├── common/
 │   ├── BaseEntity.java              # Abstract entity with UUID, timestamps, soft delete
@@ -483,7 +483,7 @@ public class KycVerificationEntity extends BaseEntity {
 **Règles KYC:**
 - Schéma PostgreSQL séparé `kyc_schema`
 - Colonnes sensibles chiffrées AES-256
-- Photos stockées dans `kyc/{userId}/` sur Hetzner S3
+- Photos stockées dans `kyc/{userId}/` sur Cloudflare R2
 - Toujours générer des URLs signées avec expiration courte (1h max)
 - Ne JAMAIS exposer d'URL publique directe
 
@@ -526,7 +526,7 @@ public class StripeService {
 
 **Invariant de capture (separate charges & transfers) :** dans le modèle actuel non-legacy, le `PaymentIntent` est **capturé dès l'acceptation du bid** (`BidAcceptedEventListener`) — l'autorisation Stripe expirant ~7 j, insuffisant pour un acheminement vers l'Afrique. La protection escrow tient au **Transfer** : le voyageur n'est payé qu'au `Transfer.create` déclenché par `DeliveryConfirmedEvent` (`DeliveryEventListener.releaseV2`) ou force-release admin J+48. L'invariant réel est donc « pas de **versement voyageur** sans `DeliveryConfirmedEvent` », pas « pas de capture ». (Legacy destination-charge : capture bien à la livraison.) Vérifier que les CGU / l'UI de paiement informent l'expéditeur qu'il est débité à l'acceptation.
 
-### 9. File Storage (Hetzner S3)
+### 9. File Storage (Cloudflare R2)
 
 ```java
 @Service

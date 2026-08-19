@@ -70,7 +70,14 @@ class V171ContentCategoriesMigrationTest {
 
     @BeforeAll
     static void startDatabase() throws Exception {
-        postgres = EmbeddedPostgres.builder().start();
+        // locale explicite : sans elle, initdb hérite de la locale du host (souvent "C" en CI/macOS),
+        // où lower() ne foldcase pas les majuscules accentuées multi-octets ('É' reste 'É' au lieu de
+        // 'é') — contrairement au Postgres 16 réel (image officielle Docker, LANG=en_US.utf8) utilisé
+        // en dev/prod. Sans ce réglage, ce test ne reproduit pas fidèlement le comportement de lower()
+        // de la migration V171 en production.
+        postgres = EmbeddedPostgres.builder()
+                .setLocaleConfig("locale", "en_US.UTF-8")
+                .start();
         dataSource = postgres.getPostgresDatabase();
         try (Connection c = dataSource.getConnection(); Statement s = c.createStatement()) {
             s.execute("CREATE SCHEMA IF NOT EXISTS kyc_schema");
