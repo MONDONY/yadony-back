@@ -107,6 +107,21 @@ public class CommissionRateResolver {
      * la commission négative).
      */
     public BigDecimal resolve(UUID travelerId, UUID senderId, String promoCode, UUID promoUserId) {
+        return resolve(travelerId, senderId, promoCode, promoUserId, null);
+    }
+
+    /**
+     * Même résolution, rattachée à une transaction identifiée.
+     *
+     * @param reference bid ou fil de négociation auquel se rattache le prélèvement. Quand
+     *                  il est fourni, le bon pris en compte est celui DÉJÀ consommé pour
+     *                  cette référence s'il existe, sinon le plus ancien disponible : un
+     *                  réessai de prélèvement ne peut donc plus faire remonter le taux
+     *                  après que le bon a été consommé. Toujours une lecture pure — la
+     *                  consommation reste à la charge du point d'engagement financier.
+     */
+    public BigDecimal resolve(UUID travelerId, UUID senderId, String promoCode, UUID promoUserId,
+                              UUID reference) {
         BigDecimal rate = globalRate();
         rate = minNullable(rate, overrideOf(travelerId));
         rate = minNullable(rate, overrideOf(senderId));
@@ -117,7 +132,10 @@ public class CommissionRateResolver {
         }
         if (senderId != null) {
             BigDecimal beforeVoucher = rate;
-            rate = voucherService.peekActive(senderId)
+            var voucher = reference == null
+                    ? voucherService.peekActive(senderId)
+                    : voucherService.peekForReference(senderId, reference);
+            rate = voucher
                     .map(v -> beforeVoucher.multiply(v.getFactor()))
                     .orElse(beforeVoucher);
         }

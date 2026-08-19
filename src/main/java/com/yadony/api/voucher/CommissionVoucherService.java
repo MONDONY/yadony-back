@@ -72,6 +72,26 @@ public class CommissionVoucherService {
         return active.isEmpty() ? Optional.empty() : Optional.of(active.get(0));
     }
 
+    /**
+     * Le bon applicable à une transaction identifiée ({@code reference} = bid ou fil de
+     * négociation) : celui qui a DÉJÀ été consommé pour cette référence s'il existe,
+     * sinon le plus ancien encore disponible.
+     *
+     * <p>Sans ce repli, un réessai de prélèvement (carte refusée puis retentée, 3DS
+     * complétée plus tard) recalculait le taux après consommation du bon et le faisait
+     * remonter au plein tarif : le détenteur perdait sa remise entre deux tentatives du
+     * même règlement. Lecture pure, aucun effet de bord.
+     */
+    @Transactional(readOnly = true)
+    public Optional<CommissionVoucherEntity> peekForReference(UUID userId, UUID reference) {
+        if (reference == null) {
+            return peekActive(userId);
+        }
+        Optional<CommissionVoucherEntity> alreadyConsumed =
+                repository.findByConsumedOnBidIdAndUserId(reference, userId);
+        return alreadyConsumed.isPresent() ? alreadyConsumed : peekActive(userId);
+    }
+
     /** Tous les bons encore disponibles pour ce détenteur, triés du plus ancien au plus récent. */
     @Transactional(readOnly = true)
     public List<CommissionVoucherEntity> listActive(UUID userId) {

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.*;
 
 import com.yadony.api.auth.UserEntity;
@@ -91,6 +92,8 @@ class CashCommissionServiceTest {
     @BeforeEach
     void setUp() {
         lenient().when(commissionRateResolver.resolve(any(), any())).thenReturn(new BigDecimal("0.12"));
+        lenient().when(commissionRateResolver.resolve(any(), any(), any(), any(), any()))
+                .thenReturn(new BigDecimal("0.12"));
         lenient().when(commissionRateResolver.resolve(any())).thenReturn(new BigDecimal("0.12"));
         lenient().when(bidGridItemRepository.findByBidId(any())).thenReturn(java.util.List.of());
         service = new CashCommissionService(props, userRepo, bidRepo, announcementRepo, events,
@@ -168,7 +171,7 @@ class CashCommissionServiceTest {
             UUID travelerId = UUID.randomUUID();
             UUID senderId = UUID.randomUUID();
             // Override 8 % pour ce couple (écrase le stub générique 12 % du setUp).
-            when(commissionRateResolver.resolve(travelerId, senderId)).thenReturn(new BigDecimal("0.08"));
+            when(commissionRateResolver.resolve(eq(travelerId), eq(senderId), isNull(), isNull(), any())).thenReturn(new BigDecimal("0.08"));
 
             BidEntity bid = new BidEntity();
             ReflectionTestUtils.setField(bid, "id", UUID.randomUUID());
