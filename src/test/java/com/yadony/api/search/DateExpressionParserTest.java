@@ -105,4 +105,17 @@ class DateExpressionParserTest {
 
         assertThat(s.remaining()).isEmpty();
     }
+
+    @Test
+    void invalidDayForMonth_fallsBackToWholeMonth() {
+        // « le 31 février » : février n'a jamais 31 jours.
+        // Le parseur ne doit pas planter en DateTimeException,
+        // mais revenir au mois entier (1er au dernier jour de février).
+        ParseState s = state("le 31 février");
+
+        DateExpressionParser.apply(s);
+
+        assertThat(s.values()).containsEntry("departureDateFrom", LocalDate.of(2027, 2, 1));
+        assertThat(s.values()).containsEntry("departureDateTo", LocalDate.of(2027, 2, 28));
+    }
 }

@@ -70,7 +70,7 @@ public final class DateExpressionParser {
             Integer month = MONTHS.get(n);
             if (month != null) {
                 YearMonth target = nextOccurrence(today, month);
-                Integer day = precedingDay(state, tokens, i);
+                Integer day = precedingDay(state, tokens, i, target);
                 if (day != null) {
                     LocalDate exact = target.atDay(day);
                     putRange(state, exact, exact, t);
@@ -89,15 +89,16 @@ public final class DateExpressionParser {
         return candidate.isBefore(YearMonth.from(today)) ? candidate.plusYears(1) : candidate;
     }
 
-    /** Un nombre de 1 à 31 juste avant le mois : « le 12 mars ». */
-    private static Integer precedingDay(ParseState state, List<Token> tokens, int monthIndex) {
+    /** Un nombre de 1 à 31 juste avant le mois, valide pour ce mois : « le 12 mars ». */
+    private static Integer precedingDay(ParseState state, List<Token> tokens, int monthIndex, YearMonth target) {
         if (monthIndex == 0) return null;
         int prev = monthIndex - 1;
         if (state.isConsumed(prev)) return null;
         String p = tokens.get(prev).normalized();
         if (!p.chars().allMatch(Character::isDigit) || p.isEmpty()) return null;
         int day = Integer.parseInt(p);
-        return (day >= 1 && day <= 31) ? day : null;
+        // Valider que le jour existe réellement dans ce mois (ex: 31 février invalide).
+        return (day >= 1 && target.isValidDay(day)) ? day : null;
     }
 
     private static void putRange(ParseState state, LocalDate from, LocalDate to, Token source) {
