@@ -33,6 +33,17 @@ class FlagParserTest {
     }
 
     @Test
+    void identityPapersDoNotPhantomSetTheKycFlag() {
+        // I3 : « identite » posait kycVerifiedOnly même sur « papiers d'identité »,
+        // qui décrit le CONTENU du colis, pas une exigence sur le voyageur.
+        ParseState s = state("papiers d'identité pour mon fils");
+
+        FlagParser.apply(s);
+
+        assertThat(s.values()).doesNotContainKey("kycVerifiedOnly");
+    }
+
+    @Test
     void kiloProSetsTheProFlag() {
         ParseState s = state("kilo pro");
 

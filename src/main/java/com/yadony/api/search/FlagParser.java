@@ -17,7 +17,10 @@ public final class FlagParser {
     private FlagParser() {}
 
     private static final Set<String> URGENT   = Set.of("urgent", "urgente", "urgence", "presse");
-    private static final Set<String> VERIFIED = Set.of("verifie", "verifiee", "verifies", "identite");
+    // « identite » exclu volontairement : « papiers d'identité », « pièce d'identité »
+    // décrivent le CONTENU du colis, pas une exigence sur le voyageur. Le mot seul
+    // posait kycVerifiedOnly en fantôme sur ces phrases (trouvaille I3 de la revue).
+    private static final Set<String> VERIFIED = Set.of("verifie", "verifiee", "verifies");
     // Les tokens arrivent déjà sans accent : inutile de lister « noté ».
     private static final Set<String> WELL_RATED = Set.of("note", "notee", "notes");
 

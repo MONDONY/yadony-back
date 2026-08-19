@@ -94,6 +94,26 @@ class ParseStateTest {
     }
 
     @Test
+    void put_calledTwiceOnTheSameField_recognizedKeepsOnlyTheFinalValue() {
+        // I2 : values.put() écrase, mais recognized.add() était un append — une
+        // seconde expression pour le même champ (ex: deux poids dans la même
+        // phrase) laissait recognized contredire filters (une entrée obsolète en
+        // plus de la bonne). recognized doit refléter exactement values.
+        ParseState state = newState("20 kilos à Bamako");
+        Token twenty = state.allTokens().get(0);
+        Token bamako = state.allTokens().get(3);
+
+        state.put("minAvailableKg", "20", twenty, 1.0);
+        state.put("minAvailableKg", "15", bamako, 0.8);
+
+        assertThat(state.values()).containsEntry("minAvailableKg", "15");
+        assertThat(state.recognized()).hasSize(1);
+        RecognizedField field = state.recognized().get(0);
+        assertThat(field.value()).isEqualTo("15");
+        assertThat(field.confidence()).isEqualTo(0.8);
+    }
+
+    @Test
     void addUnresolved_recordsKindPhraseAndOptions() {
         ParseState state = newState("Kedougou");
 

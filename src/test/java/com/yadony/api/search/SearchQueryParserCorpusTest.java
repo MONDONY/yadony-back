@@ -47,7 +47,7 @@ class SearchQueryParserCorpusTest {
                 String token = invocation.getArgument(0);
                 return KNOWN_CITIES.stream()
                     .map(city -> new SearchCityRepository.CityMatch(
-                        city, similarity(SearchTokenizer.normalize(city), token), 1_000_000L))
+                        city, similarity(SearchTokenizer.normalize(city), token), 1_000_000L, "XX"))
                     .filter(m -> m.similarity() >= 0.4)
                     .sorted((a, b) -> Double.compare(b.similarity(), a.similarity()))
                     .toList();

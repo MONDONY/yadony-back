@@ -58,6 +58,12 @@ public final class ParseState {
 
     public void put(String field, Object value, Token from, double confidence) {
         values.put(field, value);
+        // values.put() écrase silencieusement une valeur précédente pour ce champ,
+        // mais recognized.add() est un append : sans ce retrait, un second put() sur
+        // le même champ (ex: deux expressions de poids dans la même phrase) laisse
+        // dans recognized une entrée obsolète dont le span/valeur ne correspond plus
+        // à ce que filters contient réellement — contradiction visible côté client.
+        recognized.removeIf(r -> r.field().equals(field));
         recognized.add(new RecognizedField(
                 field, String.valueOf(value), new int[]{from.start(), from.end()}, confidence));
     }

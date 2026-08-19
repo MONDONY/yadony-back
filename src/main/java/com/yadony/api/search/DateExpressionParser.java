@@ -44,8 +44,15 @@ public final class DateExpressionParser {
             }
 
             if (n.equals("demain")) {
-                putRange(state, today.plusDays(1), today.plusDays(1), t);
-                state.consume(i, i + 1);
+                // « après-demain » se découpe en deux tokens ("apres", "demain") : sans
+                // ce regard en arrière, il retombait sur la branche « demain » et
+                // renvoyait J+1 avec confiance — une date fausse, pas une absence
+                // (trouvaille I5 de la revue).
+                boolean afterTomorrow = i > 0 && !state.isConsumed(i - 1)
+                        && tokens.get(i - 1).normalized().equals("apres");
+                LocalDate date = afterTomorrow ? today.plusDays(2) : today.plusDays(1);
+                putRange(state, date, date, t);
+                state.consume(afterTomorrow ? i - 1 : i, i + 1);
                 continue;
             }
 

@@ -120,6 +120,29 @@ class SearchParseControllerIT {
     }
 
     @Test
+    void parse_withTodayFarInTheFuture_returns422InsteadOf500() throws Exception {
+        // Avant ce garde-fou, une valeur proche de LocalDate.MAX faisait déborder
+        // l'arithmétique de DateExpressionParser (DateTimeException non rattrapée
+        // -> 500 + Sentry.captureException à chaque appel).
+        mockMvc.perform(post("/search/parse")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(
+                    new SearchParseRequest("à Bamako", SearchMode.TRIPS, LocalDate.of(3000, 1, 1))))
+                .with(authentication(sender())))
+            .andExpect(status().isUnprocessableEntity());
+    }
+
+    @Test
+    void parse_withTodayFarInThePast_returns422InsteadOf500() throws Exception {
+        mockMvc.perform(post("/search/parse")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(
+                    new SearchParseRequest("à Bamako", SearchMode.TRIPS, LocalDate.of(1200, 1, 1))))
+                .with(authentication(sender())))
+            .andExpect(status().isUnprocessableEntity());
+    }
+
+    @Test
     void parse_withoutAuth_returns401() throws Exception {
         mockMvc.perform(post("/search/parse")
                 .contentType(MediaType.APPLICATION_JSON)

@@ -67,6 +67,20 @@ class DateExpressionParserTest {
     }
 
     @Test
+    void dayAfterTomorrowResolvesToPlusTwoDays_notPlusOne() {
+        // I5 : « après-demain » se découpe en deux tokens ("apres", "demain") et
+        // retombait sur la branche "demain" seule, renvoyant J+1 avec confiance —
+        // une date fausse plutôt qu'une absence.
+        ParseState s = state("après-demain");
+
+        DateExpressionParser.apply(s);
+
+        assertThat(s.values()).containsEntry("departureDateFrom", LocalDate.of(2026, 8, 21));
+        assertThat(s.values()).containsEntry("departureDateTo", LocalDate.of(2026, 8, 21));
+        assertThat(s.remaining()).isEmpty();
+    }
+
+    @Test
     void thisWeekendSetsTheWeekendFlagWithoutPinningDates() {
         ParseState s = state("ce week-end");
 
