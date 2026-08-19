@@ -2,19 +2,23 @@ package com.yadony.api.payments;
 
 import com.yadony.api.auth.FirebaseContactService;
 import com.yadony.api.auth.UserEntity;
+import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.config.StripeConnectProperties;
 import com.stripe.model.Account;
 import com.stripe.param.AccountCreateParams;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
@@ -36,7 +40,7 @@ class StripeExpressAccountProvisionerTest {
     void setUp() {
         StripeConnectProperties props = PaymentServiceTestFactory.defaultConnectProperties();
         provisioner = new StripeExpressAccountProvisioner(stripeGateway, props, firebaseContact);
-        when(firebaseContact.getContact(any()))
+        org.mockito.Mockito.lenient().when(firebaseContact.getContact(any()))
                 .thenReturn(new FirebaseContactService.Contact("+33600000000", "test@yadony.app"));
     }
 
@@ -47,6 +51,31 @@ class StripeExpressAccountProvisionerTest {
         u.setProAccount(isPro);
         u.setCountry(country);
         return u;
+    }
+
+    @Test
+    @DisplayName("Sans pays renseigne, aucun compte Connect n'est cree")
+    void refusesToProvisionWithoutCountry() {
+        UserEntity user = buildUser(false, null);
+
+        assertThatThrownBy(() -> provisioner.provision(user))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> {
+                    YadonyBusinessException ex = (YadonyBusinessException) e;
+                    assertThat(ex.getErrorCode()).isEqualTo("country-required");
+                    assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                });
+    }
+
+    @Test
+    @DisplayName("Pays vide (chaine vide), aucun compte Connect n'est cree")
+    void refusesToProvisionWithBlankCountry() {
+        UserEntity user = buildUser(false, "");
+
+        assertThatThrownBy(() -> provisioner.provision(user))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                        .isEqualTo("country-required"));
     }
 
     @Test

@@ -5,7 +5,9 @@ import com.stripe.model.Account;
 import com.stripe.param.AccountCreateParams;
 import com.yadony.api.auth.FirebaseContactService;
 import com.yadony.api.auth.UserEntity;
+import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.config.StripeConnectProperties;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
 /**
@@ -32,6 +34,16 @@ public class StripeExpressAccountProvisioner implements ConnectAccountProvisione
 
     @Override
     public Account provision(UserEntity user) throws StripeException {
+        // Le pays d'un compte Connect est immuable apres creation : mieux vaut
+        // refuser que fabriquer un compte francais par defaut, comme le faisait
+        // le "FR" en dur de UserEntity avant le 2026-08-19.
+        if (user.getCountry() == null || user.getCountry().isBlank()) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "country-required", "Country Required",
+                    "Renseignez votre pays dans les reglages avant de creer votre "
+                            + "compte de paiement.");
+        }
+
         AccountCreateParams params = AccountCreateParams.builder()
                 .setType(AccountCreateParams.Type.EXPRESS)
                 .setCountry(user.getCountry())
