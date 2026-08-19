@@ -41,6 +41,20 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
     Optional<UserEntity> findByFirebaseUidIncludingDeleted(@Param("firebaseUid") String firebaseUid);
 
     /**
+     * Trouve un utilisateur par id, y compris soft-deleted.
+     *
+     * <p>Requête native délibérée, même motif que {@link #findByFirebaseUidIncludingDeleted} :
+     * {@code com.yadony.api.messaging.UserFinalizedMessagingListener} tourne en
+     * {@code AFTER_COMMIT}, c'est-à-dire après que {@code AccountFinalizationService#finalize} a
+     * déjà persisté {@code deleted_at}. Une
+     * méthode dérivée subirait le {@code @Where(deleted_at IS NULL)} de {@link UserEntity} et ne
+     * trouverait jamais la ligne, alors que {@code firebase_uid} lui-même n'est jamais effacé par
+     * la finalisation.
+     */
+    @Query(value = "SELECT * FROM users WHERE id = :id LIMIT 1", nativeQuery = true)
+    Optional<UserEntity> findByIdIncludingDeleted(@Param("id") UUID id);
+
+    /**
      * Reactivates a soft-deleted account via native UPDATE, bypassing the @Where filter.
      * Required because em.merge() on a soft-deleted entity would trigger an internal
      * SELECT filtered by @Where(deleted_at IS NULL), find nothing, and attempt an INSERT
@@ -74,6 +88,15 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
      * Used to identify accounts ready for final permanent deletion.
      */
     List<UserEntity> findByStatusAndDeletionRequestedAtBefore(UserStatus status, Instant cutoff);
+
+    /**
+     * Lot C — file des demandes de suppression RGPD, les plus anciennes d'abord.
+     *
+     * <p>Requête dérivée délibérée : elle hérite du {@code @Where(deleted_at IS NULL)} de
+     * {@link UserEntity}, ce qui exclut d'office les comptes déjà finalisés — la file ne
+     * montre donc que les demandes encore à traiter, sans filtre supplémentaire.
+     */
+    Page<UserEntity> findByDeletionRequestedAtIsNotNullOrderByDeletionRequestedAtAsc(Pageable pageable);
 
     @Query("SELECT u FROM UserEntity u WHERE u.commissionPaymentMethodId IS NOT NULL AND " +
            "(u.commissionCardExpYear < :year OR " +

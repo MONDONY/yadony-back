@@ -3,7 +3,7 @@ package com.yadony.api.matching;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.StorageService;
-import com.yadony.api.config.YadonyConfigProperties;
+import com.yadony.api.config.PlatformSettingsTestFactory;
 import com.yadony.api.matching.dto.AnnouncementSearchResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -38,10 +38,9 @@ class AnnouncementSearchMapperTest {
 
     @BeforeEach
     void init() {
-        YadonyConfigProperties config = new YadonyConfigProperties(null, null,
-                new YadonyConfigProperties.Urgency(3), null);
         lenient().when(storageService.avatarUrl(any())).thenAnswer(inv -> inv.getArgument(0));
-        mapper = new AnnouncementSearchMapper(userRepository, bidRepository, priceGridService, storageService, config);
+        mapper = new AnnouncementSearchMapper(userRepository, bidRepository, priceGridService, storageService,
+                PlatformSettingsTestFactory.withUrgencyThresholdDays(3));
     }
 
     private static void setId(Object entity, UUID id) {

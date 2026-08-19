@@ -4,7 +4,7 @@ import com.yadony.api.auth.KycStatus;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.StorageService;
-import com.yadony.api.config.YadonyConfigProperties;
+import com.yadony.api.config.PlatformSettingsService;
 import com.yadony.api.matching.dto.AddressDto;
 import com.yadony.api.matching.dto.AnnouncementPriceGridItemResponse;
 import com.yadony.api.matching.dto.AnnouncementSearchResponse;
@@ -34,18 +34,18 @@ public class AnnouncementSearchMapper {
     private final BidRepository bidRepository;
     private final PriceGridService priceGridService;
     private final StorageService storageService;
-    private final YadonyConfigProperties config;
+    private final PlatformSettingsService settings;
 
     public AnnouncementSearchMapper(UserRepository userRepository,
                                     BidRepository bidRepository,
                                     PriceGridService priceGridService,
                                     StorageService storageService,
-                                    YadonyConfigProperties config) {
+                                    PlatformSettingsService settings) {
         this.userRepository = userRepository;
         this.bidRepository = bidRepository;
         this.priceGridService = priceGridService;
         this.storageService = storageService;
-        this.config = config;
+        this.settings = settings;
     }
 
     /**
@@ -55,7 +55,7 @@ public class AnnouncementSearchMapper {
     private boolean computeUrgent(java.time.LocalDate departureDate) {
         if (departureDate == null) return false;
         java.time.LocalDate today = java.time.LocalDate.now(java.time.ZoneOffset.UTC);
-        int threshold = config.urgency().thresholdDays();
+        int threshold = settings.urgencyThresholdDays();
         return !departureDate.isBefore(today)
                 && !departureDate.isAfter(today.plusDays(threshold));
     }

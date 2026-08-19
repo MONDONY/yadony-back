@@ -14,6 +14,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -51,6 +52,19 @@ public class BidLostRematchListener {
 
     private static final String REASON_CANCELLED_BY_TRAVELER = "CANCELLED_BY_TRAVELER";
 
+    /**
+     * Motifs « initiés par le voyageur » (revue round 3) : au-delà du refus/annulation
+     * explicite d'un bid par le voyageur, la suppression de son propre trajet
+     * ({@code AnnouncementService#removeByAdmin}/{@code deleteAnnouncement}, motif
+     * {@link BidEntity#REJECTION_ANNOUNCEMENT_DELETED}) porte la même nature : c'est le
+     * voyageur qui a agi (ou la modération en son nom), pas un refus explicite du colis. Le
+     * libellé final distingue quand même les deux cas (cf.
+     * {@code NotificationDispatcher#onBidLostRematchPrepared}, sur {@code reason}), mais les
+     * deux ouvrent droit au même traitement rematch.
+     */
+    private static final Set<String> TRAVELER_INITIATED_REASONS =
+            Set.of(REASON_CANCELLED_BY_TRAVELER, BidEntity.REJECTION_ANNOUNCEMENT_DELETED);
+
     private final BidRepository bidRepository;
     private final AnnouncementRepository announcementRepository;
     private final CancellationRepository cancellationRepository;
@@ -75,13 +89,13 @@ public class BidLostRematchListener {
             return;
         }
 
-        boolean cancelledByTraveler = REASON_CANCELLED_BY_TRAVELER.equals(event.getReason());
+        boolean cancelledByTraveler = TRAVELER_INITIATED_REASONS.contains(event.getReason());
 
         if (cancellationRepository.findByBidId(event.getBidId()).isPresent()) {
             log.warn("BidLostRematchListener: cancellation HANDOVER déjà existante pour bid {}, "
                             + "rematch non généré (probable no-show en cours)", event.getBidId());
             eventPublisher.publishEvent(new BidLostRematchPreparedEvent(
-                    event.getSenderId(), event.getBidId(), null, 0, cancelledByTraveler));
+                    event.getSenderId(), event.getBidId(), null, 0, cancelledByTraveler, event.getReason()));
             return;
         }
 
@@ -117,6 +131,7 @@ public class BidLostRematchListener {
         int suggestionCount = info != null ? info.suggestionCount() : 0;
 
         eventPublisher.publishEvent(new BidLostRematchPreparedEvent(
-                bid.getSenderId(), bid.getId(), cancellation.getId(), suggestionCount, cancelledByTraveler));
+                bid.getSenderId(), bid.getId(), cancellation.getId(), suggestionCount,
+                cancelledByTraveler, event.getReason()));
     }
 }

@@ -639,6 +639,49 @@ class CashCommissionServiceTest {
         }
 
         @Test
+        // Lot B (correction 2, round 2) : la commission est déjà CHARGED (argent du
+        // voyageur déjà prélevé) quand ce chemin s'exécute — un rejet dur ici laisserait
+        // une commission prélevée sans bid accepté correspondant, donc finalizeBidAcceptance
+        // finalise quand même le bid, mais ne doit JAMAIS réécrire l'annonce retirée en FULL
+        // (defense-in-depth conservée de la correction round 1).
+        void announcementRemovedByAdmin_stillFinalizesButDoesNotResurrectToFull() {
+            bid.setCommissionStatus(CommissionStatus.CHARGED);
+            bid.setWeightKg(new java.math.BigDecimal("5"));
+            announcement.setStatus(AnnouncementStatus.REMOVED_BY_ADMIN);
+            announcement.setAvailableKg(new java.math.BigDecimal("5")); // exactement plein après ce bid
+
+            try (MockedStatic<PaymentIntent> pi = mockStatic(PaymentIntent.class)) {
+                ConfirmAcceptanceResponse resp = service.confirmCommissionAcceptance(bid.getId(), travelerId);
+
+                assertThat(resp.accepted()).isTrue();
+                assertThat(bid.getStatus()).isEqualTo(BidStatus.ACCEPTED);
+                assertThat(announcement.getStatus()).isEqualTo(AnnouncementStatus.REMOVED_BY_ADMIN);
+                pi.verifyNoInteractions();
+            }
+        }
+
+        @Test
+        // Lot C : le même rétrécissement existait dans finalizeBidAcceptance, atteint par
+        // confirmCommissionAcceptance (chemin 3DS) SANS repasser par la garde d'entrée
+        // d'acceptCashBid. Restreinte à REMOVED_BY_ADMIN, elle laissait un trajet annulé
+        // ressusciter en FULL, statut qui réapparaît dans les allowlists ACTIVE/FULL.
+        void announcementCancelled_stillFinalizesButDoesNotResurrectToFull() {
+            bid.setCommissionStatus(CommissionStatus.CHARGED);
+            bid.setWeightKg(new java.math.BigDecimal("5"));
+            announcement.setStatus(AnnouncementStatus.CANCELLED);
+            announcement.setAvailableKg(new java.math.BigDecimal("5")); // exactement plein après ce bid
+
+            try (MockedStatic<PaymentIntent> pi = mockStatic(PaymentIntent.class)) {
+                ConfirmAcceptanceResponse resp = service.confirmCommissionAcceptance(bid.getId(), travelerId);
+
+                assertThat(resp.accepted()).isTrue();
+                assertThat(bid.getStatus()).isEqualTo(BidStatus.ACCEPTED);
+                assertThat(announcement.getStatus()).isEqualTo(AnnouncementStatus.CANCELLED);
+                pi.verifyNoInteractions();
+            }
+        }
+
+        @Test
         void setsFailedWhenPINotSucceeded() throws StripeException {
             PaymentIntent mockPi = new PaymentIntent();
             mockPi.setStatus("requires_payment_method");
@@ -751,6 +794,82 @@ class CashCommissionServiceTest {
             announcement.setAcceptedPaymentMethods(methods);
             lenient().when(announcementRepo.findByIdForUpdate(announcementId)).thenReturn(Optional.of(announcement));
             lenient().when(announcementRepo.findById(announcementId)).thenReturn(Optional.of(announcement));
+        }
+
+        @Test
+        // Lot B (correction 2, round 2) : la garde REMOVED_BY_ADMIN doit être posée AVANT
+        // tout débit — le test prouve qu'aucune méthode de débit n'est appelée, pas
+        // seulement que le bid reste non-accepté.
+        void announcementRemovedByAdmin_rejectsBeforeAnyDebit() {
+            announcement.setStatus(AnnouncementStatus.REMOVED_BY_ADMIN);
+
+            assertThatThrownBy(() -> service.acceptCashBid(
+                    bid.getId(), travelerId, com.yadony.api.payments.cash.CommissionSource.WALLET_FIRST))
+                    .isInstanceOf(com.yadony.api.common.YadonyBusinessException.class)
+                    .satisfies(e -> {
+                        var y = (com.yadony.api.common.YadonyBusinessException) e;
+                        assertThat(y.getStatus()).isEqualTo(org.springframework.http.HttpStatus.CONFLICT);
+                        assertThat(y.getErrorCode()).isEqualTo("announcement-not-accepting");
+                    });
+
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.PENDING);
+            verify(walletService, never()).getBalance(any(), any());
+            verify(walletService, never()).debit(any(), any(), any(), any(), any());
+            verify(bidRepo, never()).save(any());
+            verify(announcementRepo, never()).save(any());
+            verify(events, never()).publishEvent(any());
+        }
+
+        @Test
+        // Même garde, chemin CARD : aucune tentative de PaymentIntent Stripe — le mock
+        // statique n'est même pas ouvert, la moindre tentative d'appel non stubbé
+        // lèverait de toute façon une NPE/erreur Mockito plutôt que de silencieusement
+        // réussir, donc l'absence d'exception Mockito ici est déjà une garantie suffisante.
+        void announcementRemovedByAdmin_cardSource_rejectsBeforeAnyStripeCall() {
+            announcement.setStatus(AnnouncementStatus.REMOVED_BY_ADMIN);
+
+            assertThatThrownBy(() -> service.acceptCashBid(
+                    bid.getId(), travelerId, com.yadony.api.payments.cash.CommissionSource.CARD))
+                    .isInstanceOf(com.yadony.api.common.YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((com.yadony.api.common.YadonyBusinessException) e).getErrorCode())
+                            .isEqualTo("announcement-not-accepting"));
+
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.PENDING);
+        }
+
+        @Test
+        // Lot C : la garde ne visait que REMOVED_BY_ADMIN. Un trajet annulé par son
+        // voyageur n'accepte pas davantage un nouvel engagement d'argent.
+        void announcementCancelled_rejectsBeforeAnyDebit() {
+            announcement.setStatus(AnnouncementStatus.CANCELLED);
+
+            assertThatThrownBy(() -> service.acceptCashBid(
+                    bid.getId(), travelerId, com.yadony.api.payments.cash.CommissionSource.WALLET_FIRST))
+                    .isInstanceOf(com.yadony.api.common.YadonyBusinessException.class)
+                    .satisfies(e -> {
+                        var y = (com.yadony.api.common.YadonyBusinessException) e;
+                        assertThat(y.getStatus()).isEqualTo(org.springframework.http.HttpStatus.CONFLICT);
+                        assertThat(y.getErrorCode()).isEqualTo("announcement-not-accepting");
+                    });
+
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.PENDING);
+            verify(walletService, never()).debit(any(), any(), any(), any(), any());
+            verify(announcementRepo, never()).save(any());
+        }
+
+        @Test
+        // Lot C : idem pour un trajet déjà livré — la course est terminée.
+        void announcementCompleted_rejectsBeforeAnyDebit() {
+            announcement.setStatus(AnnouncementStatus.COMPLETED);
+
+            assertThatThrownBy(() -> service.acceptCashBid(
+                    bid.getId(), travelerId, com.yadony.api.payments.cash.CommissionSource.WALLET_FIRST))
+                    .isInstanceOf(com.yadony.api.common.YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((com.yadony.api.common.YadonyBusinessException) e).getErrorCode())
+                            .isEqualTo("announcement-not-accepting"));
+
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.PENDING);
+            verify(walletService, never()).debit(any(), any(), any(), any(), any());
         }
 
         @Test
@@ -986,6 +1105,15 @@ class CashCommissionServiceTest {
                 assertThat(announcement.getStatus()).isEqualTo(AnnouncementStatus.FULL);
             }
         }
+
+        // Lot B (correction 2, round 2) : ce test remplace l'ancien
+        // announcementRemovedByAdmin_doesNotResurrectToFull (round 1), devenu obsolète —
+        // acceptCashBid rejette maintenant AVANT tout débit (voir
+        // announcementRemovedByAdmin_rejectsBeforeAnyDebit ci-dessus), donc ce chemin ne
+        // finalise plus jamais un bid sur une annonce REMOVED_BY_ADMIN. La protection
+        // defense-in-depth de finalizeBidAcceptance (ne jamais réécrire FULL) reste
+        // couverte séparément pour le chemin encore atteignable : confirmCommissionAcceptance
+        // quand la commission est déjà CHARGED (cf. ConfirmCommissionAcceptance ci-dessous).
 
         // --- handover window inheritance ---
 

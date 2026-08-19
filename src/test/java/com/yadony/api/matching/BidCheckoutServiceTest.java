@@ -439,4 +439,61 @@ class BidCheckoutServiceTest {
                 .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
                         .isEqualTo("bid-not-found"));
     }
+
+    // Lot B (revue round 3, Critical B) : negotiationCheckout appelait createEscrow sans
+    // AUCUNE garde de statut d'annonce — sœur littérale de checkout(), qui en a une.
+    @Test
+    void negotiationCheckout_announcementRemovedByAdmin_isRejected() {
+        BidEntity bid = negotiatedBid();
+        announcement.setStatus(AnnouncementStatus.REMOVED_BY_ADMIN);
+        when(bidRepository.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
+
+        assertThatThrownBy(() -> service.negotiationCheckout("uid-sender", bid.getId()))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                        .isEqualTo("announcement-not-active"));
+        verify(paymentService, never()).createEscrow(any(), anyString());
+    }
+
+    @Test
+    void negotiationCheckout_announcementCancelled_isRejected() {
+        BidEntity bid = negotiatedBid();
+        announcement.setStatus(AnnouncementStatus.CANCELLED);
+        when(bidRepository.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
+
+        assertThatThrownBy(() -> service.negotiationCheckout("uid-sender", bid.getId()))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                        .isEqualTo("announcement-not-active"));
+    }
+
+    @Test
+    void negotiationCheckout_announcementCompleted_isRejected() {
+        BidEntity bid = negotiatedBid();
+        announcement.setStatus(AnnouncementStatus.COMPLETED);
+        when(bidRepository.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
+
+        assertThatThrownBy(() -> service.negotiationCheckout("uid-sender", bid.getId()))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                        .isEqualTo("announcement-not-active"));
+    }
+
+    // Important (revue round 3) : FULL ne doit PAS être bloqué — un trajet partagé peut
+    // légitimement se remplir entre l'attachement du fil négocié et son paiement (un
+    // autre expéditeur a payé entretemps). Bloquer ce paiement serait une régression sur
+    // un chemin qui fonctionnait.
+    @Test
+    void negotiationCheckout_announcementFull_isNotBlocked() {
+        BidEntity bid = negotiatedBid();
+        announcement.setStatus(AnnouncementStatus.FULL);
+        when(bidRepository.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
+        when(bidRepository.save(any(BidEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(paymentService.createEscrow(any(), eq("uid-sender"))).thenReturn(stubPaymentResponse());
+
+        BidCheckoutResponse resp = service.negotiationCheckout("uid-sender", bid.getId());
+
+        assertThat(resp.bidId()).isEqualTo(bid.getId());
+        verify(paymentService).createEscrow(any(), eq("uid-sender"));
+    }
 }

@@ -1,5 +1,6 @@
 package com.yadony.api.messaging;
 
+import com.google.cloud.Timestamp;
 import com.google.cloud.firestore.Firestore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -7,6 +8,7 @@ import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -189,6 +191,46 @@ public class FirestoreService {
             firestore.collection("conversations").document(conversationId).delete().get();
         } catch (Exception e) {
             log.warn("Firestore purgeConversation failed for {}: {}", conversationId, e.getMessage());
+        }
+    }
+
+    /**
+     * Publie l'état de coupure de messagerie dans Firestore.
+     *
+     * <p>La règle de sécurité Firestore lit le document {@code moderation/{firebaseUid}}
+     * pour refuser l'écriture d'un message : c'est le seul point d'application réel, les
+     * clients écrivant directement dans Firestore sans passer par ce backend. Keyer sur
+     * l'UUID PostgreSQL rendrait le mute inopérant — la règle ne voit que
+     * {@code request.auth.uid}, l'UID Firebase.
+     *
+     * <p>{@code messagingMutedUntil} est écrit comme un {@link Timestamp} Firestore, jamais
+     * une chaîne ISO comme le reste de ce fichier (sentAt, deletedAt, lastMessageAt) : la
+     * règle est fail-open sur le type, une chaîne laisserait le mute silencieusement inopérant.
+     */
+    public void setMessagingMute(String firebaseUid, Instant until) {
+        if (firestore == null) {
+            log.warn("Firestore disabled — skipping setMessagingMute for {}", firebaseUid);
+            return;
+        }
+        try {
+            Map<String, Object> data = new HashMap<>();
+            data.put("messagingMutedUntil", Timestamp.of(Date.from(until)));
+            firestore.collection("moderation").document(firebaseUid).set(data).get();
+        } catch (Exception e) {
+            throw new RuntimeException("Firestore setMessagingMute failed", e);
+        }
+    }
+
+    /** Retire la coupure — le document est supprimé, pas laissé avec une date passée. */
+    public void clearMessagingMute(String firebaseUid) {
+        if (firestore == null) {
+            log.warn("Firestore disabled — skipping clearMessagingMute for {}", firebaseUid);
+            return;
+        }
+        try {
+            firestore.collection("moderation").document(firebaseUid).delete().get();
+        } catch (Exception e) {
+            throw new RuntimeException("Firestore clearMessagingMute failed", e);
         }
     }
 

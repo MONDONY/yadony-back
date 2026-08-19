@@ -47,6 +47,21 @@ public class CacheConfig {
                             .build());
         }
 
+        // platform-settings : une seule entree ("all"), TTL courte de 30 s ET eviction
+        // explicite a l'ecriture. Contrairement aux caches "/me" ci-dessus, celui-ci a un
+        // point d'ecriture UNIQUE (PUT /admin/settings) : l'eviction exhaustive y est donc
+        // fiable, et la TTL n'est qu'un filet en cas d'ecriture faite hors application.
+        //
+        // ⚠️ registerCustomCache et NON setCacheNames : setCacheNames s'execute apres et fait
+        // cacheMap.keySet().retainAll(customCacheNames) — les caches personnalises survivent,
+        // mais une entree ajoutee a la liste setCacheNames prendrait le spec par defaut
+        // (5 min), pas cette TTL.
+        manager.registerCustomCache("platform-settings",
+                Caffeine.newBuilder()
+                        .maximumSize(1)
+                        .expireAfterWrite(30, TimeUnit.SECONDS)
+                        .build());
+
         // Standard caches that use the default spec
         manager.setCacheNames(java.util.List.of(
                 "announcements-search",

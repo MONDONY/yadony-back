@@ -80,6 +80,7 @@ class AnnouncementInProgressTransitionTest {
                 announcementRepository, bidRepository,
                 mock(com.yadony.api.auth.UserRepository.class),
                 auditService, eventPublisher, config,
+                com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3),
                 mock(PriceGridService.class),
                 mock(com.yadony.api.country.FlagService.class),
                 mock(com.yadony.api.common.StorageService.class),
@@ -87,7 +88,8 @@ class AnnouncementInProgressTransitionTest {
                 mock(com.yadony.api.payments.currency.ActiveCurrencyResolver.class, inv -> "EUR"),
                 mock(AnnouncementSearchMapper.class),
                 mock(com.yadony.api.requests.repository.PackageRequestRepository.class),
-                mock(com.yadony.api.requests.repository.NegotiationThreadRepository.class));
+                mock(com.yadony.api.requests.repository.NegotiationThreadRepository.class),
+                mock(com.yadony.api.notifications.NotificationDispatcher.class));
     }
 
     private static void setId(Object entity, UUID id) {

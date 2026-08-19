@@ -292,6 +292,21 @@ public class BidCheckoutService {
                 "Cette demande n'attend pas de paiement (statut : " + bid.getStatus() + ")");
         }
 
+        // Lot B (revue round 3, Critical B) : garde AVANT tout appel createEscrow — sœur de
+        // celle de checkout() (ligne ~84), mais restreinte à OUT_OF_MARKET (pas != ACTIVE) :
+        // ce bid a déjà négocié son prix et sa place sur un trajet potentiellement partagé,
+        // qui peut légitimement être passé FULL entretemps (autre expéditeur payé) sans que
+        // ce paiement-ci doive être bloqué. PaymentService.createEscrow ne le fait pas à sa
+        // place : sa validation porte sur le statut du bid, jamais sur celui de l'annonce.
+        AnnouncementEntity announcement = announcementRepository.findByIdForUpdate(bid.getAnnouncementId())
+            .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
+                "announcement-not-found", "Announcement Not Found", "Annonce introuvable"));
+        if (AnnouncementStatus.OUT_OF_MARKET.contains(announcement.getStatus())) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT,
+                "announcement-not-active", "Announcement Not Active",
+                "Cette annonce n'est plus disponible");
+        }
+
         CreatePaymentRequest paymentReq = new CreatePaymentRequest();
         paymentReq.setBidId(bid.getId());
         PaymentResponse paymentResp = paymentService.createEscrow(paymentReq, firebaseUid);

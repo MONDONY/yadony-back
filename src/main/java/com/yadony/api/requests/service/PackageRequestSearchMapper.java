@@ -5,7 +5,7 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.city.CityEntity;
 import com.yadony.api.common.StorageService;
-import com.yadony.api.config.YadonyConfigProperties;
+import com.yadony.api.config.PlatformSettingsService;
 import com.yadony.api.requests.dto.PackageRequestPhotoResponse;
 import com.yadony.api.requests.dto.PackageRequestSearchResponse;
 import com.yadony.api.requests.entity.PackageRequestEntity;
@@ -34,18 +34,18 @@ public class PackageRequestSearchMapper {
     private final com.yadony.api.city.CityRepository cityRepository;
     private final StorageService storageService;
     private final PackageRequestPhotoService photoService;
-    private final YadonyConfigProperties config;
+    private final PlatformSettingsService settings;
 
     public PackageRequestSearchMapper(UserRepository userRepository,
                                       com.yadony.api.city.CityRepository cityRepository,
                                       StorageService storageService,
                                       PackageRequestPhotoService photoService,
-                                      YadonyConfigProperties config) {
+                                      PlatformSettingsService settings) {
         this.userRepository = userRepository;
         this.cityRepository = cityRepository;
         this.storageService = storageService;
         this.photoService = photoService;
-        this.config = config;
+        this.settings = settings;
     }
 
     /**
@@ -55,7 +55,7 @@ public class PackageRequestSearchMapper {
     private boolean computeUrgent(java.time.LocalDate desiredDate) {
         if (desiredDate == null) return false;
         java.time.LocalDate today = java.time.LocalDate.now(java.time.ZoneOffset.UTC);
-        int threshold = config.urgency().thresholdDays();
+        int threshold = settings.urgencyThresholdDays();
         return !desiredDate.isBefore(today) && !desiredDate.isAfter(today.plusDays(threshold));
     }
 

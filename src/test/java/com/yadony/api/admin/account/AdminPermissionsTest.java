@@ -50,12 +50,14 @@ class AdminPermissionsTest {
     }
 
     @Test
-    @DisplayName("AdminRole.SUPPORT.permissions() contains exactly 15 specific permissions")
-    void testSupportHasExactly15Permissions() {
+    @DisplayName("AdminRole.SUPPORT.permissions() contains exactly 16 specific permissions")
+    // 16 depuis le Lot C : USER_MESSAGE_MUTE accordee au support sur decision du
+    // proprietaire du produit (il peut deja bannir, geste bien plus severe).
+    void testSupportHasExactly16Permissions() {
         Set<AdminPermission> perms = AdminRole.SUPPORT.permissions();
 
-        assertEquals(15, perms.size(),
-                "SUPPORT should have exactly 15 permissions");
+        assertEquals(16, perms.size(),
+                "SUPPORT should have exactly 16 permissions");
 
         // Verify exact set
         assertTrue(perms.contains(AdminPermission.METRICS_VIEW));
@@ -73,6 +75,9 @@ class AdminPermissionsTest {
         assertTrue(perms.contains(AdminPermission.REPORT_VIEW));
         assertTrue(perms.contains(AdminPermission.REPORT_RESOLVE));
         assertTrue(perms.contains(AdminPermission.RATING_MODERATE));
+        // Lot C : le support modere les avis mais ne les efface pas definitivement.
+        assertFalse(perms.contains(AdminPermission.RATING_DELETE));
+        assertTrue(perms.contains(AdminPermission.USER_MESSAGE_MUTE));
     }
 
     @Test

@@ -55,12 +55,29 @@ public class AccountFinalizationService {
         user.setBirthDate(null);
         user.setCity(null);
         user.setFcmToken(null);
+        // Lot C — le SIRET est un identifiant d'entreprise reel : chiffre au repos, mais
+        // parfaitement re-identifiant tant qu'il subsiste. Le laisser vidait l'anonymisation
+        // de son sens pour tout compte PRO.
+        user.setProSiret(null);
+        // Lot C — un statut KYC VERIFIED survivant a la suppression rattache le compte
+        // anonymise a une verification d'identite reelle.
+        user.setKycStatus(KycStatus.NOT_STARTED);
+        // Lot C — la demande est traitee : la conserver garde une trace datee de l'acte,
+        // et fausse toute file de demandes RGPD en attente (cf. reactivateAccount qui, lui,
+        // l'efface deja).
+        user.setDeletionRequestedAt(null);
         user.setStatus(UserStatus.BANNED);
         user.setDeletedAt(LocalDateTime.now(ZoneOffset.UTC));
         userRepository.save(user);
 
         // 2. Soft-delete KYC
         kycRepository.findByUserId(userId).ifPresent(kyc -> {
+            // Lot C — le soft-delete seul laissait intact le pointeur de session Stripe, qui
+            // mene aux pieces d'identite detenues par Stripe : la suppression du compte
+            // laissait donc un chemin d'acces vivant vers les documents de l'utilisateur.
+            kyc.setStripeVerificationSessionId(null);
+            kyc.setRejectionReason(null);
+            kyc.setRejectionCode(null);
             kyc.softDelete();
             kycRepository.save(kyc);
         });

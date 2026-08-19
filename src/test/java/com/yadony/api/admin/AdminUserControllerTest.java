@@ -61,6 +61,81 @@ class AdminUserControllerTest {
         verify(userService).setCommissionRateOverride(userId, null);
     }
 
+    // ── Lot B : coupure de messagerie ────────────────────────────────────────
+
+    private static final UUID ADMIN_ID = UUID.randomUUID();
+
+    /**
+     * L'identifiant de l'administrateur doit atteindre le service : c'est lui qui part dans
+     * {@code audit_log} comme acteur. Une trace qui designe la CIBLE ne pourra jamais etre
+     * corrigee, la table etant immuable.
+     */
+    private static org.springframework.security.core.Authentication adminAuth() {
+        var principal = new com.yadony.api.admin.account.AdminPrincipal(
+                ADMIN_ID, "admin@yadony.test",
+                com.yadony.api.admin.account.AdminRole.ADMIN, false, "uid-admin");
+        return new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                principal, null, java.util.List.of());
+    }
+
+    @Test
+    void muteMessaging_delegatesToService_andReturnsDetail() {
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact);
+        when(firebaseContact.getContact(any())).thenReturn(
+                com.yadony.api.auth.FirebaseContactService.Contact.EMPTY);
+        UUID userId = UUID.randomUUID();
+        com.yadony.api.auth.UserEntity user = new com.yadony.api.auth.UserEntity();
+        when(userService.muteMessaging(userId, 24, "harcèlement", ADMIN_ID)).thenReturn(user);
+
+        var resp = controller.muteMessaging(userId,
+                new com.yadony.api.admin.dto.MuteMessagingRequest(24, "harcèlement"), adminAuth());
+
+        assertThat(resp).isNotNull();
+        verify(userService).muteMessaging(userId, 24, "harcèlement", ADMIN_ID);
+    }
+
+    @Test
+    void muteMessaging_nullDuration_delegatesNull_forIndefiniteMute() {
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact);
+        when(firebaseContact.getContact(any())).thenReturn(
+                com.yadony.api.auth.FirebaseContactService.Contact.EMPTY);
+        UUID userId = UUID.randomUUID();
+        when(userService.muteMessaging(userId, null, "fraude", ADMIN_ID))
+                .thenReturn(new com.yadony.api.auth.UserEntity());
+
+        controller.muteMessaging(userId,
+                new com.yadony.api.admin.dto.MuteMessagingRequest(null, "fraude"), adminAuth());
+
+        verify(userService).muteMessaging(userId, null, "fraude", ADMIN_ID);
+    }
+
+    @Test
+    void unmuteMessaging_delegatesToService_andReturnsDetail() {
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact);
+        when(firebaseContact.getContact(any())).thenReturn(
+                com.yadony.api.auth.FirebaseContactService.Contact.EMPTY);
+        UUID userId = UUID.randomUUID();
+        com.yadony.api.auth.UserEntity user = new com.yadony.api.auth.UserEntity();
+        when(userService.unmuteMessaging(userId, ADMIN_ID)).thenReturn(user);
+
+        var resp = controller.unmuteMessaging(userId, adminAuth());
+
+        assertThat(resp).isNotNull();
+        verify(userService).unmuteMessaging(userId, ADMIN_ID);
+    }
+
+    @Test
+    void muteMessagingRequest_blankReason_isRejected() {
+        assertThat(validator().validate(new com.yadony.api.admin.dto.MuteMessagingRequest(24, "  ")))
+                .isNotEmpty();
+    }
+
+    @Test
+    void muteMessagingRequest_validReason_hasNoViolations() {
+        assertThat(validator().validate(new com.yadony.api.admin.dto.MuteMessagingRequest(24, "harcèlement")))
+                .isEmpty();
+    }
+
     // ── Recherche : téléphone et email ne sont plus en base ─────────────────
 
     @Test

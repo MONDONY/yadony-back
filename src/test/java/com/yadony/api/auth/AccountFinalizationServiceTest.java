@@ -47,6 +47,11 @@ class AccountFinalizationServiceTest {
         u.setStatus(UserStatus.PENDING_DELETION);
         u.setBirthDate(java.time.LocalDate.of(1990, 1, 1));
         u.setCity("Paris");
+        // Lot C : donnees re-identifiantes que l'anonymisation laissait intactes.
+        u.setProAccount(true);
+        u.setProSiret("81234567800012");
+        u.setKycStatus(KycStatus.VERIFIED);
+        u.setDeletionRequestedAt(java.time.Instant.now());
         return u;
     }
 
@@ -82,6 +87,71 @@ class AccountFinalizationServiceTest {
         assertThat(kyc.getDeletedAt()).isNotNull();
         assertThat(user.getBirthDate()).isNull();
         assertThat(user.getCity()).isNull();
+    }
+
+    @Test
+    @DisplayName("anonymise proSiret — un SIRET reste un identifiant ré-identifiant")
+    void anonymizesProSiret() {
+        UserEntity user = makeUser();
+        com.google.firebase.auth.FirebaseAuth mockAuth = mock(com.google.firebase.auth.FirebaseAuth.class);
+
+        try (MockedStatic<FirebaseAuth> staticAuth = mockStatic(FirebaseAuth.class)) {
+            staticAuth.when(FirebaseAuth::getInstance).thenReturn(mockAuth);
+            service.finalize(user, FinalizationReason.HARD_IMMEDIATE);
+        }
+
+        assertThat(user.getProSiret()).isNull();
+    }
+
+    @Test
+    @DisplayName("remet kycStatus à NOT_STARTED et efface deletionRequestedAt")
+    void resetsKycStatusAndClearsDeletionRequest() {
+        UserEntity user = makeUser();
+        com.google.firebase.auth.FirebaseAuth mockAuth = mock(com.google.firebase.auth.FirebaseAuth.class);
+
+        try (MockedStatic<FirebaseAuth> staticAuth = mockStatic(FirebaseAuth.class)) {
+            staticAuth.when(FirebaseAuth::getInstance).thenReturn(mockAuth);
+            service.finalize(user, FinalizationReason.HARD_IMMEDIATE);
+        }
+
+        assertThat(user.getKycStatus()).isEqualTo(KycStatus.NOT_STARTED);
+        assertThat(user.getDeletionRequestedAt()).isNull();
+    }
+
+    @Test
+    @DisplayName("efface le pointeur de session Stripe — il mène aux pièces d'identité")
+    void clearsStripeVerificationSessionPointer() {
+        UserEntity user = makeUser();
+        UUID userId = user.getId();
+        KycVerificationEntity kyc = new KycVerificationEntity();
+        kyc.setStripeVerificationSessionId("vs_test_123");
+        when(kycRepository.findByUserId(userId)).thenReturn(Optional.of(kyc));
+        com.google.firebase.auth.FirebaseAuth mockAuth = mock(com.google.firebase.auth.FirebaseAuth.class);
+
+        try (MockedStatic<FirebaseAuth> staticAuth = mockStatic(FirebaseAuth.class)) {
+            staticAuth.when(FirebaseAuth::getInstance).thenReturn(mockAuth);
+            service.finalize(user, FinalizationReason.HARD_IMMEDIATE);
+        }
+
+        assertThat(kyc.getStripeVerificationSessionId()).isNull();
+        assertThat(kyc.getDeletedAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("ADMIN_INITIATED est propagée telle quelle dans l'event")
+    void propagatesAdminInitiatedReason() {
+        UserEntity user = makeUser();
+        com.google.firebase.auth.FirebaseAuth mockAuth = mock(com.google.firebase.auth.FirebaseAuth.class);
+
+        try (MockedStatic<FirebaseAuth> staticAuth = mockStatic(FirebaseAuth.class)) {
+            staticAuth.when(FirebaseAuth::getInstance).thenReturn(mockAuth);
+            service.finalize(user, FinalizationReason.ADMIN_INITIATED);
+        }
+
+        ArgumentCaptor<UserFinalizedEvent> captor = ArgumentCaptor.forClass(UserFinalizedEvent.class);
+        verify(eventPublisher, atLeastOnce()).publishEvent(captor.capture());
+        assertThat(captor.getAllValues())
+                .anySatisfy(e -> assertThat(e.getReason()).isEqualTo(FinalizationReason.ADMIN_INITIATED));
     }
 
     @Test

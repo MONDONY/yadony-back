@@ -3470,6 +3470,28 @@ class NegotiationServiceTest {
             verifyNoInteractions(cashGatePort);
         }
 
+        // Lot B (revue round 3 — inventaire, trouvaille non pointée explicitement) : même
+        // exposition que initiatePayment, côté voyageur cette fois — settleCommission engage
+        // l'argent DU VOYAGEUR (wallet/carte) pour sceller un accord sur son propre trajet,
+        // qui peut avoir été retiré par la modération entretemps sans que removeByAdmin ait
+        // pu le voir (aucun BidEntity n'existe encore pour ce fil).
+        @Test
+        @DisplayName("trajet lié REMOVED_BY_ADMIN → 422 announcement/not-active, avant tout débit")
+        void settleCommission_travelerAnnouncementRemovedByAdmin_rejectsBeforeAnyCharge() {
+            UUID announcementId = UUID.randomUUID();
+            thread.setTravelerAnnouncementId(announcementId);
+            com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
+            ann.setStatus(com.yadony.api.matching.AnnouncementStatus.REMOVED_BY_ADMIN);
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            when(requestRepo.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(announcementRepo.findById(announcementId)).thenReturn(Optional.of(ann));
+
+            assertThatThrownBy(() -> service.settleCommission(TRAVELER_ID, THREAD_ID, CommissionSource.WALLET_FIRST))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("announcement/not-active");
+            verifyNoInteractions(cashGatePort);
+        }
+
         // Revue task 5, critique 1 : sans verrou pessimiste, deux voyageurs
         // AWAITING_COMMISSION sur la même demande peuvent tous deux lire
         // "disponible" avant que l'un n'ait débité — PackageRequestEntity n'a pas
@@ -5019,6 +5041,93 @@ class NegotiationServiceTest {
             assertThat(thread.getLastNudgeAt()).isNotNull();
             assertThat(thread.getLastActivityAt()).isEqualTo(oldActivity);
             assertThat(response.canNudge()).isFalse();
+        }
+    }
+
+    @Nested
+    @DisplayName("assertTravelerAnnouncementActive() — Lot B (correction 2, round 2)")
+    class AssertTravelerAnnouncementActiveTests {
+
+        @Test
+        @DisplayName("annonce REMOVED_BY_ADMIN → 422 announcement/not-active, avant tout appel escrow")
+        void removedByAdmin_throwsUnprocessableEntity() {
+            UUID announcementId = UUID.randomUUID();
+            com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
+            ann.setStatus(com.yadony.api.matching.AnnouncementStatus.REMOVED_BY_ADMIN);
+            when(announcementRepo.findById(announcementId)).thenReturn(Optional.of(ann));
+
+            assertThatThrownBy(() -> service.assertTravelerAnnouncementActive(announcementId))
+                    .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                    .satisfies(e -> {
+                        var rse = (org.springframework.web.server.ResponseStatusException) e;
+                        assertThat(rse.getStatusCode())
+                                .isEqualTo(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY);
+                        assertThat(rse.getReason()).isEqualTo("announcement/not-active");
+                    });
+        }
+
+        @Test
+        @DisplayName("annonce ACTIVE → aucune exception")
+        void active_doesNotThrow() {
+            UUID announcementId = UUID.randomUUID();
+            com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
+            ann.setStatus(com.yadony.api.matching.AnnouncementStatus.ACTIVE);
+            when(announcementRepo.findById(announcementId)).thenReturn(Optional.of(ann));
+
+            assertThatCode(() -> service.assertTravelerAnnouncementActive(announcementId))
+                    .doesNotThrowAnyException();
+        }
+
+        @Test
+        @DisplayName("travelerAnnouncementId null (fil pas encore lié à un trajet) → no-op")
+        void nullAnnouncementId_doesNotThrow() {
+            assertThatCode(() -> service.assertTravelerAnnouncementActive(null))
+                    .doesNotThrowAnyException();
+            verifyNoInteractions(announcementRepo);
+        }
+
+        // Important (revue round 3, décision utilisateur) : FULL ne doit PAS être bloqué —
+        // un trajet partagé peut légitimement se remplir entre l'attachement du fil et son
+        // paiement (autre expéditeur payé entretemps). La garde initiale (!= ACTIVE) était
+        // trop large et aurait cassé ce chemin fonctionnel.
+        @Test
+        @DisplayName("annonce FULL → aucune exception (trajet partagé légitimement rempli)")
+        void full_doesNotThrow() {
+            UUID announcementId = UUID.randomUUID();
+            com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
+            ann.setStatus(com.yadony.api.matching.AnnouncementStatus.FULL);
+            when(announcementRepo.findById(announcementId)).thenReturn(Optional.of(ann));
+
+            assertThatCode(() -> service.assertTravelerAnnouncementActive(announcementId))
+                    .doesNotThrowAnyException();
+        }
+
+        @Test
+        @DisplayName("annonce CANCELLED → 422 announcement/not-active (sortie du marché)")
+        void cancelled_throwsUnprocessableEntity() {
+            UUID announcementId = UUID.randomUUID();
+            com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
+            ann.setStatus(com.yadony.api.matching.AnnouncementStatus.CANCELLED);
+            when(announcementRepo.findById(announcementId)).thenReturn(Optional.of(ann));
+
+            assertThatThrownBy(() -> service.assertTravelerAnnouncementActive(announcementId))
+                    .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                    .satisfies(e -> assertThat(((org.springframework.web.server.ResponseStatusException) e).getReason())
+                            .isEqualTo("announcement/not-active"));
+        }
+
+        @Test
+        @DisplayName("annonce COMPLETED → 422 announcement/not-active (sortie du marché)")
+        void completed_throwsUnprocessableEntity() {
+            UUID announcementId = UUID.randomUUID();
+            com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
+            ann.setStatus(com.yadony.api.matching.AnnouncementStatus.COMPLETED);
+            when(announcementRepo.findById(announcementId)).thenReturn(Optional.of(ann));
+
+            assertThatThrownBy(() -> service.assertTravelerAnnouncementActive(announcementId))
+                    .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                    .satisfies(e -> assertThat(((org.springframework.web.server.ResponseStatusException) e).getReason())
+                            .isEqualTo("announcement/not-active"));
         }
     }
 }

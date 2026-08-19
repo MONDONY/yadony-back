@@ -15,6 +15,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
+import com.yadony.api.matching.AnnouncementStatus;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidGridItemEntity;
 import com.yadony.api.matching.BidGridItemRepository;
@@ -387,6 +388,21 @@ public class PaymentService {
         AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
                         "announcement-not-found", "Announcement Not Found", "Annonce introuvable"));
+
+        // Lot B (revue round 3 — inventaire, trouvaille non pointée explicitement) : garde
+        // centralisée ici plutôt que dupliquée chez chaque appelant. createEscrow a TROIS
+        // appelants : BidCheckoutService.checkout (déjà gardé en amont, allowlist stricte
+        // == ACTIVE), BidCheckoutService.negotiationCheckout (gardé round 3, OUT_OF_MARKET)
+        // — et POST /payments (PaymentController.createEscrow), qui n'avait ABSOLUMENT
+        // AUCUNE garde : un sender avec un bid PENDING pouvait ouvrir un escrow Stripe en
+        // appelant cet endpoint directement, sur un trajet déjà retiré par la modération.
+        // OUT_OF_MARKET (pas != ACTIVE) : reste compatible avec negotiationCheckout sur un
+        // trajet partagé passé FULL entretemps.
+        if (AnnouncementStatus.OUT_OF_MARKET.contains(announcement.getStatus())) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT,
+                    "announcement-not-active", "Announcement Not Active",
+                    "Cette annonce n'est plus disponible");
+        }
 
         // SECURITE : le montant net est TOUJOURS recalculé côté serveur à partir
         // des données persistées du bid (grid items snapshotés + poids × prix/kg

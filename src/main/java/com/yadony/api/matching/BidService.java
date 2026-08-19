@@ -642,7 +642,8 @@ public class BidService {
 
         if (announcement.getStatus() == AnnouncementStatus.IN_PROGRESS
                 || announcement.getStatus() == AnnouncementStatus.COMPLETED
-                || announcement.getStatus() == AnnouncementStatus.CANCELLED) {
+                || announcement.getStatus() == AnnouncementStatus.CANCELLED
+                || announcement.getStatus() == AnnouncementStatus.REMOVED_BY_ADMIN) {
             throw new YadonyBusinessException(HttpStatus.CONFLICT,
                     "announcement-not-accepting", "Announcement Not Accepting",
                     "Le voyageur est déjà parti, ce trajet n'accepte plus de colis");

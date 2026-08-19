@@ -89,6 +89,10 @@ public class AdminRatingsController {
         return ResponseEntity.ok(AdminRatingResponse.from(rating, usersById));
     }
 
+    // Lot C : suppression definitive detachee de la moderation courante. L'annotation de
+    // methode REMPLACE celle de classe (elle ne s'y ajoute pas), donc les deux conditions
+    // sont re-declarees ici.
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('RATING_DELETE')")
     @DeleteMapping("/admin/ratings/{id}")
     @Transactional
     public ResponseEntity<Void> deleteRating(@PathVariable UUID id) {
