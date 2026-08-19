@@ -164,6 +164,16 @@ jobs:
           script: |
             set -e
             mkdir -p ~/yadony
+            cd ~/yadony
+            mkdir -p nginx/certs nginx/static nginx/www backups
+            # Régénérée depuis le dépôt à chaque déploiement : d'anciens
+            # fichiers écrits par des conteneurs root deviennent sinon
+            # impossibles à écraser par l'utilisateur SSH.
+            if [ -d monitoring ]; then
+              docker run --rm -v "$PWD:/work" alpine rm -rf /work/monitoring || rm -rf monitoring
+            fi
+            docker run --rm -v "$PWD:/work" alpine \
+              chown -R "$(id -u):$(id -g)" /work/nginx/static || true
 
       - name: Transférer compose et .env au VPS
         run: |
@@ -181,6 +191,17 @@ jobs:
           echo "📤 .env..."
           scp $SSH_OPTS .env "$DEST/"
 
+          echo "📤 nginx.conf..."
+          scp $SSH_OPTS nginx/nginx.conf "$DEST/nginx/"
+
+          echo "📤 nginx/static/..."
+          scp $SSH_OPTS -O -r nginx/static "$DEST/nginx/"
+
+          echo "📤 monitoring/ (config alloy)..."
+          # -O force le protocole SCP historique : le mode SFTP par défaut
+          # (OpenSSH 9.x) ne crée pas les sous-dossiers imbriqués manquants.
+          scp $SSH_OPTS -O -r monitoring "$DEST/"
+
           echo "✅ Fichiers transférés"
 
       - name: Déploiement via SSH
@@ -193,7 +214,9 @@ jobs:
             cd ~/yadony
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             docker compose -f docker-compose.prod.yml pull api
-            docker compose -f docker-compose.prod.yml up -d --no-deps api
+            docker compose -f docker-compose.prod.yml up -d --remove-orphans
+            # Le bind mount de nginx.conf ne déclenche pas de recreate.
+            docker exec yadony_nginx nginx -t && docker exec yadony_nginx nginx -s reload
             docker image prune -f
       - name: Health check post-déploiement (60s max)
         uses: appleboy/ssh-action@v1
@@ -203,19 +226,34 @@ jobs:
           key: ${{ secrets.OVH_SSH_KEY }}
           script: |
             for i in $(seq 1 12); do
-              STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/api/v1/actuator/health)
-              if [ "$STATUS" = "200" ]; then
+              STATUS=$(docker exec yadony_api wget -q -O - http://localhost:8080/api/v1/actuator/health 2>/dev/null | grep -o '"status":"[^"]*"' | cut -d: -f2 | tr -d '"' || echo UNKNOWN)
+              if [ "$STATUS" = "UP" ]; then
                 echo "API prod healthy (tentative $i)"
                 exit 0
               fi
-              echo "Tentative $i — HTTP $STATUS — attente 5s..."
+              echo "Tentative $i — état $STATUS — attente 5s..."
               sleep 5
             done
             echo "API prod non disponible après 60s"
             exit 1
+      - name: Jeton Sentry disponible ?
+        id: sentry_token
+        if: success()
+        run: |
+          if [ -n "$SENTRY_AUTH_TOKEN" ]; then
+            echo "present=true" >> $GITHUB_OUTPUT
+          else
+            echo "present=false" >> $GITHUB_OUTPUT
+            echo "SENTRY_AUTH_TOKEN absent — release Sentry ignorée"
+          fi
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+
+      # Une release Sentry manquée ne doit pas faire échouer un déploiement
+      # qui a réussi.
       - name: Release Sentry
         uses: getsentry/action-release@v3
-        if: success()
+        if: success() && steps.sentry_token.outputs.present == 'true'
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
