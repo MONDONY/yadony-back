@@ -272,11 +272,11 @@ class UserBusinessPrefsServiceTest {
     }
 
     @Test
-    @DisplayName("Un premier choix de pays n'est jamais verrouille, meme si isLocked repondrait true")
-    void firstCountryChoiceNeverLocked() {
-        // user.getCountry() est null (jamais renseigne) : la garde ne doit meme pas
-        // consulter countryLockService pour bloquer, peu importe ce qu'il repondrait.
-        when(countryLockService.isLocked(USER_ID)).thenReturn(true);
+    @DisplayName("Un premier choix de pays passe : un compte reellement neuf n'est jamais verrouille")
+    void firstCountryChoiceOnBrandNewAccount_isAllowed() {
+        // user.getCountry() est null ET rien n'a jamais engage d'argent : isLocked()
+        // rend false par construction, le choix passe sans exemption dediee.
+        when(countryLockService.isLocked(USER_ID)).thenReturn(false);
         when(activeCurrencyResolver.resolve(USER_ID)).thenReturn("XOF");
 
         UserBusinessPrefsDto result = service.upsert(FIREBASE_UID,
@@ -284,6 +284,30 @@ class UserBusinessPrefsServiceTest {
 
         assertThat(result.country()).isEqualTo("SN");
         assertThat(result.currencyCode()).isEqualTo("XOF");
+    }
+
+    @Test
+    @DisplayName("Regression : un compte existant remis a country=NULL par V225 reste verrouille")
+    void legacyAccountWithNullCountryAndStripeAccount_isStillLocked() {
+        // Scenario exact du deploiement de V225 : le pays a ete efface en base, mais le
+        // compte porte deja un compte Stripe Connect (dont le pays est immuable chez
+        // Stripe). Un `country == null` ne doit surtout pas valoir « premier choix ».
+        user.setCountry(null);
+        user.setStripeAccountId("acct_legacy_fr");
+        when(countryLockService.isLocked(USER_ID)).thenReturn(true);
+
+        assertThatThrownBy(() -> service.upsert(FIREBASE_UID,
+                    UserBusinessPrefsDto.defaults().withCountry("SN")))
+                .isInstanceOf(YadonyBusinessException.class)
+                // getMessage() renvoie le `detail` francais, pas le code : assert sur getErrorCode().
+                .satisfies(ex -> {
+                    YadonyBusinessException dbe = (YadonyBusinessException) ex;
+                    assertThat(dbe.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(dbe.getErrorCode()).isEqualTo("country-locked");
+                });
+        verify(userRepository, never()).save(any());
+        verify(repository, never()).save(any());
+        assertThat(user.getCountry()).isNull();
     }
 
     @Test

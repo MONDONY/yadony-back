@@ -56,8 +56,15 @@ public class UserBusinessPrefsService {
         // Gel au premier mouvement d'argent (lot 2, désormais porté par le pays) :
         // changer de pays n'est plus permis une fois un envoi engagé ou un
         // portefeuille entamé, sinon la devise dérivée d'un bid déjà en cours
-        // divergerait silencieusement de ce compte. Un premier choix (pays jamais
-        // renseigné) n'a jamais rien à figer.
+        // divergerait silencieusement de ce compte.
+        //
+        // Aucune exemption « premier choix » sur `user.getCountry() == null` : V225 a
+        // remis TOUS les pays à NULL, y compris ceux de comptes déjà porteurs d'un
+        // compte Connect, d'un portefeuille alimenté ou d'un envoi engagé. Une telle
+        // exemption leur aurait offert un changement de pays gratuit juste après le
+        // déploiement, puis refermé le verrou sur le mauvais pays (celui d'un compte
+        // Connect est immuable chez Stripe). Pour un utilisateur réellement neuf,
+        // isLocked() rend false par construction : la garde ne coûte rien.
         String requestedCountry = dto.country();
         if (requestedCountry != null && !CountryCatalog.isSupported(requestedCountry)) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
@@ -66,8 +73,7 @@ public class UserBusinessPrefsService {
         }
         boolean countryChanges = requestedCountry != null
                 && !requestedCountry.equalsIgnoreCase(user.getCountry());
-        if (countryChanges && user.getCountry() != null
-                && countryLockService.isLocked(userId)) {
+        if (countryChanges && countryLockService.isLocked(userId)) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "country-locked", "Country Locked",
                     "Impossible de changer de pays : un envoi est en cours, le "
