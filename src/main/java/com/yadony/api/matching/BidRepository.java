@@ -222,6 +222,21 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
 
     boolean existsBySenderIdAndStatusIn(UUID senderId, List<BidStatus> statuses);
 
+    /**
+     * Pendant voyageur de {@link #existsBySenderIdAndStatusIn} : le voyageur n'est pas
+     * porte par le bid mais par l'annonce, d'ou la jointure. Sert au verrou pays
+     * ({@code CountryLockService}) — un voyageur engage sur une livraison ne doit pas
+     * plus pouvoir changer de pays que l'expediteur qui l'a paye.
+     */
+    @Query("""
+        SELECT COUNT(b) > 0 FROM BidEntity b
+        JOIN AnnouncementEntity a ON b.announcementId = a.id
+        WHERE a.travelerId = :travelerId AND b.status IN :statuses
+    """)
+    boolean existsByAnnouncementTravelerIdAndStatusIn(
+            @Param("travelerId") UUID travelerId,
+            @Param("statuses") java.util.Collection<BidStatus> statuses);
+
     // For H-2 alert scheduler: ACCEPTED bids with handover starting in ≤ 2h, not yet alerted, not confirmed
     Optional<BidEntity> findByTrackingNumber(String trackingNumber);
 

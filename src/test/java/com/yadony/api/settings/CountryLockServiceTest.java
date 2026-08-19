@@ -49,6 +49,8 @@ class CountryLockServiceTest {
         lenient().when(walletAccountRepository.findAllByUserId(userId)).thenReturn(List.of());
         lenient().when(walletTransactionRepository.existsByUserId(userId)).thenReturn(false);
         lenient().when(bidRepository.existsBySenderIdAndStatusIn(eq(userId), anyList())).thenReturn(false);
+        lenient().when(bidRepository.existsByAnnouncementTravelerIdAndStatusIn(eq(userId), anyList()))
+                .thenReturn(false);
     }
 
     @Test
@@ -127,6 +129,25 @@ class CountryLockServiceTest {
             List<?> statuses = inv.getArgument(1);
             return statuses.contains(status);
         });
+
+        assertThat(service.isLocked(userId)).isTrue();
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = BidStatus.class, names = {
+            "PAYMENT_ESCROWED", "ACCEPTED", "HANDED_OVER", "IN_TRANSIT", "ARRIVED"
+    })
+    @DisplayName("Un envoi engage ou l'utilisateur est VOYAGEUR verrouille aussi le pays")
+    void isLocked_bidEngagedAsTraveler_returnsTrue(BidStatus status) {
+        // En zone franc CFA le rail especes ne donne au voyageur ni compte Connect ni
+        // mouvement de portefeuille avant le prelevement de commission : rien d'autre
+        // ne le retenait, il pouvait changer de pays au milieu d'une livraison.
+        stubNothingLocking();
+        when(bidRepository.existsByAnnouncementTravelerIdAndStatusIn(eq(userId), anyList()))
+                .thenAnswer(inv -> {
+                    List<?> statuses = inv.getArgument(1);
+                    return statuses.contains(status);
+                });
 
         assertThat(service.isLocked(userId)).isTrue();
     }

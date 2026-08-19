@@ -24,9 +24,10 @@ import java.util.UUID;
 public class CountryLockService {
 
     /**
-     * Statuts au-delà desquels l'expéditeur s'est engagé sur un envoi (paiement
-     * escrow posé ou remise déjà entamée) — pas les statuts encore réversibles
-     * sans conséquence financière (brouillon, négociation, terminaux).
+     * Statuts au-delà desquels un envoi est engagé (paiement escrow posé ou remise
+     * déjà entamée) — pas les statuts encore réversibles sans conséquence financière
+     * (brouillon, négociation, terminaux). Appliqués aux DEUX rôles : l'expéditeur qui
+     * a payé comme le voyageur qui transporte.
      */
     private static final List<BidStatus> COMMITTED_BID_STATUSES = List.of(
             BidStatus.PAYMENT_ESCROWED,
@@ -54,7 +55,14 @@ public class CountryLockService {
         return hasStripeAccount(userId)
                 || hasNonZeroWalletBalance(userId)
                 || walletTransactionRepository.existsByUserId(userId)
-                || bidRepository.existsBySenderIdAndStatusIn(userId, COMMITTED_BID_STATUSES);
+                || bidRepository.existsBySenderIdAndStatusIn(userId, COMMITTED_BID_STATUSES)
+                // Côté voyageur aussi : en zone franc CFA, le rail espèces ne lui impose
+                // ni compte Connect ni mouvement de portefeuille avant le prélèvement de
+                // commission. Sans cette branche il changeait de pays au milieu d'une
+                // livraison, sa devise active passait à EUR alors que son annonce et son
+                // bid restaient en XOF.
+                || bidRepository.existsByAnnouncementTravelerIdAndStatusIn(
+                        userId, COMMITTED_BID_STATUSES);
     }
 
     /**
