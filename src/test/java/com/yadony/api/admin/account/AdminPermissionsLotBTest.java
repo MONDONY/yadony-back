@@ -39,8 +39,11 @@ class AdminPermissionsLotBTest {
     }
 
     @Test
-    // 27 depuis le Lot C, qui detache RATING_DELETE de RATING_MODERATE.
-    void enumHasExactlyTwentySevenValues() {
-        assertThat(AdminPermission.values()).hasSize(27);
+    // Etait 27 depuis le Lot C (RATING_DELETE detachee de RATING_MODERATE). Passe a 29
+    // avec le Lot D, qui ajoute NOTIFICATION_SEND et CONFIG_MANAGE (aucune des deux n'est
+    // accordee au support — voir AdminPermissionsLotDTest). Methode renommee pour rester
+    // fidele au compte reel.
+    void enumHasExactlyTwentyNineValues() {
+        assertThat(AdminPermission.values()).hasSize(29);
     }
 }

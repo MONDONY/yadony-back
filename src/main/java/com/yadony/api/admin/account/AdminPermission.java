@@ -2,7 +2,7 @@ package com.yadony.api.admin.account;
 
 /**
  * Admin permissions enum (Task 2).
- * 26 granular permissions for role-based access control.
+ * 29 granular permissions for role-based access control.
  */
 public enum AdminPermission {
     // Account management
@@ -48,6 +48,19 @@ public enum AdminPermission {
      * Le support consulte et exclut ; effacer pour de bon reste a ADMIN et SUPER_ADMIN.
      */
     RATING_DELETE,
+
+    /**
+     * Lot D — envoi d'un broadcast de notifications (push + in-app) a un segment
+     * d'utilisateurs. Jamais accordee au support : un envoi de masse est irreversible.
+     */
+    NOTIFICATION_SEND,
+
+    /**
+     * Lot D — modification des parametres plateforme (commission globale, seuil
+     * d'urgence, plafond de remboursement, activation des SMS). Jamais accordee au
+     * support : couper les SMS coupe aussi l'authentification par OTP.
+     */
+    CONFIG_MANAGE,
 
     // Content & operations
     PROMO_MANAGE,
