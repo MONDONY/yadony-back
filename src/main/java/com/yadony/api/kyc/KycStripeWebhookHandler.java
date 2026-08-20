@@ -4,6 +4,7 @@ import com.yadony.api.auth.KycStatus;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
+import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.common.stripe.StripeWebhookHandler;
 import com.yadony.api.kyc.events.UserKycVerifiedEvent;
 import com.yadony.api.kyc.events.UserKycActionRequiredEvent;
@@ -34,17 +35,20 @@ public class KycStripeWebhookHandler implements StripeWebhookHandler {
     private final AuditService auditService;
     private final ApplicationEventPublisher eventPublisher;
     private final ObjectMapper objectMapper;
+    private final AdminAlertService adminAlert;
 
     public KycStripeWebhookHandler(KycRepository kycRepository,
                                     UserRepository userRepository,
                                     AuditService auditService,
                                     ApplicationEventPublisher eventPublisher,
-                                    ObjectMapper objectMapper) {
+                                    ObjectMapper objectMapper,
+                                    AdminAlertService adminAlert) {
         this.kycRepository = kycRepository;
         this.userRepository = userRepository;
         this.auditService = auditService;
         this.eventPublisher = eventPublisher;
         this.objectMapper = objectMapper;
+        this.adminAlert = adminAlert;
     }
 
     @Override
@@ -111,6 +115,9 @@ public class KycStripeWebhookHandler implements StripeWebhookHandler {
                 userRepository.save(user);
                 auditService.log("kyc_verification", kyc.getId(), "KYC_CANCELED",
                         user.getId(), Map.of("sessionId", sessionId, "reason", "session_canceled"));
+                adminAlert.raise("KYC_IDENTITY_CANCELED",
+                        "Session Stripe Identity annulée pour l'utilisateur " + kyc.getUserId(),
+                        Map.of("userId", kyc.getUserId().toString(), "sessionId", sessionId));
             }
             case "identity.verification_session.requires_input" -> {
                 if (kyc.getStatus() == KycVerificationStatus.VERIFIED) {
@@ -125,6 +132,11 @@ public class KycStripeWebhookHandler implements StripeWebhookHandler {
                 userRepository.save(user);
                 auditService.log("kyc_verification", kyc.getId(), "KYC_REJECTED",
                         user.getId(), Map.of("sessionId", sessionId, "reason", kyc.getRejectionReason()));
+                adminAlert.raise("KYC_IDENTITY_REJECTED",
+                        "Échec de vérification Stripe Identity pour l'utilisateur " + kyc.getUserId()
+                                + " (raison: " + kyc.getRejectionReason() + ")",
+                        Map.of("userId", kyc.getUserId().toString(), "sessionId", sessionId,
+                                "reason", kyc.getRejectionReason()));
                 eventPublisher.publishEvent(new UserKycActionRequiredEvent(
                         user.getId(), kyc.getRejectionCode()));
             }

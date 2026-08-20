@@ -4,6 +4,7 @@ import com.yadony.api.auth.KycStatus;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
+import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.kyc.events.UserKycActionRequiredEvent;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.stripe.net.ApiResource;
@@ -29,13 +30,14 @@ class KycStripeWebhookHandlerTest {
     @Mock UserRepository userRepository;
     @Mock AuditService auditService;
     @Mock ApplicationEventPublisher eventPublisher;
+    @Mock AdminAlertService adminAlert;
     ObjectMapper objectMapper = new ObjectMapper();
     KycStripeWebhookHandler handler;
 
     @BeforeEach
     void setUp() {
         handler = new KycStripeWebhookHandler(kycRepository, userRepository,
-                auditService, eventPublisher, objectMapper);
+                auditService, eventPublisher, objectMapper, adminAlert);
     }
 
     private Event buildEvent(String type, String sessionId) {
@@ -117,6 +119,7 @@ class KycStripeWebhookHandlerTest {
         assertThat(kyc.getRejectionReason()).isEqualTo("verification_failed");
         verify(auditService).log(eq("kyc_verification"), any(), eq("KYC_REJECTED"), any(), any());
         verify(eventPublisher).publishEvent(any(UserKycActionRequiredEvent.class));
+        verify(adminAlert).raise(eq("KYC_IDENTITY_REJECTED"), any(), any());
     }
 
     @Test
@@ -138,6 +141,7 @@ class KycStripeWebhookHandlerTest {
         assertThat(user.getKycStatus()).isEqualTo(KycStatus.NOT_STARTED);
         verify(auditService).log(eq("kyc_verification"), any(), eq("KYC_CANCELED"), any(), any());
         verify(eventPublisher, never()).publishEvent(any());
+        verify(adminAlert).raise(eq("KYC_IDENTITY_CANCELED"), any(), any());
     }
 
     @Test
@@ -181,6 +185,7 @@ class KycStripeWebhookHandlerTest {
 
         verify(kycRepository, never()).save(any());
         verify(auditService, never()).log(any(), any(), any(), any(), any());
+        verifyNoInteractions(adminAlert);
     }
 
     @Test
@@ -199,6 +204,7 @@ class KycStripeWebhookHandlerTest {
 
         verify(kycRepository, never()).save(any());
         verify(auditService, never()).log(any(), any(), any(), any(), any());
+        verifyNoInteractions(adminAlert);
     }
 
     @Test
