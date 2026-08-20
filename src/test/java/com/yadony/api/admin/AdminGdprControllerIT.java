@@ -156,21 +156,6 @@ class AdminGdprControllerIT {
     }
 
     @Test
-    @DisplayName("POST — solde wallet non vide → 422 wallet-balance-not-empty")
-    void execute_walletBalance_returns422() throws Exception {
-        doThrow(new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-balance-not-empty",
-                "Unprocessable", "Solde wallet non nul"))
-                .when(adminGdprService).executeDeletion(eq(USER_ID), any(), any(), anyBoolean());
-
-        mockMvc.perform(post("/admin/users/{userId}/gdpr-execute", USER_ID)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new GdprExecuteRequest("motif", null)))
-                        .with(authentication(adminAuth())))
-                .andExpect(status().isUnprocessableEntity())
-                .andExpect(jsonPath("$.code").value("wallet-balance-not-empty"));
-    }
-
-    @Test
     @DisplayName("POST — motif vide → 422 (bean validation)")
     void execute_blankReason_returns422() throws Exception {
         mockMvc.perform(post("/admin/users/{userId}/gdpr-execute", USER_ID)

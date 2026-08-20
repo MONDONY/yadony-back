@@ -113,24 +113,20 @@ class AuthServiceDeleteImmediatelyTest {
     }
 
     @Test
-    @DisplayName("solde wallet positif → 422 wallet-balance-not-empty")
-    void positiveWalletBalance_throws422() {
-        // No SecurityContext / auth_time stub needed : le check wallet précède le check auth_time.
-        // La règle elle-même vit dans UserService#assertNoWalletBalance (point unique, partagé
-        // avec requestDeletion) et y est testée sur le vrai repository ; ici on vérifie
-        // uniquement que deleteImmediately l'applique et s'arrête avant la finalisation.
-        when(userRepository.findByFirebaseUid(FIREBASE_UID))
-                .thenReturn(Optional.of(makeUser(UserStatus.ACTIVE)));
-        doThrow(new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-balance-not-empty",
-                "Unprocessable", "Impossible — vous avez un solde wallet non nul, dépensez-le d'abord"))
-                .when(userService).assertNoWalletBalance(USER_ID);
+    @DisplayName("solde wallet positif → ne bloque plus, ticket ouvert, finalisation appelée quand même (Apple 5.1.1(v))")
+    void positiveWalletBalance_doesNotBlock_opensTicketAndFinalizes() {
+        long recentAuthTime = Instant.now().minusSeconds(60).getEpochSecond();
+        setupSecurityContext(recentAuthTime);
+        UserEntity user = makeUser(UserStatus.ACTIVE);
+        when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
 
-        assertThatThrownBy(() -> authService.deleteImmediately(
-                FIREBASE_UID, new DeleteImmediatelyRequest(true)))
-                .isInstanceOf(YadonyBusinessException.class)
-                .extracting("status").isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+        authService.deleteImmediately(FIREBASE_UID, new DeleteImmediatelyRequest(true));
 
-        verify(accountFinalizationService, never()).finalize(any(), any());
+        // La règle elle-même vit dans UserService#openWalletRefundTicketIfNeeded (point unique,
+        // partagé avec requestDeletion) et y est testée sur le vrai repository ; ici on vérifie
+        // uniquement que deleteImmediately l'applique puis poursuit la finalisation.
+        verify(userService).openWalletRefundTicketIfNeeded(USER_ID);
+        verify(accountFinalizationService).finalize(eq(user), eq(FinalizationReason.HARD_IMMEDIATE));
     }
 
     @Test
@@ -143,7 +139,7 @@ class AuthServiceDeleteImmediatelyTest {
 
         authService.deleteImmediately(FIREBASE_UID, new DeleteImmediatelyRequest(true));
 
-        verify(userService).assertNoWalletBalance(USER_ID);
+        verify(userService).openWalletRefundTicketIfNeeded(USER_ID);
         verify(accountFinalizationService).finalize(eq(user), eq(FinalizationReason.HARD_IMMEDIATE));
     }
 

@@ -45,6 +45,7 @@ class UserServiceAuditActorTest {
     @Mock AccountFinalizationService accountFinalizationService;
     @Mock FirestoreService firestoreService;
     @Mock NotificationDispatcher notificationDispatcher;
+    @Mock com.yadony.api.payments.wallet.WalletRefundRequestService walletRefundRequestService;
 
     UserService service;
 
@@ -55,7 +56,7 @@ class UserServiceAuditActorTest {
     void setUp() {
         service = new UserService(userRepository, paymentRepository, walletAccountRepository,
                 auditService, eventPublisher, accountFinalizationService,
-                firestoreService, notificationDispatcher);
+                firestoreService, notificationDispatcher, walletRefundRequestService);
 
         UserEntity user = new UserEntity();
         ReflectionTestUtils.setField(user, "id", USER_ID);

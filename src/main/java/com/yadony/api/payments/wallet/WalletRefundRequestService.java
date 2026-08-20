@@ -17,11 +17,12 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Option 2 du blocage de suppression pour solde wallet non nul (cf.
- * {@code UserService#assertNoWalletBalance}) : aucun flow de remboursement
- * automatique n'existe côté Stripe, donc un utilisateur bloqué ouvre un ticket ici,
- * un admin rembourse manuellement hors-app puis résout — ce qui débite le wallet à
- * zéro et débloque la suppression.
+ * Ouvre le ticket de remboursement wallet — automatiquement à chaque suppression de compte
+ * en solde positif (cf. {@code UserService#openWalletRefundTicketIfNeeded}, jamais bloquant :
+ * Apple 5.1.1(v)), ou explicitement via {@code POST /auth/me/wallet-refund-request} pour qui
+ * veut être remboursé sans supprimer son compte. Aucun flow de remboursement automatique
+ * n'existe côté Stripe pour le wallet : un admin rembourse manuellement hors-app puis résout
+ * le ticket, ce qui débite le wallet à zéro.
  */
 @Service
 public class WalletRefundRequestService {

@@ -41,7 +41,7 @@ class AuthControllerDeletionEligibilityIntegrationTest {
     @Autowired WalletAccountRepository walletAccountRepository;
 
     private static final String FIREBASE_UID_ELIGIBLE = "uid-deletion-elig-001";
-    private static final String FIREBASE_UID_WALLET_BLOCKED = "uid-deletion-elig-002";
+    private static final String FIREBASE_UID_WALLET_BALANCE = "uid-deletion-elig-002";
 
     @BeforeEach
     void setUp() {
@@ -56,7 +56,7 @@ class AuthControllerDeletionEligibilityIntegrationTest {
         userRepository.save(eligible);
 
         UserEntity walletBlocked = new UserEntity();
-        walletBlocked.setFirebaseUid(FIREBASE_UID_WALLET_BLOCKED);
+        walletBlocked.setFirebaseUid(FIREBASE_UID_WALLET_BALANCE);
         walletBlocked.setStatus(UserStatus.ACTIVE);
         walletBlocked.setKycStatus(KycStatus.PENDING);
         walletBlocked.setRoles(Set.of(Role.SENDER));
@@ -74,23 +74,25 @@ class AuthControllerDeletionEligibilityIntegrationTest {
     }
 
     @Test
-    @DisplayName("200 OK, canDelete=true, blockedReasonCode=null quand rien ne bloque")
+    @DisplayName("200 OK, canDelete=true, blockedReasonCode=null, hasWalletBalance=false quand rien ne bloque")
     void noBlockers_returnsEligible() throws Exception {
         mockMvc.perform(get("/auth/me/deletion-eligibility")
                         .with(authentication(authenticatedAs(FIREBASE_UID_ELIGIBLE))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.canDelete").value(true))
-                .andExpect(jsonPath("$.blockedReasonCode").doesNotExist());
+                .andExpect(jsonPath("$.blockedReasonCode").doesNotExist())
+                .andExpect(jsonPath("$.hasWalletBalance").value(false));
     }
 
     @Test
-    @DisplayName("200 OK, canDelete=false, blockedReasonCode=wallet-balance-not-empty avec un solde wallet positif")
-    void positiveWalletBalance_returnsBlocked() throws Exception {
+    @DisplayName("200 OK, canDelete=true malgré un solde wallet positif (Apple 5.1.1(v)), hasWalletBalance=true")
+    void positiveWalletBalance_doesNotBlockButIsSignaled() throws Exception {
         mockMvc.perform(get("/auth/me/deletion-eligibility")
-                        .with(authentication(authenticatedAs(FIREBASE_UID_WALLET_BLOCKED))))
+                        .with(authentication(authenticatedAs(FIREBASE_UID_WALLET_BALANCE))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.canDelete").value(false))
-                .andExpect(jsonPath("$.blockedReasonCode").value("wallet-balance-not-empty"));
+                .andExpect(jsonPath("$.canDelete").value(true))
+                .andExpect(jsonPath("$.blockedReasonCode").doesNotExist())
+                .andExpect(jsonPath("$.hasWalletBalance").value(true));
     }
 
     @Test

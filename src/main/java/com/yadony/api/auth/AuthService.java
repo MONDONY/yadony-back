@@ -309,8 +309,12 @@ public class AuthService {
         return userService.checkDeletionEligibility(firebaseUid);
     }
 
-    /** Solde wallet bloquant la suppression (cf. {@link #checkDeletionEligibility}) : ouvre un
-     *  ticket de remboursement manuel pour chaque devise en solde positif. */
+    /** Demande explicite et autonome de remboursement du solde wallet (ex. l'utilisateur garde
+     *  son compte mais veut récupérer son argent) : ouvre un ticket manuel pour chaque devise
+     *  en solde positif. La suppression de compte ouvre déjà ce même ticket automatiquement
+     *  (cf. {@link UserService#openWalletRefundTicketIfNeeded}) — cet endpoint n'est donc plus
+     *  un prérequis pour supprimer son compte, juste un raccourci pour qui veut être remboursé
+     *  sans attendre. */
     public List<WalletRefundRequestResponse> requestWalletRefund(String firebaseUid) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
                 .orElseThrow(() -> new YadonyBusinessException(
@@ -341,11 +345,11 @@ public class AuthService {
                     "Unprocessable", "Impossible — vous avez des transactions en cours");
         }
 
-        // Un solde wallet réel (rechargé par carte) devient orphelin et irrécupérable une fois
-        // le compte Firebase supprimé plus bas — aucun flow de remboursement wallet n'existe,
-        // contrairement à l'escrow Stripe ci-dessus. Règle portée par UserService pour rester
-        // identique entre suppression immédiate (ici) et suppression J+30 (requestDeletion).
-        userService.assertNoWalletBalance(user.getId());
+        // Un solde wallet réel (rechargé par carte) ouvre un ticket de remboursement
+        // automatique mais ne bloque jamais la suppression (Apple 5.1.1(v)). Règle portée par
+        // UserService pour rester identique entre suppression immédiate (ici) et suppression
+        // J+30 (requestDeletion).
+        userService.openWalletRefundTicketIfNeeded(user.getId());
 
         FirebaseToken decoded = (FirebaseToken) SecurityContextHolder
                 .getContext().getAuthentication().getCredentials();

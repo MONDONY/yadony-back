@@ -13,11 +13,11 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 /**
- * Demande de remboursement d'un solde wallet rechargé par carte, ouverte quand un
- * utilisateur veut supprimer son compte mais est bloqué par
- * {@code UserService#assertNoWalletBalance} — aucun flow de remboursement automatique
- * n'existe (cf. {@link WalletRefundRequestService}), un admin rembourse manuellement
- * via Stripe puis résout le ticket.
+ * Demande de remboursement d'un solde wallet rechargé par carte, ouverte automatiquement à
+ * la suppression de compte (cf. {@code UserService#openWalletRefundTicketIfNeeded}, jamais
+ * bloquant) ou explicitement en dehors de toute suppression — aucun flow de remboursement
+ * automatique n'existe (cf. {@link WalletRefundRequestService}), un admin rembourse
+ * manuellement via Stripe puis résout le ticket.
  */
 @Entity
 @Table(name = "wallet_refund_requests")

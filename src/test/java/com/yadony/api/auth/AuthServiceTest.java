@@ -612,7 +612,7 @@ class AuthServiceTest {
         @Test
         @DisplayName("délègue à UserService.checkDeletionEligibility()")
         void checkDeletionEligibility_delegatesToUserService() {
-            var expected = new DeletionEligibilityResponse(true, null);
+            var expected = new DeletionEligibilityResponse(true, null, false);
             when(userService.checkDeletionEligibility(FIREBASE_UID)).thenReturn(expected);
 
             assertThat(authService.checkDeletionEligibility(FIREBASE_UID)).isEqualTo(expected);
