@@ -48,6 +48,30 @@ public class WalletTransactionEntity {
     @Column(name = "idempotency_key", length = 255, unique = true)
     private String idempotencyKey;
 
+    /**
+     * Devise d'origine de la commission avant conversion (ex. la devise de l'annonce),
+     * uniquement renseignée quand une conversion a eu lieu. {@code NULL} sur toute
+     * transaction ne résultant pas d'une conversion (y compris les transactions
+     * historiques antérieures à cette colonne).
+     */
+    @Column(name = "source_currency", length = 3)
+    private String sourceCurrency;
+
+    /**
+     * Montant d'origine avant conversion, dans {@link #sourceCurrency}. Snapshoté au
+     * moment du prélèvement : ne doit jamais être recalculé a posteriori.
+     */
+    @Column(name = "source_amount", precision = 19, scale = 4)
+    private BigDecimal sourceAmount;
+
+    /**
+     * Taux de change appliqué ({@code amount} / {@code sourceAmount}), figé au moment
+     * du prélèvement. Un changement ultérieur du taux administré dans
+     * {@code exchange_rates} ne doit jamais rejaillir sur cette valeur déjà persistée.
+     */
+    @Column(name = "applied_rate", precision = 18, scale = 6)
+    private BigDecimal appliedRate;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -71,5 +95,11 @@ public class WalletTransactionEntity {
     public void setPaymentRef(String paymentRef) { this.paymentRef = paymentRef; }
     public String getIdempotencyKey() { return idempotencyKey; }
     public void setIdempotencyKey(String idempotencyKey) { this.idempotencyKey = idempotencyKey; }
+    public String getSourceCurrency() { return sourceCurrency; }
+    public void setSourceCurrency(String sourceCurrency) { this.sourceCurrency = sourceCurrency; }
+    public BigDecimal getSourceAmount() { return sourceAmount; }
+    public void setSourceAmount(BigDecimal sourceAmount) { this.sourceAmount = sourceAmount; }
+    public BigDecimal getAppliedRate() { return appliedRate; }
+    public void setAppliedRate(BigDecimal appliedRate) { this.appliedRate = appliedRate; }
     public Instant getCreatedAt() { return createdAt; }
 }

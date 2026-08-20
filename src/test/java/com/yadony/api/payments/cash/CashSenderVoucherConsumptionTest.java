@@ -64,6 +64,8 @@ class CashSenderVoucherConsumptionTest {
     @Mock private PlatformSettingsService settings;
     @Mock private PromoService promoService;
     @Mock private CommissionVoucherRepository voucherRepository;
+    @Mock private com.yadony.api.payments.currency.ActiveCurrencyResolver activeCurrencyResolver;
+    @Mock private com.yadony.api.payments.currency.ExchangeRateService exchangeRateService;
 
     private static final UUID SENDER_ID = UUID.randomUUID();
     private static final UUID TRAVELER_ID = UUID.randomUUID();
@@ -114,13 +116,14 @@ class CashSenderVoucherConsumptionTest {
         CommissionRateResolver resolver =
                 new CommissionRateResolver(userRepo, settings, promoService, voucherService);
 
+        lenient().when(activeCurrencyResolver.resolve(any())).thenReturn("EUR");
         service = new CashCommissionService(
                 new CommissionProperties(new BigDecimal("0.10"), BigDecimal.ZERO, 24),
                 userRepo, bidRepo, announcementRepo, events, walletService,
                 walletTransactionRepository, auditService, resolver, negotiationThreadRepository,
                 new StripeCashGatewayImpl(), bidGridItemRepository,
                 org.mockito.Mockito.mock(com.yadony.api.auth.FirebaseContactService.class),
-                voucherService);
+                voucherService, activeCurrencyResolver, exchangeRateService);
 
         lenient().when(bidGridItemRepository.findByBidId(any())).thenReturn(List.of());
         lenient().when(walletTransactionRepository.existsByUserIdAndBidIdAndType(any(), any(), any()))

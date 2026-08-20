@@ -73,6 +73,8 @@ class CashCommissionServiceNegotiationTest {
     @Mock private StripeCashGateway stripeCashGateway;
     @Mock private BidGridItemRepository bidGridItemRepository;
     @Mock private com.yadony.api.voucher.CommissionVoucherService voucherService;
+    @Mock private com.yadony.api.payments.currency.ActiveCurrencyResolver activeCurrencyResolver;
+    @Mock private com.yadony.api.payments.currency.ExchangeRateService exchangeRateService;
 
     private final CommissionProperties props =
             new CommissionProperties(new BigDecimal("0.12"), new BigDecimal("1.00"), 24);
@@ -84,7 +86,7 @@ class CashCommissionServiceNegotiationTest {
         service = new CashCommissionService(props, userRepo, bidRepo, announcementRepo, events,
                 walletService, walletTransactionRepository, auditService, commissionRateResolver,
                 negotiationThreadRepository, stripeCashGateway, bidGridItemRepository, stubbedContacts(),
-                voucherService);
+                voucherService, activeCurrencyResolver, exchangeRateService);
     }
 
     // --- helpers ---

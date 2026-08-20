@@ -139,6 +139,49 @@ public class WalletService {
                 userId, Map.of("amount", amount.toString(), "currency", code, "bidId", String.valueOf(bidId)));
     }
 
+    /**
+     * Variante de {@link #debit(UUID, String, BigDecimal, WalletTransactionType, UUID)} qui
+     * snapshote une conversion de devise sur la transaction : {@code sourceCurrency} /
+     * {@code sourceAmount} portent le montant avant conversion (devise de l'annonce),
+     * {@code appliedRate} le taux réellement appliqué au moment du prélèvement. Ces trois
+     * colonnes sont figées ici, une fois pour toutes : un changement ultérieur du taux
+     * administré dans {@code exchange_rates} ne doit jamais rejaillir sur cette
+     * transaction déjà persistée. À utiliser uniquement quand une conversion a
+     * effectivement eu lieu ; sinon utiliser l'overload sans ces paramètres.
+     */
+    @Transactional(noRollbackFor = InsufficientWalletBalanceException.class)
+    public void debit(UUID userId, String currency, BigDecimal amount, WalletTransactionType type, UUID bidId,
+                      String sourceCurrency, BigDecimal sourceAmount, BigDecimal appliedRate) {
+        String code = normalize(currency);
+        WalletAccountEntity wallet = walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, code)
+                .orElseGet(() -> getOrCreate(userId, code));
+
+        if (wallet.getBalance().compareTo(amount) < 0) {
+            throw new InsufficientWalletBalanceException(wallet.getBalance(), amount);
+        }
+
+        BigDecimal newBalance = wallet.getBalance().subtract(amount);
+        wallet.setBalance(newBalance);
+        walletAccountRepository.save(wallet);
+
+        WalletTransactionEntity tx = new WalletTransactionEntity();
+        tx.setUserId(userId);
+        tx.setCurrency(code);
+        tx.setType(type);
+        tx.setAmount(amount.negate());
+        tx.setBalanceAfter(newBalance);
+        tx.setBidId(bidId);
+        tx.setSourceCurrency(sourceCurrency);
+        tx.setSourceAmount(sourceAmount);
+        tx.setAppliedRate(appliedRate);
+        walletTransactionRepository.save(tx);
+
+        auditService.log("wallet", wallet.getId(), "WALLET_" + type.name(),
+                userId, Map.of("amount", amount.toString(), "currency", code, "bidId", String.valueOf(bidId),
+                "sourceCurrency", String.valueOf(sourceCurrency), "sourceAmount", String.valueOf(sourceAmount),
+                "appliedRate", String.valueOf(appliedRate)));
+    }
+
     @Transactional(noRollbackFor = InsufficientWalletBalanceException.class)
     public void debit(UUID userId, String currency, BigDecimal amount, WalletTransactionType type,
                       String paymentRef, String idempotencyKey) {
