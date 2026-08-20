@@ -21,6 +21,14 @@ import static org.mockito.Mockito.when;
  * détenu : ni l'historique de transactions, ni les envois engagés, ni le compte
  * Stripe Connect ne le figent. Un solde retombé à zéro rouvre le choix de devise :
  * c'est le comportement voulu, pas un oubli.
+ *
+ * Note de couverture : {@link CurrencyLockService} n'a qu'une seule dépendance,
+ * {@code WalletAccountRepository}. Les scénarios "transaction passée", "compte
+ * Connect seul" et "envoi engagé seul" ne peuvent donc pas être distingués par un
+ * mock différent de "aucun solde positif" — ils sont prouvés **par construction**
+ * (absence structurelle de toute dépendance vers l'historique de transactions, vers
+ * `UserRepository` ou vers `BidRepository`), pas par un comportement de mock
+ * observable qui les différencierait entre eux.
  */
 @ExtendWith(MockitoExtension.class)
 class CurrencyLockServiceTest {
@@ -62,7 +70,13 @@ class CurrencyLockServiceTest {
         // Le solde reflète déjà l'historique des transactions passées : une fois
         // qu'un solde positif a été entièrement dépensé/retiré, il retombe à zéro et
         // ne figure plus dans le résultat de findAllByUserId comme "verrouillant".
-        // Rien dans CurrencyLockService ne consulte plus l'historique de transactions.
+        // NB : ce test exerce le même chemin de mock que
+        // isLocked_zeroBalanceInEveryCurrency_returnsFalse ci-dessus — c'est attendu.
+        // CurrencyLockService n'a aucune dépendance vers l'historique de transactions,
+        // donc rien ne peut jamais faire réapparaître une transaction passée dans son
+        // calcul : la garantie "solde à zéro efface l'historique" est prouvée par
+        // construction (absence structurelle de la dépendance), pas par un mock qui
+        // distinguerait ce scénario d'un simple solde nul.
         when(walletAccountRepository.findAllByUserId(userId))
                 .thenReturn(List.of(account("EUR", BigDecimal.ZERO)));
 
@@ -70,29 +84,16 @@ class CurrencyLockServiceTest {
     }
 
     @Test
-    @DisplayName("Aucun compte portefeuille du tout : pas de verrou")
-    void isLocked_noWalletAccountAtAll_returnsFalse() {
-        when(walletAccountRepository.findAllByUserId(userId)).thenReturn(List.of());
-
-        assertThat(service.isLocked(userId)).isFalse();
-    }
-
-    @Test
-    @DisplayName("Un compte Connect seul, sans solde, ne verrouille pas la devise")
-    void isLocked_connectAccountAloneWithoutBalance_returnsFalse() {
-        // CurrencyLockService n'a aucune dépendance vers UserRepository : un compte
-        // Stripe Connect existant est structurellement hors de portée de ce verrou.
-        when(walletAccountRepository.findAllByUserId(userId)).thenReturn(List.of());
-
-        assertThat(service.isLocked(userId)).isFalse();
-    }
-
-    @Test
-    @DisplayName("Un envoi engagé seul, sans solde, ne verrouille pas la devise")
-    void isLocked_committedBidAloneWithoutBalance_returnsFalse() {
-        // CurrencyLockService n'a aucune dépendance vers BidRepository : un envoi
-        // engagé (payment escrowed, accepted, ...) est structurellement hors de
-        // portée de ce verrou, seul l'argent réellement détenu le fige.
+    @DisplayName("Aucun solde : compte portefeuille absent, compte Connect seul, ou envoi engagé seul, ne verrouillent pas la devise")
+    void isLocked_noPositiveBalance_returnsFalseRegardlessOfOtherState() {
+        // Un seul stub couvre trois scénarios métier distincts, tous prouvés par
+        // construction plutôt que par un mock qui les distinguerait entre eux, car
+        // CurrencyLockService n'a qu'une seule dépendance (WalletAccountRepository) :
+        //  - aucun compte portefeuille du tout ;
+        //  - un compte Stripe Connect existant mais sans solde (pas de dépendance
+        //    vers UserRepository, donc structurellement hors de portée) ;
+        //  - un envoi engagé (payment escrowed, accepted, ...) sans solde (pas de
+        //    dépendance vers BidRepository, donc structurellement hors de portée).
         when(walletAccountRepository.findAllByUserId(userId)).thenReturn(List.of());
 
         assertThat(service.isLocked(userId)).isFalse();
