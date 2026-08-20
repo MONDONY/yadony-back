@@ -7,6 +7,7 @@ import jakarta.persistence.Table;
 import org.hibernate.annotations.Where;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.UUID;
 
 @Entity
@@ -23,6 +24,12 @@ public class WalletAccountEntity extends BaseEntity {
     @Column(name = "currency", nullable = false, length = 3)
     private String currency = "EUR";
 
+    @Column(name = "refund_eligible_amount", nullable = false, precision = 10, scale = 2)
+    private BigDecimal refundEligibleAmount = BigDecimal.ZERO;
+
+    @Column(name = "refund_eligible_since")
+    private Instant refundEligibleSince;
+
     public UUID getUserId() { return userId; }
     public void setUserId(UUID userId) { this.userId = userId; }
 
@@ -31,4 +38,15 @@ public class WalletAccountEntity extends BaseEntity {
 
     public String getCurrency() { return currency; }
     public void setCurrency(String currency) { this.currency = currency; }
+
+    public BigDecimal getRefundEligibleAmount() { return refundEligibleAmount; }
+    public void setRefundEligibleAmount(BigDecimal refundEligibleAmount) { this.refundEligibleAmount = refundEligibleAmount; }
+
+    public Instant getRefundEligibleSince() { return refundEligibleSince; }
+    public void setRefundEligibleSince(Instant refundEligibleSince) { this.refundEligibleSince = refundEligibleSince; }
+
+    public boolean isRefundEligible() {
+        return balance.compareTo(BigDecimal.ZERO) > 0
+                && refundEligibleAmount.compareTo(balance) == 0;
+    }
 }

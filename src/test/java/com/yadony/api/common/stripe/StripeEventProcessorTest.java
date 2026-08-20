@@ -10,6 +10,7 @@ import com.yadony.api.payments.cash.CashCommissionWebhookHandler;
 import com.yadony.api.payments.chargeback.ChargebackService;
 import com.yadony.api.payments.currency.CurrencyCatalog;
 import com.yadony.api.payments.wallet.WalletService;
+import com.yadony.api.payments.wallet.WalletSelfRefundService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -179,7 +180,7 @@ class StripeEventProcessorTest {
             WalletService walletService, CashCommissionWebhookHandler cashHandler) {
         return new PaymentStripeWebhookHandler(
                 mock(PaymentService.class), cashHandler, mock(ChargebackService.class),
-                walletService, new ObjectMapper(), new CurrencyCatalog());
+                walletService, mock(WalletSelfRefundService.class), new ObjectMapper(), new CurrencyCatalog());
     }
 
     private Event paymentIntentSucceededEvent(EventDataObjectDeserializer deserializer) {

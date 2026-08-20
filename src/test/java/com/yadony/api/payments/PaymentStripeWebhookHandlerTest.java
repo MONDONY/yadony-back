@@ -5,8 +5,10 @@ import com.yadony.api.payments.cash.CashCommissionWebhookHandler;
 import com.yadony.api.payments.chargeback.ChargebackService;
 import com.yadony.api.payments.currency.CurrencyCatalog;
 import com.yadony.api.payments.wallet.WalletService;
+import com.yadony.api.payments.wallet.WalletSelfRefundService;
 import com.yadony.api.payments.wallet.WalletTransactionType;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.stripe.model.Charge;
 import com.stripe.model.Event;
 import com.stripe.model.EventDataObjectDeserializer;
 import com.stripe.model.PaymentIntent;
@@ -49,12 +51,13 @@ class PaymentStripeWebhookHandlerTest {
     @Mock CashCommissionWebhookHandler cashHandler;
     @Mock ChargebackService chargebackService;
     @Mock WalletService walletService;
+    @Mock WalletSelfRefundService walletSelfRefundService;
     PaymentStripeWebhookHandler handler;
 
     @BeforeEach
     void setUp() {
         handler = new PaymentStripeWebhookHandler(paymentService, cashHandler, chargebackService,
-                walletService, new ObjectMapper(), new CurrencyCatalog());
+                walletService, walletSelfRefundService, new ObjectMapper(), new CurrencyCatalog());
     }
 
     private Event buildEvent(String type) {
@@ -104,6 +107,31 @@ class PaymentStripeWebhookHandlerTest {
     void handle_chargeRefunded_callsService() {
         handler.handle(buildEvent("charge.refunded"));
         verify(paymentService).handleChargeRefunded(any());
+    }
+
+    @Test
+    void handle_chargeRefunded_alsoRoutesToWalletSelfRefundService() {
+        Charge charge = mock(Charge.class);
+        EventDataObjectDeserializer deserializer = mock(EventDataObjectDeserializer.class);
+        when(deserializer.getObject()).thenReturn(Optional.of(charge));
+        Event event = mock(Event.class);
+        when(event.getType()).thenReturn("charge.refunded");
+        when(event.getDataObjectDeserializer()).thenReturn(deserializer);
+
+        handler.handle(event);
+
+        verify(paymentService).handleChargeRefunded(event);
+        verify(walletSelfRefundService).handleChargeRefunded(charge);
+    }
+
+    @Test
+    void handle_chargeRefundUpdated_alsoRoutesToWalletSelfRefundService() {
+        Event event = buildEvent("charge.refund.updated");
+
+        handler.handle(event);
+
+        verify(paymentService).handleRefundUpdated(event);
+        verify(walletSelfRefundService).handleRefundUpdated(event);
     }
 
     @Test

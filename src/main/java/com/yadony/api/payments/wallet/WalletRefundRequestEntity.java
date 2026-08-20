@@ -40,6 +40,10 @@ public class WalletRefundRequestEntity extends BaseEntity {
     @Enumerated(EnumType.STRING)
     private WalletRefundRequestStatus status = WalletRefundRequestStatus.PENDING;
 
+    @Column(name = "channel", nullable = false, length = 20)
+    @Enumerated(EnumType.STRING)
+    private WalletRefundChannel channel = WalletRefundChannel.MANUAL_ADMIN;
+
     @Column(name = "requested_at", nullable = false)
     private LocalDateTime requestedAt;
 
@@ -60,6 +64,9 @@ public class WalletRefundRequestEntity extends BaseEntity {
 
     public WalletRefundRequestStatus getStatus() { return status; }
     public void setStatus(WalletRefundRequestStatus status) { this.status = status; }
+
+    public WalletRefundChannel getChannel() { return channel; }
+    public void setChannel(WalletRefundChannel channel) { this.channel = channel; }
 
     public LocalDateTime getRequestedAt() { return requestedAt; }
     public void setRequestedAt(LocalDateTime requestedAt) { this.requestedAt = requestedAt; }

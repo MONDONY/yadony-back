@@ -1,9 +1,8 @@
 package com.yadony.api.payments.wallet;
 
-public enum WalletRefundRequestStatus {
+public enum WalletRefundItemStatus {
     PENDING,
     PROCESSING,
-    RESOLVED,
     REFUNDED,
     FAILED
 }

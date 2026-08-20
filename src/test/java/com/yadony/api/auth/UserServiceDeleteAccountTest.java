@@ -7,6 +7,7 @@ import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.wallet.WalletAccountEntity;
 import com.yadony.api.payments.wallet.WalletAccountRepository;
 import com.yadony.api.payments.wallet.WalletRefundRequestService;
+import com.yadony.api.payments.wallet.WalletSelfRefundService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -38,6 +39,7 @@ class UserServiceDeleteAccountTest {
     @Mock private ApplicationEventPublisher eventPublisher;
     @Mock private AccountFinalizationService accountFinalizationService;
     @Mock private WalletRefundRequestService walletRefundRequestService;
+    @Mock private WalletSelfRefundService walletSelfRefundService;
 
     @InjectMocks private UserService userService;
 

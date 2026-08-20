@@ -11,6 +11,7 @@ import com.yadony.api.notifications.NotificationDispatcher;
 import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.wallet.WalletAccountRepository;
 import com.yadony.api.payments.wallet.WalletRefundRequestService;
+import com.yadony.api.payments.wallet.WalletSelfRefundService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
@@ -22,6 +23,9 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Map;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -43,6 +47,7 @@ public class UserService {
     private final FirestoreService firestoreService;
     private final NotificationDispatcher notificationDispatcher;
     private final WalletRefundRequestService walletRefundRequestService;
+    private final WalletSelfRefundService walletSelfRefundService;
 
     public UserService(UserRepository userRepository,
                        PaymentRepository paymentRepository,
@@ -52,7 +57,8 @@ public class UserService {
                        AccountFinalizationService accountFinalizationService,
                        FirestoreService firestoreService,
                        NotificationDispatcher notificationDispatcher,
-                       WalletRefundRequestService walletRefundRequestService) {
+                       WalletRefundRequestService walletRefundRequestService,
+                       WalletSelfRefundService walletSelfRefundService) {
         this.userRepository = userRepository;
         this.paymentRepository = paymentRepository;
         this.walletAccountRepository = walletAccountRepository;
@@ -62,6 +68,7 @@ public class UserService {
         this.firestoreService = firestoreService;
         this.notificationDispatcher = notificationDispatcher;
         this.walletRefundRequestService = walletRefundRequestService;
+        this.walletSelfRefundService = walletSelfRefundService;
     }
 
     /** Un solde wallet réel (rechargé par carte, cf. WalletTopupOrchestrator) non dépensé
@@ -75,15 +82,29 @@ public class UserService {
     }
 
     /** Apple 5.1.1(v) impose que la suppression de compte reste toujours possible en
-     *  self-service — un solde wallet ne doit donc plus jamais la bloquer. À la place, un
-     *  ticket de remboursement est ouvert automatiquement (idempotent, cf.
-     *  {@code WalletRefundRequestService#request}) pour qu'un admin rembourse manuellement
-     *  hors-app après coup ; la suppression se poursuit dans tous les cas. Appelé par les 3
-     *  chemins de suppression : {@link #requestDeletion} (soft J+30), {@code
-     *  AuthService#deleteImmediately} (hard immédiat) et {@code AdminGdprService#executeDeletion}
-     *  (admin). */
+     *  self-service. Essaie d'abord le remboursement Stripe automatique sur chaque
+     *  devise positive, puis retombe sur le ticket manuel admin pour les soldes
+     *  entamés ou mélangés. La suppression se poursuit dans tous les cas. */
     public void openWalletRefundTicketIfNeeded(UUID userId) {
-        if (hasWalletBalance(userId)) {
+        List<com.yadony.api.payments.wallet.WalletAccountEntity> positiveBalances =
+                walletAccountRepository.findAllByUserId(userId).stream()
+                        .filter(w -> w.getBalance().compareTo(BigDecimal.ZERO) > 0)
+                        .toList();
+        if (positiveBalances.isEmpty()) {
+            return;
+        }
+
+        Set<String> handledAutomatically = new HashSet<>();
+        for (com.yadony.api.payments.wallet.WalletAccountEntity wallet : positiveBalances) {
+            if (walletSelfRefundService.isEligible(userId, wallet.getCurrency())) {
+                walletSelfRefundService.request(userId, wallet.getCurrency());
+                handledAutomatically.add(wallet.getCurrency());
+            }
+        }
+
+        boolean anyIneligible = positiveBalances.stream()
+                .anyMatch(w -> !handledAutomatically.contains(w.getCurrency()));
+        if (anyIneligible) {
             walletRefundRequestService.request(userId);
         }
     }

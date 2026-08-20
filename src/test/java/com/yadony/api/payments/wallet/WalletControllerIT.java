@@ -37,6 +37,10 @@ class WalletControllerIT {
     @Autowired MockMvc mockMvc;
     @Autowired ObjectMapper objectMapper;
     @Autowired WalletService walletService;
+    @Autowired WalletTransactionRepository walletTransactionRepository;
+    @Autowired WalletRefundRequestItemRepository walletRefundRequestItemRepository;
+    @Autowired WalletRefundRequestRepository walletRefundRequestRepository;
+    @Autowired WalletAccountRepository walletAccountRepository;
     @MockBean UserRepository userRepository;
 
     private static final UUID USER_UUID = UUID.randomUUID();
@@ -44,6 +48,11 @@ class WalletControllerIT {
 
     @BeforeEach
     void setUp() {
+        walletRefundRequestItemRepository.deleteAll();
+        walletRefundRequestRepository.deleteAll();
+        walletTransactionRepository.deleteAll();
+        walletAccountRepository.deleteAll();
+
         UserEntity testUser = new UserEntity();
         try {
             var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
@@ -133,6 +142,33 @@ class WalletControllerIT {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.balances").isArray())
             .andExpect(jsonPath("$.balances[?(@.currency == 'EUR')].active").value(true));
+    }
+
+    @Test
+    void getBalance_exposesRefundEligibleTrueWhenPureTopUp() throws Exception {
+        walletService.credit(USER_UUID, "EUR", new BigDecimal("40.00"),
+            WalletTransactionType.TOP_UP, "pi_refund_eligible", "idem-refund-eligible");
+
+        mockMvc.perform(get("/wallet/balance")
+                .with(authentication(authAs(FIREBASE_UID, "SENDER"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.refundEligible").value(true));
+    }
+
+    @Test
+    void requestRefund_notEligible_returns422() throws Exception {
+        mockMvc.perform(post("/wallet/USD/refund-request")
+                .with(authentication(authAs(FIREBASE_UID, "SENDER"))))
+            .andExpect(status().isUnprocessableEntity())
+            .andExpect(jsonPath("$.code").value("wallet-not-refund-eligible"));
+    }
+
+    @Test
+    void listRefundRequests_emptyWhenNone() throws Exception {
+        mockMvc.perform(get("/wallet/refund-requests")
+                .with(authentication(authAs(FIREBASE_UID, "SENDER"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$").isArray());
     }
 
     @Test

@@ -3,6 +3,7 @@ package com.yadony.api.payments;
 import com.yadony.api.payments.chargeback.ChargebackService;
 import com.yadony.api.payments.cash.CashCommissionWebhookHandler;
 import com.yadony.api.payments.wallet.WalletService;
+import com.yadony.api.payments.wallet.WalletSelfRefundService;
 import com.stripe.model.Event;
 import com.stripe.net.ApiResource;
 import org.junit.jupiter.api.BeforeEach;
@@ -21,12 +22,13 @@ class PaymentStripeWebhookHandlerNewEventsTest {
     @Mock CashCommissionWebhookHandler cashHandler;
     @Mock ChargebackService chargebackService;
     @Mock WalletService walletService;
+    @Mock WalletSelfRefundService walletSelfRefundService;
     PaymentStripeWebhookHandler handler;
 
     @BeforeEach
     void setUp() {
         handler = new PaymentStripeWebhookHandler(paymentService, cashHandler, chargebackService, walletService,
-                new com.fasterxml.jackson.databind.ObjectMapper(),
+                walletSelfRefundService, new com.fasterxml.jackson.databind.ObjectMapper(),
                 new com.yadony.api.payments.currency.CurrencyCatalog());
     }
 
