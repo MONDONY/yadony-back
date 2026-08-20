@@ -95,6 +95,7 @@ class AnnouncementServiceAddressTest {
                 mock(com.yadony.api.common.StorageService.class),
                 mock(com.yadony.api.favorites.FavoriteRepository.class),
                 activeCurrencyResolver,
+                mock(com.yadony.api.payments.currency.ExchangeRateService.class),
                 mock(AnnouncementSearchMapper.class),
                 mock(com.yadony.api.requests.repository.PackageRequestRepository.class),
                 mock(com.yadony.api.requests.repository.NegotiationThreadRepository.class),

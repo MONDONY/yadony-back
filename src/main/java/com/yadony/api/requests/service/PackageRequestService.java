@@ -747,7 +747,7 @@ public class PackageRequestService {
                                                       UUID callerId) {
         Set<UUID> favIds = loadFavIds(callerId);
         boolean viewerHasConnect = resolveViewerHasConnect(callerId);
-        Page<PackageRequestEntity> page = repository.findAll(withActiveCurrency(spec, callerId), pageable);
+        Page<PackageRequestEntity> page = repository.findAll(spec, pageable);
         BatchMaps batch = buildBatchMaps(page.getContent());
         return page.map(e -> packageRequestSearchMapper.toSearchResponse(
                 e, favIds.contains(e.getId()), viewerHasConnect, batch.userMap, batch.cityMap, batch.photoMap));
@@ -783,7 +783,7 @@ public class PackageRequestService {
             return new org.springframework.data.domain.PageImpl<>(List.of(), pageable, 0);
         }
 
-        Specification<PackageRequestEntity> restricted = withActiveCurrency(spec, callerId)
+        Specification<PackageRequestEntity> restricted = Specification.where(spec)
                 .and(PackageRequestSpecifications.idIn(matches.keySet()));
 
         List<PackageRequestEntity> sorted = repository.findAll(restricted).stream()
@@ -851,7 +851,7 @@ public class PackageRequestService {
                                                             UUID callerId) {
         Set<UUID> favIds = loadFavIds(callerId);
         boolean viewerHasConnect = resolveViewerHasConnect(callerId);
-        Page<PackageRequestEntity> rawPage = repository.findAll(withActiveCurrency(spec, callerId), pageable);
+        Page<PackageRequestEntity> rawPage = repository.findAll(spec, pageable);
         BatchMaps batch = buildBatchMaps(rawPage.getContent());
         Page<PackageRequestSearchResponse> mapped = rawPage.map(e -> packageRequestSearchMapper.toSearchResponse(
                 e, favIds.contains(e.getId()), viewerHasConnect, batch.userMap, batch.cityMap, batch.photoMap));
@@ -865,13 +865,6 @@ public class PackageRequestService {
             .map(Map.Entry::getKey)
             .toList();
         return new org.springframework.data.domain.PageImpl<>(filtered, pageable, mapped.getTotalElements());
-    }
-
-    private Specification<PackageRequestEntity> withActiveCurrency(
-            Specification<PackageRequestEntity> spec,
-            UUID callerId) {
-        return Specification.where(spec)
-                .and(PackageRequestSpecifications.hasCurrency(activeCurrencyResolver.resolve(callerId)));
     }
 
     /** Immutable value object carrying the three batch-loaded maps for search mapping. */

@@ -123,7 +123,8 @@ public class AnnouncementSearchMapper {
                 computeUrgent(entity.getDepartureDate()),
                 entity.getCurrency(),
                 entity.isNegotiable(),
-                availablePaymentMethods
+                availablePaymentMethods,
+                null, null
         );
     }
 
@@ -183,7 +184,8 @@ public class AnnouncementSearchMapper {
                 computeUrgent(entity.getDepartureDate()),
                 entity.getCurrency(),
                 entity.isNegotiable(),
-                availablePaymentMethods
+                availablePaymentMethods,
+                null, null
         );
     }
 

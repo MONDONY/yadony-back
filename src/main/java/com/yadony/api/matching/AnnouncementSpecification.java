@@ -19,10 +19,6 @@ public class AnnouncementSpecification {
         return (root, query, cb) -> cb.equal(root.get("status"), status);
     }
 
-    public static Specification<AnnouncementEntity> hasCurrency(String currency) {
-        return (root, query, cb) -> cb.equal(root.get("currency"), currency);
-    }
-
     public static Specification<AnnouncementEntity> hasDepartureCity(String city) {
         return (root, query, cb) -> cb.equal(cb.lower(root.get("departureCity")), city.toLowerCase());
     }

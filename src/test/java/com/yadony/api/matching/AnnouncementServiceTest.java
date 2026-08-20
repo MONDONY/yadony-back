@@ -15,11 +15,13 @@ import com.yadony.api.matching.dto.AddressDto;
 import com.yadony.api.matching.dto.AnnouncementDetailResponse;
 import com.yadony.api.matching.dto.AnnouncementRequest;
 import com.yadony.api.matching.dto.AnnouncementResponse;
+import com.yadony.api.matching.dto.AnnouncementSearchResponse;
 import com.yadony.api.matching.events.AnnouncementDeletedEvent;
 import com.yadony.api.matching.events.TripArrivedEvent;
 import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.settings.UserBusinessPrefsEntity;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
+import com.yadony.api.payments.currency.ExchangeRateService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -68,12 +70,19 @@ class AnnouncementServiceTest {
     @Mock private com.yadony.api.common.StorageService storageService;
     @Mock private FavoriteRepository favoriteRepository;
     @Mock private ActiveCurrencyResolver activeCurrencyResolver;
+    @Mock private ExchangeRateService exchangeRateService;
 
     @org.junit.jupiter.api.BeforeEach
     void stubDefaultActiveCurrency() {
         org.mockito.Mockito.lenient()
                 .when(activeCurrencyResolver.resolve(org.mockito.ArgumentMatchers.any()))
                 .thenReturn("EUR");
+        // Repli neutre : conversion identité tant qu'un test ne stub pas explicitement un
+        // taux différent de EUR (le fil devenu multidevise, Tâche 10, convertit toujours).
+        org.mockito.Mockito.lenient()
+                .when(exchangeRateService.convert(org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenAnswer(inv -> inv.getArgument(0));
     }
     @Mock private com.yadony.api.requests.repository.PackageRequestRepository packageRequestRepository;
     @Mock private com.yadony.api.requests.repository.NegotiationThreadRepository negotiationThreadRepository;
@@ -96,7 +105,7 @@ class AnnouncementServiceTest {
                 auditService, eventPublisher, config,
                 com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3),
                 priceGridService, flagService,
-                storageService, favoriteRepository, activeCurrencyResolver, realMapper, packageRequestRepository,
+                storageService, favoriteRepository, activeCurrencyResolver, exchangeRateService, realMapper, packageRequestRepository,
                 negotiationThreadRepository, notificationDispatcher);
     }
 
@@ -1672,9 +1681,11 @@ class AnnouncementServiceTest {
             traveler.setFirstName("Fatou");
             traveler.setLastName(null);
             AnnouncementEntity ann = buildAnnouncement(traveler);
-            Page<AnnouncementEntity> page = new PageImpl<>(List.of(ann));
 
-            when(announcementRepository.findAll(ArgumentMatchers.<Specification<AnnouncementEntity>>any(), any(Pageable.class))).thenReturn(page);
+            // Tri par prix : depuis la Tâche 10, la branche "price" récupère l'ensemble
+            // filtré non paginé (findAll(spec)) pour trier en mémoire sur le prix converti.
+            when(announcementRepository.findAll(ArgumentMatchers.<Specification<AnnouncementEntity>>any()))
+                    .thenReturn(List.of(ann));
             stubBatchSearch(traveler, 1L);
 
             Page<?> result = announcementService.searchAnnouncements(
@@ -1728,9 +1739,11 @@ class AnnouncementServiceTest {
             traveler.setFirstName(null);
             traveler.setLastName(null);
             AnnouncementEntity ann = buildAnnouncement(traveler);
-            Page<AnnouncementEntity> page = new PageImpl<>(List.of(ann));
 
-            when(announcementRepository.findAll(ArgumentMatchers.<Specification<AnnouncementEntity>>any(), any(Pageable.class))).thenReturn(page);
+            // Tri par prix : depuis la Tâche 10, la branche "price" récupère l'ensemble
+            // filtré non paginé (findAll(spec)) pour trier en mémoire sur le prix converti.
+            when(announcementRepository.findAll(ArgumentMatchers.<Specification<AnnouncementEntity>>any()))
+                    .thenReturn(List.of(ann));
             stubBatchSearch(traveler, 0L);
 
             assertThatNoException().isThrownBy(() -> announcementService.searchAnnouncements(
@@ -1946,126 +1959,113 @@ class AnnouncementServiceTest {
             }
         }
 
+        /**
+         * Tâche 10 : le fil n'est plus cloisonné par devise. Un lecteur en EUR reçoit
+         * désormais des annonces publiées en XOF, sans qu'aucun filtre de devise
+         * n'intervienne (la méthode {@code hasCurrency} a d'ailleurs été supprimée,
+         * faute d'appelant, en même temps que ce filtre).
+         */
         @Test
-        @DisplayName("viewer avec prefs CAD → filtre recherche sur CAD")
-        void searchAnnouncements_viewerCurrencyFromBusinessPrefs_filtersByCad() {
-            UserEntity viewer = buildTraveler();
-            UUID viewerId = UUID.randomUUID();
-            setId(viewer, viewerId);
-            UserBusinessPrefsEntity prefs = new UserBusinessPrefsEntity();
-            prefs.setUserId(viewerId);
-            prefs.setCurrencyCode("CAD");
+        @DisplayName("lecteur en EUR → voit aussi les annonces publiées en XOF (plus de filtre devise)")
+        void searchAnnouncements_readerInEur_seesAnnouncementsInXof() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity xofAnnouncement = buildAnnouncement(traveler);
+            xofAnnouncement.setCurrency("XOF");
+            xofAnnouncement.setPricePerKg(BigDecimal.valueOf(3500));
+            Page<AnnouncementEntity> page = new PageImpl<>(List.of(xofAnnouncement));
 
-            when(userRepository.findByFirebaseUid("viewer-cad")).thenReturn(Optional.of(viewer));
-            when(activeCurrencyResolver.resolve(viewerId)).thenReturn(prefs.getCurrencyCode());
-            when(favoriteRepository.findTargetIds(viewerId, FavoriteTargetType.TRIP)).thenReturn(List.of());
-            when(announcementRepository.findAll(ArgumentMatchers.<Specification<AnnouncementEntity>>any(), any(Pageable.class)))
-                    .thenReturn(Page.empty(PageRequest.of(0, 10)));
-
-            try (org.mockito.MockedStatic<AnnouncementSpecification> specMock =
-                         mockStatic(AnnouncementSpecification.class, CALLS_REAL_METHODS)) {
-                announcementService.searchAnnouncements(
-                        null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
-                        "date", "asc", PageRequest.of(0, 10), "viewer-cad", null);
-
-                specMock.verify(() -> AnnouncementSpecification.hasCurrency("CAD"));
-            }
-        }
-
-        @Test
-        @DisplayName("viewer connu sans prefs → filtre recherche par défaut sur EUR")
-        void searchAnnouncements_knownViewerWithoutPrefs_defaultsToEurCurrencyFilter() {
-            UserEntity viewer = buildTraveler();
-            UUID viewerId = UUID.randomUUID();
-            setId(viewer, viewerId);
-
-            when(userRepository.findByFirebaseUid("viewer-no-prefs")).thenReturn(Optional.of(viewer));
-            when(activeCurrencyResolver.resolve(viewerId)).thenReturn("EUR");
-            when(favoriteRepository.findTargetIds(viewerId, FavoriteTargetType.TRIP)).thenReturn(List.of());
-            when(announcementRepository.findAll(ArgumentMatchers.<Specification<AnnouncementEntity>>any(), any(Pageable.class)))
-                    .thenReturn(Page.empty(PageRequest.of(0, 10)));
-
-            try (org.mockito.MockedStatic<AnnouncementSpecification> specMock =
-                         mockStatic(AnnouncementSpecification.class, CALLS_REAL_METHODS)) {
-                announcementService.searchAnnouncements(
-                        null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
-                        "date", "asc", PageRequest.of(0, 10), "viewer-no-prefs", null);
-
-                specMock.verify(() -> AnnouncementSpecification.hasCurrency("EUR"));
-            }
-        }
-
-        @Test
-        @DisplayName("viewer Firebase UID inconnu → spec repository filtrée par défaut sur EUR")
-        void searchAnnouncements_unknownViewerUid_defaultsToEurCurrencyFilterInRepositorySpec() {
-            when(userRepository.findByFirebaseUid("viewer-unknown")).thenReturn(Optional.empty());
-            when(activeCurrencyResolver.resolve(null)).thenReturn("EUR");
-
-            @SuppressWarnings("unchecked")
-            ArgumentCaptor<Specification<AnnouncementEntity>> specCaptor =
-                    ArgumentCaptor.forClass((Class) Specification.class);
-            when(announcementRepository.findAll(specCaptor.capture(), any(Pageable.class)))
-                    .thenReturn(Page.empty(PageRequest.of(0, 10)));
-
-            Specification<AnnouncementEntity> passThrough = (root, query, cb) -> cb.conjunction();
-            java.util.concurrent.atomic.AtomicBoolean eurCurrencySpecIncluded = new java.util.concurrent.atomic.AtomicBoolean(false);
-            Specification<AnnouncementEntity> eurCurrencyMarker = (root, query, cb) -> {
-                eurCurrencySpecIncluded.set(true);
-                return cb.conjunction();
-            };
-
-            try (org.mockito.MockedStatic<AnnouncementSpecification> specMock =
-                         mockStatic(AnnouncementSpecification.class)) {
-                specMock.when(() -> AnnouncementSpecification.hasStatus(AnnouncementStatus.ACTIVE))
-                        .thenReturn(passThrough);
-                specMock.when(AnnouncementSpecification::publicOrOpenSurplus)
-                        .thenReturn(passThrough);
-                specMock.when(() -> AnnouncementSpecification.hasCurrency("EUR"))
-                        .thenReturn(eurCurrencyMarker);
-
-                announcementService.searchAnnouncements(
-                        null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
-                        "date", "asc", PageRequest.of(0, 10), "viewer-unknown", null);
-            }
-
-            jakarta.persistence.criteria.CriteriaBuilder criteriaBuilder = mock(jakarta.persistence.criteria.CriteriaBuilder.class);
-            jakarta.persistence.criteria.Predicate conjunction = mock(jakarta.persistence.criteria.Predicate.class);
-            when(criteriaBuilder.conjunction()).thenReturn(conjunction);
-            when(criteriaBuilder.and(any(jakarta.persistence.criteria.Predicate.class), any(jakarta.persistence.criteria.Predicate.class)))
-                    .thenReturn(conjunction);
-
-            specCaptor.getValue().toPredicate(
-                    mock(jakarta.persistence.criteria.Root.class),
-                    mock(jakarta.persistence.criteria.CriteriaQuery.class),
-                    criteriaBuilder
-            );
-
-            assertThat(eurCurrencySpecIncluded).isTrue();
-            verify(userRepository).findByFirebaseUid("viewer-unknown");
-            // Le repli EUR appartient au résolveur, pas à l'appelant : il est donc
-            // bien sollicité, avec un viewer null.
-            verify(activeCurrencyResolver).resolve(null);
-            verifyNoInteractions(favoriteRepository);
-        }
-
-        @Test
-        @DisplayName("viewer absent → filtre recherche par défaut sur EUR")
-        void searchAnnouncements_missingViewer_defaultsToEurCurrencyFilter() {
             when(activeCurrencyResolver.resolve(null)).thenReturn("EUR");
             when(announcementRepository.findAll(ArgumentMatchers.<Specification<AnnouncementEntity>>any(), any(Pageable.class)))
-                    .thenReturn(Page.empty(PageRequest.of(0, 10)));
+                    .thenReturn(page);
+            stubBatchSearch(traveler, 0L);
 
-            try (org.mockito.MockedStatic<AnnouncementSpecification> specMock =
-                         mockStatic(AnnouncementSpecification.class, CALLS_REAL_METHODS)) {
-                announcementService.searchAnnouncements(
-                        null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
-                        "date", "asc", PageRequest.of(0, 10), null, null);
+            Page<AnnouncementSearchResponse> result = announcementService.searchAnnouncements(
+                    null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+                    "date", "asc", PageRequest.of(0, 10), null, null);
 
-                specMock.verify(() -> AnnouncementSpecification.hasCurrency("EUR"));
-            }
+            assertThat(result.getContent()).hasSize(1);
+            assertThat(result.getContent().get(0).currency()).isEqualTo("XOF");
+        }
 
-            verify(userRepository, never()).findByFirebaseUid(null);
-            verify(activeCurrencyResolver).resolve(null);
+        /**
+         * Preuve que le tri par prix croissant s'appuie sur la valeur convertie dans la
+         * devise du lecteur, pas sur la valeur brute : les montants sont choisis pour que
+         * le tri brut donnerait l'ordre EXACTEMENT inverse de l'ordre attendu une fois
+         * converti. Un tri encore basé sur {@code pricePerKg} brut ferait échouer cette
+         * assertion.
+         */
+        @Test
+        @DisplayName("tri par prix croissant sur 3 devises → ordonné sur l'équivalent converti, pas la valeur brute")
+        void searchAnnouncements_sortByPriceAsc_ordersByConvertedValueAcrossThreeCurrencies() {
+            UserEntity traveler = buildTraveler();
+
+            // Brut ascendant : usd(1) < xof(50) < eur(100) — l'inverse de l'ordre converti visé.
+            AnnouncementEntity usd = buildAnnouncement(traveler);
+            setId(usd, UUID.randomUUID());
+            usd.setCurrency("USD");
+            usd.setPricePerKg(BigDecimal.valueOf(1));
+
+            AnnouncementEntity xof = buildAnnouncement(traveler);
+            setId(xof, UUID.randomUUID());
+            xof.setCurrency("XOF");
+            xof.setPricePerKg(BigDecimal.valueOf(50));
+
+            AnnouncementEntity eur = buildAnnouncement(traveler);
+            setId(eur, UUID.randomUUID());
+            eur.setCurrency("EUR");
+            eur.setPricePerKg(BigDecimal.valueOf(100));
+
+            // Converti (devise lecteur EUR) ascendant visé : eur(100) < xof(500) < usd(900).
+            when(activeCurrencyResolver.resolve(null)).thenReturn("EUR");
+            when(exchangeRateService.convert(BigDecimal.valueOf(1), "USD", "EUR"))
+                    .thenReturn(BigDecimal.valueOf(900));
+            when(exchangeRateService.convert(BigDecimal.valueOf(50), "XOF", "EUR"))
+                    .thenReturn(BigDecimal.valueOf(500));
+            when(exchangeRateService.convert(BigDecimal.valueOf(100), "EUR", "EUR"))
+                    .thenReturn(BigDecimal.valueOf(100));
+
+            when(announcementRepository.findAll(ArgumentMatchers.<Specification<AnnouncementEntity>>any()))
+                    .thenReturn(List.of(usd, xof, eur));
+            when(userRepository.findAllById(anyCollection())).thenReturn(List.of(traveler));
+            when(bidRepository.countVisibleByAnnouncementIds(anyCollection())).thenReturn(List.of());
+
+            Page<AnnouncementSearchResponse> result = announcementService.searchAnnouncements(
+                    null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+                    "price", "asc", PageRequest.of(0, 10), null, null);
+
+            assertThat(result.getContent()).extracting(AnnouncementSearchResponse::currency)
+                    .containsExactly("EUR", "XOF", "USD");
+        }
+
+        /**
+         * La réponse porte, pour chaque annonce, le prix d'origine (dans la devise de
+         * l'annonce) ET l'équivalent converti dans la devise du lecteur.
+         */
+        @Test
+        @DisplayName("réponse → porte le prix d'origine et l'équivalent converti dans la devise du lecteur")
+        void searchAnnouncements_response_carriesOriginalAndConvertedPrice() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity xofAnnouncement = buildAnnouncement(traveler);
+            xofAnnouncement.setCurrency("XOF");
+            xofAnnouncement.setPricePerKg(BigDecimal.valueOf(1000));
+            Page<AnnouncementEntity> page = new PageImpl<>(List.of(xofAnnouncement));
+
+            when(activeCurrencyResolver.resolve(null)).thenReturn("EUR");
+            when(exchangeRateService.convert(BigDecimal.valueOf(1000), "XOF", "EUR"))
+                    .thenReturn(BigDecimal.valueOf(1.52));
+            when(announcementRepository.findAll(ArgumentMatchers.<Specification<AnnouncementEntity>>any(), any(Pageable.class)))
+                    .thenReturn(page);
+            stubBatchSearch(traveler, 0L);
+
+            Page<AnnouncementSearchResponse> result = announcementService.searchAnnouncements(
+                    null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+                    "date", "asc", PageRequest.of(0, 10), null, null);
+
+            AnnouncementSearchResponse response = result.getContent().get(0);
+            assertThat(response.currency()).isEqualTo("XOF");
+            assertThat(response.pricePerKg()).isEqualByComparingTo(BigDecimal.valueOf(1000));
+            assertThat(response.convertedCurrency()).isEqualTo("EUR");
+            assertThat(response.convertedPricePerKg()).isEqualByComparingTo(BigDecimal.valueOf(1.52));
         }
 
         // ─── computeUrgent boundary (DTO field, seuil de test = 3) ─────────────────
@@ -2296,7 +2296,7 @@ class AnnouncementServiceTest {
                     auditService, eventPublisher, configWithLimits,
                     com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3),
                     priceGridService, flagService,
-                    storageService, favoriteRepository, activeCurrencyResolver, mapperWithLimits, packageRequestRepository,
+                    storageService, favoriteRepository, activeCurrencyResolver, exchangeRateService, mapperWithLimits, packageRequestRepository,
                     negotiationThreadRepository, notificationDispatcher);
 
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
@@ -2631,7 +2631,7 @@ class AnnouncementServiceTest {
                     auditService, eventPublisher, configWithLimits,
                     com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3),
                     priceGridService, flagService,
-                    storageService, favoriteRepository, activeCurrencyResolver, mapperWithLimits, packageRequestRepository,
+                    storageService, favoriteRepository, activeCurrencyResolver, exchangeRateService, mapperWithLimits, packageRequestRepository,
                     negotiationThreadRepository, notificationDispatcher);
 
             AnnouncementEntity draft = draftEntityOwnedBy(user);
