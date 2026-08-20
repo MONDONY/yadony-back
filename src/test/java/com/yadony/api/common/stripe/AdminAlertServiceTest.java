@@ -118,6 +118,34 @@ class AdminAlertServiceTest {
     }
 
     @Test
+    void raise_withSentryIssueCode_usesBugEmojiAndDedicatedTitle() {
+        RestClient restClient = mock(RestClient.class);
+        RestClient.RequestBodyUriSpec uriSpec = mock(RestClient.RequestBodyUriSpec.class);
+        RestClient.RequestBodySpec bodySpec = mock(RestClient.RequestBodySpec.class);
+        RestClient.ResponseSpec responseSpec = mock(RestClient.ResponseSpec.class);
+
+        when(restClient.post()).thenReturn(uriSpec);
+        when(uriSpec.uri(anyString(), eq("bot-token-123"))).thenReturn(bodySpec);
+        when(bodySpec.contentType(any())).thenReturn(bodySpec);
+        when(bodySpec.body(any(Map.class))).thenReturn(bodySpec);
+        when(bodySpec.retrieve()).thenReturn(responseSpec);
+        when(responseSpec.toBodilessEntity()).thenReturn(ResponseEntity.ok().build());
+
+        AdminAlertService withConfig = new AdminAlertService(restClient, "bot-token-123", "-100999", "staging");
+
+        try (MockedStatic<Sentry> sentryMock = mockStatic(Sentry.class)) {
+            sentryMock.when(() -> Sentry.withScope(any(ScopeCallback.class))).thenAnswer(inv -> null);
+
+            withConfig.raise("SENTRY_ISSUE_CREATED", "NullPointerException in BidService", Map.of());
+
+            ArgumentCaptor<Map> bodyCaptor = ArgumentCaptor.forClass(Map.class);
+            verify(bodySpec).body(bodyCaptor.capture());
+            String text = (String) bodyCaptor.getValue().get("text");
+            assertThat(text).contains("🐛").contains("Nouvelle erreur Sentry");
+        }
+    }
+
+    @Test
     void raise_whenTelegramCallFails_doesNotThrow() {
         RestClient restClient = mock(RestClient.class);
         RestClient.RequestBodyUriSpec uriSpec = mock(RestClient.RequestBodyUriSpec.class);

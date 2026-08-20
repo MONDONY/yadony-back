@@ -123,7 +123,10 @@ public class SecurityConfig {
                     // deuxième chemin vers la page déjà couverte par /public/** ci-dessus.
                     "/annonce/**",
                     // Admin bootstrap: initial configuration without auth
-                    "/admin/bootstrap"
+                    "/admin/bootstrap",
+                    // Sentry webhook: no Firebase token (server-to-server call). Security is
+                    // enforced via HMAC signature verification in AdminSentryWebhookController.
+                    "/admin/sentry-webhook"
                 ).permitAll()
                 .anyRequest().authenticated()
             )

@@ -119,6 +119,8 @@ yadony:
       secret: ${ADMIN_BOOTSTRAP_SECRET:}
       email: ${ADMIN_BOOTSTRAP_EMAIL:}
       password: ${ADMIN_BOOTSTRAP_PASSWORD:}
+    sentry-webhook:
+      secret: ${SENTRY_WEBHOOK_SECRET:}
   commission:
     rate: ${YADONY_COMMISSION_RATE:0.05}
     minimum-amount: ${YADONY_COMMISSION_MINIMUM_AMOUNT:1.00}

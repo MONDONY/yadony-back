@@ -88,6 +88,7 @@ public class AdminAlertService {
 
     private String emojiFor(String code) {
         if (code.startsWith("KYC_")) return "🪪";
+        if (code.startsWith("SENTRY_ISSUE_")) return "🐛";
         if (code.equals("STRIPE_ACCOUNT_DEAUTHORIZED") || code.equals("STRIPE_CAPABILITY_LOST")) return "🏦";
         if (code.contains("CHARGEBACK") || code.contains("FRAUD")) return "⚠️";
         if (code.contains("REFUND")) return "💸";
@@ -111,6 +112,8 @@ public class AdminAlertService {
             case "CHARGEBACK_TRANSFER_BLOCKED" -> "Libération escrow bloquée";
             case "REFUND_AFTER_RELEASE" -> "Remboursement après versement";
             case "STRIPE_DEAD_LETTER" -> "Event Stripe en échec définitif";
+            case "SENTRY_ISSUE_CREATED" -> "Nouvelle erreur Sentry";
+            case "SENTRY_ISSUE_UNRESOLVED" -> "Régression Sentry (erreur redevenue active)";
             default -> "Alerte système";
         };
     }
