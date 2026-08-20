@@ -356,6 +356,17 @@ public class UserEntity extends BaseEntity {
     public StripeAccountStatus getStripeAccountStatus() { return stripeAccountStatus; }
     public void setStripeAccountStatus(StripeAccountStatus stripeAccountStatus) { this.stripeAccountStatus = stripeAccountStatus; }
 
+    /**
+     * Vrai si ce compte a un compte Stripe Connect actif (onboarding terminé,
+     * {@code charges_enabled = true}). Source unique de cette condition : évite de
+     * répéter {@code getStripeAccountStatus() == StripeAccountStatus.ONBOARDING_COMPLETE}
+     * à chaque site qui doit savoir si l'utilisateur peut recevoir un versement Connect
+     * (ex. {@code AnnouncementPaymentRails.availableFor}).
+     */
+    public boolean hasActiveStripeConnect() {
+        return stripeAccountStatus == StripeAccountStatus.ONBOARDING_COMPLETE;
+    }
+
     public Instant getStripeAccountCreatedAt() { return stripeAccountCreatedAt; }
     public void setStripeAccountCreatedAt(Instant stripeAccountCreatedAt) { this.stripeAccountCreatedAt = stripeAccountCreatedAt; }
 

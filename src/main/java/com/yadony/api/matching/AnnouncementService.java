@@ -2,7 +2,6 @@ package com.yadony.api.matching;
 
 import com.yadony.api.auth.KycStatus;
 import com.yadony.api.auth.Role;
-import com.yadony.api.auth.StripeAccountStatus;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserProStatusChangedEvent;
 import com.yadony.api.auth.UserRepository;
@@ -731,8 +730,7 @@ public class AnnouncementService {
                 announcement.isNegotiable(),
                 com.yadony.api.payments.currency.AnnouncementPaymentRails.availableFor(
                         announcement.getCurrency(),
-                        traveler != null
-                                && traveler.getStripeAccountStatus() == StripeAccountStatus.ONBOARDING_COMPLETE)
+                        traveler != null && traveler.hasActiveStripeConnect())
         );
     }
 
@@ -914,7 +912,7 @@ public class AnnouncementService {
                 saved.isNegotiable(),
                 com.yadony.api.payments.currency.AnnouncementPaymentRails.availableFor(
                         saved.getCurrency(),
-                        user.getStripeAccountStatus() == StripeAccountStatus.ONBOARDING_COMPLETE)
+                        user.hasActiveStripeConnect())
         );
     }
 
@@ -1209,7 +1207,7 @@ public class AnnouncementService {
     private void assertStripeCapability(UserEntity user, Set<PaymentMethod> methods) {
         if (enforceStripeOnboarding
                 && methods.contains(PaymentMethod.STRIPE)
-                && user.getStripeAccountStatus() != StripeAccountStatus.ONBOARDING_COMPLETE) {
+                && !user.hasActiveStripeConnect()) {
             throw new YadonyBusinessException(
                     HttpStatus.FORBIDDEN,
                     "stripe-onboarding-incomplete",
@@ -1494,8 +1492,7 @@ public class AnnouncementService {
 
     private AnnouncementResponse toResponse(AnnouncementEntity entity) {
         UserEntity traveler = userRepository.findById(entity.getTravelerId()).orElse(null);
-        boolean travelerHasConnect = traveler != null
-                && traveler.getStripeAccountStatus() == StripeAccountStatus.ONBOARDING_COMPLETE;
+        boolean travelerHasConnect = traveler != null && traveler.hasActiveStripeConnect();
         java.util.Set<PaymentMethod> availablePaymentMethods =
                 com.yadony.api.payments.currency.AnnouncementPaymentRails.availableFor(
                         entity.getCurrency(), travelerHasConnect);
@@ -1578,7 +1575,7 @@ public class AnnouncementService {
         if (requested == null || requested.isEmpty()) {
             // Défaut aligné sur la capacité réelle : jamais STRIPE pour un
             // voyageur sans onboarding complet (le trajet serait invendable).
-            return traveler.getStripeAccountStatus() == StripeAccountStatus.ONBOARDING_COMPLETE
+            return traveler.hasActiveStripeConnect()
                     ? EnumSet.of(PaymentMethod.STRIPE, PaymentMethod.CASH)
                     : EnumSet.of(PaymentMethod.CASH);
         }

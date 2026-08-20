@@ -6,6 +6,7 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.city.CityEntity;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.config.PlatformSettingsService;
+import com.yadony.api.payments.currency.AnnouncementPaymentRails;
 import com.yadony.api.requests.dto.PackageRequestPhotoResponse;
 import com.yadony.api.requests.dto.PackageRequestSearchResponse;
 import com.yadony.api.requests.entity.PackageRequestEntity;
@@ -63,13 +64,18 @@ public class PackageRequestSearchMapper {
      * Batch-aware mapping: reads sender users, city coordinates, and photos from pre-loaded maps
      * instead of issuing per-row queries.  Call this overload when mapping a list to avoid N+1.
      *
-     * @param entity     the package-request entity (must not be null)
-     * @param isFavorite whether the viewing user has favorited this request
+     * @param entity            the package-request entity (must not be null)
+     * @param isFavorite        whether the viewing user has favorited this request
+     * @param viewerHasConnect  whether the viewing user (if a traveler) has an active Stripe
+     *                          Connect account — drives {@code availablePaymentMethods}, same
+     *                          role as {@code isFavorite} but constant across the whole batch
+     *                          (it describes the viewer, not the entity)
      * @param userMap    pre-loaded map of senderId → UserEntity (absent = treated as null)
      * @param cityMap    pre-loaded map of lowercase city name → CityEntity (absent = no coords)
      * @param photoMap   pre-loaded map of packageRequestId → photo list (absent = empty list)
      */
     public PackageRequestSearchResponse toSearchResponse(PackageRequestEntity entity, boolean isFavorite,
+                                                         boolean viewerHasConnect,
                                                          Map<UUID, UserEntity> userMap,
                                                          Map<String, CityEntity> cityMap,
                                                          Map<UUID, List<PackageRequestPhotoResponse>> photoMap) {
@@ -87,6 +93,8 @@ public class PackageRequestSearchMapper {
         var arrCity = cityMap.get(entity.getArrivalCity() != null ? entity.getArrivalCity().toLowerCase() : "");
         List<PackageRequestPhotoResponse> photos = photoMap.getOrDefault(entity.getId(), List.of());
         String photoUrl = photos.isEmpty() ? entity.getPhotoUrl() : photos.get(0).url();
+        Set<com.yadony.api.payments.cash.PaymentMethod> availablePaymentMethods =
+                AnnouncementPaymentRails.availableFor(entity.getCurrency(), viewerHasConnect);
         return new PackageRequestSearchResponse(
                 entity.getId(), entity.getDepartureCity(), entity.getArrivalCity(),
                 depCity != null ? depCity.getLatitude() : null,
@@ -104,18 +112,22 @@ public class PackageRequestSearchMapper {
                 photos,
                 isFavorite,
                 computeUrgent(entity.getDesiredDate()),
-                null, null, null, entity.getCurrency()
+                null, null, null, entity.getCurrency(),
+                availablePaymentMethods
         );
     }
 
     /**
      * Maps an entity to the search DTO.
      *
-     * @param entity     the package-request entity (must not be null)
-     * @param isFavorite whether the viewing user has favorited this request
+     * @param entity           the package-request entity (must not be null)
+     * @param isFavorite       whether the viewing user has favorited this request
+     * @param viewerHasConnect whether the viewing user (if a traveler) has an active Stripe
+     *                         Connect account — drives {@code availablePaymentMethods}
      * @return the populated search response record
      */
-    public PackageRequestSearchResponse toSearchResponse(PackageRequestEntity entity, boolean isFavorite) {
+    public PackageRequestSearchResponse toSearchResponse(PackageRequestEntity entity, boolean isFavorite,
+                                                          boolean viewerHasConnect) {
         UserEntity sender = userRepository.findById(entity.getSenderId()).orElse(null);
         String displayName = buildSenderDisplayName(sender);
         double averageRating = sender != null && sender.getAverageRating() != null
@@ -130,6 +142,8 @@ public class PackageRequestSearchMapper {
         var arrCity = cityRepository.findFirstByNameIgnoreCase(entity.getArrivalCity()).orElse(null);
         List<PackageRequestPhotoResponse> photos = photoService.activePhotos(entity.getId());
         String photoUrl = photos.isEmpty() ? entity.getPhotoUrl() : photos.get(0).url();
+        Set<com.yadony.api.payments.cash.PaymentMethod> availablePaymentMethods =
+                AnnouncementPaymentRails.availableFor(entity.getCurrency(), viewerHasConnect);
         return new PackageRequestSearchResponse(
                 entity.getId(), entity.getDepartureCity(), entity.getArrivalCity(),
                 depCity != null ? depCity.getLatitude() : null,
@@ -147,20 +161,24 @@ public class PackageRequestSearchMapper {
                 photos,
                 isFavorite,
                 computeUrgent(entity.getDesiredDate()),
-                null, null, null, entity.getCurrency()
+                null, null, null, entity.getCurrency(),
+                availablePaymentMethods
         );
     }
 
     /**
      * Batch convenience: maps a list of entities to DTOs using a single query per resource type
      * (users, cities, photos). All entities get {@code isFavorite=true} (used by FavoriteService).
-     * For mixed isFavorite values, use {@link #toSearchResponse(PackageRequestEntity, boolean, Map, Map, Map)}.
+     * For mixed isFavorite values, use {@link #toSearchResponse(PackageRequestEntity, boolean, boolean, Map, Map, Map)}.
      *
-     * @param entities  the package-request entities to map
-     * @param favIdSet  set of request IDs that the viewer has favorited
+     * @param entities         the package-request entities to map
+     * @param favIdSet         set of request IDs that the viewer has favorited
+     * @param viewerHasConnect whether the viewer (if a traveler) has an active Stripe Connect
+     *                         account — same value for every entity in the batch
      */
     public List<PackageRequestSearchResponse> toSearchResponseList(List<PackageRequestEntity> entities,
-                                                                    Set<UUID> favIdSet) {
+                                                                    Set<UUID> favIdSet,
+                                                                    boolean viewerHasConnect) {
         if (entities.isEmpty()) return List.of();
 
         List<UUID> senderIds = entities.stream().map(PackageRequestEntity::getSenderId).distinct().toList();
@@ -179,7 +197,7 @@ public class PackageRequestSearchMapper {
 
         List<PackageRequestSearchResponse> result = new ArrayList<>(entities.size());
         for (PackageRequestEntity e : entities) {
-            result.add(toSearchResponse(e, favIdSet.contains(e.getId()), userMap, cityMap, photoMap));
+            result.add(toSearchResponse(e, favIdSet.contains(e.getId()), viewerHasConnect, userMap, cityMap, photoMap));
         }
         return result;
     }

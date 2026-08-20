@@ -1,7 +1,6 @@
 package com.yadony.api.matching;
 
 import com.yadony.api.auth.KycStatus;
-import com.yadony.api.auth.StripeAccountStatus;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.StorageService;
@@ -92,7 +91,7 @@ public class AnnouncementSearchMapper {
                 : null;
         Set<com.yadony.api.payments.cash.PaymentMethod> availablePaymentMethods =
                 AnnouncementPaymentRails.availableFor(entity.getCurrency(),
-                        traveler != null && traveler.getStripeAccountStatus() == StripeAccountStatus.ONBOARDING_COMPLETE);
+                        traveler != null && traveler.hasActiveStripeConnect());
         long bidsCount = bidCountMap.getOrDefault(entity.getId(), 0L);
         List<AnnouncementPriceGridItemResponse> gridItems =
                 entity.getPricingMode() == PricingMode.MIXED
@@ -152,7 +151,7 @@ public class AnnouncementSearchMapper {
                 : null;
         Set<com.yadony.api.payments.cash.PaymentMethod> availablePaymentMethods =
                 AnnouncementPaymentRails.availableFor(entity.getCurrency(),
-                        traveler != null && traveler.getStripeAccountStatus() == StripeAccountStatus.ONBOARDING_COMPLETE);
+                        traveler != null && traveler.hasActiveStripeConnect());
         long bidsCount = bidRepository.countVisibleByAnnouncementId(entity.getId());
         List<AnnouncementPriceGridItemResponse> gridItems =
                 entity.getPricingMode() == PricingMode.MIXED

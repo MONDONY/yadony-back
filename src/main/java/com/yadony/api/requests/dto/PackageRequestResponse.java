@@ -35,9 +35,15 @@ public record PackageRequestResponse(
     String viewerThreadStatus,
     /** Code promo saisi à la publication (brut, null si aucun) — pré-remplit l'édition. */
     String promoCode,
-    String currency
+    String currency,
+    /** Moyens de paiement effectivement disponibles pour cette demande, du point de vue du
+     *  voyageur qui la consulte : carte si ce voyageur a un compte Stripe Connect actif ET
+     *  que la devise l'autorise, espèces toujours. Même règle que {@code AnnouncementResponse}
+     *  (voir {@code AnnouncementPaymentRails}), calculée ici pour le voyageur appelant plutôt
+     *  que pour un voyageur propriétaire fixe (une demande n'a pas de voyageur assigné). */
+    Set<PaymentMethod> availablePaymentMethods
 ) {
-    /** Constructeur de compatibilité (sans promoCode/currency) — évite de retoucher tous les tests. */
+    /** Constructeur de compatibilité (sans promoCode/currency/availablePaymentMethods) — évite de retoucher tous les tests. */
     public PackageRequestResponse(
             UUID id, UUID senderId,
             String departureCity, String arrivalCity,
@@ -58,6 +64,6 @@ public record PackageRequestResponse(
         this(id, senderId, departureCity, arrivalCity, desiredDate, dateToleranceDays, weightKg, parcelSize,
             transportMode, contentCategory, description, targetPriceEur, photoUrl, pickupNeighborhood,
             deliveryNeighborhood, status, createdAt, negotiable, acceptedPaymentMethods, grossPriceEur, photos,
-            viewerThreadId, viewerThreadStatus, null, "EUR");
+            viewerThreadId, viewerThreadStatus, null, "EUR", Set.of(PaymentMethod.CASH));
     }
 }

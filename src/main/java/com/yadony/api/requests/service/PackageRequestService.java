@@ -152,7 +152,7 @@ public class PackageRequestService {
 
     @Transactional
     public PackageRequestResponse create(UUID senderId, PackageRequestCreateRequest req) {
-        return toResponse(createAndReturnEntity(senderId, req));
+        return toResponse(createAndReturnEntity(senderId, req), senderId);
     }
 
     /**
@@ -418,7 +418,7 @@ public class PackageRequestService {
         auditService.log("PACKAGE_REQUEST", saved.getId(), "UPDATED", callerUid,
             Map.of("corridor", saved.getDepartureCity() + "->" + saved.getArrivalCity()));
 
-        return toResponse(saved);
+        return toResponse(saved, callerUid);
     }
 
     // ─── publish ─────────────────────────────────────────────────────────────────
@@ -477,7 +477,7 @@ public class PackageRequestService {
         auditService.log("PACKAGE_REQUEST", saved.getId(), "PUBLISHED", callerUid,
             Map.of("corridor", saved.getDepartureCity() + "->" + saved.getArrivalCity()));
 
-        return toResponse(saved);
+        return toResponse(saved, callerUid);
     }
 
     // ─── unpublish ───────────────────────────────────────────────────────────────
@@ -517,7 +517,7 @@ public class PackageRequestService {
         auditService.log("PACKAGE_REQUEST", saved.getId(), "UNPUBLISHED", callerUid,
             Map.of("corridor", saved.getDepartureCity() + "->" + saved.getArrivalCity()));
 
-        return toResponse(saved);
+        return toResponse(saved, callerUid);
     }
 
     // ─── getById ─────────────────────────────────────────────────────────────────
@@ -558,7 +558,8 @@ public class PackageRequestService {
             : threadRepository.findActiveByPackageRequestIdAndTravelerId(requestId, callerUid);
         return toResponse(entity,
             viewerThread.map(com.yadony.api.requests.entity.NegotiationThreadEntity::getId).orElse(null),
-            viewerThread.map(t -> t.getStatus().name()).orElse(null));
+            viewerThread.map(t -> t.getStatus().name()).orElse(null),
+            resolveViewerHasConnect(callerUid));
     }
 
     // ─── findMine ─────────────────────────────────────────────────────────────────
@@ -735,7 +736,7 @@ public class PackageRequestService {
                     saved.getDisclaimerSignedIp()
                 )));
 
-        return toResponse(saved);
+        return toResponse(saved, callerUid);
     }
 
     // ─── search ──────────────────────────────────────────────────────────────────
@@ -745,10 +746,11 @@ public class PackageRequestService {
                                                       Pageable pageable,
                                                       UUID callerId) {
         Set<UUID> favIds = loadFavIds(callerId);
+        boolean viewerHasConnect = resolveViewerHasConnect(callerId);
         Page<PackageRequestEntity> page = repository.findAll(withActiveCurrency(spec, callerId), pageable);
         BatchMaps batch = buildBatchMaps(page.getContent());
         return page.map(e -> packageRequestSearchMapper.toSearchResponse(
-                e, favIds.contains(e.getId()), batch.userMap, batch.cityMap, batch.photoMap));
+                e, favIds.contains(e.getId()), viewerHasConnect, batch.userMap, batch.cityMap, batch.photoMap));
     }
 
     /**
@@ -795,10 +797,11 @@ public class PackageRequestService {
         List<PackageRequestEntity> pageEntities = sorted.subList((int) fromLong, (int) toLong);
 
         Set<UUID> favIds = loadFavIds(callerId);
+        boolean viewerHasConnect = resolveViewerHasConnect(callerId);
         BatchMaps batch = buildBatchMaps(pageEntities);
         List<PackageRequestSearchResponse> content = pageEntities.stream()
                 .map(e -> packageRequestSearchMapper.toSearchResponse(
-                        e, favIds.contains(e.getId()), batch.userMap, batch.cityMap, batch.photoMap))
+                        e, favIds.contains(e.getId()), viewerHasConnect, batch.userMap, batch.cityMap, batch.photoMap))
                 .map(r -> r.withMatch(matches.get(r.id())))
                 .toList();
 
@@ -847,10 +850,11 @@ public class PackageRequestService {
                                                             double radiusKm,
                                                             UUID callerId) {
         Set<UUID> favIds = loadFavIds(callerId);
+        boolean viewerHasConnect = resolveViewerHasConnect(callerId);
         Page<PackageRequestEntity> rawPage = repository.findAll(withActiveCurrency(spec, callerId), pageable);
         BatchMaps batch = buildBatchMaps(rawPage.getContent());
         Page<PackageRequestSearchResponse> mapped = rawPage.map(e -> packageRequestSearchMapper.toSearchResponse(
-                e, favIds.contains(e.getId()), batch.userMap, batch.cityMap, batch.photoMap));
+                e, favIds.contains(e.getId()), viewerHasConnect, batch.userMap, batch.cityMap, batch.photoMap));
         double latD = lat.doubleValue();
         double lngD = lng.doubleValue();
         List<PackageRequestSearchResponse> filtered = mapped.getContent().stream()
@@ -911,6 +915,21 @@ public class PackageRequestService {
         return new HashSet<>(favoriteRepository.findTargetIds(callerId, FavoriteTargetType.PACKAGE_REQUEST));
     }
 
+    /**
+     * Statut Stripe Connect du voyageur qui consulte une demande, pour
+     * {@code availablePaymentMethods}. Même contrat que {@link #loadFavIds} : renvoie une
+     * valeur neutre ({@code false}) quand {@code viewerId} est null (appelant anonyme) ou
+     * que l'utilisateur n'existe pas — jamais d'exception ici, ce n'est qu'un affichage.
+     */
+    private boolean resolveViewerHasConnect(UUID viewerId) {
+        if (viewerId == null) {
+            return false;
+        }
+        return userRepository.findById(viewerId)
+                .map(UserEntity::hasActiveStripeConnect)
+                .orElse(false);
+    }
+
     private static double haversineKm(double lat1, double lon1, double lat2, double lon2) {
         final double r = 6371.0;
         double dLat = Math.toRadians(lat2 - lat1);
@@ -925,16 +944,28 @@ public class PackageRequestService {
     // ─── Mappers ─────────────────────────────────────────────────────────────────
 
     PackageRequestResponse toResponse(PackageRequestEntity e) {
-        return toResponse(e, null, null);
+        return toResponse(e, null, null, false);
+    }
+
+    /**
+     * @param viewerId l'utilisateur actuellement authentifié qui consulte cette demande
+     *                 (propriétaire ou voyageur) — détermine {@code availablePaymentMethods}
+     *                 via son statut Stripe Connect, comme {@link #loadFavIds} le fait pour
+     *                 {@code isFavorite} côté recherche.
+     */
+    PackageRequestResponse toResponse(PackageRequestEntity e, UUID viewerId) {
+        return toResponse(e, null, null, resolveViewerHasConnect(viewerId));
     }
 
     PackageRequestResponse toResponse(PackageRequestEntity e, java.util.UUID viewerThreadId,
-                                      String viewerThreadStatus) {
+                                      String viewerThreadStatus, boolean viewerHasConnect) {
         BigDecimal grossPriceEur = e.getTargetPriceEur() != null
             ? PriceBreakdown.fromNet(e.getTargetPriceEur(), commissionProperties.rate()).gross()
             : null;
         List<PackageRequestPhotoResponse> photos = photoService.activePhotos(e.getId());
         String photoUrl = photos.isEmpty() ? e.getPhotoUrl() : photos.get(0).url();
+        Set<PaymentMethod> availablePaymentMethods = com.yadony.api.payments.currency.AnnouncementPaymentRails
+                .availableFor(e.getCurrency(), viewerHasConnect);
         return new PackageRequestResponse(
             e.getId(), e.getSenderId(),
             e.getDepartureCity(), e.getArrivalCity(),
@@ -951,7 +982,8 @@ public class PackageRequestService {
             viewerThreadId,
             viewerThreadStatus,
             e.getPromoCode(),
-            e.getCurrency()
+            e.getCurrency(),
+            availablePaymentMethods
         );
     }
 
@@ -960,9 +992,13 @@ public class PackageRequestService {
      * The {@code isFavorite} flag is supplied by the caller so this method remains pure and testable.
      * Delegates to {@link PackageRequestSearchMapper} so that external packages can also call
      * the mapper directly without injecting this service.
+     *
+     * <p>Sans appelant connu à ce site (aucune méthode publique de ce service n'y délègue
+     * actuellement), le statut Connect du voyageur est inconnu : {@code viewerHasConnect=false},
+     * comme {@link #toResponse(PackageRequestEntity)} pour le même cas.
      */
     public PackageRequestSearchResponse toSearchResponse(PackageRequestEntity e, boolean isFavorite) {
-        return packageRequestSearchMapper.toSearchResponse(e, isFavorite);
+        return packageRequestSearchMapper.toSearchResponse(e, isFavorite, false);
     }
 
     /**

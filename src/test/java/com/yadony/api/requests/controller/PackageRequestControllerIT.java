@@ -183,7 +183,8 @@ class PackageRequestControllerIT {
             new PackageRequestSearchResponse.SenderPublicProfile(
                 UUID.randomUUID(), "Sender", 4.5, 12, true, null),
             java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.STRIPE)
-        , List.of(), false, false, null, null, null, "EUR");
+        , List.of(), false, false, null, null, null, "EUR",
+            java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.CASH));
         var pageable = org.springframework.data.domain.PageRequest.of(0, 20);
         when(service.search(any(), any(), any())).thenReturn(new PageImpl<>(List.of(searchResp), pageable, 1));
 
@@ -211,7 +212,8 @@ class PackageRequestControllerIT {
             new PackageRequestSearchResponse.SenderPublicProfile(
                 UUID.randomUUID(), "Sender", 4.5, 12, true, null),
             java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.STRIPE)
-        , List.of(), false, false, null, null, null, "EUR");
+        , List.of(), false, false, null, null, null, "EUR",
+            java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.CASH));
         var pageable = org.springframework.data.domain.PageRequest.of(0, 20);
         when(service.search(any(), any(), any())).thenReturn(new PageImpl<>(List.of(searchResp), pageable, 1));
 
@@ -438,7 +440,8 @@ class PackageRequestControllerIT {
             new PackageRequestSearchResponse.SenderPublicProfile(
                 UUID.randomUUID(), "Sender", 4.5, 12, true, null),
             java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.STRIPE)
-        , List.of(), false, true, null, null, null, "EUR");
+        , List.of(), false, true, null, null, null, "EUR",
+            java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.CASH));
         var pageable = org.springframework.data.domain.PageRequest.of(0, 20);
         when(service.search(any(), any(), any())).thenReturn(new PageImpl<>(List.of(searchResp), pageable, 1));
 

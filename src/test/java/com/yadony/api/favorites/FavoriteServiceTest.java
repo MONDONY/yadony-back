@@ -343,14 +343,14 @@ class FavoriteServiceTest {
 
         PackageRequestSearchResponse dto = mock(PackageRequestSearchResponse.class);
         // Service now calls toSearchResponseList with filtered active list (pr1 only)
-        when(packageRequestSearchMapper.toSearchResponseList(eq(List.of(pr1)), anySet())).thenReturn(List.of(dto));
+        when(packageRequestSearchMapper.toSearchResponseList(eq(List.of(pr1)), anySet(), anyBoolean())).thenReturn(List.of(dto));
 
         var res = service.getFavoritePackageRequests(UID);
 
         assertThat(res).hasSize(1);
         assertThat(res.get(0)).isSameAs(dto);
-        verify(packageRequestSearchMapper).toSearchResponseList(eq(List.of(pr1)), anySet());
-        verify(packageRequestSearchMapper, never()).toSearchResponse(any(PackageRequestEntity.class), anyBoolean());
+        verify(packageRequestSearchMapper).toSearchResponseList(eq(List.of(pr1)), anySet(), anyBoolean());
+        verify(packageRequestSearchMapper, never()).toSearchResponse(any(PackageRequestEntity.class), anyBoolean(), anyBoolean());
     }
 
     @Test
@@ -375,12 +375,12 @@ class FavoriteServiceTest {
 
         when(packageRequestRepository.findAllById(anyCollection())).thenReturn(List.of(pr1, pr2, pr3));
         PackageRequestSearchResponse dto = mock(PackageRequestSearchResponse.class);
-        when(packageRequestSearchMapper.toSearchResponseList(eq(List.of(pr1)), anySet())).thenReturn(List.of(dto));
+        when(packageRequestSearchMapper.toSearchResponseList(eq(List.of(pr1)), anySet(), anyBoolean())).thenReturn(List.of(dto));
 
         var res = service.getFavoritePackageRequests(UID);
 
         assertThat(res).hasSize(1);
-        verify(packageRequestSearchMapper).toSearchResponseList(eq(List.of(pr1)), anySet());
+        verify(packageRequestSearchMapper).toSearchResponseList(eq(List.of(pr1)), anySet(), anyBoolean());
     }
 
     @Test
@@ -394,11 +394,11 @@ class FavoriteServiceTest {
         when(pr1.getStatus()).thenReturn(PackageRequestStatus.NEGOTIATING);
         when(packageRequestRepository.findAllById(anyCollection())).thenReturn(List.of(pr1));
         PackageRequestSearchResponse dto = mock(PackageRequestSearchResponse.class);
-        when(packageRequestSearchMapper.toSearchResponseList(anyList(), anySet())).thenReturn(List.of(dto));
+        when(packageRequestSearchMapper.toSearchResponseList(anyList(), anySet(), anyBoolean())).thenReturn(List.of(dto));
 
         service.getFavoritePackageRequests(UID);
 
         // Verify batch method called with favIdSet containing p1 (all are favorites)
-        verify(packageRequestSearchMapper).toSearchResponseList(anyList(), argThat(s -> s.contains(p1)));
+        verify(packageRequestSearchMapper).toSearchResponseList(anyList(), argThat(s -> s.contains(p1)), anyBoolean());
     }
 }

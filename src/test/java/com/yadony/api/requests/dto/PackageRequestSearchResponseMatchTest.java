@@ -24,7 +24,7 @@ class PackageRequestSearchResponseMatchTest {
                 new PackageRequestSearchResponse.SenderPublicProfile(
                         UUID.randomUUID(), "Fatou S.", 4.9, 12, true, null),
                 Set.of(), List.of(), false, false,
-                null, null, null, "EUR");
+                null, null, null, "EUR", Set.of());
     }
 
     @Test

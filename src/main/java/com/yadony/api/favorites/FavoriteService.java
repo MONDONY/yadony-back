@@ -139,7 +139,10 @@ public class FavoriteService {
                         .toList();
         if (active.isEmpty()) return List.of();
         Set<UUID> favIdSet = new HashSet<>(ids); // all are favorites
-        return packageRequestSearchMapper.toSearchResponseList(active, favIdSet);
+        boolean viewerHasConnect = userRepository.findById(userId)
+                .map(com.yadony.api.auth.UserEntity::hasActiveStripeConnect)
+                .orElse(false);
+        return packageRequestSearchMapper.toSearchResponseList(active, favIdSet, viewerHasConnect);
     }
 
     // --- private helpers ---
