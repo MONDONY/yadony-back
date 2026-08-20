@@ -728,7 +728,11 @@ public class AnnouncementService {
                 announcement.getHandoverDeadline(),
                 announcement.getCurrency(),
                 arrivalInstructions,
-                announcement.isNegotiable()
+                announcement.isNegotiable(),
+                com.yadony.api.payments.currency.AnnouncementPaymentRails.availableFor(
+                        announcement.getCurrency(),
+                        traveler != null
+                                && traveler.getStripeAccountStatus() == StripeAccountStatus.ONBOARDING_COMPLETE)
         );
     }
 
@@ -907,7 +911,10 @@ public class AnnouncementService {
                 saved.getHandoverDeadline(),
                 saved.getCurrency(),
                 saved.getArrivalInstructions(),
-                saved.isNegotiable()
+                saved.isNegotiable(),
+                com.yadony.api.payments.currency.AnnouncementPaymentRails.availableFor(
+                        saved.getCurrency(),
+                        user.getStripeAccountStatus() == StripeAccountStatus.ONBOARDING_COMPLETE)
         );
     }
 
@@ -1486,6 +1493,12 @@ public class AnnouncementService {
     }
 
     private AnnouncementResponse toResponse(AnnouncementEntity entity) {
+        UserEntity traveler = userRepository.findById(entity.getTravelerId()).orElse(null);
+        boolean travelerHasConnect = traveler != null
+                && traveler.getStripeAccountStatus() == StripeAccountStatus.ONBOARDING_COMPLETE;
+        java.util.Set<PaymentMethod> availablePaymentMethods =
+                com.yadony.api.payments.currency.AnnouncementPaymentRails.availableFor(
+                        entity.getCurrency(), travelerHasConnect);
         long pendingBidCount = bidRepository.countVisibleByAnnouncementId(entity.getId());
         long confirmedParcelCount = bidRepository.countByAnnouncementIdAndStatusIn(
                 entity.getId(),
@@ -1534,7 +1547,8 @@ public class AnnouncementService {
                 flagService.getFlag(entity.getArrivalCountryCode()),
                 entity.getHandoverDeadline(),
                 entity.getCurrency(),
-                entity.isNegotiable()
+                entity.isNegotiable(),
+                availablePaymentMethods
         );
     }
 

@@ -1,11 +1,13 @@
 package com.yadony.api.matching.dto;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
+import com.yadony.api.payments.cash.PaymentMethod;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 public record AnnouncementSearchResponse(
@@ -41,5 +43,10 @@ public record AnnouncementSearchResponse(
         String currency,
         /** Le voyageur accepte les propositions de prix : pilote le badge « prix
          *  négociable » du feed et l'entrée vers le fil de négociation. */
-        boolean negotiable
+        boolean negotiable,
+        /** Moyens de paiement effectivement disponibles pour ce trajet : carte si le voyageur
+         *  a un compte Stripe Connect actif ET que la devise l'autorise, espèces toujours.
+         *  Calculé côté serveur (voir AnnouncementPaymentRails) pour que le front n'ait pas à
+         *  rejouer la règle. */
+        Set<PaymentMethod> availablePaymentMethods
 ) {}
