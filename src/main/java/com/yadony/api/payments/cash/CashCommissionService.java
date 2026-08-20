@@ -579,12 +579,31 @@ public class CashCommissionService {
         }
 
         if (source == CommissionSource.WALLET_FIRST) {
-            BigDecimal balance = walletService.getBalance(travelerId, thread.getCurrency());
-            if (balance.compareTo(commission) >= 0) {
+            // Même correction que chargeCommissionFromWallet/chargeCommissionAuto : le
+            // wallet consulté et débité est celui de la devise PROPRE du voyageur, pas
+            // celle du fil de négociation. Quand les deux diffèrent, le montant est
+            // converti et la conversion snapshotée sur la transaction.
+            String threadCurrency = normalizeCurrency(thread.getCurrency());
+            String travelerCurrency = normalizeCurrency(activeCurrencyResolver.resolve(travelerId));
+            boolean sameCurrency = threadCurrency.equals(travelerCurrency);
+            BigDecimal commissionInTravelerCurrency = sameCurrency
+                    ? commission
+                    : exchangeRateService.convert(commission, threadCurrency, travelerCurrency);
+            BigDecimal balance = walletService.getBalance(travelerId, travelerCurrency);
+            if (balance.compareTo(commissionInTravelerCurrency) >= 0) {
                 try {
-                    walletService.debit(travelerId, thread.getCurrency(), commission,
-                            WalletTransactionType.COMMISSION_DEDUCTED,
-                            threadId.toString(), "nego_commission_wallet_" + threadId);
+                    if (sameCurrency) {
+                        walletService.debit(travelerId, travelerCurrency, commissionInTravelerCurrency,
+                                WalletTransactionType.COMMISSION_DEDUCTED,
+                                threadId.toString(), "nego_commission_wallet_" + threadId);
+                    } else {
+                        BigDecimal appliedRate = commissionInTravelerCurrency
+                                .divide(commission, 6, RoundingMode.HALF_UP);
+                        walletService.debit(travelerId, travelerCurrency, commissionInTravelerCurrency,
+                                WalletTransactionType.COMMISSION_DEDUCTED,
+                                threadId.toString(), "nego_commission_wallet_" + threadId,
+                                threadCurrency, commission, appliedRate);
+                    }
                     consumeSenderVoucher(senderId, threadId);
                     markNegotiationCommissionCharged(thread, NEGO_COMMISSION_VIA_WALLET, travelerId, commission);
                     return AcceptBidResponse.accepted();
@@ -596,7 +615,8 @@ public class CashCommissionService {
             }
             UserEntity traveler = userRepo.findById(travelerId).orElseThrow();
             return AcceptBidResponse.insufficientWallet(
-                    balance, commission, traveler.getCommissionPaymentMethodId() != null, thread.getCurrency());
+                    balance, commissionInTravelerCurrency, traveler.getCommissionPaymentMethodId() != null,
+                    travelerCurrency);
         }
 
         // CommissionSource.CARD : le voyageur a explicitement choisi sa carte.
@@ -936,8 +956,18 @@ public class CashCommissionService {
         BigDecimal commission = computeBidCommission(bid, announcement);
 
         if (commissionSource == CommissionSource.WALLET_FIRST) {
-            BigDecimal balance = walletService.getBalance(travelerId, bid.getCurrency());
-            if (balance.compareTo(commission) >= 0) {
+            // Vérifié dans la devise PROPRE du voyageur (convertie depuis celle du bid
+            // si besoin), jamais dans la devise du bid : même correction que
+            // chargeCommissionFromWallet/chargeCommissionAuto — sinon un voyageur dont
+            // le wallet est approvisionné dans sa propre devise mais pas dans celle de
+            // l'annonce se voit refuser l'acceptation à tort.
+            String bidCurrency = normalizeCurrency(bid.getCurrency());
+            String travelerCurrency = normalizeCurrency(activeCurrencyResolver.resolve(travelerId));
+            BigDecimal commissionInTravelerCurrency = bidCurrency.equals(travelerCurrency)
+                    ? commission
+                    : exchangeRateService.convert(commission, bidCurrency, travelerCurrency);
+            BigDecimal balance = walletService.getBalance(travelerId, travelerCurrency);
+            if (balance.compareTo(commissionInTravelerCurrency) >= 0) {
                 try {
                     chargeCommissionFromWallet(bid, travelerId, commission);
                     finalizeBidAcceptance(bid, announcement, travelerId);
@@ -947,10 +977,13 @@ public class CashCommissionService {
                     balance = e.getAvailableBalance();
                 }
             }
-            // Solde insuffisant → informer le voyageur
+            // Solde insuffisant → informer le voyageur, dans SA devise (celle du
+            // wallet consulté ci-dessus) pour que balance/commission/currency
+            // désignent bien la même unité.
             UserEntity traveler = userRepo.findById(travelerId).orElseThrow();
             boolean hasCard = traveler.getCommissionPaymentMethodId() != null;
-            return AcceptBidResponse.insufficientWallet(balance, commission, hasCard, bid.getCurrency());
+            return AcceptBidResponse.insufficientWallet(
+                    balance, commissionInTravelerCurrency, hasCard, travelerCurrency);
         }
 
         // commissionSource == CARD → comportement carte existant

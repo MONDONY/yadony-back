@@ -220,4 +220,57 @@ public class WalletService {
                 userId, Map.of("amount", amount.toString(), "currency", code,
                 "paymentRef", String.valueOf(paymentRef)));
     }
+
+    /**
+     * Variante de {@link #debit(UUID, String, BigDecimal, WalletTransactionType, String, String)}
+     * (paymentRef / idempotencyKey, utilisée par les fils de négociation) qui snapshote
+     * une conversion de devise sur la transaction — même contrat que l'overload à
+     * {@code bidId} : {@code sourceCurrency} / {@code sourceAmount} / {@code appliedRate}
+     * sont figés au moment du prélèvement et ne doivent jamais être recalculés a
+     * posteriori sur un changement ultérieur du taux administré.
+     */
+    @Transactional(noRollbackFor = InsufficientWalletBalanceException.class)
+    public void debit(UUID userId, String currency, BigDecimal amount, WalletTransactionType type,
+                      String paymentRef, String idempotencyKey,
+                      String sourceCurrency, BigDecimal sourceAmount, BigDecimal appliedRate) {
+        if (idempotencyKey != null) {
+            Optional<WalletTransactionEntity> existing =
+                    walletTransactionRepository.findByIdempotencyKey(idempotencyKey);
+            if (existing.isPresent()) {
+                log.info("Idempotent debit ignored for key={}", idempotencyKey);
+                return;
+            }
+        }
+
+        String code = normalize(currency);
+        WalletAccountEntity wallet = walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, code)
+                .orElseGet(() -> getOrCreate(userId, code));
+
+        if (wallet.getBalance().compareTo(amount) < 0) {
+            throw new InsufficientWalletBalanceException(wallet.getBalance(), amount);
+        }
+
+        BigDecimal newBalance = wallet.getBalance().subtract(amount);
+        wallet.setBalance(newBalance);
+        walletAccountRepository.save(wallet);
+
+        WalletTransactionEntity tx = new WalletTransactionEntity();
+        tx.setUserId(userId);
+        tx.setCurrency(code);
+        tx.setType(type);
+        tx.setAmount(amount.negate());
+        tx.setBalanceAfter(newBalance);
+        tx.setPaymentRef(paymentRef);
+        tx.setIdempotencyKey(idempotencyKey);
+        tx.setSourceCurrency(sourceCurrency);
+        tx.setSourceAmount(sourceAmount);
+        tx.setAppliedRate(appliedRate);
+        walletTransactionRepository.save(tx);
+
+        auditService.log("wallet", wallet.getId(), "WALLET_" + type.name(),
+                userId, Map.of("amount", amount.toString(), "currency", code,
+                "paymentRef", String.valueOf(paymentRef),
+                "sourceCurrency", String.valueOf(sourceCurrency), "sourceAmount", String.valueOf(sourceAmount),
+                "appliedRate", String.valueOf(appliedRate)));
+    }
 }
