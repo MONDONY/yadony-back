@@ -67,10 +67,12 @@ public enum SupportedCurrency {
      * n'ont aucun sens hors zone euro.
      *
      * <p><b>Ne jamais s'en servir pour convertir le montant d'une transaction entre
-     * deux parties.</b> Le partitionnement des devises reste strict : un prix, une
-     * offre ou un paiement demeure dans la devise où il a été créé, et l'appariement
-     * est refusé quand les devises diffèrent (voir CurrencyMatchGuard). Ce facteur
-     * traduit un barème interne, il n'arbitre aucun échange.
+     * deux parties.</b> Le partitionnement des devises reste strict au niveau du
+     * prix : un bid reprend la devise de l'annonce, une négociation celle de la
+     * demande de colis, jamais celle de la contrepartie qui répond — l'appariement
+     * entre devises différentes est autorisé (aucune devise commune n'est exigée),
+     * mais le montant, lui, ne change jamais de devise. Ce facteur traduit un
+     * barème interne, il n'arbitre aucun échange.
      *
      * <p>Pour XOF et XAF ce n'est pas une estimation de marché : leur parité avec
      * l'euro est fixe (655,957). Les autres valeurs sont des ordres de grandeur qui

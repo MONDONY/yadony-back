@@ -422,6 +422,11 @@ public class CashCommissionService {
         if (bidCurrency.equals(travelerCurrency)) {
             walletService.debit(travelerId, bidCurrency, effectiveCommission,
                     WalletTransactionType.COMMISSION_DEDUCTED, bid.getId());
+        } else if (effectiveCommission.signum() == 0) {
+            // Commission nulle (ex. bid grille-only sans poids ni item) : rien à convertir,
+            // éviter la division par zéro plus bas en débitant zéro dans la devise du voyageur.
+            walletService.debit(travelerId, travelerCurrency, BigDecimal.ZERO,
+                    WalletTransactionType.COMMISSION_DEDUCTED, bid.getId());
         } else {
             BigDecimal convertedAmount = exchangeRateService.convert(effectiveCommission, bidCurrency, travelerCurrency);
             BigDecimal appliedRate = convertedAmount.divide(effectiveCommission, 6, RoundingMode.HALF_UP);

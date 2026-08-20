@@ -1442,6 +1442,30 @@ class CashCommissionServiceTest {
         }
 
         @Test
+        void zeroCommissionCrossCurrency_debitsZeroWithoutDividingByZero() {
+            // Régression : bid grille-only sans poids ni item -> commission effective
+            // ZERO. Sur un bid cross-currency, convertedAmount.divide(effectiveCommission)
+            // levait une ArithmeticException (division par zéro) avant ce fix. La garde
+            // doit court-circuiter la conversion : exchangeRateService.convert n'est
+            // JAMAIS appelé, et le débit se fait à zéro dans la devise du voyageur.
+            when(walletTransactionRepository.existsByUserIdAndBidIdAndType(
+                    travelerId, bid.getId(), com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED))
+                    .thenReturn(false);
+            when(activeCurrencyResolver.resolve(travelerId)).thenReturn("XOF");
+
+            org.assertj.core.api.Assertions.assertThatCode(() ->
+                    service.chargeCommissionFromWallet(bid, travelerId, BigDecimal.ZERO))
+                    .doesNotThrowAnyException();
+
+            verify(walletService).debit(eq(travelerId), eq("XOF"), eq(BigDecimal.ZERO),
+                    eq(com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED), eq(bid.getId()));
+            verify(walletService, never()).debit(any(), any(), any(), any(), any(), anyString(), any(), any());
+            verifyNoInteractions(exchangeRateService);
+            assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.CHARGED);
+            assertThat(bid.getCommissionChargedVia()).isEqualTo(CommissionChargedVia.WALLET);
+        }
+
+        @Test
         void rateChangedBetweenTwoCharges_eachCallForwardsItsOwnRateToWalletService() {
             // Portée de CE test (unitaire, WalletService mocké) : CashCommissionService
             // relit le taux courant à CHAQUE appel et transmet la valeur du moment à
