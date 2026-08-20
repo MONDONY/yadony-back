@@ -664,6 +664,45 @@ class PackageRequestServiceTest {
         }
     }
 
+    @Nested @DisplayName("public guest access")
+    class PublicGuestAccess {
+
+        @Test @DisplayName("searchPublic() projette uniquement les champs non sensibles")
+        void searchPublic_returnsSanitizedProjection() {
+            PackageRequestEntity entity = buildEntity(SENDER_ID, PackageRequestStatus.OPEN);
+            entity.setDescription("Cadeau fragile");
+            entity.setTargetPriceEur(new BigDecimal("25.00"));
+            entity.setNegotiable(true);
+            entity.setPickupNeighborhood("10e arr");
+            entity.setDeliveryNeighborhood("Plateau");
+            when(repository.findAll(any(org.springframework.data.jpa.domain.Specification.class), any(org.springframework.data.domain.Pageable.class)))
+                    .thenReturn(new org.springframework.data.domain.PageImpl<>(
+                            List.of(entity), org.springframework.data.domain.PageRequest.of(0, 20), 1));
+            sender.setFirstName("Aminata");
+            sender.setLastName("Diallo");
+
+            var result = service.searchPublic(PackageRequestSpecifications.openOnly(),
+                    org.springframework.data.domain.PageRequest.of(0, 20));
+
+            assertThat(result.getContent()).hasSize(1);
+            var publicRequest = result.getContent().get(0);
+            assertThat(publicRequest.id()).isEqualTo(entity.getId());
+            assertThat(publicRequest.description()).isEqualTo("Cadeau fragile");
+            assertThat(publicRequest.senderDisplayName()).isEqualTo("Aminata D.");
+            assertThat(publicRequest.currency()).isEqualTo("EUR");
+        }
+
+        @Test @DisplayName("getPublicById() masque les demandes non publiques en 404")
+        void getPublicById_acceptedRequest_returns404() {
+            PackageRequestEntity entity = buildEntity(SENDER_ID, PackageRequestStatus.ACCEPTED);
+            when(repository.findById(entity.getId())).thenReturn(Optional.of(entity));
+
+            assertThatThrownBy(() -> service.getPublicById(entity.getId()))
+                    .isInstanceOf(ResponseStatusException.class)
+                    .hasMessageContaining("request/not-found");
+        }
+    }
+
     @Nested @DisplayName("update() — édition tant qu'aucun accord")
     class UpdateTests {
 

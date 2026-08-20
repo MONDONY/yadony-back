@@ -227,6 +227,57 @@ class PackageRequestControllerIT {
     }
 
     @Test
+    void get_publicSearch_withoutAuth_returnsSanitizedPage() throws Exception {
+        var publicResp = new PublicPackageRequestResponse(
+            UUID.randomUUID(), "Paris", "Dakar",
+            new BigDecimal("48.85"), new BigDecimal("2.35"),
+            new BigDecimal("14.69"), new BigDecimal("-17.44"),
+            LocalDate.now().plusDays(5), 2,
+            new BigDecimal("5"), ParcelSize.SMALL,
+            com.yadony.api.matching.TransportMode.PLANE,
+            "vetements",
+            "Cadeau", new BigDecimal("25"), true, "https://signed/photo",
+            "Aminata",
+            List.of(new PackageRequestPhotoResponse(UUID.randomUUID(), "package_requests/1.jpg", "https://signed/photo")),
+            false, "EUR");
+        var pageable = org.springframework.data.domain.PageRequest.of(0, 20);
+        when(service.searchPublic(any(), any())).thenReturn(new PageImpl<>(List.of(publicResp), pageable, 1));
+
+        mockMvc.perform(get("/public/package-requests")
+                .param("departure", "Paris")
+                .param("arrival", "Dakar"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.content[0].departureCity").value("Paris"))
+            .andExpect(jsonPath("$.content[0].senderDisplayName").value("Aminata"))
+            .andExpect(jsonPath("$.content[0].pickupNeighborhood").doesNotExist())
+            .andExpect(jsonPath("$.content[0].deliveryNeighborhood").doesNotExist())
+            .andExpect(jsonPath("$.content[0].acceptedPaymentMethods").doesNotExist())
+            .andExpect(jsonPath("$.content[0].isFavorite").doesNotExist());
+    }
+
+    @Test
+    void get_publicDetail_withoutAuth_returnsSanitizedDetail() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(service.getPublicById(id)).thenReturn(new PublicPackageRequestResponse(
+            id, "Paris", "Dakar",
+            null, null, null, null,
+            LocalDate.now().plusDays(5), 2,
+            new BigDecimal("5"), ParcelSize.SMALL,
+            com.yadony.api.matching.TransportMode.PLANE,
+            "vetements",
+            "Cadeau", new BigDecimal("25"), true, null,
+            "Aminata", List.of(), false, "EUR"));
+
+        mockMvc.perform(get("/public/package-requests/" + id))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.id").value(id.toString()))
+            .andExpect(jsonPath("$.description").value("Cadeau"))
+            .andExpect(jsonPath("$.senderDisplayName").value("Aminata"))
+            .andExpect(jsonPath("$.pickupNeighborhood").doesNotExist())
+            .andExpect(jsonPath("$.deliveryNeighborhood").doesNotExist());
+    }
+
+    @Test
     void delete_cancel_returns204() throws Exception {
         UUID id = UUID.randomUUID();
         mockMvc.perform(delete("/package-requests/" + id)

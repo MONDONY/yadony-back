@@ -753,6 +753,24 @@ public class PackageRequestService {
                 e, favIds.contains(e.getId()), viewerHasConnect, batch.userMap, batch.cityMap, batch.photoMap));
     }
 
+    @Transactional(readOnly = true)
+    public Page<PublicPackageRequestResponse> searchPublic(Specification<PackageRequestEntity> spec,
+                                                           Pageable pageable) {
+        Page<PackageRequestEntity> page = repository.findAll(spec, pageable);
+        BatchMaps batch = buildBatchMaps(page.getContent());
+        return page.map(e -> toPublicResponse(e, batch));
+    }
+
+    @Transactional(readOnly = true)
+    public PublicPackageRequestResponse getPublicById(UUID id) {
+        PackageRequestEntity entity = repository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found"));
+        if (!isPubliclyVisible(entity)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found");
+        }
+        return toPublicResponse(entity);
+    }
+
     /**
      * Recherche restreinte aux demandes compatibles avec les trajets actifs du
      * voyageur, triée par score de compatibilité décroissant.
@@ -895,6 +913,60 @@ public class PackageRequestService {
         Map<UUID, List<PackageRequestPhotoResponse>> photoMap = photoService.activePhotosBatch(requestIds);
 
         return new BatchMaps(userMap, cityMap, photoMap);
+    }
+
+    private PublicPackageRequestResponse toPublicResponse(PackageRequestEntity entity) {
+        BatchMaps batch = buildBatchMaps(List.of(entity));
+        return toPublicResponse(entity, batch);
+    }
+
+    private PublicPackageRequestResponse toPublicResponse(PackageRequestEntity entity, BatchMaps batch) {
+        UserEntity sender = batch.userMap.get(entity.getSenderId());
+        CityEntity depCity = batch.cityMap.get(entity.getDepartureCity() != null
+                ? entity.getDepartureCity().toLowerCase()
+                : "");
+        CityEntity arrCity = batch.cityMap.get(entity.getArrivalCity() != null
+                ? entity.getArrivalCity().toLowerCase()
+                : "");
+        List<PackageRequestPhotoResponse> photos = batch.photoMap.getOrDefault(entity.getId(), List.of());
+        String photoUrl = photos.isEmpty() ? entity.getPhotoUrl() : photos.get(0).url();
+        return new PublicPackageRequestResponse(
+                entity.getId(),
+                entity.getDepartureCity(),
+                entity.getArrivalCity(),
+                depCity != null ? depCity.getLatitude() : null,
+                depCity != null ? depCity.getLongitude() : null,
+                arrCity != null ? arrCity.getLatitude() : null,
+                arrCity != null ? arrCity.getLongitude() : null,
+                entity.getDesiredDate(),
+                entity.getDateToleranceDays() != null ? entity.getDateToleranceDays().intValue() : 0,
+                entity.getWeightKg(),
+                entity.getParcelSize(),
+                entity.getTransportMode(),
+                entity.getContentCategory(),
+                entity.getDescription(),
+                entity.getTargetPriceEur(),
+                entity.isNegotiable(),
+                photoUrl,
+                sender != null ? sender.publicDisplayName() : UserEntity.UNKNOWN_DISPLAY_NAME,
+                photos,
+                computePublicUrgent(entity.getDesiredDate()),
+                entity.getCurrency()
+        );
+    }
+
+    private static boolean isPubliclyVisible(PackageRequestEntity entity) {
+        return entity.getStatus() == PackageRequestStatus.OPEN
+                || entity.getStatus() == PackageRequestStatus.NEGOTIATING;
+    }
+
+    private boolean computePublicUrgent(LocalDate desiredDate) {
+        if (desiredDate == null) {
+            return false;
+        }
+        LocalDate today = LocalDate.now(ZoneOffset.UTC);
+        int threshold = yadonyConfig.urgency().thresholdDays();
+        return !desiredDate.isBefore(today) && !desiredDate.isAfter(today.plusDays(threshold));
     }
 
     /**
