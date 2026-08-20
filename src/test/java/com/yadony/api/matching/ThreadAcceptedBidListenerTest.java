@@ -387,6 +387,23 @@ class ThreadAcceptedBidListenerTest {
         }
 
         @Test
+        @DisplayName("bid matérialisé hérite la devise de l'annonce, pas le défaut EUR "
+            + "(régression bug devise-par-annonce : bid.currency n'était jamais posé ici)")
+        void materializedBidCarriesAnnouncementCurrency() {
+            AnnouncementEntity ann = new AnnouncementEntity();
+            ann.setCapacityUnit(CapacityUnit.SUITCASE_23KG);
+            ann.setAvailableKg(BigDecimal.valueOf(32));
+            ann.setCurrency("CAD");
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(ann));
+
+            listener.onPackageRequestAccepted(buildEvent());
+
+            ArgumentCaptor<BidEntity> captor = ArgumentCaptor.forClass(BidEntity.class);
+            verify(bidRepository).save(captor.capture());
+            assertThat(captor.getValue().getCurrency()).isEqualTo("CAD");
+        }
+
+        @Test
         @DisplayName("annonce KgFree → availableKg inchangé")
         void kgFreeAnnouncementSkipsDecrement() {
             AnnouncementEntity ann = new AnnouncementEntity();

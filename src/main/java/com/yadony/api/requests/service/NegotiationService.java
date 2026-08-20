@@ -236,7 +236,11 @@ public class NegotiationService {
         thread.setTravelerTravelDate(resolvedTravelDate);
         thread.setTravelerAvailableKg(req.travelerAvailableKg());
         thread.setStatus(NegotiationThreadStatus.OPEN);
-        thread.setCurrency(request.getCurrency());
+        // Le prix payé par l'expéditeur reste toujours dans la devise de
+        // l'annonce (trajet), jamais celle de sa demande — cf. spec
+        // 2026-08-20-devise-par-annonce §"Le prix payé par l'expéditeur
+        // reste toujours dans la devise de l'annonce".
+        thread.setCurrency(linkedTripAnn.getCurrency());
         thread.setCurrentPriceEur(req.proposedPriceEur());
         thread.setRoundsCount((short) 1);
         thread.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC));
