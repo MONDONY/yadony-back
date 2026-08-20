@@ -28,7 +28,6 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
 import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -326,7 +325,7 @@ public class AuthService {
 
     /**
      * Suppression immédiate du compte (HARD_IMMEDIATE).
-     * Vérifie : statut BANNED → 409, escrow actif → 422, auth_time récent (< 5 min) → 401.
+     * Vérifie : statut BANNED → 409, escrow actif → 422.
      * Délègue la finalisation RGPD à {@link AccountFinalizationService}.
      */
     @Transactional
@@ -350,21 +349,6 @@ public class AuthService {
         // UserService pour rester identique entre suppression immédiate (ici) et suppression
         // J+30 (requestDeletion).
         userService.openWalletRefundTicketIfNeeded(user.getId());
-
-        FirebaseToken decoded = (FirebaseToken) SecurityContextHolder
-                .getContext().getAuthentication().getCredentials();
-        Object authTimeClaim = decoded.getClaims().get("auth_time");
-        if (authTimeClaim == null) {
-            throw new YadonyBusinessException(HttpStatus.UNAUTHORIZED, "reauth-required",
-                    "Re-authentication required",
-                    "Veuillez vous ré-authentifier avant de supprimer votre compte définitivement");
-        }
-        long authTime = ((Number) authTimeClaim).longValue();
-        if (Instant.ofEpochSecond(authTime).isBefore(Instant.now().minus(5, ChronoUnit.MINUTES))) {
-            throw new YadonyBusinessException(HttpStatus.UNAUTHORIZED, "reauth-required",
-                    "Re-authentication required",
-                    "Veuillez vous ré-authentifier avant de supprimer votre compte définitivement");
-        }
 
         auditService.log("USER", user.getId(), "ACCOUNT_DELETE_IMMEDIATELY_REQUESTED",
                 user.getId(), Map.of("initiatedBy", "user"));

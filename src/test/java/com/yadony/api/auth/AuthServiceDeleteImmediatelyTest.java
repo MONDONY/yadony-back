@@ -3,8 +3,6 @@ package com.yadony.api.auth;
 import com.yadony.api.auth.dto.DeleteImmediatelyRequest;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
-import com.google.firebase.auth.FirebaseToken;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -12,13 +10,8 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.lang.reflect.Field;
-import java.time.Instant;
-import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -66,42 +59,9 @@ class AuthServiceDeleteImmediatelyTest {
         }
     }
 
-    private void setupSecurityContext(long authTimeEpochSeconds) {
-        FirebaseToken mockToken = mock(FirebaseToken.class);
-        when(mockToken.getClaims()).thenReturn(Map.of("auth_time", authTimeEpochSeconds));
-        UsernamePasswordAuthenticationToken auth =
-                new UsernamePasswordAuthenticationToken(FIREBASE_UID, mockToken, List.of());
-        SecurityContextHolder.getContext().setAuthentication(auth);
-    }
-
-    @AfterEach
-    void clearSecurityContext() {
-        SecurityContextHolder.clearContext();
-    }
-
-    @Test
-    @DisplayName("auth_time > 5 min → 401")
-    void authTimeTooOld_throws401() {
-        long oldAuthTime = Instant.now().minusSeconds(400).getEpochSecond();
-        setupSecurityContext(oldAuthTime);
-        when(userRepository.findByFirebaseUid(FIREBASE_UID))
-                .thenReturn(Optional.of(makeUser(UserStatus.ACTIVE)));
-
-        assertThatThrownBy(() -> authService.deleteImmediately(
-                FIREBASE_UID, new DeleteImmediatelyRequest(true)))
-                .isInstanceOf(YadonyBusinessException.class)
-                .extracting("status").isEqualTo(HttpStatus.UNAUTHORIZED);
-    }
-
     @Test
     @DisplayName("escrow actif → 422")
     void activeEscrow_throws422() {
-        // No stub on mockToken.getClaims(): escrow check throws before auth_time check
-        FirebaseToken mockToken = mock(FirebaseToken.class);
-        UsernamePasswordAuthenticationToken auth =
-                new UsernamePasswordAuthenticationToken(FIREBASE_UID, mockToken, List.of());
-        SecurityContextHolder.getContext().setAuthentication(auth);
-
         when(userRepository.findByFirebaseUid(FIREBASE_UID))
                 .thenReturn(Optional.of(makeUser(UserStatus.ACTIVE)));
         when(userService.hasActiveEscrow(USER_ID)).thenReturn(true);
@@ -115,8 +75,6 @@ class AuthServiceDeleteImmediatelyTest {
     @Test
     @DisplayName("solde wallet positif → ne bloque plus, ticket ouvert, finalisation appelée quand même (Apple 5.1.1(v))")
     void positiveWalletBalance_doesNotBlock_opensTicketAndFinalizes() {
-        long recentAuthTime = Instant.now().minusSeconds(60).getEpochSecond();
-        setupSecurityContext(recentAuthTime);
         UserEntity user = makeUser(UserStatus.ACTIVE);
         when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
 
@@ -132,8 +90,6 @@ class AuthServiceDeleteImmediatelyTest {
     @Test
     @DisplayName("wallet à solde zéro → pas bloqué, finalisation appelée")
     void zeroWalletBalance_doesNotBlock() {
-        long recentAuthTime = Instant.now().minusSeconds(60).getEpochSecond();
-        setupSecurityContext(recentAuthTime);
         UserEntity user = makeUser(UserStatus.ACTIVE);
         when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
 
@@ -146,17 +102,9 @@ class AuthServiceDeleteImmediatelyTest {
     @Test
     @DisplayName("user déjà BANNED → 409")
     void alreadyBanned_throws409() {
-        // No SecurityContext needed: BANNED check runs before auth_time check
         // No escrow stub needed: BANNED check runs before escrow check
         when(userRepository.findByFirebaseUid(FIREBASE_UID))
                 .thenReturn(Optional.of(makeUser(UserStatus.BANNED)));
-
-        // Minimal SecurityContext to avoid NPE on getAuthentication().getCredentials()
-        // — not reached because BANNED throws first, so no stub on mockToken.getClaims()
-        FirebaseToken mockToken = mock(FirebaseToken.class);
-        UsernamePasswordAuthenticationToken auth =
-                new UsernamePasswordAuthenticationToken(FIREBASE_UID, mockToken, List.of());
-        SecurityContextHolder.getContext().setAuthentication(auth);
 
         assertThatThrownBy(() -> authService.deleteImmediately(
                 FIREBASE_UID, new DeleteImmediatelyRequest(true)))
@@ -167,8 +115,6 @@ class AuthServiceDeleteImmediatelyTest {
     @Test
     @DisplayName("succès → AccountFinalizationService.finalize appelé avec HARD_IMMEDIATE")
     void success_callsFinalizationService() {
-        long recentAuthTime = Instant.now().minusSeconds(60).getEpochSecond();
-        setupSecurityContext(recentAuthTime);
         UserEntity user = makeUser(UserStatus.ACTIVE);
         when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
 
