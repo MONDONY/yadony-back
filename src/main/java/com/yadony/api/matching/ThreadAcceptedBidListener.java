@@ -128,6 +128,12 @@ public class ThreadAcceptedBidListener {
         }
 
         announcementRepository.findById(e.travelerAnnouncementId()).ifPresent(announcement -> {
+            // Même règle que BidService/BidNegotiationService : le bid hérite
+            // toujours la devise de l'annonce (trajet), jamais celle de la
+            // demande/du thread — cf. spec 2026-08-20-devise-par-annonce.
+            // Sans cette ligne le bid matérialisé retombe silencieusement sur
+            // le défaut Java de BidEntity.currency ("EUR").
+            bid.setCurrency(announcement.getCurrency());
             bid.applyHandoverFrom(announcement);
             boolean isKgFree = announcement.getCapacityUnit() == CapacityUnit.KG_FREE;
             // Dedicated trips (linkedPackageRequestId != null) intentionally start with
