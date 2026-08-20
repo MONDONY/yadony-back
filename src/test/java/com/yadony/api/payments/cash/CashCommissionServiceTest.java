@@ -83,6 +83,8 @@ class CashCommissionServiceTest {
     @Mock private com.yadony.api.requests.repository.NegotiationThreadRepository negotiationThreadRepository;
     @Mock private com.yadony.api.matching.BidGridItemRepository bidGridItemRepository;
     @Mock private com.yadony.api.voucher.CommissionVoucherService voucherService;
+    @Mock private com.yadony.api.payments.currency.ActiveCurrencyResolver activeCurrencyResolver;
+    @Mock private com.yadony.api.payments.currency.ExchangeRateService exchangeRateService;
 
     private final CommissionProperties props =
             new CommissionProperties(new BigDecimal("0.12"), new BigDecimal("1.00"), 24);
@@ -96,10 +98,15 @@ class CashCommissionServiceTest {
                 .thenReturn(new BigDecimal("0.12"));
         lenient().when(commissionRateResolver.resolve(any())).thenReturn(new BigDecimal("0.12"));
         lenient().when(bidGridItemRepository.findByBidId(any())).thenReturn(java.util.List.of());
+        // Devise active par défaut = EUR, comme la devise par défaut d'un bid non
+        // modifié explicitement (BidEntity.currency) : les tests existants qui ne
+        // touchent pas à la devise restent donc sur le chemin "même devise, pas de
+        // conversion" sans avoir à re-mocker ce resolver un par un.
+        lenient().when(activeCurrencyResolver.resolve(any())).thenReturn("EUR");
         service = new CashCommissionService(props, userRepo, bidRepo, announcementRepo, events,
                 walletService, walletTransactionRepository, auditService, commissionRateResolver,
                 negotiationThreadRepository, new StripeCashGatewayImpl(), bidGridItemRepository,
-                stubbedContacts(), voucherService
+                stubbedContacts(), voucherService, activeCurrencyResolver, exchangeRateService
 );
         service.setClock(Clock.fixed(Instant.parse("2026-06-01T00:00:00Z"), ZoneOffset.UTC));
     }
@@ -902,6 +909,7 @@ class CashCommissionServiceTest {
             // renvoyer « solde insuffisant » à tort.
             bid.setCurrency("CAD");
             announcement.setCurrency("CAD");
+            when(activeCurrencyResolver.resolve(travelerId)).thenReturn("CAD");
             java.math.BigDecimal commission = new java.math.BigDecimal("12.00"); // 5kg × 20 × 12%
             when(walletService.getBalance(travelerId, "CAD")).thenReturn(commission.add(java.math.BigDecimal.ONE));
             when(walletTransactionRepository.existsByUserIdAndBidIdAndType(eq(travelerId), any(), any()))
@@ -913,6 +921,52 @@ class CashCommissionServiceTest {
             verify(walletService).debit(eq(travelerId), eq("CAD"), any(), eq(com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED), any());
             verify(walletService, never()).getBalance(travelerId, "EUR");
             verify(walletService, never()).debit(eq(travelerId), eq("EUR"), any(), any(), any());
+        }
+
+        @Test
+        void walletFirstPath_announcementEurWalletXof_convertsAndAccepts() {
+            // Correction du finding 2 de la revue tâche 9 : le flux interactif WALLET_FIRST
+            // (acceptCashBid) doit lui aussi convertir devise annonce → devise propre du
+            // voyageur pour la comparaison de solde, comme chargeCommissionFromWallet /
+            // chargeCommissionAuto — sinon un voyageur avec un wallet XOF suffisant se voit
+            // refuser à tort une annonce en EUR.
+            when(activeCurrencyResolver.resolve(travelerId)).thenReturn("XOF");
+            when(exchangeRateService.convert(new BigDecimal("12.00"), "EUR", "XOF"))
+                    .thenReturn(new BigDecimal("7869.00"));
+            when(walletService.getBalance(travelerId, "XOF")).thenReturn(new BigDecimal("8000.00"));
+            when(walletTransactionRepository.existsByUserIdAndBidIdAndType(eq(travelerId), any(), any()))
+                    .thenReturn(false);
+
+            AcceptBidResponse resp = service.acceptCashBid(
+                    bid.getId(), travelerId, com.yadony.api.payments.cash.CommissionSource.WALLET_FIRST);
+
+            assertThat(resp.status()).isEqualTo(AcceptanceStatusDto.ACCEPTED);
+            assertThat(bid.getCommissionChargedVia()).isEqualTo(CommissionChargedVia.WALLET);
+            verify(walletService).debit(eq(travelerId), eq("XOF"), eq(new BigDecimal("7869.00")),
+                    eq(com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED), eq(bid.getId()),
+                    eq("EUR"), eq(new BigDecimal("12.00")), eq(new BigDecimal("655.750000")));
+            verify(walletService, never()).getBalance(travelerId, "EUR");
+        }
+
+        @Test
+        void walletFirstPath_announcementEurWalletXof_insufficientAfterConversion_returnsInsufficientWalletInTravelerCurrency() {
+            // Même sans compte Connect (pas de repli carte automatique en WALLET_FIRST),
+            // le voyageur doit être informé dans SA devise (XOF), pas dans celle de
+            // l'annonce (EUR) : balance/requiredCommission/currency doivent désigner la
+            // même unité.
+            when(activeCurrencyResolver.resolve(travelerId)).thenReturn("XOF");
+            when(exchangeRateService.convert(new BigDecimal("12.00"), "EUR", "XOF"))
+                    .thenReturn(new BigDecimal("7869.00"));
+            when(walletService.getBalance(travelerId, "XOF")).thenReturn(new BigDecimal("100.00"));
+
+            AcceptBidResponse resp = service.acceptCashBid(
+                    bid.getId(), travelerId, com.yadony.api.payments.cash.CommissionSource.WALLET_FIRST);
+
+            assertThat(resp.status()).isEqualTo(AcceptanceStatusDto.INSUFFICIENT_WALLET);
+            assertThat(resp.currency()).isEqualTo("XOF");
+            assertThat(resp.availableBalance()).isEqualByComparingTo(new BigDecimal("100.00"));
+            assertThat(resp.requiredCommission()).isEqualByComparingTo(new BigDecimal("7869.00"));
+            verify(walletService, never()).debit(any(), any(), any(), any(), any());
         }
 
         @Test
@@ -964,6 +1018,7 @@ class CashCommissionServiceTest {
             bid.setCurrency("CAD");
             announcement.setCurrency("CAD");
             traveler.setCommissionPaymentMethodId(null);
+            when(activeCurrencyResolver.resolve(travelerId)).thenReturn("CAD");
             when(walletService.getBalance(travelerId, "CAD")).thenReturn(java.math.BigDecimal.ZERO);
 
             AcceptBidResponse resp = service.acceptCashBid(bid.getId(), travelerId, com.yadony.api.payments.cash.CommissionSource.WALLET_FIRST);
@@ -1327,11 +1382,12 @@ class CashCommissionServiceTest {
         }
 
         @Test
-        void debitsWalletInBidCurrency_notAlwaysEur() {
-            // Un bid CAD doit débiter le wallet CAD du voyageur, pas le wallet EUR
-            // (sinon un voyageur avec un wallet CAD approvisionné se voit refuser
-            // l'acceptation faute de solde EUR, qu'il n'a jamais eu besoin d'avoir).
+        void debitsWalletInTravelerOwnCurrency_notTheBidCurrency() {
+            // Un bid CAD doit débiter le wallet du voyageur DANS SA PROPRE devise (ici
+            // CAD elle aussi, wallet déjà dans la même devise que le bid) : pas de
+            // conversion nécessaire dès lors que les deux devises coïncident.
             bid.setCurrency("CAD");
+            when(activeCurrencyResolver.resolve(travelerId)).thenReturn("CAD");
             when(walletTransactionRepository.existsByUserIdAndBidIdAndType(
                     travelerId, bid.getId(), com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED))
                     .thenReturn(false);
@@ -1341,6 +1397,113 @@ class CashCommissionServiceTest {
             verify(walletService).debit(eq(travelerId), eq("CAD"), eq(new BigDecimal("12.00")),
                     eq(com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED), eq(bid.getId()));
             verify(walletService, never()).debit(eq(travelerId), eq("EUR"), any(), any(), any());
+            verifyNoInteractions(exchangeRateService);
+        }
+
+        @Test
+        void sameCurrency_noConversion_sourceColumnsLeftOut() {
+            // Annonce et portefeuille dans la même devise (EUR par défaut ici) :
+            // aucune conversion, l'overload de debit() portant source_currency /
+            // source_amount / applied_rate n'est jamais appelé — ces trois colonnes
+            // restent NULL sur la transaction.
+            when(walletTransactionRepository.existsByUserIdAndBidIdAndType(
+                    travelerId, bid.getId(), com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED))
+                    .thenReturn(false);
+
+            service.chargeCommissionFromWallet(bid, travelerId, new BigDecimal("12.00"));
+
+            verify(walletService).debit(eq(travelerId), eq("EUR"), eq(new BigDecimal("12.00")),
+                    eq(com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED), eq(bid.getId()));
+            verify(walletService, never()).debit(any(), any(), any(), any(), any(), anyString(), any(), any());
+            verifyNoInteractions(exchangeRateService);
+        }
+
+        @Test
+        void announcementEurWalletXof_debitsConvertedAmountAndSnapshotsSourceCurrencyAmountAndRate() {
+            // Cas central de la tâche : annonce en EUR, portefeuille du voyageur en
+            // XOF. La commission débitée est le montant CONVERTI (en XOF), et la
+            // transaction enregistrée porte source_currency=EUR, le montant d'origine
+            // et le taux appliqué.
+            when(walletTransactionRepository.existsByUserIdAndBidIdAndType(
+                    travelerId, bid.getId(), com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED))
+                    .thenReturn(false);
+            when(activeCurrencyResolver.resolve(travelerId)).thenReturn("XOF");
+            when(exchangeRateService.convert(new BigDecimal("12.00"), "EUR", "XOF"))
+                    .thenReturn(new BigDecimal("7869.00")); // taux administré : 655.75 XOF / EUR
+
+            service.chargeCommissionFromWallet(bid, travelerId, new BigDecimal("12.00"));
+
+            verify(walletService).debit(eq(travelerId), eq("XOF"), eq(new BigDecimal("7869.00")),
+                    eq(com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED), eq(bid.getId()),
+                    eq("EUR"), eq(new BigDecimal("12.00")), eq(new BigDecimal("655.750000")));
+            verify(walletService, never()).debit(eq(travelerId), eq("XOF"), any(), any(), any());
+            assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.CHARGED);
+            assertThat(bid.getCommissionChargedVia()).isEqualTo(CommissionChargedVia.WALLET);
+        }
+
+        @Test
+        void zeroCommissionCrossCurrency_debitsZeroWithoutDividingByZero() {
+            // Régression : bid grille-only sans poids ni item -> commission effective
+            // ZERO. Sur un bid cross-currency, convertedAmount.divide(effectiveCommission)
+            // levait une ArithmeticException (division par zéro) avant ce fix. La garde
+            // doit court-circuiter la conversion : exchangeRateService.convert n'est
+            // JAMAIS appelé, et le débit se fait à zéro dans la devise du voyageur.
+            when(walletTransactionRepository.existsByUserIdAndBidIdAndType(
+                    travelerId, bid.getId(), com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED))
+                    .thenReturn(false);
+            when(activeCurrencyResolver.resolve(travelerId)).thenReturn("XOF");
+
+            org.assertj.core.api.Assertions.assertThatCode(() ->
+                    service.chargeCommissionFromWallet(bid, travelerId, BigDecimal.ZERO))
+                    .doesNotThrowAnyException();
+
+            verify(walletService).debit(eq(travelerId), eq("XOF"), eq(BigDecimal.ZERO),
+                    eq(com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED), eq(bid.getId()));
+            verify(walletService, never()).debit(any(), any(), any(), any(), any(), anyString(), any(), any());
+            verifyNoInteractions(exchangeRateService);
+            assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.CHARGED);
+            assertThat(bid.getCommissionChargedVia()).isEqualTo(CommissionChargedVia.WALLET);
+        }
+
+        @Test
+        void rateChangedBetweenTwoCharges_eachCallForwardsItsOwnRateToWalletService() {
+            // Portée de CE test (unitaire, WalletService mocké) : CashCommissionService
+            // relit le taux courant à CHAQUE appel et transmet la valeur du moment à
+            // walletService.debit(...), sans mémoriser/réutiliser un taux d'un appel
+            // précédent. La preuve que ce taux, une fois VRAIMENT PERSISTÉ, reste figé
+            // face à un changement ultérieur de exchange_rates vit dans
+            // WalletServiceCurrencyConversionTest (base réelle, insert → relecture),
+            // pas ici : WalletService étant mocké dans cette classe, on ne peut pas
+            // prouver l'immutabilité d'une ligne déjà en base.
+            BidEntity firstBid = bidForTraveler(travelerId);
+            firstBid.setCurrency("EUR");
+            when(walletTransactionRepository.existsByUserIdAndBidIdAndType(
+                    travelerId, firstBid.getId(), com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED))
+                    .thenReturn(false);
+            when(activeCurrencyResolver.resolve(travelerId)).thenReturn("XOF");
+            when(exchangeRateService.convert(new BigDecimal("12.00"), "EUR", "XOF"))
+                    .thenReturn(new BigDecimal("7869.00")); // taux du moment : 655.75
+
+            service.chargeCommissionFromWallet(firstBid, travelerId, new BigDecimal("12.00"));
+
+            verify(walletService).debit(eq(travelerId), eq("XOF"), eq(new BigDecimal("7869.00")),
+                    eq(com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED), eq(firstBid.getId()),
+                    eq("EUR"), eq(new BigDecimal("12.00")), eq(new BigDecimal("655.750000")));
+
+            // Le taux administré change en base AVANT un second prélèvement.
+            BidEntity secondBid = bidForTraveler(travelerId);
+            secondBid.setCurrency("EUR");
+            when(walletTransactionRepository.existsByUserIdAndBidIdAndType(
+                    travelerId, secondBid.getId(), com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED))
+                    .thenReturn(false);
+            when(exchangeRateService.convert(new BigDecimal("12.00"), "EUR", "XOF"))
+                    .thenReturn(new BigDecimal("7900.00")); // nouveau taux administré : 658,333...
+
+            service.chargeCommissionFromWallet(secondBid, travelerId, new BigDecimal("12.00"));
+
+            verify(walletService).debit(eq(travelerId), eq("XOF"), eq(new BigDecimal("7900.00")),
+                    eq(com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED), eq(secondBid.getId()),
+                    eq("EUR"), eq(new BigDecimal("12.00")), eq(new BigDecimal("658.333333")));
         }
     }
 
@@ -1381,10 +1544,12 @@ class CashCommissionServiceTest {
         }
 
         @Test
-        void walletSufficient_nonEurCurrency_chargesInBidCurrency() {
-            // Flux mobile money asynchrone : un bid CAD doit interroger/débiter le
-            // wallet CAD, jamais le wallet EUR.
+        void walletSufficient_travelerCurrencyMatchesBid_chargesInThatCurrency() {
+            // Flux mobile money asynchrone : un bid CAD, voyageur dont la devise
+            // propre est aussi CAD (wallet déjà dans la bonne devise), doit
+            // interroger/débiter le wallet CAD, jamais le wallet EUR.
             bid.setCurrency("CAD");
+            when(activeCurrencyResolver.resolve(travelerId)).thenReturn("CAD");
             when(walletService.getBalance(travelerId, "CAD")).thenReturn(new BigDecimal("50.00"));
             when(walletTransactionRepository.existsByUserIdAndBidIdAndType(eq(travelerId), eq(bid.getId()), any()))
                     .thenReturn(false);
@@ -1395,6 +1560,33 @@ class CashCommissionServiceTest {
             verify(walletService).debit(eq(travelerId), eq("CAD"), any(),
                     eq(com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED), eq(bid.getId()));
             verify(walletService, never()).getBalance(travelerId, "EUR");
+            verifyNoInteractions(exchangeRateService);
+        }
+
+        @Test
+        void walletInsufficientAfterConversion_fallsBackToCard() throws StripeException {
+            // Annonce en EUR, portefeuille voyageur en XOF : même une fois la
+            // commission convertie, le solde XOF ne couvre pas le montant requis →
+            // le repli carte existant reste inchangé.
+            when(activeCurrencyResolver.resolve(travelerId)).thenReturn("XOF");
+            when(exchangeRateService.convert(new BigDecimal("12.00"), "EUR", "XOF"))
+                    .thenReturn(new BigDecimal("7869.00"));
+            when(walletService.getBalance(travelerId, "XOF")).thenReturn(new BigDecimal("100.00"));
+
+            PaymentIntent mockPi = new PaymentIntent();
+            mockPi.setId("pi_xof_fallback");
+            mockPi.setStatus("succeeded");
+
+            try (MockedStatic<PaymentIntent> pi = mockStatic(PaymentIntent.class)) {
+                pi.when(() -> PaymentIntent.create(any(PaymentIntentCreateParams.class), any(RequestOptions.class)))
+                        .thenReturn(mockPi);
+
+                service.chargeCommissionAuto(bid, travelerId);
+            }
+
+            assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.CHARGED);
+            assertThat(bid.getCommissionChargedVia()).isEqualTo(CommissionChargedVia.CARD);
+            verify(walletService, never()).debit(eq(travelerId), eq("XOF"), any(), any(), any(), any(), any(), any());
         }
 
         @Test

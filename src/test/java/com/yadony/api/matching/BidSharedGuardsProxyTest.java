@@ -74,8 +74,8 @@ class BidSharedGuardsProxyTest {
         AnnouncementEntity announcement = new AnnouncementEntity();
         announcement.setStatus(AnnouncementStatus.ACTIVE);
         announcement.setCurrency("EUR");
-        // Le trajet appartient au demandeur : la garde attendue est atteinte après
-        // la résolution de devise, qui exige de vraies dépendances injectées.
+        // Le trajet appartient au demandeur : la garde attendue est atteinte avec
+        // de vraies dépendances injectées à travers le proxy.
         announcement.setTravelerId(userId);
         announcement.setDepartureCity("Paris");
         announcement.setArrivalCity("Dakar");

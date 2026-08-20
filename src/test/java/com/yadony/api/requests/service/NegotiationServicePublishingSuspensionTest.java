@@ -10,8 +10,6 @@ import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.matching.dto.AddressDto;
 import com.yadony.api.payments.cash.CommissionProperties;
 import com.yadony.api.payments.cash.PaymentMethod;
-import com.yadony.api.payments.currency.ActiveCurrencyResolver;
-import com.yadony.api.payments.currency.CurrencyMatchGuard;
 import com.yadony.api.requests.CashGatePort;
 import com.yadony.api.requests.RequestsConfig;
 import com.yadony.api.requests.dto.NegotiationCreateDedicatedTripRequest;
@@ -84,11 +82,9 @@ class NegotiationServicePublishingSuspensionTest {
     @Mock private CommissionProperties commissionProperties;
     @Mock private CashGatePort cashGatePort;
     @Mock private com.yadony.api.requests.NegotiationEscrowPort escrowPort;
-    @Mock private ActiveCurrencyResolver activeCurrencyResolver;
     @Mock private StorageService storageService;
     @Mock private PackageRequestPhotoService photoService;
     @Mock private com.yadony.api.common.CommissionRateResolver commissionRateResolver;
-    @Spy private CurrencyMatchGuard currencyMatchGuard = new CurrencyMatchGuard();
 
     @InjectMocks private NegotiationService service;
 
@@ -135,7 +131,6 @@ class NegotiationServicePublishingSuspensionTest {
         lenient().when(commissionProperties.rate()).thenReturn(new BigDecimal("0.12"));
         lenient().when(negotiationProperties.commissionWindowMinutes()).thenReturn(120);
         lenient().when(storageService.avatarUrl(any())).thenAnswer(inv -> inv.getArgument(0));
-        lenient().when(activeCurrencyResolver.resolve(any())).thenReturn("EUR");
     }
 
     /** Champs (corridor/poids/date/tolérance/paiement) requis pour construire un

@@ -28,10 +28,8 @@ import com.yadony.api.cancellation.CancellationReason;
 import com.yadony.api.cancellation.CancellationRepository;
 import com.yadony.api.cancellation.CancellationScope;
 import com.yadony.api.payments.cash.PaymentMethod;
-import com.yadony.api.payments.currency.CurrencyMatchGuard;
 import com.yadony.api.payments.currency.CurrencyPaymentRails;
 import com.yadony.api.ratings.RatingRepository;
-import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
@@ -70,8 +68,6 @@ public class BidService {
     private final StorageService storageService;
     private final BidPhotoService bidPhotoService;
     private final FirebaseContactService firebaseContact;
-    private final ActiveCurrencyResolver activeCurrencyResolver;
-    private final CurrencyMatchGuard currencyMatchGuard;
 
     public BidService(BidRepository bidRepository, AnnouncementRepository announcementRepository,
                       UserRepository userRepository, AuditService auditService,
@@ -84,9 +80,7 @@ public class BidService {
                       PromoService promoService,
                       StorageService storageService,
                       BidPhotoService bidPhotoService,
-                      FirebaseContactService firebaseContact,
-                      ActiveCurrencyResolver activeCurrencyResolver,
-                      CurrencyMatchGuard currencyMatchGuard) {
+                      FirebaseContactService firebaseContact) {
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.userRepository = userRepository;
@@ -102,8 +96,6 @@ public class BidService {
         this.storageService = storageService;
         this.bidPhotoService = bidPhotoService;
         this.firebaseContact = firebaseContact;
-        this.activeCurrencyResolver = activeCurrencyResolver;
-        this.currencyMatchGuard = currencyMatchGuard;
     }
 
     /**
@@ -313,10 +305,12 @@ public class BidService {
     /**
      * Gardes d'éligibilité communes à la création d'une offre ferme
      * ({@link #createBid}) et à l'ouverture d'un fil de négociation
-     * ({@code BidNegotiationService#propose}) : annonce active, devise compatible,
-     * capacité non fermée aux tiers, expéditeur réservé, trajet du demandeur,
-     * catégorie refusée, blocage mutuel, exigence de profil vérifié du voyageur,
-     * et unicité de la demande sur ce trajet.
+     * ({@code BidNegotiationService#propose}) : annonce active, capacité non fermée
+     * aux tiers, expéditeur réservé, trajet du demandeur, catégorie refusée,
+     * blocage mutuel, exigence de profil vérifié du voyageur, et unicité de la
+     * demande sur ce trajet. Le marché étant unifié, un expéditeur peut enchérir
+     * sur une annonce dans n'importe quelle devise : le bid porte toujours la
+     * devise de l'annonce, jamais celle de l'expéditeur (voir {@link #createBid}).
      *
      * <p>Extraite plutôt que dupliquée : la négociation doit appliquer exactement
      * les mêmes contrôles que l'offre ferme, et deux copies finiraient par diverger
@@ -330,9 +324,6 @@ public class BidService {
                     HttpStatus.CONFLICT, "announcement-not-active", "Announcement Not Active",
                     "Cette annonce n'est plus disponible");
         }
-
-        String senderCurrency = activeCurrencyResolver.resolve(sender.getId());
-        currencyMatchGuard.assertMatches(announcement.getCurrency(), senderCurrency);
 
         if (!sender.getRoles().contains(Role.SENDER)) {
             sender.getRoles().add(Role.SENDER);

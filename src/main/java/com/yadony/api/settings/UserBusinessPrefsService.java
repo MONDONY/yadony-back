@@ -5,12 +5,14 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import com.yadony.api.payments.currency.CountryCatalog;
+import com.yadony.api.payments.currency.SupportedCurrency;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Locale;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -20,15 +22,18 @@ public class UserBusinessPrefsService {
     private final UserBusinessPrefsRepository repository;
     private final UserRepository userRepository;
     private final CountryLockService countryLockService;
+    private final CurrencyLockService currencyLockService;
     private final ActiveCurrencyResolver activeCurrencyResolver;
 
     public UserBusinessPrefsService(UserBusinessPrefsRepository repository,
                                     UserRepository userRepository,
                                     CountryLockService countryLockService,
+                                    CurrencyLockService currencyLockService,
                                     ActiveCurrencyResolver activeCurrencyResolver) {
         this.repository = repository;
         this.userRepository = userRepository;
         this.countryLockService = countryLockService;
+        this.currencyLockService = currencyLockService;
         this.activeCurrencyResolver = activeCurrencyResolver;
     }
 
@@ -36,16 +41,14 @@ public class UserBusinessPrefsService {
     public UserBusinessPrefsDto getPrefs(String firebaseUid) {
         UUID userId = resolveUserId(firebaseUid);
         UserEntity user = findUserOrThrow(userId);
+        // La devise est desormais une donnee propre : la ligne existante fait foi
+        // telle quelle. Tant qu'aucune ligne n'existe encore (compte tout juste
+        // inscrit, jamais passe par upsert), on ne peut pas lire de valeur stockee :
+        // le pays sert alors de valeur initiale derivee, via ActiveCurrencyResolver.
         UserBusinessPrefsDto dto = repository.findById(userId)
                 .map(this::toDto)
-                .orElse(UserBusinessPrefsDto.defaults());
-        // La colonne currency_code n'est qu'un cache, reecrit uniquement dans upsert().
-        // La rendre telle quelle ferait mentir les Reglages : apres V225 (pays remis a
-        // NULL), un compte senegalais dont la colonne vaut encore XOF lirait « XOF »
-        // pendant que tout le reste de l'application le traite en EUR, jusqu'au 422 au
-        // moment d'encherir sur une annonce XOF. On derive donc a la lecture, exactement
-        // comme a l'ecriture : devise lue et devise appliquee ne peuvent plus diverger.
-        dto = dto.withCurrencyCode(activeCurrencyResolver.resolve(userId));
+                .orElseGet(() -> UserBusinessPrefsDto.defaults()
+                        .withCurrencyCode(activeCurrencyResolver.resolve(userId)));
         return withLockStatus(dto, user);
     }
 
@@ -53,7 +56,7 @@ public class UserBusinessPrefsService {
     public UserBusinessPrefsDto upsert(String firebaseUid, UserBusinessPrefsDto dto) {
         UUID userId = resolveUserId(firebaseUid);
         UserEntity user = findUserOrThrow(userId);
-        java.util.Optional<UserBusinessPrefsEntity> existing = repository.findById(userId);
+        Optional<UserBusinessPrefsEntity> existing = repository.findById(userId);
         UserBusinessPrefsEntity e = existing.orElseGet(() -> {
             UserBusinessPrefsEntity x = new UserBusinessPrefsEntity();
             x.setUserId(userId);
@@ -93,9 +96,33 @@ public class UserBusinessPrefsService {
         }
 
         e.setWeightUnit(dto.weightUnit());
-        // La devise n'est plus choisie : elle est recalculee depuis le pays et
-        // stockee comme cache, les annonces et bids continuant de la lire ici.
-        e.setCurrencyCode(activeCurrencyResolver.resolve(userId));
+
+        // Devise : donnee propre, gardee uniquement par le solde du portefeuille (lot
+        // 3, CurrencyLockService) — independante du pays et de sa propre garde
+        // country-locked ci-dessus. Un client qui n'envoie pas de devise (champ omis,
+        // pas de contrainte @NotNull) laisse la devise existante intacte ; un compte
+        // tout juste cree sans devise fournie recoit la valeur initiale derivee du
+        // pays, exactement comme le fait getPrefs() pour une ligne encore inexistante.
+        String requestedCurrency = dto.currencyCode();
+        if (requestedCurrency != null) {
+            SupportedCurrency validated = SupportedCurrency.fromCode(requestedCurrency);
+            if (validated == null) {
+                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "currency-unsupported", "Currency Unsupported",
+                        "Cette devise n'est pas prise en charge par yadony.");
+            }
+            String normalizedCurrency = validated.code().toUpperCase(Locale.ROOT);
+            boolean currencyChanges = !normalizedCurrency.equalsIgnoreCase(e.getCurrencyCode());
+            if (currencyChanges && currencyLockService.isLocked(userId)) {
+                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "currency-locked", "Currency Locked",
+                        "Impossible de changer de devise : le portefeuille n'est pas vide.");
+            }
+            e.setCurrencyCode(normalizedCurrency);
+        } else if (existing.isEmpty()) {
+            e.setCurrencyCode(activeCurrencyResolver.resolve(userId));
+        }
+
         e.setPickupRadiusKm(dto.pickupRadiusKm());
         e.setDefaultPackageWeightKg(dto.defaultPackageWeightKg());
         e.setMinBidPriceEur(dto.minBidPriceEur());
@@ -134,7 +161,8 @@ public class UserBusinessPrefsService {
     }
 
     private UserBusinessPrefsDto withLockStatus(UserBusinessPrefsDto dto, UserEntity user) {
-        boolean locked = countryLockService.isLocked(user.getId());
+        boolean countryLocked = countryLockService.isLocked(user.getId());
+        boolean currencyLocked = currencyLockService.isLocked(user.getId());
         return new UserBusinessPrefsDto(
                 dto.weightUnit(),
                 dto.currencyCode(),
@@ -143,9 +171,9 @@ public class UserBusinessPrefsService {
                 dto.minBidPriceEur(),
                 dto.contactMode(),
                 dto.responseDelayHours(),
-                locked,
+                currencyLocked,
                 user.getCountry(),
-                locked
+                countryLocked
         );
     }
 }

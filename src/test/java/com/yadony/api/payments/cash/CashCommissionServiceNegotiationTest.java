@@ -73,6 +73,8 @@ class CashCommissionServiceNegotiationTest {
     @Mock private StripeCashGateway stripeCashGateway;
     @Mock private BidGridItemRepository bidGridItemRepository;
     @Mock private com.yadony.api.voucher.CommissionVoucherService voucherService;
+    @Mock private com.yadony.api.payments.currency.ActiveCurrencyResolver activeCurrencyResolver;
+    @Mock private com.yadony.api.payments.currency.ExchangeRateService exchangeRateService;
 
     private final CommissionProperties props =
             new CommissionProperties(new BigDecimal("0.12"), new BigDecimal("1.00"), 24);
@@ -81,10 +83,15 @@ class CashCommissionServiceNegotiationTest {
 
     @BeforeEach
     void setUp() {
+        // Devise active par défaut = EUR, comme la devise par défaut d'un thread non
+        // modifié explicitement (NegotiationThreadEntity.currency) : les tests
+        // existants qui ne touchent pas à la devise restent donc sur le chemin "même
+        // devise, pas de conversion".
+        lenient().when(activeCurrencyResolver.resolve(any())).thenReturn("EUR");
         service = new CashCommissionService(props, userRepo, bidRepo, announcementRepo, events,
                 walletService, walletTransactionRepository, auditService, commissionRateResolver,
                 negotiationThreadRepository, stripeCashGateway, bidGridItemRepository, stubbedContacts(),
-                voucherService);
+                voucherService, activeCurrencyResolver, exchangeRateService);
     }
 
     // --- helpers ---
@@ -167,6 +174,66 @@ class CashCommissionServiceNegotiationTest {
         assertThat(thread.getCommissionStatus()).isNull();
         verify(walletService, never()).debit(any(), any(), any(), any(), any(), any());
         verify(negotiationThreadRepository, never()).save(any());
+    }
+
+    // Finding 2 de la revue tâche 9 : WALLET_FIRST doit convertir devise du thread →
+    // devise propre du voyageur pour la comparaison de solde ET le débit réel, comme
+    // chargeCommissionFromWallet/chargeCommissionAuto — sinon un voyageur avec un
+    // wallet XOF suffisant se voit refuser à tort un thread en EUR.
+    @Test
+    void settleNegotiationCommission_threadEurWalletXof_convertsAndDebitsWithSourceSnapshot() {
+        UUID travelerId = UUID.randomUUID();
+        UUID senderId = UUID.randomUUID();
+        UUID threadId = UUID.randomUUID();
+        NegotiationThreadEntity thread = threadWithId(threadId);
+
+        when(negotiationThreadRepository.findById(threadId)).thenReturn(Optional.of(thread));
+        when(commissionRateResolver.resolve(eq(travelerId), eq(senderId), isNull(), isNull(), any()))
+                .thenReturn(new BigDecimal("0.05"));
+        when(activeCurrencyResolver.resolve(travelerId)).thenReturn("XOF");
+        when(exchangeRateService.convert(new BigDecimal("5.00"), "EUR", "XOF"))
+                .thenReturn(new BigDecimal("3278.75")); // taux 655.75
+        when(walletService.getBalance(travelerId, "XOF")).thenReturn(new BigDecimal("5000.00"));
+
+        AcceptBidResponse response = service.settleNegotiationCommission(
+                travelerId, senderId, threadId, new BigDecimal("100.00"), CommissionSource.WALLET_FIRST);
+
+        assertThat(response.status()).isEqualTo(AcceptanceStatusDto.ACCEPTED);
+        verify(walletService).debit(eq(travelerId), eq("XOF"), eq(new BigDecimal("3278.75")),
+                eq(WalletTransactionType.COMMISSION_DEDUCTED), eq(threadId.toString()),
+                eq("nego_commission_wallet_" + threadId),
+                eq("EUR"), eq(new BigDecimal("5.00")), eq(new BigDecimal("655.750000")));
+        verify(walletService, never()).getBalance(travelerId, "EUR");
+        assertThat(thread.getCommissionStatus()).isEqualTo("CHARGED");
+        assertThat(thread.getCommissionChargedVia()).isEqualTo("WALLET");
+    }
+
+    @Test
+    void settleNegotiationCommission_threadEurWalletXof_insufficientAfterConversion_returnsInsufficientInTravelerCurrency() {
+        UUID travelerId = UUID.randomUUID();
+        UUID senderId = UUID.randomUUID();
+        UUID threadId = UUID.randomUUID();
+        NegotiationThreadEntity thread = threadWithId(threadId);
+        UserEntity traveler = travelerWithCard(travelerId, false);
+
+        when(negotiationThreadRepository.findById(threadId)).thenReturn(Optional.of(thread));
+        when(commissionRateResolver.resolve(eq(travelerId), eq(senderId), isNull(), isNull(), any()))
+                .thenReturn(new BigDecimal("0.05"));
+        when(activeCurrencyResolver.resolve(travelerId)).thenReturn("XOF");
+        when(exchangeRateService.convert(new BigDecimal("5.00"), "EUR", "XOF"))
+                .thenReturn(new BigDecimal("3278.75"));
+        when(walletService.getBalance(travelerId, "XOF")).thenReturn(new BigDecimal("100.00"));
+        when(userRepo.findById(travelerId)).thenReturn(Optional.of(traveler));
+
+        AcceptBidResponse response = service.settleNegotiationCommission(
+                travelerId, senderId, threadId, new BigDecimal("100.00"), CommissionSource.WALLET_FIRST);
+
+        assertThat(response.status()).isEqualTo(AcceptanceStatusDto.INSUFFICIENT_WALLET);
+        assertThat(response.currency()).isEqualTo("XOF");
+        assertThat(response.availableBalance()).isEqualByComparingTo(new BigDecimal("100.00"));
+        assertThat(response.requiredCommission()).isEqualByComparingTo(new BigDecimal("3278.75"));
+        verify(walletService, never()).debit(any(), any(), any(), any(), any(), any());
+        verify(walletService, never()).debit(any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     // Choix explicite de la carte par le voyageur après un solde insuffisant.

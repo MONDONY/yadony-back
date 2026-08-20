@@ -11,6 +11,8 @@ import com.yadony.api.matching.AnnouncementService;
 import com.yadony.api.matching.AnnouncementStatus;
 import com.yadony.api.matching.TransportMode;
 import com.yadony.api.matching.dto.AnnouncementSearchResponse;
+import com.yadony.api.payments.currency.ExchangeRateEntity;
+import com.yadony.api.payments.currency.ExchangeRateRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -39,15 +41,27 @@ class UserBusinessPrefsAnnouncementsCacheIntegrationTest {
     @Autowired private UserBusinessPrefsRepository userBusinessPrefsRepository;
     @Autowired private UserRepository userRepository;
     @Autowired private CacheManager cacheManager;
+    @Autowired private ExchangeRateRepository exchangeRateRepository;
 
     @BeforeEach
     void cleanDb() {
         if (cacheManager.getCache("announcements-search") != null) {
             cacheManager.getCache("announcements-search").clear();
         }
+        if (cacheManager.getCache("exchange-rates") != null) {
+            cacheManager.getCache("exchange-rates").clear();
+        }
         userBusinessPrefsRepository.deleteAll();
         announcementRepository.deleteAll();
         userRepository.deleteAll();
+
+        // Le profil test tourne sur H2 (Flyway desactive), sans le seed de V226 :
+        // le feed multidevise (tache 10) convertit desormais le prix de chaque
+        // annonce vers la devise du viewer, ce qui exige un taux pour les deux
+        // devises de ce scenario.
+        exchangeRateRepository.deleteAll();
+        exchangeRateRepository.save(new ExchangeRateEntity("EUR", new java.math.BigDecimal("1")));
+        exchangeRateRepository.save(new ExchangeRateEntity("CAD", new java.math.BigDecimal("1.47")));
     }
 
     @Test
@@ -56,24 +70,29 @@ class UserBusinessPrefsAnnouncementsCacheIntegrationTest {
         UserEntity cadTraveler = persistUser("traveler-cad-" + UUID.randomUUID(), "Cad");
         UserEntity eurTraveler = persistUser("traveler-eur-" + UUID.randomUUID(), "Eur");
 
-        // La devise n'est plus reçue directement : on la fait dériver du pays choisi
-        // (CA -> CAD, FR -> EUR via CountryCatalog), le reste du scénario est inchangé.
-        userBusinessPrefsService.upsert(viewer.getFirebaseUid(), prefsForCountry("CA"));
+        // La devise est de nouveau une donnée propre (tâche 4) : elle se choisit
+        // directement, indépendamment du pays, le reste du scénario est inchangé.
+        userBusinessPrefsService.upsert(viewer.getFirebaseUid(), prefsForCurrency("CAD"));
 
         AnnouncementEntity cadAnnouncement = persistAnnouncement(cadTraveler.getId(), "CAD", "Montreal");
         AnnouncementEntity eurAnnouncement = persistAnnouncement(eurTraveler.getId(), "EUR", "Paris");
 
+        // Le fil est multidevise (tache 10) : les deux annonces apparaissent quelle que
+        // soit la devise du viewer, seul le prix affiche est converti. La cle de cache
+        // (@Cacheable sur searchAnnouncements) ne porte pas la devise du viewer -- c'est
+        // upsert() qui doit l'evincer explicitement, ce que ce test verifie via la
+        // presence/absence de l'annonce supprimee plutot que via un filtrage par devise.
         Page<AnnouncementSearchResponse> firstSearch = search(viewer.getFirebaseUid());
         assertThat(firstSearch.getContent()).extracting(AnnouncementSearchResponse::id)
-                .containsExactly(cadAnnouncement.getId());
+                .containsExactlyInAnyOrder(cadAnnouncement.getId(), eurAnnouncement.getId());
 
         announcementRepository.deleteById(cadAnnouncement.getId());
 
         Page<AnnouncementSearchResponse> cachedSearch = search(viewer.getFirebaseUid());
         assertThat(cachedSearch.getContent()).extracting(AnnouncementSearchResponse::id)
-                .containsExactly(cadAnnouncement.getId());
+                .containsExactlyInAnyOrder(cadAnnouncement.getId(), eurAnnouncement.getId());
 
-        userBusinessPrefsService.upsert(viewer.getFirebaseUid(), prefsForCountry("FR"));
+        userBusinessPrefsService.upsert(viewer.getFirebaseUid(), prefsForCurrency("EUR"));
 
         Page<AnnouncementSearchResponse> afterEviction = search(viewer.getFirebaseUid());
         assertThat(afterEviction.getContent()).extracting(AnnouncementSearchResponse::id)
@@ -87,8 +106,8 @@ class UserBusinessPrefsAnnouncementsCacheIntegrationTest {
                 "date", "asc", PageRequest.of(0, 10), viewerFirebaseUid, null);
     }
 
-    private UserBusinessPrefsDto prefsForCountry(String countryIso2) {
-        return UserBusinessPrefsDto.defaults().withCountry(countryIso2);
+    private UserBusinessPrefsDto prefsForCurrency(String currencyCode) {
+        return UserBusinessPrefsDto.defaults().withCurrencyCode(currencyCode);
     }
 
     private UserEntity persistUser(String firebaseUid, String firstName) {

@@ -34,7 +34,13 @@ public record PackageRequestSearchResponse(
     UUID matchedTripId,
     /** Date de départ du trajet retenu. Null hors filtre matchingMyTrips. */
     LocalDate matchedTripDepartureDate,
-    String currency
+    String currency,
+    /** Moyens de paiement effectivement disponibles pour cette demande, du point de vue du
+     *  voyageur qui la consulte : carte si ce voyageur a un compte Stripe Connect actif ET
+     *  que la devise l'autorise, espèces toujours. Même règle que {@code AnnouncementResponse}
+     *  (voir {@code AnnouncementPaymentRails}), calculée ici pour le voyageur appelant plutôt
+     *  que pour un voyageur propriétaire fixe (une demande n'a pas de voyageur assigné). */
+    Set<PaymentMethod> availablePaymentMethods
 ) {
     public record SenderPublicProfile(UUID id, String displayName, double averageRating, int totalRatings, boolean kycVerified, String avatarUrl) {}
 
@@ -48,6 +54,7 @@ public record PackageRequestSearchResponse(
                 targetPriceEur, negotiable, photoUrl,
                 pickupNeighborhood, deliveryNeighborhood,
                 sender, acceptedPaymentMethods, photos, isFavorite, urgent,
-                info.matchScore(), info.tripId(), info.tripDepartureDate(), currency);
+                info.matchScore(), info.tripId(), info.tripDepartureDate(), currency,
+                availablePaymentMethods);
     }
 }

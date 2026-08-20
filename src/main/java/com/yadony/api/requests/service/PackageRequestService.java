@@ -152,7 +152,7 @@ public class PackageRequestService {
 
     @Transactional
     public PackageRequestResponse create(UUID senderId, PackageRequestCreateRequest req) {
-        return toResponse(createAndReturnEntity(senderId, req));
+        return toResponse(createAndReturnEntity(senderId, req), senderId);
     }
 
     /**
@@ -200,6 +200,26 @@ public class PackageRequestService {
                     "Publishing Suspended",
                     "La publication est suspendue. Contactez le support.");
         }
+    }
+
+    /**
+     * Devise de la demande à la création : choisie par l'expéditeur si fournie et
+     * valide, sinon repli sur {@link ActiveCurrencyResolver#resolve} (portefeuille,
+     * sinon pays). Un client qui n'envoie pas de devise (champ omis) garde le
+     * comportement historique.
+     */
+    private String resolvePackageRequestCurrency(String requestedCurrency, UUID senderId) {
+        if (requestedCurrency == null || requestedCurrency.isBlank()) {
+            return activeCurrencyResolver.resolve(senderId);
+        }
+        com.yadony.api.payments.currency.SupportedCurrency validated =
+                com.yadony.api.payments.currency.SupportedCurrency.fromCode(requestedCurrency);
+        if (validated == null) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "currency-unsupported", "Currency Unsupported",
+                    "Cette devise n'est pas prise en charge par yadony.");
+        }
+        return validated.code().toUpperCase(java.util.Locale.ROOT);
     }
 
     @Transactional
@@ -253,7 +273,7 @@ public class PackageRequestService {
 
         PackageRequestEntity entity = new PackageRequestEntity();
         entity.setSenderId(senderId);
-        entity.setCurrency(activeCurrencyResolver.resolve(senderId));
+        entity.setCurrency(resolvePackageRequestCurrency(req.currency(), senderId));
         entity.setDepartureCity(req.departureCity());
         entity.setArrivalCity(req.arrivalCity());
         entity.setDesiredDate(req.desiredDate());
@@ -398,7 +418,7 @@ public class PackageRequestService {
         auditService.log("PACKAGE_REQUEST", saved.getId(), "UPDATED", callerUid,
             Map.of("corridor", saved.getDepartureCity() + "->" + saved.getArrivalCity()));
 
-        return toResponse(saved);
+        return toResponse(saved, callerUid);
     }
 
     // ─── publish ─────────────────────────────────────────────────────────────────
@@ -457,7 +477,7 @@ public class PackageRequestService {
         auditService.log("PACKAGE_REQUEST", saved.getId(), "PUBLISHED", callerUid,
             Map.of("corridor", saved.getDepartureCity() + "->" + saved.getArrivalCity()));
 
-        return toResponse(saved);
+        return toResponse(saved, callerUid);
     }
 
     // ─── unpublish ───────────────────────────────────────────────────────────────
@@ -497,7 +517,7 @@ public class PackageRequestService {
         auditService.log("PACKAGE_REQUEST", saved.getId(), "UNPUBLISHED", callerUid,
             Map.of("corridor", saved.getDepartureCity() + "->" + saved.getArrivalCity()));
 
-        return toResponse(saved);
+        return toResponse(saved, callerUid);
     }
 
     // ─── getById ─────────────────────────────────────────────────────────────────
@@ -538,7 +558,8 @@ public class PackageRequestService {
             : threadRepository.findActiveByPackageRequestIdAndTravelerId(requestId, callerUid);
         return toResponse(entity,
             viewerThread.map(com.yadony.api.requests.entity.NegotiationThreadEntity::getId).orElse(null),
-            viewerThread.map(t -> t.getStatus().name()).orElse(null));
+            viewerThread.map(t -> t.getStatus().name()).orElse(null),
+            resolveViewerHasConnect(callerUid));
     }
 
     // ─── findMine ─────────────────────────────────────────────────────────────────
@@ -715,7 +736,7 @@ public class PackageRequestService {
                     saved.getDisclaimerSignedIp()
                 )));
 
-        return toResponse(saved);
+        return toResponse(saved, callerUid);
     }
 
     // ─── search ──────────────────────────────────────────────────────────────────
@@ -725,10 +746,11 @@ public class PackageRequestService {
                                                       Pageable pageable,
                                                       UUID callerId) {
         Set<UUID> favIds = loadFavIds(callerId);
-        Page<PackageRequestEntity> page = repository.findAll(withActiveCurrency(spec, callerId), pageable);
+        boolean viewerHasConnect = resolveViewerHasConnect(callerId);
+        Page<PackageRequestEntity> page = repository.findAll(spec, pageable);
         BatchMaps batch = buildBatchMaps(page.getContent());
         return page.map(e -> packageRequestSearchMapper.toSearchResponse(
-                e, favIds.contains(e.getId()), batch.userMap, batch.cityMap, batch.photoMap));
+                e, favIds.contains(e.getId()), viewerHasConnect, batch.userMap, batch.cityMap, batch.photoMap));
     }
 
     /**
@@ -761,7 +783,7 @@ public class PackageRequestService {
             return new org.springframework.data.domain.PageImpl<>(List.of(), pageable, 0);
         }
 
-        Specification<PackageRequestEntity> restricted = withActiveCurrency(spec, callerId)
+        Specification<PackageRequestEntity> restricted = Specification.where(spec)
                 .and(PackageRequestSpecifications.idIn(matches.keySet()));
 
         List<PackageRequestEntity> sorted = repository.findAll(restricted).stream()
@@ -775,10 +797,11 @@ public class PackageRequestService {
         List<PackageRequestEntity> pageEntities = sorted.subList((int) fromLong, (int) toLong);
 
         Set<UUID> favIds = loadFavIds(callerId);
+        boolean viewerHasConnect = resolveViewerHasConnect(callerId);
         BatchMaps batch = buildBatchMaps(pageEntities);
         List<PackageRequestSearchResponse> content = pageEntities.stream()
                 .map(e -> packageRequestSearchMapper.toSearchResponse(
-                        e, favIds.contains(e.getId()), batch.userMap, batch.cityMap, batch.photoMap))
+                        e, favIds.contains(e.getId()), viewerHasConnect, batch.userMap, batch.cityMap, batch.photoMap))
                 .map(r -> r.withMatch(matches.get(r.id())))
                 .toList();
 
@@ -827,10 +850,11 @@ public class PackageRequestService {
                                                             double radiusKm,
                                                             UUID callerId) {
         Set<UUID> favIds = loadFavIds(callerId);
-        Page<PackageRequestEntity> rawPage = repository.findAll(withActiveCurrency(spec, callerId), pageable);
+        boolean viewerHasConnect = resolveViewerHasConnect(callerId);
+        Page<PackageRequestEntity> rawPage = repository.findAll(spec, pageable);
         BatchMaps batch = buildBatchMaps(rawPage.getContent());
         Page<PackageRequestSearchResponse> mapped = rawPage.map(e -> packageRequestSearchMapper.toSearchResponse(
-                e, favIds.contains(e.getId()), batch.userMap, batch.cityMap, batch.photoMap));
+                e, favIds.contains(e.getId()), viewerHasConnect, batch.userMap, batch.cityMap, batch.photoMap));
         double latD = lat.doubleValue();
         double lngD = lng.doubleValue();
         List<PackageRequestSearchResponse> filtered = mapped.getContent().stream()
@@ -841,13 +865,6 @@ public class PackageRequestService {
             .map(Map.Entry::getKey)
             .toList();
         return new org.springframework.data.domain.PageImpl<>(filtered, pageable, mapped.getTotalElements());
-    }
-
-    private Specification<PackageRequestEntity> withActiveCurrency(
-            Specification<PackageRequestEntity> spec,
-            UUID callerId) {
-        return Specification.where(spec)
-                .and(PackageRequestSpecifications.hasCurrency(activeCurrencyResolver.resolve(callerId)));
     }
 
     /** Immutable value object carrying the three batch-loaded maps for search mapping. */
@@ -891,6 +908,21 @@ public class PackageRequestService {
         return new HashSet<>(favoriteRepository.findTargetIds(callerId, FavoriteTargetType.PACKAGE_REQUEST));
     }
 
+    /**
+     * Statut Stripe Connect du voyageur qui consulte une demande, pour
+     * {@code availablePaymentMethods}. Même contrat que {@link #loadFavIds} : renvoie une
+     * valeur neutre ({@code false}) quand {@code viewerId} est null (appelant anonyme) ou
+     * que l'utilisateur n'existe pas — jamais d'exception ici, ce n'est qu'un affichage.
+     */
+    private boolean resolveViewerHasConnect(UUID viewerId) {
+        if (viewerId == null) {
+            return false;
+        }
+        return userRepository.findById(viewerId)
+                .map(UserEntity::hasActiveStripeConnect)
+                .orElse(false);
+    }
+
     private static double haversineKm(double lat1, double lon1, double lat2, double lon2) {
         final double r = 6371.0;
         double dLat = Math.toRadians(lat2 - lat1);
@@ -905,16 +937,28 @@ public class PackageRequestService {
     // ─── Mappers ─────────────────────────────────────────────────────────────────
 
     PackageRequestResponse toResponse(PackageRequestEntity e) {
-        return toResponse(e, null, null);
+        return toResponse(e, null, null, false);
+    }
+
+    /**
+     * @param viewerId l'utilisateur actuellement authentifié qui consulte cette demande
+     *                 (propriétaire ou voyageur) — détermine {@code availablePaymentMethods}
+     *                 via son statut Stripe Connect, comme {@link #loadFavIds} le fait pour
+     *                 {@code isFavorite} côté recherche.
+     */
+    PackageRequestResponse toResponse(PackageRequestEntity e, UUID viewerId) {
+        return toResponse(e, null, null, resolveViewerHasConnect(viewerId));
     }
 
     PackageRequestResponse toResponse(PackageRequestEntity e, java.util.UUID viewerThreadId,
-                                      String viewerThreadStatus) {
+                                      String viewerThreadStatus, boolean viewerHasConnect) {
         BigDecimal grossPriceEur = e.getTargetPriceEur() != null
             ? PriceBreakdown.fromNet(e.getTargetPriceEur(), commissionProperties.rate()).gross()
             : null;
         List<PackageRequestPhotoResponse> photos = photoService.activePhotos(e.getId());
         String photoUrl = photos.isEmpty() ? e.getPhotoUrl() : photos.get(0).url();
+        Set<PaymentMethod> availablePaymentMethods = com.yadony.api.payments.currency.AnnouncementPaymentRails
+                .availableFor(e.getCurrency(), viewerHasConnect);
         return new PackageRequestResponse(
             e.getId(), e.getSenderId(),
             e.getDepartureCity(), e.getArrivalCity(),
@@ -931,7 +975,8 @@ public class PackageRequestService {
             viewerThreadId,
             viewerThreadStatus,
             e.getPromoCode(),
-            e.getCurrency()
+            e.getCurrency(),
+            availablePaymentMethods
         );
     }
 
@@ -940,9 +985,13 @@ public class PackageRequestService {
      * The {@code isFavorite} flag is supplied by the caller so this method remains pure and testable.
      * Delegates to {@link PackageRequestSearchMapper} so that external packages can also call
      * the mapper directly without injecting this service.
+     *
+     * <p>Sans appelant connu à ce site (aucune méthode publique de ce service n'y délègue
+     * actuellement), le statut Connect du voyageur est inconnu : {@code viewerHasConnect=false},
+     * comme {@link #toResponse(PackageRequestEntity)} pour le même cas.
      */
     public PackageRequestSearchResponse toSearchResponse(PackageRequestEntity e, boolean isFavorite) {
-        return packageRequestSearchMapper.toSearchResponse(e, isFavorite);
+        return packageRequestSearchMapper.toSearchResponse(e, isFavorite, false);
     }
 
     /**

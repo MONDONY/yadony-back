@@ -2,7 +2,6 @@ package com.yadony.api.matching;
 
 import com.yadony.api.auth.KycStatus;
 import com.yadony.api.auth.Role;
-import com.yadony.api.auth.StripeAccountStatus;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserProStatusChangedEvent;
 import com.yadony.api.auth.UserRepository;
@@ -17,6 +16,7 @@ import com.yadony.api.config.ContentCategoryNormalizer;
 import com.yadony.api.config.PlatformSettingsService;
 import com.yadony.api.config.YadonyConfigProperties;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
+import com.yadony.api.payments.currency.ExchangeRateService;
 import com.yadony.api.matching.dto.AnnouncementDetailResponse;
 import com.yadony.api.matching.dto.AnnouncementPriceGridItemResponse;
 import com.yadony.api.matching.dto.AnnouncementRequest;
@@ -57,6 +57,7 @@ import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.YearMonth;
 import java.time.ZoneId;
+import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -90,6 +91,25 @@ public class AnnouncementService {
         return date.atTime(time).atZone(resolved).toOffsetDateTime();
     }
 
+    /**
+     * Devise du trajet à la création : choisie par le voyageur si fournie et valide,
+     * sinon repli sur {@link ActiveCurrencyResolver#resolve} (portefeuille, sinon pays).
+     * Un client qui n'envoie pas de devise (champ omis) garde le comportement historique.
+     */
+    private String resolveAnnouncementCurrency(String requestedCurrency, java.util.UUID travelerId) {
+        if (requestedCurrency == null || requestedCurrency.isBlank()) {
+            return activeCurrencyResolver.resolve(travelerId);
+        }
+        com.yadony.api.payments.currency.SupportedCurrency validated =
+                com.yadony.api.payments.currency.SupportedCurrency.fromCode(requestedCurrency);
+        if (validated == null) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "currency-unsupported", "Currency Unsupported",
+                    "Cette devise n'est pas prise en charge par yadony.");
+        }
+        return validated.code().toUpperCase(java.util.Locale.ROOT);
+    }
+
     private final AnnouncementRepository announcementRepository;
     private final BidRepository bidRepository;
     private final UserRepository userRepository;
@@ -104,6 +124,7 @@ public class AnnouncementService {
     private final StorageService storageService;
     private final FavoriteRepository favoriteRepository;
     private final ActiveCurrencyResolver activeCurrencyResolver;
+    private final ExchangeRateService exchangeRateService;
     private final AnnouncementSearchMapper announcementSearchMapper;
     private final PackageRequestRepository packageRequestRepository;
     private final NegotiationThreadRepository negotiationThreadRepository;
@@ -128,6 +149,7 @@ public class AnnouncementService {
             StorageService storageService,
             FavoriteRepository favoriteRepository,
             ActiveCurrencyResolver activeCurrencyResolver,
+            ExchangeRateService exchangeRateService,
             AnnouncementSearchMapper announcementSearchMapper,
             PackageRequestRepository packageRequestRepository,
             NegotiationThreadRepository negotiationThreadRepository,
@@ -145,6 +167,7 @@ public class AnnouncementService {
         this.storageService = storageService;
         this.favoriteRepository = favoriteRepository;
         this.activeCurrencyResolver = activeCurrencyResolver;
+        this.exchangeRateService = exchangeRateService;
         this.announcementSearchMapper = announcementSearchMapper;
         this.packageRequestRepository = packageRequestRepository;
         this.negotiationThreadRepository = negotiationThreadRepository;
@@ -175,8 +198,7 @@ public class AnnouncementService {
         String viewerCurrency = activeCurrencyResolver.resolve(viewerId);
 
         Specification<AnnouncementEntity> spec = AnnouncementSpecification.hasStatus(AnnouncementStatus.ACTIVE)
-                .and(AnnouncementSpecification.publicOrOpenSurplus())
-                .and(AnnouncementSpecification.hasCurrency(viewerCurrency));
+                .and(AnnouncementSpecification.publicOrOpenSurplus());
 
         if (viewerId != null)
             spec = spec.and(AnnouncementSpecification.notBlockedBy(viewerId));
@@ -237,9 +259,6 @@ public class AnnouncementService {
                     .and(AnnouncementSpecification.idIn(idsInRadius));
         }
 
-        Sort sort = buildSort(sortBy, sortDir);
-        Pageable sortedPageable = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), sort);
-
         // Batch-load favorite trip IDs for the caller (single query, no N+1).
         // Anonymous callers (viewerId == null) get isFavorite=false for all results.
         final Set<UUID> favIds;
@@ -249,11 +268,56 @@ public class AnnouncementService {
             favIds = Set.of();
         }
 
-        Page<AnnouncementEntity> page = announcementRepository.findAll(spec, sortedPageable);
+        List<AnnouncementSearchResponse> content;
+        long totalElements;
 
-        // Batch-load all related data for the page to eliminate N+1 queries.
-        List<UUID> announcementIds = page.getContent().stream().map(AnnouncementEntity::getId).toList();
-        List<UUID> travelerIds = page.getContent().stream().map(AnnouncementEntity::getTravelerId).distinct().toList();
+        if ("price".equalsIgnoreCase(sortBy)) {
+            // Le fil n'étant plus cloisonné par devise (Tâche 10), un tri par prix ne peut
+            // plus s'appuyer sur la valeur brute en base : une liste mêlant EUR/XOF/USD
+            // triée sur pricePerKg brut n'aurait aucun sens. On récupère donc l'ensemble
+            // filtré, on trie en mémoire sur l'équivalent converti dans la devise du
+            // lecteur, puis on pagine manuellement (même pattern que
+            // PackageRequestService#searchMatchingMyTrips).
+            List<AnnouncementEntity> allMatching = announcementRepository.findAll(spec);
+            boolean desc = "desc".equalsIgnoreCase(sortDir);
+            Comparator<AnnouncementEntity> byConvertedPrice = Comparator.comparing(
+                    (AnnouncementEntity a) -> convertedPricePerKg(a, viewerCurrency),
+                    Comparator.nullsLast(Comparator.naturalOrder()));
+            if (desc) {
+                byConvertedPrice = byConvertedPrice.reversed();
+            }
+            Comparator<AnnouncementEntity> comparator = Comparator
+                    .comparing(AnnouncementEntity::isTravelerIsPro).reversed()
+                    .thenComparing(byConvertedPrice)
+                    .thenComparing(AnnouncementEntity::getId);
+            List<AnnouncementEntity> sorted = allMatching.stream().sorted(comparator).toList();
+
+            totalElements = sorted.size();
+            long fromLong = Math.min(pageable.getOffset(), sorted.size());
+            long toLong = Math.min(fromLong + pageable.getPageSize(), sorted.size());
+            List<AnnouncementEntity> pageEntities = sorted.subList((int) fromLong, (int) toLong);
+            content = mapAnnouncements(pageEntities, favIds, viewerCurrency);
+        } else {
+            Sort sort = buildSort(sortBy, sortDir);
+            Pageable sortedPageable = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), sort);
+            Page<AnnouncementEntity> page = announcementRepository.findAll(spec, sortedPageable);
+            totalElements = page.getTotalElements();
+            content = mapAnnouncements(page.getContent(), favIds, viewerCurrency);
+        }
+
+        return new org.springframework.data.domain.PageImpl<>(content, pageable, totalElements);
+    }
+
+    /**
+     * Batch-loads related data (travelers, bid counts, grid items) for a page of entities,
+     * maps each to {@link AnnouncementSearchResponse}, then enriches the response with the
+     * price equivalent converted into {@code viewerCurrency} (Tâche 10). Shared by both
+     * branches of {@link #searchAnnouncements} (tri par prix en mémoire vs. tri en base).
+     */
+    private List<AnnouncementSearchResponse> mapAnnouncements(List<AnnouncementEntity> entities,
+                                                                Set<UUID> favIds, String viewerCurrency) {
+        List<UUID> announcementIds = entities.stream().map(AnnouncementEntity::getId).toList();
+        List<UUID> travelerIds = entities.stream().map(AnnouncementEntity::getTravelerId).distinct().toList();
 
         Map<UUID, UserEntity> userMap = userRepository.findAllById(travelerIds).stream()
                 .collect(Collectors.toMap(UserEntity::getId, u -> u, (a2, b2) -> a2));
@@ -269,14 +333,30 @@ public class AnnouncementService {
         // priceGridService does not expose a batch API yet; left per-row only for MIXED announcements.
         // Non-MIXED rows get an empty list directly in the mapper.
         Map<UUID, List<AnnouncementPriceGridItemResponse>> gridItemMap = new HashMap<>();
-        for (AnnouncementEntity a : page.getContent()) {
+        for (AnnouncementEntity a : entities) {
             if (a.getPricingMode() == PricingMode.MIXED) {
                 gridItemMap.put(a.getId(), priceGridService.getAnnouncementGridItems(a.getId(), a.getTravelerId()));
             }
         }
 
-        return page.map(a -> announcementSearchMapper.toSearchResponse(
-                a, favIds.contains(a.getId()), userMap, bidCountMap, gridItemMap));
+        List<AnnouncementSearchResponse> result = new java.util.ArrayList<>(entities.size());
+        for (AnnouncementEntity a : entities) {
+            AnnouncementSearchResponse base = announcementSearchMapper.toSearchResponse(
+                    a, favIds.contains(a.getId()), userMap, bidCountMap, gridItemMap);
+            result.add(base.withConvertedPrice(convertedPricePerKg(a, viewerCurrency), viewerCurrency));
+        }
+        return result;
+    }
+
+    /**
+     * Équivalent de {@code pricePerKg} dans la devise du lecteur. {@code null} quand
+     * {@code pricePerKg} est lui-même null (mode MIXED sans prix au kilo) : rien à convertir.
+     */
+    private java.math.BigDecimal convertedPricePerKg(AnnouncementEntity entity, String viewerCurrency) {
+        if (entity.getPricePerKg() == null) {
+            return null;
+        }
+        return exchangeRateService.convert(entity.getPricePerKg(), entity.getCurrency(), viewerCurrency);
     }
 
     private Sort buildSort(String sortBy, String sortDir) {
@@ -371,8 +451,7 @@ public class AnnouncementService {
 
         AnnouncementEntity announcement = new AnnouncementEntity();
         announcement.setTravelerId(user.getId());
-        String creatorCurrency = activeCurrencyResolver.resolve(user.getId());
-        announcement.setCurrency(creatorCurrency);
+        announcement.setCurrency(resolveAnnouncementCurrency(request.currency(), user.getId()));
         announcement.setTravelerIsPro(user.isProAccount());
         announcement.setDepartureCity(request.departureCity());
         announcement.setArrivalCity(request.arrivalCity());
@@ -710,7 +789,10 @@ public class AnnouncementService {
                 announcement.getHandoverDeadline(),
                 announcement.getCurrency(),
                 arrivalInstructions,
-                announcement.isNegotiable()
+                announcement.isNegotiable(),
+                com.yadony.api.payments.currency.AnnouncementPaymentRails.availableFor(
+                        announcement.getCurrency(),
+                        traveler != null && traveler.hasActiveStripeConnect())
         );
     }
 
@@ -889,7 +971,10 @@ public class AnnouncementService {
                 saved.getHandoverDeadline(),
                 saved.getCurrency(),
                 saved.getArrivalInstructions(),
-                saved.isNegotiable()
+                saved.isNegotiable(),
+                com.yadony.api.payments.currency.AnnouncementPaymentRails.availableFor(
+                        saved.getCurrency(),
+                        user.hasActiveStripeConnect())
         );
     }
 
@@ -1184,7 +1269,7 @@ public class AnnouncementService {
     private void assertStripeCapability(UserEntity user, Set<PaymentMethod> methods) {
         if (enforceStripeOnboarding
                 && methods.contains(PaymentMethod.STRIPE)
-                && user.getStripeAccountStatus() != StripeAccountStatus.ONBOARDING_COMPLETE) {
+                && !user.hasActiveStripeConnect()) {
             throw new YadonyBusinessException(
                     HttpStatus.FORBIDDEN,
                     "stripe-onboarding-incomplete",
@@ -1468,6 +1553,11 @@ public class AnnouncementService {
     }
 
     private AnnouncementResponse toResponse(AnnouncementEntity entity) {
+        UserEntity traveler = userRepository.findById(entity.getTravelerId()).orElse(null);
+        boolean travelerHasConnect = traveler != null && traveler.hasActiveStripeConnect();
+        java.util.Set<PaymentMethod> availablePaymentMethods =
+                com.yadony.api.payments.currency.AnnouncementPaymentRails.availableFor(
+                        entity.getCurrency(), travelerHasConnect);
         long pendingBidCount = bidRepository.countVisibleByAnnouncementId(entity.getId());
         long confirmedParcelCount = bidRepository.countByAnnouncementIdAndStatusIn(
                 entity.getId(),
@@ -1516,7 +1606,8 @@ public class AnnouncementService {
                 flagService.getFlag(entity.getArrivalCountryCode()),
                 entity.getHandoverDeadline(),
                 entity.getCurrency(),
-                entity.isNegotiable()
+                entity.isNegotiable(),
+                availablePaymentMethods
         );
     }
 
@@ -1546,7 +1637,7 @@ public class AnnouncementService {
         if (requested == null || requested.isEmpty()) {
             // Défaut aligné sur la capacité réelle : jamais STRIPE pour un
             // voyageur sans onboarding complet (le trajet serait invendable).
-            return traveler.getStripeAccountStatus() == StripeAccountStatus.ONBOARDING_COMPLETE
+            return traveler.hasActiveStripeConnect()
                     ? EnumSet.of(PaymentMethod.STRIPE, PaymentMethod.CASH)
                     : EnumSet.of(PaymentMethod.CASH);
         }

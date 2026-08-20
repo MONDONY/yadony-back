@@ -9,6 +9,7 @@ import com.yadony.api.matching.dto.AddressDto;
 import com.yadony.api.matching.dto.AnnouncementPriceGridItemResponse;
 import com.yadony.api.matching.dto.AnnouncementSearchResponse;
 import com.yadony.api.matching.dto.TravelerProfileDto;
+import com.yadony.api.payments.currency.AnnouncementPaymentRails;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -88,6 +89,9 @@ public class AnnouncementSearchMapper {
                         storageService.avatarUrl(traveler.getAvatarUrl()),
                         !traveler.isContactKycOnly())
                 : null;
+        Set<com.yadony.api.payments.cash.PaymentMethod> availablePaymentMethods =
+                AnnouncementPaymentRails.availableFor(entity.getCurrency(),
+                        traveler != null && traveler.hasActiveStripeConnect());
         long bidsCount = bidCountMap.getOrDefault(entity.getId(), 0L);
         List<AnnouncementPriceGridItemResponse> gridItems =
                 entity.getPricingMode() == PricingMode.MIXED
@@ -118,7 +122,9 @@ public class AnnouncementSearchMapper {
                 isFavorite,
                 computeUrgent(entity.getDepartureDate()),
                 entity.getCurrency(),
-                entity.isNegotiable()
+                entity.isNegotiable(),
+                availablePaymentMethods,
+                null, null
         );
     }
 
@@ -144,6 +150,9 @@ public class AnnouncementSearchMapper {
                         storageService.avatarUrl(traveler.getAvatarUrl()),
                         !traveler.isContactKycOnly())
                 : null;
+        Set<com.yadony.api.payments.cash.PaymentMethod> availablePaymentMethods =
+                AnnouncementPaymentRails.availableFor(entity.getCurrency(),
+                        traveler != null && traveler.hasActiveStripeConnect());
         long bidsCount = bidRepository.countVisibleByAnnouncementId(entity.getId());
         List<AnnouncementPriceGridItemResponse> gridItems =
                 entity.getPricingMode() == PricingMode.MIXED
@@ -174,7 +183,9 @@ public class AnnouncementSearchMapper {
                 isFavorite,
                 computeUrgent(entity.getDepartureDate()),
                 entity.getCurrency(),
-                entity.isNegotiable()
+                entity.isNegotiable(),
+                availablePaymentMethods,
+                null, null
         );
     }
 
