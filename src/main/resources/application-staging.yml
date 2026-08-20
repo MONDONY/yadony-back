@@ -16,6 +16,11 @@ logging:
     com.yadony.api: DEBUG
     org.springframework.security: INFO
 
+sentry:
+  dsn: ${SENTRY_DSN:}
+  environment: staging
+  enabled: true
+
 spring:
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://yadony_db_staging:5432/yadony_staging}

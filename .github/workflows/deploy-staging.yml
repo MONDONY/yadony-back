@@ -140,6 +140,9 @@ jobs:
           STRIPE_WEBHOOK_PAYMENTS_SECRET=${{ secrets.STRIPE_WEBHOOK_PAYMENTS_SECRET }}
           STRIPE_WEBHOOK_KYC_SECRET=${{ secrets.STRIPE_WEBHOOK_KYC_SECRET }}
           SENTRY_DSN=${{ secrets.SENTRY_DSN }}
+          SENTRY_WEBHOOK_SECRET=${{ secrets.SENTRY_WEBHOOK_SECRET }}
+          TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
           GOOGLE_PLACES_API_KEY=${{ secrets.GOOGLE_PLACES_API_KEY }}
           AWS_S3_ENDPOINT=${{ secrets.AWS_S3_ENDPOINT }}
           AWS_S3_REGION=${{ secrets.AWS_S3_REGION }}

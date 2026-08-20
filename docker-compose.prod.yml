@@ -140,9 +140,30 @@ services:
     networks:
       - yadony_internal
 
+  # Surveille l'API (HTTP) et la DB (TCP) indépendamment de la stack Grafana Cloud
+  # (voir alloy ci-dessus, remote_write actuellement non fonctionnel — cf. tache
+  # separee "Fix broken Alloy->Prometheus wiring in prod compose"). Uptime Kuma
+  # ne depend d'aucune autre brique observabilite : detecte une panne meme si
+  # tout le reste de la stack monitoring est cassee. Notification Telegram
+  # configuree via son UI (pas de provisioning fichier natif).
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    container_name: yadony_uptime_kuma
+    restart: unless-stopped
+    volumes:
+      - yadony_uptime_kuma_data:/app/data
+    networks:
+      - yadony_internal
+    ports:
+      - "3001:3001"
+    depends_on:
+      - api
+      - db
+
 volumes:
   yadony_db_prod_data:
   yadony_alloy_data:
+  yadony_uptime_kuma_data:
 
 networks:
   yadony_internal:

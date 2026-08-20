@@ -195,6 +195,9 @@ services:
       GF_SECURITY_ADMIN_USER: admin
       GF_SERVER_ROOT_URL: http://141.95.41.96:3000
       GF_INSTALL_PLUGINS: grafana-piechart-panel
+      # Lus par les fichiers de provisioning alerting/contactpoints.yaml via $__env{}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
     volumes:
       - yadony_grafana_data:/var/lib/grafana
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
@@ -205,11 +208,29 @@ services:
     depends_on:
       - prometheus
 
+  # Surveille l'API (HTTP) et la DB (TCP) indépendamment des dashboards Grafana :
+  # continue de détecter une panne même si la stack Prometheus/Grafana est down.
+  # Notification Telegram configurée via son UI (pas de provisioning fichier natif).
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    container_name: yadony_uptime_kuma
+    restart: unless-stopped
+    volumes:
+      - yadony_uptime_kuma_data:/app/data
+    networks:
+      - yadony_internal
+    ports:
+      - "3001:3001"
+    depends_on:
+      - api
+      - db
+
 volumes:
   yadony_db_staging_data:
   yadony_alloy_data:
   yadony_prometheus_data:
   yadony_grafana_data:
+  yadony_uptime_kuma_data:
 
 networks:
   yadony_internal:

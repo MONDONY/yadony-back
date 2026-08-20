@@ -25,10 +25,11 @@ spring:
   flyway:
     ignore-migration-patterns: "*:missing"
 
-# Sentry disabled in dev
+# Sentry disabled in dev by default (opt-in via SENTRY_ENABLED=true if needed locally)
 sentry:
-  dsn: ""
-  enabled: false
+  dsn: ${SENTRY_DSN:}
+  environment: dev
+  enabled: ${SENTRY_ENABLED:false}
 
 # Cloudflare R2 (S3-compatible)
 aws:
