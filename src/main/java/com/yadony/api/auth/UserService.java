@@ -62,7 +62,10 @@ public class UserService {
 
     /** Un solde wallet réel (rechargé par carte, cf. WalletTopupOrchestrator) non dépensé bloque
      *  la suppression : cet argent deviendrait orphelin et irrécupérable une fois le compte
-     *  Firebase supprimé (aucun flow de remboursement wallet n'existe, contrairement à l'escrow). */
+     *  Firebase supprimé. Aucun remboursement automatique n'existe côté Stripe — l'utilisateur
+     *  bloqué ouvre un ticket via {@code WalletRefundRequestService#request}, un admin rembourse
+     *  manuellement hors-app puis résout le ticket, ce qui débite le wallet à zéro et débloque
+     *  cette suppression. */
     public boolean hasWalletBalance(UUID userId) {
         // Un utilisateur a un portefeuille par devise : n'interroger que l'EUR
         // laisserait un solde XOF/USD devenir orphelin à la suppression.

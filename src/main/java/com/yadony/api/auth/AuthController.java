@@ -8,6 +8,7 @@ import com.yadony.api.auth.dto.RegisterRequest;
 import com.yadony.api.auth.dto.UpdateProfileRequest;
 import com.yadony.api.auth.dto.UpgradeToProRequest;
 import com.yadony.api.auth.dto.UserResponse;
+import com.yadony.api.auth.dto.WalletRefundRequestResponse;
 import com.yadony.api.common.YadonyBusinessException;
 import com.google.firebase.auth.FirebaseToken;
 import jakarta.validation.Valid;
@@ -98,6 +99,15 @@ public class AuthController {
     public ResponseEntity<DeletionEligibilityResponse> checkDeletionEligibility() {
         String firebaseUid = requireFirebaseUid();
         return ResponseEntity.ok(authService.checkDeletionEligibility(firebaseUid));
+    }
+
+    /** Solde wallet bloquant la suppression → ouvre un ticket de remboursement manuel
+     *  (cf. {@code WalletRefundRequestService}). Ne débloque pas la suppression elle-même :
+     *  un admin doit résoudre le ticket après remboursement Stripe hors-app. */
+    @PostMapping("/me/wallet-refund-request")
+    public ResponseEntity<java.util.List<WalletRefundRequestResponse>> requestWalletRefund() {
+        String firebaseUid = requireFirebaseUid();
+        return ResponseEntity.ok(authService.requestWalletRefund(firebaseUid));
     }
 
     @DeleteMapping("/me")

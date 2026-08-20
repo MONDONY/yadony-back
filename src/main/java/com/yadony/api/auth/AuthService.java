@@ -9,10 +9,12 @@ import com.yadony.api.auth.dto.RegisterRequest;
 import com.yadony.api.auth.dto.UpdateProfileRequest;
 import com.yadony.api.auth.dto.UpgradeToProRequest;
 import com.yadony.api.auth.dto.UserResponse;
+import com.yadony.api.auth.dto.WalletRefundRequestResponse;
 import com.yadony.api.auth.events.UserRegisteredEvent;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
+import com.yadony.api.payments.wallet.WalletRefundRequestService;
 import com.google.firebase.auth.FirebaseToken;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -50,6 +52,7 @@ public class AuthService {
     private final AdminAuthService adminAuthService;
     private final FirebaseContactService firebaseContact;
     private final UsernameGenerator usernameGenerator;
+    private final WalletRefundRequestService walletRefundRequestService;
 
     public AuthService(UserRepository userRepository,
                        AuditService auditService,
@@ -60,7 +63,8 @@ public class AuthService {
                        StorageService storageService,
                        AdminAuthService adminAuthService,
                        FirebaseContactService firebaseContact,
-                       UsernameGenerator usernameGenerator) {
+                       UsernameGenerator usernameGenerator,
+                       WalletRefundRequestService walletRefundRequestService) {
         this.userRepository = userRepository;
         this.auditService = auditService;
         this.userService = userService;
@@ -71,6 +75,7 @@ public class AuthService {
         this.adminAuthService = adminAuthService;
         this.firebaseContact = firebaseContact;
         this.usernameGenerator = usernameGenerator;
+        this.walletRefundRequestService = walletRefundRequestService;
     }
 
     @Transactional
@@ -302,6 +307,17 @@ public class AuthService {
     // Story 9.8 — Vérification lecture seule avant tentative de suppression (cf. UserService).
     public DeletionEligibilityResponse checkDeletionEligibility(String firebaseUid) {
         return userService.checkDeletionEligibility(firebaseUid);
+    }
+
+    /** Solde wallet bloquant la suppression (cf. {@link #checkDeletionEligibility}) : ouvre un
+     *  ticket de remboursement manuel pour chaque devise en solde positif. */
+    public List<WalletRefundRequestResponse> requestWalletRefund(String firebaseUid) {
+        UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
+                .orElseThrow(() -> new YadonyBusinessException(
+                        HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
+        return walletRefundRequestService.request(user.getId()).stream()
+                .map(WalletRefundRequestResponse::from)
+                .collect(Collectors.toList());
     }
 
     /**
