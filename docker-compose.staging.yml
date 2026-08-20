@@ -195,6 +195,9 @@ services:
       GF_SECURITY_ADMIN_USER: admin
       GF_SERVER_ROOT_URL: http://141.95.41.96:3000
       GF_INSTALL_PLUGINS: grafana-piechart-panel
+      # Lus par les fichiers de provisioning alerting/contactpoints.yaml via $__env{}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
     volumes:
       - yadony_grafana_data:/var/lib/grafana
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
