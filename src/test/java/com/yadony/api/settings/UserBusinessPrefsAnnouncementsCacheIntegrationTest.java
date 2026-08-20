@@ -56,9 +56,9 @@ class UserBusinessPrefsAnnouncementsCacheIntegrationTest {
         UserEntity cadTraveler = persistUser("traveler-cad-" + UUID.randomUUID(), "Cad");
         UserEntity eurTraveler = persistUser("traveler-eur-" + UUID.randomUUID(), "Eur");
 
-        // La devise n'est plus reçue directement : on la fait dériver du pays choisi
-        // (CA -> CAD, FR -> EUR via CountryCatalog), le reste du scénario est inchangé.
-        userBusinessPrefsService.upsert(viewer.getFirebaseUid(), prefsForCountry("CA"));
+        // La devise est de nouveau une donnée propre (tâche 4) : elle se choisit
+        // directement, indépendamment du pays, le reste du scénario est inchangé.
+        userBusinessPrefsService.upsert(viewer.getFirebaseUid(), prefsForCurrency("CAD"));
 
         AnnouncementEntity cadAnnouncement = persistAnnouncement(cadTraveler.getId(), "CAD", "Montreal");
         AnnouncementEntity eurAnnouncement = persistAnnouncement(eurTraveler.getId(), "EUR", "Paris");
@@ -73,7 +73,7 @@ class UserBusinessPrefsAnnouncementsCacheIntegrationTest {
         assertThat(cachedSearch.getContent()).extracting(AnnouncementSearchResponse::id)
                 .containsExactly(cadAnnouncement.getId());
 
-        userBusinessPrefsService.upsert(viewer.getFirebaseUid(), prefsForCountry("FR"));
+        userBusinessPrefsService.upsert(viewer.getFirebaseUid(), prefsForCurrency("EUR"));
 
         Page<AnnouncementSearchResponse> afterEviction = search(viewer.getFirebaseUid());
         assertThat(afterEviction.getContent()).extracting(AnnouncementSearchResponse::id)
@@ -87,8 +87,8 @@ class UserBusinessPrefsAnnouncementsCacheIntegrationTest {
                 "date", "asc", PageRequest.of(0, 10), viewerFirebaseUid, null);
     }
 
-    private UserBusinessPrefsDto prefsForCountry(String countryIso2) {
-        return UserBusinessPrefsDto.defaults().withCountry(countryIso2);
+    private UserBusinessPrefsDto prefsForCurrency(String currencyCode) {
+        return UserBusinessPrefsDto.defaults().withCurrencyCode(currencyCode);
     }
 
     private UserEntity persistUser(String firebaseUid, String firstName) {
