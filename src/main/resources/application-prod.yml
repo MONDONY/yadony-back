@@ -8,6 +8,11 @@ springdoc:
 server:
   forward-headers-strategy: framework
 
+sentry:
+  dsn: ${SENTRY_DSN:}
+  environment: prod
+  enabled: true
+
 spring:
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://db:5432/yadony_prod}
