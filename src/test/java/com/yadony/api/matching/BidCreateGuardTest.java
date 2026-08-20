@@ -9,9 +9,7 @@ import com.yadony.api.cancellation.CancellationRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.matching.dto.BidRequest;
-import com.yadony.api.payments.currency.CurrencyMatchGuard;
 import com.yadony.api.ratings.RatingRepository;
-import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -19,7 +17,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 
@@ -53,16 +50,7 @@ class BidCreateGuardTest {
     @Mock private com.yadony.api.promo.PromoService promoService;
     @Mock private com.yadony.api.common.StorageService storageService;
     @Mock private BidPhotoService bidPhotoService;
-    @Mock private ActiveCurrencyResolver activeCurrencyResolver;
-
-    @org.junit.jupiter.api.BeforeEach
-    void stubDefaultActiveCurrency() {
-        org.mockito.Mockito.lenient()
-                .when(activeCurrencyResolver.resolve(org.mockito.ArgumentMatchers.any()))
-                .thenReturn("EUR");
-    }
     @Mock private HttpServletRequest httpRequest;
-    @Spy private CurrencyMatchGuard currencyMatchGuard = new CurrencyMatchGuard();
 
     @InjectMocks private BidService bidService;
 
@@ -128,7 +116,6 @@ class BidCreateGuardTest {
         lenient().when(httpRequest.getHeader("X-Forwarded-For")).thenReturn(null);
         lenient().when(httpRequest.getRemoteAddr()).thenReturn("127.0.0.1");
         lenient().when(cancellationRepository.findByBidId(any())).thenReturn(Optional.empty());
-        lenient().when(activeCurrencyResolver.resolve(any())).thenReturn("EUR");
     }
 
     @Test
