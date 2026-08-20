@@ -8,6 +8,7 @@ import com.yadony.api.auth.dto.RegisterRequest;
 import com.yadony.api.auth.dto.UpdateProfileRequest;
 import com.yadony.api.auth.dto.UpgradeToProRequest;
 import com.yadony.api.auth.dto.UserResponse;
+import com.yadony.api.auth.dto.WalletRefundRequestResponse;
 import com.yadony.api.common.YadonyBusinessException;
 import com.google.firebase.auth.FirebaseToken;
 import jakarta.validation.Valid;
@@ -98,6 +99,17 @@ public class AuthController {
     public ResponseEntity<DeletionEligibilityResponse> checkDeletionEligibility() {
         String firebaseUid = requireFirebaseUid();
         return ResponseEntity.ok(authService.checkDeletionEligibility(firebaseUid));
+    }
+
+    /** Demande autonome de remboursement du solde wallet, sans supprimer le compte — ouvre un
+     *  ticket manuel (cf. {@code WalletRefundRequestService}) résolu par un admin après
+     *  remboursement Stripe hors-app. La suppression de compte ouvre déjà ce même ticket
+     *  automatiquement en cas de solde positif ; cet endpoint reste utile pour qui veut être
+     *  remboursé sans supprimer son compte. */
+    @PostMapping("/me/wallet-refund-request")
+    public ResponseEntity<java.util.List<WalletRefundRequestResponse>> requestWalletRefund() {
+        String firebaseUid = requireFirebaseUid();
+        return ResponseEntity.ok(authService.requestWalletRefund(firebaseUid));
     }
 
     @DeleteMapping("/me")

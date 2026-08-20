@@ -9,10 +9,12 @@ import com.yadony.api.auth.dto.RegisterRequest;
 import com.yadony.api.auth.dto.UpdateProfileRequest;
 import com.yadony.api.auth.dto.UpgradeToProRequest;
 import com.yadony.api.auth.dto.UserResponse;
+import com.yadony.api.auth.dto.WalletRefundRequestResponse;
 import com.yadony.api.auth.events.UserRegisteredEvent;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
+import com.yadony.api.payments.wallet.WalletRefundRequestService;
 import com.google.firebase.auth.FirebaseToken;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -50,6 +52,7 @@ public class AuthService {
     private final AdminAuthService adminAuthService;
     private final FirebaseContactService firebaseContact;
     private final UsernameGenerator usernameGenerator;
+    private final WalletRefundRequestService walletRefundRequestService;
 
     public AuthService(UserRepository userRepository,
                        AuditService auditService,
@@ -60,7 +63,8 @@ public class AuthService {
                        StorageService storageService,
                        AdminAuthService adminAuthService,
                        FirebaseContactService firebaseContact,
-                       UsernameGenerator usernameGenerator) {
+                       UsernameGenerator usernameGenerator,
+                       WalletRefundRequestService walletRefundRequestService) {
         this.userRepository = userRepository;
         this.auditService = auditService;
         this.userService = userService;
@@ -71,6 +75,7 @@ public class AuthService {
         this.adminAuthService = adminAuthService;
         this.firebaseContact = firebaseContact;
         this.usernameGenerator = usernameGenerator;
+        this.walletRefundRequestService = walletRefundRequestService;
     }
 
     @Transactional
@@ -304,6 +309,21 @@ public class AuthService {
         return userService.checkDeletionEligibility(firebaseUid);
     }
 
+    /** Demande explicite et autonome de remboursement du solde wallet (ex. l'utilisateur garde
+     *  son compte mais veut récupérer son argent) : ouvre un ticket manuel pour chaque devise
+     *  en solde positif. La suppression de compte ouvre déjà ce même ticket automatiquement
+     *  (cf. {@link UserService#openWalletRefundTicketIfNeeded}) — cet endpoint n'est donc plus
+     *  un prérequis pour supprimer son compte, juste un raccourci pour qui veut être remboursé
+     *  sans attendre. */
+    public List<WalletRefundRequestResponse> requestWalletRefund(String firebaseUid) {
+        UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
+                .orElseThrow(() -> new YadonyBusinessException(
+                        HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
+        return walletRefundRequestService.request(user.getId()).stream()
+                .map(WalletRefundRequestResponse::from)
+                .collect(Collectors.toList());
+    }
+
     /**
      * Suppression immédiate du compte (HARD_IMMEDIATE).
      * Vérifie : statut BANNED → 409, escrow actif → 422, auth_time récent (< 5 min) → 401.
@@ -325,11 +345,11 @@ public class AuthService {
                     "Unprocessable", "Impossible — vous avez des transactions en cours");
         }
 
-        // Un solde wallet réel (rechargé par carte) devient orphelin et irrécupérable une fois
-        // le compte Firebase supprimé plus bas — aucun flow de remboursement wallet n'existe,
-        // contrairement à l'escrow Stripe ci-dessus. Règle portée par UserService pour rester
-        // identique entre suppression immédiate (ici) et suppression J+30 (requestDeletion).
-        userService.assertNoWalletBalance(user.getId());
+        // Un solde wallet réel (rechargé par carte) ouvre un ticket de remboursement
+        // automatique mais ne bloque jamais la suppression (Apple 5.1.1(v)). Règle portée par
+        // UserService pour rester identique entre suppression immédiate (ici) et suppression
+        // J+30 (requestDeletion).
+        userService.openWalletRefundTicketIfNeeded(user.getId());
 
         FirebaseToken decoded = (FirebaseToken) SecurityContextHolder
                 .getContext().getAuthentication().getCredentials();

@@ -53,10 +53,10 @@ public class AdminGdprService {
     /**
      * Exécute immédiatement l'anonymisation d'un compte. <strong>Irréversible.</strong>
      *
-     * <p>Mêmes gardes et mêmes codes de refus que le chemin self-service, portés par
-     * {@link UserService} : escrow actif → 422 {@code active-transactions}, solde wallet non
-     * vide → 422 {@code wallet-balance-not-empty}. Introduire un 409 ici créerait deux
-     * conventions pour un refus identique, déjà mappé par l'application mobile.
+     * <p>Même garde que le chemin self-service, portée par {@link UserService} : escrow actif
+     * → 422 {@code active-transactions}. Un solde wallet positif n'est plus bloquant (Apple
+     * 5.1.1(v)) — un ticket de remboursement est ouvert automatiquement et la finalisation se
+     * poursuit.
      *
      * <p>Un compte déjà finalisé n'est plus visible ({@code @Where(deleted_at IS NULL)}) :
      * un second appel répond 404, ce qui est l'issue attendue pour un geste irréversible.
@@ -83,7 +83,7 @@ public class AdminGdprService {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "active-transactions",
                     "Unprocessable", "Impossible — cet utilisateur a des transactions en cours");
         }
-        userService.assertNoWalletBalance(user.getId());
+        userService.openWalletRefundTicketIfNeeded(user.getId());
 
         // Écrit AVANT finalize() : celui-ci journalise USER_GDPR_DELETION avec l'utilisateur
         // comme acteur. Sans cette entrée, l'administrateur à l'origine du geste ne serait

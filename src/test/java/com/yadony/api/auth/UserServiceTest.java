@@ -7,6 +7,7 @@ import com.yadony.api.kyc.KycRepository;
 import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.wallet.WalletAccountEntity;
 import com.yadony.api.payments.wallet.WalletAccountRepository;
+import com.yadony.api.payments.wallet.WalletRefundRequestService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -37,6 +38,7 @@ class UserServiceTest {
     @Mock private KycRepository kycRepository;
     @Mock private AuditService auditService;
     @Mock private ApplicationEventPublisher eventPublisher;
+    @Mock private WalletRefundRequestService walletRefundRequestService;
 
     @InjectMocks private UserService userService;
 
@@ -142,25 +144,24 @@ class UserServiceTest {
         }
 
         @Test
-        @DisplayName("solde wallet positif → 422 wallet-balance-not-empty")
-        void deleteAccount_positiveWalletBalance_throws422() {
+        @DisplayName("solde wallet positif → ne bloque plus, ticket de remboursement ouvert (Apple 5.1.1(v))")
+        void deleteAccount_positiveWalletBalance_opensTicketAndSucceeds() {
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
             when(paymentRepository.hasActiveEscrowForUser(USER_ID)).thenReturn(false);
             WalletAccountEntity wallet = new WalletAccountEntity();
             wallet.setBalance(java.math.BigDecimal.TEN);
             when(walletAccountRepository.findAllByUserId(USER_ID)).thenReturn(java.util.List.of(wallet));
+            when(userRepository.save(any())).thenReturn(user);
 
-            assertThatThrownBy(() -> userService.deleteAccount(FIREBASE_UID))
-                    .isInstanceOf(YadonyBusinessException.class)
-                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getStatus())
-                            .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY));
+            userService.deleteAccount(FIREBASE_UID);
 
-            verify(userRepository, never()).save(any());
+            assertThat(user.getStatus()).isEqualTo(UserStatus.PENDING_DELETION);
+            verify(walletRefundRequestService).request(USER_ID);
         }
 
         @Test
-        @DisplayName("régression : un solde non-EUR bloque aussi la suppression")
-        void deleteAccount_positiveNonEurBalance_throws422() {
+        @DisplayName("régression : un solde non-EUR ouvre aussi le ticket")
+        void deleteAccount_positiveNonEurBalance_opensTicketAndSucceeds() {
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
             when(paymentRepository.hasActiveEscrowForUser(USER_ID)).thenReturn(false);
             WalletAccountEntity eurWallet = new WalletAccountEntity();
@@ -171,17 +172,16 @@ class UserServiceTest {
             xofWallet.setBalance(new java.math.BigDecimal("50000"));
             when(walletAccountRepository.findAllByUserId(USER_ID))
                     .thenReturn(java.util.List.of(eurWallet, xofWallet));
+            when(userRepository.save(any())).thenReturn(user);
 
-            assertThatThrownBy(() -> userService.deleteAccount(FIREBASE_UID))
-                    .isInstanceOf(YadonyBusinessException.class)
-                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getStatus())
-                            .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY));
+            userService.deleteAccount(FIREBASE_UID);
 
-            verify(userRepository, never()).save(any());
+            assertThat(user.getStatus()).isEqualTo(UserStatus.PENDING_DELETION);
+            verify(walletRefundRequestService).request(USER_ID);
         }
 
         @Test
-        @DisplayName("wallet à solde zéro → pas bloqué par le check wallet")
+        @DisplayName("wallet à solde zéro → pas de ticket ouvert")
         void deleteAccount_zeroWalletBalance_doesNotBlock() {
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
             when(paymentRepository.hasActiveEscrowForUser(USER_ID)).thenReturn(false);
@@ -193,6 +193,7 @@ class UserServiceTest {
             userService.deleteAccount(FIREBASE_UID);
 
             assertThat(user.getStatus()).isEqualTo(UserStatus.PENDING_DELETION);
+            verify(walletRefundRequestService, never()).request(any());
         }
     }
 
@@ -211,6 +212,7 @@ class UserServiceTest {
 
             assertThat(result.canDelete()).isTrue();
             assertThat(result.blockedReasonCode()).isNull();
+            assertThat(result.hasWalletBalance()).isFalse();
             verify(userRepository, never()).save(any());
         }
 
@@ -226,11 +228,12 @@ class UserServiceTest {
 
             assertThat(result.canDelete()).isFalse();
             assertThat(result.blockedReasonCode()).isEqualTo("active-transactions");
+            assertThat(result.hasWalletBalance()).isFalse();
         }
 
         @Test
-        @DisplayName("solde wallet positif → canDelete=false, blockedReasonCode=wallet-balance-not-empty")
-        void positiveWalletBalance_returnsBlocked() {
+        @DisplayName("solde wallet positif → canDelete=true (non bloquant), hasWalletBalance=true")
+        void positiveWalletBalance_returnsEligibleButInformsWalletBalance() {
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
             when(paymentRepository.hasActiveEscrowForUser(USER_ID)).thenReturn(false);
             WalletAccountEntity wallet = new WalletAccountEntity();
@@ -239,8 +242,9 @@ class UserServiceTest {
 
             var result = userService.checkDeletionEligibility(FIREBASE_UID);
 
-            assertThat(result.canDelete()).isFalse();
-            assertThat(result.blockedReasonCode()).isEqualTo("wallet-balance-not-empty");
+            assertThat(result.canDelete()).isTrue();
+            assertThat(result.blockedReasonCode()).isNull();
+            assertThat(result.hasWalletBalance()).isTrue();
         }
 
         @Test

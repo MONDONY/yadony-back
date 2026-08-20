@@ -6,6 +6,7 @@ import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.wallet.WalletAccountEntity;
 import com.yadony.api.payments.wallet.WalletAccountRepository;
+import com.yadony.api.payments.wallet.WalletRefundRequestService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -36,6 +37,7 @@ class UserServiceDeleteAccountTest {
     @Mock private AuditService auditService;
     @Mock private ApplicationEventPublisher eventPublisher;
     @Mock private AccountFinalizationService accountFinalizationService;
+    @Mock private WalletRefundRequestService walletRefundRequestService;
 
     @InjectMocks private UserService userService;
 
@@ -107,21 +109,21 @@ class UserServiceDeleteAccountTest {
         }
 
         @Test
-        @DisplayName("solde wallet positif → 422 wallet-balance-not-empty")
-        void positiveWalletBalance_throws422() {
+        @DisplayName("solde wallet positif → ne bloque plus, ticket ouvert, suppression poursuivie")
+        void positiveWalletBalance_opensTicketAndSucceeds() {
             UserEntity user = makeUser(UserStatus.ACTIVE);
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
             when(paymentRepository.hasActiveEscrowForUser(USER_ID)).thenReturn(false);
             WalletAccountEntity wallet = new WalletAccountEntity();
             wallet.setBalance(java.math.BigDecimal.TEN);
             when(walletAccountRepository.findAllByUserId(USER_ID)).thenReturn(java.util.List.of(wallet));
+            when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-            assertThatThrownBy(() -> userService.requestDeletion(FIREBASE_UID))
-                .isInstanceOf(YadonyBusinessException.class)
-                .extracting("status")
-                .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+            userService.requestDeletion(FIREBASE_UID);
 
-            verify(userRepository, never()).save(any());
+            assertThat(user.getStatus()).isEqualTo(UserStatus.PENDING_DELETION);
+            verify(walletRefundRequestService).request(USER_ID);
+            verify(userRepository).save(any());
         }
 
         @Test

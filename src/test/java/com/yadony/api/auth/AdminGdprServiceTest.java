@@ -128,21 +128,16 @@ class AdminGdprServiceTest {
     }
 
     @Test
-    @DisplayName("exécution : solde wallet non vide → 422 wallet-balance-not-empty via UserService")
-    void executeDeletion_walletBalance_throws422() {
+    @DisplayName("exécution : solde wallet non vide → ne bloque plus, ticket ouvert, finalisation poursuivie")
+    void executeDeletion_walletBalance_opensTicketAndFinalizes() {
         UserEntity user = buildPendingUser();
         when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
         when(userService.hasActiveEscrow(user.getId())).thenReturn(false);
-        doThrow(new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                "wallet-balance-not-empty", "Unprocessable", "Solde wallet non nul"))
-                .when(userService).assertNoWalletBalance(user.getId());
 
-        assertThatThrownBy(() -> service.executeDeletion(user.getId(), ADMIN_ID, "motif", false))
-                .isInstanceOf(YadonyBusinessException.class)
-                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
-                        .isEqualTo("wallet-balance-not-empty"));
+        service.executeDeletion(user.getId(), ADMIN_ID, "motif", false);
 
-        verifyNoInteractions(accountFinalizationService);
+        verify(userService).openWalletRefundTicketIfNeeded(user.getId());
+        verify(accountFinalizationService).finalize(user, FinalizationReason.ADMIN_INITIATED);
     }
 
     @Test

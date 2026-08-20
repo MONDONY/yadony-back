@@ -10,6 +10,7 @@ import com.yadony.api.messaging.FirestoreService;
 import com.yadony.api.notifications.NotificationDispatcher;
 import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.wallet.WalletAccountRepository;
+import com.yadony.api.payments.wallet.WalletRefundRequestService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
@@ -41,6 +42,7 @@ public class UserService {
     private final AccountFinalizationService accountFinalizationService;
     private final FirestoreService firestoreService;
     private final NotificationDispatcher notificationDispatcher;
+    private final WalletRefundRequestService walletRefundRequestService;
 
     public UserService(UserRepository userRepository,
                        PaymentRepository paymentRepository,
@@ -49,7 +51,8 @@ public class UserService {
                        ApplicationEventPublisher eventPublisher,
                        AccountFinalizationService accountFinalizationService,
                        FirestoreService firestoreService,
-                       NotificationDispatcher notificationDispatcher) {
+                       NotificationDispatcher notificationDispatcher,
+                       WalletRefundRequestService walletRefundRequestService) {
         this.userRepository = userRepository;
         this.paymentRepository = paymentRepository;
         this.walletAccountRepository = walletAccountRepository;
@@ -58,11 +61,12 @@ public class UserService {
         this.accountFinalizationService = accountFinalizationService;
         this.firestoreService = firestoreService;
         this.notificationDispatcher = notificationDispatcher;
+        this.walletRefundRequestService = walletRefundRequestService;
     }
 
-    /** Un solde wallet réel (rechargé par carte, cf. WalletTopupOrchestrator) non dépensé bloque
-     *  la suppression : cet argent deviendrait orphelin et irrécupérable une fois le compte
-     *  Firebase supprimé (aucun flow de remboursement wallet n'existe, contrairement à l'escrow). */
+    /** Un solde wallet réel (rechargé par carte, cf. WalletTopupOrchestrator) non dépensé
+     *  deviendrait orphelin une fois le compte Firebase supprimé. Purement informatif : ne
+     *  bloque plus aucune suppression (cf. {@link #openWalletRefundTicketIfNeeded}). */
     public boolean hasWalletBalance(UUID userId) {
         // Un utilisateur a un portefeuille par devise : n'interroger que l'EUR
         // laisserait un solde XOF/USD devenir orphelin à la suppression.
@@ -70,12 +74,17 @@ public class UserService {
                 .anyMatch(w -> w.getBalance().compareTo(BigDecimal.ZERO) > 0);
     }
 
-    /** Variante throwing de {@link #hasWalletBalance}, pour les deux chemins de suppression :
-     *  {@link #requestDeletion} (soft J+30) et {@code AuthService#deleteImmediately} (hard). */
-    public void assertNoWalletBalance(UUID userId) {
+    /** Apple 5.1.1(v) impose que la suppression de compte reste toujours possible en
+     *  self-service — un solde wallet ne doit donc plus jamais la bloquer. À la place, un
+     *  ticket de remboursement est ouvert automatiquement (idempotent, cf.
+     *  {@code WalletRefundRequestService#request}) pour qu'un admin rembourse manuellement
+     *  hors-app après coup ; la suppression se poursuit dans tous les cas. Appelé par les 3
+     *  chemins de suppression : {@link #requestDeletion} (soft J+30), {@code
+     *  AuthService#deleteImmediately} (hard immédiat) et {@code AdminGdprService#executeDeletion}
+     *  (admin). */
+    public void openWalletRefundTicketIfNeeded(UUID userId) {
         if (hasWalletBalance(userId)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-balance-not-empty",
-                    "Unprocessable", "Impossible — vous avez un solde wallet non nul, dépensez-le d'abord");
+            walletRefundRequestService.request(userId);
         }
     }
 
@@ -86,9 +95,11 @@ public class UserService {
     }
 
     /** Story 9.8 — Vérification en lecture seule (aucune écriture, aucune exception) de
-     *  l'éligibilité à la suppression de compte, pour permettre au front de désactiver le
-     *  bouton et d'expliquer pourquoi *avant* que l'utilisateur ne tente réellement l'action.
-     *  Mêmes règles et même ordre que {@link #requestDeletion} : escrow actif d'abord, puis wallet. */
+     *  l'éligibilité à la suppression de compte, pour permettre au front d'expliquer un
+     *  blocage réel *avant* que l'utilisateur ne tente l'action. Seul l'escrow actif bloque
+     *  encore {@code canDelete} (temporaire, se résout de lui-même) — un solde wallet ne
+     *  bloque plus rien (cf. {@link #openWalletRefundTicketIfNeeded}), il est juste signalé
+     *  via {@code hasWalletBalance} pour informer l'utilisateur. */
     @Transactional(readOnly = true)
     public DeletionEligibilityResponse checkDeletionEligibility(String firebaseUid) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
@@ -96,12 +107,9 @@ public class UserService {
                         HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
 
         if (hasActiveEscrow(user.getId())) {
-            return new DeletionEligibilityResponse(false, "active-transactions");
+            return new DeletionEligibilityResponse(false, "active-transactions", false);
         }
-        if (hasWalletBalance(user.getId())) {
-            return new DeletionEligibilityResponse(false, "wallet-balance-not-empty");
-        }
-        return new DeletionEligibilityResponse(true, null);
+        return new DeletionEligibilityResponse(true, null, hasWalletBalance(user.getId()));
     }
 
     // Story 9.5 — Suspension automatique après trop de refus de colis
@@ -144,7 +152,7 @@ public class UserService {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "active-transactions",
                     "Unprocessable", "Impossible — vous avez des transactions en cours");
         }
-        assertNoWalletBalance(user.getId());
+        openWalletRefundTicketIfNeeded(user.getId());
 
         user.setStatus(UserStatus.PENDING_DELETION);
         user.setDeletionRequestedAt(Instant.now());
