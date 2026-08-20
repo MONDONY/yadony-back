@@ -423,6 +423,47 @@ class PackageRequestServiceTest {
             verify(activeCurrencyResolver).resolve(SENDER_ID);
         }
 
+        @Test @DisplayName("devise choisie explicitement (USD) → prévaut sur celle du portefeuille")
+        void create_explicitCurrency_overridesResolvedCurrency() {
+            when(config.maxOpenRequestsPerSender()).thenReturn(10);
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+            when(repository.countBySenderIdAndStatusIn(eq(SENDER_ID), any())).thenReturn(0L);
+            when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            PackageRequestEntity saved = service.createAndReturnEntity(SENDER_ID, requestWithCurrency("USD"));
+
+            assertThat(saved.getCurrency()).isEqualTo("USD");
+            verify(activeCurrencyResolver, never()).resolve(any());
+        }
+
+        @Test @DisplayName("devise absente de la requête → repli sur ActiveCurrencyResolver (comportement historique)")
+        void create_noCurrencyInRequest_fallsBackToResolver() {
+            when(config.maxOpenRequestsPerSender()).thenReturn(10);
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+            when(activeCurrencyResolver.resolve(SENDER_ID)).thenReturn("CAD");
+            when(repository.countBySenderIdAndStatusIn(eq(SENDER_ID), any())).thenReturn(0L);
+            when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            PackageRequestEntity saved = service.createAndReturnEntity(SENDER_ID, requestWithCurrency(null));
+
+            assertThat(saved.getCurrency()).isEqualTo("CAD");
+            verify(activeCurrencyResolver).resolve(SENDER_ID);
+        }
+
+        @Test @DisplayName("devise hors catalogue → 422 currency-unsupported")
+        void create_unsupportedCurrency_throws422() {
+            when(config.maxOpenRequestsPerSender()).thenReturn(10);
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+            when(repository.countBySenderIdAndStatusIn(eq(SENDER_ID), any())).thenReturn(0L);
+
+            assertThatThrownBy(() -> service.createAndReturnEntity(SENDER_ID, requestWithCurrency("JPY")))
+                .isInstanceOf(com.yadony.api.common.YadonyBusinessException.class)
+                .satisfies(ex -> assertThat(((com.yadony.api.common.YadonyBusinessException) ex).getErrorCode())
+                    .isEqualTo("currency-unsupported"));
+
+            verify(repository, never()).save(any());
+        }
+
         // C2 : normalisation à l'écriture — un client pas à jour envoie un libellé/code
         // legacy, la demande doit être persistée avec le libellé canonique.
         @Test @DisplayName("contentCategory legacy ('Hi-fi') → persisté normalisé ('Téléphone & électronique')")
@@ -1497,6 +1538,16 @@ class PackageRequestServiceTest {
             "10e arr", "Plateau",
             true, EnumSet.of(PaymentMethod.STRIPE)
         , List.of(), null);
+    }
+
+    private PackageRequestCreateRequest requestWithCurrency(String currency) {
+        return new PackageRequestCreateRequest(
+            "Paris", "Dakar",
+            LocalDate.now().plusDays(7), 2,
+            new BigDecimal("5"), "vetements",
+            "Cadeau pour ma mère", new BigDecimal("28.00"), null,
+            "10e arr", "Plateau",
+            true, EnumSet.of(PaymentMethod.STRIPE), List.of(), null, null, currency);
     }
 
     // ========== AvatarUrl in SenderPublicProfile ==========

@@ -31,11 +31,17 @@ public record PackageRequestCreateRequest(
     Boolean saveAsDraft,
     // Code promo brut (nullable), saisi à la publication — validation paresseuse
     // au paiement réel, même contrat que BidRequest.promoCode.
-    @Size(max = 50) String promoCode
+    @Size(max = 50) String promoCode,
+    // Devise choisie pour cette demande (ex "USD"). Optionnel : absent ou vide, le
+    // service retombe sur ActiveCurrencyResolver.resolve(senderId) (portefeuille,
+    // sinon pays). Validée contre SupportedCurrency dans PackageRequestService,
+    // jamais ici (422 currency-unsupported, pas une 400 Bean Validation).
+    String currency
 ) {
     /**
-     * Constructeur de compatibilité (sans promoCode) — évite de retoucher tous
-     * les sites d'appel de test existants pour l'ajout de ce champ optionnel.
+     * Constructeur de compatibilité (sans promoCode ni currency) — évite de
+     * retoucher tous les sites d'appel de test existants pour l'ajout de ces
+     * champs optionnels.
      */
     public PackageRequestCreateRequest(
             String departureCity, String arrivalCity, LocalDate desiredDate, int dateToleranceDays,
@@ -44,6 +50,21 @@ public record PackageRequestCreateRequest(
             Set<PaymentMethod> acceptedPaymentMethods, List<String> photoKeys, Boolean saveAsDraft) {
         this(departureCity, arrivalCity, desiredDate, dateToleranceDays, weightKg, contentCategory,
             description, totalBudgetEur, photoUrl, pickupNeighborhood, deliveryNeighborhood, negotiable,
-            acceptedPaymentMethods, photoKeys, saveAsDraft, null);
+            acceptedPaymentMethods, photoKeys, saveAsDraft, null, null);
+    }
+
+    /**
+     * Constructeur de compatibilité (sans currency) — évite de retoucher tous
+     * les sites d'appel de test existants pour l'ajout de ce champ optionnel.
+     */
+    public PackageRequestCreateRequest(
+            String departureCity, String arrivalCity, LocalDate desiredDate, int dateToleranceDays,
+            BigDecimal weightKg, String contentCategory, String description, BigDecimal totalBudgetEur,
+            String photoUrl, String pickupNeighborhood, String deliveryNeighborhood, boolean negotiable,
+            Set<PaymentMethod> acceptedPaymentMethods, List<String> photoKeys, Boolean saveAsDraft,
+            String promoCode) {
+        this(departureCity, arrivalCity, desiredDate, dateToleranceDays, weightKg, contentCategory,
+            description, totalBudgetEur, photoUrl, pickupNeighborhood, deliveryNeighborhood, negotiable,
+            acceptedPaymentMethods, photoKeys, saveAsDraft, promoCode, null);
     }
 }

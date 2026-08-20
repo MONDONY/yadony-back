@@ -202,6 +202,26 @@ public class PackageRequestService {
         }
     }
 
+    /**
+     * Devise de la demande à la création : choisie par l'expéditeur si fournie et
+     * valide, sinon repli sur {@link ActiveCurrencyResolver#resolve} (portefeuille,
+     * sinon pays). Un client qui n'envoie pas de devise (champ omis) garde le
+     * comportement historique.
+     */
+    private String resolvePackageRequestCurrency(String requestedCurrency, UUID senderId) {
+        if (requestedCurrency == null || requestedCurrency.isBlank()) {
+            return activeCurrencyResolver.resolve(senderId);
+        }
+        com.yadony.api.payments.currency.SupportedCurrency validated =
+                com.yadony.api.payments.currency.SupportedCurrency.fromCode(requestedCurrency);
+        if (validated == null) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "currency-unsupported", "Currency Unsupported",
+                    "Cette devise n'est pas prise en charge par yadony.");
+        }
+        return validated.code().toUpperCase(java.util.Locale.ROOT);
+    }
+
     @Transactional
     public PackageRequestEntity createAndReturnEntity(UUID senderId, PackageRequestCreateRequest req) {
         UserEntity sender = userRepository.findById(senderId)
@@ -253,7 +273,7 @@ public class PackageRequestService {
 
         PackageRequestEntity entity = new PackageRequestEntity();
         entity.setSenderId(senderId);
-        entity.setCurrency(activeCurrencyResolver.resolve(senderId));
+        entity.setCurrency(resolvePackageRequestCurrency(req.currency(), senderId));
         entity.setDepartureCity(req.departureCity());
         entity.setArrivalCity(req.arrivalCity());
         entity.setDesiredDate(req.desiredDate());
