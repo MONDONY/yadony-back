@@ -44,7 +44,7 @@ public class WalletRefundRequestService {
 
     /**
      * Ouvre un ticket par devise en solde positif. Idempotent : une devise déjà
-     * PENDING n'est pas dupliquée (l'utilisateur peut retaper l'action sans
+     * PENDING/PROCESSING n'est pas dupliquée (l'utilisateur peut retaper l'action sans
      * conséquence, ex. après avoir fermé l'app).
      *
      * @throws YadonyBusinessException 422 {@code wallet-balance-empty} si aucun
@@ -69,7 +69,8 @@ public class WalletRefundRequestService {
 
     private WalletRefundRequestEntity requestForCurrency(UUID userId, WalletAccountEntity wallet) {
         WalletRefundRequestEntity existing = refundRequestRepository
-                .findByUserIdAndCurrencyAndStatus(userId, wallet.getCurrency(), WalletRefundRequestStatus.PENDING)
+                .findByUserIdAndCurrencyAndStatusIn(userId, wallet.getCurrency(),
+                        List.of(WalletRefundRequestStatus.PENDING, WalletRefundRequestStatus.PROCESSING))
                 .orElse(null);
         if (existing != null) {
             return existing;

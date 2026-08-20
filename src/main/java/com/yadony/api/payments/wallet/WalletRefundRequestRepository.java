@@ -13,7 +13,15 @@ public interface WalletRefundRequestRepository extends JpaRepository<WalletRefun
     Optional<WalletRefundRequestEntity> findByUserIdAndCurrencyAndStatus(
             UUID userId, String currency, WalletRefundRequestStatus status);
 
+    Optional<WalletRefundRequestEntity> findByUserIdAndCurrencyAndStatusIn(
+            UUID userId, String currency, List<WalletRefundRequestStatus> statuses);
+
+    boolean existsByUserIdAndCurrencyAndStatusIn(
+            UUID userId, String currency, List<WalletRefundRequestStatus> statuses);
+
     List<WalletRefundRequestEntity> findAllByUserIdAndStatus(UUID userId, WalletRefundRequestStatus status);
+
+    List<WalletRefundRequestEntity> findAllByUserIdOrderByRequestedAtDesc(UUID userId);
 
     Page<WalletRefundRequestEntity> findAllByStatusOrderByRequestedAtAsc(
             WalletRefundRequestStatus status, Pageable pageable);

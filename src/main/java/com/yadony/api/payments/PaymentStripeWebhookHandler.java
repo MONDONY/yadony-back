@@ -7,9 +7,11 @@ import com.yadony.api.payments.chargeback.ChargebackService;
 import com.yadony.api.payments.currency.CurrencyCatalog;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.wallet.WalletService;
+import com.yadony.api.payments.wallet.WalletSelfRefundService;
 import com.yadony.api.payments.wallet.WalletTransactionType;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.stripe.model.Charge;
 import com.stripe.model.Event;
 import com.stripe.model.PaymentIntent;
 import com.stripe.model.StripeObject;
@@ -56,6 +58,7 @@ public class PaymentStripeWebhookHandler implements StripeWebhookHandler {
     private final CashCommissionWebhookHandler cashHandler;
     private final ChargebackService chargebackService;
     private final WalletService walletService;
+    private final WalletSelfRefundService walletSelfRefundService;
     private final ObjectMapper objectMapper;
     private final CurrencyCatalog currencyCatalog;
 
@@ -63,12 +66,14 @@ public class PaymentStripeWebhookHandler implements StripeWebhookHandler {
                                         CashCommissionWebhookHandler cashHandler,
                                         ChargebackService chargebackService,
                                         WalletService walletService,
+                                        WalletSelfRefundService walletSelfRefundService,
                                         ObjectMapper objectMapper,
                                         CurrencyCatalog currencyCatalog) {
         this.paymentService = paymentService;
         this.cashHandler = cashHandler;
         this.chargebackService = chargebackService;
         this.walletService = walletService;
+        this.walletSelfRefundService = walletSelfRefundService;
         this.objectMapper = objectMapper;
         this.currencyCatalog = currencyCatalog;
     }
@@ -87,7 +92,13 @@ public class PaymentStripeWebhookHandler implements StripeWebhookHandler {
                 paymentService.handlePaymentFailed(event);
                 cashHandler.handlePaymentIntentFailed(event);
             }
-            case "charge.refunded"                    -> paymentService.handleChargeRefunded(event);
+            case "charge.refunded" -> {
+                paymentService.handleChargeRefunded(event);
+                event.getDataObjectDeserializer().getObject()
+                        .filter(Charge.class::isInstance)
+                        .map(Charge.class::cast)
+                        .ifPresent(walletSelfRefundService::handleChargeRefunded);
+            }
             case "setup_intent.succeeded"             -> cashHandler.handleSetupIntentSucceeded(event);
             case "payment_intent.succeeded" -> {
                 PaymentIntent pi = resolvePaymentIntent(event);
@@ -111,7 +122,10 @@ public class PaymentStripeWebhookHandler implements StripeWebhookHandler {
             case "payout.paid"                         -> paymentService.handlePayoutPaid(event);
             case "account.application.deauthorized"   -> paymentService.handleAccountDeauthorized(event);
             case "capability.updated"                 -> paymentService.handleCapabilityUpdated(event);
-            case "charge.refund.updated"              -> paymentService.handleRefundUpdated(event);
+            case "charge.refund.updated" -> {
+                paymentService.handleRefundUpdated(event);
+                walletSelfRefundService.handleRefundUpdated(event);
+            }
             case "radar.early_fraud_warning.created"  -> paymentService.handleEarlyFraudWarning(event);
         }
     }

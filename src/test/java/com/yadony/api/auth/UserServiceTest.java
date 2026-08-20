@@ -8,6 +8,7 @@ import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.wallet.WalletAccountEntity;
 import com.yadony.api.payments.wallet.WalletAccountRepository;
 import com.yadony.api.payments.wallet.WalletRefundRequestService;
+import com.yadony.api.payments.wallet.WalletSelfRefundService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -39,6 +40,7 @@ class UserServiceTest {
     @Mock private AuditService auditService;
     @Mock private ApplicationEventPublisher eventPublisher;
     @Mock private WalletRefundRequestService walletRefundRequestService;
+    @Mock private WalletSelfRefundService walletSelfRefundService;
 
     @InjectMocks private UserService userService;
 
@@ -156,6 +158,36 @@ class UserServiceTest {
             userService.deleteAccount(FIREBASE_UID);
 
             assertThat(user.getStatus()).isEqualTo(UserStatus.PENDING_DELETION);
+            verify(walletRefundRequestService).request(USER_ID);
+        }
+
+        @Test
+        @DisplayName("devise éligible → passe par WalletSelfRefundService, jamais le ticket manuel")
+        void openWalletRefundTicketIfNeeded_prefersAutomaticWhenEligible() {
+            WalletAccountEntity wallet = new WalletAccountEntity();
+            wallet.setCurrency("EUR");
+            wallet.setBalance(new java.math.BigDecimal("30.00"));
+            when(walletAccountRepository.findAllByUserId(USER_ID)).thenReturn(java.util.List.of(wallet));
+            when(walletSelfRefundService.isEligible(USER_ID, "EUR")).thenReturn(true);
+
+            userService.openWalletRefundTicketIfNeeded(USER_ID);
+
+            verify(walletSelfRefundService).request(USER_ID, "EUR");
+            verifyNoInteractions(walletRefundRequestService);
+        }
+
+        @Test
+        @DisplayName("devise non éligible → retombe sur le ticket manuel")
+        void openWalletRefundTicketIfNeeded_fallsBackToManualWhenNotEligible() {
+            WalletAccountEntity wallet = new WalletAccountEntity();
+            wallet.setCurrency("EUR");
+            wallet.setBalance(new java.math.BigDecimal("30.00"));
+            when(walletAccountRepository.findAllByUserId(USER_ID)).thenReturn(java.util.List.of(wallet));
+            when(walletSelfRefundService.isEligible(USER_ID, "EUR")).thenReturn(false);
+
+            userService.openWalletRefundTicketIfNeeded(USER_ID);
+
+            verify(walletSelfRefundService, never()).request(any(), any());
             verify(walletRefundRequestService).request(USER_ID);
         }
 

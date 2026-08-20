@@ -5,6 +5,7 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.wallet.dto.WalletBalanceResponse;
 import com.yadony.api.payments.wallet.dto.WalletCurrencyBalanceDto;
+import com.yadony.api.payments.wallet.dto.WalletRefundRequestSummaryResponse;
 import com.yadony.api.payments.wallet.dto.WalletTopupRequest;
 import com.yadony.api.payments.wallet.dto.WalletTopupResponse;
 import com.yadony.api.payments.wallet.dto.WalletTransactionDto;
@@ -16,6 +17,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -32,15 +34,18 @@ import java.util.stream.Collectors;
 public class WalletController {
 
     private final WalletService walletService;
+    private final WalletSelfRefundService walletSelfRefundService;
     private final WalletTopupOrchestrator topupOrchestrator;
     private final UserRepository userRepository;
     private final UserBusinessPrefsService businessPrefsService;
 
     public WalletController(WalletService walletService,
+                            WalletSelfRefundService walletSelfRefundService,
                             WalletTopupOrchestrator topupOrchestrator,
                             UserRepository userRepository,
                             UserBusinessPrefsService businessPrefsService) {
         this.walletService = walletService;
+        this.walletSelfRefundService = walletSelfRefundService;
         this.topupOrchestrator = topupOrchestrator;
         this.userRepository = userRepository;
         this.businessPrefsService = businessPrefsService;
@@ -62,10 +67,12 @@ public class WalletController {
                 // equalsIgnoreCase : les portefeuilles antérieurs à V202 peuvent
                 // encore porter une casse mixte, et un simple equals aurait
                 // affiché « aucun portefeuille actif » à leur propriétaire.
-                w.getCurrency(), w.getBalance(), w.getCurrency().equalsIgnoreCase(activeCurrency)))
+                w.getCurrency(), w.getBalance(), w.getCurrency().equalsIgnoreCase(activeCurrency),
+                w.isRefundEligible()))
             .collect(Collectors.toList());
         return ResponseEntity.ok(
-            new WalletBalanceResponse(wallet.getBalance(), activeCurrency, txs, balances));
+            new WalletBalanceResponse(wallet.getBalance(), activeCurrency, txs, balances,
+                    wallet.isRefundEligible()));
     }
 
     @PostMapping("/topup")
@@ -73,6 +80,21 @@ public class WalletController {
             @Valid @RequestBody WalletTopupRequest request) {
         UUID userId = currentUserId();
         return ResponseEntity.ok(topupOrchestrator.initiate(userId, request));
+    }
+
+    @PostMapping("/{currency}/refund-request")
+    public ResponseEntity<WalletRefundRequestSummaryResponse> requestRefund(@PathVariable String currency) {
+        UUID userId = currentUserId();
+        return ResponseEntity.ok(
+                WalletRefundRequestSummaryResponse.from(walletSelfRefundService.request(userId, currency)));
+    }
+
+    @GetMapping("/refund-requests")
+    public ResponseEntity<List<WalletRefundRequestSummaryResponse>> listRefundRequests() {
+        UUID userId = currentUserId();
+        return ResponseEntity.ok(walletSelfRefundService.listForUser(userId).stream()
+                .map(WalletRefundRequestSummaryResponse::from)
+                .collect(Collectors.toList()));
     }
 
     private UUID currentUserId() {

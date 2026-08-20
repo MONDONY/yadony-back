@@ -89,8 +89,9 @@ class WalletRefundRequestServiceTest {
         void onePositiveBalance_createsTicketAndAlertsAdmin() {
             when(walletService.getAllBalances(USER_ID)).thenReturn(
                     List.of(walletOf("CAD", "45.00")));
-            when(refundRequestRepository.findByUserIdAndCurrencyAndStatus(
-                    USER_ID, "CAD", WalletRefundRequestStatus.PENDING)).thenReturn(Optional.empty());
+            when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(
+                    USER_ID, "CAD", List.of(WalletRefundRequestStatus.PENDING, WalletRefundRequestStatus.PROCESSING)))
+                    .thenReturn(Optional.empty());
             when(refundRequestRepository.save(any())).thenAnswer(inv -> {
                 WalletRefundRequestEntity e = inv.getArgument(0);
                 assignId(e);
@@ -115,7 +116,7 @@ class WalletRefundRequestServiceTest {
         void multiplePositiveBalances_createsOneTicketPerCurrency() {
             when(walletService.getAllBalances(USER_ID)).thenReturn(
                     List.of(walletOf("EUR", "10.00"), walletOf("CAD", "20.00")));
-            when(refundRequestRepository.findByUserIdAndCurrencyAndStatus(any(), any(), any()))
+            when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(any(), any(), any()))
                     .thenReturn(Optional.empty());
             when(refundRequestRepository.save(any())).thenAnswer(inv -> {
                 WalletRefundRequestEntity e = inv.getArgument(0);
@@ -140,8 +141,9 @@ class WalletRefundRequestServiceTest {
 
             when(walletService.getAllBalances(USER_ID)).thenReturn(
                     List.of(walletOf("EUR", "30.00")));
-            when(refundRequestRepository.findByUserIdAndCurrencyAndStatus(
-                    USER_ID, "EUR", WalletRefundRequestStatus.PENDING)).thenReturn(Optional.of(existing));
+            when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(
+                    USER_ID, "EUR", List.of(WalletRefundRequestStatus.PENDING, WalletRefundRequestStatus.PROCESSING)))
+                    .thenReturn(Optional.of(existing));
 
             List<WalletRefundRequestEntity> result = service.request(USER_ID);
 

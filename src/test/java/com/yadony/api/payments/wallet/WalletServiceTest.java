@@ -16,6 +16,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
@@ -25,13 +26,15 @@ class WalletServiceTest {
 
     @Mock WalletAccountRepository walletAccountRepository;
     @Mock WalletTransactionRepository walletTransactionRepository;
+    @Mock WalletRefundRequestRepository walletRefundRequestRepository;
     @Mock AuditService auditService;
 
     WalletService walletService;
 
     @BeforeEach
     void setUp() {
-        walletService = new WalletService(walletAccountRepository, walletTransactionRepository, auditService);
+        walletService = new WalletService(walletAccountRepository, walletTransactionRepository,
+                walletRefundRequestRepository, auditService);
     }
 
     @Test
@@ -242,6 +245,86 @@ class WalletServiceTest {
 
         assertThat(thrown).isInstanceOf(InsufficientWalletBalanceException.class);
         verify(walletTransactionRepository, never()).save(any());
+    }
+
+    @Test
+    void credit_topUp_incrementsRefundEligibleAmount() {
+        UUID userId = UUID.randomUUID();
+        WalletAccountEntity eur = wallet(userId, "EUR", BigDecimal.ZERO);
+        when(walletAccountRepository.findByUserIdAndCurrency(userId, "EUR")).thenReturn(Optional.of(eur));
+        when(walletAccountRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(walletTransactionRepository.findByIdempotencyKey(anyString())).thenReturn(Optional.empty());
+        when(walletTransactionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        walletService.credit(userId, "EUR", new BigDecimal("20.00"),
+                WalletTransactionType.TOP_UP, "pi_123", "idem-1");
+
+        assertThat(eur.getRefundEligibleAmount()).isEqualByComparingTo("20.00");
+        assertThat(eur.isRefundEligible()).isTrue();
+    }
+
+    @Test
+    void credit_nonTopUp_taintsRefundEligibility() {
+        UUID userId = UUID.randomUUID();
+        WalletAccountEntity eur = wallet(userId, "EUR", BigDecimal.ZERO);
+        eur.setRefundEligibleAmount(new BigDecimal("20.00"));
+        when(walletAccountRepository.findByUserIdAndCurrency(userId, "EUR")).thenReturn(Optional.of(eur));
+        when(walletAccountRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(walletTransactionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        walletService.credit(userId, "EUR", new BigDecimal("5.00"),
+                WalletTransactionType.REFUND, null, null);
+
+        assertThat(eur.getRefundEligibleAmount()).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(eur.getRefundEligibleSince()).isNotNull();
+    }
+
+    @Test
+    void debit_taintsRefundEligibilityAndBlocksWhenNoPendingRequest() {
+        UUID userId = UUID.randomUUID();
+        WalletAccountEntity eur = wallet(userId, "EUR", new BigDecimal("20.00"));
+        eur.setRefundEligibleAmount(new BigDecimal("20.00"));
+        when(walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, "EUR")).thenReturn(Optional.of(eur));
+        when(walletAccountRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(walletTransactionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(walletRefundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(
+                eq(userId), eq("EUR"), anyList())).thenReturn(false);
+
+        walletService.debit(userId, "EUR", new BigDecimal("5.00"),
+                WalletTransactionType.BID_PAYMENT, UUID.randomUUID());
+
+        assertThat(eur.getRefundEligibleAmount()).isEqualByComparingTo(BigDecimal.ZERO);
+    }
+
+    @Test
+    void debit_throwsWhenRefundRequestPendingOnCurrency() {
+        UUID userId = UUID.randomUUID();
+        when(walletRefundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(
+                eq(userId), eq("EUR"), anyList())).thenReturn(true);
+
+        Throwable thrown = catchThrowable(() -> walletService.debit(
+                userId, "EUR", new BigDecimal("5.00"), WalletTransactionType.BID_PAYMENT, UUID.randomUUID()));
+
+        assertThat(thrown).isInstanceOf(com.yadony.api.common.YadonyBusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "wallet-refund-pending");
+        verify(walletAccountRepository, never()).findByUserIdAndCurrencyForUpdate(any(), any());
+    }
+
+    @Test
+    void debitConfirmedRefund_decrementsRefundEligibleAmountInsteadOfZeroingIt() {
+        UUID userId = UUID.randomUUID();
+        WalletAccountEntity eur = wallet(userId, "EUR", new BigDecimal("50.00"));
+        eur.setRefundEligibleAmount(new BigDecimal("50.00"));
+        when(walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, "EUR")).thenReturn(Optional.of(eur));
+        when(walletAccountRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(walletTransactionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        walletService.debitConfirmedRefund(userId, "EUR", new BigDecimal("20.00"),
+                WalletTransactionType.SELF_REFUND_OUT);
+
+        assertThat(eur.getBalance()).isEqualByComparingTo("30.00");
+        assertThat(eur.getRefundEligibleAmount()).isEqualByComparingTo("30.00");
+        assertThat(eur.isRefundEligible()).isTrue();
     }
 
     private WalletAccountEntity wallet(UUID userId, String currency, BigDecimal balance) {

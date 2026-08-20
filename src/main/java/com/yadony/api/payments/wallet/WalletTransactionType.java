@@ -12,4 +12,10 @@ public enum WalletTransactionType {
      * Cf. {@code WalletRefundRequestService}.
      */
     ADMIN_REFUND_OUT
+    ,
+    /**
+     * Solde débité automatiquement après confirmation Stripe d'un remboursement
+     * self-service, distinct du zérotage manuel admin pour l'audit.
+     */
+    SELF_REFUND_OUT
 }
