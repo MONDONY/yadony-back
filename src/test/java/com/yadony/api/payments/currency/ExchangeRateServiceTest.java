@@ -13,6 +13,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -101,6 +102,21 @@ class ExchangeRateServiceTest {
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(ex -> assertThat(((YadonyBusinessException) ex).getErrorCode())
                         .isEqualTo("exchange-rate-missing"));
+    }
+
+    @Test
+    void convert_xof_vers_usd_passe_par_le_pivot_eur_et_lookupte_les_deux_devises() {
+        when(repository.findByCurrency("XOF"))
+                .thenReturn(Optional.of(new ExchangeRateEntity("XOF", new BigDecimal("655.957000"))));
+        when(repository.findByCurrency("USD"))
+                .thenReturn(Optional.of(new ExchangeRateEntity("USD", new BigDecimal("1.080000"))));
+
+        BigDecimal result = service.convert(new BigDecimal("6559.57"), "XOF", "USD");
+
+        // 6559.57 / 655.957 = 10 EUR (pivot) ; 10 * 1.08 = 10.80 USD (2 decimales)
+        assertThat(result).isEqualByComparingTo("10.80");
+        verify(repository, times(1)).findByCurrency("XOF");
+        verify(repository, times(1)).findByCurrency("USD");
     }
 
     @Test
