@@ -179,7 +179,8 @@ public class TripRecurrenceService {
                 null,
                 handoverDeadline,
                 Boolean.FALSE,
-                Boolean.FALSE
+                Boolean.FALSE,
+                null
         );
     }
 

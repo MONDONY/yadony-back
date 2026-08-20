@@ -90,6 +90,25 @@ public class AnnouncementService {
         return date.atTime(time).atZone(resolved).toOffsetDateTime();
     }
 
+    /**
+     * Devise du trajet à la création : choisie par le voyageur si fournie et valide,
+     * sinon repli sur {@link ActiveCurrencyResolver#resolve} (portefeuille, sinon pays).
+     * Un client qui n'envoie pas de devise (champ omis) garde le comportement historique.
+     */
+    private String resolveAnnouncementCurrency(String requestedCurrency, java.util.UUID travelerId) {
+        if (requestedCurrency == null || requestedCurrency.isBlank()) {
+            return activeCurrencyResolver.resolve(travelerId);
+        }
+        com.yadony.api.payments.currency.SupportedCurrency validated =
+                com.yadony.api.payments.currency.SupportedCurrency.fromCode(requestedCurrency);
+        if (validated == null) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "currency-unsupported", "Currency Unsupported",
+                    "Cette devise n'est pas prise en charge par yadony.");
+        }
+        return validated.code().toUpperCase(java.util.Locale.ROOT);
+    }
+
     private final AnnouncementRepository announcementRepository;
     private final BidRepository bidRepository;
     private final UserRepository userRepository;
@@ -371,8 +390,7 @@ public class AnnouncementService {
 
         AnnouncementEntity announcement = new AnnouncementEntity();
         announcement.setTravelerId(user.getId());
-        String creatorCurrency = activeCurrencyResolver.resolve(user.getId());
-        announcement.setCurrency(creatorCurrency);
+        announcement.setCurrency(resolveAnnouncementCurrency(request.currency(), user.getId()));
         announcement.setTravelerIsPro(user.isProAccount());
         announcement.setDepartureCity(request.departureCity());
         announcement.setArrivalCity(request.arrivalCity());

@@ -79,8 +79,14 @@ public record AnnouncementRequest(
 
         // Le voyageur ouvre son trajet aux propositions de prix. Nullable pour les
         // clients pas encore à jour : absent = prix ferme, le comportement historique.
+        Boolean negotiable,
+
+        // Devise choisie pour ce trajet (ex "USD"). Optionnel : absent ou vide, le
+        // service retombe sur ActiveCurrencyResolver.resolve(travelerId) (portefeuille,
+        // sinon pays). Validée contre SupportedCurrency dans AnnouncementService,
+        // jamais ici (422 currency-unsupported, pas une 400 Bean Validation).
         // Doit rester en DERNIER (record construit positionnellement dans les tests).
-        Boolean negotiable
+        String currency
 ) {
     public boolean isDraft() {
         return Boolean.TRUE.equals(saveAsDraft);

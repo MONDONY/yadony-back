@@ -169,8 +169,26 @@ class AnnouncementServiceTest {
                 null, null,
                 departure.atTime(9, 0),
                 null,
-                null
-        );
+                null,
+                null);
+    }
+
+    private AnnouncementRequest requestWithCurrency(String currency) {
+        LocalDate departure = LocalDate.now().plusDays(10);
+        return new AnnouncementRequest(
+                "Paris", "Dakar",
+                departure,
+                LocalTime.of(10, 0), LocalTime.of(22, 0),
+                new AddressDto("CDG Terminal 2E", 49.009, 2.547),
+                new AddressDto("Aéroport LSS", 14.739, -17.490),
+                BigDecimal.valueOf(20), BigDecimal.valueOf(5),
+                TransportMode.PLANE,
+                null, null, null, null, null, null,
+                null, null,
+                departure.atTime(9, 0),
+                null,
+                null,
+                currency);
     }
 
     private AnnouncementRequest draftRequest() {
@@ -187,8 +205,8 @@ class AnnouncementServiceTest {
                 null, null,
                 departure.atTime(9, 0),
                 true,
-                null
-        );
+                null,
+                null);
     }
 
     /**
@@ -210,8 +228,8 @@ class AnnouncementServiceTest {
                 null, null,
                 departure.atTime(9, 0),
                 null,
-                null
-        );
+                null,
+                null);
     }
 
     private UserEntity buildTravelerWithCommissionMethod() {
@@ -332,6 +350,64 @@ class AnnouncementServiceTest {
             assertThat(captor.getValue().getCurrency()).isEqualTo("EUR");
         }
 
+        @Test
+        @DisplayName("devise choisie explicitement (USD) → prévaut sur celle du portefeuille")
+        void createAnnouncement_explicitCurrency_overridesResolvedCurrency() {
+            UserEntity traveler = buildTraveler();
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            // La requête impose USD : le resolver ne doit même pas être appelé.
+            when(announcementRepository.save(any())).thenAnswer(inv -> {
+                AnnouncementEntity a = inv.getArgument(0);
+                setId(a, ANNOUNCEMENT_ID);
+                return a;
+            });
+            when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
+            when(bidRepository.countByAnnouncementIdAndStatusIn(any(), any())).thenReturn(0L);
+
+            announcementService.createAnnouncement(FIREBASE_UID, requestWithCurrency("USD"));
+
+            ArgumentCaptor<AnnouncementEntity> captor = ArgumentCaptor.forClass(AnnouncementEntity.class);
+            verify(announcementRepository).save(captor.capture());
+            assertThat(captor.getValue().getCurrency()).isEqualTo("USD");
+            verify(activeCurrencyResolver, never()).resolve(any());
+        }
+
+        @Test
+        @DisplayName("devise absente de la requête → repli sur ActiveCurrencyResolver (comportement historique)")
+        void createAnnouncement_noCurrencyInRequest_fallsBackToResolver() {
+            UserEntity traveler = buildTraveler();
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(activeCurrencyResolver.resolve(traveler.getId())).thenReturn("CAD");
+            when(announcementRepository.save(any())).thenAnswer(inv -> {
+                AnnouncementEntity a = inv.getArgument(0);
+                setId(a, ANNOUNCEMENT_ID);
+                return a;
+            });
+            when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
+            when(bidRepository.countByAnnouncementIdAndStatusIn(any(), any())).thenReturn(0L);
+
+            announcementService.createAnnouncement(FIREBASE_UID, requestWithCurrency(null));
+
+            ArgumentCaptor<AnnouncementEntity> captor = ArgumentCaptor.forClass(AnnouncementEntity.class);
+            verify(announcementRepository).save(captor.capture());
+            assertThat(captor.getValue().getCurrency()).isEqualTo("CAD");
+            verify(activeCurrencyResolver).resolve(traveler.getId());
+        }
+
+        @Test
+        @DisplayName("devise hors catalogue → 422 currency-unsupported")
+        void createAnnouncement_unsupportedCurrency_throws422() {
+            UserEntity traveler = buildTraveler();
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+
+            assertYadonyError(
+                    () -> announcementService.createAnnouncement(FIREBASE_UID, requestWithCurrency("JPY")),
+                    "currency-unsupported"
+            );
+
+            verify(announcementRepository, never()).save(any());
+        }
+
         // C2 : normalisation à l'écriture — un client pas à jour envoie un libellé/code
         // legacy dans acceptedContentTypes/refusedTypes, doivent être persistés canoniques.
         @Test
@@ -362,8 +438,8 @@ class AnnouncementServiceTest {
                     null, null, null, null, null,
                     departure.atTime(9, 0),
                     null,
-                    null
-            );
+                    null,
+                null);
 
             announcementService.createAnnouncement(FIREBASE_UID, req);
 
@@ -401,8 +477,8 @@ class AnnouncementServiceTest {
                     "US", "SN",
                     LocalDate.now().plusDays(10).atTime(9, 0),
                     null,
-                    null
-            );
+                    null,
+                null);
 
             AnnouncementResponse result = announcementService.createAnnouncement(FIREBASE_UID, req);
 
@@ -674,8 +750,8 @@ class AnnouncementServiceTest {
                     null, null,
                     LocalDate.now().plusDays(10).atTime(18, 0),
                     null,
-                    null
-            );
+                    null,
+                null);
 
             // Ne doit PAS lever CommissionMethodMissingException
             org.assertj.core.api.Assertions.assertThatNoException()
@@ -708,8 +784,8 @@ class AnnouncementServiceTest {
                     null, null,
                     LocalDate.now().plusDays(10).atTime(18, 0),
                     null,
-                    null
-            );
+                    null,
+                null);
 
             announcementService.createAnnouncement(FIREBASE_UID, req);
 
@@ -747,8 +823,8 @@ class AnnouncementServiceTest {
                     null, null,
                     LocalDate.now().plusDays(10).atTime(9, 0),
                     null,
-                    null
-            );
+                    null,
+                null);
 
             AnnouncementResponse result = announcementService.createAnnouncement(FIREBASE_UID, req);
 
@@ -785,8 +861,8 @@ class AnnouncementServiceTest {
                     null, null,
                     LocalDate.now().plusDays(10).atTime(9, 0),
                     null,
-                    null
-            );
+                    null,
+                null);
 
             assertThatThrownBy(() -> announcementService.createAnnouncement(FIREBASE_UID, req))
                     .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
@@ -1125,8 +1201,8 @@ class AnnouncementServiceTest {
                     null, null,
                     LocalDate.now().plusDays(15).atTime(18, 0),
                     null,
-                    null
-            );
+                    null,
+                null);
 
             AnnouncementDetailResponse result = announcementService.updateAnnouncement(
                     ANNOUNCEMENT_ID, FIREBASE_UID, req);
@@ -1161,8 +1237,8 @@ class AnnouncementServiceTest {
                     null, null, null, null, null,
                     departure.atTime(18, 0),
                     null,
-                    null
-            );
+                    null,
+                null);
 
             assertYadonyError(
                     () -> announcementService.updateAnnouncement(ANNOUNCEMENT_ID, FIREBASE_UID, req),
@@ -1198,8 +1274,8 @@ class AnnouncementServiceTest {
                     null, null, null, null, null,
                     departure.atTime(18, 0),
                     null,
-                    null
-            );
+                    null,
+                null);
 
             announcementService.updateAnnouncement(ANNOUNCEMENT_ID, FIREBASE_UID, req);
 
@@ -1255,8 +1331,8 @@ class AnnouncementServiceTest {
                     null, null,
                     LocalDate.now().plusDays(15).atTime(18, 0),
                     null,
-                    null
-            );
+                    null,
+                null);
 
             announcementService.updateAnnouncement(ANNOUNCEMENT_ID, FIREBASE_UID, req);
 
@@ -2077,8 +2153,8 @@ class AnnouncementServiceTest {
                     null, null,
                     LocalDate.now().plusDays(10).atTime(9, 0),
                     null,
-                    null
-            );
+                    null,
+                null);
 
             announcementService.createAnnouncement(FIREBASE_UID, req);
 
@@ -2122,8 +2198,8 @@ class AnnouncementServiceTest {
                     null, null,
                     LocalDate.now().minusDays(1).atTime(18, 0),
                     null,
-                    null
-            );
+                    null,
+                null);
 
             assertThatThrownBy(() -> announcementService.createAnnouncement(FIREBASE_UID, req))
                     .isInstanceOf(YadonyBusinessException.class)
@@ -2302,8 +2378,8 @@ class AnnouncementServiceTest {
                     null, null,
                     deadline,
                     null,
-                    null
-            );
+                    null,
+                null);
         }
 
         @Test
@@ -2367,8 +2443,8 @@ class AnnouncementServiceTest {
                     null, null,
                     deadline,
                     null,
-                    null
-            );
+                    null,
+                null);
 
             assertThatThrownBy(() -> announcementService.createAnnouncement(FIREBASE_UID, req))
                     .isInstanceOf(YadonyBusinessException.class)
@@ -3099,8 +3175,8 @@ class AnnouncementServiceTest {
                     null, null,
                     departure.atTime(9, 0),
                     null,
-                    negotiable
-            );
+                    negotiable,
+                null);
         }
 
         private ArgumentCaptor<AnnouncementEntity> stubCreate() {

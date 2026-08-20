@@ -145,6 +145,7 @@ class AnnouncementServiceAddressTest {
             null, null,
             departure.atTime(18, 0),
             null,
+            null,
             null
         );
     }
