@@ -271,9 +271,12 @@ class NegotiationServiceTest {
         }
 
         @Test
-        @DisplayName("le thread copie exactement la devise de la demande, quelle qu'elle soit (pas de devise voyageur en jeu)")
-        void start_copiesExactRequestCurrencyRegardlessOfTraveler() {
-            request.setCurrency("cad");
+        @DisplayName("le thread copie la devise du TRAJET, jamais celle de la demande — le prix payé par "
+            + "l'expéditeur reste toujours dans la devise de l'annonce (régression bug devise-par-annonce)")
+        void start_copiesTripCurrencyNeverRequestCurrency() {
+            // La demande est en EUR (devise de l'expéditeur), le trajet en CAD :
+            // le thread doit suivre le trajet, jamais la demande.
+            request.setCurrency("EUR");
 
             when(config.maxOpenThreadsPerTraveler()).thenReturn(5);
             when(config.threadsPerMinuteRateLimit()).thenReturn(1);
@@ -287,13 +290,16 @@ class NegotiationServiceTest {
             when(threadRepo.countCreatedBy(eq(TRAVELER_ID), any())).thenReturn(0L);
             when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
             stubMatchingTrip();
+            com.yadony.api.matching.AnnouncementEntity tripAnn =
+                announcementRepo.findById(TRIP_ANNOUNCEMENT_ID).orElseThrow();
+            tripAnn.setCurrency("CAD");
 
             service.start(TRAVELER_ID, validStartReq());
 
             ArgumentCaptor<NegotiationThreadEntity> captor =
                 ArgumentCaptor.forClass(NegotiationThreadEntity.class);
             verify(threadRepo).save(captor.capture());
-            assertThat(captor.getValue().getCurrency()).isEqualTo("cad");
+            assertThat(captor.getValue().getCurrency()).isEqualTo("CAD");
         }
     }
 
@@ -454,16 +460,18 @@ class NegotiationServiceTest {
         }
 
         @Test
-        @DisplayName("devise de la demande différente de celle du voyageur → start() réussit quand même, "
-            + "le thread copie la devise de la DEMANDE (pas celle du voyageur)")
-        void start_crossCurrency_succeedsAndThreadCarriesRequestCurrencyNotTravelerCurrency() {
+        @DisplayName("devise de la demande différente de celle du trajet → start() réussit quand même, "
+            + "le thread copie la devise du TRAJET (jamais celle de la demande)")
+        void start_crossCurrency_succeedsAndThreadCarriesTripCurrencyNotRequestCurrency() {
             // Task 8 a retiré ce même garde-fou de BidService (un bid reprend la devise
             // de l'annonce, pas celle de qui enchérit) et Task 10 a retiré le filtre de
             // devise du fil unifié : un voyageur navigue désormais des demandes dans
             // n'importe quelle devise. NegotiationService.start() est le seul chemin par
             // lequel il peut répondre à une demande — il ne doit donc plus refuser
             // l'appariement entre devises différentes, sous peine de rendre ces demandes
-            // visibles mais jamais actionnables.
+            // visibles mais jamais actionnables. Le prix payé par l'expéditeur reste en
+            // revanche toujours dans la devise de l'annonce (trajet) — cf. spec
+            // 2026-08-20-devise-par-annonce — jamais celle de sa demande.
             request.setCurrency("USD");
 
             when(config.maxOpenThreadsPerTraveler()).thenReturn(5);
@@ -478,6 +486,9 @@ class NegotiationServiceTest {
             when(threadRepo.countCreatedBy(eq(TRAVELER_ID), any())).thenReturn(0L);
             when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
             stubMatchingTrip();
+            com.yadony.api.matching.AnnouncementEntity tripAnn =
+                announcementRepo.findById(TRIP_ANNOUNCEMENT_ID).orElseThrow();
+            tripAnn.setCurrency("CAD");
 
             var response = service.start(TRAVELER_ID, validStartReq());
 
@@ -486,7 +497,7 @@ class NegotiationServiceTest {
             verify(threadRepo).save(captor.capture());
             assertThat(response).isNotNull();
             assertThat(response.status()).isEqualTo(NegotiationThreadStatus.OPEN);
-            assertThat(captor.getValue().getCurrency()).isEqualTo("USD");
+            assertThat(captor.getValue().getCurrency()).isEqualTo("CAD");
         }
 
         @Test
