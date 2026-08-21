@@ -10,11 +10,13 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -92,8 +94,10 @@ class GuestUserProvisionerTest {
     }
 
     @Test
-    @DisplayName("ligne soft-deleted portant le même firebase_uid -> réactivée, jamais réinsérée")
+    @DisplayName("ligne soft-deleted SANS rôle (ligne invitée pure) -> réactivée, jamais réinsérée")
     void reactivatesSoftDeletedRowInsteadOfReinserting() {
+        // roles vide par défaut (HashSet neuf) : c'est précisément ce qui distingue une
+        // ligne invitée pure d'un ancien compte réel (ronde de correction 2).
         UserEntity deleted = new UserEntity();
         deleted.setFirebaseUid("uid-3");
         when(userRepository.findByFirebaseUidIncludingDeleted("uid-3")).thenReturn(Optional.of(deleted));
@@ -112,6 +116,56 @@ class GuestUserProvisionerTest {
 
         assertThat(id).isEqualTo(reactivatedId);
         verify(userRepository).reactivateByFirebaseUid("uid-3", UserStatus.ACTIVE.name());
+        verify(userRepository, never()).save(any());
+    }
+
+    // --- Ronde de correction 2 : régression de sécurité sur la réactivation ---
+    //
+    // AccountFinalizationService.finalize() (suppression RGPD / bannissement d'un VRAI
+    // compte) soft-delete la ligne SANS jamais vider `roles`. Réactiver une telle ligne ici
+    // ressusciterait un compte banni/supprimé hors du tunnel /auth/register — sans reset de
+    // ses champs pseudonymisés, sans entrée d'audit. Une ligne soft-deleted portant le
+    // moindre rôle n'est jamais une ligne invitée pure : le provisioner doit refuser de la
+    // toucher, laissant /auth/register (seul habilité) faire ce travail.
+
+    @Test
+    @DisplayName("Ronde 2 : ligne soft-deleted PORTANT DES RÔLES -> jamais réactivée, ancien compte réel")
+    void refusesToReactivateSoftDeletedRowWithRoles() {
+        UserEntity deletedRealAccount = new UserEntity();
+        deletedRealAccount.setFirebaseUid("uid-5");
+        deletedRealAccount.setRoles(Set.of(Role.SENDER));
+        when(userRepository.findByFirebaseUid("uid-5")).thenReturn(Optional.empty());
+        when(userRepository.findByFirebaseUidIncludingDeleted("uid-5"))
+                .thenReturn(Optional.of(deletedRealAccount));
+
+        // La ligne reste supprimée : le seul mécanisme qui efface deleted_at
+        // (reactivateByFirebaseUid) n'est jamais invoqué. Rien n'est retourné à l'appelant :
+        // resolveOrProvision lève avant tout `return`, donc ni l'id ni les rôles de cet
+        // ancien compte ne fuient jamais hors de ce provisioner.
+        assertThatThrownBy(() -> provisioner.resolveOrProvision("uid-5"))
+                .isInstanceOf(IllegalStateException.class);
+
+        verify(userRepository, never()).reactivateByFirebaseUid(any(), any());
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("Ronde 2 : la ligne à rôles reste supprimée, aucune tentative de résurrection")
+    void softDeletedRowWithRoles_neverReactivatedNorLeaked() {
+        UserEntity deletedAdmin = new UserEntity();
+        deletedAdmin.setFirebaseUid("uid-7");
+        deletedAdmin.setRoles(Set.of(Role.ADMIN));
+        when(userRepository.findByFirebaseUid("uid-7")).thenReturn(Optional.empty());
+        when(userRepository.findByFirebaseUidIncludingDeleted("uid-7"))
+                .thenReturn(Optional.of(deletedAdmin));
+
+        assertThatThrownBy(() -> provisioner.resolveOrProvision("uid-7"))
+                .isInstanceOf(IllegalStateException.class);
+
+        // Preuve que le contrôle a bien eu lieu (pas juste esquivé), et que la ligne
+        // conserve son deleted_at (aucun appel à la réactivation ni à une nouvelle création).
+        verify(userRepository).findByFirebaseUidIncludingDeleted("uid-7");
+        verify(userRepository, never()).reactivateByFirebaseUid(eq("uid-7"), any());
         verify(userRepository, never()).save(any());
     }
 

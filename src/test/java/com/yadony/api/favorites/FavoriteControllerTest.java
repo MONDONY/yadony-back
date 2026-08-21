@@ -109,6 +109,13 @@ class FavoriteControllerTest {
                 List.of(new SimpleGrantedAuthority("ROLE_SENDER")));
     }
 
+    /** Un compte inscrit (rôle TRAVELER) dont la ligne {@code users} a disparu. */
+    private static UsernamePasswordAuthenticationToken asTravelerWithMissingRow() {
+        return new UsernamePasswordAuthenticationToken(
+                MISSING_ROW_UID, null,
+                List.of(new SimpleGrantedAuthority("ROLE_TRAVELER")));
+    }
+
     // ── PUT /favorites/trip/{id} ──────────────────────────────────────────────
 
     @Test
@@ -294,6 +301,20 @@ class FavoriteControllerTest {
                         .with(authentication(asGuest())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$").isArray());
+    }
+
+    /**
+     * Ronde de correction 2, point secondaire : trou de couverture comblé — même
+     * non-régression que sur DELETE/GET trips/GET ids (constat 4 de la ronde 1), sur le
+     * quatrième chemin concerné.
+     */
+    @Test
+    void getPackageRequests_registeredUserWithMissingRow_returns404_neverReachesService() throws Exception {
+        mockMvc.perform(get("/favorites/package-requests")
+                        .with(authentication(asTravelerWithMissingRow())))
+                .andExpect(status().isNotFound());
+
+        verify(favoriteService, never()).getFavoritePackageRequests(any());
     }
 
     // ── GET /favorites/ids ────────────────────────────────────────────────────

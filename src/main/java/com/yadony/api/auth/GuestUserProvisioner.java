@@ -67,18 +67,35 @@ public class GuestUserProvisioner {
     }
 
     /**
-     * Une ligne invitée purgée (soft delete, cf. Task 7) reste porteuse du même
-     * {@code firebase_uid} : {@link UserRepository#findByFirebaseUid} ne la voit plus
-     * (filtre {@code @Where(deleted_at IS NULL)} sur {@link UserEntity}), et une simple
+     * Une ligne invitée purgée (soft delete) reste porteuse du même {@code firebase_uid} :
+     * {@link UserRepository#findByFirebaseUid} ne la voit plus (filtre
+     * {@code @Where(deleted_at IS NULL)} sur {@link UserEntity}), et une simple
      * réinsertion violerait l'index unique {@code uq_users_firebase_uid}.
      *
      * <p>Même idiome que {@code AuthService#register} : UPDATE natif qui contourne le
      * filtre (au lieu d'un {@code em.merge()} qui SELECT-erait filtré, ne trouverait
      * rien, et tenterait un INSERT en conflit), puis relecture.
+     *
+     * <p><b>Ronde de correction 2 — régression de sécurité corrigée.</b> Une ligne
+     * soft-deleted n'est pas forcément une ligne invitée : {@code AccountFinalizationService
+     * #finalize} soft-delete aussi un VRAI compte (suppression RGPD, bannissement) sans
+     * jamais vider {@code roles}. Réactiver une telle ligne ici ressusciterait ce compte
+     * hors du tunnel {@code /auth/register} — sans réinitialisation de ses champs
+     * pseudonymisés, sans entrée d'audit. Seule une ligne {@code roles.isEmpty()} est donc
+     * réactivée ; toute autre fait échouer explicitement l'appel, laissant
+     * {@code /auth/register} (seul habilité) faire ce travail.
      */
     private Optional<UUID> reactivateIfSoftDeleted(String firebaseUid) {
         return userRepository.findByFirebaseUidIncludingDeleted(firebaseUid)
                 .map(deleted -> {
+                    if (!deleted.getRoles().isEmpty()) {
+                        throw new IllegalStateException(
+                                "GuestUserProvisioner.resolveOrProvision : une ligne soft-deleted "
+                                        + "portant des rôles existe pour ce firebase_uid ; ce n'est "
+                                        + "pas une ligne invitée mais un ancien compte réel "
+                                        + "(suppression RGPD ou bannissement). Seul /auth/register "
+                                        + "peut la réactiver.");
+                    }
                     userRepository.reactivateByFirebaseUid(firebaseUid, UserStatus.ACTIVE.name());
                     return userRepository.findByFirebaseUid(firebaseUid).orElseThrow().getId();
                 });
