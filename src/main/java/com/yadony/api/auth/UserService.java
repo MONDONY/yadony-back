@@ -97,7 +97,14 @@ public class UserService {
         Set<String> handledAutomatically = new HashSet<>();
         for (com.yadony.api.payments.wallet.WalletAccountEntity wallet : positiveBalances) {
             if (walletSelfRefundService.isEligible(userId, wallet.getCurrency())) {
-                walletSelfRefundService.request(userId, wallet.getCurrency());
+                // Suppression de compte : on rembourse la totalité du solde éligible,
+                // pas une sélection utilisateur — jamais de sheet ici.
+                List<UUID> eligibleTopupIds = walletSelfRefundService
+                        .listEligibleTopups(userId, wallet.getCurrency())
+                        .stream()
+                        .map(com.yadony.api.payments.wallet.WalletTransactionEntity::getId)
+                        .toList();
+                walletSelfRefundService.request(userId, wallet.getCurrency(), eligibleTopupIds);
                 handledAutomatically.add(wallet.getCurrency());
             }
         }

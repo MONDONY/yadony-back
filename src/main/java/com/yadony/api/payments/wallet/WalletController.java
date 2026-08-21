@@ -5,7 +5,9 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.wallet.dto.WalletBalanceResponse;
 import com.yadony.api.payments.wallet.dto.WalletCurrencyBalanceDto;
+import com.yadony.api.payments.wallet.dto.WalletEligibleTopupResponse;
 import com.yadony.api.payments.wallet.dto.WalletRefundRequestSummaryResponse;
+import com.yadony.api.payments.wallet.dto.WalletRefundSelectionRequest;
 import com.yadony.api.payments.wallet.dto.WalletTopupRequest;
 import com.yadony.api.payments.wallet.dto.WalletTopupResponse;
 import com.yadony.api.payments.wallet.dto.WalletTransactionDto;
@@ -25,6 +27,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -57,9 +60,12 @@ public class WalletController {
         UUID userId = currentUserId();
         String activeCurrency = businessPrefsService.getPrefs(currentFirebaseUid()).currencyCode();
         WalletAccountEntity wallet = walletService.getOrCreate(userId, activeCurrency);
-        List<WalletTransactionDto> txs = walletService.getTransactions(userId, page)
+        List<WalletTransactionEntity> transactions = walletService.getTransactions(userId, page);
+        Map<UUID, String> refundStatusByTxId = walletSelfRefundService.refundStatusByTransactionId(
+                transactions.stream().map(WalletTransactionEntity::getId).toList());
+        List<WalletTransactionDto> txs = transactions
             .stream()
-            .map(WalletTransactionDto::from)
+            .map(tx -> WalletTransactionDto.from(tx, refundStatusByTxId.get(tx.getId())))
             .collect(Collectors.toList());
         List<WalletCurrencyBalanceDto> balances = walletService.getAllBalances(userId)
             .stream()
@@ -82,11 +88,23 @@ public class WalletController {
         return ResponseEntity.ok(topupOrchestrator.initiate(userId, request));
     }
 
-    @PostMapping("/{currency}/refund-request")
-    public ResponseEntity<WalletRefundRequestSummaryResponse> requestRefund(@PathVariable String currency) {
+    @GetMapping("/{currency}/refund-eligible-topups")
+    public ResponseEntity<List<WalletEligibleTopupResponse>> refundEligibleTopups(@PathVariable String currency) {
         UUID userId = currentUserId();
+        return ResponseEntity.ok(walletSelfRefundService.listEligibleTopups(userId, currency).stream()
+                .map(WalletEligibleTopupResponse::from)
+                .collect(Collectors.toList()));
+    }
+
+    @PostMapping("/{currency}/refund-request")
+    public ResponseEntity<WalletRefundRequestSummaryResponse> requestRefund(
+            @PathVariable String currency,
+            @RequestBody(required = false) WalletRefundSelectionRequest request) {
+        UUID userId = currentUserId();
+        List<UUID> transactionIds = request == null ? List.of() : request.transactionIds();
         return ResponseEntity.ok(
-                WalletRefundRequestSummaryResponse.from(walletSelfRefundService.request(userId, currency)));
+                WalletRefundRequestSummaryResponse.from(
+                        walletSelfRefundService.request(userId, currency, transactionIds)));
     }
 
     @GetMapping("/refund-requests")

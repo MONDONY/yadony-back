@@ -16,6 +16,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -181,6 +182,37 @@ class WalletControllerIT {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.balances[?(@.currency == 'CAD')].balance").value(15.0))
             .andExpect(jsonPath("$.balances[?(@.currency == 'CAD')].active").value(false));
+    }
+
+    @Test
+    void getBalance_marksTopupAsRefundProcessingWhenItemInProgress() throws Exception {
+        walletService.credit(USER_UUID, "EUR", new BigDecimal("10.00"),
+            WalletTransactionType.TOP_UP, "pi_refund_processing", "idem-refund-processing");
+        WalletTransactionEntity topup = walletTransactionRepository
+            .findByIdempotencyKey("idem-refund-processing").orElseThrow();
+
+        WalletRefundRequestEntity request = new WalletRefundRequestEntity();
+        request.setUserId(USER_UUID);
+        request.setCurrency("EUR");
+        request.setStatus(WalletRefundRequestStatus.PROCESSING);
+        request.setAmount(new BigDecimal("10.00"));
+        request.setChannel(WalletRefundChannel.AUTOMATIC_STRIPE);
+        request.setRequestedAt(LocalDateTime.now());
+        WalletRefundRequestEntity savedRequest = walletRefundRequestRepository.save(request);
+
+        WalletRefundRequestItemEntity item = new WalletRefundRequestItemEntity();
+        item.setRefundRequestId(savedRequest.getId());
+        item.setWalletTransactionId(topup.getId());
+        item.setPaymentIntentId("pi_refund_processing");
+        item.setAmount(new BigDecimal("10.00"));
+        item.setStatus(WalletRefundItemStatus.PROCESSING);
+        walletRefundRequestItemRepository.save(item);
+
+        mockMvc.perform(get("/wallet/balance")
+                .with(authentication(authAs(FIREBASE_UID, "SENDER"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.transactions[?(@.paymentRef == 'pi_refund_processing')].refundStatus")
+                .value("PROCESSING"));
     }
 
     @Test
