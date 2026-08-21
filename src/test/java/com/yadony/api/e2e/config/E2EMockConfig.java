@@ -89,7 +89,13 @@ public class E2EMockConfig {
         Customer escrowCustomer = Mockito.mock(Customer.class);
         Mockito.when(escrowCustomer.getId()).thenReturn("cus_escrow_test123");
 
-        Mockito.when(gateway.createAccount(Mockito.any())).thenReturn(account);
+        // La création passe par Accounts v2 et rend un type distinct ; la lecture reste
+        // en v1, qui répond de la même manière sur un compte créé en v2.
+        com.stripe.model.v2.core.Account createdAccount =
+                Mockito.mock(com.stripe.model.v2.core.Account.class);
+        Mockito.when(createdAccount.getId()).thenReturn("acct_test123");
+
+        Mockito.when(gateway.createAccountV2(Mockito.any())).thenReturn(createdAccount);
         Mockito.when(gateway.retrieveAccount(Mockito.anyString())).thenReturn(account);
         Mockito.when(gateway.createAccountLink(Mockito.any())).thenReturn(link);
         Mockito.when(gateway.createPaymentIntent(Mockito.any())).thenReturn(pi);

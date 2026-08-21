@@ -23,9 +23,9 @@ import static org.mockito.Mockito.*;
 
 /**
  * Orchestration de {@code createConnectAccount} — verrou, relecture, sauvegarde,
- * audit. La construction des {@code AccountCreateParams} elle-même est extraite
- * (lot 4) dans {@link StripeExpressAccountProvisioner}, couverte par
- * {@link StripeExpressAccountProvisionerTest}.
+ * audit. La construction des paramètres Stripe elle-même est extraite dans
+ * {@link StripeV2AccountProvisioner}, couverte par
+ * {@link StripeV2AccountProvisionerTest}.
  */
 @ExtendWith(MockitoExtension.class)
 class StripeConnectAccountCreationTest {
@@ -49,7 +49,7 @@ class StripeConnectAccountCreationTest {
                 paymentRepository, auditService, eventPublisher,
                 PaymentServiceTestFactory.defaultConnectProperties(),
                 new com.fasterxml.jackson.databind.ObjectMapper(),
-                org.mockito.Mockito.mock(com.yadony.api.common.stripe.AdminAlertService.class), PaymentServiceTestFactory.stubbedResolver(), org.mockito.Mockito.mock(com.yadony.api.promo.PromoService.class), new StripeGatewayImpl(),
+                org.mockito.Mockito.mock(com.yadony.api.common.stripe.AdminAlertService.class), PaymentServiceTestFactory.stubbedResolver(), org.mockito.Mockito.mock(com.yadony.api.promo.PromoService.class), new StripeGatewayImpl(null),
                 PaymentServiceTestFactory.stubbedContacts(), mock(com.yadony.api.voucher.CommissionVoucherService.class), connectAccountProvisioner
 );
     }
@@ -70,10 +70,8 @@ class StripeConnectAccountCreationTest {
         UserEntity user = buildUser(false, "FR");
         when(userRepository.findByFirebaseUid("uid-test")).thenReturn(Optional.of(user));
         when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        Account mockAccount = mock(Account.class);
-        when(mockAccount.getId()).thenReturn("acct_new");
         try {
-            when(connectAccountProvisioner.provision(user)).thenReturn(mockAccount);
+            when(connectAccountProvisioner.provision(user)).thenReturn("acct_new");
         } catch (Exception ignored) { /* checked StripeException, never thrown in this stub */ }
 
         service.createConnectAccount("uid-test");
@@ -89,10 +87,8 @@ class StripeConnectAccountCreationTest {
         UserEntity user = buildUser(false, "FR");
         when(userRepository.findByFirebaseUid("uid-test")).thenReturn(Optional.of(user));
         when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        Account mockAccount = mock(Account.class);
-        when(mockAccount.getId()).thenReturn("acct_audit");
         try {
-            when(connectAccountProvisioner.provision(user)).thenReturn(mockAccount);
+            when(connectAccountProvisioner.provision(user)).thenReturn("acct_audit");
         } catch (Exception ignored) { }
 
         service.createConnectAccount("uid-test");
@@ -116,5 +112,47 @@ class StripeConnectAccountCreationTest {
 
             verifyNoInteractions(connectAccountProvisioner);
         }
+    }
+
+    // ── Eligibilite du pays exposee a l'application ──────────────────────────
+
+    @Test
+    void getConnectAccountStatus_supportedCountry_reportsConnectAvailable() {
+        UserEntity user = buildUser(false, "FR");
+        when(userRepository.findByFirebaseUid("uid-test")).thenReturn(Optional.of(user));
+
+        assertThat(service.getConnectAccountStatus("uid-test").connectAvailableInCountry())
+                .isTrue();
+    }
+
+    @Test
+    void getConnectAccountStatus_countryNotCoveredByStripe_reportsConnectUnavailable() {
+        // Le Senegal est desservi par yadony mais Stripe n'y ouvre pas de compte : le
+        // voyageur doit rester en especes, sans se voir proposer l'activation carte.
+        UserEntity user = buildUser(false, "SN");
+        when(userRepository.findByFirebaseUid("uid-test")).thenReturn(Optional.of(user));
+
+        assertThat(service.getConnectAccountStatus("uid-test").connectAvailableInCountry())
+                .isFalse();
+    }
+
+    @Test
+    void getConnectAccountStatus_countryNotSet_reportsConnectUnavailable() {
+        UserEntity user = buildUser(false, null);
+        when(userRepository.findByFirebaseUid("uid-test")).thenReturn(Optional.of(user));
+
+        assertThat(service.getConnectAccountStatus("uid-test").connectAvailableInCountry())
+                .isFalse();
+    }
+
+    @Test
+    void createConnectAccount_reportsConnectAvailabilityAlongsideNewAccount() throws Exception {
+        UserEntity user = buildUser(false, "FR");
+        when(userRepository.findByFirebaseUid("uid-test")).thenReturn(Optional.of(user));
+        when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(connectAccountProvisioner.provision(user)).thenReturn("acct_new");
+
+        assertThat(service.createConnectAccount("uid-test").connectAvailableInCountry())
+                .isTrue();
     }
 }

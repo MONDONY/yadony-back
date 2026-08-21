@@ -74,7 +74,7 @@ class PaymentServiceNegotiatedEscrowTest {
                 mock(com.yadony.api.common.stripe.AdminAlertService.class),
                 PaymentServiceTestFactory.stubbedResolver(),
                 mock(com.yadony.api.promo.PromoService.class),
-                new StripeGatewayImpl(),
+                new StripeGatewayImpl(null),
                 PaymentServiceTestFactory.stubbedContacts(), mock(com.yadony.api.voucher.CommissionVoucherService.class), mock(com.yadony.api.payments.ConnectAccountProvisioner.class));
     }
 

@@ -125,7 +125,17 @@ public class PaymentService {
 
     public ConnectAccountResponse getConnectAccountStatus(String firebaseUid) {
         UserEntity user = findUser(firebaseUid);
-        return new ConnectAccountResponse(user.getStripeAccountId(), user.getStripeAccountStatus());
+        return new ConnectAccountResponse(user.getStripeAccountId(), user.getStripeAccountStatus(),
+                connectAvailableFor(user));
+    }
+
+    /**
+     * Stripe ne couvre pas tous les pays desservis par yadony (zone XOF, zone XAF, US, CA).
+     * L'exposer permet a l'application de masquer l'activation du paiement par carte plutot
+     * que de laisser le voyageur la tenter et echouer.
+     */
+    private boolean connectAvailableFor(UserEntity user) {
+        return StripeConnectCountries.isSupported(user.getCountry());
     }
 
     public ConnectAccountResponse createConnectAccount(String firebaseUid) {
@@ -142,7 +152,8 @@ public class PaymentService {
         if (user.getStripeAccountId() != null) {
             try {
                 stripeGateway.retrieveAccount(user.getStripeAccountId());
-                return new ConnectAccountResponse(user.getStripeAccountId(), user.getStripeAccountStatus());
+                return new ConnectAccountResponse(user.getStripeAccountId(),
+                        user.getStripeAccountStatus(), connectAvailableFor(user));
             } catch (StripeException e) {
                 if (!isStripeAccountMissing(e)) {
                     log.error("Failed to verify Stripe account {} for user {}",
@@ -159,26 +170,26 @@ public class PaymentService {
         }
 
         try {
-            // Lot 4 (préparation Accounts v2) : la construction des paramètres et l'appel
-            // Stripe sont isolés derrière ConnectAccountProvisioner. Basculer d'implémentation
-            // (v1 EXPRESS → v2) ne touchera plus cette méthode, seulement le bean injecté.
-            Account account = connectAccountProvisioner.provision(user);
-            user.setStripeAccountId(account.getId());
+            // La construction des paramètres et l'appel Stripe sont isolés derrière
+            // ConnectAccountProvisioner : cette méthode ne connaît que l'identifiant rendu.
+            String accountId = connectAccountProvisioner.provision(user);
+            user.setStripeAccountId(accountId);
             user.setStripeAccountStatus(StripeAccountStatus.PENDING_ONBOARDING);
             user.setStripeAccountCreatedAt(java.time.Instant.now());
             try {
                 userRepository.save(user);
             } catch (Exception saveEx) {
                 log.error("Failed to save user after Stripe account creation. orphan_account_id={}, user_id={}",
-                        account.getId(), user.getId(), saveEx);
+                        accountId, user.getId(), saveEx);
                 throw saveEx;
             }
 
             auditService.log("USER", user.getId(), "STRIPE_ACCOUNT_CREATED", user.getId(),
-                    Map.of("stripeAccountId", account.getId()));
+                    Map.of("stripeAccountId", accountId));
 
-            log.info("Stripe Express account created for user {} : {}", user.getId(), account.getId());
-            return new ConnectAccountResponse(account.getId(), StripeAccountStatus.PENDING_ONBOARDING);
+            log.info("Stripe Connect account created for user {} : {}", user.getId(), accountId);
+            return new ConnectAccountResponse(accountId, StripeAccountStatus.PENDING_ONBOARDING,
+                    connectAvailableFor(user));
 
         } catch (YadonyBusinessException e) {
             // Erreur métier déjà qualifiée (ex. 422 country-required levé par
@@ -292,7 +303,8 @@ public class PaymentService {
                         user.getId(), newStatus);
             }
 
-            return new ConnectAccountResponse(account.getId(), user.getStripeAccountStatus());
+            return new ConnectAccountResponse(account.getId(), user.getStripeAccountStatus(),
+                    connectAvailableFor(user));
 
         } catch (StripeException e) {
             log.error("Failed to refresh Stripe account {} for user {}",
