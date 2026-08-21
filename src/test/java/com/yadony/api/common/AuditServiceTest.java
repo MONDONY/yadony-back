@@ -100,6 +100,10 @@ class AuditServiceTest {
         payload.put("bidId", "bid-9");
         payload.put("amount", 42);
         payload.put("status", "ACCEPTED");
+        // UID Firebase d'une session anonyme reclamee (GuestClaimService). C'est la seule
+        // information qui relie l'entree d'audit aux deux sessions : si redact() la masquait
+        // un jour, l'entree perdrait tout interet. Verrou explicite.
+        payload.put("guestUid", "anon-uid-42");
 
         auditService.log("BID", UUID.randomUUID(), "BID_CREATED", UUID.randomUUID(), payload);
 
@@ -119,6 +123,7 @@ class AuditServiceTest {
         assertThat(saved).containsEntry("bidId", "bid-9");
         assertThat(saved).containsEntry("amount", 42);
         assertThat(saved).containsEntry("status", "ACCEPTED");
+        assertThat(saved).containsEntry("guestUid", "anon-uid-42");
     }
 
     private <T> T any() {

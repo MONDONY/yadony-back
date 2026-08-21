@@ -123,6 +123,15 @@ public class SecurityConfig {
                 // exactement le tunnel d'inscription qu'ils servent.
                 .requestMatchers("/auth/email-otp/attach").access(authenticatedNonGuest())
                 .requestMatchers("/auth/sms-otp/attach").access(authenticatedNonGuest())
+                // Réclamation des données d'une session anonyme : mute deux comptes (les
+                // favoris changent de propriétaire, la ligne invitée est supprimée). Même
+                // motif que les deux règles ci-dessus, et même emplacement obligatoire,
+                // AVANT le permitAll sur /auth/**.
+                //
+                // `authenticatedNonGuest()` : l'appelant doit être un VRAI compte. Un invité
+                // qui atteindrait cet endpoint pourrait, en présentant le jeton anonyme d'un
+                // autre visiteur, s'approprier ses favoris sans jamais s'inscrire.
+                .requestMatchers(HttpMethod.POST, "/auth/guest/claim").access(authenticatedNonGuest())
                 .requestMatchers(
                     "/auth/**",
                     "/actuator/health",

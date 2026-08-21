@@ -336,6 +336,26 @@ class GuestAuthorizationIT {
     }
 
     /**
+     * Meme motif que les deux precedents, pour l'endpoint de reclamation des donnees d'une
+     * session anonyme (Task 5). Il MUTE deux comptes : il transfere les favoris d'une session
+     * invitee vers le compte appelant, puis supprime la ligne invitee. L'appelant doit donc
+     * etre un VRAI compte. Un invite qui l'atteindrait pourrait, en presentant le token
+     * anonyme d'un autre visiteur, s'approprier ses favoris sans jamais s'inscrire.
+     *
+     * <p>{@code /auth/**} etant en {@code permitAll}, la regle explicite doit etre declaree
+     * AVANT ce bloc : c'est ce que ce test verrouille.
+     */
+    @Test
+    @DisplayName("un invite ne peut PAS reclamer les donnees d'une session anonyme")
+    void guestCannotClaimGuestData() throws Exception {
+        mockMvc.perform(post("/auth/guest/claim")
+                        .with(authentication(guest()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"guestIdToken\":\"un-token\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    /**
      * Amendement A5 : {@code /auth/**} est en {@code permitAll}, la regle invite ne
      * s'applique donc jamais a ce chemin. Le refus vient de la resolution de la ligne
      * « users », absente pour un invite : 404, pas 403. Ne pas « corriger » SecurityConfig
