@@ -11,14 +11,20 @@ public class WalletTransactionDto {
     private BigDecimal balanceAfter;
     private String paymentRef;
     private Instant createdAt;
+    private String refundStatus;
 
     public static WalletTransactionDto from(WalletTransactionEntity tx) {
+        return from(tx, null);
+    }
+
+    public static WalletTransactionDto from(WalletTransactionEntity tx, String refundStatus) {
         WalletTransactionDto dto = new WalletTransactionDto();
         dto.type = tx.getType().name();
         dto.amount = tx.getAmount();
         dto.balanceAfter = tx.getBalanceAfter();
         dto.paymentRef = tx.getPaymentRef();
         dto.createdAt = tx.getCreatedAt();
+        dto.refundStatus = refundStatus;
         return dto;
     }
 
@@ -27,4 +33,5 @@ public class WalletTransactionDto {
     public BigDecimal getBalanceAfter() { return balanceAfter; }
     public String getPaymentRef() { return paymentRef; }
     public Instant getCreatedAt() { return createdAt; }
+    public String getRefundStatus() { return refundStatus; }
 }

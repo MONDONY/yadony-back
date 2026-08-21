@@ -104,12 +104,6 @@ class PaymentStripeWebhookHandlerTest {
     }
 
     @Test
-    void handle_chargeRefunded_callsService() {
-        handler.handle(buildEvent("charge.refunded"));
-        verify(paymentService).handleChargeRefunded(any());
-    }
-
-    @Test
     void handle_chargeRefunded_alsoRoutesToWalletSelfRefundService() {
         Charge charge = mock(Charge.class);
         EventDataObjectDeserializer deserializer = mock(EventDataObjectDeserializer.class);
@@ -122,6 +116,74 @@ class PaymentStripeWebhookHandlerTest {
 
         verify(paymentService).handleChargeRefunded(event);
         verify(walletSelfRefundService).handleChargeRefunded(charge);
+    }
+
+    @Test
+    void handle_chargeRefunded_deserializerEmpty_fetchesViaApiAndRoutesToWallet() {
+        // Régression : même mismatch de version d'API que pour payment_intent.succeeded.
+        // Sans le fallback (getRawJson + Charge.retrieve), l'item de remboursement wallet
+        // restait bloqué en PROCESSING pour toujours (le webhook répondait 200 sans rien
+        // faire, donc Stripe ne retentait jamais) — cf. WalletSelfRefundService.
+        EventDataObjectDeserializer deserializer = mock(EventDataObjectDeserializer.class);
+        when(deserializer.getObject()).thenReturn(Optional.empty());
+        when(deserializer.getRawJson()).thenReturn("{\"id\":\"ch_fallback\"}");
+
+        Event event = mock(Event.class);
+        when(event.getType()).thenReturn("charge.refunded");
+        when(event.getDataObjectDeserializer()).thenReturn(deserializer);
+
+        Charge fetched = mock(Charge.class);
+
+        try (MockedStatic<Charge> mocked = mockStatic(Charge.class)) {
+            mocked.when(() -> Charge.retrieve("ch_fallback")).thenReturn(fetched);
+            handler.handle(event);
+        }
+
+        verify(paymentService).handleChargeRefunded(event);
+        verify(walletSelfRefundService).handleChargeRefunded(fetched);
+    }
+
+    @Test
+    void handle_chargeRefunded_payloadCannotBeParsed_failsRetryably() {
+        EventDataObjectDeserializer deserializer = mock(EventDataObjectDeserializer.class);
+        when(deserializer.getObject()).thenReturn(Optional.empty());
+        when(deserializer.getRawJson()).thenReturn("{");
+
+        Event event = mock(Event.class);
+        when(event.getType()).thenReturn("charge.refunded");
+        when(event.getId()).thenReturn("evt_charge_parse_failure");
+        when(event.getDataObjectDeserializer()).thenReturn(deserializer);
+
+        assertThatThrownBy(() -> handler.handle(event))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, error -> {
+                    assertThat(error.getStatus()).isEqualTo(HttpStatus.BAD_GATEWAY);
+                    assertThat(error.getErrorCode()).isEqualTo("stripe-charge-resolution-failed");
+                });
+        verify(walletSelfRefundService, never()).handleChargeRefunded(any());
+    }
+
+    @Test
+    void handle_chargeRefunded_retrievalFails_failsRetryably() {
+        EventDataObjectDeserializer deserializer = mock(EventDataObjectDeserializer.class);
+        when(deserializer.getObject()).thenReturn(Optional.empty());
+        when(deserializer.getRawJson()).thenReturn("{\"id\":\"ch_unavailable\"}");
+
+        Event event = mock(Event.class);
+        when(event.getType()).thenReturn("charge.refunded");
+        when(event.getId()).thenReturn("evt_charge_retrieve_failure");
+        when(event.getDataObjectDeserializer()).thenReturn(deserializer);
+
+        try (MockedStatic<Charge> mocked = mockStatic(Charge.class)) {
+            mocked.when(() -> Charge.retrieve("ch_unavailable"))
+                    .thenThrow(new RuntimeException("Stripe unavailable"));
+
+            assertThatThrownBy(() -> handler.handle(event))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, error -> {
+                        assertThat(error.getStatus()).isEqualTo(HttpStatus.BAD_GATEWAY);
+                        assertThat(error.getErrorCode()).isEqualTo("stripe-charge-resolution-failed");
+                    });
+        }
+        verify(walletSelfRefundService, never()).handleChargeRefunded(any());
     }
 
     @Test

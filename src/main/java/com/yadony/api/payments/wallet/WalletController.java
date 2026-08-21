@@ -27,6 +27,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -59,9 +60,12 @@ public class WalletController {
         UUID userId = currentUserId();
         String activeCurrency = businessPrefsService.getPrefs(currentFirebaseUid()).currencyCode();
         WalletAccountEntity wallet = walletService.getOrCreate(userId, activeCurrency);
-        List<WalletTransactionDto> txs = walletService.getTransactions(userId, page)
+        List<WalletTransactionEntity> transactions = walletService.getTransactions(userId, page);
+        Map<UUID, String> refundStatusByTxId = walletSelfRefundService.refundStatusByTransactionId(
+                transactions.stream().map(WalletTransactionEntity::getId).toList());
+        List<WalletTransactionDto> txs = transactions
             .stream()
-            .map(WalletTransactionDto::from)
+            .map(tx -> WalletTransactionDto.from(tx, refundStatusByTxId.get(tx.getId())))
             .collect(Collectors.toList());
         List<WalletCurrencyBalanceDto> balances = walletService.getAllBalances(userId)
             .stream()

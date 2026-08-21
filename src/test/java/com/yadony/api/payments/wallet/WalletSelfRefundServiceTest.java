@@ -20,12 +20,14 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -209,6 +211,9 @@ class WalletSelfRefundServiceTest {
     @Test
     void listEligibleTopups_returnsTopupsSinceRefundEligibleSince() {
         WalletAccountEntity wallet = eligibleWallet();
+        when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(
+                USER_ID, "EUR", List.of(WalletRefundRequestStatus.PROCESSING)))
+                .thenReturn(Optional.empty());
         when(refundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(
                 USER_ID, "EUR", List.of(WalletRefundRequestStatus.PENDING, WalletRefundRequestStatus.PROCESSING)))
                 .thenReturn(false);
@@ -218,8 +223,153 @@ class WalletSelfRefundServiceTest {
         when(walletTransactionRepository.findByUserIdAndCurrencyAndTypeAndCreatedAtGreaterThanEqual(
                 USER_ID, "EUR", WalletTransactionType.TOP_UP, wallet.getRefundEligibleSince()))
                 .thenReturn(List.of(topup1, topup2));
+        when(refundRequestItemRepository.findByWalletTransactionIdIn(List.of(topup1.getId(), topup2.getId())))
+                .thenReturn(List.of());
 
         assertThat(service.listEligibleTopups(USER_ID, "EUR")).containsExactly(topup1, topup2);
+    }
+
+    @Test
+    void listEligibleTopups_excludesTopupsAlreadyFullyRefunded() {
+        // Une recharge déjà remboursée (item REFUNDED d'une demande antérieure, désormais
+        // terminale) ne doit jamais réapparaître : la reproposer déclencherait un second
+        // Refund.create sur un charge déjà remboursé côté Stripe.
+        WalletAccountEntity wallet = eligibleWallet();
+        when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(
+                USER_ID, "EUR", List.of(WalletRefundRequestStatus.PROCESSING)))
+                .thenReturn(Optional.empty());
+        when(refundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(
+                USER_ID, "EUR", List.of(WalletRefundRequestStatus.PENDING, WalletRefundRequestStatus.PROCESSING)))
+                .thenReturn(false);
+        when(walletAccountRepository.findByUserIdAndCurrency(USER_ID, "EUR")).thenReturn(Optional.of(wallet));
+        WalletTransactionEntity topup1 = topup("pi_111", "30.00");
+        WalletTransactionEntity topup2 = topup("pi_222", "20.00");
+        when(walletTransactionRepository.findByUserIdAndCurrencyAndTypeAndCreatedAtGreaterThanEqual(
+                USER_ID, "EUR", WalletTransactionType.TOP_UP, wallet.getRefundEligibleSince()))
+                .thenReturn(List.of(topup1, topup2));
+        WalletRefundRequestItemEntity refundedItem = new WalletRefundRequestItemEntity();
+        refundedItem.setWalletTransactionId(topup1.getId());
+        refundedItem.setStatus(WalletRefundItemStatus.REFUNDED);
+        when(refundRequestItemRepository.findByWalletTransactionIdIn(List.of(topup1.getId(), topup2.getId())))
+                .thenReturn(List.of(refundedItem));
+
+        assertThat(service.listEligibleTopups(USER_ID, "EUR")).containsExactly(topup2);
+    }
+
+    @Test
+    void listEligibleTopups_reconcilesStaleProcessingRequestBeforeCheckingActiveRequest() {
+        // Régression : un item resté PROCESSING alors que Stripe a déjà terminé le
+        // remboursement (webhook manqué, cf. PaymentStripeWebhookHandler.resolveCharge)
+        // bloquait sinon la liste indéfiniment, même après une nouvelle recharge.
+        UUID requestId = UUID.randomUUID();
+        WalletRefundRequestEntity stale = new WalletRefundRequestEntity();
+        stale.setUserId(USER_ID);
+        stale.setCurrency("EUR");
+        stale.setStatus(WalletRefundRequestStatus.PROCESSING);
+        setId(stale, requestId);
+        WalletRefundRequestItemEntity item = new WalletRefundRequestItemEntity();
+        item.setRefundRequestId(requestId);
+        item.setStatus(WalletRefundItemStatus.PROCESSING);
+        item.setStripeRefundId("re_stale");
+        item.setAmount(new BigDecimal("10.00"));
+
+        when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(
+                USER_ID, "EUR", List.of(WalletRefundRequestStatus.PROCESSING)))
+                .thenReturn(Optional.of(stale));
+        when(refundRequestItemRepository.findByRefundRequestId(requestId)).thenReturn(List.of(item));
+        when(refundRequestRepository.findById(requestId)).thenReturn(Optional.of(stale));
+        when(refundRequestRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(refundRequestItemRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        // Après réconciliation, la demande n'est plus PROCESSING : plus aucun blocage.
+        when(refundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(
+                USER_ID, "EUR", List.of(WalletRefundRequestStatus.PENDING, WalletRefundRequestStatus.PROCESSING)))
+                .thenReturn(false);
+        WalletAccountEntity wallet = eligibleWallet();
+        when(walletAccountRepository.findByUserIdAndCurrency(USER_ID, "EUR")).thenReturn(Optional.of(wallet));
+        when(walletTransactionRepository.findByUserIdAndCurrencyAndTypeAndCreatedAtGreaterThanEqual(
+                USER_ID, "EUR", WalletTransactionType.TOP_UP, wallet.getRefundEligibleSince()))
+                .thenReturn(List.of());
+
+        try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            Refund refund = mock(Refund.class);
+            when(refund.getStatus()).thenReturn("succeeded");
+            refundStatic.when(() -> Refund.retrieve("re_stale")).thenReturn(refund);
+
+            service.listEligibleTopups(USER_ID, "EUR");
+        }
+
+        assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.REFUNDED);
+        assertThat(stale.getStatus()).isEqualTo(WalletRefundRequestStatus.REFUNDED);
+        verify(walletService).debitConfirmedRefund(USER_ID, "EUR", new BigDecimal("10.00"),
+                WalletTransactionType.SELF_REFUND_OUT);
+    }
+
+    @Test
+    void listForUser_reconcilesProcessingRequestsAgainstStripe() {
+        UUID requestId = UUID.randomUUID();
+        WalletRefundRequestEntity request = new WalletRefundRequestEntity();
+        request.setUserId(USER_ID);
+        request.setCurrency("EUR");
+        request.setStatus(WalletRefundRequestStatus.PROCESSING);
+        setId(request, requestId);
+        WalletRefundRequestItemEntity item = new WalletRefundRequestItemEntity();
+        item.setRefundRequestId(requestId);
+        item.setStatus(WalletRefundItemStatus.PROCESSING);
+        item.setStripeRefundId("re_stale");
+        item.setAmount(new BigDecimal("10.00"));
+
+        when(refundRequestRepository.findAllByUserIdOrderByRequestedAtDesc(USER_ID)).thenReturn(List.of(request));
+        when(refundRequestItemRepository.findByRefundRequestId(requestId)).thenReturn(List.of(item));
+        when(refundRequestRepository.findById(requestId)).thenReturn(Optional.of(request));
+        when(refundRequestRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(refundRequestItemRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            Refund refund = mock(Refund.class);
+            when(refund.getStatus()).thenReturn("failed");
+            refundStatic.when(() -> Refund.retrieve("re_stale")).thenReturn(refund);
+
+            List<WalletRefundRequestEntity> result = service.listForUser(USER_ID);
+
+            assertThat(result).containsExactly(request);
+        }
+
+        assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.FAILED);
+        assertThat(request.getStatus()).isEqualTo(WalletRefundRequestStatus.FAILED);
+        verify(adminAlertService).raise(eq("wallet-self-refund-failed"), any(), any());
+    }
+
+    @Test
+    void refundStatusByTransactionId_mapsProcessingAndRefundedButNotFailed() {
+        UUID processingTxId = UUID.randomUUID();
+        UUID refundedTxId = UUID.randomUUID();
+        UUID failedTxId = UUID.randomUUID();
+
+        WalletRefundRequestItemEntity processingItem = new WalletRefundRequestItemEntity();
+        processingItem.setWalletTransactionId(processingTxId);
+        processingItem.setStatus(WalletRefundItemStatus.PROCESSING);
+        WalletRefundRequestItemEntity refundedItem = new WalletRefundRequestItemEntity();
+        refundedItem.setWalletTransactionId(refundedTxId);
+        refundedItem.setStatus(WalletRefundItemStatus.REFUNDED);
+        WalletRefundRequestItemEntity failedItem = new WalletRefundRequestItemEntity();
+        failedItem.setWalletTransactionId(failedTxId);
+        failedItem.setStatus(WalletRefundItemStatus.FAILED);
+
+        List<UUID> ids = List.of(processingTxId, refundedTxId, failedTxId);
+        when(refundRequestItemRepository.findByWalletTransactionIdIn(ids))
+                .thenReturn(List.of(processingItem, refundedItem, failedItem));
+
+        Map<UUID, String> result = service.refundStatusByTransactionId(ids);
+
+        assertThat(result).containsExactlyInAnyOrderEntriesOf(Map.of(
+                processingTxId, "PROCESSING",
+                refundedTxId, "REFUNDED"));
+    }
+
+    @Test
+    void refundStatusByTransactionId_emptyInputReturnsEmptyMap() {
+        assertThat(service.refundStatusByTransactionId(List.of())).isEmpty();
+        verifyNoInteractions(refundRequestItemRepository);
     }
 
     @Test

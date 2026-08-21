@@ -94,10 +94,7 @@ public class PaymentStripeWebhookHandler implements StripeWebhookHandler {
             }
             case "charge.refunded" -> {
                 paymentService.handleChargeRefunded(event);
-                event.getDataObjectDeserializer().getObject()
-                        .filter(Charge.class::isInstance)
-                        .map(Charge.class::cast)
-                        .ifPresent(walletSelfRefundService::handleChargeRefunded);
+                walletSelfRefundService.handleChargeRefunded(resolveCharge(event));
             }
             case "setup_intent.succeeded"             -> cashHandler.handleSetupIntentSucceeded(event);
             case "payment_intent.succeeded" -> {
@@ -153,6 +150,49 @@ public class PaymentStripeWebhookHandler implements StripeWebhookHandler {
                 paymentIntent.getAmount(), walletCurrency.minorUnit());
         walletService.credit(userId, walletCurrency.name(), amount, WalletTransactionType.TOP_UP,
                 paymentIntent.getId(), "stripe-" + paymentIntent.getId());
+    }
+
+    /**
+     * Résout le Charge d'un event charge.refunded. Même mismatch de version d'API
+     * que {@link #resolvePaymentIntent} : {@code getObject()} peut renvoyer
+     * {@code Optional.empty()}, et l'ancien code faisait alors un simple
+     * {@code ifPresent} silencieux — {@code walletSelfRefundService.handleChargeRefunded}
+     * n'était jamais appelé, l'item de remboursement restait bloqué en PROCESSING
+     * indéfiniment (le webhook répondait 200, donc Stripe ne retentait jamais).
+     */
+    private Charge resolveCharge(Event event) {
+        try {
+            Optional<StripeObject> objOpt = event.getDataObjectDeserializer().getObject();
+            if (objOpt.isPresent()) {
+                if (objOpt.get() instanceof Charge charge) {
+                    return charge;
+                }
+                throw new IllegalStateException("L'objet Stripe résolu n'est pas un Charge");
+            }
+
+            String rawJson = event.getDataObjectDeserializer().getRawJson();
+            JsonNode node = objectMapper.readTree(rawJson);
+            JsonNode idNode = node == null ? null : node.get("id");
+            if (idNode == null || !idNode.isTextual() || idNode.asText().isBlank()) {
+                throw new IllegalStateException("Identifiant Charge absent du payload Stripe");
+            }
+            String chargeId = idNode.asText();
+            log.debug("charge.refunded: deserializer vide pour event {}, fetch Charge {} via API",
+                    event.getId(), chargeId);
+            Charge charge = Charge.retrieve(chargeId);
+            if (charge == null) {
+                throw new IllegalStateException("Stripe n'a retourné aucun Charge");
+            }
+            return charge;
+        } catch (Exception e) {
+            log.error("charge.refunded: impossible de résoudre le Charge depuis l'event {}: {}",
+                    event.getId(), e.getMessage(), e);
+            throw new YadonyBusinessException(
+                    HttpStatus.BAD_GATEWAY,
+                    "stripe-charge-resolution-failed",
+                    "Stripe Charge Resolution Failed",
+                    "Impossible de résoudre le Charge Stripe du webhook.");
+        }
     }
 
     private UUID resolveWalletUserId(String rawUserId) {
