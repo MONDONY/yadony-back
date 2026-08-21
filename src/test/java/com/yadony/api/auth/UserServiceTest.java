@@ -172,7 +172,8 @@ class UserServiceTest {
 
             userService.openWalletRefundTicketIfNeeded(USER_ID);
 
-            verify(walletSelfRefundService).request(USER_ID, "EUR");
+            verify(walletSelfRefundService).listEligibleTopups(USER_ID, "EUR");
+            verify(walletSelfRefundService).request(eq(USER_ID), eq("EUR"), any());
             verifyNoInteractions(walletRefundRequestService);
         }
 
@@ -187,7 +188,7 @@ class UserServiceTest {
 
             userService.openWalletRefundTicketIfNeeded(USER_ID);
 
-            verify(walletSelfRefundService, never()).request(any(), any());
+            verify(walletSelfRefundService, never()).request(any(), any(), any());
             verify(walletRefundRequestService).request(USER_ID);
         }
 

@@ -21,10 +21,14 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 public class WalletSelfRefundService {
@@ -65,15 +69,69 @@ public class WalletSelfRefundService {
                 .orElse(false);
     }
 
-    @Transactional
-    public WalletRefundRequestEntity request(UUID userId, String currency) {
+    /**
+     * Recharges carte encore remboursables pour {@code currency} : celles créditées
+     * depuis {@link WalletAccountEntity#getRefundEligibleSince()}, tant qu'aucune demande
+     * de remboursement PENDING/PROCESSING n'existe déjà pour cette devise (auto ou
+     * manuelle). Une demande active couvre toujours l'intégralité des recharges
+     * éligibles au moment de sa création — cf. {@link #request} — donc "aucune demande
+     * active" suffit à garantir qu'aucune des recharges retournées n'est déjà en cours
+     * de remboursement.
+     */
+    @Transactional(readOnly = true)
+    public List<WalletTransactionEntity> listEligibleTopups(UUID userId, String currency) {
         String code = normalize(currency);
+        boolean hasActiveRequest = refundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(
+                userId, code, List.of(WalletRefundRequestStatus.PENDING, WalletRefundRequestStatus.PROCESSING));
+        if (hasActiveRequest) {
+            return List.of();
+        }
+        return walletAccountRepository.findByUserIdAndCurrency(userId, code)
+                .filter(WalletAccountEntity::isRefundEligible)
+                .map(wallet -> computeEligibleTopups(userId, code, wallet))
+                .orElseGet(List::of);
+    }
+
+    private List<WalletTransactionEntity> computeEligibleTopups(UUID userId, String code, WalletAccountEntity wallet) {
+        Instant since = wallet.getRefundEligibleSince() != null ? wallet.getRefundEligibleSince() : Instant.EPOCH;
+        return walletTransactionRepository.findByUserIdAndCurrencyAndTypeAndCreatedAtGreaterThanEqual(
+                userId, code, WalletTransactionType.TOP_UP, since);
+    }
+
+    /**
+     * Demande de remboursement automatique portant sur {@code selectedTransactionIds}
+     * uniquement (jamais l'intégralité du solde éligible d'office) : l'utilisateur choisit
+     * quelle(s) recharge(s) il veut se faire rembourser dans la sheet de sélection Flutter.
+     */
+    @Transactional
+    public WalletRefundRequestEntity request(UUID userId, String currency, List<UUID> selectedTransactionIds) {
+        String code = normalize(currency);
+        List<UUID> selected = selectedTransactionIds == null
+                ? List.of()
+                : selectedTransactionIds.stream().distinct().toList();
+        if (selected.isEmpty()) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "wallet-not-refund-eligible", "Unprocessable",
+                    "Sélectionnez au moins une recharge à rembourser");
+        }
+
         WalletRefundRequestEntity existing = refundRequestRepository
                 .findByUserIdAndCurrencyAndStatusIn(userId, code,
                         List.of(WalletRefundRequestStatus.PENDING, WalletRefundRequestStatus.PROCESSING))
                 .orElse(null);
         if (existing != null) {
-            return existing;
+            Set<UUID> existingTopupIds = refundRequestItemRepository.findByRefundRequestId(existing.getId())
+                    .stream()
+                    .map(WalletRefundRequestItemEntity::getWalletTransactionId)
+                    .collect(Collectors.toSet());
+            if (existingTopupIds.equals(new HashSet<>(selected))) {
+                // Même sélection qu'une demande déjà en cours : re-tap accidentel,
+                // on renvoie le ticket existant plutôt que d'échouer.
+                return existing;
+            }
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "wallet-refund-pending", "Unprocessable",
+                    "Solde gelé : une demande de remboursement est déjà en cours sur cette devise");
         }
 
         WalletAccountEntity wallet = walletAccountRepository.findByUserIdAndCurrency(userId, code)
@@ -82,27 +140,33 @@ public class WalletSelfRefundService {
                         "wallet-not-refund-eligible", "Unprocessable",
                         "Ce solde n'est pas éligible au remboursement automatique"));
 
-        Instant since = wallet.getRefundEligibleSince() != null ? wallet.getRefundEligibleSince() : Instant.EPOCH;
-        List<WalletTransactionEntity> eligibleTopups = walletTransactionRepository
-                .findByUserIdAndCurrencyAndTypeAndCreatedAtGreaterThanEqual(
-                        userId, code, WalletTransactionType.TOP_UP, since);
-
-        if (eligibleTopups.isEmpty()) {
+        List<WalletTransactionEntity> eligibleTopups = computeEligibleTopups(userId, code, wallet);
+        Map<UUID, WalletTransactionEntity> eligibleById = eligibleTopups.stream()
+                .collect(Collectors.toMap(WalletTransactionEntity::getId, t -> t));
+        List<WalletTransactionEntity> selectedTopups = selected.stream()
+                .map(eligibleById::get)
+                .filter(Objects::nonNull)
+                .toList();
+        if (selectedTopups.size() != selected.size()) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "wallet-not-refund-eligible", "Unprocessable",
-                    "Aucune recharge carte remboursable n'a été trouvée pour ce solde");
+                    "Une ou plusieurs recharges sélectionnées ne sont plus éligibles au remboursement");
         }
+
+        BigDecimal amount = selectedTopups.stream()
+                .map(WalletTransactionEntity::getAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         WalletRefundRequestEntity request = new WalletRefundRequestEntity();
         request.setUserId(userId);
         request.setCurrency(code);
-        request.setAmount(wallet.getRefundEligibleAmount());
+        request.setAmount(amount);
         request.setChannel(WalletRefundChannel.AUTOMATIC_STRIPE);
         request.setStatus(WalletRefundRequestStatus.PENDING);
         request.setRequestedAt(LocalDateTime.now(ZoneOffset.UTC));
         WalletRefundRequestEntity saved = refundRequestRepository.save(request);
 
-        for (WalletTransactionEntity topup : eligibleTopups) {
+        for (WalletTransactionEntity topup : selectedTopups) {
             WalletRefundRequestItemEntity item = new WalletRefundRequestItemEntity();
             item.setRefundRequestId(saved.getId());
             item.setWalletTransactionId(topup.getId());
@@ -117,7 +181,7 @@ public class WalletSelfRefundService {
 
         auditService.log("wallet_refund_request", saved.getId(), "AUTOMATIC_REQUESTED", userId,
                 Map.of("currency", code, "amount", saved.getAmount().toString(),
-                        "items", String.valueOf(eligibleTopups.size())));
+                        "items", String.valueOf(selectedTopups.size())));
 
         for (WalletRefundRequestItemEntity item : refundRequestItemRepository.findByRefundRequestId(saved.getId())) {
             issueStripeRefund(item);
