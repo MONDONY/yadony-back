@@ -122,6 +122,12 @@ public class BidCheckoutService {
             sender.getId(), announcement.getId(), BidStatus.AWAITING_PAYMENT);
         if (awaitingBid.isPresent()) {
             BidEntity existing = awaitingBid.get();
+            // Auto-réparation : sans elle, un bid dont l'escrow est déjà actif est
+            // « repris » ici et repart dans createEscrow, qui répond 409
+            // payment-already-completed — l'expéditeur ne peut alors ni payer ni
+            // reposter sur ce trajet. Voir settleIfAlreadyEscrowed.
+            settleIfAlreadyEscrowed(existing);
+
             CreatePaymentRequest resumeReq = new CreatePaymentRequest();
             resumeReq.setBidId(existing.getId());
             resumeReq.setSavePaymentMethod(req.savePaymentMethod());
@@ -284,6 +290,9 @@ public class BidCheckoutService {
                 "Cette demande n'est pas issue d'une négociation de prix");
         }
 
+        // Auto-réparation AVANT la garde de statut : voir settleIfAlreadyEscrowed.
+        settleIfAlreadyEscrowed(bid);
+
         // Filtre à la fois le fil encore ouvert (NEGOTIATING), le fil refusé/annulé et
         // l'accord en espèces (PENDING) — ce dernier n'a aucun paiement en ligne à ouvrir.
         if (bid.getStatus() != BidStatus.AWAITING_PAYMENT) {
@@ -328,6 +337,48 @@ public class BidCheckoutService {
             paymentResp.getCurrency(),
             paymentResp.getPaymentMethodTypes()
         );
+    }
+
+    /**
+     * Rattrape un bid resté en {@code AWAITING_PAYMENT} alors que son escrow Stripe
+     * est en réalité déjà actif, et coupe court au paiement.
+     *
+     * <p>Deux filets doivent normalement promouvoir le bid après l'autorisation :
+     * le webhook {@code payment_intent.amount_capturable_updated} et l'appel client
+     * {@code POST /bids/{id}/confirm-payment}. Quand les deux manquent (webhook non
+     * délivré ET écran quitté avant l'envoi de la confirmation), le bid reste en
+     * {@code AWAITING_PAYMENT} avec un {@code payments} déjà en {@code ESCROW} :
+     * l'expéditeur voit « à payer », mais tout nouveau paiement se heurte au 409
+     * {@code payment-already-completed} de {@code createEscrow}, et la reprise
+     * d'idempotence de {@link #checkout} le renvoie dans la même impasse même après
+     * annulation du fil. Aucune sortie côté utilisateur.
+     *
+     * <p>On rejoue donc ici le filet manquant — {@code confirmBidPayment} interroge
+     * Stripe et promeut le bid s'il est réellement autorisé — puis on répond 409
+     * {@code bid-already-paid} pour que le client recharge et affiche l'état à jour.
+     *
+     * <p>Coût nul sur un premier paiement : sans {@code paymentIntentId} sur le bid,
+     * {@code confirmBidPayment} sort immédiatement sans appeler Stripe. Une panne
+     * Stripe ne bloque pas un paiement légitime : l'échec est avalé et le flux normal
+     * reprend la main.
+     */
+    private void settleIfAlreadyEscrowed(BidEntity bid) {
+        if (bid.getStatus() != BidStatus.AWAITING_PAYMENT || bid.getPaymentIntentId() == null) {
+            return;
+        }
+        boolean settled;
+        try {
+            settled = paymentService.confirmBidPayment(bid.getId());
+        } catch (RuntimeException e) {
+            // Stripe injoignable : on ne transforme pas un incident transitoire en
+            // refus de paiement, le parcours normal continue.
+            return;
+        }
+        if (settled) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT,
+                "bid-already-paid", "Bid Already Paid",
+                "Ce colis est déjà payé. Actualisez pour voir son état à jour.");
+        }
     }
 
     private String resolveClientIp(HttpServletRequest request) {
