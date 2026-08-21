@@ -24,6 +24,7 @@ import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.lang.reflect.Field;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -384,5 +385,89 @@ class FirebaseTokenFilterTest {
 
         verify(filterChain).doFilter(request, response);
         verify(response, never()).setStatus(SC_FORBIDDEN);
+    }
+
+    // ── ROLE_GUEST — sessions Firebase anonymes ─────────────────────────────
+
+    @Test
+    @DisplayName("session anonyme sans ligne en base → ROLE_GUEST")
+    void anonymousWithoutRow() throws Exception {
+        when(request.getHeader("Authorization")).thenReturn("Bearer fake-token");
+        when(mockToken.getUid()).thenReturn("anon-uid");
+        when(mockToken.getClaims())
+                .thenReturn(Map.of("firebase", Map.of("sign_in_provider", "anonymous")));
+        when(userLinkerService.resolveAndLink(eq("anon-uid"), any()))
+                .thenReturn(Optional.empty());
+
+        try (MockedStatic<FirebaseAuth> staticAuth = mockStatic(FirebaseAuth.class);
+             MockedStatic<FirebaseApp> staticApp = mockStatic(FirebaseApp.class)) {
+            staticApp.when(FirebaseApp::getApps).thenReturn(List.of(mock(FirebaseApp.class)));
+            staticAuth.when(FirebaseAuth::getInstance).thenReturn(mockFirebaseAuth);
+            when(mockFirebaseAuth.verifyIdToken("fake-token")).thenReturn(mockToken);
+
+            buildFilter().doFilterInternal(request, response, filterChain);
+        }
+
+        var auth = SecurityContextHolder.getContext().getAuthentication();
+        assertThat(auth).isNotNull();
+        assertThat(auth.getAuthorities())
+                .extracting("authority")
+                .containsExactly("ROLE_GUEST");
+        verify(filterChain).doFilter(request, response);
+    }
+
+    @Test
+    @DisplayName("session anonyme AVEC ligne en base → ROLE_GUEST, jamais les rôles de la ligne")
+    void anonymousWithRowStillGuest() throws Exception {
+        UserEntity guestRow = new UserEntity();
+        guestRow.setFirebaseUid("anon-uid");
+        guestRow.setStatus(UserStatus.ACTIVE);
+        guestRow.setRoles(Set.of(Role.SENDER, Role.TRAVELER));
+
+        when(request.getHeader("Authorization")).thenReturn("Bearer fake-token");
+        when(mockToken.getUid()).thenReturn("anon-uid");
+        when(mockToken.getClaims())
+                .thenReturn(Map.of("firebase", Map.of("sign_in_provider", "anonymous")));
+        when(userLinkerService.resolveAndLink(eq("anon-uid"), any()))
+                .thenReturn(Optional.of(guestRow));
+
+        try (MockedStatic<FirebaseAuth> staticAuth = mockStatic(FirebaseAuth.class);
+             MockedStatic<FirebaseApp> staticApp = mockStatic(FirebaseApp.class)) {
+            staticApp.when(FirebaseApp::getApps).thenReturn(List.of(mock(FirebaseApp.class)));
+            staticAuth.when(FirebaseAuth::getInstance).thenReturn(mockFirebaseAuth);
+            when(mockFirebaseAuth.verifyIdToken("fake-token")).thenReturn(mockToken);
+
+            buildFilter().doFilterInternal(request, response, filterChain);
+        }
+
+        // Le token fait autorité, pas la base : une ligne dont les rôles auraient
+        // été écrits par erreur ne doit jamais promouvoir un invité.
+        assertThat(SecurityContextHolder.getContext().getAuthentication().getAuthorities())
+                .extracting("authority")
+                .containsExactly("ROLE_GUEST");
+        verify(filterChain).doFilter(request, response);
+    }
+
+    @Test
+    @DisplayName("session téléphone sans ligne → rôles vides (tunnel d'inscription intact)")
+    void phoneWithoutRowKeepsEmptyRoles() throws Exception {
+        when(request.getHeader("Authorization")).thenReturn("Bearer fake-token");
+        when(mockToken.getUid()).thenReturn("new-uid");
+        when(mockToken.getClaims())
+                .thenReturn(Map.of("firebase", Map.of("sign_in_provider", "phone")));
+        when(userLinkerService.resolveAndLink(eq("new-uid"), any()))
+                .thenReturn(Optional.empty());
+
+        try (MockedStatic<FirebaseAuth> staticAuth = mockStatic(FirebaseAuth.class);
+             MockedStatic<FirebaseApp> staticApp = mockStatic(FirebaseApp.class)) {
+            staticApp.when(FirebaseApp::getApps).thenReturn(List.of(mock(FirebaseApp.class)));
+            staticAuth.when(FirebaseAuth::getInstance).thenReturn(mockFirebaseAuth);
+            when(mockFirebaseAuth.verifyIdToken("fake-token")).thenReturn(mockToken);
+
+            buildFilter().doFilterInternal(request, response, filterChain);
+        }
+
+        assertThat(SecurityContextHolder.getContext().getAuthentication().getAuthorities()).isEmpty();
+        verify(filterChain).doFilter(request, response);
     }
 }
