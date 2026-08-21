@@ -1,5 +1,6 @@
 package com.yadony.api.favorites;
 
+import com.yadony.api.auth.GuestUserProvisioner;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
@@ -34,6 +35,7 @@ class FavoriteServiceTest {
     @Mock PackageRequestRepository packageRequestRepository;
     @Mock AnnouncementSearchMapper announcementSearchMapper;
     @Mock PackageRequestSearchMapper packageRequestSearchMapper;
+    @Mock GuestUserProvisioner guestUserProvisioner;
 
     FavoriteService service;
 
@@ -46,13 +48,17 @@ class FavoriteServiceTest {
         MockitoAnnotations.openMocks(this);
         service = new FavoriteService(favoriteRepository, userRepository,
                 announcementRepository, packageRequestRepository,
-                announcementSearchMapper, packageRequestSearchMapper);
+                announcementSearchMapper, packageRequestSearchMapper,
+                guestUserProvisioner);
         userId = UUID.randomUUID();
         tripId = UUID.randomUUID();
 
         UserEntity user = mock(UserEntity.class);
         when(user.getId()).thenReturn(userId);
         when(userRepository.findByFirebaseUid(UID)).thenReturn(Optional.of(user));
+        // addFavorite passe par le provisioner, pas par userRepository directement :
+        // un compte déjà enregistré s'y résout à sa propre ligne, sans création.
+        when(guestUserProvisioner.resolveOrProvision(UID)).thenReturn(userId);
     }
 
     private AnnouncementEntity tripOwnedBy(UUID ownerId) {
@@ -400,5 +406,77 @@ class FavoriteServiceTest {
 
         // Verify batch method called with favIdSet containing p1 (all are favorites)
         verify(packageRequestSearchMapper).toSearchResponseList(anyList(), argThat(s -> s.contains(p1)), anyBoolean());
+    }
+
+    // --- Matérialisation paresseuse d'un invité (Task 4) ---
+
+    @Test
+    void addFavorite_provisionsGuestRowWhenAbsent() {
+        String guestUid = "guest-uid-999";
+        UUID guestUserId = UUID.randomUUID();
+        when(guestUserProvisioner.resolveOrProvision(guestUid)).thenReturn(guestUserId);
+        when(announcementRepository.findById(tripId))
+                .thenReturn(Optional.of(tripOwnedBy(UUID.randomUUID())));
+        when(favoriteRepository.existsByUserIdAndTargetTypeAndTargetId(guestUserId, FavoriteTargetType.TRIP, tripId))
+                .thenReturn(false);
+
+        service.addFavorite(guestUid, FavoriteTargetType.TRIP, tripId);
+
+        verify(guestUserProvisioner).resolveOrProvision(guestUid);
+        verify(favoriteRepository).save(argThat(f -> f.getUserId().equals(guestUserId)));
+        // La résolution passe uniquement par le provisioner : jamais un accès direct au
+        // repository qui contournerait la matérialisation paresseuse.
+        verify(userRepository, never()).findByFirebaseUid(guestUid);
+    }
+
+    @Test
+    void getFavoriteIds_guestWithoutRow_returnsEmptySetsWithoutProvisioning() {
+        String guestUid = "guest-uid-000";
+        when(userRepository.findByFirebaseUid(guestUid)).thenReturn(Optional.empty());
+
+        FavoriteIdsResponse res = service.getFavoriteIds(guestUid);
+
+        assertThat(res.trips()).isEmpty();
+        assertThat(res.packageRequests()).isEmpty();
+        // Chemin de lecture : naviguer ne doit jamais créer la ligne de l'invité.
+        verifyNoInteractions(guestUserProvisioner);
+        verify(favoriteRepository, never()).findTargetIds(any(), any());
+    }
+
+    @Test
+    void getFavoriteTrips_guestWithoutRow_returnsEmptyListWithoutProvisioning() {
+        String guestUid = "guest-uid-001";
+        when(userRepository.findByFirebaseUid(guestUid)).thenReturn(Optional.empty());
+
+        var res = service.getFavoriteTrips(guestUid);
+
+        assertThat(res).isEmpty();
+        verifyNoInteractions(guestUserProvisioner);
+        verify(announcementRepository, never()).findAllById(any());
+    }
+
+    @Test
+    void getFavoritePackageRequests_guestWithoutRow_returnsEmptyListWithoutProvisioning() {
+        String guestUid = "guest-uid-002";
+        when(userRepository.findByFirebaseUid(guestUid)).thenReturn(Optional.empty());
+
+        var res = service.getFavoritePackageRequests(guestUid);
+
+        assertThat(res).isEmpty();
+        verifyNoInteractions(guestUserProvisioner);
+        verify(packageRequestRepository, never()).findAllById(any());
+    }
+
+    @Test
+    void removeFavorite_guestWithoutRow_isNoOpWithoutProvisioning() {
+        String guestUid = "guest-uid-003";
+        when(userRepository.findByFirebaseUid(guestUid)).thenReturn(Optional.empty());
+
+        service.removeFavorite(guestUid, FavoriteTargetType.TRIP, tripId);
+
+        verify(favoriteRepository, never()).findByUserIdAndTargetTypeAndTargetId(any(), any(), any());
+        verify(favoriteRepository, never()).delete(any());
+        // Rien à retirer pour une ligne qui n'existe pas : pas de raison de la créer.
+        verifyNoInteractions(guestUserProvisioner);
     }
 }
