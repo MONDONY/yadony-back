@@ -80,10 +80,10 @@ public class AuthService {
 
     @Transactional
     public UserResponse register(String firebaseUid, FirebaseToken decodedToken, RegisterRequest request) {
-        // Active user → return as-is
+        // Active user → return as-is, sauf s'il s'agit d'une ligne invitée à promouvoir
         Optional<UserEntity> active = userRepository.findByFirebaseUid(firebaseUid);
         if (active.isPresent()) {
-            return toResponse(active.get());
+            return toResponse(promoteGuestRowIfNeeded(active.get(), decodedToken));
         }
         // Soft-deleted user with same Firebase UID → reactivate via native UPDATE to bypass
         // @Where filter (em.merge() would SELECT with the filter, find nothing, attempt INSERT → constraint violation)
@@ -111,6 +111,41 @@ public class AuthService {
             return toResponse(reactivated);
         }
         return createUser(firebaseUid, decodedToken, request);
+    }
+
+    /**
+     * Promeut en compte réel la ligne {@code users} d'un ancien visiteur.
+     *
+     * <p><b>Pourquoi c'est nécessaire.</b> {@code linkWithCredential} conserve l'UID Firebase :
+     * quand un visiteur s'inscrit, {@code register} retombe donc sur SA ligne, déjà active,
+     * créée sans aucun rôle par {@code GuestUserProvisioner} au premier favori. La renvoyer
+     * telle quelle laissait le compte à autorités vides : aucun endpoint exigeant un rôle ne
+     * lui était accessible, et la purge des lignes invitées abandonnées l'aurait visé comme
+     * un visiteur qui n'est jamais revenu.
+     *
+     * <p><b>Deux conditions, toutes deux nécessaires.</b> On ne touche qu'aux lignes
+     * {@code roles.isEmpty()} : seul {@code GuestUserProvisioner} en produit, un compte inscrit
+     * ou réactivé porte toujours SENDER+TRAVELER. Et on exige un jeton qui n'est <b>plus</b>
+     * anonyme : {@code /auth/**} est en {@code permitAll}, un invité peut donc atteindre
+     * {@code /auth/register}, et poser des rôles sur la foi d'un jeton encore anonyme
+     * accorderait un compte complet à une simple session visiteur. Un jeton absent est traité
+     * comme non probant, donc refusé — c'est déjà ce que fait {@code createUser}, dont le
+     * {@code switch} sur le provider rejette un provider nul ou inconnu.
+     */
+    private UserEntity promoteGuestRowIfNeeded(UserEntity user, FirebaseToken decodedToken) {
+        boolean guestRow = user.getRoles().isEmpty();
+        boolean tokenPromoted = decodedToken != null && !FirebaseSignInProvider.isAnonymous(decodedToken);
+        if (!guestRow || !tokenPromoted) {
+            return user;
+        }
+        user.setRoles(new java.util.HashSet<>(Set.of(Role.SENDER, Role.TRAVELER)));
+        UserEntity saved = userRepository.save(user);
+        auditService.log("USER", saved.getId(), "GUEST_PROMOTED", saved.getId(),
+                Map.of("provider", String.valueOf(FirebaseSignInProvider.of(decodedToken))));
+        // L'inscription d'un invité EST une inscription : sans cet event, le compte naîtrait
+        // sans code de parrainage et n'apparaîtrait dans aucune métrique d'acquisition.
+        eventPublisher.publishEvent(new UserRegisteredEvent(saved.getId(), saved.getFirebaseUid()));
+        return saved;
     }
 
     @Transactional(readOnly = true)

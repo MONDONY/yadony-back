@@ -3,6 +3,8 @@ package com.yadony.api.auth;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseAuthException;
 import com.google.firebase.auth.FirebaseToken;
+import com.google.firebase.auth.UserInfo;
+import com.google.firebase.auth.UserRecord;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.favorites.FavoriteEntity;
@@ -17,6 +19,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -52,6 +55,25 @@ class GuestClaimServiceTest {
     private final UserRepository userRepository = mock(UserRepository.class);
     private final FavoriteRepository favoriteRepository = mock(FavoriteRepository.class);
     private final AuditService auditService = mock(AuditService.class);
+
+    // ── Etape 0 : sans Firebase, aucune verification n'est possible ───────────
+
+    @Test
+    @DisplayName("bean FirebaseAuth absent → refus, jamais un transfert non vérifié")
+    void refusesWhenFirebaseUnavailable() {
+        // Ronde 1, constat 4. `firebaseAuth` est @Nullable (le bean vaut null en test/CI) :
+        // toute la sécurité de cet endpoint repose sur le fait que l'absence de Firebase
+        // FERME le chemin au lieu de le laisser passer. Sans ce test, remplacer le `throw`
+        // par un `return` ne casserait rien et ouvrirait le transfert à un jeton jamais
+        // vérifié.
+        GuestClaimService sansFirebase =
+                new GuestClaimService(null, userRepository, favoriteRepository, auditService);
+
+        assertThatThrownBy(() -> sansFirebase.claim(CALLER_UID, PRESENTED_TOKEN))
+                .isInstanceOf(IllegalStateException.class);
+
+        verifyNoInteractions(userRepository, favoriteRepository, auditService);
+    }
 
     // ── Etape 1 : le token presente doit etre verifiable ──────────────────────
 
@@ -103,6 +125,62 @@ class GuestClaimServiceTest {
         verifyNoInteractions(userRepository, favoriteRepository, auditService);
     }
 
+    // ── Barriere A : l'etat COURANT du compte Firebase, pas le claim fige ─────
+
+    @Test
+    @DisplayName("session déjà promue par linkWithCredential → refus, malgré un claim encore anonyme")
+    void rejectsPromotedAccountToken() throws Exception {
+        // Ronde 1, constat 1. `sign_in_provider` est figé à l'émission du jeton, et
+        // linkWithCredential CONSERVE l'UID : un jeton émis avant la promotion reste valide
+        // environ une heure et continue d'annoncer `anonymous` alors que l'UID désigne
+        // désormais un vrai compte. Sans cette barrière, le présenter depuis un AUTRE compte
+        // ferait transférer les favoris de ce vrai compte puis soft-deleter sa ligne `users`.
+        // C'est l'état courant du compte qui tranche, jamais le claim.
+        UserInfo phoneProvider = mock(UserInfo.class);
+        stubFirebaseUser(GUEST_UID, phoneProvider);
+
+        assertThatThrownBy(() -> serviceWithGuestToken("anonymous", GUEST_UID)
+                .claim(CALLER_UID, PRESENTED_TOKEN))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> {
+                    assertThat(((YadonyBusinessException) e).getErrorCode())
+                            .isEqualTo("guest-claim-promoted-account");
+                    assertThat(((YadonyBusinessException) e).getStatus())
+                            .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                });
+
+        verifyNoInteractions(userRepository, favoriteRepository, auditService);
+    }
+
+    // ── Barriere B : seconde barriere, cote base ──────────────────────────────
+
+    @Test
+    @DisplayName("ligne invitée portant des rôles → refus, ce n'est pas une ligne invitée")
+    void rejectsGuestRowWithRoles() throws Exception {
+        // Seconde barrière, indépendante de Firebase : une ligne `users` porteuse du moindre
+        // rôle n'est jamais une ligne invitée (GuestUserProvisioner en crée sans aucun rôle).
+        // Même garde que GuestUserProvisioner sur la réactivation, et elle ne coûte rien.
+        stubFirebaseUser(GUEST_UID);
+        UserEntity realAccount = userWithId(GUEST_UID);
+        realAccount.setRoles(Set.of(Role.SENDER));
+        when(userRepository.findByFirebaseUid(GUEST_UID)).thenReturn(Optional.of(realAccount));
+
+        assertThatThrownBy(() -> serviceWithGuestToken("anonymous", GUEST_UID)
+                .claim(CALLER_UID, PRESENTED_TOKEN))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> {
+                    assertThat(((YadonyBusinessException) e).getErrorCode())
+                            .isEqualTo("guest-claim-has-roles");
+                    assertThat(((YadonyBusinessException) e).getStatus())
+                            .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                });
+
+        // Le compte visé reste absolument intact : rien n'est transféré, rien n'est supprimé.
+        assertThat(realAccount.getDeletedAt()).isNull();
+        verify(userRepository, never()).save(any());
+        verifyNoInteractions(favoriteRepository, auditService);
+    }
+
     // ── Etape 4 : ligne invitee absente → succes sans effet ───────────────────
 
     @Test
@@ -113,6 +191,7 @@ class GuestClaimServiceTest {
         // La materialisation paresseuse (Task 4) fait qu'une ligne `users` n'existe
         // que si l'invite a persiste quelque chose : la majorite des sessions
         // anonymes n'en ont aucune.
+        stubFirebaseUser(GUEST_UID);
         when(userRepository.findByFirebaseUid(GUEST_UID)).thenReturn(Optional.empty());
 
         assertThatCode(() -> serviceWithGuestToken("anonymous", GUEST_UID)
@@ -132,6 +211,7 @@ class GuestClaimServiceTest {
     @Test
     @DisplayName("ligne de l'appelant absente → 404, la ligne invitée reste intacte")
     void missingCallerRowIsRejected() {
+        stubFirebaseUser(GUEST_UID);
         UserEntity guest = userWithId(GUEST_UID);
         when(userRepository.findByFirebaseUid(GUEST_UID)).thenReturn(Optional.of(guest));
         when(userRepository.findByFirebaseUid(CALLER_UID)).thenReturn(Optional.empty());
@@ -150,15 +230,16 @@ class GuestClaimServiceTest {
         verifyNoInteractions(favoriteRepository, auditService);
     }
 
-    // ── Etape 6 : transfert des favoris, doublons ignores ─────────────────────
+    // ── Etape 6 : transfert des favoris, doublons ecartes ─────────────────────
 
     @Test
-    @DisplayName("favori déjà présent chez l'appelant → ignoré, le transfert aboutit")
+    @DisplayName("favori déjà présent chez l'appelant → écarté, le transfert aboutit")
     void duplicateFavoriteIsSkipped() {
         // Sans ce comportement, la contrainte d'unicité (user_id, target) ferait
         // échouer TOUT le transfert à cause d'un seul doublon : l'index unique partiel
         // ux_favorites_active (user_id, target_type, target_id) WHERE deleted_at IS NULL
         // refuserait la reassignation, et l'exception remonterait sur tout l'appel.
+        stubFirebaseUser(GUEST_UID);
         UserEntity guest = userWithId(GUEST_UID);
         UserEntity caller = userWithId(CALLER_UID);
         when(userRepository.findByFirebaseUid(GUEST_UID)).thenReturn(Optional.of(guest));
@@ -184,14 +265,18 @@ class GuestClaimServiceTest {
         assertThat(saved.getValue().getTargetId()).isEqualTo(nouveau);
         assertThat(saved.getValue().getUserId()).isEqualTo(caller.getId());
 
-        // Le doublon reste sur la ligne invitee, qui va etre supprimee.
+        // Ronde 1, constat 3 : le doublon est supprime physiquement, jamais laisse en
+        // place. L'y laisser l'aurait rattache a une ligne `users` soft-deletee, donc
+        // invisible a toute requete JPQL : plus rien ne l'aurait jamais purge. Le hard
+        // delete est assume pour les favoris dans ce depot (V172).
+        verify(favoriteRepository).delete(doublon);
         assertThat(doublon.getUserId()).isEqualTo(guest.getId());
 
         // Le transfert aboutit malgre le doublon : ligne invitee supprimee et audit ecrit.
         assertThat(guest.getDeletedAt()).isNotNull();
         assertThat(auditPayload(caller.getId()))
                 .containsEntry("favoritesTransferred", 1)
-                .containsEntry("favoritesSkipped", 1);
+                .containsEntry("favoritesDiscarded", 1);
     }
 
     // ── Etapes 6 a 8 : nominal ────────────────────────────────────────────────
@@ -199,6 +284,7 @@ class GuestClaimServiceTest {
     @Test
     @DisplayName("transfert nominal → favoris déplacés, ligne invitée supprimée")
     void transfersThenDeletesGuestRow() {
+        stubFirebaseUser(GUEST_UID);
         UserEntity guest = userWithId(GUEST_UID);
         UserEntity caller = userWithId(CALLER_UID);
         when(userRepository.findByFirebaseUid(GUEST_UID)).thenReturn(Optional.of(guest));
@@ -235,7 +321,9 @@ class GuestClaimServiceTest {
         assertThat(auditPayload(caller.getId()))
                 .containsEntry("guestUid", GUEST_UID)
                 .containsEntry("favoritesTransferred", 2)
-                .containsEntry("favoritesSkipped", 0);
+                .containsEntry("favoritesDiscarded", 0);
+        // Aucun doublon ici : rien n'est supprime cote favoris.
+        verify(favoriteRepository, never()).delete(any());
     }
 
     // ── Outillage ─────────────────────────────────────────────────────────────
@@ -254,6 +342,20 @@ class GuestClaimServiceTest {
             throw new AssertionError(e);
         }
         return service();
+    }
+
+    /**
+     * Etat COURANT du compte Firebase (barriere A). Sans fournisseur = session encore
+     * anonyme ; avec au moins un fournisseur = compte promu par linkWithCredential.
+     */
+    private void stubFirebaseUser(String uid, UserInfo... providers) {
+        UserRecord record = mock(UserRecord.class);
+        when(record.getProviderData()).thenReturn(providers);
+        try {
+            when(firebaseAuth.getUser(uid)).thenReturn(record);
+        } catch (FirebaseAuthException e) {
+            throw new AssertionError(e);
+        }
     }
 
     private static UserEntity userWithId(String firebaseUid) {

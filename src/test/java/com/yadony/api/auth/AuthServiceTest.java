@@ -124,6 +124,63 @@ class AuthServiceTest {
             verify(userRepository, never()).save(any());
         }
 
+        /**
+         * Ronde 1 de la Task 5, constat 2. {@code linkWithCredential} conserve l'UID :
+         * quand un visiteur s'inscrit, {@code register} retombe sur SA ligne, déjà active
+         * et créée sans aucun rôle par {@code GuestUserProvisioner}. La renvoyer telle
+         * quelle laissait le compte à autorités vides — aucun endpoint à rôle accessible,
+         * et la purge de la Task 7 l'aurait visé comme une ligne invitée abandonnée.
+         */
+        @Test
+        @DisplayName("ligne invitée sans rôle + token promu → promue en SENDER+TRAVELER")
+        void register_guestRow_promotesToSenderAndTraveler() {
+            UserEntity guestRow = new UserEntity();
+            guestRow.setFirebaseUid(FIREBASE_UID);
+            guestRow.setStatus(UserStatus.ACTIVE);
+            guestRow.setKycStatus(KycStatus.NOT_STARTED);
+            setId(guestRow, UUID.randomUUID());
+            assertThat(guestRow.getRoles()).isEmpty();
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(guestRow));
+            when(userRepository.save(any(UserEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            RegisterRequest req = new RegisterRequest(PHONE, null, Set.of("SENDER"));
+            authService.register(FIREBASE_UID, mockPhoneToken(), req);
+
+            assertThat(guestRow.getRoles()).containsExactlyInAnyOrder(Role.SENDER, Role.TRAVELER);
+            verify(userRepository).save(guestRow);
+            // L'inscription d'un invité EST une inscription : le code de parrainage et les
+            // métriques dépendent de cet event, qui n'était jamais publié pour lui.
+            verify(eventPublisher).publishEvent(any(com.yadony.api.auth.events.UserRegisteredEvent.class));
+        }
+
+        /**
+         * Le garde-fou du correctif ci-dessus. {@code /auth/**} est en {@code permitAll} :
+         * un invité peut atteindre {@code /auth/register}. Poser des rôles sur la foi d'un
+         * jeton ENCORE anonyme accorderait un compte complet à une simple session visiteur.
+         */
+        @Test
+        @DisplayName("ligne invitée sans rôle + token encore anonyme → jamais promue")
+        void register_guestRow_anonymousToken_neverPromotes() {
+            UserEntity guestRow = new UserEntity();
+            guestRow.setFirebaseUid(FIREBASE_UID);
+            guestRow.setStatus(UserStatus.ACTIVE);
+            guestRow.setKycStatus(KycStatus.NOT_STARTED);
+            setId(guestRow, UUID.randomUUID());
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(guestRow));
+
+            com.google.firebase.auth.FirebaseToken anonymous =
+                    mock(com.google.firebase.auth.FirebaseToken.class);
+            lenient().when(anonymous.getClaims()).thenReturn(java.util.Map.of(
+                    "firebase", java.util.Map.of("sign_in_provider", "anonymous")));
+
+            RegisterRequest req = new RegisterRequest(PHONE, null, Set.of("SENDER"));
+            authService.register(FIREBASE_UID, anonymous, req);
+
+            assertThat(guestRow.getRoles()).isEmpty();
+            verify(userRepository, never()).save(any());
+            verify(eventPublisher, never()).publishEvent(any());
+        }
+
         @Test
         @DisplayName("nouvel utilisateur valide → crée l'utilisateur en base")
         void register_newUser_createsUser() {
