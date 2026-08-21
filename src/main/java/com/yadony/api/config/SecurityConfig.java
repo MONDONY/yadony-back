@@ -18,6 +18,7 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.access.expression.WebExpressionAuthorizationManager;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
@@ -128,7 +129,45 @@ public class SecurityConfig {
                     // enforced via HMAC signature verification in AdminSentryWebhookController.
                     "/admin/sentry-webhook"
                 ).permitAll()
-                .anyRequest().authenticated()
+                // ── Invités (session Firebase anonyme) ──────────────────────────────
+                // Modèle FERMÉ PAR DÉFAUT : on énumère ce qu'un invité peut faire, et
+                // tout le reste lui est refusé par la dernière règle. Un contrôleur
+                // ajouté demain sans y penser est donc inaccessible aux invités, au
+                // lieu de leur être ouvert : l'oubli devient sûr.
+                //
+                // NE JAMAIS remplacer ceci par des @PreAuthorize sur les contrôleurs
+                // d'engagement : ce serait revenir à un modèle ouvert par défaut.
+                //
+                // Ces chemins sont volontairement laissés en `authenticated()` et non en
+                // `hasAnyRole("GUEST", "SENDER", ...)`. Ils étaient déjà joignables par
+                // tout authentifié ; les réécrire en liste de rôles fermerait la
+                // recherche aux comptes à autorités vides, c'est-à-dire au tunnel
+                // d'inscription. La liste blanche ouvre aux invités, elle ne doit rien
+                // fermer à personne. Le tri fin par rôle reste porté par les
+                // @PreAuthorize de chaque méthode, inchangés hormis l'ajout de 'GUEST'.
+                .requestMatchers(HttpMethod.GET,
+                    "/announcements",
+                    "/announcements/*",
+                    "/package-requests",
+                    "/package-requests/*",
+                    "/favorites/ids",
+                    "/favorites/trips",
+                    "/favorites/package-requests",
+                    "/me/corridor-alerts"
+                ).authenticated()
+                // L'ajout d'un favori est un PUT (toggle-on), pas un POST.
+                .requestMatchers(HttpMethod.PUT, "/favorites/*/*", "/me/corridor-alerts/*")
+                    .authenticated()
+                .requestMatchers(HttpMethod.POST, "/me/corridor-alerts")
+                    .authenticated()
+                .requestMatchers(HttpMethod.DELETE, "/favorites/*/*", "/me/corridor-alerts/*")
+                    .authenticated()
+                // Tout le reste : authentifié ET non-invité. `authenticated()` seul ne
+                // suffirait pas, un token anonyme étant parfaitement authentifié.
+                // `hasRole('GUEST')` teste l'autorité `ROLE_GUEST` : le préfixe est ajouté
+                // par Spring Security, il ne doit pas être écrit ici.
+                .anyRequest().access(new WebExpressionAuthorizationManager(
+                    "isAuthenticated() and !hasRole('GUEST')"))
             )
             .addFilterBefore(firebaseTokenFilter, UsernamePasswordAuthenticationFilter.class)
             .exceptionHandling(ex -> ex

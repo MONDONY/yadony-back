@@ -81,7 +81,7 @@ public class PackageRequestController {
 
     @GetMapping("/{id}")
     public PackageRequestResponse getById(@PathVariable UUID id) {
-        return service.getById(requireUserId(), id);
+        return service.getById(viewerUserIdOrNull(), id);
     }
 
     /** Sender edits a request while no agreement is reached (OPEN/NEGOTIATING). */
@@ -133,7 +133,10 @@ public class PackageRequestController {
     }
 
     @GetMapping
-    @PreAuthorize("hasRole('TRAVELER')")
+    // 'GUEST' : chercher un colis fait partie de ce qu'un visiteur peut faire avant de
+    // s'inscrire. Conséquence assumée, signalée par l'amendement A2 : la liste devient
+    // visible d'un visiteur alors qu'un expéditeur inscrit n'y a toujours pas accès.
+    @PreAuthorize("hasAnyRole('TRAVELER','GUEST')")
     public Page<PackageRequestSearchResponse> search(
             @RequestParam(required = false) String departure,
             @RequestParam(required = false) String arrival,
@@ -158,7 +161,7 @@ public class PackageRequestController {
         if (Boolean.TRUE.equals(urgent)) {
             spec = spec.and(PackageRequestSpecifications.urgent(settings.urgencyThresholdDays()));
         }
-        UUID callerId = requireUserId();
+        UUID callerId = viewerUserIdOrNull();
         Pageable pageable = PageRequest.of(page, size);
         // Le filtre « mes trajets » prime sur la recherche géographique : les deux
         // trient différemment (score vs distance) et ne se composent pas.
@@ -199,6 +202,39 @@ public class PackageRequestController {
         return userRepository.findByFirebaseUid(firebaseUid)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "user/not-found"))
                 .getId();
+    }
+
+    /**
+     * Identifiant de l'appelant pour les deux lectures ouvertes aux invités
+     * ({@code GET /package-requests} et {@code GET /package-requests/{id}}), ou
+     * {@code null} pour un invité.
+     *
+     * <p>Un invité n'a pas de ligne {@code users} : la matérialisation est paresseuse, et
+     * tout son intérêt est que naviguer ne laisse aucune trace. On ne provisionne donc
+     * surtout pas ici, on consulte sans identité. Le service traite déjà ce {@code null}
+     * comme un appelant anonyme (aucun favori, aucun statut Connect, jamais propriétaire).
+     *
+     * <p>La tolérance est délibérément réservée aux invités : pour tout autre appelant,
+     * l'absence de ligne reste un 404 {@code user/not-found}, exactement comme avant.
+     */
+    private UUID viewerUserIdOrNull() {
+        if (isGuest()) {
+            return null;
+        }
+        return requireUserId();
+    }
+
+    /**
+     * Vrai si l'appelant est une session Firebase anonyme.
+     *
+     * <p>On teste l'autorité posée par {@code FirebaseTokenFilter} plutôt que de relire le
+     * claim du token : c'est le filtre qui fait autorité sur « cette session est-elle
+     * anonyme ? », et le relire ici en ferait une seconde source de vérité.
+     */
+    private boolean isGuest() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        return auth != null && auth.getAuthorities().stream()
+                .anyMatch(a -> "ROLE_GUEST".equals(a.getAuthority()));
     }
 
     private String requireFirebaseUid() {

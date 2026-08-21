@@ -30,7 +30,11 @@ public class FavoriteController {
      * unknown type  → 400 via YadonyBusinessException thrown by FavoriteTargetType.fromPath
      */
     @PutMapping("/{type}/{targetId}")
-    @PreAuthorize("hasAnyRole('SENDER','TRAVELER')")
+    // 'GUEST' : un visiteur peut mettre un trajet de côté avant de s'inscrire. La règle
+    // centrale de SecurityConfig continue de lui fermer tout le reste ; ici l'annotation
+    // ne fait que cesser de le refuser après la chaîne de filtres. Aucun rôle existant
+    // ne change de périmètre.
+    @PreAuthorize("hasAnyRole('SENDER','TRAVELER','GUEST')")
     public ResponseEntity<Void> add(@AuthenticationPrincipal String firebaseUid,
                                     @PathVariable String type,
                                     @PathVariable UUID targetId) {
@@ -44,7 +48,7 @@ public class FavoriteController {
      * Remove a favorite (toggle-off). 204 No Content.
      */
     @DeleteMapping("/{type}/{targetId}")
-    @PreAuthorize("hasAnyRole('SENDER','TRAVELER')")
+    @PreAuthorize("hasAnyRole('SENDER','TRAVELER','GUEST')")
     public ResponseEntity<Void> remove(@AuthenticationPrincipal String firebaseUid,
                                        @PathVariable String type,
                                        @PathVariable UUID targetId) {
@@ -56,17 +60,22 @@ public class FavoriteController {
      * Favorite trips — both roles.
      */
     @GetMapping("/trips")
-    @PreAuthorize("hasAnyRole('SENDER','TRAVELER')")
+    @PreAuthorize("hasAnyRole('SENDER','TRAVELER','GUEST')")
     public List<AnnouncementSearchResponse> getFavoriteTrips(
             @AuthenticationPrincipal String firebaseUid) {
         return service.getFavoriteTrips(firebaseUid);
     }
 
     /**
-     * Favorite package-requests — TRAVELER only (declared at @PreAuthorize level).
+     * Favorite package-requests — TRAVELER, plus GUEST (declared at @PreAuthorize level).
+     *
+     * <p>Un invité peut lire cette liste mais ne peut pas l'alimenter : le garde privé
+     * {@code enforcePackageRequestRequiresTraveler} exige encore ROLE_TRAVELER à l'ajout.
+     * Asymétrie assumée à ce stade, l'amendement A2 interdisant d'élargir quoi que ce
+     * soit au-delà des {@code hasAnyRole} listés.
      */
     @GetMapping("/package-requests")
-    @PreAuthorize("hasRole('TRAVELER')")
+    @PreAuthorize("hasAnyRole('TRAVELER','GUEST')")
     public List<PackageRequestSearchResponse> getFavoritePackageRequests(
             @AuthenticationPrincipal String firebaseUid) {
         return service.getFavoritePackageRequests(firebaseUid);
