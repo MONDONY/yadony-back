@@ -21,14 +21,14 @@ public class AlertController {
     }
 
     @GetMapping("/me/corridor-alerts")
-    @PreAuthorize("hasAnyRole('TRAVELER','SENDER','GUEST')")
+    @PreAuthorize("hasAnyRole('TRAVELER','SENDER')")
     public List<CorridorAlertResponse> list(@AuthenticationPrincipal String firebaseUid,
                                             @RequestParam(required = false) AlertDirection direction) {
         return alertService.list(firebaseUid, direction);
     }
 
     @PostMapping("/me/corridor-alerts")
-    @PreAuthorize("hasAnyRole('TRAVELER','SENDER','GUEST')")
+    @PreAuthorize("hasAnyRole('TRAVELER','SENDER')")
     @ResponseStatus(HttpStatus.CREATED)
     public CorridorAlertResponse create(@AuthenticationPrincipal String firebaseUid,
                                         @Valid @RequestBody CorridorAlertRequest request) {
@@ -36,7 +36,7 @@ public class AlertController {
     }
 
     @PutMapping("/me/corridor-alerts/{id}")
-    @PreAuthorize("hasAnyRole('TRAVELER','SENDER','GUEST')")
+    @PreAuthorize("hasAnyRole('TRAVELER','SENDER')")
     public CorridorAlertResponse update(@AuthenticationPrincipal String firebaseUid,
                                         @PathVariable UUID id,
                                         @Valid @RequestBody CorridorAlertRequest request) {
@@ -44,7 +44,7 @@ public class AlertController {
     }
 
     @DeleteMapping("/me/corridor-alerts/{id}")
-    @PreAuthorize("hasAnyRole('TRAVELER','SENDER','GUEST')")
+    @PreAuthorize("hasAnyRole('TRAVELER','SENDER')")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@AuthenticationPrincipal String firebaseUid,
                        @PathVariable UUID id) {

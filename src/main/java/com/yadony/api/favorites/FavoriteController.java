@@ -69,10 +69,9 @@ public class FavoriteController {
     /**
      * Favorite package-requests — TRAVELER, plus GUEST (declared at @PreAuthorize level).
      *
-     * <p>Un invité peut lire cette liste mais ne peut pas l'alimenter : le garde privé
-     * {@code enforcePackageRequestRequiresTraveler} exige encore ROLE_TRAVELER à l'ajout.
-     * Asymétrie assumée à ce stade, l'amendement A2 interdisant d'élargir quoi que ce
-     * soit au-delà des {@code hasAnyRole} listés.
+     * <p>Un invité peut lire cette liste et l'alimenter : le garde privé
+     * {@code enforcePackageRequestRequiresTraveler} l'accepte au même titre qu'un
+     * voyageur. Un expéditeur reste exclu, comme avant.
      */
     @GetMapping("/package-requests")
     @PreAuthorize("hasAnyRole('TRAVELER','GUEST')")
@@ -95,17 +94,23 @@ public class FavoriteController {
     /**
      * A SENDER must not be able to favourite a package-request (only travelers browse them).
      * Throws {@link AccessDeniedException} which the project maps to HTTP 403.
+     *
+     * <p>ROLE_GUEST est accepté au même titre que ROLE_TRAVELER : un visiteur peut
+     * parcourir les colis et lire {@code GET /favorites/package-requests}, le laisser
+     * dehors ici lui donnerait une liste qu'il ne pourrait jamais alimenter. Rien ne
+     * change pour SENDER ni pour TRAVELER.
      */
     private void enforcePackageRequestRequiresTraveler(FavoriteTargetType type) {
         if (type != FavoriteTargetType.PACKAGE_REQUEST) return;
 
-        boolean isTraveler = SecurityContextHolder.getContext()
+        boolean canBrowsePackageRequests = SecurityContextHolder.getContext()
                 .getAuthentication()
                 .getAuthorities()
                 .stream()
-                .anyMatch(a -> a.getAuthority().equals("ROLE_TRAVELER"));
+                .anyMatch(a -> a.getAuthority().equals("ROLE_TRAVELER")
+                        || a.getAuthority().equals("ROLE_GUEST"));
 
-        if (!isTraveler) {
+        if (!canBrowsePackageRequests) {
             throw new AccessDeniedException(
                     "Seul un voyageur peut mettre une demande d'envoi en favori");
         }

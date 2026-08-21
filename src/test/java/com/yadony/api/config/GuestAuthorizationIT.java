@@ -17,6 +17,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -120,17 +121,33 @@ class GuestAuthorizationIT {
     }
 
     /**
-     * Amendement A4 : le 200 ne peut pas etre exige a ce stade. Le provisionnement de la
-     * ligne invitee arrive a la tache suivante ; ici {@code AlertService} fait encore un
-     * {@code orElseThrow}. Ce que cette tache verrouille est la chaine de securite.
+     * Le detail d'un trajet est une capacite explicite de la doctrine invite. Le
+     * verrouiller sur un identifiant inexistant prouve que la chaine de securite laisse
+     * passer ET que la resolution ne bute pas sur l'identite de l'appelant : l'echec
+     * porte sur la ressource. Sans ce test, un futur {@code orElseThrow} sur la ligne
+     * « users » fermerait ce parcours en silence.
      */
     @Test
-    @DisplayName("un invite n'est pas refuse par la securite sur ses alertes corridor")
-    void guestCanListCorridorAlerts() throws Exception {
-        MvcResult result = mockMvc.perform(get("/me/corridor-alerts").with(authentication(guest())))
+    @DisplayName("un invite peut consulter le detail d'un trajet")
+    void guestCanReadAnnouncementDetail() throws Exception {
+        mockMvc.perform(get("/announcements/" + UNKNOWN_ID).with(authentication(guest())))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("announcement-not-found"));
+    }
+
+    /**
+     * Un invite doit pouvoir alimenter la liste de favoris qu'il peut lire. Le garde
+     * prive {@code enforcePackageRequestRequiresTraveler} n'exigeait que ROLE_TRAVELER
+     * et le refusait donc, alors que la recherche de colis lui est ouverte.
+     */
+    @Test
+    @DisplayName("un invite peut poser un favori sur un colis")
+    void guestCanFavoritePackageRequest() throws Exception {
+        MvcResult result = mockMvc.perform(put("/favorites/package-request/" + UNKNOWN_ID)
+                        .with(authentication(guest())))
                 .andReturn();
         assertThat(result.getResponse().getStatus())
-                .as("la chaine de securite doit laisser passer un invite sur ses alertes")
+                .as("un invite parcourt les colis, il doit pouvoir en mettre un de cote")
                 .isNotEqualTo(HttpStatus.FORBIDDEN.value());
     }
 
@@ -181,6 +198,79 @@ class GuestAuthorizationIT {
     }
 
     /**
+     * Verrou d'une DECISION PRODUIT, pas d'une limite technique : les alertes corridor
+     * sortent du perimetre invite.
+     *
+     * <p>{@code AlertService.validateDirection} n'est pas une barriere de permission mais
+     * un controle semantique : {@code SENDER_WANTS_TRIPS} exige le role SENDER,
+     * {@code TRAVELER_WANTS_PACKAGES} exige TRAVELER. Un invite n'etant ni l'un ni
+     * l'autre, aucune direction ne lui convient. La regle retenue est : si une action
+     * exige un role, l'invite ne la fait pas, et on ne contourne pas ce controle.
+     *
+     * <p>Ne pas « reparer » ce test en rouvrant les alertes : ce serait revenir sur la
+     * decision. Les favoris, eux, restent ouverts, leur controle de role ne signifiant
+     * que « sois un vrai compte ».
+     */
+    @Test
+    @DisplayName("un invite ne peut PAS utiliser les alertes corridor (decision produit)")
+    void guestCannotUseCorridorAlerts() throws Exception {
+        mockMvc.perform(get("/me/corridor-alerts").with(authentication(guest())))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/me/corridor-alerts")
+                        .with(authentication(guest()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isForbidden());
+    }
+
+    /**
+     * Capacite nommee par la doctrine comme devant rester fermee. {@code KycController}
+     * ne porte aucun {@code @PreAuthorize} : seule la regle centrale peut produire ce
+     * 403, ce qui rend le test d'autant plus necessaire.
+     */
+    @Test
+    @DisplayName("un invite ne peut PAS demarrer une verification d'identite")
+    void guestCannotStartKyc() throws Exception {
+        mockMvc.perform(post("/kyc/session").with(authentication(guest())))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("un invite ne peut PAS publier un colis")
+    void guestCannotPublishPackageRequest() throws Exception {
+        mockMvc.perform(post("/package-requests")
+                        .with(authentication(guest()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isForbidden());
+    }
+
+    /**
+     * Correctif du trou critique : ces deux endpoints d'ecriture sont declares AVANT la
+     * regle invite et etaient en {@code authenticated()}, qu'un ROLE_GUEST satisfait. Ils
+     * RATTACHENT une identite au compte : un visiteur ne doit jamais les atteindre.
+     */
+    @Test
+    @DisplayName("un invite ne peut PAS rattacher une adresse e-mail a un compte")
+    void guestCannotAttachEmail() throws Exception {
+        mockMvc.perform(post("/auth/email-otp/attach")
+                        .with(authentication(guest()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"awa@example.com\",\"code\":\"123456\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("un invite ne peut PAS rattacher un numero de telephone a un compte")
+    void guestCannotAttachPhone() throws Exception {
+        mockMvc.perform(post("/auth/sms-otp/attach")
+                        .with(authentication(guest()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"phoneNumber\":\"+33612000001\",\"code\":\"123456\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    /**
      * Amendement A5 : {@code /auth/**} est en {@code permitAll}, la regle invite ne
      * s'applique donc jamais a ce chemin. Le refus vient de la resolution de la ligne
      * « users », absente pour un invite : 404, pas 403. Ne pas « corriger » SecurityConfig
@@ -226,6 +316,47 @@ class GuestAuthorizationIT {
         assertThat(result.getResponse().getStatus())
                 .as("l'inscription en cours ne doit pas etre confondue avec un invite")
                 .isNotEqualTo(HttpStatus.FORBIDDEN.value());
+    }
+
+    /**
+     * Contrepartie du correctif sur les deux endpoints de rattachement : les fermer aux
+     * invites ne doit pas les fermer au tunnel d'inscription, qui est precisement ce
+     * qu'ils servent. C'est pourquoi ils sont en « authentifie et non-invite » et jamais
+     * en liste de roles : un compte en cours d'inscription n'a aucun role.
+     */
+    @Test
+    @DisplayName("un compte sans role atteint toujours le rattachement d'adresse e-mail")
+    void registrationTunnelStillReachesEmailAttach() throws Exception {
+        MvcResult result = mockMvc.perform(post("/auth/email-otp/attach")
+                        .with(authentication(registering()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"awa@example.com\",\"code\":\"123456\"}"))
+                .andReturn();
+        assertThat(result.getResponse().getStatus())
+                .as("le rattachement doit rester ouvert au tunnel d'inscription")
+                .isNotEqualTo(HttpStatus.FORBIDDEN.value());
+    }
+
+    /**
+     * Les chemins a identifiant de la liste blanche sont contraints a la forme d'un UUID.
+     * Un segment nomme ne matche donc aucune regle de la liste blanche et retombe sur la
+     * regle finale, c'est-a-dire ferme. Sans cette contrainte, tout endpoint ajoute demain
+     * sous ces prefixes serait ouvert aux invites par defaut : exactement l'inverse de la
+     * promesse du modele ferme par defaut.
+     */
+    @Test
+    @DisplayName("un segment non-UUID sous un prefixe de la liste blanche reste ferme a un invite")
+    void guestIsNotLetInByNonUuidSegments() throws Exception {
+        // Ces chemins n'existent pas aujourd'hui : ce qui est verrouille est qu'un
+        // homologue ajoute demain serait refuse, et non ouvert par le joker.
+        mockMvc.perform(get("/announcements/export").with(authentication(guest())))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/package-requests/export").with(authentication(guest())))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(put("/favorites/bulk/import").with(authentication(guest())))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(delete("/favorites/bulk/import").with(authentication(guest())))
+                .andExpect(status().isForbidden());
     }
 
     /**
