@@ -168,13 +168,13 @@ public class GuestClaimService {
                         "User Not Found",
                         "Utilisateur introuvable"));
 
-        // 6. Transfert des favoris, doublons ignorés.
+        // 6. Transfert des favoris, doublons écartés.
         TransferResult favorites = transferFavorites(guest.getId(), caller.getId());
 
-        // 7. La ligne invitée disparaît. Soft delete : la règle du projet interdit les
-        //    suppressions physiques d'entités métier, et `favorites.user_id` référence
-        //    `users(id)` sans ON DELETE CASCADE — un DELETE physique échouerait dès qu'un
-        //    doublon a été laissé en place à l'étape 6.
+        // 7. La ligne invitée disparaît. Soft delete, conformément à la règle du projet qui
+        //    interdit les suppressions physiques d'entités métier. La ligne ne porte aucun
+        //    rôle (barrière B ci-dessus), elle reste donc réactivable par
+        //    `GuestUserProvisioner` si le jeton anonyme, encore valide, reposait un favori.
         guest.softDelete();
         userRepository.save(guest);
 
@@ -183,7 +183,7 @@ public class GuestClaimService {
         auditService.log("USER", caller.getId(), "GUEST_DATA_CLAIMED", caller.getId(),
                 auditPayload(guestUid, guest.getId(), favorites));
 
-        log.info("Données de session invitée réclamées: callerId={} guestUserId={} favoris transférés={} ignorés={}",
+        log.info("Données de session invitée réclamées: callerId={} guestUserId={} favoris transférés={} supprimés en doublon={}",
                 caller.getId(), guest.getId(), favorites.transferred(), favorites.discarded());
     }
 

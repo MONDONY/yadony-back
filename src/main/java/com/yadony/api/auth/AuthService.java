@@ -80,6 +80,31 @@ public class AuthService {
 
     @Transactional
     public UserResponse register(String firebaseUid, FirebaseToken decodedToken, RegisterRequest request) {
+        // Un jeton ENCORE anonyme ne donne jamais un compte réel. Refus posé ici, en tête,
+        // et non sur chaque branche : `createUser` le refusait déjà via le `default` de son
+        // switch sur le provider, mais les deux retours anticipés ci-dessous (ligne active,
+        // ligne soft-deletée) ne l'atteignent jamais.
+        //
+        // La branche réactivation était la faille : elle accorde SENDER+TRAVELER sans aucun
+        // contrôle de provider. Inoffensive tant qu'une ligne soft-deletée restait rare, elle
+        // ne l'est plus depuis que `GuestClaimService` en produit une à chaque réclamation
+        // réussie (et la purge des lignes invitées en produira aussi). La séquence : poser un
+        // favori en visiteur, réclamer ses données, puis appeler /auth/register avec le même
+        // jeton encore anonyme — et obtenir un compte complet sur un UID anonyme, sans
+        // téléphone ni email, en contournant toutes les validations d'identité. Cela ferait
+        // aussi refuser, ensuite, une réclamation pourtant légitime de cette même session
+        // (`guest-claim-has-roles`).
+        //
+        // /auth/** est en permitAll : un invité atteint réellement cet endpoint, ce n'est pas
+        // un cas théorique. Aucun parcours d'inscription légitime ne présente un jeton anonyme
+        // — l'app promeut d'abord la session par linkWithCredential (le provider devient alors
+        // `phone`), ou bascule sur le compte existant si le numéro est déjà pris.
+        if (FirebaseSignInProvider.isAnonymous(decodedToken)) {
+            throw new YadonyBusinessException(
+                    HttpStatus.UNPROCESSABLE_ENTITY, "invalid-provider",
+                    "Invalid Provider", "Mode d'authentification non supporté");
+        }
+
         // Active user → return as-is, sauf s'il s'agit d'une ligne invitée à promouvoir
         Optional<UserEntity> active = userRepository.findByFirebaseUid(firebaseUid);
         if (active.isPresent()) {
@@ -125,12 +150,13 @@ public class AuthService {
      *
      * <p><b>Deux conditions, toutes deux nécessaires.</b> On ne touche qu'aux lignes
      * {@code roles.isEmpty()} : seul {@code GuestUserProvisioner} en produit, un compte inscrit
-     * ou réactivé porte toujours SENDER+TRAVELER. Et on exige un jeton qui n'est <b>plus</b>
-     * anonyme : {@code /auth/**} est en {@code permitAll}, un invité peut donc atteindre
-     * {@code /auth/register}, et poser des rôles sur la foi d'un jeton encore anonyme
-     * accorderait un compte complet à une simple session visiteur. Un jeton absent est traité
-     * comme non probant, donc refusé — c'est déjà ce que fait {@code createUser}, dont le
-     * {@code switch} sur le provider rejette un provider nul ou inconnu.
+     * ou réactivé porte toujours SENDER+TRAVELER. Et on exige un jeton probant.
+     *
+     * <p>Le cas anonyme est déjà fermé en tête de {@link #register} depuis la ronde 2 ; la
+     * condition conservée ici y ajoute ce que ce refus ne couvre pas : un jeton <b>absent</b>
+     * ({@code isAnonymous(null)} vaut {@code false}). Un jeton nul ne prouve rien, il ne peut
+     * donc pas déclencher de promotion — c'est déjà la position de {@code createUser}, dont le
+     * {@code switch} rejette un provider nul ou inconnu.
      */
     private UserEntity promoteGuestRowIfNeeded(UserEntity user, FirebaseToken decodedToken) {
         boolean guestRow = user.getRoles().isEmpty();
