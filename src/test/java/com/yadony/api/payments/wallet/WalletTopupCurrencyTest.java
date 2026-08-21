@@ -3,6 +3,7 @@ package com.yadony.api.payments.wallet;
 import com.stripe.model.PaymentIntent;
 import com.stripe.param.PaymentIntentCreateParams;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import com.yadony.api.payments.currency.CurrencyCatalog;
 import com.yadony.api.payments.wallet.dto.WalletTopupRequest;
 import com.yadony.api.payments.wallet.dto.WalletTopupResponse;
@@ -23,6 +24,13 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.when;
 
+/**
+ * La devise créditée est celle que le SERVEUR reconnaît à l'utilisateur, jamais
+ * celle envoyée par le client — c'est la même que celle relue par les contrôles
+ * de solde ({@code ActiveCurrencyResolver}). Laisser le client la choisir
+ * permettait de créditer une devise et d'en contrôler une autre : le voyageur
+ * rechargeait, son solde restait « insuffisant », sans issue possible.
+ */
 class WalletTopupCurrencyTest {
 
     @ParameterizedTest
@@ -30,11 +38,11 @@ class WalletTopupCurrencyTest {
             "CAD, 20.00, 2000, cad",
             "XOF, 5000.00, 5000, xof"
     })
-    void initiate_chargesRequestedCurrencyMinorUnits_withoutFxMetadata(
-            String requestedCurrency, String requestedAmount, long expectedMinor, String stripeCurrency) {
+    void initiate_chargesTheServerResolvedCurrencyMinorUnits_withoutFxMetadata(
+            String resolvedCurrency, String requestedAmount, long expectedMinor, String stripeCurrency) {
         UUID userId = UUID.randomUUID();
-        WalletTopupRequest request = topupRequest(requestedCurrency, requestedAmount);
-        WalletTopupOrchestrator orchestrator = orchestrator();
+        WalletTopupRequest request = topupRequest(requestedAmount);
+        WalletTopupOrchestrator orchestrator = orchestrator(userId, resolvedCurrency);
         AtomicReference<PaymentIntentCreateParams> capturedParams = new AtomicReference<>();
 
         try (MockedStatic<PaymentIntent> mockedPi = mockStatic(PaymentIntent.class)) {
@@ -61,25 +69,80 @@ class WalletTopupCurrencyTest {
                 "wallet_currency", stripeCurrency));
     }
 
+    /**
+     * Régression du blocage « rechargez encore » : un client qui envoie EUR (ou
+     * qui n'envoie rien, l'ancien repli silencieux) ne doit plus pouvoir créditer
+     * autre chose que le portefeuille réellement contrôlé côté commission.
+     */
+    @ParameterizedTest
+    @CsvSource({"EUR", "USD"})
+    void initiate_ignoresTheCurrencySentByTheClient(String currencySentByClient) {
+        UUID userId = UUID.randomUUID();
+        WalletTopupRequest request = topupRequest("5000.00");
+        request.setCurrencyCode(currencySentByClient);
+        // Le portefeuille réel du voyageur, celui que relit acceptCashBid.
+        WalletTopupOrchestrator orchestrator = orchestrator(userId, "XOF");
+        AtomicReference<PaymentIntentCreateParams> capturedParams = new AtomicReference<>();
+
+        try (MockedStatic<PaymentIntent> mockedPi = mockStatic(PaymentIntent.class)) {
+            PaymentIntent fakePi = mock(PaymentIntent.class);
+            when(fakePi.getClientSecret()).thenReturn("secret_test");
+            mockedPi.when(() -> PaymentIntent.create(any(PaymentIntentCreateParams.class)))
+                    .thenAnswer(invocation -> {
+                        capturedParams.set(invocation.getArgument(0));
+                        return fakePi;
+                    });
+
+            orchestrator.initiate(userId, request);
+        }
+
+        assertThat(capturedParams.get().getCurrency()).isEqualTo("xof");
+        assertThat(capturedParams.get().getMetadata()).containsEntry("wallet_currency", "xof");
+    }
+
+    @Test
+    void initiate_withoutAnyCurrencyFromTheClient_stillCreditsTheWalletCurrency() {
+        UUID userId = UUID.randomUUID();
+        // currencyCode absent : l'ancien code retombait sur EUR en silence.
+        WalletTopupRequest request = topupRequest("5000.00");
+        WalletTopupOrchestrator orchestrator = orchestrator(userId, "XOF");
+        AtomicReference<PaymentIntentCreateParams> capturedParams = new AtomicReference<>();
+
+        try (MockedStatic<PaymentIntent> mockedPi = mockStatic(PaymentIntent.class)) {
+            PaymentIntent fakePi = mock(PaymentIntent.class);
+            when(fakePi.getClientSecret()).thenReturn("secret_test");
+            mockedPi.when(() -> PaymentIntent.create(any(PaymentIntentCreateParams.class)))
+                    .thenAnswer(invocation -> {
+                        capturedParams.set(invocation.getArgument(0));
+                        return fakePi;
+                    });
+
+            orchestrator.initiate(userId, request);
+        }
+
+        assertThat(capturedParams.get().getCurrency()).isEqualTo("xof");
+    }
+
     @Test
     void initiate_propagatesUnsupportedCurrencyAsBusinessError() {
-        WalletTopupOrchestrator orchestrator = orchestrator();
+        UUID userId = UUID.randomUUID();
+        WalletTopupOrchestrator orchestrator = orchestrator(userId, "BTC");
 
-        assertThatThrownBy(() -> orchestrator.initiate(
-                UUID.randomUUID(), topupRequest("BTC", "20.00")))
+        assertThatThrownBy(() -> orchestrator.initiate(userId, topupRequest("20.00")))
                 .isInstanceOfSatisfying(YadonyBusinessException.class,
                         error -> assertThat(error.getErrorCode()).isEqualTo("unsupported-currency"));
     }
 
-    private static WalletTopupRequest topupRequest(String currency, String amount) {
+    private static WalletTopupRequest topupRequest(String amount) {
         WalletTopupRequest request = new WalletTopupRequest();
         request.setAmount(new BigDecimal(amount));
         request.setPaymentMethod("STRIPE");
-        request.setCurrencyCode(currency);
         return request;
     }
 
-    private static WalletTopupOrchestrator orchestrator() {
-        return new WalletTopupOrchestrator(new CurrencyCatalog());
+    private static WalletTopupOrchestrator orchestrator(UUID userId, String resolvedCurrency) {
+        ActiveCurrencyResolver resolver = mock(ActiveCurrencyResolver.class);
+        when(resolver.resolve(userId)).thenReturn(resolvedCurrency);
+        return new WalletTopupOrchestrator(new CurrencyCatalog(), resolver);
     }
 }

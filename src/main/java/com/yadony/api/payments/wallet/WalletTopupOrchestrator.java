@@ -4,6 +4,7 @@ import com.stripe.exception.StripeException;
 import com.stripe.model.PaymentIntent;
 import com.stripe.param.PaymentIntentCreateParams;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import com.yadony.api.payments.currency.CurrencyAmount;
 import com.yadony.api.payments.currency.CurrencyCatalog;
 import com.yadony.api.payments.currency.SupportedCurrency;
@@ -18,9 +19,12 @@ import java.util.UUID;
 public class WalletTopupOrchestrator {
 
     private final CurrencyCatalog currencyCatalog;
+    private final ActiveCurrencyResolver activeCurrencyResolver;
 
-    public WalletTopupOrchestrator(CurrencyCatalog currencyCatalog) {
+    public WalletTopupOrchestrator(CurrencyCatalog currencyCatalog,
+                                   ActiveCurrencyResolver activeCurrencyResolver) {
         this.currencyCatalog = currencyCatalog;
+        this.activeCurrencyResolver = activeCurrencyResolver;
     }
 
     public WalletTopupResponse initiate(UUID userId, WalletTopupRequest request) {
@@ -37,7 +41,18 @@ public class WalletTopupOrchestrator {
     }
 
     private WalletTopupResponse initiateStripe(UUID userId, WalletTopupRequest request) {
-        SupportedCurrency currency = currencyCatalog.resolve(request.getCurrencyCode());
+        // La devise créditée est celle que le SERVEUR reconnaît à l'utilisateur, jamais
+        // celle envoyée par le client. C'est exactement celle que relisent les contrôles
+        // de solde (ActiveCurrencyResolver, cf. CashCommissionService.acceptCashBid) :
+        // une seule source de vérité, donc divergence impossible par construction.
+        //
+        // Avant, `request.getCurrencyCode()` faisait foi et retombait silencieusement
+        // sur EUR quand il était absent (CurrencyCatalog.resolve) : un voyageur au
+        // portefeuille XOF pouvait créditer de l'EUR, tandis que le contrôle de
+        // commission relisait son solde XOF — toujours insuffisant, « rechargez encore »
+        // sans issue possible.
+        SupportedCurrency currency =
+                currencyCatalog.resolve(activeCurrencyResolver.resolve(userId));
         CurrencyAmount amount = CurrencyAmount.of(request.getAmount(), currency);
 
         PaymentIntentCreateParams params = PaymentIntentCreateParams.builder()

@@ -375,6 +375,79 @@ class BidCheckoutServiceTest {
         assertThat(bid.getPaymentIntentId()).isEqualTo("pi_test123");
     }
 
+    // ── Auto-réparation d'un bid dont l'escrow est déjà actif ────────────────────
+    //
+    // Régression : quand NI le webhook Stripe NI POST /bids/{id}/confirm-payment
+    // n'ont promu le bid, il reste AWAITING_PAYMENT alors que son paiement est bien
+    // en ESCROW. L'expéditeur revoyait « à payer », et tout nouveau paiement se
+    // heurtait au 409 payment-already-completed de createEscrow — sans issue, même
+    // après annulation (la reprise d'idempotence de checkout() le ramenait là).
+
+    @Test
+    void negotiationCheckout_whenEscrowIsAlreadyActive_promotesTheBidAndStopsThePayment() {
+        BidEntity bid = negotiatedBid();
+        bid.setPaymentIntentId("pi_already_paid");
+        when(bidRepository.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
+        // Le filet rejoué depuis le serveur : Stripe confirme l'autorisation.
+        when(paymentService.confirmBidPayment(bid.getId())).thenReturn(true);
+
+        assertThatThrownBy(() -> service.negotiationCheckout("uid-sender", bid.getId()))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                        .isEqualTo("bid-already-paid"));
+        // Aucun second escrow ouvert : c'est bien la promotion qui débloque.
+        verify(paymentService, never()).createEscrow(any(), anyString());
+    }
+
+    @Test
+    void negotiationCheckout_whenPaymentIsNotActuallyAuthorized_proceedsNormally() {
+        BidEntity bid = negotiatedBid();
+        // PaymentIntent présent (sheet abandonnée) mais jamais autorisé : le
+        // paiement doit rester possible, pas être confondu avec un bid déjà réglé.
+        bid.setPaymentIntentId("pi_abandoned");
+        when(bidRepository.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
+        when(bidRepository.save(any(BidEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(paymentService.confirmBidPayment(bid.getId())).thenReturn(false);
+        when(paymentService.createEscrow(any(), eq("uid-sender")))
+                .thenReturn(stubPaymentResponse());
+
+        BidCheckoutResponse resp = service.negotiationCheckout("uid-sender", bid.getId());
+
+        assertThat(resp.bidId()).isEqualTo(bid.getId());
+    }
+
+    @Test
+    void negotiationCheckout_whenStripeIsUnreachable_doesNotBlockALegitimatePayment() {
+        BidEntity bid = negotiatedBid();
+        bid.setPaymentIntentId("pi_unknown");
+        when(bidRepository.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
+        when(bidRepository.save(any(BidEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        // Incident transitoire côté Stripe : ne doit jamais se transformer en refus.
+        when(paymentService.confirmBidPayment(bid.getId()))
+                .thenThrow(new YadonyBusinessException(org.springframework.http.HttpStatus.BAD_GATEWAY,
+                        "stripe-error", "Stripe Error", "Stripe injoignable"));
+        when(paymentService.createEscrow(any(), eq("uid-sender")))
+                .thenReturn(stubPaymentResponse());
+
+        BidCheckoutResponse resp = service.negotiationCheckout("uid-sender", bid.getId());
+
+        assertThat(resp.bidId()).isEqualTo(bid.getId());
+    }
+
+    @Test
+    void negotiationCheckout_withoutPaymentIntent_neverCallsStripeForNothing() {
+        BidEntity bid = negotiatedBid();
+        when(bidRepository.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
+        when(bidRepository.save(any(BidEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(paymentService.createEscrow(any(), eq("uid-sender")))
+                .thenReturn(stubPaymentResponse());
+
+        service.negotiationCheckout("uid-sender", bid.getId());
+
+        // Premier paiement : rien à rattraper, aucun aller-retour Stripe supplémentaire.
+        verify(paymentService, never()).confirmBidPayment(any());
+    }
+
     @Test
     void negotiationCheckout_byAnotherUser_isForbidden() {
         BidEntity bid = negotiatedBid();
