@@ -1,14 +1,17 @@
 package com.yadony.api.favorites;
 
+import com.yadony.api.auth.UserRepository;
 import com.yadony.api.favorites.dto.FavoriteIdsResponse;
 import com.yadony.api.matching.dto.AnnouncementSearchResponse;
 import com.yadony.api.requests.dto.PackageRequestSearchResponse;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.UUID;
@@ -18,9 +21,11 @@ import java.util.UUID;
 public class FavoriteController {
 
     private final FavoriteService service;
+    private final UserRepository userRepository;
 
-    public FavoriteController(FavoriteService service) {
+    public FavoriteController(FavoriteService service, UserRepository userRepository) {
         this.service = service;
+        this.userRepository = userRepository;
     }
 
     /**
@@ -52,7 +57,7 @@ public class FavoriteController {
     public ResponseEntity<Void> remove(@AuthenticationPrincipal String firebaseUid,
                                        @PathVariable String type,
                                        @PathVariable UUID targetId) {
-        service.removeFavorite(firebaseUid, FavoriteTargetType.fromPath(type), targetId);
+        service.removeFavorite(viewerUserIdOrNull(firebaseUid), FavoriteTargetType.fromPath(type), targetId);
         return ResponseEntity.noContent().build();
     }
 
@@ -63,7 +68,7 @@ public class FavoriteController {
     @PreAuthorize("hasAnyRole('SENDER','TRAVELER','GUEST')")
     public List<AnnouncementSearchResponse> getFavoriteTrips(
             @AuthenticationPrincipal String firebaseUid) {
-        return service.getFavoriteTrips(firebaseUid);
+        return service.getFavoriteTrips(viewerUserIdOrNull(firebaseUid));
     }
 
     /**
@@ -77,7 +82,7 @@ public class FavoriteController {
     @PreAuthorize("hasAnyRole('TRAVELER','GUEST')")
     public List<PackageRequestSearchResponse> getFavoritePackageRequests(
             @AuthenticationPrincipal String firebaseUid) {
-        return service.getFavoritePackageRequests(firebaseUid);
+        return service.getFavoritePackageRequests(viewerUserIdOrNull(firebaseUid));
     }
 
     /**
@@ -86,7 +91,49 @@ public class FavoriteController {
     @GetMapping("/ids")
     @PreAuthorize("isAuthenticated()")
     public FavoriteIdsResponse getFavoriteIds(@AuthenticationPrincipal String firebaseUid) {
-        return service.getFavoriteIds(firebaseUid);
+        return service.getFavoriteIds(viewerUserIdOrNull(firebaseUid));
+    }
+
+    // ── Auth helpers ──────────────────────────────────────────────────────────
+
+    /**
+     * Identifiant de l'appelant pour les lectures et la suppression, ou {@code null}
+     * pour un invité.
+     *
+     * <p>Un invité n'a pas de ligne {@code users} tant qu'il n'a rien favorité : la
+     * matérialisation est paresseuse, et tout son intérêt est que naviguer (ou retirer
+     * un favori qui ne peut pas exister) ne laisse aucune trace. On ne provisionne donc
+     * surtout pas ici ; {@link FavoriteService} traite ce {@code null} comme « aucun
+     * favori, rien à retirer ».
+     *
+     * <p>La tolérance est délibérément réservée aux invités : pour tout autre appelant,
+     * l'absence de ligne reste un 404 {@code user/not-found}, exactement comme avant
+     * l'ouverture aux invités. Même idiome que
+     * {@code PackageRequestController.viewerUserIdOrNull}.
+     */
+    private UUID viewerUserIdOrNull(String firebaseUid) {
+        if (isGuest()) {
+            return null;
+        }
+        return requireUserId(firebaseUid);
+    }
+
+    private UUID requireUserId(String firebaseUid) {
+        return userRepository.findByFirebaseUid(firebaseUid)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "user/not-found"))
+                .getId();
+    }
+
+    /**
+     * Vrai si l'appelant est une session Firebase anonyme.
+     *
+     * <p>On teste l'autorité posée par {@code FirebaseTokenFilter} plutôt que de relire le
+     * claim du token : c'est le filtre qui fait autorité sur « cette session est-elle
+     * anonyme ? », le relire ici en ferait une seconde source de vérité.
+     */
+    private boolean isGuest() {
+        return SecurityContextHolder.getContext().getAuthentication().getAuthorities().stream()
+                .anyMatch(a -> "ROLE_GUEST".equals(a.getAuthority()));
     }
 
     // ── private guard ─────────────────────────────────────────────────────────

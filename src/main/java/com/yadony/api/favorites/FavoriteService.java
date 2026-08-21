@@ -22,7 +22,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.HashSet;
 import java.util.List;
-import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -78,33 +77,38 @@ public class FavoriteService {
     }
 
     /**
-     * Physically deletes the favorite row if present. No-op otherwise.
+     * Physically deletes the favorite row if present. No-op otherwise (whether because
+     * the favorite doesn't exist, or because {@code callerId} is {@code null}).
      *
-     * <p>Un invité qui n'a pas de ligne {@code users} n'a par construction aucun favori :
-     * on ne provisionne pas ici, ce serait créer une ligne fantôme pour retirer quelque
-     * chose qui ne peut pas exister.
+     * <p>{@code callerId} est {@code null} exactement quand l'appelant est un invité sans
+     * ligne {@code users} (résolu par {@code FavoriteController.viewerUserIdOrNull}) : il
+     * n'a par construction aucun favori, on ne provisionne donc pas ici, ce serait créer
+     * une ligne fantôme pour retirer quelque chose qui ne peut pas exister. Pour tout
+     * autre appelant, le contrôleur a déjà transformé une ligne absente en 404 avant
+     * d'arriver ici — le service ne voit donc jamais ce cas-là comme un {@code null}.
      */
-    public void removeFavorite(String firebaseUid, FavoriteTargetType type, UUID targetId) {
-        resolveUserIdIfExists(firebaseUid).ifPresent(userId ->
-                favoriteRepository.findByUserIdAndTargetTypeAndTargetId(userId, type, targetId)
-                        .ifPresent(favoriteRepository::delete));
+    public void removeFavorite(UUID callerId, FavoriteTargetType type, UUID targetId) {
+        if (callerId == null) return;
+        favoriteRepository.findByUserIdAndTargetTypeAndTargetId(callerId, type, targetId)
+                .ifPresent(favoriteRepository::delete);
     }
 
     /**
      * Returns the sets of favorite target IDs for the caller, split by type.
      *
-     * <p>Chemin de lecture : un invité sans ligne {@code users} n'a jamais posé de favori,
-     * il reçoit donc des ensembles vides plutôt qu'une erreur ou un provisionnement.
+     * <p>Chemin de lecture : {@code callerId == null} signifie un invité sans ligne
+     * {@code users} (jamais posé de favori), qui reçoit donc des ensembles vides plutôt
+     * qu'une erreur ou un provisionnement. Voir {@link #removeFavorite} pour le contrat
+     * complet de {@code callerId}.
      */
     @Transactional(readOnly = true)
-    public FavoriteIdsResponse getFavoriteIds(String firebaseUid) {
-        Optional<UUID> userId = resolveUserIdIfExists(firebaseUid);
-        if (userId.isEmpty()) {
+    public FavoriteIdsResponse getFavoriteIds(UUID callerId) {
+        if (callerId == null) {
             return new FavoriteIdsResponse(Set.of(), Set.of());
         }
-        Set<UUID> trips = new HashSet<>(favoriteRepository.findTargetIds(userId.get(), FavoriteTargetType.TRIP));
+        Set<UUID> trips = new HashSet<>(favoriteRepository.findTargetIds(callerId, FavoriteTargetType.TRIP));
         Set<UUID> packageRequests = new HashSet<>(
-                favoriteRepository.findTargetIds(userId.get(), FavoriteTargetType.PACKAGE_REQUEST));
+                favoriteRepository.findTargetIds(callerId, FavoriteTargetType.PACKAGE_REQUEST));
         return new FavoriteIdsResponse(trips, packageRequests);
     }
 
@@ -117,11 +121,9 @@ public class FavoriteService {
      * Batch-loads users, bid counts, and grid items in 3 queries total (no N+1).
      */
     @Transactional(readOnly = true)
-    public List<AnnouncementSearchResponse> getFavoriteTrips(String firebaseUid) {
-        Optional<UUID> maybeUserId = resolveUserIdIfExists(firebaseUid);
-        if (maybeUserId.isEmpty()) return List.of();
-        UUID userId = maybeUserId.get();
-        List<UUID> ids = favoriteRepository.findTargetIds(userId, FavoriteTargetType.TRIP);
+    public List<AnnouncementSearchResponse> getFavoriteTrips(UUID callerId) {
+        if (callerId == null) return List.of();
+        List<UUID> ids = favoriteRepository.findTargetIds(callerId, FavoriteTargetType.TRIP);
         if (ids.isEmpty()) return List.of();
         List<AnnouncementEntity> active = announcementRepository.findAllById(ids).stream()
                 .filter(a -> a.getStatus() != AnnouncementStatus.CANCELLED
@@ -144,11 +146,9 @@ public class FavoriteService {
      * Batch-loads users, cities, and photos in 3 queries total (no N+1).
      */
     @Transactional(readOnly = true)
-    public List<PackageRequestSearchResponse> getFavoritePackageRequests(String firebaseUid) {
-        Optional<UUID> maybeUserId = resolveUserIdIfExists(firebaseUid);
-        if (maybeUserId.isEmpty()) return List.of();
-        UUID userId = maybeUserId.get();
-        List<UUID> ids = favoriteRepository.findTargetIds(userId, FavoriteTargetType.PACKAGE_REQUEST);
+    public List<PackageRequestSearchResponse> getFavoritePackageRequests(UUID callerId) {
+        if (callerId == null) return List.of();
+        List<UUID> ids = favoriteRepository.findTargetIds(callerId, FavoriteTargetType.PACKAGE_REQUEST);
         if (ids.isEmpty()) return List.of();
         List<com.yadony.api.requests.entity.PackageRequestEntity> active =
                 packageRequestRepository.findAllById(ids).stream()
@@ -159,7 +159,7 @@ public class FavoriteService {
                         .toList();
         if (active.isEmpty()) return List.of();
         Set<UUID> favIdSet = new HashSet<>(ids); // all are favorites
-        boolean viewerHasConnect = userRepository.findById(userId)
+        boolean viewerHasConnect = userRepository.findById(callerId)
                 .map(UserEntity::hasActiveStripeConnect)
                 .orElse(false);
         return packageRequestSearchMapper.toSearchResponseList(active, favIdSet, viewerHasConnect);
@@ -175,16 +175,6 @@ public class FavoriteService {
      */
     private UUID resolveUserId(String firebaseUid) {
         return guestUserProvisioner.resolveOrProvision(firebaseUid);
-    }
-
-    /**
-     * Résout l'id utilisateur SANS jamais provisionner. Réservé aux chemins de lecture et
-     * à la suppression : un invité sans ligne {@code users} n'a par construction rien à lire
-     * ni rien à retirer, donc rien à créer non plus. Provisionner ici romprait la
-     * matérialisation paresseuse (naviguer ne doit laisser aucune trace en base).
-     */
-    private Optional<UUID> resolveUserIdIfExists(String firebaseUid) {
-        return userRepository.findByFirebaseUid(firebaseUid).map(UserEntity::getId);
     }
 
     /**

@@ -1,5 +1,12 @@
 package com.yadony.api.config;
 
+import com.yadony.api.auth.UserEntity;
+import com.yadony.api.auth.UserRepository;
+import com.yadony.api.auth.UserStatus;
+import com.yadony.api.matching.AnnouncementEntity;
+import com.yadony.api.matching.AnnouncementRepository;
+import com.yadony.api.matching.AnnouncementStatus;
+import com.yadony.api.matching.TransportMode;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -13,7 +20,10 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
+import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
@@ -52,6 +62,12 @@ class GuestAuthorizationIT {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private AnnouncementRepository announcementRepository;
+
+    @Autowired
+    private UserRepository userRepository;
 
     /** Exactement ce que pose FirebaseTokenFilter pour une session anonyme. */
     private static UsernamePasswordAuthenticationToken guest() {
@@ -106,8 +122,14 @@ class GuestAuthorizationIT {
      * Amendement A3 : l'ajout d'un favori est un PUT, pas un POST.
      *
      * <p>Ce qui est verrouille ici est le passage de la chaine de securite, pas le
-     * succes fonctionnel : la ligne « users » de l'invite n'est provisionnee qu'a la
-     * tache suivante, donc le service repond encore 404 a ce stade.
+     * provisionnement : la cible {@code UNKNOWN_ID} n'existe pas, donc
+     * {@code FavoriteService.addFavorite} leve {@code YadonyNotFoundException} juste
+     * apres avoir resolu (et provisionne) la ligne invitee — l'exception, non checked,
+     * fait annuler toute la transaction @Transactional, provisionnement inclus. Ce test
+     * ne prouve donc PAS qu'une ligne est creee en base : seulement que la securite ne
+     * bloque pas l'invite avant d'atteindre le service. Voir
+     * {@code guestFavoritingRealTripProvisionsGuestRowWithoutRoles} pour la preuve du
+     * provisionnement effectif, sur une cible reelle.
      */
     @Test
     @DisplayName("un invite n'est pas refuse par la securite quand il pose un favori")
@@ -149,6 +171,49 @@ class GuestAuthorizationIT {
         assertThat(result.getResponse().getStatus())
                 .as("un invite parcourt les colis, il doit pouvoir en mettre un de cote")
                 .isNotEqualTo(HttpStatus.FORBIDDEN.value());
+    }
+
+    /**
+     * Ronde de correction 1, constat 5 : {@code guestCanFavorite} ne prouve pas le
+     * provisionnement (cible inexistante -> transaction annulee avant tout INSERT). Ce
+     * test utilise une cible reelle pour que l'ajout reussisse effectivement, et verifie
+     * EN BASE que la ligne invitee a ete creee, active, et SANS AUCUN ROLE (A6 : le statut
+     * invite reste porte par le token, jamais par la base).
+     */
+    @Test
+    @DisplayName("poser un favori sur une cible reelle provisionne la ligne invitee, sans role")
+    void guestFavoritingRealTripProvisionsGuestRowWithoutRoles() throws Exception {
+        AnnouncementEntity trip = new AnnouncementEntity();
+        trip.setTravelerId(UUID.randomUUID()); // pas l'invite lui-meme
+        trip.setDepartureCity("Paris");
+        trip.setArrivalCity("Dakar");
+        trip.setDepartureDate(LocalDate.now().plusDays(3));
+        trip.setTransportMode(TransportMode.PLANE);
+        trip.setPickupAddressLabel("Gare du Nord, Paris");
+        trip.setPickupLat(new BigDecimal("48.880756"));
+        trip.setPickupLng(new BigDecimal("2.354987"));
+        trip.setDeliveryAddressLabel("Aeroport Blaise Diagne, Dakar");
+        trip.setDeliveryLat(new BigDecimal("14.740"));
+        trip.setDeliveryLng(new BigDecimal("-17.490"));
+        trip.setAvailableKg(new BigDecimal("20.00"));
+        trip.setTotalKg(new BigDecimal("23.00"));
+        trip.setPricePerKg(new BigDecimal("8.00"));
+        trip.setTimezone("Europe/Paris");
+        trip.setStatus(AnnouncementStatus.ACTIVE);
+        trip = announcementRepository.saveAndFlush(trip);
+
+        String guestUid = "uid-invite-favori-reel-001";
+        UsernamePasswordAuthenticationToken realGuest = new UsernamePasswordAuthenticationToken(
+                guestUid, null, List.of(new SimpleGrantedAuthority("ROLE_GUEST")));
+
+        mockMvc.perform(put("/favorites/trip/" + trip.getId())
+                        .with(authentication(realGuest)))
+                .andExpect(status().isOk());
+
+        UserEntity created = userRepository.findByFirebaseUid(guestUid).orElseThrow(
+                () -> new AssertionError("La ligne invitee aurait du etre provisionnee"));
+        assertThat(created.getStatus()).isEqualTo(UserStatus.ACTIVE);
+        assertThat(created.getRoles()).isEmpty();
     }
 
     // ── Ce qu'un invite ne peut PAS atteindre ─────────────────────────────────
