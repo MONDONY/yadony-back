@@ -470,4 +470,66 @@ class FirebaseTokenFilterTest {
         assertThat(SecurityContextHolder.getContext().getAuthentication().getAuthorities()).isEmpty();
         verify(filterChain).doFilter(request, response);
     }
+
+    @Test
+    @DisplayName("session anonyme avec ligne SUSPENDED → 403, filterChain non appelé, pas de ROLE_GUEST")
+    void anonymousSuspendedRow_returns403() throws Exception {
+        UserEntity suspendedGuestRow = new UserEntity();
+        suspendedGuestRow.setFirebaseUid("anon-uid");
+        suspendedGuestRow.setStatus(UserStatus.SUSPENDED);
+
+        when(request.getHeader("Authorization")).thenReturn("Bearer fake-token");
+        when(mockToken.getUid()).thenReturn("anon-uid");
+        when(mockToken.getClaims())
+                .thenReturn(Map.of("firebase", Map.of("sign_in_provider", "anonymous")));
+        when(userLinkerService.resolveAndLink(eq("anon-uid"), any()))
+                .thenReturn(Optional.of(suspendedGuestRow));
+        when(response.getWriter()).thenReturn(new PrintWriter(new StringWriter()));
+
+        try (MockedStatic<FirebaseAuth> staticAuth = mockStatic(FirebaseAuth.class);
+             MockedStatic<FirebaseApp> staticApp = mockStatic(FirebaseApp.class)) {
+            staticApp.when(FirebaseApp::getApps).thenReturn(List.of(mock(FirebaseApp.class)));
+            staticAuth.when(FirebaseAuth::getInstance).thenReturn(mockFirebaseAuth);
+            when(mockFirebaseAuth.verifyIdToken("fake-token")).thenReturn(mockToken);
+
+            buildFilter().doFilterInternal(request, response, filterChain);
+        }
+
+        verify(response).setStatus(SC_FORBIDDEN);
+        verify(filterChain, never()).doFilter(any(), any());
+        // writeForbidden() renvoie avant tout appel à setAuthentication() : aucune
+        // authentification, donc a fortiori aucune autorité ROLE_GUEST, n'est posée.
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    }
+
+    @Test
+    @DisplayName("session anonyme avec ligne BANNED → 403, filterChain non appelé, pas de ROLE_GUEST")
+    void anonymousBannedRow_returns403() throws Exception {
+        UserEntity bannedGuestRow = new UserEntity();
+        bannedGuestRow.setFirebaseUid("anon-uid");
+        bannedGuestRow.setStatus(UserStatus.BANNED);
+
+        when(request.getHeader("Authorization")).thenReturn("Bearer fake-token");
+        when(mockToken.getUid()).thenReturn("anon-uid");
+        when(mockToken.getClaims())
+                .thenReturn(Map.of("firebase", Map.of("sign_in_provider", "anonymous")));
+        when(userLinkerService.resolveAndLink(eq("anon-uid"), any()))
+                .thenReturn(Optional.of(bannedGuestRow));
+        when(response.getWriter()).thenReturn(new PrintWriter(new StringWriter()));
+
+        try (MockedStatic<FirebaseAuth> staticAuth = mockStatic(FirebaseAuth.class);
+             MockedStatic<FirebaseApp> staticApp = mockStatic(FirebaseApp.class)) {
+            staticApp.when(FirebaseApp::getApps).thenReturn(List.of(mock(FirebaseApp.class)));
+            staticAuth.when(FirebaseAuth::getInstance).thenReturn(mockFirebaseAuth);
+            when(mockFirebaseAuth.verifyIdToken("fake-token")).thenReturn(mockToken);
+
+            buildFilter().doFilterInternal(request, response, filterChain);
+        }
+
+        verify(response).setStatus(SC_FORBIDDEN);
+        verify(filterChain, never()).doFilter(any(), any());
+        // writeForbidden() renvoie avant tout appel à setAuthentication() : aucune
+        // authentification, donc a fortiori aucune autorité ROLE_GUEST, n'est posée.
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    }
 }
