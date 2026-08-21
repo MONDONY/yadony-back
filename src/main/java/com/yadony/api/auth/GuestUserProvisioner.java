@@ -1,6 +1,8 @@
 package com.yadony.api.auth;
 
+import com.yadony.api.common.YadonyBusinessException;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -84,17 +86,27 @@ public class GuestUserProvisioner {
      * pseudonymisés, sans entrée d'audit. Seule une ligne {@code roles.isEmpty()} est donc
      * réactivée ; toute autre fait échouer explicitement l'appel, laissant
      * {@code /auth/register} (seul habilité) faire ce travail.
+     *
+     * <p><b>Task 5 — le refus est un 403 métier, pas une erreur interne.</b> Il levait une
+     * {@code IllegalStateException}, donc un 500 assorti d'un {@code Sentry.captureException}
+     * par le handler générique. Or ce cas se produit réellement en production, dans la fenêtre
+     * d'environ une heure où un jeton reste valide après la suppression d'un compte : c'est un
+     * comportement voulu, pas un incident. Un {@link YadonyBusinessException} 403 supprime le
+     * bruit Sentry et évite de suggérer au client de réessayer, ce qui ne changerait rien avant
+     * l'expiration du jeton. (La garde anti-transaction-en-lecture-seule, elle, reste une
+     * {@code IllegalStateException} : c'est bien une erreur de programmation interne.)
      */
     private Optional<UUID> reactivateIfSoftDeleted(String firebaseUid) {
         return userRepository.findByFirebaseUidIncludingDeleted(firebaseUid)
                 .map(deleted -> {
                     if (!deleted.getRoles().isEmpty()) {
-                        throw new IllegalStateException(
-                                "GuestUserProvisioner.resolveOrProvision : une ligne soft-deleted "
-                                        + "portant des rôles existe pour ce firebase_uid ; ce n'est "
-                                        + "pas une ligne invitée mais un ancien compte réel "
-                                        + "(suppression RGPD ou bannissement). Seul /auth/register "
-                                        + "peut la réactiver.");
+                        throw new YadonyBusinessException(
+                                HttpStatus.FORBIDDEN,
+                                "account-reactivation-denied",
+                                "Compte supprimé",
+                                "Ce compte a été supprimé ou banni. Il ne peut pas être réactivé "
+                                        + "par cette action : reconnectez-vous pour créer un nouveau "
+                                        + "compte.");
                     }
                     userRepository.reactivateByFirebaseUid(firebaseUid, UserStatus.ACTIVE.name());
                     return userRepository.findByFirebaseUid(firebaseUid).orElseThrow().getId();

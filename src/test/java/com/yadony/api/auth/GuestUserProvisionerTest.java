@@ -7,7 +7,10 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+
+import com.yadony.api.common.YadonyBusinessException;
 
 import java.util.Optional;
 import java.util.Set;
@@ -127,6 +130,13 @@ class GuestUserProvisionerTest {
     // ses champs pseudonymisés, sans entrée d'audit. Une ligne soft-deleted portant le
     // moindre rôle n'est jamais une ligne invitée pure : le provisioner doit refuser de la
     // toucher, laissant /auth/register (seul habilité) faire ce travail.
+    //
+    // Task 5 : ce refus était une IllegalStateException, donc un 500 assorti d'un
+    // Sentry.captureException par le handler générique. Or ce cas se produit RÉELLEMENT en
+    // production, dans la fenêtre d'environ une heure où un jeton reste valide après la
+    // suppression d'un compte : c'est un comportement voulu, pas un incident. C'est
+    // désormais un 403 RFC 7807 (`account-reactivation-denied`) — pas de bruit Sentry, et
+    // un code qui n'invite pas le client à réessayer avant l'expiration du jeton.
 
     @Test
     @DisplayName("Ronde 2 : ligne soft-deleted PORTANT DES RÔLES -> jamais réactivée, ancien compte réel")
@@ -143,7 +153,12 @@ class GuestUserProvisionerTest {
         // resolveOrProvision lève avant tout `return`, donc ni l'id ni les rôles de cet
         // ancien compte ne fuient jamais hors de ce provisioner.
         assertThatThrownBy(() -> provisioner.resolveOrProvision("uid-5"))
-                .isInstanceOf(IllegalStateException.class);
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> {
+                    assertThat(((YadonyBusinessException) e).getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+                    assertThat(((YadonyBusinessException) e).getErrorCode())
+                            .isEqualTo("account-reactivation-denied");
+                });
 
         verify(userRepository, never()).reactivateByFirebaseUid(any(), any());
         verify(userRepository, never()).save(any());
@@ -160,7 +175,7 @@ class GuestUserProvisionerTest {
                 .thenReturn(Optional.of(deletedAdmin));
 
         assertThatThrownBy(() -> provisioner.resolveOrProvision("uid-7"))
-                .isInstanceOf(IllegalStateException.class);
+                .isInstanceOf(YadonyBusinessException.class);
 
         // Preuve que le contrôle a bien eu lieu (pas juste esquivé), et que la ligne
         // conserve son deleted_at (aucun appel à la réactivation ni à une nouvelle création).
