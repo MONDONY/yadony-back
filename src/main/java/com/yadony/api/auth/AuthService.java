@@ -12,6 +12,7 @@ import com.yadony.api.auth.dto.UserResponse;
 import com.yadony.api.auth.dto.WalletRefundRequestResponse;
 import com.yadony.api.auth.events.UserRegisteredEvent;
 import com.yadony.api.common.AuditService;
+import com.yadony.api.common.FirebaseSignInProvider;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.payments.wallet.WalletRefundRequestService;
@@ -99,7 +100,7 @@ public class AuthService {
             // Le compte Firebase qui se ré-inscrit porte déjà son téléphone (provider
             // phone) ou son email (google/apple) ; seul le custom token doit se voir
             // écrire son email, un compte custom n'en portant aucun.
-            String signInProvider = extractSignInProvider(decodedToken);
+            String signInProvider = FirebaseSignInProvider.of(decodedToken);
             if ("custom".equals(signInProvider) && request.email() != null) {
                 firebaseContact.updateEmail(firebaseUid, request.email());
             }
@@ -402,7 +403,7 @@ public class AuthService {
         // les capacités (carte via Stripe) sont gérées séparément.
         Set<Role> roles = new java.util.HashSet<>(Set.of(Role.SENDER, Role.TRAVELER));
 
-        String signInProvider = extractSignInProvider(decodedToken);
+        String signInProvider = FirebaseSignInProvider.of(decodedToken);
 
         UserEntity user = new UserEntity();
         user.setFirebaseUid(firebaseUid);
@@ -514,19 +515,6 @@ public class AuthService {
         eventPublisher.publishEvent(new UserRegisteredEvent(saved.getId(), saved.getFirebaseUid()));
 
         return toResponse(saved);
-    }
-
-    /** Provider de connexion porté par le token Firebase (phone, google.com, apple.com, custom). */
-    private static String extractSignInProvider(FirebaseToken decodedToken) {
-        if (decodedToken == null) {
-            return null;
-        }
-        Object firebaseClaim = decodedToken.getClaims().get("firebase");
-        if (firebaseClaim instanceof Map<?, ?> firebaseMap) {
-            Object provider = firebaseMap.get("sign_in_provider");
-            if (provider instanceof String s) return s;
-        }
-        return null;
     }
 
     /** Numéro porté par le token Firebase (claim {@code phone_number}), ou null. */
