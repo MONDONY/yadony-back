@@ -140,10 +140,29 @@ public class PriceGridService {
         return gridRepo.saveAll(items).stream().map(this::toResponse).toList();
     }
 
+    /**
+     * Grille tarifaire d'une annonce, telle qu'elle doit être servie au lecteur courant.
+     *
+     * <p>{@code unitPriceNet} est masqué pour une session anonyme (voir
+     * {@link com.yadony.api.common.GuestSession#travelerNetOrNull}) : c'est le net voyageur, et
+     * il voyagerait sinon à côté de son propre brut dans le même objet. {@code unitPriceDisplay}
+     * reste toujours servi, c'est lui que le visiteur a besoin de lire.
+     *
+     * <p>Point unique de construction d'{@link AnnouncementPriceGridItemResponse} : le masquage
+     * couvre donc d'un coup la recherche de trajets, le détail d'un trajet et les favoris. Les
+     * autres appelants (édition d'une annonce par son voyageur, page publique d'affiche) ne sont
+     * pas atteignables par un invité, ou ne lisent que {@code unitPriceDisplay}.
+     *
+     * <p>À ne pas confondre avec {@link #toResponse(PriceGridItemEntity)}, qui sert la grille du
+     * profil voyageur sur {@code /me/price-grid} : cet écran est celui du propriétaire, il édite
+     * ses propres nets et n'est pas ouvert aux invités.
+     */
     public List<AnnouncementPriceGridItemResponse> getAnnouncementGridItems(UUID announcementId, UUID travelerId) {
         return annGridRepo.findByAnnouncementIdOrderByPositionAsc(announcementId)
                 .stream().map(e -> new AnnouncementPriceGridItemResponse(
-                        e.getId(), e.getLabel(), e.getUnitPriceNet(), displayPrice(e.getUnitPriceNet(), travelerId)
+                        e.getId(), e.getLabel(),
+                        com.yadony.api.common.GuestSession.travelerNetOrNull(e.getUnitPriceNet()),
+                        displayPrice(e.getUnitPriceNet(), travelerId)
                 )).toList();
     }
 

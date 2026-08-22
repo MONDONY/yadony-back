@@ -281,7 +281,7 @@ public class AnnouncementService {
             List<AnnouncementEntity> allMatching = announcementRepository.findAll(spec);
             boolean desc = "desc".equalsIgnoreCase(sortDir);
             Comparator<AnnouncementEntity> byConvertedPrice = Comparator.comparing(
-                    (AnnouncementEntity a) -> convertedPricePerKg(a, viewerCurrency),
+                    (AnnouncementEntity a) -> convertedPricePerKgForSort(a, viewerCurrency),
                     Comparator.nullsLast(Comparator.naturalOrder()));
             if (desc) {
                 byConvertedPrice = byConvertedPrice.reversed();
@@ -343,20 +343,42 @@ public class AnnouncementService {
         for (AnnouncementEntity a : entities) {
             AnnouncementSearchResponse base = announcementSearchMapper.toSearchResponse(
                     a, favIds.contains(a.getId()), userMap, bidCountMap, gridItemMap);
-            result.add(base.withConvertedPrice(convertedPricePerKg(a, viewerCurrency), viewerCurrency));
+            result.add(base.withConvertedPrice(
+                    convertedPricePerKgForResponse(a, viewerCurrency), viewerCurrency));
         }
         return result;
     }
 
     /**
-     * Équivalent de {@code pricePerKg} dans la devise du lecteur. {@code null} quand
-     * {@code pricePerKg} est lui-même null (mode MIXED sans prix au kilo) : rien à convertir.
+     * Équivalent de {@code pricePerKg} dans la devise du lecteur, pour le TRI uniquement.
+     *
+     * <p>Jamais sérialisé : cette valeur ne sert qu'à ordonner un fil multidevise, où trier sur
+     * le montant brut en base n'aurait aucun sens. Elle est donc calculée pour tout le monde,
+     * invités compris, sinon un visiteur trierait une liste de valeurs toutes nulles, c'est-à-dire
+     * pas du tout. Ce qui sort vers le client passe par {@link #convertedPricePerKgForResponse}.
+     *
+     * <p>{@code null} quand {@code pricePerKg} l'est (mode MIXED sans prix au kilo).
      */
-    private java.math.BigDecimal convertedPricePerKg(AnnouncementEntity entity, String viewerCurrency) {
+    private java.math.BigDecimal convertedPricePerKgForSort(AnnouncementEntity entity, String viewerCurrency) {
         if (entity.getPricePerKg() == null) {
             return null;
         }
         return exchangeRateService.convert(entity.getPricePerKg(), entity.getCurrency(), viewerCurrency);
+    }
+
+    /**
+     * Le même équivalent, mais tel qu'il doit être SERVI : {@code null} pour un invité.
+     *
+     * <p>Ce champ n'est pas un dérivé du brut, c'est <b>le net voyageur lui-même</b> exprimé
+     * dans une autre devise. Masquer {@code pricePerKg} sans masquer celui-ci le reconduirait
+     * en clair, à l'identique dès que le lecteur lit dans la devise de l'annonce (la conversion
+     * est alors l'identité). Un invité garde {@code pricePerKgDisplay}, le brut, dans la devise
+     * d'origine de l'annonce.
+     */
+    private java.math.BigDecimal convertedPricePerKgForResponse(AnnouncementEntity entity, String viewerCurrency) {
+        return com.yadony.api.common.GuestSession.isGuest()
+                ? null
+                : convertedPricePerKgForSort(entity, viewerCurrency);
     }
 
     private Sort buildSort(String sortBy, String sortDir) {
@@ -766,7 +788,7 @@ public class AnnouncementService {
                 new com.yadony.api.matching.dto.AddressDto(announcement.getDeliveryAddressLabel(), announcement.getDeliveryLat().doubleValue(), announcement.getDeliveryLng().doubleValue()),
                 announcement.getAvailableKg(),
                 announcement.getTotalKg(),
-                announcement.getPricePerKg(),
+                com.yadony.api.common.GuestSession.travelerNetOrNull(announcement.getPricePerKg()),
                 pricePerKgDisplay(announcement.getPricePerKg(), announcement.getTravelerId()),
                 announcement.getTransportMode(),
                 announcement.getStatus().name(),

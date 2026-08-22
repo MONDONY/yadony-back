@@ -115,6 +115,11 @@ class GuestDataExposureIT {
     /** Colonne {@code announcements.arrival_instructions} : point de rendez-vous physique. */
     private static final String INSTRUCTIONS_ARRIVEE = "Sonner interphone 42B, code portail Sentinelle1974";
 
+    /** Net voyageur au kilo du trajet seede. Masque pour un invite, servi a un inscrit. */
+    private static final BigDecimal NET_PAR_KG = new BigDecimal("8.00");
+    /** Net voyageur de l'unique ligne de grille du trajet seede. Meme regle. */
+    private static final BigDecimal NET_LIGNE_GRILLE = new BigDecimal("45.00");
+
     private static final List<String> VALEURS_SENTINELLES = List.of(
             TEL_DESTINATAIRE, NOM_DESTINATAIRE, VILLE_DESTINATAIRE,
             ADRESSE_RETRAIT_EXACTE, ADRESSE_LIVRAISON_EXACTE,
@@ -137,6 +142,13 @@ class GuestDataExposureIT {
      * proprietaire ni un expediteur engage sur le trajet. Comme la serialisation est en
      * {@code NON_NULL}, la cle disparait quand la valeur est masquee : sa presence signifierait
      * que le masquage a saute.
+     *
+     * <p>Meme statut pour les TROIS vecteurs du net voyageur, ajoutes par la decision produit du
+     * 2026-08-22 : {@code pricePerKg}, {@code unitPriceNet} et {@code convertedPricePerKg}. Ils
+     * sont legitimes pour un inscrit et masques pour un invite. Le troisieme est le piege : ce
+     * n'est pas un derive du brut mais le net lui-meme dans une autre devise, identique au net
+     * quand le lecteur lit dans la devise de l'annonce. Masquer les deux premiers sans lui
+     * laissait la fuite ouverte. Voir {@code GuestSession.travelerNetOrNull}.
      */
     private static final List<String> CHAMPS_INTERDITS = List.of(
             // Identite et contact
@@ -146,6 +158,8 @@ class GuestDataExposureIT {
             // Argent et secrets de paiement
             "stripeAccountId", "paymentIntentId", "paymentIntentClientSecret", "clientSecret",
             "totalNetEur", "netEur", "commissionRate",
+            // Net voyageur : ce que touche le transporteur. Le brut (*Display) reste servi.
+            "pricePerKg", "unitPriceNet", "convertedPricePerKg",
             // Reserve au proprietaire
             "promoCode");
 
@@ -174,13 +188,11 @@ class GuestDataExposureIT {
             "id", "travelerId", "departureCity", "arrivalCity", "departureDate",
             "departureTime", "arrivalTime", "pickupAddress", "deliveryAddress",
             "availableKg", "totalKg",
-            // pricePerKg est le NET voyageur, pricePerKgDisplay le brut paye par l'expediteur.
-            // Les deux sont servis a tout appelant authentifie depuis l'origine, invite compris.
-            // Non retire ici : ce n'est pas propre a l'invite (tout inscrit le recoit), la valeur
-            // se deduit du brut et du taux de commission, et le retirer changerait le contrat de
-            // l'API pour tout le monde. Signale dans le rapport de la tache comme decision
-            // produit a trancher, et verrouille ici pour qu'il ne se propage pas en silence.
-            "pricePerKg", "pricePerKgDisplay", "convertedPricePerKg", "convertedCurrency",
+            // Seul le BRUT est servi a un invite : c'est ce que paierait l'expediteur, donc la
+            // seule information qui lui soit utile. Les trois vecteurs du net (pricePerKg,
+            // unitPriceNet, convertedPricePerKg) sont en liste NOIRE ci-dessus.
+            // convertedCurrency reste : c'est la devise du lecteur, pas un montant.
+            "pricePerKgDisplay", "convertedCurrency",
             "transportMode", "status", "bidsCount", "confirmedParcelCount", "traveler",
             "description", "acceptedContentTypes", "refusedTypes", "acceptedPaymentMethods",
             "capacityUnit", "cashAccepted", "createdAt", "updatedAt", "pricingMode",
@@ -194,13 +206,19 @@ class GuestDataExposureIT {
             // TravelerProfileDto
             "displayName", "averageRating", "totalTrips", "kiloPro", "isProAccount",
             "kycVerified", "avatarUrl", "acceptsUnverified",
-            // AnnouncementPriceGridItemResponse : meme couple net/brut que pricePerKg,
-            // meme motif de conservation.
-            "unitPriceNet", "unitPriceDisplay",
+            // AnnouncementPriceGridItemResponse : seul le brut survit, comme pour pricePerKg.
+            "unitPriceDisplay",
 
             // ── PackageRequestSearchResponse + PackageRequestResponse ─────────
             "senderId", "departureLat", "departureLng", "arrivalLat", "arrivalLng",
             "desiredDate", "dateToleranceDays", "weightKg", "parcelSize", "contentCategory",
+            // targetPriceEur est bien un net, mais AUCUN des deux motifs qui ont fait masquer le
+            // net d'un trajet ne s'y applique, verification faite : la recherche de colis ne sert
+            // aucun brut a cote (il n'y a donc pas de couple a lire, et le masquer priverait le
+            // visiteur du seul prix affichable), et le brut du detail vient de
+            // commissionProperties.rate(), le taux GLOBAL, jamais d'un override voyageur prive.
+            // S'y ajoute que le lecteur vise de cette surface est le transporteur : ce net est ce
+            // que lui-meme percevrait, pas la remuneration d'un tiers. Signale au rapport.
             "targetPriceEur", "grossPriceEur", "photoUrl",
             // Quartier, pas adresse : c'est la granularite volontairement grossiere servie
             // avant accord.
@@ -280,7 +298,7 @@ class GuestDataExposureIT {
         trajet.setDeliveryLng(new BigDecimal("-17.490000"));
         trajet.setAvailableKg(new BigDecimal("18.00"));
         trajet.setTotalKg(new BigDecimal("23.00"));
-        trajet.setPricePerKg(new BigDecimal("8.00"));
+        trajet.setPricePerKg(NET_PAR_KG);
         trajet.setCurrency("EUR");
         trajet.setTimezone("Europe/Paris");
         trajet.setStatus(AnnouncementStatus.ACTIVE);
@@ -302,7 +320,7 @@ class GuestDataExposureIT {
         AnnouncementPriceGridItemEntity ligne = new AnnouncementPriceGridItemEntity();
         ligne.setAnnouncementId(trajet.getId());
         ligne.setLabel("Valise cabine");
-        ligne.setUnitPriceNet(new BigDecimal("45.00"));
+        ligne.setUnitPriceNet(NET_LIGNE_GRILLE);
         ligne.setPosition(0);
         gridItemRepository.save(ligne);
 
@@ -353,6 +371,12 @@ class GuestDataExposureIT {
                 "sans resultat, aucun champ ne peut apparaitre et l'audit ne verifie rien")
                 .isNotEmpty();
         auditer(corps, "GET /announcements");
+
+        // Masquer le net ne doit pas laisser le visiteur sans prix : le brut reste servi. Sans
+        // cette assertion, tout casser passerait pour un succes de non-fuite.
+        assertThat(corps.path("content").get(0).path("pricePerKgDisplay").decimalValue())
+                .as("le brut est la seule information de prix utile a un visiteur, il doit rester")
+                .isGreaterThan(BigDecimal.ZERO);
     }
 
     @Test
@@ -365,6 +389,13 @@ class GuestDataExposureIT {
                 "la grille tarifaire doit etre servie, sinon unitPriceNet n'est jamais audite")
                 .isNotEmpty();
         auditer(corps, "GET /announcements/{id}");
+
+        assertThat(corps.path("pricePerKgDisplay").decimalValue())
+                .as("le brut au kilo doit rester servi a un visiteur")
+                .isGreaterThan(BigDecimal.ZERO);
+        assertThat(corps.path("priceGridItems").get(0).path("unitPriceDisplay").decimalValue())
+                .as("le brut de chaque ligne de grille doit rester servi a un visiteur")
+                .isGreaterThan(BigDecimal.ZERO);
     }
 
     @Test
@@ -407,6 +438,55 @@ class GuestDataExposureIT {
         assertThat(corps.has("promoCode"))
                 .as("le code promo appartient a l'expediteur, jamais a qui consulte sa demande")
                 .isFalse();
+    }
+
+    // ── Non-regression : rien ne change pour un compte inscrit ────────────────
+
+    /**
+     * Contrepartie obligatoire du masquage du net : il ne doit toucher QUE les invites.
+     *
+     * <p>Le masquage est porte par {@code GuestSession}, qui lit l'autorite {@code ROLE_GUEST}
+     * du contexte de securite. Une erreur de sens dans ce predicat, ou un masquage pose trop
+     * haut dans la chaine, priverait les expediteurs inscrits d'une information qu'ils ont
+     * toujours recue. Sans ce cas, la suite resterait verte : les tests de non-fuite ne
+     * verifient que l'absence.
+     *
+     * <p>Les trois vecteurs sont couverts : {@code pricePerKg} en recherche et en detail,
+     * {@code unitPriceNet} dans la grille, {@code convertedPricePerKg} en recherche.
+     */
+    @Test
+    @DisplayName("un compte inscrit recoit toujours le net voyageur, sur les trois vecteurs")
+    void unInscritRecoitToujoursLeNet() throws Exception {
+        var inscrit = new UsernamePasswordAuthenticationToken(
+                "uid-expediteur-exposition", null,
+                List.of(new SimpleGrantedAuthority("ROLE_SENDER")));
+
+        String recherche = mockMvc.perform(get("/announcements")
+                        .param("page", "0").param("size", "20")
+                        .with(authentication(inscrit)))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        JsonNode premier = MAPPER.readTree(recherche).path("content").path(0);
+        assertThat(premier.path("id").isMissingNode())
+                .as("la fixture doit ressortir, sinon ce cas ne prouve rien").isFalse();
+        assertThat(premier.path("pricePerKg").decimalValue())
+                .as("un inscrit doit continuer a voir le net en recherche")
+                .isEqualByComparingTo(NET_PAR_KG);
+        // Valeur non assertee a l'identique : elle depend de la devise resolue pour le lecteur.
+        // Ce qui compte est qu'elle soit toujours servie a un inscrit.
+        assertThat(premier.path("convertedPricePerKg").decimalValue())
+                .as("un inscrit doit continuer a voir le net converti en recherche")
+                .isGreaterThan(BigDecimal.ZERO);
+
+        String detail = mockMvc.perform(get("/announcements/" + trajetId)
+                        .with(authentication(inscrit)))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        JsonNode objet = MAPPER.readTree(detail);
+        assertThat(objet.path("pricePerKg").decimalValue())
+                .as("un inscrit doit continuer a voir le net en detail")
+                .isEqualByComparingTo(NET_PAR_KG);
+        assertThat(objet.path("priceGridItems").get(0).path("unitPriceNet").decimalValue())
+                .as("un inscrit doit continuer a voir le net de chaque ligne de grille")
+                .isEqualByComparingTo(NET_LIGNE_GRILLE);
     }
 
     // ── Outillage d'audit ─────────────────────────────────────────────────────

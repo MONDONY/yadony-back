@@ -132,8 +132,7 @@ public class FavoriteController {
      * anonyme ? », le relire ici en ferait une seconde source de vérité.
      */
     private boolean isGuest() {
-        return SecurityContextHolder.getContext().getAuthentication().getAuthorities().stream()
-                .anyMatch(a -> "ROLE_GUEST".equals(a.getAuthority()));
+        return com.yadony.api.common.GuestSession.isGuest();
     }
 
     // ── private guard ─────────────────────────────────────────────────────────

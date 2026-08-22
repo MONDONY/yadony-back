@@ -232,9 +232,7 @@ public class PackageRequestController {
      * anonyme ? », et le relire ici en ferait une seconde source de vérité.
      */
     private boolean isGuest() {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        return auth != null && auth.getAuthorities().stream()
-                .anyMatch(a -> "ROLE_GUEST".equals(a.getAuthority()));
+        return com.yadony.api.common.GuestSession.isGuest();
     }
 
     private String requireFirebaseUid() {
