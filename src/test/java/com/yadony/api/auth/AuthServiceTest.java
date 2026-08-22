@@ -28,6 +28,7 @@ import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.lang.reflect.Field;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Optional;
 import java.util.Set;
@@ -243,6 +244,40 @@ class AuthServiceTest {
             assertThat(result.email()).isEqualTo("test@yadony.app");
             assertThat(result.firstName()).isEqualTo("Amadou");
             assertThat(result.lastName()).isEqualTo("Diallo");
+        }
+
+        @Test
+        @DisplayName("résidence et onboarding renseignés → exposés tels quels sur UserResponse")
+        void getProfile_residenceAndOnboardingSet_returnsExactValues() {
+            UserEntity user = buildUser();
+            user.setResidenceStreet("12 rue des Lilas");
+            user.setResidenceLine2("Bât. B, 3e étage");
+            user.setResidencePostalCode("75011");
+            user.setOnboardingSeenAt(Instant.parse("2026-08-22T10:00:00Z"));
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+
+            UserResponse result = authService.getProfile(FIREBASE_UID);
+
+            assertThat(result.residenceStreet()).isEqualTo("12 rue des Lilas");
+            assertThat(result.residenceLine2()).isEqualTo("Bât. B, 3e étage");
+            assertThat(result.residencePostalCode()).isEqualTo("75011");
+            // Contrat de sérialisation consommé par le front (DateTime.parse côté Flutter) :
+            // on asserte la chaîne ISO-8601 exacte, pas seulement sa non-nullité.
+            assertThat(result.onboardingSeenAt()).isEqualTo("2026-08-22T10:00:00Z");
+        }
+
+        @Test
+        @DisplayName("onboarding jamais vu → onboardingSeenAt est null, pas une chaîne vide")
+        void getProfile_onboardingNeverSeen_returnsNullOnboardingSeenAt() {
+            UserEntity user = buildUser(); // résidence et onboardingSeenAt restent null par défaut
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+
+            UserResponse result = authService.getProfile(FIREBASE_UID);
+
+            assertThat(result.onboardingSeenAt()).isNull();
+            assertThat(result.residenceStreet()).isNull();
+            assertThat(result.residenceLine2()).isNull();
+            assertThat(result.residencePostalCode()).isNull();
         }
 
         @Test

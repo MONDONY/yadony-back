@@ -39,22 +39,19 @@ class AuthControllerResidenceAddressIT {
     }
 
     @Test
-    void PUT_residenceAddress_rueVide_retourne400ou422() throws Exception {
-        // GlobalExceptionHandler mappe MethodArgumentNotValidException (@Valid) sur 422,
-        // pas 400 (cf. AnalyticsConsentControllerTest.PUT_analyticsConsent_grantedManquant_retourne400ou422,
-        // le test voisin le plus proche, qui tolère déjà les deux).
+    void PUT_residenceAddress_rueVide_retourne422() throws Exception {
+        // GlobalExceptionHandler.handleValidation (GlobalExceptionHandler.java:43-58) mappe
+        // MethodArgumentNotValidException (@Valid) inconditionnellement sur 422 UNPROCESSABLE_ENTITY,
+        // jamais 400 : c'est le contrat effectif de l'API, on l'asserte tel quel plutôt que de
+        // tolérer les deux (le voisin AnalyticsConsentControllerTest le tolère par héritage
+        // historique, pas parce que le code peut vraiment répondre 400 ici).
         mvc.perform(put("/auth/me/residence-address")
                         .with(authentication(auth()))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                             {"street":"","postalCode":"75011","city":"Paris"}
                             """))
-                .andExpect(result -> {
-                    int status = result.getResponse().getStatus();
-                    if (status != 400 && status != 422) {
-                        throw new AssertionError("Attendu 400 ou 422, obtenu " + status);
-                    }
-                });
+                .andExpect(status().isUnprocessableEntity());
 
         verifyNoInteractions(authService);
     }
