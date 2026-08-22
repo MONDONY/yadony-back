@@ -78,9 +78,10 @@ public class TestDataSteps extends AbstractSteps {
 
     /**
      * Le pays est désormais une donnée saisie (défaut "FR" retiré de UserEntity,
-     * V225) : StripeExpressAccountProvisioner.provision refuse un compte Connect
-     * sans pays (422 country-required). Bridge SQL équivalent à un utilisateur
-     * ayant déjà renseigné son pays dans les réglages avant de demander un compte.
+     * V225) : StripeV2AccountProvisioner.provision refuse un compte Connect sans
+     * pays (422 country-required), et refuse également un pays que Stripe ne couvre
+     * pas (422 country-not-supported-by-stripe). Bridge SQL équivalent à un
+     * utilisateur ayant déjà renseigné son pays dans les réglages.
      */
     @Etantdonné("le voyageur {string} a pour pays {string}")
     public void givenTravelerCountry(String uid, String country) {

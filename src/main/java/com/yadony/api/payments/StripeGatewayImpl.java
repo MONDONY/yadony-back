@@ -6,7 +6,7 @@ import com.stripe.model.AccountLink;
 import com.stripe.model.Customer;
 import com.stripe.model.EphemeralKey;
 import com.stripe.model.PaymentIntent;
-import com.stripe.param.AccountCreateParams;
+import com.stripe.StripeClient;
 import com.stripe.param.AccountLinkCreateParams;
 import com.stripe.param.CustomerCreateParams;
 import com.stripe.param.EphemeralKeyCreateParams;
@@ -15,15 +15,23 @@ import org.springframework.stereotype.Component;
 
 /**
  * Production {@link StripeGateway}: each method is a direct passthrough to the Stripe SDK
- * static call it replaces, so the runtime behaviour of {@link PaymentService} is identical
- * to calling the statics inline.
+ * call it replaces, so the runtime behaviour of {@link PaymentService} is identical to
+ * calling the SDK inline.
  */
 @Component
 public class StripeGatewayImpl implements StripeGateway {
 
+    /** L'API v2 n'est pas exposée par les points d'entrée statiques : elle exige un client. */
+    private final StripeClient stripeClient;
+
+    public StripeGatewayImpl(StripeClient stripeClient) {
+        this.stripeClient = stripeClient;
+    }
+
     @Override
-    public Account createAccount(AccountCreateParams params) throws StripeException {
-        return Account.create(params);
+    public com.stripe.model.v2.core.Account createAccountV2(
+            com.stripe.param.v2.core.AccountCreateParams params) throws StripeException {
+        return stripeClient.v2().core().accounts().create(params);
     }
 
     @Override

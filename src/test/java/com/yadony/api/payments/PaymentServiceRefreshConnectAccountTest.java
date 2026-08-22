@@ -53,7 +53,7 @@ class PaymentServiceRefreshConnectAccountTest {
                 paymentRepository, auditService, eventPublisher,
                 PaymentServiceTestFactory.defaultConnectProperties(),
                 new com.fasterxml.jackson.databind.ObjectMapper(),
-                org.mockito.Mockito.mock(com.yadony.api.common.stripe.AdminAlertService.class), PaymentServiceTestFactory.stubbedResolver(), org.mockito.Mockito.mock(com.yadony.api.promo.PromoService.class), new StripeGatewayImpl(),
+                org.mockito.Mockito.mock(com.yadony.api.common.stripe.AdminAlertService.class), PaymentServiceTestFactory.stubbedResolver(), org.mockito.Mockito.mock(com.yadony.api.promo.PromoService.class), new StripeGatewayImpl(null),
                 PaymentServiceTestFactory.stubbedContacts(), mock(com.yadony.api.voucher.CommissionVoucherService.class), mock(com.yadony.api.payments.ConnectAccountProvisioner.class)
 );
     }
