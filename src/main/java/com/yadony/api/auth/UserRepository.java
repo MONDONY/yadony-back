@@ -129,8 +129,8 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
      *       le discriminant qu'il est aujourd'hui. Un compte supprimé par
      *       {@code AccountFinalizationService} est ainsi protégé quatre fois plutôt qu'une
      *       (rôles intacts, statut BANNED, prénom et nom de pseudonymisation) ;</li>
-     *   <li><b>aucune trace d'activité dans les tables liées</b> — douze tables, seize colonnes.
-     *       Un vrai compte peut n'avoir aucun favori tout en ayant publié, enchéri, discuté ou
+     *   <li><b>aucune trace d'activité dans les tables liées</b> — treize tables, dix-sept
+     *       colonnes. Un vrai compte peut n'avoir aucun favori tout en ayant publié, enchéri, discuté ou
      *       encaissé. Sans ces conditions, si l'invariant des rôles venait à céder, deux modes
      *       de défaillance s'ouvraient : sur une clé étrangère <b>sans</b> cascade
      *       ({@code announcements}, {@code bids}, {@code package_requests},
