@@ -1,25 +1,46 @@
 package com.yadony.api.auth;
 
+import com.yadony.api.common.AuditLogEntity;
+import com.yadony.api.common.AuditLogRepository;
+import com.yadony.api.common.AuditService;
 import com.yadony.api.favorites.FavoriteEntity;
 import com.yadony.api.favorites.FavoriteRepository;
 import com.yadony.api.favorites.FavoriteTargetType;
+import com.yadony.api.matching.AnnouncementEntity;
+import com.yadony.api.matching.AnnouncementRepository;
+import com.yadony.api.matching.AnnouncementStatus;
+import io.sentry.Sentry;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.MockedStatic;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.transaction.PlatformTransactionManager;
 
+import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /**
  * Purge des lignes invitées abandonnées.
@@ -34,6 +55,13 @@ import static org.assertj.core.api.Assertions.assertThat;
  * main : c'est la seule façon de garantir que le critère décrit bien ce que le provisionneur
  * écrit réellement. Si quelqu'un lui fait renseigner demain un champ que le critère exclut, ces
  * tests deviennent rouges au lieu de laisser la purge devenir silencieusement inopérante.
+ *
+ * <p><b>Une limite dont il faut avoir conscience.</b> H2 fabrique son schéma à partir des
+ * entités JPA, où la clé étrangère {@code user_roles → users} n'a pas de cascade ; PostgreSQL,
+ * lui, la déclare {@code ON DELETE CASCADE} (V1). Supprimer par erreur une ligne à rôles
+ * échoue donc bruyamment ici, et réussirait <b>silencieusement</b> en production. Aucun test de
+ * ce dépôt ne peut reproduire ce que ferait un critère faux là-bas : c'est le critère lui-même,
+ * et lui seul, qui protège.
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
@@ -44,6 +72,9 @@ class GuestUserCleanupSchedulerTest {
 
     @Autowired UserRepository userRepository;
     @Autowired FavoriteRepository favoriteRepository;
+    @Autowired AnnouncementRepository announcementRepository;
+    @Autowired AuditLogRepository auditLogRepository;
+    @Autowired PlatformTransactionManager transactionManager;
     @PersistenceContext EntityManager entityManager;
 
     private GuestUserProvisioner provisioner;
@@ -52,7 +83,11 @@ class GuestUserCleanupSchedulerTest {
     @BeforeEach
     void setUp() {
         provisioner = new GuestUserProvisioner(userRepository, new UsernameGenerator(userRepository));
-        scheduler = new GuestUserCleanupScheduler(userRepository, RETENTION_DAYS);
+        scheduler = new GuestUserCleanupScheduler(
+                userRepository, new AuditService(auditLogRepository), transactionManager, RETENTION_DAYS);
+        // Suppression native : un deleteAll() JPA relirait les lignes existantes, et relire
+        // une entrée d'audit échoue sur H2 (cf. countAuditRows).
+        entityManager.createNativeQuery("DELETE FROM audit_log").executeUpdate();
     }
 
     // ------------------------------------------------------------------
@@ -208,10 +243,11 @@ class GuestUserCleanupSchedulerTest {
     @Test
     @DisplayName("favori soft-deleté : compte encore comme un favori, la ligne est conservée")
     void keepsGuestRowWhoseOnlyFavoriteIsSoftDeleted() {
-        // Le critère « sans favori » ignore délibérément le deleted_at des favoris. En base
-        // PostgreSQL, favorites.user_id porte une clé étrangère vers users(id) sans cascade
-        // (V152) : une ligne de favori soft-deletée suffirait à faire échouer la suppression
-        // physique de la ligne users, et donc tout le lot avec elle.
+        // Précaution structurelle, pas cas réel : FavoriteEntity#softDelete() n'est appelé
+        // nulle part dans src/main (le retrait d'un favori est un hard delete). Elle protège
+        // la clé étrangère PostgreSQL favorites.user_id → users(id), sans cascade (V152) :
+        // le jour où un favori serait soft-deleté, sa seule présence ferait échouer la
+        // suppression de la ligne users, et donc tout le lot de la nuit avec elle.
         UUID guestId = provisionGuest("guest-soft-deleted-favorite");
         FavoriteEntity favorite = favoriteRepository.saveAndFlush(
                 new FavoriteEntity(guestId, FavoriteTargetType.TRIP, UUID.randomUUID()));
@@ -225,7 +261,120 @@ class GuestUserCleanupSchedulerTest {
     }
 
     // ------------------------------------------------------------------
-    // Idempotence et garde de configuration
+    // Traces d'activité dans les tables liées : les deux modes de défaillance
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("ligne sans rôle ayant publié un trajet : conservée (FK sans cascade)")
+    void keepsRoleLessRowThatOwnsAnAnnouncement() {
+        // Mode de défaillance 1 : announcements.traveler_id référence users(id) SANS cascade
+        // (V3). Sans cette condition, le DELETE du lot échouerait en entier — aucune purge
+        // cette nuit-là ni les suivantes, et l'échec serait avalé sans bruit.
+        UUID ownerId = provisionGuest("activity-announcement");
+        backdate(ownerId, 400);
+        newAnnouncement(ownerId);
+
+        scheduler.purgeAbandonedGuestRows();
+
+        assertThat(countUserRows(ownerId)).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("ligne sans rôle ayant un appareil ou un blocage : conservée (FK avec cascade)")
+    void keepsRoleLessRowWithCascadingChildren() {
+        // Mode de défaillance 2 : user_devices (V96) et user_blocks (V98) sont en ON DELETE
+        // CASCADE. Sans cette condition, la suppression réussirait et emporterait ces enfants
+        // SILENCIEUSEMENT — le pire des deux modes, puisque rien ne le signalerait.
+        UUID withDevice = provisionGuest("activity-device");
+        UUID blocker = provisionGuest("activity-blocker");
+        UUID blocked = provisionGuest("activity-blocked");
+        backdate(withDevice, 400);
+        backdate(blocker, 400);
+        backdate(blocked, 400);
+        entityManager.persist(newDevice(withDevice));
+        entityManager.persist(newBlock(blocker, blocked));
+        entityManager.flush();
+
+        scheduler.purgeAbandonedGuestRows();
+
+        assertThat(countUserRows(withDevice)).isEqualTo(1);
+        assertThat(countUserRows(blocker)).isEqualTo(1);
+        assertThat(countUserRows(blocked)).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("le critère couvre les douze tables liées inventoriées")
+    void predicateCoversEveryInventoriedRelatedTable() {
+        // Cette énumération est le seul rempart contre les deux modes de défaillance ci-dessus,
+        // et rien dans le code ne signalerait qu'une ligne en a disparu. Ce test le signale.
+        assertThat(UserRepository.ABANDONED_GUEST_ROW_PREDICATE)
+                .contains("FROM user_roles r WHERE r.user_id = users.id")
+                .contains("FROM favorites f WHERE f.user_id = users.id")
+                .contains("a.traveler_id = users.id")
+                .contains("a.reserved_sender_id = users.id")
+                .contains("FROM bids b WHERE b.sender_id = users.id")
+                .contains("FROM package_requests pr WHERE pr.sender_id = users.id")
+                .contains("c.sender_id = users.id")
+                .contains("c.traveler_id = users.id")
+                .contains("d.sender_id = users.id")
+                .contains("d.traveler_id = users.id")
+                .contains("FROM wallet_accounts wa WHERE wa.user_id = users.id")
+                .contains("FROM notifications n WHERE n.user_id = users.id")
+                .contains("FROM corridor_alerts ca WHERE ca.owner_id = users.id")
+                .contains("FROM user_devices ud WHERE ud.user_id = users.id")
+                .contains("FROM user_notification_preferences np WHERE np.user_id = users.id")
+                .contains("FROM user_business_preferences bp WHERE bp.user_id = users.id")
+                .contains("ub.blocker_id = users.id")
+                .contains("ub.blocked_id = users.id");
+    }
+
+    // ------------------------------------------------------------------
+    // Trace immuable de ce qui a été détruit
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("une entrée audit_log nomme exactement les lignes détruites")
+    void writesAnAuditEntryNamingEveryDeletedRow() {
+        // La suppression étant physique, l'entrée d'audit est la SEULE trace de ce qui a
+        // disparu : sans elle, une erreur de critère serait irréversible ET indiagnosticable.
+        UUID firstDeleted = provisionGuest("audit-deleted-1");
+        UUID secondDeleted = provisionGuest("audit-deleted-2");
+        UUID kept = provisionGuest("audit-kept");
+        backdate(firstDeleted, 400);
+        backdate(secondDeleted, 400);
+        backdate(kept, 1);
+
+        scheduler.purgeAbandonedGuestRows();
+
+        assertThat(countAuditRows()).isEqualTo(1);
+        List<AuditLogEntity> entries = auditLogRepository.findAll();
+        AuditLogEntity entry = entries.get(0);
+        assertThat(entry.getAction()).isEqualTo(GuestUserCleanupScheduler.AUDIT_ACTION);
+        assertThat(entry.getPayload()).containsEntry("deletedCount", 2);
+        assertThat(entry.getPayload()).containsEntry("retentionDays", RETENTION_DAYS);
+        // Les clés survivent à AuditService.redact() : une valeur masquée rendrait l'entrée
+        // inutilisable pour l'enquête qui justifie son existence.
+        assertThat(entry.getPayload().get("cutoff")).isNotEqualTo("[redacted]");
+        List<String> auditedIds = ((List<?>) entry.getPayload().get("deletedUserIds"))
+                .stream().map(String::valueOf).toList();
+        assertThat(auditedIds)
+                .containsExactlyInAnyOrder(firstDeleted.toString(), secondDeleted.toString())
+                .doesNotContain(kept.toString());
+    }
+
+    @Test
+    @DisplayName("aucune ligne supprimée : aucune entrée audit_log (table immuable)")
+    void writesNoAuditEntryWhenNothingWasDeleted() {
+        UUID recent = provisionGuest("audit-none");
+        backdate(recent, 1);
+
+        scheduler.purgeAbandonedGuestRows();
+
+        assertThat(countAuditRows()).isZero();
+    }
+
+    // ------------------------------------------------------------------
+    // Idempotence, garde de configuration, échec bruyant
     // ------------------------------------------------------------------
 
     @Test
@@ -241,6 +390,8 @@ class GuestUserCleanupSchedulerTest {
 
         assertThat(countUserRows(abandoned)).isZero();
         assertThat(countUserRows(kept)).isEqualTo(1);
+        // Le second passage n'a rien trouvé : il n'a donc rien ajouté à la table immuable.
+        assertThat(countAuditRows()).isEqualTo(1);
     }
 
     @Test
@@ -251,11 +402,37 @@ class GuestUserCleanupSchedulerTest {
         // tâche destructrice ne fait rien : elle ne devine pas ce que l'exploitant voulait dire.
         UUID guestId = provisionGuest("guest-misconfigured");
         backdate(guestId, 400);
+        AuditService auditService = new AuditService(auditLogRepository);
 
-        new GuestUserCleanupScheduler(userRepository, 0).purgeAbandonedGuestRows();
-        new GuestUserCleanupScheduler(userRepository, -1).purgeAbandonedGuestRows();
+        new GuestUserCleanupScheduler(userRepository, auditService, transactionManager, 0)
+                .purgeAbandonedGuestRows();
+        new GuestUserCleanupScheduler(userRepository, auditService, transactionManager, -1)
+                .purgeAbandonedGuestRows();
 
         assertThat(countUserRows(guestId)).isEqualTo(1);
+        assertThat(countAuditRows()).isZero();
+    }
+
+    @Test
+    @DisplayName("échec de la purge : journalisé et remonté dans Sentry, jamais avalé")
+    void reportsFailureLoudlyInsteadOfDyingInSilence() {
+        // Une clé étrangère non anticipée fait échouer le DELETE en entier. Sans ce filet, la
+        // purge cesserait de tourner sans que personne ne l'apprenne : ni cette nuit-là, ni
+        // les suivantes. Repository et gestionnaire de transaction sont ici des mocks, pour ne
+        // pas empoisonner la transaction ambiante du test avec un rollback-only.
+        UserRepository failing = mock(UserRepository.class);
+        AuditService auditService = mock(AuditService.class);
+        RuntimeException boom = new IllegalStateException("clé étrangère non anticipée");
+        when(failing.findAbandonedGuestRowIds(any())).thenThrow(boom);
+        GuestUserCleanupScheduler failingScheduler = new GuestUserCleanupScheduler(
+                failing, auditService, mock(PlatformTransactionManager.class), RETENTION_DAYS);
+
+        try (MockedStatic<Sentry> sentry = mockStatic(Sentry.class)) {
+            assertThatCode(failingScheduler::purgeAbandonedGuestRows).doesNotThrowAnyException();
+            sentry.verify(() -> Sentry.captureException(boom), times(1));
+        }
+        // Rien n'a été détruit, donc rien n'est écrit dans la table immuable.
+        verify(auditService, never()).log(any(), any(), any(), any(), any());
     }
 
     // ------------------------------------------------------------------
@@ -287,6 +464,46 @@ class GuestUserCleanupSchedulerTest {
         return id;
     }
 
+    private void newAnnouncement(UUID travelerId) {
+        AnnouncementEntity a = new AnnouncementEntity();
+        a.setTravelerId(travelerId);
+        a.setDepartureCity("Paris");
+        a.setArrivalCity("Bamako");
+        a.setDepartureDate(LocalDate.now().plusDays(5));
+        a.setTransportMode(com.yadony.api.matching.TransportMode.PLANE);
+        a.setPickupAddressLabel("Gare du Nord, Paris");
+        a.setPickupLat(new BigDecimal("48.880756"));
+        a.setPickupLng(new BigDecimal("2.354987"));
+        a.setDeliveryAddressLabel("Aéroport Bamako-Sénou");
+        a.setDeliveryLat(new BigDecimal("12.533579"));
+        a.setDeliveryLng(new BigDecimal("-7.948969"));
+        a.setAvailableKg(new BigDecimal("20.00"));
+        a.setTotalKg(new BigDecimal("23.00"));
+        a.setPricePerKg(new BigDecimal("8.00"));
+        a.setTimezone("Europe/Paris");
+        a.setStatus(AnnouncementStatus.ACTIVE);
+        announcementRepository.saveAndFlush(a);
+    }
+
+    private UserDeviceEntity newDevice(UUID userId) {
+        UserDeviceEntity device = new UserDeviceEntity();
+        device.setUserId(userId);
+        device.setDeviceId("device-" + UUID.randomUUID());
+        device.setDeviceName("Pixel de test");
+        device.setPlatform("android");
+        device.setLastSeenAt(OffsetDateTime.now(ZoneOffset.UTC));
+        device.setCreatedAt(OffsetDateTime.now(ZoneOffset.UTC));
+        return device;
+    }
+
+    private UserBlockEntity newBlock(UUID blockerId, UUID blockedId) {
+        UserBlockEntity block = new UserBlockEntity();
+        block.setBlockerId(blockerId);
+        block.setBlockedId(blockedId);
+        block.setCreatedAt(OffsetDateTime.now(ZoneOffset.UTC));
+        return block;
+    }
+
     /** Vieillit une ligne en base : {@code created_at} est posé par @PrePersist, jamais réglable. */
     private void backdate(UUID userId, int days) {
         entityManager.flush();
@@ -307,6 +524,18 @@ class GuestUserCleanupSchedulerTest {
         return ((Number) entityManager
                 .createNativeQuery("SELECT COUNT(*) FROM users WHERE id = :id")
                 .setParameter("id", userId)
+                .getSingleResult()).longValue();
+    }
+
+    /**
+     * Compte les entrées d'audit sans les désérialiser : sur H2, relire la colonne déclarée
+     * {@code jsonb} échoue (« Could not deserialize string to java type »). Artefact du schéma
+     * de test, sans rapport avec la purge — en PostgreSQL la colonne est un vrai {@code jsonb}.
+     */
+    private long countAuditRows() {
+        entityManager.flush();
+        return ((Number) entityManager
+                .createNativeQuery("SELECT COUNT(*) FROM audit_log")
                 .getSingleResult()).longValue();
     }
 
