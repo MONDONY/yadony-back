@@ -684,7 +684,11 @@ public class AuthService {
                 user.getTransportMode() != null ? user.getTransportMode().name() : null,
                 storageService.avatarUrl(user.getAvatarUrl()),
                 user.getAverageRating() != null ? user.getAverageRating().doubleValue() : null,
-                adminInfo
+                adminInfo,
+                user.getResidenceStreet(),
+                user.getResidenceLine2(),
+                user.getResidencePostalCode(),
+                user.getOnboardingSeenAt() == null ? null : user.getOnboardingSeenAt().toString()
         );
     }
 }
