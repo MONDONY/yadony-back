@@ -154,8 +154,6 @@ services:
       - yadony_uptime_kuma_data:/app/data
     networks:
       - yadony_internal
-    ports:
-      - "3001:3001"
     depends_on:
       - api
       - db
