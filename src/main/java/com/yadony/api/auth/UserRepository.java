@@ -98,6 +98,81 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
      */
     Page<UserEntity> findByDeletionRequestedAtIsNotNullOrderByDeletionRequestedAtAsc(Pageable pageable);
 
+    /**
+     * Ce qui distingue une ligne invitée abandonnée de tout le reste de la table.
+     *
+     * <p>Constante partagée et non SQL recopié : ce prédicat décide de la <b>suppression
+     * physique</b> de lignes {@code users}. Deux copies pourraient diverger, et une seule
+     * divergence détruirait des comptes réels.
+     *
+     * <p>Chaque condition, et pourquoi elle est là :
+     * <ul>
+     *   <li><b>aucun rôle</b> — la condition centrale. {@link GuestUserProvisioner} est le seul
+     *       code qui crée une ligne sans rôle ; toute inscription réelle reçoit SENDER+TRAVELER
+     *       ({@code AuthService#createUser}), et rien ne retire jamais un rôle (la
+     *       désactivation volontaire du rôle voyageur a été supprimée, cf. migration V193 qui
+     *       répare les comptes qu'elle avait dépouillés). Une ligne à rôles est donc un compte
+     *       réel, sans exception connue ;</li>
+     *   <li><b>aucun favori</b> — un favori est la seule donnée qu'un invité puisse produire
+     *       (son périmètre se limite à chercher, consulter et mettre en favori). Une ligne qui
+     *       en porte encore un a du contenu à conserver. Le {@code deleted_at} des favoris est
+     *       délibérément ignoré : en PostgreSQL {@code favorites.user_id} référence
+     *       {@code users(id)} sans cascade (V152), et un favori soft-deleté suffirait à faire
+     *       échouer la suppression, donc tout le lot avec elle ;</li>
+     *   <li><b>plus ancienne que le seuil</b> — laisse au visiteur le temps de revenir ;</li>
+     *   <li><b>ni suspendue, ni bannie, ni en attente de suppression, ni KYC entamé, ni prénom,
+     *       ni nom, ni compte Stripe, ni client Stripe, ni compte PRO</b> — défense en
+     *       profondeur. Une ligne invitée ne porte rien de tout cela : le provisionneur
+     *       n'écrit que {@code firebase_uid}, {@code username}, {@code status=ACTIVE} et
+     *       {@code kyc_status=NOT_STARTED}. Ces conditions n'épargnent donc aucune ligne
+     *       réellement invitée, et couvrent le cas où « aucun rôle » cesserait un jour d'être
+     *       le discriminant qu'il est aujourd'hui. Un compte supprimé par
+     *       {@code AccountFinalizationService} est ainsi protégé quatre fois plutôt qu'une
+     *       (rôles intacts, statut BANNED, prénom et nom de pseudonymisation).</li>
+     * </ul>
+     *
+     * <p><b>Aucune condition sur {@code deleted_at}</b>, et c'est voulu :
+     * {@code GuestClaimService} soft-delete la ligne invitée à chaque réclamation réussie, si
+     * bien que les lignes déjà supprimées sont la population principale à purger. Un critère
+     * qui ne les verrait pas raterait sa cible. C'est aussi pourquoi ces requêtes sont natives :
+     * toute requête JPQL subirait le {@code @Where(deleted_at IS NULL)} de {@link UserEntity}.
+     */
+    String ABANDONED_GUEST_ROW_PREDICATE = """
+            NOT EXISTS (SELECT 1 FROM user_roles r WHERE r.user_id = users.id)
+            AND NOT EXISTS (SELECT 1 FROM favorites f WHERE f.user_id = users.id)
+            AND users.created_at < :cutoff
+            AND users.status = 'ACTIVE'
+            AND users.kyc_status = 'NOT_STARTED'
+            AND users.deletion_requested_at IS NULL
+            AND users.first_name IS NULL
+            AND users.last_name IS NULL
+            AND users.stripe_account_id IS NULL
+            AND users.stripe_customer_id IS NULL
+            AND users.is_pro_account = FALSE
+            """;
+
+    /**
+     * Supprime physiquement les lignes invitées abandonnées. Voir
+     * {@link #ABANDONED_GUEST_ROW_PREDICATE} pour le critère et sa justification.
+     *
+     * <p><b>Suppression physique et non soft delete</b>, par exception assumée à la règle du
+     * projet — la même exception que celle déjà retenue pour les favoris (V172). Un soft delete
+     * ne supprimerait rien : la moitié de la population visée est <i>déjà</i> soft-deletée par
+     * les réclamations, et repasser {@code deleted_at} sur une ligne qui le porte déjà laisserait
+     * la table grossir indéfiniment, ce qui est précisément le problème que cette purge existe
+     * pour résoudre. La règle du soft delete protège des données métier et un historique ; une
+     * ligne invitée abandonnée n'a ni l'un ni l'autre : ni rôle, ni favori, ni profil, et ni
+     * téléphone ni email (ils vivent dans Firebase).
+     *
+     * <p>Idempotent par construction : les lignes supprimées ne ressortent plus au passage
+     * suivant.
+     *
+     * @return le nombre de lignes supprimées
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(value = "DELETE FROM users WHERE " + ABANDONED_GUEST_ROW_PREDICATE, nativeQuery = true)
+    int deleteAbandonedGuestRows(@Param("cutoff") java.time.LocalDateTime cutoff);
+
     @Query("SELECT u FROM UserEntity u WHERE u.commissionPaymentMethodId IS NOT NULL AND " +
            "(u.commissionCardExpYear < :year OR " +
            "(u.commissionCardExpYear = :year AND u.commissionCardExpMonth <= :month))")
