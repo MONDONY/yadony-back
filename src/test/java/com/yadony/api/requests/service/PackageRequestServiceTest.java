@@ -115,7 +115,8 @@ class PackageRequestServiceTest {
         // Real mapper wired to the same mocks so SearchTests assertions remain valid
         PackageRequestSearchMapper realMapper = new PackageRequestSearchMapper(
                 userRepository, cityRepository, storageService, photoService,
-                com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3));
+                com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3),
+                commissionProperties);
         service = new PackageRequestService(
                 repository, userRepository, eventPublisher, auditService, config,
                 threadRepository, cityRepository, commissionProperties,

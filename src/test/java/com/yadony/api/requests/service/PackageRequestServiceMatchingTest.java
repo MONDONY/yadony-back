@@ -160,7 +160,8 @@ class PackageRequestServiceMatchingTest {
 
         PackageRequestSearchMapper realMapper = new PackageRequestSearchMapper(
                 userRepository, cityRepository, storageService, photoService,
-                com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3));
+                com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3),
+                commissionProperties);
         service = new PackageRequestService(
                 repository, userRepository, eventPublisher, auditService, config,
                 threadRepository, cityRepository, commissionProperties,

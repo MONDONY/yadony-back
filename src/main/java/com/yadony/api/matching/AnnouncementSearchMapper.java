@@ -126,7 +126,10 @@ public class AnnouncementSearchMapper {
                 entity.getCurrency(),
                 entity.isNegotiable(),
                 availablePaymentMethods,
-                null, null
+                // Prix convertis : dependants du lecteur, donc poses par
+                // AnnouncementService.mapAnnouncements. Restent nuls sur les surfaces sans
+                // lecteur identifie (favoris), comme documente sur le DTO.
+                null, null, null
         );
     }
 
@@ -188,7 +191,10 @@ public class AnnouncementSearchMapper {
                 entity.getCurrency(),
                 entity.isNegotiable(),
                 availablePaymentMethods,
-                null, null
+                // Prix convertis : dependants du lecteur, donc poses par
+                // AnnouncementService.mapAnnouncements. Restent nuls sur les surfaces sans
+                // lecteur identifie (favoris), comme documente sur le DTO.
+                null, null, null
         );
     }
 

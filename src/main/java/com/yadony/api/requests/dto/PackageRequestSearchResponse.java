@@ -40,7 +40,18 @@ public record PackageRequestSearchResponse(
      *  que la devise l'autorise, espèces toujours. Même règle que {@code AnnouncementResponse}
      *  (voir {@code AnnouncementPaymentRails}), calculée ici pour le voyageur appelant plutôt
      *  que pour un voyageur propriétaire fixe (une demande n'a pas de voyageur assigné). */
-    Set<PaymentMethod> availablePaymentMethods
+    Set<PaymentMethod> availablePaymentMethods,
+    /**
+     * Prix brut, commission Yadony incluse : ce que l'expéditeur paiera réellement, quand
+     * {@code targetPriceEur} est le net que le voyageur toucherait. {@code null} si la demande
+     * n'a pas de budget.
+     *
+     * <p>Ajouté par la décision produit A16. Cette surface ne servait que le net, si bien
+     * qu'elle annonçait un tarif que personne ne paie, et différent de celui du détail de la
+     * même demande. Le net reste servi : c'est l'information que cherche un voyageur, et il
+     * ne révèle ici aucun taux privé (voir {@code PackageRequestSearchMapper#grossPriceEur}).
+     */
+    BigDecimal grossPriceEur
 ) {
     public record SenderPublicProfile(UUID id, String displayName, double averageRating, int totalRatings, boolean kycVerified, String avatarUrl) {}
 
@@ -55,6 +66,6 @@ public record PackageRequestSearchResponse(
                 pickupNeighborhood, deliveryNeighborhood,
                 sender, acceptedPaymentMethods, photos, isFavorite, urgent,
                 info.matchScore(), info.tripId(), info.tripDepartureDate(), currency,
-                availablePaymentMethods);
+                availablePaymentMethods, grossPriceEur);
     }
 }

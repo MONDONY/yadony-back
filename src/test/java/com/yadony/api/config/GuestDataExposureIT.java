@@ -119,6 +119,8 @@ class GuestDataExposureIT {
     private static final BigDecimal NET_PAR_KG = new BigDecimal("8.00");
     /** Net voyageur de l'unique ligne de grille du trajet seede. Meme regle. */
     private static final BigDecimal NET_LIGNE_GRILLE = new BigDecimal("45.00");
+    /** Budget net de la demande seedee. Servi a TOUS, invites compris (decision A16). */
+    private static final BigDecimal NET_COLIS = new BigDecimal("40.00");
 
     private static final List<String> VALEURS_SENTINELLES = List.of(
             TEL_DESTINATAIRE, NOM_DESTINATAIRE, VILLE_DESTINATAIRE,
@@ -192,7 +194,10 @@ class GuestDataExposureIT {
             // seule information qui lui soit utile. Les trois vecteurs du net (pricePerKg,
             // unitPriceNet, convertedPricePerKg) sont en liste NOIRE ci-dessus.
             // convertedCurrency reste : c'est la devise du lecteur, pas un montant.
-            "pricePerKgDisplay", "convertedCurrency",
+            // pricePerKgDisplayConverted (decision A16) est le BRUT dans la devise du lecteur :
+            // il rend a l'invite la conversion que le masquage du net lui avait retiree, sans
+            // rien reveler de plus que pricePerKgDisplay dont il n'est qu'une autre unite.
+            "pricePerKgDisplay", "convertedCurrency", "pricePerKgDisplayConverted",
             "transportMode", "status", "bidsCount", "confirmedParcelCount", "traveler",
             "description", "acceptedContentTypes", "refusedTypes", "acceptedPaymentMethods",
             "capacityUnit", "cashAccepted", "createdAt", "updatedAt", "pricingMode",
@@ -335,7 +340,7 @@ class GuestDataExposureIT {
         colis.setTransportMode(TransportMode.PLANE);
         colis.setContentCategory("vetements");
         colis.setDescription("Deux pulls et une paire de chaussures.");
-        colis.setTargetPriceEur(new BigDecimal("40.00"));
+        colis.setTargetPriceEur(NET_COLIS);
         colis.setPickupNeighborhood("10e arrondissement");
         colis.setDeliveryNeighborhood("Sacre-Coeur");
         colis.setStatus(PackageRequestStatus.OPEN);
@@ -374,9 +379,18 @@ class GuestDataExposureIT {
 
         // Masquer le net ne doit pas laisser le visiteur sans prix : le brut reste servi. Sans
         // cette assertion, tout casser passerait pour un succes de non-fuite.
-        assertThat(corps.path("content").get(0).path("pricePerKgDisplay").decimalValue())
+        JsonNode trajet = corps.path("content").get(0);
+        assertThat(trajet.path("pricePerKgDisplay").decimalValue())
                 .as("le brut est la seule information de prix utile a un visiteur, il doit rester")
                 .isGreaterThan(BigDecimal.ZERO);
+
+        // Decision A16 : le champ converti servi a l'invite est le BRUT, jamais le net. La
+        // fixture etant en EUR et le lecteur aussi, la conversion est l'identite : l'egalite
+        // avec pricePerKgDisplay prouve que c'est bien le brut qui a ete converti, et non le
+        // net remis en circulation sous un autre nom.
+        assertThat(trajet.path("pricePerKgDisplayConverted").decimalValue())
+                .as("un invite doit retrouver un prix converti, et ce prix doit etre le brut")
+                .isEqualByComparingTo(trajet.path("pricePerKgDisplay").decimalValue());
     }
 
     @Test
@@ -407,6 +421,16 @@ class GuestDataExposureIT {
                 "sans resultat, aucun champ ne peut apparaitre et l'audit ne verifie rien")
                 .isNotEmpty();
         auditer(corps, "GET /package-requests");
+
+        // Decision A16 : cette surface ne servait que le net, elle annoncait donc un tarif que
+        // personne ne paie, et different de celui affiche sur le detail de la meme demande. Le
+        // brut y est desormais servi a cote. Comparer les deux plutot qu'asserter une valeur
+        // fixe : ce qui doit tenir est que le brut soit VRAIMENT le brut, commission comprise,
+        // et non une recopie du net sous un autre nom.
+        JsonNode colis = corps.path("content").get(0);
+        assertThat(colis.path("grossPriceEur").decimalValue())
+                .as("le brut doit etre servi et depasser le net de la commission")
+                .isGreaterThan(colis.path("targetPriceEur").decimalValue());
     }
 
     @Test
@@ -487,6 +511,42 @@ class GuestDataExposureIT {
         assertThat(objet.path("priceGridItems").get(0).path("unitPriceNet").decimalValue())
                 .as("un inscrit doit continuer a voir le net de chaque ligne de grille")
                 .isEqualByComparingTo(NET_LIGNE_GRILLE);
+
+        // Decision A16 : les deux nouveaux champs sont ADDITIFS. Un inscrit garde tout ce
+        // qu'il recevait et recoit en plus le brut converti, exactement comme l'invite : ces
+        // champs ne sont pas un lot de consolation reserve aux visiteurs.
+        // Le `isGreaterThan(ZERO)` n'est pas redondant : une cle absente rend un MissingNode
+        // dont decimalValue() vaut ZERO, si bien qu'une simple egalite entre deux champs
+        // absents passerait au vert sans rien prouver.
+        assertThat(premier.path("pricePerKgDisplayConverted").decimalValue())
+                .as("le brut converti est servi a tout le monde, pas seulement aux invites")
+                .isGreaterThan(BigDecimal.ZERO)
+                .isEqualByComparingTo(premier.path("pricePerKgDisplay").decimalValue());
+
+        String rechercheColis = mockMvc.perform(get("/package-requests")
+                        .param("page", "0").param("size", "20")
+                        .with(authentication(inscritVoyageur())))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        JsonNode colis = MAPPER.readTree(rechercheColis).path("content").path(0);
+        assertThat(colis.path("id").isMissingNode())
+                .as("la demande seedee doit ressortir, sinon ce cas ne prouve rien").isFalse();
+        assertThat(colis.path("targetPriceEur").decimalValue())
+                .as("le net d'un colis n'est pas masque : aucun taux prive ne s'en deduit")
+                .isEqualByComparingTo(NET_COLIS);
+        assertThat(colis.path("grossPriceEur").decimalValue())
+                .as("un voyageur inscrit voit lui aussi le brut nouvellement ajoute")
+                .isGreaterThan(NET_COLIS);
+    }
+
+    /**
+     * {@code GET /package-requests} exige TRAVELER ou GUEST : un expediteur inscrit n'y a pas
+     * acces (asymetrie assumee, amendement A2). Le pendant « compte inscrit » de cette surface
+     * est donc un voyageur.
+     */
+    private static UsernamePasswordAuthenticationToken inscritVoyageur() {
+        return new UsernamePasswordAuthenticationToken(
+                "uid-voyageur-exposition", null,
+                List.of(new SimpleGrantedAuthority("ROLE_TRAVELER")));
     }
 
     // ── Outillage d'audit ─────────────────────────────────────────────────────

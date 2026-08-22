@@ -344,7 +344,9 @@ public class AnnouncementService {
             AnnouncementSearchResponse base = announcementSearchMapper.toSearchResponse(
                     a, favIds.contains(a.getId()), userMap, bidCountMap, gridItemMap);
             result.add(base.withConvertedPrice(
-                    convertedPricePerKgForResponse(a, viewerCurrency), viewerCurrency));
+                    convertedPricePerKgForResponse(a, viewerCurrency),
+                    viewerCurrency,
+                    convertedPricePerKgDisplay(base.pricePerKgDisplay(), a.getCurrency(), viewerCurrency)));
         }
         return result;
     }
@@ -379,6 +381,28 @@ public class AnnouncementService {
         return com.yadony.api.common.GuestSession.isGuest()
                 ? null
                 : convertedPricePerKgForSort(entity, viewerCurrency);
+    }
+
+    /**
+     * Le prix BRUT au kilo, converti dans la devise du lecteur. Servi à tout le monde.
+     *
+     * <p>Décision produit A16. {@code convertedPricePerKg} étant le net, il est masqué pour une
+     * session anonyme, et un visiteur perdait alors toute conversion de devise : il lisait un
+     * prix dans la devise de l'annonce, sans équivalent dans la sienne. Ce champ le lui rend,
+     * sans qu'aucun net ne lui soit servi.
+     *
+     * <p>Prend en entrée le brut <b>déjà calculé</b> par le mappeur plutôt que de rejouer le
+     * taux de commission : une seule source pour le multiplicateur
+     * ({@link PriceGridService#displayPrice}), et la garantie que la valeur convertie est bien
+     * l'équivalent exact de {@code pricePerKgDisplay} servi à côté.
+     */
+    private java.math.BigDecimal convertedPricePerKgDisplay(java.math.BigDecimal display,
+                                                            String announcementCurrency,
+                                                            String viewerCurrency) {
+        if (display == null) {
+            return null;
+        }
+        return exchangeRateService.convert(display, announcementCurrency, viewerCurrency);
     }
 
     private Sort buildSort(String sortBy, String sortDir) {
