@@ -84,11 +84,9 @@ jobs:
           AWS_S3_BUCKET=${{ secrets.AWS_S3_BUCKET }}
           AWS_S3_ACCESS_KEY=${{ secrets.AWS_S3_ACCESS_KEY }}
           AWS_S3_SECRET_KEY=${{ secrets.AWS_S3_SECRET_KEY }}
-          GRAFANA_PROM_URL=${{ secrets.GRAFANA_PROM_URL }}
-          GRAFANA_PROM_USER=${{ secrets.GRAFANA_PROM_USER }}
-          GRAFANA_LOKI_URL=${{ secrets.GRAFANA_LOKI_URL }}
-          GRAFANA_LOKI_USER=${{ secrets.GRAFANA_LOKI_USER }}
-          GRAFANA_CLOUD_TOKEN=${{ secrets.GRAFANA_CLOUD_TOKEN }}
+          GF_ADMIN_PASSWORD=${{ secrets.GF_ADMIN_PASSWORD }}
+          TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
           RESEND_API_KEY=${{ secrets.RESEND_API_KEY }}
           INTERNAL_SHARED_SECRET=${{ secrets.INTERNAL_SHARED_SECRET }}
           TWILIO_ACCOUNT_SID=${{ secrets.TWILIO_ACCOUNT_SID }}
