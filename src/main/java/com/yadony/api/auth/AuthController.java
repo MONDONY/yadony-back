@@ -112,6 +112,19 @@ public class AuthController {
         return ResponseEntity.noContent().build();
     }
 
+    @PutMapping("/me/residence-address")
+    public ResponseEntity<Void> updateResidenceAddress(
+            @Valid @RequestBody com.yadony.api.auth.dto.ResidenceAddressRequest request) {
+        authService.updateResidenceAddress(requireFirebaseUid(), request);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PutMapping("/me/onboarding-seen")
+    public ResponseEntity<Void> markOnboardingSeen() {
+        authService.markOnboardingSeen(requireFirebaseUid());
+        return ResponseEntity.noContent().build();
+    }
+
     @GetMapping("/me/deletion-eligibility")
     public ResponseEntity<DeletionEligibilityResponse> checkDeletionEligibility() {
         String firebaseUid = requireFirebaseUid();

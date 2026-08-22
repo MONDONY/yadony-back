@@ -80,7 +80,7 @@ class PaymentServiceTestFactory {
                 mock(AdminAlertService.class),
                 stubbedResolver(),
                 mock(PromoService.class),
-                new StripeGatewayImpl(),
+                new StripeGatewayImpl(null),
                 PaymentServiceTestFactory.stubbedContacts(), mock(com.yadony.api.voucher.CommissionVoucherService.class), mock(com.yadony.api.payments.ConnectAccountProvisioner.class)
         );
     }
@@ -114,7 +114,7 @@ class PaymentServiceTestFactory {
                 adminAlert,
                 stubbedResolver(),
                 mock(PromoService.class),
-                new StripeGatewayImpl(),
+                new StripeGatewayImpl(null),
                 PaymentServiceTestFactory.stubbedContacts(), mock(com.yadony.api.voucher.CommissionVoucherService.class), mock(com.yadony.api.payments.ConnectAccountProvisioner.class)
         );
     }

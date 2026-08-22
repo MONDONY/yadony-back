@@ -344,6 +344,56 @@ public class AuthService {
     }
 
     /**
+     * Adresse de résidence. Le pays n'est pas modifiable ici : il vient de
+     * l'étape « pays » de l'onboarding et Stripe verrouille celui du compte
+     * connecté.
+     *
+     * <p>{@code city} écrase le champ profil existant : c'est la même donnée,
+     * en garder deux versions les ferait diverger.
+     */
+    @Transactional
+    public void updateResidenceAddress(String firebaseUid, com.yadony.api.auth.dto.ResidenceAddressRequest request) {
+        UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
+                .orElseThrow(() -> new YadonyBusinessException(
+                        HttpStatus.NOT_FOUND,
+                        "user-not-found",
+                        "User Not Found",
+                        "Utilisateur introuvable"
+                ));
+        user.setResidenceStreet(request.street());
+        user.setResidenceLine2(request.line2());
+        user.setResidencePostalCode(request.postalCode());
+        user.setCity(request.city());
+        userRepository.save(user);
+
+        // Aucune PII dans le journal : on trace le fait, pas l'adresse.
+        Map<String, Object> payload = new java.util.HashMap<>();
+        payload.put("hasLine2", request.line2() != null && !request.line2().isBlank());
+        auditService.log("USER", user.getId(), "RESIDENCE_ADDRESS_UPDATED", user.getId(), payload);
+    }
+
+    /**
+     * Marque le parcours d'onboarding comme vu. Idempotent : une seconde
+     * réponse ne réécrit pas la date, sinon un utilisateur qui rouvre le
+     * récapitulatif repousserait indéfiniment son propre horodatage.
+     */
+    @Transactional
+    public void markOnboardingSeen(String firebaseUid) {
+        UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
+                .orElseThrow(() -> new YadonyBusinessException(
+                        HttpStatus.NOT_FOUND,
+                        "user-not-found",
+                        "User Not Found",
+                        "Utilisateur introuvable"
+                ));
+        if (user.getOnboardingSeenAt() != null) {
+            return;
+        }
+        user.setOnboardingSeenAt(Instant.now());
+        userRepository.save(user);
+    }
+
+    /**
      * Retourne l'UUID de l'utilisateur courant à partir du FirebaseUID dans le SecurityContext.
      */
     @Transactional(readOnly = true)
@@ -683,7 +733,11 @@ public class AuthService {
                 user.getTransportMode() != null ? user.getTransportMode().name() : null,
                 storageService.avatarUrl(user.getAvatarUrl()),
                 user.getAverageRating() != null ? user.getAverageRating().doubleValue() : null,
-                adminInfo
+                adminInfo,
+                user.getResidenceStreet(),
+                user.getResidenceLine2(),
+                user.getResidencePostalCode(),
+                user.getOnboardingSeenAt() == null ? null : user.getOnboardingSeenAt().toString()
         );
     }
 }

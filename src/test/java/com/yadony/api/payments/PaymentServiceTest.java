@@ -82,7 +82,7 @@ class PaymentServiceTest {
                 PaymentServiceTestFactory.defaultConnectProperties(),
                 new com.fasterxml.jackson.databind.ObjectMapper(),
                 org.mockito.Mockito.mock(com.yadony.api.common.stripe.AdminAlertService.class),
-                commissionRateResolver, promoService, new StripeGatewayImpl(),
+                commissionRateResolver, promoService, new StripeGatewayImpl(null),
                 PaymentServiceTestFactory.stubbedContacts(), mock(com.yadony.api.voucher.CommissionVoucherService.class), connectAccountProvisioner
 );
     }
@@ -307,11 +307,9 @@ class PaymentServiceTest {
         when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(user));
         when(userRepository.findByIdForUpdate(senderId)).thenReturn(Optional.of(user));
         when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        // La construction des AccountCreateParams est extraite (lot 4) dans
-        // ConnectAccountProvisioner — testée isolément par StripeExpressAccountProvisionerTest.
-        Account mockAcct = mock(Account.class);
-        when(mockAcct.getId()).thenReturn("acct_new");
-        when(connectAccountProvisioner.provision(user)).thenReturn(mockAcct);
+        // La construction des paramètres Stripe est extraite dans
+        // ConnectAccountProvisioner — testée isolément par StripeV2AccountProvisionerTest.
+        when(connectAccountProvisioner.provision(user)).thenReturn("acct_new");
 
         ConnectAccountResponse resp = service.createConnectAccount("uid-sender");
         assertThat(resp.stripeAccountId()).isEqualTo("acct_new");

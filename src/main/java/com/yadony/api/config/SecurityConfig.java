@@ -111,22 +111,27 @@ public class SecurityConfig {
                 // être portée par la chaîne de sécurité, pas par une garde écrite dans
                 // le controller, qu'un refactor pourrait retirer sans aucun signal.
                 //
-                // `authenticatedNonGuest()` et non `authenticated()` : ces deux règles
-                // sont déclarées AVANT la règle invité, donc un ROLE_GUEST les
-                // satisferait et atteindrait deux endpoints d'écriture hors liste
-                // blanche. Inoffensif tant qu'un invité n'a pas de ligne `users`, mais
-                // ce serait un rattachement d'identité ouvert au visiteur dès que ces
-                // lignes existent.
+                // `authenticatedNonGuest()` et non `authenticated()` : ces règles sont
+                // déclarées AVANT la règle invité, donc un ROLE_GUEST les satisferait et
+                // atteindrait des endpoints d'écriture hors liste blanche. Inoffensif tant
+                // qu'un invité n'a pas de ligne `users`, mais ce serait un rattachement
+                // d'identité — ou une mutation de profil — ouvert au visiteur dès que
+                // cette ligne existe (matérialisation paresseuse au premier favori).
                 //
                 // Surtout PAS une liste de rôles ici : ces endpoints doivent rester
                 // joignables par un compte authentifié encore sans rôle, c'est
                 // exactement le tunnel d'inscription qu'ils servent.
                 .requestMatchers("/auth/email-otp/attach").access(authenticatedNonGuest())
                 .requestMatchers("/auth/sms-otp/attach").access(authenticatedNonGuest())
+                // Même motif : mutent une ligne `users` réelle (adresse de résidence,
+                // indicateur d'onboarding). Un invité matérialisé par un favori pourrait
+                // sinon écrire sur sa propre ligne invitée, promise à la purge.
+                .requestMatchers("/auth/me/residence-address").access(authenticatedNonGuest())
+                .requestMatchers("/auth/me/onboarding-seen").access(authenticatedNonGuest())
                 // Réclamation des données d'une session anonyme : mute deux comptes (les
                 // favoris changent de propriétaire, la ligne invitée est supprimée). Même
-                // motif que les deux règles ci-dessus, et même emplacement obligatoire,
-                // AVANT le permitAll sur /auth/**.
+                // motif que les règles ci-dessus, et même emplacement obligatoire, AVANT
+                // le permitAll sur /auth/**.
                 //
                 // `authenticatedNonGuest()` : l'appelant doit être un VRAI compte. Un invité
                 // qui atteindrait cet endpoint pourrait, en présentant le jeton anonyme d'un
