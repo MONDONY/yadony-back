@@ -47,6 +47,9 @@ class AccountFinalizationServiceTest {
         u.setStatus(UserStatus.PENDING_DELETION);
         u.setBirthDate(java.time.LocalDate.of(1990, 1, 1));
         u.setCity("Paris");
+        u.setResidenceStreet("12 rue de la Paix");
+        u.setResidenceLine2("Appt 4");
+        u.setResidencePostalCode("75002");
         // Lot C : donnees re-identifiantes que l'anonymisation laissait intactes.
         u.setProAccount(true);
         u.setProSiret("81234567800012");
@@ -87,6 +90,9 @@ class AccountFinalizationServiceTest {
         assertThat(kyc.getDeletedAt()).isNotNull();
         assertThat(user.getBirthDate()).isNull();
         assertThat(user.getCity()).isNull();
+        assertThat(user.getResidenceStreet()).isNull();
+        assertThat(user.getResidenceLine2()).isNull();
+        assertThat(user.getResidencePostalCode()).isNull();
     }
 
     @Test

@@ -54,6 +54,9 @@ public class AccountFinalizationService {
         user.setLastName("supprimé");
         user.setBirthDate(null);
         user.setCity(null);
+        user.setResidenceStreet(null);
+        user.setResidenceLine2(null);
+        user.setResidencePostalCode(null);
         user.setFcmToken(null);
         // Lot C — le SIRET est un identifiant d'entreprise reel : chiffre au repos, mais
         // parfaitement re-identifiant tant qu'il subsiste. Le laisser vidait l'anonymisation

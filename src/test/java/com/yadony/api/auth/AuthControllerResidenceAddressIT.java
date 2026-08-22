@@ -70,6 +70,21 @@ class AuthControllerResidenceAddressIT {
     }
 
     @Test
+    void PUT_residenceAddress_sansAuthentification_retourne401() throws Exception {
+        // SecurityConfig déclare /auth/me/residence-address authenticated() AVANT le
+        // permitAll de /auth/** : défense en profondeur, indépendante du 401 déjà renvoyé
+        // par requireFirebaseUid() dans le controller si ce garde venait à disparaître.
+        mvc.perform(put("/auth/me/residence-address")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                            {"street":"12 rue des Lilas","postalCode":"75011","city":"Paris"}
+                            """))
+                .andExpect(status().isUnauthorized());
+
+        verifyNoInteractions(authService);
+    }
+
+    @Test
     void PUT_onboardingSeen_retourne204() throws Exception {
         mvc.perform(put("/auth/me/onboarding-seen")
                         .with(authentication(auth())))

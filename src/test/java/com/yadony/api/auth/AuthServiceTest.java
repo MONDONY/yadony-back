@@ -267,6 +267,24 @@ class AuthServiceTest {
         }
 
         @Test
+        @DisplayName("onboardingSeenAt avec fraction de seconde → sérialisé sans troncature")
+        void getProfile_onboardingSeenAtWithFraction_returnsExactFractionalValue() {
+            UserEntity user = buildUser();
+            // markOnboardingSeen() (AuthService.java:330) écrit Instant.now(), qui porte quasi
+            // toujours une fraction de seconde en production, contrairement au cas seconde-entière
+            // du test voisin. AuthService.java:691 sérialise via Instant.toString() brut (aucun
+            // formatteur custom) : pour un nano multiple de 1000 mais pas de 1_000_000, le JDK
+            // (java.time.format.DateTimeFormatterBuilder.InstantPrinterParser) imprime 6 chiffres
+            // de fraction — donc la même chaîne microseconde en sortie qu'en entrée.
+            user.setOnboardingSeenAt(Instant.parse("2026-08-22T10:00:00.123456Z"));
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+
+            UserResponse result = authService.getProfile(FIREBASE_UID);
+
+            assertThat(result.onboardingSeenAt()).isEqualTo("2026-08-22T10:00:00.123456Z");
+        }
+
+        @Test
         @DisplayName("onboarding jamais vu → onboardingSeenAt est null, pas une chaîne vide")
         void getProfile_onboardingNeverSeen_returnsNullOnboardingSeenAt() {
             UserEntity user = buildUser(); // résidence et onboardingSeenAt restent null par défaut
