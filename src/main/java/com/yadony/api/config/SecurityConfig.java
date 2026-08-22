@@ -76,6 +76,8 @@ public class SecurityConfig {
                 // le controller, qu'un refactor pourrait retirer sans aucun signal.
                 .requestMatchers("/auth/email-otp/attach").authenticated()
                 .requestMatchers("/auth/sms-otp/attach").authenticated()
+                .requestMatchers("/auth/me/residence-address").authenticated()
+                .requestMatchers("/auth/me/onboarding-seen").authenticated()
                 .requestMatchers(
                     "/auth/**",
                     "/actuator/health",

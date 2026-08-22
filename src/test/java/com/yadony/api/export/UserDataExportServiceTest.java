@@ -78,6 +78,9 @@ class UserDataExportServiceTest {
         u.setFirebaseUid("uid-aissatou");
         u.setCity("Dakar");
         u.setCountry("SN");
+        u.setResidenceStreet("10 avenue Bourguiba");
+        u.setResidenceLine2("Villa 3");
+        u.setResidencePostalCode("11000");
         u.setRoles(new HashSet<>(List.of(Role.SENDER)));
         return u;
     }
@@ -126,6 +129,9 @@ class UserDataExportServiceTest {
         assertThat(export.profile().id()).isEqualTo(userId);
         assertThat(export.profile().firstName()).isEqualTo("Aïssatou");
         assertThat(export.profile().roles()).containsExactly("SENDER");
+        assertThat(export.profile().residenceStreet()).isEqualTo("10 avenue Bourguiba");
+        assertThat(export.profile().residenceLine2()).isEqualTo("Villa 3");
+        assertThat(export.profile().residencePostalCode()).isEqualTo("11000");
         assertThat(export.kyc().status()).isEqualTo("VERIFIED");
         assertThat(export.recipients()).hasSize(1);
         assertThat(export.recipients().get(0).fullName()).isEqualTo("Maman");

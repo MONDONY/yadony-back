@@ -196,6 +196,18 @@ public class UserEntity extends BaseEntity {
     @Column(name = "country", length = 2)
     private String country;
 
+    @Column(name = "residence_street", length = 255)
+    private String residenceStreet;
+
+    @Column(name = "residence_line2", length = 100)
+    private String residenceLine2;
+
+    @Column(name = "residence_postal_code", length = 20)
+    private String residencePostalCode;
+
+    @Column(name = "onboarding_seen_at")
+    private Instant onboardingSeenAt;
+
     @Column(name = "average_rating", precision = 3, scale = 2)
     private BigDecimal averageRating;
 
@@ -402,6 +414,18 @@ public class UserEntity extends BaseEntity {
 
     public String getCountry() { return country; }
     public void setCountry(String country) { this.country = country; }
+
+    public String getResidenceStreet() { return residenceStreet; }
+    public void setResidenceStreet(String residenceStreet) { this.residenceStreet = residenceStreet; }
+
+    public String getResidenceLine2() { return residenceLine2; }
+    public void setResidenceLine2(String residenceLine2) { this.residenceLine2 = residenceLine2; }
+
+    public String getResidencePostalCode() { return residencePostalCode; }
+    public void setResidencePostalCode(String residencePostalCode) { this.residencePostalCode = residencePostalCode; }
+
+    public Instant getOnboardingSeenAt() { return onboardingSeenAt; }
+    public void setOnboardingSeenAt(Instant onboardingSeenAt) { this.onboardingSeenAt = onboardingSeenAt; }
 
     public BigDecimal getAverageRating() { return averageRating; }
     public void setAverageRating(BigDecimal averageRating) { this.averageRating = averageRating; }

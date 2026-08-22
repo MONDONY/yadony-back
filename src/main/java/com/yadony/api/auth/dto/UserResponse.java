@@ -33,5 +33,9 @@ public record UserResponse(
     String transportMode,
     String avatarUrl,
     Double averageRating,
-    AdminInfo admin
+    AdminInfo admin,
+    String residenceStreet,
+    String residenceLine2,
+    String residencePostalCode,
+    String onboardingSeenAt
 ) {}
