@@ -6,6 +6,7 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.favorites.FavoriteEntity;
 import com.yadony.api.favorites.FavoriteRepository;
 import com.yadony.api.favorites.FavoriteTargetType;
+import com.yadony.api.kyc.KycVerificationEntity;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.AnnouncementStatus;
@@ -303,10 +304,35 @@ class GuestUserCleanupSchedulerTest {
     }
 
     @Test
-    @DisplayName("le critère couvre les douze tables liées inventoriées")
+    @DisplayName("ligne sans rôle ayant une vérification KYC : conservée (FK avec cascade)")
+    void keepsRoleLessRowWithKycVerification() {
+        // kyc_schema.kyc_verifications référence users(id) en ON DELETE CASCADE (V2:19). C'est
+        // la famille dangereuse : la suppression réussirait et emporterait SILENCIEUSEMENT une
+        // vérification d'identité, sa session Stripe Identity et ses champs chiffrés.
+        // La ligne garde volontairement kyc_status = NOT_STARTED : ce test doit prouver la
+        // condition sur la table liée, pas celle sur la colonne de statut.
+        UUID ownerId = provisionGuest("activity-kyc");
+        backdate(ownerId, 400);
+        KycVerificationEntity kyc = new KycVerificationEntity();
+        kyc.setUserId(ownerId);
+        kyc.setStripeVerificationSessionId("vs_test_" + UUID.randomUUID());
+        entityManager.persist(kyc);
+        entityManager.flush();
+
+        scheduler.purgeAbandonedGuestRows();
+
+        assertThat(countUserRows(ownerId)).isEqualTo(1);
+        assertThat(countKycRows(ownerId)).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("le critère couvre les treize tables liées inventoriées")
     void predicateCoversEveryInventoriedRelatedTable() {
         // Cette énumération est le seul rempart contre les deux modes de défaillance ci-dessus,
         // et rien dans le code ne signalerait qu'une ligne en a disparu. Ce test le signale.
+        // Les sept clés étrangères ON DELETE CASCADE vers users (user_roles, kyc_verifications,
+        // user_notification_preferences, user_devices, user_blocks x2, user_business_preferences)
+        // sont TOUTES ici : c'est la seule famille qui détruit sans bruit.
         assertThat(UserRepository.ABANDONED_GUEST_ROW_PREDICATE)
                 .contains("FROM user_roles r WHERE r.user_id = users.id")
                 .contains("FROM favorites f WHERE f.user_id = users.id")
@@ -321,6 +347,7 @@ class GuestUserCleanupSchedulerTest {
                 .contains("FROM wallet_accounts wa WHERE wa.user_id = users.id")
                 .contains("FROM notifications n WHERE n.user_id = users.id")
                 .contains("FROM corridor_alerts ca WHERE ca.owner_id = users.id")
+                .contains("FROM kyc_schema.kyc_verifications kv WHERE kv.user_id = users.id")
                 .contains("FROM user_devices ud WHERE ud.user_id = users.id")
                 .contains("FROM user_notification_preferences np WHERE np.user_id = users.id")
                 .contains("FROM user_business_preferences bp WHERE bp.user_id = users.id")
@@ -536,6 +563,15 @@ class GuestUserCleanupSchedulerTest {
         entityManager.flush();
         return ((Number) entityManager
                 .createNativeQuery("SELECT COUNT(*) FROM audit_log")
+                .getSingleResult()).longValue();
+    }
+
+    /** Compte les vérifications KYC en base, hors @Where(deleted_at IS NULL). */
+    private long countKycRows(UUID userId) {
+        entityManager.flush();
+        return ((Number) entityManager
+                .createNativeQuery("SELECT COUNT(*) FROM kyc_schema.kyc_verifications WHERE user_id = :id")
+                .setParameter("id", userId)
                 .getSingleResult()).longValue();
     }
 

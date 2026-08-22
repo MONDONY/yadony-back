@@ -137,16 +137,27 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
      *       {@code conversations}, {@code disputes}, {@code wallet_accounts},
      *       {@code notifications}, {@code corridor_alerts}) le {@code DELETE} du lot échouait
      *       <b>en entier</b>, et la purge mourait sans plus jamais rien supprimer ; sur une clé
-     *       étrangère <b>avec</b> cascade ({@code user_devices},
-     *       {@code user_notification_preferences}, {@code user_business_preferences},
-     *       {@code user_blocks}) les enfants disparaissaient <b>en silence</b>. Une ligne
-     *       portant la moindre de ces traces est donc épargnée quoi qu'il arrive.</li>
+     *       étrangère <b>avec</b> cascade les enfants disparaissaient <b>en silence</b>.</li>
      * </ul>
      *
-     * <p><b>Cette énumération est incomplète par nature</b> : une table liée ajoutée demain ne
-     * s'y inscrira pas toute seule. C'est pourquoi {@link GuestUserCleanupScheduler} entoure
-     * l'exécution d'un {@code try/catch} qui journalise en ERROR et remonte dans Sentry — une
-     * purge qui échoue doit le faire bruyamment.
+     * <p><b>La famille « avec cascade » est traitée exhaustivement</b>, parce qu'elle est la
+     * seule à détruire sans bruit. Énumération obtenue en balayant toutes les migrations, tous
+     * schémas confondus, à la recherche des clés étrangères vers {@code users} portant
+     * {@code ON DELETE CASCADE} — sept clés, six tables :
+     * {@code user_roles} (V1, couverte par la condition « aucun rôle »),
+     * {@code kyc_schema.kyc_verifications} (V2), {@code user_notification_preferences} (V95),
+     * {@code user_devices} (V96), {@code user_blocks} (V98, deux colonnes) et
+     * {@code user_business_preferences} (V101). Toutes sont couvertes ici. La méthode est
+     * consignée dans le rapport de tâche pour être rejouée après toute nouvelle migration.
+     *
+     * <p><b>La famille « sans cascade » ne l'est pas</b>, et ce n'est pas un oubli : une
+     * quinzaine d'autres tables référencent {@code users} sans cascade
+     * ({@code traveler_subscriptions}, {@code delivery_addresses}, {@code trip_templates},
+     * {@code wallet_transactions}, {@code negotiation_threads}…). Leur présence ferait échouer
+     * le lot de façon <b>visible</b> — log ERROR et remontée Sentry via
+     * {@link GuestUserCleanupScheduler} — donc dégradée, jamais destructrice. Les énumérer
+     * toutes allongerait le prédicat sans rien protéger de plus, et cette longueur serait
+     * elle-même une source d'erreur.
      *
      * <p><b>Deux absences volontaires.</b> {@code disputes.reporter_id} n'est pas couvert : la
      * colonne existe en PostgreSQL (V6) mais V78 l'a rendue nullable et plus aucun code ne
@@ -187,6 +198,7 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
             AND NOT EXISTS (SELECT 1 FROM wallet_accounts wa WHERE wa.user_id = users.id)
             AND NOT EXISTS (SELECT 1 FROM notifications n WHERE n.user_id = users.id)
             AND NOT EXISTS (SELECT 1 FROM corridor_alerts ca WHERE ca.owner_id = users.id)
+            AND NOT EXISTS (SELECT 1 FROM kyc_schema.kyc_verifications kv WHERE kv.user_id = users.id)
             AND NOT EXISTS (SELECT 1 FROM user_devices ud WHERE ud.user_id = users.id)
             AND NOT EXISTS (SELECT 1 FROM user_notification_preferences np WHERE np.user_id = users.id)
             AND NOT EXISTS (SELECT 1 FROM user_business_preferences bp WHERE bp.user_id = users.id)
