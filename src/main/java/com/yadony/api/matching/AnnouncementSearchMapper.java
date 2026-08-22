@@ -3,6 +3,7 @@ package com.yadony.api.matching;
 import com.yadony.api.auth.KycStatus;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
+import com.yadony.api.common.GuestSession;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.config.PlatformSettingsService;
 import com.yadony.api.matching.dto.AddressDto;
@@ -106,7 +107,8 @@ public class AnnouncementSearchMapper {
                         entity.getPickupLat().doubleValue(), entity.getPickupLng().doubleValue()),
                 new AddressDto(entity.getDeliveryAddressLabel(),
                         entity.getDeliveryLat().doubleValue(), entity.getDeliveryLng().doubleValue()),
-                entity.getAvailableKg(), entity.getTotalKg(), entity.getPricePerKg(),
+                entity.getAvailableKg(), entity.getTotalKg(),
+                GuestSession.travelerNetOrNull(entity.getPricePerKg()),
                 pricePerKgDisplay(entity.getPricePerKg(), entity.getTravelerId()),
                 entity.getTransportMode(),
                 entity.getStatus().name(), bidsCount, profile,
@@ -124,7 +126,10 @@ public class AnnouncementSearchMapper {
                 entity.getCurrency(),
                 entity.isNegotiable(),
                 availablePaymentMethods,
-                null, null
+                // Prix convertis : dependants du lecteur, donc poses par
+                // AnnouncementService.mapAnnouncements. Restent nuls sur les surfaces sans
+                // lecteur identifie (favoris), comme documente sur le DTO.
+                null, null, null
         );
     }
 
@@ -167,7 +172,8 @@ public class AnnouncementSearchMapper {
                         entity.getPickupLat().doubleValue(), entity.getPickupLng().doubleValue()),
                 new AddressDto(entity.getDeliveryAddressLabel(),
                         entity.getDeliveryLat().doubleValue(), entity.getDeliveryLng().doubleValue()),
-                entity.getAvailableKg(), entity.getTotalKg(), entity.getPricePerKg(),
+                entity.getAvailableKg(), entity.getTotalKg(),
+                GuestSession.travelerNetOrNull(entity.getPricePerKg()),
                 pricePerKgDisplay(entity.getPricePerKg(), entity.getTravelerId()),
                 entity.getTransportMode(),
                 entity.getStatus().name(), bidsCount, profile,
@@ -185,7 +191,10 @@ public class AnnouncementSearchMapper {
                 entity.getCurrency(),
                 entity.isNegotiable(),
                 availablePaymentMethods,
-                null, null
+                // Prix convertis : dependants du lecteur, donc poses par
+                // AnnouncementService.mapAnnouncements. Restent nuls sur les surfaces sans
+                // lecteur identifie (favoris), comme documente sur le DTO.
+                null, null, null
         );
     }
 

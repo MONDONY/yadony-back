@@ -54,22 +54,39 @@ public record AnnouncementSearchResponse(
          *  (mode MIXED sans prix au kilo) ou que le contexte de mapping n'a pas de lecteur
          *  identifié (ex. favoris). Voir {@link #withConvertedPrice}. */
         BigDecimal convertedPricePerKg,
-        /** Devise cible de {@code convertedPricePerKg} : celle du lecteur. Même valeur que
-         *  {@code currency} quand l'annonce est déjà dans la devise du lecteur. */
-        String convertedCurrency
+        /** Devise cible de {@code convertedPricePerKg} et de {@code pricePerKgDisplayConverted} :
+         *  celle du lecteur. Même valeur que {@code currency} quand l'annonce est déjà dans la
+         *  devise du lecteur. */
+        String convertedCurrency,
+        /**
+         * Équivalent de {@code pricePerKgDisplay}, le prix BRUT payé par l'expéditeur, converti
+         * dans la devise du lecteur.
+         *
+         * <p>Ajouté par la décision produit A16. {@code convertedPricePerKg} étant le net, il
+         * est masqué pour une session anonyme : sans ce champ, un visiteur perdait toute
+         * conversion de devise et lisait un prix dans la devise de l'annonce seulement. Servi à
+         * tous, invités compris, et ne révèle rien de plus que {@code pricePerKgDisplay} dont il
+         * n'est qu'une expression dans une autre unité.
+         *
+         * <p>{@code null} quand {@code pricePerKgDisplay} l'est (mode MIXED sans prix au kilo)
+         * ou que le contexte de mapping n'a pas de lecteur identifié (ex. favoris).
+         */
+        BigDecimal pricePerKgDisplayConverted
 ) {
     /**
-     * Copie enrichie du prix converti dans la devise du lecteur. Utilisé par
-     * {@code AnnouncementService.searchAnnouncements} une fois le prix original mappé, pour ne
+     * Copie enrichie des prix convertis dans la devise du lecteur. Utilisé par
+     * {@code AnnouncementService.searchAnnouncements} une fois les prix originaux mappés, pour ne
      * pas faire porter la conversion (dépendante du lecteur) au mapper partagé avec les favoris.
      */
-    public AnnouncementSearchResponse withConvertedPrice(BigDecimal convertedPricePerKg, String convertedCurrency) {
+    public AnnouncementSearchResponse withConvertedPrice(BigDecimal convertedPricePerKg,
+                                                         String convertedCurrency,
+                                                         BigDecimal pricePerKgDisplayConverted) {
         return new AnnouncementSearchResponse(
                 id, travelerId, departureCity, arrivalCity, departureDate, departureTime, arrivalTime,
                 pickupAddress, deliveryAddress, availableKg, totalKg, pricePerKg, pricePerKgDisplay,
                 transportMode, status, bidsCount, traveler, description, acceptedContentTypes, refusedTypes,
                 acceptedPaymentMethods, capacityUnit, createdAt, updatedAt, pricingMode, priceGridItems,
                 handoverDeadline, isFavorite, urgent, currency, negotiable, availablePaymentMethods,
-                convertedPricePerKg, convertedCurrency);
+                convertedPricePerKg, convertedCurrency, pricePerKgDisplayConverted);
     }
 }

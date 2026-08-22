@@ -98,6 +98,180 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
      */
     Page<UserEntity> findByDeletionRequestedAtIsNotNullOrderByDeletionRequestedAtAsc(Pageable pageable);
 
+    /**
+     * Ce qui distingue une ligne invitée abandonnée de tout le reste de la table.
+     *
+     * <p>Constante partagée et non SQL recopié : ce prédicat décide de la <b>suppression
+     * physique</b> de lignes {@code users}. Deux copies pourraient diverger, et une seule
+     * divergence détruirait des comptes réels.
+     *
+     * <p>Chaque condition, et pourquoi elle est là :
+     * <ul>
+     *   <li><b>aucun rôle</b> — la condition centrale. {@link GuestUserProvisioner} est le seul
+     *       code qui crée une ligne sans rôle ; toute inscription réelle reçoit SENDER+TRAVELER
+     *       ({@code AuthService#createUser}), et rien ne retire jamais un rôle (la
+     *       désactivation volontaire du rôle voyageur a été supprimée, cf. migration V193 qui
+     *       répare les comptes qu'elle avait dépouillés). Une ligne à rôles est donc un compte
+     *       réel, sans exception connue ;</li>
+     *   <li><b>aucun favori</b> — un favori est la seule donnée qu'un invité puisse produire
+     *       (son périmètre se limite à chercher, consulter et mettre en favori). Une ligne qui
+     *       en porte encore un a du contenu à conserver. Le {@code deleted_at} des favoris est
+     *       délibérément ignoré : en PostgreSQL {@code favorites.user_id} référence
+     *       {@code users(id)} sans cascade (V152), et un favori soft-deleté suffirait à faire
+     *       échouer la suppression, donc tout le lot avec elle ;</li>
+     *   <li><b>plus ancienne que le seuil</b> — laisse au visiteur le temps de revenir ;</li>
+     *   <li><b>ni suspendue, ni bannie, ni en attente de suppression, ni KYC entamé, ni prénom,
+     *       ni nom, ni compte Stripe, ni client Stripe, ni compte PRO</b> — défense en
+     *       profondeur. Une ligne invitée ne porte rien de tout cela : le provisionneur
+     *       n'écrit que {@code firebase_uid}, {@code username}, {@code status=ACTIVE} et
+     *       {@code kyc_status=NOT_STARTED}. Ces conditions n'épargnent donc aucune ligne
+     *       réellement invitée, et couvrent le cas où « aucun rôle » cesserait un jour d'être
+     *       le discriminant qu'il est aujourd'hui. Un compte supprimé par
+     *       {@code AccountFinalizationService} est ainsi protégé quatre fois plutôt qu'une
+     *       (rôles intacts, statut BANNED, prénom et nom de pseudonymisation) ;</li>
+     *   <li><b>aucune trace d'activité dans les tables liées</b> — treize tables, dix-sept
+     *       colonnes. Un vrai compte peut n'avoir aucun favori tout en ayant publié, enchéri, discuté ou
+     *       encaissé. Sans ces conditions, si l'invariant des rôles venait à céder, deux modes
+     *       de défaillance s'ouvraient : sur une clé étrangère <b>sans</b> cascade
+     *       ({@code announcements}, {@code bids}, {@code package_requests},
+     *       {@code conversations}, {@code disputes}, {@code wallet_accounts},
+     *       {@code notifications}, {@code corridor_alerts}) le {@code DELETE} du lot échouait
+     *       <b>en entier</b>, et la purge mourait sans plus jamais rien supprimer ; sur une clé
+     *       étrangère <b>avec</b> cascade les enfants disparaissaient <b>en silence</b>.</li>
+     * </ul>
+     *
+     * <p><b>La famille « avec cascade » est traitée exhaustivement</b>, parce qu'elle est la
+     * seule à détruire sans bruit. Énumération obtenue en balayant toutes les migrations, tous
+     * schémas confondus, à la recherche des clés étrangères vers {@code users} portant
+     * {@code ON DELETE CASCADE} — sept clés, six tables :
+     * {@code user_roles} (V1, couverte par la condition « aucun rôle »),
+     * {@code kyc_schema.kyc_verifications} (V2), {@code user_notification_preferences} (V95),
+     * {@code user_devices} (V96), {@code user_blocks} (V98, deux colonnes) et
+     * {@code user_business_preferences} (V101). Toutes sont couvertes ici. La méthode est
+     * consignée dans le rapport de tâche pour être rejouée après toute nouvelle migration.
+     *
+     * <p><b>La famille « sans cascade » ne l'est pas</b>, et ce n'est pas un oubli : une
+     * quinzaine d'autres tables référencent {@code users} sans cascade
+     * ({@code traveler_subscriptions}, {@code delivery_addresses}, {@code trip_templates},
+     * {@code wallet_transactions}, {@code negotiation_threads}…). Leur présence ferait échouer
+     * le lot de façon <b>visible</b> — log ERROR et remontée Sentry via
+     * {@link GuestUserCleanupScheduler} — donc dégradée, jamais destructrice. Les énumérer
+     * toutes allongerait le prédicat sans rien protéger de plus, et cette longueur serait
+     * elle-même une source d'erreur.
+     *
+     * <p><b>Deux absences volontaires.</b> {@code disputes.reporter_id} n'est pas couvert : la
+     * colonne existe en PostgreSQL (V6) mais V78 l'a rendue nullable et plus aucun code ne
+     * l'alimente ; surtout, elle n'est pas mappée dans {@code DisputeEntity}, donc elle
+     * n'existe pas dans le schéma H2 des tests et la requête y échouerait. Toutes les colonnes
+     * citées ici ont été vérifiées présentes des <b>deux</b> côtés. Quant aux alertes corridor,
+     * l'amendement A14 a retiré le critère fonctionnel « l'invité n'a pas d'alerte » (il ne
+     * peut pas en créer) ; ce qui est ajouté ici n'est pas ce critère mais une protection
+     * <b>structurelle</b> contre une clé étrangère sans cascade qui ferait échouer tout le lot.
+     * Aucun import, aucun repository, aucune dépendance vers le package {@code alerts/}.
+     *
+     * <p><b>Aucune condition sur {@code deleted_at}</b>, et c'est voulu :
+     * {@code GuestClaimService} soft-delete la ligne invitée à chaque réclamation réussie, si
+     * bien que les lignes déjà supprimées sont la population principale à purger. Un critère
+     * qui ne les verrait pas raterait sa cible. C'est aussi pourquoi ces requêtes sont natives :
+     * toute requête JPQL subirait le {@code @Where(deleted_at IS NULL)} de {@link UserEntity}.
+     */
+    String ABANDONED_GUEST_ROW_PREDICATE = """
+            NOT EXISTS (SELECT 1 FROM user_roles r WHERE r.user_id = users.id)
+            AND NOT EXISTS (SELECT 1 FROM favorites f WHERE f.user_id = users.id)
+            AND users.created_at < :cutoff
+            AND users.status = 'ACTIVE'
+            AND users.kyc_status = 'NOT_STARTED'
+            AND users.deletion_requested_at IS NULL
+            AND users.first_name IS NULL
+            AND users.last_name IS NULL
+            AND users.stripe_account_id IS NULL
+            AND users.stripe_customer_id IS NULL
+            AND users.is_pro_account = FALSE
+            AND NOT EXISTS (SELECT 1 FROM announcements a
+                            WHERE a.traveler_id = users.id OR a.reserved_sender_id = users.id)
+            AND NOT EXISTS (SELECT 1 FROM bids b WHERE b.sender_id = users.id)
+            AND NOT EXISTS (SELECT 1 FROM package_requests pr WHERE pr.sender_id = users.id)
+            AND NOT EXISTS (SELECT 1 FROM conversations c
+                            WHERE c.sender_id = users.id OR c.traveler_id = users.id)
+            AND NOT EXISTS (SELECT 1 FROM disputes d
+                            WHERE d.sender_id = users.id OR d.traveler_id = users.id)
+            AND NOT EXISTS (SELECT 1 FROM wallet_accounts wa WHERE wa.user_id = users.id)
+            AND NOT EXISTS (SELECT 1 FROM notifications n WHERE n.user_id = users.id)
+            AND NOT EXISTS (SELECT 1 FROM corridor_alerts ca WHERE ca.owner_id = users.id)
+            AND NOT EXISTS (SELECT 1 FROM kyc_schema.kyc_verifications kv WHERE kv.user_id = users.id)
+            AND NOT EXISTS (SELECT 1 FROM user_devices ud WHERE ud.user_id = users.id)
+            AND NOT EXISTS (SELECT 1 FROM user_notification_preferences np WHERE np.user_id = users.id)
+            AND NOT EXISTS (SELECT 1 FROM user_business_preferences bp WHERE bp.user_id = users.id)
+            AND NOT EXISTS (SELECT 1 FROM user_blocks ub
+                            WHERE ub.blocker_id = users.id OR ub.blocked_id = users.id)
+            """;
+
+    /**
+     * Combien de lignes au plus une purge nocturne peut détruire.
+     *
+     * <p>Borne la transaction et le volume de l'entrée d'audit. Un arriéré plus important
+     * s'écoule sur plusieurs nuits, ce qui est le bon rythme pour une opération irréversible.
+     */
+    int GUEST_PURGE_BATCH_SIZE = 1000;
+
+    /**
+     * Les lignes invitées abandonnées, dans la limite d'un lot. Voir
+     * {@link #ABANDONED_GUEST_ROW_PREDICATE} pour le critère et sa justification.
+     *
+     * <p>Sélectionner avant de supprimer n'est pas un détour : la suppression étant physique et
+     * donc irréversible, c'est la seule façon de savoir <b>quoi</b> a disparu. Ces identifiants
+     * partent dans l'entrée d'{@code audit_log} du passage.
+     *
+     * <p>Renvoie des chaînes et non des {@code UUID} : sur une requête native, le pilote H2 ne
+     * rend pas la colonne {@code uuid} sous une forme que Spring sait convertir en
+     * {@code List<UUID>}, et l'appel échouait. Le {@code CAST ... AS VARCHAR} est compris des
+     * deux bases et rend la requête indépendante du pilote ; l'appelant reconstruit les UUID.
+     */
+    @Query(value = "SELECT CAST(users.id AS VARCHAR) FROM users WHERE " + ABANDONED_GUEST_ROW_PREDICATE
+            + " ORDER BY users.created_at LIMIT " + GUEST_PURGE_BATCH_SIZE, nativeQuery = true)
+    List<String> findAbandonedGuestRowIds(@Param("cutoff") java.time.LocalDateTime cutoff);
+
+    /**
+     * Supprime physiquement les lignes désignées, <b>et seulement si elles satisfont encore le
+     * critère</b>.
+     *
+     * <p>La condition est réévaluée alors même que les identifiants viennent d'en sortir : c'est
+     * une seconde barrière volontairement redondante. Une liste d'identifiants erronée, d'où
+     * qu'elle vienne, ne peut pas détruire une ligne protégée.
+     *
+     * <p><b>Suppression physique et non soft delete</b>, par exception assumée à la règle du
+     * projet — la même exception que celle déjà retenue pour les favoris (V172). Un soft delete
+     * ne supprimerait rien : une large part de la population visée est <i>déjà</i> soft-deletée
+     * par les réclamations, et repasser {@code deleted_at} sur une ligne qui le porte déjà
+     * laisserait la table grossir indéfiniment, ce qui est précisément le problème que cette
+     * purge existe pour résoudre. La règle du soft delete protège des données métier et un
+     * historique ; une ligne invitée abandonnée n'a ni l'un ni l'autre : ni rôle, ni favori, ni
+     * profil, et ni téléphone ni email (ils vivent dans Firebase).
+     *
+     * <p>Idempotent par construction : les lignes supprimées ne ressortent plus au passage
+     * suivant.
+     *
+     * @return le nombre de lignes supprimées
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(value = "DELETE FROM users WHERE users.id IN (:ids) AND " + ABANDONED_GUEST_ROW_PREDICATE,
+           nativeQuery = true)
+    int deleteAbandonedGuestRows(@Param("ids") java.util.Collection<UUID> ids,
+                                 @Param("cutoff") java.time.LocalDateTime cutoff);
+
+    /**
+     * Parmi ces identifiants, lesquels existent encore en base ? Soft-deletés compris.
+     *
+     * <p>Sert à établir ce que la purge a <b>réellement</b> détruit, plutôt que ce qu'elle
+     * avait l'intention de détruire : entre la sélection et la suppression, une ligne peut
+     * cesser d'être éligible (un visiteur qui revient poser un favori). L'entrée d'audit étant
+     * immuable, elle doit dire vrai du premier coup.
+     *
+     * <p>Même {@code CAST ... AS VARCHAR} que ci-dessus, et pour la même raison.
+     */
+    @Query(value = "SELECT CAST(id AS VARCHAR) FROM users WHERE id IN (:ids)", nativeQuery = true)
+    List<String> findExistingUserIds(@Param("ids") java.util.Collection<UUID> ids);
+
     @Query("SELECT u FROM UserEntity u WHERE u.commissionPaymentMethodId IS NOT NULL AND " +
            "(u.commissionCardExpYear < :year OR " +
            "(u.commissionCardExpYear = :year AND u.commissionCardExpMonth <= :month))")

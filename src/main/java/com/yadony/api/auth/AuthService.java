@@ -12,6 +12,7 @@ import com.yadony.api.auth.dto.UserResponse;
 import com.yadony.api.auth.dto.WalletRefundRequestResponse;
 import com.yadony.api.auth.events.UserRegisteredEvent;
 import com.yadony.api.common.AuditService;
+import com.yadony.api.common.FirebaseSignInProvider;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.payments.wallet.WalletRefundRequestService;
@@ -79,10 +80,35 @@ public class AuthService {
 
     @Transactional
     public UserResponse register(String firebaseUid, FirebaseToken decodedToken, RegisterRequest request) {
-        // Active user → return as-is
+        // Un jeton ENCORE anonyme ne donne jamais un compte réel. Refus posé ici, en tête,
+        // et non sur chaque branche : `createUser` le refusait déjà via le `default` de son
+        // switch sur le provider, mais les deux retours anticipés ci-dessous (ligne active,
+        // ligne soft-deletée) ne l'atteignent jamais.
+        //
+        // La branche réactivation était la faille : elle accorde SENDER+TRAVELER sans aucun
+        // contrôle de provider. Inoffensive tant qu'une ligne soft-deletée restait rare, elle
+        // ne l'est plus depuis que `GuestClaimService` en produit une à chaque réclamation
+        // réussie (et la purge des lignes invitées en produira aussi). La séquence : poser un
+        // favori en visiteur, réclamer ses données, puis appeler /auth/register avec le même
+        // jeton encore anonyme — et obtenir un compte complet sur un UID anonyme, sans
+        // téléphone ni email, en contournant toutes les validations d'identité. Cela ferait
+        // aussi refuser, ensuite, une réclamation pourtant légitime de cette même session
+        // (`guest-claim-has-roles`).
+        //
+        // /auth/** est en permitAll : un invité atteint réellement cet endpoint, ce n'est pas
+        // un cas théorique. Aucun parcours d'inscription légitime ne présente un jeton anonyme
+        // — l'app promeut d'abord la session par linkWithCredential (le provider devient alors
+        // `phone`), ou bascule sur le compte existant si le numéro est déjà pris.
+        if (FirebaseSignInProvider.isAnonymous(decodedToken)) {
+            throw new YadonyBusinessException(
+                    HttpStatus.UNPROCESSABLE_ENTITY, "invalid-provider",
+                    "Invalid Provider", "Mode d'authentification non supporté");
+        }
+
+        // Active user → return as-is, sauf s'il s'agit d'une ligne invitée à promouvoir
         Optional<UserEntity> active = userRepository.findByFirebaseUid(firebaseUid);
         if (active.isPresent()) {
-            return toResponse(active.get());
+            return toResponse(promoteGuestRowIfNeeded(active.get(), decodedToken));
         }
         // Soft-deleted user with same Firebase UID → reactivate via native UPDATE to bypass
         // @Where filter (em.merge() would SELECT with the filter, find nothing, attempt INSERT → constraint violation)
@@ -99,7 +125,7 @@ public class AuthService {
             // Le compte Firebase qui se ré-inscrit porte déjà son téléphone (provider
             // phone) ou son email (google/apple) ; seul le custom token doit se voir
             // écrire son email, un compte custom n'en portant aucun.
-            String signInProvider = extractSignInProvider(decodedToken);
+            String signInProvider = FirebaseSignInProvider.of(decodedToken);
             if ("custom".equals(signInProvider) && request.email() != null) {
                 firebaseContact.updateEmail(firebaseUid, request.email());
             }
@@ -110,6 +136,42 @@ public class AuthService {
             return toResponse(reactivated);
         }
         return createUser(firebaseUid, decodedToken, request);
+    }
+
+    /**
+     * Promeut en compte réel la ligne {@code users} d'un ancien visiteur.
+     *
+     * <p><b>Pourquoi c'est nécessaire.</b> {@code linkWithCredential} conserve l'UID Firebase :
+     * quand un visiteur s'inscrit, {@code register} retombe donc sur SA ligne, déjà active,
+     * créée sans aucun rôle par {@code GuestUserProvisioner} au premier favori. La renvoyer
+     * telle quelle laissait le compte à autorités vides : aucun endpoint exigeant un rôle ne
+     * lui était accessible, et la purge des lignes invitées abandonnées l'aurait visé comme
+     * un visiteur qui n'est jamais revenu.
+     *
+     * <p><b>Deux conditions, toutes deux nécessaires.</b> On ne touche qu'aux lignes
+     * {@code roles.isEmpty()} : seul {@code GuestUserProvisioner} en produit, un compte inscrit
+     * ou réactivé porte toujours SENDER+TRAVELER. Et on exige un jeton probant.
+     *
+     * <p>Le cas anonyme est déjà fermé en tête de {@link #register} depuis la ronde 2 ; la
+     * condition conservée ici y ajoute ce que ce refus ne couvre pas : un jeton <b>absent</b>
+     * ({@code isAnonymous(null)} vaut {@code false}). Un jeton nul ne prouve rien, il ne peut
+     * donc pas déclencher de promotion — c'est déjà la position de {@code createUser}, dont le
+     * {@code switch} rejette un provider nul ou inconnu.
+     */
+    private UserEntity promoteGuestRowIfNeeded(UserEntity user, FirebaseToken decodedToken) {
+        boolean guestRow = user.getRoles().isEmpty();
+        boolean tokenPromoted = decodedToken != null && !FirebaseSignInProvider.isAnonymous(decodedToken);
+        if (!guestRow || !tokenPromoted) {
+            return user;
+        }
+        user.setRoles(new java.util.HashSet<>(Set.of(Role.SENDER, Role.TRAVELER)));
+        UserEntity saved = userRepository.save(user);
+        auditService.log("USER", saved.getId(), "GUEST_PROMOTED", saved.getId(),
+                Map.of("provider", String.valueOf(FirebaseSignInProvider.of(decodedToken))));
+        // L'inscription d'un invité EST une inscription : sans cet event, le compte naîtrait
+        // sans code de parrainage et n'apparaîtrait dans aucune métrique d'acquisition.
+        eventPublisher.publishEvent(new UserRegisteredEvent(saved.getId(), saved.getFirebaseUid()));
+        return saved;
     }
 
     @Transactional(readOnly = true)
@@ -452,7 +514,7 @@ public class AuthService {
         // les capacités (carte via Stripe) sont gérées séparément.
         Set<Role> roles = new java.util.HashSet<>(Set.of(Role.SENDER, Role.TRAVELER));
 
-        String signInProvider = extractSignInProvider(decodedToken);
+        String signInProvider = FirebaseSignInProvider.of(decodedToken);
 
         UserEntity user = new UserEntity();
         user.setFirebaseUid(firebaseUid);
@@ -564,19 +626,6 @@ public class AuthService {
         eventPublisher.publishEvent(new UserRegisteredEvent(saved.getId(), saved.getFirebaseUid()));
 
         return toResponse(saved);
-    }
-
-    /** Provider de connexion porté par le token Firebase (phone, google.com, apple.com, custom). */
-    private static String extractSignInProvider(FirebaseToken decodedToken) {
-        if (decodedToken == null) {
-            return null;
-        }
-        Object firebaseClaim = decodedToken.getClaims().get("firebase");
-        if (firebaseClaim instanceof Map<?, ?> firebaseMap) {
-            Object provider = firebaseMap.get("sign_in_provider");
-            if (provider instanceof String s) return s;
-        }
-        return null;
     }
 
     /** Numéro porté par le token Firebase (claim {@code phone_number}), ou null. */

@@ -36,17 +36,40 @@ public class PackageRequestSearchMapper {
     private final StorageService storageService;
     private final PackageRequestPhotoService photoService;
     private final PlatformSettingsService settings;
+    private final com.yadony.api.payments.cash.CommissionProperties commissionProperties;
 
     public PackageRequestSearchMapper(UserRepository userRepository,
                                       com.yadony.api.city.CityRepository cityRepository,
                                       StorageService storageService,
                                       PackageRequestPhotoService photoService,
-                                      PlatformSettingsService settings) {
+                                      PlatformSettingsService settings,
+                                      com.yadony.api.payments.cash.CommissionProperties commissionProperties) {
         this.userRepository = userRepository;
         this.cityRepository = cityRepository;
         this.storageService = storageService;
         this.photoService = photoService;
         this.settings = settings;
+        this.commissionProperties = commissionProperties;
+    }
+
+    /**
+     * Prix brut, commission incluse, à partir du net stocké.
+     *
+     * <p>Le taux employé est {@code yadony.commission.rate}, le taux <b>global</b> de la
+     * plateforme, exactement comme {@code PackageRequestService.toResponse} pour le détail de
+     * la même demande : les deux surfaces annoncent donc le même prix.
+     *
+     * <p>Ce choix n'est pas qu'une question de cohérence, il est ce qui rend sûr de servir le
+     * net et le brut côte à côte. {@code CommissionRateResolver} sait appliquer un
+     * {@code commissionRateOverride} porté par l'expéditeur, ainsi qu'un taux de code promo :
+     * l'employer ici ferait révéler ces valeurs privées par simple division brut/net, ce qui
+     * est précisément le motif pour lequel le net d'un trajet est masqué aux invités. Le taux
+     * global, lui, est public. Ne pas remplacer cet appel par le resolver.
+     */
+    private java.math.BigDecimal grossPriceEur(java.math.BigDecimal net) {
+        return net == null
+                ? null
+                : com.yadony.api.payments.PriceBreakdown.fromNet(net, commissionProperties.rate()).gross();
     }
 
     /**
@@ -113,7 +136,8 @@ public class PackageRequestSearchMapper {
                 isFavorite,
                 computeUrgent(entity.getDesiredDate()),
                 null, null, null, entity.getCurrency(),
-                availablePaymentMethods
+                availablePaymentMethods,
+                grossPriceEur(entity.getTargetPriceEur())
         );
     }
 
@@ -162,7 +186,8 @@ public class PackageRequestSearchMapper {
                 isFavorite,
                 computeUrgent(entity.getDesiredDate()),
                 null, null, null, entity.getCurrency(),
-                availablePaymentMethods
+                availablePaymentMethods,
+                grossPriceEur(entity.getTargetPriceEur())
         );
     }
 

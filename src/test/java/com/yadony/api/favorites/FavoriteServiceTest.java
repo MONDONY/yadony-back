@@ -1,5 +1,6 @@
 package com.yadony.api.favorites;
 
+import com.yadony.api.auth.GuestUserProvisioner;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
@@ -34,6 +35,7 @@ class FavoriteServiceTest {
     @Mock PackageRequestRepository packageRequestRepository;
     @Mock AnnouncementSearchMapper announcementSearchMapper;
     @Mock PackageRequestSearchMapper packageRequestSearchMapper;
+    @Mock GuestUserProvisioner guestUserProvisioner;
 
     FavoriteService service;
 
@@ -46,13 +48,17 @@ class FavoriteServiceTest {
         MockitoAnnotations.openMocks(this);
         service = new FavoriteService(favoriteRepository, userRepository,
                 announcementRepository, packageRequestRepository,
-                announcementSearchMapper, packageRequestSearchMapper);
+                announcementSearchMapper, packageRequestSearchMapper,
+                guestUserProvisioner);
         userId = UUID.randomUUID();
         tripId = UUID.randomUUID();
 
         UserEntity user = mock(UserEntity.class);
         when(user.getId()).thenReturn(userId);
         when(userRepository.findByFirebaseUid(UID)).thenReturn(Optional.of(user));
+        // addFavorite passe par le provisioner, pas par userRepository directement :
+        // un compte déjà enregistré s'y résout à sa propre ligne, sans création.
+        when(guestUserProvisioner.resolveOrProvision(UID)).thenReturn(userId);
     }
 
     private AnnouncementEntity tripOwnedBy(UUID ownerId) {
@@ -154,7 +160,7 @@ class FavoriteServiceTest {
         when(favoriteRepository.findByUserIdAndTargetTypeAndTargetId(userId, FavoriteTargetType.TRIP, tripId))
                 .thenReturn(Optional.of(active));
 
-        service.removeFavorite(UID, FavoriteTargetType.TRIP, tripId);
+        service.removeFavorite(userId, FavoriteTargetType.TRIP, tripId);
 
         verify(favoriteRepository).delete(active);
         verify(favoriteRepository, never()).save(any());
@@ -165,7 +171,7 @@ class FavoriteServiceTest {
         when(favoriteRepository.findByUserIdAndTargetTypeAndTargetId(userId, FavoriteTargetType.TRIP, tripId))
                 .thenReturn(Optional.empty());
 
-        service.removeFavorite(UID, FavoriteTargetType.TRIP, tripId);
+        service.removeFavorite(userId, FavoriteTargetType.TRIP, tripId);
 
         verify(favoriteRepository, never()).delete(any());
         verify(favoriteRepository, never()).save(any());
@@ -179,7 +185,7 @@ class FavoriteServiceTest {
         when(favoriteRepository.findTargetIds(userId, FavoriteTargetType.TRIP)).thenReturn(List.of(tripId));
         when(favoriteRepository.findTargetIds(userId, FavoriteTargetType.PACKAGE_REQUEST)).thenReturn(List.of(reqId));
 
-        FavoriteIdsResponse res = service.getFavoriteIds(UID);
+        FavoriteIdsResponse res = service.getFavoriteIds(userId);
 
         assertThat(res.trips()).containsExactly(tripId);
         assertThat(res.packageRequests()).containsExactly(reqId);
@@ -190,7 +196,7 @@ class FavoriteServiceTest {
         when(favoriteRepository.findTargetIds(userId, FavoriteTargetType.TRIP)).thenReturn(List.of());
         when(favoriteRepository.findTargetIds(userId, FavoriteTargetType.PACKAGE_REQUEST)).thenReturn(List.of());
 
-        FavoriteIdsResponse res = service.getFavoriteIds(UID);
+        FavoriteIdsResponse res = service.getFavoriteIds(userId);
 
         assertThat(res.trips()).isEmpty();
         assertThat(res.packageRequests()).isEmpty();
@@ -202,7 +208,7 @@ class FavoriteServiceTest {
     void getFavoriteTrips_emptyIds_returnsEmptyList() {
         when(favoriteRepository.findTargetIds(userId, FavoriteTargetType.TRIP)).thenReturn(List.of());
 
-        var res = service.getFavoriteTrips(UID);
+        var res = service.getFavoriteTrips(userId);
 
         assertThat(res).isEmpty();
         verify(announcementRepository, never()).findAllById(any());
@@ -231,7 +237,7 @@ class FavoriteServiceTest {
         // Service now calls toSearchResponseList with the filtered active list (a1 only)
         when(announcementSearchMapper.toSearchResponseList(eq(List.of(a1)), anySet())).thenReturn(List.of(dto));
 
-        var res = service.getFavoriteTrips(UID);
+        var res = service.getFavoriteTrips(userId);
 
         assertThat(res).hasSize(1);
         assertThat(res.get(0)).isSameAs(dto);
@@ -258,7 +264,7 @@ class FavoriteServiceTest {
         AnnouncementSearchResponse dto = mock(AnnouncementSearchResponse.class);
         when(announcementSearchMapper.toSearchResponseList(eq(List.of(a1)), anySet())).thenReturn(List.of(dto));
 
-        var res = service.getFavoriteTrips(UID);
+        var res = service.getFavoriteTrips(userId);
 
         assertThat(res).hasSize(1);
         verify(announcementSearchMapper).toSearchResponseList(eq(List.of(a1)), anySet());
@@ -284,7 +290,7 @@ class FavoriteServiceTest {
         AnnouncementSearchResponse dto = mock(AnnouncementSearchResponse.class);
         when(announcementSearchMapper.toSearchResponseList(eq(List.of(a1)), anySet())).thenReturn(List.of(dto));
 
-        var res = service.getFavoriteTrips(UID);
+        var res = service.getFavoriteTrips(userId);
 
         assertThat(res).hasSize(1);
         verify(announcementSearchMapper).toSearchResponseList(eq(List.of(a1)), anySet());
@@ -303,7 +309,7 @@ class FavoriteServiceTest {
         AnnouncementSearchResponse dto = mock(AnnouncementSearchResponse.class);
         when(announcementSearchMapper.toSearchResponseList(anyList(), anySet())).thenReturn(List.of(dto));
 
-        service.getFavoriteTrips(UID);
+        service.getFavoriteTrips(userId);
 
         // Verify batch method called with favIdSet containing t1 (all are favorites)
         verify(announcementSearchMapper).toSearchResponseList(anyList(), argThat(s -> s.contains(t1)));
@@ -316,7 +322,7 @@ class FavoriteServiceTest {
         when(favoriteRepository.findTargetIds(userId, FavoriteTargetType.PACKAGE_REQUEST))
                 .thenReturn(List.of());
 
-        var res = service.getFavoritePackageRequests(UID);
+        var res = service.getFavoritePackageRequests(userId);
 
         assertThat(res).isEmpty();
         verify(packageRequestRepository, never()).findAllById(any());
@@ -345,7 +351,7 @@ class FavoriteServiceTest {
         // Service now calls toSearchResponseList with filtered active list (pr1 only)
         when(packageRequestSearchMapper.toSearchResponseList(eq(List.of(pr1)), anySet(), anyBoolean())).thenReturn(List.of(dto));
 
-        var res = service.getFavoritePackageRequests(UID);
+        var res = service.getFavoritePackageRequests(userId);
 
         assertThat(res).hasSize(1);
         assertThat(res.get(0)).isSameAs(dto);
@@ -377,7 +383,7 @@ class FavoriteServiceTest {
         PackageRequestSearchResponse dto = mock(PackageRequestSearchResponse.class);
         when(packageRequestSearchMapper.toSearchResponseList(eq(List.of(pr1)), anySet(), anyBoolean())).thenReturn(List.of(dto));
 
-        var res = service.getFavoritePackageRequests(UID);
+        var res = service.getFavoritePackageRequests(userId);
 
         assertThat(res).hasSize(1);
         verify(packageRequestSearchMapper).toSearchResponseList(eq(List.of(pr1)), anySet(), anyBoolean());
@@ -396,9 +402,70 @@ class FavoriteServiceTest {
         PackageRequestSearchResponse dto = mock(PackageRequestSearchResponse.class);
         when(packageRequestSearchMapper.toSearchResponseList(anyList(), anySet(), anyBoolean())).thenReturn(List.of(dto));
 
-        service.getFavoritePackageRequests(UID);
+        service.getFavoritePackageRequests(userId);
 
         // Verify batch method called with favIdSet containing p1 (all are favorites)
         verify(packageRequestSearchMapper).toSearchResponseList(anyList(), argThat(s -> s.contains(p1)), anyBoolean());
+    }
+
+    // --- Matérialisation paresseuse d'un invité (Task 4) ---
+
+    @Test
+    void addFavorite_provisionsGuestRowWhenAbsent() {
+        String guestUid = "guest-uid-999";
+        UUID guestUserId = UUID.randomUUID();
+        when(guestUserProvisioner.resolveOrProvision(guestUid)).thenReturn(guestUserId);
+        when(announcementRepository.findById(tripId))
+                .thenReturn(Optional.of(tripOwnedBy(UUID.randomUUID())));
+        when(favoriteRepository.existsByUserIdAndTargetTypeAndTargetId(guestUserId, FavoriteTargetType.TRIP, tripId))
+                .thenReturn(false);
+
+        service.addFavorite(guestUid, FavoriteTargetType.TRIP, tripId);
+
+        verify(guestUserProvisioner).resolveOrProvision(guestUid);
+        verify(favoriteRepository).save(argThat(f -> f.getUserId().equals(guestUserId)));
+        // La résolution passe uniquement par le provisioner : jamais un accès direct au
+        // repository qui contournerait la matérialisation paresseuse.
+        verify(userRepository, never()).findByFirebaseUid(guestUid);
+    }
+
+    // Ronde de correction 1, constat 4 : la tolérance à l'absence de ligne doit être
+    // scopée aux invités, pas à tout appelant. Ce scope est désormais tranché par le
+    // CONTROLLER (FavoriteController.viewerUserIdOrNull, même idiome que
+    // PackageRequestController) : un invité reçoit un callerId null, un compte inscrit
+    // sans ligne reçoit un 404 avant même d'atteindre le service. Le service n'a donc
+    // plus qu'à tolérer un callerId null, sans savoir POURQUOI il est null.
+
+    @Test
+    void getFavoriteIds_nullCallerId_returnsEmptySetsWithoutQuerying() {
+        FavoriteIdsResponse res = service.getFavoriteIds(null);
+
+        assertThat(res.trips()).isEmpty();
+        assertThat(res.packageRequests()).isEmpty();
+        verify(favoriteRepository, never()).findTargetIds(any(), any());
+    }
+
+    @Test
+    void getFavoriteTrips_nullCallerId_returnsEmptyListWithoutQuerying() {
+        var res = service.getFavoriteTrips(null);
+
+        assertThat(res).isEmpty();
+        verify(announcementRepository, never()).findAllById(any());
+    }
+
+    @Test
+    void getFavoritePackageRequests_nullCallerId_returnsEmptyListWithoutQuerying() {
+        var res = service.getFavoritePackageRequests(null);
+
+        assertThat(res).isEmpty();
+        verify(packageRequestRepository, never()).findAllById(any());
+    }
+
+    @Test
+    void removeFavorite_nullCallerId_isNoOp() {
+        service.removeFavorite(null, FavoriteTargetType.TRIP, tripId);
+
+        verify(favoriteRepository, never()).findByUserIdAndTargetTypeAndTargetId(any(), any(), any());
+        verify(favoriteRepository, never()).delete(any());
     }
 }
