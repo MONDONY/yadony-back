@@ -304,17 +304,114 @@ class StripeV2AccountProvisionerTest {
     }
 
     @Test
-    @DisplayName("Sans snapshot, le compte se cree sans prefill — jamais bloque")
-    void provisionsWithoutPrefillWhenSnapshotMissing() throws Exception {
+    @DisplayName("Sans snapshot ni declaratif, le compte se cree sans prefill — jamais bloque")
+    void provisionsWithoutPrefillWhenNothingKnown() throws Exception {
         AccountCreateParams params = captureParams(buildUser(false, "FR"));
 
         assertThat(params.getIdentity().getIndividual()).isNull();
     }
 
     @Test
+    @DisplayName("Sans snapshot, les infos declarees a l'inscription servent de repli")
+    void fallsBackToDeclaredIdentityWhenSnapshotMissing() throws Exception {
+        UserEntity user = buildUser(false, "FR");
+        user.setFirstName("Awa");
+        user.setLastName("Diallo");
+        user.setBirthDate(java.time.LocalDate.of(1990, 4, 12));
+
+        AccountCreateParams.Identity.Individual individual =
+                captureParams(user).getIdentity().getIndividual();
+
+        assertThat(individual).isNotNull();
+        assertThat(individual.getGivenName()).isEqualTo("Awa");
+        assertThat(individual.getSurname()).isEqualTo("Diallo");
+        assertThat(individual.getDateOfBirth().getDay()).isEqualTo(12L);
+        assertThat(individual.getDateOfBirth().getMonth()).isEqualTo(4L);
+        assertThat(individual.getDateOfBirth().getYear()).isEqualTo(1990L);
+    }
+
+    @Test
+    @DisplayName("L'identite verifiee prime sur le declaratif — jamais l'inverse")
+    void verifiedIdentityWinsOverDeclared() throws Exception {
+        when(verifiedIdentity.forUser(any())).thenReturn(java.util.Optional.of(SNAPSHOT));
+        UserEntity user = buildUser(false, "FR");
+        // Nom declare different de celui de la piece : Stripe recoupera le verifie.
+        user.setFirstName("Awé");
+        user.setLastName("Autre");
+        user.setBirthDate(java.time.LocalDate.of(2000, 1, 1));
+
+        AccountCreateParams.Identity.Individual individual =
+                captureParams(user).getIdentity().getIndividual();
+
+        assertThat(individual.getGivenName()).isEqualTo("Awa");
+        assertThat(individual.getSurname()).isEqualTo("Diallo");
+        assertThat(individual.getDateOfBirth().getYear()).isEqualTo(1990L);
+    }
+
+    @Test
+    @DisplayName("Forme reelle en production : outputs sans date de naissance (champ sensible "
+            + "que Stripe ne rend pas a une cle standard) — c'est la date saisie qui part")
+    void declaredDobUsedBecauseVerifiedDobIsNeverReturned() throws Exception {
+        // Reproduit exactement ce que Stripe renvoie a notre cle secrete : nom et adresse
+        // presents, dob absent. Sans la date saisie a l'etape « Vos informations », le
+        // compte Connect partirait sans date de naissance du tout.
+        VerifiedIdentitySnapshot productionShape = new VerifiedIdentitySnapshot(
+                "Awa", "Diallo", null, null, null,
+                "8 rue du Document", null, "Paris", "75011", "FR");
+        when(verifiedIdentity.forUser(any())).thenReturn(java.util.Optional.of(productionShape));
+        UserEntity user = buildUser(false, "FR");
+        user.setBirthDate(java.time.LocalDate.of(1990, 4, 12));
+
+        AccountCreateParams.Identity.Individual individual =
+                captureParams(user).getIdentity().getIndividual();
+
+        assertThat(individual.getGivenName()).isEqualTo("Awa");
+        assertThat(individual.getDateOfBirth()).isNotNull();
+        assertThat(individual.getDateOfBirth().getDay()).isEqualTo(12L);
+        assertThat(individual.getDateOfBirth().getMonth()).isEqualTo(4L);
+        assertThat(individual.getDateOfBirth().getYear()).isEqualTo(1990L);
+    }
+
+    @Test
+    @DisplayName("Ni date verifiee ni date saisie : le compte part sans date, jamais en erreur")
+    void noDobAtAllStillProvisions() throws Exception {
+        VerifiedIdentitySnapshot nameOnly = new VerifiedIdentitySnapshot(
+                "Awa", "Diallo", null, null, null, null, null, null, null, null);
+        when(verifiedIdentity.forUser(any())).thenReturn(java.util.Optional.of(nameOnly));
+
+        AccountCreateParams.Identity.Individual individual =
+                captureParams(buildUser(false, "FR")).getIdentity().getIndividual();
+
+        assertThat(individual).isNotNull();
+        assertThat(individual.getGivenName()).isEqualTo("Awa");
+        assertThat(individual.getDateOfBirth()).isNull();
+    }
+
+    @Test
+    @DisplayName("Repli champ par champ : un nom declare comble un nom absent des outputs")
+    void fallsBackFieldByField() throws Exception {
+        VerifiedIdentitySnapshot nameless = new VerifiedIdentitySnapshot(
+                null, null, 12L, 4L, 1990L, null, null, null, null, null);
+        when(verifiedIdentity.forUser(any())).thenReturn(java.util.Optional.of(nameless));
+        UserEntity user = buildUser(false, "FR");
+        user.setFirstName("Awa");
+
+        AccountCreateParams.Identity.Individual individual =
+                captureParams(user).getIdentity().getIndividual();
+
+        assertThat(individual.getGivenName()).isEqualTo("Awa");
+        assertThat(individual.getSurname()).isNull();
+        assertThat(individual.getDateOfBirth().getDay()).isEqualTo(12L);
+    }
+
+    @Test
     @DisplayName("Compte pro : aucun prefill individuel sur une entite company")
     void noIndividualPrefillForProAccounts() throws Exception {
-        AccountCreateParams params = captureParams(buildUser(true, "FR"));
+        UserEntity pro = buildUser(true, "FR");
+        pro.setFirstName("Awa");
+        pro.setBirthDate(java.time.LocalDate.of(1990, 4, 12));
+
+        AccountCreateParams params = captureParams(pro);
 
         assertThat(params.getIdentity().getIndividual()).isNull();
         org.mockito.Mockito.verify(verifiedIdentity, never()).forUser(any());

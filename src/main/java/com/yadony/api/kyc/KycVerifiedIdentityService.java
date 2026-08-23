@@ -43,6 +43,20 @@ public class KycVerifiedIdentityService {
             }
 
             // verified_outputs n'est pas dans la reponse par defaut : il faut l'expand.
+            //
+            // NE PAS y ajouter "verified_outputs.dob". La date de naissance est un champ
+            // sensible chez Stripe : expanser verified_outputs ne rend que les champs PII
+            // accessibles a une cle secrete standard, et dob n'en fait pas partie. La
+            // demander explicitement avec notre cle ferait echouer l'appel entier, et le
+            // catch plus bas viderait alors AUSSI le prefill nom + adresse qui fonctionne
+            // aujourd'hui. La lire exigerait une cle restreinte dediee, qui de toute facon
+            // n'ouvre les champs sensibles que 48 h apres la verification — bien trop court
+            // pour un provisioning Connect qui peut survenir des semaines plus tard.
+            //
+            // Consequence assumee : dob est toujours null ici, et c'est la date saisie a
+            // l'etape « Vos informations » qui prereplit Stripe Connect (voir
+            // StripeV2AccountProvisioner.buildIndividual). Les champs dob du snapshot
+            // restent cables pour le jour ou une cle restreinte serait mise en place.
             VerificationSession session = VerificationSession.retrieve(
                     verification.get().getStripeVerificationSessionId(),
                     VerificationSessionRetrieveParams.builder()

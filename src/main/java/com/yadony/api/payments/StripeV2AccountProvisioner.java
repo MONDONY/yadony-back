@@ -151,34 +151,85 @@ public class StripeV2AccountProvisioner implements ConnectAccountProvisioner {
                                 : AccountCreateParams.Identity.EntityType.INDIVIDUAL);
 
         if (!user.isProAccount()) {
-            verifiedIdentity.forUser(user.getId())
-                    .ifPresent(snapshot -> identity.setIndividual(buildIndividual(user, snapshot)));
+            VerifiedIdentitySnapshot snapshot =
+                    verifiedIdentity.forUser(user.getId()).orElse(null);
+            AccountCreateParams.Identity.Individual individual = buildIndividual(user, snapshot);
+            if (individual != null) {
+                identity.setIndividual(individual);
+            }
         }
         return identity.build();
     }
 
+    /**
+     * Deux sources, une priorite : ce que Stripe Identity a <em>verifie</em> prime sur ce que
+     * l'utilisateur a <em>declare</em> a l'inscription. Un nom verifie sur piece d'identite vaut
+     * mieux qu'un nom tape au clavier, et c'est celui que Stripe recoupera de son cote.
+     *
+     * <p>Le declaratif n'est donc pas un doublon mais un filet : il couvre le cas ou les
+     * verified_outputs manquent (session purgee, champ absent du document, panne reseau au moment
+     * du provisioning). Rend {@code null} quand aucune source n'a rien a donner — un
+     * {@code individual} vide serait refuse par Stripe.
+     *
+     * <p><strong>Exception, la date de naissance :</strong> Stripe ne la rend pas a une cle
+     * secrete standard (champ sensible, voir {@code KycVerifiedIdentityService}). En pratique
+     * c'est donc toujours la date saisie a l'etape « Vos informations » qui part chez Stripe.
+     * La branche verifiee reste ecrite pour rester juste si une cle restreinte etait un jour
+     * mise en place, mais ne pas compter dessus : elle ne s'execute pas en production.
+     */
     private AccountCreateParams.Identity.Individual buildIndividual(UserEntity user,
                                                                     VerifiedIdentitySnapshot snapshot) {
         AccountCreateParams.Identity.Individual.Builder individual =
                 AccountCreateParams.Identity.Individual.builder();
+        boolean any = false;
 
-        if (snapshot.givenName() != null) {
-            individual.setGivenName(snapshot.givenName());
+        String givenName = firstNonBlank(
+                snapshot != null ? snapshot.givenName() : null, user.getFirstName());
+        if (givenName != null) {
+            individual.setGivenName(givenName);
+            any = true;
         }
-        if (snapshot.surname() != null) {
-            individual.setSurname(snapshot.surname());
+
+        String surname = firstNonBlank(
+                snapshot != null ? snapshot.surname() : null, user.getLastName());
+        if (surname != null) {
+            individual.setSurname(surname);
+            any = true;
         }
-        if (snapshot.hasDob()) {
+
+        if (snapshot != null && snapshot.hasDob()) {
             individual.setDateOfBirth(
                     AccountCreateParams.Identity.Individual.DateOfBirth.builder()
                             .setDay(snapshot.dobDay())
                             .setMonth(snapshot.dobMonth())
                             .setYear(snapshot.dobYear())
                             .build());
+            any = true;
+        } else if (user.getBirthDate() != null) {
+            individual.setDateOfBirth(
+                    AccountCreateParams.Identity.Individual.DateOfBirth.builder()
+                            .setDay((long) user.getBirthDate().getDayOfMonth())
+                            .setMonth((long) user.getBirthDate().getMonthValue())
+                            .setYear((long) user.getBirthDate().getYear())
+                            .build());
+            any = true;
         }
 
-        buildAddress(user, snapshot).ifPresent(individual::setAddress);
-        return individual.build();
+        java.util.Optional<AccountCreateParams.Identity.Individual.Address> address =
+                buildAddress(user, snapshot);
+        if (address.isPresent()) {
+            individual.setAddress(address.get());
+            any = true;
+        }
+
+        return any ? individual.build() : null;
+    }
+
+    private static String firstNonBlank(String preferred, String fallback) {
+        if (preferred != null && !preferred.isBlank()) {
+            return preferred;
+        }
+        return fallback != null && !fallback.isBlank() ? fallback : null;
     }
 
     /**
@@ -189,7 +240,7 @@ public class StripeV2AccountProvisioner implements ConnectAccountProvisioner {
      * sert de repli quand elle existe.
      */
     private java.util.Optional<AccountCreateParams.Identity.Individual.Address> buildAddress(
-            UserEntity user, VerifiedIdentitySnapshot snapshot) {
+            UserEntity user, /* nullable */ VerifiedIdentitySnapshot snapshot) {
         String residenceStreet = user.getResidenceStreet();
         if (residenceStreet != null && !residenceStreet.isBlank()) {
             AccountCreateParams.Identity.Individual.Address.Builder address =
@@ -208,7 +259,7 @@ public class StripeV2AccountProvisioner implements ConnectAccountProvisioner {
             return java.util.Optional.of(address.build());
         }
 
-        if (!snapshot.hasAddress()) {
+        if (snapshot == null || !snapshot.hasAddress()) {
             return java.util.Optional.empty();
         }
         AccountCreateParams.Identity.Individual.Address.Builder address =

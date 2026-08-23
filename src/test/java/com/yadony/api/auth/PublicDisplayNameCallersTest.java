@@ -32,11 +32,20 @@ class PublicDisplayNameCallersTest {
      * <p>Back-office admin (modération, support), exports fiscaux DAC7 et export RGPD :
      * y abréger le patronyme dégraderait la donnée. {@code buildInitials} lit les deux
      * champs par nature. {@code buildPrefix} fabrique un code de parrainage, pas un nom.
+     *
+     * <p>Identité légale envoyée à Stripe ({@code StripeV2AccountProvisioner},
+     * {@code KycVerifiedIdentityService}) : ces deux-là ne <em>recomposent</em> jamais de
+     * nom — ils transportent le prénom et le patronyme dans deux champs distincts
+     * ({@code identity.individual.given_name} / {@code surname}), que Stripe recoupe avec
+     * la pièce d'identité. Les concaténer, ou les abréger comme le fait
+     * {@code publicDisplayName()}, ferait échouer la vérification.
      */
     private static final List<String> ALLOWED_FULL_NAME_CONTEXTS = List.of(
             "com/yadony/api/admin/",
             "com/yadony/api/export/",
             "com/yadony/api/payments/FiscalExportService",
+            "com/yadony/api/payments/StripeV2AccountProvisioner",
+            "com/yadony/api/kyc/KycVerifiedIdentityService",
             "com/yadony/api/referral/ReferralService",
             "com/yadony/api/common/MatchingTextUtil",
             "com/yadony/api/auth/UserEntity",
