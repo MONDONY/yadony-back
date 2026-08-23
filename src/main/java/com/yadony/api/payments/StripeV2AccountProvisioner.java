@@ -6,6 +6,8 @@ import com.yadony.api.auth.FirebaseContactService;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.config.StripeConnectProperties;
+import com.yadony.api.kyc.KycVerifiedIdentityService;
+import com.yadony.api.kyc.VerifiedIdentitySnapshot;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
@@ -41,13 +43,16 @@ public class StripeV2AccountProvisioner implements ConnectAccountProvisioner {
     private final StripeGateway stripeGateway;
     private final StripeConnectProperties stripeConnectProperties;
     private final FirebaseContactService firebaseContact;
+    private final KycVerifiedIdentityService verifiedIdentity;
 
     public StripeV2AccountProvisioner(StripeGateway stripeGateway,
                                       StripeConnectProperties stripeConnectProperties,
-                                      FirebaseContactService firebaseContact) {
+                                      FirebaseContactService firebaseContact,
+                                      KycVerifiedIdentityService verifiedIdentity) {
         this.stripeGateway = stripeGateway;
         this.stripeConnectProperties = stripeConnectProperties;
         this.firebaseContact = firebaseContact;
+        this.verifiedIdentity = verifiedIdentity;
     }
 
     @Override
@@ -77,16 +82,7 @@ public class StripeV2AccountProvisioner implements ConnectAccountProvisioner {
                 .setContactEmail(firebaseContact.getContact(user.getFirebaseUid()).email())
                 // Reproduit l'experience d'onboarding hebergee de l'ancien type "express".
                 .setDashboard(AccountCreateParams.Dashboard.EXPRESS)
-                .setIdentity(
-                        AccountCreateParams.Identity.builder()
-                                .setCountry(country)
-                                .setEntityType(
-                                        user.isProAccount()
-                                                ? AccountCreateParams.Identity.EntityType.COMPANY
-                                                : AccountCreateParams.Identity.EntityType.INDIVIDUAL
-                                )
-                                .build()
-                )
+                .setIdentity(buildIdentity(user, country))
                 .setDefaults(
                         AccountCreateParams.Defaults.builder()
                                 // Stripe impose APPLICATION des qu'un compte porte
@@ -132,6 +128,102 @@ public class StripeV2AccountProvisioner implements ConnectAccountProvisioner {
                 .build();
 
         return stripeGateway.createAccountV2(params).getId();
+    }
+
+    /**
+     * Identite du compte : pays et type toujours ; pour un particulier, preremplie avec ce
+     * que Stripe Identity a deja verifie (nom, date de naissance) et l'adresse de residence
+     * declaree a l'inscription — l'onboarding Connect n'a plus a redemander ce que la
+     * verification d'identite vient d'etablir. La creation de compte etant fermee tant que
+     * l'identite n'est pas verifiee ({@code kyc-required}), le snapshot existe au moment ou
+     * ce code s'execute ; s'il manque malgre tout (session purgee, reseau), le compte se
+     * cree sans prefill et Stripe redemande — jamais d'echec pour un prefill.
+     *
+     * <p>Un compte pro reste sans prefill : l'identite verifiee est celle de la personne,
+     * pas de la societe ({@code entity_type: company}).
+     */
+    private AccountCreateParams.Identity buildIdentity(UserEntity user, String country) {
+        AccountCreateParams.Identity.Builder identity = AccountCreateParams.Identity.builder()
+                .setCountry(country)
+                .setEntityType(
+                        user.isProAccount()
+                                ? AccountCreateParams.Identity.EntityType.COMPANY
+                                : AccountCreateParams.Identity.EntityType.INDIVIDUAL);
+
+        if (!user.isProAccount()) {
+            verifiedIdentity.forUser(user.getId())
+                    .ifPresent(snapshot -> identity.setIndividual(buildIndividual(user, snapshot)));
+        }
+        return identity.build();
+    }
+
+    private AccountCreateParams.Identity.Individual buildIndividual(UserEntity user,
+                                                                    VerifiedIdentitySnapshot snapshot) {
+        AccountCreateParams.Identity.Individual.Builder individual =
+                AccountCreateParams.Identity.Individual.builder();
+
+        if (snapshot.givenName() != null) {
+            individual.setGivenName(snapshot.givenName());
+        }
+        if (snapshot.surname() != null) {
+            individual.setSurname(snapshot.surname());
+        }
+        if (snapshot.hasDob()) {
+            individual.setDateOfBirth(
+                    AccountCreateParams.Identity.Individual.DateOfBirth.builder()
+                            .setDay(snapshot.dobDay())
+                            .setMonth(snapshot.dobMonth())
+                            .setYear(snapshot.dobYear())
+                            .build());
+        }
+
+        buildAddress(user, snapshot).ifPresent(individual::setAddress);
+        return individual.build();
+    }
+
+    /**
+     * L'adresse de residence declaree a l'inscription prime : c'est precisement pour
+     * "preparer tes paiements" qu'elle a ete collectee, et elle est plus fraiche que celle
+     * du document d'identite. Elle n'a pas de ville (non collectee) : Stripe la redemande,
+     * le reste est deja rempli. A defaut (etape passee), l'adresse du document sert de
+     * repli quand elle existe.
+     */
+    private java.util.Optional<AccountCreateParams.Identity.Individual.Address> buildAddress(
+            UserEntity user, VerifiedIdentitySnapshot snapshot) {
+        String residenceStreet = user.getResidenceStreet();
+        if (residenceStreet != null && !residenceStreet.isBlank()) {
+            AccountCreateParams.Identity.Individual.Address.Builder address =
+                    AccountCreateParams.Identity.Individual.Address.builder()
+                            .setLine1(residenceStreet)
+                            .setCountry(user.getCountry());
+            if (user.getResidenceLine2() != null && !user.getResidenceLine2().isBlank()) {
+                address.setLine2(user.getResidenceLine2());
+            }
+            if (user.getResidencePostalCode() != null && !user.getResidencePostalCode().isBlank()) {
+                address.setPostalCode(user.getResidencePostalCode());
+            }
+            return java.util.Optional.of(address.build());
+        }
+
+        if (!snapshot.hasAddress()) {
+            return java.util.Optional.empty();
+        }
+        AccountCreateParams.Identity.Individual.Address.Builder address =
+                AccountCreateParams.Identity.Individual.Address.builder()
+                        .setLine1(snapshot.addressLine1());
+        if (snapshot.addressLine2() != null) {
+            address.setLine2(snapshot.addressLine2());
+        }
+        if (snapshot.addressCity() != null) {
+            address.setCity(snapshot.addressCity());
+        }
+        if (snapshot.addressPostalCode() != null) {
+            address.setPostalCode(snapshot.addressPostalCode());
+        }
+        if (snapshot.addressCountry() != null) {
+            address.setCountry(snapshot.addressCountry());
+        }
+        return java.util.Optional.of(address.build());
     }
 
     /**
