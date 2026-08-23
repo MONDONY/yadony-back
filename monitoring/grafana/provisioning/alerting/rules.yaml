@@ -1,0 +1,344 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: yadony-prod-critique
+    folder: Yadony
+    interval: 1m
+    rules:
+      - uid: yadony-api-down
+        title: "API prod injoignable"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              expr: 'up{job="yadony-api"}'
+              instant: true
+              range: false
+              refId: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [1]
+                  operator:
+                    type: and
+                  query:
+                    params: []
+                  reducer:
+                    params: []
+                    type: last
+              refId: C
+        noDataState: Alerting
+        execErrState: Alerting
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "L'API yadony ne répond plus depuis au moins 2 minutes."
+
+      - uid: yadony-errors-realtime
+        title: "Pic d'erreurs serveur (logs ERROR)"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              expr: 'sum(increase(logback_events_total{job="yadony-api", level="error"}[5m]))'
+              instant: true
+              range: false
+              refId: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [3]
+                  operator:
+                    type: and
+                  query:
+                    params: []
+                  reducer:
+                    params: []
+                    type: last
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Plus de 3 erreurs (log level ERROR) sur les 5 dernières minutes côté API."
+
+      - uid: yadony-5xx-rate
+        title: "Taux de réponses 5xx élevé"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              expr: 'sum(rate(http_server_requests_seconds_count{job="yadony-api", status=~"5.."}[5m])) / clamp_min(sum(rate(http_server_requests_seconds_count{job="yadony-api"}[5m])), 0.0001)'
+              instant: true
+              range: false
+              refId: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.05]
+                  operator:
+                    type: and
+                  query:
+                    params: []
+                  reducer:
+                    params: []
+                    type: last
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Plus de 5% des requêtes API renvoient une erreur 5xx sur les 5 dernières minutes."
+
+      - uid: yadony-heap-saturation
+        title: "Heap JVM proche de la saturation"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              expr: 'sum(jvm_memory_used_bytes{job="yadony-api", area="heap"}) / sum(jvm_memory_max_bytes{job="yadony-api", area="heap"})'
+              instant: true
+              range: false
+              refId: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.9]
+                  operator:
+                    type: and
+                  query:
+                    params: []
+                  reducer:
+                    params: []
+                    type: last
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Le heap JVM de l'API dépasse 90% de sa capacité max depuis 10 minutes."
+
+      - uid: yadony-disk-almost-full
+        title: "Disque hôte presque plein"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              expr: '1 - (node_filesystem_avail_bytes{env="prod", fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{env="prod", fstype!~"tmpfs|overlay"})'
+              instant: true
+              range: false
+              refId: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.85]
+                  operator:
+                    type: and
+                  query:
+                    params: []
+                  reducer:
+                    params: []
+                    type: last
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Le disque du VPS prod dépasse 85% d'occupation depuis 15 minutes."
+
+      - uid: yadony-db-pool-exhausted
+        title: "Pool de connexions DB épuisé"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              expr: 'hikaricp_connections_pending{job="yadony-api"}'
+              instant: true
+              range: false
+              refId: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [5]
+                  operator:
+                    type: and
+                  query:
+                    params: []
+                  reducer:
+                    params: []
+                    type: last
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Des requêtes attendent une connexion DB libre depuis plus de 5 minutes — pool HikariCP épuisé."
+
+      - uid: yadony-latency-p95
+        title: "Latence p95 API élevée"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              expr: 'histogram_quantile(0.95, sum by (le) (rate(http_server_requests_seconds_bucket{job="yadony-api"}[5m])))'
+              instant: true
+              range: false
+              refId: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [2]
+                  operator:
+                    type: and
+                  query:
+                    params: []
+                  reducer:
+                    params: []
+                    type: last
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "La latence p95 globale de l'API dépasse 2 secondes depuis 10 minutes."
+
+      - uid: yadony-endpoint-overload
+        title: "Endpoint surchargé et lent"
+        condition: D
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              expr: 'histogram_quantile(0.95, sum by (uri, le) (rate(http_server_requests_seconds_bucket{job="yadony-api"}[5m])))'
+              instant: true
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              expr: 'sum by (uri) (rate(http_server_requests_seconds_count{job="yadony-api"}[5m]))'
+              instant: true
+              range: false
+              refId: B
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: math
+              expression: '$A > 1.5 && $B > 0.05'
+              refId: C
+          - refId: D
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: C
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+                  operator:
+                    type: and
+                  query:
+                    params: []
+                  reducer:
+                    params: []
+                    type: last
+              refId: D
+        noDataState: OK
+        execErrState: Alerting
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Endpoint {{ $labels.uri }} très sollicité (>0.05 req/s) avec une latence p95 > 1.5s depuis 5 minutes."

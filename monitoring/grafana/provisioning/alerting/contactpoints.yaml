@@ -7,12 +7,19 @@ contactPoints:
       - uid: telegram-yadony
         type: telegram
         settings:
-          bottoken: $__env{TELEGRAM_BOT_TOKEN}
-          chatid: $__env{TELEGRAM_CHAT_ID}
+          bottoken: "$__env{TELEGRAM_BOT_TOKEN}"
+          # Pas une valeur secrete (identifiant de destination, pas une
+          # credential) : en dur, car $__env{} casse le typage JSON quand la
+          # valeur ressemble a un nombre (chat id negatif de channel/groupe) —
+          # bug connu du provisioning Grafana, meme avec des guillemets YAML.
+          chatid: "-1003922308666"
           message: |-
-            🔔 {{ .CommonLabels.alertname }}
-            Statut : {{ .Status }}
+            {{ if eq .Status "firing" }}🔴 ALERTE{{ else }}🟢 RÉSOLU{{ end }} — <b>{{ .CommonLabels.alertname }}</b>
+            Sévérité : {{ .CommonLabels.severity }}
             {{ range .Alerts }}{{ .Annotations.summary }}
+            {{ if .Values.A }}Valeur actuelle : {{ .Values.A }}{{ end }}
+            Depuis : {{ .StartsAt.Format "02/01 15:04:05" }}
+            🔗 <a href="{{ .GeneratorURL }}">Voir dans Grafana</a>
             {{ end }}
-          parse_mode: none
+          parse_mode: HTML
         disableResolveMessage: false

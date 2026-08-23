@@ -1,7 +1,7 @@
 // ── Sortie métriques : Prometheus local ─────────────────────────────────────
 prometheus.remote_write "local_prometheus" {
   external_labels = {
-    env = "staging",
+    env = env("YADONY_ENV"),
   }
   endpoint {
     url = "http://prometheus:9090/api/v1/write"
