@@ -1,6 +1,7 @@
 package com.yadony.api.payments;
 
 import com.yadony.api.auth.StripeAccountStatus;
+import com.yadony.api.auth.KycStatus;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
@@ -60,6 +61,9 @@ class StripeConnectAccountCreationTest {
         u.setFirebaseUid("uid-test");
         u.setProAccount(isPro);
         u.setCountry(country);
+        // Stripe Connect exige une identite verifiee : sans elle, createConnectAccount rend
+        // un 422 kyc-required avant meme d'atteindre le provisioner teste ici.
+        u.setKycStatus(KycStatus.VERIFIED);
         // createConnectAccount uses findByIdForUpdate for the pessimistic lock
         lenient().when(userRepository.findByIdForUpdate(userId)).thenReturn(Optional.of(u));
         return u;

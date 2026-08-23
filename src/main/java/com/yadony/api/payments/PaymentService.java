@@ -1,6 +1,7 @@
 package com.yadony.api.payments;
 
 import com.yadony.api.auth.FirebaseContactService;
+import com.yadony.api.auth.KycStatus;
 import com.yadony.api.auth.StripeAccountStatus;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
@@ -138,8 +139,29 @@ public class PaymentService {
         return StripeConnectCountries.isSupported(user.getCountry());
     }
 
+    /**
+     * Stripe Connect n'ouvre de compte qu'a une identite verifiee.
+     *
+     * <p>Sans cette barriere, un voyageur pouvait activer les paiements en sautant purement et
+     * simplement la verification d'identite : l'onboarding Connect collecte bien des informations
+     * personnelles, mais rien ne les rattache a l'identite que yadony a verifiee, et le badge
+     * verifie du profil restait absent alors que l'argent circulait deja.
+     *
+     * <p>Barriere serveur volontairement redondante avec les gardes de l'application : les points
+     * d'entree cote client (parcours d'inscription, profil, CTA) peuvent evoluer ou etre
+     * contournes, cette methode-ci ne le peut pas.
+     */
+    private void requireVerifiedIdentity(UserEntity user) {
+        if (user.getKycStatus() != KycStatus.VERIFIED) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "kyc-required", "Identity Verification Required",
+                    "Vérifiez votre identité avant d'activer les paiements");
+        }
+    }
+
     public ConnectAccountResponse createConnectAccount(String firebaseUid) {
         UserEntity user = findUser(firebaseUid);
+        requireVerifiedIdentity(user);
 
         // Lock the user row to prevent concurrent Stripe account creation (race condition guard)
         user = userRepository.findByIdForUpdate(user.getId())
@@ -206,6 +228,9 @@ public class PaymentService {
 
     public OnboardingLinkResponse createOnboardingLink(String firebaseUid) {
         UserEntity user = findUser(firebaseUid);
+        // Ferme aussi ce second point d'entree : un compte cree avant la regle, ou pendant une
+        // verification ensuite rejetee, ne doit pas pouvoir reprendre son onboarding Stripe.
+        requireVerifiedIdentity(user);
 
         if (user.getStripeAccountId() == null) {
             throw new YadonyBusinessException(HttpStatus.CONFLICT,

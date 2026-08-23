@@ -45,6 +45,7 @@ Fonctionnalité: Gestion des paiements en escrow
     Etant donné un utilisateur VOYAGEUR enregistré avec l'uid "connect-001" et le téléphone "+33699000007"
     Et le voyageur "connect-001" n'a pas encore de compte Stripe
     Et le voyageur "connect-001" a pour pays "FR"
+    Et le voyageur "connect-001" a vérifié son identité
     Etant donné l'utilisateur "connect-001" est authentifié en tant que VOYAGEUR
     Quand je consulte le statut de mon compte Stripe Connect
     Alors la réponse HTTP est 200
@@ -56,6 +57,19 @@ Fonctionnalité: Gestion des paiements en escrow
     Et la réponse contient le champ "url"
     Quand je rafraîchis mon compte Stripe Connect
     Alors la réponse HTTP est 200
+
+  @error-case
+  Scénario: Compte Stripe Connect refusé tant que l'identité n'est pas vérifiée
+    # Sans cette barrière, un voyageur pouvait encaisser sans jamais avoir fait
+    # vérifier son identité : l'onboarding Connect collecte bien des informations
+    # personnelles, mais rien ne les rattache à l'identité vérifiée par yadony.
+    Etant donné un utilisateur VOYAGEUR enregistré avec l'uid "connect-002" et le téléphone "+33699000009"
+    Et le voyageur "connect-002" n'a pas encore de compte Stripe
+    Et le voyageur "connect-002" a pour pays "FR"
+    Etant donné l'utilisateur "connect-002" est authentifié en tant que VOYAGEUR
+    Quand je crée mon compte Stripe Connect
+    Alors la réponse HTTP est 422
+    Et le code d'erreur de la réponse est "kyc-required"
 
   @error-case
   Scénario: Webhook Stripe avec signature invalide

@@ -1,6 +1,7 @@
 package com.yadony.api.payments;
 
 import com.yadony.api.auth.StripeAccountStatus;
+import com.yadony.api.auth.KycStatus;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.payments.exceptions.TravelerNotEligibleForPaymentException;
@@ -99,6 +100,10 @@ class PaymentServiceTest {
         UserEntity u = new UserEntity();
         setId(u, id);
         u.setFirebaseUid(firebaseUid);
+        // Identite verifiee par defaut : c'est le cas nominal, et les entrees Connect la
+        // reclament (voir requireVerifiedIdentity). Les tests de la barriere elle-meme la
+        // remettent explicitement a NOT_STARTED.
+        u.setKycStatus(KycStatus.VERIFIED);
         return u;
     }
 
@@ -314,6 +319,54 @@ class PaymentServiceTest {
         ConnectAccountResponse resp = service.createConnectAccount("uid-sender");
         assertThat(resp.stripeAccountId()).isEqualTo("acct_new");
         assertThat(resp.stripeAccountStatus()).isEqualTo(StripeAccountStatus.PENDING_ONBOARDING);
+    }
+
+    // ── Barriere identite verifiee ────────────────────────────────────────────
+
+    @Test
+    void createConnectAccount_identityNotVerified_throwsKycRequired() {
+        UserEntity user = buildUser(senderId, "uid-sender");
+        user.setCountry("FR");
+        user.setKycStatus(KycStatus.NOT_STARTED);
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(user));
+
+        assertYadonyError(() -> service.createConnectAccount("uid-sender"), "kyc-required");
+        // Rien ne doit avoir ete tente cote Stripe : la barriere precede le provisioning.
+        verifyNoInteractions(connectAccountProvisioner);
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void createConnectAccount_identityRejected_throwsKycRequired() {
+        UserEntity user = buildUser(senderId, "uid-sender");
+        user.setCountry("FR");
+        user.setKycStatus(KycStatus.REJECTED);
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(user));
+
+        assertYadonyError(() -> service.createConnectAccount("uid-sender"), "kyc-required");
+    }
+
+    @Test
+    void createConnectAccount_identityPending_throwsKycRequired() {
+        // PENDING n'est pas VERIFIED : une verification en cours n'ouvre aucun droit.
+        UserEntity user = buildUser(senderId, "uid-sender");
+        user.setCountry("FR");
+        user.setKycStatus(KycStatus.PENDING);
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(user));
+
+        assertYadonyError(() -> service.createConnectAccount("uid-sender"), "kyc-required");
+    }
+
+    @Test
+    void createOnboardingLink_identityNotVerified_throwsKycRequired() {
+        // Second point d'entree : un compte cree avant la regle, ou dont la verification a
+        // ete rejetee depuis, ne doit pas pouvoir reprendre son onboarding Stripe.
+        UserEntity user = buildUser(senderId, "uid-sender");
+        user.setStripeAccountId("acct_123");
+        user.setKycStatus(KycStatus.NOT_STARTED);
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(user));
+
+        assertYadonyError(() -> service.createOnboardingLink("uid-sender"), "kyc-required");
     }
 
     // ── createOnboardingLink ──────────────────────────────────────────────────
