@@ -245,3 +245,100 @@ groups:
           severity: warning
         annotations:
           summary: "Des requêtes attendent une connexion DB libre depuis plus de 5 minutes — pool HikariCP épuisé."
+
+      - uid: yadony-latency-p95
+        title: "Latence p95 API élevée"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              expr: 'histogram_quantile(0.95, sum by (le) (rate(http_server_requests_seconds_bucket{job="yadony-api"}[5m])))'
+              instant: true
+              range: false
+              refId: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [2]
+                  operator:
+                    type: and
+                  query:
+                    params: []
+                  reducer:
+                    params: []
+                    type: last
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "La latence p95 globale de l'API dépasse 2 secondes depuis 10 minutes."
+
+      - uid: yadony-endpoint-overload
+        title: "Endpoint surchargé et lent"
+        condition: D
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              expr: 'histogram_quantile(0.95, sum by (uri, le) (rate(http_server_requests_seconds_bucket{job="yadony-api"}[5m])))'
+              instant: true
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              expr: 'sum by (uri) (rate(http_server_requests_seconds_count{job="yadony-api"}[5m]))'
+              instant: true
+              range: false
+              refId: B
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: math
+              expression: '$A > 1.5 && $B > 0.05'
+              refId: C
+          - refId: D
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: C
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+                  operator:
+                    type: and
+                  query:
+                    params: []
+                  reducer:
+                    params: []
+                    type: last
+              refId: D
+        noDataState: OK
+        execErrState: Alerting
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Endpoint {{ $labels.uri }} très sollicité (>0.05 req/s) avec une latence p95 > 1.5s depuis 5 minutes."

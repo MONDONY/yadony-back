@@ -12,6 +12,12 @@ scrape_configs:
       - targets: ['api:8080']
     metrics_path: '/api/v1/actuator/prometheus'
     scrape_interval: 30s
+    # Fixe le label instance independamment de la cible reelle : evite de
+    # creer une nouvelle serie (et un etat d'alerte fantome) si jamais la
+    # cible change (ex. test manuel, migration d'hote).
+    relabel_configs:
+      - target_label: instance
+        replacement: 'api:8080'
 
 # Les métriques de l'hôte (node_*) arrivent via remote_write d'Alloy
 # (voir monitoring/alloy/config.alloy + flag --web.enable-remote-write-receiver)
