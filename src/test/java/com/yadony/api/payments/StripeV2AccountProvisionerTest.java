@@ -262,6 +262,7 @@ class StripeV2AccountProvisionerTest {
         user.setResidenceStreet("3 avenue des Lilas");
         user.setResidenceLine2("Bat. B");
         user.setResidencePostalCode("69003");
+        user.setCity("Lyon");
 
         AccountCreateParams.Identity.Individual.Address address =
                 captureParams(user).getIdentity().getIndividual().getAddress();
@@ -270,8 +271,22 @@ class StripeV2AccountProvisionerTest {
         assertThat(address.getLine2()).isEqualTo("Bat. B");
         assertThat(address.getPostalCode()).isEqualTo("69003");
         assertThat(address.getCountry()).isEqualTo("FR");
-        // La residence n'a pas de ville : Stripe la demandera, on ne prend pas
-        // celle du document pour ne pas fabriquer une adresse incoherente.
+        // La ville du formulaire d'adresse vit sur users.city : elle part avec
+        // la residence — jamais celle du document, qui peut etre perimee.
+        assertThat(address.getCity()).isEqualTo("Lyon");
+    }
+
+    @Test
+    @DisplayName("Residence sans ville connue : le champ ville reste vide, Stripe le demande")
+    void residenceWithoutCityLeavesCityEmpty() throws Exception {
+        when(verifiedIdentity.forUser(any())).thenReturn(java.util.Optional.of(SNAPSHOT));
+        UserEntity user = buildUser(false, "FR");
+        user.setResidenceStreet("3 avenue des Lilas");
+
+        AccountCreateParams.Identity.Individual.Address address =
+                captureParams(user).getIdentity().getIndividual().getAddress();
+
+        assertThat(address.getLine1()).isEqualTo("3 avenue des Lilas");
         assertThat(address.getCity()).isNull();
     }
 

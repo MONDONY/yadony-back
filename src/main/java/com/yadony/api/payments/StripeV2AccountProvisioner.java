@@ -184,9 +184,9 @@ public class StripeV2AccountProvisioner implements ConnectAccountProvisioner {
     /**
      * L'adresse de residence declaree a l'inscription prime : c'est precisement pour
      * "preparer tes paiements" qu'elle a ete collectee, et elle est plus fraiche que celle
-     * du document d'identite. Elle n'a pas de ville (non collectee) : Stripe la redemande,
-     * le reste est deja rempli. A defaut (etape passee), l'adresse du document sert de
-     * repli quand elle existe.
+     * du document d'identite. Sa ville vit sur users.city (le formulaire d'adresse du
+     * parcours y ecrit) et part avec elle. A defaut (etape passee), l'adresse du document
+     * sert de repli quand elle existe.
      */
     private java.util.Optional<AccountCreateParams.Identity.Individual.Address> buildAddress(
             UserEntity user, VerifiedIdentitySnapshot snapshot) {
@@ -201,6 +201,9 @@ public class StripeV2AccountProvisioner implements ConnectAccountProvisioner {
             }
             if (user.getResidencePostalCode() != null && !user.getResidencePostalCode().isBlank()) {
                 address.setPostalCode(user.getResidencePostalCode());
+            }
+            if (user.getCity() != null && !user.getCity().isBlank()) {
+                address.setCity(user.getCity());
             }
             return java.util.Optional.of(address.build());
         }
