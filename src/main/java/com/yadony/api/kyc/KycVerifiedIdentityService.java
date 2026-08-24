@@ -44,13 +44,20 @@ public class KycVerifiedIdentityService {
 
             // verified_outputs n'est pas dans la reponse par defaut : il faut l'expand.
             //
-            // NE PAS y ajouter "verified_outputs.dob". La date de naissance est un champ
-            // sensible chez Stripe : expanser verified_outputs ne rend que les champs PII
-            // accessibles a une cle secrete standard, et dob n'en fait pas partie. La
-            // demander explicitement avec notre cle ferait echouer l'appel entier, et le
-            // catch plus bas viderait alors AUSSI le prefill du nom, qui lui fonctionne.
-            // C'est d'ailleurs sans objet depuis que Stripe Connect demande lui-meme la
-            // date de naissance : plus rien ici n'en a besoin.
+            // NE PAS y ajouter "verified_outputs.dob" avec CETTE cle. La date de naissance
+            // est un champ sensible : elle n'est pas accessible a une cle secrete standard
+            // (doc Stripe « Access verification results », tableau des permissions). La
+            // demander ici ferait echouer l'appel entier, et le catch plus bas viderait
+            // alors AUSSI le prefill du nom, qui lui fonctionne.
+            //
+            // La lire est possible, mais exige une cle restreinte dediee : permission
+            // Identity « Access recent sensitive verification results » pour les 48
+            // dernieres heures, ou « Access all sensitive verification results » + une
+            // allowlist d'IP pour un acces sans limite de temps (obligatoire ici : un
+            // compte Connect peut se creer des semaines apres la verification). Stripe
+            // decourage explicitement cet acces long terme. Non mis en place : Connect
+            // demande la date de naissance dans son propre formulaire, et l'economie
+            // porterait sur un seul champ, saisi une fois dans la vie du compte.
             VerificationSession session = VerificationSession.retrieve(
                     verification.get().getStripeVerificationSessionId(),
                     VerificationSessionRetrieveParams.builder()
