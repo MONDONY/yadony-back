@@ -328,8 +328,7 @@ class AuthServiceTest {
 
             UpdateProfileRequest req = new UpdateProfileRequest(
                     "Amadou", "Diallo",
-                    LocalDate.of(1990, 5, 15), "Paris", null, null, null, null
-            );
+                    LocalDate.of(1990, 5, 15), "Paris", null, null, null);
 
             UserResponse result = authService.updateProfile(FIREBASE_UID, req);
 
@@ -354,7 +353,7 @@ class AuthServiceTest {
             when(userRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
             UserResponse res = authService.updateProfile(FIREBASE_UID,
-                    new UpdateProfileRequest("Amadou", null, null, null, null, null, null, null));
+                    new UpdateProfileRequest("Amadou", null, null, null, null, null, null));
 
             // Le reste du profil passe, l'adresse reste celle du compte Firebase
             assertThat(res.firstName()).isEqualTo("Amadou");
@@ -370,7 +369,7 @@ class AuthServiceTest {
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
             when(userRepository.save(any())).thenReturn(user);
 
-            UpdateProfileRequest req = new UpdateProfileRequest("  ", null, null, "  ", null, null, null, null);
+            UpdateProfileRequest req = new UpdateProfileRequest("  ", null, null, "  ", null, null, null);
             authService.updateProfile(FIREBASE_UID, req);
 
             assertThat(user.getFirstName()).isNull();
@@ -385,7 +384,7 @@ class AuthServiceTest {
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
             when(userRepository.save(any())).thenReturn(user);
 
-            UpdateProfileRequest req = new UpdateProfileRequest(null, null, null, null, null, null, null, null);
+            UpdateProfileRequest req = new UpdateProfileRequest(null, null, null, null, null, null, null);
             authService.updateProfile(FIREBASE_UID, req);
 
             assertThat(user.getFirstName()).isEqualTo("Original");
@@ -399,7 +398,7 @@ class AuthServiceTest {
             when(userRepository.save(any())).thenReturn(user);
 
             authService.updateProfile(FIREBASE_UID,
-                    new UpdateProfileRequest(null, null, null, null, "+33699000001", null, null, null));
+                    new UpdateProfileRequest(null, null, null, null, "+33699000001", null, null));
 
             verify(firebaseContact).updatePhone(FIREBASE_UID, "+33699000001");
         }
@@ -413,7 +412,7 @@ class AuthServiceTest {
                     .thenReturn(true);
 
             assertThatThrownBy(() -> authService.updateProfile(FIREBASE_UID,
-                    new UpdateProfileRequest(null, null, null, null, "+33699999999", null, null, null)))
+                    new UpdateProfileRequest(null, null, null, null, "+33699999999", null, null)))
                     .isInstanceOf(YadonyBusinessException.class)
                     .satisfies(e -> assertThat(((YadonyBusinessException) e).getStatus())
                             .isEqualTo(HttpStatus.CONFLICT));
@@ -425,27 +424,26 @@ class AuthServiceTest {
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.empty());
 
             assertThatThrownBy(() -> authService.updateProfile(FIREBASE_UID,
-                    new UpdateProfileRequest("A", null, null, null, null, null, null, null)))
+                    new UpdateProfileRequest("A", null, null, null, null, null, null)))
                     .isInstanceOf(YadonyBusinessException.class)
                     .satisfies(e -> assertThat(((YadonyBusinessException) e).getStatus())
                             .isEqualTo(HttpStatus.NOT_FOUND));
         }
 
         @Test
-        @DisplayName("bio/languages/transportMode → persistés et retournés")
-        void updateProfile_persistsBioLanguagesTransport() {
+        @DisplayName("bio/languages → persistés et retournés")
+        void updateProfile_persistsBioAndLanguages() {
             UserEntity user = buildUser();
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
             when(userRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
             var req = new UpdateProfileRequest(null, null, null, null, null,
-                    "Voyageur sérieux", Set.of("FR", "WO"), "AVION");
+                    "Voyageur sérieux", Set.of("FR", "WO"));
 
             UserResponse res = authService.updateProfile(FIREBASE_UID, req);
 
             assertThat(res.bio()).isEqualTo("Voyageur sérieux");
             assertThat(res.languages()).containsExactlyInAnyOrder("FR", "WO");
-            assertThat(res.transportMode()).isEqualTo("AVION");
         }
     }
 

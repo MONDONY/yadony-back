@@ -30,7 +30,6 @@ public record UserResponse(
     String country,
     String bio,
     Set<String> languages,
-    String transportMode,
     String avatarUrl,
     Double averageRating,
     AdminInfo admin,
