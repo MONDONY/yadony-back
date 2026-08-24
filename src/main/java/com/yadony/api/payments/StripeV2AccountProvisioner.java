@@ -6,6 +6,8 @@ import com.yadony.api.auth.FirebaseContactService;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.config.StripeConnectProperties;
+import com.yadony.api.kyc.KycVerifiedIdentityService;
+import com.yadony.api.kyc.VerifiedIdentitySnapshot;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
@@ -41,13 +43,16 @@ public class StripeV2AccountProvisioner implements ConnectAccountProvisioner {
     private final StripeGateway stripeGateway;
     private final StripeConnectProperties stripeConnectProperties;
     private final FirebaseContactService firebaseContact;
+    private final KycVerifiedIdentityService verifiedIdentity;
 
     public StripeV2AccountProvisioner(StripeGateway stripeGateway,
                                       StripeConnectProperties stripeConnectProperties,
-                                      FirebaseContactService firebaseContact) {
+                                      FirebaseContactService firebaseContact,
+                                      KycVerifiedIdentityService verifiedIdentity) {
         this.stripeGateway = stripeGateway;
         this.stripeConnectProperties = stripeConnectProperties;
         this.firebaseContact = firebaseContact;
+        this.verifiedIdentity = verifiedIdentity;
     }
 
     @Override
@@ -77,16 +82,7 @@ public class StripeV2AccountProvisioner implements ConnectAccountProvisioner {
                 .setContactEmail(firebaseContact.getContact(user.getFirebaseUid()).email())
                 // Reproduit l'experience d'onboarding hebergee de l'ancien type "express".
                 .setDashboard(AccountCreateParams.Dashboard.EXPRESS)
-                .setIdentity(
-                        AccountCreateParams.Identity.builder()
-                                .setCountry(country)
-                                .setEntityType(
-                                        user.isProAccount()
-                                                ? AccountCreateParams.Identity.EntityType.COMPANY
-                                                : AccountCreateParams.Identity.EntityType.INDIVIDUAL
-                                )
-                                .build()
-                )
+                .setIdentity(buildIdentity(user, country))
                 .setDefaults(
                         AccountCreateParams.Defaults.builder()
                                 // Stripe impose APPLICATION des qu'un compte porte
@@ -132,6 +128,80 @@ public class StripeV2AccountProvisioner implements ConnectAccountProvisioner {
                 .build();
 
         return stripeGateway.createAccountV2(params).getId();
+    }
+
+    /**
+     * Identite du compte : pays et type toujours ; pour un particulier, le nom legal en plus.
+     * La creation de compte etant fermee tant que l'identite n'est pas verifiee
+     * ({@code kyc-required}), le snapshot existe au moment ou ce code s'execute ; s'il manque
+     * malgre tout (session purgee, reseau), le compte se cree sans prefill et Stripe
+     * redemande — jamais d'echec pour un prefill.
+     *
+     * <p>Le nom est le seul champ preremli. Date de naissance et adresse de residence sont
+     * demandees par le formulaire Connect lui-meme : il les revalide de toute facon, et les
+     * envoyer d'avance n'evitait aucune saisie tout en ouvrant une classe d'echecs — une
+     * adresse au format ou au pays inattendu faisait rejeter la creation entiere
+     * ({@code address_country_identity_country}).
+     *
+     * <p>Un compte pro reste sans prefill : l'identite verifiee est celle de la personne,
+     * pas de la societe ({@code entity_type: company}).
+     */
+    private AccountCreateParams.Identity buildIdentity(UserEntity user, String country) {
+        AccountCreateParams.Identity.Builder identity = AccountCreateParams.Identity.builder()
+                .setCountry(country)
+                .setEntityType(
+                        user.isProAccount()
+                                ? AccountCreateParams.Identity.EntityType.COMPANY
+                                : AccountCreateParams.Identity.EntityType.INDIVIDUAL);
+
+        if (!user.isProAccount()) {
+            VerifiedIdentitySnapshot snapshot =
+                    verifiedIdentity.forUser(user.getId()).orElse(null);
+            AccountCreateParams.Identity.Individual individual =
+                    buildIndividual(user, snapshot);
+            if (individual != null) {
+                identity.setIndividual(individual);
+            }
+        }
+        return identity.build();
+    }
+
+    /**
+     * Deux sources, une priorite : ce que Stripe Identity a <em>verifie</em> prime sur ce que
+     * l'utilisateur a <em>declare</em> a l'inscription. Un nom verifie sur piece d'identite vaut
+     * mieux qu'un nom tape au clavier, et c'est celui que Stripe recoupera de son cote.
+     *
+     * <p>Le declaratif n'est donc pas un doublon mais un filet : il couvre le cas ou les
+     * verified_outputs manquent (session purgee, champ absent du document, panne reseau au moment
+     * du provisioning). Rend {@code null} quand aucune source n'a rien a donner — un
+     * {@code individual} vide serait refuse par Stripe.
+     */
+    private AccountCreateParams.Identity.Individual buildIndividual(UserEntity user,
+                                                                    VerifiedIdentitySnapshot snapshot) {
+        String givenName = firstNonBlank(
+                snapshot != null ? snapshot.givenName() : null, user.getFirstName());
+        String surname = firstNonBlank(
+                snapshot != null ? snapshot.surname() : null, user.getLastName());
+        if (givenName == null && surname == null) {
+            return null;
+        }
+
+        AccountCreateParams.Identity.Individual.Builder individual =
+                AccountCreateParams.Identity.Individual.builder();
+        if (givenName != null) {
+            individual.setGivenName(givenName);
+        }
+        if (surname != null) {
+            individual.setSurname(surname);
+        }
+        return individual.build();
+    }
+
+    private static String firstNonBlank(String preferred, String fallback) {
+        if (preferred != null && !preferred.isBlank()) {
+            return preferred;
+        }
+        return fallback != null && !fallback.isBlank() ? fallback : null;
     }
 
     /**

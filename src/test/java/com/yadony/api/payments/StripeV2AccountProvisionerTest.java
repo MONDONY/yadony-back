@@ -5,6 +5,8 @@ import com.yadony.api.auth.FirebaseContactService;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.config.StripeConnectProperties;
+import com.yadony.api.kyc.KycVerifiedIdentityService;
+import com.yadony.api.kyc.VerifiedIdentitySnapshot;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -32,15 +34,20 @@ class StripeV2AccountProvisionerTest {
 
     @Mock StripeGateway stripeGateway;
     @Mock FirebaseContactService firebaseContact;
+    @Mock KycVerifiedIdentityService verifiedIdentity;
 
     private ConnectAccountProvisioner provisioner;
 
     @BeforeEach
     void setUp() {
         StripeConnectProperties props = PaymentServiceTestFactory.defaultConnectProperties();
-        provisioner = new StripeV2AccountProvisioner(stripeGateway, props, firebaseContact);
+        provisioner = new StripeV2AccountProvisioner(
+                stripeGateway, props, firebaseContact, verifiedIdentity);
         org.mockito.Mockito.lenient().when(firebaseContact.getContact(any()))
                 .thenReturn(new FirebaseContactService.Contact("+33600000000", "test@yadony.app"));
+        // Par defaut, pas de snapshot : chaque test du prefill pose le sien.
+        org.mockito.Mockito.lenient().when(verifiedIdentity.forUser(any()))
+                .thenReturn(java.util.Optional.empty());
     }
 
     private UserEntity buildUser(boolean isPro, String country) {
@@ -223,5 +230,127 @@ class StripeV2AccountProvisionerTest {
         String accountId = provisioner.provision(buildUser(false, "FR"));
 
         assertThat(accountId).isEqualTo("acct_returned");
+    }
+
+    // ── Prefill depuis Stripe Identity ───────────────────────────────────────
+    //
+    // Le nom, et rien d'autre. Date de naissance et adresse de residence sont demandees
+    // par le formulaire Connect lui-meme : il les revalide de toute facon, et les envoyer
+    // d'avance n'evitait aucune saisie tout en ouvrant une classe d'echecs (une adresse
+    // au pays inattendu faisait rejeter la creation entiere).
+
+    private static final VerifiedIdentitySnapshot SNAPSHOT =
+            new VerifiedIdentitySnapshot("Awa", "Diallo");
+
+    @Test
+    @DisplayName("Particulier verifie : le nom vient de Stripe Identity")
+    void prefillsNameFromVerifiedIdentity() throws Exception {
+        when(verifiedIdentity.forUser(any())).thenReturn(java.util.Optional.of(SNAPSHOT));
+
+        AccountCreateParams params = captureParams(buildUser(false, "FR"));
+
+        AccountCreateParams.Identity.Individual individual = params.getIdentity().getIndividual();
+        assertThat(individual).isNotNull();
+        assertThat(individual.getGivenName()).isEqualTo("Awa");
+        assertThat(individual.getSurname()).isEqualTo("Diallo");
+    }
+
+    @Test
+    @DisplayName("Ni date de naissance ni adresse ne partent, meme connues en base : "
+            + "c'est Stripe qui les demande")
+    void neverSendsDateOfBirthNorAddress() throws Exception {
+        when(verifiedIdentity.forUser(any())).thenReturn(java.util.Optional.of(SNAPSHOT));
+        UserEntity user = buildUser(false, "FR");
+        // Colonnes encore alimentees pour les comptes crees avant ce changement : elles
+        // ne doivent plus rien declencher.
+        user.setBirthDate(java.time.LocalDate.of(1990, 4, 12));
+        user.setResidenceStreet("3 avenue des Lilas");
+        user.setResidenceLine2("Bat. B");
+        user.setResidencePostalCode("69003");
+        user.setCity("Lyon");
+
+        AccountCreateParams.Identity.Individual individual =
+                captureParams(user).getIdentity().getIndividual();
+
+        assertThat(individual.getDateOfBirth()).isNull();
+        assertThat(individual.getAddress()).isNull();
+    }
+
+    @Test
+    @DisplayName("Sans snapshot ni declaratif, le compte se cree sans prefill — jamais bloque")
+    void provisionsWithoutPrefillWhenNothingKnown() throws Exception {
+        AccountCreateParams params = captureParams(buildUser(false, "FR"));
+
+        assertThat(params.getIdentity().getIndividual()).isNull();
+    }
+
+    @Test
+    @DisplayName("Un utilisateur sans nom nulle part ne produit aucun individual : "
+            + "Stripe refuse un individual vide")
+    void noIndividualWhenNameMissingEverywhere() throws Exception {
+        when(verifiedIdentity.forUser(any()))
+                .thenReturn(java.util.Optional.of(new VerifiedIdentitySnapshot(null, null)));
+        UserEntity user = buildUser(false, "FR");
+        user.setBirthDate(java.time.LocalDate.of(1990, 4, 12));
+
+        assertThat(captureParams(user).getIdentity().getIndividual()).isNull();
+    }
+
+    @Test
+    @DisplayName("Sans snapshot, le nom declare a l'inscription sert de repli")
+    void fallsBackToDeclaredIdentityWhenSnapshotMissing() throws Exception {
+        UserEntity user = buildUser(false, "FR");
+        user.setFirstName("Awa");
+        user.setLastName("Diallo");
+
+        AccountCreateParams.Identity.Individual individual =
+                captureParams(user).getIdentity().getIndividual();
+
+        assertThat(individual).isNotNull();
+        assertThat(individual.getGivenName()).isEqualTo("Awa");
+        assertThat(individual.getSurname()).isEqualTo("Diallo");
+    }
+
+    @Test
+    @DisplayName("L'identite verifiee prime sur le declaratif — jamais l'inverse")
+    void verifiedIdentityWinsOverDeclared() throws Exception {
+        when(verifiedIdentity.forUser(any())).thenReturn(java.util.Optional.of(SNAPSHOT));
+        UserEntity user = buildUser(false, "FR");
+        // Nom declare different de celui de la piece : Stripe recoupera le verifie.
+        user.setFirstName("Awé");
+        user.setLastName("Autre");
+
+        AccountCreateParams.Identity.Individual individual =
+                captureParams(user).getIdentity().getIndividual();
+
+        assertThat(individual.getGivenName()).isEqualTo("Awa");
+        assertThat(individual.getSurname()).isEqualTo("Diallo");
+    }
+
+    @Test
+    @DisplayName("Repli champ par champ : un nom declare comble un nom absent des outputs")
+    void fallsBackFieldByField() throws Exception {
+        VerifiedIdentitySnapshot surnameOnly = new VerifiedIdentitySnapshot(null, "Diallo");
+        when(verifiedIdentity.forUser(any())).thenReturn(java.util.Optional.of(surnameOnly));
+        UserEntity user = buildUser(false, "FR");
+        user.setFirstName("Awa");
+
+        AccountCreateParams.Identity.Individual individual =
+                captureParams(user).getIdentity().getIndividual();
+
+        assertThat(individual.getGivenName()).isEqualTo("Awa");
+        assertThat(individual.getSurname()).isEqualTo("Diallo");
+    }
+
+    @Test
+    @DisplayName("Compte pro : aucun prefill individuel sur une entite company")
+    void noIndividualPrefillForProAccounts() throws Exception {
+        UserEntity pro = buildUser(true, "FR");
+        pro.setFirstName("Awa");
+
+        AccountCreateParams params = captureParams(pro);
+
+        assertThat(params.getIdentity().getIndividual()).isNull();
+        org.mockito.Mockito.verify(verifiedIdentity, never()).forUser(any());
     }
 }

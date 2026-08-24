@@ -88,6 +88,16 @@ public class TestDataSteps extends AbstractSteps {
         jdbcTemplate.update("UPDATE users SET country = ? WHERE firebase_uid = ?", country, uid);
     }
 
+    /**
+     * Stripe Connect exige une identite verifiee (PaymentService.requireVerifiedIdentity :
+     * 422 kyc-required). Bridge SQL equivalent a un voyageur ayant deja passe la
+     * verification d'identite Stripe Identity.
+     */
+    @Etantdonné("le voyageur {string} a vérifié son identité")
+    public void givenTravelerKycVerified(String uid) {
+        jdbcTemplate.update("UPDATE users SET kyc_status = 'VERIFIED' WHERE firebase_uid = ?", uid);
+    }
+
     @Etantdonné("l'offre {string} est marquée comme livrée")
     public void givenBidCompleted(String bidAlias) {
         jdbcTemplate.update("UPDATE bids SET status = 'COMPLETED' WHERE id = ?", ctx.getId(bidAlias));
