@@ -95,6 +95,21 @@ public class AuthController {
         return ResponseEntity.noContent().build();
     }
 
+    /**
+     * Plus aucun client actif n'appelle cet endpoint : l'application a cesse de collecter
+     * l'adresse de residence (Stripe Connect la demande lui-meme dans son formulaire, et le
+     * double envoi provoquait des refus d'activation). Il est garde volontairement, pas par
+     * oubli, le temps que le parc installe bascule sur une version qui ne l'appelle plus —
+     * un binaire anterieur qui le perdrait echouerait a l'etape « Vos informations » de son
+     * onboarding.
+     *
+     * <p>A supprimer avec {@code AuthService.updateResidenceAddress}, {@code
+     * ResidenceAddressRequest}, son entree dans {@code SecurityConfig} et {@code
+     * AuthControllerResidenceAddressIT} des que la version minimale supportee de
+     * l'application est posterieure a ce changement (regle « pas de code mort », CLAUDE.md).
+     * Les colonnes {@code residence_*} de {@code users}, elles, restent : l'export RGPD les
+     * lit et l'anonymisation les efface.
+     */
     @PutMapping("/me/residence-address")
     public ResponseEntity<Void> updateResidenceAddress(
             @Valid @RequestBody com.yadony.api.auth.dto.ResidenceAddressRequest request) {

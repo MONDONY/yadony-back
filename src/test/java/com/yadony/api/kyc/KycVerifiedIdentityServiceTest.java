@@ -100,7 +100,6 @@ class KycVerifiedIdentityServiceTest {
             assertThat(snapshot).isPresent();
             assertThat(snapshot.get().givenName()).isEqualTo("Awa");
             assertThat(snapshot.get().surname()).isEqualTo("Diallo");
-            assertThat(snapshot.get().hasName()).isTrue();
         }
     }
 

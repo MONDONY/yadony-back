@@ -11,10 +11,4 @@ package com.yadony.api.kyc;
  * <p>Donnees personnelles : ce snapshot ne se journalise jamais et ne se persiste pas — il
  * vit le temps d'un appel de provisioning, en memoire.
  */
-public record VerifiedIdentitySnapshot(String givenName, String surname) {
-
-    public boolean hasName() {
-        return (givenName != null && !givenName.isBlank())
-                || (surname != null && !surname.isBlank());
-    }
-}
+public record VerifiedIdentitySnapshot(String givenName, String surname) {}

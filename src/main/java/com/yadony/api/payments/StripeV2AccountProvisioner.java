@@ -178,25 +178,23 @@ public class StripeV2AccountProvisioner implements ConnectAccountProvisioner {
      */
     private AccountCreateParams.Identity.Individual buildIndividual(UserEntity user,
                                                                     VerifiedIdentitySnapshot snapshot) {
-        AccountCreateParams.Identity.Individual.Builder individual =
-                AccountCreateParams.Identity.Individual.builder();
-        boolean any = false;
-
         String givenName = firstNonBlank(
                 snapshot != null ? snapshot.givenName() : null, user.getFirstName());
-        if (givenName != null) {
-            individual.setGivenName(givenName);
-            any = true;
-        }
-
         String surname = firstNonBlank(
                 snapshot != null ? snapshot.surname() : null, user.getLastName());
-        if (surname != null) {
-            individual.setSurname(surname);
-            any = true;
+        if (givenName == null && surname == null) {
+            return null;
         }
 
-        return any ? individual.build() : null;
+        AccountCreateParams.Identity.Individual.Builder individual =
+                AccountCreateParams.Identity.Individual.builder();
+        if (givenName != null) {
+            individual.setGivenName(givenName);
+        }
+        if (surname != null) {
+            individual.setSurname(surname);
+        }
+        return individual.build();
     }
 
     private static String firstNonBlank(String preferred, String fallback) {
