@@ -131,13 +131,17 @@ public class StripeV2AccountProvisioner implements ConnectAccountProvisioner {
     }
 
     /**
-     * Identite du compte : pays et type toujours ; pour un particulier, preremplie avec ce
-     * que Stripe Identity a deja verifie (nom, date de naissance) et l'adresse de residence
-     * declaree a l'inscription — l'onboarding Connect n'a plus a redemander ce que la
-     * verification d'identite vient d'etablir. La creation de compte etant fermee tant que
-     * l'identite n'est pas verifiee ({@code kyc-required}), le snapshot existe au moment ou
-     * ce code s'execute ; s'il manque malgre tout (session purgee, reseau), le compte se
-     * cree sans prefill et Stripe redemande — jamais d'echec pour un prefill.
+     * Identite du compte : pays et type toujours ; pour un particulier, le nom legal en plus.
+     * La creation de compte etant fermee tant que l'identite n'est pas verifiee
+     * ({@code kyc-required}), le snapshot existe au moment ou ce code s'execute ; s'il manque
+     * malgre tout (session purgee, reseau), le compte se cree sans prefill et Stripe
+     * redemande — jamais d'echec pour un prefill.
+     *
+     * <p>Le nom est le seul champ preremli. Date de naissance et adresse de residence sont
+     * demandees par le formulaire Connect lui-meme : il les revalide de toute facon, et les
+     * envoyer d'avance n'evitait aucune saisie tout en ouvrant une classe d'echecs — une
+     * adresse au format ou au pays inattendu faisait rejeter la creation entiere
+     * ({@code address_country_identity_country}).
      *
      * <p>Un compte pro reste sans prefill : l'identite verifiee est celle de la personne,
      * pas de la societe ({@code entity_type: company}).
@@ -154,7 +158,7 @@ public class StripeV2AccountProvisioner implements ConnectAccountProvisioner {
             VerifiedIdentitySnapshot snapshot =
                     verifiedIdentity.forUser(user.getId()).orElse(null);
             AccountCreateParams.Identity.Individual individual =
-                    buildIndividual(user, snapshot, country);
+                    buildIndividual(user, snapshot);
             if (individual != null) {
                 identity.setIndividual(individual);
             }
@@ -171,16 +175,9 @@ public class StripeV2AccountProvisioner implements ConnectAccountProvisioner {
      * verified_outputs manquent (session purgee, champ absent du document, panne reseau au moment
      * du provisioning). Rend {@code null} quand aucune source n'a rien a donner — un
      * {@code individual} vide serait refuse par Stripe.
-     *
-     * <p><strong>Exception, la date de naissance :</strong> Stripe ne la rend pas a une cle
-     * secrete standard (champ sensible, voir {@code KycVerifiedIdentityService}). En pratique
-     * c'est donc toujours la date saisie a l'etape « Vos informations » qui part chez Stripe.
-     * La branche verifiee reste ecrite pour rester juste si une cle restreinte etait un jour
-     * mise en place, mais ne pas compter dessus : elle ne s'execute pas en production.
      */
     private AccountCreateParams.Identity.Individual buildIndividual(UserEntity user,
-                                                                    VerifiedIdentitySnapshot snapshot,
-                                                                    String country) {
+                                                                    VerifiedIdentitySnapshot snapshot) {
         AccountCreateParams.Identity.Individual.Builder individual =
                 AccountCreateParams.Identity.Individual.builder();
         boolean any = false;
@@ -199,31 +196,6 @@ public class StripeV2AccountProvisioner implements ConnectAccountProvisioner {
             any = true;
         }
 
-        if (snapshot != null && snapshot.hasDob()) {
-            individual.setDateOfBirth(
-                    AccountCreateParams.Identity.Individual.DateOfBirth.builder()
-                            .setDay(snapshot.dobDay())
-                            .setMonth(snapshot.dobMonth())
-                            .setYear(snapshot.dobYear())
-                            .build());
-            any = true;
-        } else if (user.getBirthDate() != null) {
-            individual.setDateOfBirth(
-                    AccountCreateParams.Identity.Individual.DateOfBirth.builder()
-                            .setDay((long) user.getBirthDate().getDayOfMonth())
-                            .setMonth((long) user.getBirthDate().getMonthValue())
-                            .setYear((long) user.getBirthDate().getYear())
-                            .build());
-            any = true;
-        }
-
-        java.util.Optional<AccountCreateParams.Identity.Individual.Address> address =
-                buildAddress(user, snapshot, country);
-        if (address.isPresent()) {
-            individual.setAddress(address.get());
-            any = true;
-        }
-
         return any ? individual.build() : null;
     }
 
@@ -232,69 +204,6 @@ public class StripeV2AccountProvisioner implements ConnectAccountProvisioner {
             return preferred;
         }
         return fallback != null && !fallback.isBlank() ? fallback : null;
-    }
-
-    /**
-     * L'adresse de residence declaree a l'inscription prime : c'est precisement pour
-     * "preparer tes paiements" qu'elle a ete collectee, et elle est plus fraiche que celle
-     * du document d'identite. Sa ville vit sur users.city (le formulaire d'adresse du
-     * parcours y ecrit) et part avec elle. A defaut (etape passee), l'adresse du document
-     * sert de repli quand elle existe.
-     */
-    private java.util.Optional<AccountCreateParams.Identity.Individual.Address> buildAddress(
-            UserEntity user, /* nullable */ VerifiedIdentitySnapshot snapshot, String country) {
-        String residenceStreet = user.getResidenceStreet();
-        if (residenceStreet != null && !residenceStreet.isBlank()) {
-            AccountCreateParams.Identity.Individual.Address.Builder address =
-                    AccountCreateParams.Identity.Individual.Address.builder()
-                            .setLine1(residenceStreet)
-                            .setCountry(user.getCountry());
-            if (user.getResidenceLine2() != null && !user.getResidenceLine2().isBlank()) {
-                address.setLine2(user.getResidenceLine2());
-            }
-            if (user.getResidencePostalCode() != null && !user.getResidencePostalCode().isBlank()) {
-                address.setPostalCode(user.getResidencePostalCode());
-            }
-            if (user.getCity() != null && !user.getCity().isBlank()) {
-                address.setCity(user.getCity());
-            }
-            return java.util.Optional.of(address.build());
-        }
-
-        if (snapshot == null || !snapshot.hasAddress()) {
-            return java.util.Optional.empty();
-        }
-
-        // L'adresse du document doit etre dans le MEME pays que le compte, sinon Stripe
-        // rejette la creation entiere :
-        //
-        //   The address country must match the identity country, which is FR.
-        //   code: address_country_identity_country
-        //
-        // Le cas se produit des qu'une piece etrangere sert de repli — typiquement un
-        // voyageur qui a passe l'etape adresse et dont le document est d'un autre pays
-        // (les documents de test Stripe sont americains, ce qui le rend systematique en
-        // recette). Une adresse dans un autre pays n'est de toute facon pas la residence
-        // que Connect demande : mieux vaut ne rien envoyer et laisser Stripe la reclamer
-        // que de faire echouer l'activation.
-        if (!country.equalsIgnoreCase(snapshot.addressCountry())) {
-            return java.util.Optional.empty();
-        }
-
-        AccountCreateParams.Identity.Individual.Address.Builder address =
-                AccountCreateParams.Identity.Individual.Address.builder()
-                        .setLine1(snapshot.addressLine1())
-                        .setCountry(country);
-        if (snapshot.addressLine2() != null) {
-            address.setLine2(snapshot.addressLine2());
-        }
-        if (snapshot.addressCity() != null) {
-            address.setCity(snapshot.addressCity());
-        }
-        if (snapshot.addressPostalCode() != null) {
-            address.setPostalCode(snapshot.addressPostalCode());
-        }
-        return java.util.Optional.of(address.build());
     }
 
     /**

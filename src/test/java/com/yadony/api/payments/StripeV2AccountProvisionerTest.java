@@ -233,14 +233,18 @@ class StripeV2AccountProvisionerTest {
     }
 
     // ── Prefill depuis Stripe Identity ───────────────────────────────────────
+    //
+    // Le nom, et rien d'autre. Date de naissance et adresse de residence sont demandees
+    // par le formulaire Connect lui-meme : il les revalide de toute facon, et les envoyer
+    // d'avance n'evitait aucune saisie tout en ouvrant une classe d'echecs (une adresse
+    // au pays inattendu faisait rejeter la creation entiere).
 
-    private static final VerifiedIdentitySnapshot SNAPSHOT = new VerifiedIdentitySnapshot(
-            "Awa", "Diallo", 12L, 4L, 1990L,
-            "8 rue du Document", null, "Paris", "75011", "FR");
+    private static final VerifiedIdentitySnapshot SNAPSHOT =
+            new VerifiedIdentitySnapshot("Awa", "Diallo");
 
     @Test
-    @DisplayName("Particulier verifie : nom et date de naissance viennent de Stripe Identity")
-    void prefillsNameAndDobFromVerifiedIdentity() throws Exception {
+    @DisplayName("Particulier verifie : le nom vient de Stripe Identity")
+    void prefillsNameFromVerifiedIdentity() throws Exception {
         when(verifiedIdentity.forUser(any())).thenReturn(java.util.Optional.of(SNAPSHOT));
 
         AccountCreateParams params = captureParams(buildUser(false, "FR"));
@@ -249,95 +253,27 @@ class StripeV2AccountProvisionerTest {
         assertThat(individual).isNotNull();
         assertThat(individual.getGivenName()).isEqualTo("Awa");
         assertThat(individual.getSurname()).isEqualTo("Diallo");
-        assertThat(individual.getDateOfBirth().getDay()).isEqualTo(12L);
-        assertThat(individual.getDateOfBirth().getMonth()).isEqualTo(4L);
-        assertThat(individual.getDateOfBirth().getYear()).isEqualTo(1990L);
     }
 
     @Test
-    @DisplayName("L'adresse de residence declaree prime sur celle du document")
-    void residenceAddressWinsOverDocumentAddress() throws Exception {
+    @DisplayName("Ni date de naissance ni adresse ne partent, meme connues en base : "
+            + "c'est Stripe qui les demande")
+    void neverSendsDateOfBirthNorAddress() throws Exception {
         when(verifiedIdentity.forUser(any())).thenReturn(java.util.Optional.of(SNAPSHOT));
         UserEntity user = buildUser(false, "FR");
+        // Colonnes encore alimentees pour les comptes crees avant ce changement : elles
+        // ne doivent plus rien declencher.
+        user.setBirthDate(java.time.LocalDate.of(1990, 4, 12));
         user.setResidenceStreet("3 avenue des Lilas");
         user.setResidenceLine2("Bat. B");
         user.setResidencePostalCode("69003");
         user.setCity("Lyon");
 
-        AccountCreateParams.Identity.Individual.Address address =
-                captureParams(user).getIdentity().getIndividual().getAddress();
-
-        assertThat(address.getLine1()).isEqualTo("3 avenue des Lilas");
-        assertThat(address.getLine2()).isEqualTo("Bat. B");
-        assertThat(address.getPostalCode()).isEqualTo("69003");
-        assertThat(address.getCountry()).isEqualTo("FR");
-        // La ville du formulaire d'adresse vit sur users.city : elle part avec
-        // la residence — jamais celle du document, qui peut etre perimee.
-        assertThat(address.getCity()).isEqualTo("Lyon");
-    }
-
-    @Test
-    @DisplayName("Piece etrangere en repli : aucune adresse envoyee, Stripe la reclamera")
-    void foreignDocumentAddressIsNotSentAtAll() throws Exception {
-        // Constate en recette : l'utilisateur avait passe l'etape adresse, et le document
-        // de test Stripe porte une adresse americaine. Envoyee telle quelle sur un compte
-        // FR, elle faisait echouer la creation entiere :
-        //   The address country must match the identity country, which is FR.
-        VerifiedIdentitySnapshot usDocument = new VerifiedIdentitySnapshot(
-                "Awa", "Diallo", null, null, null,
-                "1234 Main St", null, "San Francisco", "94111", "US");
-        when(verifiedIdentity.forUser(any())).thenReturn(java.util.Optional.of(usDocument));
-
         AccountCreateParams.Identity.Individual individual =
-                captureParams(buildUser(false, "FR")).getIdentity().getIndividual();
+                captureParams(user).getIdentity().getIndividual();
 
-        assertThat(individual).isNotNull();
-        assertThat(individual.getGivenName()).isEqualTo("Awa");
+        assertThat(individual.getDateOfBirth()).isNull();
         assertThat(individual.getAddress()).isNull();
-    }
-
-    @Test
-    @DisplayName("Adresse du document dans le meme pays : le pays du compte fait foi")
-    void sameCountryDocumentAddressUsesAccountCountry() throws Exception {
-        VerifiedIdentitySnapshot frDocument = new VerifiedIdentitySnapshot(
-                "Awa", "Diallo", null, null, null,
-                "8 rue du Document", null, "Paris", "75011", "fr");
-        when(verifiedIdentity.forUser(any())).thenReturn(java.util.Optional.of(frDocument));
-
-        AccountCreateParams.Identity.Individual.Address address =
-                captureParams(buildUser(false, "FR")).getIdentity().getIndividual().getAddress();
-
-        assertThat(address).isNotNull();
-        assertThat(address.getLine1()).isEqualTo("8 rue du Document");
-        // Casse normalisee sur le pays du compte, jamais celle du document.
-        assertThat(address.getCountry()).isEqualTo("FR");
-    }
-
-    @Test
-    @DisplayName("Residence sans ville connue : le champ ville reste vide, Stripe le demande")
-    void residenceWithoutCityLeavesCityEmpty() throws Exception {
-        when(verifiedIdentity.forUser(any())).thenReturn(java.util.Optional.of(SNAPSHOT));
-        UserEntity user = buildUser(false, "FR");
-        user.setResidenceStreet("3 avenue des Lilas");
-
-        AccountCreateParams.Identity.Individual.Address address =
-                captureParams(user).getIdentity().getIndividual().getAddress();
-
-        assertThat(address.getLine1()).isEqualTo("3 avenue des Lilas");
-        assertThat(address.getCity()).isNull();
-    }
-
-    @Test
-    @DisplayName("Residence passee : l'adresse du document sert de repli")
-    void documentAddressUsedWhenResidenceSkipped() throws Exception {
-        when(verifiedIdentity.forUser(any())).thenReturn(java.util.Optional.of(SNAPSHOT));
-
-        AccountCreateParams.Identity.Individual.Address address =
-                captureParams(buildUser(false, "FR")).getIdentity().getIndividual().getAddress();
-
-        assertThat(address.getLine1()).isEqualTo("8 rue du Document");
-        assertThat(address.getCity()).isEqualTo("Paris");
-        assertThat(address.getPostalCode()).isEqualTo("75011");
     }
 
     @Test
@@ -349,12 +285,23 @@ class StripeV2AccountProvisionerTest {
     }
 
     @Test
-    @DisplayName("Sans snapshot, les infos declarees a l'inscription servent de repli")
+    @DisplayName("Un utilisateur sans nom nulle part ne produit aucun individual : "
+            + "Stripe refuse un individual vide")
+    void noIndividualWhenNameMissingEverywhere() throws Exception {
+        when(verifiedIdentity.forUser(any()))
+                .thenReturn(java.util.Optional.of(new VerifiedIdentitySnapshot(null, null)));
+        UserEntity user = buildUser(false, "FR");
+        user.setBirthDate(java.time.LocalDate.of(1990, 4, 12));
+
+        assertThat(captureParams(user).getIdentity().getIndividual()).isNull();
+    }
+
+    @Test
+    @DisplayName("Sans snapshot, le nom declare a l'inscription sert de repli")
     void fallsBackToDeclaredIdentityWhenSnapshotMissing() throws Exception {
         UserEntity user = buildUser(false, "FR");
         user.setFirstName("Awa");
         user.setLastName("Diallo");
-        user.setBirthDate(java.time.LocalDate.of(1990, 4, 12));
 
         AccountCreateParams.Identity.Individual individual =
                 captureParams(user).getIdentity().getIndividual();
@@ -362,9 +309,6 @@ class StripeV2AccountProvisionerTest {
         assertThat(individual).isNotNull();
         assertThat(individual.getGivenName()).isEqualTo("Awa");
         assertThat(individual.getSurname()).isEqualTo("Diallo");
-        assertThat(individual.getDateOfBirth().getDay()).isEqualTo(12L);
-        assertThat(individual.getDateOfBirth().getMonth()).isEqualTo(4L);
-        assertThat(individual.getDateOfBirth().getYear()).isEqualTo(1990L);
     }
 
     @Test
@@ -375,61 +319,19 @@ class StripeV2AccountProvisionerTest {
         // Nom declare different de celui de la piece : Stripe recoupera le verifie.
         user.setFirstName("Awé");
         user.setLastName("Autre");
-        user.setBirthDate(java.time.LocalDate.of(2000, 1, 1));
 
         AccountCreateParams.Identity.Individual individual =
                 captureParams(user).getIdentity().getIndividual();
 
         assertThat(individual.getGivenName()).isEqualTo("Awa");
         assertThat(individual.getSurname()).isEqualTo("Diallo");
-        assertThat(individual.getDateOfBirth().getYear()).isEqualTo(1990L);
-    }
-
-    @Test
-    @DisplayName("Forme reelle en production : outputs sans date de naissance (champ sensible "
-            + "que Stripe ne rend pas a une cle standard) — c'est la date saisie qui part")
-    void declaredDobUsedBecauseVerifiedDobIsNeverReturned() throws Exception {
-        // Reproduit exactement ce que Stripe renvoie a notre cle secrete : nom et adresse
-        // presents, dob absent. Sans la date saisie a l'etape « Vos informations », le
-        // compte Connect partirait sans date de naissance du tout.
-        VerifiedIdentitySnapshot productionShape = new VerifiedIdentitySnapshot(
-                "Awa", "Diallo", null, null, null,
-                "8 rue du Document", null, "Paris", "75011", "FR");
-        when(verifiedIdentity.forUser(any())).thenReturn(java.util.Optional.of(productionShape));
-        UserEntity user = buildUser(false, "FR");
-        user.setBirthDate(java.time.LocalDate.of(1990, 4, 12));
-
-        AccountCreateParams.Identity.Individual individual =
-                captureParams(user).getIdentity().getIndividual();
-
-        assertThat(individual.getGivenName()).isEqualTo("Awa");
-        assertThat(individual.getDateOfBirth()).isNotNull();
-        assertThat(individual.getDateOfBirth().getDay()).isEqualTo(12L);
-        assertThat(individual.getDateOfBirth().getMonth()).isEqualTo(4L);
-        assertThat(individual.getDateOfBirth().getYear()).isEqualTo(1990L);
-    }
-
-    @Test
-    @DisplayName("Ni date verifiee ni date saisie : le compte part sans date, jamais en erreur")
-    void noDobAtAllStillProvisions() throws Exception {
-        VerifiedIdentitySnapshot nameOnly = new VerifiedIdentitySnapshot(
-                "Awa", "Diallo", null, null, null, null, null, null, null, null);
-        when(verifiedIdentity.forUser(any())).thenReturn(java.util.Optional.of(nameOnly));
-
-        AccountCreateParams.Identity.Individual individual =
-                captureParams(buildUser(false, "FR")).getIdentity().getIndividual();
-
-        assertThat(individual).isNotNull();
-        assertThat(individual.getGivenName()).isEqualTo("Awa");
-        assertThat(individual.getDateOfBirth()).isNull();
     }
 
     @Test
     @DisplayName("Repli champ par champ : un nom declare comble un nom absent des outputs")
     void fallsBackFieldByField() throws Exception {
-        VerifiedIdentitySnapshot nameless = new VerifiedIdentitySnapshot(
-                null, null, 12L, 4L, 1990L, null, null, null, null, null);
-        when(verifiedIdentity.forUser(any())).thenReturn(java.util.Optional.of(nameless));
+        VerifiedIdentitySnapshot surnameOnly = new VerifiedIdentitySnapshot(null, "Diallo");
+        when(verifiedIdentity.forUser(any())).thenReturn(java.util.Optional.of(surnameOnly));
         UserEntity user = buildUser(false, "FR");
         user.setFirstName("Awa");
 
@@ -437,8 +339,7 @@ class StripeV2AccountProvisionerTest {
                 captureParams(user).getIdentity().getIndividual();
 
         assertThat(individual.getGivenName()).isEqualTo("Awa");
-        assertThat(individual.getSurname()).isNull();
-        assertThat(individual.getDateOfBirth().getDay()).isEqualTo(12L);
+        assertThat(individual.getSurname()).isEqualTo("Diallo");
     }
 
     @Test
@@ -446,7 +347,6 @@ class StripeV2AccountProvisionerTest {
     void noIndividualPrefillForProAccounts() throws Exception {
         UserEntity pro = buildUser(true, "FR");
         pro.setFirstName("Awa");
-        pro.setBirthDate(java.time.LocalDate.of(1990, 4, 12));
 
         AccountCreateParams params = captureParams(pro);
 

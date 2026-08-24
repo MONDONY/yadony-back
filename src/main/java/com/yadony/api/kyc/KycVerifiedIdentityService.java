@@ -48,15 +48,9 @@ public class KycVerifiedIdentityService {
             // sensible chez Stripe : expanser verified_outputs ne rend que les champs PII
             // accessibles a une cle secrete standard, et dob n'en fait pas partie. La
             // demander explicitement avec notre cle ferait echouer l'appel entier, et le
-            // catch plus bas viderait alors AUSSI le prefill nom + adresse qui fonctionne
-            // aujourd'hui. La lire exigerait une cle restreinte dediee, qui de toute facon
-            // n'ouvre les champs sensibles que 48 h apres la verification — bien trop court
-            // pour un provisioning Connect qui peut survenir des semaines plus tard.
-            //
-            // Consequence assumee : dob est toujours null ici, et c'est la date saisie a
-            // l'etape « Vos informations » qui prereplit Stripe Connect (voir
-            // StripeV2AccountProvisioner.buildIndividual). Les champs dob du snapshot
-            // restent cables pour le jour ou une cle restreinte serait mise en place.
+            // catch plus bas viderait alors AUSSI le prefill du nom, qui lui fonctionne.
+            // C'est d'ailleurs sans objet depuis que Stripe Connect demande lui-meme la
+            // date de naissance : plus rien ici n'en a besoin.
             VerificationSession session = VerificationSession.retrieve(
                     verification.get().getStripeVerificationSessionId(),
                     VerificationSessionRetrieveParams.builder()
@@ -69,19 +63,8 @@ public class KycVerifiedIdentityService {
                 return Optional.empty();
             }
 
-            var dob = outputs.getDob();
-            var address = outputs.getAddress();
             return Optional.of(new VerifiedIdentitySnapshot(
-                    outputs.getFirstName(),
-                    outputs.getLastName(),
-                    dob != null ? dob.getDay() : null,
-                    dob != null ? dob.getMonth() : null,
-                    dob != null ? dob.getYear() : null,
-                    address != null ? address.getLine1() : null,
-                    address != null ? address.getLine2() : null,
-                    address != null ? address.getCity() : null,
-                    address != null ? address.getPostalCode() : null,
-                    address != null ? address.getCountry() : null));
+                    outputs.getFirstName(), outputs.getLastName()));
         } catch (Exception e) {
             // Jamais de donnees dans le log : seulement l'utilisateur et la classe d'erreur.
             log.warn("verified_outputs indisponibles pour l'utilisateur {} ({}) — provisioning sans prefill",

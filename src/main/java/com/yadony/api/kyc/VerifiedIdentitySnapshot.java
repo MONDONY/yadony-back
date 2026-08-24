@@ -1,30 +1,20 @@
 package com.yadony.api.kyc;
 
 /**
- * Extrait des {@code verified_outputs} d'une session Stripe Identity aboutie : ce que la
- * plateforme a le droit de reutiliser pour preremplir l'onboarding Stripe Connect, et rien
- * de plus (pas de numero de piece, pas de sexe, pas de lieu de naissance).
+ * Extrait des {@code verified_outputs} d'une session Stripe Identity aboutie : le nom verifie
+ * sur piece, et rien de plus (pas de date de naissance, pas d'adresse, pas de numero de piece).
+ *
+ * <p>Le perimetre s'arrete la parce que c'est tout ce que la plateforme prereplit desormais :
+ * l'etat civil complet — date de naissance, adresse de residence — est demande par le
+ * formulaire Stripe Connect, qui fait autorite sur ces champs et les revalide de toute facon.
  *
  * <p>Donnees personnelles : ce snapshot ne se journalise jamais et ne se persiste pas — il
  * vit le temps d'un appel de provisioning, en memoire.
  */
-public record VerifiedIdentitySnapshot(
-        String givenName,
-        String surname,
-        Long dobDay,
-        Long dobMonth,
-        Long dobYear,
-        String addressLine1,
-        String addressLine2,
-        String addressCity,
-        String addressPostalCode,
-        String addressCountry) {
+public record VerifiedIdentitySnapshot(String givenName, String surname) {
 
-    public boolean hasDob() {
-        return dobDay != null && dobMonth != null && dobYear != null;
-    }
-
-    public boolean hasAddress() {
-        return addressLine1 != null && !addressLine1.isBlank();
+    public boolean hasName() {
+        return (givenName != null && !givenName.isBlank())
+                || (surname != null && !surname.isBlank());
     }
 }

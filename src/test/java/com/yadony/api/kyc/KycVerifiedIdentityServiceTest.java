@@ -77,27 +77,16 @@ class KycVerifiedIdentityServiceTest {
     }
 
     @Test
-    @DisplayName("Session aboutie : le snapshot porte nom, date de naissance et adresse")
+    @DisplayName("Session aboutie : le snapshot porte le nom verifie, et rien d'autre")
     void mapsVerifiedOutputs() {
         when(kycRepository.findByUserId(userId))
                 .thenReturn(Optional.of(verification(KycVerificationStatus.VERIFIED, "vs_1")));
 
         VerificationSession session = mock(VerificationSession.class);
         VerificationSession.VerifiedOutputs outputs = mock(VerificationSession.VerifiedOutputs.class);
-        VerificationSession.VerifiedOutputs.Dob dob = mock(VerificationSession.VerifiedOutputs.Dob.class);
-        com.stripe.model.Address address = mock(com.stripe.model.Address.class);
         when(session.getVerifiedOutputs()).thenReturn(outputs);
         when(outputs.getFirstName()).thenReturn("Awa");
         when(outputs.getLastName()).thenReturn("Diallo");
-        when(outputs.getDob()).thenReturn(dob);
-        when(dob.getDay()).thenReturn(12L);
-        when(dob.getMonth()).thenReturn(4L);
-        when(dob.getYear()).thenReturn(1990L);
-        when(outputs.getAddress()).thenReturn(address);
-        when(address.getLine1()).thenReturn("8 rue du Document");
-        when(address.getCity()).thenReturn("Paris");
-        when(address.getPostalCode()).thenReturn("75011");
-        when(address.getCountry()).thenReturn("FR");
 
         try (MockedStatic<VerificationSession> sessions = mockStatic(VerificationSession.class)) {
             sessions.when(() -> VerificationSession.retrieve(
@@ -111,9 +100,33 @@ class KycVerifiedIdentityServiceTest {
             assertThat(snapshot).isPresent();
             assertThat(snapshot.get().givenName()).isEqualTo("Awa");
             assertThat(snapshot.get().surname()).isEqualTo("Diallo");
-            assertThat(snapshot.get().hasDob()).isTrue();
-            assertThat(snapshot.get().addressLine1()).isEqualTo("8 rue du Document");
-            assertThat(snapshot.get().addressCity()).isEqualTo("Paris");
+            assertThat(snapshot.get().hasName()).isTrue();
+        }
+    }
+
+    @Test
+    @DisplayName("Ni date de naissance ni adresse ne sont lues : Stripe Connect les demande "
+            + "lui-meme, plus rien ici n'en depend")
+    void neverReadsDobNorAddress() {
+        when(kycRepository.findByUserId(userId))
+                .thenReturn(Optional.of(verification(KycVerificationStatus.VERIFIED, "vs_1")));
+
+        VerificationSession session = mock(VerificationSession.class);
+        VerificationSession.VerifiedOutputs outputs = mock(VerificationSession.VerifiedOutputs.class);
+        when(session.getVerifiedOutputs()).thenReturn(outputs);
+        when(outputs.getFirstName()).thenReturn("Awa");
+
+        try (MockedStatic<VerificationSession> sessions = mockStatic(VerificationSession.class)) {
+            sessions.when(() -> VerificationSession.retrieve(
+                    eq("vs_1"),
+                    any(com.stripe.param.identity.VerificationSessionRetrieveParams.class),
+                    any()))
+                    .thenReturn(session);
+
+            service().forUser(userId);
+
+            org.mockito.Mockito.verify(outputs, org.mockito.Mockito.never()).getDob();
+            org.mockito.Mockito.verify(outputs, org.mockito.Mockito.never()).getAddress();
         }
     }
 }
