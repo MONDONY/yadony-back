@@ -153,7 +153,8 @@ public class StripeV2AccountProvisioner implements ConnectAccountProvisioner {
         if (!user.isProAccount()) {
             VerifiedIdentitySnapshot snapshot =
                     verifiedIdentity.forUser(user.getId()).orElse(null);
-            AccountCreateParams.Identity.Individual individual = buildIndividual(user, snapshot);
+            AccountCreateParams.Identity.Individual individual =
+                    buildIndividual(user, snapshot, country);
             if (individual != null) {
                 identity.setIndividual(individual);
             }
@@ -178,7 +179,8 @@ public class StripeV2AccountProvisioner implements ConnectAccountProvisioner {
      * mise en place, mais ne pas compter dessus : elle ne s'execute pas en production.
      */
     private AccountCreateParams.Identity.Individual buildIndividual(UserEntity user,
-                                                                    VerifiedIdentitySnapshot snapshot) {
+                                                                    VerifiedIdentitySnapshot snapshot,
+                                                                    String country) {
         AccountCreateParams.Identity.Individual.Builder individual =
                 AccountCreateParams.Identity.Individual.builder();
         boolean any = false;
@@ -216,7 +218,7 @@ public class StripeV2AccountProvisioner implements ConnectAccountProvisioner {
         }
 
         java.util.Optional<AccountCreateParams.Identity.Individual.Address> address =
-                buildAddress(user, snapshot);
+                buildAddress(user, snapshot, country);
         if (address.isPresent()) {
             individual.setAddress(address.get());
             any = true;
@@ -240,7 +242,7 @@ public class StripeV2AccountProvisioner implements ConnectAccountProvisioner {
      * sert de repli quand elle existe.
      */
     private java.util.Optional<AccountCreateParams.Identity.Individual.Address> buildAddress(
-            UserEntity user, /* nullable */ VerifiedIdentitySnapshot snapshot) {
+            UserEntity user, /* nullable */ VerifiedIdentitySnapshot snapshot, String country) {
         String residenceStreet = user.getResidenceStreet();
         if (residenceStreet != null && !residenceStreet.isBlank()) {
             AccountCreateParams.Identity.Individual.Address.Builder address =
@@ -262,9 +264,27 @@ public class StripeV2AccountProvisioner implements ConnectAccountProvisioner {
         if (snapshot == null || !snapshot.hasAddress()) {
             return java.util.Optional.empty();
         }
+
+        // L'adresse du document doit etre dans le MEME pays que le compte, sinon Stripe
+        // rejette la creation entiere :
+        //
+        //   The address country must match the identity country, which is FR.
+        //   code: address_country_identity_country
+        //
+        // Le cas se produit des qu'une piece etrangere sert de repli — typiquement un
+        // voyageur qui a passe l'etape adresse et dont le document est d'un autre pays
+        // (les documents de test Stripe sont americains, ce qui le rend systematique en
+        // recette). Une adresse dans un autre pays n'est de toute facon pas la residence
+        // que Connect demande : mieux vaut ne rien envoyer et laisser Stripe la reclamer
+        // que de faire echouer l'activation.
+        if (!country.equalsIgnoreCase(snapshot.addressCountry())) {
+            return java.util.Optional.empty();
+        }
+
         AccountCreateParams.Identity.Individual.Address.Builder address =
                 AccountCreateParams.Identity.Individual.Address.builder()
-                        .setLine1(snapshot.addressLine1());
+                        .setLine1(snapshot.addressLine1())
+                        .setCountry(country);
         if (snapshot.addressLine2() != null) {
             address.setLine2(snapshot.addressLine2());
         }
@@ -273,9 +293,6 @@ public class StripeV2AccountProvisioner implements ConnectAccountProvisioner {
         }
         if (snapshot.addressPostalCode() != null) {
             address.setPostalCode(snapshot.addressPostalCode());
-        }
-        if (snapshot.addressCountry() != null) {
-            address.setCountry(snapshot.addressCountry());
         }
         return java.util.Optional.of(address.build());
     }

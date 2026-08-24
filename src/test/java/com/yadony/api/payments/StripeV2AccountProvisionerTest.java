@@ -277,6 +277,43 @@ class StripeV2AccountProvisionerTest {
     }
 
     @Test
+    @DisplayName("Piece etrangere en repli : aucune adresse envoyee, Stripe la reclamera")
+    void foreignDocumentAddressIsNotSentAtAll() throws Exception {
+        // Constate en recette : l'utilisateur avait passe l'etape adresse, et le document
+        // de test Stripe porte une adresse americaine. Envoyee telle quelle sur un compte
+        // FR, elle faisait echouer la creation entiere :
+        //   The address country must match the identity country, which is FR.
+        VerifiedIdentitySnapshot usDocument = new VerifiedIdentitySnapshot(
+                "Awa", "Diallo", null, null, null,
+                "1234 Main St", null, "San Francisco", "94111", "US");
+        when(verifiedIdentity.forUser(any())).thenReturn(java.util.Optional.of(usDocument));
+
+        AccountCreateParams.Identity.Individual individual =
+                captureParams(buildUser(false, "FR")).getIdentity().getIndividual();
+
+        assertThat(individual).isNotNull();
+        assertThat(individual.getGivenName()).isEqualTo("Awa");
+        assertThat(individual.getAddress()).isNull();
+    }
+
+    @Test
+    @DisplayName("Adresse du document dans le meme pays : le pays du compte fait foi")
+    void sameCountryDocumentAddressUsesAccountCountry() throws Exception {
+        VerifiedIdentitySnapshot frDocument = new VerifiedIdentitySnapshot(
+                "Awa", "Diallo", null, null, null,
+                "8 rue du Document", null, "Paris", "75011", "fr");
+        when(verifiedIdentity.forUser(any())).thenReturn(java.util.Optional.of(frDocument));
+
+        AccountCreateParams.Identity.Individual.Address address =
+                captureParams(buildUser(false, "FR")).getIdentity().getIndividual().getAddress();
+
+        assertThat(address).isNotNull();
+        assertThat(address.getLine1()).isEqualTo("8 rue du Document");
+        // Casse normalisee sur le pays du compte, jamais celle du document.
+        assertThat(address.getCountry()).isEqualTo("FR");
+    }
+
+    @Test
     @DisplayName("Residence sans ville connue : le champ ville reste vide, Stripe le demande")
     void residenceWithoutCityLeavesCityEmpty() throws Exception {
         when(verifiedIdentity.forUser(any())).thenReturn(java.util.Optional.of(SNAPSHOT));
