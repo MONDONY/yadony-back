@@ -60,7 +60,6 @@ class ProfilePublicControllerTest {
                 null,
                 null,
                 null,
-                null,
                 null);
     }
 

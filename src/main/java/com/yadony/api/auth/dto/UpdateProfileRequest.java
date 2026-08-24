@@ -21,7 +21,5 @@ public record UpdateProfileRequest(
     @Pattern(regexp = "^\\+[1-9]\\d{1,14}$", message = "Format E.164 requis (ex: +33612345678)")
     String phoneNumber,
     @Size(max = 280) String bio,
-    Set<String> languages,
-    @Pattern(regexp = "AVION|VOITURE|TRAIN", message = "Mode de transport invalide")
-    String transportMode
+    Set<String> languages
 ) {}

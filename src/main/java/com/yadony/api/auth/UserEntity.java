@@ -184,10 +184,6 @@ public class UserEntity extends BaseEntity {
     @Column(name = "avatar_url", length = 512)
     private String avatarUrl;
 
-    @Enumerated(EnumType.STRING)
-    @Column(name = "transport_mode", length = 16)
-    private TransportMode transportMode;
-
     @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "user_languages", joinColumns = @JoinColumn(name = "user_id"))
     @Column(name = "language", length = 32)
@@ -406,8 +402,6 @@ public class UserEntity extends BaseEntity {
     public String getAvatarUrl() { return avatarUrl; }
     public void setAvatarUrl(String avatarUrl) { this.avatarUrl = avatarUrl; }
 
-    public TransportMode getTransportMode() { return transportMode; }
-    public void setTransportMode(TransportMode transportMode) { this.transportMode = transportMode; }
 
     public Set<String> getLanguages() { return languages; }
     public void setLanguages(Set<String> languages) { this.languages = languages; }

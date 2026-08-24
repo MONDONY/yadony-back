@@ -18,6 +18,5 @@ public record ProfilePublicResponse(
         String contactMode,
         Integer responseDelayHours,
         String bio,
-        List<String> languages,
-        String transportMode
+        List<String> languages
 ) {}

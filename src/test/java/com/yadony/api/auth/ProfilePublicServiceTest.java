@@ -249,7 +249,6 @@ class ProfilePublicServiceTest {
         u.setBio("Hello");
         u.setAvatarUrl("https://cdn/a.jpg");
         u.setLanguages(Set.of("FR"));
-        u.setTransportMode(TransportMode.AVION);
 
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(u));
         when(ratingService.getUserRatings(USER_ID, 0, 3))
@@ -262,7 +261,6 @@ class ProfilePublicServiceTest {
         assertThat(r.bio()).isEqualTo("Hello");
         assertThat(r.avatarUrl()).isEqualTo("https://cdn/a.jpg");
         assertThat(r.languages()).containsExactly("FR");
-        assertThat(r.transportMode()).isEqualTo("AVION");
     }
 
     // ─── Helpers ────────────────────────────────────────────────────────────────

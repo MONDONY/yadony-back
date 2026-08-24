@@ -169,10 +169,6 @@ public class AuthService {
         if (request.languages() != null) {
             user.setLanguages(new HashSet<>(request.languages()));
         }
-        if (request.transportMode() != null) {
-            String v = request.transportMode().trim();
-            user.setTransportMode(v.isEmpty() ? null : TransportMode.valueOf(v));
-        }
 
         return toResponse(userRepository.save(user));
     }
@@ -681,7 +677,6 @@ public class AuthService {
                 user.getCountry(),
                 user.getBio(),
                 user.getLanguages(),
-                user.getTransportMode() != null ? user.getTransportMode().name() : null,
                 storageService.avatarUrl(user.getAvatarUrl()),
                 user.getAverageRating() != null ? user.getAverageRating().doubleValue() : null,
                 adminInfo,

@@ -67,8 +67,7 @@ public class ProfilePublicService {
                 contactMode,
                 responseDelayHours,
                 user.getBio(),
-                new ArrayList<>(user.getLanguages()),
-                user.getTransportMode() != null ? user.getTransportMode().name() : null
+                new ArrayList<>(user.getLanguages())
         );
     }
 
