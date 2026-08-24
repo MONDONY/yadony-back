@@ -98,6 +98,14 @@ class AuthServiceTest {
         }
     }
 
+    /** Session Firebase encore anonyme : aucun parcours d'inscription légitime n'en présente. */
+    private com.google.firebase.auth.FirebaseToken anonymousToken() {
+        com.google.firebase.auth.FirebaseToken token = mock(com.google.firebase.auth.FirebaseToken.class);
+        lenient().when(token.getClaims()).thenReturn(java.util.Map.of(
+                "firebase", java.util.Map.of("sign_in_provider", "anonymous")));
+        return token;
+    }
+
     private com.google.firebase.auth.FirebaseToken mockPhoneToken() {
         com.google.firebase.auth.FirebaseToken token = mock(com.google.firebase.auth.FirebaseToken.class);
         lenient().when(token.getClaims()).thenReturn(java.util.Map.of(
@@ -123,6 +131,124 @@ class AuthServiceTest {
 
             assertThat(result.phoneNumber()).isEqualTo(PHONE);
             verify(userRepository, never()).save(any());
+        }
+
+        /**
+         * Ronde 1 de la Task 5, constat 2. {@code linkWithCredential} conserve l'UID :
+         * quand un visiteur s'inscrit, {@code register} retombe sur SA ligne, déjà active
+         * et créée sans aucun rôle par {@code GuestUserProvisioner}. La renvoyer telle
+         * quelle laissait le compte à autorités vides — aucun endpoint à rôle accessible,
+         * et la purge de la Task 7 l'aurait visé comme une ligne invitée abandonnée.
+         */
+        @Test
+        @DisplayName("ligne invitée sans rôle + token promu → promue en SENDER+TRAVELER")
+        void register_guestRow_promotesToSenderAndTraveler() {
+            UserEntity guestRow = new UserEntity();
+            guestRow.setFirebaseUid(FIREBASE_UID);
+            guestRow.setStatus(UserStatus.ACTIVE);
+            guestRow.setKycStatus(KycStatus.NOT_STARTED);
+            setId(guestRow, UUID.randomUUID());
+            assertThat(guestRow.getRoles()).isEmpty();
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(guestRow));
+            when(userRepository.save(any(UserEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            RegisterRequest req = new RegisterRequest(PHONE, null, Set.of("SENDER"));
+            authService.register(FIREBASE_UID, mockPhoneToken(), req);
+
+            assertThat(guestRow.getRoles()).containsExactlyInAnyOrder(Role.SENDER, Role.TRAVELER);
+            verify(userRepository).save(guestRow);
+            // L'inscription d'un invité EST une inscription : le code de parrainage et les
+            // métriques dépendent de cet event, qui n'était jamais publié pour lui.
+            verify(eventPublisher).publishEvent(any(com.yadony.api.auth.events.UserRegisteredEvent.class));
+        }
+
+        /**
+         * Le garde-fou du correctif ci-dessus. {@code /auth/**} est en {@code permitAll} :
+         * un invité peut atteindre {@code /auth/register}. Accorder des rôles sur la foi d'un
+         * jeton ENCORE anonyme donnerait un compte complet à une simple session visiteur.
+         *
+         * <p>Ronde 2 : le refus est désormais posé en tête de {@code register}, il vaut donc
+         * pour les trois branches et pas seulement pour celle-ci.
+         */
+        @Test
+        @DisplayName("ligne invitée sans rôle + token encore anonyme → refus, jamais promue")
+        void register_guestRow_anonymousToken_neverPromotes() {
+            UserEntity guestRow = new UserEntity();
+            guestRow.setFirebaseUid(FIREBASE_UID);
+            guestRow.setStatus(UserStatus.ACTIVE);
+            guestRow.setKycStatus(KycStatus.NOT_STARTED);
+            setId(guestRow, UUID.randomUUID());
+            lenient().when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(guestRow));
+
+            RegisterRequest req = new RegisterRequest(PHONE, null, Set.of("SENDER"));
+            assertThatThrownBy(() -> authService.register(FIREBASE_UID, anonymousToken(), req))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                            .isEqualTo("invalid-provider"));
+
+            assertThat(guestRow.getRoles()).isEmpty();
+            verify(userRepository, never()).save(any());
+            verify(eventPublisher, never()).publishEvent(any());
+        }
+
+        /**
+         * Ronde 2. La branche RÉACTIVATION accordait {@code SENDER+TRAVELER} sans le moindre
+         * contrôle de provider : le {@code switch} de {@code createUser}, qui rejette
+         * {@code anonymous}, n'est jamais atteint depuis cette branche.
+         *
+         * <p>Ce n'était pas exploitable avant la Task 5, faute de lignes invitées
+         * soft-deletées. Ça l'est depuis que {@code GuestClaimService} en produit à chaque
+         * réclamation réussie (et la purge de la Task 7 en produira aussi) : visiteur pose un
+         * favori, réclame ses données (ligne soft-deletée), puis appelle
+         * {@code /auth/register} avec le même jeton encore anonyme et obtient un compte
+         * complet sur un UID anonyme, sans téléphone ni email.
+         */
+        @Test
+        @DisplayName("branche réactivation + token encore anonyme → refus, ligne jamais réactivée")
+        void register_reactivation_anonymousToken_isRejected() {
+            UserEntity softDeleted = buildUser();
+            lenient().when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.empty());
+            lenient().when(userRepository.findByFirebaseUidIncludingDeleted(FIREBASE_UID))
+                    .thenReturn(Optional.of(softDeleted));
+
+            RegisterRequest req = new RegisterRequest(PHONE, null, Set.of("SENDER"));
+            assertThatThrownBy(() -> authService.register(FIREBASE_UID, anonymousToken(), req))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                            .isEqualTo("invalid-provider"));
+
+            // La ligne reste supprimée : reactivateByFirebaseUid est le seul mécanisme qui
+            // efface deleted_at, et il n'est jamais invoqué.
+            verify(userRepository, never()).reactivateByFirebaseUid(any(), any());
+            verify(userRepository, never()).save(any());
+        }
+
+        /**
+         * Non-régression du refus ci-dessus : une réactivation légitime, avec un jeton
+         * téléphone, doit continuer de fonctionner exactement comme avant.
+         */
+        @Test
+        @DisplayName("branche réactivation + token téléphone → réactivation inchangée")
+        void register_reactivation_nonAnonymousToken_stillWorks() {
+            UserEntity softDeleted = buildUser();
+            when(userRepository.findByFirebaseUidIncludingDeleted(FIREBASE_UID))
+                    .thenReturn(Optional.of(softDeleted));
+
+            UserEntity reactivated = new UserEntity();
+            reactivated.setFirebaseUid(FIREBASE_UID);
+            reactivated.setStatus(UserStatus.ACTIVE);
+            setId(reactivated, UUID.randomUUID());
+            when(userRepository.findByFirebaseUid(FIREBASE_UID))
+                    .thenReturn(Optional.empty())
+                    .thenReturn(Optional.of(reactivated));
+            when(userRepository.save(any())).thenReturn(reactivated);
+
+            RegisterRequest req = new RegisterRequest(PHONE, null, Set.of("SENDER"));
+            authService.register(FIREBASE_UID, mockPhoneToken(), req);
+
+            verify(userRepository).reactivateByFirebaseUid(FIREBASE_UID, UserStatus.ACTIVE.name());
+            assertThat(reactivated.getRoles()).containsExactlyInAnyOrder(Role.SENDER, Role.TRAVELER);
+            verify(auditService).log(eq("USER"), any(), eq("USER_REACTIVATED"), any(), any());
         }
 
         @Test

@@ -115,7 +115,8 @@ class PackageRequestServiceTest {
         // Real mapper wired to the same mocks so SearchTests assertions remain valid
         PackageRequestSearchMapper realMapper = new PackageRequestSearchMapper(
                 userRepository, cityRepository, storageService, photoService,
-                com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3));
+                com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3),
+                commissionProperties);
         service = new PackageRequestService(
                 repository, userRepository, eventPublisher, auditService, config,
                 threadRepository, cityRepository, commissionProperties,
@@ -570,6 +571,45 @@ class PackageRequestServiceTest {
             var resp = service.getById(SENDER_ID, entity.getId());
 
             assertThat(resp.viewerThreadId()).isNull();
+        }
+
+        /**
+         * Contrepartie du masquage de {@code promoCode} : il ne doit toucher QUE les tiers.
+         *
+         * <p>Sans ce test, quelqu'un qui durcirait le masquage demain casserait l'écran
+         * d'édition du propriétaire, dont le formulaire se pré-remplit avec ce code, sans que
+         * rien ne l'en avertisse. Les tests de non-fuite ne vérifient que l'absence.
+         *
+         * <p>Écrit ici et non dans {@code PackageRequestControllerIT} : ce dernier pose un
+         * {@code @MockBean PackageRequestService}, donc {@code toResponse} n'y tourne jamais et
+         * un test y aurait vérifié un mock. Ici le vrai service s'exécute.
+         */
+        @Test @DisplayName("propriétaire → reçoit toujours son propre promoCode")
+        void getById_owner_stillReceivesOwnPromoCode() {
+            PackageRequestEntity entity = buildEntity(SENDER_ID, PackageRequestStatus.OPEN);
+            entity.setPromoCode("BIENVENUE10");
+            when(repository.findById(entity.getId())).thenReturn(Optional.of(entity));
+
+            var resp = service.getById(SENDER_ID, entity.getId());
+
+            assertThat(resp.promoCode())
+                .as("le code pré-remplit l'édition de son propriétaire, il doit lui rester servi")
+                .isEqualTo("BIENVENUE10");
+        }
+
+        /** Le pendant négatif, au même endroit : un tiers ne l'obtient jamais. */
+        @Test @DisplayName("voyageur tiers → promoCode masqué")
+        void getById_thirdParty_promoCodeHidden() {
+            UUID autre = UUID.randomUUID();
+            PackageRequestEntity entity = buildEntity(SENDER_ID, PackageRequestStatus.OPEN);
+            entity.setPromoCode("BIENVENUE10");
+            when(repository.findById(entity.getId())).thenReturn(Optional.of(entity));
+
+            var resp = service.getById(autre, entity.getId());
+
+            assertThat(resp.promoCode())
+                .as("un code à usages comptés ne suit pas la consultation d'une demande")
+                .isNull();
         }
 
         @Test @DisplayName("non-participant, demande OPEN → OK (consultable publiquement)")

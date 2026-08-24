@@ -559,7 +559,8 @@ public class PackageRequestService {
         return toResponse(entity,
             viewerThread.map(com.yadony.api.requests.entity.NegotiationThreadEntity::getId).orElse(null),
             viewerThread.map(t -> t.getStatus().name()).orElse(null),
-            resolveViewerHasConnect(callerUid));
+            resolveViewerHasConnect(callerUid),
+            isOwner);
     }
 
     // ─── findMine ─────────────────────────────────────────────────────────────────
@@ -936,8 +937,9 @@ public class PackageRequestService {
 
     // ─── Mappers ─────────────────────────────────────────────────────────────────
 
+    /** Liste « mes demandes » : le lecteur est toujours l'expéditeur propriétaire. */
     PackageRequestResponse toResponse(PackageRequestEntity e) {
-        return toResponse(e, null, null, false);
+        return toResponse(e, null, null, false, true);
     }
 
     /**
@@ -947,11 +949,25 @@ public class PackageRequestService {
      *                 {@code isFavorite} côté recherche.
      */
     PackageRequestResponse toResponse(PackageRequestEntity e, UUID viewerId) {
-        return toResponse(e, null, null, resolveViewerHasConnect(viewerId));
+        // Tous les appelants de cette surcharge (create, update, publish, unpublish,
+        // completeDetails) viennent de rejouer un contrôle de propriété : le lecteur est
+        // l'expéditeur propriétaire.
+        return toResponse(e, null, null, resolveViewerHasConnect(viewerId), true);
     }
 
+    /**
+     * @param isOwner le lecteur est l'expéditeur propriétaire de la demande. Seul lui reçoit
+     *                {@code promoCode} : ce code est saisi à la publication pour pré-remplir
+     *                sa propre édition, il n'a aucun usage d'affichage pour un tiers. Une
+     *                demande OPEN ou NEGOTIATING est consultable par n'importe quel voyageur
+     *                et, depuis l'ouverture aux sessions anonymes, par n'importe quel
+     *                visiteur : le servir à tous distribuait un code à usages comptés
+     *                ({@code max_redemptions}, {@code per_user_limit}) que son porteur
+     *                n'avait aucune intention de partager.
+     */
     PackageRequestResponse toResponse(PackageRequestEntity e, java.util.UUID viewerThreadId,
-                                      String viewerThreadStatus, boolean viewerHasConnect) {
+                                      String viewerThreadStatus, boolean viewerHasConnect,
+                                      boolean isOwner) {
         BigDecimal grossPriceEur = e.getTargetPriceEur() != null
             ? PriceBreakdown.fromNet(e.getTargetPriceEur(), commissionProperties.rate()).gross()
             : null;
@@ -974,7 +990,7 @@ public class PackageRequestService {
             photos,
             viewerThreadId,
             viewerThreadStatus,
-            e.getPromoCode(),
+            isOwner ? e.getPromoCode() : null,
             e.getCurrency(),
             availablePaymentMethods
         );

@@ -5,6 +5,7 @@ import com.yadony.api.admin.account.AdminAuthorities;
 import com.yadony.api.admin.account.AdminPermission;
 import com.yadony.api.admin.account.AdminPrincipal;
 import com.yadony.api.admin.account.AdminRole;
+import com.yadony.api.common.FirebaseSignInProvider;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.firebase.FirebaseApp;
 import com.google.firebase.auth.FirebaseAuth;
@@ -150,7 +151,22 @@ public class FirebaseTokenFilter extends OncePerRequestFilter {
         }
 
         try {
+            // Le statut invité vient du TOKEN, avant toute lecture de la base : un
+            // anonyme n'a le plus souvent aucune ligne (matérialisation paresseuse),
+            // et une ligne existante ne doit jamais le promouvoir.
+            boolean isGuest = FirebaseSignInProvider.isAnonymous(decoded);
+
             UserEntity user = userLinkerService.resolveAndLink(uid, decoded).orElse(null);
+
+            if (isGuest) {
+                if (user != null
+                        && (user.getStatus() == UserStatus.SUSPENDED || user.getStatus() == UserStatus.BANNED)) {
+                    writeForbidden(response, "Votre compte est suspendu ou banni");
+                    return true;
+                }
+                setAuthentication(uid, decoded, List.of(new SimpleGrantedAuthority("ROLE_GUEST")));
+                return false;
+            }
 
             if (user == null) {
                 // New user — not yet registered; allow with empty roles (registration flow)

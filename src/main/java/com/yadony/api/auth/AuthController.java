@@ -4,6 +4,7 @@ import com.yadony.api.admin.account.AdminPrincipal;
 import com.yadony.api.auth.dto.DeleteImmediatelyRequest;
 import com.yadony.api.auth.dto.DeletionEligibilityResponse;
 import com.yadony.api.auth.dto.FcmTokenRequest;
+import com.yadony.api.auth.dto.GuestClaimRequest;
 import com.yadony.api.auth.dto.RegisterRequest;
 import com.yadony.api.auth.dto.UpdateProfileRequest;
 import com.yadony.api.auth.dto.UpgradeToProRequest;
@@ -35,9 +36,25 @@ import java.io.IOException;
 public class AuthController {
 
     private final AuthService authService;
+    private final GuestClaimService guestClaimService;
 
-    public AuthController(AuthService authService) {
+    public AuthController(AuthService authService, GuestClaimService guestClaimService) {
         this.authService = authService;
+        this.guestClaimService = guestClaimService;
+    }
+
+    /**
+     * Rattache au compte de l'appelant les favoris posés pendant une session visiteur.
+     *
+     * <p>Appelé quand l'inscription a échoué parce que le numéro appartenait déjà à un compte :
+     * l'app bascule sur ce compte et présente ici le jeton anonyme encore valide. Réservé à un
+     * appelant NON invité — la règle est portée par {@code SecurityConfig}, déclarée avant le
+     * {@code permitAll} sur {@code /auth/**}, et non par une garde écrite ici.
+     */
+    @PostMapping("/guest/claim")
+    public ResponseEntity<Void> claimGuestData(@Valid @RequestBody GuestClaimRequest request) {
+        guestClaimService.claim(requireFirebaseUid(), request.guestIdToken());
+        return ResponseEntity.noContent().build();
     }
 
     @PostMapping("/register")

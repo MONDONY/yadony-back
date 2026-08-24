@@ -134,6 +134,12 @@ yadony:
     card-expiration-warning-days: 30
   cancellation:
     return-deadline-cron: "0 0 * * * *"
+  guest:
+    # Combien de temps on garde la ligne « users » d'un visiteur anonyme qui n'est
+    # jamais devenu un compte. Au-delà, GuestUserCleanupScheduler la supprime — mais
+    # seulement si elle ne porte ni rôle, ni favori, ni la moindre marque de compte
+    # réel. Une valeur inférieure à 1 désactive la purge (voir MIN_RETENTION_DAYS).
+    retention-days: ${YADONY_GUEST_RETENTION_DAYS:30}
   limits:
     non-pro:
       monthly-announcements: ${YADONY_LIMITS_NON_PRO_MONTHLY_ANNOUNCEMENTS:2}

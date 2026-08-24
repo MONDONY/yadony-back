@@ -18,7 +18,10 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.access.expression.WebExpressionAuthorizationManager;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.util.matcher.RegexRequestMatcher;
+import org.springframework.security.web.util.matcher.RequestMatcher;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -61,6 +64,39 @@ public class SecurityConfig {
         return source;
     }
 
+    /** Forme canonique d'un UUID, telle qu'elle apparaît dans les chemins d'API. */
+    private static final String UUID_SEGMENT =
+            "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
+
+    /**
+     * « Authentifié, et pas un invité. »
+     *
+     * <p>{@code authenticated()} seul ne suffit pas : un token Firebase anonyme est
+     * parfaitement authentifié. {@code hasRole('GUEST')} teste l'autorité
+     * {@code ROLE_GUEST} ; le préfixe est ajouté par Spring Security et ne doit pas être
+     * écrit ici.
+     *
+     * <p>Une nouvelle instance à chaque appel : ces gestionnaires sont posés une seule
+     * fois au démarrage, rien ne justifie de partager un état entre règles.
+     */
+    private static WebExpressionAuthorizationManager authenticatedNonGuest() {
+        return new WebExpressionAuthorizationManager("isAuthenticated() and !hasRole('GUEST')");
+    }
+
+    /**
+     * Matcher d'un chemin {@code <prefixe>/<uuid>} pour une méthode donnée.
+     *
+     * <p>{@code prefixRegex} est inséré tel quel dans l'expression régulière : il peut
+     * donc contenir un segment libre (par exemple {@code "/favorites/[^/]+"}).
+     *
+     * <p>{@code RegexRequestMatcher} compare le chemin servlet, auquel la chaîne de
+     * requête est concaténée quand elle existe : d'où le {@code (\?.*)?} final, sans
+     * lequel la moindre {@code ?page=0} ferait échouer le matcher.
+     */
+    private static RequestMatcher uuidPath(HttpMethod method, String prefixRegex) {
+        return RegexRequestMatcher.regexMatcher(method, "^" + prefixRegex + "/" + UUID_SEGMENT + "(\\?.*)?$");
+    }
+
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
@@ -74,10 +110,33 @@ public class SecurityConfig {
                 // MUTE le compte (il y rattache une adresse) : l'authentification doit
                 // être portée par la chaîne de sécurité, pas par une garde écrite dans
                 // le controller, qu'un refactor pourrait retirer sans aucun signal.
-                .requestMatchers("/auth/email-otp/attach").authenticated()
-                .requestMatchers("/auth/sms-otp/attach").authenticated()
-                .requestMatchers("/auth/me/residence-address").authenticated()
-                .requestMatchers("/auth/me/onboarding-seen").authenticated()
+                //
+                // `authenticatedNonGuest()` et non `authenticated()` : ces règles sont
+                // déclarées AVANT la règle invité, donc un ROLE_GUEST les satisferait et
+                // atteindrait des endpoints d'écriture hors liste blanche. Inoffensif tant
+                // qu'un invité n'a pas de ligne `users`, mais ce serait un rattachement
+                // d'identité — ou une mutation de profil — ouvert au visiteur dès que
+                // cette ligne existe (matérialisation paresseuse au premier favori).
+                //
+                // Surtout PAS une liste de rôles ici : ces endpoints doivent rester
+                // joignables par un compte authentifié encore sans rôle, c'est
+                // exactement le tunnel d'inscription qu'ils servent.
+                .requestMatchers("/auth/email-otp/attach").access(authenticatedNonGuest())
+                .requestMatchers("/auth/sms-otp/attach").access(authenticatedNonGuest())
+                // Même motif : mutent une ligne `users` réelle (adresse de résidence,
+                // indicateur d'onboarding). Un invité matérialisé par un favori pourrait
+                // sinon écrire sur sa propre ligne invitée, promise à la purge.
+                .requestMatchers("/auth/me/residence-address").access(authenticatedNonGuest())
+                .requestMatchers("/auth/me/onboarding-seen").access(authenticatedNonGuest())
+                // Réclamation des données d'une session anonyme : mute deux comptes (les
+                // favoris changent de propriétaire, la ligne invitée est supprimée). Même
+                // motif que les règles ci-dessus, et même emplacement obligatoire, AVANT
+                // le permitAll sur /auth/**.
+                //
+                // `authenticatedNonGuest()` : l'appelant doit être un VRAI compte. Un invité
+                // qui atteindrait cet endpoint pourrait, en présentant le jeton anonyme d'un
+                // autre visiteur, s'approprier ses favoris sans jamais s'inscrire.
+                .requestMatchers(HttpMethod.POST, "/auth/guest/claim").access(authenticatedNonGuest())
                 .requestMatchers(
                     "/auth/**",
                     "/actuator/health",
@@ -130,7 +189,60 @@ public class SecurityConfig {
                     // enforced via HMAC signature verification in AdminSentryWebhookController.
                     "/admin/sentry-webhook"
                 ).permitAll()
-                .anyRequest().authenticated()
+                // ── Invités (session Firebase anonyme) ──────────────────────────────
+                // Modèle FERMÉ PAR DÉFAUT : on énumère ce qu'un invité peut faire, et
+                // tout le reste lui est refusé par la dernière règle. Un contrôleur
+                // ajouté demain sans y penser est donc inaccessible aux invités, au
+                // lieu de leur être ouvert : l'oubli devient sûr.
+                //
+                // NE JAMAIS remplacer ceci par des @PreAuthorize sur les contrôleurs
+                // d'engagement : ce serait revenir à un modèle ouvert par défaut.
+                //
+                // Ces chemins sont volontairement laissés en `authenticated()` et non en
+                // `hasAnyRole("GUEST", "SENDER", ...)`. Ils étaient déjà joignables par
+                // tout authentifié ; les réécrire en liste de rôles fermerait la
+                // recherche aux comptes à autorités vides, c'est-à-dire au tunnel
+                // d'inscription. La liste blanche ouvre aux invités, elle ne doit rien
+                // fermer à personne. Le tri fin par rôle reste porté par les
+                // @PreAuthorize de chaque méthode, inchangés hormis l'ajout de 'GUEST'.
+                //
+                // Les chemins portant un identifiant sont décrits par une expression
+                // régulière et non par un joker `*`. Un joker ouvrirait aussi tous les
+                // chemins frères ajoutés plus tard sous le même préfixe
+                // (`/announcements/export`, `/favorites/bulk/import`…), ce qui
+                // contredirait frontalement la promesse « l'oubli devient sûr ». Exiger
+                // la forme d'un UUID fait qu'un segment nommé ne matche jamais, et
+                // retombe donc sur la règle finale, c'est-à-dire fermé.
+                //
+                // Les alertes corridor sont volontairement ABSENTES de cette liste.
+                // Décision produit : si une action exige un rôle, l'invité ne la fait
+                // pas. `AlertService.validateDirection` n'est pas une barrière de
+                // permission mais un contrôle sémantique — SENDER_WANTS_TRIPS exige
+                // SENDER, TRAVELER_WANTS_PACKAGES exige TRAVELER — et un invité n'étant
+                // ni l'un ni l'autre, aucune direction ne lui convient. Les favoris
+                // restent ouverts : leur contrôle de rôle ne signifiait que « sois un
+                // vrai compte », l'action elle-même ne dépend d'aucun rôle.
+                .requestMatchers(HttpMethod.GET,
+                    "/announcements",
+                    "/package-requests",
+                    "/favorites/ids",
+                    "/favorites/trips",
+                    "/favorites/package-requests"
+                ).authenticated()
+                .requestMatchers(uuidPath(HttpMethod.GET, "/announcements"))
+                    .authenticated()
+                .requestMatchers(uuidPath(HttpMethod.GET, "/package-requests"))
+                    .authenticated()
+                // L'ajout d'un favori est un PUT (toggle-on), pas un POST. Le segment
+                // de type reste libre : il est validé en 400 par FavoriteTargetType.
+                .requestMatchers(uuidPath(HttpMethod.PUT, "/favorites/[^/]+"))
+                    .authenticated()
+                .requestMatchers(uuidPath(HttpMethod.DELETE, "/favorites/[^/]+"))
+                    .authenticated()
+                // Tout le reste : authentifié ET non-invité. C'est cette règle, et elle
+                // seule, qui rend l'oubli sûr : un contrôleur ajouté demain sans y penser
+                // est fermé aux invités d'office.
+                .anyRequest().access(authenticatedNonGuest())
             )
             .addFilterBefore(firebaseTokenFilter, UsernamePasswordAuthenticationFilter.class)
             .exceptionHandling(ex -> ex
