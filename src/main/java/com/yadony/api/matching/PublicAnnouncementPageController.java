@@ -107,7 +107,7 @@ public class PublicAnnouncementPageController {
 
     /**
      * Bouton principal orienté store selon l'appareil, plutôt que le lien
-     * {@code dony://}. Faux par défaut : l'application n'est pas encore
+     * {@code yadony://}. Faux par défaut : l'application n'est pas encore
      * publiée, et un bouton orienté store pointerait vers rien tant que
      * {@code app.store.android}/{@code .ios} restent vides. Le comportement
      * est écrit et testé maintenant ; l'activer plus tard n'est qu'un
@@ -187,7 +187,7 @@ public class PublicAnnouncementPageController {
         // Lieux de remise et de récupération, tels que le voyageur les a saisis.
         model.addAttribute("pickupAddress", announcement.getPickupAddressLabel());
         model.addAttribute("deliveryAddress", announcement.getDeliveryAddressLabel());
-        model.addAttribute("deepLink", "dony://annonce/" + announcementId);
+        model.addAttribute("deepLink", "yadony://annonce/" + announcementId);
         model.addAttribute("shareUrl", buildShareUrl(announcementId));
         applyPrimaryCta(model, announcementId, request);
 
@@ -196,13 +196,13 @@ public class PublicAnnouncementPageController {
 
     /**
      * Bouton principal : le store du bon système si {@link #isStoreOsRedirectEnabled()}
-     * et que l'appareil est identifié, sinon le lien {@code dony://} historique.
+     * et que l'appareil est identifié, sinon le lien {@code yadony://} historique.
      *
      * <p>Une majorité écrasante des visiteurs de cette page n'a pas encore
      * l'application — c'est toute la raison d'être de la page. Pour eux, le
-     * lien {@code dony://} ne fait rien d'utile ; les envoyer directement vers
+     * lien {@code yadony://} ne fait rien d'utile ; les envoyer directement vers
      * le store correspondant à leur téléphone les convertit au lieu de les
-     * laisser cliquer dans le vide. Repli sur {@code dony://} si le système
+     * laisser cliquer dans le vide. Repli sur {@code yadony://} si le système
      * n'est pas reconnu (ordinateur) ou si son store n'est pas configuré — un
      * bouton qui ne mène nulle part coûte plus cher qu'un bouton absent.
      *
@@ -213,7 +213,7 @@ public class PublicAnnouncementPageController {
      * que ne rien montrer.
      */
     private void applyPrimaryCta(Model model, UUID announcementId, HttpServletRequest request) {
-        String deepLink = "dony://annonce/" + announcementId;
+        String deepLink = "yadony://annonce/" + announcementId;
         String osStoreUrl = null;
 
         if (isStoreOsRedirectEnabled()) {
@@ -235,7 +235,7 @@ public class PublicAnnouncementPageController {
     /**
      * Détection best-effort par User-Agent, comme {@link #isPreviewCrawler}.
      * Elle n'a pas besoin d'être infaillible : au pire un visiteur mal
-     * identifié retombe sur le lien {@code dony://}, sans jamais casser rien.
+     * identifié retombe sur le lien {@code yadony://}, sans jamais casser rien.
      */
     private MobileOs detectMobileOs(HttpServletRequest request) {
         String agent = request.getHeader("User-Agent");

@@ -91,7 +91,7 @@ class PublicAnnouncementPageControllerStoreRedirectTest {
 
     /**
      * Un ordinateur n'a pas de store mobile à ouvrir : le bouton retombe sur le
-     * lien {@code dony://} plutôt que d'envoyer quelqu'un vers un store au
+     * lien {@code yadony://} plutôt que d'envoyer quelqu'un vers un store au
      * hasard.
      */
     @Test
@@ -101,7 +101,7 @@ class PublicAnnouncementPageControllerStoreRedirectTest {
         mockMvc.perform(get("/public/annonce/" + a.getId()).header("User-Agent", DESKTOP_UA))
                 .andExpect(status().isOk())
                 .andExpect(content().string(
-                        containsString("dony://annonce/" + a.getId())))
+                        containsString("yadony://annonce/" + a.getId())))
                 .andExpect(content().string(containsString("Ouvrir dans l'application")));
     }
 }
