@@ -154,8 +154,13 @@ yadony:
       mcc: "4215"
       product-description: "Transport de colis entre particuliers via la plateforme Yadony"
       business-url: ${YADONY_STRIPE_CONNECT_BUSINESS_URL:https://yadony.com}
-      return-url: "yadony://stripe/onboarding/complete"
-      refresh-url: "yadony://stripe/onboarding/refresh"
+      # URL HTTPS, jamais le deep link : l'API AccountLink de Stripe refuse
+      # `yadony://` avec `url_invalid`, ce qui faisait échouer toute création
+      # de lien d'onboarding en production. Ces endpoints publics redirigent
+      # ensuite vers le deep link (StripeOnboardingRedirectController), et
+      # l'application intercepte de toute façon ces chemins dans sa webview.
+      return-url: ${YADONY_STRIPE_CONNECT_RETURN_URL:https://api.yadony.com/api/v1/payments/onboarding/return}
+      refresh-url: ${YADONY_STRIPE_CONNECT_REFRESH_URL:https://api.yadony.com/api/v1/payments/onboarding/refresh}
     webhook:
       poll-interval: 10s
       batch-size: 50
