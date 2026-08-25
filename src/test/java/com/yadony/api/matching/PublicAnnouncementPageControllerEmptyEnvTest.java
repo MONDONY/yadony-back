@@ -95,7 +95,7 @@ class PublicAnnouncementPageControllerEmptyEnvTest {
 
         mockMvc.perform(get("/public/annonce/" + a.getId()).header("User-Agent", ANDROID_UA))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("dony://annonce/" + a.getId())))
+                .andExpect(content().string(containsString("yadony://annonce/" + a.getId())))
                 .andExpect(content().string(containsString("Ouvrir dans l'application")));
     }
 }

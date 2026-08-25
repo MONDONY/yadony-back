@@ -99,7 +99,7 @@ class PublicAnnouncementPageControllerIntegrationTest {
         mockMvc.perform(get("/public/annonce/" + a.getId()).header("User-Agent", BROWSER_UA))
                 .andExpect(status().isOk())
                 .andExpect(content().string(
-                        org.hamcrest.Matchers.containsString("dony://annonce/" + a.getId())))
+                        org.hamcrest.Matchers.containsString("yadony://annonce/" + a.getId())))
                 .andExpect(content().string(
                         org.hamcrest.Matchers.containsString("/annonce/" + a.getId())));
     }
@@ -377,7 +377,7 @@ class PublicAnnouncementPageControllerIntegrationTest {
 
     /**
      * Flag {@code app.store.os-redirect-enabled} faux par défaut (repli des
-     * tests) : le bouton principal reste le lien {@code dony://} historique,
+     * tests) : le bouton principal reste le lien {@code yadony://} historique,
      * quel que soit l'appareil qui visite la page.
      */
     @Test
@@ -388,7 +388,7 @@ class PublicAnnouncementPageControllerIntegrationTest {
                         .header("User-Agent", "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit"))
                 .andExpect(status().isOk())
                 .andExpect(content().string(
-                        org.hamcrest.Matchers.containsString("dony://annonce/" + a.getId())))
+                        org.hamcrest.Matchers.containsString("yadony://annonce/" + a.getId())))
                 .andExpect(content().string(
                         org.hamcrest.Matchers.containsString("Ouvrir dans l'application")));
     }
