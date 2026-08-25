@@ -1,0 +1,65 @@
+:root {
+  --bg: #ffffff;
+  --surface: #f6f7f9;
+  --text: #101828;
+  --muted: #5a6474;
+  --accent: #1e49c7;
+  --border: #e4e7ec;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1216;
+    --surface: #171b21;
+    --text: #e8eaed;
+    --muted: #9aa4b2;
+    --accent: #7d9bff;
+    --border: #262b33;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 17px;
+  line-height: 1.65;
+  -webkit-text-size-adjust: 100%;
+}
+.wrap { max-width: 44rem; margin: 0 auto; padding: 2rem 1.25rem 5rem; }
+header { border-bottom: 1px solid var(--border); padding-bottom: 1.5rem; margin-bottom: 2rem; }
+.brand { font-size: 1.05rem; font-weight: 700; color: var(--accent); letter-spacing: -0.01em; }
+h1 { font-size: 1.9rem; line-height: 1.25; margin: 0.75rem 0 0.5rem; letter-spacing: -0.02em; text-wrap: balance; }
+h2 { font-size: 1.15rem; margin: 2.25rem 0 0.6rem; letter-spacing: -0.01em; text-wrap: balance; }
+h3 { font-size: 1rem; margin: 1.5rem 0 0.4rem; color: var(--muted); }
+p, li { color: var(--text); }
+.meta { color: var(--muted); font-size: 0.92rem; margin: 0; }
+ul, ol { padding-left: 1.25rem; }
+li { margin: 0.3rem 0; }
+a { color: var(--accent); }
+code { background: var(--surface); padding: 0.1em 0.35em; border-radius: 4px; font-size: 0.9em; }
+.todo {
+  display: inline-block;
+  background: #fff3cd;
+  color: #664d03;
+  border: 1px solid #ffe69c;
+  border-radius: 4px;
+  padding: 0.05em 0.4em;
+  font-size: 0.9em;
+  font-weight: 600;
+}
+@media (prefers-color-scheme: dark) {
+  .todo { background: #3d3113; color: #ffd970; border-color: #5c4a1c; }
+}
+.callout {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem 1.15rem;
+  margin: 1.5rem 0;
+}
+table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: 0.95rem; }
+.scroll { overflow-x: auto; }
+th, td { text-align: left; padding: 0.55rem 0.6rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.03em; }
+footer { margin-top: 3.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border); color: var(--muted); font-size: 0.9rem; }
