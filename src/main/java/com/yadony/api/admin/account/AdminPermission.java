@@ -17,6 +17,8 @@ public enum AdminPermission {
     USER_BAN,
     USER_KYC,
     USER_GDPR_DELETE,
+    /** Suppression d'un compte décidée par l'administrateur, distincte d'une demande RGPD reçue. */
+    USER_DELETE,
     USER_COMMISSION,
 
     // Payment management
