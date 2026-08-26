@@ -54,4 +54,13 @@ public interface ConversationRepository extends JpaRepository<ConversationEntity
     @Query("SELECT c FROM ConversationEntity c WHERE c.bidId = :bidId AND (c.senderId = :userId OR c.travelerId = :userId)")
     Optional<ConversationEntity> findByBidIdAndParticipantIgnoreDeleted(
             @Param("bidId") UUID bidId, @Param("userId") UUID userId);
+
+    /**
+     * Conversations qu'un participant voit encore : ni supprimées ni archivées de son côté.
+     * Pendant compté de {@link #findByParticipant} — même clause, sans pagination.
+     */
+    @Query("SELECT COUNT(c) FROM ConversationEntity c WHERE " +
+           "(c.senderId = :userId AND c.senderDeletedAt IS NULL AND c.senderArchivedAt IS NULL) OR " +
+           "(c.travelerId = :userId AND c.travelerDeletedAt IS NULL AND c.travelerArchivedAt IS NULL)")
+    long countActiveByParticipant(@Param("userId") UUID userId);
 }
