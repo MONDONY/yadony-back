@@ -3,6 +3,7 @@ package com.yadony.api.admin;
 import com.yadony.api.admin.account.AdminPrincipal;
 import com.yadony.api.admin.dto.AdminUserDetailResponse;
 import com.yadony.api.admin.dto.AdminUserListItemResponse;
+import com.yadony.api.admin.dto.DeletionImpactResponse;
 import com.yadony.api.admin.dto.MuteMessagingRequest;
 import com.yadony.api.auth.FirebaseContactService;
 import com.yadony.api.auth.KycStatus;
@@ -38,13 +39,16 @@ public class AdminUserController {
     private final UserService userService;
     private final UserRepository userRepository;
     private final FirebaseContactService firebaseContact;
+    private final UserDeletionImpactService deletionImpactService;
 
     public AdminUserController(UserService userService,
                                UserRepository userRepository,
-                               FirebaseContactService firebaseContact) {
+                               FirebaseContactService firebaseContact,
+                               UserDeletionImpactService deletionImpactService) {
         this.userService = userService;
         this.userRepository = userRepository;
         this.firebaseContact = firebaseContact;
+        this.deletionImpactService = deletionImpactService;
     }
 
     @PreAuthorize("hasAuthority('USER_VIEW')")
@@ -170,6 +174,16 @@ public class AdminUserController {
     public AdminUserDetailResponse unmuteMessaging(@PathVariable UUID userId,
             Authentication authentication) {
         return detail(userService.unmuteMessaging(userId, adminId(authentication)));
+    }
+
+    /** Consultation seule : aucun effet de bord, l'administrateur peut l'ouvrir à volonté. */
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('USER_DELETE')")
+    @GetMapping("/{userId}/deletion-impact")
+    public DeletionImpactResponse deletionImpact(@PathVariable UUID userId) {
+        userRepository.findById(userId)
+                .orElseThrow(() -> new YadonyBusinessException(
+                        HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
+        return deletionImpactService.report(userId);
     }
 
     private AdminUserDetailResponse detail(UserEntity user) {
