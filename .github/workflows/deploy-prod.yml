@@ -92,6 +92,7 @@ jobs:
           TWILIO_ACCOUNT_SID=${{ secrets.TWILIO_ACCOUNT_SID }}
           TWILIO_AUTH_TOKEN=${{ secrets.TWILIO_AUTH_TOKEN }}
           AT_API_KEY=${{ secrets.AT_API_KEY }}
+          YADONY_KYC_VERIFICATION_FLOW_ID=${{ secrets.YADONY_KYC_VERIFICATION_FLOW_ID }}
 
           # Config métier (non sensible) — modifiable dans Settings > Environments > production > Variables
           CORS_ALLOWED_ORIGINS=${{ vars.CORS_ALLOWED_ORIGINS }}
