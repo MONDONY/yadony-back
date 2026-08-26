@@ -177,6 +177,55 @@ class KycServiceTest {
     }
 
     @Test
+    void createSession_pendingWithResumableSession_reusesExistingSession() {
+        UserEntity user = buildUser(KycStatus.PENDING);
+        KycVerificationEntity kyc = buildKyc(user.getId(), KycVerificationStatus.PENDING);
+        when(userRepository.findByFirebaseUid("uid-001")).thenReturn(Optional.of(user));
+        when(kycRepository.findByUserId(user.getId())).thenReturn(Optional.of(kyc));
+
+        try (MockedStatic<VerificationSession> vsStatic = mockStatic(VerificationSession.class)) {
+            VerificationSession existingSession = mock(VerificationSession.class);
+            when(existingSession.getStatus()).thenReturn("requires_input");
+            when(existingSession.getUrl()).thenReturn("https://verify.stripe.com/start/vs_test_001");
+            vsStatic.when(() -> VerificationSession.retrieve("vs_test_001")).thenReturn(existingSession);
+
+            KycSessionResponse resp = service.createSession("uid-001");
+
+            assertThat(resp.sessionId()).isEqualTo("vs_test_001");
+            assertThat(resp.stripeUrl()).isEqualTo("https://verify.stripe.com/start/vs_test_001");
+            vsStatic.verify(() -> VerificationSession.create(any(VerificationSessionCreateParams.class)), never());
+            verify(kycRepository, never()).save(any());
+        }
+    }
+
+    @Test
+    void createSession_pendingWithTerminalSession_createsFreshSessionInstead() {
+        UserEntity user = buildUser(KycStatus.PENDING);
+        KycVerificationEntity kyc = buildKyc(user.getId(), KycVerificationStatus.PENDING);
+        when(userRepository.findByFirebaseUid("uid-001")).thenReturn(Optional.of(user));
+        // findByUserId est aussi rappelé plus loin pour récupérer/mettre à jour l'enregistrement KYC
+        when(kycRepository.findByUserId(user.getId())).thenReturn(Optional.of(kyc));
+        when(kycRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        try (MockedStatic<VerificationSession> vsStatic = mockStatic(VerificationSession.class)) {
+            VerificationSession staleSession = mock(VerificationSession.class);
+            when(staleSession.getStatus()).thenReturn("verified");
+            vsStatic.when(() -> VerificationSession.retrieve("vs_test_001")).thenReturn(staleSession);
+
+            VerificationSession freshSession = mock(VerificationSession.class);
+            when(freshSession.getId()).thenReturn("vs_test_new");
+            when(freshSession.getUrl()).thenReturn("https://verify.stripe.com/start/vs_test_new");
+            vsStatic.when(() -> VerificationSession.create(any(VerificationSessionCreateParams.class)))
+                    .thenReturn(freshSession);
+
+            KycSessionResponse resp = service.createSession("uid-001");
+
+            assertThat(resp.sessionId()).isEqualTo("vs_test_new");
+            verify(kycRepository).save(any(KycVerificationEntity.class));
+        }
+    }
+
+    @Test
     void createSession_notStarted_transitionsToPendingAndCreatesKycRecord() {
         UserEntity user = buildUser(KycStatus.NOT_STARTED);
         when(userRepository.findByFirebaseUid("uid-001")).thenReturn(Optional.of(user));
