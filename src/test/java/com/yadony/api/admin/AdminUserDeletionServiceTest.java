@@ -59,6 +59,8 @@ class AdminUserDeletionServiceTest {
         service().delete(USER_ID, ADMIN_ID, "FRAUD", "faux documents");
 
         verify(finalizationService).finalize(user, FinalizationReason.ADMIN_INITIATED);
+        verify(auditService).log(
+                eq("USER"), eq(USER_ID), eq("USER_ADMIN_DELETION"), eq(ADMIN_ID), anyMap());
     }
 
     // Le rapport affiché a pu vieillir de plusieurs minutes ; un escrow peut s'être ouvert
@@ -88,6 +90,7 @@ class AdminUserDeletionServiceTest {
                         .isEqualTo(HttpStatus.NOT_FOUND));
 
         verify(finalizationService, never()).finalize(any(), any());
+        verify(auditService, never()).log(any(), any(), any(), any(), anyMap());
     }
 
     @Test
