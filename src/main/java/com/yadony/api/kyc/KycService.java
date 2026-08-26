@@ -32,6 +32,9 @@ public class KycService {
     @Value("${yadony.kyc.return-url:https://yadony.com/kyc/complete}")
     private String kycReturnUrl;
 
+    @Value("${yadony.kyc.verification-flow-id:}")
+    private String kycVerificationFlowId;
+
     public KycService(KycRepository kycRepository,
                       UserRepository userRepository,
                       AuditService auditService) {
@@ -70,26 +73,32 @@ public class KycService {
         }
 
         try {
-            VerificationSessionCreateParams params = VerificationSessionCreateParams.builder()
-                    .setType(VerificationSessionCreateParams.Type.DOCUMENT)
+            VerificationSessionCreateParams.Builder paramsBuilder = VerificationSessionCreateParams.builder()
                     .setReturnUrl(kycReturnUrl)
-                    .putMetadata("user_id", user.getId().toString())
-                    .setOptions(
-                            VerificationSessionCreateParams.Options.builder()
-                                    .setDocument(
-                                            VerificationSessionCreateParams.Options.Document.builder()
-                                                    .setRequireLiveCapture(true)
-                                                    .setRequireMatchingSelfie(true)
-                                                    .addAllowedType(VerificationSessionCreateParams.Options.Document.AllowedType.ID_CARD)
-                                                    .addAllowedType(VerificationSessionCreateParams.Options.Document.AllowedType.PASSPORT)
-                                                    .addAllowedType(VerificationSessionCreateParams.Options.Document.AllowedType.DRIVING_LICENSE)
-                                                    .build()
-                                    )
-                                    .build()
-                    )
-                    .build();
+                    .putMetadata("user_id", user.getId().toString());
 
-            VerificationSession session = VerificationSession.create(params);
+            if (kycVerificationFlowId != null && !kycVerificationFlowId.isBlank()) {
+                // Le flow (configuré dans le Dashboard Stripe) pilote type + options : mutuellement
+                // exclusif avec setType/setOptions d'après la doc Stripe, donc on ne les fixe pas ici.
+                paramsBuilder.setVerificationFlow(kycVerificationFlowId);
+            } else {
+                paramsBuilder.setType(VerificationSessionCreateParams.Type.DOCUMENT)
+                        .setOptions(
+                                VerificationSessionCreateParams.Options.builder()
+                                        .setDocument(
+                                                VerificationSessionCreateParams.Options.Document.builder()
+                                                        .setRequireLiveCapture(true)
+                                                        .setRequireMatchingSelfie(true)
+                                                        .addAllowedType(VerificationSessionCreateParams.Options.Document.AllowedType.ID_CARD)
+                                                        .addAllowedType(VerificationSessionCreateParams.Options.Document.AllowedType.PASSPORT)
+                                                        .addAllowedType(VerificationSessionCreateParams.Options.Document.AllowedType.DRIVING_LICENSE)
+                                                        .build()
+                                        )
+                                        .build()
+                        );
+            }
+
+            VerificationSession session = VerificationSession.create(paramsBuilder.build());
 
             // Find existing or create new KYC record
             KycVerificationEntity kyc = kycRepository.findByUserId(user.getId())
