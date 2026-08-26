@@ -18,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 @Service
@@ -53,21 +54,26 @@ public class KycService {
         }
 
         // Idempotency: return existing session if already PENDING to avoid duplicate Stripe sessions —
-        // mais seulement si Stripe la considère toujours utilisable. Une session déjà verified/canceled/
-        // processing (ou une session issue d'une config Stripe désormais périmée, ex. avant l'ajout d'un
-        // verification_flow) ne doit jamais être resservie : on retombe alors sur la création d'une session
-        // neuve, avec la config actuelle.
+        // à deux conditions. La session doit rester utilisable (`requires_input` : ni verified, ni
+        // canceled, ni processing), et avoir été créée avec la configuration de flow courante. Sans ce
+        // second test, un changement de `verification-flow-id` ne prend jamais effet pour les comptes
+        // déjà PENDING : leur session inachevée est elle aussi `requires_input`, donc resservie
+        // indéfiniment avec l'ancienne configuration.
         if (user.getKycStatus() == KycStatus.PENDING) {
             Optional<KycVerificationEntity> existing = kycRepository.findByUserId(user.getId());
             if (existing.isPresent() && existing.get().getStripeVerificationSessionId() != null) {
                 String existingSessionId = existing.get().getStripeVerificationSessionId();
                 try {
                     VerificationSession existingSession = VerificationSession.retrieve(existingSessionId);
-                    if ("requires_input".equals(existingSession.getStatus())) {
+                    if (!"requires_input".equals(existingSession.getStatus())) {
+                        log.info("Existing KYC session {} no longer resumable (status={}), creating new one",
+                                existingSessionId, existingSession.getStatus());
+                    } else if (!matchesConfiguredFlow(existingSession)) {
+                        log.info("Existing KYC session {} was created with flow {} but {} is configured, creating new one",
+                                existingSessionId, existingSession.getVerificationFlow(), kycVerificationFlowId);
+                    } else {
                         return new KycSessionResponse(existingSession.getUrl(), existingSessionId, "PENDING");
                     }
-                    log.info("Existing KYC session {} no longer resumable (status={}), creating new one",
-                            existingSessionId, existingSession.getStatus());
                 } catch (Exception e) {
                     log.warn("Could not retrieve existing KYC session {}, creating new one", existingSessionId);
                 }
@@ -133,6 +139,19 @@ public class KycService {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
                     "Impossible de créer la session de vérification");
         }
+    }
+
+    /**
+     * Une session Stripe porte le flow avec lequel elle a été créée, ou {@code null} si elle
+     * provient de l'ancien chemin type/options. Elle n'est réutilisable que si ce flow correspond
+     * exactement à la configuration courante — flow retiré compris, auquel cas seules les sessions
+     * sans flow restent valables.
+     */
+    private boolean matchesConfiguredFlow(VerificationSession session) {
+        String configured = (kycVerificationFlowId == null || kycVerificationFlowId.isBlank())
+                ? null
+                : kycVerificationFlowId;
+        return Objects.equals(configured, session.getVerificationFlow());
     }
 
     @Transactional
