@@ -94,6 +94,28 @@ class MatchingDeletionImpactContributorTest {
                 .containsExactlyInAnyOrder(asSenderCounterparty, asTravelerCounterparty);
     }
 
+    @Test
+    @DisplayName("les deux rôles sont agrégés dans un seul constat d'offre en attente")
+    void pendingBid_mergesBothRoles() {
+        UUID asSenderCounterparty = UUID.randomUUID();
+        UUID asTravelerCounterparty = UUID.randomUUID();
+        noAnnouncements();
+        when(bidRepository.findTravelerCounterpartiesForSender(eq(USER_ID), any()))
+                .thenAnswer(inv -> ((Collection<BidStatus>) inv.getArgument(1)).contains(BidStatus.PENDING)
+                        ? List.of(counterparty(UUID.randomUUID(), asSenderCounterparty)) : List.of());
+        when(bidRepository.findSenderCounterpartiesForTraveler(eq(USER_ID), any()))
+                .thenAnswer(inv -> ((Collection<BidStatus>) inv.getArgument(1)).contains(BidStatus.PENDING)
+                        ? List.of(counterparty(UUID.randomUUID(), asTravelerCounterparty)) : List.of());
+
+        ImpactFinding pending = contributor().contribute(USER_ID).stream()
+                .filter(f -> f.code().equals("PENDING_BID")).findFirst().orElseThrow();
+
+        assertThat(pending.count()).isEqualTo(2);
+        assertThat(pending.affectedParties())
+                .extracting(ImpactFinding.AffectedParty::userId)
+                .containsExactlyInAnyOrder(asSenderCounterparty, asTravelerCounterparty);
+    }
+
     // Les offres d'une annonce sont déjà rapportées par PENDING_BID et PARCEL_IN_TRANSIT :
     // les lister une seconde fois ici afficherait deux fois les mêmes personnes.
     @Test

@@ -51,7 +51,7 @@ public class MatchingDeletionImpactContributor implements UserDeletionImpactCont
         long upcoming = announcementRepository.countByTravelerIdAndStatusIn(userId, UPCOMING);
         if (upcoming > 0) {
             findings.add(ImpactFinding.plain(
-                    ImpactSeverity.WARNING, "UPCOMING_ANNOUNCEMENT", (int) upcoming));
+                    ImpactSeverity.WARNING, "UPCOMING_ANNOUNCEMENT", Math.toIntExact(upcoming)));
         }
 
         return findings;
