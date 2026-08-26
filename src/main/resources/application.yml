@@ -149,6 +149,7 @@ yadony:
     max-amount-eur: ${YADONY_REIMBURSEMENT_MAX_AMOUNT_EUR:50}
   kyc:
     return-url: ${YADONY_KYC_RETURN_URL:https://yadony.com/kyc/complete}
+    verification-flow-id: ${YADONY_KYC_VERIFICATION_FLOW_ID:}
   stripe:
     connect:
       mcc: "4215"
