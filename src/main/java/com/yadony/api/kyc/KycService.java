@@ -52,14 +52,22 @@ public class KycService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "KYC déjà vérifié");
         }
 
-        // Idempotency: return existing session if already PENDING to avoid duplicate Stripe sessions
+        // Idempotency: return existing session if already PENDING to avoid duplicate Stripe sessions —
+        // mais seulement si Stripe la considère toujours utilisable. Une session déjà verified/canceled/
+        // processing (ou une session issue d'une config Stripe désormais périmée, ex. avant l'ajout d'un
+        // verification_flow) ne doit jamais être resservie : on retombe alors sur la création d'une session
+        // neuve, avec la config actuelle.
         if (user.getKycStatus() == KycStatus.PENDING) {
             Optional<KycVerificationEntity> existing = kycRepository.findByUserId(user.getId());
             if (existing.isPresent() && existing.get().getStripeVerificationSessionId() != null) {
                 String existingSessionId = existing.get().getStripeVerificationSessionId();
                 try {
                     VerificationSession existingSession = VerificationSession.retrieve(existingSessionId);
-                    return new KycSessionResponse(existingSession.getUrl(), existingSessionId, "PENDING");
+                    if ("requires_input".equals(existingSession.getStatus())) {
+                        return new KycSessionResponse(existingSession.getUrl(), existingSessionId, "PENDING");
+                    }
+                    log.info("Existing KYC session {} no longer resumable (status={}), creating new one",
+                            existingSessionId, existingSession.getStatus());
                 } catch (Exception e) {
                     log.warn("Could not retrieve existing KYC session {}, creating new one", existingSessionId);
                 }
