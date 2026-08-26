@@ -14,7 +14,6 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -41,7 +40,9 @@ class WalletDeletionImpactContributorTest {
     @DisplayName("un solde positif bloque la suppression")
     void positiveBalance_isBlocking() {
         when(accountRepository.findAllByUserId(USER_ID)).thenReturn(List.of(accountWith("12.50")));
-        lenient().when(refundRepository.findAllByUserIdAndStatus(any(), any())).thenReturn(List.of());
+        // L'implémentation interroge systématiquement les deux repositories pour produire un rapport
+        // complet d'emblée — ce stub est donc effectivement appelé, pas lenient().
+        when(refundRepository.findAllByUserIdAndStatus(any(), any())).thenReturn(List.of());
 
         List<ImpactFinding> findings = contributor().contribute(USER_ID);
 
@@ -66,6 +67,24 @@ class WalletDeletionImpactContributorTest {
                 .thenReturn(List.of(new WalletRefundRequestEntity(), new WalletRefundRequestEntity()));
         when(refundRepository.findAllByUserIdAndStatus(USER_ID, WalletRefundRequestStatus.PROCESSING))
                 .thenReturn(List.of());
+
+        List<ImpactFinding> findings = contributor().contribute(USER_ID);
+
+        assertThat(findings).hasSize(1);
+        assertThat(findings.getFirst().code()).isEqualTo("WALLET_REFUND_PENDING");
+        assertThat(findings.getFirst().count()).isEqualTo(2);
+    }
+
+    // Les deux statuts appellent la même action — attendre que le remboursement soit soldé.
+    // Les distinguer à l'écran ajouterait du bruit sans changer la décision de l'administrateur.
+    @Test
+    @DisplayName("les demandes en attente et en cours de traitement sont un seul et même obstacle")
+    void pendingAndProcessingRefunds_produceSingleFindingWithCombinedCount() {
+        when(accountRepository.findAllByUserId(USER_ID)).thenReturn(List.of());
+        when(refundRepository.findAllByUserIdAndStatus(USER_ID, WalletRefundRequestStatus.PENDING))
+                .thenReturn(List.of(new WalletRefundRequestEntity()));
+        when(refundRepository.findAllByUserIdAndStatus(USER_ID, WalletRefundRequestStatus.PROCESSING))
+                .thenReturn(List.of(new WalletRefundRequestEntity()));
 
         List<ImpactFinding> findings = contributor().contribute(USER_ID);
 

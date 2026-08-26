@@ -32,6 +32,7 @@ class PaymentDeletionImpactContributorTest {
         assertThat(findings).hasSize(1);
         assertThat(findings.getFirst().severity()).isEqualTo(ImpactSeverity.BLOCKING);
         assertThat(findings.getFirst().code()).isEqualTo("ACTIVE_ESCROW");
+        assertThat(findings.getFirst().count()).isEqualTo(1);
     }
 
     @Test

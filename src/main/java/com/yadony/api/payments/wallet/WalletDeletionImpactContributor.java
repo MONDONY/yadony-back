@@ -42,7 +42,7 @@ public class WalletDeletionImpactContributor implements UserDeletionImpactContri
                 .count();
         if (credited > 0) {
             findings.add(ImpactFinding.plain(
-                    ImpactSeverity.BLOCKING, "WALLET_POSITIVE_BALANCE", (int) credited));
+                    ImpactSeverity.BLOCKING, "WALLET_POSITIVE_BALANCE", Math.toIntExact(credited)));
         }
 
         int unresolved = UNRESOLVED.stream()
