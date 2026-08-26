@@ -50,6 +50,6 @@ public class DisputeDeletionImpactContributor implements UserDeletionImpactContr
         // Le décompte suit les litiges, pas les contreparties : un litige sans autre partie
         // identifiable doit rester visible à l'écran.
         return List.of(new ImpactFinding(
-                ImpactSeverity.WARNING, "OPEN_DISPUTE", open.size(), List.copyOf(parties)));
+                ImpactSeverity.WARNING, "OPEN_DISPUTE", open.size(), parties));
     }
 }

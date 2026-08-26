@@ -74,4 +74,18 @@ class DisputeDeletionImpactContributorTest {
         assertThat(findings.getFirst().count()).isEqualTo(1);
         assertThat(findings.getFirst().affectedParties()).isEmpty();
     }
+
+    @Test
+    @DisplayName("un litige où le compte est des deux côtés n'expose jamais son propre identifiant")
+    void disputeWhereAccountIsBothSides_noCounterparty() {
+        when(disputeRepository.findBySenderIdOrTravelerIdOrderByCreatedAtDesc(USER_ID, USER_ID))
+                .thenReturn(List.of(dispute(USER_ID, USER_ID, "OPEN")));
+
+        List<ImpactFinding> findings =
+                new DisputeDeletionImpactContributor(disputeRepository).contribute(USER_ID);
+
+        assertThat(findings).hasSize(1);
+        assertThat(findings.getFirst().count()).isEqualTo(1);
+        assertThat(findings.getFirst().affectedParties()).isEmpty();
+    }
 }
