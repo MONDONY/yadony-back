@@ -32,8 +32,10 @@ public class ReportDeletionImpactContributor implements UserDeletionImpactContri
                 ReportStatus.OPEN, ReportTargetType.USER, userId);
         if (!targeting.isEmpty()) {
             // Un signalement anonyme ou système peut avoir un reporterId nul : on ne le nomme pas.
+            // Si l'auteur est le compte lui-même (auto-signalement), il n'est pas une contrepartie
+            // — il reste dans le décompte mais ne doit pas apparaître comme un tiers affecté.
             List<ImpactFinding.AffectedParty> authors = targeting.stream()
-                    .filter(r -> r.getReporterId() != null)
+                    .filter(r -> r.getReporterId() != null && !userId.equals(r.getReporterId()))
                     .map(r -> new ImpactFinding.AffectedParty(r.getReporterId(), r.getId()))
                     .toList();
             findings.add(new ImpactFinding(

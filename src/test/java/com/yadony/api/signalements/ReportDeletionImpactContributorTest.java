@@ -74,6 +74,49 @@ class ReportDeletionImpactContributorTest {
                 .extracting(ImpactFinding.AffectedParty::userId).containsExactly(OTHER_ID);
     }
 
+    // Le décompte et la liste de contreparties peuvent diverger : un signalement anonyme reste
+    // dans le count mais n'a personne à nommer. Ce test garantit que retirer le filtre != null
+    // ferait échouer la suite — un count=2 avec une seule contrepartie est le résultat attendu.
+    @Test
+    @DisplayName("un signalement anonyme reste compté mais ne nomme personne")
+    void reportTargeting_anonymousReporterCountedButNotNamed() {
+        when(reportRepository.findByStatusAndTargetTypeAndTargetId(
+                ReportStatus.OPEN, ReportTargetType.USER, USER_ID))
+                .thenReturn(List.of(
+                        report(OTHER_ID, ReportTargetType.USER, USER_ID),   // auteur connu
+                        report(null,     ReportTargetType.USER, USER_ID))); // signalement anonyme
+        when(reportRepository.findByStatusAndReporterId(ReportStatus.OPEN, USER_ID))
+                .thenReturn(List.of());
+
+        ImpactFinding finding = contributor().contribute(USER_ID).getFirst();
+
+        assertThat(finding.code()).isEqualTo("REPORT_TARGETING");
+        // Deux signalements dans le décompte, mais un seul auteur identifiable.
+        assertThat(finding.count()).isEqualTo(2);
+        assertThat(finding.affectedParties())
+                .extracting(ImpactFinding.AffectedParty::userId)
+                .containsExactly(OTHER_ID);
+    }
+
+    // Un compte peut théoriquement se signaler lui-même. Dans ce cas il n'est pas une contrepartie
+    // — le rapport ne doit pas l'afficher comme un tiers affecté par sa propre suppression.
+    // Le signalement reste dans le décompte : le supprimer du count masquerait l'information.
+    @Test
+    @DisplayName("un auto-signalement ne produit aucune contrepartie, mais reste compté")
+    void reportTargeting_selfReportNoCounterparty() {
+        when(reportRepository.findByStatusAndTargetTypeAndTargetId(
+                ReportStatus.OPEN, ReportTargetType.USER, USER_ID))
+                .thenReturn(List.of(report(USER_ID, ReportTargetType.USER, USER_ID)));
+        when(reportRepository.findByStatusAndReporterId(ReportStatus.OPEN, USER_ID))
+                .thenReturn(List.of());
+
+        ImpactFinding finding = contributor().contribute(USER_ID).getFirst();
+
+        assertThat(finding.code()).isEqualTo("REPORT_TARGETING");
+        assertThat(finding.count()).isEqualTo(1);
+        assertThat(finding.affectedParties()).isEmpty();
+    }
+
     @Test
     @DisplayName("aucune modération en cours, rien à rapporter")
     void noReport_reportsNothing() {
