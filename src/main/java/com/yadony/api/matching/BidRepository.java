@@ -511,4 +511,35 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
           AND b.deletedAt IS NULL
     """)
     List<BidEntity> findNegotiationsOnDepartedTrips(@Param("today") java.time.LocalDate today);
+
+    /**
+     * L'autre partie d'une offre, sans charger l'entité.
+     *
+     * <p>Le voyageur n'est pas sur le bid mais sur l'annonce : sans jointure il faudrait une
+     * requête par offre pour l'obtenir.
+     */
+    interface BidCounterparty {
+        UUID getBidId();
+        UUID getCounterpartyId();
+    }
+
+    /** Offres où l'utilisateur est expéditeur — la contrepartie est le voyageur. */
+    @Query("""
+            SELECT b.id AS bidId, a.travelerId AS counterpartyId
+            FROM BidEntity b JOIN AnnouncementEntity a ON b.announcementId = a.id
+            WHERE b.senderId = :senderId AND b.status IN :statuses
+            """)
+    List<BidCounterparty> findTravelerCounterpartiesForSender(
+            @Param("senderId") UUID senderId,
+            @Param("statuses") Collection<BidStatus> statuses);
+
+    /** Offres portant sur les annonces de l'utilisateur — la contrepartie est l'expéditeur. */
+    @Query("""
+            SELECT b.id AS bidId, b.senderId AS counterpartyId
+            FROM BidEntity b JOIN AnnouncementEntity a ON b.announcementId = a.id
+            WHERE a.travelerId = :travelerId AND b.status IN :statuses
+            """)
+    List<BidCounterparty> findSenderCounterpartiesForTraveler(
+            @Param("travelerId") UUID travelerId,
+            @Param("statuses") Collection<BidStatus> statuses);
 }

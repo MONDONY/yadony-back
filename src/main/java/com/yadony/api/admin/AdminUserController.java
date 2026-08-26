@@ -1,8 +1,10 @@
 package com.yadony.api.admin;
 
 import com.yadony.api.admin.account.AdminPrincipal;
+import com.yadony.api.admin.dto.AdminDeleteUserRequest;
 import com.yadony.api.admin.dto.AdminUserDetailResponse;
 import com.yadony.api.admin.dto.AdminUserListItemResponse;
+import com.yadony.api.admin.dto.DeletionImpactResponse;
 import com.yadony.api.admin.dto.MuteMessagingRequest;
 import com.yadony.api.auth.FirebaseContactService;
 import com.yadony.api.auth.KycStatus;
@@ -12,6 +14,7 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.auth.UserService;
 import com.yadony.api.auth.UserStatus;
 import com.yadony.api.common.YadonyBusinessException;
+import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
@@ -25,6 +28,7 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
@@ -38,13 +42,19 @@ public class AdminUserController {
     private final UserService userService;
     private final UserRepository userRepository;
     private final FirebaseContactService firebaseContact;
+    private final UserDeletionImpactService deletionImpactService;
+    private final AdminUserDeletionService deletionService;
 
     public AdminUserController(UserService userService,
                                UserRepository userRepository,
-                               FirebaseContactService firebaseContact) {
+                               FirebaseContactService firebaseContact,
+                               UserDeletionImpactService deletionImpactService,
+                               AdminUserDeletionService deletionService) {
         this.userService = userService;
         this.userRepository = userRepository;
         this.firebaseContact = firebaseContact;
+        this.deletionImpactService = deletionImpactService;
+        this.deletionService = deletionService;
     }
 
     @PreAuthorize("hasAuthority('USER_VIEW')")
@@ -170,6 +180,29 @@ public class AdminUserController {
     public AdminUserDetailResponse unmuteMessaging(@PathVariable UUID userId,
             Authentication authentication) {
         return detail(userService.unmuteMessaging(userId, adminId(authentication)));
+    }
+
+    /** Consultation seule : aucun effet de bord, l'administrateur peut l'ouvrir à volonté. */
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('USER_DELETE')")
+    @GetMapping("/{userId}/deletion-impact")
+    public DeletionImpactResponse deletionImpact(@PathVariable UUID userId) {
+        userRepository.findById(userId)
+                .orElseThrow(() -> new YadonyBusinessException(
+                        HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
+        return deletionImpactService.report(userId);
+    }
+
+    /**
+     * {@code POST} et non {@code DELETE} : un corps de requête est nécessaire pour le motif, et
+     * tous les endpoints admin existants suivent déjà cette forme.
+     */
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('USER_DELETE')")
+    @PostMapping("/{userId}/delete")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteUser(@PathVariable UUID userId,
+                           @Valid @RequestBody AdminDeleteUserRequest request,
+                           Authentication authentication) {
+        deletionService.delete(userId, adminId(authentication), request.reasonCode(), request.reason());
     }
 
     private AdminUserDetailResponse detail(UserEntity user) {

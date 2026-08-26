@@ -11,12 +11,14 @@ public enum AdminPermission {
     // Metrics & reporting
     METRICS_VIEW,
 
-    // User management (7 permissions)
+    // User management (8 permissions)
     USER_VIEW,
     USER_SUSPEND,
     USER_BAN,
     USER_KYC,
     USER_GDPR_DELETE,
+    /** Suppression d'un compte décidée par l'administrateur, distincte d'une demande RGPD reçue. */
+    USER_DELETE,
     USER_COMMISSION,
 
     // Payment management

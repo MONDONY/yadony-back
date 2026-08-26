@@ -61,15 +61,49 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
     @Query("UPDATE PaymentEntity p SET p.status = 'REFUNDED' WHERE p.id = :id AND p.status = 'ESCROW'")
     int markRefundedIfEscrow(@Param("id") UUID id);
 
-    /** Story 9.8 — RGPD: check if the user has any active escrow payments (as sender or traveler). */
-    @Query("SELECT CASE WHEN COUNT(p) > 0 THEN true ELSE false END FROM PaymentEntity p " +
-           "WHERE p.bidId IN " +
-           "  (SELECT b.id FROM com.yadony.api.matching.BidEntity b WHERE b.senderId = :userId " +
-           "   UNION " +
-           "   SELECT b2.id FROM com.yadony.api.matching.BidEntity b2 " +
-           "   JOIN com.yadony.api.matching.AnnouncementEntity a ON b2.announcementId = a.id " +
-           "   WHERE a.travelerId = :userId) " +
-           "AND p.status = com.yadony.api.payments.PaymentStatus.ESCROW")
+    /**
+     * Vrai si l'utilisateur a au moins un paiement en séquestre actif, qu'il soit
+     * expéditeur ou voyageur, quel que soit le flux (bid direct ou négociation).
+     *
+     * <p>Deux chemins sont couverts :</p>
+     * <ul>
+     *   <li><b>Flux bid direct</b> — {@code p.bid_id} est renseigné ; on remonte via
+     *       {@code bids} (expéditeur = {@code b.sender_id}) et via
+     *       {@code announcements} (voyageur = {@code a.traveler_id}).</li>
+     *   <li><b>Flux négociation / trajet dédié</b> — {@code p.bid_id} est NULL et le
+     *       paiement est keyed sur {@code negotiation_thread_id}. Le voyageur est
+     *       directement {@code t.traveler_id} ; l'expéditeur est
+     *       {@code package_requests.sender_id} via {@code t.package_request_id}.</li>
+     * </ul>
+     *
+     * <p><b>Requête native délibérée</b> — même motif que
+     * {@link com.yadony.api.auth.UserRepository#findByIdIncludingDeleted} : les entités
+     * {@code BidEntity}, {@code AnnouncementEntity}, {@code NegotiationThreadEntity} et
+     * {@code PackageRequestEntity} portent {@code @Where} / {@code @SQLRestriction}
+     * ({@code deleted_at IS NULL}). Hibernate injecte ces filtres dans la clause {@code ON}
+     * des {@code LEFT JOIN} JPQL, rendant la jointure {@code NULL} dès que l'objet métier
+     * a été soft-deleted. Conséquence : un paiement bel et bien en séquestre devenait
+     * invisible, permettant l'anonymisation d'un compte dont de l'argent d'un tiers
+     * était encore bloqué chez Stripe. La requête native court-circuite ces filtres ;
+     * seul {@code payments.deleted_at IS NULL} est conservé (un paiement supprimé
+     * n'engage plus d'argent réel).</p>
+     */
+    @Query(value = """
+        SELECT CASE WHEN COUNT(*) > 0 THEN TRUE ELSE FALSE END
+        FROM payments p
+        LEFT JOIN bids b              ON p.bid_id = b.id
+        LEFT JOIN announcements a     ON b.announcement_id = a.id
+        LEFT JOIN negotiation_threads t  ON p.negotiation_thread_id = t.id
+        LEFT JOIN package_requests pr ON t.package_request_id = pr.id
+        WHERE p.deleted_at IS NULL
+          AND p.status = 'ESCROW'
+          AND (
+                b.sender_id   = :userId
+             OR a.traveler_id = :userId
+             OR t.traveler_id = :userId
+             OR pr.sender_id  = :userId
+              )
+    """, nativeQuery = true)
     boolean hasActiveEscrowForUser(@Param("userId") UUID userId);
 
     // Un paiement du flux négociation / trajet dédié a bidId = NULL (keyé sur le

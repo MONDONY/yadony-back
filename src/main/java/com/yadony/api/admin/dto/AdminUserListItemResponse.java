@@ -12,6 +12,7 @@ public record AdminUserListItemResponse(
         String firstName,
         String lastName,
         String phoneNumber,
+        String email,
         String city,
         String country,
         String status,
@@ -22,13 +23,14 @@ public record AdminUserListItemResponse(
         int totalShipments,
         LocalDateTime createdAt
 ) {
-    /** Le téléphone provient de Firebase : il n'est plus stocké en base. */
+    /** Le téléphone et l'email proviennent de Firebase : ils ne sont plus stockés en base. */
     public static AdminUserListItemResponse from(UserEntity u, FirebaseContactService.Contact contact) {
         return new AdminUserListItemResponse(
                 u.getId(),
                 u.getFirstName(),
                 u.getLastName(),
                 contact.phoneNumber(),
+                contact.email(),
                 u.getCity(),
                 u.getCountry(),
                 u.getStatus().name(),
