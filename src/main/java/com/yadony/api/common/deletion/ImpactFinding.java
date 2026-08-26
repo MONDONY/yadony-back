@@ -17,6 +17,11 @@ public record ImpactFinding(
         int count,
         List<AffectedParty> affectedParties
 ) {
+    /** Garantit l'immuabilité de la liste quelle que soit l'implémentation passée au constructeur. */
+    public ImpactFinding {
+        affectedParties = List.copyOf(affectedParties);
+    }
+
     public record AffectedParty(UUID userId, UUID relatedEntityId) {}
 
     /** Constat sans contrepartie identifiable — un solde, un décompte. */
@@ -26,6 +31,6 @@ public record ImpactFinding(
 
     /** Constat dont le nombre se déduit des contreparties listées. */
     public static ImpactFinding of(ImpactSeverity severity, String code, List<AffectedParty> parties) {
-        return new ImpactFinding(severity, code, parties.size(), List.copyOf(parties));
+        return new ImpactFinding(severity, code, parties.size(), parties);
     }
 }

@@ -25,6 +25,7 @@ class AdminRolePermissionsTest {
     @Test
     @DisplayName("USER_DELETE reste distincte de USER_GDPR_DELETE")
     void support_hasNeitherDeletionPermission() {
+        assertThat(AdminRole.SUPPORT.permissions()).doesNotContain(AdminPermission.USER_DELETE);
         assertThat(AdminRole.SUPPORT.permissions()).doesNotContain(AdminPermission.USER_GDPR_DELETE);
     }
 }

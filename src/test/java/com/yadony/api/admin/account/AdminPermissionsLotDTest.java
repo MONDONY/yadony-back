@@ -49,7 +49,8 @@ class AdminPermissionsLotDTest {
     }
 
     @Test
-    void enumHolds29Permissions() {
-        assertThat(AdminPermission.values()).hasSize(29);
+    void enumHolds30Permissions() {
+        // USER_DELETE ajoutee en tache 3 (feature/suppression-compte-admin) — 29 → 30.
+        assertThat(AdminPermission.values()).hasSize(30);
     }
 }

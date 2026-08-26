@@ -11,7 +11,7 @@ public enum AdminPermission {
     // Metrics & reporting
     METRICS_VIEW,
 
-    // User management (7 permissions)
+    // User management (8 permissions)
     USER_VIEW,
     USER_SUSPEND,
     USER_BAN,

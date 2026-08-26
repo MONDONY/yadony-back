@@ -40,10 +40,9 @@ class AdminPermissionsLotBTest {
 
     @Test
     // Etait 27 depuis le Lot C (RATING_DELETE detachee de RATING_MODERATE). Passe a 29
-    // avec le Lot D, qui ajoute NOTIFICATION_SEND et CONFIG_MANAGE (aucune des deux n'est
-    // accordee au support — voir AdminPermissionsLotDTest). Methode renommee pour rester
-    // fidele au compte reel.
-    void enumHasExactlyTwentyNineValues() {
-        assertThat(AdminPermission.values()).hasSize(29);
+    // avec le Lot D, qui ajoute NOTIFICATION_SEND et CONFIG_MANAGE. Passe a 30 avec la
+    // tache 3 de feature/suppression-compte-admin, qui ajoute USER_DELETE.
+    void enumHasExactlyThirtyValues() {
+        assertThat(AdminPermission.values()).hasSize(30);
     }
 }
