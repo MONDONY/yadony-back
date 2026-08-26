@@ -38,6 +38,9 @@ public interface RatingRepository extends JpaRepository<RatingEntity, UUID> {
 
     boolean existsByBidIdAndTrackingToken(UUID bidId, String trackingToken);
 
+    /** Notes émises par ce compte — celles qui resteront affichées chez les autres. */
+    long countByRaterId(UUID raterId);
+
     @Query("""
             SELECT r FROM RatingEntity r
             WHERE (:flagged IS NULL OR r.flagged = :flagged)
