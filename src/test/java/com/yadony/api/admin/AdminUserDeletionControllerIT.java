@@ -130,6 +130,34 @@ class AdminUserDeletionControllerIT {
                 .andExpect(status().isUnprocessableEntity());
     }
 
+    // Constat 4 : le motif libre doit être borné à 500 caractères pour éviter qu'un
+    // texte arbitraire saturant la colonne JSONB immuable ne devienne incontrôlable.
+    @Test
+    @DisplayName("POST — un motif libre dépassant 500 caractères est refusé (422)")
+    void delete_withTooLongReason_returns422() throws Exception {
+        String tooLong = "x".repeat(501);
+        mockMvc.perform(post("/admin/users/{userId}/delete", USER_ID)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body("FRAUD", tooLong))
+                        .with(authentication(auth(AdminRole.ADMIN))))
+                .andExpect(status().isUnprocessableEntity());
+
+        verify(deletionService, never()).delete(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("POST — un motif libre de exactement 500 caractères est accepté")
+    void delete_withMaxLengthReason_isAccepted() throws Exception {
+        String maxLength = "x".repeat(500);
+        mockMvc.perform(post("/admin/users/{userId}/delete", USER_ID)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body("FRAUD", maxLength))
+                        .with(authentication(auth(AdminRole.ADMIN))))
+                .andExpect(status().isNoContent());
+
+        verify(deletionService).delete(eq(USER_ID), eq(ADMIN_ID), eq("FRAUD"), eq(maxLength));
+    }
+
     @Test
     @DisplayName("GET — le rapport d'impact est lisible avec USER_DELETE")
     void impact_withPermission_returns200() throws Exception {

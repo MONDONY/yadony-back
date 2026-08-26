@@ -7,6 +7,10 @@ import com.yadony.api.matching.TransportMode;
 import com.yadony.api.matching.dto.AnnouncementRevenueRow;
 import com.yadony.api.requests.entity.NegotiationThreadEntity;
 import com.yadony.api.requests.entity.NegotiationThreadStatus;
+import com.yadony.api.requests.entity.PackageRequestEntity;
+import com.yadony.api.requests.entity.PackageRequestStatus;
+import com.yadony.api.requests.entity.ParcelSize;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
@@ -191,5 +195,96 @@ class PaymentRepositoryRevenueTest {
         assertThat(rows.get(0).announcementId()).isEqualTo(ann);
         assertThat(rows.get(0).gross()).isEqualByComparingTo("200.00");
         assertThat(rows.get(0).commission()).isEqualByComparingTo("24.00");
+    }
+
+    // ── Tests hasActiveEscrowForUser ──────────────────────────────────────────
+    // Constat 1 : la requête précédente ne couvrait pas le flux négociation
+    // (paiements avec bidId=NULL, keyés sur negotiationThreadId). Un escrow de
+    // négociation devait produire un constat bloquant et l'anonymisation devait
+    // être refusée — elle ne l'était pas.
+
+    private PackageRequestEntity newPackageRequest(UUID senderId) {
+        PackageRequestEntity pr = new PackageRequestEntity();
+        pr.setSenderId(senderId);
+        pr.setDepartureCity("Paris");
+        pr.setArrivalCity("Dakar");
+        pr.setDesiredDate(LocalDate.of(2026, 9, 1));
+        pr.setDateToleranceDays((short) 3);
+        pr.setWeightKg(new BigDecimal("5.00"));
+        pr.setParcelSize(ParcelSize.SMALL);
+        pr.setTransportMode(TransportMode.PLANE);
+        pr.setContentCategory("VETEMENTS");
+        pr.setStatus(PackageRequestStatus.OPEN);
+        return em.persistAndFlush(pr);
+    }
+
+    private NegotiationThreadEntity newThreadWithRequest(UUID travelerId, UUID packageRequestId) {
+        NegotiationThreadEntity t = new NegotiationThreadEntity();
+        t.setPackageRequestId(packageRequestId);
+        t.setTravelerId(travelerId);
+        t.setTravelerAnnouncementId(null);
+        t.setTravelerTravelDate(LocalDate.of(2026, 9, 1));
+        t.setTravelerAvailableKg(new BigDecimal("10.00"));
+        t.setStatus(NegotiationThreadStatus.ACCEPTED);
+        t.setCurrentPriceEur(new BigDecimal("150.00"));
+        t.setRoundsCount((short) 2);
+        t.setLastActivityAt(LocalDateTime.now());
+        return em.persistAndFlush(t);
+    }
+
+    @Test
+    @DisplayName("un escrow de négociation (bidId=NULL) est détecté pour le voyageur")
+    void negotiationEscrow_detectedForTraveler() {
+        UUID traveler = UUID.randomUUID();
+        UUID sender = UUID.randomUUID();
+        UUID requestId = newPackageRequest(sender).getId();
+        UUID threadId = newThreadWithRequest(traveler, requestId).getId();
+        newPayment(null, threadId, "150.00", "18.00", PaymentStatus.ESCROW);
+
+        assertThat(paymentRepository.hasActiveEscrowForUser(traveler)).isTrue();
+    }
+
+    @Test
+    @DisplayName("un escrow de négociation (bidId=NULL) est détecté pour l'expéditeur")
+    void negotiationEscrow_detectedForSender() {
+        UUID traveler = UUID.randomUUID();
+        UUID sender = UUID.randomUUID();
+        UUID requestId = newPackageRequest(sender).getId();
+        UUID threadId = newThreadWithRequest(traveler, requestId).getId();
+        newPayment(null, threadId, "150.00", "18.00", PaymentStatus.ESCROW);
+
+        assertThat(paymentRepository.hasActiveEscrowForUser(sender)).isTrue();
+    }
+
+    @Test
+    @DisplayName("un escrow de bid direct (negotiationThreadId=NULL) reste détecté")
+    void bidEscrow_stillDetected() {
+        UUID traveler = UUID.randomUUID();
+        UUID ann = newAnnouncement(traveler).getId();
+        BidEntity bid = newBid(ann);
+        newPayment(bid.getId(), null, "100.00", "12.00", PaymentStatus.ESCROW);
+
+        assertThat(paymentRepository.hasActiveEscrowForUser(traveler)).isTrue();
+        assertThat(paymentRepository.hasActiveEscrowForUser(bid.getSenderId())).isTrue();
+    }
+
+    @Test
+    @DisplayName("un paiement de négociation non-ESCROW ne produit pas de blocage")
+    void releasedNegotiationPayment_doesNotBlock() {
+        UUID traveler = UUID.randomUUID();
+        UUID sender = UUID.randomUUID();
+        UUID requestId = newPackageRequest(sender).getId();
+        UUID threadId = newThreadWithRequest(traveler, requestId).getId();
+        newPayment(null, threadId, "150.00", "18.00", PaymentStatus.RELEASED);
+
+        assertThat(paymentRepository.hasActiveEscrowForUser(traveler)).isFalse();
+        assertThat(paymentRepository.hasActiveEscrowForUser(sender)).isFalse();
+    }
+
+    @Test
+    @DisplayName("un utilisateur sans paiement en séquestre ne produit pas de blocage")
+    void noEscrow_returnsFalse() {
+        UUID randomUser = UUID.randomUUID();
+        assertThat(paymentRepository.hasActiveEscrowForUser(randomUser)).isFalse();
     }
 }

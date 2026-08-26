@@ -61,15 +61,42 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
     @Query("UPDATE PaymentEntity p SET p.status = 'REFUNDED' WHERE p.id = :id AND p.status = 'ESCROW'")
     int markRefundedIfEscrow(@Param("id") UUID id);
 
-    /** Story 9.8 — RGPD: check if the user has any active escrow payments (as sender or traveler). */
-    @Query("SELECT CASE WHEN COUNT(p) > 0 THEN true ELSE false END FROM PaymentEntity p " +
-           "WHERE p.bidId IN " +
-           "  (SELECT b.id FROM com.yadony.api.matching.BidEntity b WHERE b.senderId = :userId " +
-           "   UNION " +
-           "   SELECT b2.id FROM com.yadony.api.matching.BidEntity b2 " +
-           "   JOIN com.yadony.api.matching.AnnouncementEntity a ON b2.announcementId = a.id " +
-           "   WHERE a.travelerId = :userId) " +
-           "AND p.status = com.yadony.api.payments.PaymentStatus.ESCROW")
+    /**
+     * Vrai si l'utilisateur a au moins un paiement en séquestre actif, qu'il soit
+     * expéditeur ou voyageur, quel que soit le flux (bid direct ou négociation).
+     *
+     * <p>Deux chemins sont couverts :</p>
+     * <ul>
+     *   <li><b>Flux bid direct</b> — {@code p.bidId} est renseigné ; on remonte via
+     *       {@code BidEntity} (expéditeur = {@code b.senderId}) et via
+     *       {@code AnnouncementEntity} (voyageur = {@code a.travelerId}).</li>
+     *   <li><b>Flux négociation / trajet dédié</b> — {@code p.bidId} est NULL et le
+     *       paiement est keyed sur {@code negotiationThreadId}. Le voyageur est
+     *       directement {@code t.travelerId} ; l'expéditeur est
+     *       {@code PackageRequestEntity.senderId} via {@code t.packageRequestId}.</li>
+     * </ul>
+     *
+     * <p>Un paiement de négociation ne portant que {@code negotiationThreadId}
+     * était invisible à la requête précédente, ce qui permettait d'anonymiser un
+     * compte même avec de l'argent bloqué en séquestre sur une négociation.</p>
+     */
+    @Query("""
+        SELECT CASE WHEN COUNT(p) > 0 THEN true ELSE false END
+        FROM PaymentEntity p
+        LEFT JOIN com.yadony.api.matching.BidEntity b ON p.bidId = b.id
+        LEFT JOIN com.yadony.api.matching.AnnouncementEntity a ON b.announcementId = a.id
+        LEFT JOIN com.yadony.api.requests.entity.NegotiationThreadEntity t
+               ON p.negotiationThreadId = t.id
+        LEFT JOIN com.yadony.api.requests.entity.PackageRequestEntity pr
+               ON t.packageRequestId = pr.id
+        WHERE p.status = com.yadony.api.payments.PaymentStatus.ESCROW
+          AND (
+                b.senderId = :userId
+             OR a.travelerId = :userId
+             OR t.travelerId = :userId
+             OR pr.senderId = :userId
+              )
+    """)
     boolean hasActiveEscrowForUser(@Param("userId") UUID userId);
 
     // Un paiement du flux négociation / trajet dédié a bidId = NULL (keyé sur le
