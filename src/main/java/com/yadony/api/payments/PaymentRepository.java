@@ -67,36 +67,43 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
      *
      * <p>Deux chemins sont couverts :</p>
      * <ul>
-     *   <li><b>Flux bid direct</b> — {@code p.bidId} est renseigné ; on remonte via
-     *       {@code BidEntity} (expéditeur = {@code b.senderId}) et via
-     *       {@code AnnouncementEntity} (voyageur = {@code a.travelerId}).</li>
-     *   <li><b>Flux négociation / trajet dédié</b> — {@code p.bidId} est NULL et le
-     *       paiement est keyed sur {@code negotiationThreadId}. Le voyageur est
-     *       directement {@code t.travelerId} ; l'expéditeur est
-     *       {@code PackageRequestEntity.senderId} via {@code t.packageRequestId}.</li>
+     *   <li><b>Flux bid direct</b> — {@code p.bid_id} est renseigné ; on remonte via
+     *       {@code bids} (expéditeur = {@code b.sender_id}) et via
+     *       {@code announcements} (voyageur = {@code a.traveler_id}).</li>
+     *   <li><b>Flux négociation / trajet dédié</b> — {@code p.bid_id} est NULL et le
+     *       paiement est keyed sur {@code negotiation_thread_id}. Le voyageur est
+     *       directement {@code t.traveler_id} ; l'expéditeur est
+     *       {@code package_requests.sender_id} via {@code t.package_request_id}.</li>
      * </ul>
      *
-     * <p>Un paiement de négociation ne portant que {@code negotiationThreadId}
-     * était invisible à la requête précédente, ce qui permettait d'anonymiser un
-     * compte même avec de l'argent bloqué en séquestre sur une négociation.</p>
+     * <p><b>Requête native délibérée</b> — même motif que
+     * {@link com.yadony.api.auth.UserRepository#findByIdIncludingDeleted} : les entités
+     * {@code BidEntity}, {@code AnnouncementEntity}, {@code NegotiationThreadEntity} et
+     * {@code PackageRequestEntity} portent {@code @Where} / {@code @SQLRestriction}
+     * ({@code deleted_at IS NULL}). Hibernate injecte ces filtres dans la clause {@code ON}
+     * des {@code LEFT JOIN} JPQL, rendant la jointure {@code NULL} dès que l'objet métier
+     * a été soft-deleted. Conséquence : un paiement bel et bien en séquestre devenait
+     * invisible, permettant l'anonymisation d'un compte dont de l'argent d'un tiers
+     * était encore bloqué chez Stripe. La requête native court-circuite ces filtres ;
+     * seul {@code payments.deleted_at IS NULL} est conservé (un paiement supprimé
+     * n'engage plus d'argent réel).</p>
      */
-    @Query("""
-        SELECT CASE WHEN COUNT(p) > 0 THEN true ELSE false END
-        FROM PaymentEntity p
-        LEFT JOIN com.yadony.api.matching.BidEntity b ON p.bidId = b.id
-        LEFT JOIN com.yadony.api.matching.AnnouncementEntity a ON b.announcementId = a.id
-        LEFT JOIN com.yadony.api.requests.entity.NegotiationThreadEntity t
-               ON p.negotiationThreadId = t.id
-        LEFT JOIN com.yadony.api.requests.entity.PackageRequestEntity pr
-               ON t.packageRequestId = pr.id
-        WHERE p.status = com.yadony.api.payments.PaymentStatus.ESCROW
+    @Query(value = """
+        SELECT CASE WHEN COUNT(*) > 0 THEN TRUE ELSE FALSE END
+        FROM payments p
+        LEFT JOIN bids b              ON p.bid_id = b.id
+        LEFT JOIN announcements a     ON b.announcement_id = a.id
+        LEFT JOIN negotiation_threads t  ON p.negotiation_thread_id = t.id
+        LEFT JOIN package_requests pr ON t.package_request_id = pr.id
+        WHERE p.deleted_at IS NULL
+          AND p.status = 'ESCROW'
           AND (
-                b.senderId = :userId
-             OR a.travelerId = :userId
-             OR t.travelerId = :userId
-             OR pr.senderId = :userId
+                b.sender_id   = :userId
+             OR a.traveler_id = :userId
+             OR t.traveler_id = :userId
+             OR pr.sender_id  = :userId
               )
-    """)
+    """, nativeQuery = true)
     boolean hasActiveEscrowForUser(@Param("userId") UUID userId);
 
     // Un paiement du flux négociation / trajet dédié a bidId = NULL (keyé sur le

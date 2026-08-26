@@ -287,4 +287,73 @@ class PaymentRepositoryRevenueTest {
         UUID randomUser = UUID.randomUUID();
         assertThat(paymentRepository.hasActiveEscrowForUser(randomUser)).isFalse();
     }
+
+    // ── Tests discriminants angle mort soft-delete ────────────────────────────
+    // Ces deux tests échouent si l'on utilise la requête JPQL (LEFT JOIN filtré
+    // par @Where/@SQLRestriction) et passent avec la requête native SQL.
+
+    /**
+     * Cas 1 — flux bid : le bid et l'annonce sont soft-deleted mais le paiement
+     * reste en ESCROW. La détection doit retourner true.
+     *
+     * Avec la requête JPQL précédente : Hibernate injectait
+     * "AND b.deleted_at IS NULL" dans le ON du LEFT JOIN, rendant b NULL, donc
+     * aucun des critères (b.sender_id, a.traveler_id) n'était satisfait → false.
+     */
+    @Test
+    @DisplayName("escrow détecté même si le bid et l'annonce sont soft-deleted")
+    void escrow_detectedWhenBidAndAnnouncementSoftDeleted() {
+        UUID traveler = UUID.randomUUID();
+        AnnouncementEntity ann = newAnnouncement(traveler);
+        BidEntity bid = newBid(ann.getId());
+
+        // Soft-delete bid et annonce directement en base (contourne les filtres JPA)
+        em.getEntityManager().createNativeQuery(
+                "UPDATE bids SET deleted_at = NOW() WHERE id = :id")
+                .setParameter("id", bid.getId())
+                .executeUpdate();
+        em.getEntityManager().createNativeQuery(
+                "UPDATE announcements SET deleted_at = NOW() WHERE id = :id")
+                .setParameter("id", ann.getId())
+                .executeUpdate();
+
+        newPayment(bid.getId(), null, "100.00", "12.00", PaymentStatus.ESCROW);
+        em.flush();
+        em.clear();
+
+        // Le paiement reste en séquestre — le compte ne peut pas être anonymisé
+        assertThat(paymentRepository.hasActiveEscrowForUser(traveler)).isTrue();
+        assertThat(paymentRepository.hasActiveEscrowForUser(bid.getSenderId())).isTrue();
+    }
+
+    /**
+     * Cas 2 — flux négociation : le fil de négociation est soft-deleted mais le
+     * paiement reste en ESCROW. La détection doit retourner true.
+     *
+     * Avec la requête JPQL précédente : Hibernate injectait
+     * "AND t.deleted_at IS NULL" dans le ON du LEFT JOIN, rendant t NULL, donc
+     * ni t.traveler_id ni pr.sender_id n'était satisfait → false.
+     */
+    @Test
+    @DisplayName("escrow détecté même si le fil de négociation est soft-deleted")
+    void escrow_detectedWhenNegotiationThreadSoftDeleted() {
+        UUID traveler = UUID.randomUUID();
+        UUID sender = UUID.randomUUID();
+        UUID requestId = newPackageRequest(sender).getId();
+        NegotiationThreadEntity thread = newThreadWithRequest(traveler, requestId);
+
+        // Soft-delete le fil de négociation directement en base
+        em.getEntityManager().createNativeQuery(
+                "UPDATE negotiation_threads SET deleted_at = NOW() WHERE id = :id")
+                .setParameter("id", thread.getId())
+                .executeUpdate();
+
+        newPayment(null, thread.getId(), "150.00", "18.00", PaymentStatus.ESCROW);
+        em.flush();
+        em.clear();
+
+        // Le paiement reste en séquestre — le compte ne peut pas être anonymisé
+        assertThat(paymentRepository.hasActiveEscrowForUser(traveler)).isTrue();
+        assertThat(paymentRepository.hasActiveEscrowForUser(sender)).isTrue();
+    }
 }
