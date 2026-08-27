@@ -1618,8 +1618,13 @@ class BillingControllerIntegrationTest {
     @Test
     @DisplayName("le webhook est public mais refuse une signature invalide")
     void webhookIsPublicButRejectsBadSignature() throws Exception {
+        // Le Content-Type est indispensable : sans lui, Spring ne peut pas
+        // résoudre le @RequestBody et rejette la requête AVANT d'entrer dans le
+        // contrôleur. Le test obtiendrait alors son 400 sans jamais exercer la
+        // vérification de signature — il passerait pour de mauvaises raisons.
         mockMvc.perform(post("/billing/webhook")
                         .header("Stripe-Signature", "t=1,v1=invalide")
+                        .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"id\":\"evt_x\",\"type\":\"invoice.paid\"}"))
                 .andExpect(status().isBadRequest());
     }

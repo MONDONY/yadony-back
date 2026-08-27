@@ -15,6 +15,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.test.context.ActiveProfiles;
@@ -122,10 +123,32 @@ class BillingControllerIntegrationTest {
     @Test
     @DisplayName("le webhook est public mais refuse une signature invalide")
     void webhookIsPublicButRejectsBadSignature() throws Exception {
+        // Content-Type explicite : sans lui, Spring rejette la requête avant
+        // même d'atteindre le contrôleur (échec de résolution du
+        // @RequestBody String), et le 400 obtenu ne prouverait rien du rejet
+        // de signature par StripeWebhookIngestService.
         mockMvc.perform(post("/billing/webhook")
+                        .contentType(MediaType.APPLICATION_JSON)
                         .header("Stripe-Signature", "t=1,v1=invalide")
                         .content("{\"id\":\"evt_x\",\"type\":\"invoice.paid\"}"))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentType("application/problem+json"))
+                .andExpect(jsonPath("$.code").value("invalid-webhook-signature"));
+    }
+
+    @Test
+    @DisplayName("jeton valide mais compte disparu : firebaseUid inconnu répond 401 en ProblemDetail")
+    void unknownFirebaseUidReturnsProblemDetail401() throws Exception {
+        // Protège un jeton Firebase valide dont le compte a été supprimé
+        // entre-temps : currentUserId() ne trouve personne et doit refuser
+        // proprement plutôt que de lever une NoSuchElementException brute.
+        UsernamePasswordAuthenticationToken unknownUser = new UsernamePasswordAuthenticationToken(
+                "uid-does-not-exist-in-db", null, List.of(new SimpleGrantedAuthority("ROLE_TRAVELER")));
+
+        mockMvc.perform(get("/billing/subscription").with(authentication(unknownUser)))
+                .andExpect(status().isUnauthorized())
+                .andExpect(content().contentType("application/problem+json"))
+                .andExpect(jsonPath("$.code").value("unknown-user"));
     }
 
     @Test
