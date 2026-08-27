@@ -86,8 +86,10 @@ public class ProSubscriptionService {
      * utilisateur, statut fermé compris.
      *
      * <p>Purge les champs qui n'ont plus de sens une fois l'abonnement payé :
-     * la grâce historique, un impayé antérieur, et une résiliation programmée
-     * sur un cycle précédent.
+     * la grâce historique, un impayé antérieur, une résiliation programmée
+     * sur un cycle précédent, et les traces d'un octroi administrateur
+     * antérieur (la source change, donc les traces de l'origine précédente
+     * ne doivent pas survivre).
      */
     @Transactional
     public ProSubscriptionEntity activateFromStripe(UUID userId,
@@ -107,6 +109,8 @@ public class ProSubscriptionService {
         sub.setGraceExpiresAt(null);
         sub.setPastDueSince(null);
         sub.setCancelAtPeriodEnd(false);
+        sub.setGrantedByAdminId(null);
+        sub.setAdminGrantReason(null);
         ProSubscriptionEntity saved = repository.save(sub);
 
         accessSynchronizer.sync(userId, true);

@@ -15,6 +15,8 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -51,7 +53,11 @@ class ProSubscriptionServiceStripeTest {
         Instant periodEnd = Instant.now().plus(30, ChronoUnit.DAYS);
         when(repository.findByUserId(USER_ID)).thenReturn(Optional.empty());
         when(repository.save(any(ProSubscriptionEntity.class)))
-                .thenAnswer(inv -> inv.getArgument(0));
+                .thenAnswer(inv -> {
+                    ProSubscriptionEntity entity = inv.getArgument(0);
+                    ReflectionTestUtils.setField(entity, "id", SUB_ID);
+                    return entity;
+                });
 
         ProSubscriptionEntity result = service().activateFromStripe(
                 USER_ID, CUSTOMER_ID, SUBSCRIPTION_ID, BillingCycle.MONTHLY, periodEnd);
@@ -63,6 +69,8 @@ class ProSubscriptionServiceStripeTest {
         assertThat(result.getBillingCycle()).isEqualTo(BillingCycle.MONTHLY);
         assertThat(result.getCurrentPeriodEnd()).isEqualTo(periodEnd);
         verify(accessSynchronizer).sync(USER_ID, true);
+        verify(auditService).log(eq("BILLING"), eq(SUB_ID), eq("BILLING_SUBSCRIPTION_ACTIVATED"),
+                eq(USER_ID), anyMap());
     }
 
     @Test
@@ -86,6 +94,7 @@ class ProSubscriptionServiceStripeTest {
                 .as("la grâce n'a plus lieu d'être une fois l'abonnement payé")
                 .isNull();
         assertThat(result.getPastDueSince()).isNull();
+        verify(accessSynchronizer).sync(USER_ID, true);
     }
 
     @Test
@@ -103,6 +112,33 @@ class ProSubscriptionServiceStripeTest {
 
         assertThat(result.getStatus()).isEqualTo(ProSubscriptionStatus.ACTIVE);
         assertThat(result.isCancelAtPeriodEnd()).isFalse();
+        verify(accessSynchronizer).sync(USER_ID, true);
+    }
+
+    @Test
+    @DisplayName("l'activation depuis Stripe purge les traces d'un octroi administrateur antérieur")
+    void activationPurgesAdminGrantTrace() {
+        UUID adminId = UUID.randomUUID();
+        ProSubscriptionEntity adminGranted = subscription(ProSubscriptionStatus.ACTIVE,
+                ProSubscriptionSource.ADMIN_GRANT);
+        adminGranted.setGrantedByAdminId(adminId);
+        adminGranted.setAdminGrantReason("Promotion winter 2026");
+        when(repository.findByUserId(USER_ID)).thenReturn(Optional.of(adminGranted));
+        when(repository.save(adminGranted)).thenAnswer(inv -> {
+            ProSubscriptionEntity entity = inv.getArgument(0);
+            ReflectionTestUtils.setField(entity, "id", SUB_ID);
+            return entity;
+        });
+
+        ProSubscriptionEntity result = service().activateFromStripe(
+                USER_ID, CUSTOMER_ID, SUBSCRIPTION_ID, BillingCycle.MONTHLY,
+                Instant.now().plus(30, ChronoUnit.DAYS));
+
+        assertThat(result.getSource()).isEqualTo(ProSubscriptionSource.STRIPE);
+        assertThat(result.getGrantedByAdminId())
+                .as("la source change : les traces de l'octroi administratif ne doivent pas survivre")
+                .isNull();
+        assertThat(result.getAdminGrantReason()).isNull();
         verify(accessSynchronizer).sync(USER_ID, true);
     }
 
