@@ -66,11 +66,29 @@ class LegacyProGraceListenerTest {
     }
 
     @Test
-    @DisplayName("une perte d'accès ne déclenche aucune grâce")
-    void ignoresDowngrade() {
+    @DisplayName("une perte d'accès ferme l'abonnement encore ouvert")
+    void closesOpenSubscriptionOnDowngrade() {
+        ProSubscriptionEntity active = new ProSubscriptionEntity();
+        active.setStatus(ProSubscriptionStatus.ACTIVE);
+        when(repository.findByUserId(USER_ID)).thenReturn(Optional.of(active));
+
         listener().onUserProStatusChanged(new UserProStatusChangedEvent(USER_ID, false));
 
-        verify(subscriptionService, never()).openLegacyGrace(any(), anyInt());
-        verify(repository, never()).findByUserId(any());
+        // Sans cela, DELETE /auth/me/upgrade-to-pro met is_pro_account=false
+        // mais laisse la ligne pro_subscriptions ouverte : grantsProAccess()
+        // resterait vrai alors que le drapeau est faux.
+        verify(subscriptionService).cancel(active);
+    }
+
+    @Test
+    @DisplayName("une perte d'accès sur un abonnement déjà fermé ne fait rien")
+    void ignoresDowngradeWhenSubscriptionAlreadyClosed() {
+        ProSubscriptionEntity expired = new ProSubscriptionEntity();
+        expired.setStatus(ProSubscriptionStatus.EXPIRED);
+        when(repository.findByUserId(USER_ID)).thenReturn(Optional.of(expired));
+
+        listener().onUserProStatusChanged(new UserProStatusChangedEvent(USER_ID, false));
+
+        verify(subscriptionService, never()).cancel(any());
     }
 }

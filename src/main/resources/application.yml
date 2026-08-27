@@ -150,7 +150,7 @@ yadony:
     scheduler-enabled: ${YADONY_BILLING_SCHEDULER_ENABLED:false}
     legacy-grace-days: ${YADONY_BILLING_LEGACY_GRACE_DAYS:60}
     dunning-grace-days: ${YADONY_BILLING_DUNNING_GRACE_DAYS:5}
-    expiry-cron: "0 30 3 * * *"
+    expiry-cron: ${YADONY_BILLING_EXPIRY_CRON:0 30 3 * * *}
   dispute-sla-hours: ${YADONY_DISPUTE_SLA_HOURS:72}
   reimbursement:
     max-amount-eur: ${YADONY_REIMBURSEMENT_MAX_AMOUNT_EUR:50}

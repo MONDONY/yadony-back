@@ -60,6 +60,18 @@ public class ProSubscriptionService {
         // du cron de dunning.
         sub.setPastDueSince(null);
         sub.setCancelAtPeriodEnd(false);
+        // La ligne recyclée passe en source LEGACY_FREE : elle ne doit porter
+        // aucun résidu d'un précédent cycle Stripe ou octroi admin. Sans cette
+        // purge, un stripe_subscription_id périmé survivrait sur une ligne
+        // LEGACY_FREE — et findByStripeSubscriptionId, indexée pour les
+        // webhooks du lot 2, la ramènerait au premier webhook reçu pour cet
+        // identifiant, qui ne correspond plus à cet abonnement.
+        sub.setStripeCustomerId(null);
+        sub.setStripeSubscriptionId(null);
+        sub.setBillingCycle(null);
+        sub.setCurrentPeriodEnd(null);
+        sub.setGrantedByAdminId(null);
+        sub.setAdminGrantReason(null);
         ProSubscriptionEntity saved = repository.save(sub);
         accessSynchronizer.sync(userId, true);
         log.info("Legacy PRO grace opened for user {} until {}", userId, saved.getGraceExpiresAt());

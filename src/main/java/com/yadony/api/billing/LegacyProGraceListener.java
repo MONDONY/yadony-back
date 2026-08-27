@@ -7,17 +7,24 @@ import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.UUID;
+
 /**
- * Garantit qu'aucun compte PRO n'existe sans ligne dans {@code pro_subscriptions}.
+ * Garantit qu'aucun compte PRO n'existe sans ligne dans {@code pro_subscriptions},
+ * et qu'aucune ligne n'y reste ouverte pour un compte qui n'est plus PRO.
  *
  * <p>Tant que le lot 2 n'est pas déployé, {@code POST /auth/me/upgrade-to-pro}
- * accorde encore le statut PRO gratuitement. Sans ce listener, un tel compte
- * n'aurait aucun abonnement, échapperait aux tâches planifiées et resterait
- * PRO gratuit indéfiniment.
+ * accorde encore le statut PRO gratuitement. Sans la branche montée en PRO de
+ * ce listener, un tel compte n'aurait aucun abonnement, échapperait aux
+ * tâches planifiées et resterait PRO gratuit indéfiniment.
+ *
+ * <p>Symétriquement, {@code DELETE /auth/me/upgrade-to-pro} redescend le
+ * drapeau : sans la branche downgrade (voir {@link #onDowngrade}), la ligne
+ * d'abonnement resterait ouverte alors que l'utilisateur n'est plus PRO.
  *
  * <p>Aucun risque de boucle avec {@link ProAccessSynchronizer} : quand
- * celui-ci publie l'événement, la ligne d'abonnement existe déjà et le
- * listener ne fait rien.
+ * celui-ci publie l'événement, la ligne d'abonnement est déjà dans l'état
+ * cible et ce listener ne fait rien.
  */
 @Component
 public class LegacyProGraceListener {
@@ -40,6 +47,7 @@ public class LegacyProGraceListener {
     @Transactional
     public void onUserProStatusChanged(UserProStatusChangedEvent event) {
         if (!event.isPro()) {
+            onDowngrade(event.userId());
             return;
         }
         // Tester la présence de la ligne ne suffit pas : elle est recyclée et
@@ -54,5 +62,31 @@ public class LegacyProGraceListener {
         }
         subscriptionService.openLegacyGrace(event.userId(), properties.legacyGraceDaysOrDefault());
         log.info("Orphan PRO user {} given a legacy grace period", event.userId());
+    }
+
+    /**
+     * {@code DELETE /auth/me/upgrade-to-pro} met {@code is_pro_account = false}
+     * puis publie cet événement, sans qu'aucun autre composant de
+     * {@code billing/} n'y réagisse jusqu'ici : la ligne {@code pro_subscriptions}
+     * restait {@code LEGACY_GRACE} ou {@code ACTIVE}, donc {@code grantsProAccess()}
+     * continuait de valoir vrai alors que le drapeau était faux.
+     *
+     * <p>Le garde {@code grantsProAccess()} rend aussi cet appel idempotent :
+     * un abonnement déjà fermé (EXPIRED/CANCELED) n'est jamais repassé à
+     * {@link ProSubscriptionService#cancel}, qui réécrirait sinon une entrée
+     * {@code audit_log} avec un {@code previousStatus} égal au statut cible.
+     *
+     * <p>Aucun risque de boucle : {@code UserService.downgradePro} pose le
+     * drapeau à faux *avant* de publier l'événement, donc le
+     * {@link ProAccessSynchronizer#sync} déclenché par {@code cancel} constate
+     * que le drapeau est déjà dans l'état voulu et ne republie rien.
+     */
+    private void onDowngrade(UUID userId) {
+        repository.findByUserId(userId)
+                .filter(sub -> sub.getStatus().grantsProAccess())
+                .ifPresent(sub -> {
+                    subscriptionService.cancel(sub);
+                    log.info("Subscription {} closed following downgrade of user {}", sub.getId(), userId);
+                });
     }
 }

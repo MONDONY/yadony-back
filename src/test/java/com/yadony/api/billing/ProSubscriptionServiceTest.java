@@ -86,6 +86,34 @@ class ProSubscriptionServiceTest {
     }
 
     @Test
+    @DisplayName("openLegacyGrace purge les champs Stripe/admin d'un cycle Stripe précédent")
+    void reusesExistingRowAndPurgesStaleStripeAndAdminFields() {
+        ProSubscriptionEntity existing = subscription(ProSubscriptionStatus.CANCELED,
+                ProSubscriptionSource.STRIPE);
+        existing.setStripeCustomerId("cus_stale");
+        existing.setStripeSubscriptionId("sub_stale");
+        existing.setBillingCycle(BillingCycle.MONTHLY);
+        existing.setCurrentPeriodEnd(Instant.now().minus(10, ChronoUnit.DAYS));
+        existing.setGrantedByAdminId(UUID.randomUUID());
+        existing.setAdminGrantReason("ancien octroi admin");
+        when(repository.findByUserId(USER_ID)).thenReturn(Optional.of(existing));
+        when(repository.save(existing)).thenReturn(existing);
+
+        ProSubscriptionEntity result = service().openLegacyGrace(USER_ID, 60);
+
+        // Une ligne LEGACY_FREE ne doit porter aucun résidu d'un cycle Stripe ou
+        // d'un octroi admin précédent : stripe_subscription_id est indexée pour
+        // les webhooks du lot 2, qui ramèneraient sinon cette ligne périmée au
+        // premier webhook reçu pour cet identifiant.
+        assertThat(result.getStripeCustomerId()).isNull();
+        assertThat(result.getStripeSubscriptionId()).isNull();
+        assertThat(result.getBillingCycle()).isNull();
+        assertThat(result.getCurrentPeriodEnd()).isNull();
+        assertThat(result.getGrantedByAdminId()).isNull();
+        assertThat(result.getAdminGrantReason()).isNull();
+    }
+
+    @Test
     @DisplayName("markPastDue horodate l'entrée en impayé sans couper l'accès")
     void marksPastDue() {
         ProSubscriptionEntity sub = subscription(ProSubscriptionStatus.ACTIVE,
