@@ -12,6 +12,8 @@ public interface AutomationRuleRepository extends JpaRepository<AutomationRuleEn
 
     List<AutomationRuleEntity> findByTravelerIdOrderByCreatedAtAsc(UUID travelerId);
 
+    List<AutomationRuleEntity> findByTravelerIdAndDisabledByDowngradeTrue(UUID travelerId);
+
     @Query("SELECT r FROM AutomationRuleEntity r WHERE r.id = :id AND r.travelerId = :travelerId")
     Optional<AutomationRuleEntity> findByIdAndTravelerId(@Param("id") UUID id,
                                                           @Param("travelerId") UUID travelerId);
