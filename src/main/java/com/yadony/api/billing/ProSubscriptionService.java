@@ -79,6 +79,73 @@ public class ProSubscriptionService {
     }
 
     /**
+     * Souscription payante confirmée par Stripe.
+     *
+     * <p>Recycle la ligne existante comme {@link #openLegacyGrace} : l'index
+     * {@code uq_pro_subscriptions_user} n'autorise qu'un abonnement vivant par
+     * utilisateur, statut fermé compris.
+     *
+     * <p>Purge les champs qui n'ont plus de sens une fois l'abonnement payé :
+     * la grâce historique, un impayé antérieur, et une résiliation programmée
+     * sur un cycle précédent.
+     */
+    @Transactional
+    public ProSubscriptionEntity activateFromStripe(UUID userId,
+                                                    String customerId,
+                                                    String subscriptionId,
+                                                    BillingCycle cycle,
+                                                    Instant periodEnd) {
+        ProSubscriptionEntity sub = repository.findByUserId(userId)
+                .orElseGet(ProSubscriptionEntity::new);
+        sub.setUserId(userId);
+        sub.setStatus(ProSubscriptionStatus.ACTIVE);
+        sub.setSource(ProSubscriptionSource.STRIPE);
+        sub.setStripeCustomerId(customerId);
+        sub.setStripeSubscriptionId(subscriptionId);
+        sub.setBillingCycle(cycle);
+        sub.setCurrentPeriodEnd(periodEnd);
+        sub.setGraceExpiresAt(null);
+        sub.setPastDueSince(null);
+        sub.setCancelAtPeriodEnd(false);
+        ProSubscriptionEntity saved = repository.save(sub);
+
+        accessSynchronizer.sync(userId, true);
+        auditService.log(AUDIT_ENTITY_TYPE, saved.getId(), "BILLING_SUBSCRIPTION_ACTIVATED", userId,
+                Map.of("cycle", cycle.name(), "stripeSubscriptionId", subscriptionId));
+
+        log.info("Subscription {} activated from Stripe for user {} ({})",
+                saved.getId(), userId, cycle);
+        return saved;
+    }
+
+    /**
+     * Résiliation programmée, ou son annulation, depuis le Customer Portal.
+     * L'accès n'est pas coupé : la période en cours est déjà réglée. C'est
+     * {@code ProSubscriptionScheduler.closeEndedCancellations} ou le webhook
+     * {@code customer.subscription.deleted} qui fermera à l'échéance.
+     */
+    @Transactional
+    public ProSubscriptionEntity markCancelAtPeriodEnd(ProSubscriptionEntity sub,
+                                                       boolean cancelAtPeriodEnd) {
+        sub.setCancelAtPeriodEnd(cancelAtPeriodEnd);
+        ProSubscriptionEntity saved = repository.save(sub);
+        log.info("Subscription {} cancelAtPeriodEnd set to {}", sub.getId(), cancelAtPeriodEnd);
+        return saved;
+    }
+
+    /** Échéance encaissée : repousse la période et sort d'un éventuel impayé. */
+    @Transactional
+    public ProSubscriptionEntity renew(ProSubscriptionEntity sub, Instant periodEnd) {
+        sub.setStatus(ProSubscriptionStatus.ACTIVE);
+        sub.setPastDueSince(null);
+        sub.setCurrentPeriodEnd(periodEnd);
+        ProSubscriptionEntity saved = repository.save(sub);
+        accessSynchronizer.sync(sub.getUserId(), true);
+        log.info("Subscription {} renewed until {}", sub.getId(), periodEnd);
+        return saved;
+    }
+
+    /**
      * Entrée en impayé. L'accès reste ouvert : Stripe relance la carte
      * pendant plusieurs jours et couper immédiatement pénaliserait un
      * incident bancaire passager.
