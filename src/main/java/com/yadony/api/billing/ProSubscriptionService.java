@@ -123,6 +123,56 @@ public class ProSubscriptionService {
     }
 
     /**
+     * Accès PRO offert par un administrateur : partenariat, geste commercial.
+     *
+     * <p>Sans échéance — il court jusqu'à révocation explicite par un administrateur,
+     * ou renoncement de l'utilisateur lui-même. Aucune tâche planifiée ne le ferme :
+     * les trois requêtes de {@code ProSubscriptionScheduler} filtrent sur des statuts
+     * ou des dates que cet octroi ne porte pas.
+     *
+     * <p>Recycle la ligne existante comme les autres créateurs : l'index
+     * {@code uq_pro_subscriptions_user} n'autorise qu'un abonnement vivant par
+     * utilisateur, statuts fermés compris.
+     *
+     * <p>Le motif n'entre pas dans {@code audit_log} : cette table est immuable, et un
+     * texte libre saisi par un administrateur y graverait définitivement d'éventuelles
+     * données personnelles. Il vit dans {@code admin_grant_reason}.
+     */
+    @Transactional
+    public ProSubscriptionEntity grantByAdmin(UUID userId, UUID adminId, String reason) {
+        ProSubscriptionEntity sub = repository.findByUserId(userId)
+                .orElseGet(ProSubscriptionEntity::new);
+        sub.setUserId(userId);
+        sub.setStatus(ProSubscriptionStatus.ACTIVE);
+        sub.setSource(ProSubscriptionSource.ADMIN_GRANT);
+        sub.setGrantedByAdminId(adminId);
+        sub.setAdminGrantReason(reason);
+        // La source change : les traces d'un cycle Stripe précédent ne doivent pas
+        // survivre. Un stripe_subscription_id résiduel serait retrouvé par
+        // findByStripeSubscriptionId au prochain webhook, qui piloterait alors cette
+        // ligne depuis un abonnement qui n'est plus le sien.
+        sub.setStripeCustomerId(null);
+        sub.setStripeSubscriptionId(null);
+        sub.setBillingCycle(null);
+        sub.setCurrentPeriodEnd(null);
+        sub.setGraceExpiresAt(null);
+        sub.setPastDueSince(null);
+        sub.setCancelAtPeriodEnd(false);
+
+        // Enregistrer AVANT de synchroniser : LegacyProGraceListener réagit à
+        // l'événement et ouvrirait une LEGACY_GRACE si aucun abonnement ne couvrait
+        // encore l'utilisateur — écrasant cet octroi.
+        ProSubscriptionEntity saved = repository.save(sub);
+        accessSynchronizer.sync(userId, true);
+
+        auditService.log(AUDIT_ENTITY_TYPE, saved.getId(), "BILLING_ADMIN_GRANTED", adminId,
+                Map.of("targetUserId", userId.toString()));
+
+        log.info("PRO access granted to user {} by admin {}", userId, adminId);
+        return saved;
+    }
+
+    /**
      * Résiliation programmée, ou son annulation, depuis le Customer Portal.
      * L'accès n'est pas coupé : la période en cours est déjà réglée. C'est
      * {@code ProSubscriptionScheduler.closeEndedCancellations} ou le webhook
