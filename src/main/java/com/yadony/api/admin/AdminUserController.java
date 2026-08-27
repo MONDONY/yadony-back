@@ -264,7 +264,10 @@ public class AdminUserController {
     }
 
     private AdminUserDetailResponse detail(UserEntity user) {
-        return AdminUserDetailResponse.from(user, firebaseContact.getContact(user.getFirebaseUid()));
+        return AdminUserDetailResponse.from(
+                user,
+                firebaseContact.getContact(user.getFirebaseUid()),
+                proSubscriptionRepository.findByUserId(user.getId()).orElse(null));
     }
 
     /**

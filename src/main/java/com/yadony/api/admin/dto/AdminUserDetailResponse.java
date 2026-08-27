@@ -2,6 +2,8 @@ package com.yadony.api.admin.dto;
 
 import com.yadony.api.auth.FirebaseContactService;
 import com.yadony.api.auth.UserEntity;
+import com.yadony.api.billing.ProSubscriptionEntity;
+import com.yadony.api.billing.dto.AdminProSubscriptionView;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -34,10 +36,17 @@ public record AdminUserDetailResponse(
         int senderHandoverIncidentCount,
         int ratingCount,
         LocalDateTime deletionRequestedAt,
-        LocalDateTime messagingMutedUntil
+        LocalDateTime messagingMutedUntil,
+        AdminProSubscriptionView proSubscription
 ) {
     /** Téléphone et email proviennent de Firebase : ils ne sont plus stockés en base. */
     public static AdminUserDetailResponse from(UserEntity u, FirebaseContactService.Contact contact) {
+        return from(u, contact, null);
+    }
+
+    /** Variante chargeant en plus l'état d'abonnement PRO pour l'administration. */
+    public static AdminUserDetailResponse from(UserEntity u, FirebaseContactService.Contact contact,
+                                                ProSubscriptionEntity sub) {
         return new AdminUserDetailResponse(
                 u.getId(),
                 u.getFirstName(),
@@ -68,7 +77,8 @@ public record AdminUserDetailResponse(
                         : null,
                 u.getMessagingMutedUntil() != null
                         ? java.time.LocalDateTime.ofInstant(u.getMessagingMutedUntil(), java.time.ZoneOffset.UTC)
-                        : null
+                        : null,
+                AdminProSubscriptionView.from(sub)
         );
     }
 }

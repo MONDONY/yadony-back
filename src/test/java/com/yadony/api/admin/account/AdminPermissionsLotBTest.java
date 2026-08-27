@@ -41,8 +41,10 @@ class AdminPermissionsLotBTest {
     @Test
     // Etait 27 depuis le Lot C (RATING_DELETE detachee de RATING_MODERATE). Passe a 29
     // avec le Lot D, qui ajoute NOTIFICATION_SEND et CONFIG_MANAGE. Passe a 30 avec la
-    // tache 3 de feature/suppression-compte-admin, qui ajoute USER_DELETE.
-    void enumHasExactlyThirtyValues() {
-        assertThat(AdminPermission.values()).hasSize(30);
+    // tache 3 de feature/suppression-compte-admin, qui ajoute USER_DELETE. Passe a 31
+    // avec la tache 2 du lot billing (feature/pro-saas-abonnement), qui ajoute
+    // USER_PRO_GRANT.
+    void enumHasExactlyThirtyOneValues() {
+        assertThat(AdminPermission.values()).hasSize(31);
     }
 }
