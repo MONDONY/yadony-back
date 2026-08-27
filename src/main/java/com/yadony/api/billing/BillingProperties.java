@@ -12,7 +12,12 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public record BillingProperties(
         Boolean schedulerEnabled,
         Integer legacyGraceDays,
-        Integer dunningGraceDays
+        Integer dunningGraceDays,
+        String priceMonthly,
+        String priceYearly,
+        String successUrl,
+        String cancelUrl,
+        String portalReturnUrl
 ) {
 
     /**
@@ -33,5 +38,20 @@ public record BillingProperties(
 
     public int dunningGraceDaysOrDefault() {
         return dunningGraceDays != null ? dunningGraceDays : 5;
+    }
+
+    /**
+     * Vrai si les identifiants de Price Stripe sont renseignés. Faux en
+     * développement et en test, où le dashboard Stripe n'est pas configuré :
+     * l'application doit démarrer quand même, et c'est l'appel à
+     * {@code POST /billing/checkout-session} qui échoue proprement.
+     */
+    public boolean stripePricesConfigured() {
+        return priceMonthly != null && !priceMonthly.isBlank()
+                && priceYearly != null && !priceYearly.isBlank();
+    }
+
+    public String priceFor(BillingCycle cycle) {
+        return cycle == BillingCycle.YEARLY ? priceYearly : priceMonthly;
     }
 }

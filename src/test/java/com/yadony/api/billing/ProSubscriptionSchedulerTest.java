@@ -25,7 +25,7 @@ class ProSubscriptionSchedulerTest {
 
     private ProSubscriptionScheduler scheduler(boolean enabled) {
         return new ProSubscriptionScheduler(repository, subscriptionService,
-                new BillingProperties(enabled, 60, 5));
+                new BillingProperties(enabled, 60, 5, null, null, null, null, null));
     }
 
     private ProSubscriptionEntity subscription(ProSubscriptionStatus status) {
