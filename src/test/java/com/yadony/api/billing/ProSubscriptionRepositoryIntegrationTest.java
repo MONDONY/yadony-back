@@ -105,4 +105,15 @@ class ProSubscriptionRepositoryIntegrationTest {
         assertThat(repository.findByUserId(userId)).isPresent();
         assertThat(repository.findByUserId(UUID.randomUUID())).isEmpty();
     }
+
+    @Test
+    @DisplayName("findByStripeSubscriptionId retrouve l'abonnement par son identifiant Stripe")
+    void findsByStripeSubscriptionId() {
+        ProSubscriptionEntity active = persist(ProSubscriptionStatus.ACTIVE, ProSubscriptionSource.STRIPE);
+        active.setStripeSubscriptionId("sub_test_123");
+        repository.save(active);
+
+        assertThat(repository.findByStripeSubscriptionId("sub_test_123")).isPresent();
+        assertThat(repository.findByStripeSubscriptionId("sub_unknown")).isEmpty();
+    }
 }
