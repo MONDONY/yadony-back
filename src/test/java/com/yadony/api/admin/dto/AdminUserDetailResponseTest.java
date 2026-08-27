@@ -2,12 +2,15 @@ package com.yadony.api.admin.dto;
 
 import com.yadony.api.auth.FirebaseContactService;
 import com.yadony.api.auth.UserEntity;
+import com.yadony.api.billing.BillingCycle;
 import com.yadony.api.billing.ProSubscriptionEntity;
 import com.yadony.api.billing.ProSubscriptionSource;
 import com.yadony.api.billing.ProSubscriptionStatus;
+import com.yadony.api.billing.dto.AdminProSubscriptionView;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -37,19 +40,37 @@ class AdminUserDetailResponseTest {
     @Test
     @DisplayName("un accès offert expose l'administrateur et le motif")
     void adminGrantExposesGranter() {
+        // Valeurs toutes distinctes et reconnaissables : une inversion positionnelle dans
+        // AdminProSubscriptionView.from(...) (ex. stripeSubscriptionId <-> adminGrantReason,
+        // deux String adjacents) doit faire échouer ce test, pas passer inaperçue derrière
+        // une couverture JaCoCo satisfaite.
         UUID adminId = UUID.randomUUID();
+        Instant currentPeriodEnd = Instant.parse("2027-01-01T00:00:00Z");
+        Instant graceExpiresAt = Instant.parse("2027-06-15T00:00:00Z");
+
         ProSubscriptionEntity sub = new ProSubscriptionEntity();
         sub.setStatus(ProSubscriptionStatus.ACTIVE);
         sub.setSource(ProSubscriptionSource.ADMIN_GRANT);
+        sub.setBillingCycle(BillingCycle.YEARLY);
+        sub.setCurrentPeriodEnd(currentPeriodEnd);
+        sub.setCancelAtPeriodEnd(true);
+        sub.setGraceExpiresAt(graceExpiresAt);
+        sub.setStripeSubscriptionId("sub_distinct_stripe_id");
         sub.setGrantedByAdminId(adminId);
         sub.setAdminGrantReason("Partenariat presse");
 
-        AdminUserDetailResponse response =
-                AdminUserDetailResponse.from(sampleUser(), sampleContact(), sub);
+        AdminProSubscriptionView view =
+                AdminUserDetailResponse.from(sampleUser(), sampleContact(), sub).proSubscription();
 
-        assertThat(response.proSubscription().source()).isEqualTo("ADMIN_GRANT");
-        assertThat(response.proSubscription().grantedByAdminId()).isEqualTo(adminId);
-        assertThat(response.proSubscription().adminGrantReason()).isEqualTo("Partenariat presse");
+        assertThat(view.status()).isEqualTo("ACTIVE");
+        assertThat(view.source()).isEqualTo("ADMIN_GRANT");
+        assertThat(view.billingCycle()).isEqualTo("YEARLY");
+        assertThat(view.currentPeriodEnd()).isEqualTo(currentPeriodEnd);
+        assertThat(view.cancelAtPeriodEnd()).isTrue();
+        assertThat(view.graceExpiresAt()).isEqualTo(graceExpiresAt);
+        assertThat(view.stripeSubscriptionId()).isEqualTo("sub_distinct_stripe_id");
+        assertThat(view.grantedByAdminId()).isEqualTo(adminId);
+        assertThat(view.adminGrantReason()).isEqualTo("Partenariat presse");
     }
 
     @Test
