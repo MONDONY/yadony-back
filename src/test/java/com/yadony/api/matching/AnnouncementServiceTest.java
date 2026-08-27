@@ -311,7 +311,31 @@ class AnnouncementServiceTest {
             assertThat(result.departureCity()).isEqualTo("Paris");
             assertThat(result.arrivalCity()).isEqualTo("Dakar");
             assertThat(result.status()).isEqualTo("ACTIVE");
+            ArgumentCaptor<AnnouncementEntity> saved = ArgumentCaptor.forClass(AnnouncementEntity.class);
+            verify(announcementRepository).save(saved.capture());
+            assertThat(saved.getValue().getSourceRecurrenceId()).isNull();
             verify(auditService).log(eq("USER"), any(), eq("ANNOUNCEMENT_CREATED"), any(), any());
+        }
+
+        @Test
+        @DisplayName("création récurrente → identifiant de programmation persisté")
+        void createRecurringAnnouncement_linksSourceRecurrence() {
+            UserEntity traveler = buildTraveler();
+            UUID recurrenceId = UUID.randomUUID();
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.save(any())).thenAnswer(inv -> {
+                AnnouncementEntity announcement = inv.getArgument(0);
+                setId(announcement, ANNOUNCEMENT_ID);
+                return announcement;
+            });
+            when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
+            when(bidRepository.countByAnnouncementIdAndStatusIn(any(), any())).thenReturn(0L);
+
+            announcementService.createRecurringAnnouncement(FIREBASE_UID, buildRequest(), recurrenceId);
+
+            ArgumentCaptor<AnnouncementEntity> saved = ArgumentCaptor.forClass(AnnouncementEntity.class);
+            verify(announcementRepository).save(saved.capture());
+            assertThat(saved.getValue().getSourceRecurrenceId()).isEqualTo(recurrenceId);
         }
 
         @Test

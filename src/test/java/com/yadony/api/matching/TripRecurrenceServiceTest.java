@@ -32,6 +32,7 @@ class TripRecurrenceServiceTest {
 
     @Mock TripRecurrenceRepository repository;
     @Mock AnnouncementService announcementService;
+    @Mock AnnouncementRepository announcementRepository;
     @Mock UserRepository userRepository;
     @Mock AuditService auditService;
     @InjectMocks TripRecurrenceService service;
@@ -78,7 +79,7 @@ class TripRecurrenceServiceTest {
         int created = service.generateForRecurrence(rec);
 
         assertThat(created).isEqualTo(7);
-        verify(announcementService, times(7)).createAnnouncement(eq("firebase-uid"), any());
+        verify(announcementService, times(7)).createRecurringAnnouncement(eq("firebase-uid"), any(), eq(rec.getId()));
         assertThat(rec.getLastGeneratedDate()).isEqualTo(LocalDate.now().plusDays(6));
     }
 
@@ -92,7 +93,7 @@ class TripRecurrenceServiceTest {
         service.generateForRecurrence(rec);
 
         ArgumentCaptor<AnnouncementRequest> cap = ArgumentCaptor.forClass(AnnouncementRequest.class);
-        verify(announcementService).createAnnouncement(eq("firebase-uid"), cap.capture());
+        verify(announcementService).createRecurringAnnouncement(eq("firebase-uid"), cap.capture(), eq(rec.getId()));
         assertThat(cap.getValue().acceptedPaymentMethods())
                 .contains(PaymentMethod.STRIPE, PaymentMethod.CASH);
         assertThat(cap.getValue().arrivalTime()).isEqualTo(LocalTime.of(18, 30));
@@ -107,7 +108,7 @@ class TripRecurrenceServiceTest {
         int created = service.generateForRecurrence(rec);
 
         assertThat(created).isZero();
-        verify(announcementService, never()).createAnnouncement(anyString(), any());
+        verify(announcementService, never()).createRecurringAnnouncement(anyString(), any(), any());
     }
 
     @Test
@@ -124,14 +125,14 @@ class TripRecurrenceServiceTest {
     @Test
     void generate_isolatesCreationFailures() {
         mockUser();
-        when(announcementService.createAnnouncement(anyString(), any()))
+        when(announcementService.createRecurringAnnouncement(anyString(), any(), any()))
                 .thenThrow(new RuntimeException("limite PRO atteinte"));
         TripRecurrenceEntity rec = entity("1111111", 1, null); // 2 jours
 
         int created = service.generateForRecurrence(rec);
 
         assertThat(created).isZero(); // aucune réussie
-        verify(announcementService, times(2)).createAnnouncement(anyString(), any()); // mais 2 tentées
+        verify(announcementService, times(2)).createRecurringAnnouncement(anyString(), any(), any()); // mais 2 tentées
         assertThat(rec.getLastGeneratedDate()).isEqualTo(LocalDate.now().plusDays(1));
     }
 
@@ -147,6 +148,19 @@ class TripRecurrenceServiceTest {
     }
 
     @Test
+    void generate_skipsOccurrenceAlreadyLinkedToRecurrence() {
+        mockUser();
+        TripRecurrenceEntity rec = entity("1111111", 0, null);
+        when(announcementRepository.existsBySourceRecurrenceIdAndDepartureDate(
+                rec.getId(), LocalDate.now())).thenReturn(true);
+
+        int created = service.generateForRecurrence(rec);
+
+        assertThat(created).isZero();
+        verifyNoInteractions(announcementService);
+    }
+
+    @Test
     void create_savesAndGeneratesWhenActive() {
         mockUser();
         var req = request("1111111", 0, true);
@@ -154,7 +168,7 @@ class TripRecurrenceServiceTest {
         service.create(userId, req);
 
         verify(repository, atLeastOnce()).save(any(TripRecurrenceEntity.class));
-        verify(announcementService, times(1)).createAnnouncement(eq("firebase-uid"), any());
+        verify(announcementService, times(1)).createRecurringAnnouncement(eq("firebase-uid"), any(), any());
         verify(auditService).log(eq("TRIP_RECURRENCE"), any(), eq("TRIP_RECURRENCE_CREATED"), eq(userId), anyMap());
     }
 

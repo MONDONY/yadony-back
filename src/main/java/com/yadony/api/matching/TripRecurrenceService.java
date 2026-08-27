@@ -14,6 +14,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.dao.DataIntegrityViolationException;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -34,16 +35,19 @@ public class TripRecurrenceService {
 
     private final TripRecurrenceRepository repository;
     private final AnnouncementService announcementService;
+    private final AnnouncementRepository announcementRepository;
     private final UserRepository userRepository;
     private final AuditService auditService;
     private final TripRecurrenceCalendar calendar = new TripRecurrenceCalendar();
 
     public TripRecurrenceService(TripRecurrenceRepository repository,
                                  AnnouncementService announcementService,
+                                 AnnouncementRepository announcementRepository,
                                  UserRepository userRepository,
                                  AuditService auditService) {
         this.repository = repository;
         this.announcementService = announcementService;
+        this.announcementRepository = announcementRepository;
         this.userRepository = userRepository;
         this.auditService = auditService;
     }
@@ -139,9 +143,17 @@ public class TripRecurrenceService {
             if (rec.getWeekdays().charAt(idx) != '1') {
                 continue;
             }
+            if (announcementRepository.existsBySourceRecurrenceIdAndDepartureDate(rec.getId(), d)) {
+                continue;
+            }
             try {
-                announcementService.createAnnouncement(firebaseUid, buildRequest(rec, d));
+                announcementService.createRecurringAnnouncement(firebaseUid, buildRequest(rec, d), rec.getId());
                 created++;
+            } catch (DataIntegrityViolationException exception) {
+                if (!isDuplicateOccurrence(exception)) {
+                    throw exception;
+                }
+                log.info("TripRecurrence {} : trajet {} déjà publié", rec.getId(), d);
             } catch (Exception e) {
                 log.warn("TripRecurrence {} : échec création trajet {} : {}", rec.getId(), d, e.getMessage());
             }
@@ -150,6 +162,18 @@ public class TripRecurrenceService {
         rec.setLastGeneratedDate(end);
         repository.save(rec);
         return created;
+    }
+
+    private boolean isDuplicateOccurrence(DataIntegrityViolationException exception) {
+        Throwable current = exception;
+        while (current != null) {
+            if (current.getMessage() != null
+                    && current.getMessage().contains("uq_announcements_recurrence_departure")) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     private AnnouncementRequest buildRequest(TripRecurrenceEntity rec, LocalDate date) {
