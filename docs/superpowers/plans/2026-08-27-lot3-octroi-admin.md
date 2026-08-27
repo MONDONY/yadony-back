@@ -391,7 +391,7 @@ import com.yadony.api.billing.ProSubscriptionEntity;
 import com.yadony.api.billing.ProSubscriptionRepository;
 import com.yadony.api.billing.ProSubscriptionSource;
 import com.yadony.api.billing.ProSubscriptionStatus;
-import com.yadony.api.kyc.KycStatus;
+import com.yadony.api.auth.KycStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
