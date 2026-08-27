@@ -126,6 +126,35 @@ class ProBillingStripeWebhookHandlerTest {
     }
 
     @Test
+    @DisplayName("invoice.paid lit l'abonnement sous sa forme actuelle parent.subscription_details.subscription")
+    void invoicePaidReadsSubscriptionFromParentSubscriptionDetails() {
+        // Forme réelle envoyée par Stripe depuis 2025-03-31.basil : le champ racine
+        // "subscription" a été retiré de Invoice, remplacé par ce chemin imbriqué.
+        ProSubscriptionEntity sub = existingSubscription(ProSubscriptionStatus.PAST_DUE);
+        when(repository.findByStripeSubscriptionId(SUBSCRIPTION_ID)).thenReturn(Optional.of(sub));
+        String data = "{\"id\":\"in_1\",\"parent\":{\"type\":\"subscription_details\","
+                + "\"subscription_details\":{\"subscription\":\"" + SUBSCRIPTION_ID + "\"}},"
+                + "\"period_end\":1788000000}";
+
+        handler().handle(event("invoice.paid", data));
+
+        verify(subscriptionService).renew(eq(sub), any(Instant.class));
+    }
+
+    @Test
+    @DisplayName("invoice.payment_failed lit l'abonnement sous sa forme actuelle parent.subscription_details.subscription")
+    void invoiceFailedReadsSubscriptionFromParentSubscriptionDetails() {
+        ProSubscriptionEntity sub = existingSubscription(ProSubscriptionStatus.ACTIVE);
+        when(repository.findByStripeSubscriptionId(SUBSCRIPTION_ID)).thenReturn(Optional.of(sub));
+        String data = "{\"id\":\"in_1\",\"parent\":{\"type\":\"subscription_details\","
+                + "\"subscription_details\":{\"subscription\":\"" + SUBSCRIPTION_ID + "\"}}}";
+
+        handler().handle(event("invoice.payment_failed", data));
+
+        verify(subscriptionService).markPastDue(sub);
+    }
+
+    @Test
     @DisplayName("un abonnement inconnu est ignoré sans exception")
     void unknownSubscriptionIsIgnored() {
         when(repository.findByStripeSubscriptionId("sub_inconnu")).thenReturn(Optional.empty());

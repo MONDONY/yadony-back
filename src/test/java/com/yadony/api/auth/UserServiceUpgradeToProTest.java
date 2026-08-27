@@ -1,6 +1,7 @@
 package com.yadony.api.auth;
 
 import com.yadony.api.auth.dto.UpgradeToProRequest;
+import com.yadony.api.billing.ProSubscriptionRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.messaging.FirestoreService;
@@ -72,11 +73,13 @@ class UserServiceUpgradeToProTest {
     @Mock NotificationDispatcher notificationDispatcher;
     @Mock WalletRefundRequestService walletRefundRequestService;
     @Mock WalletSelfRefundService walletSelfRefundService;
+    @Mock ProSubscriptionRepository proSubscriptionRepository;
 
     private UserService service() {
         return new UserService(userRepository, paymentRepository, walletAccountRepository,
                 auditService, eventPublisher, accountFinalizationService, firestoreService,
-                notificationDispatcher, walletRefundRequestService, walletSelfRefundService);
+                notificationDispatcher, walletRefundRequestService, walletSelfRefundService,
+                proSubscriptionRepository);
     }
 
     private UserEntity user(boolean pro) {

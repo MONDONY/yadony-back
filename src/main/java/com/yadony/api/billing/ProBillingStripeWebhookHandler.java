@@ -138,7 +138,7 @@ public class ProBillingStripeWebhookHandler implements StripeWebhookHandler {
     }
 
     private void onInvoicePaid(JsonNode data) {
-        find(text(data, "subscription")).ifPresent(sub -> {
+        find(invoiceSubscriptionId(data)).ifPresent(sub -> {
             long periodEnd = data.path("period_end").asLong(0L);
             Instant end = periodEnd > 0
                     ? Instant.ofEpochSecond(periodEnd)
@@ -148,12 +148,37 @@ public class ProBillingStripeWebhookHandler implements StripeWebhookHandler {
     }
 
     private void onInvoiceFailed(JsonNode data) {
-        find(text(data, "subscription")).ifPresent(sub -> {
+        find(invoiceSubscriptionId(data)).ifPresent(sub -> {
             if (sub.getStatus() == ProSubscriptionStatus.PAST_DUE) {
                 return;
             }
             subscriptionService.markPastDue(sub);
         });
+    }
+
+    /**
+     * Lit l'identifiant d'abonnement d'une {@code Invoice}.
+     *
+     * <p>Le champ racine {@code subscription} a été retiré de l'objet Invoice en
+     * {@code 2025-03-31.basil} ; sa forme actuelle est
+     * {@code parent.subscription_details.subscription}. On lit d'abord cette forme
+     * actuelle, avec repli sur l'ancien champ racine : la version d'API Stripe
+     * effectivement utilisée dépend de la configuration du compte/endpoint webhook,
+     * pas de celle du SDK embarqué ici, et une migration future pourrait la faire
+     * évoluer encore — ce repli évite de dépendre de l'une ou l'autre.
+     */
+    private static String invoiceSubscriptionId(JsonNode invoice) {
+        JsonNode parent = invoice.get("parent");
+        if (parent != null && !parent.isNull()) {
+            JsonNode subscriptionDetails = parent.get("subscription_details");
+            if (subscriptionDetails != null && !subscriptionDetails.isNull()) {
+                String nested = text(subscriptionDetails, "subscription");
+                if (nested != null) {
+                    return nested;
+                }
+            }
+        }
+        return text(invoice, "subscription");
     }
 
     private void onSubscriptionUpdated(JsonNode data) {

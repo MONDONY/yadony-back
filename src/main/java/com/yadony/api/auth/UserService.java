@@ -4,6 +4,9 @@ import com.yadony.api.auth.dto.DeletionEligibilityResponse;
 import com.yadony.api.auth.dto.UpgradeToProRequest;
 import com.yadony.api.auth.events.AccountDeletionRequestedEvent;
 import com.yadony.api.auth.events.UserSuspendedEvent;
+import com.yadony.api.billing.ProSubscriptionEntity;
+import com.yadony.api.billing.ProSubscriptionRepository;
+import com.yadony.api.billing.ProSubscriptionSource;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.messaging.FirestoreService;
@@ -48,6 +51,7 @@ public class UserService {
     private final NotificationDispatcher notificationDispatcher;
     private final WalletRefundRequestService walletRefundRequestService;
     private final WalletSelfRefundService walletSelfRefundService;
+    private final ProSubscriptionRepository proSubscriptionRepository;
 
     public UserService(UserRepository userRepository,
                        PaymentRepository paymentRepository,
@@ -58,7 +62,8 @@ public class UserService {
                        FirestoreService firestoreService,
                        NotificationDispatcher notificationDispatcher,
                        WalletRefundRequestService walletRefundRequestService,
-                       WalletSelfRefundService walletSelfRefundService) {
+                       WalletSelfRefundService walletSelfRefundService,
+                       ProSubscriptionRepository proSubscriptionRepository) {
         this.userRepository = userRepository;
         this.paymentRepository = paymentRepository;
         this.walletAccountRepository = walletAccountRepository;
@@ -69,6 +74,7 @@ public class UserService {
         this.notificationDispatcher = notificationDispatcher;
         this.walletRefundRequestService = walletRefundRequestService;
         this.walletSelfRefundService = walletSelfRefundService;
+        this.proSubscriptionRepository = proSubscriptionRepository;
     }
 
     /** Un solde wallet réel (rechargé par carte, cf. WalletTopupOrchestrator) non dépensé
@@ -274,9 +280,37 @@ public class UserService {
         return saved;
     }
 
+    /**
+     * Renonce au profil PRO.
+     *
+     * <p>Refuse cette voie lorsque la ligne {@code pro_subscriptions} de
+     * l'utilisateur est un abonnement Stripe encore ouvert (statut qui
+     * {@link com.yadony.api.billing.ProSubscriptionStatus#grantsProAccess()
+     * accorde encore l'accès}) : Stripe continuerait à débiter l'utilisateur
+     * après la perte de son accès, et {@code ProSubscriptionService.close()} ne
+     * purge pas {@code stripeSubscriptionId} — le prochain {@code invoice.paid}
+     * ressusciterait la ligne fermée en {@code ACTIVE}. La résiliation d'un
+     * abonnement payant passe par le Customer Portal Stripe, pas par cet
+     * endpoint. Un compte PRO sans abonnement Stripe payant (grâce historique
+     * {@code LEGACY_FREE}, octroi administrateur, ou abonnement Stripe déjà
+     * fermé) reste toujours libre de renoncer à son profil professionnel.
+     */
     @Transactional
     public UserEntity downgradePro(UserEntity user) {
         UUID userId = user.getId();
+
+        proSubscriptionRepository.findByUserId(userId).ifPresent(subscription -> {
+            if (subscription.getSource() == ProSubscriptionSource.STRIPE
+                    && subscription.getStatus().grantsProAccess()) {
+                throw new YadonyBusinessException(
+                        HttpStatus.CONFLICT,
+                        "active-stripe-subscription",
+                        "Active Stripe Subscription",
+                        "Vous avez un abonnement PRO payant en cours — gérez sa résiliation "
+                                + "depuis la gestion de votre abonnement (portail Stripe), pas depuis cette action");
+            }
+        });
+
         user.setProAccount(false);
         user.setProCompanyName(null);
         user.setProSiret(null);
