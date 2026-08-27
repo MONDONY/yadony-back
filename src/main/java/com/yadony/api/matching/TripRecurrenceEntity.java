@@ -3,6 +3,8 @@ package com.yadony.api.matching;
 import com.yadony.api.common.BaseEntity;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Table;
 import org.hibernate.annotations.Where;
 import java.time.LocalDate;
@@ -96,6 +98,7 @@ public class TripRecurrenceEntity extends BaseEntity {
     @Column(name = "handover_lead_days", nullable = false)
     private Integer handoverLeadDays = 0;
 
+    @Enumerated(EnumType.STRING)
     @Column(name = "pricing_mode", nullable = false, length = 10)
     private PricingMode pricingMode = PricingMode.KG;
 
