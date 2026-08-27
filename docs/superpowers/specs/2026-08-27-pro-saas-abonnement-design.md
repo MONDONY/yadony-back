@@ -166,6 +166,12 @@ Chaque transition vers `EXPIRED` ou `CANCELED` publie `UserProStatusChangedEvent
 
 Le service de scoring de `matching/` lit `traveler.isProAccount()` — lecture directe du flag, sans événement, conformément au précédent déjà en place dans `AnnouncementService` et `BidService`.
 
+> **Corrigé au lot 4, 2026-08-27.** Ce qui suit décrivait une intention, pas la réalité. La mise en avant des voyageurs PRO **existait déjà en production** au moment d'écrire ce spec, et sous une forme plus agressive que celle décrite : `travelerIsPro` est la **clé de tri primaire absolue** dans les deux branches de `AnnouncementService.searchAnnouncements`, si bien que la dernière annonce PRO d'un corridor passe devant la première annonce non-PRO, quels que soient son prix et sa date.
+>
+> Après arbitrage, ce tri est **conservé**. Le remplacer par le bonus additif décrit ci-dessous imposerait de construire un score de classement inexistant, de faire basculer la pagination SQL vers un chargement mémoire complet du jeu filtré, et de gérer l'invalidation d'un cache dont la clé ignore le réglage — pour un gain de pertinence non demandé par le produit. Le lot 4 s'est donc limité à couvrir de tests ce comportement, qui ne l'était pas du tout. Voir `docs/stories-done/story-billing-lot4-mise-en-avant-pro.md`.
+>
+> Le paragraphe original est conservé ci-dessous à titre d'archive de l'intention initiale.
+
 Un **bonus de score additif** est appliqué aux voyageurs PRO actifs dans le classement des résultats de recherche et de matching côté expéditeur. Le choix d'un bonus additif plutôt que d'un remplacement du score de pertinence est délibéré : la pertinence pour l'expéditeur ne doit pas être dégradée par la monétisation.
 
 La valeur du bonus est une constante configurable dans `application.yml`. Pas de table de configuration : inutile tant qu'il n'existe qu'un seul palier.
