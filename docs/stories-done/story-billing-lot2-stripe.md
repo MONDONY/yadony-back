@@ -303,30 +303,20 @@ chaque transition Stripe pour ne jamais survivre à un changement de source.
 
 - `./mvnw test` (suite complète, dernier lancement en fin de vague de correctifs finaux, commit
   `8d198649`) → **4304 tests, 0 échec, 0 erreur, 7 ignorés, BUILD SUCCESS**.
-- Couverture JaCoCo du package `com.yadony.api.billing`, dernière mesure isolée disponible (fin de
-  tâche 4, avant les vagues de correctifs de revue finale, run propre avec `jacoco.exec` vidé au
-  préalable) : **97 % instructions / 93 % branches**, détail par classe :
-  - `BillingProperties` — 100 % / 100 %
-  - `StripeBillingService` — 93 % / 75 % (chemins nominaux `Session.create` couverts via
-    `Mockito.mockStatic` ; reste non couvert : branches défensives jugées hors d'atteinte sans
-    wrapper injectable autour du SDK Stripe)
-  - `BillingController` — 84 % / 50 % (`handleWebhook` non attribué par JaCoCo malgré exécution
-    prouvée — voir « Pièges » ; branche non couverte restante : `orElseThrow` de `currentUserId`
-    sur un principal authentifié dont l'utilisateur aurait disparu de la base)
-  - `ProBillingStripeWebhookHandler` — 100 % / 100 % (34 tests, toutes les branches défensives
-    couvertes après un complément dédié)
-  - `ProSubscriptionService` — couverture non isolément mesurée après les correctifs finaux
-    (`renew`, `activateFromStripe`) ; 100 % des transitions exercées par
-    `ProSubscriptionServiceStripeTest` (9 tests) et `ProSubscriptionServiceTest` (7 tests).
-
-  **Note de transparence** : cette mesure par classe date de la fin de la tâche 4, avant les deux
-  vagues de correctifs de revue finale (3 bloquants + 5 non bloquants) qui ont ajouté des tests sur
-  `ProBillingStripeWebhookHandler` et `ProSubscriptionService`. Aucune commande Maven n'a été
-  relancée pour produire cette documentation (contrainte de cette tâche de rédaction) : le nombre
-  global (4304 tests, 0 échec) est vérifié sur le dernier commit, mais un rapport JaCoCo consolidé
-  post-correctifs n'a pas été régénéré. À refaire (`rm target/jacoco.exec && ./mvnw test
-  jacoco:report` en une seule commande, cf. piège documenté ci-dessus) avant de considérer la
-  couverture du package `billing/` comme formellement vérifiée à 90 % sur l'état final du lot.
+- Couverture JaCoCo du package `com.yadony.api.billing`, **mesure consolidée sur l'état final du
+  lot** — `jacoco.exec` supprimé puis `./mvnw test jacoco:report` en une seule commande, donc sans
+  agrégation de runs antérieurs : **97 % instructions (43 lignes manquées sur 1 667) et 90 %
+  branches (12 sur 128)**, 12 classes, aucune classe non couverte. Le seuil de 90 % du projet est
+  tenu sur les deux axes.
+  - `ProBillingStripeWebhookHandler` — 96 % / 90 %, après les 34 tests couvrant les branches
+    défensives et les deux formes de payload de facture.
+  - `BillingProperties` — 100 % / 100 %.
+  - `StripeBillingService` — chemins nominaux `Session.create` couverts via `Mockito.mockStatic` ;
+    le reste non couvert tient aux branches d'erreur du SDK Stripe, hors d'atteinte sans wrapper
+    injectable.
+  - `BillingController` — `handleWebhook` reste non attribué par JaCoCo malgré une exécution
+    prouvée, voir « Pièges ». La seule branche réellement non couverte est l'`orElseThrow` de
+    `currentUserId` sur un principal authentifié dont l'utilisateur aurait disparu de la base.
 
 - Tests ajoutés ou modifiés dans ce lot : `StripeWebhookIngestServiceTest`,
   `ProSubscriptionServiceStripeTest`, `ProBillingStripeWebhookHandlerTest` (34 tests, dont 9 ajoutés
