@@ -550,6 +550,11 @@ Dans `src/main/java/com/yadony/api/billing/ProSubscriptionService.java`, après 
         sub.setGraceExpiresAt(null);
         sub.setPastDueSince(null);
         sub.setCancelAtPeriodEnd(false);
+        // La source devient STRIPE : les traces d'un octroi administrateur
+        // antérieur ne doivent pas survivre, sinon toute lecture ultérieure sur
+        // l'origine du droit est faussée. Symétrique de openLegacyGrace.
+        sub.setGrantedByAdminId(null);
+        sub.setAdminGrantReason(null);
         ProSubscriptionEntity saved = repository.save(sub);
 
         accessSynchronizer.sync(userId, true);
