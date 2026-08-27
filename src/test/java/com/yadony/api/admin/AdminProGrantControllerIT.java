@@ -17,6 +17,8 @@ import com.yadony.api.auth.KycStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -26,6 +28,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -128,12 +131,36 @@ class AdminProGrantControllerIT {
     }
 
     @Test
-    @DisplayName("un administrateur sans la permission est refusé en 403")
-    void withoutPermissionIsForbidden() throws Exception {
+    @DisplayName("un motif de plus de 500 caractères est refusé en 422")
+    void reasonExceedingFiveHundredCharsIsRejected() throws Exception {
+        // 501 caractères : dépasse d'un cran la colonne admin_grant_reason (bornée à 500).
+        // C'est le @Size(max = 500) du DTO qui doit intercepter ça avant d'atteindre le SQL.
+        String tooLong = "a".repeat(501);
+
         mockMvc.perform(post("/admin/users/{userId}/pro-grant", userId)
-                        .with(authentication(adminWithoutPermission()))
+                        .with(authentication(adminAuth(AdminRole.ADMIN)))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new ProGrantRequest("Test"))))
+                        .content(objectMapper.writeValueAsString(new ProGrantRequest(tooLong))))
+                .andExpect(status().isUnprocessableEntity());
+    }
+
+    /**
+     * Couvre l'octroi ET la révocation : les deux endpoints portent la même
+     * {@code @PreAuthorize}, et rien ne garantit qu'elle n'a pas été oubliée ou mal
+     * recopiée sur l'un des deux — {@code AdminPermissionCoverageTest} prouve seulement
+     * que la permission est citée quelque part, pas que chaque endpoint l'applique.
+     */
+    @ParameterizedTest(name = "{0} sans la permission est refusé en 403")
+    @ValueSource(strings = {"POST", "DELETE"})
+    @DisplayName("un administrateur sans la permission est refusé en 403, à l'octroi comme à la révocation")
+    void actionWithoutPermissionIsForbidden(String httpMethod) throws Exception {
+        MockHttpServletRequestBuilder request = "POST".equals(httpMethod)
+                ? post("/admin/users/{userId}/pro-grant", userId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new ProGrantRequest("Test")))
+                : delete("/admin/users/{userId}/pro-grant", userId);
+
+        mockMvc.perform(request.with(authentication(adminWithoutPermission())))
                 .andExpect(status().isForbidden());
     }
 
