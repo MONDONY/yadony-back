@@ -237,7 +237,28 @@ Toutes les erreurs passent par `GlobalExceptionHandler` au format RFC 7807 `Prob
 
 ---
 
-## 12. Hors périmètre v1
+## 12. Effets du downgrade
+
+Perdre le statut PRO (grâce expirée, dunning épuisé, résiliation arrivée à échéance, révocation admin) ne se limite pas à couper l'accès à l'interface. Les effets sont pilotés par le listener de `UserProStatusChangedEvent`.
+
+| Ressource | Effet du downgrade |
+|---|---|
+| **Règles d'automatisation** | **Désactivées, jamais supprimées.** Elles cessent de s'exécuter mais restent en base. Un voyageur qui se réabonne les retrouve intactes |
+| **Quotas de brouillons** | Retour de `maxDraftsPro` à `maxDrafts`. Les brouillons existants au-delà du quota sont conservés ; seule la création de nouveaux brouillons est bloquée tant que le dépassement persiste |
+| **Annonces publiées** | Aucun impact. Elles restent publiées et réservables : un downgrade ne doit jamais casser des trajets en cours ou des engagements pris envers des expéditeurs |
+| **Export fiscal, analytics** | Accès simplement refusé. Aucune donnée touchée : les revenus historiques restent disponibles si le voyageur se réabonne |
+| **Portail `dony-pro`** | `middleware/pro-only.ts` redirige vers `/upgrade`, sans changement de code |
+| **Boost de matching** | Disparaît automatiquement, le scoring lisant `isProAccount` |
+
+Le point critique est celui des automatisations : elles s'exécutent côté serveur et ne s'arrêteraient pas d'elles-mêmes. Sans désactivation explicite, un voyageur résilié continuerait de bénéficier du moteur d'automatisations, ce qui reviendrait à un compte PRO gratuit de fait.
+
+Le choix « désactiver sans supprimer » respecte la règle du projet interdisant les suppressions physiques, et constitue le meilleur levier de reconquête : le réabonnement restaure une configuration immédiatement opérationnelle.
+
+**Tests associés :** vérifier qu'un downgrade désactive bien les règles d'automatisation, qu'il ne dépublie aucune annonce, et qu'un réabonnement les réactive.
+
+---
+
+## 13. Hors périmètre v1
 
 Backlog explicite, à ne pas implémenter dans ce lot :
 
