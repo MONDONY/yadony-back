@@ -137,14 +137,44 @@ public class ProSubscriptionService {
         return saved;
     }
 
-    /** Échéance encaissée : repousse la période et sort d'un éventuel impayé. */
+    /**
+     * Échéance encaissée : repousse la période et sort d'un éventuel impayé.
+     *
+     * <p>Refuse de ressusciter un abonnement {@code CANCELED} : une résiliation
+     * volontaire ne doit jamais être rouverte par un encaissement tardif (facture
+     * en retard sur un abonnement déjà résilié, webhook rejoué après coup...).
+     * {@code ACTIVE}, {@code PAST_DUE} et {@code EXPIRED} restent éligibles —
+     * ressusciter un {@code EXPIRED} après un encaissement tardif de dunning est
+     * au contraire le comportement souhaité.
+     *
+     * <p>Journalise {@code BILLING_SUBSCRIPTION_REACTIVATED} uniquement quand la
+     * résurrection a réellement lieu, c'est-à-dire quand le statut de départ ne
+     * donnait pas déjà l'accès ({@code EXPIRED}) : {@link #close} avait écrit une
+     * entrée fermante à ce moment-là, sans celle-ci la piste d'audit laisserait
+     * croire que le compte est resté fermé.
+     */
     @Transactional
     public ProSubscriptionEntity renew(ProSubscriptionEntity sub, Instant periodEnd) {
+        if (sub.getStatus() == ProSubscriptionStatus.CANCELED) {
+            log.warn("Refusing to renew CANCELED subscription {} — a voluntary cancellation "
+                    + "is never reopened by a late payment", sub.getId());
+            return sub;
+        }
+
+        ProSubscriptionStatus previousStatus = sub.getStatus();
+        boolean isReactivation = !previousStatus.grantsProAccess();
+
         sub.setStatus(ProSubscriptionStatus.ACTIVE);
         sub.setPastDueSince(null);
         sub.setCurrentPeriodEnd(periodEnd);
         ProSubscriptionEntity saved = repository.save(sub);
         accessSynchronizer.sync(sub.getUserId(), true);
+
+        if (isReactivation) {
+            auditService.log(AUDIT_ENTITY_TYPE, saved.getId(), "BILLING_SUBSCRIPTION_REACTIVATED",
+                    sub.getUserId(), Map.of("previousStatus", previousStatus.name()));
+        }
+
         log.info("Subscription {} renewed until {}", sub.getId(), periodEnd);
         return saved;
     }
@@ -161,17 +191,6 @@ public class ProSubscriptionService {
         ProSubscriptionEntity saved = repository.save(sub);
         accessSynchronizer.sync(sub.getUserId(), true);
         log.info("Subscription {} marked PAST_DUE", sub.getId());
-        return saved;
-    }
-
-    /** Paiement finalement encaissé : retour à ACTIVE. */
-    @Transactional
-    public ProSubscriptionEntity clearPastDue(ProSubscriptionEntity sub) {
-        sub.setStatus(ProSubscriptionStatus.ACTIVE);
-        sub.setPastDueSince(null);
-        ProSubscriptionEntity saved = repository.save(sub);
-        accessSynchronizer.sync(sub.getUserId(), true);
-        log.info("Subscription {} recovered to ACTIVE", sub.getId());
         return saved;
     }
 

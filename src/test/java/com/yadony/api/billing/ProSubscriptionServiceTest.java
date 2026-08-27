@@ -129,21 +129,6 @@ class ProSubscriptionServiceTest {
     }
 
     @Test
-    @DisplayName("clearPastDue efface l'horodatage et rétablit ACTIVE")
-    void clearsPastDue() {
-        ProSubscriptionEntity sub = subscription(ProSubscriptionStatus.PAST_DUE,
-                ProSubscriptionSource.STRIPE);
-        sub.setPastDueSince(Instant.now().minus(2, ChronoUnit.DAYS));
-        when(repository.save(sub)).thenReturn(sub);
-
-        ProSubscriptionEntity result = service().clearPastDue(sub);
-
-        assertThat(result.getStatus()).isEqualTo(ProSubscriptionStatus.ACTIVE);
-        assertThat(result.getPastDueSince()).isNull();
-        verify(accessSynchronizer).sync(USER_ID, true);
-    }
-
-    @Test
     @DisplayName("expire ferme l'accès et journalise")
     void expires() {
         ProSubscriptionEntity sub = subscription(ProSubscriptionStatus.LEGACY_GRACE,

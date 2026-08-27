@@ -13,10 +13,16 @@ import java.util.UUID;
  * Garantit qu'aucun compte PRO n'existe sans ligne dans {@code pro_subscriptions},
  * et qu'aucune ligne n'y reste ouverte pour un compte qui n'est plus PRO.
  *
- * <p>Tant que le lot 2 n'est pas déployé, {@code POST /auth/me/upgrade-to-pro}
- * accorde encore le statut PRO gratuitement. Sans la branche montée en PRO de
- * ce listener, un tel compte n'aurait aucun abonnement, échapperait aux
- * tâches planifiées et resterait PRO gratuit indéfiniment.
+ * <p>Filet défensif, pas un chemin d'activation attendu : depuis ce lot,
+ * {@code POST /auth/me/upgrade-to-pro} ne fait plus qu'éditer le profil PRO
+ * (raison sociale, SIRET) et n'accorde plus jamais {@code isProAccount = true}
+ * gratuitement — seul {@link ProAccessSynchronizer}, piloté par Stripe via
+ * {@link ProSubscriptionService}, publie encore un
+ * {@code UserProStatusChangedEvent} à {@code isPro() == true}. La branche
+ * montée en PRO de ce listener protège malgré tout contre un compte qui
+ * basculerait {@code isProAccount = true} par un autre chemin que celui-là —
+ * migration de données, régression future, octroi admin direct — sans ligne
+ * {@code pro_subscriptions} associée.
  *
  * <p>Symétriquement, {@code DELETE /auth/me/upgrade-to-pro} redescend le
  * drapeau : sans la branche downgrade (voir {@link #onDowngrade}), la ligne

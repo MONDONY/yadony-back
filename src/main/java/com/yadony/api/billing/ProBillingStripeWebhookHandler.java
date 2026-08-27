@@ -2,7 +2,10 @@ package com.yadony.api.billing;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.stripe.exception.StripeException;
 import com.stripe.model.Event;
+import com.stripe.model.Subscription;
+import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.common.stripe.StripeWebhookHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -10,6 +13,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -44,13 +48,16 @@ public class ProBillingStripeWebhookHandler implements StripeWebhookHandler {
     private final ProSubscriptionRepository repository;
     private final ProSubscriptionService subscriptionService;
     private final ObjectMapper objectMapper;
+    private final AdminAlertService adminAlertService;
 
     public ProBillingStripeWebhookHandler(ProSubscriptionRepository repository,
                                           ProSubscriptionService subscriptionService,
-                                          ObjectMapper objectMapper) {
+                                          ObjectMapper objectMapper,
+                                          AdminAlertService adminAlertService) {
         this.repository = repository;
         this.subscriptionService = subscriptionService;
         this.objectMapper = objectMapper;
+        this.adminAlertService = adminAlertService;
     }
 
     @Override
@@ -94,22 +101,44 @@ public class ProBillingStripeWebhookHandler implements StripeWebhookHandler {
         }
     }
 
-    private void onCheckoutCompleted(JsonNode data) {
-        String reference = text(data, "client_reference_id");
-        String customerId = text(data, "customer");
-        String subscriptionId = text(data, "subscription");
+    /**
+     * Statuts {@code payment_status} d'une Checkout Session pour lesquels l'argent
+     * est effectivement acquis (ou n'a jamais été dû).
+     */
+    private static final Set<String> PAYMENT_CONFIRMED_STATUSES = Set.of("paid", "no_payment_required");
 
-        if (reference == null || customerId == null || subscriptionId == null) {
-            log.warn("Checkout session incomplete (reference={}, customer={}, subscription={})",
-                    reference, customerId, subscriptionId);
+    private void onCheckoutCompleted(JsonNode data) {
+        String sessionId = text(data, "id");
+        String paymentStatus = text(data, "payment_status");
+        // "checkout.session.completed" peut arriver avec payment_status=unpaid : le
+        // prélèvement SEPA (très utilisé sur ce marché) confirme la session avant que
+        // le débit soit encaissé. Un champ absent est traité comme "pas confirmé" —
+        // on ne peut pas prouver que l'argent est là, donc on n'accorde pas l'accès ;
+        // au pire on active un peu plus tard via invoice.paid, jamais trop tôt.
+        if (paymentStatus == null || !PAYMENT_CONFIRMED_STATUSES.contains(paymentStatus)) {
+            log.info("Checkout session {} not confirmed as paid yet (payment_status={}) — "
+                    + "waiting for the matching invoice.paid", sessionId, paymentStatus);
             return;
         }
 
-        UUID userId;
-        try {
-            userId = UUID.fromString(reference);
-        } catch (IllegalArgumentException e) {
-            log.warn("Checkout session carries a non-UUID client_reference_id: {}", reference);
+        String customerId = text(data, "customer");
+        String subscriptionId = text(data, "subscription");
+        if (customerId == null || subscriptionId == null) {
+            log.warn("Checkout session incomplete (customer={}, subscription={})",
+                    customerId, subscriptionId);
+            return;
+        }
+
+        UUID userId = resolveUserId(data, subscriptionId);
+        if (userId == null) {
+            log.error("Checkout session {} is paid but no user could be resolved "
+                    + "(client_reference_id absent/invalid and subscription metadata unusable)", sessionId);
+            adminAlertService.raise("BILLING_CHECKOUT_UNRESOLVED_USER",
+                    "Session Checkout " + sessionId + " payée, mais aucun utilisateur n'a pu être "
+                            + "rattaché à l'abonnement Stripe " + subscriptionId,
+                    Map.of("checkoutSessionId", String.valueOf(sessionId),
+                            "customerId", customerId,
+                            "subscriptionId", subscriptionId));
             return;
         }
 
@@ -121,6 +150,50 @@ public class ProBillingStripeWebhookHandler implements StripeWebhookHandler {
 
         subscriptionService.activateFromStripe(userId, customerId, subscriptionId,
                 cycle, provisionalEnd);
+    }
+
+    /**
+     * Résout l'utilisateur d'une session Checkout : {@code client_reference_id}
+     * d'abord, avec repli sur la métadonnée {@code user_id} de l'abonnement Stripe.
+     *
+     * <p>Cette métadonnée est posée par {@code StripeBillingService} via
+     * {@code subscription_data.putMetadata("user_id", …)} à la création de la
+     * session : elle atterrit sur l'objet {@code Subscription} une fois créé, pas
+     * sur la Session elle-même (le paramètre {@code subscription_data} n'est pas
+     * ré-exposé tel quel dans le payload de la Session). Il faut donc aller la
+     * chercher via l'API Stripe.
+     */
+    private UUID resolveUserId(JsonNode data, String subscriptionId) {
+        String reference = text(data, "client_reference_id");
+        if (reference != null) {
+            try {
+                return UUID.fromString(reference);
+            } catch (IllegalArgumentException e) {
+                log.warn("Checkout session carries a non-UUID client_reference_id: {} — "
+                        + "trying the subscription's user_id metadata as a fallback", reference);
+            }
+        }
+        return resolveUserIdFromSubscriptionMetadata(subscriptionId);
+    }
+
+    private UUID resolveUserIdFromSubscriptionMetadata(String subscriptionId) {
+        try {
+            Subscription subscription = Subscription.retrieve(subscriptionId);
+            String userIdMetadata = subscription.getMetadata() != null
+                    ? subscription.getMetadata().get("user_id")
+                    : null;
+            if (userIdMetadata == null) {
+                return null;
+            }
+            return UUID.fromString(userIdMetadata);
+        } catch (StripeException e) {
+            log.warn("Cannot retrieve Stripe subscription {} to resolve its user_id metadata: {}",
+                    subscriptionId, e.getMessage());
+            return null;
+        } catch (IllegalArgumentException e) {
+            log.warn("Stripe subscription {} carries a non-UUID user_id metadata", subscriptionId);
+            return null;
+        }
     }
 
     private BillingCycle readCycle(JsonNode data) {
@@ -139,12 +212,34 @@ public class ProBillingStripeWebhookHandler implements StripeWebhookHandler {
 
     private void onInvoicePaid(JsonNode data) {
         find(invoiceSubscriptionId(data)).ifPresent(sub -> {
-            long periodEnd = data.path("period_end").asLong(0L);
+            long periodEnd = invoiceServicePeriodEnd(data);
             Instant end = periodEnd > 0
                     ? Instant.ofEpochSecond(periodEnd)
                     : Instant.now().plus(32, ChronoUnit.DAYS);
             subscriptionService.renew(sub, end);
         });
+    }
+
+    /**
+     * Échéance de la nouvelle période de service, à ne pas confondre avec le
+     * {@code period_end} racine de la facture : celui-ci ferme la période
+     * d'USAGE déjà facturée (proche de l'instant présent à chaque renouvellement),
+     * pas la nouvelle période de service dont l'accès dépend. La source non
+     * ambiguë est {@code lines.data[0].period.end}. Sans ce correctif,
+     * {@code currentPeriodEnd} retombait quasiment à maintenant à chaque
+     * renouvellement, et {@code closeEndedCancellations} aurait fermé un
+     * abonnement {@code cancelAtPeriodEnd=true} dès son passage suivant — alors
+     * que la période venait justement d'être payée.
+     */
+    private static long invoiceServicePeriodEnd(JsonNode invoice) {
+        JsonNode lines = invoice.path("lines").path("data");
+        if (lines.isArray() && !lines.isEmpty()) {
+            long lineItemEnd = lines.get(0).path("period").path("end").asLong(0L);
+            if (lineItemEnd > 0) {
+                return lineItemEnd;
+            }
+        }
+        return invoice.path("period_end").asLong(0L);
     }
 
     private void onInvoiceFailed(JsonNode data) {

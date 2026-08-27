@@ -15,8 +15,10 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -172,5 +174,61 @@ class ProSubscriptionServiceStripeTest {
         assertThat(result.getPastDueSince()).isNull();
         assertThat(result.getCurrentPeriodEnd()).isEqualTo(newEnd);
         verify(accessSynchronizer).sync(USER_ID, true);
+        // PAST_DUE donnait déjà l'accès : ce n'est pas une résurrection, pas d'audit dédié.
+        verify(auditService, never()).log(any(), any(), eq("BILLING_SUBSCRIPTION_REACTIVATED"), any(), anyMap());
+    }
+
+    @Test
+    @DisplayName("renew depuis ACTIVE prolonge simplement la période, sans audit de résurrection")
+    void renewFromActiveJustExtendsPeriod() {
+        ProSubscriptionEntity active = subscription(ProSubscriptionStatus.ACTIVE,
+                ProSubscriptionSource.STRIPE);
+        Instant newEnd = Instant.now().plus(30, ChronoUnit.DAYS);
+        when(repository.save(active)).thenReturn(active);
+
+        ProSubscriptionEntity result = service().renew(active, newEnd);
+
+        assertThat(result.getStatus()).isEqualTo(ProSubscriptionStatus.ACTIVE);
+        assertThat(result.getCurrentPeriodEnd()).isEqualTo(newEnd);
+        verify(accessSynchronizer).sync(USER_ID, true);
+        verify(auditService, never()).log(any(), any(), eq("BILLING_SUBSCRIPTION_REACTIVATED"), any(), anyMap());
+    }
+
+    @Test
+    @DisplayName("renew depuis EXPIRED ressuscite l'abonnement et journalise BILLING_SUBSCRIPTION_REACTIVATED")
+    void renewFromExpiredReactivatesAndAudits() {
+        ProSubscriptionEntity expired = subscription(ProSubscriptionStatus.EXPIRED,
+                ProSubscriptionSource.STRIPE);
+        Instant newEnd = Instant.now().plus(30, ChronoUnit.DAYS);
+        when(repository.save(expired)).thenReturn(expired);
+
+        ProSubscriptionEntity result = service().renew(expired, newEnd);
+
+        assertThat(result.getStatus())
+                .as("un encaissement tardif de dunning doit pouvoir ressusciter un EXPIRED")
+                .isEqualTo(ProSubscriptionStatus.ACTIVE);
+        assertThat(result.getCurrentPeriodEnd()).isEqualTo(newEnd);
+        verify(accessSynchronizer).sync(USER_ID, true);
+        verify(auditService).log(eq("BILLING"), eq(SUB_ID), eq("BILLING_SUBSCRIPTION_REACTIVATED"),
+                eq(USER_ID), anyMap());
+    }
+
+    @Test
+    @DisplayName("renew refuse de ressusciter un abonnement CANCELED")
+    void renewRefusesToResurrectCanceledSubscription() {
+        ProSubscriptionEntity canceled = subscription(ProSubscriptionStatus.CANCELED,
+                ProSubscriptionSource.STRIPE);
+        Instant staleEnd = canceled.getCurrentPeriodEnd();
+        Instant newEnd = Instant.now().plus(30, ChronoUnit.DAYS);
+
+        ProSubscriptionEntity result = service().renew(canceled, newEnd);
+
+        assertThat(result.getStatus())
+                .as("une résiliation volontaire ne doit jamais être rouverte par un paiement tardif")
+                .isEqualTo(ProSubscriptionStatus.CANCELED);
+        assertThat(result.getCurrentPeriodEnd()).isEqualTo(staleEnd);
+        verify(repository, never()).save(any());
+        verify(accessSynchronizer, never()).sync(any(), anyBoolean());
+        verify(auditService, never()).log(any(), any(), any(), any(), anyMap());
     }
 }
