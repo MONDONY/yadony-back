@@ -239,7 +239,14 @@ public class UserService {
         requestDeletion(firebaseUid);
     }
 
-    // PR-1 — Upgrade to PRO account
+    /**
+     * Met à jour le profil professionnel : raison sociale et SIRET.
+     *
+     * <p>Cette méthode n'accorde plus le statut PRO — il s'obtient uniquement
+     * par un abonnement payant, via Stripe Checkout depuis le portail web.
+     * Le drapeau {@code isProAccount} est désormais piloté exclusivement par
+     * {@code billing/ProAccessSynchronizer}.
+     */
     @Transactional
     public UserEntity upgradeToPro(UserEntity user, UpgradeToProRequest request) {
         UUID userId = user.getId();
@@ -255,24 +262,15 @@ public class UserService {
             }
         }
 
-        boolean alreadyPro = user.isProAccount();
-        String auditAction = alreadyPro ? "USER_PRO_PROFILE_UPDATED" : "USER_UPGRADED_TO_PRO";
-
-        user.setProAccount(true);
         user.setProCompanyName(request.companyName());
         user.setProSiret(request.siret());
         UserEntity saved = userRepository.save(user);
 
-        auditService.log("USER", userId, auditAction, userId,
+        auditService.log("USER", userId, "USER_PRO_PROFILE_UPDATED", userId,
                 Map.of("companyName", request.companyName() != null ? request.companyName() : "",
                         "siret", request.siret() != null ? request.siret() : ""));
 
-        if (!alreadyPro) {
-            eventPublisher.publishEvent(new UserProStatusChangedEvent(userId, true));
-            log.info("User {} upgraded to PRO account", userId);
-        } else {
-            log.info("User {} PRO profile updated (companyName, siret)", userId);
-        }
+        log.info("User {} PRO profile updated (companyName, siret)", userId);
         return saved;
     }
 

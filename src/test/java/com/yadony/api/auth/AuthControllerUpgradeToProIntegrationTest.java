@@ -87,7 +87,8 @@ class AuthControllerUpgradeToProIntegrationTest {
     }
 
     @Test
-    @DisplayName("200 OK with valid body → isProAccount=true, stripeAccountStatus=NOT_CREATED, country=FR in response")
+    @DisplayName("200 OK with valid body → profil pro mis à jour, mais isProAccount reste false : "
+            + "le statut PRO ne s'obtient plus que par abonnement Stripe payant")
     void upgradeToPro_success_returns200() throws Exception {
         UpgradeToProRequest request = new UpgradeToProRequest("Yadony SARL", "12345678901234");
 
@@ -98,13 +99,14 @@ class AuthControllerUpgradeToProIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").exists())
                 .andExpect(jsonPath("$.phoneNumber").value("+33612000001"))
-                .andExpect(jsonPath("$.isProAccount").value(true))
+                .andExpect(jsonPath("$.isProAccount").value(false))
                 .andExpect(jsonPath("$.stripeAccountStatus").value("NOT_CREATED"))
                 .andExpect(jsonPath("$.country").value("FR"));
     }
 
     @Test
-    @DisplayName("200 OK when user already has a Stripe Connect account → compte pro indépendant de Stripe")
+    @DisplayName("200 OK when user already has a Stripe Connect account → profil pro mis à jour, "
+            + "toujours sans accorder isProAccount")
     void upgradeToPro_withStripeAccount_returns200() throws Exception {
         UpgradeToProRequest request = new UpgradeToProRequest("Yadony SARL", "12345678901234");
 
@@ -113,7 +115,7 @@ class AuthControllerUpgradeToProIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.isProAccount").value(true))
+                .andExpect(jsonPath("$.isProAccount").value(false))
                 .andExpect(jsonPath("$.stripeAccountStatus").value("PENDING_ONBOARDING"));
     }
 
