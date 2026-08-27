@@ -144,6 +144,13 @@ yadony:
     non-pro:
       monthly-announcements: ${YADONY_LIMITS_NON_PRO_MONTHLY_ANNOUNCEMENTS:2}
   escrow-timeout-hours: ${YADONY_ESCROW_TIMEOUT_HOURS:48}
+  billing:
+    # Faux tant que le lot 2 (Stripe Checkout) n'est pas en production :
+    # sans lui, les comptes en grâce n'ont aucun moyen de s'abonner.
+    scheduler-enabled: ${YADONY_BILLING_SCHEDULER_ENABLED:false}
+    legacy-grace-days: ${YADONY_BILLING_LEGACY_GRACE_DAYS:60}
+    dunning-grace-days: ${YADONY_BILLING_DUNNING_GRACE_DAYS:5}
+    expiry-cron: "0 30 3 * * *"
   dispute-sla-hours: ${YADONY_DISPUTE_SLA_HOURS:72}
   reimbursement:
     max-amount-eur: ${YADONY_REIMBURSEMENT_MAX_AMOUNT_EUR:50}
