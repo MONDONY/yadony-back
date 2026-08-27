@@ -28,6 +28,7 @@ stripe:
   webhook:
     payments-secret: ${STRIPE_WEBHOOK_PAYMENTS_SECRET}
     kyc-secret: ${STRIPE_WEBHOOK_KYC_SECRET}
+    billing-secret: ${STRIPE_WEBHOOK_BILLING_SECRET}
 
 yadony:
   kyc:

@@ -326,6 +326,7 @@ stripe:
   webhook:
     payments-secret: ${STRIPE_WEBHOOK_PAYMENTS_SECRET:${STRIPE_WEBHOOK_SECRET:}}
     kyc-secret: ${STRIPE_WEBHOOK_KYC_SECRET:${STRIPE_WEBHOOK_SECRET:}}
+    billing-secret: ${STRIPE_WEBHOOK_BILLING_SECRET:${STRIPE_WEBHOOK_SECRET:}}
 
 storage:
   public-base-url: ${STORAGE_PUBLIC_BASE_URL:https://yadony-storage.local}
