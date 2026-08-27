@@ -28,12 +28,14 @@ class AdminUserControllerTest {
     @Mock com.yadony.api.auth.FirebaseContactService firebaseContact;
     @Mock UserDeletionImpactService deletionImpactService;
     @Mock AdminUserDeletionService deletionService;
+    @Mock com.yadony.api.billing.ProSubscriptionService proSubscriptionService;
+    @Mock com.yadony.api.billing.ProSubscriptionRepository proSubscriptionRepository;
 
     // ── Délégation du contrôleur ────────────────────────────────────────────
 
     @Test
     void setCommissionRate_delegatesToService_andReturnsDetail() {
-        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService);
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository);
         // Coordonnées servies par Firebase, plus par la base
         when(firebaseContact.getContact(any())).thenReturn(
                 com.yadony.api.auth.FirebaseContactService.Contact.EMPTY);
@@ -50,7 +52,7 @@ class AdminUserControllerTest {
 
     @Test
     void setCommissionRate_nullRate_delegatesNull_forGlobalReset() {
-        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService);
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository);
         // Coordonnées servies par Firebase, plus par la base
         when(firebaseContact.getContact(any())).thenReturn(
                 com.yadony.api.auth.FirebaseContactService.Contact.EMPTY);
@@ -82,7 +84,7 @@ class AdminUserControllerTest {
 
     @Test
     void muteMessaging_delegatesToService_andReturnsDetail() {
-        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService);
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository);
         when(firebaseContact.getContact(any())).thenReturn(
                 com.yadony.api.auth.FirebaseContactService.Contact.EMPTY);
         UUID userId = UUID.randomUUID();
@@ -98,7 +100,7 @@ class AdminUserControllerTest {
 
     @Test
     void muteMessaging_nullDuration_delegatesNull_forIndefiniteMute() {
-        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService);
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository);
         when(firebaseContact.getContact(any())).thenReturn(
                 com.yadony.api.auth.FirebaseContactService.Contact.EMPTY);
         UUID userId = UUID.randomUUID();
@@ -113,7 +115,7 @@ class AdminUserControllerTest {
 
     @Test
     void unmuteMessaging_delegatesToService_andReturnsDetail() {
-        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService);
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository);
         when(firebaseContact.getContact(any())).thenReturn(
                 com.yadony.api.auth.FirebaseContactService.Contact.EMPTY);
         UUID userId = UUID.randomUUID();
@@ -142,7 +144,7 @@ class AdminUserControllerTest {
 
     @Test
     void listUsers_queryOnEmail_resolvesFirebaseUid_andMapsContacts() {
-        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService);
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository);
         com.yadony.api.auth.UserEntity user = new com.yadony.api.auth.UserEntity();
         user.setFirebaseUid("uid-awa");
 
@@ -169,7 +171,7 @@ class AdminUserControllerTest {
 
     @Test
     void listUsers_queryOnPhone_usesPhoneLookupOnly() {
-        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService);
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository);
         when(firebaseContact.findUidByPhone("+221701234567")).thenReturn(java.util.Optional.of("uid-awa"));
         when(userRepository.findAdminFiltered(any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(org.springframework.data.domain.Page.empty());
@@ -184,7 +186,7 @@ class AdminUserControllerTest {
 
     @Test
     void listUsers_queryOnName_hitsNoFirebaseLookup() {
-        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService);
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository);
         when(userRepository.findAdminFiltered(any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(org.springframework.data.domain.Page.empty());
 
@@ -197,7 +199,7 @@ class AdminUserControllerTest {
 
     @Test
     void listUsers_withoutQuery_doesNotHitFirebaseLookups() {
-        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService);
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository);
         when(userRepository.findAdminFiltered(any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(org.springframework.data.domain.Page.empty());
 

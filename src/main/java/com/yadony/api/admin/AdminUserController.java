@@ -6,6 +6,7 @@ import com.yadony.api.admin.dto.AdminUserDetailResponse;
 import com.yadony.api.admin.dto.AdminUserListItemResponse;
 import com.yadony.api.admin.dto.DeletionImpactResponse;
 import com.yadony.api.admin.dto.MuteMessagingRequest;
+import com.yadony.api.admin.dto.ProGrantRequest;
 import com.yadony.api.auth.FirebaseContactService;
 import com.yadony.api.auth.KycStatus;
 import com.yadony.api.auth.Role;
@@ -13,6 +14,10 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.auth.UserService;
 import com.yadony.api.auth.UserStatus;
+import com.yadony.api.billing.ProSubscriptionEntity;
+import com.yadony.api.billing.ProSubscriptionRepository;
+import com.yadony.api.billing.ProSubscriptionSource;
+import com.yadony.api.billing.ProSubscriptionService;
 import com.yadony.api.common.YadonyBusinessException;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
@@ -22,6 +27,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -44,17 +50,23 @@ public class AdminUserController {
     private final FirebaseContactService firebaseContact;
     private final UserDeletionImpactService deletionImpactService;
     private final AdminUserDeletionService deletionService;
+    private final ProSubscriptionService proSubscriptionService;
+    private final ProSubscriptionRepository proSubscriptionRepository;
 
     public AdminUserController(UserService userService,
                                UserRepository userRepository,
                                FirebaseContactService firebaseContact,
                                UserDeletionImpactService deletionImpactService,
-                               AdminUserDeletionService deletionService) {
+                               AdminUserDeletionService deletionService,
+                               ProSubscriptionService proSubscriptionService,
+                               ProSubscriptionRepository proSubscriptionRepository) {
         this.userService = userService;
         this.userRepository = userRepository;
         this.firebaseContact = firebaseContact;
         this.deletionImpactService = deletionImpactService;
         this.deletionService = deletionService;
+        this.proSubscriptionService = proSubscriptionService;
+        this.proSubscriptionRepository = proSubscriptionRepository;
     }
 
     @PreAuthorize("hasAuthority('USER_VIEW')")
@@ -203,6 +215,52 @@ public class AdminUserController {
                            @Valid @RequestBody AdminDeleteUserRequest request,
                            Authentication authentication) {
         deletionService.delete(userId, adminId(authentication), request.reasonCode(), request.reason());
+    }
+
+    /**
+     * Offre un accès PRO gratuit : partenariat, geste commercial.
+     *
+     * <p>{@code POST} et non {@code PUT} : un corps est nécessaire pour le motif, et
+     * c'est la forme retenue par les endpoints admin du dépôt.
+     */
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('USER_PRO_GRANT')")
+    @PostMapping("/{userId}/pro-grant")
+    public AdminUserDetailResponse grantPro(@PathVariable UUID userId,
+                                            @Valid @RequestBody ProGrantRequest request,
+                                            Authentication authentication) {
+        proSubscriptionService.grantByAdmin(userId, adminId(authentication), request.reason());
+        return detail(userRepository.findById(userId)
+                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
+                        "user-not-found", "Not Found", "Utilisateur introuvable")));
+    }
+
+    /**
+     * Révoque un accès offert.
+     *
+     * <p>Refusé si l'abonnement n'est pas un octroi administrateur : fermer une ligne
+     * Stripe ici désynchroniserait la base et Stripe, l'utilisateur perdant son accès
+     * tout en restant débité. La résiliation d'un abonnement payant passe par le
+     * Customer Portal.
+     */
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('USER_PRO_GRANT')")
+    @DeleteMapping("/{userId}/pro-grant")
+    public AdminUserDetailResponse revokePro(@PathVariable UUID userId,
+                                             Authentication authentication) {
+        ProSubscriptionEntity sub = proSubscriptionRepository.findByUserId(userId)
+                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
+                        "no-subscription", "Not Found",
+                        "Aucun abonnement PRO sur ce compte"));
+
+        if (sub.getSource() != ProSubscriptionSource.ADMIN_GRANT) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT,
+                    "not-an-admin-grant", "Not An Admin Grant",
+                    "Cet abonnement n'est pas un accès offert : il se résilie depuis Stripe.");
+        }
+
+        proSubscriptionService.cancel(sub);
+        return detail(userRepository.findById(userId)
+                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
+                        "user-not-found", "Not Found", "Utilisateur introuvable")));
     }
 
     private AdminUserDetailResponse detail(UserEntity user) {
