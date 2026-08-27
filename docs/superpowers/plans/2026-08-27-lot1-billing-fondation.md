@@ -752,6 +752,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -788,6 +789,7 @@ class ProSubscriptionServiceTest {
     @Test
     @DisplayName("openLegacyGrace crée une grâce datée et ouvre l'accès")
     void opensLegacyGrace() {
+        when(repository.findByUserId(USER_ID)).thenReturn(Optional.empty());
         when(repository.save(any(ProSubscriptionEntity.class)))
                 .thenAnswer(inv -> inv.getArgument(0));
 
@@ -800,6 +802,28 @@ class ProSubscriptionServiceTest {
         assertThat(result.getGraceExpiresAt())
                 .isBetween(before.plus(59, ChronoUnit.DAYS), Instant.now().plus(61, ChronoUnit.DAYS));
         verify(accessSynchronizer).sync(USER_ID, true);
+    }
+
+    @Test
+    @DisplayName("openLegacyGrace recycle la ligne existante et purge les résidus du cycle précédent")
+    void reusesExistingRowAndClearsStaleFields() {
+        ProSubscriptionEntity existing = subscription(ProSubscriptionStatus.EXPIRED,
+                ProSubscriptionSource.STRIPE);
+        existing.setPastDueSince(Instant.now().minus(30, ChronoUnit.DAYS));
+        existing.setCancelAtPeriodEnd(true);
+        when(repository.findByUserId(USER_ID)).thenReturn(Optional.of(existing));
+        when(repository.save(existing)).thenReturn(existing);
+
+        ProSubscriptionEntity result = service().openLegacyGrace(USER_ID, 60);
+
+        // Une seule ligne par utilisateur : uq_pro_subscriptions_user refuserait
+        // une seconde insertion, statut fermé compris.
+        assertThat(result.getId()).isEqualTo(SUB_ID);
+        assertThat(result.getStatus()).isEqualTo(ProSubscriptionStatus.LEGACY_GRACE);
+        assertThat(result.getPastDueSince())
+                .as("un past_due_since périmé ferait expirer la grâce au premier cron de dunning")
+                .isNull();
+        assertThat(result.isCancelAtPeriodEnd()).isFalse();
     }
 
     @Test
@@ -930,14 +954,25 @@ public class ProSubscriptionService {
      * Ouvre une grâce pour un compte PRO gratuit historique.
      * Utilisé par le backfill de la migration V231 et par
      * {@link LegacyProGraceListener} pour les upgrades gratuits résiduels.
+     *
+     * <p>Réutilise la ligne existante si l'utilisateur en a déjà une :
+     * l'index {@code uq_pro_subscriptions_user} n'autorise qu'un abonnement
+     * vivant par utilisateur, statut fermé compris. Un utilisateur dont
+     * l'abonnement est EXPIRED conserve donc sa ligne, qui est recyclée.
      */
     @Transactional
     public ProSubscriptionEntity openLegacyGrace(UUID userId, int graceDays) {
-        ProSubscriptionEntity sub = new ProSubscriptionEntity();
+        ProSubscriptionEntity sub = repository.findByUserId(userId)
+                .orElseGet(ProSubscriptionEntity::new);
         sub.setUserId(userId);
         sub.setStatus(ProSubscriptionStatus.LEGACY_GRACE);
         sub.setSource(ProSubscriptionSource.LEGACY_FREE);
         sub.setGraceExpiresAt(Instant.now().plus(graceDays, ChronoUnit.DAYS));
+        // Nettoyage des résidus d'un cycle précédent : sans cela, un
+        // past_due_since périmé ferait expirer la grâce dès le premier passage
+        // du cron de dunning.
+        sub.setPastDueSince(null);
+        sub.setCancelAtPeriodEnd(false);
         ProSubscriptionEntity saved = repository.save(sub);
         accessSynchronizer.sync(userId, true);
         log.info("Legacy PRO grace opened for user {} until {}", userId, saved.getGraceExpiresAt());
@@ -1003,7 +1038,7 @@ public class ProSubscriptionService {
 - [ ] **Étape 4 : Relancer le test**
 
 Commande : `./mvnw test -Dtest=ProSubscriptionServiceTest`
-Attendu : SUCCÈS, 6 tests.
+Attendu : SUCCÈS, 7 tests.
 
 - [ ] **Étape 5 : Commit**
 
@@ -1124,14 +1159,29 @@ class LegacyProGraceListenerTest {
     }
 
     @Test
-    @DisplayName("un PRO qui a déjà un abonnement n'en reçoit pas un second")
-    void ignoresUserWithExistingSubscription() {
-        when(repository.findByUserId(USER_ID))
-                .thenReturn(Optional.of(new ProSubscriptionEntity()));
+    @DisplayName("un PRO déjà couvert par un abonnement ouvert n'en reçoit pas un second")
+    void ignoresUserWithActiveSubscription() {
+        ProSubscriptionEntity active = new ProSubscriptionEntity();
+        active.setStatus(ProSubscriptionStatus.ACTIVE);
+        when(repository.findByUserId(USER_ID)).thenReturn(Optional.of(active));
 
         listener().onUserProStatusChanged(new UserProStatusChangedEvent(USER_ID, true));
 
         verify(subscriptionService, never()).openLegacyGrace(any(), anyInt());
+    }
+
+    @Test
+    @DisplayName("un PRO dont l'abonnement est fermé reçoit une nouvelle grâce")
+    void reopensGraceForClosedSubscription() {
+        ProSubscriptionEntity expired = new ProSubscriptionEntity();
+        expired.setStatus(ProSubscriptionStatus.EXPIRED);
+        when(repository.findByUserId(USER_ID)).thenReturn(Optional.of(expired));
+
+        listener().onUserProStatusChanged(new UserProStatusChangedEvent(USER_ID, true));
+
+        // Sans cela, un utilisateur expiré repassant par l'upgrade gratuit
+        // resterait PRO indéfiniment avec un abonnement fermé.
+        verify(subscriptionService).openLegacyGrace(USER_ID, 60);
     }
 
     @Test
@@ -1199,7 +1249,14 @@ public class LegacyProGraceListener {
         if (!event.isPro()) {
             return;
         }
-        if (repository.findByUserId(event.userId()).isPresent()) {
+        // Tester la présence de la ligne ne suffit pas : elle est recyclée et
+        // survit à un EXPIRED. Un utilisateur dont la grâce s'est éteinte et qui
+        // repasserait par l'upgrade gratuit garderait sinon isProAccount = true
+        // avec un abonnement fermé, hors de portée des tâches planifiées.
+        boolean alreadyCovered = repository.findByUserId(event.userId())
+                .map(sub -> sub.getStatus().grantsProAccess())
+                .orElse(false);
+        if (alreadyCovered) {
             return;
         }
         subscriptionService.openLegacyGrace(event.userId(), properties.legacyGraceDaysOrDefault());
@@ -1211,7 +1268,7 @@ public class LegacyProGraceListener {
 - [ ] **Étape 5 : Relancer le test**
 
 Commande : `./mvnw test -Dtest=LegacyProGraceListenerTest`
-Attendu : SUCCÈS, 3 tests.
+Attendu : SUCCÈS, 4 tests.
 
 - [ ] **Étape 6 : Commit**
 
@@ -1458,10 +1515,177 @@ public class AutomationRuleProStatusListener {
 Commande : `./mvnw test -Dtest=AutomationRuleProStatusListenerTest`
 Attendu : SUCCÈS, 3 tests.
 
-- [ ] **Étape 8 : Commit**
+- [ ] **Étape 8 : Écrire le test de bout en bout du downgrade**
+
+Ce test couvre l'exigence du spec la plus facile à casser silencieusement : **un downgrade ne doit dépublier aucune annonce**. Une annonce retirée du marché parce qu'un abonnement a expiré casserait des engagements déjà pris envers des expéditeurs.
+
+`src/test/java/com/yadony/api/billing/ProDowngradeEndToEndIntegrationTest.java` :
+
+```java
+package com.yadony.api.billing;
+
+import com.yadony.api.auth.Role;
+import com.yadony.api.auth.UserEntity;
+import com.yadony.api.auth.UserRepository;
+import com.yadony.api.auth.UserStatus;
+import com.yadony.api.automation.AutomationRuleEntity;
+import com.yadony.api.automation.AutomationRuleRepository;
+import com.yadony.api.kyc.KycStatus;
+import com.yadony.api.matching.AnnouncementEntity;
+import com.yadony.api.matching.AnnouncementRepository;
+import com.yadony.api.matching.AnnouncementStatus;
+import com.yadony.api.matching.TransportMode;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.ActiveProfiles;
+
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+@SpringBootTest
+@ActiveProfiles("test")
+@DisplayName("Downgrade PRO — effets de bout en bout")
+class ProDowngradeEndToEndIntegrationTest {
+
+    @Autowired ProSubscriptionService subscriptionService;
+    @Autowired ProSubscriptionRepository subscriptionRepository;
+    @Autowired UserRepository userRepository;
+    @Autowired AutomationRuleRepository ruleRepository;
+    @Autowired AnnouncementRepository announcementRepository;
+
+    private UUID travelerId;
+
+    @BeforeEach
+    void setUp() {
+        subscriptionRepository.deleteAll();
+        ruleRepository.deleteAll();
+        announcementRepository.deleteAll();
+        userRepository.deleteAll();
+
+        UserEntity traveler = new UserEntity();
+        traveler.setFirebaseUid("uid-downgrade-e2e-001");
+        traveler.setStatus(UserStatus.ACTIVE);
+        traveler.setKycStatus(KycStatus.PENDING);
+        traveler.setRoles(Set.of(Role.TRAVELER));
+        traveler.setCountry("FR");
+        traveler.setProAccount(true);
+        travelerId = userRepository.save(traveler).getId();
+    }
+
+    private ProSubscriptionEntity activeSubscription() {
+        ProSubscriptionEntity sub = new ProSubscriptionEntity();
+        sub.setUserId(travelerId);
+        sub.setStatus(ProSubscriptionStatus.ACTIVE);
+        sub.setSource(ProSubscriptionSource.STRIPE);
+        return subscriptionRepository.save(sub);
+    }
+
+    private AutomationRuleEntity enabledRule() {
+        AutomationRuleEntity rule = new AutomationRuleEntity();
+        rule.setTravelerId(travelerId);
+        rule.setRuleType("preset");
+        rule.setPresetRuleId("alert_capacity_free");
+        rule.setName("Alerte capacité");
+        rule.setEnabled(true);
+        rule.setConditions(List.of(Map.of()));
+        rule.setAction(Map.of());
+        return ruleRepository.save(rule);
+    }
+
+    private AnnouncementEntity activeAnnouncement() {
+        AnnouncementEntity a = new AnnouncementEntity();
+        a.setTravelerId(travelerId);
+        a.setDepartureCity("Paris");
+        a.setArrivalCity("Dakar");
+        a.setDepartureDate(LocalDate.now().plusDays(7));
+        a.setTransportMode(TransportMode.PLANE);
+        a.setPickupAddressLabel("Paris CDG");
+        a.setPickupLat(new BigDecimal("48.860000"));
+        a.setPickupLng(new BigDecimal("2.350000"));
+        a.setDeliveryAddressLabel("Dakar Centre");
+        a.setDeliveryLat(new BigDecimal("14.693000"));
+        a.setDeliveryLng(new BigDecimal("-17.447000"));
+        a.setAvailableKg(new BigDecimal("10.00"));
+        a.setTotalKg(new BigDecimal("10.00"));
+        a.setPricePerKg(new BigDecimal("5.00"));
+        a.setStatus(AnnouncementStatus.ACTIVE);
+        a.setTravelerIsPro(true);
+        return announcementRepository.save(a);
+    }
+
+    @Test
+    @DisplayName("l'expiration retire le statut PRO, suspend les règles, mais ne dépublie pas les annonces")
+    void expirationSuspendsRulesWithoutUnpublishingAnnouncements() {
+        ProSubscriptionEntity sub = activeSubscription();
+        AutomationRuleEntity rule = enabledRule();
+        AnnouncementEntity announcement = activeAnnouncement();
+
+        subscriptionService.expire(sub);
+
+        assertThat(userRepository.findById(travelerId).orElseThrow().isProAccount())
+                .as("le drapeau PRO doit tomber")
+                .isFalse();
+
+        assertThat(ruleRepository.findById(rule.getId()).orElseThrow())
+                .satisfies(r -> {
+                    assertThat(r.isEnabled()).as("la règle doit être suspendue").isFalse();
+                    assertThat(r.isDisabledByDowngrade())
+                            .as("la suspension doit être marquée pour un futur réabonnement")
+                            .isTrue();
+                });
+
+        AnnouncementEntity reloaded = announcementRepository.findById(announcement.getId()).orElseThrow();
+        assertThat(reloaded.getStatus())
+                .as("un downgrade ne doit jamais dépublier une annonce : "
+                        + "des expéditeurs peuvent déjà s'être engagés dessus")
+                .isEqualTo(AnnouncementStatus.ACTIVE);
+        assertThat(reloaded.isTravelerIsPro())
+                .as("seul le badge PRO de l'annonce doit tomber")
+                .isFalse();
+    }
+
+    @Test
+    @DisplayName("le réabonnement rallume les règles suspendues par le downgrade")
+    void resubscriptionRestoresSuspendedRules() {
+        ProSubscriptionEntity sub = activeSubscription();
+        AutomationRuleEntity rule = enabledRule();
+
+        subscriptionService.expire(sub);
+        assertThat(ruleRepository.findById(rule.getId()).orElseThrow().isEnabled()).isFalse();
+
+        subscriptionService.openLegacyGrace(travelerId, 60);
+
+        assertThat(ruleRepository.findById(rule.getId()).orElseThrow())
+                .satisfies(r -> {
+                    assertThat(r.isEnabled()).isTrue();
+                    assertThat(r.isDisabledByDowngrade()).isFalse();
+                });
+    }
+}
+```
+
+> **Piège de ce test.** Il n'est volontairement pas annoté `@Transactional` : `AnnouncementRepository.updateTravelerProStatus` est une requête `@Modifying` qui contourne le contexte de persistance, et un test transactionnel lirait des valeurs périmées. D'où le nettoyage explicite dans `@BeforeEach`.
+>
+> Le second test réabonne un utilisateur dont la ligne est déjà `EXPIRED`. Il passe parce que `openLegacyGrace` **recycle la ligne existante** au lieu d'en insérer une seconde, ce que l'index `uq_pro_subscriptions_user` refuserait : il porte sur `deleted_at IS NULL`, sans distinguer les statuts fermés. Un abonnement par utilisateur, pour toute sa vie.
+
+- [ ] **Étape 9 : Lancer le test de bout en bout**
+
+Commande : `./mvnw test -Dtest=ProDowngradeEndToEndIntegrationTest`
+Attendu : SUCCÈS, 2 tests.
+
+- [ ] **Étape 10 : Commit**
 
 ```bash
-git add src/main/java/com/yadony/api/automation src/main/resources/db/migration/V232__automation_rules_disabled_by_downgrade.sql src/test/java/com/yadony/api/automation/AutomationRuleProStatusListenerTest.java
+git add src/main/java/com/yadony/api/automation src/main/resources/db/migration/V232__automation_rules_disabled_by_downgrade.sql src/test/java/com/yadony/api/automation/AutomationRuleProStatusListenerTest.java src/test/java/com/yadony/api/billing/ProDowngradeEndToEndIntegrationTest.java
 git commit -m "feat(automation): suspend les règles à la perte du statut PRO"
 ```
 
