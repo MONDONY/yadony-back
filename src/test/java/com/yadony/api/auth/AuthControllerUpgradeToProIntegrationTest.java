@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -102,6 +103,12 @@ class AuthControllerUpgradeToProIntegrationTest {
                 .andExpect(jsonPath("$.isProAccount").value(false))
                 .andExpect(jsonPath("$.stripeAccountStatus").value("NOT_CREATED"))
                 .andExpect(jsonPath("$.country").value("FR"));
+
+        // UserResponse n'expose pas proCompanyName/proSiret : c'est la seule façon de
+        // vérifier que l'endpoint a bien encore un effet réel (mise à jour du profil pro).
+        UserEntity persisted = userRepository.findByFirebaseUid(FIREBASE_UID).orElseThrow();
+        assertThat(persisted.getProCompanyName()).isEqualTo("Yadony SARL");
+        assertThat(persisted.getProSiret()).isEqualTo("12345678901234");
     }
 
     @Test
@@ -117,6 +124,10 @@ class AuthControllerUpgradeToProIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.isProAccount").value(false))
                 .andExpect(jsonPath("$.stripeAccountStatus").value("PENDING_ONBOARDING"));
+
+        UserEntity persisted = userRepository.findByFirebaseUid(FIREBASE_UID_WITH_STRIPE).orElseThrow();
+        assertThat(persisted.getProCompanyName()).isEqualTo("Yadony SARL");
+        assertThat(persisted.getProSiret()).isEqualTo("12345678901234");
     }
 
     @Test

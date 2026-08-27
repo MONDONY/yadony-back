@@ -38,7 +38,7 @@ Fonctionnalité: Gestion avancée du compte
     Etant donné un utilisateur EXPÉDITEUR enregistré avec l'uid "acct-002" et le téléphone "+33655000002"
     Et le compte "acct-002" est un compte PRO
     Etant donné l'utilisateur "acct-002" est authentifié en tant qu'EXPÉDITEUR
-    Quand je passe mon compte en PRO
+    Quand je mets à jour mon profil pro
     Alors la réponse HTTP est 200
     Quand je repasse mon compte en standard
     Alors la réponse HTTP est 200

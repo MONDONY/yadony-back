@@ -54,7 +54,7 @@ public class AuthExtraSteps extends AbstractSteps {
         store(asCurrentUser().body(body).put("/auth/me/analytics-consent"));
     }
 
-    @Quand("je passe mon compte en PRO")
+    @Quand("je mets à jour mon profil pro")
     public void whenUpgradePro() {
         Map<String, Object> body = new HashMap<>();
         body.put("companyName", "Yadony Transport SARL");
