@@ -6,12 +6,15 @@ import com.yadony.api.auth.Role;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.auth.UserStatus;
+import com.yadony.api.common.YadonyBusinessException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.test.context.ActiveProfiles;
@@ -24,9 +27,14 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -43,6 +51,14 @@ class BillingControllerIntegrationTest {
     @Autowired ProSubscriptionRepository subscriptionRepository;
 
     @MockitoBean FirebaseContactService firebaseContact;
+
+    /**
+     * Le contrôleur n'a qu'à résoudre l'utilisateur authentifié et déléguer :
+     * il n'a pas à appeler Stripe pour être testé. Les chemins nominaux et
+     * les gardes métier du service sont couverts séparément par
+     * {@code StripeBillingServiceTest}.
+     */
+    @MockitoBean StripeBillingService stripeBillingService;
 
     private UUID userId;
 
@@ -115,7 +131,79 @@ class BillingControllerIntegrationTest {
     @Test
     @DisplayName("sans client Stripe rattaché, le portail répond 404")
     void portalWithoutCustomerReturns404() throws Exception {
+        when(stripeBillingService.createPortalSession(userId))
+                .thenThrow(new YadonyBusinessException(HttpStatus.NOT_FOUND,
+                        "no-stripe-customer", "No Billing Account",
+                        "Aucun abonnement payant n'est rattaché à ce compte."));
+
         mockMvc.perform(post("/billing/portal-session").with(authentication(authenticated())))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    @DisplayName("POST /billing/checkout-session délègue au service avec l'utilisateur authentifié et répond 200")
+    void checkoutSessionDelegatesToServiceWithAuthenticatedUser() throws Exception {
+        when(stripeBillingService.createCheckoutSession(any(), any()))
+                .thenReturn("https://checkout.stripe.com/pay/cs_test_1");
+
+        mockMvc.perform(post("/billing/checkout-session").with(authentication(authenticated())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.url").value("https://checkout.stripe.com/pay/cs_test_1"));
+
+        ArgumentCaptor<UUID> userIdCaptor = ArgumentCaptor.forClass(UUID.class);
+        ArgumentCaptor<BillingCycle> cycleCaptor = ArgumentCaptor.forClass(BillingCycle.class);
+        verify(stripeBillingService).createCheckoutSession(userIdCaptor.capture(), cycleCaptor.capture());
+
+        // La garantie centrale : on ne peut jamais souscrire pour autrui,
+        // ni sur un autre cycle que celui demandé.
+        assertUserIdMatchesAuthenticatedUser(userIdCaptor.getValue());
+        org.assertj.core.api.Assertions.assertThat(cycleCaptor.getValue()).isEqualTo(BillingCycle.MONTHLY);
+    }
+
+    @Test
+    @DisplayName("POST /billing/checkout-session?cycle=YEARLY transmet bien le cycle annuel")
+    void checkoutSessionPassesYearlyCycle() throws Exception {
+        when(stripeBillingService.createCheckoutSession(any(), any()))
+                .thenReturn("https://checkout.stripe.com/pay/cs_test_yearly");
+
+        mockMvc.perform(post("/billing/checkout-session")
+                        .param("cycle", "YEARLY")
+                        .with(authentication(authenticated())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.url").value("https://checkout.stripe.com/pay/cs_test_yearly"));
+
+        verify(stripeBillingService).createCheckoutSession(eq(userId), eq(BillingCycle.YEARLY));
+    }
+
+    @Test
+    @DisplayName("POST /billing/portal-session délègue au service et répond 200 avec l'URL")
+    void portalSessionDelegatesToServiceAndReturnsUrl() throws Exception {
+        when(stripeBillingService.createPortalSession(userId))
+                .thenReturn("https://billing.stripe.com/session/bps_test_1");
+
+        mockMvc.perform(post("/billing/portal-session").with(authentication(authenticated())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.url").value("https://billing.stripe.com/session/bps_test_1"));
+
+        verify(stripeBillingService).createPortalSession(userId);
+    }
+
+    @Test
+    @DisplayName("abonnement déjà actif : la 409 métier du service est renvoyée en ProblemDetail, pas en erreur brute")
+    void checkoutSessionAlreadyActiveReturnsProblemDetail409() throws Exception {
+        when(stripeBillingService.createCheckoutSession(any(), any()))
+                .thenThrow(new YadonyBusinessException(HttpStatus.CONFLICT,
+                        "subscription-already-active", "Already Subscribed",
+                        "Vous avez déjà un abonnement PRO en cours."));
+
+        mockMvc.perform(post("/billing/checkout-session").with(authentication(authenticated())))
+                .andExpect(status().isConflict())
+                .andExpect(content().contentType("application/problem+json"))
+                .andExpect(jsonPath("$.status").value(409))
+                .andExpect(jsonPath("$.code").value("subscription-already-active"));
+    }
+
+    private void assertUserIdMatchesAuthenticatedUser(UUID capturedUserId) {
+        org.assertj.core.api.Assertions.assertThat(capturedUserId).isEqualTo(userId);
     }
 }
