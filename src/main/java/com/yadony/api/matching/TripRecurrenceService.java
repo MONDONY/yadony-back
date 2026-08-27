@@ -21,6 +21,8 @@ import java.time.LocalTime;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Locale;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -34,6 +36,7 @@ public class TripRecurrenceService {
     private final AnnouncementService announcementService;
     private final UserRepository userRepository;
     private final AuditService auditService;
+    private final TripRecurrenceCalendar calendar = new TripRecurrenceCalendar();
 
     public TripRecurrenceService(TripRecurrenceRepository repository,
                                  AnnouncementService announcementService,
@@ -196,6 +199,8 @@ public class TripRecurrenceService {
         // (generateForRecurrence → announcementService.createAnnouncement) ré-injecte
         // des libellés legacy dans announcement_accepted_types que V171 vient de normaliser.
         e.setAcceptedCategories(joinCategories(ContentCategoryNormalizer.normalizeList(r.acceptedCategories())));
+        e.setRefusedCategories(joinCategories(ContentCategoryNormalizer.normalizeList(r.refusedCategories())));
+        e.setDescription(r.description());
         e.setPickupLabel(r.pickupAddress().label());
         e.setPickupLat(r.pickupAddress().lat());
         e.setPickupLng(r.pickupAddress().lng());
@@ -206,7 +211,19 @@ public class TripRecurrenceService {
         e.setArrivalTime(r.arrivalTime());
         e.setCashAccepted(r.cashAccepted());
         e.setWeekdays(r.weekdays());
-        e.setHorizonDays(r.horizonDays() != null ? r.horizonDays() : 14);
+        int publicationLeadDays = r.publicationLeadDays() != null
+                ? r.publicationLeadDays()
+                : r.horizonDays() != null ? r.horizonDays() : 14;
+        e.setHorizonDays(r.horizonDays() != null ? r.horizonDays() : publicationLeadDays);
+        e.setStartDate(r.startDate() != null ? r.startDate() : LocalDate.now());
+        e.setEndDate(r.endDate());
+        e.setWeekInterval(r.weekInterval() != null ? r.weekInterval() : 1);
+        e.setPublicationLeadDays(publicationLeadDays);
+        e.setHandoverLeadDays(r.handoverLeadDays() != null ? r.handoverLeadDays() : 0);
+        e.setPricingMode(r.pricingMode() != null ? r.pricingMode() : PricingMode.KG);
+        e.setNegotiable(Boolean.TRUE.equals(r.negotiable()));
+        e.setCurrency(r.currency() == null || r.currency().isBlank()
+                ? "EUR" : r.currency().toUpperCase(Locale.ROOT));
         e.setActive(r.active());
     }
 
@@ -223,14 +240,62 @@ public class TripRecurrenceService {
     }
 
     private TripRecurrenceDto toDto(TripRecurrenceEntity e) {
+        return toDto(e, LocalDate.now());
+    }
+
+    TripRecurrenceDto toDto(TripRecurrenceEntity e, LocalDate today) {
+        Optional<TripRecurrenceCalendar.OccurrenceDate> nextOccurrence = nextOccurrence(e, today);
+        TripRecurrenceStatus status = statusOf(e, today, nextOccurrence);
         return new TripRecurrenceDto(
                 e.getId(), e.getSourceTemplateId(), e.getDepartureCity(), e.getArrivalCity(),
                 e.getTransportMode(), e.getCapacityUnit(), e.getAvailableKg(), e.getPricePerKg(),
-                splitCategories(e.getAcceptedCategories()),
+                e.getPricingMode(), e.isNegotiable(), e.getCurrency(), e.getDescription(),
+                splitCategories(e.getAcceptedCategories()), splitCategories(e.getRefusedCategories()),
                 new AddressDto(e.getPickupLabel(), e.getPickupLat(), e.getPickupLng()),
                 new AddressDto(e.getDeliveryLabel(), e.getDeliveryLat(), e.getDeliveryLng()),
                 e.getDepartureTime(), e.getArrivalTime(), e.isCashAccepted(),
-                e.getWeekdays(), e.getHorizonDays(), e.isActive(),
-                e.getLastGeneratedDate(), e.getCreatedAt(), e.getUpdatedAt());
+                e.getWeekdays(), e.getHorizonDays(), e.getStartDate(), e.getEndDate(),
+                e.getWeekInterval(), e.getPublicationLeadDays(), e.getHandoverLeadDays(), e.isActive(),
+                e.getLastGeneratedDate(), e.getLastPublicationErrorCode(),
+                e.getLastPublicationErrorMessage(), e.getLastPublicationErrorAt(), status,
+                nextOccurrence.map(TripRecurrenceCalendar.OccurrenceDate::departureDate).orElse(null),
+                nextOccurrence.map(TripRecurrenceCalendar.OccurrenceDate::publicationDate).orElse(null),
+                e.getCreatedAt(), e.getUpdatedAt());
+    }
+
+    private Optional<TripRecurrenceCalendar.OccurrenceDate> nextOccurrence(
+            TripRecurrenceEntity recurrence,
+            LocalDate today
+    ) {
+        try {
+            var schedule = new TripRecurrenceCalendar.Schedule(
+                    recurrence.getStartDate(), recurrence.getEndDate(), recurrence.getWeekdays(),
+                    recurrence.getWeekInterval(), recurrence.getPublicationLeadDays());
+            return calendar.nextOccurrences(today, 1, schedule).stream().findFirst();
+        } catch (IllegalArgumentException | NullPointerException exception) {
+            log.warn("TripRecurrence {} : programmation calendaire invalide", recurrence.getId());
+            return Optional.empty();
+        }
+    }
+
+    private TripRecurrenceStatus statusOf(
+            TripRecurrenceEntity recurrence,
+            LocalDate today,
+            Optional<TripRecurrenceCalendar.OccurrenceDate> nextOccurrence
+    ) {
+        if (recurrence.getEndDate() != null && recurrence.getEndDate().isBefore(today)) {
+            return TripRecurrenceStatus.TERMINATED;
+        }
+        if (!recurrence.isActive()) {
+            return TripRecurrenceStatus.PAUSED;
+        }
+        if (recurrence.getLastPublicationErrorCode() != null) {
+            return TripRecurrenceStatus.ACTION_REQUIRED;
+        }
+        if (nextOccurrence.map(TripRecurrenceCalendar.OccurrenceDate::publicationDate)
+                .filter(date -> date.isAfter(today)).isPresent()) {
+            return TripRecurrenceStatus.UPCOMING;
+        }
+        return TripRecurrenceStatus.ACTIVE;
     }
 }

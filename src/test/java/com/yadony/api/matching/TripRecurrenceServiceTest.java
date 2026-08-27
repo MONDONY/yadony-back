@@ -57,6 +57,7 @@ class TripRecurrenceServiceTest {
         e.setDepartureTime(LocalTime.of(14, 0));
         e.setWeekdays(weekdays);
         e.setHorizonDays(horizon);
+        e.setStartDate(LocalDate.now());
         e.setActive(true);
         e.setLastGeneratedDate(lastGen);
         return e;
@@ -213,6 +214,27 @@ class TripRecurrenceServiceTest {
 
         assertThat(rec.getDeletedAt()).isNotNull();
         verify(auditService).log(eq("TRIP_RECURRENCE"), any(), eq("TRIP_RECURRENCE_DELETED"), eq(userId), anyMap());
+    }
+
+    @Test
+    void toDto_derivesLifecycleStatusAndNextOccurrence() {
+        LocalDate today = LocalDate.of(2026, 9, 1);
+        TripRecurrenceEntity upcoming = entity("0001000", 14, null);
+        upcoming.setStartDate(LocalDate.of(2026, 9, 10));
+        upcoming.setPublicationLeadDays(7);
+
+        var upcomingDto = service.toDto(upcoming, today);
+
+        assertThat(upcomingDto.status()).isEqualTo(TripRecurrenceStatus.UPCOMING);
+        assertThat(upcomingDto.nextDepartureDate()).isEqualTo(LocalDate.of(2026, 9, 10));
+        assertThat(upcomingDto.nextPublicationDate()).isEqualTo(LocalDate.of(2026, 9, 3));
+
+        upcoming.setActive(false);
+        assertThat(service.toDto(upcoming, today).status()).isEqualTo(TripRecurrenceStatus.PAUSED);
+
+        upcoming.setEndDate(today.minusDays(1));
+        upcoming.setLastPublicationErrorCode("kyc-required");
+        assertThat(service.toDto(upcoming, today).status()).isEqualTo(TripRecurrenceStatus.TERMINATED);
     }
 
     private TripRecurrenceRequest request(String weekdays, int horizon, boolean active) {

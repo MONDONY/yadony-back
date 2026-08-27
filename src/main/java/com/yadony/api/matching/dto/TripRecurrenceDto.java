@@ -1,5 +1,7 @@
 package com.yadony.api.matching.dto;
 
+import com.yadony.api.matching.PricingMode;
+import com.yadony.api.matching.TripRecurrenceStatus;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -15,7 +17,12 @@ public record TripRecurrenceDto(
         String capacityUnit,
         Double availableKg,
         Double pricePerKg,
+        PricingMode pricingMode,
+        boolean negotiable,
+        String currency,
+        String description,
         List<String> acceptedCategories,
+        List<String> refusedCategories,
         AddressDto pickupAddress,
         AddressDto deliveryAddress,
         LocalTime departureTime,
@@ -23,8 +30,19 @@ public record TripRecurrenceDto(
         boolean cashAccepted,
         String weekdays,
         Integer horizonDays,
+        LocalDate startDate,
+        LocalDate endDate,
+        Integer weekInterval,
+        Integer publicationLeadDays,
+        Integer handoverLeadDays,
         boolean active,
         LocalDate lastGeneratedDate,
+        String lastPublicationErrorCode,
+        String lastPublicationErrorMessage,
+        LocalDateTime lastPublicationErrorAt,
+        TripRecurrenceStatus status,
+        LocalDate nextDepartureDate,
+        LocalDate nextPublicationDate,
         LocalDateTime createdAt,
         LocalDateTime updatedAt
 ) {}
