@@ -22,6 +22,8 @@
 - `@ConfigurationPropertiesScan` est déjà actif : un record `@ConfigurationProperties` est détecté automatiquement.
 - Tests : Spring Boot 3.4 → utiliser `@MockitoBean`, jamais `@MockBean` (déprécié). Pas de `@InjectMocks` : instanciation manuelle du service. AssertJ. `ReflectionTestUtils.setField(entity, "id", uuid)` pour poser un id hérité de `BaseEntity` (pas de setter). Le `CLAUDE.md` du dépôt mentionne encore `@MockBean` : le code réel fait foi.
 - Profil de test : `@ActiveProfiles("test")` sur tout test d'intégration.
+- **Le profil de test tourne sur H2, `spring.flyway.enabled: false`, `ddl-auto: create`.** Conséquences à connaître : les fichiers de migration ne sont **jamais exécutés** par la suite de tests, le schéma vient des entités JPA. Une erreur SQL dans un `.sql` ne sera donc pas vue par `./mvnw test`. Les index partiels (`... WHERE deleted_at IS NULL`) n'existent pas non plus en test : ne jamais écrire un test dont l'assertion repose sur une contrainte d'unicité de la base.
+- Corollaire : la **logique métier** d'une migration se teste dans `src/test/java/com/yadony/api/migrations/`, en rejouant le SQL en version compatible H2 via `JdbcTemplate`. Voir `V89MigrationTest` pour le gabarit de référence, et `V212MigrationTest`, `V216MigrationTest` pour des exemples plus récents.
 - **Transactionalité des listeners de ce lot.** `CLAUDE.md` interdit `@EventListener` seul pour les *listeners de paiement*, au profit de `@TransactionalEventListener(phase = AFTER_COMMIT)` + `@Transactional(propagation = REQUIRES_NEW)`. Cette règle ne s'applique pas ici et les listeners du lot utilisent `@EventListener` simple, pour deux raisons : ils ne touchent aucun objet Stripe ni aucun montant, et la suspension des droits doit être **atomique** avec le changement de drapeau — un downgrade commité dont les automatisations resteraient actives parce qu'une transaction séparée a échoué serait précisément la faille que ce lot ferme. C'est aussi le choix du listener déjà en place, `matching/AnnouncementService.onUserProStatusChanged`.
 - Un listener exécuté dans la transaction de l'appelant ne doit jamais laisser échapper d'exception : il ferait échouer la transaction appelante.
 - En test d'intégration, le principal Spring Security est le **`firebaseUid` (String)**, pas un `UserEntity`.
@@ -73,6 +75,7 @@
 - Créer : `src/main/resources/db/migration/V231__pro_subscriptions.sql`
 - Test : `src/test/java/com/yadony/api/billing/ProSubscriptionStatusTest.java`
 - Test : `src/test/java/com/yadony/api/billing/ProSubscriptionRepositoryIntegrationTest.java`
+- Test : `src/test/java/com/yadony/api/migrations/V231MigrationTest.java`
 
 **Interfaces :**
 - Consomme : `com.yadony.api.common.BaseEntity`
@@ -513,15 +516,149 @@ class ProSubscriptionRepositoryIntegrationTest {
 }
 ```
 
-- [ ] **Étape 9 : Lancer les tests**
+- [ ] **Étape 9 : Écrire le test de la logique du backfill**
 
-Commande : `./mvnw test -Dtest='ProSubscriptionStatusTest,ProSubscriptionRepositoryIntegrationTest'`
-Attendu : SUCCÈS. Si Flyway refuse de démarrer parce qu'une migration a été sautée en dev, exporter `SPRING_FLYWAY_OUT_OF_ORDER=true`.
+Le backfill s'exécutera une fois, en production, sur **tous** les comptes PRO existants. C'est la partie la plus risquée du lot et la suite de tests ne l'exerce pas : le profil de test désactive Flyway. On rejoue donc sa logique en SQL compatible H2, selon le gabarit de `V89MigrationTest`.
 
-- [ ] **Étape 10 : Commit**
+`src/test/java/com/yadony/api/migrations/V231MigrationTest.java` :
+
+```java
+package com.yadony.api.migrations;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * Logique métier du backfill de la migration V231 : chaque compte PRO existant
+ * reçoit une grâce de 60 jours.
+ *
+ * <p><b>Stratégie</b> — identique à {@link V89MigrationTest} : le profil de test
+ * tourne sur H2 avec Flyway désactivé, le fichier de migration n'est donc jamais
+ * exécuté. On rejoue ici le même SELECT avec les fonctions H2 équivalentes
+ * ({@code DATEADD} pour {@code NOW() + INTERVAL}, {@code RANDOM_UUID()} pour
+ * {@code gen_random_uuid()}). Le SQL de production cible PostgreSQL 16.
+ */
+@SpringBootTest
+@ActiveProfiles("test")
+@Transactional
+@DisplayName("V231 — backfill des comptes PRO existants en LEGACY_GRACE")
+class V231MigrationTest {
+
+    @Autowired
+    private JdbcTemplate jdbc;
+
+    private final UUID proUserId = UUID.randomUUID();
+    private final UUID plainUserId = UUID.randomUUID();
+    private final UUID deletedProUserId = UUID.randomUUID();
+
+    @BeforeEach
+    void seed() {
+        jdbc.update("DELETE FROM pro_subscriptions");
+        // Reprendre la liste de colonnes de l'INSERT de V89MigrationTest, qui est
+        // tenue à jour avec les colonnes NOT NULL de `users`, et y ajouter
+        // is_pro_account et deleted_at. Une colonne NOT NULL absente de cet INSERT
+        // fait échouer le test sous H2.
+        insertUser(proUserId, true, null);
+        insertUser(plainUserId, false, null);
+        insertUser(deletedProUserId, true, "2026-01-01 00:00:00");
+    }
+
+    private void insertUser(UUID id, boolean pro, String deletedAt) {
+        jdbc.update("INSERT INTO users (id, firebase_uid, status, kyc_status, country, "
+                        + "is_pro_account, deleted_at, created_at, updated_at) "
+                        + "VALUES (?, ?, 'ACTIVE', 'PENDING', 'FR', ?, ?, NOW(), NOW())",
+                id, "uid-" + id, pro, deletedAt);
+    }
+
+    /** Équivalent H2 du backfill de V231__pro_subscriptions.sql. */
+    private void runBackfill() {
+        jdbc.update("INSERT INTO pro_subscriptions "
+                + "(id, user_id, status, source, grace_expires_at, cancel_at_period_end, created_at) "
+                + "SELECT RANDOM_UUID(), id, 'LEGACY_GRACE', 'LEGACY_FREE', "
+                + "DATEADD('DAY', 60, NOW()), FALSE, NOW() "
+                + "FROM users WHERE is_pro_account = TRUE AND deleted_at IS NULL");
+    }
+
+    @Test
+    @DisplayName("un compte PRO actif reçoit une grâce de 60 jours")
+    void proUserGetsGrace() {
+        runBackfill();
+
+        Integer count = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM pro_subscriptions WHERE user_id = ?", Integer.class, proUserId);
+        assertThat(count).isEqualTo(1);
+
+        String status = jdbc.queryForObject(
+                "SELECT status FROM pro_subscriptions WHERE user_id = ?", String.class, proUserId);
+        assertThat(status).isEqualTo("LEGACY_GRACE");
+
+        String source = jdbc.queryForObject(
+                "SELECT source FROM pro_subscriptions WHERE user_id = ?", String.class, proUserId);
+        assertThat(source).isEqualTo("LEGACY_FREE");
+
+        Integer daysAhead = jdbc.queryForObject(
+                "SELECT DATEDIFF('DAY', NOW(), grace_expires_at) FROM pro_subscriptions WHERE user_id = ?",
+                Integer.class, proUserId);
+        assertThat(daysAhead).isBetween(59, 60);
+    }
+
+    @Test
+    @DisplayName("un compte non PRO ne reçoit rien")
+    void plainUserGetsNothing() {
+        runBackfill();
+
+        Integer count = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM pro_subscriptions WHERE user_id = ?", Integer.class, plainUserId);
+        assertThat(count).isZero();
+    }
+
+    @Test
+    @DisplayName("un compte PRO supprimé est ignoré")
+    void softDeletedProUserIsSkipped() {
+        runBackfill();
+
+        Integer count = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM pro_subscriptions WHERE user_id = ?",
+                Integer.class, deletedProUserId);
+        assertThat(count)
+                .as("le backfill filtre sur deleted_at IS NULL")
+                .isZero();
+    }
+
+    @Test
+    @DisplayName("le backfill crée exactement une ligne par compte PRO éligible")
+    void oneRowPerEligibleUser() {
+        runBackfill();
+
+        Integer total = jdbc.queryForObject("SELECT COUNT(*) FROM pro_subscriptions", Integer.class);
+        assertThat(total).isEqualTo(1);
+    }
+}
+```
+
+> Si l'`INSERT` de `seed()` échoue sous H2 sur une colonne `NOT NULL` manquante, ajouter la colonne à la liste plutôt que de la rendre nullable en base : c'est le piège documenté du gabarit `V89MigrationTest`. Aligner la liste de colonnes sur celle utilisée par ce test de référence.
+
+- [ ] **Étape 10 : Lancer les tests**
+
+Commande : `./mvnw test -Dtest='ProSubscriptionStatusTest,ProSubscriptionRepositoryIntegrationTest,V231MigrationTest'`
+Attendu : SUCCÈS.
+
+Note : le profil de test n'exécute pas Flyway, la migration V231 n'est donc pas jouée ici — le schéma vient des entités. Pour la vérifier réellement, lancer l'application en profil `dev` sur la base Docker (`docker compose -f docker-compose.dev.yml up -d`). Si Flyway refuse de démarrer parce qu'une migration a été sautée en dev, exporter `SPRING_FLYWAY_OUT_OF_ORDER=true`.
+
+- [ ] **Étape 11 : Commit**
 
 ```bash
-git add src/main/java/com/yadony/api/billing src/main/resources/db/migration/V231__pro_subscriptions.sql src/test/java/com/yadony/api/billing
+git add src/main/java/com/yadony/api/billing src/main/resources/db/migration/V231__pro_subscriptions.sql src/test/java/com/yadony/api/billing src/test/java/com/yadony/api/migrations/V231MigrationTest.java
 git commit -m "feat(billing): modèle de souscription PRO et migration V231"
 ```
 
