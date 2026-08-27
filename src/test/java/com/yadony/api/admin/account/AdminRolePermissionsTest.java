@@ -28,4 +28,14 @@ class AdminRolePermissionsTest {
         assertThat(AdminRole.SUPPORT.permissions()).doesNotContain(AdminPermission.USER_DELETE);
         assertThat(AdminRole.SUPPORT.permissions()).doesNotContain(AdminPermission.USER_GDPR_DELETE);
     }
+
+    // Offrir ou révoquer un accès PRO gratuit est un geste commercial de la même portée
+    // que USER_COMMISSION : accordé à ADMIN et SUPER_ADMIN, jamais au support.
+    @Test
+    @DisplayName("SUPER_ADMIN et ADMIN peuvent offrir/révoquer un accès PRO, pas SUPPORT")
+    void onlyAdminsHaveProGrant() {
+        assertThat(AdminRole.SUPER_ADMIN.permissions()).contains(AdminPermission.USER_PRO_GRANT);
+        assertThat(AdminRole.ADMIN.permissions()).contains(AdminPermission.USER_PRO_GRANT);
+        assertThat(AdminRole.SUPPORT.permissions()).doesNotContain(AdminPermission.USER_PRO_GRANT);
+    }
 }

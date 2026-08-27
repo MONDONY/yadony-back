@@ -22,7 +22,8 @@ public record AdminProSubscriptionView(
         Instant graceExpiresAt,
         String stripeSubscriptionId,
         UUID grantedByAdminId,
-        String adminGrantReason
+        String adminGrantReason,
+        Instant grantedAt
 ) {
     public static AdminProSubscriptionView from(ProSubscriptionEntity sub) {
         if (sub == null) {
@@ -37,7 +38,8 @@ public record AdminProSubscriptionView(
                 sub.getGraceExpiresAt(),
                 sub.getStripeSubscriptionId(),
                 sub.getGrantedByAdminId(),
-                sub.getAdminGrantReason()
+                sub.getAdminGrantReason(),
+                sub.getGrantedAt()
         );
     }
 }

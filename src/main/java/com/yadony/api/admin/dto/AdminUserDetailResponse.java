@@ -39,12 +39,10 @@ public record AdminUserDetailResponse(
         LocalDateTime messagingMutedUntil,
         AdminProSubscriptionView proSubscription
 ) {
-    /** Téléphone et email proviennent de Firebase : ils ne sont plus stockés en base. */
-    public static AdminUserDetailResponse from(UserEntity u, FirebaseContactService.Contact contact) {
-        return from(u, contact, null);
-    }
-
-    /** Variante chargeant en plus l'état d'abonnement PRO pour l'administration. */
+    /**
+     * Téléphone et email proviennent de Firebase : ils ne sont plus stockés en base.
+     * Charge en plus l'état d'abonnement PRO pour l'administration.
+     */
     public static AdminUserDetailResponse from(UserEntity u, FirebaseContactService.Contact contact,
                                                 ProSubscriptionEntity sub) {
         return new AdminUserDetailResponse(

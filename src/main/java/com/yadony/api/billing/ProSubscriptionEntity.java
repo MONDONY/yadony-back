@@ -68,6 +68,14 @@ public class ProSubscriptionEntity extends BaseEntity {
     @Column(name = "admin_grant_reason", length = 500)
     private String adminGrantReason;
 
+    /**
+     * Horodatage de l'octroi administrateur. Ni {@code createdAt} (date de création de la
+     * ligne recyclée, pas de l'octroi) ni {@code updatedAt} (écrasé par toute écriture
+     * ultérieure) ne peuvent en tenir lieu.
+     */
+    @Column(name = "granted_at")
+    private Instant grantedAt;
+
     public UUID getUserId() { return userId; }
     public void setUserId(UUID userId) { this.userId = userId; }
 
@@ -103,4 +111,7 @@ public class ProSubscriptionEntity extends BaseEntity {
 
     public String getAdminGrantReason() { return adminGrantReason; }
     public void setAdminGrantReason(String adminGrantReason) { this.adminGrantReason = adminGrantReason; }
+
+    public Instant getGrantedAt() { return grantedAt; }
+    public void setGrantedAt(Instant grantedAt) { this.grantedAt = grantedAt; }
 }

@@ -1,12 +1,14 @@
 package com.yadony.api.billing;
 
 import com.yadony.api.common.AuditService;
+import com.yadony.api.common.YadonyBusinessException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Instant;
@@ -16,9 +18,11 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -73,7 +77,7 @@ class ProSubscriptionServiceAdminGrantTest {
     }
 
     @Test
-    @DisplayName("un octroi purge les traces Stripe de la ligne recyclée")
+    @DisplayName("un octroi purge stripe_subscription_id mais conserve le client Stripe")
     void grantPurgesStripeTraces() {
         ProSubscriptionEntity expired = subscription(ProSubscriptionStatus.EXPIRED,
                 ProSubscriptionSource.STRIPE);
@@ -93,15 +97,71 @@ class ProSubscriptionServiceAdminGrantTest {
         // une seconde insertion, statut fermé compris.
         assertThat(result.getId()).isEqualTo(SUB_ID);
         assertThat(result.getSource()).isEqualTo(ProSubscriptionSource.ADMIN_GRANT);
+        // Le client Stripe est réutilisé en cas de réabonnement après annulation : il ne
+        // doit pas être perdu au passage par un octroi administrateur.
+        assertThat(result.getStripeCustomerId()).isEqualTo("cus_ancien");
         // Un stripe_subscription_id survivant serait retrouvé par findByStripeSubscriptionId
         // au prochain webhook, et cette ligne serait pilotée par un abonnement étranger.
-        assertThat(result.getStripeCustomerId()).isNull();
         assertThat(result.getStripeSubscriptionId()).isNull();
         assertThat(result.getBillingCycle()).isNull();
         assertThat(result.getCurrentPeriodEnd()).isNull();
         assertThat(result.getPastDueSince()).isNull();
         assertThat(result.isCancelAtPeriodEnd()).isFalse();
         assertThat(result.getGraceExpiresAt()).isNull();
+    }
+
+    @Test
+    @DisplayName("un octroi renseigne grantedAt")
+    void grantSetsGrantedAt() {
+        when(repository.findByUserId(USER_ID)).thenReturn(Optional.empty());
+        when(repository.save(any(ProSubscriptionEntity.class)))
+                .thenAnswer(inv -> {
+                    ProSubscriptionEntity entity = inv.getArgument(0);
+                    ReflectionTestUtils.setField(entity, "id", SUB_ID);
+                    return entity;
+                });
+
+        Instant before = Instant.now();
+        ProSubscriptionEntity result = service().grantByAdmin(USER_ID, ADMIN_ID, REASON);
+
+        assertThat(result.getGrantedAt())
+                .isBetween(before.minusSeconds(1), Instant.now().plusSeconds(1));
+    }
+
+    @Test
+    @DisplayName("refuse d'offrir un accès quand un abonnement Stripe est encore vivant")
+    void refusesGrantOverLiveStripeSubscription() {
+        ProSubscriptionEntity liveStripe = subscription(ProSubscriptionStatus.ACTIVE,
+                ProSubscriptionSource.STRIPE);
+        liveStripe.setStripeCustomerId("cus_live");
+        liveStripe.setStripeSubscriptionId("sub_live");
+        when(repository.findByUserId(USER_ID)).thenReturn(Optional.of(liveStripe));
+
+        assertThatThrownBy(() -> service().grantByAdmin(USER_ID, ADMIN_ID, REASON))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(ex -> assertThat(((YadonyBusinessException) ex).getStatus())
+                        .isEqualTo(HttpStatus.CONFLICT));
+
+        // Ni mutation ni trace d'audit : l'octroi est refusé avant tout effet de bord.
+        verify(repository, never()).save(any());
+        verify(accessSynchronizer, never()).sync(any(), org.mockito.ArgumentMatchers.anyBoolean());
+        verify(auditService, never()).log(any(), any(), any(), any(), anyMap());
+    }
+
+    @Test
+    @DisplayName("un octroi reste possible sur un abonnement Stripe déjà fermé")
+    void grantAllowedOverClosedStripeSubscription() {
+        ProSubscriptionEntity closedStripe = subscription(ProSubscriptionStatus.CANCELED,
+                ProSubscriptionSource.STRIPE);
+        closedStripe.setStripeCustomerId("cus_closed");
+        closedStripe.setStripeSubscriptionId("sub_closed");
+        when(repository.findByUserId(USER_ID)).thenReturn(Optional.of(closedStripe));
+        when(repository.save(closedStripe)).thenReturn(closedStripe);
+
+        ProSubscriptionEntity result = service().grantByAdmin(USER_ID, ADMIN_ID, REASON);
+
+        assertThat(result.getSource()).isEqualTo(ProSubscriptionSource.ADMIN_GRANT);
+        assertThat(result.getStatus()).isEqualTo(ProSubscriptionStatus.ACTIVE);
     }
 
     @Test

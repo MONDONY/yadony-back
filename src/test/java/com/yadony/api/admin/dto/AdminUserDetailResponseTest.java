@@ -47,6 +47,7 @@ class AdminUserDetailResponseTest {
         UUID adminId = UUID.randomUUID();
         Instant currentPeriodEnd = Instant.parse("2027-01-01T00:00:00Z");
         Instant graceExpiresAt = Instant.parse("2027-06-15T00:00:00Z");
+        Instant grantedAt = Instant.parse("2026-08-01T00:00:00Z");
 
         ProSubscriptionEntity sub = new ProSubscriptionEntity();
         sub.setStatus(ProSubscriptionStatus.ACTIVE);
@@ -58,6 +59,7 @@ class AdminUserDetailResponseTest {
         sub.setStripeSubscriptionId("sub_distinct_stripe_id");
         sub.setGrantedByAdminId(adminId);
         sub.setAdminGrantReason("Partenariat presse");
+        sub.setGrantedAt(grantedAt);
 
         AdminProSubscriptionView view =
                 AdminUserDetailResponse.from(sampleUser(), sampleContact(), sub).proSubscription();
@@ -71,15 +73,6 @@ class AdminUserDetailResponseTest {
         assertThat(view.stripeSubscriptionId()).isEqualTo("sub_distinct_stripe_id");
         assertThat(view.grantedByAdminId()).isEqualTo(adminId);
         assertThat(view.adminGrantReason()).isEqualTo("Partenariat presse");
-    }
-
-    @Test
-    @DisplayName("la surcharge à deux arguments reste disponible et laisse le champ nul")
-    void twoArgOverloadStillWorks() {
-        // Neuf appels du contrôleur l'utilisent encore : elle ne doit pas disparaître.
-        AdminUserDetailResponse response =
-                AdminUserDetailResponse.from(sampleUser(), sampleContact());
-
-        assertThat(response.proSubscription()).isNull();
+        assertThat(view.grantedAt()).isEqualTo(grantedAt);
     }
 }

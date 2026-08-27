@@ -86,7 +86,7 @@ class ProSubscriptionServiceTest {
     }
 
     @Test
-    @DisplayName("openLegacyGrace purge les champs Stripe/admin d'un cycle Stripe précédent")
+    @DisplayName("openLegacyGrace purge stripe_subscription_id et les traces admin, conserve le client Stripe")
     void reusesExistingRowAndPurgesStaleStripeAndAdminFields() {
         ProSubscriptionEntity existing = subscription(ProSubscriptionStatus.CANCELED,
                 ProSubscriptionSource.STRIPE);
@@ -96,21 +96,25 @@ class ProSubscriptionServiceTest {
         existing.setCurrentPeriodEnd(Instant.now().minus(10, ChronoUnit.DAYS));
         existing.setGrantedByAdminId(UUID.randomUUID());
         existing.setAdminGrantReason("ancien octroi admin");
+        existing.setGrantedAt(Instant.now().minus(10, ChronoUnit.DAYS));
         when(repository.findByUserId(USER_ID)).thenReturn(Optional.of(existing));
         when(repository.save(existing)).thenReturn(existing);
 
         ProSubscriptionEntity result = service().openLegacyGrace(USER_ID, 60);
 
+        // Le client Stripe est réutilisé en cas de réabonnement après annulation : il ne
+        // doit pas être perdu au recyclage de la ligne.
+        assertThat(result.getStripeCustomerId()).isEqualTo("cus_stale");
         // Une ligne LEGACY_FREE ne doit porter aucun résidu d'un cycle Stripe ou
         // d'un octroi admin précédent : stripe_subscription_id est indexée pour
         // les webhooks du lot 2, qui ramèneraient sinon cette ligne périmée au
         // premier webhook reçu pour cet identifiant.
-        assertThat(result.getStripeCustomerId()).isNull();
         assertThat(result.getStripeSubscriptionId()).isNull();
         assertThat(result.getBillingCycle()).isNull();
         assertThat(result.getCurrentPeriodEnd()).isNull();
         assertThat(result.getGrantedByAdminId()).isNull();
         assertThat(result.getAdminGrantReason()).isNull();
+        assertThat(result.getGrantedAt()).isNull();
     }
 
     @Test

@@ -13,10 +13,13 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 
 import java.math.BigDecimal;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -239,5 +242,55 @@ class AdminUserControllerTest {
     void request_rateOneOrAbove_isRejected() {
         assertThat(validator().validate(new CommissionRateOverrideRequest(new BigDecimal("1.5"))))
                 .isNotEmpty();
+    }
+
+    // ── Octroi / révocation PRO admin (lot 3, vague finale) ──────────────────
+
+    @Test
+    void grantPro_userNotFound_throws404_beforeCallingService() {
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository);
+        UUID userId = UUID.randomUUID();
+        when(userRepository.findById(userId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> controller.grantPro(userId,
+                new com.yadony.api.admin.dto.ProGrantRequest("Partenariat"), adminAuth()))
+                .isInstanceOf(com.yadony.api.common.YadonyBusinessException.class)
+                .satisfies(ex -> assertThat(((com.yadony.api.common.YadonyBusinessException) ex).getStatus())
+                        .isEqualTo(HttpStatus.NOT_FOUND));
+
+        // Mutation refusée avant tout appel au service : pas de ligne fantôme.
+        verify(proSubscriptionService, never())
+                .grantByAdmin(any(), any(), any());
+    }
+
+    @Test
+    void grantPro_userExists_delegatesToService_andReturnsDetail() {
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository);
+        UUID userId = UUID.randomUUID();
+        com.yadony.api.auth.UserEntity user = new com.yadony.api.auth.UserEntity();
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(firebaseContact.getContact(any())).thenReturn(
+                com.yadony.api.auth.FirebaseContactService.Contact.EMPTY);
+
+        var resp = controller.grantPro(userId,
+                new com.yadony.api.admin.dto.ProGrantRequest("Partenariat"), adminAuth());
+
+        assertThat(resp).isNotNull();
+        verify(proSubscriptionService).grantByAdmin(userId, ADMIN_ID, "Partenariat");
+    }
+
+    @Test
+    void revokePro_delegatesToRevokeAdminGrant_andReturnsDetail() {
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository);
+        UUID userId = UUID.randomUUID();
+        com.yadony.api.auth.UserEntity user = new com.yadony.api.auth.UserEntity();
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(firebaseContact.getContact(any())).thenReturn(
+                com.yadony.api.auth.FirebaseContactService.Contact.EMPTY);
+
+        var resp = controller.revokePro(userId, adminAuth());
+
+        assertThat(resp).isNotNull();
+        verify(proSubscriptionService).revokeAdminGrant(userId, ADMIN_ID);
     }
 }

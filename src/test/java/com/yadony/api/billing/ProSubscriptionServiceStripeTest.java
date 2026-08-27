@@ -125,6 +125,7 @@ class ProSubscriptionServiceStripeTest {
                 ProSubscriptionSource.ADMIN_GRANT);
         adminGranted.setGrantedByAdminId(adminId);
         adminGranted.setAdminGrantReason("Promotion winter 2026");
+        adminGranted.setGrantedAt(Instant.now().minus(5, ChronoUnit.DAYS));
         when(repository.findByUserId(USER_ID)).thenReturn(Optional.of(adminGranted));
         when(repository.save(adminGranted)).thenAnswer(inv -> {
             ProSubscriptionEntity entity = inv.getArgument(0);
@@ -141,6 +142,7 @@ class ProSubscriptionServiceStripeTest {
                 .as("la source change : les traces de l'octroi administratif ne doivent pas survivre")
                 .isNull();
         assertThat(result.getAdminGrantReason()).isNull();
+        assertThat(result.getGrantedAt()).isNull();
         verify(accessSynchronizer).sync(USER_ID, true);
     }
 

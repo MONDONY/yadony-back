@@ -14,9 +14,7 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.auth.UserService;
 import com.yadony.api.auth.UserStatus;
-import com.yadony.api.billing.ProSubscriptionEntity;
 import com.yadony.api.billing.ProSubscriptionRepository;
-import com.yadony.api.billing.ProSubscriptionSource;
 import com.yadony.api.billing.ProSubscriptionService;
 import com.yadony.api.common.YadonyBusinessException;
 import jakarta.validation.Valid;
@@ -228,6 +226,13 @@ public class AdminUserController {
     public AdminUserDetailResponse grantPro(@PathVariable UUID userId,
                                             @Valid @RequestBody ProGrantRequest request,
                                             Authentication authentication) {
+        // Résolu avant toute mutation : grantByAdmin est transactionnelle et commite au
+        // retour. Sur un utilisateur soft-deleted, la FK passerait quand même — la ligne
+        // users reste physiquement présente — et laisserait une ligne pro_subscriptions
+        // ACTIVE fantôme, jamais balayée par aucune tâche planifiée.
+        userRepository.findById(userId)
+                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
+                        "user-not-found", "Not Found", "Utilisateur introuvable"));
         proSubscriptionService.grantByAdmin(userId, adminId(authentication), request.reason());
         return detail(userRepository.findById(userId)
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
@@ -237,27 +242,15 @@ public class AdminUserController {
     /**
      * Révoque un accès offert.
      *
-     * <p>Refusé si l'abonnement n'est pas un octroi administrateur : fermer une ligne
-     * Stripe ici désynchroniserait la base et Stripe, l'utilisateur perdant son accès
-     * tout en restant débité. La résiliation d'un abonnement payant passe par le
-     * Customer Portal.
+     * <p>La garde-fou et la journalisation vivent dans
+     * {@link ProSubscriptionService#revokeAdminGrant} : elle journalise l'administrateur
+     * comme acteur, jamais la cible.
      */
     @PreAuthorize("hasRole('ADMIN') and hasAuthority('USER_PRO_GRANT')")
     @DeleteMapping("/{userId}/pro-grant")
     public AdminUserDetailResponse revokePro(@PathVariable UUID userId,
                                              Authentication authentication) {
-        ProSubscriptionEntity sub = proSubscriptionRepository.findByUserId(userId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "no-subscription", "Not Found",
-                        "Aucun abonnement PRO sur ce compte"));
-
-        if (sub.getSource() != ProSubscriptionSource.ADMIN_GRANT) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                    "not-an-admin-grant", "Not An Admin Grant",
-                    "Cet abonnement n'est pas un accès offert : il se résilie depuis Stripe.");
-        }
-
-        proSubscriptionService.cancel(sub);
+        proSubscriptionService.revokeAdminGrant(userId, adminId(authentication));
         return detail(userRepository.findById(userId)
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
                         "user-not-found", "Not Found", "Utilisateur introuvable")));
