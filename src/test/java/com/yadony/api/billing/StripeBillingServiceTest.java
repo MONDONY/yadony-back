@@ -29,14 +29,14 @@ class StripeBillingServiceTest {
 
     private BillingProperties configured() {
         return new BillingProperties(false, 60, 5, "price_m", "price_y",
-                "https://pro.yadony.com/ok", "https://pro.yadony.com/ko",
-                "https://pro.yadony.com/parametres/abonnement");
+                "https://yadony.com/pro/ok", "https://yadony.com/pro/ko",
+                "https://yadony.com/pro/parametres/abonnement");
     }
 
     private BillingProperties unconfigured() {
         return new BillingProperties(false, 60, 5, null, null,
-                "https://pro.yadony.com/ok", "https://pro.yadony.com/ko",
-                "https://pro.yadony.com/parametres/abonnement");
+                "https://yadony.com/pro/ok", "https://yadony.com/pro/ko",
+                "https://yadony.com/pro/parametres/abonnement");
     }
 
     private ProSubscriptionEntity subscription(ProSubscriptionStatus status, String customerId) {
