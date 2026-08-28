@@ -48,6 +48,7 @@ stripe:
   webhook:
     payments-secret: ${STRIPE_WEBHOOK_PAYMENTS_SECRET:${STRIPE_WEBHOOK_SECRET:whsec_local}}
     kyc-secret: ${STRIPE_WEBHOOK_KYC_SECRET:${STRIPE_WEBHOOK_SECRET:whsec_local}}
+    billing-secret: ${STRIPE_WEBHOOK_BILLING_SECRET:${STRIPE_WEBHOOK_SECRET:whsec_local}}
 
 # Firebase
 firebase:

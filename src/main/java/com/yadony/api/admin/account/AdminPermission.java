@@ -20,6 +20,11 @@ public enum AdminPermission {
     /** Suppression d'un compte décidée par l'administrateur, distincte d'une demande RGPD reçue. */
     USER_DELETE,
     USER_COMMISSION,
+    /**
+     * Offrir ou révoquer un accès PRO gratuit — geste commercial de même portée que
+     * {@link #USER_COMMISSION}, donc accordée aux mêmes rôles.
+     */
+    USER_PRO_GRANT,
 
     // Payment management
     PAYMENT_VIEW,

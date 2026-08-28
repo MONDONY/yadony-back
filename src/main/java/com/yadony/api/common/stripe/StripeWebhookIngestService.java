@@ -19,19 +19,29 @@ public class StripeWebhookIngestService {
     private final StripeEventInboxRepository repo;
     private final String paymentsSecret;
     private final String kycSecret;
+    private final String billingSecret;
 
     public StripeWebhookIngestService(
             StripeEventInboxRepository repo,
             @Qualifier("stripePaymentsWebhookSecret") String paymentsSecret,
-            @Qualifier("stripeKycWebhookSecret") String kycSecret) {
+            @Qualifier("stripeKycWebhookSecret") String kycSecret,
+            @Qualifier("stripeBillingWebhookSecret") String billingSecret) {
         this.repo = repo;
         this.paymentsSecret = paymentsSecret;
         this.kycSecret = kycSecret;
+        this.billingSecret = billingSecret;
     }
 
     @Transactional
     public void ingest(String payload, String sigHeader, StripeWebhookSource source) {
-        String secret = source == StripeWebhookSource.KYC ? kycSecret : paymentsSecret;
+        // switch exhaustif, et non un ternaire : une nouvelle source ajoutée à
+        // l'enum sans être traitée ici validerait sa signature avec le secret
+        // d'une autre source, silencieusement.
+        String secret = switch (source) {
+            case PAYMENTS -> paymentsSecret;
+            case KYC -> kycSecret;
+            case BILLING -> billingSecret;
+        };
         Event event;
         try {
             event = Webhook.constructEvent(payload, sigHeader, secret);

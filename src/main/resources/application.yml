@@ -144,6 +144,18 @@ yadony:
     non-pro:
       monthly-announcements: ${YADONY_LIMITS_NON_PRO_MONTHLY_ANNOUNCEMENTS:2}
   escrow-timeout-hours: ${YADONY_ESCROW_TIMEOUT_HOURS:48}
+  billing:
+    # Faux tant que le lot 2 (Stripe Checkout) n'est pas en production :
+    # sans lui, les comptes en grâce n'ont aucun moyen de s'abonner.
+    scheduler-enabled: ${YADONY_BILLING_SCHEDULER_ENABLED:false}
+    legacy-grace-days: ${YADONY_BILLING_LEGACY_GRACE_DAYS:60}
+    dunning-grace-days: ${YADONY_BILLING_DUNNING_GRACE_DAYS:5}
+    expiry-cron: ${YADONY_BILLING_EXPIRY_CRON:0 30 3 * * *}
+    price-monthly: ${STRIPE_BILLING_PRICE_MONTHLY:}
+    price-yearly: ${STRIPE_BILLING_PRICE_YEARLY:}
+    success-url: ${YADONY_BILLING_SUCCESS_URL:https://pro.yadony.com/parametres/abonnement?success=1}
+    cancel-url: ${YADONY_BILLING_CANCEL_URL:https://pro.yadony.com/upgrade?canceled=1}
+    portal-return-url: ${YADONY_BILLING_PORTAL_RETURN_URL:https://pro.yadony.com/parametres/abonnement}
   dispute-sla-hours: ${YADONY_DISPUTE_SLA_HOURS:72}
   reimbursement:
     max-amount-eur: ${YADONY_REIMBURSEMENT_MAX_AMOUNT_EUR:50}
@@ -319,6 +331,7 @@ stripe:
   webhook:
     payments-secret: ${STRIPE_WEBHOOK_PAYMENTS_SECRET:${STRIPE_WEBHOOK_SECRET:}}
     kyc-secret: ${STRIPE_WEBHOOK_KYC_SECRET:${STRIPE_WEBHOOK_SECRET:}}
+    billing-secret: ${STRIPE_WEBHOOK_BILLING_SECRET:${STRIPE_WEBHOOK_SECRET:}}
 
 storage:
   public-base-url: ${STORAGE_PUBLIC_BASE_URL:https://yadony-storage.local}

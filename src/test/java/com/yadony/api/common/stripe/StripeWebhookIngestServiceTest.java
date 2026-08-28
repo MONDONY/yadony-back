@@ -1,99 +1,120 @@
 package com.yadony.api.common.stripe;
 
-import com.stripe.exception.SignatureVerificationException;
-import com.stripe.model.Event;
-import com.stripe.net.Webhook;
-import org.junit.jupiter.api.BeforeEach;
+import com.yadony.api.common.YadonyBusinessException;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
-import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
+@DisplayName("StripeWebhookIngestService — chaque source valide avec son propre secret")
 class StripeWebhookIngestServiceTest {
 
-    @Mock
-    StripeEventInboxRepository repo;
+    private static final String PAYMENTS_SECRET = "whsec_payments_aaaaaaaaaaaaaaaa";
+    private static final String KYC_SECRET = "whsec_kyc_bbbbbbbbbbbbbbbbbbbb";
+    private static final String BILLING_SECRET = "whsec_billing_cccccccccccccccc";
 
-    StripeWebhookIngestService service;
+    @Mock StripeEventInboxRepository repo;
 
-    @BeforeEach
-    void setUp() {
-        service = new StripeWebhookIngestService(repo, "whsec_payments", "whsec_kyc");
+    private StripeWebhookIngestService service() {
+        return new StripeWebhookIngestService(repo, PAYMENTS_SECRET, KYC_SECRET, BILLING_SECRET);
     }
 
-    @Test
-    void ingest_skipsAlreadyPresentEvent() throws Exception {
-        var fakeEvent = mockEvent("evt_dup", "payment_intent.succeeded");
-
-        try (MockedStatic<Webhook> wh = mockStatic(Webhook.class)) {
-            wh.when(() -> Webhook.constructEvent(any(), any(), any())).thenReturn(fakeEvent);
-            when(repo.existsById("evt_dup")).thenReturn(true);
-
-            service.ingest("{}", "sig", StripeWebhookSource.PAYMENTS);
-
-            verify(repo, never()).save(any());
+    /** Reproduit l'en-tête Stripe-Signature : t=<ts>,v1=<HMAC-SHA256(ts + "." + payload, secret)>. */
+    private static String signature(String payload, String secret) {
+        long timestamp = Instant.now().getEpochSecond();
+        String signedPayload = timestamp + "." + payload;
+        try {
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+            byte[] hash = mac.doFinal(signedPayload.getBytes(StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder();
+            for (byte b : hash) {
+                hex.append(String.format("%02x", b));
+            }
+            return "t=" + timestamp + ",v1=" + hex;
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
         }
     }
 
-    @Test
-    void ingest_savesNewEvent() throws Exception {
-        var fakeEvent = mockEvent("evt_new", "payment_intent.succeeded");
-
-        try (MockedStatic<Webhook> wh = mockStatic(Webhook.class)) {
-            wh.when(() -> Webhook.constructEvent(any(), any(), any())).thenReturn(fakeEvent);
-            when(repo.existsById("evt_new")).thenReturn(false);
-            when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
-
-            service.ingest("{}", "sig", StripeWebhookSource.PAYMENTS);
-
-            verify(repo).save(argThat(e ->
-                    "evt_new".equals(e.getEventId()) &&
-                    StripeWebhookSource.PAYMENTS == e.getSource() &&
-                    "payment_intent.succeeded".equals(e.getEventType())
-            ));
-        }
+    private static String payload(String eventId, String type) {
+        return "{\"id\":\"" + eventId + "\",\"object\":\"event\",\"type\":\"" + type
+                + "\",\"data\":{\"object\":{}}}";
     }
 
     @Test
-    void ingest_withKycSource_usesKycSecret() throws Exception {
-        var fakeEvent = mockEvent("evt_kyc", "identity.verification_session.verified");
+    @DisplayName("un événement billing signé avec le secret billing est accepté et rangé sous BILLING")
+    void billingEventAcceptedWithBillingSecret() {
+        String body = payload("evt_billing_1", "invoice.paid");
+        when(repo.existsById("evt_billing_1")).thenReturn(false);
 
-        try (MockedStatic<Webhook> wh = mockStatic(Webhook.class)) {
-            wh.when(() -> Webhook.constructEvent(any(), any(), eq("whsec_kyc"))).thenReturn(fakeEvent);
-            when(repo.existsById("evt_kyc")).thenReturn(false);
-            when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        service().ingest(body, signature(body, BILLING_SECRET), StripeWebhookSource.BILLING);
 
-            service.ingest("{}", "sig", StripeWebhookSource.KYC);
-
-            wh.verify(() -> Webhook.constructEvent(any(), any(), eq("whsec_kyc")));
-            verify(repo).save(argThat(e -> StripeWebhookSource.KYC == e.getSource()));
-        }
+        ArgumentCaptor<StripeEventInbox> captor = ArgumentCaptor.forClass(StripeEventInbox.class);
+        verify(repo).save(captor.capture());
+        assertThat(captor.getValue().getSource()).isEqualTo(StripeWebhookSource.BILLING);
+        assertThat(captor.getValue().getEventType()).isEqualTo("invoice.paid");
     }
 
     @Test
-    void ingest_throwsOnInvalidSignature() throws Exception {
-        try (MockedStatic<Webhook> wh = mockStatic(Webhook.class)) {
-            wh.when(() -> Webhook.constructEvent(any(), any(), any()))
-              .thenThrow(new SignatureVerificationException("bad sig", "sig_header"));
+    @DisplayName("un événement billing signé avec le secret payments est refusé")
+    void billingEventRejectedWithPaymentsSecret() {
+        String body = payload("evt_billing_2", "invoice.paid");
 
-            assertThatThrownBy(() -> service.ingest("{}", "bad", StripeWebhookSource.PAYMENTS))
-                    .isInstanceOf(com.yadony.api.common.YadonyBusinessException.class);
+        assertThatThrownBy(() ->
+                service().ingest(body, signature(body, PAYMENTS_SECRET), StripeWebhookSource.BILLING))
+                .isInstanceOf(YadonyBusinessException.class)
+                .hasMessageContaining("Signature");
 
-            verify(repo, never()).save(any());
-        }
+        verify(repo, never()).save(any());
     }
 
-    private Event mockEvent(String id, String type) {
-        var event = mock(Event.class);
-        lenient().when(event.getId()).thenReturn(id);
-        lenient().when(event.getType()).thenReturn(type);
-        return event;
+    @Test
+    @DisplayName("un événement payments signé avec le secret billing est refusé")
+    void paymentsEventRejectedWithBillingSecret() {
+        String body = payload("evt_pay_1", "payment_intent.succeeded");
+
+        assertThatThrownBy(() ->
+                service().ingest(body, signature(body, BILLING_SECRET), StripeWebhookSource.PAYMENTS))
+                .isInstanceOf(YadonyBusinessException.class);
+
+        verify(repo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("un événement KYC signé avec le secret KYC reste accepté")
+    void kycEventStillWorks() {
+        String body = payload("evt_kyc_1", "identity.verification_session.verified");
+        when(repo.existsById("evt_kyc_1")).thenReturn(false);
+
+        service().ingest(body, signature(body, KYC_SECRET), StripeWebhookSource.KYC);
+
+        verify(repo).save(any(StripeEventInbox.class));
+    }
+
+    @Test
+    @DisplayName("un événement déjà présent dans l'inbox n'est pas réinséré")
+    void duplicateIsSkipped() {
+        String body = payload("evt_dup", "invoice.paid");
+        when(repo.existsById("evt_dup")).thenReturn(true);
+
+        service().ingest(body, signature(body, BILLING_SECRET), StripeWebhookSource.BILLING);
+
+        verify(repo, never()).save(any());
     }
 }

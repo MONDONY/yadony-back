@@ -29,10 +29,16 @@ Fonctionnalité: Gestion avancée du compte
     Et le champ "city" de la réponse vaut "Lyon"
 
   @happy-path
-  Scénario: Passage en compte PRO puis retour au compte standard
+  Scénario: Mise à jour du profil PRO (abonné) puis retour au compte standard
+    # Depuis le lot Stripe billing, l'endpoint upgrade-to-pro ne fait plus que mettre à
+    # jour la raison sociale/le SIRET : le statut PRO s'obtient désormais par abonnement
+    # payant (Stripe Checkout). On simule ici un abonné déjà PRO pour vérifier que la
+    # mise à jour de son profil (200) et le renoncement au compte PRO (200) fonctionnent
+    # toujours.
     Etant donné un utilisateur EXPÉDITEUR enregistré avec l'uid "acct-002" et le téléphone "+33655000002"
+    Et le compte "acct-002" est un compte PRO
     Etant donné l'utilisateur "acct-002" est authentifié en tant qu'EXPÉDITEUR
-    Quand je passe mon compte en PRO
+    Quand je mets à jour mon profil pro
     Alors la réponse HTTP est 200
     Quand je repasse mon compte en standard
     Alors la réponse HTTP est 200

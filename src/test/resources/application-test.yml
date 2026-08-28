@@ -49,6 +49,7 @@ stripe:
   webhook:
     payments-secret: whsec_test_payments
     kyc-secret: whsec_test_kyc
+    billing-secret: whsec_test_billing
 
 yadony:
   email:

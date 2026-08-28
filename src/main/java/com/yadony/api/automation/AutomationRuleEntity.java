@@ -32,6 +32,13 @@ public class AutomationRuleEntity extends BaseEntity {
     @Column(name = "enabled", nullable = false)
     private boolean enabled = true;
 
+    /**
+     * Vrai si cette règle a été éteinte par la perte du statut PRO, et non par
+     * le voyageur. Seules ces règles sont rallumées au réabonnement.
+     */
+    @Column(name = "disabled_by_downgrade", nullable = false)
+    private boolean disabledByDowngrade = false;
+
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "conditions", nullable = false, columnDefinition = "jsonb")
     private List<Map<String, Object>> conditions = List.of();
@@ -56,6 +63,9 @@ public class AutomationRuleEntity extends BaseEntity {
 
     public boolean isEnabled() { return enabled; }
     public void setEnabled(boolean enabled) { this.enabled = enabled; }
+
+    public boolean isDisabledByDowngrade() { return disabledByDowngrade; }
+    public void setDisabledByDowngrade(boolean disabledByDowngrade) { this.disabledByDowngrade = disabledByDowngrade; }
 
     public List<Map<String, Object>> getConditions() { return conditions; }
     public void setConditions(List<Map<String, Object>> conditions) { this.conditions = conditions; }

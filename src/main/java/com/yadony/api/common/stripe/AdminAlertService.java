@@ -112,6 +112,7 @@ public class AdminAlertService {
             case "CHARGEBACK_TRANSFER_BLOCKED" -> "Libération escrow bloquée";
             case "REFUND_AFTER_RELEASE" -> "Remboursement après versement";
             case "STRIPE_DEAD_LETTER" -> "Event Stripe en échec définitif";
+            case "BILLING_CHECKOUT_UNRESOLVED_USER" -> "Paiement PRO encaissé sans utilisateur identifiable";
             case "SENTRY_ISSUE_CREATED" -> "Nouvelle erreur Sentry";
             case "SENTRY_ISSUE_UNRESOLVED" -> "Régression Sentry (erreur redevenue active)";
             default -> "Alerte système";
