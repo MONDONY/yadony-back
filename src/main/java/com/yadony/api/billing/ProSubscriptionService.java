@@ -53,29 +53,20 @@ public class ProSubscriptionService {
     public ProSubscriptionEntity openLegacyGrace(UUID userId, int graceDays) {
         ProSubscriptionEntity sub = repository.findByUserId(userId)
                 .orElseGet(ProSubscriptionEntity::new);
+        // Purge d'abord les champs transverses (cf. purgeTransverseFields) : la ligne
+        // recyclée passe en source LEGACY_FREE et ne doit porter aucun résidu d'un
+        // précédent cycle Stripe ou octroi admin — un past_due_since périmé ferait
+        // expirer la grâce dès le premier passage du cron de dunning, et un
+        // stripe_subscription_id périmé serait ramené par findByStripeSubscriptionId
+        // au premier webhook reçu pour cet identifiant, qui ne correspond plus à cet
+        // abonnement. Le client Stripe, lui, est conservé : il est réutilisé en cas de
+        // réabonnement après annulation, pour éviter de fragmenter l'historique de
+        // facturation.
+        purgeTransverseFields(sub);
         sub.setUserId(userId);
         sub.setStatus(ProSubscriptionStatus.LEGACY_GRACE);
         sub.setSource(ProSubscriptionSource.LEGACY_FREE);
         sub.setGraceExpiresAt(Instant.now().plus(graceDays, ChronoUnit.DAYS));
-        // Nettoyage des résidus d'un cycle précédent : sans cela, un
-        // past_due_since périmé ferait expirer la grâce dès le premier passage
-        // du cron de dunning.
-        sub.setPastDueSince(null);
-        sub.setCancelAtPeriodEnd(false);
-        // La ligne recyclée passe en source LEGACY_FREE : elle ne doit porter
-        // aucun résidu d'un précédent cycle Stripe ou octroi admin. Sans cette
-        // purge, un stripe_subscription_id périmé survivrait sur une ligne
-        // LEGACY_FREE — et findByStripeSubscriptionId, indexée pour les
-        // webhooks du lot 2, la ramènerait au premier webhook reçu pour cet
-        // identifiant, qui ne correspond plus à cet abonnement. Le client Stripe,
-        // lui, est conservé : il est réutilisé en cas de réabonnement après
-        // annulation, pour éviter de fragmenter l'historique de facturation.
-        sub.setStripeSubscriptionId(null);
-        sub.setBillingCycle(null);
-        sub.setCurrentPeriodEnd(null);
-        sub.setGrantedByAdminId(null);
-        sub.setAdminGrantReason(null);
-        sub.setGrantedAt(null);
         ProSubscriptionEntity saved = repository.save(sub);
         accessSynchronizer.sync(userId, true);
         log.info("Legacy PRO grace opened for user {} until {}", userId, saved.getGraceExpiresAt());
@@ -103,6 +94,7 @@ public class ProSubscriptionService {
                                                     Instant periodEnd) {
         ProSubscriptionEntity sub = repository.findByUserId(userId)
                 .orElseGet(ProSubscriptionEntity::new);
+        purgeTransverseFields(sub);
         sub.setUserId(userId);
         sub.setStatus(ProSubscriptionStatus.ACTIVE);
         sub.setSource(ProSubscriptionSource.STRIPE);
@@ -110,12 +102,6 @@ public class ProSubscriptionService {
         sub.setStripeSubscriptionId(subscriptionId);
         sub.setBillingCycle(cycle);
         sub.setCurrentPeriodEnd(periodEnd);
-        sub.setGraceExpiresAt(null);
-        sub.setPastDueSince(null);
-        sub.setCancelAtPeriodEnd(false);
-        sub.setGrantedByAdminId(null);
-        sub.setAdminGrantReason(null);
-        sub.setGrantedAt(null);
         ProSubscriptionEntity saved = repository.save(sub);
 
         accessSynchronizer.sync(userId, true);
@@ -156,31 +142,26 @@ public class ProSubscriptionService {
         ProSubscriptionEntity sub = repository.findByUserId(userId)
                 .orElseGet(ProSubscriptionEntity::new);
 
-        if (sub.getSource() == ProSubscriptionSource.STRIPE && sub.getStatus() != null
-                && sub.getStatus().grantsProAccess()) {
+        if (sub.isStripeManaged()) {
             throw new YadonyBusinessException(HttpStatus.CONFLICT,
                     "active-stripe-subscription", "Active Stripe Subscription",
                     "Cet utilisateur a un abonnement PRO payant en cours — orientez-le vers "
                             + "le Customer Portal Stripe pour le résilier avant d'offrir un accès.");
         }
 
+        // La source change : les traces d'un cycle Stripe précédent ne doivent pas
+        // survivre (cf. purgeTransverseFields). Un stripe_subscription_id résiduel
+        // serait retrouvé par findByStripeSubscriptionId au prochain webhook, qui
+        // piloterait alors cette ligne depuis un abonnement qui n'est plus le sien.
+        // Le client Stripe, lui, est conservé : il est réutilisé en cas de
+        // réabonnement après annulation.
+        purgeTransverseFields(sub);
         sub.setUserId(userId);
         sub.setStatus(ProSubscriptionStatus.ACTIVE);
         sub.setSource(ProSubscriptionSource.ADMIN_GRANT);
         sub.setGrantedByAdminId(adminId);
         sub.setAdminGrantReason(reason);
         sub.setGrantedAt(Instant.now());
-        // La source change : les traces d'un cycle Stripe précédent ne doivent pas
-        // survivre. Un stripe_subscription_id résiduel serait retrouvé par
-        // findByStripeSubscriptionId au prochain webhook, qui piloterait alors cette
-        // ligne depuis un abonnement qui n'est plus le sien. Le client Stripe, lui,
-        // est conservé : il est réutilisé en cas de réabonnement après annulation.
-        sub.setStripeSubscriptionId(null);
-        sub.setBillingCycle(null);
-        sub.setCurrentPeriodEnd(null);
-        sub.setGraceExpiresAt(null);
-        sub.setPastDueSince(null);
-        sub.setCancelAtPeriodEnd(false);
 
         // Enregistrer AVANT de synchroniser : LegacyProGraceListener réagit à
         // l'événement et ouvrirait une LEGACY_GRACE si aucun abonnement ne couvrait
@@ -321,6 +302,30 @@ public class ProSubscriptionService {
     @Transactional
     public ProSubscriptionEntity cancel(ProSubscriptionEntity sub) {
         return close(sub, ProSubscriptionStatus.CANCELED, "BILLING_SUBSCRIPTION_CANCELED");
+    }
+
+    /**
+     * Purge les champs transverses avant qu'un créateur ({@link #openLegacyGrace},
+     * {@link #activateFromStripe}, {@link #grantByAdmin}) ne recycle la ligne existante
+     * d'un utilisateur pour une nouvelle source : {@code stripeSubscriptionId},
+     * {@code billingCycle}, {@code currentPeriodEnd}, {@code graceExpiresAt},
+     * {@code pastDueSince}, {@code cancelAtPeriodEnd}, {@code grantedByAdminId},
+     * {@code adminGrantReason} et {@code grantedAt}. Chaque créateur pose ensuite ses
+     * champs propres, qui écrasent le cas échéant la valeur purgée.
+     *
+     * <p>{@code stripeCustomerId} en est volontairement absent : il est réutilisé en cas
+     * de réabonnement après annulation, quelle que soit la nouvelle source.
+     */
+    private void purgeTransverseFields(ProSubscriptionEntity sub) {
+        sub.setStripeSubscriptionId(null);
+        sub.setBillingCycle(null);
+        sub.setCurrentPeriodEnd(null);
+        sub.setGraceExpiresAt(null);
+        sub.setPastDueSince(null);
+        sub.setCancelAtPeriodEnd(false);
+        sub.setGrantedByAdminId(null);
+        sub.setAdminGrantReason(null);
+        sub.setGrantedAt(null);
     }
 
     private ProSubscriptionEntity close(ProSubscriptionEntity sub,

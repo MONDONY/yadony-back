@@ -114,4 +114,14 @@ public class ProSubscriptionEntity extends BaseEntity {
 
     public Instant getGrantedAt() { return grantedAt; }
     public void setGrantedAt(Instant grantedAt) { this.grantedAt = grantedAt; }
+
+    /**
+     * Vrai si un abonnement Stripe vivant couvre encore ce compte : la source est
+     * {@code STRIPE} et le statut {@link ProSubscriptionStatus#grantsProAccess()
+     * accorde encore l'accès}. Utilisé pour refuser un octroi administrateur ou une
+     * résiliation en self-service tant que Stripe continue de prélever.
+     */
+    public boolean isStripeManaged() {
+        return source == ProSubscriptionSource.STRIPE && status != null && status.grantsProAccess();
+    }
 }

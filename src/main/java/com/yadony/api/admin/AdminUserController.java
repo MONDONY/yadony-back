@@ -125,10 +125,7 @@ public class AdminUserController {
     @PreAuthorize("hasAuthority('USER_VIEW')")
     @GetMapping("/{userId}")
     public AdminUserDetailResponse getUser(@PathVariable UUID userId) {
-        UserEntity user = userRepository.findById(userId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
-        return detail(user);
+        return detail(requireUser(userId));
     }
 
     @PreAuthorize("hasAuthority('USER_SUSPEND')")
@@ -196,9 +193,7 @@ public class AdminUserController {
     @PreAuthorize("hasRole('ADMIN') and hasAuthority('USER_DELETE')")
     @GetMapping("/{userId}/deletion-impact")
     public DeletionImpactResponse deletionImpact(@PathVariable UUID userId) {
-        userRepository.findById(userId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
+        requireUser(userId);
         return deletionImpactService.report(userId);
     }
 
@@ -230,13 +225,15 @@ public class AdminUserController {
         // retour. Sur un utilisateur soft-deleted, la FK passerait quand même — la ligne
         // users reste physiquement présente — et laisserait une ligne pro_subscriptions
         // ACTIVE fantôme, jamais balayée par aucune tâche planifiée.
-        userRepository.findById(userId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "user-not-found", "Not Found", "Utilisateur introuvable"));
+        //
+        // Reste ici plutôt que de descendre dans ProSubscriptionService (contrairement à
+        // revokePro juste en dessous) : le déplacer romprait le contrat couvert par
+        // AdminUserControllerTest#grantPro_userNotFound_throws404_beforeCallingService,
+        // qui exige explicitement que grantByAdmin ne soit jamais appelée sur un
+        // utilisateur inconnu.
+        requireUser(userId);
         proSubscriptionService.grantByAdmin(userId, adminId(authentication), request.reason());
-        return detail(userRepository.findById(userId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "user-not-found", "Not Found", "Utilisateur introuvable")));
+        return detail(requireUser(userId));
     }
 
     /**
@@ -251,9 +248,7 @@ public class AdminUserController {
     public AdminUserDetailResponse revokePro(@PathVariable UUID userId,
                                              Authentication authentication) {
         proSubscriptionService.revokeAdminGrant(userId, adminId(authentication));
-        return detail(userRepository.findById(userId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "user-not-found", "Not Found", "Utilisateur introuvable")));
+        return detail(requireUser(userId));
     }
 
     private AdminUserDetailResponse detail(UserEntity user) {
@@ -261,6 +256,14 @@ public class AdminUserController {
                 user,
                 firebaseContact.getContact(user.getFirebaseUid()),
                 proSubscriptionRepository.findByUserId(user.getId()).orElse(null));
+    }
+
+    /** Résout l'utilisateur ou lève le 404 métier standard — réutilisé partout où
+     *  ce contrôleur a besoin de l'entité complète avant de construire une réponse. */
+    private UserEntity requireUser(UUID userId) {
+        return userRepository.findById(userId)
+                .orElseThrow(() -> new YadonyBusinessException(
+                        HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
     }
 
     /**

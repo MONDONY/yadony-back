@@ -6,7 +6,6 @@ import com.yadony.api.auth.events.AccountDeletionRequestedEvent;
 import com.yadony.api.auth.events.UserSuspendedEvent;
 import com.yadony.api.billing.ProSubscriptionEntity;
 import com.yadony.api.billing.ProSubscriptionRepository;
-import com.yadony.api.billing.ProSubscriptionSource;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.messaging.FirestoreService;
@@ -300,8 +299,7 @@ public class UserService {
         UUID userId = user.getId();
 
         proSubscriptionRepository.findByUserId(userId).ifPresent(subscription -> {
-            if (subscription.getSource() == ProSubscriptionSource.STRIPE
-                    && subscription.getStatus().grantsProAccess()) {
+            if (subscription.isStripeManaged()) {
                 throw new YadonyBusinessException(
                         HttpStatus.CONFLICT,
                         "active-stripe-subscription",

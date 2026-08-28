@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -43,16 +44,17 @@ public class StripeBillingService {
                     "Le service de billing de l'abonnement PRO n'est pas encore disponible.");
         }
 
-        repository.findByUserId(userId).ifPresent(sub -> {
-            if (sub.getStatus() == ProSubscriptionStatus.ACTIVE
-                    || sub.getStatus() == ProSubscriptionStatus.PAST_DUE) {
+        Optional<ProSubscriptionEntity> existingSubscription = repository.findByUserId(userId);
+
+        existingSubscription.ifPresent(sub -> {
+            if (!sub.getStatus().allowsNewCheckout()) {
                 throw new YadonyBusinessException(HttpStatus.CONFLICT,
                         "subscription-already-active", "Already Subscribed",
                         "Vous avez déjà un abonnement PRO en cours.");
             }
         });
 
-        String existingCustomerId = repository.findByUserId(userId)
+        String existingCustomerId = existingSubscription
                 .map(ProSubscriptionEntity::getStripeCustomerId)
                 .orElse(null);
 

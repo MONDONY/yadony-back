@@ -59,17 +59,7 @@ public class BillingController {
     @GetMapping("/subscription")
     public ResponseEntity<ProSubscriptionResponse> getSubscription(Authentication authentication) {
         UUID userId = currentUserId(authentication);
-        return repository.findByUserId(userId)
-                .map(sub -> ResponseEntity.ok(new ProSubscriptionResponse(
-                        sub.getStatus().grantsProAccess(),
-                        sub.getStatus().name(),
-                        sub.getSource().name(),
-                        sub.getBillingCycle() == null ? null : sub.getBillingCycle().name(),
-                        sub.getCurrentPeriodEnd(),
-                        sub.isCancelAtPeriodEnd(),
-                        sub.getGraceExpiresAt())))
-                .orElseGet(() -> ResponseEntity.ok(new ProSubscriptionResponse(
-                        false, "NONE", null, null, null, false, null)));
+        return ResponseEntity.ok(ProSubscriptionResponse.from(repository.findByUserId(userId).orElse(null)));
     }
 
     /** Endpoint public — la signature est vérifiée par StripeWebhookIngestService. */

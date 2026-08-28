@@ -20,4 +20,15 @@ public enum ProSubscriptionStatus {
     public boolean grantsProAccess() {
         return this == ACTIVE || this == PAST_DUE || this == LEGACY_GRACE;
     }
+
+    /**
+     * Vrai si un abonnement dans cet état laisse ouvrir une nouvelle session Checkout.
+     * Volontairement distinct de {@link #grantsProAccess()} : {@code LEGACY_GRACE}
+     * accorde déjà l'accès mais doit pouvoir souscrire (c'est le but de la grâce
+     * historique), alors que {@code ACTIVE} et {@code PAST_DUE} ont déjà un abonnement
+     * Stripe en cours et doivent le bloquer.
+     */
+    public boolean allowsNewCheckout() {
+        return this != ACTIVE && this != PAST_DUE;
+    }
 }
