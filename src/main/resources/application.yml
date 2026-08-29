@@ -151,6 +151,11 @@ yadony:
     legacy-grace-days: ${YADONY_BILLING_LEGACY_GRACE_DAYS:60}
     dunning-grace-days: ${YADONY_BILLING_DUNNING_GRACE_DAYS:5}
     expiry-cron: ${YADONY_BILLING_EXPIRY_CRON:0 30 3 * * *}
+    # Essai gratuit, en jours. Zéro ou négatif signifie « pas d'essai » : le champ est
+    # alors omis de la session Checkout, Stripe refusant une durée nulle.
+    # Trois conditions cumulatives pour en bénéficier, cf. ProTrialPolicy : un essai
+    # configuré, au moins un trajet réalisé, et n'avoir jamais été client Stripe.
+    trial-days: ${YADONY_BILLING_TRIAL_DAYS:7}
     price-monthly: ${STRIPE_BILLING_PRICE_MONTHLY:}
     price-yearly: ${STRIPE_BILLING_PRICE_YEARLY:}
     success-url: ${YADONY_BILLING_SUCCESS_URL:https://yadony.com/pro/parametres/abonnement?success=1}
