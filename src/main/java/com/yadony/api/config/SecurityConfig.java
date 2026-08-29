@@ -152,6 +152,7 @@ public class SecurityConfig {
                     "/kyc/webhook",
                     "/payments/webhook",
                     "/payments/stripe/webhook",
+                    "/billing/webhook",
                     "/ratings/recipient",
                     "/ratings/user/**",
                     // /tracking/search n'est PAS public : il expose le statut du colis et

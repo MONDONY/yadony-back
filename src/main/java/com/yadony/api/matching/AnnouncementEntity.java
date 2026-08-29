@@ -35,6 +35,9 @@ public class AnnouncementEntity extends BaseEntity {
     @Column(name = "traveler_id", nullable = false)
     private UUID travelerId;
 
+    @Column(name = "source_recurrence_id")
+    private UUID sourceRecurrenceId;
+
     @Column(name = "departure_city", nullable = false, length = 100)
     private String departureCity;
 
@@ -288,6 +291,9 @@ public class AnnouncementEntity extends BaseEntity {
 
     public UUID getTravelerId() { return travelerId; }
     public void setTravelerId(UUID travelerId) { this.travelerId = travelerId; }
+
+    public UUID getSourceRecurrenceId() { return sourceRecurrenceId; }
+    public void setSourceRecurrenceId(UUID sourceRecurrenceId) { this.sourceRecurrenceId = sourceRecurrenceId; }
 
     public String getDepartureCity() { return departureCity; }
     public void setDepartureCity(String departureCity) { this.departureCity = departureCity; }

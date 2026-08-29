@@ -24,6 +24,8 @@ public interface AnnouncementRepository extends JpaRepository<AnnouncementEntity
 
     Page<AnnouncementEntity> findByTravelerIdAndStatus(UUID travelerId, AnnouncementStatus status, Pageable pageable);
 
+    boolean existsBySourceRecurrenceIdAndDepartureDate(UUID sourceRecurrenceId, LocalDate departureDate);
+
     @Query("""
             SELECT a FROM AnnouncementEntity a
             WHERE a.travelerId = :travelerId

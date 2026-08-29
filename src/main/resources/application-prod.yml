@@ -28,6 +28,7 @@ stripe:
   webhook:
     payments-secret: ${STRIPE_WEBHOOK_PAYMENTS_SECRET}
     kyc-secret: ${STRIPE_WEBHOOK_KYC_SECRET}
+    billing-secret: ${STRIPE_WEBHOOK_BILLING_SECRET}
 
 yadony:
   kyc:
@@ -40,3 +41,9 @@ yadony:
       batch-size: 50
       max-retries: 8
       retry-backoff-base: 30s
+  billing:
+    price-monthly: ${STRIPE_BILLING_PRICE_MONTHLY}
+    price-yearly: ${STRIPE_BILLING_PRICE_YEARLY}
+    success-url: ${YADONY_BILLING_SUCCESS_URL:https://yadony.com/pro/parametres/abonnement?success=1}
+    cancel-url: ${YADONY_BILLING_CANCEL_URL:https://yadony.com/pro/upgrade?canceled=1}
+    portal-return-url: ${YADONY_BILLING_PORTAL_RETURN_URL:https://yadony.com/pro/parametres/abonnement}

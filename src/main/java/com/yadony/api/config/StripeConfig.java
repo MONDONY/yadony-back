@@ -25,6 +25,9 @@ public class StripeConfig {
     @Value("${stripe.webhook.kyc-secret:}")
     private String kycWebhookSecret;
 
+    @Value("${stripe.webhook.billing-secret:}")
+    private String billingWebhookSecret;
+
     @PostConstruct
     public void init() {
         Stripe.apiKey = secretKey;
@@ -54,5 +57,10 @@ public class StripeConfig {
     @Bean("stripeKycWebhookSecret")
     public String stripeKycWebhookSecret() {
         return kycWebhookSecret;
+    }
+
+    @Bean("stripeBillingWebhookSecret")
+    public String stripeBillingWebhookSecret() {
+        return billingWebhookSecret;
     }
 }

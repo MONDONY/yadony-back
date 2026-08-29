@@ -1,5 +1,6 @@
 package com.yadony.api.auth;
 
+import com.yadony.api.billing.ProSubscriptionRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.messaging.FirestoreService;
 import com.yadony.api.notifications.NotificationDispatcher;
@@ -47,6 +48,7 @@ class UserServiceAuditActorTest {
     @Mock NotificationDispatcher notificationDispatcher;
     @Mock com.yadony.api.payments.wallet.WalletRefundRequestService walletRefundRequestService;
     @Mock com.yadony.api.payments.wallet.WalletSelfRefundService walletSelfRefundService;
+    @Mock ProSubscriptionRepository proSubscriptionRepository;
 
     UserService service;
 
@@ -58,7 +60,7 @@ class UserServiceAuditActorTest {
         service = new UserService(userRepository, paymentRepository, walletAccountRepository,
                 auditService, eventPublisher, accountFinalizationService,
                 firestoreService, notificationDispatcher, walletRefundRequestService,
-                walletSelfRefundService);
+                walletSelfRefundService, proSubscriptionRepository);
 
         UserEntity user = new UserEntity();
         ReflectionTestUtils.setField(user, "id", USER_ID);

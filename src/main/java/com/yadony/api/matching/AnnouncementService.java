@@ -449,6 +449,24 @@ public class AnnouncementService {
     @Transactional
     @CacheEvict(value = "announcements-search", allEntries = true)
     public AnnouncementResponse createAnnouncement(String firebaseUid, AnnouncementRequest request) {
+        return createAnnouncement(firebaseUid, request, null);
+    }
+
+    @Transactional
+    @CacheEvict(value = "announcements-search", allEntries = true)
+    public AnnouncementResponse createRecurringAnnouncement(
+            String firebaseUid,
+            AnnouncementRequest request,
+            UUID recurrenceId
+    ) {
+        return createAnnouncement(firebaseUid, request, recurrenceId);
+    }
+
+    private AnnouncementResponse createAnnouncement(
+            String firebaseUid,
+            AnnouncementRequest request,
+            UUID recurrenceId
+    ) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND,
@@ -497,6 +515,7 @@ public class AnnouncementService {
 
         AnnouncementEntity announcement = new AnnouncementEntity();
         announcement.setTravelerId(user.getId());
+        announcement.setSourceRecurrenceId(recurrenceId);
         announcement.setCurrency(resolveAnnouncementCurrency(request.currency(), user.getId()));
         announcement.setTravelerIsPro(user.isProAccount());
         announcement.setDepartureCity(request.departureCity());

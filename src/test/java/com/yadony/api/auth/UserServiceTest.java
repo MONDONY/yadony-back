@@ -1,6 +1,10 @@
 package com.yadony.api.auth;
 
 import com.yadony.api.auth.events.UserSuspendedEvent;
+import com.yadony.api.billing.ProSubscriptionEntity;
+import com.yadony.api.billing.ProSubscriptionRepository;
+import com.yadony.api.billing.ProSubscriptionSource;
+import com.yadony.api.billing.ProSubscriptionStatus;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.kyc.KycRepository;
@@ -41,6 +45,7 @@ class UserServiceTest {
     @Mock private ApplicationEventPublisher eventPublisher;
     @Mock private WalletRefundRequestService walletRefundRequestService;
     @Mock private WalletSelfRefundService walletSelfRefundService;
+    @Mock private ProSubscriptionRepository proSubscriptionRepository;
 
     @InjectMocks private UserService userService;
 
@@ -101,6 +106,101 @@ class UserServiceTest {
 
             verify(userRepository, never()).save(any());
             verify(eventPublisher, never()).publishEvent(any());
+        }
+    }
+
+    @Nested
+    @DisplayName("downgradePro() — résiliation du profil PRO")
+    class DowngradeProTests {
+
+        private ProSubscriptionEntity subscription(ProSubscriptionSource source, ProSubscriptionStatus status) {
+            ProSubscriptionEntity sub = new ProSubscriptionEntity();
+            sub.setUserId(USER_ID);
+            sub.setSource(source);
+            sub.setStatus(status);
+            return sub;
+        }
+
+        @Test
+        @DisplayName("abonné Stripe actif → 409, refuse la résiliation via cet endpoint")
+        void downgradePro_activeStripeSubscription_throws409() {
+            when(proSubscriptionRepository.findByUserId(USER_ID))
+                    .thenReturn(Optional.of(subscription(ProSubscriptionSource.STRIPE, ProSubscriptionStatus.ACTIVE)));
+
+            assertThatThrownBy(() -> userService.downgradePro(user))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getStatus())
+                            .isEqualTo(HttpStatus.CONFLICT));
+
+            verify(userRepository, never()).save(any());
+            verify(eventPublisher, never()).publishEvent(any());
+        }
+
+        @Test
+        @DisplayName("abonné Stripe en impayé (PAST_DUE, accès encore accordé) → 409")
+        void downgradePro_pastDueStripeSubscription_throws409() {
+            when(proSubscriptionRepository.findByUserId(USER_ID))
+                    .thenReturn(Optional.of(subscription(ProSubscriptionSource.STRIPE, ProSubscriptionStatus.PAST_DUE)));
+
+            assertThatThrownBy(() -> userService.downgradePro(user))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getStatus())
+                            .isEqualTo(HttpStatus.CONFLICT));
+
+            verify(userRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("abonnement Stripe déjà fermé (CANCELED) → autorisé")
+        void downgradePro_closedStripeSubscription_succeeds() {
+            when(proSubscriptionRepository.findByUserId(USER_ID))
+                    .thenReturn(Optional.of(subscription(ProSubscriptionSource.STRIPE, ProSubscriptionStatus.CANCELED)));
+            when(userRepository.save(any())).thenReturn(user);
+
+            userService.downgradePro(user);
+
+            assertThat(user.isProAccount()).isFalse();
+            verify(userRepository).save(user);
+        }
+
+        @Test
+        @DisplayName("grâce historique LEGACY_FREE → autorisé, pas d'abonnement payant en jeu")
+        void downgradePro_legacyGraceAccount_succeeds() {
+            when(proSubscriptionRepository.findByUserId(USER_ID))
+                    .thenReturn(Optional.of(subscription(ProSubscriptionSource.LEGACY_FREE, ProSubscriptionStatus.LEGACY_GRACE)));
+            when(userRepository.save(any())).thenReturn(user);
+
+            userService.downgradePro(user);
+
+            assertThat(user.isProAccount()).isFalse();
+            verify(userRepository).save(user);
+            verify(eventPublisher).publishEvent(any(UserProStatusChangedEvent.class));
+        }
+
+        @Test
+        @DisplayName("octroi administrateur (ADMIN_GRANT) → autorisé même si le statut accorde encore l'accès")
+        void downgradePro_adminGrantAccount_succeeds() {
+            when(proSubscriptionRepository.findByUserId(USER_ID))
+                    .thenReturn(Optional.of(subscription(ProSubscriptionSource.ADMIN_GRANT, ProSubscriptionStatus.ACTIVE)));
+            when(userRepository.save(any())).thenReturn(user);
+
+            userService.downgradePro(user);
+
+            assertThat(user.isProAccount()).isFalse();
+            verify(userRepository).save(user);
+        }
+
+        @Test
+        @DisplayName("aucune ligne pro_subscriptions → autorisé (compte PRO sans abonnement)")
+        void downgradePro_noSubscriptionRow_succeeds() {
+            when(proSubscriptionRepository.findByUserId(USER_ID)).thenReturn(Optional.empty());
+            when(userRepository.save(any())).thenReturn(user);
+
+            userService.downgradePro(user);
+
+            assertThat(user.isProAccount()).isFalse();
+            verify(userRepository).save(user);
+            verify(eventPublisher).publishEvent(any(UserProStatusChangedEvent.class));
         }
     }
 

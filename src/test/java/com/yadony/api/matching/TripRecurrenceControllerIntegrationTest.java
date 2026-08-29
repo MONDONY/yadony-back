@@ -5,6 +5,7 @@ import com.yadony.api.auth.Role;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.auth.UserStatus;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -107,6 +108,78 @@ class TripRecurrenceControllerIntegrationTest {
                 .with(authentication(asTraveler(TRAVELER_UID))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(1));
+    }
+
+    @Test
+    void create_completeSchedule_roundTripsAllPublicationSettings() throws Exception {
+        ObjectNode payload = (ObjectNode) objectMapper.readTree(recurrenceJson("1000100", false));
+        payload.put("startDate", "2026-09-01");
+        payload.put("endDate", "2027-03-31");
+        payload.put("weekInterval", 2);
+        payload.put("publicationLeadDays", 21);
+        payload.put("handoverLeadDays", 2);
+        payload.put("pricingMode", "MIXED");
+        payload.put("negotiable", true);
+        payload.put("currency", "USD");
+        payload.put("description", "Remise possible la veille sur rendez-vous.");
+        payload.set("refusedCategories", objectMapper.valueToTree(List.of("Produits frais / périssables")));
+
+        mockMvc.perform(post("/trip-recurrences")
+                .with(authentication(asTraveler(TRAVELER_UID)))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(payload)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.startDate").value("2026-09-01"))
+                .andExpect(jsonPath("$.endDate").value("2027-03-31"))
+                .andExpect(jsonPath("$.weekInterval").value(2))
+                .andExpect(jsonPath("$.publicationLeadDays").value(21))
+                .andExpect(jsonPath("$.handoverLeadDays").value(2))
+                .andExpect(jsonPath("$.pricingMode").value("MIXED"))
+                .andExpect(jsonPath("$.negotiable").value(true))
+                .andExpect(jsonPath("$.currency").value("USD"))
+                .andExpect(jsonPath("$.description").value("Remise possible la veille sur rendez-vous."))
+                .andExpect(jsonPath("$.refusedCategories[0]").value("Produits frais / périssables"))
+                .andExpect(jsonPath("$.status").value("PAUSED"));
+    }
+
+    @Test
+    void create_legacySchedule_returnsCompatibleDefaults() throws Exception {
+        mockMvc.perform(post("/trip-recurrences")
+                .with(authentication(asTraveler(TRAVELER_UID)))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(recurrenceJson("1000000", false)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.startDate").exists())
+                .andExpect(jsonPath("$.endDate").doesNotExist())
+                .andExpect(jsonPath("$.weekInterval").value(1))
+                .andExpect(jsonPath("$.publicationLeadDays").value(14))
+                .andExpect(jsonPath("$.handoverLeadDays").value(0))
+                .andExpect(jsonPath("$.pricingMode").value("KG"))
+                .andExpect(jsonPath("$.negotiable").value(false))
+                .andExpect(jsonPath("$.currency").value("EUR"));
+    }
+
+    @Test
+    void create_rejectsInvalidCompleteSchedule() throws Exception {
+        ObjectNode invalidPeriod = (ObjectNode) objectMapper.readTree(recurrenceJson("1000000", false));
+        invalidPeriod.put("startDate", "2026-10-01");
+        invalidPeriod.put("endDate", "2026-09-30");
+
+        ObjectNode invalidInterval = invalidPeriod.deepCopy();
+        invalidInterval.remove("endDate");
+        invalidInterval.put("weekInterval", 5);
+
+        ObjectNode invalidPublicationLead = invalidPeriod.deepCopy();
+        invalidPublicationLead.remove("endDate");
+        invalidPublicationLead.put("publicationLeadDays", 10);
+
+        for (ObjectNode payload : List.of(invalidPeriod, invalidInterval, invalidPublicationLead)) {
+            mockMvc.perform(post("/trip-recurrences")
+                    .with(authentication(asTraveler(TRAVELER_UID)))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(payload)))
+                    .andExpect(status().isUnprocessableEntity());
+        }
     }
 
     @Test

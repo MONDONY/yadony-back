@@ -15,6 +15,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.lang.reflect.Field;
@@ -195,6 +196,57 @@ class KycServiceTest {
             assertThat(resp.stripeUrl()).isEqualTo("https://verify.stripe.com/start/vs_test_001");
             vsStatic.verify(() -> VerificationSession.create(any(VerificationSessionCreateParams.class)), never());
             verify(kycRepository, never()).save(any());
+        }
+    }
+
+    @Test
+    void createSession_pendingSessionFromPreviousFlowConfig_createsFreshSession() {
+        // Une session inachevée est `requires_input` même si elle date d'avant l'activation du flow :
+        // seul le flow porté par la session permet de détecter qu'elle est périmée.
+        ReflectionTestUtils.setField(service, "kycVerificationFlowId", "vf_current");
+        UserEntity user = buildUser(KycStatus.PENDING);
+        KycVerificationEntity kyc = buildKyc(user.getId(), KycVerificationStatus.PENDING);
+        when(userRepository.findByFirebaseUid("uid-001")).thenReturn(Optional.of(user));
+        when(kycRepository.findByUserId(user.getId())).thenReturn(Optional.of(kyc));
+        when(kycRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        try (MockedStatic<VerificationSession> vsStatic = mockStatic(VerificationSession.class)) {
+            VerificationSession staleSession = mock(VerificationSession.class);
+            when(staleSession.getStatus()).thenReturn("requires_input");
+            when(staleSession.getVerificationFlow()).thenReturn(null); // créée avant le flow
+            vsStatic.when(() -> VerificationSession.retrieve("vs_test_001")).thenReturn(staleSession);
+
+            VerificationSession freshSession = mock(VerificationSession.class);
+            when(freshSession.getId()).thenReturn("vs_test_new");
+            when(freshSession.getUrl()).thenReturn("https://verify.stripe.com/start/vs_test_new");
+            vsStatic.when(() -> VerificationSession.create(any(VerificationSessionCreateParams.class)))
+                    .thenReturn(freshSession);
+
+            KycSessionResponse resp = service.createSession("uid-001");
+
+            assertThat(resp.sessionId()).isEqualTo("vs_test_new");
+        }
+    }
+
+    @Test
+    void createSession_pendingSessionMatchingConfiguredFlow_isReused() {
+        ReflectionTestUtils.setField(service, "kycVerificationFlowId", "vf_current");
+        UserEntity user = buildUser(KycStatus.PENDING);
+        KycVerificationEntity kyc = buildKyc(user.getId(), KycVerificationStatus.PENDING);
+        when(userRepository.findByFirebaseUid("uid-001")).thenReturn(Optional.of(user));
+        when(kycRepository.findByUserId(user.getId())).thenReturn(Optional.of(kyc));
+
+        try (MockedStatic<VerificationSession> vsStatic = mockStatic(VerificationSession.class)) {
+            VerificationSession existingSession = mock(VerificationSession.class);
+            when(existingSession.getStatus()).thenReturn("requires_input");
+            when(existingSession.getVerificationFlow()).thenReturn("vf_current");
+            when(existingSession.getUrl()).thenReturn("https://verify.stripe.com/start/vs_test_001");
+            vsStatic.when(() -> VerificationSession.retrieve("vs_test_001")).thenReturn(existingSession);
+
+            KycSessionResponse resp = service.createSession("uid-001");
+
+            assertThat(resp.sessionId()).isEqualTo("vs_test_001");
+            vsStatic.verify(() -> VerificationSession.create(any(VerificationSessionCreateParams.class)), never());
         }
     }
 
