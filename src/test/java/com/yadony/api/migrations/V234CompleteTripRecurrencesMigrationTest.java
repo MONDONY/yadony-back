@@ -17,7 +17,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-class V233CompleteTripRecurrencesMigrationTest {
+class V234CompleteTripRecurrencesMigrationTest {
 
     private static EmbeddedPostgres postgres;
     private static DataSource dataSource;
@@ -52,7 +52,7 @@ class V233CompleteTripRecurrencesMigrationTest {
             recurrenceId = seedRecurrence(connection, userId, createdDate);
         }
 
-        flywayUpTo("233").migrate();
+        flywayUpTo("234").migrate();
 
         try (Connection connection = dataSource.getConnection(); Statement statement = connection.createStatement()) {
             var result = statement.executeQuery("""
@@ -75,7 +75,7 @@ class V233CompleteTripRecurrencesMigrationTest {
 
     @Test
     void generatedAnnouncementIsUniqueForRecurrenceAndDepartureDate() throws Exception {
-        flywayUpTo("233").migrate();
+        flywayUpTo("234").migrate();
 
         try (Connection connection = dataSource.getConnection()) {
             UUID userId = seedUser(connection);
