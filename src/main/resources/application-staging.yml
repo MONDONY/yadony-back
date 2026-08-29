@@ -40,3 +40,13 @@ yadony:
     connect:
       return-url: "https://api-staging.yadony.com/api/v1/payments/onboarding/return"
       refresh-url: "https://api-staging.yadony.com/api/v1/payments/onboarding/refresh"
+
+  # Abonnement PRO : sans ces trois surcharges, staging héritait des défauts de
+  # application.yml, qui pointent sur https://yadony.com/pro — la PRODUCTION.
+  # Un paiement de test aurait donc renvoyé le navigateur sur le portail réel,
+  # avec un `?success=1` qu'aucun abonnement de production ne justifie : l'écran
+  # d'attente d'activation y aurait tourné dans le vide.
+  billing:
+    success-url: "https://staging.yadony.com/pro/parametres/abonnement?success=1"
+    cancel-url: "https://staging.yadony.com/pro/upgrade?canceled=1"
+    portal-return-url: "https://staging.yadony.com/pro/parametres/abonnement"
