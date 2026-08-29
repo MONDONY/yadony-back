@@ -117,7 +117,7 @@ public class AuthService {
             userRepository.reactivateByFirebaseUid(firebaseUid, UserStatus.ACTIVE.name());
             UserEntity reactivated = userRepository.findByFirebaseUid(firebaseUid).orElseThrow();
             reactivated.setRoles(new java.util.HashSet<>(Set.of(Role.SENDER, Role.TRAVELER)));
-            // Reset pseuyadonymized fields (GDPR deletion sets placeholder values)
+            // Reset pseudonymized fields (GDPR deletion sets placeholder values)
             reactivated.setFirstName(null);
             reactivated.setLastName(null);
             reactivated.setKycStatus(KycStatus.NOT_STARTED);
@@ -406,7 +406,7 @@ public class AuthService {
      * Supprime le compte : soft-delete en DB + suppression dans Firebase Auth.
      */
     @Transactional
-    // Story 9.8 — Delegates full GDPR deletion (pseuyadonymization, KYC cleanup, Firebase revoke)
+    // Story 9.8 — Delegates full GDPR deletion (pseudonymization, KYC cleanup, Firebase revoke)
     public void deleteAccount(String firebaseUid) {
         userService.deleteAccount(firebaseUid);
     }

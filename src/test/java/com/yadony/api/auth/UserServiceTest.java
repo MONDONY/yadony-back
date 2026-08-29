@@ -210,7 +210,7 @@ class UserServiceTest {
 
         @Test
         @DisplayName("utilisateur sans transaction active → statut PENDING_DELETION + event publié")
-        void deleteAccount_noActiveTransactions_pseuyadonymizes() throws Exception {
+        void deleteAccount_noActiveTransactions_pseudonymizes() throws Exception {
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
             when(paymentRepository.hasActiveEscrowForUser(USER_ID)).thenReturn(false);
             when(userRepository.save(any())).thenReturn(user);

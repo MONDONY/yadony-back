@@ -18,6 +18,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 
 import java.lang.reflect.Field;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -69,8 +70,8 @@ class AccountFinalizationServiceTest {
     }
 
     @Test
-    @DisplayName("pseuyadonymise le user et soft-delete KYC")
-    void pseuyadonymizesUserAndSoftDeletesKyc() {
+    @DisplayName("pseudonymise le user et soft-delete KYC")
+    void pseudonymizesUserAndSoftDeletesKyc() {
         UserEntity user = makeUser();
         UUID userId = user.getId();
         KycVerificationEntity kyc = new KycVerificationEntity();
@@ -93,6 +94,28 @@ class AccountFinalizationServiceTest {
         assertThat(user.getResidenceStreet()).isNull();
         assertThat(user.getResidenceLine2()).isNull();
         assertThat(user.getResidencePostalCode()).isNull();
+    }
+
+    @Test
+    @DisplayName("écrit la clé d'audit pseudonymized, jamais pseuyadonymized")
+    void writesPseudonymizedAuditKey() {
+        UserEntity user = makeUser();
+        UUID userId = user.getId();
+        com.google.firebase.auth.FirebaseAuth mockAuth =
+                mock(com.google.firebase.auth.FirebaseAuth.class);
+
+        try (MockedStatic<FirebaseAuth> staticAuth = mockStatic(FirebaseAuth.class)) {
+            staticAuth.when(FirebaseAuth::getInstance).thenReturn(mockAuth);
+            service.finalize(user, FinalizationReason.HARD_IMMEDIATE);
+        }
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
+        verify(auditService).log(
+                eq("USER"), eq(userId), eq("USER_GDPR_DELETION"), eq(userId), payload.capture());
+
+        assertThat(payload.getValue()).containsKey("pseudonymized");
+        assertThat(payload.getValue()).doesNotContainKey("pseuyadonymized");
     }
 
     @Test

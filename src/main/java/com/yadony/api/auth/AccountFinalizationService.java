@@ -47,7 +47,7 @@ public class AccountFinalizationService {
         UUID userId = user.getId();
         String uid = userId.toString();
 
-        // 1. Pseuyadonymise personal data
+        // 1. Pseudonymise personal data
         // Téléphone et email ne sont plus stockés ici : ils disparaissent avec le
         // compte Firebase supprimé à l'étape 5.
         user.setFirstName("Utilisateur");
@@ -103,7 +103,7 @@ public class AccountFinalizationService {
 
         // 6. Immutable audit entry
         auditService.log("USER", userId, "USER_GDPR_DELETION", userId,
-                Map.of("reason", reason.name(), "pseuyadonymized", true));
+                Map.of("reason", reason.name(), "pseudonymized", true));
         log.info("Account finalized for user {} (reason: {})", uid, reason);
     }
 }
