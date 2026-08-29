@@ -42,6 +42,7 @@ yadony:
       max-retries: 8
       retry-backoff-base: 30s
   billing:
+    trial-days: ${YADONY_BILLING_TRIAL_DAYS:7}
     price-monthly: ${STRIPE_BILLING_PRICE_MONTHLY}
     price-yearly: ${STRIPE_BILLING_PRICE_YEARLY}
     success-url: ${YADONY_BILLING_SUCCESS_URL:https://yadony.com/pro/parametres/abonnement?success=1}

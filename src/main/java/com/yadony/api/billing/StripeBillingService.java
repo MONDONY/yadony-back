@@ -23,11 +23,14 @@ public class StripeBillingService {
 
     private final ProSubscriptionRepository repository;
     private final BillingProperties properties;
+    private final ProTrialPolicy trialPolicy;
 
     public StripeBillingService(ProSubscriptionRepository repository,
-                                BillingProperties properties) {
+                                BillingProperties properties,
+                                ProTrialPolicy trialPolicy) {
         this.repository = repository;
         this.properties = properties;
+        this.trialPolicy = trialPolicy;
     }
 
     /**
@@ -58,6 +61,11 @@ public class StripeBillingService {
                 .map(ProSubscriptionEntity::getStripeCustomerId)
                 .orElse(null);
 
+        // La règle entière vit dans ProTrialPolicy, partagée avec GET /billing/subscription :
+        // c'est ce qui garantit que l'essai annoncé au portail est exactement celui que
+        // Stripe accordera.
+        Long trialDays = trialPolicy.trialDaysFor(userId);
+
         try {
             com.stripe.param.checkout.SessionCreateParams.Builder params =
                     com.stripe.param.checkout.SessionCreateParams.builder()
@@ -66,11 +74,7 @@ public class StripeBillingService {
                             .setCancelUrl(properties.cancelUrl())
                             .setClientReferenceId(userId.toString())
                             .putMetadata("billing_cycle", cycle.name())
-                            .setSubscriptionData(
-                                    com.stripe.param.checkout.SessionCreateParams.SubscriptionData.builder()
-                                            .putMetadata("billing_cycle", cycle.name())
-                                            .putMetadata("user_id", userId.toString())
-                                            .build())
+                            .setSubscriptionData(subscriptionData(userId, cycle, trialDays))
                             .addLineItem(
                                     com.stripe.param.checkout.SessionCreateParams.LineItem.builder()
                                             .setPrice(properties.priceFor(cycle))
@@ -92,6 +96,24 @@ public class StripeBillingService {
             log.error("Stripe refused the checkout session for user {}: {}", userId, e.getMessage());
             throw new IllegalStateException("Stripe checkout session creation failed", e);
         }
+    }
+
+    /**
+     * Métadonnées de l'abonnement, et l'essai gratuit quand il s'applique.
+     *
+     * <p>{@code user_id} est le repli de {@code ProBillingStripeWebhookHandler} quand
+     * {@code client_reference_id} manque : il doit rester posé, essai ou pas.
+     */
+    private com.stripe.param.checkout.SessionCreateParams.SubscriptionData subscriptionData(
+            UUID userId, BillingCycle cycle, Long trialDays) {
+        com.stripe.param.checkout.SessionCreateParams.SubscriptionData.Builder builder =
+                com.stripe.param.checkout.SessionCreateParams.SubscriptionData.builder()
+                        .putMetadata("billing_cycle", cycle.name())
+                        .putMetadata("user_id", userId.toString());
+        if (trialDays != null) {
+            builder.setTrialPeriodDays(trialDays);
+        }
+        return builder.build();
     }
 
     /** Ouvre une session Customer Portal pour gérer carte et résiliation. */

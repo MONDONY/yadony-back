@@ -25,7 +25,7 @@ class LegacyProGraceListenerTest {
     @Mock ProSubscriptionService subscriptionService;
 
     private LegacyProGraceListener listener() {
-        BillingProperties props = new BillingProperties(false, 60, 5, null, null, null, null, null);
+        BillingProperties props = new BillingProperties(false, 60, 5, null, null, null, null, null, null);
         return new LegacyProGraceListener(repository, subscriptionService, props);
     }
 

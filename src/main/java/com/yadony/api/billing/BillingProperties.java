@@ -17,7 +17,8 @@ public record BillingProperties(
         String priceYearly,
         String successUrl,
         String cancelUrl,
-        String portalReturnUrl
+        String portalReturnUrl,
+        Integer trialDays
 ) {
 
     /**
@@ -49,6 +50,17 @@ public record BillingProperties(
     public boolean stripePricesConfigured() {
         return priceMonthly != null && !priceMonthly.isBlank()
                 && priceYearly != null && !priceYearly.isBlank();
+    }
+
+    /**
+     * Durée de l'essai gratuit, en jours, ou {@code null} s'il n'y en a pas.
+     *
+     * <p>Stripe refuse un {@code trial_period_days} nul ou négatif : une valeur absente,
+     * zéro ou négative signifie donc « pas d'essai », et l'appel omet simplement le champ
+     * plutôt que d'envoyer une valeur que Stripe rejetterait.
+     */
+    public Long trialDaysOrNull() {
+        return trialDays != null && trialDays > 0 ? trialDays.longValue() : null;
     }
 
     public String priceFor(BillingCycle cycle) {

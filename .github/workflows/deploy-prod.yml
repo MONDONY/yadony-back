@@ -78,6 +78,14 @@ jobs:
           STRIPE_WEBHOOK_PAYMENTS_SECRET=${{ secrets.STRIPE_WEBHOOK_PAYMENTS_SECRET }}
           STRIPE_WEBHOOK_KYC_SECRET=${{ secrets.STRIPE_WEBHOOK_KYC_SECRET }}
           STRIPE_WEBHOOK_BILLING_SECRET=${{ secrets.STRIPE_WEBHOOK_BILLING_SECRET }}
+          # Identifiants de Price Stripe de l'abonnement PRO. Ils manquaient : le workflow
+          # reconstruit ce .env a zero puis le scp, donc une variable posee a la main sur le
+          # VPS y etait detruite au deploiement suivant. Tant que les secrets n'existent pas,
+          # la valeur part vide — et c'est voulu : stripePricesConfigured() rend alors faux et
+          # /billing/checkout-session repond un 503 explicite, au lieu d'envoyer a Stripe un
+          # placeholder non resolu qui revient en « No such price ».
+          STRIPE_BILLING_PRICE_MONTHLY=${{ secrets.STRIPE_BILLING_PRICE_MONTHLY }}
+          STRIPE_BILLING_PRICE_YEARLY=${{ secrets.STRIPE_BILLING_PRICE_YEARLY }}
           SENTRY_DSN=${{ secrets.SENTRY_DSN }}
           GOOGLE_PLACES_API_KEY=${{ secrets.GOOGLE_PLACES_API_KEY }}
           AWS_S3_ENDPOINT=${{ secrets.AWS_S3_ENDPOINT }}
@@ -117,6 +125,8 @@ jobs:
           TWILIO_FROM=${{ vars.TWILIO_FROM }}
           WAVE_API_URL=${{ vars.WAVE_API_URL }}
           ORANGE_MONEY_API_URL=${{ vars.ORANGE_MONEY_API_URL }}
+          # Essai gratuit de l'abonnement PRO, en jours. Absente ou nulle : pas d'essai.
+          YADONY_BILLING_TRIAL_DAYS=${{ vars.YADONY_BILLING_TRIAL_DAYS }}
           YADONY_COMMISSION_RATE=${{ vars.YADONY_COMMISSION_RATE }}
           YADONY_COMMISSION_MINIMUM_AMOUNT=${{ vars.YADONY_COMMISSION_MINIMUM_AMOUNT }}
           YADONY_COMMISSION_NO_SHOW_CONTESTATION_HOURS=${{ vars.YADONY_COMMISSION_NO_SHOW_CONTESTATION_HOURS }}

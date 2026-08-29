@@ -85,6 +85,33 @@ class BillingControllerIntegrationTest {
                 FIREBASE_UID, null, List.of(new SimpleGrantedAuthority("ROLE_TRAVELER")));
     }
 
+    /**
+     * Le contrat que lit le portail PRO pour annoncer « 7 jours offerts ». Il est vérifié
+     * ici, sur le JSON réel, et pas seulement sur la politique : c'est la sérialisation qui
+     * arrive au client, et un champ oublié dans le DTO ne se verrait nulle part ailleurs.
+     */
+    @Test
+    @DisplayName("un voyageur ayant déjà roulé se voit annoncer l'essai")
+    void subscriptionExposesTrialEligibilityForAnExperiencedTraveler() throws Exception {
+        UserEntity user = userRepository.findById(userId).orElseThrow();
+        user.setTotalTrips(1);
+        userRepository.save(user);
+
+        mockMvc.perform(get("/billing/subscription").with(authentication(authenticated())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.trialEligible").value(true))
+                .andExpect(jsonPath("$.trialDays").value(7));
+    }
+
+    @Test
+    @DisplayName("sans trajet réalisé, aucun essai n'est annoncé")
+    void subscriptionAnnouncesNoTrialWithoutACompletedTrip() throws Exception {
+        mockMvc.perform(get("/billing/subscription").with(authentication(authenticated())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.trialEligible").value(false))
+                .andExpect(jsonPath("$.trialDays").doesNotExist());
+    }
+
     @Test
     @DisplayName("sans abonnement, GET /billing/subscription répond NONE et inactif")
     void subscriptionAbsentReturnsNone() throws Exception {

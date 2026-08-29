@@ -29,15 +29,18 @@ public class BillingController {
     private final ProSubscriptionRepository repository;
     private final UserRepository userRepository;
     private final StripeWebhookIngestService ingestService;
+    private final ProTrialPolicy trialPolicy;
 
     public BillingController(StripeBillingService stripeBillingService,
                              ProSubscriptionRepository repository,
                              UserRepository userRepository,
-                             StripeWebhookIngestService ingestService) {
+                             StripeWebhookIngestService ingestService,
+                             ProTrialPolicy trialPolicy) {
         this.stripeBillingService = stripeBillingService;
         this.repository = repository;
         this.userRepository = userRepository;
         this.ingestService = ingestService;
+        this.trialPolicy = trialPolicy;
     }
 
     @PostMapping("/checkout-session")
@@ -59,7 +62,9 @@ public class BillingController {
     @GetMapping("/subscription")
     public ResponseEntity<ProSubscriptionResponse> getSubscription(Authentication authentication) {
         UUID userId = currentUserId(authentication);
-        return ResponseEntity.ok(ProSubscriptionResponse.from(repository.findByUserId(userId).orElse(null)));
+        return ResponseEntity.ok(ProSubscriptionResponse.from(
+                repository.findByUserId(userId).orElse(null),
+                trialPolicy.trialDaysFor(userId)));
     }
 
     /** Endpoint public — la signature est vérifiée par StripeWebhookIngestService. */
