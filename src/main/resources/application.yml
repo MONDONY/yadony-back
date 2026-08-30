@@ -313,7 +313,14 @@ app:
       from: ${TWILIO_FROM:}
   places:
     api-key: ${GOOGLE_PLACES_API_KEY}
-    allowed-countries: FR,SN,CI,ML,CM,GN,BF,TG,BJ,NE,MR,CD,CG,GA,TD,MA,DZ,TN,MG,RE,MU,GP,MQ
+    # Autocomplétion mondiale : la liste blanche de pays est levée. L'ancienne
+    # liste (22 pays) dépassait de toute façon le plafond Google Places de 15
+    # region codes : MA, DZ, TN, MG, RE, MU, GP et MQ étaient silencieusement
+    # ignorés, et la diaspora hors corridors (US, CA…) ne trouvait pas ses
+    # adresses. Le biais de proximité (cercle 50 km autour de la position)
+    # continue de favoriser les résultats locaux. Surchargable via
+    # APP_PLACES_ALLOWED_COUNTRIES si une restriction redevient nécessaire.
+    allowed-countries: ${APP_PLACES_ALLOWED_COUNTRIES:}
     rate-limit-per-minute: ${APP_PLACES_RATE_LIMIT_PER_MINUTE:100}
     daily-quota-autocomplete: ${APP_PLACES_DAILY_QUOTA_AUTOCOMPLETE:5000}
     daily-quota-details: ${APP_PLACES_DAILY_QUOTA_DETAILS:1000}
