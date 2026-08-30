@@ -139,6 +139,16 @@ jobs:
           STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
           STRIPE_WEBHOOK_PAYMENTS_SECRET=${{ secrets.STRIPE_WEBHOOK_PAYMENTS_SECRET }}
           STRIPE_WEBHOOK_KYC_SECRET=${{ secrets.STRIPE_WEBHOOK_KYC_SECRET }}
+          # Abonnement PRO. Ces quatre valeurs manquaient : staging demarrait sans elles, mais
+          # tout le parcours de paiement y etait muet — la signature du webhook billing n etait
+          # pas validee, et les Price etaient introuvables. Rien ne le signalait, puisque
+          # l application demarre quand meme : c est le premier Checkout qui echouait.
+          #
+          # Attendu ici : des valeurs Stripe en mode TEST, distinctes de celles de production.
+          # Ce sont des secrets d environnement `staging`, donc jamais les memes objets.
+          STRIPE_WEBHOOK_BILLING_SECRET=${{ secrets.STRIPE_WEBHOOK_BILLING_SECRET }}
+          STRIPE_BILLING_PRICE_MONTHLY=${{ secrets.STRIPE_BILLING_PRICE_MONTHLY }}
+          STRIPE_BILLING_PRICE_YEARLY=${{ secrets.STRIPE_BILLING_PRICE_YEARLY }}
           SENTRY_DSN=${{ secrets.SENTRY_DSN }}
           SENTRY_WEBHOOK_SECRET=${{ secrets.SENTRY_WEBHOOK_SECRET }}
           TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -182,6 +192,8 @@ jobs:
           TWILIO_FROM=${{ vars.TWILIO_FROM }}
           WAVE_API_URL=${{ vars.WAVE_API_URL }}
           ORANGE_MONEY_API_URL=${{ vars.ORANGE_MONEY_API_URL }}
+          # Essai gratuit de l abonnement PRO, en jours. Absente ou nulle : pas d essai.
+          YADONY_BILLING_TRIAL_DAYS=${{ vars.YADONY_BILLING_TRIAL_DAYS }}
           YADONY_COMMISSION_RATE=${{ vars.YADONY_COMMISSION_RATE }}
           YADONY_COMMISSION_MINIMUM_AMOUNT=${{ vars.YADONY_COMMISSION_MINIMUM_AMOUNT }}
           YADONY_COMMISSION_NO_SHOW_CONTESTATION_HOURS=${{ vars.YADONY_COMMISSION_NO_SHOW_CONTESTATION_HOURS }}
