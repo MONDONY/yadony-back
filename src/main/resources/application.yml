@@ -321,6 +321,9 @@ app:
     # continue de favoriser les résultats locaux. Surchargable via
     # APP_PLACES_ALLOWED_COUNTRIES si une restriction redevient nécessaire.
     allowed-countries: ${APP_PLACES_ALLOWED_COUNTRIES:}
+    # Biais de proximité désactivé par défaut : laisse remonter les villes du
+    # monde entier (Toronto, etc.). Réactivable via APP_PLACES_LOCATION_BIAS_ENABLED.
+    location-bias-enabled: ${APP_PLACES_LOCATION_BIAS_ENABLED:false}
     rate-limit-per-minute: ${APP_PLACES_RATE_LIMIT_PER_MINUTE:100}
     daily-quota-autocomplete: ${APP_PLACES_DAILY_QUOTA_AUTOCOMPLETE:5000}
     daily-quota-details: ${APP_PLACES_DAILY_QUOTA_DETAILS:1000}

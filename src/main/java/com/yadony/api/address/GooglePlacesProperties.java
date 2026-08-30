@@ -13,5 +13,9 @@ public record GooglePlacesProperties(
     int dailyQuotaAutocomplete,
     int dailyQuotaDetails,
     int dailyQuotaReverse,
-    boolean blockWhenQuotaExceeded
+    boolean blockWhenQuotaExceeded,
+    /** Biais de proximité (cercle 50 km autour de la position) dans l'autocomplétion.
+     *  Désactivé par défaut : un biais serré sature les 5 suggestions Google de
+     *  résultats locaux et empêche les villes lointaines (ex. Toronto) de remonter. */
+    boolean locationBiasEnabled
 ) {}

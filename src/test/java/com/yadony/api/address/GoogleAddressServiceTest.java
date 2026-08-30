@@ -28,6 +28,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.when;
+import org.mockito.ArgumentCaptor;
+import org.springframework.http.HttpEntity;
 
 @ExtendWith(MockitoExtension.class)
 class GoogleAddressServiceTest {
@@ -39,7 +41,7 @@ class GoogleAddressServiceTest {
     GoogleAddressService service;
 
     private static GooglePlacesProperties defaultProps() {
-        return new GooglePlacesProperties("test-key", "FR,SN", 100, 5000, 1000, 500, true);
+        return new GooglePlacesProperties("test-key", "FR,SN", 100, 5000, 1000, 500, true, false);
     }
 
     @BeforeEach
@@ -457,18 +459,66 @@ class GoogleAddressServiceTest {
         assertThat(service.details("ChIJp", "tok").city()).isEqualTo("London");
     }
 
+    // ── Biais de proximité (locationBias) ────────────────────────────────────
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> captureAutocompleteBody(GoogleAddressService svc,
+                                                        Double lat, Double lng) {
+        when(restTemplate.exchange(contains("places:autocomplete"),
+                eq(HttpMethod.POST), any(), eq(Map.class)))
+            .thenReturn(new ResponseEntity<>(Map.of(), HttpStatus.OK));
+        svc.autocomplete("Toronto", "tok", lat, lng);
+        ArgumentCaptor<HttpEntity> captor = ArgumentCaptor.forClass(HttpEntity.class);
+        org.mockito.Mockito.verify(restTemplate).exchange(
+            contains("places:autocomplete"), eq(HttpMethod.POST), captor.capture(), eq(Map.class));
+        return (Map<String, Object>) captor.getValue().getBody();
+    }
+
+    @Test
+    void autocomplete_biasDisabled_omitsLocationBiasEvenWithCoords() {
+        GooglePlacesProperties props =
+            new GooglePlacesProperties("key", "", 100, 5000, 1000, 500, true, false);
+        GoogleAddressService svc = new GoogleAddressService(props, restTemplate, dailyQuotaCache);
+
+        Map<String, Object> body = captureAutocompleteBody(svc, 48.85, 2.35);
+
+        assertThat(body).doesNotContainKey("locationBias");
+    }
+
+    @Test
+    void autocomplete_biasEnabled_includesLocationBiasWhenCoordsProvided() {
+        GooglePlacesProperties props =
+            new GooglePlacesProperties("key", "", 100, 5000, 1000, 500, true, true);
+        GoogleAddressService svc = new GoogleAddressService(props, restTemplate, dailyQuotaCache);
+
+        Map<String, Object> body = captureAutocompleteBody(svc, 48.85, 2.35);
+
+        assertThat(body).containsKey("locationBias");
+    }
+
+    @Test
+    void autocomplete_biasEnabled_noCoords_omitsLocationBias() {
+        GooglePlacesProperties props =
+            new GooglePlacesProperties("key", "", 100, 5000, 1000, 500, true, true);
+        GoogleAddressService svc = new GoogleAddressService(props, restTemplate, dailyQuotaCache);
+
+        Map<String, Object> body = captureAutocompleteBody(svc, null, null);
+
+        assertThat(body).doesNotContainKey("locationBias");
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     @Test
     void buildComponentsParam_withCountries() {
-        GooglePlacesProperties props = new GooglePlacesProperties("key", "FR,SN", 100, 5000, 1000, 500, true);
+        GooglePlacesProperties props = new GooglePlacesProperties("key", "FR,SN", 100, 5000, 1000, 500, true, false);
         GoogleAddressService svc = new GoogleAddressService(props, restTemplate, dailyQuotaCache);
         assertThat(svc.buildComponentsParam()).isEqualTo("country:FR|country:SN");
     }
 
     @Test
     void buildComponentsParam_emptyConfig_returnsEmpty() {
-        GooglePlacesProperties props = new GooglePlacesProperties("key", "", 100, 5000, 1000, 500, true);
+        GooglePlacesProperties props = new GooglePlacesProperties("key", "", 100, 5000, 1000, 500, true, false);
         GoogleAddressService svc = new GoogleAddressService(props, restTemplate, dailyQuotaCache);
         assertThat(svc.buildComponentsParam()).isEmpty();
     }
@@ -477,7 +527,7 @@ class GoogleAddressServiceTest {
 
     @Test
     void autocomplete_dailyQuotaExceeded_throws429() {
-        GooglePlacesProperties props = new GooglePlacesProperties("key", "", 100, 1, 1000, 500, true);
+        GooglePlacesProperties props = new GooglePlacesProperties("key", "", 100, 1, 1000, 500, true, false);
         GoogleAddressService svc = new GoogleAddressService(props, restTemplate, dailyQuotaCache);
 
         when(restTemplate.exchange(contains("places:autocomplete"),
@@ -496,7 +546,7 @@ class GoogleAddressServiceTest {
 
     @Test
     void autocomplete_quotaDisabled_noThrow() {
-        GooglePlacesProperties props = new GooglePlacesProperties("key", "", 100, 0, 0, 0, false);
+        GooglePlacesProperties props = new GooglePlacesProperties("key", "", 100, 0, 0, 0, false, false);
         GoogleAddressService svc = new GoogleAddressService(props, restTemplate, dailyQuotaCache);
 
         when(restTemplate.exchange(contains("places:autocomplete"),

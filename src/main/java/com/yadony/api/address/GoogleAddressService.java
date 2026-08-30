@@ -72,7 +72,10 @@ public class GoogleAddressService {
         if (!regionCodes.isEmpty()) {
             body.put("includedRegionCodes", regionCodes);
         }
-        if (lat != null && lng != null) {
+        // Biais de proximité désactivé par défaut : un cercle de 50 km sature les
+        // 5 suggestions Google de résultats locaux et empêche une ville lointaine
+        // (ex. Toronto tapé depuis la France) de remonter. Réactivable via config.
+        if (props.locationBiasEnabled() && lat != null && lng != null) {
             body.put("locationBias", Map.of(
                 "circle", Map.of(
                     "center", Map.of("latitude", lat, "longitude", lng),
