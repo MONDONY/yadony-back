@@ -152,6 +152,7 @@ services:
       sh -c "
         certbot certonly --webroot -w /var/www/certbot -d api.yadony.com --non-interactive --agree-tos --email ops@yadony.com --keep-until-expiring --quiet;
         certbot certonly --webroot -w /var/www/certbot -d yadony.com -d www.yadony.com --non-interactive --agree-tos --email ops@yadony.com --keep-until-expiring --quiet;
+        certbot certonly --webroot -w /var/www/certbot -d pro.yadony.com --non-interactive --agree-tos --email ops@yadony.com --keep-until-expiring --quiet;
         while true; do
           sleep 86400 &
           wait $$!
