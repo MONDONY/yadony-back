@@ -13,6 +13,7 @@ public record PlatformSettingsSnapshot(
         int urgencyThresholdDays,
         BigDecimal reimbursementCapEur,
         boolean smsEnabled,
+        boolean proEnabled,
         LocalDateTime updatedAt,
         UUID updatedBy) {
 }

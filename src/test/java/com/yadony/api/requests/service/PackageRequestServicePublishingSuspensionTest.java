@@ -122,7 +122,8 @@ class PackageRequestServicePublishingSuspensionTest {
                 repository, userRepository, eventPublisher, auditService, config,
                 threadRepository, cityRepository, commissionProperties,
                 storageService, photoService, favoriteRepository, activeCurrencyResolver, realMapper, matchingService,
-                yadonyConfig, announcementRepository, commissionRateResolver);
+                yadonyConfig, announcementRepository, commissionRateResolver,
+                com.yadony.api.config.PlatformSettingsTestFactory.defaults());
         lenient().when(activeCurrencyResolver.resolve(any())).thenReturn("EUR");
     }
 

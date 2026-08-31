@@ -2,6 +2,7 @@ package com.yadony.api.config;
 
 import com.yadony.api.config.dto.CommissionRateResponse;
 import com.yadony.api.config.dto.ContentCategoryResponse;
+import com.yadony.api.config.dto.ProEnabledResponse;
 import com.yadony.api.config.dto.ReimbursementCapResponse;
 import com.yadony.api.config.dto.SmsEnabledResponse;
 import com.yadony.api.config.dto.UrgencyThresholdResponse;
@@ -55,5 +56,15 @@ public class ConfigController {
     @GetMapping("/sms-enabled")
     public ResponseEntity<SmsEnabledResponse> getSmsEnabled() {
         return ResponseEntity.ok(new SmsEnabledResponse(settings.smsEnabled()));
+    }
+
+    /**
+     * Feature flag de l'offre PRO, lu par l'application mobile au demarrage pour masquer
+     * toute entree PRO tant que l'offre n'est pas ouverte. Public comme ses voisins : le
+     * flag est lu avant toute authentification et ne revele rien de sensible.
+     */
+    @GetMapping("/pro-enabled")
+    public ResponseEntity<ProEnabledResponse> getProEnabled() {
+        return ResponseEntity.ok(new ProEnabledResponse(settings.proEnabled()));
     }
 }

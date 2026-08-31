@@ -122,4 +122,24 @@ class ConfigControllerPlatformSettingsIT {
 
         assertThat(settings.smsEnabled()).isEqualTo(before);
     }
+
+    @Test
+    void proEnabledFollowsTheTableToo() throws Exception {
+        boolean before = settings.proEnabled();
+
+        settings.update(Map.of(PlatformSettingKey.PRO_ENABLED, String.valueOf(!before)),
+                UUID.randomUUID());
+        try {
+            // C'est la promesse faite au produit : ouvrir l'offre PRO depuis le back-office
+            // doit suffire, sans redeploiement ni nouvelle version de l'application.
+            mockMvc.perform(get("/config/pro-enabled"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.enabled").value(!before));
+        } finally {
+            settings.update(Map.of(PlatformSettingKey.PRO_ENABLED, String.valueOf(before)),
+                    UUID.randomUUID());
+        }
+
+        assertThat(settings.proEnabled()).isEqualTo(before);
+    }
 }

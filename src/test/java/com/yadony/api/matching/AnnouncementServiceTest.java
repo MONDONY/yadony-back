@@ -2844,6 +2844,94 @@ class AnnouncementServiceTest {
 
     // ─── Audit anti-fuite DRAFT (Task 5) ───────────────────────────────────────
 
+    // ─── Feature flag PRO ferme : les quotas des comptes standard sont leves ────────
+
+    @Nested
+    @DisplayName("offre PRO fermee (pro_enabled=false) — quotas standard leves")
+    class ProDisabledQuotaTests {
+
+        /**
+         * Le meme service que les autres tests, mais l'offre PRO fermee et une limite
+         * mensuelle configuree a 2 : c'est exactement le montage du test « limite
+         * mensuelle atteinte → 403 », pour prouver que SEUL le flag change l'issue.
+         */
+        private AnnouncementService serviceWithProClosed() {
+            YadonyConfigProperties.Limits limits = new YadonyConfigProperties.Limits(
+                    new YadonyConfigProperties.Limits.NonPro(2), null);
+            YadonyConfigProperties configWithLimits = new YadonyConfigProperties(null, limits,
+                    new YadonyConfigProperties.Urgency(3), null);
+            AnnouncementSearchMapper mapper = new AnnouncementSearchMapper(
+                    userRepository, bidRepository, priceGridService, storageService,
+                    com.yadony.api.config.PlatformSettingsTestFactory.withProEnabled(false));
+            return new AnnouncementService(
+                    announcementRepository, bidRepository, userRepository,
+                    auditService, eventPublisher, configWithLimits,
+                    com.yadony.api.config.PlatformSettingsTestFactory.withProEnabled(false),
+                    priceGridService, flagService,
+                    storageService, favoriteRepository, activeCurrencyResolver, exchangeRateService, mapper,
+                    packageRequestRepository, negotiationThreadRepository, notificationDispatcher);
+        }
+
+        @Test
+        @DisplayName("publication : la limite mensuelle n'est meme pas consultee pour un compte standard")
+        void publishAnnouncement_nonPro_proDisabled_ignoresMonthlyLimit() {
+            AnnouncementService proClosed = serviceWithProClosed();
+            UserEntity user = standardUser();
+            AnnouncementEntity draft = draftEntityOwnedBy(user);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+            when(announcementRepository.findById(draft.getId())).thenReturn(Optional.of(draft));
+            when(announcementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            proClosed.publishAnnouncement(draft.getId(), FIREBASE_UID);
+
+            assertThat(draft.getStatus()).isEqualTo(AnnouncementStatus.ACTIVE);
+            // Pas seulement « pas de 403 » : le comptage mensuel ne part pas du tout.
+            verify(announcementRepository, never())
+                    .countByTravelerIdAndCreatedAtBetweenAndStatusNot(any(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("brouillon : le compte standard beneficie du quota PRO (10) au lieu de 1")
+        void createAnnouncement_saveAsDraft_nonPro_proDisabled_usesProQuota() {
+            AnnouncementService proClosed = serviceWithProClosed();
+            UserEntity user = standardUser();
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+            when(announcementRepository.countByTravelerIdAndStatus(user.getId(), AnnouncementStatus.DRAFT))
+                    .thenReturn(1L); // au quota standard, sous le quota PRO
+            when(announcementRepository.save(any())).thenAnswer(inv -> {
+                AnnouncementEntity a = inv.getArgument(0);
+                setId(a, ANNOUNCEMENT_ID);
+                return a;
+            });
+            when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
+            when(bidRepository.countByAnnouncementIdAndStatusIn(any(), any())).thenReturn(0L);
+
+            AnnouncementResponse resp = proClosed.createAnnouncement(FIREBASE_UID, draftRequest());
+
+            assertThat(resp.status()).isEqualTo("DRAFT");
+        }
+
+        @Test
+        @DisplayName("depublication : le compte standard beneficie du quota PRO de brouillons")
+        void unpublish_nonPro_proDisabled_usesProQuota() {
+            AnnouncementService proClosed = serviceWithProClosed();
+            UserEntity user = standardUser();
+            AnnouncementEntity active = buildAnnouncement(user);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+            when(announcementRepository.findByIdForUpdate(active.getId())).thenReturn(Optional.of(active));
+            // Relecture finale par getAnnouncementDetail, une fois le statut change.
+            when(announcementRepository.findById(active.getId())).thenReturn(Optional.of(active));
+            when(bidRepository.countVisibleByAnnouncementId(active.getId())).thenReturn(0L);
+            when(announcementRepository.countByTravelerIdAndStatus(user.getId(), AnnouncementStatus.DRAFT))
+                    .thenReturn(1L);
+            when(announcementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            proClosed.unpublishAnnouncement(active.getId(), FIREBASE_UID);
+
+            assertThat(active.getStatus()).isEqualTo(AnnouncementStatus.DRAFT);
+        }
+    }
+
     @Nested
     @DisplayName("getTravelerAnnouncements() — verrou anti-fuite DRAFT")
     class GetTravelerAnnouncementsTests {

@@ -8,6 +8,7 @@ import com.yadony.api.common.CommissionRateResolver;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.config.ContentCategoryNormalizer;
+import com.yadony.api.config.PlatformSettingsService;
 import com.yadony.api.config.YadonyConfigProperties;
 import com.yadony.api.favorites.FavoriteRepository;
 import com.yadony.api.favorites.FavoriteTargetType;
@@ -70,6 +71,7 @@ public class PackageRequestService {
     private final YadonyConfigProperties yadonyConfig;
     private final AnnouncementRepository announcementRepository;
     private final CommissionRateResolver commissionRateResolver;
+    private final PlatformSettingsService platformSettings;
 
     public PackageRequestService(PackageRequestRepository repository,
                                   UserRepository userRepository,
@@ -87,7 +89,8 @@ public class PackageRequestService {
                                   MatchingService matchingService,
                                   YadonyConfigProperties yadonyConfig,
                                   AnnouncementRepository announcementRepository,
-                                  CommissionRateResolver commissionRateResolver) {
+                                  CommissionRateResolver commissionRateResolver,
+                                  PlatformSettingsService platformSettings) {
         this.repository = repository;
         this.userRepository = userRepository;
         this.eventPublisher = eventPublisher;
@@ -105,6 +108,7 @@ public class PackageRequestService {
         this.yadonyConfig = yadonyConfig;
         this.announcementRepository = announcementRepository;
         this.commissionRateResolver = commissionRateResolver;
+        this.platformSettings = platformSettings;
     }
 
     /**
@@ -326,7 +330,8 @@ public class PackageRequestService {
         YadonyConfigProperties.Limits limits = yadonyConfig.limits() != null
             ? yadonyConfig.limits()
             : new YadonyConfigProperties.Limits(null, null);
-        int maxDrafts = sender.isProAccount() ? limits.maxDraftsPro() : limits.maxDrafts();
+        int maxDrafts = platformSettings.hasProQuotas(sender.isProAccount())
+            ? limits.maxDraftsPro() : limits.maxDrafts();
         long draftCount = repository.countBySenderIdAndStatus(senderId, PackageRequestStatus.DRAFT)
             + announcementRepository.countByTravelerIdAndStatus(senderId, AnnouncementStatus.DRAFT);
         if (draftCount >= maxDrafts) {
