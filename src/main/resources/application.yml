@@ -143,6 +143,12 @@ yadony:
   limits:
     non-pro:
       monthly-announcements: ${YADONY_LIMITS_NON_PRO_MONTHLY_ANNOUNCEMENTS:2}
+  pro:
+    # Feature flag de l'offre PRO. Faux par defaut : l'application mobile masque toute
+    # entree PRO et les quotas des comptes standard ne s'appliquent pas, le temps de
+    # terminer l'offre. Valeur d'AMORCAGE seulement : une fois la ligne pro_enabled
+    # presente dans platform_settings, c'est le back-office (Parametres) qui decide.
+    enabled: ${YADONY_PRO_ENABLED:false}
   escrow-timeout-hours: ${YADONY_ESCROW_TIMEOUT_HOURS:48}
   billing:
     # Faux tant que le lot 2 (Stripe Checkout) n'est pas en production :

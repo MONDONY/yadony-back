@@ -39,17 +39,20 @@ public class PlatformSettingsService {
     private final AuditService auditService;
     private final YadonyConfigProperties config;
     private final boolean smsEnabledProperty;
+    private final boolean proEnabledProperty;
 
     public PlatformSettingsService(PlatformSettingRepository repository,
                                    PlatformSettingsCache cache,
                                    AuditService auditService,
                                    YadonyConfigProperties config,
-                                   @Value("${app.sms.enabled:false}") boolean smsEnabledProperty) {
+                                   @Value("${app.sms.enabled:false}") boolean smsEnabledProperty,
+                                   @Value("${yadony.pro.enabled:false}") boolean proEnabledProperty) {
         this.repository = repository;
         this.cache = cache;
         this.auditService = auditService;
         this.config = config;
         this.smsEnabledProperty = smsEnabledProperty;
+        this.proEnabledProperty = proEnabledProperty;
     }
 
     // ── Lecture ──────────────────────────────────────────────────────────────
@@ -74,6 +77,24 @@ public class PlatformSettingsService {
         return raw == null ? smsEnabledProperty : Boolean.parseBoolean(raw);
     }
 
+    /** Feature flag de l'offre PRO — voir {@link PlatformSettingKey#PRO_ENABLED}. */
+    public boolean proEnabled() {
+        String raw = cache.all().get(PlatformSettingKey.PRO_ENABLED.key());
+        return raw == null ? proEnabledProperty : Boolean.parseBoolean(raw);
+    }
+
+    /**
+     * Regle unique des quotas reserves aux comptes standard (annonces mensuelles,
+     * brouillons) : un compte beneficie des plafonds PRO s'il EST PRO, ou si l'offre PRO
+     * est fermee — un quota dont le depassement ne peut s'acheter n'est qu'un mur.
+     *
+     * <p>Centralisee ici plutot que repetee sur chaque site : les quatre controles de
+     * quota doivent lever au meme instant, jamais l'un sans les autres.
+     */
+    public boolean hasProQuotas(boolean isProAccount) {
+        return isProAccount || !proEnabled();
+    }
+
     @Transactional(readOnly = true)
     public PlatformSettingsSnapshot snapshot() {
         List<PlatformSettingEntity> rows = repository.findAll();
@@ -83,6 +104,7 @@ public class PlatformSettingsService {
                 .orElse(null);
         return new PlatformSettingsSnapshot(
                 commissionRate(), urgencyThresholdDays(), reimbursementCapEur(), smsEnabled(),
+                proEnabled(),
                 mostRecent == null ? null : mostRecent.getUpdatedAt(),
                 mostRecent == null ? null : mostRecent.getUpdatedBy());
     }
@@ -121,6 +143,7 @@ public class PlatformSettingsService {
             case URGENCY_THRESHOLD_DAYS -> String.valueOf(urgencyThresholdDays());
             case REIMBURSEMENT_CAP_EUR -> reimbursementCapEur().toPlainString();
             case SMS_ENABLED -> String.valueOf(smsEnabled());
+            case PRO_ENABLED -> String.valueOf(proEnabled());
         };
     }
 
@@ -222,6 +245,12 @@ public class PlatformSettingsService {
             case SMS_ENABLED -> {
                 if (!"true".equalsIgnoreCase(value) && !"false".equalsIgnoreCase(value)) {
                     throw invalid("L'activation des SMS attend true ou false");
+                }
+                yield String.valueOf(Boolean.parseBoolean(value));
+            }
+            case PRO_ENABLED -> {
+                if (!"true".equalsIgnoreCase(value) && !"false".equalsIgnoreCase(value)) {
+                    throw invalid("L'activation de l'offre PRO attend true ou false");
                 }
                 yield String.valueOf(Boolean.parseBoolean(value));
             }

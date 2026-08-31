@@ -117,11 +117,20 @@ class PackageRequestServiceTest {
                 userRepository, cityRepository, storageService, photoService,
                 com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3),
                 commissionProperties);
-        service = new PackageRequestService(
+        service = serviceWithProEnabled(realMapper, true);
+    }
+
+    /**
+     * Le feature flag PRO decide si les quotas des comptes standard s'appliquent : offre
+     * ouverte par defaut ici (comportement historique), fermee pour les tests dedies.
+     */
+    private PackageRequestService serviceWithProEnabled(PackageRequestSearchMapper mapper, boolean proEnabled) {
+        return new PackageRequestService(
                 repository, userRepository, eventPublisher, auditService, config,
                 threadRepository, cityRepository, commissionProperties,
-                storageService, photoService, favoriteRepository, activeCurrencyResolver, realMapper, matchingService,
-                yadonyConfig, announcementRepository, commissionRateResolver);
+                storageService, photoService, favoriteRepository, activeCurrencyResolver, mapper, matchingService,
+                yadonyConfig, announcementRepository, commissionRateResolver,
+                com.yadony.api.config.PlatformSettingsTestFactory.withProEnabled(proEnabled));
     }
 
     // ========== Task 12: create() tests ==========
@@ -1679,6 +1688,23 @@ class PackageRequestServiceTest {
             assertThatThrownBy(() -> service.create(SENDER_ID, draftRequest(true)))
                     .isInstanceOf(ResponseStatusException.class)
                     .hasMessageContaining("draft-limit-reached");
+        }
+
+        @Test @DisplayName("offre PRO fermee : le compte standard beneficie du quota PRO de brouillons")
+        void create_asDraft_overStandardLimit_proDisabled_usesProQuota() {
+            // Un quota dont le depassement ne peut pas s'acheter n'est qu'un mur : quand
+            // l'offre PRO est fermee, le plafond PRO (10) s'applique a tout le monde.
+            PackageRequestService proClosed = serviceWithProEnabled(
+                    new PackageRequestSearchMapper(userRepository, cityRepository, storageService, photoService,
+                            com.yadony.api.config.PlatformSettingsTestFactory.withProEnabled(false),
+                            commissionProperties),
+                    false);
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+            when(repository.countBySenderIdAndStatus(SENDER_ID, PackageRequestStatus.DRAFT))
+                    .thenReturn(1L);
+
+            assertThatCode(() -> proClosed.create(SENDER_ID, draftRequest(true)))
+                    .doesNotThrowAnyException();
         }
 
         @Test @DisplayName("saveAsDraft=null → publication directe (comportement historique)")

@@ -15,9 +15,9 @@ import java.util.Map;
  * Garnit platform_settings a partir des properties deja resolues, une seule fois, sans
  * jamais ecraser une valeur existante.
  *
- * <p>Le seed vit ici et non dans la migration parce que les quatre valeurs viennent de
+ * <p>Le seed vit ici et non dans la migration parce que les valeurs viennent de
  * sources heterogenes : trois sous {@code yadony.*} via {@link YadonyConfigProperties},
- * la quatrieme sous {@code app.sms.enabled}, lue en {@code @Value} — et toutes
+ * {@code app.sms.enabled} et {@code yadony.pro.enabled} lues en {@code @Value} — et toutes
  * surchargeables par variable d'environnement, invisible depuis du SQL.
  */
 @Component
@@ -28,13 +28,16 @@ public class PlatformSettingsInitializer {
     private final PlatformSettingRepository repository;
     private final YadonyConfigProperties config;
     private final boolean smsEnabledProperty;
+    private final boolean proEnabledProperty;
 
     public PlatformSettingsInitializer(PlatformSettingRepository repository,
                                        YadonyConfigProperties config,
-                                       @Value("${app.sms.enabled:false}") boolean smsEnabledProperty) {
+                                       @Value("${app.sms.enabled:false}") boolean smsEnabledProperty,
+                                       @Value("${yadony.pro.enabled:false}") boolean proEnabledProperty) {
         this.repository = repository;
         this.config = config;
         this.smsEnabledProperty = smsEnabledProperty;
+        this.proEnabledProperty = proEnabledProperty;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -57,6 +60,8 @@ public class PlatformSettingsInitializer {
                 config.reimbursement().maxAmountEur().toPlainString());
         defaults.put(PlatformSettingKey.SMS_ENABLED,
                 String.valueOf(smsEnabledProperty));
+        defaults.put(PlatformSettingKey.PRO_ENABLED,
+                String.valueOf(proEnabledProperty));
 
         int inserted = 0;
         for (Map.Entry<PlatformSettingKey, String> entry : defaults.entrySet()) {

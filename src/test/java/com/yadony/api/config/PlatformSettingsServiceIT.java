@@ -14,6 +14,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.math.BigDecimal;
 import java.util.EnumMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -68,6 +69,7 @@ class PlatformSettingsServiceIT {
         assertThat(service.reimbursementCapEur())
                 .isEqualByComparingTo(config.reimbursement().maxAmountEur());
         assertThat(service.smsEnabled()).isFalse();
+        assertThat(service.proEnabled()).isFalse();
     }
 
     @Test
@@ -78,6 +80,71 @@ class PlatformSettingsServiceIT {
 
         assertThat(service.commissionRate()).isEqualByComparingTo(config.commission().rate());
         assertThat(service.smsEnabled()).isFalse();
+        assertThat(service.proEnabled()).isFalse();
+    }
+
+    @Test
+    @DisplayName("offre PRO fermee : tout compte beneficie des quotas PRO ; ouverte : seuls les comptes PRO")
+    void proQuotasFollowTheProFlag() {
+        // Offre fermee (defaut) : un compte standard n'a pas a se heurter a un quota qu'il
+        // ne peut pas acheter.
+        assertThat(service.hasProQuotas(false)).isTrue();
+        assertThat(service.hasProQuotas(true)).isTrue();
+
+        service.update(change(PlatformSettingKey.PRO_ENABLED, "true"), ADMIN_ID);
+
+        assertThat(service.proEnabled()).isTrue();
+        assertThat(service.hasProQuotas(false)).isFalse();
+        assertThat(service.hasProQuotas(true)).isTrue();
+    }
+
+    @Test
+    @DisplayName("la vue par cle sert les cinq reglages dans l'ordre de l'enum, meme sans aucune ligne")
+    void listByKeyServesEveryKeyEvenWithoutRows() {
+        // Base restauree d'avant l'amorcage : l'ecran admin doit rester complet, chaque
+        // cle portee par sa valeur effective (celle du contrat public), sans auteur.
+        repository.deleteAll();
+        cache.evict();
+
+        List<PlatformSettingView> views = service.listByKey();
+
+        assertThat(views).extracting(PlatformSettingView::key)
+                .containsExactly(PlatformSettingKey.values());
+        PlatformSettingView pro = views.get(views.size() - 1);
+        assertThat(pro.key()).isEqualTo(PlatformSettingKey.PRO_ENABLED);
+        assertThat(pro.value()).isEqualTo("false");
+        assertThat(pro.updatedAt()).isNull();
+        assertThat(pro.updatedBy()).isNull();
+    }
+
+    @Test
+    @DisplayName("la vue par cle expose la date et l'auteur d'un reglage modifie, et rien pour les autres")
+    void listByKeyExposesEditorOnlyForEditedRows() {
+        service.update(change(PlatformSettingKey.PRO_ENABLED, "true"), ADMIN_ID);
+
+        List<PlatformSettingView> views = service.listByKey();
+
+        PlatformSettingView pro = views.stream()
+                .filter(v -> v.key() == PlatformSettingKey.PRO_ENABLED).findFirst().orElseThrow();
+        assertThat(pro.value()).isEqualTo("true");
+        assertThat(pro.updatedBy()).isEqualTo(ADMIN_ID);
+        assertThat(pro.updatedAt()).isNotNull();
+        // Amorce mais jamais modifie : BaseEntity l'horodate, la vue ne doit pas le montrer
+        // comme une modification.
+        PlatformSettingView sms = views.stream()
+                .filter(v -> v.key() == PlatformSettingKey.SMS_ENABLED).findFirst().orElseThrow();
+        assertThat(sms.updatedAt()).isNull();
+        assertThat(sms.updatedBy()).isNull();
+    }
+
+    @Test
+    @DisplayName("pro_enabled n'accepte que true ou false → 422 sinon")
+    void proEnabledRejectsAnythingButABoolean() {
+        assertThatThrownBy(() ->
+                service.update(change(PlatformSettingKey.PRO_ENABLED, "oui"), ADMIN_ID))
+                .isInstanceOf(YadonyBusinessException.class)
+                .hasMessageContaining("true ou false");
+        assertThat(service.proEnabled()).isFalse();
     }
 
     @Test
@@ -161,6 +228,7 @@ class PlatformSettingsServiceIT {
         PlatformSettingsSnapshot snapshot = service.snapshot();
 
         assertThat(snapshot.smsEnabled()).isTrue();
+        assertThat(snapshot.proEnabled()).isFalse();
         assertThat(snapshot.updatedBy()).isEqualTo(ADMIN_ID);
         assertThat(snapshot.updatedAt()).isNotNull();
     }

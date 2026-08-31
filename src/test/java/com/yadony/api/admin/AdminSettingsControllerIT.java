@@ -94,13 +94,14 @@ class AdminSettingsControllerIT {
     }
 
     @Test
-    @DisplayName("GET — ADMIN → 200, les quatre reglages avec leur type et leur auteur")
+    @DisplayName("GET — ADMIN → 200, les cinq reglages avec leur type et leur auteur")
     void get_withAdmin_returnsEveryKeyWithItsOwnEditor() throws Exception {
         when(settingsService.listByKey()).thenReturn(List.of(
                 new PlatformSettingView(PlatformSettingKey.COMMISSION_RATE, "0.05", EDITED_AT, EDITOR_ID),
                 new PlatformSettingView(PlatformSettingKey.URGENCY_THRESHOLD_DAYS, "3", null, null),
                 new PlatformSettingView(PlatformSettingKey.REIMBURSEMENT_CAP_EUR, "50", null, null),
-                new PlatformSettingView(PlatformSettingKey.SMS_ENABLED, "false", null, null)));
+                new PlatformSettingView(PlatformSettingKey.SMS_ENABLED, "false", null, null),
+                new PlatformSettingView(PlatformSettingKey.PRO_ENABLED, "false", null, null)));
         // Les auteurs sont resolus en UN appel groupe, pas un findById par ligne : avec quatre
         // reglages, la version naive ferait quatre requetes pour afficher un ecran.
         AdminUserEntity editor = new AdminUserEntity("uid-editor", "editeur@yadony.test", AdminRole.ADMIN);
@@ -109,7 +110,7 @@ class AdminSettingsControllerIT {
 
         mockMvc.perform(get("/admin/settings").with(authentication(adminAuth())))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(4))
+                .andExpect(jsonPath("$.length()").value(5))
                 // La cle exposee est celle de la TABLE (commission_rate), pas le nom de la
                 // constante Java : c'est elle que le PUT reprend dans son chemin.
                 .andExpect(jsonPath("$[0].key").value("commission_rate"))
@@ -119,7 +120,12 @@ class AdminSettingsControllerIT {
                 .andExpect(jsonPath("$[1].key").value("urgency_threshold_days"))
                 .andExpect(jsonPath("$[1].type").value("INTEGER"))
                 .andExpect(jsonPath("$[3].key").value("sms_enabled"))
-                .andExpect(jsonPath("$[3].type").value("BOOLEAN"));
+                .andExpect(jsonPath("$[3].type").value("BOOLEAN"))
+                // Le feature flag PRO passe par le meme ecran et la meme permission
+                // (CONFIG_MANAGE) que les autres reglages : c'est ce qui permet de l'ouvrir
+                // depuis le back-office sans redeploiement.
+                .andExpect(jsonPath("$[4].key").value("pro_enabled"))
+                .andExpect(jsonPath("$[4].type").value("BOOLEAN"));
     }
 
     @Test

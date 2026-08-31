@@ -485,14 +485,15 @@ public class AnnouncementService {
             YadonyConfigProperties.Limits limits = config.limits() != null
                     ? config.limits()
                     : new YadonyConfigProperties.Limits(null, null);
-            int maxDrafts = user.isProAccount() ? limits.maxDraftsPro() : limits.maxDrafts();
+            boolean proQuotas = settings.hasProQuotas(user.isProAccount());
+            int maxDrafts = proQuotas ? limits.maxDraftsPro() : limits.maxDrafts();
             long draftCount = announcementRepository.countByTravelerIdAndStatus(user.getId(), AnnouncementStatus.DRAFT)
                     + packageRequestRepository.countBySenderIdAndStatus(user.getId(), PackageRequestStatus.DRAFT);
             if (draftCount >= maxDrafts) {
                 throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "draft-limit-reached",
                         "Draft Limit Reached",
                         "Limite de " + maxDrafts + " brouillon(s) atteinte."
-                                + (user.isProAccount() ? "" : " Passez en PRO pour en créer davantage."));
+                                + (proQuotas ? "" : " Passez en PRO pour en créer davantage."));
             }
         }
 
@@ -1132,14 +1133,15 @@ public class AnnouncementService {
         YadonyConfigProperties.Limits limits = config.limits() != null
                 ? config.limits()
                 : new YadonyConfigProperties.Limits(null, null);
-        int maxDrafts = user.isProAccount() ? limits.maxDraftsPro() : limits.maxDrafts();
+        boolean proQuotas = settings.hasProQuotas(user.isProAccount());
+        int maxDrafts = proQuotas ? limits.maxDraftsPro() : limits.maxDrafts();
         long draftCount = announcementRepository.countByTravelerIdAndStatus(user.getId(), AnnouncementStatus.DRAFT)
                 + packageRequestRepository.countBySenderIdAndStatus(user.getId(), PackageRequestStatus.DRAFT);
         if (draftCount >= maxDrafts) {
             throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "draft-limit-reached",
                     "Draft Limit Reached",
                     "Limite de " + maxDrafts + " brouillon(s) atteinte."
-                            + (user.isProAccount() ? "" : " Passez en PRO pour en créer davantage."));
+                            + (proQuotas ? "" : " Passez en PRO pour en créer davantage."));
         }
 
         announcement.setStatus(AnnouncementStatus.DRAFT);
@@ -1294,7 +1296,8 @@ public class AnnouncementService {
     /**
      * Contrôles de publication partagés entre {@link #createAnnouncement} (chemin non-brouillon)
      * et {@link #publishAnnouncement} (DRAFT→ACTIVE) : suspension de publication, KYC vérifié,
-     * limite mensuelle d'annonces (hors PRO).
+     * limite mensuelle d'annonces (hors PRO, et seulement tant que l'offre PRO est ouverte —
+     * voir {@link PlatformSettingsService#hasProQuotas(boolean)}).
      */
     private void assertCanPublish(UserEntity user) {
         assertPublishingNotSuspended(user);
@@ -1308,7 +1311,7 @@ public class AnnouncementService {
             );
         }
 
-        if (!user.isProAccount() && config.limits() != null) {
+        if (!settings.hasProQuotas(user.isProAccount()) && config.limits() != null) {
             YearMonth current = YearMonth.now();
             LocalDateTime from = current.atDay(1).atStartOfDay();
             LocalDateTime to = current.atEndOfMonth().atTime(23, 59, 59);

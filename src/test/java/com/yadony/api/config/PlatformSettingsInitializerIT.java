@@ -47,11 +47,16 @@ class PlatformSettingsInitializerIT {
     }
 
     @Test
-    @DisplayName("insere les quatre cles depuis les properties resolues")
-    void seedsAllFourKeysFromProperties() {
+    @DisplayName("insere les cinq cles depuis les properties resolues")
+    void seedsAllFiveKeysFromProperties() {
         int inserted = initializer.seedMissingKeys();
 
-        assertThat(inserted).isEqualTo(4);
+        assertThat(inserted).isEqualTo(5);
+        // Offre PRO fermee tant qu'un administrateur ne l'ouvre pas : le defaut de la
+        // property, et le seul defaut sur qui permet de livrer l'application avant l'offre.
+        assertThat(repository.findBySettingKey("pro_enabled")).isPresent()
+                .get().extracting(PlatformSettingEntity::getSettingValue)
+                .isEqualTo("false");
         assertThat(repository.findBySettingKey("commission_rate")).isPresent()
                 .get().extracting(PlatformSettingEntity::getSettingValue)
                 .isEqualTo(config.commission().rate().toPlainString());
@@ -72,7 +77,7 @@ class PlatformSettingsInitializerIT {
         initializer.seedMissingKeys();
 
         assertThat(initializer.seedMissingKeys()).isZero();
-        assertThat(repository.count()).isEqualTo(4);
+        assertThat(repository.count()).isEqualTo(5);
     }
 
     @Test
@@ -99,6 +104,8 @@ class PlatformSettingsInitializerIT {
         assertThat(repository.findBySettingKey("urgency_threshold_days").orElseThrow().getValueType())
                 .isEqualTo(PlatformSettingType.INTEGER);
         assertThat(repository.findBySettingKey("sms_enabled").orElseThrow().getValueType())
+                .isEqualTo(PlatformSettingType.BOOLEAN);
+        assertThat(repository.findBySettingKey("pro_enabled").orElseThrow().getValueType())
                 .isEqualTo(PlatformSettingType.BOOLEAN);
     }
 
