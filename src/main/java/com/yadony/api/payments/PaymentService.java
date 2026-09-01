@@ -609,6 +609,8 @@ public class PaymentService {
             payment.setStripePaymentIntentId(pi.getId());
             payment.setAmount(localAmount.major());
             payment.setCommissionAmount(localCommission.major());
+            // Le setter de PaymentEntity normalise en MAJUSCULES (V236) ; les params
+            // Stripe au-dessus gardent code() minuscule, exigé par leur API.
             payment.setCurrency(currency.code());
             payment.setStatus(PaymentStatus.PENDING);
             payment.setLegacyDestinationCharge(false);
@@ -1682,6 +1684,8 @@ public class PaymentService {
             payment.setStripePaymentIntentId(pi.getId());
             payment.setAmount(localGross.major());          // total payé par l'expéditeur (gross)
             payment.setCommissionAmount(localCommission.major());
+            // Le setter de PaymentEntity normalise en MAJUSCULES (V236) ; les params
+            // Stripe au-dessus gardent code() minuscule, exigé par leur API.
             payment.setCurrency(currency.code());
             payment.setStatus(PaymentStatus.PENDING);
             if (recyclable != null) {

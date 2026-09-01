@@ -10,6 +10,9 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.matching.dto.TripsSummaryDto;
 import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.PaymentStatus;
+import com.yadony.api.payments.currency.ActiveCurrencyResolver;
+import com.yadony.api.payments.currency.ExchangeRateService;
+import com.yadony.api.payments.dto.CurrencyAmountRow;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -33,6 +36,8 @@ class TripsSummaryServiceTest {
     @Mock private PaymentRepository paymentRepository;
     @Mock private CacheManager cacheManager;
     @Mock private Cache cache;
+    @Mock private ActiveCurrencyResolver activeCurrencyResolver;
+    @Mock private ExchangeRateService exchangeRateService;
 
     private TripsSummaryService service;
     private UserEntity traveler;
@@ -40,9 +45,18 @@ class TripsSummaryServiceTest {
     @BeforeEach
     void setUp() {
         service = new TripsSummaryService(
-                announcementRepository, bidRepository, paymentRepository, cacheManager);
+                announcementRepository, bidRepository, paymentRepository, cacheManager,
+                activeCurrencyResolver, exchangeRateService);
         traveler = new UserEntity();
         ReflectionTestUtils.setField(traveler, "id", UUID.randomUUID());
+        org.mockito.Mockito.lenient().when(activeCurrencyResolver.resolve(any())).thenReturn("EUR");
+        // Même devise → identité, comme ExchangeRateService.convert en production.
+        org.mockito.Mockito.lenient().when(exchangeRateService.convert(any(), any(), any()))
+                .thenAnswer(inv -> inv.getArgument(0));
+    }
+
+    private static List<CurrencyAmountRow> eur(String amount) {
+        return List.of(new CurrencyAmountRow("EUR", new BigDecimal(amount)));
     }
 
     @Test
@@ -54,9 +68,9 @@ class TripsSummaryServiceTest {
         when(bidRepository.sumDeliveredKgForTraveler(
                 eq(traveler.getId()), eq(BidStatus.COMPLETED), any(), any()))
                 .thenReturn(new BigDecimal("19.0"));
-        when(paymentRepository.sumCapturedRevenueForTraveler(
+        when(paymentRepository.sumCapturedRevenueForTravelerByCurrency(
                 eq(traveler.getId()), eq(PaymentStatus.RELEASED), any(), any()))
-                .thenReturn(new BigDecimal("152.4567"));
+                .thenReturn(eur("152.4567"));
 
         TripsSummaryDto dto = service.computeSummary(traveler, StatsPeriod.DEFAULT);
 
@@ -67,15 +81,15 @@ class TripsSummaryServiceTest {
 
     @Test
     void computeSummary_adds_cash_revenue_to_card_revenue() {
-        when(paymentRepository.sumCapturedRevenueForTraveler(
+        when(paymentRepository.sumCapturedRevenueForTravelerByCurrency(
                 eq(traveler.getId()), eq(PaymentStatus.RELEASED), any(), any()))
-                .thenReturn(new BigDecimal("150.00"));
+                .thenReturn(eur("150.00"));
         // Les deals réglés en espèces ne créent pas de PaymentEntity : leur net
         // (bids CASH livrés) doit s'ajouter au revenu carte, pas rester à 0.
-        when(bidRepository.sumCashNetRevenueForTraveler(
+        when(bidRepository.sumCashNetRevenueForTravelerByCurrency(
                 eq(traveler.getId()), eq(BidStatus.COMPLETED),
                 eq(com.yadony.api.payments.cash.PaymentMethod.CASH), any(), any()))
-                .thenReturn(new BigDecimal("50.00"));
+                .thenReturn(eur("50.00"));
 
         TripsSummaryDto dto = service.computeSummary(traveler, StatsPeriod.DEFAULT);
 
@@ -83,13 +97,13 @@ class TripsSummaryServiceTest {
     }
 
     @Test
-    void computeSummary_returns_zeros_when_repositories_return_null() {
+    void computeSummary_returns_zeros_when_repositories_return_nothing() {
         when(announcementRepository.countByTravelerIdAndStatusIn(
                 eq(traveler.getId()), any())).thenReturn(0L);
         when(bidRepository.sumDeliveredKgForTraveler(any(), any(), any(), any()))
                 .thenReturn(null);
-        when(paymentRepository.sumCapturedRevenueForTraveler(any(), any(), any(), any()))
-                .thenReturn(null);
+        when(paymentRepository.sumCapturedRevenueForTravelerByCurrency(any(), any(), any(), any()))
+                .thenReturn(List.of());
 
         TripsSummaryDto dto = service.computeSummary(traveler, StatsPeriod.DEFAULT);
 
@@ -102,8 +116,8 @@ class TripsSummaryServiceTest {
     void computeSummary_exposes_the_legacy_aliases_with_the_same_values() {
         when(bidRepository.sumDeliveredKgForTraveler(any(), any(), any(), any()))
                 .thenReturn(new BigDecimal("4.0"));
-        when(paymentRepository.sumCapturedRevenueForTraveler(any(), any(), any(), any()))
-                .thenReturn(new BigDecimal("40.00"));
+        when(paymentRepository.sumCapturedRevenueForTravelerByCurrency(any(), any(), any(), any()))
+                .thenReturn(eur("40.00"));
 
         TripsSummaryDto dto = service.computeSummary(traveler, StatsPeriod.LAST_7_DAYS);
 
@@ -143,6 +157,24 @@ class TripsSummaryServiceTest {
 
         assertThat(dto.tripsPublished()).isEqualTo(2);
         assertThat(dto.parcelsSent()).isEqualTo(5);
+    }
+
+    @Test
+    void computeSummary_converts_each_currency_before_summing() {
+        // 100 EUR carte + 65 595,70 XOF cash → 200 EUR, jamais 65 695,70.
+        when(paymentRepository.sumCapturedRevenueForTravelerByCurrency(
+                eq(traveler.getId()), eq(PaymentStatus.RELEASED), any(), any()))
+                .thenReturn(eur("100.00"));
+        when(bidRepository.sumCashNetRevenueForTravelerByCurrency(
+                eq(traveler.getId()), eq(BidStatus.COMPLETED),
+                eq(com.yadony.api.payments.cash.PaymentMethod.CASH), any(), any()))
+                .thenReturn(List.of(new CurrencyAmountRow("XOF", new BigDecimal("65595.70"))));
+        when(exchangeRateService.convert(eq(new BigDecimal("65595.70")), eq("XOF"), eq("EUR")))
+                .thenReturn(new BigDecimal("100.00"));
+
+        TripsSummaryDto dto = service.computeSummary(traveler, StatsPeriod.DEFAULT);
+
+        assertThat(dto.revenue()).isEqualByComparingTo("200.00");
     }
 
     @Test

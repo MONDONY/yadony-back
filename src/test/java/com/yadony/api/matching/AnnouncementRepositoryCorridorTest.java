@@ -173,16 +173,14 @@ class AnnouncementRepositoryCorridorTest {
         repository.saveAndFlush(newAnnouncement("Paris", "Bamako", AnnouncementStatus.ACTIVE));
 
         List<AnnouncementEntity> result = repository.findRecentByCorridor(
-                "Paris", "Bamako", "EUR", org.springframework.data.domain.PageRequest.of(0, 30));
+                "Paris", "Bamako", org.springframework.data.domain.PageRequest.of(0, 30));
 
         assertThat(result).hasSize(1);
         assertThat(result.get(0).getStatus()).isEqualTo(AnnouncementStatus.ACTIVE);
     }
 
     @Test
-    void findRecentByCorridor_filtersByCurrency_excludesOtherCurrencies() {
-        // Deux annonces sur le même corridor mais en devises différentes : moyenner
-        // leurs prix serait sans signification, la requête doit isoler la devise demandée.
+    void findRecentByCorridor_returnsAllCurrencies_marketIsUnified() {
         AnnouncementEntity eur = newAnnouncement("Paris", "Bamako", AnnouncementStatus.ACTIVE);
         eur.setCurrency("EUR");
         repository.saveAndFlush(eur);
@@ -192,10 +190,12 @@ class AnnouncementRepositoryCorridorTest {
         repository.saveAndFlush(cad);
 
         List<AnnouncementEntity> result = repository.findRecentByCorridor(
-                "Paris", "Bamako", "CAD", org.springframework.data.domain.PageRequest.of(0, 30));
+                "Paris", "Bamako", org.springframework.data.domain.PageRequest.of(0, 30));
 
-        assertThat(result).hasSize(1);
-        assertThat(result.get(0).getCurrency()).isEqualTo("CAD");
+        // Marché unifié : le corridor rend TOUTES les devises, l'estimation moyenne
+        // ensuite sur le pivot EUR — cloisonner ici rendait l'estimation muette sur
+        // un corridor pourtant actif dans une autre devise.
+        assertThat(result).hasSize(2);
     }
 
     // ── findTopDestinationsForTraveler (TravelerStatsService) ──────────────────

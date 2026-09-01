@@ -57,13 +57,16 @@ public class AdminExchangeRateController {
     private final ExchangeRateRepository exchangeRateRepository;
     private final AuditService auditService;
     private final CacheManager cacheManager;
+    private final com.yadony.api.matching.AnnouncementRepository announcementRepository;
 
     public AdminExchangeRateController(ExchangeRateRepository exchangeRateRepository,
                                        AuditService auditService,
-                                       CacheManager cacheManager) {
+                                       CacheManager cacheManager,
+                                       com.yadony.api.matching.AnnouncementRepository announcementRepository) {
         this.exchangeRateRepository = exchangeRateRepository;
         this.auditService = auditService;
         this.cacheManager = cacheManager;
+        this.announcementRepository = announcementRepository;
     }
 
     @GetMapping
@@ -110,8 +113,15 @@ public class AdminExchangeRateController {
 
         evictCache(normalized);
 
+        // Le pivot EUR des annonces est une dérivée du taux : le laisser en l'état
+        // ferait filtrer/trier le fil sur l'ancien taux jusqu'à la prochaine écriture
+        // de chaque annonce. Un seul UPDATE par devise, dans la même transaction.
+        int repivoted = announcementRepository.recomputeEurPivotForCurrency(
+                normalized, saved.getUnitsPerEur());
+
         auditService.log("EXCHANGE_RATE", null, "EXCHANGE_RATE_UPDATED", adminId,
-                Map.of("currency", normalized, "unitsPerEur", saved.getUnitsPerEur().toPlainString()));
+                Map.of("currency", normalized, "unitsPerEur", saved.getUnitsPerEur().toPlainString(),
+                        "announcementsRepivoted", String.valueOf(repivoted)));
 
         return ExchangeRateResponse.from(saved);
     }

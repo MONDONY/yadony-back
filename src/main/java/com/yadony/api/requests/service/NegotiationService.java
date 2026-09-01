@@ -63,6 +63,7 @@ public class NegotiationService {
     private final StorageService storageService;
     private final PackageRequestPhotoService photoService;
     private final CommissionRateResolver commissionRateResolver;
+    private final com.yadony.api.payments.currency.ExchangeRateService exchangeRateService;
 
     public NegotiationService(PackageRequestRepository requestRepo,
                                NegotiationThreadRepository threadRepo,
@@ -78,7 +79,8 @@ public class NegotiationService {
                                NegotiationEscrowPort escrowPort,
                                StorageService storageService,
                                PackageRequestPhotoService photoService,
-                               CommissionRateResolver commissionRateResolver) {
+                               CommissionRateResolver commissionRateResolver,
+                               com.yadony.api.payments.currency.ExchangeRateService exchangeRateService) {
         this.requestRepo = requestRepo;
         this.threadRepo = threadRepo;
         this.messageRepo = messageRepo;
@@ -94,6 +96,7 @@ public class NegotiationService {
         this.storageService = storageService;
         this.photoService = photoService;
         this.commissionRateResolver = commissionRateResolver;
+        this.exchangeRateService = exchangeRateService;
     }
 
     /**
@@ -827,6 +830,12 @@ public class NegotiationService {
             derivedPricePerKg = new BigDecimal("0.01");
         }
         ann.setPricePerKg(derivedPricePerKg);
+        // Devise de la DEMANDE, règle métier « la négociation porte la devise de la
+        // demande de colis » : sans cette ligne le trajet dédié restait sur le défaut
+        // d'entité (EUR), même pour une négo XOF — et thread.setCurrency copiait
+        // ensuite cette devise erronée.
+        ann.setCurrency(request.getCurrency());
+        ann.setPricePerKgEur(exchangeRateService.toEurPivot(derivedPricePerKg, request.getCurrency()));
         ann.setTransportMode(request.getTransportMode());
         ann.setStatus(com.yadony.api.matching.AnnouncementStatus.ACTIVE);
         ann.setDescription(req.description());
@@ -1495,6 +1504,7 @@ public class NegotiationService {
         ann.setAvailableKg(surplusKg);
         ann.setTotalKg(ann.getReservedKg().add(surplusKg));
         ann.setPricePerKg(pricePerKg);
+        ann.setPricePerKgEur(exchangeRateService.toEurPivot(pricePerKg, ann.getCurrency()));
         ann.setSurplusPublished(true);
         announcementRepo.save(ann);
 

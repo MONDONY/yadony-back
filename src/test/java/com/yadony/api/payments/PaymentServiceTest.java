@@ -883,7 +883,7 @@ class PaymentServiceTest {
             PaymentEntity saved = paymentCaptor.getValue();
             assertThat(saved.getAmount()).isEqualByComparingTo("39.20");
             assertThat(saved.getCommissionAmount()).isEqualByComparingTo("4.20");
-            assertThat(saved.getCurrency()).isEqualTo("cad");
+            assertThat(saved.getCurrency()).isEqualTo("CAD");
             assertThat(saved.getStripeFxQuoteId()).isNull();
             assertThat(saved.getFxExchangeRate()).isNull();
             assertThat(saved.getFxQuoteExpiresAt()).isNull();

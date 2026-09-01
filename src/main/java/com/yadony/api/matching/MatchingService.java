@@ -29,14 +29,17 @@ public class MatchingService {
     private final AnnouncementRepository announcementRepository;
     private final PackageRequestRepository packageRequestRepository;
     private final UserRepository userRepository;
+    private final com.yadony.api.payments.currency.ExchangeRateService exchangeRateService;
 
     public MatchingService(
             AnnouncementRepository announcementRepository,
             PackageRequestRepository packageRequestRepository,
-            UserRepository userRepository) {
+            UserRepository userRepository,
+            com.yadony.api.payments.currency.ExchangeRateService exchangeRateService) {
         this.announcementRepository = announcementRepository;
         this.packageRequestRepository = packageRequestRepository;
         this.userRepository = userRepository;
+        this.exchangeRateService = exchangeRateService;
     }
 
     public List<MatchingRequestDto> findMatchingRequests(UUID travelerId) {
@@ -233,11 +236,29 @@ public class MatchingService {
                 4, java.math.RoundingMode.HALF_UP).doubleValue();
         int weightScore = (int) Math.round((1.0 - Math.min(ratio, 1.0)) * 40);
 
+        // Budget (devise de la demande) et prix (devise de l'annonce) ne se comparent
+        // que sur une échelle commune : le pivot EUR. Sans conversion, 5000 XOF/kg de
+        // budget « couvrait » n'importe quel prix EUR (5000 >= 8), et un budget 10 €/kg
+        // échouait face à 6000 F CFA/kg qui n'en valent que ~9. Même devise → brut,
+        // exact et sans bruit de taux.
         double pricePerKg = announcement.getPricePerKg().doubleValue();
+        double budgetComparable = budgetPerKg;
+        double priceComparable = pricePerKg;
+        String requestCurrency = request.getCurrency() != null ? request.getCurrency() : "EUR";
+        String announcementCurrency = announcement.getCurrency() != null ? announcement.getCurrency() : "EUR";
+        if (!requestCurrency.equalsIgnoreCase(announcementCurrency)) {
+            budgetComparable = exchangeRateService.toEurPivot(
+                    java.math.BigDecimal.valueOf(budgetPerKg), requestCurrency).doubleValue();
+            java.math.BigDecimal pivot = announcement.getPricePerKgEur() != null
+                    ? announcement.getPricePerKgEur()
+                    : exchangeRateService.toEurPivot(
+                            announcement.getPricePerKg(), announcementCurrency);
+            priceComparable = pivot.doubleValue();
+        }
         int budgetScore;
-        if (budgetPerKg >= pricePerKg) {
+        if (budgetComparable >= priceComparable) {
             budgetScore = 35;
-        } else if (budgetPerKg >= pricePerKg * 0.8) {
+        } else if (budgetComparable >= priceComparable * 0.8) {
             budgetScore = 20;
         } else {
             budgetScore = 5;

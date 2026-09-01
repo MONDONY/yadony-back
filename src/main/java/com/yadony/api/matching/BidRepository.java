@@ -112,30 +112,37 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
      * déjà comptés par {@code PaymentRepository.sumCapturedRevenueForTraveler}.
      * Même fenêtre que {@link #sumDeliveredKgForTraveler} ({@code b.createdAt}).
      */
+    // Groupé par la devise du BID (celle de l'annonce, figée à la création) : le nom
+    // hérité negotiatedNetEur ment depuis le multidevise, le montant est dans
+    // b.currency. Sommer à plat mélangeait EUR et XOF.
     @Query("""
-        SELECT COALESCE(SUM(b.negotiatedNetEur), 0)
+        SELECT new com.yadony.api.payments.dto.CurrencyAmountRow(
+            UPPER(b.currency), SUM(b.negotiatedNetEur))
         FROM BidEntity b
         JOIN AnnouncementEntity a ON b.announcementId = a.id
         WHERE a.travelerId = :travelerId AND b.status = :status
           AND b.paymentMethod = :method
           AND b.createdAt BETWEEN :from AND :to AND b.deletedAt IS NULL
+        GROUP BY UPPER(b.currency)
     """)
-    java.math.BigDecimal sumCashNetRevenueForTraveler(
+    List<com.yadony.api.payments.dto.CurrencyAmountRow> sumCashNetRevenueForTravelerByCurrency(
             @Param("travelerId") UUID travelerId,
             @Param("status") BidStatus status,
             @Param("method") PaymentMethod method,
             @Param("from") java.time.LocalDateTime from,
             @Param("to") java.time.LocalDateTime to);
 
-    /** Total tous temps du revenu net cash — voir {@link #sumCashNetRevenueForTraveler}. */
+    /** Total tous temps du revenu net cash, par devise — voir {@link #sumCashNetRevenueForTravelerByCurrency}. */
     @Query("""
-        SELECT COALESCE(SUM(b.negotiatedNetEur), 0)
+        SELECT new com.yadony.api.payments.dto.CurrencyAmountRow(
+            UPPER(b.currency), SUM(b.negotiatedNetEur))
         FROM BidEntity b
         JOIN AnnouncementEntity a ON b.announcementId = a.id
         WHERE a.travelerId = :travelerId AND b.status = :status
           AND b.paymentMethod = :method AND b.deletedAt IS NULL
+        GROUP BY UPPER(b.currency)
     """)
-    java.math.BigDecimal sumTotalCashNetRevenueForTraveler(
+    List<com.yadony.api.payments.dto.CurrencyAmountRow> sumTotalCashNetRevenueForTravelerByCurrency(
             @Param("travelerId") UUID travelerId,
             @Param("status") BidStatus status,
             @Param("method") PaymentMethod method);
@@ -150,14 +157,14 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
      */
     @Query("""
         SELECT new com.yadony.api.matching.dto.AnnouncementRevenueRow(
-            a.id, a.departureCity, a.arrivalCity, a.departureDate,
+            a.id, a.departureCity, a.arrivalCity, a.departureDate, UPPER(a.currency),
             COUNT(b), COALESCE(SUM(b.negotiatedNetEur), 0), COALESCE(SUM(b.negotiatedNetEur * 0), 0))
         FROM BidEntity b
         JOIN AnnouncementEntity a ON b.announcementId = a.id
         WHERE a.travelerId = :travelerId AND b.status = :status
           AND b.paymentMethod = :method
           AND b.createdAt BETWEEN :from AND :to AND b.deletedAt IS NULL
-        GROUP BY a.id, a.departureCity, a.arrivalCity, a.departureDate
+        GROUP BY a.id, a.departureCity, a.arrivalCity, a.departureDate, a.currency
         ORDER BY a.departureDate DESC
     """)
     List<AnnouncementRevenueRow> findCashRevenueByAnnouncement(

@@ -32,15 +32,21 @@ public class ProAnalyticsService {
     private final AnnouncementRepository announcementRepository;
     private final BidRepository bidRepository;
     private final PaymentRepository paymentRepository;
+    private final com.yadony.api.payments.currency.ActiveCurrencyResolver activeCurrencyResolver;
+    private final com.yadony.api.payments.currency.ExchangeRateService exchangeRateService;
 
     public ProAnalyticsService(
             AnnouncementRepository announcementRepository,
             BidRepository bidRepository,
-            PaymentRepository paymentRepository
+            PaymentRepository paymentRepository,
+            com.yadony.api.payments.currency.ActiveCurrencyResolver activeCurrencyResolver,
+            com.yadony.api.payments.currency.ExchangeRateService exchangeRateService
     ) {
         this.announcementRepository = announcementRepository;
         this.bidRepository = bidRepository;
         this.paymentRepository = paymentRepository;
+        this.activeCurrencyResolver = activeCurrencyResolver;
+        this.exchangeRateService = exchangeRateService;
     }
 
     @Transactional(readOnly = true)
@@ -53,17 +59,21 @@ public class ProAnalyticsService {
         LocalDateTime prevFrom = prevRange[0];
         LocalDateTime prevTo = prevRange[1];
 
-        // Revenue = carte (escrow libéré) + espèces (net des bids CASH livrés, hors PaymentEntity).
-        BigDecimal revenue = TravelerRevenue.cardPlusCash(
-                paymentRepository.sumCapturedRevenueForTraveler(
+        // Revenue = carte (escrow libéré) + espèces (net des bids CASH livrés, hors
+        // PaymentEntity), par devise puis converti vers la devise active pour le KPI.
+        // Les deux périodes passent par les MÊMES taux courants : la tendance en %
+        // compare donc des grandeurs cohérentes.
+        String activeCurrency = activeCurrencyResolver.resolve(userId);
+        BigDecimal revenue = convertedTotal(TravelerRevenue.cardPlusCashByCurrency(
+                paymentRepository.sumCapturedRevenueForTravelerByCurrency(
                         userId, PaymentStatus.RELEASED, from, to),
-                bidRepository.sumCashNetRevenueForTraveler(
-                        userId, BidStatus.COMPLETED, PaymentMethod.CASH, from, to));
-        BigDecimal prevRevenue = TravelerRevenue.cardPlusCash(
-                paymentRepository.sumCapturedRevenueForTraveler(
+                bidRepository.sumCashNetRevenueForTravelerByCurrency(
+                        userId, BidStatus.COMPLETED, PaymentMethod.CASH, from, to)), activeCurrency);
+        BigDecimal prevRevenue = convertedTotal(TravelerRevenue.cardPlusCashByCurrency(
+                paymentRepository.sumCapturedRevenueForTravelerByCurrency(
                         userId, PaymentStatus.RELEASED, prevFrom, prevTo),
-                bidRepository.sumCashNetRevenueForTraveler(
-                        userId, BidStatus.COMPLETED, PaymentMethod.CASH, prevFrom, prevTo));
+                bidRepository.sumCashNetRevenueForTravelerByCurrency(
+                        userId, BidStatus.COMPLETED, PaymentMethod.CASH, prevFrom, prevTo)), activeCurrency);
 
         // Trips
         long trips = announcementRepository.countByTravelerIdAndCreatedAtBetween(userId, from, to);
@@ -88,7 +98,7 @@ public class ProAnalyticsService {
 
         // KPIs
         List<KpiDto> kpis = new ArrayList<>();
-        kpis.add(revenueKpi(revenue, prevRevenue));
+        kpis.add(revenueKpi(revenue, prevRevenue, activeCurrency));
         kpis.add(new KpiDto("trips", "Trajets", String.valueOf(trips), trend(trips, prevTrips), delta(trips, prevTrips)));
         kpis.add(new KpiDto("parcels", "Colis gérés", String.valueOf(parcels), null, null));
         kpis.add(new KpiDto("acceptance", "Taux acceptation", formatPercent(acceptRate), null, null));
@@ -102,8 +112,8 @@ public class ProAnalyticsService {
 
     // ── helpers ────────────────────────────────────────────────────────────────
 
-    private KpiDto revenueKpi(BigDecimal current, BigDecimal prev) {
-        String value = formatEuros(current);
+    private KpiDto revenueKpi(BigDecimal current, BigDecimal prev, String currency) {
+        String value = formatAmount(current, currency);
         if (prev.compareTo(BigDecimal.ZERO) == 0) {
             return new KpiDto("revenue", "Revenus nets", value, null, null);
         }
@@ -125,12 +135,24 @@ public class ProAnalyticsService {
         return (diff >= 0 ? "+" : "") + diff;
     }
 
-    // Format monétaire fr-FR (« 1 234,56 € ») cohérent avec le rendu de la table
-    // côté front (toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })),
-    // pour que la carte KPI « Revenus nets » et la colonne Net s'affichent pareil.
-    private String formatEuros(BigDecimal amount) {
-        return NumberFormat.getCurrencyInstance(Locale.FRANCE)
-                .format(amount.setScale(2, RoundingMode.HALF_UP));
+    // Format monétaire fr-FR (« 1 234,56 € », « 3 280 F CFA ») dans la devise du
+    // montant. Symbole et décimales viennent du catalogue SupportedCurrency (0 en
+    // XOF), pas du JDK, pour rester aligné sur le rendu Flutter (CurrencyFormatter).
+    private String formatAmount(BigDecimal amount, String currencyCode) {
+        com.yadony.api.payments.currency.SupportedCurrency currency =
+                com.yadony.api.payments.currency.SupportedCurrency.fromCodeOrDefault(currencyCode);
+        NumberFormat nf = NumberFormat.getNumberInstance(Locale.FRANCE);
+        nf.setMinimumFractionDigits(currency.minorUnit());
+        nf.setMaximumFractionDigits(currency.minorUnit());
+        return nf.format(amount.setScale(currency.minorUnit(), RoundingMode.HALF_UP))
+                + "\u00A0" + currency.symbol();
+    }
+
+    /** Somme « environ » dans la devise cible : chaque devise convertie au taux courant. */
+    private BigDecimal convertedTotal(java.util.Map<String, BigDecimal> byCurrency, String target) {
+        return byCurrency.entrySet().stream()
+                .map(e -> exchangeRateService.convert(e.getValue(), e.getKey(), target))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
     private String formatPercent(double rate) {
@@ -158,16 +180,17 @@ public class ProAnalyticsService {
                         a.departureCity + " → " + a.arrivalCity,
                         a.departureDate.format(DateTimeFormatter.ISO_LOCAL_DATE),
                         (int) a.parcelCount,
-                        toCents(a.gross),
-                        toCents(a.commission),
-                        toCents(a.gross.subtract(a.commission))))
+                        toMinorUnits(a.gross, a.currency),
+                        toMinorUnits(a.commission, a.currency),
+                        toMinorUnits(a.gross.subtract(a.commission), a.currency),
+                        a.currency))
                 .toList();
     }
 
     private static void accumulate(Map<UUID, TxnAccumulator> map, AnnouncementRevenueRow r) {
         map.computeIfAbsent(
                 r.announcementId(),
-                id -> new TxnAccumulator(id, r.departureCity(), r.arrivalCity(), r.departureDate()))
+                id -> new TxnAccumulator(id, r.departureCity(), r.arrivalCity(), r.departureDate(), r.currency()))
            .add(r.parcelCount(), r.gross(), r.commission());
     }
 
@@ -177,15 +200,19 @@ public class ProAnalyticsService {
         final String departureCity;
         final String arrivalCity;
         final LocalDate departureDate;
+        /** Une annonce = une devise : carte et cash de la même annonce la partagent. */
+        final String currency;
         long parcelCount;
         BigDecimal gross = BigDecimal.ZERO;
         BigDecimal commission = BigDecimal.ZERO;
 
-        TxnAccumulator(UUID announcementId, String departureCity, String arrivalCity, LocalDate departureDate) {
+        TxnAccumulator(UUID announcementId, String departureCity, String arrivalCity,
+                       LocalDate departureDate, String currency) {
             this.announcementId = announcementId;
             this.departureCity = departureCity;
             this.arrivalCity = arrivalCity;
             this.departureDate = departureDate;
+            this.currency = currency;
         }
 
         void add(long count, BigDecimal g, BigDecimal c) {
@@ -195,8 +222,15 @@ public class ProAnalyticsService {
         }
     }
 
-    private long toCents(BigDecimal euros) {
-        return euros.multiply(BigDecimal.valueOf(100)).longValue();
+    /**
+     * Unités mineures de la devise de la ligne : centimes quand elle en a, unité
+     * pleine en XOF/XAF ({@code minorUnit = 0}). L'ancien {@code toCents} multipliait
+     * tout par 100, XOF compris — 5000 F devenaient 500000 « centimes » inexistants.
+     */
+    private long toMinorUnits(BigDecimal amount, String currencyCode) {
+        int minorUnit = com.yadony.api.payments.currency.SupportedCurrency
+                .fromCodeOrDefault(currencyCode).minorUnit();
+        return amount.movePointRight(minorUnit).setScale(0, RoundingMode.HALF_UP).longValue();
     }
 
     private LocalDateTime[] periodRange(String period) {

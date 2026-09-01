@@ -23,7 +23,9 @@ class PaymentResponseTest {
     void payment_entity_defaults_to_eur_for_existing_domain_objects() {
         PaymentEntity payment = new PaymentEntity();
 
-        assertThat(payment.getCurrency()).isEqualTo("eur");
+        // MAJUSCULES depuis V236 : convention du schéma entier, le CHECK refuse
+        // désormais un code minuscule.
+        assertThat(payment.getCurrency()).isEqualTo("EUR");
     }
 
     @Test

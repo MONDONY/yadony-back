@@ -115,6 +115,17 @@ public class AnnouncementEntity extends BaseEntity {
     @Column(name = "currency", nullable = false, length = 3)
     private String currency = "EUR";
 
+    /**
+     * Équivalent EUR de {@code pricePerKg} (4 décimales), échelle commune du marché
+     * unifié : filtre « prix max », tri par prix et score de matching comparent ce
+     * pivot, jamais le brut multidevise. Posé à l'écriture via
+     * {@code ExchangeRateService.toEurPivot}, recalculé en masse quand l'admin
+     * change un taux. Jamais servi au client : l'affichage converti passe par
+     * {@code convertedPricePerKg}, calculé au taux courant à la lecture.
+     */
+    @Column(name = "price_per_kg_eur", precision = 19, scale = 4)
+    private BigDecimal pricePerKgEur;
+
     @Column(name = "description", length = 500)
     private String description;
 
@@ -354,6 +365,9 @@ public class AnnouncementEntity extends BaseEntity {
 
     public String getCurrency() { return currency; }
     public void setCurrency(String currency) { this.currency = currency; }
+
+    public BigDecimal getPricePerKgEur() { return pricePerKgEur; }
+    public void setPricePerKgEur(BigDecimal pricePerKgEur) { this.pricePerKgEur = pricePerKgEur; }
 
     public String getDescription() { return description; }
     public void setDescription(String description) { this.description = description; }

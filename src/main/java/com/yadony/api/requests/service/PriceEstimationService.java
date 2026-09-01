@@ -23,10 +23,13 @@ public class PriceEstimationService {
 
     private final AnnouncementRepository announcementRepo;
     private final RequestsConfig config;
+    private final com.yadony.api.payments.currency.ExchangeRateService exchangeRateService;
 
-    public PriceEstimationService(AnnouncementRepository announcementRepo, RequestsConfig config) {
+    public PriceEstimationService(AnnouncementRepository announcementRepo, RequestsConfig config,
+                                  com.yadony.api.payments.currency.ExchangeRateService exchangeRateService) {
         this.announcementRepo = announcementRepo;
         this.config = config;
+        this.exchangeRateService = exchangeRateService;
     }
 
     /**
@@ -44,34 +47,47 @@ public class PriceEstimationService {
     @Cacheable(value = "estimation-corridor",
                key = "#departure + '|' + #arrival + '|' + #currency + '|' + T(java.lang.Math).ceil(#weightKg.doubleValue())")
     public PriceEstimateResponse estimate(String departure, String arrival, BigDecimal weightKg, String currency) {
-        // Filtré par devise : moyenner des annonces en devises différentes (ex. EUR et CAD)
-        // produirait un montant sans signification. Le sample ne compare que des trajets
-        // publiés dans la même devise que la demande à estimer.
+        // Marché unifié : l'échantillon prend le corridor TOUTES devises confondues et
+        // moyenne sur le pivot EUR (price_per_kg_eur), puis la fourchette est convertie
+        // dans la devise de la demande. L'ancien cloisonnement rendait l'estimation
+        // muette (« LOW, 0 trajet ») sur un corridor pourtant actif dans une autre
+        // devise — Paris→Dakar plein de trajets EUR n'estimait rien pour un
+        // expéditeur XOF. La devise reste dans la clé de cache : c'est celle du
+        // montant RENDU, pas un filtre.
         List<AnnouncementEntity> sample = announcementRepo.findRecentByCorridor(
-            departure, arrival, currency,
+            departure, arrival,
             PageRequest.of(0, config.estimationCorridorRecentTrips()));
 
-        if (sample.isEmpty()) {
+        List<BigDecimal> pivots = sample.stream()
+            .map(a -> a.getPricePerKgEur() != null
+                    ? a.getPricePerKgEur()
+                    : exchangeRateService.toEurPivot(a.getPricePerKg(), a.getCurrency()))
+            .filter(java.util.Objects::nonNull)
+            .toList();
+
+        if (pivots.isEmpty()) {
             return new PriceEstimateResponse(null, null, "LOW", 0, currency);
         }
 
-        BigDecimal sum = sample.stream()
-            .map(AnnouncementEntity::getPricePerKg)
-            .reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal avg = sum.divide(BigDecimal.valueOf(sample.size()), 2, RoundingMode.HALF_UP);
+        BigDecimal sum = pivots.stream().reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal avgEur = sum.divide(BigDecimal.valueOf(pivots.size()), 4, RoundingMode.HALF_UP);
 
-        BigDecimal low  = avg.multiply(weightKg).multiply(LOW_FACTOR) .setScale(2, RoundingMode.HALF_UP);
-        BigDecimal high = avg.multiply(weightKg).multiply(HIGH_FACTOR).setScale(2, RoundingMode.HALF_UP);
+        // Bornes en EUR puis conversion : convert() arrondit au nombre de décimales de
+        // la devise cible (0 en XOF — un « 5 903,55 F CFA » n'existe pas).
+        BigDecimal low = exchangeRateService.convert(
+            avgEur.multiply(weightKg).multiply(LOW_FACTOR), "EUR", currency);
+        BigDecimal high = exchangeRateService.convert(
+            avgEur.multiply(weightKg).multiply(HIGH_FACTOR), "EUR", currency);
 
         String confidence;
-        if (sample.size() >= 10) {
+        if (pivots.size() >= 10) {
             confidence = "HIGH";
-        } else if (sample.size() >= 5) {
+        } else if (pivots.size() >= 5) {
             confidence = "MEDIUM";
         } else {
             confidence = "LOW";
         }
 
-        return new PriceEstimateResponse(low, high, confidence, sample.size(), currency);
+        return new PriceEstimateResponse(low, high, confidence, pivots.size(), currency);
     }
 }

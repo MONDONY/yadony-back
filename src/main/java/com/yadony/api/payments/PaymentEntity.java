@@ -34,8 +34,10 @@ public class PaymentEntity extends BaseEntity {
     @Column(name = "amount", nullable = false, precision = 10, scale = 2)
     private BigDecimal amount;
 
+    // MAJUSCULES depuis V236 : convention du schéma entier ('eur' historique V196
+    // normalisé en base, CHECK ajouté).
     @Column(name = "currency", nullable = false, length = 3)
-    private String currency = "eur";
+    private String currency = "EUR";
 
     /** Stripe FX Quote used to lock the presentment-to-EUR conversion for this payment. */
     @Column(name = "stripe_fx_quote_id", length = 255)
@@ -86,7 +88,14 @@ public class PaymentEntity extends BaseEntity {
     public void setAmount(BigDecimal amount) { this.amount = amount; }
 
     public String getCurrency() { return currency; }
-    public void setCurrency(String currency) { this.currency = currency == null ? null : currency.toLowerCase(); }
+    /**
+     * Point de normalisation unique : MAJUSCULES (V236), convention du schéma
+     * entier — l'ancien {@code toLowerCase} défensif annulait silencieusement
+     * toute normalisation posée par l'appelant et violait le CHECK.
+     */
+    public void setCurrency(String currency) {
+        this.currency = currency == null ? null : currency.toUpperCase(java.util.Locale.ROOT);
+    }
 
     public String getStripeFxQuoteId() { return stripeFxQuoteId; }
     public void setStripeFxQuoteId(String stripeFxQuoteId) { this.stripeFxQuoteId = stripeFxQuoteId; }
