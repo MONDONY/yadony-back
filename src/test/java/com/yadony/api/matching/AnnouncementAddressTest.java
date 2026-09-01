@@ -80,6 +80,9 @@ class AnnouncementServiceAddressTest {
         org.mockito.Mockito.lenient()
                 .when(activeCurrencyResolver.resolve(org.mockito.ArgumentMatchers.any()))
                 .thenReturn("EUR");
+        org.mockito.Mockito.lenient()
+                .when(activeCurrencyResolver.resolveDisplay(org.mockito.ArgumentMatchers.any()))
+                .thenReturn("EUR");
     }
     AnnouncementService announcementService;
 

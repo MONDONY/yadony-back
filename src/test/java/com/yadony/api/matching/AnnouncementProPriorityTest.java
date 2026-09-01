@@ -74,6 +74,7 @@ class AnnouncementProPriorityTest {
     @BeforeEach
     void stubDefaultActiveCurrency() {
         lenient().when(activeCurrencyResolver.resolve(ArgumentMatchers.any())).thenReturn("EUR");
+        lenient().when(activeCurrencyResolver.resolveDisplay(ArgumentMatchers.any())).thenReturn("EUR");
         // Repli neutre : conversion identité tant qu'un test ne stub pas un taux explicite.
         lenient().when(exchangeRateService.convert(ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any()))
                 .thenAnswer(inv -> inv.getArgument(0));

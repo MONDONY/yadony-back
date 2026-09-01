@@ -49,7 +49,7 @@ class TripsSummaryServiceTest {
                 activeCurrencyResolver, exchangeRateService);
         traveler = new UserEntity();
         ReflectionTestUtils.setField(traveler, "id", UUID.randomUUID());
-        org.mockito.Mockito.lenient().when(activeCurrencyResolver.resolve(any())).thenReturn("EUR");
+        org.mockito.Mockito.lenient().when(activeCurrencyResolver.resolveDisplay(any())).thenReturn("EUR");
         // Même devise → identité, comme ExchangeRateService.convert en production.
         org.mockito.Mockito.lenient().when(exchangeRateService.convert(any(), any(), any()))
                 .thenAnswer(inv -> inv.getArgument(0));

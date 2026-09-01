@@ -77,6 +77,9 @@ class AnnouncementServiceTest {
         org.mockito.Mockito.lenient()
                 .when(activeCurrencyResolver.resolve(org.mockito.ArgumentMatchers.any()))
                 .thenReturn("EUR");
+        org.mockito.Mockito.lenient()
+                .when(activeCurrencyResolver.resolveDisplay(org.mockito.ArgumentMatchers.any()))
+                .thenReturn("EUR");
         // Repli neutre : conversion identité tant qu'un test ne stub pas explicitement un
         // taux différent de EUR (le fil devenu multidevise, Tâche 10, convertit toujours).
         org.mockito.Mockito.lenient()
@@ -977,6 +980,59 @@ class AnnouncementServiceTest {
         }
 
         @Test
+        @DisplayName("lecteur EUR sur annonce XOF → prix affiché ET grille convertis « environ »")
+        void getDetail_readerInEur_getsConvertedPricesAndGrid() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity a = buildAnnouncement(traveler);
+            a.setCurrency("XOF");
+            a.setPricePerKg(BigDecimal.valueOf(5000));
+            a.setPricingMode(PricingMode.MIXED);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
+            when(priceGridService.getAnnouncementGridItems(any(), any())).thenReturn(List.of(
+                    new com.yadony.api.matching.dto.AnnouncementPriceGridItemResponse(
+                            UUID.randomUUID(), "Valise 23 kg",
+                            BigDecimal.valueOf(30000), BigDecimal.valueOf(33600))));
+            when(activeCurrencyResolver.resolveDisplay(any())).thenReturn("EUR");
+            // Le brut affiché (net × commission) alimente le converti : sans ce stub le
+            // display serait null et l'équivalent aussi.
+            when(priceGridService.displayPrice(any(), any()))
+                .thenAnswer(inv -> ((BigDecimal) inv.getArgument(0))
+                        .multiply(BigDecimal.valueOf(1.12)));
+            when(exchangeRateService.convert(any(), org.mockito.ArgumentMatchers.eq("XOF"),
+                    org.mockito.ArgumentMatchers.eq("EUR")))
+                .thenAnswer(inv -> ((BigDecimal) inv.getArgument(0))
+                        .divide(BigDecimal.valueOf(655.957), 2, java.math.RoundingMode.HALF_UP));
+
+            AnnouncementDetailResponse result = announcementService.getAnnouncementDetail(
+                    ANNOUNCEMENT_ID, FIREBASE_UID);
+
+            // Les montants d'origine restent en XOF, les équivalents sont un repère.
+            assertThat(result.currency()).isEqualTo("XOF");
+            assertThat(result.convertedCurrency()).isEqualTo("EUR");
+            assertThat(result.pricePerKgDisplayConverted()).isNotNull();
+            assertThat(result.priceGridItems().get(0).convertedUnitPriceDisplay())
+                    .isEqualByComparingTo("51.22");   // 33600 / 655.957
+            assertThat(result.priceGridItems().get(0).unitPriceDisplay())
+                    .isEqualByComparingTo("33600");
+        }
+
+        @Test
+        @DisplayName("lecteur dans la devise de l'annonce → aucun équivalent joint")
+        void getDetail_sameCurrency_noConversion() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity a = buildAnnouncement(traveler);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
+            when(activeCurrencyResolver.resolveDisplay(any())).thenReturn(a.getCurrency());
+
+            AnnouncementDetailResponse result = announcementService.getAnnouncementDetail(
+                    ANNOUNCEMENT_ID, FIREBASE_UID);
+
+            assertThat(result.convertedCurrency()).isNull();
+            assertThat(result.convertedPricePerKg()).isNull();
+            assertThat(result.pricePerKgDisplayConverted()).isNull();
+        }
+
+        @Test
         @DisplayName("détail expose le nombre de colis acceptés (confirmedParcelCount)")
         void getDetail_exposesConfirmedParcelCount() {
             UserEntity traveler = buildTraveler();
@@ -1199,10 +1255,13 @@ class AnnouncementServiceTest {
                     ANNOUNCEMENT_ID, "uid-other-traveler-2");
 
             assertThat(result.status()).isEqualTo("ACTIVE");
-            // Le viewer est désormais résolu à chaque lecture, et plus seulement pour un
-            // brouillon : la garde de blocage a besoin de son id pour interroger
-            // BlockVisibility. Un uid inconnu se résout à null, donc rien n'est masqué.
-            verify(userRepository).findByFirebaseUid("uid-other-traveler-2");
+            // Le viewer est résolu à chaque lecture, et plus seulement pour un brouillon :
+            // la garde de blocage a besoin de son id pour interroger BlockVisibility, et le
+            // lot 5 multidevise s'en sert pour la devise d'affichage. L'ancien never()
+            // protégeait un contrat qui n'existe plus. Les deux besoins partagent la même
+            // résolution : on vérifie qu'elle a lieu, et qu'elle reste UNIQUE (pas de N+1).
+            verify(userRepository, org.mockito.Mockito.times(1))
+                    .findByFirebaseUid("uid-other-traveler-2");
         }
     }
 
@@ -1999,7 +2058,7 @@ class AnnouncementServiceTest {
             xofAnnouncement.setPricePerKg(BigDecimal.valueOf(3500));
             Page<AnnouncementEntity> page = new PageImpl<>(List.of(xofAnnouncement));
 
-            when(activeCurrencyResolver.resolve(null)).thenReturn("EUR");
+            when(activeCurrencyResolver.resolveDisplay(null)).thenReturn("EUR");
             when(announcementRepository.findAll(ArgumentMatchers.<Specification<AnnouncementEntity>>any(), any(Pageable.class)))
                     .thenReturn(page);
             stubBatchSearch(traveler, 0L);
@@ -2026,7 +2085,7 @@ class AnnouncementServiceTest {
             UserEntity traveler = buildTraveler();
             AnnouncementEntity ann = buildAnnouncement(traveler);
 
-            when(activeCurrencyResolver.resolve(null)).thenReturn("EUR");
+            when(activeCurrencyResolver.resolveDisplay(null)).thenReturn("EUR");
             ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
             when(announcementRepository.findAll(
                     ArgumentMatchers.<Specification<AnnouncementEntity>>any(), pageableCaptor.capture()))
@@ -2064,7 +2123,7 @@ class AnnouncementServiceTest {
             xofAnnouncement.setPricePerKg(BigDecimal.valueOf(1000));
             Page<AnnouncementEntity> page = new PageImpl<>(List.of(xofAnnouncement));
 
-            when(activeCurrencyResolver.resolve(null)).thenReturn("EUR");
+            when(activeCurrencyResolver.resolveDisplay(null)).thenReturn("EUR");
             when(exchangeRateService.convert(BigDecimal.valueOf(1000), "XOF", "EUR"))
                     .thenReturn(BigDecimal.valueOf(1.52));
             when(announcementRepository.findAll(ArgumentMatchers.<Specification<AnnouncementEntity>>any(), any(Pageable.class)))

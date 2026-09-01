@@ -60,7 +60,7 @@ class UserBusinessPrefsControllerTest {
 
     @Test
     void putPrefs_valid_returns200() throws Exception {
-        UserBusinessPrefsDto dto = new UserBusinessPrefsDto("lbs", "XOF", 20, 30, 5, "call", 2, null, null, null);
+        UserBusinessPrefsDto dto = new UserBusinessPrefsDto("lbs", "XOF", 20, 30, 5, "call", 2, null, null, null, null);
         when(service.upsert(eq(FIREBASE_UID), any())).thenReturn(dto);
         mockMvc.perform(put("/users/me/business-preferences")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -74,7 +74,7 @@ class UserBusinessPrefsControllerTest {
 
     @Test
     void putPrefs_acceptsNorthAmericanCurrency() throws Exception {
-        UserBusinessPrefsDto dto = new UserBusinessPrefsDto("kg", "CAD", 20, 30, 5, "call", 2, null, null, null);
+        UserBusinessPrefsDto dto = new UserBusinessPrefsDto("kg", "CAD", 20, 30, 5, "call", 2, null, null, null, null);
         when(service.upsert(eq(FIREBASE_UID), any())).thenReturn(dto);
 
         mockMvc.perform(put("/users/me/business-preferences")
@@ -101,5 +101,31 @@ class UserBusinessPrefsControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(UserBusinessPrefsDto.defaults())))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void putPrefs_responseCarriesDisplayCurrency() throws Exception {
+        UserBusinessPrefsDto dto = new UserBusinessPrefsDto(
+                "kg", "XOF", 10, 23, 0, null, null, null, null, null, "USD");
+        when(service.upsert(eq(FIREBASE_UID), any())).thenReturn(dto);
+
+        mockMvc.perform(put("/users/me/business-preferences")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(dto))
+                        .with(authentication(asUser())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.displayCurrencyCode").value("USD"));
+    }
+
+    @Test
+    void putPrefs_invalidDisplayCurrency_returns422() throws Exception {
+        String body = "{\"weightUnit\":\"kg\",\"pickupRadiusKm\":10,"
+                + "\"defaultPackageWeightKg\":23,\"minBidPriceEur\":0,"
+                + "\"displayCurrencyCode\":\"BTC\"}";
+        mockMvc.perform(put("/users/me/business-preferences")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body)
+                        .with(authentication(asUser())))
+                .andExpect(status().isUnprocessableEntity());
     }
 }

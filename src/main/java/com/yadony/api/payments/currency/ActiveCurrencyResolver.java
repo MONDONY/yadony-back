@@ -54,6 +54,36 @@ public class ActiveCurrencyResolver {
         if (walletCurrency.isPresent()) {
             return walletCurrency.get().toUpperCase(Locale.ROOT);
         }
+        return fromCountryOrDefault(userId);
+    }
+
+    /**
+     * Devise d'AFFICHAGE du lecteur (presentment, lot 8) : celle explicitement
+     * choisie dans les reglages ({@code display_currency_code}), sinon la devise
+     * active ({@link #resolve}). A n'utiliser que sur les chemins de lecture
+     * (equivalents convertis, agregats, filtres du fil) — jamais pour snapshotter
+     * la devise d'une annonce, d'une demande ou d'un paiement.
+     */
+    public String resolveDisplay(UUID userId) {
+        if (userId == null) {
+            return DEFAULT_CURRENCY;
+        }
+        java.util.Optional<UserBusinessPrefsEntity> prefs =
+                userBusinessPrefsRepository.findById(userId);
+        if (prefs.isPresent()) {
+            String display = prefs.get().getDisplayCurrencyCode();
+            if (display != null) {
+                return display.toUpperCase(Locale.ROOT);
+            }
+            String wallet = prefs.get().getCurrencyCode();
+            if (wallet != null) {
+                return wallet.toUpperCase(Locale.ROOT);
+            }
+        }
+        return fromCountryOrDefault(userId);
+    }
+
+    private String fromCountryOrDefault(UUID userId) {
         SupportedCurrency currency = userRepository.findById(userId)
                 .map(UserEntity::getCountry)
                 .map(CountryCatalog::currencyOf)

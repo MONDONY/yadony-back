@@ -76,4 +76,53 @@ class TravelerSubscriptionRepositoryTest {
         assertThat(rows).hasSize(1);
         assertThat(rows.get(0)[2]).isEqualTo("avatars/ibrahima.jpg");
     }
+
+    @Test
+    void markAllSeenBySenderId_resetsOnlyThatSendersFlags() {
+        UUID sender = UUID.randomUUID();
+        UUID autreSender = UUID.randomUUID();
+
+        TravelerSubscriptionEntity avecNouveau = new TravelerSubscriptionEntity();
+        avecNouveau.setSenderId(sender);
+        avecNouveau.setTravelerId(UUID.randomUUID());
+        avecNouveau.setHasNew(true);
+        repo.save(avecNouveau);
+
+        TravelerSubscriptionEntity dejaVu = new TravelerSubscriptionEntity();
+        dejaVu.setSenderId(sender);
+        dejaVu.setTravelerId(UUID.randomUUID());
+        dejaVu.setHasNew(false);
+        repo.save(dejaVu);
+
+        TravelerSubscriptionEntity voisin = new TravelerSubscriptionEntity();
+        voisin.setSenderId(autreSender);
+        voisin.setTravelerId(UUID.randomUUID());
+        voisin.setHasNew(true);
+        repo.save(voisin);
+
+        // Seule la ligne réellement marquée est réécrite : le compteur le prouve.
+        assertThat(repo.markAllSeenBySenderId(sender)).isEqualTo(1);
+
+        assertThat(repo.findAllBySenderId(sender))
+            .allSatisfy(s -> assertThat(s.isHasNew()).isFalse());
+        // L'abonnement d'un autre expéditeur garde sa pastille.
+        assertThat(repo.findAllBySenderId(autreSender))
+            .singleElement()
+            .satisfies(s -> assertThat(s.isHasNew()).isTrue());
+    }
+
+    @Test
+    void markAllSeenBySenderId_ignoresUnsubscribedRows() {
+        UUID sender = UUID.randomUUID();
+        TravelerSubscriptionEntity resilie = new TravelerSubscriptionEntity();
+        resilie.setSenderId(sender);
+        resilie.setTravelerId(UUID.randomUUID());
+        resilie.setHasNew(true);
+        resilie.setDeletedAt(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC));
+        repo.save(resilie);
+
+        // Le @Where de l'entité ne filtre pas les mises à jour en masse : c'est
+        // la clause deletedAt de la requête qui protège la ligne résiliée.
+        assertThat(repo.markAllSeenBySenderId(sender)).isZero();
+    }
 }

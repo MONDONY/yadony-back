@@ -1,6 +1,7 @@
 package com.yadony.api.subscriptions.dto;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
@@ -20,6 +21,8 @@ public record SubscriptionItemResponse(
         String departureCity,
         String arrivalCity,
         BigDecimal pricePerKg,
+        String currency,
+        LocalDate departureDate,
         LocalDateTime publishedAt
     ) {}
 }

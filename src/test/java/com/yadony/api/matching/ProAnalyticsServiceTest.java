@@ -34,7 +34,7 @@ class ProAnalyticsServiceTest {
     @Mock ExchangeRateService exchangeRateService;
 
     private ProAnalyticsService service() {
-        lenient().when(activeCurrencyResolver.resolve(any())).thenReturn("EUR");
+        lenient().when(activeCurrencyResolver.resolveDisplay(any())).thenReturn("EUR");
         lenient().when(exchangeRateService.convert(any(), any(), any()))
                 .thenAnswer(inv -> inv.getArgument(0));
         return new ProAnalyticsService(announcementRepository, bidRepository, paymentRepository,

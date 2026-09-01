@@ -222,6 +222,32 @@ class SubscriptionControllerTest {
                 .andExpect(status().isForbidden());
     }
 
+    // ── markAllSeen ───────────────────────────────────────────────────────────
+
+    @Test
+    void markAllSeen_asSender_returns204() throws Exception {
+        doNothing().when(subscriptionService).markAllSeen(FIREBASE_UID);
+
+        mockMvc.perform(post("/me/subscriptions/mark-seen")
+                        .with(authentication(asSender())))
+                .andExpect(status().isNoContent());
+
+        verify(subscriptionService).markAllSeen(FIREBASE_UID);
+    }
+
+    @Test
+    void markAllSeen_unauthenticated_returns401() throws Exception {
+        mockMvc.perform(post("/me/subscriptions/mark-seen"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void markAllSeen_asTraveler_returns403() throws Exception {
+        mockMvc.perform(post("/me/subscriptions/mark-seen")
+                        .with(authentication(asTraveler())))
+                .andExpect(status().isForbidden());
+    }
+
     // ── mySubscribers ─────────────────────────────────────────────────────────
 
     @Test
