@@ -92,6 +92,17 @@ public class SubscriptionService {
         });
     }
 
+    /**
+     * Retire l'indicateur « nouveau » de tous les abonnements de l'expéditeur.
+     *
+     * <p>Existe parce que l'écran « Mes abonnements » offre une action unique :
+     * marquer un à un aurait produit autant de requêtes que d'abonnements.</p>
+     */
+    @Transactional
+    public void markAllSeen(String firebaseUid) {
+        subscriptionRepository.markAllSeenBySenderId(senderId(firebaseUid));
+    }
+
     @Transactional(readOnly = true)
     public SubscriptionStatusResponse getStatus(String firebaseUid, UUID travelerId) {
         UUID sid = senderId(firebaseUid);
@@ -130,12 +141,24 @@ public class SubscriptionService {
     private SubscriptionItemResponse mapRow(Object[] r) {
         SubscriptionItemResponse.LastAnnouncement last = null;
         if (r[8] != null) {
-            LocalDateTime published = r[12] instanceof java.sql.Timestamp ts
+            LocalDateTime published = r[14] instanceof java.sql.Timestamp ts
                 ? ts.toLocalDateTime()
-                : ((java.time.Instant) r[12]).atZone(ZoneOffset.UTC).toLocalDateTime();
+                : ((java.time.Instant) r[14]).atZone(ZoneOffset.UTC).toLocalDateTime();
+            // La colonne remonte en java.sql.Date sous PostgreSQL, en LocalDate
+            // sous H2 : les deux formes doivent être acceptées.
+            java.time.LocalDate departure = switch (r[13]) {
+                case java.sql.Date d -> d.toLocalDate();
+                case java.time.LocalDate d -> d;
+                case null, default -> null;
+            };
+            // Repli sur EUR : la colonne est NOT NULL en base, mais une annonce
+            // antérieure au multidevise pourrait remonter nulle d'un jeu de test.
+            String currency = r[12] != null ? (String) r[12] : "EUR";
             last = new SubscriptionItemResponse.LastAnnouncement(
                 (UUID) r[8], (String) r[9], (String) r[10],
                 (BigDecimal) r[11],
+                currency,
+                departure,
                 published
             );
         }

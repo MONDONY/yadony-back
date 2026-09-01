@@ -141,7 +141,9 @@ class SubscriptionServiceTest {
         Object[] row = new Object[]{
             travelerId, "Ibrahima D", "avatars/ibrahima.jpg", true, new java.math.BigDecimal("4.8"), 2L,
             false, true, UUID.randomUUID(), "Paris", "Dakar",
-            new java.math.BigDecimal("8.00"), java.sql.Timestamp.valueOf(java.time.LocalDateTime.now())
+            new java.math.BigDecimal("8.00"), "XOF",
+            java.sql.Date.valueOf(java.time.LocalDate.of(2026, 9, 27)),
+            java.sql.Timestamp.valueOf(java.time.LocalDateTime.now())
         };
         when(repo.findEnrichedBySenderId(senderId)).thenReturn(List.<Object[]>of(row));
 
@@ -152,6 +154,44 @@ class SubscriptionServiceTest {
         assertThat(list.get(0).avatarUrl()).isEqualTo("https://cdn.yadony.app/signed/ibrahima.jpg");
         assertThat(list.get(0).ongoingTripsCount()).isEqualTo(2L);
         assertThat(list.get(0).lastAnnouncement().arrivalCity()).isEqualTo("Dakar");
+        // La devise vient de l'annonce : afficher un euro sur un prix publié en
+        // XOF donnerait un montant faux de plusieurs centaines de fois.
+        assertThat(list.get(0).lastAnnouncement().currency()).isEqualTo("XOF");
+        // La date de départ décide si l'expéditeur peut confier son colis : la
+        // carte l'affiche à la place de la date de publication.
+        assertThat(list.get(0).lastAnnouncement().departureDate())
+            .isEqualTo(java.time.LocalDate.of(2026, 9, 27));
+    }
+
+    @Test
+    void getMySubscriptions_nullCurrency_fallsBackToEur() {
+        when(userRepository.findByFirebaseUid(uid)).thenReturn(Optional.of(sender));
+        when(storageService.avatarUrl(null)).thenReturn(null);
+        Object[] row = new Object[]{
+            travelerId, "Ibrahima D", null, false, new java.math.BigDecimal("4.8"), 1L,
+            false, false, UUID.randomUUID(), "Lyon", "Bamako",
+            new java.math.BigDecimal("7.00"), null,
+            java.time.LocalDate.of(2026, 10, 5),
+            java.sql.Timestamp.valueOf(java.time.LocalDateTime.now())
+        };
+        when(repo.findEnrichedBySenderId(senderId)).thenReturn(List.<Object[]>of(row));
+
+        var list = service.getMySubscriptions(uid);
+
+        assertThat(list.get(0).lastAnnouncement().currency()).isEqualTo("EUR");
+        // H2 rend un LocalDate là où PostgreSQL rend un java.sql.Date : les deux
+        // formes doivent être acceptées par le mapping.
+        assertThat(list.get(0).lastAnnouncement().departureDate())
+            .isEqualTo(java.time.LocalDate.of(2026, 10, 5));
+    }
+
+    @Test
+    void markAllSeen_delegatesToRepositoryWithSenderId() {
+        when(userRepository.findByFirebaseUid(uid)).thenReturn(Optional.of(sender));
+
+        service.markAllSeen(uid);
+
+        verify(repo).markAllSeenBySenderId(senderId);
     }
 
     @Test
@@ -160,7 +200,7 @@ class SubscriptionServiceTest {
         when(storageService.avatarUrl(null)).thenReturn(null);
         Object[] row = new Object[]{
             travelerId, "Karim", null, false, new java.math.BigDecimal("4.5"), 0L,
-            false, false, null, null, null, null, null
+            false, false, null, null, null, null, null, null, null
         };
         when(repo.findEnrichedBySenderId(senderId)).thenReturn(List.<Object[]>of(row));
 

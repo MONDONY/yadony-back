@@ -1,6 +1,7 @@
 package com.yadony.api.subscriptions;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -52,6 +53,12 @@ public interface TravelerSubscriptionRepository extends JpaRepository<TravelerSu
                (SELECT a.price_per_kg FROM announcements a WHERE a.traveler_id = ts.traveler_id
                   AND a.deleted_at IS NULL AND a.status IN ('ACTIVE','FULL')
                   ORDER BY a.created_at DESC LIMIT 1)            AS last_price,
+               (SELECT a.currency FROM announcements a WHERE a.traveler_id = ts.traveler_id
+                  AND a.deleted_at IS NULL AND a.status IN ('ACTIVE','FULL')
+                  ORDER BY a.created_at DESC LIMIT 1)            AS last_currency,
+               (SELECT a.departure_date FROM announcements a WHERE a.traveler_id = ts.traveler_id
+                  AND a.deleted_at IS NULL AND a.status IN ('ACTIVE','FULL')
+                  ORDER BY a.created_at DESC LIMIT 1)            AS last_departure,
                (SELECT a.created_at FROM announcements a WHERE a.traveler_id = ts.traveler_id
                   AND a.deleted_at IS NULL AND a.status IN ('ACTIVE','FULL')
                   ORDER BY a.created_at DESC LIMIT 1)            AS last_published
@@ -62,4 +69,18 @@ public interface TravelerSubscriptionRepository extends JpaRepository<TravelerSu
         ORDER BY ts.has_new DESC, ts.created_at DESC
         """, nativeQuery = true)
     List<Object[]> findEnrichedBySenderId(@Param("senderId") UUID senderId);
+
+    /**
+     * Retire l'indicateur « nouveau » de tous les abonnements d'un expéditeur.
+     *
+     * <p>La clause {@code deletedAt IS NULL} est écrite explicitement : le
+     * {@code @Where} de l'entité filtre les chargements, pas les mises à jour en
+     * masse, et un abonnement résilié ne doit pas être réécrit.</p>
+     *
+     * @return le nombre de lignes effectivement remises à zéro
+     */
+    @Modifying(clearAutomatically = true)
+    @Query("UPDATE TravelerSubscriptionEntity ts SET ts.hasNew = false "
+         + "WHERE ts.senderId = :senderId AND ts.hasNew = true AND ts.deletedAt IS NULL")
+    int markAllSeenBySenderId(@Param("senderId") UUID senderId);
 }
