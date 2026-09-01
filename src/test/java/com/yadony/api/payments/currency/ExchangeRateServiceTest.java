@@ -128,4 +128,28 @@ class ExchangeRateServiceTest {
                 .satisfies(ex -> assertThat(((YadonyBusinessException) ex).getErrorCode())
                         .isEqualTo("exchange-rate-missing"));
     }
+
+    // ── toEurPivot ─────────────────────────────────────────────────────────────
+
+    @Test
+    void toEurPivot_eur_isIdentityAtScale4() {
+        assertThat(service.toEurPivot(new java.math.BigDecimal("12.5"), "EUR"))
+                .isEqualByComparingTo("12.5000");
+    }
+
+    @Test
+    void toEurPivot_xof_dividesByAdministeredRate() {
+        when(repository.findByCurrency("XOF"))
+                .thenReturn(java.util.Optional.of(new ExchangeRateEntity("XOF", new BigDecimal("655.957000"))));
+        // 5000 F CFA → 7,6225 EUR (7,62245… HALF_UP) : 4 décimales, pas 2 — un pivot
+        // ordonne des prix, arrondir au centime écraserait des écarts réels entre
+        // deux prix XOF voisins.
+        assertThat(service.toEurPivot(new java.math.BigDecimal("5000"), "XOF"))
+                .isEqualByComparingTo("7.6225");
+    }
+
+    @Test
+    void toEurPivot_null_returnsNull() {
+        assertThat(service.toEurPivot(null, "XOF")).isNull();
+    }
 }

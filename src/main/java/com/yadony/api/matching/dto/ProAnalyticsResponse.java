@@ -15,6 +15,7 @@ public record ProAnalyticsResponse(
             String trendValue
     ) {}
 
+    /** Montants en unités MINEURES de {@code currency} (centimes EUR, unité pleine XOF). */
     public record TransactionRowDto(
             String tripId,
             String corridor,
@@ -22,6 +23,7 @@ public record ProAnalyticsResponse(
             int parcelCount,
             long grossRevenue,
             long commission,
-            long netRevenue
+            long netRevenue,
+            String currency
     ) {}
 }

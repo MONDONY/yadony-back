@@ -72,6 +72,27 @@ public class ExchangeRateService {
         return converted.setScale(decimals, RoundingMode.HALF_UP);
     }
 
+    /**
+     * Équivalent EUR « pivot » d'un montant, à 4 décimales : l'échelle commune sur
+     * laquelle le marché unifié compare des montants publiés dans des devises
+     * différentes (colonne {@code announcements.price_per_kg_eur}, score de matching,
+     * estimation de corridor, borne du filtre prix).
+     *
+     * <p>4 décimales et non celles de l'EUR : un pivot sert à ordonner et à borner,
+     * pas à être affiché — arrondir au centime écraserait des écarts réels entre
+     * deux prix XOF voisins (1 F CFA ≈ 0,0015 €).
+     */
+    public BigDecimal toEurPivot(BigDecimal amount, String currency) {
+        if (amount == null) {
+            return null;
+        }
+        String from = normalize(currency);
+        if ("EUR".equals(from)) {
+            return amount.setScale(4, RoundingMode.HALF_UP);
+        }
+        return amount.divide(rateOf(from), 4, RoundingMode.HALF_UP);
+    }
+
     private String normalize(String currency) {
         return currency == null ? "" : currency.trim().toUpperCase(Locale.ROOT);
     }

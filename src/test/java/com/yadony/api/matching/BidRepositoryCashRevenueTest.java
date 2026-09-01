@@ -2,6 +2,7 @@ package com.yadony.api.matching;
 
 import com.yadony.api.matching.dto.AnnouncementRevenueRow;
 import com.yadony.api.payments.cash.PaymentMethod;
+import com.yadony.api.payments.dto.CurrencyAmountRow;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
@@ -55,13 +56,25 @@ class BidRepositoryCashRevenueTest {
     }
 
     private void newBid(UUID announcementId, BidStatus status, PaymentMethod method, String net) {
+        newBid(announcementId, status, method, net, "EUR");
+    }
+
+    private void newBid(UUID announcementId, BidStatus status, PaymentMethod method, String net,
+                        String currency) {
         BidEntity b = new BidEntity();
         b.setAnnouncementId(announcementId);
         b.setSenderId(UUID.randomUUID());
         b.setStatus(status);
         b.setPaymentMethod(method);
         b.setNegotiatedNetEur(net == null ? null : new BigDecimal(net));
+        b.setCurrency(currency);
         em.persistAndFlush(b);
+    }
+
+    /** Total réduit d'une ventilation par devise — zéro quand elle est vide. */
+    private static BigDecimal sumOf(List<CurrencyAmountRow> rows) {
+        return rows.stream().map(CurrencyAmountRow::amount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
     @Test
@@ -70,8 +83,8 @@ class BidRepositoryCashRevenueTest {
         UUID ann = newAnnouncement(traveler);
         newBid(ann, BidStatus.COMPLETED, PaymentMethod.CASH, "150.00");
 
-        BigDecimal revenue = bidRepository.sumCashNetRevenueForTraveler(
-                traveler, BidStatus.COMPLETED, PaymentMethod.CASH, FROM, TO);
+        BigDecimal revenue = sumOf(bidRepository.sumCashNetRevenueForTravelerByCurrency(
+                traveler, BidStatus.COMPLETED, PaymentMethod.CASH, FROM, TO));
 
         assertThat(revenue).isEqualByComparingTo("150.00");
     }
@@ -83,8 +96,8 @@ class BidRepositoryCashRevenueTest {
         // Un deal carte est déjà compté côté PaymentEntity — ne pas le doubler ici.
         newBid(ann, BidStatus.COMPLETED, PaymentMethod.STRIPE, "150.00");
 
-        BigDecimal revenue = bidRepository.sumCashNetRevenueForTraveler(
-                traveler, BidStatus.COMPLETED, PaymentMethod.CASH, FROM, TO);
+        BigDecimal revenue = sumOf(bidRepository.sumCashNetRevenueForTravelerByCurrency(
+                traveler, BidStatus.COMPLETED, PaymentMethod.CASH, FROM, TO));
 
         assertThat(revenue).isEqualByComparingTo("0");
     }
@@ -95,8 +108,8 @@ class BidRepositoryCashRevenueTest {
         UUID ann = newAnnouncement(traveler);
         newBid(ann, BidStatus.ACCEPTED, PaymentMethod.CASH, "150.00");
 
-        BigDecimal revenue = bidRepository.sumCashNetRevenueForTraveler(
-                traveler, BidStatus.COMPLETED, PaymentMethod.CASH, FROM, TO);
+        BigDecimal revenue = sumOf(bidRepository.sumCashNetRevenueForTravelerByCurrency(
+                traveler, BidStatus.COMPLETED, PaymentMethod.CASH, FROM, TO));
 
         assertThat(revenue).isEqualByComparingTo("0");
     }
@@ -107,8 +120,8 @@ class BidRepositoryCashRevenueTest {
         UUID otherAnn = newAnnouncement(UUID.randomUUID());
         newBid(otherAnn, BidStatus.COMPLETED, PaymentMethod.CASH, "150.00");
 
-        BigDecimal revenue = bidRepository.sumCashNetRevenueForTraveler(
-                traveler, BidStatus.COMPLETED, PaymentMethod.CASH, FROM, TO);
+        BigDecimal revenue = sumOf(bidRepository.sumCashNetRevenueForTravelerByCurrency(
+                traveler, BidStatus.COMPLETED, PaymentMethod.CASH, FROM, TO));
 
         assertThat(revenue).isEqualByComparingTo("0");
     }
@@ -120,8 +133,8 @@ class BidRepositoryCashRevenueTest {
         newBid(ann, BidStatus.COMPLETED, PaymentMethod.CASH, "150.00");
         newBid(ann, BidStatus.COMPLETED, PaymentMethod.CASH, "90.00");
 
-        BigDecimal revenue = bidRepository.sumCashNetRevenueForTraveler(
-                traveler, BidStatus.COMPLETED, PaymentMethod.CASH, FROM, TO);
+        BigDecimal revenue = sumOf(bidRepository.sumCashNetRevenueForTravelerByCurrency(
+                traveler, BidStatus.COMPLETED, PaymentMethod.CASH, FROM, TO));
 
         assertThat(revenue).isEqualByComparingTo("240.00");
     }
@@ -132,8 +145,8 @@ class BidRepositoryCashRevenueTest {
         UUID ann = newAnnouncement(traveler);
         newBid(ann, BidStatus.COMPLETED, PaymentMethod.CASH, "150.00");
 
-        BigDecimal total = bidRepository.sumTotalCashNetRevenueForTraveler(
-                traveler, BidStatus.COMPLETED, PaymentMethod.CASH);
+        BigDecimal total = sumOf(bidRepository.sumTotalCashNetRevenueForTravelerByCurrency(
+                traveler, BidStatus.COMPLETED, PaymentMethod.CASH));
 
         assertThat(total).isEqualByComparingTo("150.00");
     }
@@ -158,6 +171,22 @@ class BidRepositoryCashRevenueTest {
         // gross = net (le voyageur encaisse le net en cash), commission = 0.
         assertThat(row.gross()).isEqualByComparingTo("240.00");
         assertThat(row.commission()).isEqualByComparingTo("0");
+    }
+
+    @Test
+    void cashRevenue_isGroupedByBidCurrency_neverFlattened() {
+        UUID traveler = UUID.randomUUID();
+        UUID ann = newAnnouncement(traveler);
+        newBid(ann, BidStatus.COMPLETED, PaymentMethod.CASH, "150.00", "EUR");
+        newBid(ann, BidStatus.COMPLETED, PaymentMethod.CASH, "50.00", "EUR");
+        newBid(ann, BidStatus.COMPLETED, PaymentMethod.CASH, "65596", "XOF");
+
+        List<CurrencyAmountRow> rows = bidRepository.sumCashNetRevenueForTravelerByCurrency(
+                traveler, BidStatus.COMPLETED, PaymentMethod.CASH, FROM, TO);
+
+        assertThat(rows).containsExactlyInAnyOrder(
+                new CurrencyAmountRow("EUR", new BigDecimal("200.00")),
+                new CurrencyAmountRow("XOF", new BigDecimal("65596.00")));
     }
 
     @Test

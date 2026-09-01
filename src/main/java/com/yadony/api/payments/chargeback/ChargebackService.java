@@ -52,7 +52,8 @@ public class ChargebackService {
         String disputeId = dispute.path("id").asText();
         String chargeId  = dispute.path("charge").asText(null);
         long amount      = dispute.path("amount").asLong();
-        String currency  = dispute.path("currency").asText("eur");
+        // Stripe parle en minuscules ; le schéma Yadony en MAJUSCULES (V236).
+        String currency  = dispute.path("currency").asText("eur").toUpperCase(java.util.Locale.ROOT);
         String reason    = dispute.path("reason").asText(null);
 
         if (chargebackRepository.findByStripeDisputeId(disputeId).isPresent()) {

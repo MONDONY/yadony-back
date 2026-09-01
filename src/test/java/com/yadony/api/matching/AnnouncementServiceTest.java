@@ -1706,10 +1706,10 @@ class AnnouncementServiceTest {
             traveler.setLastName(null);
             AnnouncementEntity ann = buildAnnouncement(traveler);
 
-            // Tri par prix : depuis la Tâche 10, la branche "price" récupère l'ensemble
-            // filtré non paginé (findAll(spec)) pour trier en mémoire sur le prix converti.
-            when(announcementRepository.findAll(ArgumentMatchers.<Specification<AnnouncementEntity>>any()))
-                    .thenReturn(List.of(ann));
+            // Tri par prix : en SQL sur le pivot EUR (price_per_kg_eur) depuis V235,
+            // même chemin paginé que les autres tris.
+            when(announcementRepository.findAll(ArgumentMatchers.<Specification<AnnouncementEntity>>any(), any(Pageable.class)))
+                    .thenReturn(new PageImpl<>(List.of(ann)));
             stubBatchSearch(traveler, 1L);
 
             Page<?> result = announcementService.searchAnnouncements(
@@ -1764,10 +1764,9 @@ class AnnouncementServiceTest {
             traveler.setLastName(null);
             AnnouncementEntity ann = buildAnnouncement(traveler);
 
-            // Tri par prix : depuis la Tâche 10, la branche "price" récupère l'ensemble
-            // filtré non paginé (findAll(spec)) pour trier en mémoire sur le prix converti.
-            when(announcementRepository.findAll(ArgumentMatchers.<Specification<AnnouncementEntity>>any()))
-                    .thenReturn(List.of(ann));
+            // Tri par prix : en SQL sur le pivot EUR, même chemin paginé que les autres tris.
+            when(announcementRepository.findAll(ArgumentMatchers.<Specification<AnnouncementEntity>>any(), any(Pageable.class)))
+                    .thenReturn(new PageImpl<>(List.of(ann)));
             stubBatchSearch(traveler, 0L);
 
             assertThatNoException().isThrownBy(() -> announcementService.searchAnnouncements(
@@ -2012,53 +2011,42 @@ class AnnouncementServiceTest {
         }
 
         /**
-         * Preuve que le tri par prix croissant s'appuie sur la valeur convertie dans la
-         * devise du lecteur, pas sur la valeur brute : les montants sont choisis pour que
-         * le tri brut donnerait l'ordre EXACTEMENT inverse de l'ordre attendu une fois
-         * converti. Un tri encore basé sur {@code pricePerKg} brut ferait échouer cette
-         * assertion.
+         * Le tri par prix est délégué au SQL sur le pivot EUR ({@code pricePerKgEur}) :
+         * multiplier par le taux du lecteur (facteur strictement positif) préserve
+         * l'ordre, donc trier sur le pivot équivaut à trier sur le prix converti. Le
+         * contrat vérifié ici : le Pageable transmis au repository porte bien
+         * pro-d'abord, puis le pivot, puis l'id en départage — jamais le brut
+         * {@code pricePerKg} multidevise.
          */
         @Test
-        @DisplayName("tri par prix croissant sur 3 devises → ordonné sur l'équivalent converti, pas la valeur brute")
-        void searchAnnouncements_sortByPriceAsc_ordersByConvertedValueAcrossThreeCurrencies() {
+        @DisplayName("tri par prix → délégué au SQL sur le pivot EUR, nulls last, départage id")
+        void searchAnnouncements_sortByPrice_delegatesToSqlPivotSort() {
             UserEntity traveler = buildTraveler();
+            AnnouncementEntity ann = buildAnnouncement(traveler);
 
-            // Brut ascendant : usd(1) < xof(50) < eur(100) — l'inverse de l'ordre converti visé.
-            AnnouncementEntity usd = buildAnnouncement(traveler);
-            setId(usd, UUID.randomUUID());
-            usd.setCurrency("USD");
-            usd.setPricePerKg(BigDecimal.valueOf(1));
-
-            AnnouncementEntity xof = buildAnnouncement(traveler);
-            setId(xof, UUID.randomUUID());
-            xof.setCurrency("XOF");
-            xof.setPricePerKg(BigDecimal.valueOf(50));
-
-            AnnouncementEntity eur = buildAnnouncement(traveler);
-            setId(eur, UUID.randomUUID());
-            eur.setCurrency("EUR");
-            eur.setPricePerKg(BigDecimal.valueOf(100));
-
-            // Converti (devise lecteur EUR) ascendant visé : eur(100) < xof(500) < usd(900).
             when(activeCurrencyResolver.resolve(null)).thenReturn("EUR");
-            when(exchangeRateService.convert(BigDecimal.valueOf(1), "USD", "EUR"))
-                    .thenReturn(BigDecimal.valueOf(900));
-            when(exchangeRateService.convert(BigDecimal.valueOf(50), "XOF", "EUR"))
-                    .thenReturn(BigDecimal.valueOf(500));
-            when(exchangeRateService.convert(BigDecimal.valueOf(100), "EUR", "EUR"))
-                    .thenReturn(BigDecimal.valueOf(100));
+            ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
+            when(announcementRepository.findAll(
+                    ArgumentMatchers.<Specification<AnnouncementEntity>>any(), pageableCaptor.capture()))
+                    .thenReturn(new PageImpl<>(List.of(ann)));
+            stubBatchSearch(traveler, 0L);
 
-            when(announcementRepository.findAll(ArgumentMatchers.<Specification<AnnouncementEntity>>any()))
-                    .thenReturn(List.of(usd, xof, eur));
-            when(userRepository.findAllById(anyCollection())).thenReturn(List.of(traveler));
-            when(bidRepository.countVisibleByAnnouncementIds(anyCollection())).thenReturn(List.of());
-
-            Page<AnnouncementSearchResponse> result = announcementService.searchAnnouncements(
+            announcementService.searchAnnouncements(
                     null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
                     "price", "asc", PageRequest.of(0, 10), null, null);
 
-            assertThat(result.getContent()).extracting(AnnouncementSearchResponse::currency)
-                    .containsExactly("EUR", "XOF", "USD");
+            org.springframework.data.domain.Sort sort = pageableCaptor.getValue().getSort();
+            java.util.List<org.springframework.data.domain.Sort.Order> orders =
+                    sort.stream().toList();
+            assertThat(orders).extracting(org.springframework.data.domain.Sort.Order::getProperty)
+                    .containsExactly("travelerIsPro", "pricePerKgEur", "id");
+            org.springframework.data.domain.Sort.Order pivot = orders.get(1);
+            assertThat(pivot.isAscending()).isTrue();
+            // Pas de NullHandling : refusé par Spring Data sur une requête Criteria,
+            // et le pivot est non null par construction (price_per_kg NOT NULL V3).
+            assertThat(pivot.getNullHandling())
+                    .isEqualTo(org.springframework.data.domain.Sort.NullHandling.NATIVE);
+            assertThat(sort.getOrderFor("pricePerKg")).isNull();
         }
 
         /**

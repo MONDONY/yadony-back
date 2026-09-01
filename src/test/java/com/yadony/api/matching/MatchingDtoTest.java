@@ -19,8 +19,13 @@ class MatchingDtoTest {
                 BigDecimal.valueOf(500), BigDecimal.valueOf(2000),
                 3, 12, 0.95, BigDecimal.valueOf(4.8),
                 List.of(dest),
-                8, 2, 40, 3, 15);
+                8, 2, 40, 3, 15,
+                "EUR",
+                List.of(new TravelerStatsDto.CurrencyRevenue("EUR", BigDecimal.valueOf(500))),
+                List.of(new TravelerStatsDto.CurrencyRevenue("EUR", BigDecimal.valueOf(2000))));
         assertThat(dto.totalRevenue()).isEqualTo(BigDecimal.valueOf(2000));
+        assertThat(dto.currency()).isEqualTo("EUR");
+        assertThat(dto.totalRevenueByCurrency()).hasSize(1);
         assertThat(dto.topDestinations()).hasSize(1);
         assertThat(dto.totalTripsCompleted()).isEqualTo(8);
         assertThat(dto.activeTrips()).isEqualTo(2);

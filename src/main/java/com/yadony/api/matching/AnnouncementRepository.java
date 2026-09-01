@@ -178,12 +178,15 @@ public interface AnnouncementRepository extends JpaRepository<AnnouncementEntity
     /**
      * Returns recent announcements on a corridor (departure→arrival) with a future or
      * today departure date, ordered newest first. Used by PriceEstimationService.
+     *
+     * <p>Toutes devises confondues : le marché est unifié, l'estimation moyenne sur le
+     * pivot EUR puis convertit vers la devise de la demande. Cloisonner par devise
+     * rendait l'estimation muette sur un corridor pourtant actif dans une autre devise.
      */
     @Query("""
         SELECT a FROM AnnouncementEntity a
         WHERE LOWER(a.departureCity) = LOWER(:departure)
           AND LOWER(a.arrivalCity)   = LOWER(:arrival)
-          AND a.currency = :currency
           AND a.departureDate >= CURRENT_DATE
           AND a.status <> com.yadony.api.matching.AnnouncementStatus.DRAFT
         ORDER BY a.createdAt DESC
@@ -191,8 +194,25 @@ public interface AnnouncementRepository extends JpaRepository<AnnouncementEntity
     List<AnnouncementEntity> findRecentByCorridor(
         @Param("departure") String departure,
         @Param("arrival") String arrival,
-        @Param("currency") String currency,
         org.springframework.data.domain.Pageable pageable);
+
+    /**
+     * Recalcule le pivot EUR de toutes les annonces d'une devise après un changement
+     * de taux administré ({@code AdminExchangeRateController}). Bulk JPQL : ignore
+     * {@code @Where}, donc réécrit aussi les lignes soft-deleted — sans conséquence,
+     * le pivot y est inerte. {@code updatable = false} nulle part : le pivot est une
+     * dérivée, pas une donnée métier figée.
+     */
+    @org.springframework.data.jpa.repository.Modifying(clearAutomatically = true)
+    @Query("""
+        UPDATE AnnouncementEntity a
+        SET a.pricePerKgEur = ROUND(a.pricePerKg / :unitsPerEur, 4)
+        WHERE UPPER(a.currency) = UPPER(:currency)
+          AND a.pricePerKg IS NOT NULL
+    """)
+    int recomputeEurPivotForCurrency(
+        @Param("currency") String currency,
+        @Param("unitsPerEur") java.math.BigDecimal unitsPerEur);
 
     /**
      * Returns ACTIVE or FULL announcements on a corridor (departure→arrival), case-insensitive

@@ -5,6 +5,7 @@ import com.yadony.api.matching.AnnouncementStatus;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.TransportMode;
 import com.yadony.api.matching.dto.AnnouncementRevenueRow;
+import com.yadony.api.payments.dto.CurrencyAmountRow;
 import com.yadony.api.requests.entity.NegotiationThreadEntity;
 import com.yadony.api.requests.entity.NegotiationThreadStatus;
 import com.yadony.api.requests.entity.PackageRequestEntity;
@@ -86,6 +87,12 @@ class PaymentRepositoryRevenueTest {
         return em.persistAndFlush(t);
     }
 
+    /** Total réduit d'une ventilation par devise — zéro quand elle est vide. */
+    private static BigDecimal sumOf(List<CurrencyAmountRow> rows) {
+        return rows.stream().map(CurrencyAmountRow::amount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
     private PaymentEntity newPayment(
             UUID bidId, UUID threadId, String amount, String commission, PaymentStatus status) {
         PaymentEntity p = new PaymentEntity();
@@ -106,8 +113,8 @@ class PaymentRepositoryRevenueTest {
         // bidId NULL : paiement keyé sur le thread (flux négociation).
         newPayment(null, thread, "200.00", "24.00", PaymentStatus.RELEASED);
 
-        BigDecimal revenue = paymentRepository.sumCapturedRevenueForTraveler(
-                traveler, PaymentStatus.RELEASED, FROM, TO);
+        BigDecimal revenue = sumOf(paymentRepository.sumCapturedRevenueForTravelerByCurrency(
+                traveler, PaymentStatus.RELEASED, FROM, TO));
 
         // net = amount - commission = 176. Avant fix : 0 (ligne jetée par l'INNER JOIN).
         assertThat(revenue).isEqualByComparingTo("176.00");
@@ -120,8 +127,8 @@ class PaymentRepositoryRevenueTest {
         UUID bid = newBid(ann).getId();
         newPayment(bid, null, "100.00", "12.00", PaymentStatus.RELEASED);
 
-        BigDecimal revenue = paymentRepository.sumCapturedRevenueForTraveler(
-                traveler, PaymentStatus.RELEASED, FROM, TO);
+        BigDecimal revenue = sumOf(paymentRepository.sumCapturedRevenueForTravelerByCurrency(
+                traveler, PaymentStatus.RELEASED, FROM, TO));
 
         assertThat(revenue).isEqualByComparingTo("88.00");
     }
@@ -135,8 +142,8 @@ class PaymentRepositoryRevenueTest {
         newPayment(bid, null, "100.00", "12.00", PaymentStatus.RELEASED);
         newPayment(null, thread, "200.00", "24.00", PaymentStatus.RELEASED);
 
-        BigDecimal revenue = paymentRepository.sumCapturedRevenueForTraveler(
-                traveler, PaymentStatus.RELEASED, FROM, TO);
+        BigDecimal revenue = sumOf(paymentRepository.sumCapturedRevenueForTravelerByCurrency(
+                traveler, PaymentStatus.RELEASED, FROM, TO));
 
         assertThat(revenue).isEqualByComparingTo("264.00");
     }
@@ -149,8 +156,8 @@ class PaymentRepositoryRevenueTest {
         UUID otherThread = newThread(otherTraveler, otherAnn).getId();
         newPayment(null, otherThread, "200.00", "24.00", PaymentStatus.RELEASED);
 
-        BigDecimal revenue = paymentRepository.sumCapturedRevenueForTraveler(
-                traveler, PaymentStatus.RELEASED, FROM, TO);
+        BigDecimal revenue = sumOf(paymentRepository.sumCapturedRevenueForTravelerByCurrency(
+                traveler, PaymentStatus.RELEASED, FROM, TO));
 
         assertThat(revenue).isEqualByComparingTo("0");
     }
@@ -162,8 +169,8 @@ class PaymentRepositoryRevenueTest {
         UUID thread = newThread(traveler, ann).getId();
         newPayment(null, thread, "200.00", "24.00", PaymentStatus.ESCROW);
 
-        BigDecimal revenue = paymentRepository.sumCapturedRevenueForTraveler(
-                traveler, PaymentStatus.RELEASED, FROM, TO);
+        BigDecimal revenue = sumOf(paymentRepository.sumCapturedRevenueForTravelerByCurrency(
+                traveler, PaymentStatus.RELEASED, FROM, TO));
 
         assertThat(revenue).isEqualByComparingTo("0");
     }
@@ -175,8 +182,8 @@ class PaymentRepositoryRevenueTest {
         UUID thread = newThread(traveler, ann).getId();
         newPayment(null, thread, "200.00", "24.00", PaymentStatus.RELEASED);
 
-        BigDecimal total = paymentRepository.sumTotalCapturedRevenueForTraveler(
-                traveler, PaymentStatus.RELEASED);
+        BigDecimal total = sumOf(paymentRepository.sumTotalCapturedRevenueForTravelerByCurrency(
+                traveler, PaymentStatus.RELEASED));
 
         assertThat(total).isEqualByComparingTo("176.00");
     }
@@ -195,6 +202,31 @@ class PaymentRepositoryRevenueTest {
         assertThat(rows.get(0).announcementId()).isEqualTo(ann);
         assertThat(rows.get(0).gross()).isEqualByComparingTo("200.00");
         assertThat(rows.get(0).commission()).isEqualByComparingTo("24.00");
+    }
+
+    @Test
+    void revenue_isGroupedByCurrency_neverFlattened() {
+        UUID traveler = UUID.randomUUID();
+        UUID ann = newAnnouncement(traveler).getId();
+        UUID bid = newBid(ann).getId();
+        UUID bid2 = newBid(ann).getId();
+        UUID bid3 = newBid(ann).getId();
+        // Un voyageur payé en EUR et en XOF : deux groupes, jamais une somme à plat
+        // (l'ancien SUM sans GROUP BY rendait 65 738,71 « euros »).
+        PaymentEntity p1 = newPayment(bid, null, "100.00", "12.00", PaymentStatus.RELEASED);
+        p1.setCurrency("EUR");
+        PaymentEntity p2 = newPayment(bid2, null, "50.00", "6.00", PaymentStatus.RELEASED);
+        p2.setCurrency("EUR");
+        PaymentEntity p3 = newPayment(bid3, null, "65596", "7871", PaymentStatus.RELEASED);
+        p3.setCurrency("XOF");
+        em.flush();
+
+        List<CurrencyAmountRow> rows = paymentRepository.sumCapturedRevenueForTravelerByCurrency(
+                traveler, PaymentStatus.RELEASED, FROM, TO);
+
+        assertThat(rows).containsExactlyInAnyOrder(
+                new CurrencyAmountRow("EUR", new BigDecimal("132.00")),
+                new CurrencyAmountRow("XOF", new BigDecimal("57725.00")));
     }
 
     // ── Tests hasActiveEscrowForUser ──────────────────────────────────────────

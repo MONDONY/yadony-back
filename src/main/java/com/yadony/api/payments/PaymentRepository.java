@@ -109,8 +109,14 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
     // Un paiement du flux négociation / trajet dédié a bidId = NULL (keyé sur le
     // thread) : LEFT JOIN + attribution via t.travelerId, sinon l'INNER JOIN sur
     // le bid jetait ces revenus (KPI « Revenus » à 0 pour les deals carte négociés).
+    // Groupé par devise, jamais sommé à plat : les paiements d'un voyageur peuvent
+    // mêler EUR et XOF, et « SUM(amount) » toutes devises confondues additionnait
+    // des grandeurs incommensurables. UPPER : la colonne a historiquement porté
+    // 'eur' minuscule (V196), normalisée en V236 — le UPPER rend la requête
+    // insensible à l'ordre d'exécution des migrations et aux lignes futures.
     @Query("""
-        SELECT COALESCE(SUM(p.amount - p.commissionAmount), 0)
+        SELECT new com.yadony.api.payments.dto.CurrencyAmountRow(
+            UPPER(p.currency), SUM(p.amount - p.commissionAmount))
         FROM PaymentEntity p
         LEFT JOIN com.yadony.api.matching.BidEntity b ON p.bidId = b.id
         LEFT JOIN com.yadony.api.matching.AnnouncementEntity a ON b.announcementId = a.id
@@ -118,8 +124,9 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
         WHERE (a.travelerId = :travelerId OR t.travelerId = :travelerId)
           AND p.status = :status
           AND p.createdAt BETWEEN :from AND :to
+        GROUP BY UPPER(p.currency)
     """)
-    java.math.BigDecimal sumCapturedRevenueForTraveler(
+    List<com.yadony.api.payments.dto.CurrencyAmountRow> sumCapturedRevenueForTravelerByCurrency(
             @Param("travelerId") UUID travelerId,
             @Param("status") PaymentStatus status,
             @Param("from") java.time.LocalDateTime from,
@@ -139,7 +146,7 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
     // deux, sinon les revenus négociés disparaissaient de la ventilation par annonce.
     @Query("""
         SELECT new com.yadony.api.matching.dto.AnnouncementRevenueRow(
-            ann.id, ann.departureCity, ann.arrivalCity, ann.departureDate,
+            ann.id, ann.departureCity, ann.arrivalCity, ann.departureDate, UPPER(ann.currency),
             COUNT(p), COALESCE(SUM(p.amount), 0), COALESCE(SUM(p.commissionAmount), 0))
         FROM PaymentEntity p
         LEFT JOIN com.yadony.api.matching.BidEntity b ON p.bidId = b.id
@@ -150,7 +157,7 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
         WHERE ann.travelerId = :travelerId
           AND p.status = :status
           AND p.createdAt BETWEEN :from AND :to
-        GROUP BY ann.id, ann.departureCity, ann.arrivalCity, ann.departureDate
+        GROUP BY ann.id, ann.departureCity, ann.arrivalCity, ann.departureDate, ann.currency
         ORDER BY ann.departureDate DESC
     """)
     List<AnnouncementRevenueRow> findReleasedRevenueByAnnouncement(
@@ -159,16 +166,19 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
             @Param("from") LocalDateTime from,
             @Param("to") LocalDateTime to);
 
+    /** Total tous temps, groupé par devise — voir {@link #sumCapturedRevenueForTravelerByCurrency}. */
     @Query("""
-        SELECT COALESCE(SUM(p.amount - p.commissionAmount), 0)
+        SELECT new com.yadony.api.payments.dto.CurrencyAmountRow(
+            UPPER(p.currency), SUM(p.amount - p.commissionAmount))
         FROM PaymentEntity p
         LEFT JOIN com.yadony.api.matching.BidEntity b ON p.bidId = b.id
         LEFT JOIN com.yadony.api.matching.AnnouncementEntity a ON b.announcementId = a.id
         LEFT JOIN com.yadony.api.requests.entity.NegotiationThreadEntity t ON p.negotiationThreadId = t.id
         WHERE (a.travelerId = :travelerId OR t.travelerId = :travelerId)
           AND p.status = :status
+        GROUP BY UPPER(p.currency)
     """)
-    java.math.BigDecimal sumTotalCapturedRevenueForTraveler(
+    List<com.yadony.api.payments.dto.CurrencyAmountRow> sumTotalCapturedRevenueForTravelerByCurrency(
             @Param("travelerId") UUID travelerId,
             @Param("status") PaymentStatus status);
 

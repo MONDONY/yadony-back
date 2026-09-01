@@ -37,6 +37,7 @@ class MatchingServiceTest {
     @Mock private AnnouncementRepository announcementRepository;
     @Mock private PackageRequestRepository packageRequestRepository;
     @Mock private UserRepository userRepository;
+    @Mock private com.yadony.api.payments.currency.ExchangeRateService exchangeRateService;
 
     @InjectMocks private MatchingService matchingService;
 
@@ -93,6 +94,39 @@ class MatchingServiceTest {
             assertThat(dto.senderInitials()).isEqualTo("MD");
             assertThat(dto.senderRating()).isEqualTo(4.5);
             assertThat(dto.weightKg()).isEqualTo(5.0);
+        }
+
+        /**
+         * Budget en XOF face à un prix en EUR : sans conversion, 5000 F CFA/kg
+         * « couvrait » 5 EUR/kg (5000 >= 5 → 35/35). Le score doit comparer sur le
+         * pivot EUR : 5000 F ≈ 7,62 EUR/kg ≥ 5 EUR/kg — mais l'inverse (budget
+         * 3 EUR/kg face à 5000 F/kg) doit échouer au lieu de scorer 5/35 à tort.
+         */
+        @Test
+        void matchScore_convertsBudgetAndPrice_whenCurrenciesDiffer() throws Exception {
+            // Demande XOF : budget 6000 F pour 3 kg → 2000 F/kg ≈ 3,05 EUR/kg.
+            PackageRequestEntity request = buildRequest(3, LocalDate.now().plusDays(10), 3);
+            request.setCurrency("XOF");
+            request.setTargetPriceEur(BigDecimal.valueOf(6000));
+            // Annonce EUR à 5 EUR/kg, pivot posé (V235).
+            activeAnnouncement.setCurrency("EUR");
+            activeAnnouncement.setPricePerKgEur(new BigDecimal("5.0000"));
+
+            when(exchangeRateService.toEurPivot(
+                    org.mockito.ArgumentMatchers.argThat(v -> v != null && v.doubleValue() == 2000.0),
+                    org.mockito.ArgumentMatchers.eq("XOF")))
+                    .thenReturn(new BigDecimal("3.0490"));
+            when(announcementRepository.findActiveByTravelerId(TRAVELER_ID))
+                    .thenReturn(List.of(activeAnnouncement));
+            when(packageRequestRepository.findOpenByCorridor("Paris", "Dakar"))
+                    .thenReturn(List.of(request));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+
+            List<MatchingRequestDto> results = matchingService.findMatchingRequests(TRAVELER_ID);
+
+            // weight 3/20 → ratio 0,15 → 34 ; budget 3,05 < 5×0,8 → 5 ; date → 25.
+            // Sans conversion, 2000 >= 5 aurait donné 35 (score 94).
+            assertThat(results.get(0).matchScore()).isEqualTo(64);
         }
 
         @Test

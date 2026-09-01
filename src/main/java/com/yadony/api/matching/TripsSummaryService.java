@@ -38,16 +38,22 @@ public class TripsSummaryService {
     private final BidRepository bidRepository;
     private final PaymentRepository paymentRepository;
     private final CacheManager cacheManager;
+    private final com.yadony.api.payments.currency.ActiveCurrencyResolver activeCurrencyResolver;
+    private final com.yadony.api.payments.currency.ExchangeRateService exchangeRateService;
 
     public TripsSummaryService(
             AnnouncementRepository announcementRepository,
             BidRepository bidRepository,
             PaymentRepository paymentRepository,
-            CacheManager cacheManager) {
+            CacheManager cacheManager,
+            com.yadony.api.payments.currency.ActiveCurrencyResolver activeCurrencyResolver,
+            com.yadony.api.payments.currency.ExchangeRateService exchangeRateService) {
         this.announcementRepository = announcementRepository;
         this.bidRepository = bidRepository;
         this.paymentRepository = paymentRepository;
         this.cacheManager = cacheManager;
+        this.activeCurrencyResolver = activeCurrencyResolver;
+        this.exchangeRateService = exchangeRateService;
     }
 
     @Cacheable(
@@ -68,13 +74,19 @@ public class TripsSummaryService {
                 userId, BidStatus.COMPLETED, from, to);
 
         // Revenu = carte (escrow libéré) + espèces (net des bids CASH livrés, qui
-        // ne passent par aucun PaymentEntity). Sans le terme cash, un trajet réglé
-        // en espèces restait à 0 € alors que « Kg vendus » le comptait déjà.
-        BigDecimal revenue = TravelerRevenue.cardPlusCash(
-                paymentRepository.sumCapturedRevenueForTraveler(
-                        userId, PaymentStatus.RELEASED, from, to),
-                bidRepository.sumCashNetRevenueForTraveler(
-                        userId, BidStatus.COMPLETED, PaymentMethod.CASH, from, to));
+        // ne passent par aucun PaymentEntity), agrégé PAR DEVISE puis converti au
+        // taux courant vers la devise active du voyageur — sommer EUR et XOF à plat
+        // n'a pas de sens. Sans le terme cash, un trajet réglé en espèces restait à
+        // 0 alors que « Kg vendus » le comptait déjà.
+        String activeCurrency = activeCurrencyResolver.resolve(userId);
+        BigDecimal revenue = TravelerRevenue.cardPlusCashByCurrency(
+                        paymentRepository.sumCapturedRevenueForTravelerByCurrency(
+                                userId, PaymentStatus.RELEASED, from, to),
+                        bidRepository.sumCashNetRevenueForTravelerByCurrency(
+                                userId, BidStatus.COMPLETED, PaymentMethod.CASH, from, to))
+                .entrySet().stream()
+                .map(e -> exchangeRateService.convert(e.getValue(), e.getKey(), activeCurrency))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         long tripsPublished = announcementRepository
                 .countByTravelerIdAndCreatedAtBetweenAndStatusNot(
@@ -86,9 +98,10 @@ public class TripsSummaryService {
         return TripsSummaryDto.of(
                 activeTrips,
                 kgSold != null ? kgSold : BigDecimal.ZERO,
-                revenue != null
-                        ? revenue.setScale(2, RoundingMode.HALF_UP)
-                        : BigDecimal.ZERO,
+                revenue.setScale(
+                        com.yadony.api.payments.currency.SupportedCurrency
+                                .fromCodeOrDefault(activeCurrency).minorUnit(),
+                        RoundingMode.HALF_UP),
                 tripsPublished,
                 parcelsSent,
                 period.apiValue());

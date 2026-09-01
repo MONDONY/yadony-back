@@ -150,155 +150,42 @@ class AnnouncementProPriorityTest {
                 sortBy, sortDir, PageRequest.of(0, 10), null, null);
     }
 
-    // ─── Branche "prix" (comparateur en mémoire) ──────────────────────────────
+    // ─── Branche "prix" (Sort SQL sur le pivot EUR depuis V235) ───────────────
 
     /**
-     * Le test le plus parlant du lot : une annonce PRO plus chère doit malgré tout ressortir
-     * avant une annonce standard moins chère, en tri par prix CROISSANT.
+     * Le tri par prix n'est plus un comparateur en mémoire : il est délégué au SQL
+     * sur le pivot EUR ({@code price_per_kg_eur}). L'invariant PRO de ce fichier se
+     * vérifie donc au même endroit que la branche date : le {@link Sort} réellement
+     * transmis au repository doit mettre {@code travelerIsPro DESC} en PREMIER,
+     * avant le critère demandé — retirer la priorité PRO de {@code buildSort}
+     * ferait échouer cette assertion. Le pivot est en second, l'id en départage
+     * pour un ordre total stable sous pagination.
      *
-     * <p><b>Discriminant :</b> en brut, un tri ascendant classerait {@code standardCheap} (5)
-     * avant {@code proExpensive} (100). Si {@code Comparator.comparing(isTravelerIsPro).reversed()}
-     * était retiré du comparateur, l'ordre obtenu serait exactement l'inverse de celui attendu
-     * ici — le test échouerait.
+     * <p>La preuve d'ordre multidevise (payer 100 EUR classé après 5 EUR mais
+     * avant 5000 XOF) n'a plus sa place en mock : multiplier le pivot par le taux
+     * du lecteur préserve l'ordre, c'est la base qui trie.
      */
     @Test
-    @DisplayName("une annonce PRO plus chère passe devant une annonce standard moins chère (tri prix croissant)")
-    void searchAnnouncements_sortByPriceAsc_proAnnouncementOutranksCheaperStandardOne() {
+    @DisplayName("tri par prix : le Sort SQL garde la priorité PRO en tête, pivot EUR ensuite, id en départage")
+    void searchAnnouncements_sortByPrice_keepsProPriorityFirstInSqlSort() {
         UserEntity traveler = buildTraveler();
+        AnnouncementEntity ann = buildAnnouncement(traveler);
+        setId(ann, UUID.randomUUID());
 
-        AnnouncementEntity proExpensive = buildAnnouncement(traveler);
-        UUID proId = UUID.randomUUID();
-        setId(proExpensive, proId);
-        proExpensive.setTravelerIsPro(true);
-        proExpensive.setCurrency("EUR");
-        proExpensive.setPricePerKg(BigDecimal.valueOf(100));
-
-        AnnouncementEntity standardCheap = buildAnnouncement(traveler);
-        UUID standardId = UUID.randomUUID();
-        setId(standardCheap, standardId);
-        standardCheap.setTravelerIsPro(false);
-        standardCheap.setCurrency("EUR");
-        standardCheap.setPricePerKg(BigDecimal.valueOf(5));
-
-        // Ordre reçu du repository volontairement "correct au brut" (cheap d'abord) pour bien
-        // montrer que c'est le service, pas un artefact d'ordre d'entrée, qui inverse.
-        when(announcementRepository.findAll(ArgumentMatchers.<Specification<AnnouncementEntity>>any()))
-                .thenReturn(List.of(standardCheap, proExpensive));
+        ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
+        when(announcementRepository.findAll(
+                ArgumentMatchers.<Specification<AnnouncementEntity>>any(), pageableCaptor.capture()))
+                .thenReturn(new PageImpl<>(List.of(ann)));
         when(userRepository.findAllById(anyCollection())).thenReturn(List.of(traveler));
         when(bidRepository.countVisibleByAnnouncementIds(anyCollection())).thenReturn(List.of());
 
-        Page<AnnouncementSearchResponse> result = search("price", "asc");
+        search("price", "asc");
 
-        assertThat(result.getContent()).extracting(AnnouncementSearchResponse::id)
-                .containsExactly(proId, standardId);
-    }
-
-    /**
-     * À statut PRO égal, le critère demandé (prix) doit départager normalement les annonces
-     * PRO entre elles — et l'ensemble doit rester devant l'annonce standard, même moins chère.
-     *
-     * <p><b>Discriminant (double) :</b>
-     * <ul>
-     *   <li>Entre {@code proCheap} (5) et {@code proExpensive} (50), le premier terme du
-     *   comparateur ({@code isTravelerIsPro}) est à égalité (les deux valent {@code true}) :
-     *   seul {@code thenComparing(byConvertedPrice)} peut les départager. Un comparateur qui
-     *   ignorerait ce second terme (ex. le remplacerait par un no-op, ou l'appliquerait dans le
-     *   mauvais sens) romprait cet ordre sans que le premier test de ce fichier ne le révèle,
-     *   puisque celui-ci n'oppose jamais deux PRO entre eux.</li>
-     *   <li>Si la priorité PRO elle-même disparaissait, le tri ascendant brut classerait
-     *   {@code standardCheapest} (1) en tête, devant les deux PRO — contredisant l'ordre attendu
-     *   ici où il ressort en dernier.</li>
-     * </ul>
-     */
-    @Test
-    @DisplayName("à statut PRO égal, le critère de tri demandé départage normalement les annonces PRO entre elles")
-    void searchAnnouncements_twoProAnnouncementsTiedOnProStatus_orderedByRequestedCriterion() {
-        UserEntity traveler = buildTraveler();
-
-        AnnouncementEntity proCheap = buildAnnouncement(traveler);
-        setId(proCheap, UUID.randomUUID());
-        proCheap.setTravelerIsPro(true);
-        proCheap.setCurrency("EUR");
-        proCheap.setPricePerKg(BigDecimal.valueOf(5));
-
-        AnnouncementEntity proExpensive = buildAnnouncement(traveler);
-        setId(proExpensive, UUID.randomUUID());
-        proExpensive.setTravelerIsPro(true);
-        proExpensive.setCurrency("EUR");
-        proExpensive.setPricePerKg(BigDecimal.valueOf(50));
-
-        AnnouncementEntity standardCheapest = buildAnnouncement(traveler);
-        setId(standardCheapest, UUID.randomUUID());
-        standardCheapest.setTravelerIsPro(false);
-        standardCheapest.setCurrency("EUR");
-        standardCheapest.setPricePerKg(BigDecimal.valueOf(1));
-
-        when(announcementRepository.findAll(ArgumentMatchers.<Specification<AnnouncementEntity>>any()))
-                .thenReturn(List.of(proExpensive, standardCheapest, proCheap));
-        when(userRepository.findAllById(anyCollection())).thenReturn(List.of(traveler));
-        when(bidRepository.countVisibleByAnnouncementIds(anyCollection())).thenReturn(List.of());
-
-        Page<AnnouncementSearchResponse> result = search("price", "asc");
-
-        assertThat(result.getContent()).extracting(AnnouncementSearchResponse::id)
-                .containsExactly(proCheap.getId(), proExpensive.getId(), standardCheapest.getId());
-    }
-
-    /**
-     * Stabilité de l'ordre : deux annonces PRO à prix converti IDENTIQUE doivent toujours
-     * sortir dans le même ordre (par id croissant), quel que soit l'ordre dans lequel le
-     * repository les renvoie.
-     *
-     * <p><b>Discriminant (double) :</b>
-     * <ul>
-     *   <li>Le repository renvoie délibérément {@code proHigh} (id le plus grand) AVANT
-     *   {@code proLow} (id le plus petit). Sur ces deux entrées, {@code isTravelerIsPro} et le
-     *   prix converti sont à égalité : seul {@code thenComparing(getId)} peut encore les
-     *   départager. {@code Stream.sorted} étant un tri stable, retirer ce dernier maillon du
-     *   comparateur laisserait l'ordre d'entrée inchangé — {@code proHigh} sortirait avant
-     *   {@code proLow}, contredisant l'ordre par id croissant attendu ici.</li>
-     *   <li>{@code standardCheapest} (prix le plus bas de tous) doit malgré tout ressortir en
-     *   dernier : si la priorité PRO disparaissait, le tri ascendant brut le placerait en tête.</li>
-     * </ul>
-     */
-    @Test
-    @DisplayName("deux annonces PRO à prix converti identique sortent dans un ordre stable (départagées par id), indépendamment de l'ordre reçu du repository")
-    void searchAnnouncements_tieOnProStatusAndPrice_ordersDeterministicallyById() {
-        UserEntity traveler = buildTraveler();
-
-        UUID lowId = UUID.fromString("00000000-0000-0000-0000-000000000001");
-        UUID highId = UUID.fromString("00000000-0000-0000-0000-000000000002");
-
-        AnnouncementEntity proHigh = buildAnnouncement(traveler);
-        setId(proHigh, highId);
-        proHigh.setTravelerIsPro(true);
-        proHigh.setCurrency("EUR");
-        proHigh.setPricePerKg(BigDecimal.valueOf(10));
-
-        AnnouncementEntity proLow = buildAnnouncement(traveler);
-        setId(proLow, lowId);
-        proLow.setTravelerIsPro(true);
-        proLow.setCurrency("EUR");
-        proLow.setPricePerKg(BigDecimal.valueOf(10));
-
-        AnnouncementEntity standardCheapest = buildAnnouncement(traveler);
-        UUID standardId = UUID.randomUUID();
-        setId(standardCheapest, standardId);
-        standardCheapest.setTravelerIsPro(false);
-        standardCheapest.setCurrency("EUR");
-        standardCheapest.setPricePerKg(BigDecimal.valueOf(1));
-
-        // Ordre d'entrée : standard d'abord, puis proHigh AVANT proLow — l'inverse de l'ordre
-        // par id attendu pour la paire PRO.
-        when(announcementRepository.findAll(ArgumentMatchers.<Specification<AnnouncementEntity>>any()))
-                .thenReturn(List.of(standardCheapest, proHigh, proLow));
-        when(userRepository.findAllById(anyCollection())).thenReturn(List.of(traveler));
-        when(bidRepository.countVisibleByAnnouncementIds(anyCollection())).thenReturn(List.of());
-
-        Page<AnnouncementSearchResponse> result = search("price", "asc");
-
-        assertThat(result.getContent()).extracting(AnnouncementSearchResponse::id)
-                .containsExactly(lowId, highId, standardId);
+        List<Sort.Order> orders = pageableCaptor.getValue().getSort().stream().toList();
+        assertThat(orders).extracting(Sort.Order::getProperty)
+                .containsExactly("travelerIsPro", "pricePerKgEur", "id");
+        assertThat(orders.get(0).getDirection()).isEqualTo(Sort.Direction.DESC);
+        assertThat(orders.get(1).isAscending()).isTrue();
     }
 
     // ─── Branche "date" (Sort SQL construit par buildSort, privée) ────────────

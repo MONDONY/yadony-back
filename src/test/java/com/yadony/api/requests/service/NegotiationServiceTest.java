@@ -64,6 +64,7 @@ class NegotiationServiceTest {
     @Mock private StorageService storageService;
     @Mock private PackageRequestPhotoService photoService;
     @Mock private com.yadony.api.common.CommissionRateResolver commissionRateResolver;
+    @Mock private com.yadony.api.payments.currency.ExchangeRateService exchangeRateService;
 
     @InjectMocks private NegotiationService service;
 

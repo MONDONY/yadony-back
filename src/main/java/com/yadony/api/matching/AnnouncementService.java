@@ -226,8 +226,13 @@ public class AnnouncementService {
             spec = spec.and(AnnouncementSpecification.minAvailableKg(minAvailableKg));
         if (maxAvailableKg != null)
             spec = spec.and(AnnouncementSpecification.maxAvailableKg(maxAvailableKg));
-        if (maxPricePerKg != null)
-            spec = spec.and(AnnouncementSpecification.maxPricePerKg(maxPricePerKg));
+        if (maxPricePerKg != null) {
+            // La borne est saisie dans la devise ACTIVE du lecteur (celle dans laquelle il
+            // lit les prix convertis du fil) ; on la ramène au pivot EUR pour comparer une
+            // liste multidevise sur une échelle commune. Anonyme → EUR (repli du resolver).
+            spec = spec.and(AnnouncementSpecification.maxPricePerKgEur(
+                    exchangeRateService.toEurPivot(maxPricePerKg, viewerCurrency)));
+        }
         if (Boolean.TRUE.equals(weekendOnly))
             spec = spec.and(AnnouncementSpecification.weekendOnly());
         if (minRating != null)
@@ -268,44 +273,16 @@ public class AnnouncementService {
             favIds = Set.of();
         }
 
-        List<AnnouncementSearchResponse> content;
-        long totalElements;
+        // Tri par prix inclus : le pivot EUR (price_per_kg_eur) ordonne la liste
+        // multidevise en SQL. Multiplier par le taux du lecteur préserve l'ordre
+        // (facteur strictement positif), donc trier sur le pivot équivaut à trier
+        // sur le prix converti dans sa devise — sans charger tout le fil en mémoire.
+        Sort sort = buildSort(sortBy, sortDir);
+        Pageable sortedPageable = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), sort);
+        Page<AnnouncementEntity> page = announcementRepository.findAll(spec, sortedPageable);
+        List<AnnouncementSearchResponse> content = mapAnnouncements(page.getContent(), favIds, viewerCurrency);
 
-        if ("price".equalsIgnoreCase(sortBy)) {
-            // Le fil n'étant plus cloisonné par devise (Tâche 10), un tri par prix ne peut
-            // plus s'appuyer sur la valeur brute en base : une liste mêlant EUR/XOF/USD
-            // triée sur pricePerKg brut n'aurait aucun sens. On récupère donc l'ensemble
-            // filtré, on trie en mémoire sur l'équivalent converti dans la devise du
-            // lecteur, puis on pagine manuellement (même pattern que
-            // PackageRequestService#searchMatchingMyTrips).
-            List<AnnouncementEntity> allMatching = announcementRepository.findAll(spec);
-            boolean desc = "desc".equalsIgnoreCase(sortDir);
-            Comparator<AnnouncementEntity> byConvertedPrice = Comparator.comparing(
-                    (AnnouncementEntity a) -> convertedPricePerKgForSort(a, viewerCurrency),
-                    Comparator.nullsLast(Comparator.naturalOrder()));
-            if (desc) {
-                byConvertedPrice = byConvertedPrice.reversed();
-            }
-            Comparator<AnnouncementEntity> comparator = Comparator
-                    .comparing(AnnouncementEntity::isTravelerIsPro).reversed()
-                    .thenComparing(byConvertedPrice)
-                    .thenComparing(AnnouncementEntity::getId);
-            List<AnnouncementEntity> sorted = allMatching.stream().sorted(comparator).toList();
-
-            totalElements = sorted.size();
-            long fromLong = Math.min(pageable.getOffset(), sorted.size());
-            long toLong = Math.min(fromLong + pageable.getPageSize(), sorted.size());
-            List<AnnouncementEntity> pageEntities = sorted.subList((int) fromLong, (int) toLong);
-            content = mapAnnouncements(pageEntities, favIds, viewerCurrency);
-        } else {
-            Sort sort = buildSort(sortBy, sortDir);
-            Pageable sortedPageable = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), sort);
-            Page<AnnouncementEntity> page = announcementRepository.findAll(spec, sortedPageable);
-            totalElements = page.getTotalElements();
-            content = mapAnnouncements(page.getContent(), favIds, viewerCurrency);
-        }
-
-        return new org.springframework.data.domain.PageImpl<>(content, pageable, totalElements);
+        return new org.springframework.data.domain.PageImpl<>(content, pageable, page.getTotalElements());
     }
 
     /**
@@ -352,12 +329,11 @@ public class AnnouncementService {
     }
 
     /**
-     * Équivalent de {@code pricePerKg} dans la devise du lecteur, pour le TRI uniquement.
+     * Équivalent de {@code pricePerKg} dans la devise du lecteur, au taux courant.
      *
-     * <p>Jamais sérialisé : cette valeur ne sert qu'à ordonner un fil multidevise, où trier sur
-     * le montant brut en base n'aurait aucun sens. Elle est donc calculée pour tout le monde,
-     * invités compris, sinon un visiteur trierait une liste de valeurs toutes nulles, c'est-à-dire
-     * pas du tout. Ce qui sort vers le client passe par {@link #convertedPricePerKgForResponse}.
+     * <p>Le tri, lui, passe par le pivot SQL {@code pricePerKgEur} ({@link #buildSort}) ;
+     * cette méthode ne sert plus que la valeur exposée via
+     * {@link #convertedPricePerKgForResponse}.
      *
      * <p>{@code null} quand {@code pricePerKg} l'est (mode MIXED sans prix au kilo).
      */
@@ -409,7 +385,15 @@ public class AnnouncementService {
         Sort.Direction direction = "desc".equalsIgnoreCase(sortDir) ? Sort.Direction.DESC : Sort.Direction.ASC;
         Sort proFirst = Sort.by(Sort.Direction.DESC, "travelerIsPro");
         Sort secondary = switch (sortBy != null ? sortBy : "date") {
-            case "price" -> Sort.by(direction, "pricePerKg");
+            // Pivot EUR, jamais le brut : seul lui ordonne un fil multidevise.
+            // Pas de NullHandling : Spring Data JPA le refuse sur une requête
+            // Criteria (« Applying Null Precedence using Criteria Queries is not
+            // yet supported », 500 assurée) — et le pivot est de facto non null,
+            // price_per_kg étant NOT NULL + CHECK > 0 depuis V3, backfillé par
+            // V235 et posé à chaque écriture. Id en départage : ordre total
+            // stable sous pagination.
+            case "price" -> Sort.by(direction, "pricePerKgEur")
+                    .and(Sort.by(Sort.Direction.ASC, "id"));
             default -> Sort.by(direction, "departureDate");
         };
         return proFirst.and(secondary);
@@ -537,6 +521,8 @@ public class AnnouncementService {
         announcement.setAvailableKg(request.availableKg());
         announcement.setTotalKg(request.availableKg());
         announcement.setPricePerKg(request.pricePerKg());
+        announcement.setPricePerKgEur(
+                exchangeRateService.toEurPivot(request.pricePerKg(), announcement.getCurrency()));
         announcement.setTransportMode(request.transportMode());
         announcement.setStatus(isDraft ? AnnouncementStatus.DRAFT : AnnouncementStatus.ACTIVE);
         announcement.setDescription(request.description());
@@ -947,6 +933,8 @@ public class AnnouncementService {
         // Update is blocked if any bid is ACCEPTED, so no booked weight to preserve → keep total in sync.
         announcement.setTotalKg(request.availableKg());
         announcement.setPricePerKg(request.pricePerKg());
+        announcement.setPricePerKgEur(
+                exchangeRateService.toEurPivot(request.pricePerKg(), announcement.getCurrency()));
         announcement.setTransportMode(request.transportMode());
         announcement.setDescription(request.description());
         // Normalisé à l'écriture (C2) — cf. ContentCategoryNormalizer javadoc.

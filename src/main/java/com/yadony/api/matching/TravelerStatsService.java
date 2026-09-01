@@ -22,15 +22,21 @@ public class TravelerStatsService {
     private final AnnouncementRepository announcementRepository;
     private final BidRepository bidRepository;
     private final PaymentRepository paymentRepository;
+    private final com.yadony.api.payments.currency.ActiveCurrencyResolver activeCurrencyResolver;
+    private final com.yadony.api.payments.currency.ExchangeRateService exchangeRateService;
 
     public TravelerStatsService(
             AnnouncementRepository announcementRepository,
             BidRepository bidRepository,
-            PaymentRepository paymentRepository
+            PaymentRepository paymentRepository,
+            com.yadony.api.payments.currency.ActiveCurrencyResolver activeCurrencyResolver,
+            com.yadony.api.payments.currency.ExchangeRateService exchangeRateService
     ) {
         this.announcementRepository = announcementRepository;
         this.bidRepository = bidRepository;
         this.paymentRepository = paymentRepository;
+        this.activeCurrencyResolver = activeCurrencyResolver;
+        this.exchangeRateService = exchangeRateService;
     }
 
     @Transactional(readOnly = true)
@@ -40,16 +46,21 @@ public class TravelerStatsService {
         LocalDateTime monthStart = current.atDay(1).atStartOfDay();
         LocalDateTime monthEnd = current.atEndOfMonth().atTime(23, 59, 59);
 
-        // Carte (escrow libéré) + espèces (net des bids CASH livrés, hors PaymentEntity).
-        BigDecimal monthlyRevenue = TravelerRevenue.cardPlusCash(
-                paymentRepository.sumCapturedRevenueForTraveler(
+        // Carte (escrow libéré) + espèces (net des bids CASH livrés, hors PaymentEntity),
+        // fusionnés PAR DEVISE puis convertis vers la devise active du voyageur pour le
+        // total affiché. La ventilation part telle quelle dans le DTO, sans conversion.
+        String activeCurrency = activeCurrencyResolver.resolve(userId);
+        java.util.Map<String, BigDecimal> monthlyByCurrency = TravelerRevenue.cardPlusCashByCurrency(
+                paymentRepository.sumCapturedRevenueForTravelerByCurrency(
                         userId, PaymentStatus.RELEASED, monthStart, monthEnd),
-                bidRepository.sumCashNetRevenueForTraveler(
+                bidRepository.sumCashNetRevenueForTravelerByCurrency(
                         userId, BidStatus.COMPLETED, PaymentMethod.CASH, monthStart, monthEnd));
-        BigDecimal totalRevenue = TravelerRevenue.cardPlusCash(
-                paymentRepository.sumTotalCapturedRevenueForTraveler(userId, PaymentStatus.RELEASED),
-                bidRepository.sumTotalCashNetRevenueForTraveler(
+        java.util.Map<String, BigDecimal> totalByCurrency = TravelerRevenue.cardPlusCashByCurrency(
+                paymentRepository.sumTotalCapturedRevenueForTravelerByCurrency(userId, PaymentStatus.RELEASED),
+                bidRepository.sumTotalCashNetRevenueForTravelerByCurrency(
                         userId, BidStatus.COMPLETED, PaymentMethod.CASH));
+        BigDecimal monthlyRevenue = convertedTotal(monthlyByCurrency, activeCurrency);
+        BigDecimal totalRevenue = convertedTotal(totalByCurrency, activeCurrency);
 
         long monthlyTrips = announcementRepository
                 .countByTravelerIdAndStatusAndCreatedAtBetween(userId, AnnouncementStatus.COMPLETED, monthStart, monthEnd);
@@ -80,8 +91,8 @@ public class TravelerStatsService {
                 .findTopDestinationsForTraveler(userId, PageRequest.of(0, 3));
 
         return new TravelerStatsDto(
-                monthlyRevenue != null ? monthlyRevenue.setScale(2, RoundingMode.HALF_UP) : BigDecimal.ZERO,
-                totalRevenue != null ? totalRevenue.setScale(2, RoundingMode.HALF_UP) : BigDecimal.ZERO,
+                monthlyRevenue,
+                totalRevenue,
                 monthlyTrips,
                 deliveredBids,
                 acceptanceRate,
@@ -91,7 +102,30 @@ public class TravelerStatsService {
                 activeTrips,
                 totalParcelsDelivered,
                 parcelsInTransit,
-                traveler.getRatingCount()
+                traveler.getRatingCount(),
+                activeCurrency,
+                toBreakdown(monthlyByCurrency),
+                toBreakdown(totalByCurrency)
         );
+    }
+
+    /**
+     * Total « environ » dans la devise active : chaque devise encaissée est convertie
+     * au taux courant puis sommée. Arrondi au nombre de décimales de la devise active
+     * (0 en XOF). Estimation d'affichage — la vérité par devise est la ventilation.
+     */
+    private BigDecimal convertedTotal(java.util.Map<String, BigDecimal> byCurrency, String activeCurrency) {
+        BigDecimal total = byCurrency.entrySet().stream()
+                .map(e -> exchangeRateService.convert(e.getValue(), e.getKey(), activeCurrency))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        int decimals = com.yadony.api.payments.currency.SupportedCurrency
+                .fromCodeOrDefault(activeCurrency).minorUnit();
+        return total.setScale(decimals, RoundingMode.HALF_UP);
+    }
+
+    private List<TravelerStatsDto.CurrencyRevenue> toBreakdown(java.util.Map<String, BigDecimal> byCurrency) {
+        return byCurrency.entrySet().stream()
+                .map(e -> new TravelerStatsDto.CurrencyRevenue(e.getKey(), e.getValue()))
+                .toList();
     }
 }

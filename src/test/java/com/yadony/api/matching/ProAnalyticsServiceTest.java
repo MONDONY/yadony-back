@@ -5,6 +5,8 @@ import com.yadony.api.matching.dto.AnnouncementRevenueRow;
 import com.yadony.api.matching.dto.ProAnalyticsResponse;
 import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.PaymentStatus;
+import com.yadony.api.payments.currency.ActiveCurrencyResolver;
+import com.yadony.api.payments.currency.ExchangeRateService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -28,15 +30,21 @@ class ProAnalyticsServiceTest {
     @Mock AnnouncementRepository announcementRepository;
     @Mock BidRepository bidRepository;
     @Mock PaymentRepository paymentRepository;
+    @Mock ActiveCurrencyResolver activeCurrencyResolver;
+    @Mock ExchangeRateService exchangeRateService;
 
     private ProAnalyticsService service() {
-        return new ProAnalyticsService(announcementRepository, bidRepository, paymentRepository);
+        lenient().when(activeCurrencyResolver.resolve(any())).thenReturn("EUR");
+        lenient().when(exchangeRateService.convert(any(), any(), any()))
+                .thenAnswer(inv -> inv.getArgument(0));
+        return new ProAnalyticsService(announcementRepository, bidRepository, paymentRepository,
+                activeCurrencyResolver, exchangeRateService);
     }
 
     /** Stubs communs des KPI non liés aux transactions (revenus/trajets/colis/acceptation). */
     private void stubKpisToZero() {
-        lenient().when(paymentRepository.sumCapturedRevenueForTraveler(any(), any(), any(), any()))
-                .thenReturn(BigDecimal.ZERO);
+        lenient().when(paymentRepository.sumCapturedRevenueForTravelerByCurrency(any(), any(), any(), any()))
+                .thenReturn(List.of());
         lenient().when(announcementRepository.countByTravelerIdAndCreatedAtBetween(any(), any(), any()))
                 .thenReturn(0L);
         lenient().when(bidRepository.countDeliveredBidsForTraveler(any(), any(), any(), any()))
@@ -63,7 +71,7 @@ class ProAnalyticsServiceTest {
         when(paymentRepository.findReleasedRevenueByAnnouncement(
                 eq(travelerId), eq(PaymentStatus.RELEASED), any(), any()))
                 .thenReturn(List.of(new AnnouncementRevenueRow(
-                        annId, "Paris", "Dakar", LocalDate.of(2026, 6, 10),
+                        annId, "Paris", "Dakar", LocalDate.of(2026, 6, 10), "EUR",
                         2L, new BigDecimal("100.00"), new BigDecimal("8.00"))));
 
         ProAnalyticsResponse resp = service().computeAnalytics(traveler, "month");
@@ -92,10 +100,10 @@ class ProAnalyticsServiceTest {
                 eq(travelerId), eq(PaymentStatus.RELEASED), any(), any()))
                 .thenReturn(List.of(
                         new AnnouncementRevenueRow(UUID.randomUUID(), "Moscow", "Abidjan",
-                                LocalDate.of(2026, 6, 29), 1L,
+                                LocalDate.of(2026, 6, 29), "EUR", 1L,
                                 new BigDecimal("150.08"), new BigDecimal("16.08")),   // net 134,00
                         new AnnouncementRevenueRow(UUID.randomUUID(), "Paris", "Abidjan",
-                                LocalDate.of(2026, 6, 24), 1L,
+                                LocalDate.of(2026, 6, 24), "EUR", 1L,
                                 new BigDecimal("300.16"), new BigDecimal("32.16"))    // net 268,00
                 ));
 
@@ -127,17 +135,17 @@ class ProAnalyticsServiceTest {
         when(paymentRepository.findReleasedRevenueByAnnouncement(
                 eq(travelerId), eq(PaymentStatus.RELEASED), any(), any()))
                 .thenReturn(List.of(new AnnouncementRevenueRow(
-                        annA, "Paris", "Dakar", LocalDate.of(2026, 6, 10),
+                        annA, "Paris", "Dakar", LocalDate.of(2026, 6, 10), "EUR",
                         2L, new BigDecimal("100.00"), new BigDecimal("8.00"))));
         when(bidRepository.findCashRevenueByAnnouncement(
                 eq(travelerId), eq(BidStatus.COMPLETED),
                 eq(com.yadony.api.payments.cash.PaymentMethod.CASH), any(), any()))
                 .thenReturn(List.of(
                         new AnnouncementRevenueRow(annA, "Paris", "Dakar",
-                                LocalDate.of(2026, 6, 10), 1L,
+                                LocalDate.of(2026, 6, 10), "EUR", 1L,
                                 new BigDecimal("50.00"), BigDecimal.ZERO),
                         new AnnouncementRevenueRow(annB, "Lyon", "Abidjan",
-                                LocalDate.of(2026, 6, 5), 1L,
+                                LocalDate.of(2026, 6, 5), "EUR", 1L,
                                 new BigDecimal("30.00"), BigDecimal.ZERO)));
 
         ProAnalyticsResponse resp = service().computeAnalytics(traveler, "year");
@@ -153,6 +161,56 @@ class ProAnalyticsServiceTest {
         long netSum = resp.transactions().stream()
                 .mapToLong(ProAnalyticsResponse.TransactionRowDto::netRevenue).sum();
         assertThat(netSum).isEqualTo(17200L);                    // 142 + 30
+    }
+
+    @Test
+    void transactions_xofRow_usesWholeUnits_andCarriesCurrency() {
+        UUID travelerId = UUID.randomUUID();
+        UUID annId = UUID.randomUUID();
+        UserEntity traveler = new UserEntity();
+        ReflectionTestUtils.setField(traveler, "id", travelerId);
+
+        stubKpisToZero();
+        // Annonce XOF : minorUnit = 0 → les « unités mineures » sont l'unité pleine.
+        // L'ancien toCents multipliait par 100 : 5000 F devenaient 500000.
+        when(bidRepository.findCashRevenueByAnnouncement(
+                eq(travelerId), eq(BidStatus.COMPLETED),
+                eq(com.yadony.api.payments.cash.PaymentMethod.CASH), any(), any()))
+                .thenReturn(List.of(new AnnouncementRevenueRow(
+                        annId, "Dakar", "Paris", LocalDate.of(2026, 7, 2), "XOF",
+                        1L, new BigDecimal("5000"), BigDecimal.ZERO)));
+
+        ProAnalyticsResponse resp = service().computeAnalytics(traveler, "month");
+
+        ProAnalyticsResponse.TransactionRowDto row = resp.transactions().get(0);
+        assertThat(row.currency()).isEqualTo("XOF");
+        assertThat(row.grossRevenue()).isEqualTo(5000L);
+        assertThat(row.netRevenue()).isEqualTo(5000L);
+    }
+
+    @Test
+    void revenueKpi_convertsEachCurrencyIntoTheActiveOne() {
+        UUID travelerId = UUID.randomUUID();
+        UserEntity traveler = new UserEntity();
+        ReflectionTestUtils.setField(traveler, "id", travelerId);
+
+        // service() pose un stub identité sur convert : le construire AVANT le stub
+        // spécifique, sinon l'identité (posée après) reprendrait la main.
+        ProAnalyticsService svc = service();
+        stubKpisToZero();
+        when(paymentRepository.sumCapturedRevenueForTravelerByCurrency(any(), any(), any(), any()))
+                .thenReturn(List.of(new com.yadony.api.payments.dto.CurrencyAmountRow(
+                        "XOF", new BigDecimal("65596"))));
+        when(exchangeRateService.convert(eq(new BigDecimal("65596")), eq("XOF"), eq("EUR")))
+                .thenReturn(new BigDecimal("100.00"));
+
+        ProAnalyticsResponse resp = svc.computeAnalytics(traveler, "month");
+
+        ProAnalyticsResponse.KpiDto revenue = resp.kpis().stream()
+                .filter(k -> k.id().equals("revenue")).findFirst().orElseThrow();
+        // 65 596 XOF affichés « 100,00 € » (devise active EUR), pas « 65 596,00 € ».
+        assertThat(revenue.value()).contains("100,00");
+        assertThat(revenue.value()).doesNotContain("65");
     }
 
     @Test

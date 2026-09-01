@@ -251,7 +251,7 @@ class PaymentServiceOnBehalfOfTest {
 
             ArgumentCaptor<PaymentEntity> paymentCaptor = ArgumentCaptor.forClass(PaymentEntity.class);
             verify(paymentRepository).save(paymentCaptor.capture());
-            assertThat(paymentCaptor.getValue().getCurrency()).isEqualTo("cad");
+            assertThat(paymentCaptor.getValue().getCurrency()).isEqualTo("CAD");
             assertThat(paymentCaptor.getValue().getStripeFxQuoteId()).isNull();
         }
     }
@@ -335,7 +335,7 @@ class PaymentServiceOnBehalfOfTest {
             verify(paymentRepository).save(legacy);
             assertThat(legacy.getStripePaymentIntentId()).isEqualTo("pi_fresh_cad");
             assertThat(legacy.getAmount()).isEqualByComparingTo("28.00");
-            assertThat(legacy.getCurrency()).isEqualTo("cad");
+            assertThat(legacy.getCurrency()).isEqualTo("CAD");
             assertThat(legacy.getStripeFxQuoteId()).isNull();
             assertThat(legacy.getFxExchangeRate()).isNull();
             assertThat(legacy.getFxQuoteExpiresAt()).isNull();

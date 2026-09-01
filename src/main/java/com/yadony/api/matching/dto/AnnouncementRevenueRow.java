@@ -16,6 +16,8 @@ public record AnnouncementRevenueRow(
         String departureCity,
         String arrivalCity,
         LocalDate departureDate,
+        /** Devise de l'annonce (majuscule) — une ligne = une seule devise, les montants la portent. */
+        String currency,
         long parcelCount,
         BigDecimal gross,
         BigDecimal commission

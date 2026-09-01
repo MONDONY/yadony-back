@@ -43,8 +43,16 @@ public class AnnouncementSpecification {
         return (root, query, cb) -> cb.lessThanOrEqualTo(root.get("availableKg"), kg);
     }
 
-    public static Specification<AnnouncementEntity> maxPricePerKg(BigDecimal max) {
-        return (root, query, cb) -> cb.lessThanOrEqualTo(root.get("pricePerKg"), max);
+    /**
+     * Borne haute de prix comparée sur le pivot EUR ({@code price_per_kg_eur}), jamais
+     * sur le brut : le fil mélange les devises, et « pricePerKg <= 10 » n'a aucun sens
+     * entre une annonce à 8 EUR et une à 5000 XOF. L'appelant convertit la borne
+     * (saisie dans la devise du lecteur) via {@code ExchangeRateService.toEurPivot}.
+     * Pivot non null par construction (price_per_kg NOT NULL + CHECK > 0 depuis V3,
+     * backfill V235) : aucune annonce n'échappe au filtre par absence de pivot.
+     */
+    public static Specification<AnnouncementEntity> maxPricePerKgEur(BigDecimal maxEur) {
+        return (root, query, cb) -> cb.lessThanOrEqualTo(root.get("pricePerKgEur"), maxEur);
     }
 
     /**
