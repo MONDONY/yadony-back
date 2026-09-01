@@ -77,6 +77,9 @@ class AnnouncementServiceTest {
         org.mockito.Mockito.lenient()
                 .when(activeCurrencyResolver.resolve(org.mockito.ArgumentMatchers.any()))
                 .thenReturn("EUR");
+        org.mockito.Mockito.lenient()
+                .when(activeCurrencyResolver.resolveDisplay(org.mockito.ArgumentMatchers.any()))
+                .thenReturn("EUR");
         // Repli neutre : conversion identité tant qu'un test ne stub pas explicitement un
         // taux différent de EUR (le fil devenu multidevise, Tâche 10, convertit toujours).
         org.mockito.Mockito.lenient()
@@ -988,7 +991,7 @@ class AnnouncementServiceTest {
                     new com.yadony.api.matching.dto.AnnouncementPriceGridItemResponse(
                             UUID.randomUUID(), "Valise 23 kg",
                             BigDecimal.valueOf(30000), BigDecimal.valueOf(33600))));
-            when(activeCurrencyResolver.resolve(any())).thenReturn("EUR");
+            when(activeCurrencyResolver.resolveDisplay(any())).thenReturn("EUR");
             // Le brut affiché (net × commission) alimente le converti : sans ce stub le
             // display serait null et l'équivalent aussi.
             when(priceGridService.displayPrice(any(), any()))
@@ -1018,7 +1021,7 @@ class AnnouncementServiceTest {
             UserEntity traveler = buildTraveler();
             AnnouncementEntity a = buildAnnouncement(traveler);
             when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
-            when(activeCurrencyResolver.resolve(any())).thenReturn(a.getCurrency());
+            when(activeCurrencyResolver.resolveDisplay(any())).thenReturn(a.getCurrency());
 
             AnnouncementDetailResponse result = announcementService.getAnnouncementDetail(
                     ANNOUNCEMENT_ID, FIREBASE_UID);
@@ -2052,7 +2055,7 @@ class AnnouncementServiceTest {
             xofAnnouncement.setPricePerKg(BigDecimal.valueOf(3500));
             Page<AnnouncementEntity> page = new PageImpl<>(List.of(xofAnnouncement));
 
-            when(activeCurrencyResolver.resolve(null)).thenReturn("EUR");
+            when(activeCurrencyResolver.resolveDisplay(null)).thenReturn("EUR");
             when(announcementRepository.findAll(ArgumentMatchers.<Specification<AnnouncementEntity>>any(), any(Pageable.class)))
                     .thenReturn(page);
             stubBatchSearch(traveler, 0L);
@@ -2079,7 +2082,7 @@ class AnnouncementServiceTest {
             UserEntity traveler = buildTraveler();
             AnnouncementEntity ann = buildAnnouncement(traveler);
 
-            when(activeCurrencyResolver.resolve(null)).thenReturn("EUR");
+            when(activeCurrencyResolver.resolveDisplay(null)).thenReturn("EUR");
             ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
             when(announcementRepository.findAll(
                     ArgumentMatchers.<Specification<AnnouncementEntity>>any(), pageableCaptor.capture()))
@@ -2117,7 +2120,7 @@ class AnnouncementServiceTest {
             xofAnnouncement.setPricePerKg(BigDecimal.valueOf(1000));
             Page<AnnouncementEntity> page = new PageImpl<>(List.of(xofAnnouncement));
 
-            when(activeCurrencyResolver.resolve(null)).thenReturn("EUR");
+            when(activeCurrencyResolver.resolveDisplay(null)).thenReturn("EUR");
             when(exchangeRateService.convert(BigDecimal.valueOf(1000), "XOF", "EUR"))
                     .thenReturn(BigDecimal.valueOf(1.52));
             when(announcementRepository.findAll(ArgumentMatchers.<Specification<AnnouncementEntity>>any(), any(Pageable.class)))

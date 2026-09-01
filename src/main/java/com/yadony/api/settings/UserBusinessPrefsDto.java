@@ -23,23 +23,30 @@ public record UserBusinessPrefsDto(
     // Pays ISO 3166-1 alpha-2, ou null tant qu'il n'est pas renseigne.
     @Pattern(regexp = "[A-Z]{2}") String country,
     // Lecture seule : renseigne par le serveur en reponse, ignore en requete.
-    Boolean countryLocked
+    Boolean countryLocked,
+    // Devise d'affichage (presentment, lot 8) : "AUTO" = suivre la devise active
+    // (comportement historique), sinon une des 7 devises. Jamais verrouillee par le
+    // solde. Omise dans la requete (null), la valeur existante est conservee ; le
+    // serveur repond toujours une valeur concrete ("AUTO" quand rien n'est fige).
+    @Pattern(regexp = "AUTO|EUR|USD|CAD|GBP|CHF|XOF|XAF") String displayCurrencyCode
 ) {
     public static UserBusinessPrefsDto defaults() {
         return new UserBusinessPrefsDto(
-                "kg", "EUR", 10, 23, 0, null, null, false, null, false);
+                "kg", "EUR", 10, 23, 0, null, null, false, null, false, "AUTO");
     }
 
     /** Valeur initiale (derivee du pays) quand aucune ligne de portefeuille n'existe encore. */
     public UserBusinessPrefsDto withCurrencyCode(String code) {
         return new UserBusinessPrefsDto(weightUnit, code, pickupRadiusKm,
                 defaultPackageWeightKg, minBidPriceEur, contactMode,
-                responseDelayHours, currencyLocked, country, countryLocked);
+                responseDelayHours, currencyLocked, country, countryLocked,
+                displayCurrencyCode);
     }
 
     public UserBusinessPrefsDto withCountry(String iso2) {
         return new UserBusinessPrefsDto(weightUnit, currencyCode, pickupRadiusKm,
                 defaultPackageWeightKg, minBidPriceEur, contactMode,
-                responseDelayHours, currencyLocked, iso2, countryLocked);
+                responseDelayHours, currencyLocked, iso2, countryLocked,
+                displayCurrencyCode);
     }
 }

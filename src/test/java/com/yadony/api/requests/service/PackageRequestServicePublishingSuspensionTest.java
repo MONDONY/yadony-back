@@ -127,6 +127,7 @@ class PackageRequestServicePublishingSuspensionTest {
                 yadonyConfig, announcementRepository, commissionRateResolver,
                 com.yadony.api.config.PlatformSettingsTestFactory.defaults());
         lenient().when(activeCurrencyResolver.resolve(any())).thenReturn("EUR");
+        lenient().when(activeCurrencyResolver.resolveDisplay(any())).thenReturn("EUR");
     }
 
     private PackageRequestCreateRequest validNonDraftRequest() {

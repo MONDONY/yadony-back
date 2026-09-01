@@ -25,6 +25,11 @@ public class UserBusinessPrefsEntity {
     @Column(name = "currency_code", nullable = false, length = 3)
     private String currencyCode = "EUR";
 
+    // Devise d'affichage (presentment). NULL = automatique : suivre la devise
+    // active. Jamais verrouillee par le solde, contrairement a currency_code.
+    @Column(name = "display_currency_code", length = 3)
+    private String displayCurrencyCode;
+
     @Column(name = "pickup_radius_km", nullable = false)
     private int pickupRadiusKm = 10;
 
@@ -55,6 +60,8 @@ public class UserBusinessPrefsEntity {
     public void setWeightUnit(String v) { this.weightUnit = v; }
     public String getCurrencyCode() { return currencyCode; }
     public void setCurrencyCode(String v) { this.currencyCode = v; }
+    public String getDisplayCurrencyCode() { return displayCurrencyCode; }
+    public void setDisplayCurrencyCode(String v) { this.displayCurrencyCode = v; }
     public int getPickupRadiusKm() { return pickupRadiusKm; }
     public void setPickupRadiusKm(int v) { this.pickupRadiusKm = v; }
     public int getDefaultPackageWeightKg() { return defaultPackageWeightKg; }

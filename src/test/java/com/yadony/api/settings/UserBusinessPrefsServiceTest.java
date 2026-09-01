@@ -143,7 +143,7 @@ class UserBusinessPrefsServiceTest {
         when(repository.findById(USER_ID)).thenReturn(Optional.empty());
 
         UserBusinessPrefsDto input = new UserBusinessPrefsDto(
-                "lbs", "XAF", 15, 10, 3, "call", 2, null, null, null);
+                "lbs", "XAF", 15, 10, 3, "call", 2, null, null, null, null);
         UserBusinessPrefsDto result = service.upsert(FIREBASE_UID, input);
 
         ArgumentCaptor<UserBusinessPrefsEntity> captor = ArgumentCaptor.forClass(UserBusinessPrefsEntity.class);
@@ -179,7 +179,7 @@ class UserBusinessPrefsServiceTest {
         when(repository.findById(USER_ID)).thenReturn(Optional.of(existing));
 
         UserBusinessPrefsDto input = new UserBusinessPrefsDto(
-                "lbs", "XOF", 25, 5, 10, "message", 4, null, null, null);
+                "lbs", "XOF", 25, 5, 10, "message", 4, null, null, null, null);
         UserBusinessPrefsDto result = service.upsert(FIREBASE_UID, input);
 
         ArgumentCaptor<UserBusinessPrefsEntity> captor = ArgumentCaptor.forClass(UserBusinessPrefsEntity.class);
@@ -212,7 +212,7 @@ class UserBusinessPrefsServiceTest {
         when(currencyLockService.isLocked(USER_ID)).thenReturn(false);
 
         UserBusinessPrefsDto input = new UserBusinessPrefsDto(
-                "kg", "XOF", 10, 23, 0, null, null, null, null, null);
+                "kg", "XOF", 10, 23, 0, null, null, null, null, null, null);
         UserBusinessPrefsDto result = service.upsert(FIREBASE_UID, input);
 
         ArgumentCaptor<UserBusinessPrefsEntity> captor = ArgumentCaptor.forClass(UserBusinessPrefsEntity.class);
@@ -234,7 +234,7 @@ class UserBusinessPrefsServiceTest {
         when(currencyLockService.isLocked(USER_ID)).thenReturn(true);
 
         UserBusinessPrefsDto input = new UserBusinessPrefsDto(
-                "kg", "XOF", 10, 23, 0, null, null, null, null, null);
+                "kg", "XOF", 10, 23, 0, null, null, null, null, null, null);
 
         assertThatThrownBy(() -> service.upsert(FIREBASE_UID, input))
                 .isInstanceOf(YadonyBusinessException.class)
@@ -258,7 +258,7 @@ class UserBusinessPrefsServiceTest {
         when(currencyLockService.isLocked(USER_ID)).thenReturn(true);
 
         UserBusinessPrefsDto input = new UserBusinessPrefsDto(
-                "kg", "EUR", 10, 23, 0, null, null, null, null, null);
+                "kg", "EUR", 10, 23, 0, null, null, null, null, null, null);
         UserBusinessPrefsDto result = service.upsert(FIREBASE_UID, input);
 
         assertThat(result.currencyCode()).isEqualTo("EUR");
@@ -275,7 +275,7 @@ class UserBusinessPrefsServiceTest {
         // le service lui-meme refuse, independamment de la validation Bean Validation
         // du controller.
         UserBusinessPrefsDto input = new UserBusinessPrefsDto(
-                "kg", "JPY", 10, 23, 0, null, null, null, null, null);
+                "kg", "JPY", 10, 23, 0, null, null, null, null, null, null);
 
         assertThatThrownBy(() -> service.upsert(FIREBASE_UID, input))
                 .isInstanceOf(YadonyBusinessException.class)
@@ -324,7 +324,7 @@ class UserBusinessPrefsServiceTest {
         when(repository.findById(USER_ID)).thenReturn(Optional.of(existing));
 
         UserBusinessPrefsDto input = new UserBusinessPrefsDto(
-                "kg", "GBP", 10, 23, 0, null, null, null, null, null);
+                "kg", "GBP", 10, 23, 0, null, null, null, null, null, null);
         UserBusinessPrefsDto result = service.upsert(FIREBASE_UID, input);
 
         assertThat(result.currencyCode()).isEqualTo("GBP");
@@ -340,7 +340,7 @@ class UserBusinessPrefsServiceTest {
         when(repository.findById(USER_ID)).thenReturn(Optional.of(existing));
 
         UserBusinessPrefsDto dto = new UserBusinessPrefsDto(
-                "kg", null, 10, 23, 0, null, null, null, "CA", null);
+                "kg", null, 10, 23, 0, null, null, null, "CA", null, null);
 
         UserBusinessPrefsDto saved = service.upsert(FIREBASE_UID, dto);
 
@@ -475,5 +475,86 @@ class UserBusinessPrefsServiceTest {
         e.setContactMode(contactMode);
         e.setResponseDelayHours(responseDelay);
         return e;
+    }
+
+    // -------------------------------------------------------------------------
+    // upsert — devise d'affichage (presentment, lot 8)
+    // -------------------------------------------------------------------------
+
+    @Test
+    @DisplayName("La devise d'affichage se change meme portefeuille verrouille (exemption voulue)")
+    void upsert_displayCurrency_ignoresWalletLock() {
+        UserBusinessPrefsEntity entity = buildEntity("kg", "XOF", 10, 23, 0, null, null);
+        when(repository.findById(USER_ID)).thenReturn(Optional.of(entity));
+        when(currencyLockService.isLocked(USER_ID)).thenReturn(true);
+        UserBusinessPrefsDto input = new UserBusinessPrefsDto(
+                "kg", null, 10, 23, 0, null, null, null, null, null, "USD");
+
+        UserBusinessPrefsDto result = service.upsert(FIREBASE_UID, input);
+
+        assertThat(result.displayCurrencyCode()).isEqualTo("USD");
+        // La devise transactionnelle, elle, n'a pas bouge.
+        assertThat(result.currencyCode()).isEqualTo("XOF");
+        assertThat(entity.getDisplayCurrencyCode()).isEqualTo("USD");
+        assertThat(entity.getCurrencyCode()).isEqualTo("XOF");
+    }
+
+    @Test
+    @DisplayName("AUTO efface le choix : retour au suivi de la devise active")
+    void upsert_displayAuto_clearsStoredChoice() {
+        UserBusinessPrefsEntity entity = buildEntity("kg", "EUR", 10, 23, 0, null, null);
+        entity.setDisplayCurrencyCode("USD");
+        when(repository.findById(USER_ID)).thenReturn(Optional.of(entity));
+        UserBusinessPrefsDto input = new UserBusinessPrefsDto(
+                "kg", null, 10, 23, 0, null, null, null, null, null, "AUTO");
+
+        UserBusinessPrefsDto result = service.upsert(FIREBASE_UID, input);
+
+        assertThat(entity.getDisplayCurrencyCode()).isNull();
+        assertThat(result.displayCurrencyCode()).isEqualTo("AUTO");
+    }
+
+    @Test
+    @DisplayName("Champ omis : le choix d'affichage existant est conserve")
+    void upsert_displayOmitted_keepsExistingChoice() {
+        UserBusinessPrefsEntity entity = buildEntity("kg", "EUR", 10, 23, 0, null, null);
+        entity.setDisplayCurrencyCode("CAD");
+        when(repository.findById(USER_ID)).thenReturn(Optional.of(entity));
+        UserBusinessPrefsDto input = new UserBusinessPrefsDto(
+                "kg", null, 10, 23, 0, null, null, null, null, null, null);
+
+        UserBusinessPrefsDto result = service.upsert(FIREBASE_UID, input);
+
+        assertThat(entity.getDisplayCurrencyCode()).isEqualTo("CAD");
+        assertThat(result.displayCurrencyCode()).isEqualTo("CAD");
+    }
+
+    @Test
+    @DisplayName("Sans choix stocke, la reponse porte AUTO explicite (jamais null)")
+    void upsert_noStoredChoice_respondsAuto() {
+        when(repository.findById(USER_ID)).thenReturn(Optional.empty());
+        UserBusinessPrefsDto input = new UserBusinessPrefsDto(
+                "kg", "EUR", 10, 23, 0, null, null, null, null, null, null);
+
+        UserBusinessPrefsDto result = service.upsert(FIREBASE_UID, input);
+
+        assertThat(result.displayCurrencyCode()).isEqualTo("AUTO");
+    }
+
+    @Test
+    @DisplayName("Devise d'affichage hors catalogue : 422 currency-unsupported")
+    void upsert_displayUnsupported_throws422() {
+        UserBusinessPrefsEntity entity = buildEntity("kg", "EUR", 10, 23, 0, null, null);
+        when(repository.findById(USER_ID)).thenReturn(Optional.of(entity));
+        UserBusinessPrefsDto input = new UserBusinessPrefsDto(
+                "kg", null, 10, 23, 0, null, null, null, null, null, "JPY");
+
+        assertThatThrownBy(() -> service.upsert(FIREBASE_UID, input))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(ex -> {
+                    YadonyBusinessException dbe = (YadonyBusinessException) ex;
+                    assertThat(dbe.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(dbe.getErrorCode()).isEqualTo("currency-unsupported");
+                });
     }
 }
