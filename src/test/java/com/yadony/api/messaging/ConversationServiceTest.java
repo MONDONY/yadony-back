@@ -253,6 +253,79 @@ class ConversationServiceTest {
                 .isInstanceOf(YadonyBusinessException.class);
     }
 
+    /** Chemin « copie supprimée par soi-même » quand rien n'est masqué : le fil est rendu
+     *  tel quel, avec son drapeau, pour que l'appelant propose la restauration. */
+    @Test
+    void getOrCreateByBidId_rendLaCopieSupprimee_quandRienNestMasque() {
+        ConversationEntity deleted = new ConversationEntity(bidId, senderId, travelerId, "conv_" + bidId);
+        when(conversationRepository.findByBidIdAndParticipant(bidId, travelerId))
+                .thenReturn(Optional.empty());
+        when(conversationRepository.findByBidIdAndParticipantIgnoreDeleted(bidId, travelerId))
+                .thenReturn(Optional.of(deleted));
+
+        ConversationEntity result = service.getOrCreateByBidId(bidId, travelerId);
+
+        assertThat(result).isSameAs(deleted);
+        verify(blockVisibility).assertVisible(travelerId, senderId);
+    }
+
+    /** Chemin de création : aucun fil n'existe encore et la contrepartie est masquée. */
+    @Test
+    void getOrCreateByBidId_refuseLaCreation_quandLaContrepartieEstMasquee() {
+        UUID announcementId = UUID.randomUUID();
+        BidEntity bid = new BidEntity();
+        bid.setSenderId(senderId);
+        bid.setAnnouncementId(announcementId);
+        com.yadony.api.matching.AnnouncementEntity announcement =
+                new com.yadony.api.matching.AnnouncementEntity();
+        announcement.setTravelerId(travelerId);
+
+        when(conversationRepository.findByBidIdAndParticipant(bidId, senderId))
+                .thenReturn(Optional.empty());
+        when(conversationRepository.findByBidIdAndParticipantIgnoreDeleted(bidId, senderId))
+                .thenReturn(Optional.empty());
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(announcement));
+        doThrow(new YadonyBusinessException(org.springframework.http.HttpStatus.NOT_FOUND,
+                "not-found", "Not Found", "Ressource introuvable"))
+                .when(blockVisibility).assertVisible(senderId, travelerId);
+
+        assertThatThrownBy(() -> service.getOrCreateByBidId(bidId, senderId))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getStatus())
+                        .isEqualTo(org.springframework.http.HttpStatus.NOT_FOUND));
+        // Aucun fil ne naît entre deux comptes masqués l'un pour l'autre.
+        verify(conversationRepository, never()).save(any());
+    }
+
+    /** Chemin de création quand rien n'est masqué : le fil se crée normalement. */
+    @Test
+    void getOrCreateByBidId_creeLeFil_quandRienNestMasque() {
+        UUID announcementId = UUID.randomUUID();
+        BidEntity bid = new BidEntity();
+        bid.setSenderId(senderId);
+        bid.setAnnouncementId(announcementId);
+        com.yadony.api.matching.AnnouncementEntity announcement =
+                new com.yadony.api.matching.AnnouncementEntity();
+        announcement.setTravelerId(travelerId);
+        ConversationEntity existing = new ConversationEntity(bidId, senderId, travelerId, "conv_" + bidId);
+
+        when(conversationRepository.findByBidIdAndParticipant(bidId, senderId))
+                .thenReturn(Optional.empty());
+        when(conversationRepository.findByBidIdAndParticipantIgnoreDeleted(bidId, senderId))
+                .thenReturn(Optional.empty());
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(announcement));
+        // Un fil deja cree pour ce bid : createConversationForBid le rend sans repasser
+        // par Firestore, ce qui garde le test centre sur la garde de blocage.
+        when(conversationRepository.findByBidId(bidId)).thenReturn(Optional.of(existing));
+
+        ConversationEntity result = service.getOrCreateByBidId(bidId, senderId);
+
+        assertThat(result).isSameAs(existing);
+        verify(blockVisibility, atLeastOnce()).assertVisible(senderId, travelerId);
+    }
+
     @Test
     void createConversationForBid_refuses_whenParticipantsHiddenFromEachOther() {
         doThrow(new YadonyBusinessException(org.springframework.http.HttpStatus.NOT_FOUND,
