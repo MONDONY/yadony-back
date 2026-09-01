@@ -53,5 +53,32 @@ public record AnnouncementDetailResponse(
          *  a un compte Stripe Connect actif ET que la devise l'autorise, espèces toujours.
          *  Calculé côté serveur (voir AnnouncementPaymentRails) pour que le front n'ait pas à
          *  rejouer la règle. */
-        Set<PaymentMethod> availablePaymentMethods
-) {}
+        Set<PaymentMethod> availablePaymentMethods,
+        /**
+         * Équivalent ESTIMÉ de {@code pricePerKg} (net voyageur) dans la devise active
+         * du lecteur, au taux courant. {@code null} pour un invité (le net lui est déjà
+         * masqué), sans prix au kilo, ou quand le lecteur lit déjà dans la devise de
+         * l'annonce. Repère de lecture — le montant échangé reste dans la devise de
+         * l'annonce.
+         */
+        BigDecimal convertedPricePerKg,
+        /** Équivalent ESTIMÉ de {@code pricePerKgDisplay} (brut expéditeur), servi à tous. */
+        BigDecimal pricePerKgDisplayConverted,
+        /** Devise cible des équivalents convertis : celle du lecteur. */
+        String convertedCurrency
+) {
+    /** Copie enrichie des équivalents convertis — même pattern que le fil de recherche. */
+    public AnnouncementDetailResponse withConvertedPrices(BigDecimal convertedPricePerKg,
+                                                          BigDecimal pricePerKgDisplayConverted,
+                                                          String convertedCurrency,
+                                                          List<AnnouncementPriceGridItemResponse> convertedGridItems) {
+        return new AnnouncementDetailResponse(
+                id, travelerId, departureCity, arrivalCity, departureDate, departureTime, arrivalTime,
+                pickupAddress, deliveryAddress, availableKg, totalKg, pricePerKg, pricePerKgDisplay,
+                transportMode, status, bidsCount, confirmedParcelCount, traveler, description,
+                acceptedContentTypes, refusedTypes, acceptedPaymentMethods, capacityUnit, cashAccepted,
+                createdAt, updatedAt, pricingMode, convertedGridItems, reservedKg, surplusEligible,
+                surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,
+                availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency);
+    }
+}

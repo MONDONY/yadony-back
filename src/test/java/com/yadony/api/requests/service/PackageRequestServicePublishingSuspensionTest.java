@@ -56,6 +56,7 @@ class PackageRequestServicePublishingSuspensionTest {
 
     @Mock private PackageRequestRepository repository;
     @Mock private UserRepository userRepository;
+    @Mock private com.yadony.api.payments.currency.ExchangeRateService exchangeRateService;
     @Mock private ApplicationEventPublisher eventPublisher;
     @Mock private AuditService auditService;
     @Mock private RequestsConfig config;
@@ -121,7 +122,8 @@ class PackageRequestServicePublishingSuspensionTest {
         service = new PackageRequestService(
                 repository, userRepository, eventPublisher, auditService, config,
                 threadRepository, cityRepository, commissionProperties,
-                storageService, photoService, favoriteRepository, activeCurrencyResolver, realMapper, matchingService,
+                storageService, photoService, favoriteRepository, activeCurrencyResolver,
+                exchangeRateService, realMapper, matchingService,
                 yadonyConfig, announcementRepository, commissionRateResolver,
                 com.yadony.api.config.PlatformSettingsTestFactory.defaults());
         lenient().when(activeCurrencyResolver.resolve(any())).thenReturn("EUR");
