@@ -158,7 +158,7 @@ public class BidController {
     public ResponseEntity<BidResponse> cancelAfterHandover(@PathVariable UUID bidId) {
         String firebaseUid = requireFirebaseUid();
         cancellationService.cancelAfterHandover(firebaseUid, bidId);
-        return ResponseEntity.ok(bidService.getBidById(bidId, firebaseUid));
+        return ResponseEntity.ok(bidService.getBidAfterOwnMutation(bidId, firebaseUid));
     }
 
     // Story 9.4 — Voyageur refuse le colis lors de l'inspection

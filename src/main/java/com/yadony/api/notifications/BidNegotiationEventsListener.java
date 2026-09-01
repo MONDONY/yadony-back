@@ -28,8 +28,12 @@ public class BidNegotiationEventsListener {
     @EventListener
     @Async
     public void onMessagePosted(BidNegotiationMessagePostedEvent e) {
-        dispatcher.notifyUser(
+        // Message posté par l'autre partie : supprimé si les deux comptes sont masqués
+        // l'un pour l'autre. Une négociation liée à une transaction en cours passe quand
+        // même, isHidden portant cette exception.
+        dispatcher.notifyUnlessBlocked(
                 e.recipientId(),
+                e.authorId(),
                 titleFor(e.kind()),
                 bodyFor(e),
                 Map.of(
@@ -50,8 +54,13 @@ public class BidNegotiationEventsListener {
                 "announcementId", e.announcementId().toString()
         );
         String body = "Faute de réponse, la discussion de prix sur ce trajet s'est refermée.";
-        dispatcher.notifyUser(e.senderId(), "Discussion de prix expirée", body, data);
-        dispatcher.notifyUser(e.travelerId(), "Discussion de prix expirée", body, data);
+        // Chacun est prévenu au sujet de l'autre : si les deux comptes sont masqués l'un
+        // pour l'autre, la discussion morte n'a plus à être annoncée. Aucun risque de
+        // couper une coordination, une négociation expirée ne liant plus personne.
+        dispatcher.notifyUnlessBlocked(e.senderId(), e.travelerId(),
+                "Discussion de prix expirée", body, data);
+        dispatcher.notifyUnlessBlocked(e.travelerId(), e.senderId(),
+                "Discussion de prix expirée", body, data);
     }
 
     private String titleFor(BidNegotiationMessageKind kind) {

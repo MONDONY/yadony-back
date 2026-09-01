@@ -76,8 +76,12 @@ public class CorridorAlertTripMatchListener {
                         && Duration.between(alert.getLastNotifiedAt(), now).compareTo(COOLDOWN) < 0) {
                     continue; // cooldown anti-rafale
                 }
-                notificationDispatcher.notifyUser(
+                // Confidentialité — l'alerte porte sur le contenu d'un tiers : rien ne part
+                // si le voyageur et le propriétaire de l'alerte sont masqués l'un pour
+                // l'autre. Le blocage reste silencieux, l'alerte n'est ni coupée ni marquée.
+                boolean notified = notificationDispatcher.notifyUnlessBlocked(
                         alert.getOwnerId(),
+                        trip.getTravelerId(),
                         "Nouveau trajet sur " + corridor,
                         "Un trajet correspond à votre alerte",
                         Map.of(
@@ -86,6 +90,12 @@ public class CorridorAlertTripMatchListener {
                                 "announcementId", trip.getId().toString(),
                                 "corridor", corridor,
                                 "direction", alert.getDirection().name()));
+                if (!notified) {
+                    // Pas d'horodatage : lastNotifiedAt sert aussi de borne « depuis » au
+                    // digest. Le poser ici ferait disparaître du digest des trajets visibles
+                    // publiés dans la même fenêtre, à cause d'un trajet masqué.
+                    continue;
+                }
                 alert.setLastNotifiedAt(now);
                 alertRepository.save(alert);
             } catch (Exception e) {

@@ -70,6 +70,7 @@ class PackageRequestServicePublishingSuspensionTest {
     @Mock private com.yadony.api.matching.MatchingService matchingService;
     @Mock private com.yadony.api.matching.AnnouncementRepository announcementRepository;
     @Mock private com.yadony.api.common.CommissionRateResolver commissionRateResolver;
+    @Mock private com.yadony.api.common.BlockVisibility blockVisibility;
 
     /** Real record (not mocked) — threshold-days=3 mirrors application-test.yml (yadony.urgency.threshold-days). */
     private final YadonyConfigProperties yadonyConfig =
@@ -125,7 +126,8 @@ class PackageRequestServicePublishingSuspensionTest {
                 storageService, photoService, favoriteRepository, activeCurrencyResolver,
                 exchangeRateService, realMapper, matchingService,
                 yadonyConfig, announcementRepository, commissionRateResolver,
-                com.yadony.api.config.PlatformSettingsTestFactory.defaults());
+                com.yadony.api.config.PlatformSettingsTestFactory.defaults(),
+                blockVisibility);
         lenient().when(activeCurrencyResolver.resolve(any())).thenReturn("EUR");
         lenient().when(activeCurrencyResolver.resolveDisplay(any())).thenReturn("EUR");
     }

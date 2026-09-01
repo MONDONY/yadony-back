@@ -10,6 +10,7 @@ import com.yadony.api.favorites.FavoriteTargetType;
 import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.payments.cash.exception.CommissionMethodMissingException;
 import com.yadony.api.common.AuditService;
+import com.yadony.api.common.BlockVisibility;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.config.ContentCategoryNormalizer;
@@ -129,6 +130,8 @@ public class AnnouncementService {
     private final PackageRequestRepository packageRequestRepository;
     private final NegotiationThreadRepository negotiationThreadRepository;
     private final NotificationDispatcher notificationDispatcher;
+    /** Masquage mutuel des comptes bloqués, cf. {@link BlockVisibility}. */
+    private final BlockVisibility blockVisibility;
 
     @Value("${yadony.kyc.enforce:true}")
     private boolean enforceKyc;
@@ -153,7 +156,8 @@ public class AnnouncementService {
             AnnouncementSearchMapper announcementSearchMapper,
             PackageRequestRepository packageRequestRepository,
             NegotiationThreadRepository negotiationThreadRepository,
-            NotificationDispatcher notificationDispatcher
+            NotificationDispatcher notificationDispatcher,
+            BlockVisibility blockVisibility
     ) {
         this.announcementRepository = announcementRepository;
         this.bidRepository = bidRepository;
@@ -172,6 +176,7 @@ public class AnnouncementService {
         this.packageRequestRepository = packageRequestRepository;
         this.negotiationThreadRepository = negotiationThreadRepository;
         this.notificationDispatcher = notificationDispatcher;
+        this.blockVisibility = blockVisibility;
     }
 
     @Transactional(readOnly = true)
@@ -760,16 +765,25 @@ public class AnnouncementService {
         AnnouncementEntity announcement = announcementRepository.findById(id)
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "announcement-not-found", "Announcement Not Found", "Annonce introuvable"));
 
+        // Un viewer anonyme (pas de token, ou uid inconnu) reste résolu à null : il n'a pas
+        // d'identité à confronter aux blocages et continue donc de voir l'annonce.
+        UUID viewerId = resolveViewerId(firebaseUid);
+
+        // Confidentialité v2 — le trajet d'un voyageur bloqué (dans un sens ou dans
+        // l'autre) devient introuvable. On relève exactement la même erreur que pour une
+        // annonce absente, et non un 403 : un code distinct rendrait le blocage
+        // détectable par celui qui en fait l'objet.
+        if (blockVisibility.isHidden(viewerId, announcement.getTravelerId())) {
+            throw new YadonyBusinessException(HttpStatus.NOT_FOUND, "announcement-not-found",
+                    "Announcement Not Found", "Annonce introuvable");
+        }
+
         // Un brouillon est invisible des tiers : même erreur que si l'annonce n'existait
         // pas, pour ne pas révéler son existence à un utilisateur non-propriétaire.
-        if (announcement.getStatus() == AnnouncementStatus.DRAFT) {
-            UUID viewerId = userRepository.findByFirebaseUid(firebaseUid)
-                    .map(UserEntity::getId)
-                    .orElse(null);
-            if (viewerId == null || !viewerId.equals(announcement.getTravelerId())) {
-                throw new YadonyBusinessException(HttpStatus.NOT_FOUND, "announcement-not-found",
-                        "Announcement Not Found", "Annonce introuvable");
-            }
+        if (announcement.getStatus() == AnnouncementStatus.DRAFT
+                && (viewerId == null || !viewerId.equals(announcement.getTravelerId()))) {
+            throw new YadonyBusinessException(HttpStatus.NOT_FOUND, "announcement-not-found",
+                    "Announcement Not Found", "Annonce introuvable");
         }
 
         long bidsCount = bidRepository.countVisibleByAnnouncementId(id);
@@ -852,8 +866,9 @@ public class AnnouncementService {
         // Même repère de lecture que le fil (Tâche 10) : équivalents « environ » dans
         // la devise active du lecteur quand elle diffère de celle de l'annonce. Le net
         // converti suit la règle A16 du fil : masqué pour un invité, comme le net brut.
-        String viewerCurrency = activeCurrencyResolver.resolveDisplay(
-                userRepository.findByFirebaseUid(firebaseUid).map(UserEntity::getId).orElse(null));
+        // viewerId est déjà résolu en tête de méthode pour la garde de blocage : le
+        // réutiliser évite un second findByFirebaseUid identique sur le même appel.
+        String viewerCurrency = activeCurrencyResolver.resolveDisplay(viewerId);
         if (announcement.getCurrency() != null
                 && !announcement.getCurrency().equalsIgnoreCase(viewerCurrency)) {
             java.math.BigDecimal convertedNet = com.yadony.api.common.GuestSession.isGuest()
@@ -873,6 +888,18 @@ public class AnnouncementService {
             detail = detail.withConvertedPrices(convertedNet, convertedDisplay, viewerCurrency, convertedGrid);
         }
         return detail;
+    }
+
+    /**
+     * Identité de l'appelant, ou {@code null} s'il est anonyme (aucun uid transmis) ou si
+     * l'uid ne correspond à aucun compte. Même résolution que dans
+     * {@link #searchAnnouncements} : un viewer sans identité ne subit aucun masquage.
+     */
+    private UUID resolveViewerId(String firebaseUid) {
+        if (firebaseUid == null || firebaseUid.isBlank()) {
+            return null;
+        }
+        return userRepository.findByFirebaseUid(firebaseUid).map(UserEntity::getId).orElse(null);
     }
 
     /**

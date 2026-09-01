@@ -34,8 +34,11 @@ public class RequestEventsListener {
     @EventListener
     @Async
     public void onNegotiationStarted(NegotiationStartedEvent e) {
-        dispatcher.notifyUser(
+        // Nouvelle offre déclenchée par le voyageur : supprimée si les deux comptes sont
+        // masqués l'un pour l'autre.
+        dispatcher.notifyUnlessBlocked(
             e.senderId(),
+            e.travelerId(),
             "Nouvelle proposition reçue",
             String.format("Un voyageur propose %.2f€ pour votre demande", e.proposedPriceEur()),
             Map.of(
@@ -49,8 +52,10 @@ public class RequestEventsListener {
     @EventListener
     @Async
     public void onNegotiationCounterPosted(NegotiationCounterPostedEvent e) {
-        dispatcher.notifyUser(
+        // Contre-proposition postée par l'autre partie : même règle que l'offre initiale.
+        dispatcher.notifyUnlessBlocked(
             e.toUserId(),
+            e.fromUserId(),
             "Nouvelle contre-proposition",
             String.format("Nouvelle offre: %.2f€ (round %d)", e.newPriceEur(), e.roundsCount()),
             Map.of(
@@ -266,8 +271,11 @@ public class RequestEventsListener {
     @EventListener
     @Async
     public void onNegotiationNudgeSent(NegotiationNudgeSentEvent e) {
-        dispatcher.notifyUser(
+        // Relance envoyée à la main par l'autre partie : c'est exactement le type de
+        // sollicitation qu'un blocage doit faire taire.
+        dispatcher.notifyUnlessBlocked(
             e.toUserId(),
+            e.fromUserId(),
             "Relance",
             e.fromUserName() + " attend de vos nouvelles sur votre négociation.",
             Map.of(

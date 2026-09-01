@@ -2,6 +2,7 @@ package com.yadony.api.matching;
 
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
+import com.yadony.api.common.BlockVisibility;
 import com.yadony.api.common.MatchingTextUtil;
 import com.yadony.api.matching.dto.MatchingRequestDto;
 import com.yadony.api.requests.entity.PackageRequestEntity;
@@ -30,21 +31,28 @@ public class MatchingService {
     private final PackageRequestRepository packageRequestRepository;
     private final UserRepository userRepository;
     private final com.yadony.api.payments.currency.ExchangeRateService exchangeRateService;
+    private final BlockVisibility blockVisibility;
 
     public MatchingService(
             AnnouncementRepository announcementRepository,
             PackageRequestRepository packageRequestRepository,
             UserRepository userRepository,
-            com.yadony.api.payments.currency.ExchangeRateService exchangeRateService) {
+            com.yadony.api.payments.currency.ExchangeRateService exchangeRateService,
+            BlockVisibility blockVisibility) {
         this.announcementRepository = announcementRepository;
         this.packageRequestRepository = packageRequestRepository;
         this.userRepository = userRepository;
         this.exchangeRateService = exchangeRateService;
+        this.blockVisibility = blockVisibility;
     }
 
     public List<MatchingRequestDto> findMatchingRequests(UUID travelerId) {
         List<AnnouncementEntity> activeAnnouncements =
                 announcementRepository.findActiveByTravelerId(travelerId);
+
+        // Résolu une fois pour tout l'appel : la liste des blocages ne dépend que
+        // du voyageur, pas des demandes parcourues.
+        Set<UUID> hiddenSenderIds = blockVisibility.hiddenUserIdsFor(travelerId);
 
         List<MatchingRequestDto> results = new ArrayList<>();
 
@@ -54,6 +62,7 @@ public class MatchingService {
 
             for (PackageRequestEntity request : candidates) {
                 if (!matches(request, announcement)) continue;
+                if (isHiddenSender(hiddenSenderIds, request)) continue;
 
                 Optional<UserEntity> senderOpt = userRepository.findById(request.getSenderId());
                 if (senderOpt.isEmpty()) continue;
@@ -65,6 +74,17 @@ public class MatchingService {
 
         results.sort((a, b) -> Integer.compare(b.matchScore(), a.matchScore()));
         return results;
+    }
+
+    /**
+     * L'expéditeur de cette demande est-il masqué pour le voyageur ?
+     *
+     * <p>Le test de nullité est nécessaire : {@code hiddenUserIdsFor} peut renvoyer
+     * un {@code Set.of()} immuable, dont {@code contains(null)} lève une NPE.
+     */
+    private static boolean isHiddenSender(Set<UUID> hiddenSenderIds, PackageRequestEntity request) {
+        UUID senderId = request.getSenderId();
+        return senderId != null && hiddenSenderIds.contains(senderId);
     }
 
     /**
@@ -98,6 +118,8 @@ public class MatchingService {
         List<AnnouncementEntity> activeAnnouncements =
                 announcementRepository.findActiveByTravelerId(travelerId);
 
+        Set<UUID> hiddenSenderIds = blockVisibility.hiddenUserIdsFor(travelerId);
+
         // 1er passage : couples (trajet, demande) compatibles, sans toucher aux expéditeurs.
         List<Candidate> candidates = new ArrayList<>();
         for (AnnouncementEntity announcement : activeAnnouncements) {
@@ -107,6 +129,7 @@ public class MatchingService {
 
             for (PackageRequestEntity request : requests) {
                 if (!matches(request, announcement)) continue;
+                if (isHiddenSender(hiddenSenderIds, request)) continue;
                 candidates.add(new Candidate(request, announcement));
             }
         }

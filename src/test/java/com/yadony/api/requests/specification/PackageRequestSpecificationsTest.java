@@ -270,4 +270,38 @@ class PackageRequestSpecificationsTest {
         assertThat(result).isSameAs(inPredicate);
         verify(root).get("id");
     }
+
+    @Test
+    @DisplayName("notBlockedBy(null) → conjonction neutre, aucun filtre pour un visiteur")
+    void notBlockedBy_viewerNull_retourneUneConjonction() {
+        Specification<PackageRequestEntity> spec = PackageRequestSpecifications.notBlockedBy(null);
+
+        Predicate result = spec.toPredicate(root, query, cb);
+
+        assertThat(result).isNotNull();
+        verify(cb).conjunction();
+        verify(query, never()).subquery(java.util.UUID.class);
+    }
+
+    @Test
+    @DisplayName("notBlockedBy(viewer) → deux sous-requêtes user_blocks appliquées sur senderId")
+    @SuppressWarnings("unchecked")
+    void notBlockedBy_viewerConnu_construitLesDeuxSousRequetes() {
+        java.util.UUID viewer = java.util.UUID.randomUUID();
+
+        Path<Object> senderPath = mock(Path.class);
+        Subquery<java.util.UUID> subquery = mock(Subquery.class);
+        when(root.get("senderId")).thenReturn(senderPath);
+        when(query.subquery(java.util.UUID.class)).thenReturn(subquery);
+        when(subquery.from(com.yadony.api.auth.UserBlockEntity.class)).thenReturn(mock(Root.class));
+        when(subquery.select(any())).thenReturn(subquery);
+
+        Specification<PackageRequestEntity> spec = PackageRequestSpecifications.notBlockedBy(viewer);
+        spec.toPredicate(root, query, cb);
+
+        // Masquage symétrique : bloqués PAR le viewer, et bloqueurs DU viewer.
+        verify(query, times(2)).subquery(java.util.UUID.class);
+        verify(senderPath, times(2)).in(subquery);
+        verify(cb, times(2)).not(any());
+    }
 }

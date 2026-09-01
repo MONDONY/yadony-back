@@ -21,6 +21,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -65,13 +66,28 @@ class ProfilePublicControllerTest {
 
     @Test
     void getProfilePublic_notFound_returns404() throws Exception {
-        when(profilePublicService.getProfilePublic(any()))
+        when(profilePublicService.getProfilePublic(any(), any()))
                 .thenThrow(new YadonyBusinessException(
                         HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
 
         mockMvc.perform(get("/users/{userId}/profile-public", TARGET_USER_ID)
                         .with(authentication(asRole(SENDER_UID, "SENDER"))))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void getProfilePublic_hiddenByBlock_returns404NotForbidden() throws Exception {
+        // Le service masque un compte bloqué par un 404 « not-found » : le contrôleur doit
+        // le relayer tel quel. Un 403 confirmerait l'existence du profil et rendrait le
+        // blocage détectable.
+        when(profilePublicService.getProfilePublic(eq(TARGET_USER_ID), any()))
+                .thenThrow(new YadonyBusinessException(
+                        HttpStatus.NOT_FOUND, "not-found", "Not Found", "Ressource introuvable"));
+
+        mockMvc.perform(get("/users/{userId}/profile-public", TARGET_USER_ID)
+                        .with(authentication(asRole(SENDER_UID, "SENDER"))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("not-found"));
     }
 
     @Test
@@ -82,7 +98,7 @@ class ProfilePublicControllerTest {
 
     @Test
     void getProfilePublic_asSender_returns200() throws Exception {
-        when(profilePublicService.getProfilePublic(TARGET_USER_ID)).thenReturn(stubProfile());
+        when(profilePublicService.getProfilePublic(eq(TARGET_USER_ID), any())).thenReturn(stubProfile());
 
         mockMvc.perform(get("/users/{userId}/profile-public", TARGET_USER_ID)
                         .with(authentication(asRole(SENDER_UID, "SENDER"))))
@@ -98,7 +114,7 @@ class ProfilePublicControllerTest {
 
     @Test
     void getProfilePublic_neverExposesPhone() throws Exception {
-        when(profilePublicService.getProfilePublic(TARGET_USER_ID)).thenReturn(stubProfile());
+        when(profilePublicService.getProfilePublic(eq(TARGET_USER_ID), any())).thenReturn(stubProfile());
 
         MvcResult result = mockMvc.perform(get("/users/{userId}/profile-public", TARGET_USER_ID)
                         .with(authentication(asRole(SENDER_UID, "SENDER"))))

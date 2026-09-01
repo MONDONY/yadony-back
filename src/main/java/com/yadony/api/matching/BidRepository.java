@@ -420,7 +420,8 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
 
     /**
      * True if there is at least one active (in-flight) transaction between two users,
-     * in either direction (sender↔traveler). Used to prevent blocking a user mid-deal.
+     * in either direction (sender↔traveler). Used to keep a blocked counterparty
+     * visible until the delivery is over.
      */
     @Query("""
         SELECT COUNT(b) > 0 FROM BidEntity b
@@ -432,6 +433,24 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
     boolean hasActiveTransactionBetween(
             @Param("userA") UUID userA,
             @Param("userB") UUID userB,
+            @Param("activeStatuses") List<BidStatus> activeStatuses);
+
+    /**
+     * Batch counterpart of {@link #hasActiveTransactionBetween}: among {@code candidateIds},
+     * the users still in an active transaction with {@code userId}. Lets the block filter
+     * spare those counterparties without one query per candidate.
+     */
+    @Query("""
+        SELECT CASE WHEN b.senderId = :userId THEN a.travelerId ELSE b.senderId END
+        FROM BidEntity b
+        JOIN AnnouncementEntity a ON a.id = b.announcementId
+        WHERE b.status IN :activeStatuses AND (
+              (b.senderId = :userId AND a.travelerId IN :candidateIds)
+           OR (b.senderId IN :candidateIds AND a.travelerId = :userId))
+        """)
+    List<UUID> findActiveTransactionCounterparties(
+            @Param("userId") UUID userId,
+            @Param("candidateIds") List<UUID> candidateIds,
             @Param("activeStatuses") List<BidStatus> activeStatuses);
 
     @Query(value = """

@@ -180,8 +180,12 @@ public class TravelerStatsController {
 
         String travelerName = buildTravelerName(traveler);
         String corridor = announcement.getDepartureCity() + " → " + announcement.getArrivalCity();
-        notificationDispatcher.notifyUser(
+        // Confidentialité — sollicitation directe d'un tiers, donc exactement ce qu'un
+        // blocage doit faire taire. Rien n'est renvoyé au voyageur : le 200 est conservé
+        // pour que le blocage reste indétectable côté émetteur.
+        notificationDispatcher.notifyUnlessBlocked(
                 request.getSenderId(),
+                traveler.getId(),
                 "Invitation d'un voyageur",
                 travelerName + " vous invite à envoyer votre colis sur le trajet " + corridor + ".",
                 Map.of(

@@ -1,6 +1,7 @@
 package com.yadony.api.auth;
 
 import com.yadony.api.auth.dto.ProfilePublicResponse;
+import com.yadony.api.common.BlockVisibility;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.ratings.RatingService;
@@ -30,6 +31,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -40,10 +44,12 @@ class ProfilePublicServiceTest {
     @Mock private RatingService ratingService;
     @Mock private UserBusinessPrefsRepository userBusinessPrefsRepository;
     @Mock private StorageService storageService;
+    @Mock private BlockVisibility blockVisibility;
 
     @InjectMocks private ProfilePublicService profilePublicService;
 
     private static final UUID USER_ID = UUID.randomUUID();
+    private static final UUID VIEWER_ID = UUID.randomUUID();
 
     private UserEntity user;
 
@@ -87,7 +93,7 @@ class ProfilePublicServiceTest {
     void getProfilePublic_userNotFound_throws404() {
         when(userRepository.findById(USER_ID)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> profilePublicService.getProfilePublic(USER_ID))
+        assertThatThrownBy(() -> profilePublicService.getProfilePublic(USER_ID, VIEWER_ID))
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(e -> {
                     YadonyBusinessException ex = (YadonyBusinessException) e;
@@ -97,12 +103,60 @@ class ProfilePublicServiceTest {
     }
 
     @Test
+    @DisplayName("profil masqué par un blocage → 404, sans même lire le profil")
+    void getProfilePublic_hiddenByBlock_throws404() {
+        doThrow(new YadonyBusinessException(
+                HttpStatus.NOT_FOUND, "not-found", "Not Found", "Ressource introuvable"))
+                .when(blockVisibility).assertVisible(VIEWER_ID, USER_ID);
+
+        assertThatThrownBy(() -> profilePublicService.getProfilePublic(USER_ID, VIEWER_ID))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> {
+                    YadonyBusinessException ex = (YadonyBusinessException) e;
+                    // 404 et non 403 : un 403 rendrait le blocage détectable.
+                    assertThat(ex.getStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+                    assertThat(ex.getErrorCode()).isEqualTo("not-found");
+                });
+
+        // Le masquage coupe avant toute lecture : rien du profil n'est chargé.
+        verifyNoInteractions(userRepository, ratingService);
+    }
+
+    @Test
+    @DisplayName("profil partageable masqué par un blocage → 404")
+    void getPublicTravelerProfile_hiddenByBlock_throws404() {
+        doThrow(new YadonyBusinessException(
+                HttpStatus.NOT_FOUND, "not-found", "Not Found", "Ressource introuvable"))
+                .when(blockVisibility).assertVisible(VIEWER_ID, USER_ID);
+
+        assertThatThrownBy(() -> profilePublicService.getPublicTravelerProfile(USER_ID, VIEWER_ID))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getStatus())
+                        .isEqualTo(HttpStatus.NOT_FOUND));
+
+        verifyNoInteractions(userRepository, ratingService);
+    }
+
+    @Test
+    @DisplayName("profil partageable, viewer anonyme → aucun masquage, profil rendu")
+    void getPublicTravelerProfile_anonymousViewer_returnsProfile() {
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(3), isNull()))
+                .thenReturn(stubRatingSummary());
+
+        var response = profilePublicService.getPublicTravelerProfile(USER_ID, null);
+
+        assertThat(response.displayName()).isEqualTo("Moussa D.");
+        assertThat(response.ratingCount()).isEqualTo(10);
+    }
+
+    @Test
     @DisplayName("utilisateur trouvé → retourne profil public complet")
     void getProfilePublic_validUser_returnsFullProfile() {
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
-        when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(3))).thenReturn(stubRatingSummary());
+        when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(3), eq(VIEWER_ID))).thenReturn(stubRatingSummary());
 
-        ProfilePublicResponse response = profilePublicService.getProfilePublic(USER_ID);
+        ProfilePublicResponse response = profilePublicService.getProfilePublic(USER_ID, VIEWER_ID);
 
         assertThat(response.userId()).isEqualTo(USER_ID.toString());
         assertThat(response.displayName()).isEqualTo("Moussa D.");
@@ -119,9 +173,9 @@ class ProfilePublicServiceTest {
     @DisplayName("getPublicTravelerProfile → profil minimal, sans préférences de contact")
     void getPublicTravelerProfile_returnsMinimalProfile() {
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
-        when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(3))).thenReturn(stubRatingSummary());
+        when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(3), eq(VIEWER_ID))).thenReturn(stubRatingSummary());
 
-        var response = profilePublicService.getPublicTravelerProfile(USER_ID);
+        var response = profilePublicService.getPublicTravelerProfile(USER_ID, VIEWER_ID);
 
         assertThat(response.displayName()).isEqualTo("Moussa D.");
         assertThat(response.kycVerified()).isTrue();
@@ -141,7 +195,7 @@ class ProfilePublicServiceTest {
     void getPublicTravelerProfile_userNotFound_throws404() {
         when(userRepository.findById(USER_ID)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> profilePublicService.getPublicTravelerProfile(USER_ID))
+        assertThatThrownBy(() -> profilePublicService.getPublicTravelerProfile(USER_ID, VIEWER_ID))
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(e -> assertThat(((YadonyBusinessException) e).getStatus()).isEqualTo(HttpStatus.NOT_FOUND));
     }
@@ -151,9 +205,9 @@ class ProfilePublicServiceTest {
     void getProfilePublic_kycNotVerified_kycVerifiedFalse() throws Exception {
         setField(user, "kycStatus", KycStatus.PENDING);
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
-        when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(3))).thenReturn(stubRatingSummary());
+        when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(3), eq(VIEWER_ID))).thenReturn(stubRatingSummary());
 
-        ProfilePublicResponse response = profilePublicService.getProfilePublic(USER_ID);
+        ProfilePublicResponse response = profilePublicService.getProfilePublic(USER_ID, VIEWER_ID);
 
         assertThat(response.kycVerified()).isFalse();
     }
@@ -163,9 +217,9 @@ class ProfilePublicServiceTest {
     void getProfilePublic_noLastName_displayNameIsFirstNameOnly() throws Exception {
         setField(user, "lastName", null);
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
-        when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(3))).thenReturn(stubRatingSummary());
+        when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(3), eq(VIEWER_ID))).thenReturn(stubRatingSummary());
 
-        ProfilePublicResponse response = profilePublicService.getProfilePublic(USER_ID);
+        ProfilePublicResponse response = profilePublicService.getProfilePublic(USER_ID, VIEWER_ID);
 
         assertThat(response.displayName()).isEqualTo("Moussa");
     }
@@ -176,9 +230,9 @@ class ProfilePublicServiceTest {
         setField(user, "firstName", null);
         setField(user, "lastName", null);
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
-        when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(3))).thenReturn(stubRatingSummary());
+        when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(3), eq(VIEWER_ID))).thenReturn(stubRatingSummary());
 
-        ProfilePublicResponse response = profilePublicService.getProfilePublic(USER_ID);
+        ProfilePublicResponse response = profilePublicService.getProfilePublic(USER_ID, VIEWER_ID);
 
         // Le repli n'est plus « Utilisateur » mais le username du compte : deux profils sans
         // prénom restaient sinon indiscernables l'un de l'autre.
@@ -189,9 +243,9 @@ class ProfilePublicServiceTest {
     @DisplayName("response ne contient jamais phoneNumber")
     void getProfilePublic_neverContainsPhoneNumber() {
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
-        when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(3))).thenReturn(stubRatingSummary());
+        when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(3), eq(VIEWER_ID))).thenReturn(stubRatingSummary());
 
-        ProfilePublicResponse response = profilePublicService.getProfilePublic(USER_ID);
+        ProfilePublicResponse response = profilePublicService.getProfilePublic(USER_ID, VIEWER_ID);
 
         // ProfilePublicResponse record fields must not include phone
         assertThat(response).isNotNull();
@@ -206,10 +260,10 @@ class ProfilePublicServiceTest {
     @DisplayName("pas de prefs → contactMode et responseDelayHours sont null")
     void getProfilePublic_noPrefs_contactModeAndDelayAreNull() {
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
-        when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(3))).thenReturn(stubRatingSummary());
+        when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(3), eq(VIEWER_ID))).thenReturn(stubRatingSummary());
         // userBusinessPrefsRepository already stubbed to return empty in setUp()
 
-        ProfilePublicResponse response = profilePublicService.getProfilePublic(USER_ID);
+        ProfilePublicResponse response = profilePublicService.getProfilePublic(USER_ID, VIEWER_ID);
 
         assertThat(response.contactMode()).isNull();
         assertThat(response.responseDelayHours()).isNull();
@@ -224,10 +278,10 @@ class ProfilePublicServiceTest {
         setField(prefs, "responseDelayHours", 24);
 
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
-        when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(3))).thenReturn(stubRatingSummary());
+        when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(3), eq(VIEWER_ID))).thenReturn(stubRatingSummary());
         when(userBusinessPrefsRepository.findById(USER_ID)).thenReturn(Optional.of(prefs));
 
-        ProfilePublicResponse response = profilePublicService.getProfilePublic(USER_ID);
+        ProfilePublicResponse response = profilePublicService.getProfilePublic(USER_ID, VIEWER_ID);
 
         assertThat(response.contactMode()).isEqualTo("WHATSAPP");
         assertThat(response.responseDelayHours()).isEqualTo(24);
@@ -251,12 +305,12 @@ class ProfilePublicServiceTest {
         u.setLanguages(Set.of("FR"));
 
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(u));
-        when(ratingService.getUserRatings(USER_ID, 0, 3))
+        when(ratingService.getUserRatings(USER_ID, 0, 3, VIEWER_ID))
                 .thenReturn(new UserRatingsSummaryResponse(
                         BigDecimal.ZERO, 0, Map.of(), List.of(), 0, 0));
         when(userBusinessPrefsRepository.findById(USER_ID)).thenReturn(Optional.empty());
 
-        ProfilePublicResponse r = profilePublicService.getProfilePublic(USER_ID);
+        ProfilePublicResponse r = profilePublicService.getProfilePublic(USER_ID, VIEWER_ID);
 
         assertThat(r.bio()).isEqualTo("Hello");
         assertThat(r.avatarUrl()).isEqualTo("https://cdn/a.jpg");

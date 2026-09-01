@@ -36,7 +36,6 @@ class BlockServiceTest {
     @Test
     void block_creeLaRelation() {
         when(blockRepo.existsByBlockerIdAndBlockedId(me, other)).thenReturn(false);
-        when(bidRepository.hasActiveTransactionBetween(eq(me), eq(other), anyList())).thenReturn(false);
         service.block(me, other);
         verify(blockRepo).save(argThat(b -> b.getBlockerId().equals(me) && b.getBlockedId().equals(other)));
     }
@@ -54,28 +53,92 @@ class BlockServiceTest {
         verify(blockRepo, never()).save(any());
     }
 
+    /** Une transaction en cours n'empêche plus de bloquer : le harcèlement peut survenir
+     *  précisément pendant l'acheminement. La coordination est préservée autrement, en
+     *  gardant la contrepartie visible (voir isHidden_*). */
     @Test
-    void block_refuseSiTransactionActive() {
+    void block_autoriseMemeAvecTransactionActive() {
         when(blockRepo.existsByBlockerIdAndBlockedId(me, other)).thenReturn(false);
-        when(bidRepository.hasActiveTransactionBetween(eq(me), eq(other), anyList())).thenReturn(true);
-        assertThatThrownBy(() -> service.block(me, other))
-                .isInstanceOf(YadonyBusinessException.class)
-                .satisfies(e -> assertThat(((YadonyBusinessException) e).getStatus().value()).isEqualTo(409));
-        verify(blockRepo, never()).save(any());
-    }
-
-    /** Régression I2 : ARRIVED doit figurer dans ACTIVE_STATUSES. Le colis est arrivé
-     *  mais pas encore retiré — c'est exactement le moment où les deux parties
-     *  coordonnent le retrait, donc le pire moment pour autoriser un blocage. */
-    @Test
-    void block_ACTIVE_STATUSES_inclutArrived() {
-        when(blockRepo.existsByBlockerIdAndBlockedId(me, other)).thenReturn(false);
-        when(bidRepository.hasActiveTransactionBetween(eq(me), eq(other), anyList())).thenReturn(false);
 
         service.block(me, other);
 
+        verify(blockRepo).save(argThat(b -> b.getBlockerId().equals(me) && b.getBlockedId().equals(other)));
+    }
+
+    @Test
+    void isHidden_faux_siAucunBlocage() {
+        when(blockRepo.existsBetween(me, other)).thenReturn(false);
+        assertThat(service.isHidden(me, other)).isFalse();
+        verifyNoInteractions(bidRepository);
+    }
+
+    @Test
+    void isHidden_vrai_siBloqueSansTransaction() {
+        when(blockRepo.existsBetween(me, other)).thenReturn(true);
+        when(bidRepository.hasActiveTransactionBetween(eq(me), eq(other), anyList())).thenReturn(false);
+        assertThat(service.isHidden(me, other)).isTrue();
+    }
+
+    /** Régression I2, reformulée : ARRIVED reste dans ACTIVE_STATUSES. Le colis est arrivé
+     *  mais pas encore retiré — c'est le moment où les deux parties coordonnent le retrait,
+     *  donc le pire moment pour leur couper la visibilité mutuelle. */
+    @Test
+    void isHidden_faux_siTransactionActive_etArrivedEnFaitPartie() {
+        when(blockRepo.existsBetween(me, other)).thenReturn(true);
+        when(bidRepository.hasActiveTransactionBetween(eq(me), eq(other), anyList())).thenReturn(true);
+
+        assertThat(service.isHidden(me, other)).isFalse();
+
         verify(bidRepository).hasActiveTransactionBetween(eq(me), eq(other),
                 argThat(statuses -> statuses.contains(com.yadony.api.matching.BidStatus.ARRIVED)));
+    }
+
+    @Test
+    void isHidden_faux_pourUnViewerAnonymeOuSoiMeme() {
+        assertThat(service.isHidden(null, other)).isFalse();
+        assertThat(service.isHidden(me, me)).isFalse();
+        verifyNoInteractions(blockRepo, bidRepository);
+    }
+
+    /** 404 et non 403 : un 403 confirmerait l'existence de la ressource et rendrait le
+     *  blocage détectable. */
+    @Test
+    void assertVisible_leve404_siMasque() {
+        when(blockRepo.existsBetween(me, other)).thenReturn(true);
+        when(bidRepository.hasActiveTransactionBetween(eq(me), eq(other), anyList())).thenReturn(false);
+
+        assertThatThrownBy(() -> service.assertVisible(me, other))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getStatus().value()).isEqualTo(404));
+    }
+
+    @Test
+    void assertVisible_passe_siVisible() {
+        when(blockRepo.existsBetween(me, other)).thenReturn(false);
+        assertThatCode(() -> service.assertVisible(me, other)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void hiddenUserIdsFor_excluteLesContrepartiesEnTransaction() {
+        UUID trading = UUID.randomUUID();
+        when(blockRepo.findBlockedRelationIds(me)).thenReturn(List.of(other, trading));
+        when(bidRepository.findActiveTransactionCounterparties(eq(me), anyList(), anyList()))
+                .thenReturn(List.of(trading));
+
+        assertThat(service.hiddenUserIdsFor(me)).containsExactly(other);
+    }
+
+    @Test
+    void hiddenUserIdsFor_vide_siAucuneRelation() {
+        when(blockRepo.findBlockedRelationIds(me)).thenReturn(List.of());
+        assertThat(service.hiddenUserIdsFor(me)).isEmpty();
+        verifyNoInteractions(bidRepository);
+    }
+
+    @Test
+    void hiddenUserIdsFor_vide_pourUnViewerAnonyme() {
+        assertThat(service.hiddenUserIdsFor(null)).isEmpty();
+        verifyNoInteractions(blockRepo, bidRepository);
     }
 
     @Test

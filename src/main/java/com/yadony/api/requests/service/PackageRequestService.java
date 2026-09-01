@@ -4,6 +4,7 @@ import com.yadony.api.auth.KycStatus;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
+import com.yadony.api.common.BlockVisibility;
 import com.yadony.api.common.CommissionRateResolver;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.common.YadonyBusinessException;
@@ -73,6 +74,7 @@ public class PackageRequestService {
     private final AnnouncementRepository announcementRepository;
     private final CommissionRateResolver commissionRateResolver;
     private final PlatformSettingsService platformSettings;
+    private final BlockVisibility blockVisibility;
 
     public PackageRequestService(PackageRequestRepository repository,
                                   UserRepository userRepository,
@@ -92,7 +94,8 @@ public class PackageRequestService {
                                   YadonyConfigProperties yadonyConfig,
                                   AnnouncementRepository announcementRepository,
                                   CommissionRateResolver commissionRateResolver,
-                                  PlatformSettingsService platformSettings) {
+                                  PlatformSettingsService platformSettings,
+                                  BlockVisibility blockVisibility) {
         this.repository = repository;
         this.userRepository = userRepository;
         this.eventPublisher = eventPublisher;
@@ -112,6 +115,7 @@ public class PackageRequestService {
         this.announcementRepository = announcementRepository;
         this.commissionRateResolver = commissionRateResolver;
         this.platformSettings = platformSettings;
+        this.blockVisibility = blockVisibility;
     }
 
     /**
@@ -535,6 +539,13 @@ public class PackageRequestService {
         PackageRequestEntity entity = repository.findById(requestId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found"));
 
+        // Masquage mutuel : si l'expéditeur et l'appelant se sont bloqués, la demande
+        // n'existe pas pour lui. Le contrôle passe avant tout autre verdict d'accès pour
+        // que la réponse reste un 404 silencieux, jamais un 403 qui trahirait le blocage.
+        // Un appelant anonyme (invité, callerUid nul) n'a pas d'identité à confronter :
+        // BlockVisibility ne masque rien pour lui.
+        blockVisibility.assertVisible(callerUid, entity.getSenderId());
+
         boolean isOwner = entity.getSenderId().equals(callerUid);
         boolean isThreadParticipant = threadRepository
             .existsByPackageRequestIdAndTravelerId(requestId, callerUid);
@@ -769,12 +780,30 @@ public class PackageRequestService {
                                                       UUID callerId) {
         Set<UUID> favIds = loadFavIds(callerId);
         boolean viewerHasConnect = resolveViewerHasConnect(callerId);
-        Page<PackageRequestEntity> page = repository.findAll(spec, pageable);
+        Page<PackageRequestEntity> page = repository.findAll(visibleTo(spec, callerId), pageable);
         BatchMaps batch = buildBatchMaps(page.getContent());
         String viewerCurrency = activeCurrencyResolver.resolveDisplay(callerId);
         return page.map(e -> withViewerConversion(packageRequestSearchMapper.toSearchResponse(
                 e, favIds.contains(e.getId()), viewerHasConnect, batch.userMap, batch.cityMap, batch.photoMap),
                 viewerCurrency));
+    }
+
+    /**
+     * Ajoute le masquage mutuel à une recherche : les demandes d'un expéditeur en relation
+     * de blocage avec l'appelant disparaissent des résultats, dans les deux sens.
+     *
+     * <p>Le filtre est ajouté à la {@code Specification} et non appliqué après coup sur la
+     * page : filtrer en mémoire laisserait la pagination SQL compter les demandes masquées,
+     * et une page de vingt résultats en rendrait dix-sept.
+     *
+     * <p>Appelant anonyme : rien à masquer, la spécification d'origine est renvoyée telle
+     * quelle pour ne pas payer les sous-requêtes inutilement.
+     */
+    private Specification<PackageRequestEntity> visibleTo(Specification<PackageRequestEntity> spec, UUID callerId) {
+        if (callerId == null) {
+            return spec;
+        }
+        return Specification.where(spec).and(PackageRequestSpecifications.notBlockedBy(callerId));
     }
 
     /**
@@ -807,7 +836,7 @@ public class PackageRequestService {
             return new org.springframework.data.domain.PageImpl<>(List.of(), pageable, 0);
         }
 
-        Specification<PackageRequestEntity> restricted = Specification.where(spec)
+        Specification<PackageRequestEntity> restricted = Specification.where(visibleTo(spec, callerId))
                 .and(PackageRequestSpecifications.idIn(matches.keySet()));
 
         List<PackageRequestEntity> sorted = repository.findAll(restricted).stream()
@@ -877,7 +906,7 @@ public class PackageRequestService {
                                                             UUID callerId) {
         Set<UUID> favIds = loadFavIds(callerId);
         boolean viewerHasConnect = resolveViewerHasConnect(callerId);
-        Page<PackageRequestEntity> rawPage = repository.findAll(spec, pageable);
+        Page<PackageRequestEntity> rawPage = repository.findAll(visibleTo(spec, callerId), pageable);
         BatchMaps batch = buildBatchMaps(rawPage.getContent());
         String viewerCurrency = activeCurrencyResolver.resolveDisplay(callerId);
         Page<PackageRequestSearchResponse> mapped = rawPage.map(e -> withViewerConversion(

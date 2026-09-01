@@ -90,6 +90,7 @@ class AnnouncementServiceTest {
     @Mock private com.yadony.api.requests.repository.PackageRequestRepository packageRequestRepository;
     @Mock private com.yadony.api.requests.repository.NegotiationThreadRepository negotiationThreadRepository;
     @Mock private com.yadony.api.notifications.NotificationDispatcher notificationDispatcher;
+    @Mock private com.yadony.api.common.BlockVisibility blockVisibility;
 
     private AnnouncementService announcementService;
 
@@ -109,7 +110,7 @@ class AnnouncementServiceTest {
                 com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3),
                 priceGridService, flagService,
                 storageService, favoriteRepository, activeCurrencyResolver, exchangeRateService, realMapper, packageRequestRepository,
-                negotiationThreadRepository, notificationDispatcher);
+                negotiationThreadRepository, notificationDispatcher, blockVisibility);
     }
 
     private static final String FIREBASE_UID = "uid-traveler-001";
@@ -1242,7 +1243,7 @@ class AnnouncementServiceTest {
         }
 
         @Test
-        @DisplayName("annonce ACTIVE → un tiers peut voir le détail (non-régression, pas de résolution du viewer)")
+        @DisplayName("annonce ACTIVE → un tiers peut voir le détail")
         void getDetail_activeNonOwner_returnsDetail() {
             UserEntity owner = buildTraveler();
             AnnouncementEntity a = buildAnnouncement(owner);
@@ -1254,11 +1255,13 @@ class AnnouncementServiceTest {
                     ANNOUNCEMENT_ID, "uid-other-traveler-2");
 
             assertThat(result.status()).isEqualTo("ACTIVE");
-            // Depuis le lot 5 multidevise, le lookup viewer sert aussi à résoudre la
-            // devise ACTIVE du lecteur (équivalents « environ » du détail) : il est
-            // devenu légitime sur une annonce ACTIVE — l'ancien never() protégeait un
-            // contrat qui n'existe plus. On vérifie qu'il reste UNIQUE (pas de N+1).
-            verify(userRepository, org.mockito.Mockito.atMostOnce()).findByFirebaseUid(any());
+            // Le viewer est résolu à chaque lecture, et plus seulement pour un brouillon :
+            // la garde de blocage a besoin de son id pour interroger BlockVisibility, et le
+            // lot 5 multidevise s'en sert pour la devise d'affichage. L'ancien never()
+            // protégeait un contrat qui n'existe plus. Les deux besoins partagent la même
+            // résolution : on vérifie qu'elle a lieu, et qu'elle reste UNIQUE (pas de N+1).
+            verify(userRepository, org.mockito.Mockito.times(1))
+                    .findByFirebaseUid("uid-other-traveler-2");
         }
     }
 
@@ -2367,7 +2370,7 @@ class AnnouncementServiceTest {
                     com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3),
                     priceGridService, flagService,
                     storageService, favoriteRepository, activeCurrencyResolver, exchangeRateService, mapperWithLimits, packageRequestRepository,
-                    negotiationThreadRepository, notificationDispatcher);
+                    negotiationThreadRepository, notificationDispatcher, blockVisibility);
 
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
             // le nouveau count (hors DRAFT) renvoie 1 => sous la limite (2) => création OK
@@ -2702,7 +2705,7 @@ class AnnouncementServiceTest {
                     com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3),
                     priceGridService, flagService,
                     storageService, favoriteRepository, activeCurrencyResolver, exchangeRateService, mapperWithLimits, packageRequestRepository,
-                    negotiationThreadRepository, notificationDispatcher);
+                    negotiationThreadRepository, notificationDispatcher, blockVisibility);
 
             AnnouncementEntity draft = draftEntityOwnedBy(user);
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
@@ -2915,7 +2918,7 @@ class AnnouncementServiceTest {
                     com.yadony.api.config.PlatformSettingsTestFactory.withProEnabled(false),
                     priceGridService, flagService,
                     storageService, favoriteRepository, activeCurrencyResolver, exchangeRateService, mapper,
-                    packageRequestRepository, negotiationThreadRepository, notificationDispatcher);
+                    packageRequestRepository, negotiationThreadRepository, notificationDispatcher, blockVisibility);
         }
 
         @Test

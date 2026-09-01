@@ -8,6 +8,7 @@ import com.yadony.api.cancellation.events.TripCancelledEvent;
 import com.yadony.api.cancellation.events.ParcelReturnedEvent;
 import com.yadony.api.cancellation.events.ReturnDeadlineExpiredEvent;
 import com.yadony.api.cancellation.events.ReturnDeadlineWarningEvent;
+import com.yadony.api.common.BlockVisibility;
 import com.yadony.api.disputes.events.DisputeOpenedEvent;
 import com.yadony.api.disputes.events.DisputeResolvedEvent;
 import com.yadony.api.disputes.events.DisputeUpdatedEvent;
@@ -57,14 +58,17 @@ public class NotificationDispatcher {
     private final SmsService smsService;
     private final UserRepository userRepository;
     private final NotificationService notificationService;
+    private final BlockVisibility blockVisibility;
 
     public NotificationDispatcher(FcmService fcmService, SmsService smsService,
                                   UserRepository userRepository,
-                                  NotificationService notificationService) {
+                                  NotificationService notificationService,
+                                  BlockVisibility blockVisibility) {
         this.fcmService = fcmService;
         this.smsService = smsService;
         this.userRepository = userRepository;
         this.notificationService = notificationService;
+        this.blockVisibility = blockVisibility;
     }
 
     // ── Public API ───────────────────────────────────────────────────────────
@@ -79,6 +83,37 @@ public class NotificationDispatcher {
             Map<String, String> dataWithId = withNotificationId(data, saved.getId());
             fcmService.sendToUser(userId, title, body, dataWithId);
         }
+    }
+
+    /**
+     * Notification déclenchée par un autre utilisateur : rien n'est envoyé si l'émetteur
+     * est masqué pour le destinataire (blocage sans transaction en cours).
+     *
+     * <p>Voie distincte de {@link #notifyUser} à dessein : la voie générique sert aussi aux
+     * notifications système, sans émetteur, qu'un filtre silencieux glissé dans son corps
+     * aurait rendues dépendantes d'une relation qui n'existe pas. Ici l'appelant déclare
+     * l'émetteur, donc la question a un sens.
+     *
+     * <p>Ne jamais l'utiliser pour ce qui touche à une transaction en cours (paiement,
+     * remise, arrivée, litige) : {@link BlockVisibility#isHidden} les laisserait passer de
+     * toute façon, mais ces notifications ne doivent dépendre d'aucune règle de blocage.
+     *
+     * @return vrai si la notification a été émise, faux si elle a été supprimée
+     */
+    public boolean notifyUnlessBlocked(UUID recipientId, UUID actorId, String title, String body,
+                                       Map<String, String> data) {
+        return notifyUnlessBlocked(recipientId, actorId, title, body, data, true);
+    }
+
+    /** Variante de {@link #notifyUnlessBlocked} qui contrôle l'envoi du push. */
+    public boolean notifyUnlessBlocked(UUID recipientId, UUID actorId, String title, String body,
+                                       Map<String, String> data, boolean push) {
+        if (blockVisibility.isHidden(recipientId, actorId)) {
+            log.debug("Notification supprimée : émetteur {} masqué pour {}", actorId, recipientId);
+            return false;
+        }
+        notifyUser(recipientId, title, body, data, push);
+        return true;
     }
 
     // Critical: persisted with is_critical=true → SmsFallbackScheduler sends SMS if no ACK in 60s
@@ -104,24 +139,27 @@ public class NotificationDispatcher {
     @Async
     public void onBidCreated(BidCreatedEvent event) {
         notifyNewBid(event.getBidId(), event.getAnnouncementId(), event.getTravelerId(),
-                event.getSenderFirstName(), event.getWeightKg(), event.getCorridor());
+                event.getSenderId(), event.getSenderFirstName(), event.getWeightKg(),
+                event.getCorridor());
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
     public void onCashBidCreated(CashBidCreatedEvent event) {
         notifyNewBid(event.bidId(), event.announcementId(), event.travelerId(),
-                event.senderFirstName(), event.weightKg(), event.corridor());
+                event.senderId(), event.senderFirstName(), event.weightKg(), event.corridor());
     }
 
-    private void notifyNewBid(UUID bidId, UUID announcementId, UUID travelerId,
+    private void notifyNewBid(UUID bidId, UUID announcementId, UUID travelerId, UUID senderId,
                               String senderFirstName, BigDecimal weightKg, String corridor) {
         String body = weightKg != null
                 ? String.format("%s veut envoyer %.1f kg — %s",
                         senderFirstName, weightKg.doubleValue(), corridor)
                 : String.format("%s a une demande d'envoi — %s",
                         senderFirstName, corridor);
-        notifyUser(travelerId, "Nouvelle demande d'envoi", body,
+        // Une nouvelle demande est déclenchée par l'expéditeur : rien ne part si le
+        // voyageur et lui sont masqués l'un pour l'autre.
+        notifyUnlessBlocked(travelerId, senderId, "Nouvelle demande d'envoi", body,
                 Map.of("type", "BID_CREATED",
                        "bidId", bidId.toString(),
                        "announcementId", announcementId.toString()));
@@ -207,7 +245,10 @@ public class NotificationDispatcher {
         // trajet », qui annonce déjà l'acceptation ET porte le lien de paiement. Pousser en
         // plus « Demande acceptée ! » ferait deux push pour la même action, le second
         // répétant le premier. On persiste quand même la trace pour la boîte de réception.
-        notifyUser(event.getSenderId(), "Demande acceptée !",
+        // Acceptation déclenchée par le voyageur. La transaction qui démarre rend de toute
+        // façon les deux comptes visibles l'un pour l'autre : la garde ne coupe donc que
+        // les cas où l'acceptation ne noue aucune transaction.
+        notifyUnlessBlocked(event.getSenderId(), event.getTravelerId(), "Demande acceptée !",
                 name + " accepte votre colis",
                 Map.of("type", "BID_ACCEPTED", "bidId", event.getBidId().toString()),
                 !event.isMobileMoney());
@@ -457,8 +498,16 @@ public class NotificationDispatcher {
         String truncated = preview.length() > MESSAGE_PREVIEW_MAX_LENGTH
                 ? preview.substring(0, MESSAGE_PREVIEW_MAX_LENGTH - 3) + "..."
                 : preview;
-        notifyUser(recipientId, "Message de " + senderName, truncated,
+        boolean notified = notifyUnlessBlocked(recipientId, senderUser.getId(),
+                "Message de " + senderName, truncated,
                 Map.of("type", "NEW_MESSAGE", "conversationId", conversationId));
+
+        // Fil masqué : ni push, ni UID renvoyé. La Cloud Function se sert de cet UID pour
+        // créditer le compteur de non-lus ; le renvoyer ferait apparaître un badge pour un
+        // message que le destinataire n'est pas censé voir.
+        if (!notified) {
+            return null;
+        }
 
         return userRepository.findById(recipientId)
                 .map(com.yadony.api.auth.UserEntity::getFirebaseUid)

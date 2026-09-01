@@ -54,6 +54,9 @@ class ConversationControllerTest {
     @Mock
     private StorageService storageService;
 
+    @Mock
+    private com.yadony.api.common.BlockVisibility blockVisibility;
+
     @InjectMocks
     private ConversationController controller;
 
@@ -148,6 +151,46 @@ class ConversationControllerTest {
         controller.listConversations(pageable);
 
         verify(conversationService).fetchConversationMeta(List.of(conversation.getFirestoreConversationId()));
+    }
+
+    // -------------------------------------------------------------------------
+    // Blocage : les fils masqués sortent de la liste, et on n'y poste plus
+    // -------------------------------------------------------------------------
+
+    @Test
+    void listConversations_excludesThreadsWithHiddenCounterparty() {
+        Pageable pageable = PageRequest.of(0, 20);
+        UUID hiddenUserId = UUID.randomUUID();
+        // La page renvoyée est déjà amputée : le filtrage se fait en base pour ne pas
+        // fausser la pagination.
+        PageImpl<ConversationEntity> page = new PageImpl<>(List.of());
+
+        when(blockVisibility.hiddenUserIdsFor(currentUserId)).thenReturn(java.util.Set.of(hiddenUserId));
+        when(conversationRepository.findByParticipantExcludingHidden(
+                eq(currentUserId), eq(java.util.Set.of(hiddenUserId)), eq(pageable))).thenReturn(page);
+        when(conversationService.fetchConversationMeta(anyList())).thenReturn(Map.of());
+
+        ResponseEntity<PageResponse<ConversationResponse>> response =
+                controller.listConversations(pageable);
+
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().content()).isEmpty();
+        verify(conversationRepository, never()).findByParticipant(any(), any());
+    }
+
+    @Test
+    void updateLastMessage_propagates404_whenCounterpartyHidden() {
+        when(conversationRepository.findByIdAndParticipant(conversationId, currentUserId))
+                .thenReturn(Optional.of(conversation));
+        doThrow(new com.yadony.api.common.YadonyBusinessException(HttpStatus.NOT_FOUND,
+                "not-found", "Not Found", "Ressource introuvable"))
+                .when(conversationService).assertMessagingAllowed(conversation, currentUserId);
+
+        assertThatThrownBy(() -> controller.updateLastMessage(conversationId,
+                new com.yadony.api.messaging.dto.LastMessageRequest("Coucou")))
+                .isInstanceOf(com.yadony.api.common.YadonyBusinessException.class);
+
+        verify(conversationService, never()).updateLastMessage(anyString(), anyString());
     }
 
     // -------------------------------------------------------------------------

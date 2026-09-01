@@ -94,7 +94,8 @@ class AnnouncementProPriorityTest {
                 com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3),
                 priceGridService, flagService,
                 storageService, favoriteRepository, activeCurrencyResolver, exchangeRateService, realMapper,
-                packageRequestRepository, negotiationThreadRepository, notificationDispatcher);
+                packageRequestRepository, negotiationThreadRepository, notificationDispatcher,
+                org.mockito.Mockito.mock(com.yadony.api.common.BlockVisibility.class));
     }
 
     private static void setId(Object entity, UUID id) {

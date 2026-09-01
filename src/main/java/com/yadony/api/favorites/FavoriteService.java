@@ -3,6 +3,7 @@ package com.yadony.api.favorites;
 import com.yadony.api.auth.GuestUserProvisioner;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
+import com.yadony.api.common.BlockVisibility;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.YadonyNotFoundException;
 import com.yadony.api.favorites.dto.FavoriteIdsResponse;
@@ -36,6 +37,7 @@ public class FavoriteService {
     private final AnnouncementSearchMapper announcementSearchMapper;
     private final PackageRequestSearchMapper packageRequestSearchMapper;
     private final GuestUserProvisioner guestUserProvisioner;
+    private final BlockVisibility blockVisibility;
 
     public FavoriteService(FavoriteRepository favoriteRepository,
                            UserRepository userRepository,
@@ -43,7 +45,8 @@ public class FavoriteService {
                            PackageRequestRepository packageRequestRepository,
                            AnnouncementSearchMapper announcementSearchMapper,
                            PackageRequestSearchMapper packageRequestSearchMapper,
-                           GuestUserProvisioner guestUserProvisioner) {
+                           GuestUserProvisioner guestUserProvisioner,
+                           BlockVisibility blockVisibility) {
         this.favoriteRepository = favoriteRepository;
         this.userRepository = userRepository;
         this.announcementRepository = announcementRepository;
@@ -51,6 +54,7 @@ public class FavoriteService {
         this.announcementSearchMapper = announcementSearchMapper;
         this.packageRequestSearchMapper = packageRequestSearchMapper;
         this.guestUserProvisioner = guestUserProvisioner;
+        this.blockVisibility = blockVisibility;
     }
 
     /**
@@ -119,19 +123,24 @@ public class FavoriteService {
      * {@code REMOVED_BY_ADMIN} are also filtered out (masquage immédiat à la lecture ; le
      * nettoyage effectif en base est fait par {@link FavoriteCleanupScheduler}).
      * Batch-loads users, bid counts, and grid items in 3 queries total (no N+1).
+     *
+     * <p>Les trajets d'un voyageur bloqué sont retirés au même endroit : le favori reste
+     * en base (le blocage peut être levé), il cesse simplement d'être présenté.
      */
     @Transactional(readOnly = true)
     public List<AnnouncementSearchResponse> getFavoriteTrips(UUID callerId) {
         if (callerId == null) return List.of();
         List<UUID> ids = favoriteRepository.findTargetIds(callerId, FavoriteTargetType.TRIP);
         if (ids.isEmpty()) return List.of();
+        Set<UUID> hidden = blockVisibility.hiddenUserIdsFor(callerId);
         List<AnnouncementEntity> active = announcementRepository.findAllById(ids).stream()
                 .filter(a -> a.getStatus() != AnnouncementStatus.CANCELLED
                         && a.getStatus() != AnnouncementStatus.COMPLETED
                         && a.getStatus() != AnnouncementStatus.DRAFT
                         // Lot B (correction 3) : un trajet retiré par la modération ne doit pas
                         // rester visible dans les favoris de l'utilisateur.
-                        && a.getStatus() != AnnouncementStatus.REMOVED_BY_ADMIN)
+                        && a.getStatus() != AnnouncementStatus.REMOVED_BY_ADMIN
+                        && !ownerHidden(hidden, a.getTravelerId()))
                 .toList();
         if (active.isEmpty()) return List.of();
         Set<UUID> favIdSet = new HashSet<>(ids); // all are favorites
@@ -144,18 +153,23 @@ public class FavoriteService {
      * immédiat à la lecture ; le nettoyage effectif en base est fait par
      * {@link FavoriteCleanupScheduler}).
      * Batch-loads users, cities, and photos in 3 queries total (no N+1).
+     *
+     * <p>Les demandes d'un expéditeur bloqué sont retirées au même endroit : le favori
+     * reste en base (le blocage peut être levé), il cesse simplement d'être présenté.
      */
     @Transactional(readOnly = true)
     public List<PackageRequestSearchResponse> getFavoritePackageRequests(UUID callerId) {
         if (callerId == null) return List.of();
         List<UUID> ids = favoriteRepository.findTargetIds(callerId, FavoriteTargetType.PACKAGE_REQUEST);
         if (ids.isEmpty()) return List.of();
+        Set<UUID> hidden = blockVisibility.hiddenUserIdsFor(callerId);
         List<com.yadony.api.requests.entity.PackageRequestEntity> active =
                 packageRequestRepository.findAllById(ids).stream()
                         .filter(pr -> pr.getStatus() != PackageRequestStatus.CANCELLED
                                 && pr.getStatus() != PackageRequestStatus.COMPLETED
                                 && pr.getStatus() != PackageRequestStatus.EXPIRED
-                                && pr.getStatus() != PackageRequestStatus.DRAFT)
+                                && pr.getStatus() != PackageRequestStatus.DRAFT
+                                && !ownerHidden(hidden, pr.getSenderId()))
                         .toList();
         if (active.isEmpty()) return List.of();
         Set<UUID> favIdSet = new HashSet<>(ids); // all are favorites
@@ -166,6 +180,17 @@ public class FavoriteService {
     }
 
     // --- private helpers ---
+
+    /**
+     * Le propriétaire du contenu fait-il partie des comptes masqués pour l'appelant ?
+     *
+     * <p>Le test de nullité n'est pas décoratif : {@code hiddenUserIdsFor} peut rendre un
+     * {@code Set} immuable, dont le {@code contains(null)} lève une NPE plutôt que de
+     * répondre {@code false}.
+     */
+    private static boolean ownerHidden(Set<UUID> hidden, UUID ownerId) {
+        return ownerId != null && hidden.contains(ownerId);
+    }
 
     /**
      * Résout l'id utilisateur pour un chemin qui persiste réellement quelque chose pour
