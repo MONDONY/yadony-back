@@ -65,6 +65,13 @@ public class SubscriptionController {
         return subscriptionService.getMySubscribers(firebaseUid);
     }
 
+    @PostMapping("/me/subscriptions/mark-seen")
+    @PreAuthorize("hasRole('SENDER')")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void markAllSeen(@AuthenticationPrincipal String firebaseUid) {
+        subscriptionService.markAllSeen(firebaseUid);
+    }
+
     @PostMapping("/me/subscriptions/{travelerId}/mark-seen")
     @PreAuthorize("hasRole('SENDER')")
     @ResponseStatus(HttpStatus.NO_CONTENT)
