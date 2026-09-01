@@ -66,7 +66,11 @@ public class AutomationAnnouncementListener {
 
         String corridor = event.departureCity() + " → " + event.arrivalCity();
         for (UUID senderId : loyalSenderIds) {
-            notificationDispatcher.notifyUser(senderId,
+            // Confidentialité — la règle est armée par le voyageur et parle de SON trajet :
+            // un expéditeur masqué pour lui (ou pour qui il l'est) ne reçoit rien. Les
+            // transactions passées qui font la « fidélité » sont terminées, elles ne
+            // relèvent donc pas de l'exception « transaction en cours ».
+            notificationDispatcher.notifyUnlessBlocked(senderId, event.travelerId(),
                     "Nouveau trajet sur votre corridor habituel",
                     event.travelerName() + " vient de publier un nouveau trajet " + corridor + ".",
                     Map.of("type", "automation_loyal_sender", "announcementId", event.announcementId().toString()),

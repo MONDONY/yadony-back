@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -33,7 +34,7 @@ class PublicTravelerControllerTest {
 
     @Test
     void publicProfile_isAccessibleWithoutAuth() throws Exception {
-        when(profilePublicService.getPublicTravelerProfile(TARGET)).thenReturn(
+        when(profilePublicService.getPublicTravelerProfile(eq(TARGET), any())).thenReturn(
                 new PublicTravelerProfileResponse("Moussa D.", true, true, 12,
                         new BigDecimal("4.80"), 10, "Membre depuis mars 2025", List.of()));
 
@@ -45,8 +46,22 @@ class PublicTravelerControllerTest {
     }
 
     @Test
+    void publicProfile_hiddenByBlock_returns404() throws Exception {
+        // Un utilisateur connecté qui ouvre le lien partageable d'un compte bloqué doit
+        // recevoir le même 404 que sur le profil interne : le lien public ne doit pas
+        // devenir la porte dérobée du blocage.
+        when(profilePublicService.getPublicTravelerProfile(eq(TARGET), any()))
+                .thenThrow(new YadonyBusinessException(
+                        HttpStatus.NOT_FOUND, "not-found", "Not Found", "Ressource introuvable"));
+
+        mockMvc.perform(get("/public/travelers/{id}", TARGET))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("not-found"));
+    }
+
+    @Test
     void publicProfile_returns404WhenUserUnknown() throws Exception {
-        when(profilePublicService.getPublicTravelerProfile(any())).thenThrow(
+        when(profilePublicService.getPublicTravelerProfile(any(), any())).thenThrow(
                 new YadonyBusinessException(HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
 
         mockMvc.perform(get("/public/travelers/{id}", UUID.randomUUID()))

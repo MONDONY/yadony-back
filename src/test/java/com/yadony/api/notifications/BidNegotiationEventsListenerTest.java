@@ -43,7 +43,7 @@ class BidNegotiationEventsListenerTest {
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, String>> data = ArgumentCaptor.forClass(Map.class);
-        verify(dispatcher).notifyUser(eq(RECIPIENT_ID), anyString(), anyString(), data.capture());
+        verify(dispatcher).notifyUnlessBlocked(eq(RECIPIENT_ID), eq(AUTHOR_ID), anyString(), anyString(), data.capture());
         assertThat(data.getValue()).containsEntry("type", "bid_negotiation_message");
         assertThat(data.getValue()).containsEntry("bidId", BID_ID.toString());
         assertThat(data.getValue()).containsEntry("kind", "COUNTER");
@@ -56,7 +56,7 @@ class BidNegotiationEventsListenerTest {
                 BID_ID, ANNOUNCEMENT_ID, AUTHOR_ID, RECIPIENT_ID,
                 BidNegotiationMessageKind.REJECT, null, 2));
 
-        verify(dispatcher).notifyUser(eq(RECIPIENT_ID), anyString(), anyString(), anyMap());
+        verify(dispatcher).notifyUnlessBlocked(eq(RECIPIENT_ID), eq(AUTHOR_ID), anyString(), anyString(), anyMap());
     }
 
     @Test
@@ -68,8 +68,8 @@ class BidNegotiationEventsListenerTest {
         listener.onExpired(new BidNegotiationExpiredEvent(
                 BID_ID, ANNOUNCEMENT_ID, senderId, travelerId, "INACTIVE"));
 
-        verify(dispatcher).notifyUser(eq(senderId), anyString(), anyString(), anyMap());
-        verify(dispatcher).notifyUser(eq(travelerId), anyString(), anyString(), anyMap());
+        verify(dispatcher).notifyUnlessBlocked(eq(senderId), eq(travelerId), anyString(), anyString(), anyMap());
+        verify(dispatcher).notifyUnlessBlocked(eq(travelerId), eq(senderId), anyString(), anyString(), anyMap());
     }
 
     @Test
@@ -82,7 +82,7 @@ class BidNegotiationEventsListenerTest {
         }
         ArgumentCaptor<String> titles = ArgumentCaptor.forClass(String.class);
         verify(dispatcher, org.mockito.Mockito.times(BidNegotiationMessageKind.values().length))
-                .notifyUser(any(), titles.capture(), anyString(), anyMap());
+                .notifyUnlessBlocked(any(), any(), titles.capture(), anyString(), anyMap());
         assertThat(titles.getAllValues()).doesNotHaveDuplicates();
     }
 }

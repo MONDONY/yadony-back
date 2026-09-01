@@ -69,6 +69,8 @@ class PackageRequestServiceTest {
     @Mock private com.yadony.api.matching.MatchingService matchingService;
     @Mock private com.yadony.api.matching.AnnouncementRepository announcementRepository;
     @Mock private com.yadony.api.common.CommissionRateResolver commissionRateResolver;
+    /** Masquage mutuel : par défaut le mock ne masque rien (assertVisible ne lève pas). */
+    @Mock private com.yadony.api.common.BlockVisibility blockVisibility;
     /** Real record (not mocked) — threshold-days=3 mirrors application-test.yml (yadony.urgency.threshold-days). */
     private final YadonyConfigProperties yadonyConfig =
             new YadonyConfigProperties(null, null, new YadonyConfigProperties.Urgency(3), null);
@@ -130,7 +132,8 @@ class PackageRequestServiceTest {
                 threadRepository, cityRepository, commissionProperties,
                 storageService, photoService, favoriteRepository, activeCurrencyResolver, mapper, matchingService,
                 yadonyConfig, announcementRepository, commissionRateResolver,
-                com.yadony.api.config.PlatformSettingsTestFactory.withProEnabled(proEnabled));
+                com.yadony.api.config.PlatformSettingsTestFactory.withProEnabled(proEnabled),
+                blockVisibility);
     }
 
     // ========== Task 12: create() tests ==========
@@ -710,6 +713,123 @@ class PackageRequestServiceTest {
             assertThatThrownBy(() -> service.getById(stranger, id))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("request/not-found");
+        }
+    }
+
+    // ========== Confidentialité v2 : masquage mutuel (blocage) ==========
+
+    @Nested @DisplayName("blocage — masquage mutuel des demandes de colis")
+    class BlockVisibilityTests {
+
+        private final UUID VIEWER = UUID.randomUUID();
+
+        /** Même 404 silencieux que celui levé par BlockService.assertVisible. */
+        private com.yadony.api.common.YadonyBusinessException hidden() {
+            return new com.yadony.api.common.YadonyBusinessException(
+                HttpStatus.NOT_FOUND, "not-found", "Not Found", "Ressource introuvable");
+        }
+
+        @Test @DisplayName("getById() — expéditeur masqué → 404 silencieux, jamais 403")
+        void getById_hiddenSender_throwsNotFound() {
+            PackageRequestEntity entity = buildEntity(SENDER_ID, PackageRequestStatus.OPEN);
+            when(repository.findById(entity.getId())).thenReturn(Optional.of(entity));
+            doThrow(hidden()).when(blockVisibility).assertVisible(VIEWER, SENDER_ID);
+
+            assertThatThrownBy(() -> service.getById(VIEWER, entity.getId()))
+                .isInstanceOf(com.yadony.api.common.YadonyBusinessException.class)
+                .extracting(e -> ((com.yadony.api.common.YadonyBusinessException) e).getStatus())
+                .isEqualTo(HttpStatus.NOT_FOUND);
+        }
+
+        @Test @DisplayName("getById() — expéditeur masqué : aucune donnée de la demande n'est lue")
+        void getById_hiddenSender_doesNotExposeThreads() {
+            PackageRequestEntity entity = buildEntity(SENDER_ID, PackageRequestStatus.OPEN);
+            when(repository.findById(entity.getId())).thenReturn(Optional.of(entity));
+            doThrow(hidden()).when(blockVisibility).assertVisible(VIEWER, SENDER_ID);
+
+            assertThatThrownBy(() -> service.getById(VIEWER, entity.getId()))
+                .isInstanceOf(com.yadony.api.common.YadonyBusinessException.class);
+
+            // Le masquage tranche avant tout le reste : rien du contenu n'est chargé.
+            verify(threadRepository, never())
+                .findActiveByPackageRequestIdAndTravelerId(any(), any());
+        }
+
+        @Test @DisplayName("getById() — aucun blocage → la demande reste consultable")
+        void getById_visibleSender_returnsResponse() {
+            PackageRequestEntity entity = buildEntity(SENDER_ID, PackageRequestStatus.OPEN);
+            when(repository.findById(entity.getId())).thenReturn(Optional.of(entity));
+
+            var resp = service.getById(VIEWER, entity.getId());
+
+            assertThat(resp.id()).isEqualTo(entity.getId());
+            verify(blockVisibility).assertVisible(VIEWER, SENDER_ID);
+        }
+
+        @Test @DisplayName("getById() — invité (viewer null) : le masquage ne s'applique pas")
+        void getById_guestViewer_notImpacted() {
+            PackageRequestEntity entity = buildEntity(SENDER_ID, PackageRequestStatus.OPEN);
+            when(repository.findById(entity.getId())).thenReturn(Optional.of(entity));
+
+            var resp = service.getById(null, entity.getId());
+
+            assertThat(resp.id()).isEqualTo(entity.getId());
+            verify(blockVisibility).assertVisible(null, SENDER_ID);
+        }
+
+        @Test @DisplayName("search() — viewer authentifié → le filtre de blocage est composé dans la Specification")
+        void search_authenticatedViewer_composesBlockFilter() {
+            when(repository.findAll(any(org.springframework.data.jpa.domain.Specification.class),
+                                    any(org.springframework.data.domain.Pageable.class)))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
+            when(favoriteRepository.findTargetIds(any(), any())).thenReturn(List.of());
+
+            var supplied = PackageRequestSpecifications.openOnly();
+            service.search(supplied, org.springframework.data.domain.PageRequest.of(0, 20), VIEWER);
+
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<org.springframework.data.jpa.domain.Specification<PackageRequestEntity>> captor =
+                ArgumentCaptor.forClass(org.springframework.data.jpa.domain.Specification.class);
+            verify(repository).findAll(captor.capture(),
+                                       any(org.springframework.data.domain.Pageable.class));
+            // La spécification exécutée n'est plus celle fournie : notBlockedBy y a été ajoutée.
+            assertThat(captor.getValue()).isNotSameAs(supplied);
+        }
+
+        @Test @DisplayName("search() — invité (viewer null) → aucune restriction ajoutée")
+        void search_guestViewer_specUnchanged() {
+            when(repository.findAll(any(org.springframework.data.jpa.domain.Specification.class),
+                                    any(org.springframework.data.domain.Pageable.class)))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
+
+            var supplied = PackageRequestSpecifications.openOnly();
+            service.search(supplied, org.springframework.data.domain.PageRequest.of(0, 20), null);
+
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<org.springframework.data.jpa.domain.Specification<PackageRequestEntity>> captor =
+                ArgumentCaptor.forClass(org.springframework.data.jpa.domain.Specification.class);
+            verify(repository).findAll(captor.capture(),
+                                       any(org.springframework.data.domain.Pageable.class));
+            assertThat(captor.getValue()).isSameAs(supplied);
+        }
+
+        @Test @DisplayName("searchNearMe() — viewer authentifié → le filtre de blocage est composé aussi")
+        void searchNearMe_authenticatedViewer_composesBlockFilter() {
+            when(repository.findAll(any(org.springframework.data.jpa.domain.Specification.class),
+                                    any(org.springframework.data.domain.Pageable.class)))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
+            when(favoriteRepository.findTargetIds(any(), any())).thenReturn(List.of());
+
+            var supplied = PackageRequestSpecifications.openOnly();
+            service.searchNearMe(supplied, org.springframework.data.domain.PageRequest.of(0, 20),
+                                 new BigDecimal("48.85"), new BigDecimal("2.35"), 50.0, VIEWER);
+
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<org.springframework.data.jpa.domain.Specification<PackageRequestEntity>> captor =
+                ArgumentCaptor.forClass(org.springframework.data.jpa.domain.Specification.class);
+            verify(repository).findAll(captor.capture(),
+                                       any(org.springframework.data.domain.Pageable.class));
+            assertThat(captor.getValue()).isNotSameAs(supplied);
         }
     }
 

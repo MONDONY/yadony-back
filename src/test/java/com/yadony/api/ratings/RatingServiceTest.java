@@ -7,6 +7,7 @@ import com.yadony.api.cancellation.CancellationReason;
 import com.yadony.api.cancellation.CancellationRepository;
 import com.yadony.api.cancellation.CancellationStatus;
 import com.yadony.api.common.AuditService;
+import com.yadony.api.common.BlockVisibility;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
@@ -56,6 +57,7 @@ class RatingServiceTest {
     @Mock private CancellationRepository cancellationRepository;
     @Mock private AuditService auditService;
     @Mock private ApplicationEventPublisher eventPublisher;
+    @Mock private BlockVisibility blockVisibility;
 
     @InjectMocks private RatingService ratingService;
 
@@ -64,6 +66,7 @@ class RatingServiceTest {
     private static final UUID TRAVELER_ID = UUID.randomUUID();
     private static final UUID BID_ID = UUID.randomUUID();
     private static final UUID ANNOUNCEMENT_ID = UUID.randomUUID();
+    private static final UUID VIEWER_ID = UUID.randomUUID();
     private static final String TRACKING_TOKEN = "tok-abc-123";
 
     private UserEntity sender;
@@ -456,7 +459,7 @@ class RatingServiceTest {
             when(ratingRepository.findByRatedUserId(eq(TRAVELER_ID), any()))
                     .thenReturn(new PageImpl<>(List.of(r1, r2, r3)));
 
-            UserRatingsSummaryResponse response = ratingService.getUserRatings(TRAVELER_ID, 0, 20);
+            UserRatingsSummaryResponse response = ratingService.getUserRatings(TRAVELER_ID, 0, 20, VIEWER_ID);
 
             assertThat(response.ratingCount()).isEqualTo(3);
             assertThat(response.averageRating()).isEqualByComparingTo(new BigDecimal("4.33"));
@@ -467,11 +470,84 @@ class RatingServiceTest {
         }
 
         @Test
+        @DisplayName("utilisateur masqué par un blocage → 404 sans lecture des notes")
+        void getUserRatings_hiddenByBlock_throws404() {
+            doThrow(new YadonyBusinessException(
+                    HttpStatus.NOT_FOUND, "not-found", "Not Found", "Ressource introuvable"))
+                    .when(blockVisibility).assertVisible(VIEWER_ID, TRAVELER_ID);
+
+            assertThatThrownBy(() -> ratingService.getUserRatings(TRAVELER_ID, 0, 20, VIEWER_ID))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> {
+                        YadonyBusinessException ex = (YadonyBusinessException) e;
+                        // 404 et non 403 : le blocage doit rester indétectable.
+                        assertThat(ex.getStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+                        assertThat(ex.getErrorCode()).isEqualTo("not-found");
+                    });
+
+            verifyNoInteractions(ratingRepository);
+        }
+
+        @Test
+        @DisplayName("viewer anonyme → aucun masquage, notes rendues")
+        void getUserRatings_anonymousViewer_returnsSummary() throws Exception {
+            UserEntity user = new UserEntity();
+            setId(user, TRAVELER_ID);
+            setField(user, "averageRating", new BigDecimal("5.00"));
+
+            RatingEntity r = buildRating(5);
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(user));
+            when(ratingRepository.findIncludedRatingsByRatedUserId(TRAVELER_ID)).thenReturn(List.of(r));
+            when(ratingRepository.findByRatedUserId(eq(TRAVELER_ID), any()))
+                    .thenReturn(new PageImpl<>(List.of(r)));
+
+            UserRatingsSummaryResponse res = ratingService.getUserRatings(TRAVELER_ID, 0, 20, null);
+
+            assertThat(res.ratingCount()).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("note écrite par un compte bloqué → conservée, moyenne inchangée")
+        void getUserRatings_ratingWrittenByBlockedUser_isKept() throws Exception {
+            // Décision produit assumée : on masque le profil, on ne réécrit pas l'historique
+            // de réputation. Un avis laissé par un compte depuis bloqué reste affiché et
+            // continue de compter — sinon la moyenne d'un tiers changerait selon qui regarde.
+            UUID blockedAuthorId = UUID.randomUUID();
+
+            UserEntity ratedUser = new UserEntity();
+            setId(ratedUser, TRAVELER_ID);
+            setField(ratedUser, "averageRating", new BigDecimal("5.00"));
+
+            UserEntity blockedAuthor = new UserEntity();
+            setId(blockedAuthor, blockedAuthorId);
+            setField(blockedAuthor, "firstName", "Fatou");
+            setField(blockedAuthor, "lastName", "Mbaye");
+
+            RatingEntity r = buildRating(5);
+            r.setRaterId(blockedAuthorId);
+
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(ratedUser));
+            when(userRepository.findById(blockedAuthorId)).thenReturn(Optional.of(blockedAuthor));
+            when(ratingRepository.findIncludedRatingsByRatedUserId(TRAVELER_ID)).thenReturn(List.of(r));
+            when(ratingRepository.findByRatedUserId(eq(TRAVELER_ID), any()))
+                    .thenReturn(new PageImpl<>(List.of(r)));
+
+            UserRatingsSummaryResponse res = ratingService.getUserRatings(TRAVELER_ID, 0, 20, VIEWER_ID);
+
+            assertThat(res.ratings()).hasSize(1);
+            assertThat(res.ratings().get(0).authorName()).isEqualTo("Fatou M.");
+            assertThat(res.ratingCount()).isEqualTo(1);
+            assertThat(res.averageRating()).isEqualByComparingTo(new BigDecimal("5.00"));
+            // Aucun filtrage d'auteur : la liste des bloqués n'est même pas consultée.
+            verify(blockVisibility, never()).hiddenUserIdsFor(any());
+        }
+
+        @Test
         @DisplayName("utilisateur inexistant → 404")
         void getUserRatings_unknownUser_throws404() {
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.empty());
 
-            assertThatThrownBy(() -> ratingService.getUserRatings(TRAVELER_ID, 0, 20))
+            assertThatThrownBy(() -> ratingService.getUserRatings(TRAVELER_ID, 0, 20, VIEWER_ID))
                     .isInstanceOf(YadonyBusinessException.class)
                     .satisfies(e -> assertThat(((YadonyBusinessException) e).getStatus())
                             .isEqualTo(HttpStatus.NOT_FOUND));
@@ -520,7 +596,7 @@ class RatingServiceTest {
             when(bidRepository.findById(bidId)).thenReturn(Optional.of(bidEntity));
             when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
 
-            UserRatingsSummaryResponse res = ratingService.getUserRatings(ratedUserId, 0, 20);
+            UserRatingsSummaryResponse res = ratingService.getUserRatings(ratedUserId, 0, 20, VIEWER_ID);
 
             assertThat(res.ratings()).hasSize(1);
             var item = res.ratings().get(0);
@@ -551,7 +627,7 @@ class RatingServiceTest {
                     .thenReturn(new PageImpl<>(List.of(rating)));
             when(bidRepository.findById(bidId)).thenReturn(Optional.empty());
 
-            UserRatingsSummaryResponse res = ratingService.getUserRatings(ratedUserId, 0, 20);
+            UserRatingsSummaryResponse res = ratingService.getUserRatings(ratedUserId, 0, 20, VIEWER_ID);
 
             assertThat(res.ratings()).hasSize(1);
             var item = res.ratings().get(0);

@@ -50,6 +50,7 @@ class NotificationDispatcherTest {
     @Mock SmsService smsService;
     @Mock UserRepository userRepository;
     @Mock NotificationService notificationService;
+    @Mock com.yadony.api.common.BlockVisibility blockVisibility;
 
     NotificationDispatcher dispatcher;
 
@@ -60,7 +61,8 @@ class NotificationDispatcherTest {
 
     @BeforeEach
     void setUp() {
-        dispatcher = new NotificationDispatcher(fcmService, smsService, userRepository, notificationService);
+        dispatcher = new NotificationDispatcher(fcmService, smsService, userRepository, notificationService,
+                blockVisibility);
         // persist() must return an entity with a non-null ID (JPA doesn't run in unit tests)
         var stubEntity = new NotificationEntity(UUID.randomUUID(), "STUB", "stub", "stub", Map.of(), false);
         setEntityId(stubEntity, UUID.randomUUID());
@@ -707,5 +709,126 @@ class NotificationDispatcherTest {
 
         verify(notificationService).persist(eq(userId), eq("X"), eq("T"), eq("B"), anyMap(), eq(false));
         verify(fcmService).sendToUser(eq(userId), eq("T"), eq("B"), anyMap());
+    }
+
+    // ── notifyUnlessBlocked — voie des notifications déclenchées par autrui ───
+
+    @Test
+    void notifyUnlessBlocked_sendsNothing_whenActorHiddenFromRecipient() {
+        UUID recipientId = UUID.randomUUID();
+        UUID actorId = UUID.randomUUID();
+        when(blockVisibility.isHidden(recipientId, actorId)).thenReturn(true);
+
+        boolean sent = dispatcher.notifyUnlessBlocked(recipientId, actorId, "T", "B", Map.of("type", "X"));
+
+        assertThat(sent).isFalse();
+        verifyNoInteractions(notificationService);
+        verifyNoInteractions(fcmService);
+    }
+
+    @Test
+    void notifyUnlessBlocked_notifies_whenActorVisible() {
+        UUID recipientId = UUID.randomUUID();
+        UUID actorId = UUID.randomUUID();
+        when(blockVisibility.isHidden(recipientId, actorId)).thenReturn(false);
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        boolean sent = dispatcher.notifyUnlessBlocked(recipientId, actorId, "T", "B", Map.of("type", "X"));
+
+        assertThat(sent).isTrue();
+        verify(notificationService).persist(eq(recipientId), eq("X"), eq("T"), eq("B"), anyMap(), eq(false));
+        verify(fcmService).sendToUser(eq(recipientId), eq("T"), eq("B"), anyMap());
+    }
+
+    /** Notification système (aucun émetteur) : la voie générique ne consulte jamais le blocage. */
+    @Test
+    void notifyUser_neverConsultsBlockVisibility() {
+        dispatcher.notifyUser(UUID.randomUUID(), "T", "B", Map.of("type", "X"), false);
+        verifyNoInteractions(blockVisibility);
+    }
+
+    @Test
+    void onBidCreated_sendsNothing_whenSenderHiddenFromTraveler() {
+        when(blockVisibility.isHidden(travelerId, senderId)).thenReturn(true);
+
+        dispatcher.onBidCreated(new BidCreatedEvent(
+                bidId, annId, travelerId, senderId, "Mariama", BigDecimal.valueOf(3.5), "Paris → Dakar"));
+
+        verifyNoInteractions(notificationService);
+        verifyNoInteractions(fcmService);
+    }
+
+    @Test
+    void onCashBidCreated_sendsNothing_whenSenderHiddenFromTraveler() {
+        when(blockVisibility.isHidden(travelerId, senderId)).thenReturn(true);
+
+        dispatcher.onCashBidCreated(new CashBidCreatedEvent(
+                bidId, annId, travelerId, senderId, "Mariama", BigDecimal.valueOf(3.5), "Paris → Dakar"));
+
+        verifyNoInteractions(notificationService);
+        verifyNoInteractions(fcmService);
+    }
+
+    @Test
+    void onBidAccepted_sendsNothing_whenTravelerHiddenFromSender() {
+        UserEntity traveler = new UserEntity();
+        traveler.setFirstName("Ibrahima");
+        when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler));
+        when(blockVisibility.isHidden(senderId, travelerId)).thenReturn(true);
+
+        dispatcher.onBidAccepted(new BidAcceptedEvent(bidId, senderId, travelerId, annId));
+
+        verifyNoInteractions(notificationService);
+        verifyNoInteractions(fcmService);
+    }
+
+    // ── sendMessageNotification — fil masqué : ni push, ni crédit de non-lus ──
+
+    @Test
+    void sendMessageNotification_returnsNull_andSendsNothing_whenSenderHidden() {
+        UserEntity messageSender = new UserEntity();
+        setUserId(messageSender, senderId);
+        messageSender.setFirstName("Mariama");
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(messageSender));
+        when(blockVisibility.isHidden(travelerId, senderId)).thenReturn(true);
+
+        String recipientUid = dispatcher.sendMessageNotification(
+                senderId, travelerId, "uid-sender", "Bonjour", "conv_1");
+
+        assertThat(recipientUid).isNull();
+        verifyNoInteractions(notificationService);
+        verifyNoInteractions(fcmService);
+        // Aucun UID renvoyé : la Cloud Function ne crédite donc aucun compteur de non-lus.
+        verify(userRepository, never()).findById(travelerId);
+    }
+
+    @Test
+    void sendMessageNotification_notifiesAndReturnsRecipientUid_whenNotHidden() {
+        UserEntity messageSender = new UserEntity();
+        setUserId(messageSender, senderId);
+        messageSender.setFirstName("Mariama");
+        UserEntity recipient = new UserEntity();
+        recipient.setFirebaseUid("uid-traveler");
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(messageSender));
+        when(userRepository.findById(travelerId)).thenReturn(Optional.of(recipient));
+        when(blockVisibility.isHidden(travelerId, senderId)).thenReturn(false);
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        String recipientUid = dispatcher.sendMessageNotification(
+                senderId, travelerId, "uid-sender", "Bonjour", "conv_1");
+
+        assertThat(recipientUid).isEqualTo("uid-traveler");
+        verify(fcmService).sendToUser(eq(travelerId), contains("Mariama"), eq("Bonjour"), anyMap());
+    }
+
+    /** L'id de BaseEntity n'a pas de setter : il se pose par réflexion, comme setEntityId. */
+    private static void setUserId(UserEntity user, UUID id) {
+        try {
+            var field = UserEntity.class.getSuperclass().getDeclaredField("id");
+            field.setAccessible(true);
+            field.set(user, id);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(e);
+        }
     }
 }

@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
@@ -31,11 +32,12 @@ class PackageMatchTravelerNotifyListenerTest {
     @InjectMocks PackageMatchTravelerNotifyListener listener;
 
     final UUID requestId = UUID.randomUUID();
+    final UUID senderId = UUID.randomUUID();
     final UUID travelerId = UUID.randomUUID();
 
     private PackageRequestCreatedEvent event() {
         return new PackageRequestCreatedEvent(
-                requestId, UUID.randomUUID(), "Paris", "Bamako", LocalDate.now().plusDays(5));
+                requestId, senderId, "Paris", "Bamako", LocalDate.now().plusDays(5));
     }
 
     @Test
@@ -45,8 +47,8 @@ class PackageMatchTravelerNotifyListenerTest {
 
         listener.onPackageRequestCreated(event());
 
-        verify(notificationDispatcher).notifyUser(
-                eq(travelerId), contains("Nouveau colis"), any(),
+        verify(notificationDispatcher).notifyUnlessBlocked(
+                eq(travelerId), eq(senderId), contains("Nouveau colis"), any(),
                 argThat(d -> "PACKAGE_MATCH".equals(d.get("type"))
                         && requestId.toString().equals(d.get("requestId"))));
     }
@@ -58,7 +60,8 @@ class PackageMatchTravelerNotifyListenerTest {
 
         listener.onPackageRequestCreated(event());
 
-        verify(notificationDispatcher, never()).notifyUser(any(), any(), any(), any());
+        verify(notificationDispatcher, never()).notifyUnlessBlocked(any(), any(), any(), any(), anyMap());
+        verify(notificationDispatcher, never()).notifyUser(any(), any(), any(), anyMap());
     }
 
     @Test
@@ -68,5 +71,24 @@ class PackageMatchTravelerNotifyListenerTest {
         listener.onPackageRequestCreated(event());
 
         verifyNoInteractions(notificationPrefsService, notificationDispatcher);
+    }
+
+    /**
+     * Confidentialité — le voyageur et l'expéditeur sont masqués l'un pour l'autre : le
+     * listener passe l'émetteur au dispatcher, qui supprime l'envoi. La voie générique
+     * {@code notifyUser}, aveugle au blocage, ne doit jamais être empruntée ici.
+     */
+    @Test
+    void onCreated_travelerBlockedWithSender_dispatcherSuppresses() {
+        when(matchingService.findTravelersMatchingPackage(requestId)).thenReturn(List.of(travelerId));
+        when(notificationPrefsService.isPackageMatchEnabled(travelerId)).thenReturn(true);
+        when(notificationDispatcher.notifyUnlessBlocked(
+                eq(travelerId), eq(senderId), any(), any(), anyMap())).thenReturn(false);
+
+        listener.onPackageRequestCreated(event());
+
+        verify(notificationDispatcher).notifyUnlessBlocked(
+                eq(travelerId), eq(senderId), any(), any(), anyMap());
+        verify(notificationDispatcher, never()).notifyUser(any(), any(), any(), anyMap());
     }
 }

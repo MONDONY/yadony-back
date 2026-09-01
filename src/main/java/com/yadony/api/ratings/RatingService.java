@@ -6,6 +6,7 @@ import com.yadony.api.cancellation.CancellationReason;
 import com.yadony.api.cancellation.CancellationRepository;
 import com.yadony.api.cancellation.CancellationStatus;
 import com.yadony.api.common.AuditService;
+import com.yadony.api.common.BlockVisibility;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
@@ -54,6 +55,7 @@ public class RatingService {
     private final CancellationRepository cancellationRepository;
     private final AuditService auditService;
     private final ApplicationEventPublisher eventPublisher;
+    private final BlockVisibility blockVisibility;
 
     public RatingService(RatingRepository ratingRepository,
                          BidRepository bidRepository,
@@ -61,7 +63,8 @@ public class RatingService {
                          UserRepository userRepository,
                          CancellationRepository cancellationRepository,
                          AuditService auditService,
-                         ApplicationEventPublisher eventPublisher) {
+                         ApplicationEventPublisher eventPublisher,
+                         BlockVisibility blockVisibility) {
         this.ratingRepository = ratingRepository;
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
@@ -69,6 +72,7 @@ public class RatingService {
         this.cancellationRepository = cancellationRepository;
         this.auditService = auditService;
         this.eventPublisher = eventPublisher;
+        this.blockVisibility = blockVisibility;
     }
 
     /**
@@ -245,10 +249,28 @@ public class RatingService {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.UNAUTHORIZED, "unauthorized", "Unauthorized", "Utilisateur introuvable"));
-        return getUserRatings(user.getId(), page, size);
+        // Ses propres notes : l'utilisateur est son propre viewer, aucun masquage possible.
+        return getUserRatings(user.getId(), page, size, user.getId());
     }
 
-    public UserRatingsSummaryResponse getUserRatings(UUID userId, int page, int size) {
+    /**
+     * Notes reçues par {@code userId}, telles que les voit {@code viewerId}
+     * ({@code null} pour un appelant anonyme, qui ne subit aucun masquage).
+     *
+     * <p>Si l'utilisateur noté est masqué pour le viewer, on lève un 404 avant toute
+     * lecture : la fiche de réputation ne doit pas rester un moyen de consulter un
+     * compte bloqué.
+     *
+     * <p><b>Décision produit assumée :</b> le masquage porte sur le profil noté, pas sur
+     * l'historique de réputation. Les notes écrites par des utilisateurs bloqués restent
+     * affichées et continuent de compter dans la moyenne et la distribution. Retirer ces
+     * avis réécrirait la réputation publique d'un tiers au gré des blocages de chacun, et
+     * donnerait deux moyennes différentes selon qui regarde : on préfère une réputation
+     * stable, identique pour tout le monde.
+     */
+    public UserRatingsSummaryResponse getUserRatings(UUID userId, int page, int size, UUID viewerId) {
+        blockVisibility.assertVisible(viewerId, userId);
+
         UserEntity user = userRepository.findById(userId)
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));

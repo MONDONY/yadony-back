@@ -61,8 +61,11 @@ public class PackageMatchTravelerNotifyListener {
                 if (!notificationPrefsService.isPackageMatchEnabled(travelerId)) {
                     continue; // le voyageur a coupé la cloche
                 }
-                notificationDispatcher.notifyUser(
+                // Confidentialité — le colis appartient à un tiers : rien ne part si
+                // l'expéditeur et le voyageur sont masqués l'un pour l'autre.
+                notificationDispatcher.notifyUnlessBlocked(
                         travelerId,
+                        event.senderId(),
                         "Nouveau colis sur " + corridor,
                         "Un colis correspond à votre trajet",
                         Map.of(

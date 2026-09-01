@@ -75,6 +75,7 @@ class PackageRequestServiceMatchingTest {
     @Mock private MatchingService matchingService;
     @Mock private com.yadony.api.matching.AnnouncementRepository announcementRepository;
     @Mock private com.yadony.api.common.CommissionRateResolver commissionRateResolver;
+    @Mock private com.yadony.api.common.BlockVisibility blockVisibility;
 
     /** Real record (not mocked) — threshold-days=3 mirrors application-test.yml (yadony.urgency.threshold-days). */
     private final YadonyConfigProperties yadonyConfig =
@@ -167,7 +168,8 @@ class PackageRequestServiceMatchingTest {
                 threadRepository, cityRepository, commissionProperties,
                 storageService, photoService, favoriteRepository, activeCurrencyResolver, realMapper, matchingService,
                 yadonyConfig, announcementRepository, commissionRateResolver,
-                com.yadony.api.config.PlatformSettingsTestFactory.defaults());
+                com.yadony.api.config.PlatformSettingsTestFactory.defaults(),
+                blockVisibility);
     }
 
     @Test
@@ -387,5 +389,50 @@ class PackageRequestServiceMatchingTest {
         // Ordre createdAt décroissant → page 0 = [id3, id2].
         verify(photoService).activePhotosBatch(List.of(id3, id2));
         assertThat(page.getTotalElements()).isEqualTo(3);
+    }
+
+    /**
+     * Confidentialité v2 : « mes trajets » est une liste de demandes de tiers au même
+     * titre que la recherche standard, elle doit porter le même masquage.
+     *
+     * <p>On évalue la {@code Specification} réellement transmise au repository contre un
+     * {@code CriteriaQuery} simulé : si {@code notBlockedBy} y figure, deux sous-requêtes
+     * sur {@code user_blocks} sont créées (bloqués par le viewer, et bloqueurs du viewer).
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void searchMatchingMyTrips_appliqueLeMasquageMutuel() {
+        UUID id = UUID.randomUUID();
+        PackageRequestEntity entity = buildEntity(id);
+        Map<UUID, MatchingService.MatchInfo> matches = new LinkedHashMap<>();
+        matches.put(id, new MatchingService.MatchInfo(id, UUID.randomUUID(), LocalDate.now().plusDays(3), 80));
+        when(matchingService.findBestMatchByRequestId(CALLER_ID)).thenReturn(matches);
+        when(repository.findAll(any(Specification.class))).thenReturn(List.of(entity));
+
+        service.searchMatchingMyTrips(Specification.where(null), PageRequest.of(0, 20), CALLER_ID);
+
+        org.mockito.ArgumentCaptor<Specification<PackageRequestEntity>> captor =
+                org.mockito.ArgumentCaptor.forClass(Specification.class);
+        verify(repository).findAll(captor.capture());
+
+        jakarta.persistence.criteria.Root<PackageRequestEntity> root =
+                mock(jakarta.persistence.criteria.Root.class);
+        jakarta.persistence.criteria.CriteriaQuery<?> query =
+                mock(jakarta.persistence.criteria.CriteriaQuery.class);
+        jakarta.persistence.criteria.CriteriaBuilder cb =
+                mock(jakarta.persistence.criteria.CriteriaBuilder.class);
+        jakarta.persistence.criteria.Subquery<UUID> subquery =
+                mock(jakarta.persistence.criteria.Subquery.class);
+        when(root.get("senderId")).thenReturn(mock(jakarta.persistence.criteria.Path.class));
+        when(root.get("id")).thenReturn(mock(jakarta.persistence.criteria.Path.class));
+        when(query.subquery(UUID.class)).thenReturn(subquery);
+        when(subquery.from(com.yadony.api.auth.UserBlockEntity.class))
+                .thenReturn(mock(jakarta.persistence.criteria.Root.class));
+        when(subquery.select(any())).thenReturn(subquery);
+
+        captor.getValue().toPredicate(root, query, cb);
+
+        // Deux sous-requêtes : le masquage est bien symétrique.
+        verify(query, times(2)).subquery(UUID.class);
     }
 }

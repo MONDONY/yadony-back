@@ -34,6 +34,7 @@ class CorridorAlertTripMatchListenerTest {
     @InjectMocks CorridorAlertTripMatchListener listener;
 
     final UUID tripId = UUID.randomUUID();
+    final UUID travelerId = UUID.randomUUID();
 
     private static void setId(Object target, UUID id) {
         try {
@@ -46,6 +47,7 @@ class CorridorAlertTripMatchListenerTest {
     private AnnouncementEntity trip() {
         AnnouncementEntity a = new AnnouncementEntity();
         setId(a, tripId);
+        a.setTravelerId(travelerId);
         a.setDepartureCity("Paris");
         a.setArrivalCity("Bamako");
         return a;
@@ -73,14 +75,37 @@ class CorridorAlertTripMatchListenerTest {
         CorridorAlertEntity alert = alert(null);
         when(announcementRepository.findById(tripId)).thenReturn(Optional.of(trip));
         when(alertService.findSenderAlertsMatchingTrip(trip)).thenReturn(List.of(alert));
+        when(notificationDispatcher.notifyUnlessBlocked(
+                eq(alert.getOwnerId()), eq(travelerId), any(), any(), anyMap())).thenReturn(true);
 
         listener.onAnnouncementCreated(event());
 
-        verify(notificationDispatcher).notifyUser(
-                eq(alert.getOwnerId()), contains("Nouveau trajet"), any(),
+        verify(notificationDispatcher).notifyUnlessBlocked(
+                eq(alert.getOwnerId()), eq(travelerId), contains("Nouveau trajet"), any(),
                 argThat(d -> tripId.toString().equals(d.get("announcementId"))));
         assertThat(alert.getLastNotifiedAt()).isNotNull();
         verify(alertRepository).save(alert);
+    }
+
+    /**
+     * Confidentialité — le voyageur et le propriétaire de l'alerte sont masqués l'un pour
+     * l'autre : le dispatcher supprime la notification, et l'alerte ne doit pas être
+     * horodatée, sinon le digest sauterait les trajets visibles de la même fenêtre.
+     */
+    @Test
+    void onCreated_ownerBlockedWithTraveler_noStampNoSave() {
+        AnnouncementEntity trip = trip();
+        CorridorAlertEntity alert = alert(null);
+        when(announcementRepository.findById(tripId)).thenReturn(Optional.of(trip));
+        when(alertService.findSenderAlertsMatchingTrip(trip)).thenReturn(List.of(alert));
+        when(notificationDispatcher.notifyUnlessBlocked(
+                eq(alert.getOwnerId()), eq(travelerId), any(), any(), anyMap())).thenReturn(false);
+
+        listener.onAnnouncementCreated(event());
+
+        assertThat(alert.getLastNotifiedAt()).isNull();
+        verify(alertRepository, never()).save(any());
+        verify(notificationDispatcher, never()).notifyUser(any(), any(), any(), anyMap());
     }
 
     @Test

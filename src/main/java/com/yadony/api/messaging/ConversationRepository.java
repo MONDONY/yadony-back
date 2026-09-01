@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -21,6 +22,26 @@ public interface ConversationRepository extends JpaRepository<ConversationEntity
            "(c.senderId = :userId AND c.senderDeletedAt IS NULL AND c.senderArchivedAt IS NULL) OR " +
            "(c.travelerId = :userId AND c.travelerDeletedAt IS NULL AND c.travelerArchivedAt IS NULL)")
     Page<ConversationEntity> findByParticipant(@Param("userId") UUID userId, Pageable pageable);
+
+    /**
+     * Même liste que {@link #findByParticipant}, amputée des fils dont la contrepartie est
+     * masquée (blocage sans transaction en cours).
+     *
+     * <p>Le filtrage est en base et non après pagination : retirer des lignes d'une page
+     * déjà constituée rendrait des pages courtes et un total faux. Les deux colonnes sont
+     * testées car {@code hiddenIds} ne contient jamais l'appelant lui-même, personne ne
+     * pouvant se bloquer soi-même.
+     *
+     * <p>À n'appeler qu'avec une collection non vide : un {@code NOT IN ()} vide n'a pas
+     * de sens en JPQL. Sinon, {@link #findByParticipant}.
+     */
+    @Query("SELECT c FROM ConversationEntity c WHERE " +
+           "((c.senderId = :userId AND c.senderDeletedAt IS NULL AND c.senderArchivedAt IS NULL) OR " +
+           "(c.travelerId = :userId AND c.travelerDeletedAt IS NULL AND c.travelerArchivedAt IS NULL)) " +
+           "AND c.senderId NOT IN :hiddenIds AND c.travelerId NOT IN :hiddenIds")
+    Page<ConversationEntity> findByParticipantExcludingHidden(@Param("userId") UUID userId,
+                                                              @Param("hiddenIds") Collection<UUID> hiddenIds,
+                                                              Pageable pageable);
 
     // Archived conversations: archived but not deleted
     @Query("SELECT c FROM ConversationEntity c WHERE " +

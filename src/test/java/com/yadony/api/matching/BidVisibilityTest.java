@@ -38,6 +38,8 @@ class BidVisibilityTest {
     @Mock private StorageService storageService;
     @Mock private BidPhotoService bidPhotoService;
     @Mock private com.yadony.api.common.CommissionRateResolver commissionRateResolver;
+    // Aucun blocage par défaut : hiddenUserIdsFor renvoie un Set vide (défaut Mockito).
+    @Mock private com.yadony.api.common.BlockVisibility blockVisibility;
 
     @InjectMocks private BidService bidService;
 

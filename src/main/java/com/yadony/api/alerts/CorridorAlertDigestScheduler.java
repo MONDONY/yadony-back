@@ -1,7 +1,10 @@
 package com.yadony.api.alerts;
 
+import com.yadony.api.common.BlockVisibility;
 import com.yadony.api.common.MatchingTextUtil;
+import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.notifications.NotificationDispatcher;
+import com.yadony.api.requests.entity.PackageRequestEntity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -10,8 +13,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 
 @Component
 public class CorridorAlertDigestScheduler {
@@ -21,13 +27,16 @@ public class CorridorAlertDigestScheduler {
     private final CorridorAlertRepository alertRepository;
     private final AlertService alertService;
     private final NotificationDispatcher notificationDispatcher;
+    private final BlockVisibility blockVisibility;
 
     public CorridorAlertDigestScheduler(CorridorAlertRepository alertRepository,
                                         AlertService alertService,
-                                        NotificationDispatcher notificationDispatcher) {
+                                        NotificationDispatcher notificationDispatcher,
+                                        BlockVisibility blockVisibility) {
         this.alertRepository = alertRepository;
         this.alertService = alertService;
         this.notificationDispatcher = notificationDispatcher;
+        this.blockVisibility = blockVisibility;
     }
 
     @Scheduled(cron = "${app.alerts.digest-cron:0 0 9 * * *}", zone = "Europe/Paris")
@@ -41,16 +50,35 @@ public class CorridorAlertDigestScheduler {
         }
         log.debug("[CorridorAlertDigest] processing {} active alert(s)", active.size());
 
+        // Confidentialité — un utilisateur masqué ne doit rien peser dans le digest de son
+        // destinataire. Le jeu masqué est résolu UNE fois par destinataire et mémorisé pour
+        // toute l'exécution : un propriétaire peut avoir plusieurs alertes, et un appel par
+        // élément trouvé ferait exploser le nombre de requêtes sur un digest quotidien.
+        Map<UUID, Set<UUID>> hiddenByOwner = new HashMap<>();
+
         for (CorridorAlertEntity alert : active) {
             try {
                 LocalDateTime since = alert.getLastNotifiedAt() != null
                         ? alert.getLastNotifiedAt()
                         : now.minusHours(24);
 
+                Set<UUID> hidden = hiddenByOwner.computeIfAbsent(
+                        alert.getOwnerId(), blockVisibility::hiddenUserIdsFor);
+
                 boolean isTrips = alert.getDirection() == AlertDirection.SENDER_WANTS_TRIPS;
-                int count = isTrips
-                        ? alertService.findRecentTripMatches(alert, since).size()
-                        : alertService.findRecentMatches(alert, since).size();
+                // Le null-check précède le contains : hiddenUserIdsFor peut renvoyer un
+                // Set.of() immuable, dont contains(null) lève une NPE.
+                long count = isTrips
+                        ? alertService.findRecentTripMatches(alert, since).stream()
+                                .map(AnnouncementEntity::getTravelerId)
+                                .filter(ownerOfContent -> ownerOfContent == null
+                                        || !hidden.contains(ownerOfContent))
+                                .count()
+                        : alertService.findRecentMatches(alert, since).stream()
+                                .map(PackageRequestEntity::getSenderId)
+                                .filter(ownerOfContent -> ownerOfContent == null
+                                        || !hidden.contains(ownerOfContent))
+                                .count();
                 if (count == 0) {
                     continue;
                 }

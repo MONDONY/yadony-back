@@ -7,6 +7,7 @@ import com.yadony.api.auth.Role;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
+import com.yadony.api.common.BlockVisibility;
 import com.yadony.api.common.CommissionRateResolver;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
@@ -63,6 +64,12 @@ public class BidService {
     private final BidGridItemRepository bidGridItemRepository;
     private final AnnouncementPriceGridItemRepository annGridItemRepository;
     private final BlockService blockService;
+    /**
+     * Masquage en lecture des comptes bloqués. Distinct de {@link #blockService}, qui ne
+     * sert qu'à interdire la création d'un colis ({@code isBlockedEitherWay}, hors contrat
+     * {@link BlockVisibility}) : ici on masque, on n'interdit pas.
+     */
+    private final BlockVisibility blockVisibility;
     private final CommissionRateResolver commissionRateResolver;
     private final PromoService promoService;
     private final StorageService storageService;
@@ -76,6 +83,7 @@ public class BidService {
                       BidGridItemRepository bidGridItemRepository,
                       AnnouncementPriceGridItemRepository annGridItemRepository,
                       BlockService blockService,
+                      BlockVisibility blockVisibility,
                       CommissionRateResolver commissionRateResolver,
                       PromoService promoService,
                       StorageService storageService,
@@ -91,6 +99,7 @@ public class BidService {
         this.bidGridItemRepository = bidGridItemRepository;
         this.annGridItemRepository = annGridItemRepository;
         this.blockService = blockService;
+        this.blockVisibility = blockVisibility;
         this.commissionRateResolver = commissionRateResolver;
         this.promoService = promoService;
         this.storageService = storageService;
@@ -464,6 +473,24 @@ public class BidService {
 
     @Transactional(readOnly = true)
     public BidResponse getBidById(UUID bidId, String firebaseUid) {
+        return getBidById(bidId, firebaseUid, true);
+    }
+
+    /**
+     * Lecture d'un colis juste après que l'appelant l'a lui-même modifié.
+     *
+     * <p>Le masquage est délibérément levé ici : l'action vient d'aboutir, et une
+     * annulation fait sortir le colis des statuts « transaction en cours », donc la
+     * relecture gardée renverrait un 404 à celui qui vient d'annuler avec succès.
+     * Signaler un échec pour une opération réussie serait pire que de rendre une
+     * dernière fois l'état d'un colis auquel l'appelant est partie.
+     */
+    @Transactional(readOnly = true)
+    public BidResponse getBidAfterOwnMutation(UUID bidId, String firebaseUid) {
+        return getBidById(bidId, firebaseUid, false);
+    }
+
+    private BidResponse getBidById(UUID bidId, String firebaseUid, boolean applyBlockVisibility) {
         BidEntity bid = findBid(bidId);
         AnnouncementEntity announcement = findAnnouncement(bid.getAnnouncementId());
         UserEntity requester = findUserByFirebaseUid(firebaseUid);
@@ -475,6 +502,15 @@ public class BidService {
         if (!isTraveler && !isSender) {
             throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
                     "Accès non autorisé à ce bid");
+        }
+
+        // Confidentialité v2 — si la contrepartie est masquée (blocage dans un sens ou dans
+        // l'autre, hors transaction en cours), le colis devient introuvable. Même erreur
+        // qu'un bid inexistant, jamais un 403 : un code distinct trahirait le blocage.
+        UUID counterpartyId = isSender ? announcement.getTravelerId() : bid.getSenderId();
+        if (applyBlockVisibility && blockVisibility.isHidden(requester.getId(), counterpartyId)) {
+            throw new YadonyBusinessException(HttpStatus.NOT_FOUND, "bid-not-found",
+                    "Bid Not Found", "Demande introuvable");
         }
 
         UserEntity sender = userRepository.findById(bid.getSenderId()).orElse(null);
@@ -548,9 +584,15 @@ public class BidService {
                     "Vous n'êtes pas autorisé à voir ces demandes");
         }
 
+        // Confidentialité v2 — les colis des expéditeurs bloqués (dans un sens ou dans
+        // l'autre) disparaissent de la liste, sans trace ni compteur : le voyageur ne doit
+        // pas pouvoir déduire qu'une demande a été filtrée.
+        java.util.Set<UUID> hiddenSenderIds = blockVisibility.hiddenUserIdsFor(traveler.getId());
+
         List<BidEntity> visible = bidRepository.findByAnnouncementId(announcementId)
                 .stream()
                 .filter(b -> !b.isDeletedByTraveler())
+                .filter(b -> !hiddenSenderIds.contains(b.getSenderId()))
                 .filter(b -> b.getStatus() != BidStatus.AWAITING_PAYMENT
                           && !BidStatus.NEGOTIATION_ACTIVE.contains(b.getStatus()))
                 .toList();

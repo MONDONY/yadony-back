@@ -41,9 +41,18 @@ public class TravelerAvailabilityListener {
         );
 
         for (TravelerSubscriptionEntity sub : subs) {
+            // Confidentialité — l'abonnement porte sur le contenu du voyageur : ni push, ni
+            // pastille « nouveau » si les deux comptes sont masqués l'un pour l'autre. Poser
+            // hasNew malgré tout afficherait un badge pour un trajet que l'abonné ne peut
+            // pas ouvrir. L'abonnement lui-même n'est pas supprimé : le blocage est
+            // réversible, et le retirer serait détectable côté abonné.
+            boolean notified = notificationDispatcher.notifyUnlessBlocked(
+                    sub.getSenderId(), event.travelerId(), title, body, data, sub.isPushEnabled());
+            if (!notified) {
+                continue;
+            }
             sub.setHasNew(true);
             subscriptionRepository.save(sub);
-            notificationDispatcher.notifyUser(sub.getSenderId(), title, body, data, sub.isPushEnabled());
         }
     }
 }

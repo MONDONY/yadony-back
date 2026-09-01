@@ -3,7 +3,9 @@ package com.yadony.api.messaging;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
+import com.yadony.api.common.BlockVisibility;
 import com.yadony.api.common.StorageService;
+import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
@@ -21,6 +23,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
@@ -34,6 +37,7 @@ class ConversationServiceTest {
     @Mock BidRepository bidRepository;
     @Mock AnnouncementRepository announcementRepository;
     @Mock StorageService storageService;
+    @Mock BlockVisibility blockVisibility;
 
     ConversationService service;
 
@@ -45,7 +49,7 @@ class ConversationServiceTest {
     void setUp() {
         lenient().when(storageService.avatarUrl(any())).thenAnswer(inv -> inv.getArgument(0));
         service = new ConversationService(conversationRepository, firestoreService, userRepository, auditService,
-                bidRepository, announcementRepository, storageService);
+                bidRepository, announcementRepository, storageService, blockVisibility);
 
         UserEntity sender   = mockUser(senderId,   "Alice", "Martin", "uid-sender");
         UserEntity traveler = mockUser(travelerId, "Bob",   "Dupont", "uid-traveler");
@@ -201,6 +205,105 @@ class ConversationServiceTest {
         service.fetchConversationMeta(ids);
 
         verify(firestoreService).getConversationMeta(ids);
+    }
+
+    // ── Blocage : masquage symétrique et silencieux ───────────────────────────
+
+    @Test
+    void getOrCreateByBidId_returns404_whenCounterpartyHidden() {
+        ConversationEntity existing = new ConversationEntity(bidId, senderId, travelerId, "conv_" + bidId);
+        when(conversationRepository.findByBidIdAndParticipant(bidId, senderId))
+                .thenReturn(Optional.of(existing));
+        doThrow(new YadonyBusinessException(org.springframework.http.HttpStatus.NOT_FOUND,
+                "not-found", "Not Found", "Ressource introuvable"))
+                .when(blockVisibility).assertVisible(senderId, travelerId);
+
+        assertThatThrownBy(() -> service.getOrCreateByBidId(bidId, senderId))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getStatus())
+                        .isEqualTo(org.springframework.http.HttpStatus.NOT_FOUND));
+    }
+
+    @Test
+    void getOrCreateByBidId_returnsConversation_whenTransactionStillActive() {
+        // Transaction en cours : BlockVisibility ne masque rien, le fil reste ouvert
+        // des deux côtés malgré le blocage.
+        ConversationEntity existing = new ConversationEntity(bidId, senderId, travelerId, "conv_" + bidId);
+        when(conversationRepository.findByBidIdAndParticipant(bidId, senderId))
+                .thenReturn(Optional.of(existing));
+
+        ConversationEntity result = service.getOrCreateByBidId(bidId, senderId);
+
+        assertThat(result).isSameAs(existing);
+        verify(blockVisibility).assertVisible(senderId, travelerId);
+    }
+
+    @Test
+    void getOrCreateByBidId_returns404_whenHidden_onCopyDeletedBySelf() {
+        ConversationEntity deleted = new ConversationEntity(bidId, senderId, travelerId, "conv_" + bidId);
+        when(conversationRepository.findByBidIdAndParticipant(bidId, travelerId))
+                .thenReturn(Optional.empty());
+        when(conversationRepository.findByBidIdAndParticipantIgnoreDeleted(bidId, travelerId))
+                .thenReturn(Optional.of(deleted));
+        doThrow(new YadonyBusinessException(org.springframework.http.HttpStatus.NOT_FOUND,
+                "not-found", "Not Found", "Ressource introuvable"))
+                .when(blockVisibility).assertVisible(travelerId, senderId);
+
+        assertThatThrownBy(() -> service.getOrCreateByBidId(bidId, travelerId))
+                .isInstanceOf(YadonyBusinessException.class);
+    }
+
+    @Test
+    void createConversationForBid_refuses_whenParticipantsHiddenFromEachOther() {
+        doThrow(new YadonyBusinessException(org.springframework.http.HttpStatus.NOT_FOUND,
+                "not-found", "Not Found", "Ressource introuvable"))
+                .when(blockVisibility).assertVisible(senderId, travelerId);
+
+        assertThatThrownBy(() -> service.createConversationForBid(bidId, senderId, travelerId))
+                .isInstanceOf(YadonyBusinessException.class);
+
+        verify(conversationRepository, never()).save(any());
+        verifyNoInteractions(firestoreService);
+    }
+
+    @Test
+    void assertMessagingAllowed_checksTheCounterparty_fromTheActorPointOfView() {
+        ConversationEntity conv = new ConversationEntity(bidId, senderId, travelerId, "conv_" + bidId);
+
+        service.assertMessagingAllowed(conv, travelerId);
+
+        verify(blockVisibility).assertVisible(travelerId, senderId);
+    }
+
+    @Test
+    void assertMessagingAllowed_propagates404_whenCounterpartyHidden() {
+        ConversationEntity conv = new ConversationEntity(bidId, senderId, travelerId, "conv_" + bidId);
+        doThrow(new YadonyBusinessException(org.springframework.http.HttpStatus.NOT_FOUND,
+                "not-found", "Not Found", "Ressource introuvable"))
+                .when(blockVisibility).assertVisible(senderId, travelerId);
+
+        assertThatThrownBy(() -> service.assertMessagingAllowed(conv, senderId))
+                .isInstanceOf(YadonyBusinessException.class);
+    }
+
+    @Test
+    void getArchivedConversations_dropsThreadsWithHiddenCounterparty() {
+        UUID otherBidId = UUID.randomUUID();
+        UUID hiddenTravelerId = UUID.randomUUID();
+        ConversationEntity visible = new ConversationEntity(bidId, senderId, travelerId, "conv_" + bidId);
+        ConversationEntity masked = new ConversationEntity(
+                otherBidId, senderId, hiddenTravelerId, "conv_" + otherBidId);
+
+        when(blockVisibility.hiddenUserIdsFor(senderId)).thenReturn(java.util.Set.of(hiddenTravelerId));
+        when(conversationRepository.findArchivedByParticipant(eq(senderId), any()))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(visible, masked)));
+        when(firestoreService.getConversationMeta(anyList())).thenReturn(Map.of());
+        when(bidRepository.findById(any())).thenReturn(Optional.empty());
+
+        var result = service.getArchivedConversations(senderId);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).bidId()).isEqualTo(bidId);
     }
 
     private BidEntity mockBid(BidStatus status) {

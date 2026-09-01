@@ -79,13 +79,29 @@ class RatingControllerIntegrationTest {
                 Map.of(1, 0L, 2, 0L, 3, 0L, 4, 1L, 5, 1L),
                 List.of(new RatingItemResponse(5, "Super", LocalDateTime.now(), false, null, null, null, null)),
                 0, 1);
-        when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(20))).thenReturn(summary);
+        // Appel anonyme : le contrôleur transmet un viewer nul, aucun masquage possible.
+        when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(20), isNull())).thenReturn(summary);
 
         mockMvc.perform(get("/ratings/user/{userId}", USER_ID))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.averageRating").value(4.50))
                 .andExpect(jsonPath("$.ratingCount").value(2))
                 .andExpect(jsonPath("$.ratings[0].stars").value(5));
+    }
+
+    @Test
+    void getUserRatings_hiddenByBlock_returns404NotForbidden() throws Exception {
+        // Le service masque un utilisateur bloqué par un 404 « not-found » : le contrôleur
+        // le relaie tel quel. Un 403 rendrait le blocage détectable.
+        when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(20), any()))
+                .thenThrow(new com.yadony.api.common.YadonyBusinessException(
+                        org.springframework.http.HttpStatus.NOT_FOUND, "not-found",
+                        "Not Found", "Ressource introuvable"));
+
+        mockMvc.perform(get("/ratings/user/{userId}", USER_ID)
+                        .with(authentication(asRole(SENDER_UID, "SENDER"))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("not-found"));
     }
 
     @Test

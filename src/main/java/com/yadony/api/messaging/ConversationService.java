@@ -3,6 +3,7 @@ package com.yadony.api.messaging;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
+import com.yadony.api.common.BlockVisibility;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
@@ -37,6 +38,7 @@ public class ConversationService {
     private final BidRepository bidRepository;
     private final AnnouncementRepository announcementRepository;
     private final StorageService storageService;
+    private final BlockVisibility blockVisibility;
 
     public ConversationService(ConversationRepository conversationRepository,
                                 FirestoreService firestoreService,
@@ -44,7 +46,8 @@ public class ConversationService {
                                 AuditService auditService,
                                 BidRepository bidRepository,
                                 AnnouncementRepository announcementRepository,
-                                StorageService storageService) {
+                                StorageService storageService,
+                                BlockVisibility blockVisibility) {
         this.conversationRepository = conversationRepository;
         this.firestoreService = firestoreService;
         this.userRepository = userRepository;
@@ -52,6 +55,7 @@ public class ConversationService {
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.storageService = storageService;
+        this.blockVisibility = blockVisibility;
     }
 
     @Transactional
@@ -60,6 +64,10 @@ public class ConversationService {
         Optional<ConversationEntity> accessible =
             conversationRepository.findByBidIdAndParticipant(bidId, requestingUserId);
         if (accessible.isPresent()) {
+            // Un fil dont la contrepartie est masquée n'existe plus pour l'appelant : 404
+            // silencieux. La transaction en cours est déjà l'exception portée par
+            // BlockVisibility, si bien qu'un colis en cours d'acheminement passe toujours.
+            blockVisibility.assertVisible(requestingUserId, otherUserId(accessible.get(), requestingUserId));
             return accessible.get();
         }
 
@@ -68,6 +76,7 @@ public class ConversationService {
         Optional<ConversationEntity> deletedBySelf =
             conversationRepository.findByBidIdAndParticipantIgnoreDeleted(bidId, requestingUserId);
         if (deletedBySelf.isPresent()) {
+            blockVisibility.assertVisible(requestingUserId, otherUserId(deletedBySelf.get(), requestingUserId));
             return deletedBySelf.get();
         }
 
@@ -84,6 +93,10 @@ public class ConversationService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
                 "Conversation not found or access denied");
         }
+
+        // Aucune conversation ne s'ouvre entre deux comptes masqués l'un pour l'autre.
+        blockVisibility.assertVisible(requestingUserId,
+            requestingUserId.equals(senderId) ? travelerId : senderId);
 
         return createConversationForBid(bidId, senderId, travelerId);
     }
@@ -117,6 +130,12 @@ public class ConversationService {
 
     @Transactional
     public ConversationEntity createConversationForBid(UUID bidId, UUID senderId, UUID travelerId) {
+        // Le masquage étant symétrique, le sens de la vérification n'a pas d'importance :
+        // si l'un des deux a bloqué l'autre et qu'aucune transaction ne les lie, aucun fil
+        // ne doit naître. Sur le chemin « bid accepté », la transaction est active, donc
+        // isHidden rend faux et la conversation se crée normalement.
+        blockVisibility.assertVisible(senderId, travelerId);
+
         return conversationRepository.findByBidId(bidId).orElseGet(() -> {
             String firestoreId = "conv_" + bidId;
 
@@ -255,10 +274,32 @@ public class ConversationService {
         auditService.log("conversation", conversationId, "CONVERSATION_UNARCHIVED", requestingUserId, Map.of());
     }
 
+    /**
+     * Garde d'envoi d'un message : lève un 404 si la contrepartie du fil est masquée
+     * pour {@code actorId}.
+     *
+     * <p>Posée ici et non seulement dans le contrôleur, pour que tout chemin qui poste
+     * dans une conversation (aperçu du dernier message, envoi d'image) passe par la même
+     * règle. Elle reste ouverte tant qu'une transaction lie les deux comptes : un colis
+     * en cours d'acheminement continue de se coordonner malgré le blocage.
+     */
+    @Transactional(readOnly = true)
+    public void assertMessagingAllowed(ConversationEntity conv, UUID actorId) {
+        blockVisibility.assertVisible(actorId, otherUserId(conv, actorId));
+    }
+
     public List<ConversationResponse> getArchivedConversations(UUID userId) {
+        // Liste non paginée : le filtrage en mémoire suffit et évite une requête dédiée.
+        // La liste active, elle, est paginée et doit filtrer en base (cf.
+        // ConversationRepository#findByParticipantExcludingHidden) sous peine de fausser
+        // le nombre total de pages.
+        java.util.Set<UUID> hidden = blockVisibility.hiddenUserIdsFor(userId);
         List<ConversationEntity> archived = conversationRepository
             .findArchivedByParticipant(userId, Pageable.unpaged())
-            .getContent();
+            .getContent()
+            .stream()
+            .filter(c -> !hidden.contains(otherUserId(c, userId)))
+            .toList();
         Map<String, Map<String, Object>> meta = fetchConversationMeta(
             archived.stream().map(ConversationEntity::getFirestoreConversationId).toList());
         return archived.stream()

@@ -2,6 +2,7 @@ package com.yadony.api.messaging;
 
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
+import com.yadony.api.common.BlockVisibility;
 import com.yadony.api.common.PageResponse;
 import com.yadony.api.common.StorageService;
 import java.util.List;
@@ -36,15 +37,18 @@ public class ConversationController {
     private final ConversationService conversationService;
     private final UserRepository userRepository;
     private final StorageService storageService;
+    private final BlockVisibility blockVisibility;
 
     public ConversationController(ConversationRepository conversationRepository,
                                    ConversationService conversationService,
                                    UserRepository userRepository,
-                                   StorageService storageService) {
+                                   StorageService storageService,
+                                   BlockVisibility blockVisibility) {
         this.conversationRepository = conversationRepository;
         this.conversationService = conversationService;
         this.userRepository = userRepository;
         this.storageService = storageService;
+        this.blockVisibility = blockVisibility;
     }
 
     // GET /conversations — paginated list for the authenticated user
@@ -53,8 +57,14 @@ public class ConversationController {
             @PageableDefault(size = 20) Pageable pageable) {
 
         UserEntity currentUser = resolveCurrentUser();
-        Page<ConversationEntity> page = conversationRepository
-                .findByParticipant(currentUser.getId(), pageable);
+        // Les fils dont la contrepartie est masquée disparaissent de la liste. Le filtrage
+        // se fait en base pour que la pagination reste juste ; l'appel sans exclusion est
+        // conservé pour le cas courant (aucun blocage), un NOT IN vide n'étant pas valide.
+        java.util.Set<UUID> hidden = blockVisibility.hiddenUserIdsFor(currentUser.getId());
+        Page<ConversationEntity> page = hidden.isEmpty()
+                ? conversationRepository.findByParticipant(currentUser.getId(), pageable)
+                : conversationRepository.findByParticipantExcludingHidden(
+                        currentUser.getId(), hidden, pageable);
 
         java.util.Map<String, java.util.Map<String, Object>> meta = conversationService.fetchConversationMeta(
                 page.getContent().stream().map(ConversationEntity::getFirestoreConversationId).toList());
@@ -74,6 +84,9 @@ public class ConversationController {
                 .findByIdAndParticipant(id, currentUser.getId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN,
                         "Conversation not found or access denied"));
+
+        // Ouvrir directement un fil masqué doit échouer comme il a disparu de la liste.
+        conversationService.assertMessagingAllowed(conv, currentUser.getId());
 
         return ResponseEntity.ok(conversationService.toResponse(conv, currentUser.getId()));
     }
@@ -99,6 +112,9 @@ public class ConversationController {
                 .findByIdAndParticipant(id, currentUser.getId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN,
                         "Conversation not found or access denied"));
+
+        // Poster dans un fil dont la contrepartie est masquée est refusé (404 silencieux).
+        conversationService.assertMessagingAllowed(conv, currentUser.getId());
 
         conversationService.updateLastMessage(conv.getFirestoreConversationId(), body.preview());
 
@@ -155,6 +171,9 @@ public class ConversationController {
                 .findByIdAndParticipant(id, currentUser.getId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN,
                         "Conversation not found or access denied"));
+
+        // Une image est un message : même garde que l'aperçu du dernier message.
+        conversationService.assertMessagingAllowed(conv, currentUser.getId());
 
         if (file.getSize() > MAX_IMAGE_SIZE) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,

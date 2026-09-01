@@ -21,6 +21,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -38,6 +39,7 @@ class MatchingServiceTest {
     @Mock private PackageRequestRepository packageRequestRepository;
     @Mock private UserRepository userRepository;
     @Mock private com.yadony.api.payments.currency.ExchangeRateService exchangeRateService;
+    @Mock private com.yadony.api.common.BlockVisibility blockVisibility;
 
     @InjectMocks private MatchingService matchingService;
 
@@ -67,6 +69,54 @@ class MatchingServiceTest {
         sender.setLastName("Dupont");
         setField(sender, "averageRating", BigDecimal.valueOf(4.5));
         setField(sender, "totalShipments", 8);
+    }
+
+    @Nested
+    @DisplayName("masquage des expéditeurs bloqués")
+    class BlockVisibilityFilter {
+
+        /** Une demande d'un expéditeur bloqué ne doit pas remonter dans les
+         *  suggestions du voyageur, même si le corridor correspond parfaitement. */
+        @Test
+        void findMatchingRequests_ecarteLesDemandesDUnExpediteurMasque() throws Exception {
+            PackageRequestEntity request = buildRequest(5, LocalDate.now().plusDays(10), 3);
+            when(announcementRepository.findActiveByTravelerId(TRAVELER_ID))
+                    .thenReturn(List.of(activeAnnouncement));
+            when(packageRequestRepository.findOpenByCorridor("Paris", "Dakar"))
+                    .thenReturn(List.of(request));
+            when(blockVisibility.hiddenUserIdsFor(TRAVELER_ID)).thenReturn(Set.of(SENDER_ID));
+
+            assertThat(matchingService.findMatchingRequests(TRAVELER_ID)).isEmpty();
+            // L'expéditeur masqué n'est même pas chargé.
+            verify(userRepository, never()).findById(SENDER_ID);
+        }
+
+        @Test
+        void findBestMatchByRequestId_ecarteLesDemandesDUnExpediteurMasque() throws Exception {
+            PackageRequestEntity request = buildRequest(5, LocalDate.now().plusDays(10), 3);
+            when(announcementRepository.findActiveByTravelerId(TRAVELER_ID))
+                    .thenReturn(List.of(activeAnnouncement));
+            when(packageRequestRepository.findOpenOrNegotiatingByCorridor("Paris", "Dakar"))
+                    .thenReturn(List.of(request));
+            when(blockVisibility.hiddenUserIdsFor(TRAVELER_ID)).thenReturn(Set.of(SENDER_ID));
+
+            assertThat(matchingService.findBestMatchByRequestId(TRAVELER_ID)).isEmpty();
+        }
+
+        @Test
+        void findBestMatchByRequestId_conserveLesAutresExpediteurs() throws Exception {
+            PackageRequestEntity request = buildRequest(5, LocalDate.now().plusDays(10), 3);
+            when(announcementRepository.findActiveByTravelerId(TRAVELER_ID))
+                    .thenReturn(List.of(activeAnnouncement));
+            when(packageRequestRepository.findOpenOrNegotiatingByCorridor("Paris", "Dakar"))
+                    .thenReturn(List.of(request));
+            when(blockVisibility.hiddenUserIdsFor(TRAVELER_ID))
+                    .thenReturn(Set.of(UUID.randomUUID()));
+            when(userRepository.findAllById(Set.of(SENDER_ID))).thenReturn(List.of(sender));
+
+            assertThat(matchingService.findBestMatchByRequestId(TRAVELER_ID))
+                    .containsKey(REQUEST_ID);
+        }
     }
 
     @Nested

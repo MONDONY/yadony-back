@@ -87,6 +87,7 @@ class AnnouncementServiceTest {
     @Mock private com.yadony.api.requests.repository.PackageRequestRepository packageRequestRepository;
     @Mock private com.yadony.api.requests.repository.NegotiationThreadRepository negotiationThreadRepository;
     @Mock private com.yadony.api.notifications.NotificationDispatcher notificationDispatcher;
+    @Mock private com.yadony.api.common.BlockVisibility blockVisibility;
 
     private AnnouncementService announcementService;
 
@@ -106,7 +107,7 @@ class AnnouncementServiceTest {
                 com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3),
                 priceGridService, flagService,
                 storageService, favoriteRepository, activeCurrencyResolver, exchangeRateService, realMapper, packageRequestRepository,
-                negotiationThreadRepository, notificationDispatcher);
+                negotiationThreadRepository, notificationDispatcher, blockVisibility);
     }
 
     private static final String FIREBASE_UID = "uid-traveler-001";
@@ -1186,7 +1187,7 @@ class AnnouncementServiceTest {
         }
 
         @Test
-        @DisplayName("annonce ACTIVE → un tiers peut voir le détail (non-régression, pas de résolution du viewer)")
+        @DisplayName("annonce ACTIVE → un tiers peut voir le détail")
         void getDetail_activeNonOwner_returnsDetail() {
             UserEntity owner = buildTraveler();
             AnnouncementEntity a = buildAnnouncement(owner);
@@ -1198,9 +1199,10 @@ class AnnouncementServiceTest {
                     ANNOUNCEMENT_ID, "uid-other-traveler-2");
 
             assertThat(result.status()).isEqualTo("ACTIVE");
-            // Le lookup viewer (findByFirebaseUid) ne doit se déclencher que pour un DRAFT ;
-            // seul le lookup du profil voyageur affiché (findById) est attendu ici.
-            verify(userRepository, never()).findByFirebaseUid(any());
+            // Le viewer est désormais résolu à chaque lecture, et plus seulement pour un
+            // brouillon : la garde de blocage a besoin de son id pour interroger
+            // BlockVisibility. Un uid inconnu se résout à null, donc rien n'est masqué.
+            verify(userRepository).findByFirebaseUid("uid-other-traveler-2");
         }
     }
 
@@ -2309,7 +2311,7 @@ class AnnouncementServiceTest {
                     com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3),
                     priceGridService, flagService,
                     storageService, favoriteRepository, activeCurrencyResolver, exchangeRateService, mapperWithLimits, packageRequestRepository,
-                    negotiationThreadRepository, notificationDispatcher);
+                    negotiationThreadRepository, notificationDispatcher, blockVisibility);
 
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
             // le nouveau count (hors DRAFT) renvoie 1 => sous la limite (2) => création OK
@@ -2644,7 +2646,7 @@ class AnnouncementServiceTest {
                     com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3),
                     priceGridService, flagService,
                     storageService, favoriteRepository, activeCurrencyResolver, exchangeRateService, mapperWithLimits, packageRequestRepository,
-                    negotiationThreadRepository, notificationDispatcher);
+                    negotiationThreadRepository, notificationDispatcher, blockVisibility);
 
             AnnouncementEntity draft = draftEntityOwnedBy(user);
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
@@ -2857,7 +2859,7 @@ class AnnouncementServiceTest {
                     com.yadony.api.config.PlatformSettingsTestFactory.withProEnabled(false),
                     priceGridService, flagService,
                     storageService, favoriteRepository, activeCurrencyResolver, exchangeRateService, mapper,
-                    packageRequestRepository, negotiationThreadRepository, notificationDispatcher);
+                    packageRequestRepository, negotiationThreadRepository, notificationDispatcher, blockVisibility);
         }
 
         @Test

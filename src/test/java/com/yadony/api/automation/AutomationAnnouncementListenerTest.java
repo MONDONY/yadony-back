@@ -56,8 +56,31 @@ class AutomationAnnouncementListenerTest {
         listener.onAnnouncementPublished(new AnnouncementPublishedEvent(
                 announcementId, travelerId, "Jean", "Paris", "Dakar"));
 
-        verify(notificationDispatcher).notifyUser(eq(senderId1), any(), any(), any(), eq(false));
-        verify(notificationDispatcher).notifyUser(eq(senderId2), any(), any(), any(), eq(false));
+        verify(notificationDispatcher).notifyUnlessBlocked(
+                eq(senderId1), eq(travelerId), any(), any(), any(), eq(false));
+        verify(notificationDispatcher).notifyUnlessBlocked(
+                eq(senderId2), eq(travelerId), any(), any(), any(), eq(false));
+    }
+
+    /**
+     * Confidentialité — la règle est armée par le voyageur et parle de son trajet : un
+     * expéditeur masqué pour lui ne reçoit rien. Le listener délègue au dispatcher en lui
+     * déclarant l'émetteur ; la voie générique, aveugle au blocage, est proscrite ici.
+     */
+    @Test
+    void onAnnouncementPublished_routesThroughBlockAwareChannel() {
+        when(ruleRepository.findByTravelerIdOrderByCreatedAtAsc(travelerId))
+                .thenReturn(List.of(loyalRule(true)));
+        when(bidRepository.findLoyalSenderIds(travelerId, "Paris", "Dakar"))
+                .thenReturn(List.of(senderId1));
+        when(notificationDispatcher.notifyUnlessBlocked(
+                eq(senderId1), eq(travelerId), any(), any(), any(), eq(false))).thenReturn(false);
+
+        listener.onAnnouncementPublished(new AnnouncementPublishedEvent(
+                announcementId, travelerId, "Jean", "Paris", "Dakar"));
+
+        verify(notificationDispatcher, never()).notifyUser(any(), any(), any(), any());
+        verify(notificationDispatcher, never()).notifyUser(any(), any(), any(), any(), anyBoolean());
     }
 
     /**
@@ -76,8 +99,9 @@ class AutomationAnnouncementListenerTest {
                 announcementId, travelerId, "Jean", "Paris", "Dakar"));
 
         // La surcharge 4 arguments pousse un push : elle ne doit jamais être empruntée ici.
-        verify(notificationDispatcher, never()).notifyUser(any(), any(), any(), any());
-        verify(notificationDispatcher, never()).notifyUser(any(), any(), any(), any(), eq(true));
+        verify(notificationDispatcher, never()).notifyUnlessBlocked(any(), any(), any(), any(), any());
+        verify(notificationDispatcher, never())
+                .notifyUnlessBlocked(any(), any(), any(), any(), any(), eq(true));
     }
 
     @Test
@@ -89,7 +113,8 @@ class AutomationAnnouncementListenerTest {
                 announcementId, travelerId, "Jean", "Paris", "Dakar"));
 
         verify(bidRepository, never()).findLoyalSenderIds(any(), any(), any());
-        verify(notificationDispatcher, never()).notifyUser(any(), any(), any(), any(), anyBoolean());
+        verify(notificationDispatcher, never())
+                .notifyUnlessBlocked(any(), any(), any(), any(), any(), anyBoolean());
     }
 
     @Test
@@ -102,6 +127,7 @@ class AutomationAnnouncementListenerTest {
         listener.onAnnouncementPublished(new AnnouncementPublishedEvent(
                 announcementId, travelerId, "Jean", "Paris", "Dakar"));
 
-        verify(notificationDispatcher, never()).notifyUser(any(), any(), any(), any(), anyBoolean());
+        verify(notificationDispatcher, never())
+                .notifyUnlessBlocked(any(), any(), any(), any(), any(), anyBoolean());
     }
 }

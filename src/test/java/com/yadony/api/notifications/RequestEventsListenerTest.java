@@ -23,27 +23,48 @@ class RequestEventsListenerTest {
     @Test
     void onNegotiationStarted_notifiesSender() {
         UUID senderId = UUID.randomUUID();
+        UUID travelerId = UUID.randomUUID();
         var event = new NegotiationStartedEvent(
-            UUID.randomUUID(), UUID.randomUUID(), senderId, UUID.randomUUID(),
+            UUID.randomUUID(), UUID.randomUUID(), senderId, travelerId,
             new BigDecimal("30")
         );
 
         listener.onNegotiationStarted(event);
 
-        verify(dispatcher).notifyUser(eq(senderId), contains("proposition"), anyString(), anyMap());
+        // Voie « déclenchée par autrui » : rien ne part si le voyageur est masqué.
+        verify(dispatcher).notifyUnlessBlocked(eq(senderId), eq(travelerId),
+            contains("proposition"), anyString(), anyMap());
+        verify(dispatcher, never()).notifyUser(any(), anyString(), anyString(), anyMap());
     }
 
     @Test
     void onNegotiationCounterPosted_notifiesToUser() {
         UUID toUserId = UUID.randomUUID();
+        UUID fromUserId = UUID.randomUUID();
         var event = new NegotiationCounterPostedEvent(
-            UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), toUserId,
+            UUID.randomUUID(), UUID.randomUUID(), fromUserId, toUserId,
             new BigDecimal("25"), 2
         );
 
         listener.onNegotiationCounterPosted(event);
 
-        verify(dispatcher).notifyUser(eq(toUserId), contains("contre-proposition"), anyString(), anyMap());
+        verify(dispatcher).notifyUnlessBlocked(eq(toUserId), eq(fromUserId),
+            contains("contre-proposition"), anyString(), anyMap());
+    }
+
+    @Test
+    void onNegotiationNudgeSent_goesThroughTheBlockAwarePath() {
+        UUID toUserId = UUID.randomUUID();
+        UUID fromUserId = UUID.randomUUID();
+        var event = new NegotiationNudgeSentEvent(
+            UUID.randomUUID(), UUID.randomUUID(), fromUserId, toUserId, "Fatou"
+        );
+
+        listener.onNegotiationNudgeSent(event);
+
+        verify(dispatcher).notifyUnlessBlocked(eq(toUserId), eq(fromUserId),
+            anyString(), contains("Fatou"), anyMap());
+        verify(dispatcher, never()).notifyUser(any(), anyString(), anyString(), anyMap());
     }
 
     @Test

@@ -3,6 +3,7 @@ package com.yadony.api.favorites;
 import com.yadony.api.auth.GuestUserProvisioner;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
+import com.yadony.api.common.BlockVisibility;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.YadonyNotFoundException;
 import com.yadony.api.favorites.dto.FavoriteIdsResponse;
@@ -36,6 +37,7 @@ class FavoriteServiceTest {
     @Mock AnnouncementSearchMapper announcementSearchMapper;
     @Mock PackageRequestSearchMapper packageRequestSearchMapper;
     @Mock GuestUserProvisioner guestUserProvisioner;
+    @Mock BlockVisibility blockVisibility;
 
     FavoriteService service;
 
@@ -49,7 +51,7 @@ class FavoriteServiceTest {
         service = new FavoriteService(favoriteRepository, userRepository,
                 announcementRepository, packageRequestRepository,
                 announcementSearchMapper, packageRequestSearchMapper,
-                guestUserProvisioner);
+                guestUserProvisioner, blockVisibility);
         userId = UUID.randomUUID();
         tripId = UUID.randomUUID();
 
@@ -313,6 +315,114 @@ class FavoriteServiceTest {
 
         // Verify batch method called with favIdSet containing t1 (all are favorites)
         verify(announcementSearchMapper).toSearchResponseList(anyList(), argThat(s -> s.contains(t1)));
+    }
+
+    // --- filtrage des comptes bloqués ---
+
+    @Test
+    void getFavoriteTrips_skipsTripsOfBlockedTraveler() {
+        UUID blockedTraveler = UUID.randomUUID();
+        UUID visibleTraveler = UUID.randomUUID();
+        UUID t1 = UUID.randomUUID(); // voyageur visible — conservé
+        UUID t2 = UUID.randomUUID(); // voyageur bloqué — retiré de la liste
+        when(favoriteRepository.findTargetIds(userId, FavoriteTargetType.TRIP))
+                .thenReturn(List.of(t1, t2));
+
+        AnnouncementEntity a1 = mock(AnnouncementEntity.class);
+        when(a1.getStatus()).thenReturn(AnnouncementStatus.ACTIVE);
+        when(a1.getTravelerId()).thenReturn(visibleTraveler);
+
+        AnnouncementEntity a2 = mock(AnnouncementEntity.class);
+        when(a2.getStatus()).thenReturn(AnnouncementStatus.ACTIVE);
+        when(a2.getTravelerId()).thenReturn(blockedTraveler);
+
+        when(announcementRepository.findAllById(anyCollection())).thenReturn(List.of(a1, a2));
+        when(blockVisibility.hiddenUserIdsFor(userId)).thenReturn(Set.of(blockedTraveler));
+
+        AnnouncementSearchResponse dto = mock(AnnouncementSearchResponse.class);
+        when(announcementSearchMapper.toSearchResponseList(eq(List.of(a1)), anySet()))
+                .thenReturn(List.of(dto));
+
+        var res = service.getFavoriteTrips(userId);
+
+        // Le favori reste en base (le blocage peut être levé), il cesse d'être présenté.
+        assertThat(res).hasSize(1);
+        verify(announcementSearchMapper).toSearchResponseList(eq(List.of(a1)), anySet());
+        verify(favoriteRepository, never()).delete(any());
+    }
+
+    @Test
+    void getFavoriteTrips_keepsTripsWhenNobodyBlocked() {
+        UUID t1 = UUID.randomUUID();
+        when(favoriteRepository.findTargetIds(userId, FavoriteTargetType.TRIP))
+                .thenReturn(List.of(t1));
+
+        AnnouncementEntity a1 = mock(AnnouncementEntity.class);
+        when(a1.getStatus()).thenReturn(AnnouncementStatus.ACTIVE);
+        when(a1.getTravelerId()).thenReturn(UUID.randomUUID());
+
+        when(announcementRepository.findAllById(anyCollection())).thenReturn(List.of(a1));
+        when(blockVisibility.hiddenUserIdsFor(userId)).thenReturn(Set.of());
+
+        AnnouncementSearchResponse dto = mock(AnnouncementSearchResponse.class);
+        when(announcementSearchMapper.toSearchResponseList(eq(List.of(a1)), anySet()))
+                .thenReturn(List.of(dto));
+
+        var res = service.getFavoriteTrips(userId);
+
+        assertThat(res).hasSize(1);
+    }
+
+    @Test
+    void getFavoritePackageRequests_skipsRequestsOfBlockedSender() {
+        UUID blockedSender = UUID.randomUUID();
+        UUID p1 = UUID.randomUUID(); // expéditeur visible — conservé
+        UUID p2 = UUID.randomUUID(); // expéditeur bloqué — retiré de la liste
+        when(favoriteRepository.findTargetIds(userId, FavoriteTargetType.PACKAGE_REQUEST))
+                .thenReturn(List.of(p1, p2));
+
+        PackageRequestEntity pr1 = mock(PackageRequestEntity.class);
+        when(pr1.getStatus()).thenReturn(PackageRequestStatus.OPEN);
+        when(pr1.getSenderId()).thenReturn(UUID.randomUUID());
+
+        PackageRequestEntity pr2 = mock(PackageRequestEntity.class);
+        when(pr2.getStatus()).thenReturn(PackageRequestStatus.OPEN);
+        when(pr2.getSenderId()).thenReturn(blockedSender);
+
+        when(packageRequestRepository.findAllById(anyCollection())).thenReturn(List.of(pr1, pr2));
+        when(blockVisibility.hiddenUserIdsFor(userId)).thenReturn(Set.of(blockedSender));
+
+        PackageRequestSearchResponse dto = mock(PackageRequestSearchResponse.class);
+        when(packageRequestSearchMapper.toSearchResponseList(eq(List.of(pr1)), anySet(), anyBoolean()))
+                .thenReturn(List.of(dto));
+
+        var res = service.getFavoritePackageRequests(userId);
+
+        assertThat(res).hasSize(1);
+        verify(packageRequestSearchMapper).toSearchResponseList(eq(List.of(pr1)), anySet(), anyBoolean());
+        verify(favoriteRepository, never()).delete(any());
+    }
+
+    @Test
+    void getFavoritePackageRequests_keepsRequestsWhenNobodyBlocked() {
+        UUID p1 = UUID.randomUUID();
+        when(favoriteRepository.findTargetIds(userId, FavoriteTargetType.PACKAGE_REQUEST))
+                .thenReturn(List.of(p1));
+
+        PackageRequestEntity pr1 = mock(PackageRequestEntity.class);
+        when(pr1.getStatus()).thenReturn(PackageRequestStatus.OPEN);
+        when(pr1.getSenderId()).thenReturn(UUID.randomUUID());
+
+        when(packageRequestRepository.findAllById(anyCollection())).thenReturn(List.of(pr1));
+        when(blockVisibility.hiddenUserIdsFor(userId)).thenReturn(Set.of());
+
+        PackageRequestSearchResponse dto = mock(PackageRequestSearchResponse.class);
+        when(packageRequestSearchMapper.toSearchResponseList(eq(List.of(pr1)), anySet(), anyBoolean()))
+                .thenReturn(List.of(dto));
+
+        var res = service.getFavoritePackageRequests(userId);
+
+        assertThat(res).hasSize(1);
     }
 
     // --- getFavoritePackageRequests tests ---
