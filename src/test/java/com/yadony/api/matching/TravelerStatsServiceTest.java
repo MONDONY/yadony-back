@@ -75,7 +75,7 @@ class TravelerStatsServiceTest {
         UUID id = UUID.randomUUID();
         UserEntity traveler = traveler(id);
 
-        when(activeCurrencyResolver.resolve(id)).thenReturn("EUR");
+        when(activeCurrencyResolver.resolveDisplay(id)).thenReturn("EUR");
         stubIdentityConversion();
         when(paymentRepository.sumCapturedRevenueForTravelerByCurrency(eq(id), eq(PaymentStatus.RELEASED), any(), any()))
                 .thenReturn(List.of());
@@ -106,7 +106,7 @@ class TravelerStatsServiceTest {
         UUID id = UUID.randomUUID();
         UserEntity traveler = traveler(id);
 
-        when(activeCurrencyResolver.resolve(id)).thenReturn("EUR");
+        when(activeCurrencyResolver.resolveDisplay(id)).thenReturn("EUR");
         // Carte : 100 EUR. Cash : 65 595,70 XOF (= 100 EUR à la parité fixe).
         when(paymentRepository.sumCapturedRevenueForTravelerByCurrency(eq(id), eq(PaymentStatus.RELEASED), any(), any()))
                 .thenReturn(List.of(new CurrencyAmountRow("EUR", new BigDecimal("100.00"))));

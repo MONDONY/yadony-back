@@ -49,7 +49,7 @@ public class TravelerStatsService {
         // Carte (escrow libéré) + espèces (net des bids CASH livrés, hors PaymentEntity),
         // fusionnés PAR DEVISE puis convertis vers la devise active du voyageur pour le
         // total affiché. La ventilation part telle quelle dans le DTO, sans conversion.
-        String activeCurrency = activeCurrencyResolver.resolve(userId);
+        String activeCurrency = activeCurrencyResolver.resolveDisplay(userId);
         java.util.Map<String, BigDecimal> monthlyByCurrency = TravelerRevenue.cardPlusCashByCurrency(
                 paymentRepository.sumCapturedRevenueForTravelerByCurrency(
                         userId, PaymentStatus.RELEASED, monthStart, monthEnd),

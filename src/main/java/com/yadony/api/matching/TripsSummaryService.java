@@ -78,7 +78,7 @@ public class TripsSummaryService {
         // taux courant vers la devise active du voyageur — sommer EUR et XOF à plat
         // n'a pas de sens. Sans le terme cash, un trajet réglé en espèces restait à
         // 0 alors que « Kg vendus » le comptait déjà.
-        String activeCurrency = activeCurrencyResolver.resolve(userId);
+        String activeCurrency = activeCurrencyResolver.resolveDisplay(userId);
         BigDecimal revenue = TravelerRevenue.cardPlusCashByCurrency(
                         paymentRepository.sumCapturedRevenueForTravelerByCurrency(
                                 userId, PaymentStatus.RELEASED, from, to),

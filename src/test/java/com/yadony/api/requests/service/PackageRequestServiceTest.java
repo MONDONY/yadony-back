@@ -66,6 +66,9 @@ class PackageRequestServiceTest {
         org.mockito.Mockito.lenient()
                 .when(activeCurrencyResolver.resolve(org.mockito.ArgumentMatchers.any()))
                 .thenReturn("EUR");
+        org.mockito.Mockito.lenient()
+                .when(activeCurrencyResolver.resolveDisplay(org.mockito.ArgumentMatchers.any()))
+                .thenReturn("EUR");
     }
     @Mock private com.yadony.api.matching.MatchingService matchingService;
     @Mock private com.yadony.api.matching.AnnouncementRepository announcementRepository;
@@ -550,7 +553,7 @@ class PackageRequestServiceTest {
             entity.setCurrency("XOF");
             entity.setTargetPriceEur(new java.math.BigDecimal("65596"));
             when(repository.findById(entity.getId())).thenReturn(Optional.of(entity));
-            when(activeCurrencyResolver.resolve(viewer)).thenReturn("EUR");
+            when(activeCurrencyResolver.resolveDisplay(viewer)).thenReturn("EUR");
             when(exchangeRateService.convert(any(java.math.BigDecimal.class), org.mockito.ArgumentMatchers.eq("XOF"), org.mockito.ArgumentMatchers.eq("EUR")))
                 .thenReturn(new java.math.BigDecimal("100.00"));
 
@@ -1267,7 +1270,7 @@ class PackageRequestServiceTest {
                                     any(org.springframework.data.domain.Pageable.class)))
                 .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(xofRequest)));
             when(favoriteRepository.findTargetIds(any(), any())).thenReturn(List.of());
-            when(activeCurrencyResolver.resolve(callerId)).thenReturn("EUR");
+            when(activeCurrencyResolver.resolveDisplay(callerId)).thenReturn("EUR");
             when(exchangeRateService.convert(any(java.math.BigDecimal.class), org.mockito.ArgumentMatchers.eq("XOF"), org.mockito.ArgumentMatchers.eq("EUR")))
                 .thenReturn(new java.math.BigDecimal("100.00"));
 
@@ -1295,7 +1298,7 @@ class PackageRequestServiceTest {
                                     any(org.springframework.data.domain.Pageable.class)))
                 .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(eurRequest)));
             when(favoriteRepository.findTargetIds(any(), any())).thenReturn(List.of());
-            when(activeCurrencyResolver.resolve(callerId)).thenReturn("EUR");
+            when(activeCurrencyResolver.resolveDisplay(callerId)).thenReturn("EUR");
 
             var result = service.search(
                 org.springframework.data.jpa.domain.Specification.where(null),

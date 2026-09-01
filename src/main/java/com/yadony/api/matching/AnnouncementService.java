@@ -195,7 +195,7 @@ public class AnnouncementService {
                 : userRepository.findByFirebaseUid(viewerFirebaseUid)
                         .map(UserEntity::getId)
                         .orElse(null);
-        String viewerCurrency = activeCurrencyResolver.resolve(viewerId);
+        String viewerCurrency = activeCurrencyResolver.resolveDisplay(viewerId);
 
         Specification<AnnouncementEntity> spec = AnnouncementSpecification.hasStatus(AnnouncementStatus.ACTIVE)
                 .and(AnnouncementSpecification.publicOrOpenSurplus());
@@ -852,7 +852,7 @@ public class AnnouncementService {
         // Même repère de lecture que le fil (Tâche 10) : équivalents « environ » dans
         // la devise active du lecteur quand elle diffère de celle de l'annonce. Le net
         // converti suit la règle A16 du fil : masqué pour un invité, comme le net brut.
-        String viewerCurrency = activeCurrencyResolver.resolve(
+        String viewerCurrency = activeCurrencyResolver.resolveDisplay(
                 userRepository.findByFirebaseUid(firebaseUid).map(UserEntity::getId).orElse(null));
         if (announcement.getCurrency() != null
                 && !announcement.getCurrency().equalsIgnoreCase(viewerCurrency)) {
