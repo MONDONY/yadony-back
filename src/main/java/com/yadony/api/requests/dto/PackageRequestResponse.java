@@ -41,7 +41,16 @@ public record PackageRequestResponse(
      *  que la devise l'autorise, espèces toujours. Même règle que {@code AnnouncementResponse}
      *  (voir {@code AnnouncementPaymentRails}), calculée ici pour le voyageur appelant plutôt
      *  que pour un voyageur propriétaire fixe (une demande n'a pas de voyageur assigné). */
-    Set<PaymentMethod> availablePaymentMethods
+    Set<PaymentMethod> availablePaymentMethods,
+    /**
+     * Équivalent ESTIMÉ de {@code targetPriceEur} dans la devise active du lecteur,
+     * au taux courant — repère de lecture (« environ »), jamais le montant échangé,
+     * qui reste dans la devise de la demande. {@code null} sans budget ou quand le
+     * lecteur lit déjà dans la devise de la demande.
+     */
+    BigDecimal convertedTargetPrice,
+    /** Devise cible de {@code convertedTargetPrice} : celle du lecteur. */
+    String convertedCurrency
 ) {
     /** Constructeur de compatibilité (sans promoCode/currency/availablePaymentMethods) — évite de retoucher tous les tests. */
     public PackageRequestResponse(
@@ -64,6 +73,17 @@ public record PackageRequestResponse(
         this(id, senderId, departureCity, arrivalCity, desiredDate, dateToleranceDays, weightKg, parcelSize,
             transportMode, contentCategory, description, targetPriceEur, photoUrl, pickupNeighborhood,
             deliveryNeighborhood, status, createdAt, negotiable, acceptedPaymentMethods, grossPriceEur, photos,
-            viewerThreadId, viewerThreadStatus, null, "EUR", Set.of(PaymentMethod.CASH));
+            viewerThreadId, viewerThreadStatus, null, "EUR", Set.of(PaymentMethod.CASH), null, null);
+    }
+
+    /** Copie enrichie de l'équivalent converti — même pattern que le fil de recherche. */
+    public PackageRequestResponse withConvertedPrice(BigDecimal convertedTargetPrice,
+                                                     String convertedCurrency) {
+        return new PackageRequestResponse(
+            id, senderId, departureCity, arrivalCity, desiredDate, dateToleranceDays, weightKg, parcelSize,
+            transportMode, contentCategory, description, targetPriceEur, photoUrl, pickupNeighborhood,
+            deliveryNeighborhood, status, createdAt, negotiable, acceptedPaymentMethods, grossPriceEur, photos,
+            viewerThreadId, viewerThreadStatus, promoCode, currency, availablePaymentMethods,
+            convertedTargetPrice, convertedCurrency);
     }
 }

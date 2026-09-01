@@ -51,9 +51,33 @@ public record PackageRequestSearchResponse(
      * même demande. Le net reste servi : c'est l'information que cherche un voyageur, et il
      * ne révèle ici aucun taux privé (voir {@code PackageRequestSearchMapper#grossPriceEur}).
      */
-    BigDecimal grossPriceEur
+    BigDecimal grossPriceEur,
+    /**
+     * Équivalent ESTIMÉ de {@code targetPriceEur} dans la devise active du lecteur,
+     * au taux courant — jamais le montant réellement échangé, qui reste dans la
+     * devise de la demande. {@code null} si la demande n'a pas de budget ou si le
+     * lecteur lit déjà dans la devise de la demande (rien à convertir).
+     */
+    BigDecimal convertedTargetPrice,
+    /** Devise cible de {@code convertedTargetPrice} : celle du lecteur. */
+    String convertedCurrency
 ) {
     public record SenderPublicProfile(UUID id, String displayName, double averageRating, int totalRatings, boolean kycVerified, String avatarUrl) {}
+
+    /** Copie enrichie de l'équivalent converti — même pattern que {@code AnnouncementSearchResponse}. */
+    public PackageRequestSearchResponse withConvertedPrice(BigDecimal convertedTargetPrice,
+                                                           String convertedCurrency) {
+        return new PackageRequestSearchResponse(
+                id, departureCity, arrivalCity,
+                departureLat, departureLng, arrivalLat, arrivalLng,
+                desiredDate, dateToleranceDays,
+                weightKg, parcelSize, transportMode, contentCategory,
+                targetPriceEur, negotiable, photoUrl,
+                pickupNeighborhood, deliveryNeighborhood,
+                sender, acceptedPaymentMethods, photos, isFavorite, urgent,
+                matchScore, matchedTripId, matchedTripDepartureDate, currency,
+                availablePaymentMethods, grossPriceEur, convertedTargetPrice, convertedCurrency);
+    }
 
     /** Copie enrichie des informations de match. Utilisé uniquement quand matchingMyTrips est actif. */
     public PackageRequestSearchResponse withMatch(com.yadony.api.matching.MatchingService.MatchInfo info) {
@@ -66,6 +90,6 @@ public record PackageRequestSearchResponse(
                 pickupNeighborhood, deliveryNeighborhood,
                 sender, acceptedPaymentMethods, photos, isFavorite, urgent,
                 info.matchScore(), info.tripId(), info.tripDepartureDate(), currency,
-                availablePaymentMethods, grossPriceEur);
+                availablePaymentMethods, grossPriceEur, convertedTargetPrice, convertedCurrency);
     }
 }

@@ -137,7 +137,9 @@ public class PackageRequestSearchMapper {
                 computeUrgent(entity.getDesiredDate()),
                 null, null, null, entity.getCurrency(),
                 availablePaymentMethods,
-                grossPriceEur(entity.getTargetPriceEur())
+                grossPriceEur(entity.getTargetPriceEur()),
+                // Converti joint par le service (withViewerConversion), qui connaît le lecteur.
+                null, null
         );
     }
 
@@ -187,7 +189,9 @@ public class PackageRequestSearchMapper {
                 computeUrgent(entity.getDesiredDate()),
                 null, null, null, entity.getCurrency(),
                 availablePaymentMethods,
-                grossPriceEur(entity.getTargetPriceEur())
+                grossPriceEur(entity.getTargetPriceEur()),
+                // Converti joint par le service (withViewerConversion), qui connaît le lecteur.
+                null, null
         );
     }
 

@@ -66,6 +66,7 @@ public class PackageRequestService {
     private final PackageRequestPhotoService photoService;
     private final FavoriteRepository favoriteRepository;
     private final ActiveCurrencyResolver activeCurrencyResolver;
+    private final com.yadony.api.payments.currency.ExchangeRateService exchangeRateService;
     private final PackageRequestSearchMapper packageRequestSearchMapper;
     private final MatchingService matchingService;
     private final YadonyConfigProperties yadonyConfig;
@@ -85,6 +86,7 @@ public class PackageRequestService {
                                   PackageRequestPhotoService photoService,
                                   FavoriteRepository favoriteRepository,
                                   ActiveCurrencyResolver activeCurrencyResolver,
+                                  com.yadony.api.payments.currency.ExchangeRateService exchangeRateService,
                                   PackageRequestSearchMapper packageRequestSearchMapper,
                                   MatchingService matchingService,
                                   YadonyConfigProperties yadonyConfig,
@@ -103,6 +105,7 @@ public class PackageRequestService {
         this.photoService = photoService;
         this.favoriteRepository = favoriteRepository;
         this.activeCurrencyResolver = activeCurrencyResolver;
+        this.exchangeRateService = exchangeRateService;
         this.packageRequestSearchMapper = packageRequestSearchMapper;
         this.matchingService = matchingService;
         this.yadonyConfig = yadonyConfig;
@@ -561,11 +564,22 @@ public class PackageRequestService {
         var viewerThread = isOwner
             ? java.util.Optional.<com.yadony.api.requests.entity.NegotiationThreadEntity>empty()
             : threadRepository.findActiveByPackageRequestIdAndTravelerId(requestId, callerUid);
-        return toResponse(entity,
+        PackageRequestResponse response = toResponse(entity,
             viewerThread.map(com.yadony.api.requests.entity.NegotiationThreadEntity::getId).orElse(null),
             viewerThread.map(t -> t.getStatus().name()).orElse(null),
             resolveViewerHasConnect(callerUid),
             isOwner);
+        // Même repère de lecture que le fil : budget converti « environ » dans la
+        // devise du lecteur quand elle diffère de celle de la demande.
+        String viewerCurrency = activeCurrencyResolver.resolve(callerUid);
+        if (response.targetPriceEur() != null
+                && response.currency() != null
+                && !response.currency().equalsIgnoreCase(viewerCurrency)) {
+            response = response.withConvertedPrice(
+                exchangeRateService.convert(response.targetPriceEur(), response.currency(), viewerCurrency),
+                viewerCurrency);
+        }
+        return response;
     }
 
     // ─── findMine ─────────────────────────────────────────────────────────────────
@@ -755,8 +769,10 @@ public class PackageRequestService {
         boolean viewerHasConnect = resolveViewerHasConnect(callerId);
         Page<PackageRequestEntity> page = repository.findAll(spec, pageable);
         BatchMaps batch = buildBatchMaps(page.getContent());
-        return page.map(e -> packageRequestSearchMapper.toSearchResponse(
-                e, favIds.contains(e.getId()), viewerHasConnect, batch.userMap, batch.cityMap, batch.photoMap));
+        String viewerCurrency = activeCurrencyResolver.resolve(callerId);
+        return page.map(e -> withViewerConversion(packageRequestSearchMapper.toSearchResponse(
+                e, favIds.contains(e.getId()), viewerHasConnect, batch.userMap, batch.cityMap, batch.photoMap),
+                viewerCurrency));
     }
 
     /**
@@ -805,10 +821,12 @@ public class PackageRequestService {
         Set<UUID> favIds = loadFavIds(callerId);
         boolean viewerHasConnect = resolveViewerHasConnect(callerId);
         BatchMaps batch = buildBatchMaps(pageEntities);
+        String viewerCurrency = activeCurrencyResolver.resolve(callerId);
         List<PackageRequestSearchResponse> content = pageEntities.stream()
                 .map(e -> packageRequestSearchMapper.toSearchResponse(
                         e, favIds.contains(e.getId()), viewerHasConnect, batch.userMap, batch.cityMap, batch.photoMap))
                 .map(r -> r.withMatch(matches.get(r.id())))
+                .map(r -> withViewerConversion(r, viewerCurrency))
                 .toList();
 
         return new org.springframework.data.domain.PageImpl<>(content, pageable, sorted.size());
@@ -859,8 +877,11 @@ public class PackageRequestService {
         boolean viewerHasConnect = resolveViewerHasConnect(callerId);
         Page<PackageRequestEntity> rawPage = repository.findAll(spec, pageable);
         BatchMaps batch = buildBatchMaps(rawPage.getContent());
-        Page<PackageRequestSearchResponse> mapped = rawPage.map(e -> packageRequestSearchMapper.toSearchResponse(
-                e, favIds.contains(e.getId()), viewerHasConnect, batch.userMap, batch.cityMap, batch.photoMap));
+        String viewerCurrency = activeCurrencyResolver.resolve(callerId);
+        Page<PackageRequestSearchResponse> mapped = rawPage.map(e -> withViewerConversion(
+                packageRequestSearchMapper.toSearchResponse(
+                        e, favIds.contains(e.getId()), viewerHasConnect, batch.userMap, batch.cityMap, batch.photoMap),
+                viewerCurrency));
         double latD = lat.doubleValue();
         double lngD = lng.doubleValue();
         List<PackageRequestSearchResponse> filtered = mapped.getContent().stream()
@@ -871,6 +892,25 @@ public class PackageRequestService {
             .map(Map.Entry::getKey)
             .toList();
         return new org.springframework.data.domain.PageImpl<>(filtered, pageable, mapped.getTotalElements());
+    }
+
+    /**
+     * Joint au budget l'équivalent ESTIMÉ dans la devise active du lecteur, au taux
+     * courant — même contrat que le fil des annonces (Tâche 10) : le montant échangé
+     * reste dans la devise de la demande, la conversion n'est qu'un repère de lecture
+     * (« environ »). Rien à joindre quand la demande n'a pas de budget ou que le
+     * lecteur lit déjà dans la devise de la demande.
+     */
+    private PackageRequestSearchResponse withViewerConversion(PackageRequestSearchResponse r,
+                                                              String viewerCurrency) {
+        if (r.targetPriceEur() == null
+                || r.currency() == null
+                || r.currency().equalsIgnoreCase(viewerCurrency)) {
+            return r;
+        }
+        return r.withConvertedPrice(
+                exchangeRateService.convert(r.targetPriceEur(), r.currency(), viewerCurrency),
+                viewerCurrency);
     }
 
     /** Immutable value object carrying the three batch-loaded maps for search mapping. */
@@ -997,7 +1037,9 @@ public class PackageRequestService {
             viewerThreadStatus,
             isOwner ? e.getPromoCode() : null,
             e.getCurrency(),
-            availablePaymentMethods
+            availablePaymentMethods,
+            // Converti joint par getById (withConvertedPrice), qui connaît le lecteur.
+            null, null
         );
     }
 

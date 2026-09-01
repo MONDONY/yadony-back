@@ -323,7 +323,7 @@ public class AnnouncementService {
             result.add(base.withConvertedPrice(
                     convertedPricePerKgForResponse(a, viewerCurrency),
                     viewerCurrency,
-                    convertedPricePerKgDisplay(base.pricePerKgDisplay(), a.getCurrency(), viewerCurrency)));
+                    pricePerKgDisplayConverted(base.pricePerKgDisplay(), a.getCurrency(), viewerCurrency)));
         }
         return result;
     }
@@ -372,7 +372,7 @@ public class AnnouncementService {
      * ({@link PriceGridService#displayPrice}), et la garantie que la valeur convertie est bien
      * l'équivalent exact de {@code pricePerKgDisplay} servi à côté.
      */
-    private java.math.BigDecimal convertedPricePerKgDisplay(java.math.BigDecimal display,
+    private java.math.BigDecimal pricePerKgDisplayConverted(java.math.BigDecimal display,
                                                             String announcementCurrency,
                                                             String viewerCurrency) {
         if (display == null) {
@@ -806,7 +806,7 @@ public class AnnouncementService {
                         ? priceGridService.getAnnouncementGridItems(announcement.getId(), announcement.getTravelerId())
                         : List.of();
 
-        return new AnnouncementDetailResponse(
+        AnnouncementDetailResponse detail = new AnnouncementDetailResponse(
                 announcement.getId(),
                 announcement.getTravelerId(),
                 announcement.getDepartureCity(),
@@ -844,8 +844,35 @@ public class AnnouncementService {
                 announcement.isNegotiable(),
                 com.yadony.api.payments.currency.AnnouncementPaymentRails.availableFor(
                         announcement.getCurrency(),
-                        traveler != null && traveler.hasActiveStripeConnect())
+                        traveler != null && traveler.hasActiveStripeConnect()),
+                // Convertis joints juste en dessous (withConvertedPrices).
+                null, null, null
         );
+
+        // Même repère de lecture que le fil (Tâche 10) : équivalents « environ » dans
+        // la devise active du lecteur quand elle diffère de celle de l'annonce. Le net
+        // converti suit la règle A16 du fil : masqué pour un invité, comme le net brut.
+        String viewerCurrency = activeCurrencyResolver.resolve(
+                userRepository.findByFirebaseUid(firebaseUid).map(UserEntity::getId).orElse(null));
+        if (announcement.getCurrency() != null
+                && !announcement.getCurrency().equalsIgnoreCase(viewerCurrency)) {
+            java.math.BigDecimal convertedNet = com.yadony.api.common.GuestSession.isGuest()
+                    || detail.pricePerKg() == null
+                    ? null
+                    : exchangeRateService.convert(detail.pricePerKg(), announcement.getCurrency(), viewerCurrency);
+            java.math.BigDecimal convertedDisplay = detail.pricePerKgDisplay() == null
+                    ? null
+                    : exchangeRateService.convert(detail.pricePerKgDisplay(), announcement.getCurrency(), viewerCurrency);
+            List<com.yadony.api.matching.dto.AnnouncementPriceGridItemResponse> convertedGrid =
+                    detail.priceGridItems().stream()
+                            .map(item -> item.unitPriceDisplay() == null
+                                    ? item
+                                    : item.withConvertedDisplay(exchangeRateService.convert(
+                                            item.unitPriceDisplay(), announcement.getCurrency(), viewerCurrency)))
+                            .toList();
+            detail = detail.withConvertedPrices(convertedNet, convertedDisplay, viewerCurrency, convertedGrid);
+        }
+        return detail;
     }
 
     /**
@@ -1028,7 +1055,10 @@ public class AnnouncementService {
                 saved.isNegotiable(),
                 com.yadony.api.payments.currency.AnnouncementPaymentRails.availableFor(
                         saved.getCurrency(),
-                        user.hasActiveStripeConnect())
+                        user.hasActiveStripeConnect()),
+                // Retour d'écriture : le lecteur est le propriétaire, qui lit dans la
+                // devise de sa propre annonce — rien à convertir.
+                null, null, null
         );
     }
 

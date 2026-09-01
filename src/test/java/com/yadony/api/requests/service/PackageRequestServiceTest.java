@@ -49,6 +49,7 @@ class PackageRequestServiceTest {
 
     @Mock private PackageRequestRepository repository;
     @Mock private UserRepository userRepository;
+    @Mock private com.yadony.api.payments.currency.ExchangeRateService exchangeRateService;
     @Mock private ApplicationEventPublisher eventPublisher;
     @Mock private AuditService auditService;
     @Mock private RequestsConfig config;
@@ -128,7 +129,8 @@ class PackageRequestServiceTest {
         return new PackageRequestService(
                 repository, userRepository, eventPublisher, auditService, config,
                 threadRepository, cityRepository, commissionProperties,
-                storageService, photoService, favoriteRepository, activeCurrencyResolver, mapper, matchingService,
+                storageService, photoService, favoriteRepository, activeCurrencyResolver,
+                exchangeRateService, mapper, matchingService,
                 yadonyConfig, announcementRepository, commissionRateResolver,
                 com.yadony.api.config.PlatformSettingsTestFactory.withProEnabled(proEnabled));
     }
@@ -538,6 +540,25 @@ class PackageRequestServiceTest {
 
             var resp = service.getById(SENDER_ID, entity.getId());
             assertThat(resp.id()).isEqualTo(entity.getId());
+        }
+
+        @Test
+        @DisplayName("voyageur EUR sur demande XOF → budget converti « environ » joint au détail")
+        void getById_readerInEur_getsConvertedBudget() {
+            UUID viewer = UUID.randomUUID();
+            PackageRequestEntity entity = buildEntity(SENDER_ID, PackageRequestStatus.OPEN);
+            entity.setCurrency("XOF");
+            entity.setTargetPriceEur(new java.math.BigDecimal("65596"));
+            when(repository.findById(entity.getId())).thenReturn(Optional.of(entity));
+            when(activeCurrencyResolver.resolve(viewer)).thenReturn("EUR");
+            when(exchangeRateService.convert(new java.math.BigDecimal("65596"), "XOF", "EUR"))
+                .thenReturn(new java.math.BigDecimal("100.00"));
+
+            var resp = service.getById(viewer, entity.getId());
+
+            assertThat(resp.targetPriceEur()).isEqualByComparingTo("65596");
+            assertThat(resp.convertedTargetPrice()).isEqualByComparingTo("100.00");
+            assertThat(resp.convertedCurrency()).isEqualTo("EUR");
         }
 
         @Test @DisplayName("photos non vides → photos[] présignées + photoUrl = 1ère")
@@ -1232,6 +1253,60 @@ class PackageRequestServiceTest {
 
             assertThat(result.getContent()).hasSize(1);
             assertThat(result.getContent().get(0).currency()).isEqualTo("XOF");
+        }
+
+        @Test
+        @DisplayName("lecteur EUR sur demande XOF → budget converti « environ » joint")
+        void search_readerInEur_getsConvertedBudget() {
+            UUID callerId = UUID.randomUUID();
+            PackageRequestEntity xofRequest = buildEntity(SENDER_ID, PackageRequestStatus.OPEN);
+            xofRequest.setCurrency("XOF");
+            xofRequest.setTargetPriceEur(new java.math.BigDecimal("65596"));
+            when(userRepository.findAllById(any())).thenReturn(List.of(sender));
+            when(repository.findAll(any(org.springframework.data.jpa.domain.Specification.class),
+                                    any(org.springframework.data.domain.Pageable.class)))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(xofRequest)));
+            when(favoriteRepository.findTargetIds(any(), any())).thenReturn(List.of());
+            when(activeCurrencyResolver.resolve(callerId)).thenReturn("EUR");
+            when(exchangeRateService.convert(new java.math.BigDecimal("65596"), "XOF", "EUR"))
+                .thenReturn(new java.math.BigDecimal("100.00"));
+
+            var result = service.search(
+                org.springframework.data.jpa.domain.Specification.where(null),
+                org.springframework.data.domain.PageRequest.of(0, 20),
+                callerId
+            );
+
+            var row = result.getContent().get(0);
+            // Le montant échangé reste en XOF ; le converti n'est qu'un repère de lecture.
+            assertThat(row.targetPriceEur()).isEqualByComparingTo("65596");
+            assertThat(row.convertedTargetPrice()).isEqualByComparingTo("100.00");
+            assertThat(row.convertedCurrency()).isEqualTo("EUR");
+        }
+
+        @Test
+        @DisplayName("même devise que le lecteur → aucun converti joint (rien à convertir)")
+        void search_sameCurrency_noConversion() {
+            UUID callerId = UUID.randomUUID();
+            PackageRequestEntity eurRequest = buildEntity(SENDER_ID, PackageRequestStatus.OPEN);
+            eurRequest.setCurrency("EUR");
+            when(userRepository.findAllById(any())).thenReturn(List.of(sender));
+            when(repository.findAll(any(org.springframework.data.jpa.domain.Specification.class),
+                                    any(org.springframework.data.domain.Pageable.class)))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(eurRequest)));
+            when(favoriteRepository.findTargetIds(any(), any())).thenReturn(List.of());
+            when(activeCurrencyResolver.resolve(callerId)).thenReturn("EUR");
+
+            var result = service.search(
+                org.springframework.data.jpa.domain.Specification.where(null),
+                org.springframework.data.domain.PageRequest.of(0, 20),
+                callerId
+            );
+
+            assertThat(result.getContent().get(0).convertedTargetPrice()).isNull();
+            assertThat(result.getContent().get(0).convertedCurrency()).isNull();
+            org.mockito.Mockito.verify(exchangeRateService, org.mockito.Mockito.never())
+                .convert(any(), any(), any());
         }
 
         @Test @DisplayName("N résultats → userRepository.findAllById appelé 1 fois, findById jamais")
