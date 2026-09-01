@@ -551,13 +551,13 @@ class PackageRequestServiceTest {
             entity.setTargetPriceEur(new java.math.BigDecimal("65596"));
             when(repository.findById(entity.getId())).thenReturn(Optional.of(entity));
             when(activeCurrencyResolver.resolve(viewer)).thenReturn("EUR");
-            when(exchangeRateService.convert(new java.math.BigDecimal("65596"), "XOF", "EUR"))
+            when(exchangeRateService.convert(any(java.math.BigDecimal.class), org.mockito.ArgumentMatchers.eq("XOF"), org.mockito.ArgumentMatchers.eq("EUR")))
                 .thenReturn(new java.math.BigDecimal("100.00"));
 
             var resp = service.getById(viewer, entity.getId());
 
             assertThat(resp.targetPriceEur()).isEqualByComparingTo("65596");
-            assertThat(resp.convertedTargetPrice()).isEqualByComparingTo("100.00");
+            assertThat(resp.convertedDisplayPrice()).isEqualByComparingTo("100.00");
             assertThat(resp.convertedCurrency()).isEqualTo("EUR");
         }
 
@@ -1268,7 +1268,7 @@ class PackageRequestServiceTest {
                 .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(xofRequest)));
             when(favoriteRepository.findTargetIds(any(), any())).thenReturn(List.of());
             when(activeCurrencyResolver.resolve(callerId)).thenReturn("EUR");
-            when(exchangeRateService.convert(new java.math.BigDecimal("65596"), "XOF", "EUR"))
+            when(exchangeRateService.convert(any(java.math.BigDecimal.class), org.mockito.ArgumentMatchers.eq("XOF"), org.mockito.ArgumentMatchers.eq("EUR")))
                 .thenReturn(new java.math.BigDecimal("100.00"));
 
             var result = service.search(
@@ -1280,7 +1280,7 @@ class PackageRequestServiceTest {
             var row = result.getContent().get(0);
             // Le montant échangé reste en XOF ; le converti n'est qu'un repère de lecture.
             assertThat(row.targetPriceEur()).isEqualByComparingTo("65596");
-            assertThat(row.convertedTargetPrice()).isEqualByComparingTo("100.00");
+            assertThat(row.convertedDisplayPrice()).isEqualByComparingTo("100.00");
             assertThat(row.convertedCurrency()).isEqualTo("EUR");
         }
 
@@ -1303,7 +1303,7 @@ class PackageRequestServiceTest {
                 callerId
             );
 
-            assertThat(result.getContent().get(0).convertedTargetPrice()).isNull();
+            assertThat(result.getContent().get(0).convertedDisplayPrice()).isNull();
             assertThat(result.getContent().get(0).convertedCurrency()).isNull();
             org.mockito.Mockito.verify(exchangeRateService, org.mockito.Mockito.never())
                 .convert(any(), any(), any());

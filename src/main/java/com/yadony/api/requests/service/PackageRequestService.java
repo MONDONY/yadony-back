@@ -572,11 +572,13 @@ public class PackageRequestService {
         // Même repère de lecture que le fil : budget converti « environ » dans la
         // devise du lecteur quand elle diffère de celle de la demande.
         String viewerCurrency = activeCurrencyResolver.resolve(callerUid);
-        if (response.targetPriceEur() != null
+        java.math.BigDecimal displayed = response.grossPriceEur() != null
+                ? response.grossPriceEur() : response.targetPriceEur();
+        if (displayed != null
                 && response.currency() != null
                 && !response.currency().equalsIgnoreCase(viewerCurrency)) {
             response = response.withConvertedPrice(
-                exchangeRateService.convert(response.targetPriceEur(), response.currency(), viewerCurrency),
+                exchangeRateService.convert(displayed, response.currency(), viewerCurrency),
                 viewerCurrency);
         }
         return response;
@@ -903,13 +905,16 @@ public class PackageRequestService {
      */
     private PackageRequestSearchResponse withViewerConversion(PackageRequestSearchResponse r,
                                                               String viewerCurrency) {
-        if (r.targetPriceEur() == null
+        // Convertir le PRIX AFFICHÉ (gross sinon net) : le repère « environ » doit
+        // porter sur le montant que le lecteur a sous les yeux.
+        java.math.BigDecimal displayed = r.grossPriceEur() != null ? r.grossPriceEur() : r.targetPriceEur();
+        if (displayed == null
                 || r.currency() == null
                 || r.currency().equalsIgnoreCase(viewerCurrency)) {
             return r;
         }
         return r.withConvertedPrice(
-                exchangeRateService.convert(r.targetPriceEur(), r.currency(), viewerCurrency),
+                exchangeRateService.convert(displayed, r.currency(), viewerCurrency),
                 viewerCurrency);
     }
 

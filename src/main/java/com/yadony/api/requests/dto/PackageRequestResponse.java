@@ -43,13 +43,13 @@ public record PackageRequestResponse(
      *  que pour un voyageur propriétaire fixe (une demande n'a pas de voyageur assigné). */
     Set<PaymentMethod> availablePaymentMethods,
     /**
-     * Équivalent ESTIMÉ de {@code targetPriceEur} dans la devise active du lecteur,
-     * au taux courant — repère de lecture (« environ »), jamais le montant échangé,
-     * qui reste dans la devise de la demande. {@code null} sans budget ou quand le
-     * lecteur lit déjà dans la devise de la demande.
+     * Équivalent ESTIMÉ, dans la devise active du lecteur et au taux courant, du
+     * PRIX AFFICHÉ ({@code grossPriceEur} sinon {@code targetPriceEur}) — repère
+     * de lecture (« environ »), jamais le montant échangé. {@code null} sans
+     * budget ou même devise.
      */
-    BigDecimal convertedTargetPrice,
-    /** Devise cible de {@code convertedTargetPrice} : celle du lecteur. */
+    BigDecimal convertedDisplayPrice,
+    /** Devise cible de {@code convertedDisplayPrice} : celle du lecteur. */
     String convertedCurrency
 ) {
     /** Constructeur de compatibilité (sans promoCode/currency/availablePaymentMethods) — évite de retoucher tous les tests. */
@@ -77,13 +77,13 @@ public record PackageRequestResponse(
     }
 
     /** Copie enrichie de l'équivalent converti — même pattern que le fil de recherche. */
-    public PackageRequestResponse withConvertedPrice(BigDecimal convertedTargetPrice,
+    public PackageRequestResponse withConvertedPrice(BigDecimal convertedDisplayPrice,
                                                      String convertedCurrency) {
         return new PackageRequestResponse(
             id, senderId, departureCity, arrivalCity, desiredDate, dateToleranceDays, weightKg, parcelSize,
             transportMode, contentCategory, description, targetPriceEur, photoUrl, pickupNeighborhood,
             deliveryNeighborhood, status, createdAt, negotiable, acceptedPaymentMethods, grossPriceEur, photos,
             viewerThreadId, viewerThreadStatus, promoCode, currency, availablePaymentMethods,
-            convertedTargetPrice, convertedCurrency);
+            convertedDisplayPrice, convertedCurrency);
     }
 }

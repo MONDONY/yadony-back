@@ -53,19 +53,21 @@ public record PackageRequestSearchResponse(
      */
     BigDecimal grossPriceEur,
     /**
-     * Équivalent ESTIMÉ de {@code targetPriceEur} dans la devise active du lecteur,
-     * au taux courant — jamais le montant réellement échangé, qui reste dans la
-     * devise de la demande. {@code null} si la demande n'a pas de budget ou si le
-     * lecteur lit déjà dans la devise de la demande (rien à convertir).
+     * Équivalent ESTIMÉ, dans la devise active du lecteur et au taux courant, du
+     * PRIX AFFICHÉ par les clients ({@code grossPriceEur} quand il existe, sinon
+     * {@code targetPriceEur}) : le repère « environ » doit convertir le même
+     * montant que celui montré, pas un autre. Jamais le montant échangé, qui
+     * reste dans la devise de la demande. {@code null} sans budget ou quand le
+     * lecteur lit déjà dans la devise de la demande.
      */
-    BigDecimal convertedTargetPrice,
-    /** Devise cible de {@code convertedTargetPrice} : celle du lecteur. */
+    BigDecimal convertedDisplayPrice,
+    /** Devise cible de {@code convertedDisplayPrice} : celle du lecteur. */
     String convertedCurrency
 ) {
     public record SenderPublicProfile(UUID id, String displayName, double averageRating, int totalRatings, boolean kycVerified, String avatarUrl) {}
 
     /** Copie enrichie de l'équivalent converti — même pattern que {@code AnnouncementSearchResponse}. */
-    public PackageRequestSearchResponse withConvertedPrice(BigDecimal convertedTargetPrice,
+    public PackageRequestSearchResponse withConvertedPrice(BigDecimal convertedDisplayPrice,
                                                            String convertedCurrency) {
         return new PackageRequestSearchResponse(
                 id, departureCity, arrivalCity,
@@ -76,7 +78,7 @@ public record PackageRequestSearchResponse(
                 pickupNeighborhood, deliveryNeighborhood,
                 sender, acceptedPaymentMethods, photos, isFavorite, urgent,
                 matchScore, matchedTripId, matchedTripDepartureDate, currency,
-                availablePaymentMethods, grossPriceEur, convertedTargetPrice, convertedCurrency);
+                availablePaymentMethods, grossPriceEur, convertedDisplayPrice, convertedCurrency);
     }
 
     /** Copie enrichie des informations de match. Utilisé uniquement quand matchingMyTrips est actif. */
@@ -90,6 +92,6 @@ public record PackageRequestSearchResponse(
                 pickupNeighborhood, deliveryNeighborhood,
                 sender, acceptedPaymentMethods, photos, isFavorite, urgent,
                 info.matchScore(), info.tripId(), info.tripDepartureDate(), currency,
-                availablePaymentMethods, grossPriceEur, convertedTargetPrice, convertedCurrency);
+                availablePaymentMethods, grossPriceEur, convertedDisplayPrice, convertedCurrency);
     }
 }
