@@ -63,7 +63,7 @@ public class ProAnalyticsService {
         // PaymentEntity), par devise puis converti vers la devise active pour le KPI.
         // Les deux périodes passent par les MÊMES taux courants : la tendance en %
         // compare donc des grandeurs cohérentes.
-        String activeCurrency = activeCurrencyResolver.resolve(userId);
+        String activeCurrency = activeCurrencyResolver.resolveDisplay(userId);
         BigDecimal revenue = convertedTotal(TravelerRevenue.cardPlusCashByCurrency(
                 paymentRepository.sumCapturedRevenueForTravelerByCurrency(
                         userId, PaymentStatus.RELEASED, from, to),

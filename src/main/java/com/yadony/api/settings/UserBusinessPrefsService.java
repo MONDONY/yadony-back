@@ -123,6 +123,25 @@ public class UserBusinessPrefsService {
             e.setCurrencyCode(activeCurrencyResolver.resolve(userId));
         }
 
+        // Devise d'affichage (lot 8) : pure preference de lecture, volontairement
+        // exemptee de CurrencyLockService — elle ne touche ni portefeuille ni
+        // paiements. "AUTO" efface le choix (retour au suivi de la devise active) ;
+        // omise (null), la valeur existante est conservee.
+        String requestedDisplay = dto.displayCurrencyCode();
+        if (requestedDisplay != null) {
+            if ("AUTO".equalsIgnoreCase(requestedDisplay)) {
+                e.setDisplayCurrencyCode(null);
+            } else {
+                SupportedCurrency validatedDisplay = SupportedCurrency.fromCode(requestedDisplay);
+                if (validatedDisplay == null) {
+                    throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                            "currency-unsupported", "Currency Unsupported",
+                            "Cette devise n'est pas prise en charge par yadony.");
+                }
+                e.setDisplayCurrencyCode(validatedDisplay.code().toUpperCase(Locale.ROOT));
+            }
+        }
+
         e.setPickupRadiusKm(dto.pickupRadiusKm());
         e.setDefaultPackageWeightKg(dto.defaultPackageWeightKg());
         e.setMinBidPriceEur(dto.minBidPriceEur());
@@ -156,7 +175,8 @@ public class UserBusinessPrefsService {
                 e.getResponseDelayHours(),
                 null,
                 null,
-                null
+                null,
+                e.getDisplayCurrencyCode() == null ? "AUTO" : e.getDisplayCurrencyCode()
         );
     }
 
@@ -173,7 +193,8 @@ public class UserBusinessPrefsService {
                 dto.responseDelayHours(),
                 currencyLocked,
                 user.getCountry(),
-                countryLocked
+                countryLocked,
+                dto.displayCurrencyCode() == null ? "AUTO" : dto.displayCurrencyCode()
         );
     }
 }

@@ -571,7 +571,7 @@ public class PackageRequestService {
             isOwner);
         // Même repère de lecture que le fil : budget converti « environ » dans la
         // devise du lecteur quand elle diffère de celle de la demande.
-        String viewerCurrency = activeCurrencyResolver.resolve(callerUid);
+        String viewerCurrency = activeCurrencyResolver.resolveDisplay(callerUid);
         java.math.BigDecimal displayed = response.grossPriceEur() != null
                 ? response.grossPriceEur() : response.targetPriceEur();
         if (displayed != null
@@ -771,7 +771,7 @@ public class PackageRequestService {
         boolean viewerHasConnect = resolveViewerHasConnect(callerId);
         Page<PackageRequestEntity> page = repository.findAll(spec, pageable);
         BatchMaps batch = buildBatchMaps(page.getContent());
-        String viewerCurrency = activeCurrencyResolver.resolve(callerId);
+        String viewerCurrency = activeCurrencyResolver.resolveDisplay(callerId);
         return page.map(e -> withViewerConversion(packageRequestSearchMapper.toSearchResponse(
                 e, favIds.contains(e.getId()), viewerHasConnect, batch.userMap, batch.cityMap, batch.photoMap),
                 viewerCurrency));
@@ -823,7 +823,7 @@ public class PackageRequestService {
         Set<UUID> favIds = loadFavIds(callerId);
         boolean viewerHasConnect = resolveViewerHasConnect(callerId);
         BatchMaps batch = buildBatchMaps(pageEntities);
-        String viewerCurrency = activeCurrencyResolver.resolve(callerId);
+        String viewerCurrency = activeCurrencyResolver.resolveDisplay(callerId);
         List<PackageRequestSearchResponse> content = pageEntities.stream()
                 .map(e -> packageRequestSearchMapper.toSearchResponse(
                         e, favIds.contains(e.getId()), viewerHasConnect, batch.userMap, batch.cityMap, batch.photoMap))
@@ -879,7 +879,7 @@ public class PackageRequestService {
         boolean viewerHasConnect = resolveViewerHasConnect(callerId);
         Page<PackageRequestEntity> rawPage = repository.findAll(spec, pageable);
         BatchMaps batch = buildBatchMaps(rawPage.getContent());
-        String viewerCurrency = activeCurrencyResolver.resolve(callerId);
+        String viewerCurrency = activeCurrencyResolver.resolveDisplay(callerId);
         Page<PackageRequestSearchResponse> mapped = rawPage.map(e -> withViewerConversion(
                 packageRequestSearchMapper.toSearchResponse(
                         e, favIds.contains(e.getId()), viewerHasConnect, batch.userMap, batch.cityMap, batch.photoMap),

@@ -72,6 +72,9 @@ class PackageRequestServiceMatchingTest {
         org.mockito.Mockito.lenient()
                 .when(activeCurrencyResolver.resolve(org.mockito.ArgumentMatchers.any()))
                 .thenReturn("EUR");
+        org.mockito.Mockito.lenient()
+                .when(activeCurrencyResolver.resolveDisplay(org.mockito.ArgumentMatchers.any()))
+                .thenReturn("EUR");
     }
     @Mock private MatchingService matchingService;
     @Mock private com.yadony.api.matching.AnnouncementRepository announcementRepository;

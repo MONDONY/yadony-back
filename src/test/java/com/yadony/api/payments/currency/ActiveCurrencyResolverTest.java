@@ -118,4 +118,58 @@ class ActiveCurrencyResolverTest {
 
         assertThat(resolver().resolve(userId)).isEqualTo(ActiveCurrencyResolver.DEFAULT_CURRENCY);
     }
+
+    // ── resolveDisplay (presentment, lot 8) ─────────────────────────────────────
+
+    @Test
+    @DisplayName("resolveDisplay : la devise d'affichage choisie prime sur tout le reste")
+    void displayChosenCurrencyWinsOverWalletAndCountry() {
+        UUID userId = UUID.randomUUID();
+        UserBusinessPrefsEntity prefs = prefsWithCurrency(userId, "XOF");
+        prefs.setDisplayCurrencyCode("USD");
+        when(userBusinessPrefsRepository.findById(userId)).thenReturn(Optional.of(prefs));
+
+        assertThat(resolver().resolveDisplay(userId)).isEqualTo("USD");
+        verify(userRepository, never()).findById(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    @DisplayName("resolveDisplay : sans choix explicite, retombe sur la devise active du portefeuille")
+    void displayFallsBackToWalletCurrencyWhenNoChoice() {
+        UUID userId = UUID.randomUUID();
+        when(userBusinessPrefsRepository.findById(userId))
+                .thenReturn(Optional.of(prefsWithCurrency(userId, "XAF")));
+
+        assertThat(resolver().resolveDisplay(userId)).isEqualTo("XAF");
+    }
+
+    @Test
+    @DisplayName("resolveDisplay : sans ligne de prefs, meme chute que resolve (pays puis EUR)")
+    void displayFallsBackToCountryThenEurWithoutPrefsRow() {
+        UUID userId = UUID.randomUUID();
+        UserEntity user = new UserEntity();
+        user.setCountry("SN");
+        when(userBusinessPrefsRepository.findById(userId)).thenReturn(Optional.empty());
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+
+        assertThat(resolver().resolveDisplay(userId)).isEqualTo("XOF");
+    }
+
+    @Test
+    @DisplayName("resolveDisplay : invite (userId null) reste sur l'euro")
+    void displayGuestStaysOnEur() {
+        assertThat(resolver().resolveDisplay(null))
+                .isEqualTo(ActiveCurrencyResolver.DEFAULT_CURRENCY);
+    }
+
+    @Test
+    @DisplayName("resolveDisplay : le code stocke est rendu en majuscules")
+    void displayNormalizesCase() {
+        UUID userId = UUID.randomUUID();
+        UserBusinessPrefsEntity prefs = prefsWithCurrency(userId, "eur");
+        prefs.setDisplayCurrencyCode("usd");
+        when(userBusinessPrefsRepository.findById(userId)).thenReturn(Optional.of(prefs));
+
+        assertThat(resolver().resolveDisplay(userId)).isEqualTo("USD");
+    }
 }
