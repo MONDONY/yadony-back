@@ -52,6 +52,9 @@ stripe:
     billing-secret: whsec_test_billing
 
 yadony:
+  exchange-rates:
+    # Pas de flux externe ni d'horloge dans les tests d'intégration.
+    sync-enabled: false
   email:
     resend-api-key: "test-resend-key"
     from-address: "noreply@test.yadony.app"

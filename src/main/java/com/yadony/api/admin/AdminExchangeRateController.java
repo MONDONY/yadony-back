@@ -3,16 +3,11 @@ package com.yadony.api.admin;
 import com.yadony.api.admin.account.AdminPrincipal;
 import com.yadony.api.admin.dto.ExchangeRateResponse;
 import com.yadony.api.admin.dto.UpdateExchangeRateRequest;
-import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
-import com.yadony.api.payments.currency.ExchangeRateEntity;
 import com.yadony.api.payments.currency.ExchangeRateRepository;
-import org.springframework.cache.Cache;
-import org.springframework.cache.CacheManager;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -20,13 +15,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.math.BigDecimal;
-import java.time.OffsetDateTime;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -46,27 +36,13 @@ import java.util.UUID;
 @PreAuthorize("hasRole('ADMIN')")
 public class AdminExchangeRateController {
 
-    /** XOF et XAF : parite fixe avec l'euro, non negociable, jamais modifiable ici. */
-    private static final Set<String> FIXED_PARITY_CURRENCIES = Set.of("XOF", "XAF");
-
-    // Aucune devise supportee ne s'approche de cet ordre de grandeur (la plus elevee, XOF/XAF,
-    // vaut ~656 et est de toute facon refusee ci-dessus) : au-dela, une saisie a trois zeros de
-    // trop se traduirait en commissions et montants convertis totalement faux.
-    private static final BigDecimal MAX_UNITS_PER_EUR = new BigDecimal("10000");
-
     private final ExchangeRateRepository exchangeRateRepository;
-    private final AuditService auditService;
-    private final CacheManager cacheManager;
-    private final com.yadony.api.matching.AnnouncementRepository announcementRepository;
+    private final com.yadony.api.payments.currency.ExchangeRateUpdateService updateService;
 
     public AdminExchangeRateController(ExchangeRateRepository exchangeRateRepository,
-                                       AuditService auditService,
-                                       CacheManager cacheManager,
-                                       com.yadony.api.matching.AnnouncementRepository announcementRepository) {
+                                       com.yadony.api.payments.currency.ExchangeRateUpdateService updateService) {
         this.exchangeRateRepository = exchangeRateRepository;
-        this.auditService = auditService;
-        this.cacheManager = cacheManager;
-        this.announcementRepository = announcementRepository;
+        this.updateService = updateService;
     }
 
     @GetMapping
@@ -78,84 +54,16 @@ public class AdminExchangeRateController {
     }
 
     /**
-     * L'audit_log est ecrit ICI, une seule fois par ecriture reussie — pas dans le repository,
-     * qui ignore qui appelle. Le cache {@code exchange-rates} est evince APRES le save, jamais
-     * avant : une eviction anticipee laisserait une fenetre ou une lecture concurrente re-peuple
-     * le cache avec l'ancienne valeur juste avant le commit.
+     * Toute la séquence (validation, save, éviction, repivot, audit) vit dans
+     * {@code ExchangeRateUpdateService}, partagée avec la synchronisation BCE : deux
+     * copies divergeraient. Ici ne restent que l'identité de l'admin et le mapping HTTP.
      */
     @PutMapping("/{currency}")
-    @Transactional
     public ExchangeRateResponse update(@PathVariable String currency,
                                        @RequestBody UpdateExchangeRateRequest request,
                                        Authentication authentication) {
-        String normalized = normalize(currency);
-
-        if (FIXED_PARITY_CURRENCIES.contains(normalized)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "exchange-rate-fixed-parity", "Fixed Parity Currency",
-                    normalized + " a une parite fixe avec l'euro (655,957), elle ne se pilote pas depuis cet ecran.",
-                    Map.of("currency", normalized));
-        }
-
-        validateRate(request.unitsPerEur());
-
-        ExchangeRateEntity entity = exchangeRateRepository.findByCurrency(normalized)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "exchange-rate-not-found", "Exchange Rate Not Found",
-                        "Aucun taux de change n'existe pour la devise " + normalized));
-
-        UUID adminId = adminId(authentication);
-
-        entity.setUnitsPerEur(request.unitsPerEur());
-        entity.setUpdatedAt(OffsetDateTime.now());
-        entity.setUpdatedBy(adminId);
-        ExchangeRateEntity saved = exchangeRateRepository.save(entity);
-
-        evictCache(normalized);
-
-        // Le pivot EUR des annonces est une dérivée du taux : le laisser en l'état
-        // ferait filtrer/trier le fil sur l'ancien taux jusqu'à la prochaine écriture
-        // de chaque annonce. Un seul UPDATE par devise, dans la même transaction.
-        int repivoted = announcementRepository.recomputeEurPivotForCurrency(
-                normalized, saved.getUnitsPerEur());
-
-        auditService.log("EXCHANGE_RATE", null, "EXCHANGE_RATE_UPDATED", adminId,
-                Map.of("currency", normalized, "unitsPerEur", saved.getUnitsPerEur().toPlainString(),
-                        "announcementsRepivoted", String.valueOf(repivoted)));
-
-        return ExchangeRateResponse.from(saved);
-    }
-
-    private void validateRate(BigDecimal unitsPerEur) {
-        if (unitsPerEur == null) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "exchange-rate-required", "Exchange Rate Required",
-                    "Le taux de change est obligatoire");
-        }
-        if (unitsPerEur.compareTo(BigDecimal.ZERO) <= 0) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "exchange-rate-not-positive", "Exchange Rate Not Positive",
-                    "Le taux de change doit etre strictement positif",
-                    Map.of("unitsPerEur", unitsPerEur.toPlainString()));
-        }
-        if (unitsPerEur.compareTo(MAX_UNITS_PER_EUR) > 0) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "exchange-rate-out-of-range", "Exchange Rate Out Of Range",
-                    "Le taux de change depasse la borne maximale autorisee (" + MAX_UNITS_PER_EUR.toPlainString() + ")",
-                    Map.of("unitsPerEur", unitsPerEur.toPlainString(), "max", MAX_UNITS_PER_EUR.toPlainString()));
-        }
-    }
-
-    /** Evince explicitement : point d'ecriture unique, comme {@code platform-settings}. */
-    private void evictCache(String currency) {
-        Cache cache = cacheManager.getCache("exchange-rates");
-        if (cache != null) {
-            cache.evict(currency);
-        }
-    }
-
-    private String normalize(String currency) {
-        return currency == null ? "" : currency.trim().toUpperCase(Locale.ROOT);
+        return ExchangeRateResponse.from(updateService.apply(
+                currency, request.unitsPerEur(), adminId(authentication), "EXCHANGE_RATE_UPDATED"));
     }
 
     private UUID adminId(Authentication authentication) {

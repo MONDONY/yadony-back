@@ -127,6 +127,15 @@ yadony:
     no-show-contestation-hours: ${YADONY_COMMISSION_NO_SHOW_CONTESTATION_HOURS:24}
   urgency:
     threshold-days: ${YADONY_URGENCY_THRESHOLD_DAYS:3}
+  exchange-rates:
+    # Synchronisation quotidienne des taux flottants (USD/CAD/GBP/CHF) depuis les
+    # taux de référence BCE — EUR (pivot) et XOF/XAF (parité fixe par traité) ne
+    # sont jamais touchés. Une variation relative au-delà du garde-fou n'est PAS
+    # appliquée : alerte admin (Sentry + Telegram), l'humain tranche au back-office.
+    sync-enabled: ${YADONY_EXCHANGE_RATES_SYNC_ENABLED:true}
+    sync-cron: ${YADONY_EXCHANGE_RATES_SYNC_CRON:0 0 7 * * *}
+    max-relative-change: ${YADONY_EXCHANGE_RATES_MAX_RELATIVE_CHANGE:0.10}
+    ecb-url: ${YADONY_EXCHANGE_RATES_ECB_URL:https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml}
   cash-commission:
     orphan-pi-cleanup-cron: "0 */15 * * * *"
     orphan-pi-timeout-minutes: 30
