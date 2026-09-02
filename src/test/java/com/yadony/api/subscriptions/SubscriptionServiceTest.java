@@ -26,6 +26,7 @@ class SubscriptionServiceTest {
     @Mock TravelerSubscriptionRepository repo;
     @Mock UserRepository userRepository;
     @Mock com.yadony.api.common.StorageService storageService;
+    @Mock com.yadony.api.common.BlockVisibility blockVisibility;
     @InjectMocks SubscriptionService service;
 
     final String uid = "firebase-uid";
@@ -246,5 +247,73 @@ class SubscriptionServiceTest {
         // le fil, qui faisait changer de nom un même compte selon l'écran.
         assertThat(result.get(0).displayName())
                 .isEqualTo(com.yadony.api.auth.UserEntity.UNKNOWN_DISPLAY_NAME);
+    }
+
+    // ---- Blocage : un compte masqué disparaît des deux listes et refuse tout nouvel abonnement ----
+
+    private Object[] subscriptionRow(UUID traveler, String name) {
+        return new Object[]{
+            traveler, name, null, false, new java.math.BigDecimal("4.5"), 0L,
+            false, false, null, null, null, null, null, null, null
+        };
+    }
+
+    @Test
+    void getMySubscriptions_omitsBlockedTravelers() {
+        when(userRepository.findByFirebaseUid(uid)).thenReturn(Optional.of(sender));
+        when(storageService.avatarUrl(null)).thenReturn(null);
+        UUID blockedTraveler = UUID.randomUUID();
+        when(repo.findEnrichedBySenderId(senderId)).thenReturn(List.<Object[]>of(
+            subscriptionRow(blockedTraveler, "Bloqué"),
+            subscriptionRow(travelerId, "Visible")));
+        when(blockVisibility.hiddenUserIdsFor(senderId)).thenReturn(java.util.Set.of(blockedTraveler));
+
+        var list = service.getMySubscriptions(uid);
+
+        // L'abonnement n'est pas résilié, seulement masqué : il réapparaît au déblocage.
+        assertThat(list).extracting(r -> r.travelerId()).containsExactly(travelerId);
+    }
+
+    @Test
+    void getMySubscribers_omitsBlockedSenders() {
+        when(userRepository.findByFirebaseUid(uid)).thenReturn(Optional.of(sender));
+        UUID blockedSender = UUID.randomUUID();
+        UUID visibleSender = UUID.randomUUID();
+        TravelerSubscriptionEntity blocked = new TravelerSubscriptionEntity();
+        blocked.setSenderId(blockedSender); blocked.setTravelerId(senderId);
+        TravelerSubscriptionEntity visible = new TravelerSubscriptionEntity();
+        visible.setSenderId(visibleSender); visible.setTravelerId(senderId);
+        when(repo.findAllByTravelerId(senderId)).thenReturn(List.of(blocked, visible));
+        when(blockVisibility.hiddenUserIdsFor(senderId)).thenReturn(java.util.Set.of(blockedSender));
+        when(userRepository.findById(visibleSender)).thenReturn(Optional.of(new UserEntity()));
+
+        var result = service.getMySubscribers(uid);
+
+        assertThat(result).extracting(r -> r.senderId()).containsExactly(visibleSender);
+        verify(userRepository, never()).findById(blockedSender);
+    }
+
+    @Test
+    void subscribe_isRefusedSilently_whenTravelerHidden() {
+        when(userRepository.findByFirebaseUid(uid)).thenReturn(Optional.of(sender));
+        doThrow(new com.yadony.api.common.YadonyBusinessException(
+                org.springframework.http.HttpStatus.NOT_FOUND, "not-found", "Not Found", "Ressource introuvable"))
+            .when(blockVisibility).assertVisible(senderId, travelerId);
+
+        assertThatThrownBy(() -> service.subscribe(uid, travelerId))
+            .isInstanceOf(com.yadony.api.common.YadonyBusinessException.class);
+
+        verify(repo, never()).save(any());
+    }
+
+    @Test
+    void getStatus_isRefusedSilently_whenTravelerHidden() {
+        when(userRepository.findByFirebaseUid(uid)).thenReturn(Optional.of(sender));
+        doThrow(new com.yadony.api.common.YadonyBusinessException(
+                org.springframework.http.HttpStatus.NOT_FOUND, "not-found", "Not Found", "Ressource introuvable"))
+            .when(blockVisibility).assertVisible(senderId, travelerId);
+
+        assertThatThrownBy(() -> service.getStatus(uid, travelerId))
+            .isInstanceOf(com.yadony.api.common.YadonyBusinessException.class);
     }
 }

@@ -2,6 +2,7 @@ package com.yadony.api.subscriptions;
 
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
+import com.yadony.api.common.BlockVisibility;
 import com.yadony.api.common.YadonyNotFoundException;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.subscriptions.dto.SubscriberResponse;
@@ -15,6 +16,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -23,13 +25,16 @@ public class SubscriptionService {
     private final TravelerSubscriptionRepository subscriptionRepository;
     private final UserRepository userRepository;
     private final StorageService storageService;
+    private final BlockVisibility blockVisibility;
 
     public SubscriptionService(TravelerSubscriptionRepository subscriptionRepository,
                                UserRepository userRepository,
-                               StorageService storageService) {
+                               StorageService storageService,
+                               BlockVisibility blockVisibility) {
         this.subscriptionRepository = subscriptionRepository;
         this.userRepository = userRepository;
         this.storageService = storageService;
+        this.blockVisibility = blockVisibility;
     }
 
     private UUID senderId(String firebaseUid) {
@@ -38,9 +43,14 @@ public class SubscriptionService {
             .getId();
     }
 
+    /**
+     * Le blocage est silencieux (404, jamais 403) : un compte masqué se comporte
+     * exactement comme un compte inexistant, sinon le blocage serait détectable.
+     */
     @Transactional
     public void subscribe(String firebaseUid, UUID travelerId) {
         UUID sid = senderId(firebaseUid);
+        blockVisibility.assertVisible(sid, travelerId);
         userRepository.findById(travelerId)
             .orElseThrow(() -> new YadonyNotFoundException("Traveler", travelerId));
 
@@ -77,6 +87,7 @@ public class SubscriptionService {
     @Transactional
     public void setPush(String firebaseUid, UUID travelerId, boolean enabled) {
         UUID sid = senderId(firebaseUid);
+        blockVisibility.assertVisible(sid, travelerId);
         TravelerSubscriptionEntity sub = subscriptionRepository.findBySenderIdAndTravelerId(sid, travelerId)
             .orElseThrow(() -> new YadonyNotFoundException("Subscription not found"));
         sub.setPushEnabled(enabled);
@@ -106,15 +117,23 @@ public class SubscriptionService {
     @Transactional(readOnly = true)
     public SubscriptionStatusResponse getStatus(String firebaseUid, UUID travelerId) {
         UUID sid = senderId(firebaseUid);
+        blockVisibility.assertVisible(sid, travelerId);
         return subscriptionRepository.findBySenderIdAndTravelerId(sid, travelerId)
             .map(s -> new SubscriptionStatusResponse(true, s.isPushEnabled()))
             .orElse(new SubscriptionStatusResponse(false, false));
     }
 
+    /**
+     * Les abonnements vers un compte bloqué sont masqués, pas résiliés : ils
+     * réapparaissent au déblocage, comme partout ailleurs dans l'application.
+     * Filtrage en mémoire : la liste n'est pas paginée.
+     */
     @Transactional(readOnly = true)
     public List<SubscriptionItemResponse> getMySubscriptions(String firebaseUid) {
         UUID sid = senderId(firebaseUid);
+        Set<UUID> hidden = blockVisibility.hiddenUserIdsFor(sid);
         return subscriptionRepository.findEnrichedBySenderId(sid).stream()
+            .filter(r -> !hidden.contains((UUID) r[0]))
             .map(this::mapRow)
             .toList();
     }
@@ -123,7 +142,9 @@ public class SubscriptionService {
     @Transactional(readOnly = true)
     public List<SubscriberResponse> getMySubscribers(String firebaseUid) {
         UUID travelerId = senderId(firebaseUid); // résout l'utilisateur courant
+        Set<UUID> hidden = blockVisibility.hiddenUserIdsFor(travelerId);
         return subscriptionRepository.findAllByTravelerId(travelerId).stream()
+            .filter(sub -> !hidden.contains(sub.getSenderId()))
             .map(sub -> {
                 String name = userRepository.findById(sub.getSenderId())
                     .map(this::buildSubscriberName)

@@ -217,7 +217,19 @@ public class TravelerStatsController {
     @GetMapping("/{travelerId}/announcements")
     public ResponseEntity<List<com.yadony.api.matching.dto.TravelerAnnouncementResponse>> travelerAnnouncements(
             @PathVariable UUID travelerId) {
-        return ResponseEntity.ok(announcementService.getTravelerAnnouncements(travelerId));
+        return ResponseEntity.ok(announcementService.getTravelerAnnouncements(currentFirebaseUidOrNull(), travelerId));
+    }
+
+    /**
+     * Endpoint public : le viewer est facultatif, mais s'il est connecté son identité
+     * sert à masquer les trajets d'un voyageur bloqué (dans un sens ou dans l'autre).
+     */
+    private String currentFirebaseUidOrNull() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !auth.isAuthenticated() || "anonymousUser".equals(auth.getPrincipal())) {
+            return null;
+        }
+        return auth.getPrincipal() instanceof String s ? s : null;
     }
 
     private String requireFirebaseUid() {

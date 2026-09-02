@@ -37,6 +37,7 @@ class AlertServiceTripMatchesTest {
     @Mock UserRepository userRepository;
     @Mock PackageRequestRepository packageRequestRepository;
     @Mock AnnouncementRepository announcementRepository;
+    @Mock com.yadony.api.common.BlockVisibility blockVisibility;
     @InjectMocks AlertService service;
 
     final String uid = "firebase-uid";
@@ -132,6 +133,30 @@ class AlertServiceTripMatchesTest {
         assertThat(dto.pricePerKg()).isEqualTo(new BigDecimal("8.50"));
         assertThat(dto.transportMode()).isEqualTo(TransportMode.PLANE);
         assertThat(dto.travelerRating()).isCloseTo(4.7, within(0.0001));
+    }
+
+    /** Un voyageur bloqué (dans un sens ou l'autre) ne doit pas remonter dans les
+     *  correspondances d'une alerte : c'est la même liste de trajets que la recherche. */
+    @Test
+    void getTripMatches_omitsBlockedTravelers() {
+        UUID blockedTraveler = UUID.randomUUID();
+        UUID visibleTraveler = UUID.randomUUID();
+        AnnouncementEntity fromBlocked = trip(blockedTraveler, LocalDate.of(2026, 7, 10),
+                new BigDecimal("15.00"), new BigDecimal("8.50"));
+        AnnouncementEntity fromVisible = trip(visibleTraveler, LocalDate.of(2026, 7, 12),
+                new BigDecimal("10.00"), new BigDecimal("7.00"));
+
+        when(alertRepository.findById(alertId)).thenReturn(Optional.of(senderAlert()));
+        when(announcementRepository.findActiveByCorridor("Paris", "Bamako"))
+                .thenReturn(List.of(fromBlocked, fromVisible));
+        when(blockVisibility.hiddenUserIdsFor(ownerId)).thenReturn(java.util.Set.of(blockedTraveler));
+        when(userRepository.findAllById(anyCollection()))
+                .thenReturn(List.of(traveler(visibleTraveler, "Awa", "Keita", null)));
+
+        List<AlertTripMatchDto> matches = service.getTripMatches(uid, alertId);
+
+        assertThat(matches).hasSize(1);
+        assertThat(matches.get(0).announcementId()).isEqualTo(fromVisible.getId());
     }
 
     @Test

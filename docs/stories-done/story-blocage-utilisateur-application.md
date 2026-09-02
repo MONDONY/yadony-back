@@ -75,6 +75,22 @@ Aucun endpoint ajouté ou supprimé. Les endpoints existants renvoient 404 au li
 - `CorridorAlertTripMatchListener` n'horodate pas `lastNotifiedAt` quand la notification est supprimée : cette borne sert de « depuis » au digest, la poser ferait disparaître des trajets visibles publiés dans la même fenêtre.
 - Les notes déjà écrites par un utilisateur bloqué restent comptées dans le score de réputation. Décision assumée : on masque un profil, on ne réécrit pas l'historique, sinon la réputation d'un tiers changerait selon qui la regarde.
 
+## Complément du 2026-09-02 : trous restants
+
+Remontée utilisateur après la mise en prod : les trajets d'un bloqué restaient visibles, et le bloqué restait listé dans « Mes abonnements ». Quatre trous, aucun dans le contrat lui-même :
+
+| Trou | Cause | Correctif |
+|---|---|---|
+| Recherche de trajets : bloqué encore servi après le blocage | Cache `announcements-search` (TTL 5 min) clé par viewer mais ignorant ses blocages ; l'app relançait la recherche et recevait la page cachée | `BlockService` publie `UserBlockChangedEvent` (block et unblock) ; `AnnouncementSearchBlockEvictionListener` (`matching/`) purge le cache en `AFTER_COMMIT` |
+| `GET /travelers/{id}/announcements` (trajets de la fiche voyageur) | Aucune garde, endpoint public sans viewer résolu | `getTravelerAnnouncements(viewerFirebaseUid, travelerId)` + `assertVisible` ; le controller passe l'uid courant ou `null` |
+| `GET /me/subscriptions`, `GET /me/subscribers` | Aucun filtre | `hiddenUserIdsFor` en mémoire (listes non paginées). **Masqué, pas résilié** : l'abonnement réapparaît au déblocage |
+| `subscribe`, `getStatus`, `setPush` vers un bloqué | Aucune garde | `assertVisible` (404 silencieux) |
+| Correspondances d'alertes corridor (`/matches`, `countMatches`) | Seul le digest filtrait | `findMatchingTrips` / `findMatchingPackages` filtrent par les blocages du propriétaire de l'alerte |
+
+Côté app, `SubscriptionsBloc` écoute désormais `BlockEventsService` et recharge la liste, comme la messagerie et la recherche.
+
+Piège : un cache clé par viewer n'est pas « personnel » pour autant. Toute règle de visibilité qui dépend d'un état mutable (blocage, préférences) doit avoir son point d'invalidation, sinon la règle est correcte en base et fausse à l'écran pendant tout le TTL.
+
 ## Décisions techniques
 
 | Décision | Alternative écartée | Motif |
@@ -85,6 +101,8 @@ Aucun endpoint ajouté ou supprimé. Les endpoints existants renvoient 404 au li
 | `notifyUnlessBlocked` distincte de `notifyUser` | Filtre silencieux dans `notifyUser` | `notifyUser` sert aussi aux notifications système sans émetteur ; un filtre implicite y masquerait des messages légitimes |
 | Filtrage SQL pour les listes paginées | Filtrage en mémoire après `findAll` | Sinon pages trouées et total faux |
 | Notes conservées dans le score | Recalcul en excluant les bloqués | La réputation ne doit pas dépendre de qui la consulte |
+| Abonnement masqué au blocage, pas résilié | Soft-delete de l'abonnement | Même sémantique que le reste du masquage : réversible au déblocage, sans réécrire l'historique |
+| Purge totale de `announcements-search` au blocage | Éviction ciblée par viewer | Les clés sont composées de tous les filtres de recherche, impossible de les énumérer ; un blocage est rare |
 
 ## Tests
 

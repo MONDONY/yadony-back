@@ -37,6 +37,7 @@ class AlertServiceMatchesTest {
     @Mock UserRepository userRepository;
     @Mock PackageRequestRepository packageRequestRepository;
     @Mock AnnouncementRepository announcementRepository;
+    @Mock com.yadony.api.common.BlockVisibility blockVisibility;
     @InjectMocks AlertService service;
 
     final String uid = "firebase-uid";
@@ -113,6 +114,25 @@ class AlertServiceMatchesTest {
         assertThat(matches).hasSize(1);
         assertThat(matches.get(0).contentType()).isEqualTo("Documents");
         assertThat(matches.get(0).weightKg()).isEqualTo(3.0);
+    }
+
+    /** Symétrique côté voyageur : le colis d'un expéditeur bloqué ne remonte pas. */
+    @Test
+    void getMatches_omitsBlockedSenders() {
+        PackageRequestEntity fromBlocked = pkg("Documents", new BigDecimal("3.00"), LocalDate.of(2026, 7, 10));
+        PackageRequestEntity fromVisible = pkg("Documents", new BigDecimal("3.00"), LocalDate.of(2026, 7, 11));
+
+        when(alertRepository.findById(alertId)).thenReturn(Optional.of(alert(true)));
+        when(packageRequestRepository.findOpenByCorridor("Paris", "Bamako"))
+                .thenReturn(List.of(fromBlocked, fromVisible));
+        when(blockVisibility.hiddenUserIdsFor(ownerId)).thenReturn(java.util.Set.of(fromBlocked.getSenderId()));
+        when(userRepository.findAllById(anyCollection()))
+                .thenReturn(List.of(senderWithId(fromVisible.getSenderId())));
+
+        List<MatchingRequestDto> matches = service.getMatches(uid, alertId);
+
+        assertThat(matches).hasSize(1);
+        assertThat(matches.get(0).id()).isEqualTo(fromVisible.getId().toString());
     }
 
     // C1 (bug adjacent) : p.getContentCategory() est une liste jointe par virgule

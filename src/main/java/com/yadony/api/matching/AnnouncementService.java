@@ -1724,8 +1724,15 @@ public class AnnouncementService {
         );
     }
 
+    /**
+     * Trajets publics d'un voyageur (fiche voyageur). Endpoint public : le viewer peut
+     * être anonyme, auquel cas aucun masquage ne s'applique. Un viewer bloqué (ou
+     * bloqueur) reçoit un 404, comme pour le profil public lui-même.
+     */
     @Transactional(readOnly = true)
-    public java.util.List<com.yadony.api.matching.dto.TravelerAnnouncementResponse> getTravelerAnnouncements(java.util.UUID travelerId) {
+    public java.util.List<com.yadony.api.matching.dto.TravelerAnnouncementResponse> getTravelerAnnouncements(
+            String viewerFirebaseUid, java.util.UUID travelerId) {
+        blockVisibility.assertVisible(resolveViewerId(viewerFirebaseUid), travelerId);
         var pageable = org.springframework.data.domain.PageRequest.of(0, 50,
             org.springframework.data.domain.Sort.by("departureDate").ascending());
         var active = announcementRepository.findByTravelerIdAndStatus(travelerId, AnnouncementStatus.ACTIVE, pageable).getContent();
