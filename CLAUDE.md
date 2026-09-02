@@ -718,7 +718,7 @@ public class AnnouncementService {
 10. ✅ Isolate KYC data in `kyc_schema` with encryption
 11. ✅ Vérifier l'ownership avant tout accès à une ressource — ex. `GET /payments/bid/{bidId}` doit confirmer que le caller est l'expéditeur ou le voyageur du bid
 12. ✅ Enregistrer les events Stripe dans `processed_stripe_events` **avant** de les traiter (insert-first, then process) pour garantir l'idempotence
-13. ✅ Demander les capacités `card_payments` ET `transfers` à la création d'un compte Stripe Connect Express — obligatoire pour le pattern `on_behalf_of`
+13. ✅ Laisser les comptes Connect v2 en configuration `recipient` uniquement (voir `StripeV2AccountProvisioner`) — ne JAMAIS demander `card_payments` sur un compte voyageur : cela greffe la configuration marchande, Stripe exige alors `business_profile.mcc` + `individual.phone` (past_due) et désactive tout le compte. Le modèle est *separate charges and transfers* : le PaymentIntent est un charge plateforme sans `on_behalf_of`, seul `transfers` est requis côté voyageur
 14. ✅ Vérifier que `yadony.kyc.enforce` et `yadony.stripe.enforce` sont bien désactivés dans `application-test.yml` pour ne pas bloquer les tests d'intégration
 
 ---
