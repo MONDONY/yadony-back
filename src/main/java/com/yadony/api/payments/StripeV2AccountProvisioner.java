@@ -2,6 +2,7 @@ package com.yadony.api.payments;
 
 import com.stripe.exception.StripeException;
 import com.stripe.param.v2.core.AccountCreateParams;
+import com.stripe.param.v2.core.AccountTokenCreateParams;
 import com.yadony.api.auth.FirebaseContactService;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.common.YadonyBusinessException;
@@ -16,18 +17,21 @@ import org.springframework.stereotype.Component;
  * en remplacement de l'API v1 que Stripe bloque désormais
  * ({@code v1_accounts_create_blocked}).
  *
- * <p>Le compte ne porte que la configuration {@code recipient}. C'est délibéré :
+ * <p>Le modèle de paiement est en <em>separate charges and transfers</em> — les fonds
+ * restent sur le solde plateforme et le voyageur est réglé par {@code Transfer.create}
+ * à la livraison, ce qui ne requiert que {@code stripe_balance.stripe_transfers}. Deux
+ * formes de compte selon le pays :
  * <ul>
- *   <li>le modèle de paiement est en <em>separate charges and transfers</em> — les fonds
- *       restent sur le solde plateforme et le voyageur est réglé par
- *       {@code Transfer.create} à la livraison, ce qui ne requiert que
- *       {@code stripe_balance.stripe_transfers} ;</li>
- *   <li>ajouter la configuration {@code merchant} déclencherait
- *       {@code account_token_required} — une plateforme établie en France ne peut pas
- *       écrire l'identité sur une configuration marchande sans passer par les
- *       <em>account tokens</em> ;</li>
- *   <li>l'onboarding du voyageur reste réduit au strict nécessaire (identité + IBAN),
- *       sans la vérification marchande qui ne sert à rien dans ce modèle.</li>
+ *   <li><b>Recipient seul</b> (défaut, zone euro/SEPA + CH + GB) : onboarding réduit au
+ *       strict nécessaire (identité + IBAN), sans vérification marchande. Ne jamais y
+ *       demander {@code card_payments} — la greffe marchande après coup exige
+ *       {@code mcc} + {@code phone} en {@code past_due} et désactive tout le compte
+ *       (incident du 2026-09-02) ;</li>
+ *   <li><b>Merchant + recipient</b> (US, CA — voir
+ *       {@link StripeConnectCountries#requiresMerchantConfiguration}) : Stripe y refuse
+ *       {@code stripe_transfers} sans {@code merchant.card_payments}. La création passe
+ *       par un account token v2 ({@code account_token_required} pour une plateforme
+ *       française) — voir {@link #provisionMerchantAndRecipient}.</li>
  * </ul>
  *
  * <p>Correspondances avec l'ancienne implémentation v1 : {@code type: express} devient
@@ -68,7 +72,7 @@ public class StripeV2AccountProvisioner implements ConnectAccountProvisioner {
                             + "compte de paiement.");
         }
 
-        // yadony dessert des pays que Stripe ne couvre pas (zone XOF, zone XAF, US, CA).
+        // yadony dessert des pays que Stripe ne couvre pas (zone XOF, zone XAF).
         // Sans cette garde, Stripe repond une erreur generique remontee en 500 : le
         // voyageur ne comprend pas qu'il doit simplement rester en especes.
         if (!StripeConnectCountries.isSupported(country)) {
@@ -76,6 +80,14 @@ public class StripeV2AccountProvisioner implements ConnectAccountProvisioner {
                     "country-not-supported-by-stripe", "Country Not Supported",
                     "Le paiement par carte n'est pas encore disponible dans votre pays. "
                             + "Vous pouvez continuer a recevoir vos paiements en especes.");
+        }
+
+        // US / Canada : Stripe refuse stripe_transfers sans merchant.card_payments dans
+        // ces pays. Le compte porte alors merchant + recipient, et la creation passe par
+        // un account token (exigence account_token_required pour une plateforme FR).
+        // Les 22 pays recipient-only gardent le chemin simple ci-dessous, inchange.
+        if (StripeConnectCountries.requiresMerchantConfiguration(country)) {
+            return provisionMerchantAndRecipient(user, country);
         }
 
         AccountCreateParams params = AccountCreateParams.builder()
@@ -202,6 +214,125 @@ public class StripeV2AccountProvisioner implements ConnectAccountProvisioner {
             return preferred;
         }
         return fallback != null && !fallback.isBlank() ? fallback : null;
+    }
+
+    /**
+     * Chemin US / Canada : compte {@code merchant} (card_payments) + {@code recipient}
+     * (stripe_transfers), créé via un account token.
+     *
+     * <p>Le token ne porte que l'email de contact, le type d'entité et, pour un
+     * particulier, le nom — même préfill minimal que le chemin recipient-only. L'identité
+     * complète (SSN aux US, adresse, activité) est collectée par l'onboarding hébergé
+     * Express : elle transite directement du voyageur vers Stripe, jamais par nos
+     * serveurs (conformité PSD2, raison d'être de l'exigence de token).
+     *
+     * <p>Sur la création du compte, seuls restent : le pays (interdit dans un token),
+     * les configurations, les defaults et les metadata. Poser {@code contact_email} ou
+     * {@code identity.entity_type} à côté du token est refusé
+     * ({@code param_alongside_account_token}). Chaîne complète validée en test mode le
+     * 2026-09-03 (US et CA, account link d'onboarding compris).
+     */
+    private String provisionMerchantAndRecipient(UserEntity user, String country)
+            throws StripeException {
+        AccountTokenCreateParams.Identity.Builder tokenIdentity =
+                AccountTokenCreateParams.Identity.builder()
+                        .setEntityType(
+                                user.isProAccount()
+                                        ? AccountTokenCreateParams.Identity.EntityType.COMPANY
+                                        : AccountTokenCreateParams.Identity.EntityType.INDIVIDUAL);
+
+        if (!user.isProAccount()) {
+            VerifiedIdentitySnapshot snapshot =
+                    verifiedIdentity.forUser(user.getId()).orElse(null);
+            AccountTokenCreateParams.Identity.Individual individual =
+                    buildTokenIndividual(user, snapshot);
+            if (individual != null) {
+                tokenIdentity.setIndividual(individual);
+            }
+        }
+
+        AccountTokenCreateParams tokenParams = AccountTokenCreateParams.builder()
+                .setContactEmail(firebaseContact.getContact(user.getFirebaseUid()).email())
+                .setIdentity(tokenIdentity.build())
+                .build();
+        String accountToken = stripeGateway.createAccountToken(tokenParams).getId();
+
+        AccountCreateParams params = AccountCreateParams.builder()
+                .setAccountToken(accountToken)
+                .setDashboard(AccountCreateParams.Dashboard.EXPRESS)
+                .setIdentity(AccountCreateParams.Identity.builder()
+                        .setCountry(country)
+                        .build())
+                .setDefaults(
+                        AccountCreateParams.Defaults.builder()
+                                .setResponsibilities(
+                                        AccountCreateParams.Defaults.Responsibilities.builder()
+                                                .setLossesCollector(
+                                                        AccountCreateParams.Defaults.Responsibilities
+                                                                .LossesCollector.APPLICATION)
+                                                .setFeesCollector(
+                                                        AccountCreateParams.Defaults.Responsibilities
+                                                                .FeesCollector.APPLICATION)
+                                                .build())
+                                .setProfile(
+                                        AccountCreateParams.Defaults.Profile.builder()
+                                                .setBusinessUrl(stripeConnectProperties.businessUrl())
+                                                .setProductDescription(
+                                                        stripeConnectProperties.productDescription())
+                                                .build())
+                                .build())
+                .setConfiguration(
+                        AccountCreateParams.Configuration.builder()
+                                .setMerchant(
+                                        AccountCreateParams.Configuration.Merchant.builder()
+                                                .setCapabilities(
+                                                        AccountCreateParams.Configuration.Merchant
+                                                                .Capabilities.builder()
+                                                                .setCardPayments(
+                                                                        AccountCreateParams.Configuration
+                                                                                .Merchant.Capabilities
+                                                                                .CardPayments.builder()
+                                                                                .setRequested(true)
+                                                                                .build())
+                                                                .build())
+                                                .build())
+                                .setRecipient(
+                                        AccountCreateParams.Configuration.Recipient.builder()
+                                                .setCapabilities(
+                                                        AccountCreateParams.Configuration.Recipient
+                                                                .Capabilities.builder()
+                                                                .setStripeBalance(
+                                                                        stripeBalanceCapabilities())
+                                                                .build())
+                                                .build())
+                                .build())
+                .putMetadata("user_id", user.getId().toString())
+                .addInclude(AccountCreateParams.Include.CONFIGURATION__RECIPIENT)
+                .build();
+
+        return stripeGateway.createAccountV2(params).getId();
+    }
+
+    /** Variante token de {@link #buildIndividual} — mêmes sources, même priorité. */
+    private AccountTokenCreateParams.Identity.Individual buildTokenIndividual(
+            UserEntity user, VerifiedIdentitySnapshot snapshot) {
+        String givenName = firstNonBlank(
+                snapshot != null ? snapshot.givenName() : null, user.getFirstName());
+        String surname = firstNonBlank(
+                snapshot != null ? snapshot.surname() : null, user.getLastName());
+        if (givenName == null && surname == null) {
+            return null;
+        }
+
+        AccountTokenCreateParams.Identity.Individual.Builder individual =
+                AccountTokenCreateParams.Identity.Individual.builder();
+        if (givenName != null) {
+            individual.setGivenName(givenName);
+        }
+        if (surname != null) {
+            individual.setSurname(surname);
+        }
+        return individual.build();
     }
 
     /**
