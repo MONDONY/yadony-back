@@ -90,7 +90,10 @@ public class ExchangeRateUpdateService {
         entity.setUnitsPerEur(unitsPerEur);
         entity.setUpdatedAt(OffsetDateTime.now());
         entity.setUpdatedBy(actorId);
-        ExchangeRateEntity saved = exchangeRateRepository.save(entity);
+        // saveAndFlush, pas save : le listener synchrone du pivot execute un bulk
+        // JPQL clearAutomatically dans cette meme transaction — une ecriture encore
+        // en attente au moment du clear serait perdue sans bruit.
+        ExchangeRateEntity saved = exchangeRateRepository.saveAndFlush(entity);
 
         evictCache(normalized);
 
