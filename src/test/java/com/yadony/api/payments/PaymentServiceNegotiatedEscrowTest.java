@@ -143,12 +143,6 @@ class PaymentServiceNegotiatedEscrowTest {
 
     private ArgumentCaptor<PaymentIntentCreateParams> stubStripe(
             MockedStatic<com.stripe.model.Account> acctStatic, MockedStatic<PaymentIntent> piStatic) {
-        com.stripe.model.Account acct = mock(com.stripe.model.Account.class);
-        com.stripe.model.Account.Capabilities caps = mock(com.stripe.model.Account.Capabilities.class);
-        when(caps.getCardPayments()).thenReturn("active");
-        when(acct.getCapabilities()).thenReturn(caps);
-        acctStatic.when(() -> com.stripe.model.Account.retrieve(any(String.class))).thenReturn(acct);
-
         ArgumentCaptor<PaymentIntentCreateParams> captor =
                 ArgumentCaptor.forClass(PaymentIntentCreateParams.class);
         PaymentIntent pi = mock(PaymentIntent.class);

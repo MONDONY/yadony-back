@@ -43,7 +43,6 @@ import com.stripe.model.Event;
 import com.stripe.model.PaymentIntent;
 import com.stripe.model.PaymentMethod;
 import com.stripe.param.AccountLinkCreateParams;
-import com.stripe.param.AccountUpdateParams;
 import com.stripe.param.CustomerCreateParams;
 import com.stripe.param.EphemeralKeyCreateParams;
 import com.stripe.param.PaymentIntentCancelParams;
@@ -561,12 +560,6 @@ public class PaymentService {
         }
 
         try {
-            // Compatibilité comptes legacy : avant cette fix, certains comptes Stripe Connect
-            // ont été créés sans la capacité card_payments (seulement transfers).
-            // Stripe rejette PaymentIntent.create(on_behalf_of=…) si card_payments n'est pas active.
-            // On la demande de manière idempotente : si déjà active, no-op.
-            ensureCardPaymentsCapability(traveler.getStripeAccountId());
-
             long commissionCents = localCommission.minor();
 
             // Customer attaché : rend les cartes réutilisables (YadonyPaymentSheet).
@@ -1139,67 +1132,6 @@ public class PaymentService {
                         "user-not-found", "User Not Found", "Utilisateur introuvable"));
     }
 
-    /**
-     * Garantit que la capacité {@code card_payments} est demandée sur le compte Connect.
-     * <p>
-     * Historiquement requise : Stripe rejetait {@code PaymentIntent.create(on_behalf_of=…)}
-     * sans elle. Depuis le passage aux wallets (Approche A), {@code on_behalf_of} a été retiré
-     * des PaymentIntents escrow — ce check n'est donc plus strictement nécessaire à la création
-     * du PaymentIntent. Conservé (idempotent : no-op si déjà active/pending) en attendant un
-     * nettoyage côté onboarding Connect ; aucun effet de bord négatif.
-     */
-    private void ensureCardPaymentsCapability(String stripeAccountId) throws StripeException {
-        Account account = stripeGateway.retrieveAccount(stripeAccountId);
-        String currentState = account.getCapabilities() == null
-                ? null
-                : account.getCapabilities().getCardPayments();
-        if ("active".equals(currentState)) {
-            return;
-        }
-        // pending → la capacité est demandée mais Stripe attend encore des infos
-        // (typiquement un document KYC). On lève une erreur métier claire plutôt
-        // que de laisser Stripe rejeter le PaymentIntent avec un message technique.
-        if ("pending".equals(currentState)) {
-            log.warn("card_payments pending on Stripe account {} — traveler needs to complete onboarding (KYC docs)",
-                    stripeAccountId);
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "traveler-onboarding-pending", "Traveler Onboarding Pending",
-                    "Le voyageur doit finaliser son inscription Stripe (pièce d'identité requise) "
-                    + "avant de pouvoir recevoir des paiements.");
-        }
-        // null / inactive / unrequested → demander la capacité (idempotent côté Stripe)
-        log.info("Requesting card_payments capability on legacy Stripe account {} (current={})",
-                stripeAccountId, currentState);
-        AccountUpdateParams updateParams = AccountUpdateParams.builder()
-                .setCapabilities(
-                        AccountUpdateParams.Capabilities.builder()
-                                .setCardPayments(
-                                        AccountUpdateParams.Capabilities.CardPayments.builder()
-                                                .setRequested(true)
-                                                .build()
-                                )
-                                .setTransfers(
-                                        AccountUpdateParams.Capabilities.Transfers.builder()
-                                                .setRequested(true)
-                                                .build()
-                                )
-                                .build()
-                )
-                .build();
-        Account updated = account.update(updateParams);
-        String newState = updated.getCapabilities() == null
-                ? null
-                : updated.getCapabilities().getCardPayments();
-        if (!"active".equals(newState)) {
-            log.warn("card_payments still {} after update on account {} — traveler needs to complete onboarding",
-                    newState, stripeAccountId);
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "traveler-onboarding-pending", "Traveler Onboarding Pending",
-                    "Le voyageur doit finaliser son inscription Stripe (pièce d'identité requise) "
-                    + "avant de pouvoir recevoir des paiements.");
-        }
-    }
-
     private PaymentResponse toPaymentResponse(PaymentEntity payment, String clientSecret) {
         return new PaymentResponse(
                 payment.getId(),
@@ -1645,8 +1577,6 @@ public class PaymentService {
         }
 
         try {
-            ensureCardPaymentsCapability(traveler.getStripeAccountId());
-
             // Customer attaché (même règle que createEscrow) : sans lui, Stripe rejette
             // un payment_method enregistré ("pm_... appartient au client cus_...") quand
             // la PaymentSheet native paie la négociation avec une carte enregistrée.

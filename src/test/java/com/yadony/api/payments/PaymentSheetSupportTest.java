@@ -153,11 +153,6 @@ class PaymentSheetSupportTest {
     /** Stubbe Account.retrieve (capability card_payments active) + PaymentIntent.create. */
     private ArgumentCaptor<PaymentIntentCreateParams> stubStripeStatics(
             MockedStatic<com.stripe.model.Account> acctStatic, MockedStatic<PaymentIntent> piStatic) {
-        com.stripe.model.Account mockAcct = mock(com.stripe.model.Account.class);
-        com.stripe.model.Account.Capabilities caps = mock(com.stripe.model.Account.Capabilities.class);
-        when(caps.getCardPayments()).thenReturn("active");
-        when(mockAcct.getCapabilities()).thenReturn(caps);
-        acctStatic.when(() -> com.stripe.model.Account.retrieve(any(String.class))).thenReturn(mockAcct);
 
         ArgumentCaptor<PaymentIntentCreateParams> captor =
                 ArgumentCaptor.forClass(PaymentIntentCreateParams.class);
@@ -226,11 +221,6 @@ class PaymentSheetSupportTest {
 
         try (MockedStatic<com.stripe.model.Account> acctStatic = mockStatic(com.stripe.model.Account.class);
              MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class)) {
-            com.stripe.model.Account mockAcct = mock(com.stripe.model.Account.class);
-            com.stripe.model.Account.Capabilities caps = mock(com.stripe.model.Account.Capabilities.class);
-            when(caps.getCardPayments()).thenReturn("active");
-            when(mockAcct.getCapabilities()).thenReturn(caps);
-            acctStatic.when(() -> com.stripe.model.Account.retrieve(any(String.class))).thenReturn(mockAcct);
 
             PaymentIntent mockPi = mock(PaymentIntent.class);
             when(mockPi.getId()).thenReturn("pi_test_new");

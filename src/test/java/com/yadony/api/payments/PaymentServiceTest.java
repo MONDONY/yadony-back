@@ -834,13 +834,6 @@ class PaymentServiceTest {
         try (MockedStatic<Account> acctStatic = mockStatic(Account.class);
              MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class)) {
 
-            // ensureCardPaymentsCapability calls Account.retrieve
-            Account mockAccount = mock(Account.class);
-            com.stripe.model.Account.Capabilities caps = mock(com.stripe.model.Account.Capabilities.class);
-            when(caps.getCardPayments()).thenReturn("active");
-            when(mockAccount.getCapabilities()).thenReturn(caps);
-            acctStatic.when(() -> Account.retrieve("acct_traveler")).thenReturn(mockAccount);
-
             // PaymentIntent.create — capture the params
             PaymentIntent mockPi = mock(PaymentIntent.class);
             when(mockPi.getId()).thenReturn("pi_negotiation_123");
@@ -930,12 +923,6 @@ class PaymentServiceTest {
         try (MockedStatic<Account> acctStatic = mockStatic(Account.class);
              MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class)) {
 
-            Account mockAccount = mock(Account.class);
-            com.stripe.model.Account.Capabilities caps = mock(com.stripe.model.Account.Capabilities.class);
-            when(caps.getCardPayments()).thenReturn("active");
-            when(mockAccount.getCapabilities()).thenReturn(caps);
-            acctStatic.when(() -> Account.retrieve("acct_traveler")).thenReturn(mockAccount);
-
             PaymentIntent mockPi = mock(PaymentIntent.class);
             when(mockPi.getId()).thenReturn("pi_negotiation_123");
             when(mockPi.getClientSecret()).thenReturn("pi_negotiation_123_secret");
@@ -975,12 +962,6 @@ class PaymentServiceTest {
              MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class);
              MockedStatic<com.stripe.model.Customer> custStatic =
                      mockStatic(com.stripe.model.Customer.class)) {
-
-            Account mockAccount = mock(Account.class);
-            com.stripe.model.Account.Capabilities caps = mock(com.stripe.model.Account.Capabilities.class);
-            when(caps.getCardPayments()).thenReturn("active");
-            when(mockAccount.getCapabilities()).thenReturn(caps);
-            acctStatic.when(() -> Account.retrieve("acct_traveler")).thenReturn(mockAccount);
 
             com.stripe.model.Customer mockCustomer = mock(com.stripe.model.Customer.class);
             when(mockCustomer.getId()).thenReturn("cus_created");
@@ -1073,12 +1054,6 @@ class PaymentServiceTest {
 
         try (MockedStatic<Account> acctStatic = mockStatic(Account.class);
              MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class)) {
-            Account mockAccount = mock(Account.class);
-            com.stripe.model.Account.Capabilities caps = mock(com.stripe.model.Account.Capabilities.class);
-            when(caps.getCardPayments()).thenReturn("active");
-            when(mockAccount.getCapabilities()).thenReturn(caps);
-            acctStatic.when(() -> Account.retrieve("acct_traveler")).thenReturn(mockAccount);
-
             PaymentIntent mockPi = mock(PaymentIntent.class);
             when(mockPi.getId()).thenReturn("pi_fresh");
             when(mockPi.getClientSecret()).thenReturn("pi_fresh_secret");
@@ -1120,12 +1095,6 @@ class PaymentServiceTest {
             PaymentIntent canceledPi = mock(PaymentIntent.class);
             when(canceledPi.getStatus()).thenReturn("canceled");
             piStatic.when(() -> PaymentIntent.retrieve("pi_old")).thenReturn(canceledPi);
-
-            Account mockAccount = mock(Account.class);
-            com.stripe.model.Account.Capabilities caps = mock(com.stripe.model.Account.Capabilities.class);
-            when(caps.getCardPayments()).thenReturn("active");
-            when(mockAccount.getCapabilities()).thenReturn(caps);
-            acctStatic.when(() -> Account.retrieve("acct_traveler")).thenReturn(mockAccount);
 
             PaymentIntent freshPi = mock(PaymentIntent.class);
             when(freshPi.getId()).thenReturn("pi_fresh2");
@@ -1175,12 +1144,6 @@ class PaymentServiceTest {
             when(legacyPi.cancel(any(PaymentIntentCancelParams.class))).thenReturn(legacyPi);
             piStatic.when(() -> PaymentIntent.retrieve("pi_legacy_fx")).thenReturn(legacyPi);
 
-            Account mockAccount = mock(Account.class);
-            com.stripe.model.Account.Capabilities caps = mock(com.stripe.model.Account.Capabilities.class);
-            when(caps.getCardPayments()).thenReturn("active");
-            when(mockAccount.getCapabilities()).thenReturn(caps);
-            acctStatic.when(() -> Account.retrieve("acct_traveler")).thenReturn(mockAccount);
-
             PaymentIntent freshPi = mock(PaymentIntent.class);
             when(freshPi.getId()).thenReturn("pi_fresh_cad");
             when(freshPi.getClientSecret()).thenReturn("pi_fresh_cad_secret");
@@ -1228,12 +1191,6 @@ class PaymentServiceTest {
             when(stuckPi.getStatus()).thenReturn("requires_action", "canceled");
             when(stuckPi.cancel(any(PaymentIntentCancelParams.class))).thenReturn(stuckPi);
             piStatic.when(() -> PaymentIntent.retrieve("pi_stuck")).thenReturn(stuckPi);
-
-            Account mockAccount = mock(Account.class);
-            com.stripe.model.Account.Capabilities caps = mock(com.stripe.model.Account.Capabilities.class);
-            when(caps.getCardPayments()).thenReturn("active");
-            when(mockAccount.getCapabilities()).thenReturn(caps);
-            acctStatic.when(() -> Account.retrieve("acct_traveler")).thenReturn(mockAccount);
 
             PaymentIntent freshPi = mock(PaymentIntent.class);
             when(freshPi.getId()).thenReturn("pi_fresh3");
@@ -1290,12 +1247,6 @@ class PaymentServiceTest {
 
         try (MockedStatic<Account> acctStatic = mockStatic(Account.class);
              MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class)) {
-            Account mockAccount = mock(Account.class);
-            com.stripe.model.Account.Capabilities caps = mock(com.stripe.model.Account.Capabilities.class);
-            when(caps.getCardPayments()).thenReturn("active");
-            when(mockAccount.getCapabilities()).thenReturn(caps);
-            acctStatic.when(() -> Account.retrieve("acct_traveler")).thenReturn(mockAccount);
-
             PaymentIntent mockPi = mock(PaymentIntent.class);
             when(mockPi.getId()).thenReturn("pi_promo_1");
             when(mockPi.getClientSecret()).thenReturn("pi_promo_1_secret");
@@ -1331,12 +1282,6 @@ class PaymentServiceTest {
 
         try (MockedStatic<Account> acctStatic = mockStatic(Account.class);
              MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class)) {
-            Account mockAccount = mock(Account.class);
-            com.stripe.model.Account.Capabilities caps = mock(com.stripe.model.Account.Capabilities.class);
-            when(caps.getCardPayments()).thenReturn("active");
-            when(mockAccount.getCapabilities()).thenReturn(caps);
-            acctStatic.when(() -> Account.retrieve("acct_traveler")).thenReturn(mockAccount);
-
             PaymentIntent mockPi = mock(PaymentIntent.class);
             when(mockPi.getId()).thenReturn("pi_promo_2");
             when(mockPi.getClientSecret()).thenReturn("pi_promo_2_secret");
