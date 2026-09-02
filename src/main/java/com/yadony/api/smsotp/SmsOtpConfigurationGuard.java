@@ -63,11 +63,19 @@ public class SmsOtpConfigurationGuard implements HealthIndicator {
         }
 
         if (activeProfiles.contains("prod")) {
-            log.error("❌ SMS OTP mal configuré en production (smsEnabled={}, twilio={}, "
+            if (!smsEnabled) {
+                // Canal fermé délibérément (SMS_ENABLED=false) : l'app masque le
+                // CTA téléphone via GET /config/sms-enabled — situation normale,
+                // pas une erreur à remonter en alerte à chaque démarrage.
+                log.warn("⚠️  Canal SMS OTP désactivé en production (SMS_ENABLED=false) — "
+                        + "la connexion par téléphone est masquée dans l'app.");
+                return;
+            }
+            log.error("❌ SMS OTP activé mais mal configuré en production (twilio={}, "
                     + "africasTalking={}) : aucun code OTP ne partira, la connexion par "
-                    + "téléphone est INUTILISABLE. Vérifier SMS_ENABLED, TWILIO_ACCOUNT_SID, "
+                    + "téléphone est INUTILISABLE. Vérifier TWILIO_ACCOUNT_SID, "
                     + "AT_API_KEY dans le .env de l'hôte, puis redémarrer.",
-                    smsEnabled, isTwilioConfigured(), isAfricasTalkingConfigured());
+                    isTwilioConfigured(), isAfricasTalkingConfigured());
             return;
         }
 

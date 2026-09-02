@@ -5,9 +5,11 @@ import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -85,15 +87,34 @@ public class WalletService {
         wallet.setRefundEligibleSince(Instant.now());
     }
 
+    // NOT_SUPPORTED : deux requêtes concurrentes peuvent toutes deux rater le
+    // find puis insérer — la contrainte UNIQUE(user_id, currency) fait échouer
+    // la seconde. Dans la transaction englobante du service, la violation ne
+    // surgissait qu'au commit (transaction Postgres avortée, relecture
+    // impossible) et remontait en 500 sur GET /wallet/balance. Hors
+    // transaction, le save du repository porte sa propre transaction courte :
+    // la violation est immédiate et la relecture repart sur une connexion
+    // saine. Les appels internes (credit/debit) restent dans leur transaction
+    // (self-invocation sans proxy) : wallet déjà créé dans ces parcours.
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public WalletAccountEntity getOrCreate(UUID userId, String currency) {
         String code = normalize(currency);
-        return walletAccountRepository.findByUserIdAndCurrency(userId, code).orElseGet(() -> {
+        return walletAccountRepository.findByUserIdAndCurrency(userId, code)
+                .orElseGet(() -> createOrReadExisting(userId, code));
+    }
+
+    private WalletAccountEntity createOrReadExisting(UUID userId, String code) {
+        try {
             WalletAccountEntity wallet = new WalletAccountEntity();
             wallet.setUserId(userId);
             wallet.setCurrency(code);
             wallet.setRefundEligibleSince(Instant.now());
             return walletAccountRepository.save(wallet);
-        });
+        } catch (DataIntegrityViolationException e) {
+            // Perdant de la course : l'autre requête vient d'insérer ce wallet.
+            return walletAccountRepository.findByUserIdAndCurrency(userId, code)
+                    .orElseThrow(() -> e);
+        }
     }
 
     public BigDecimal getBalance(UUID userId, String currency) {
