@@ -27,7 +27,7 @@ public class AdminAlertService {
     private final String environment;
 
     public AdminAlertService() {
-        this(RestClient.create(), null, null, "");
+        this(withTimeouts(), null, null, "");
     }
 
     @Autowired
@@ -35,7 +35,17 @@ public class AdminAlertService {
             @Value("${yadony.telegram.bot-token:}") String telegramBotToken,
             @Value("${yadony.telegram.chat-id:}") String telegramChatId,
             @Value("${spring.profiles.active:}") String environment) {
-        this(RestClient.create(), telegramBotToken, telegramChatId, environment);
+        this(withTimeouts(), telegramBotToken, telegramChatId, environment);
+    }
+
+    // Timeouts durs : RestClient.create() n'en a AUCUN (défauts JDK infinis) — une
+    // alerte ne doit jamais pendre le thread qui la lève (2026-09-02, fetch BCE).
+    private static RestClient withTimeouts() {
+        org.springframework.http.client.SimpleClientHttpRequestFactory factory =
+                new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(5_000);
+        factory.setReadTimeout(10_000);
+        return RestClient.builder().requestFactory(factory).build();
     }
 
     AdminAlertService(RestClient restClient, String telegramBotToken, String telegramChatId, String environment) {
