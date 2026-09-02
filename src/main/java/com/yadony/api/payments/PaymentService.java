@@ -130,7 +130,7 @@ public class PaymentService {
     }
 
     /**
-     * Stripe ne couvre pas tous les pays desservis par yadony (zone XOF, zone XAF, US, CA).
+     * Stripe ne couvre pas tous les pays desservis par yadony (zone XOF, zone XAF).
      * L'exposer permet a l'application de masquer l'activation du paiement par carte plutot
      * que de laisser le voyageur la tenter et echouer.
      */

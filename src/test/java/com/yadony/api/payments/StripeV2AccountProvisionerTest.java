@@ -353,4 +353,95 @@ class StripeV2AccountProvisionerTest {
         assertThat(params.getIdentity().getIndividual()).isNull();
         org.mockito.Mockito.verify(verifiedIdentity, never()).forUser(any());
     }
+
+    // ── Chemin US / Canada : merchant + recipient via account token ──────────────
+
+    /** Capture token et params compte pour un pays merchant-required. */
+    private CapturedMerchantCreation captureMerchantCreation(UserEntity user) throws Exception {
+        com.stripe.model.v2.core.AccountToken token =
+                org.mockito.Mockito.mock(com.stripe.model.v2.core.AccountToken.class);
+        when(token.getId()).thenReturn("accttok_test_123");
+        ArgumentCaptor<com.stripe.param.v2.core.AccountTokenCreateParams> tokenCaptor =
+                ArgumentCaptor.forClass(com.stripe.param.v2.core.AccountTokenCreateParams.class);
+        when(stripeGateway.createAccountToken(tokenCaptor.capture())).thenReturn(token);
+
+        com.stripe.model.v2.core.Account created =
+                org.mockito.Mockito.mock(com.stripe.model.v2.core.Account.class);
+        when(created.getId()).thenReturn("acct_created_na");
+        ArgumentCaptor<AccountCreateParams> accountCaptor =
+                ArgumentCaptor.forClass(AccountCreateParams.class);
+        when(stripeGateway.createAccountV2(accountCaptor.capture())).thenReturn(created);
+
+        provisioner.provision(user);
+        return new CapturedMerchantCreation(tokenCaptor.getValue(), accountCaptor.getValue());
+    }
+
+    private record CapturedMerchantCreation(
+            com.stripe.param.v2.core.AccountTokenCreateParams token,
+            AccountCreateParams account) {
+    }
+
+    @Test
+    @DisplayName("US : merchant + recipient via account token, identite hors du compte")
+    void usAccountGoesThroughAccountTokenWithMerchantAndRecipient() throws Exception {
+        CapturedMerchantCreation captured = captureMerchantCreation(buildUser(false, "US"));
+
+        // Le token porte email de contact et type d'entite.
+        assertThat(captured.token().getContactEmail()).isEqualTo("test@yadony.app");
+        assertThat(captured.token().getIdentity().getEntityType())
+                .isEqualTo(com.stripe.param.v2.core.AccountTokenCreateParams.Identity
+                        .EntityType.INDIVIDUAL);
+
+        // Le compte ne porte que le pays cote identite, le reste vient du token —
+        // contact_email ou entity_type a cote du token seraient refuses par Stripe
+        // (param_alongside_account_token).
+        AccountCreateParams account = captured.account();
+        assertThat(account.getAccountToken()).isEqualTo("accttok_test_123");
+        assertThat(account.getContactEmail()).isNull();
+        assertThat(account.getIdentity().getCountry()).isEqualTo("US");
+        assertThat(account.getIdentity().getEntityType()).isNull();
+        assertThat(account.getDashboard()).isEqualTo(AccountCreateParams.Dashboard.EXPRESS);
+
+        // Les deux configurations sont demandees des la creation : la greffe de
+        // card_payments apres coup desactivait tout le compte (incident 2026-09-02).
+        assertThat(account.getConfiguration().getMerchant()
+                .getCapabilities().getCardPayments().getRequested()).isTrue();
+        assertThat(account.getConfiguration().getRecipient()
+                .getCapabilities().getStripeBalance().getStripeTransfers().getRequested())
+                .isTrue();
+    }
+
+    @Test
+    @DisplayName("Canada : meme chemin token que les Etats-Unis")
+    void canadaAlsoGoesThroughAccountToken() throws Exception {
+        CapturedMerchantCreation captured = captureMerchantCreation(buildUser(false, "CA"));
+
+        assertThat(captured.account().getIdentity().getCountry()).isEqualTo("CA");
+        assertThat(captured.account().getConfiguration().getMerchant()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("US : le nom verifie prefille l'individual du token")
+    void usTokenCarriesVerifiedName() throws Exception {
+        UserEntity user = buildUser(false, "US");
+        when(verifiedIdentity.forUser(any())).thenReturn(java.util.Optional.of(
+                new VerifiedIdentitySnapshot("Awa", "Diallo")));
+
+        CapturedMerchantCreation captured = captureMerchantCreation(user);
+
+        assertThat(captured.token().getIdentity().getIndividual().getGivenName())
+                .isEqualTo("Awa");
+        assertThat(captured.token().getIdentity().getIndividual().getSurname())
+                .isEqualTo("Diallo");
+    }
+
+    @Test
+    @DisplayName("France : le chemin recipient-only n'utilise jamais de token")
+    void frenchAccountNeverUsesAccountToken() throws Exception {
+        AccountCreateParams params = captureParams(buildUser(false, "FR"));
+
+        assertThat(params.getAccountToken()).isNull();
+        assertThat(params.getConfiguration().getMerchant()).isNull();
+        org.mockito.Mockito.verify(stripeGateway, never()).createAccountToken(any());
+    }
 }

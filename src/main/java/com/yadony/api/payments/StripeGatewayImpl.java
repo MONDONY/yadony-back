@@ -35,6 +35,12 @@ public class StripeGatewayImpl implements StripeGateway {
     }
 
     @Override
+    public com.stripe.model.v2.core.AccountToken createAccountToken(
+            com.stripe.param.v2.core.AccountTokenCreateParams params) throws StripeException {
+        return stripeClient.v2().core().accountTokens().create(params);
+    }
+
+    @Override
     public Account retrieveAccount(String accountId) throws StripeException {
         return Account.retrieve(accountId);
     }

@@ -38,10 +38,21 @@ class StripeConnectCountriesTest {
     }
 
     @Test
-    @DisplayName("Les Etats-Unis et le Canada ne sont pas couverts : Stripe y exige card_payments")
-    void northAmericaIsNotSupported() {
-        assertThat(StripeConnectCountries.isSupported("US")).isFalse();
-        assertThat(StripeConnectCountries.isSupported("CA")).isFalse();
+    @DisplayName("Les Etats-Unis et le Canada sont couverts, en configuration merchant + recipient")
+    void northAmericaIsSupportedWithMerchantConfiguration() {
+        assertThat(StripeConnectCountries.isSupported("US")).isTrue();
+        assertThat(StripeConnectCountries.isSupported("CA")).isTrue();
+        assertThat(StripeConnectCountries.requiresMerchantConfiguration("US")).isTrue();
+        assertThat(StripeConnectCountries.requiresMerchantConfiguration("ca")).isTrue();
+    }
+
+    @Test
+    @DisplayName("Les pays recipient-only ne demandent jamais la configuration marchande")
+    void recipientOnlyCountriesDoNotRequireMerchantConfiguration() {
+        assertThat(StripeConnectCountries.requiresMerchantConfiguration("FR")).isFalse();
+        assertThat(StripeConnectCountries.requiresMerchantConfiguration("GB")).isFalse();
+        assertThat(StripeConnectCountries.requiresMerchantConfiguration(null)).isFalse();
+        assertThat(StripeConnectCountries.requiresMerchantConfiguration("SN")).isFalse();
     }
 
     @Test

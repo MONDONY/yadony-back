@@ -27,6 +27,15 @@ public interface StripeGateway {
             com.stripe.param.v2.core.AccountCreateParams params) throws StripeException;
 
     /**
+     * Crée un account token v2 ({@code POST /v2/core/account_tokens}). Requis pour créer un
+     * compte portant la configuration {@code merchant} depuis une plateforme française
+     * ({@code account_token_required}) : l'identité et l'email de contact passent par le token,
+     * le reste (pays, configurations, defaults, metadata) reste sur la création du compte.
+     */
+    com.stripe.model.v2.core.AccountToken createAccountToken(
+            com.stripe.param.v2.core.AccountTokenCreateParams params) throws StripeException;
+
+    /**
      * Lecture v1, volontairement conservée : elle rend la même structure sur un compte
      * créé en v2 que sur un compte v1, ce dont dépendent le rafraîchissement du statut
      * et les webhooks {@code account.updated} / {@code capability.updated}.
