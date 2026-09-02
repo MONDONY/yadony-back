@@ -32,9 +32,16 @@ public class AdminAlertEntity {
     private String type;
 
     /**
-     * Free-form JSON stored as TEXT (mapped to the JSONB column).
-     * Callers build the JSON string themselves (e.g. with String.format or Jackson).
+     * Free-form JSON stored in the JSONB column. Callers build the JSON string
+     * themselves (e.g. with String.format or Jackson).
+     *
+     * <p>{@code @JdbcTypeCode(SqlTypes.JSON)} est OBLIGATOIRE : sans lui, Hibernate 6
+     * envoie un {@code varchar} et Postgres refuse l'INSERT ("column payload is of
+     * type jsonb but expression is of type character varying") — toutes les alertes
+     * DB (escrow J+48, échéances de retour) échouaient en silence dans les
+     * schedulers (staging/prod, constaté le 2026-09-02).
      */
+    @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.JSON)
     @Column(name = "payload", columnDefinition = "jsonb")
     private String payload;
 
