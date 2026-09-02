@@ -129,7 +129,7 @@ class AdminExchangeRateControllerTest {
     void put_withAdmin_writesUpdatedByAndAuditLog() throws Exception {
         ExchangeRateEntity existing = usdRate();
         when(exchangeRateRepository.findByCurrency("USD")).thenReturn(Optional.of(existing));
-        when(exchangeRateRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(exchangeRateRepository.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
 
         mockMvc.perform(put("/admin/exchange-rates/USD")
                         .with(authentication(adminAuth()))
@@ -156,7 +156,7 @@ class AdminExchangeRateControllerTest {
 
         ExchangeRateEntity existing = usdRate();
         when(exchangeRateRepository.findByCurrency("USD")).thenReturn(Optional.of(existing));
-        when(exchangeRateRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(exchangeRateRepository.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
 
         mockMvc.perform(put("/admin/exchange-rates/USD")
                         .with(authentication(adminAuth()))

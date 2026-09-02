@@ -43,7 +43,7 @@ class ExchangeRateUpdateServiceTest {
     void apply_savesEvictsPublishesAndAudits() {
         ExchangeRateEntity usd = new ExchangeRateEntity("USD", new BigDecimal("1.08"));
         when(exchangeRateRepository.findByCurrency("USD")).thenReturn(Optional.of(usd));
-        when(exchangeRateRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(exchangeRateRepository.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
         UUID adminId = UUID.randomUUID();
 
         ExchangeRateEntity saved = service().apply(

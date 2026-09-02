@@ -203,7 +203,11 @@ public interface AnnouncementRepository extends JpaRepository<AnnouncementEntity
      * le pivot y est inerte. {@code updatable = false} nulle part : le pivot est une
      * dérivée, pas une donnée métier figée.
      */
-    @org.springframework.data.jpa.repository.Modifying(clearAutomatically = true)
+    // flushAutomatically OBLIGATOIRE avec clearAutomatically : ce bulk s'execute en
+    // plein milieu de ExchangeRateUpdateService.apply(), DANS la meme transaction —
+    // sans flush prealable, le clear aneantissait la modification EN ATTENTE du taux
+    // (jamais flushee), commit vert, audit ecrit, table intacte (prod, 2026-09-02).
+    @org.springframework.data.jpa.repository.Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
         UPDATE AnnouncementEntity a
         SET a.pricePerKgEur = ROUND(a.pricePerKg / :unitsPerEur, 4)
