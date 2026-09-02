@@ -7,6 +7,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -49,6 +50,41 @@ class WalletServiceTest {
         assertThat(wallet.getCurrency()).isEqualTo("CAD");
         assertThat(wallet.getBalance()).isEqualByComparingTo(BigDecimal.ZERO);
         verify(walletAccountRepository).save(wallet);
+    }
+
+    @Test
+    void getOrCreate_reReadsWalletWhenConcurrentInsertWinsTheRace() {
+        // Course : le find initial rate, l'insert perd sur la contrainte
+        // UNIQUE(user_id, currency) — getOrCreate doit relire et renvoyer le
+        // wallet créé par l'autre requête au lieu de propager un 500.
+        UUID userId = UUID.randomUUID();
+        WalletAccountEntity winner = wallet(userId, "XOF", BigDecimal.ZERO);
+        when(walletAccountRepository.findByUserIdAndCurrency(userId, "XOF"))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.of(winner));
+        when(walletAccountRepository.save(any()))
+                .thenThrow(new DataIntegrityViolationException(
+                        "duplicate key value violates unique constraint \"wallet_accounts_user_id_currency_unique\""));
+
+        WalletAccountEntity result = walletService.getOrCreate(userId, "XOF");
+
+        assertThat(result).isSameAs(winner);
+        verify(walletAccountRepository, times(2)).findByUserIdAndCurrency(userId, "XOF");
+    }
+
+    @Test
+    void getOrCreate_propagatesViolationWhenReReadStillFindsNothing() {
+        // Violation d'intégrité sans gagnant relisible (autre contrainte,
+        // wallet soft-deleted…) : on ne masque pas l'erreur d'origine.
+        UUID userId = UUID.randomUUID();
+        when(walletAccountRepository.findByUserIdAndCurrency(userId, "XOF"))
+                .thenReturn(Optional.empty());
+        DataIntegrityViolationException boom = new DataIntegrityViolationException("duplicate key");
+        when(walletAccountRepository.save(any())).thenThrow(boom);
+
+        Throwable thrown = catchThrowable(() -> walletService.getOrCreate(userId, "XOF"));
+
+        assertThat(thrown).isSameAs(boom);
     }
 
     @Test

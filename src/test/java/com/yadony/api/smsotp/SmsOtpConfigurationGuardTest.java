@@ -42,6 +42,48 @@ class SmsOtpConfigurationGuardTest {
                 .doesNotThrowAnyException();
     }
 
+    /**
+     * SMS_ENABLED=false en prod est un choix produit (canal fermé, CTA masqué
+     * dans l'app via /config/sms-enabled) : le boot ne doit plus crier ERROR
+     * à chaque démarrage — c'était un faux positif d'alerte permanent.
+     */
+    @Test
+    void deliberatelyDisabledChannelInProd_logsWarnNotError() {
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(SmsOtpConfigurationGuard.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            guard(false, "AC123", "", "prod").reportConfigurationAtStartup();
+            assertThat(appender.list)
+                    .noneMatch(e -> e.getLevel() == ch.qos.logback.classic.Level.ERROR);
+            assertThat(appender.list)
+                    .anyMatch(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN);
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    /** Activé mais sans aucun fournisseur : vraie erreur de config, ERROR attendu. */
+    @Test
+    void enabledButUnconfiguredInProd_logsError() {
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(SmsOtpConfigurationGuard.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            guard(true, "", "", "prod").reportConfigurationAtStartup();
+            assertThat(appender.list)
+                    .anyMatch(e -> e.getLevel() == ch.qos.logback.classic.Level.ERROR);
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
     @Test
     void healthStaysUp_evenWhenNotConfigured() {
         assertThat(guard(false, "", "", "prod").health().getStatus()).isEqualTo(Status.UP);
