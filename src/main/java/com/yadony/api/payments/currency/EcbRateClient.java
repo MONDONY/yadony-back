@@ -40,7 +40,22 @@ public class EcbRateClient {
     public EcbRateClient(
             @Value("${yadony.exchange-rates.ecb-url:https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml}")
             String url) {
-        this(RestClient.create(), url);
+        this(withTimeouts(), url);
+    }
+
+    /**
+     * Timeouts durs obligatoires : {@code RestClient.create()} hérite des défauts
+     * JDK (connexion et lecture INFINIES). Le 2026-09-02, un connect pendu vers la
+     * BCE a gelé la synchronisation sans exception, donc sans alerte — et un cron
+     * pendu monopolise l'unique thread du pool de scheduling. Échouer vite (l'échec
+     * s'alerte), ne jamais pendre.
+     */
+    private static RestClient withTimeouts() {
+        org.springframework.http.client.SimpleClientHttpRequestFactory factory =
+                new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(5_000);
+        factory.setReadTimeout(10_000);
+        return RestClient.builder().requestFactory(factory).build();
     }
 
     EcbRateClient(RestClient restClient, String url) {

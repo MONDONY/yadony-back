@@ -1,4 +1,10 @@
 spring:
+  task:
+    scheduling:
+      # Un seul thread par défaut : n'importe quel cron pendu (fetch réseau sans
+      # timeout, 2026-09-02) gèlerait TOUS les autres jobs planifiés du back.
+      pool:
+        size: 4
   application:
     name: yadony-back
   profiles:
