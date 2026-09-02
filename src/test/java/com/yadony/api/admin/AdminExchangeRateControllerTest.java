@@ -5,6 +5,7 @@ import com.yadony.api.admin.account.AdminRole;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.payments.currency.ExchangeRateEntity;
 import com.yadony.api.payments.currency.ExchangeRateRepository;
+import com.yadony.api.payments.currency.ExchangeRateSyncService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -56,6 +57,7 @@ class AdminExchangeRateControllerTest {
 
     @MockitoBean ExchangeRateRepository exchangeRateRepository;
     @MockitoBean AuditService auditService;
+    @MockitoBean ExchangeRateSyncService exchangeRateSyncService;
 
     private static final UUID ADMIN_ID = UUID.randomUUID();
 
@@ -261,5 +263,33 @@ class AdminExchangeRateControllerTest {
                 .andExpect(status().isNotFound());
 
         verify(exchangeRateRepository, never()).save(any());
+    }
+
+    // ── POST /sync — déclenchement manuel de la synchronisation BCE ──────────
+
+    @Test
+    @DisplayName("POST /sync — sans ROLE_ADMIN -> 403")
+    void sync_withoutAdminRole_returns403() throws Exception {
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .post("/admin/exchange-rates/sync")
+                        .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors
+                                .authentication(nonAdminAuth())))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
+                        .status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("POST /sync — admin -> 200 avec le nombre de devises mises à jour")
+    void sync_withAdmin_returnsUpdatedCount() throws Exception {
+        org.mockito.Mockito.when(exchangeRateSyncService.syncAll()).thenReturn(3);
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .post("/admin/exchange-rates/sync")
+                        .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors
+                                .authentication(adminAuth())))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
+                        .status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
+                        .jsonPath("$.updated").value(3));
     }
 }

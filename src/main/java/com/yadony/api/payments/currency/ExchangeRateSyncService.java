@@ -63,8 +63,12 @@ public class ExchangeRateSyncService {
     public int syncAll() {
         Map<String, BigDecimal> ecbRates = ecbRateClient.fetchDailyRates();
         if (ecbRates.isEmpty()) {
-            // Flux injoignable ou illisible : les taux de la veille restent, état correct.
-            log.warn("Synchronisation BCE sans effet : aucun taux reçu");
+            // Flux injoignable ou illisible : les taux de la veille restent (état
+            // correct), mais un silence total a déjà masqué un échec en production —
+            // l'alerte est obligatoire, un log seul ne sort jamais du conteneur.
+            adminAlertService.raise("EXCHANGE_RATE_SYNC_FAILED",
+                    "Flux BCE vide ou injoignable, aucun taux synchronisé",
+                    Map.of("source", "eurofxref-daily.xml"));
             return 0;
         }
 

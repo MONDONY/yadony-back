@@ -10,6 +10,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -38,11 +39,14 @@ public class AdminExchangeRateController {
 
     private final ExchangeRateRepository exchangeRateRepository;
     private final com.yadony.api.payments.currency.ExchangeRateUpdateService updateService;
+    private final com.yadony.api.payments.currency.ExchangeRateSyncService syncService;
 
     public AdminExchangeRateController(ExchangeRateRepository exchangeRateRepository,
-                                       com.yadony.api.payments.currency.ExchangeRateUpdateService updateService) {
+                                       com.yadony.api.payments.currency.ExchangeRateUpdateService updateService,
+                                       com.yadony.api.payments.currency.ExchangeRateSyncService syncService) {
         this.exchangeRateRepository = exchangeRateRepository;
         this.updateService = updateService;
+        this.syncService = syncService;
     }
 
     @GetMapping
@@ -73,5 +77,18 @@ public class AdminExchangeRateController {
         throw new YadonyBusinessException(HttpStatus.FORBIDDEN,
                 "admin-principal-required", "Admin Principal Required",
                 "Authentification administrateur requise");
+    }
+
+    /**
+     * Déclenchement manuel de la synchronisation BCE (même chemin que le cron de
+     * 07 h 00 UTC) : diagnostic immédiat après déploiement ou incident, sans attendre
+     * le prochain passage planifié. Mêmes garde-fous que la synchronisation
+     * automatique (parité fixe, variation maximale, alertes).
+     *
+     * @return nombre de devises effectivement mises à jour.
+     */
+    @PostMapping("/sync")
+    public java.util.Map<String, Integer> syncNow() {
+        return java.util.Map.of("updated", syncService.syncAll());
     }
 }

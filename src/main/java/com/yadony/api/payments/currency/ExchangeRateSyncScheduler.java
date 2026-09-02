@@ -1,6 +1,10 @@
 package com.yadony.api.payments.currency;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -20,14 +24,33 @@ import org.springframework.stereotype.Component;
         havingValue = "true", matchIfMissing = true)
 public class ExchangeRateSyncScheduler {
 
+    private static final Logger log = LoggerFactory.getLogger(ExchangeRateSyncScheduler.class);
+
     private final ExchangeRateSyncService syncService;
 
     public ExchangeRateSyncScheduler(ExchangeRateSyncService syncService) {
         this.syncService = syncService;
     }
 
-    @Scheduled(cron = "${yadony.exchange-rates.sync-cron:0 0 7 * * *}")
+    // zone explicite : le cron doit viser 07 h 00 UTC quel que soit le fuseau de la
+    // JVM du conteneur — un TZ hérité décalerait silencieusement l'heure de passage.
+    @Scheduled(cron = "${yadony.exchange-rates.sync-cron:0 0 7 * * *}", zone = "UTC")
     public void syncDailyRates() {
         syncService.syncAll();
+    }
+
+    /**
+     * Synchronisation au démarrage : après un déploiement ou un long arrêt, les taux
+     * en base peuvent dater ; attendre le prochain passage du cron laisse jusqu'à
+     * 24 h d'écart. Best-effort : un échec s'alerte via le service, jamais en
+     * empêchant l'application de servir.
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void syncOnStartup() {
+        try {
+            syncService.syncAll();
+        } catch (RuntimeException e) {
+            log.warn("Synchronisation BCE au démarrage en échec : {}", e.getMessage());
+        }
     }
 }

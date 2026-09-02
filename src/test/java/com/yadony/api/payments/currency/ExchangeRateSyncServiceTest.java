@@ -102,12 +102,17 @@ class ExchangeRateSyncServiceTest {
     }
 
     @Test
-    @DisplayName("flux vide (BCE injoignable) → aucun effet, les taux de la veille restent")
-    void syncAll_emptyFeed_isNoOp() {
+    @DisplayName("flux vide (BCE injoignable) → taux conservés ET alerte admin levée")
+    void syncAll_emptyFeed_keepsRatesAndAlerts() {
         when(ecbRateClient.fetchDailyRates()).thenReturn(Map.of());
 
         assertThat(service("0.10").syncAll()).isZero();
         verify(updateService, never()).apply(any(), any(), any(), any());
+        // Le silence total a déjà masqué un échec en production (2026-09-02) : un
+        // flux vide DOIT alerter, un log seul ne sort jamais du conteneur.
+        verify(adminAlertService).raise(
+                org.mockito.ArgumentMatchers.eq("EXCHANGE_RATE_SYNC_FAILED"),
+                any(String.class), any());
     }
 
     @Test
