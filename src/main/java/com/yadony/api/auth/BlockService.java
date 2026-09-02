@@ -1,10 +1,12 @@
 package com.yadony.api.auth;
 
 import com.yadony.api.auth.dto.BlockedUserDto;
+import com.yadony.api.auth.events.UserBlockChangedEvent;
 import com.yadony.api.common.BlockVisibility;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -37,12 +39,14 @@ public class BlockService implements BlockVisibility {
     private final UserBlockJpaRepository blockRepo;
     private final UserRepository userRepository;
     private final BidRepository bidRepository;
+    private final ApplicationEventPublisher eventPublisher;
 
     public BlockService(UserBlockJpaRepository blockRepo, UserRepository userRepository,
-                        BidRepository bidRepository) {
+                        BidRepository bidRepository, ApplicationEventPublisher eventPublisher) {
         this.blockRepo = blockRepo;
         this.userRepository = userRepository;
         this.bidRepository = bidRepository;
+        this.eventPublisher = eventPublisher;
     }
 
     @Transactional
@@ -58,11 +62,15 @@ public class BlockService implements BlockVisibility {
         entity.setBlockerId(blockerId);
         entity.setBlockedId(blockedId);
         blockRepo.save(entity);
+        // Les caches de lecture clés par viewer (recherche de trajets) ignorent le
+        // blocage : sans cet événement ils serviraient le bloqué jusqu'à leur TTL.
+        eventPublisher.publishEvent(new UserBlockChangedEvent(blockerId, blockedId, true));
     }
 
     @Transactional
     public void unblock(UUID blockerId, UUID blockedId) {
         blockRepo.deleteByBlockerIdAndBlockedId(blockerId, blockedId);
+        eventPublisher.publishEvent(new UserBlockChangedEvent(blockerId, blockedId, false));
     }
 
     @Transactional(readOnly = true)

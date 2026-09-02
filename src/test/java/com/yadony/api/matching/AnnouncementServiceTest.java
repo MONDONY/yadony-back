@@ -2994,7 +2994,7 @@ class AnnouncementServiceTest {
             when(announcementRepository.findByTravelerIdAndStatus(eq(travelerId), eq(AnnouncementStatus.FULL), any()))
                     .thenReturn(new PageImpl<>(List.of()));
 
-            announcementService.getTravelerAnnouncements(travelerId);
+            announcementService.getTravelerAnnouncements(null, travelerId);
 
             verify(announcementRepository, never())
                     .findByTravelerIdAndStatus(eq(travelerId), eq(AnnouncementStatus.DRAFT), any());
@@ -3015,7 +3015,7 @@ class AnnouncementServiceTest {
             when(announcementRepository.findByTravelerIdAndStatus(eq(travelerId), eq(AnnouncementStatus.FULL), any()))
                     .thenReturn(new PageImpl<>(List.of()));
 
-            var result = announcementService.getTravelerAnnouncements(travelerId);
+            var result = announcementService.getTravelerAnnouncements(null, travelerId);
 
             assertThat(result).hasSize(1);
             assertThat(result).allSatisfy(r -> assertThat(r.status()).isNotEqualTo("DRAFT"));
@@ -3037,9 +3037,40 @@ class AnnouncementServiceTest {
             when(announcementRepository.findByTravelerIdAndStatus(eq(travelerId), eq(AnnouncementStatus.FULL), any()))
                     .thenReturn(new PageImpl<>(List.of()));
 
-            var result = announcementService.getTravelerAnnouncements(travelerId);
+            var result = announcementService.getTravelerAnnouncements(null, travelerId);
 
             assertThat(result.get(0).currency()).isEqualTo("CAD");
+        }
+
+        @Test
+        @DisplayName("un viewer bloqué (ou bloqueur) reçoit un 404, comme si le voyageur n'existait pas")
+        void getTravelerAnnouncements_hiddenTraveler_is404() {
+            UUID travelerId = UUID.randomUUID();
+            UUID viewerId = UUID.randomUUID();
+            UserEntity viewer = buildTraveler();
+            setId(viewer, viewerId);
+            when(userRepository.findByFirebaseUid("viewer-uid")).thenReturn(Optional.of(viewer));
+            doThrow(new YadonyBusinessException(HttpStatus.NOT_FOUND, "not-found", "Not Found", "Ressource introuvable"))
+                    .when(blockVisibility).assertVisible(viewerId, travelerId);
+
+            assertThatThrownBy(() -> announcementService.getTravelerAnnouncements("viewer-uid", travelerId))
+                    .isInstanceOf(YadonyBusinessException.class);
+
+            verify(announcementRepository, never()).findByTravelerIdAndStatus(any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("viewer anonyme : aucune garde, la liste est servie")
+        void getTravelerAnnouncements_anonymousViewer_skipsGuard() {
+            UUID travelerId = UUID.randomUUID();
+            when(announcementRepository.findByTravelerIdAndStatus(eq(travelerId), eq(AnnouncementStatus.ACTIVE), any()))
+                    .thenReturn(new PageImpl<>(List.of()));
+            when(announcementRepository.findByTravelerIdAndStatus(eq(travelerId), eq(AnnouncementStatus.FULL), any()))
+                    .thenReturn(new PageImpl<>(List.of()));
+
+            announcementService.getTravelerAnnouncements(null, travelerId);
+
+            verify(blockVisibility).assertVisible(null, travelerId);
         }
     }
 
@@ -3429,7 +3460,7 @@ class AnnouncementServiceTest {
             when(announcementRepository.findByTravelerIdAndStatus(eq(travelerId), eq(AnnouncementStatus.FULL), any()))
                     .thenReturn(new PageImpl<>(List.of()));
 
-            var result = announcementService.getTravelerAnnouncements(travelerId);
+            var result = announcementService.getTravelerAnnouncements(null, travelerId);
 
             assertThat(result.get(0).negotiable()).isTrue();
         }

@@ -38,6 +38,7 @@ class AlertServiceCreateTest {
     @Mock UserRepository userRepository;
     @Mock PackageRequestRepository packageRequestRepository;
     @Mock AnnouncementRepository announcementRepository;
+    @Mock com.yadony.api.common.BlockVisibility blockVisibility;
     @InjectMocks AlertService service;
 
     final String uid = "firebase-uid";

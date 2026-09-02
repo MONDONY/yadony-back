@@ -6,6 +6,7 @@ import com.yadony.api.alerts.dto.CorridorAlertResponse;
 import com.yadony.api.auth.Role;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
+import com.yadony.api.common.BlockVisibility;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.YadonyNotFoundException;
 import com.yadony.api.common.MatchingTextUtil;
@@ -29,6 +30,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -45,15 +47,18 @@ public class AlertService {
     private final UserRepository userRepository;
     private final PackageRequestRepository packageRequestRepository;
     private final AnnouncementRepository announcementRepository;
+    private final BlockVisibility blockVisibility;
 
     public AlertService(CorridorAlertRepository alertRepository,
                         UserRepository userRepository,
                         PackageRequestRepository packageRequestRepository,
-                        AnnouncementRepository announcementRepository) {
+                        AnnouncementRepository announcementRepository,
+                        BlockVisibility blockVisibility) {
         this.alertRepository = alertRepository;
         this.userRepository = userRepository;
         this.packageRequestRepository = packageRequestRepository;
         this.announcementRepository = announcementRepository;
+        this.blockVisibility = blockVisibility;
     }
 
     private UUID ownerId(String firebaseUid) {
@@ -288,10 +293,16 @@ public class AlertService {
                 .toList();
     }
 
+    /**
+     * Les correspondances sont filtrées par les blocages du propriétaire de l'alerte :
+     * c'est la même liste que la recherche, elle doit masquer les mêmes comptes.
+     */
     private List<PackageRequestEntity> findMatchingPackages(CorridorAlertEntity alert) {
+        Set<UUID> hidden = blockVisibility.hiddenUserIdsFor(alert.getOwnerId());
         return packageRequestRepository
                 .findOpenByCorridor(alert.getDepartureCity(), alert.getArrivalCity())
                 .stream()
+                .filter(p -> !hidden.contains(p.getSenderId()))
                 .filter(p -> fitsAlertDate(p.getDesiredDate(), alert))
                 .filter(p -> fitsAlertWeight(p, alert))
                 .filter(p -> fitsAlertCategory(p, alert))
@@ -308,7 +319,9 @@ public class AlertService {
                         alert.getRadiusKm())
                 : announcementRepository.findActiveByCorridor(
                         alert.getDepartureCity(), alert.getArrivalCity());
+        Set<UUID> hidden = blockVisibility.hiddenUserIdsFor(alert.getOwnerId());
         return candidates.stream()
+                .filter(a -> !hidden.contains(a.getTravelerId()))
                 .filter(a -> fitsAlertDate(a.getDepartureDate(), alert))
                 .toList();
     }

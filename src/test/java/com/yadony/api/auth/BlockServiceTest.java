@@ -22,6 +22,7 @@ class BlockServiceTest {
     @Mock UserBlockJpaRepository blockRepo;
     @Mock UserRepository userRepository;
     @Mock BidRepository bidRepository;
+    @Mock org.springframework.context.ApplicationEventPublisher eventPublisher;
 
     BlockService service;
 
@@ -30,7 +31,7 @@ class BlockServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new BlockService(blockRepo, userRepository, bidRepository);
+        service = new BlockService(blockRepo, userRepository, bidRepository, eventPublisher);
     }
 
     @Test
@@ -51,6 +52,29 @@ class BlockServiceTest {
         when(blockRepo.existsByBlockerIdAndBlockedId(me, other)).thenReturn(true);
         service.block(me, other);
         verify(blockRepo, never()).save(any());
+        // Rien n'a changé : aucun cache à invalider.
+        verifyNoInteractions(eventPublisher);
+    }
+
+    /** Les caches de lecture (recherche de trajets) sont clés par viewer et ne savent
+     *  rien du blocage : l'événement est ce qui leur permet de se purger. */
+    @Test
+    void block_publieUnEvenementDeChangement() {
+        when(blockRepo.existsByBlockerIdAndBlockedId(me, other)).thenReturn(false);
+
+        service.block(me, other);
+
+        verify(eventPublisher).publishEvent(argThat((com.yadony.api.auth.events.UserBlockChangedEvent e) ->
+                e.blockerId().equals(me) && e.blockedId().equals(other) && e.blocked()));
+    }
+
+    @Test
+    void unblock_publieUnEvenementDeChangement() {
+        service.unblock(me, other);
+
+        verify(blockRepo).deleteByBlockerIdAndBlockedId(me, other);
+        verify(eventPublisher).publishEvent(argThat((com.yadony.api.auth.events.UserBlockChangedEvent e) ->
+                e.blockerId().equals(me) && e.blockedId().equals(other) && !e.blocked()));
     }
 
     /** Une transaction en cours n'empêche plus de bloquer : le harcèlement peut survenir
