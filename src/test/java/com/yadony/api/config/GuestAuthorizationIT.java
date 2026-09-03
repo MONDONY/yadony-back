@@ -263,6 +263,18 @@ class GuestAuthorizationIT {
     }
 
     /**
+     * {@code ToolsCompletionController} ne porte aucun {@code @PreAuthorize} :
+     * seule la regle finale {@code anyRequest().access(authenticatedNonGuest())}
+     * peut produire ce 403, l'endpoint n'etant present dans aucune liste blanche.
+     */
+    @Test
+    @DisplayName("un invite ne peut PAS lire la completion des outils")
+    void guestCannotReadToolsCompletion() throws Exception {
+        mockMvc.perform(get("/users/me/tools-completion").with(authentication(guest())))
+                .andExpect(status().isForbidden());
+    }
+
+    /**
      * Verrou d'une DECISION PRODUIT, pas d'une limite technique : les alertes corridor
      * sortent du perimetre invite.
      *

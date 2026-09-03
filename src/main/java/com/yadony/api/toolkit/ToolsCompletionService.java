@@ -4,6 +4,7 @@ import com.yadony.api.toolkit.ToolsCompletionResponse.ToolStatus;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class ToolsCompletionService {
@@ -14,6 +15,8 @@ public class ToolsCompletionService {
         this.repository = repository;
     }
 
+    // open-in-view: false — sans cette annotation, chaque COUNT ouvrait sa propre transaction et empruntait sa propre connexion.
+    @Transactional(readOnly = true)
     public ToolsCompletionResponse compute(UUID userId) {
         List<ToolStatus> tools = List.of(
                 ToolStatus.of(ToolKey.ADDRESSES, repository.countAddresses(userId)),
