@@ -3,6 +3,7 @@ package com.yadony.api.notifications;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.PageResponse;
 import com.yadony.api.notifications.dto.NotificationDTO;
+import com.yadony.api.notifications.dto.NotificationDetailDTO;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -44,6 +45,16 @@ public class NotificationController {
     @GetMapping("/unread-count")
     public ResponseEntity<Map<String, Long>> unreadCount() {
         return ResponseEntity.ok(Map.of("count", notificationService.countUnread(requireUid())));
+    }
+
+    /**
+     * Une notification seule, avec {@code fullBody}. C'est l'écran de détail
+     * générique qui l'appelle, pour une ligne sans deeplink (une annonce
+     * plateforme). La liste, elle, ne sert jamais le texte complet.
+     */
+    @GetMapping("/{id}")
+    public ResponseEntity<NotificationDetailDTO> detail(@PathVariable UUID id) {
+        return ResponseEntity.ok(notificationService.detail(requireUid(), id));
     }
 
     @PatchMapping("/{id}/read")

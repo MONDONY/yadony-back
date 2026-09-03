@@ -52,7 +52,6 @@ import java.util.UUID;
 public class NotificationDispatcher {
 
     private static final Logger log = LoggerFactory.getLogger(NotificationDispatcher.class);
-    private static final int MESSAGE_PREVIEW_MAX_LENGTH = 60;
 
     private final FcmService fcmService;
     private final SmsService smsService;
@@ -495,19 +494,21 @@ public class NotificationDispatcher {
         String senderName = senderUser.publicDisplayName();
         UUID recipientId = senderUser.getId().equals(senderId) ? travelerId : senderId;
 
-        String truncated = preview.length() > MESSAGE_PREVIEW_MAX_LENGTH
-                ? preview.substring(0, MESSAGE_PREVIEW_MAX_LENGTH - 3) + "..."
-                : preview;
-        boolean notified = notifyUnlessBlocked(recipientId, senderUser.getId(),
-                "Message de " + senderName, truncated,
-                Map.of("type", "NEW_MESSAGE", "conversationId", conversationId));
-
         // Fil masqué : ni push, ni UID renvoyé. La Cloud Function se sert de cet UID pour
         // créditer le compteur de non-lus ; le renvoyer ferait apparaître un badge pour un
         // message que le destinataire n'est pas censé voir.
-        if (!notified) {
+        if (blockVisibility.isHidden(recipientId, senderUser.getId())) {
+            log.debug("Notification supprimée : émetteur {} masqué pour {}", senderUser.getId(), recipientId);
             return null;
         }
+
+        // Push seul, rien en base : la messagerie porte déjà son badge et sa liste,
+        // une ligne de plus dans le feed ferait deux endroits à vider pour un même
+        // message (refonte du sheet, 2026-09). L'aperçu est coupé au mot, jamais
+        // au milieu, à la longueur que deux lignes tiennent.
+        String truncated = NotificationCaps.truncateAtWord(preview, NotificationCaps.BODY_MAX);
+        fcmService.sendToUser(recipientId, "Message de " + NotificationCaps.shortDisplayName(senderName), truncated,
+                Map.of("type", "NEW_MESSAGE", "conversationId", conversationId));
 
         return userRepository.findById(recipientId)
                 .map(com.yadony.api.auth.UserEntity::getFirebaseUid)

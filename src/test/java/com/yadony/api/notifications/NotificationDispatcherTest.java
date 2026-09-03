@@ -819,6 +819,33 @@ class NotificationDispatcherTest {
 
         assertThat(recipientUid).isEqualTo("uid-traveler");
         verify(fcmService).sendToUser(eq(travelerId), contains("Mariama"), eq("Bonjour"), anyMap());
+        // Push seul : la messagerie porte déjà son badge, le feed ne garde pas de ligne.
+        verifyNoInteractions(notificationService);
+    }
+
+    @Test
+    void sendMessageNotification_shortensSenderNameAndCutsPreviewAtWord() {
+        UserEntity messageSender = new UserEntity();
+        setUserId(messageSender, senderId);
+        messageSender.setFirstName("Mohammed");
+        messageSender.setLastName("Abdoulaye Diallo");
+        UserEntity recipient = new UserEntity();
+        recipient.setFirebaseUid("uid-traveler");
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(messageSender));
+        when(userRepository.findById(travelerId)).thenReturn(Optional.of(recipient));
+        when(blockVisibility.isHidden(travelerId, senderId)).thenReturn(false);
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+        String longPreview = "Bonjour, je serai à Roissy vendredi vers 18h, est-ce que vous pouvez me confirmer le point de remise";
+
+        dispatcher.sendMessageNotification(senderId, travelerId, "uid-sender", longPreview, "conv_1");
+
+        var title = ArgumentCaptor.forClass(String.class);
+        var body = ArgumentCaptor.forClass(String.class);
+        verify(fcmService).sendToUser(eq(travelerId), title.capture(), body.capture(), anyMap());
+        assertThat(title.getValue()).startsWith("Message de ");
+        assertThat(title.getValue().length()).isLessThanOrEqualTo(NotificationCaps.TITLE_MAX);
+        assertThat(body.getValue().length()).isLessThanOrEqualTo(NotificationCaps.BODY_MAX);
+        assertThat(body.getValue()).endsWith("…").doesNotContain("...");
     }
 
     /** L'id de BaseEntity n'a pas de setter : il se pose par réflexion, comme setEntityId. */
