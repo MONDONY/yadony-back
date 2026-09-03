@@ -36,10 +36,8 @@ public class StripeOnboardingReminderScheduler {
     private static final Logger log = LoggerFactory.getLogger(StripeOnboardingReminderScheduler.class);
 
     private static final String NOTIFICATION_TYPE = "STRIPE_ONBOARDING_INCOMPLETE";
-    private static final String TITLE = "Terminez la configuration de vos paiements";
-    private static final String BODY =
-            "Il manque quelques informations pour que vous puissiez être payé par carte. "
-            + "Deux minutes suffisent.";
+    private static final String TITLE = com.yadony.api.notifications.NotificationTexts.stripeOnboardingIncomplete().title();
+    private static final String BODY = com.yadony.api.notifications.NotificationTexts.stripeOnboardingIncomplete().body();
 
     private final UserRepository userRepository;
     private final NotificationDispatcher notificationDispatcher;

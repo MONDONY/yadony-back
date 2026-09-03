@@ -183,7 +183,7 @@ class CorridorAlertDigestSchedulerTest {
 
         ArgumentCaptor<String> bodyCaptor = ArgumentCaptor.forClass(String.class);
         verify(notificationDispatcher).notifyUser(eq(ownerId), anyString(), bodyCaptor.capture(), anyMap());
-        assertThat(bodyCaptor.getValue()).startsWith("1 colis");
+        assertThat(bodyCaptor.getValue()).contains(": 1 colis correspond.");
     }
 
     /** Même règle côté trajets : un voyageur masqué ne pèse pas dans le digest. */
@@ -201,7 +201,7 @@ class CorridorAlertDigestSchedulerTest {
 
         ArgumentCaptor<String> bodyCaptor = ArgumentCaptor.forClass(String.class);
         verify(notificationDispatcher).notifyUser(eq(ownerId), anyString(), bodyCaptor.capture(), anyMap());
-        assertThat(bodyCaptor.getValue()).startsWith("1 trajets");
+        assertThat(bodyCaptor.getValue()).contains(": 1 trajet correspond.");
     }
 
     /**

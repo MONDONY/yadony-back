@@ -48,7 +48,7 @@ class PackageMatchTravelerNotifyListenerTest {
         listener.onPackageRequestCreated(event());
 
         verify(notificationDispatcher).notifyUnlessBlocked(
-                eq(travelerId), eq(senderId), contains("Nouveau colis"), any(),
+                eq(travelerId), eq(senderId), contains("colis pour votre trajet"), any(),
                 argThat(d -> "PACKAGE_MATCH".equals(d.get("type"))
                         && requestId.toString().equals(d.get("requestId"))));
     }

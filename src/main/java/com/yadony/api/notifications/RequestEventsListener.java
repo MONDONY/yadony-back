@@ -36,11 +36,12 @@ public class RequestEventsListener {
     public void onNegotiationStarted(NegotiationStartedEvent e) {
         // Nouvelle offre déclenchée par le voyageur : supprimée si les deux comptes sont
         // masqués l'un pour l'autre.
+        var text = NotificationTexts.negotiationStarted(e.proposedPriceEur());
         dispatcher.notifyUnlessBlocked(
             e.senderId(),
             e.travelerId(),
-            "Nouvelle proposition reçue",
-            String.format("Un voyageur propose %.2f€ pour votre demande", e.proposedPriceEur()),
+            text.title(),
+            text.body(),
             Map.of(
                 "type", "negotiation_started",
                 "threadId", e.threadId().toString(),
@@ -53,11 +54,12 @@ public class RequestEventsListener {
     @Async
     public void onNegotiationCounterPosted(NegotiationCounterPostedEvent e) {
         // Contre-proposition postée par l'autre partie : même règle que l'offre initiale.
+        var text = NotificationTexts.negotiationCounter(e.newPriceEur(), e.roundsCount());
         dispatcher.notifyUnlessBlocked(
             e.toUserId(),
             e.fromUserId(),
-            "Nouvelle contre-proposition",
-            String.format("Nouvelle offre: %.2f€ (round %d)", e.newPriceEur(), e.roundsCount()),
+            text.title(),
+            text.body(),
             Map.of(
                 "type", "negotiation_counter",
                 "threadId", e.threadId().toString(),
@@ -73,11 +75,11 @@ public class RequestEventsListener {
     @EventListener
     @Async
     public void onNegotiationAwaitingTrip(NegotiationAwaitingTripEvent e) {
+        var text = NotificationTexts.negotiationAwaitingTrip(e.agreedPriceEur());
         dispatcher.notifyUser(
             e.travelerId(),
-            "Votre offre a été acceptée 🎉",
-            String.format("L'expéditeur a accepté à %.0f€. Choisissez maintenant le trajet à lier.",
-                e.agreedPriceEur()),
+            text.title(),
+            text.body(),
             Map.of(
                 "type", "negotiation_awaiting_trip",
                 "threadId", e.threadId().toString(),
@@ -93,11 +95,11 @@ public class RequestEventsListener {
     @EventListener
     @Async
     public void onNegotiationAwaitingPayment(NegotiationAwaitingPaymentEvent e) {
+        var text = NotificationTexts.negotiationAwaitingPayment(e.agreedPriceEur());
         dispatcher.notifyUser(
             e.senderId(),
-            "Trajet validé — paiement requis 💳",
-            String.format("Le voyageur a confirmé son trajet. Payez %.0f€ pour finaliser la commande.",
-                e.agreedPriceEur()),
+            text.title(),
+            text.body(),
             Map.of(
                 "type", "negotiation_awaiting_payment",
                 "threadId", e.threadId().toString(),
@@ -113,10 +115,11 @@ public class RequestEventsListener {
     @EventListener
     @Async
     public void onNegotiationTripChanged(com.yadony.api.requests.event.NegotiationTripChangedEvent e) {
+        var text = NotificationTexts.negotiationTripChanged();
         dispatcher.notifyUser(
             e.senderId(),
-            "Trajet mis à jour",
-            "Le voyageur a changé le trajet associé à votre demande.",
+            text.title(),
+            text.body(),
             Map.of(
                 "type", "negotiation_trip_changed",
                 "threadId", e.threadId().toString(),
@@ -133,12 +136,11 @@ public class RequestEventsListener {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
     public void onNegotiationCommissionPending(NegotiationCommissionPendingEvent e) {
+        var text = NotificationTexts.commissionPending(e.commissionAmount(), e.currency());
         dispatcher.notifyUser(
             e.travelerId(),
-            "Confirmez votre prise en charge",
-            String.format(
-                "L'expéditeur a retenu votre offre. Réglez la commission de %.2f %s pour confirmer, sans quoi la demande repartira.",
-                e.commissionAmount(), e.currency()),
+            text.title(),
+            text.body(),
             Map.of(
                 "type", "negotiation_commission_pending",
                 "threadId", e.threadId().toString(),
@@ -158,10 +160,11 @@ public class RequestEventsListener {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
     public void onNegotiationCommissionDeclined(NegotiationCommissionDeclinedEvent e) {
+        var text = NotificationTexts.commissionDeclined();
         dispatcher.notifyUser(
             e.senderId(),
-            "Le voyageur a renoncé",
-            "Le voyageur a renoncé à l'accord en espèces. Votre demande reste disponible pour d'autres voyageurs.",
+            text.title(),
+            text.body(),
             Map.of(
                 "type", "negotiation_commission_declined",
                 "threadId", e.threadId().toString(),
@@ -185,10 +188,11 @@ public class RequestEventsListener {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
     public void onNegotiationCommissionExpired(NegotiationCommissionExpiredEvent e) {
+        var forTraveler = NotificationTexts.commissionExpiredForTraveler();
         dispatcher.notifyUser(
             e.travelerId(),
-            "Délai de commission dépassé",
-            "Vous n'avez pas réglé la commission à temps, cette demande n'est plus disponible pour vous.",
+            forTraveler.title(),
+            forTraveler.body(),
             Map.of(
                 "type", "negotiation_commission_expired",
                 "threadId", e.threadId().toString(),
@@ -201,10 +205,11 @@ public class RequestEventsListener {
         // violerait la contrainte NOT NULL de notifications.user_id. Même garde
         // que onNegotiationExpired.
         if (e.senderId() != null) {
+            var forSender = NotificationTexts.commissionExpiredForSender();
             dispatcher.notifyUser(
                 e.senderId(),
-                "Votre demande est de nouveau disponible",
-                "Le voyageur n'a pas réglé la commission à temps. Votre demande reste ouverte à d'autres voyageurs.",
+                forSender.title(),
+                forSender.body(),
                 Map.of(
                     "type", "negotiation_commission_expired",
                     "threadId", e.threadId().toString(),
@@ -222,11 +227,11 @@ public class RequestEventsListener {
     @EventListener
     @Async
     public void onPackageRequestAccepted(PackageRequestAcceptedEvent e) {
+        var forTraveler = NotificationTexts.requestAcceptedForTraveler(e.agreedPriceEur());
         dispatcher.notifyUser(
             e.travelerId(),
-            "Paiement reçu — c'est parti ✈️",
-            String.format("Le paiement de %.0f€ est en escrow. Vous pouvez préparer le retrait du colis.",
-                e.agreedPriceEur()),
+            forTraveler.title(),
+            forTraveler.body(),
             Map.of(
                 "type", "request_accepted",
                 "threadId", e.threadId().toString(),
@@ -237,11 +242,11 @@ public class RequestEventsListener {
         // qu'il vient de confirmer dans l'application — l'écran de succès le lui a déjà dit.
         // Le voyageur, lui, garde son push : c'est une nouvelle pour lui, et elle appelle une
         // action (préparer le retrait du colis).
+        var forSender = NotificationTexts.requestAcceptedForSender(e.agreedPriceEur());
         dispatcher.notifyUser(
             e.senderId(),
-            "Demande finalisée ✅",
-            String.format("Paiement de %.0f€ confirmé. Le voyageur va vous contacter.",
-                e.agreedPriceEur()),
+            forSender.title(),
+            forSender.body(),
             Map.of(
                 "type", "request_accepted",
                 "threadId", e.threadId().toString(),
@@ -254,10 +259,11 @@ public class RequestEventsListener {
     @EventListener
     @Async
     public void onPackageRequestExpired(PackageRequestExpiredEvent e) {
+        var text = NotificationTexts.requestExpired();
         dispatcher.notifyUser(
             e.senderId(),
-            "Votre demande a expiré",
-            "Aucun voyageur n'a accepté votre demande dans les délais. Vous pouvez en créer une nouvelle.",
+            text.title(),
+            text.body(),
             Map.of(
                 "type", "request_expired",
                 "packageRequestId", e.requestId().toString()
@@ -273,11 +279,12 @@ public class RequestEventsListener {
     public void onNegotiationNudgeSent(NegotiationNudgeSentEvent e) {
         // Relance envoyée à la main par l'autre partie : c'est exactement le type de
         // sollicitation qu'un blocage doit faire taire.
+        var text = NotificationTexts.negotiationReminder(e.fromUserName());
         dispatcher.notifyUnlessBlocked(
             e.toUserId(),
             e.fromUserId(),
-            "Relance",
-            e.fromUserName() + " attend de vos nouvelles sur votre négociation.",
+            text.title(),
+            text.body(),
             Map.of(
                 "type", "negotiation",
                 "threadId", e.threadId().toString()
@@ -295,10 +302,11 @@ public class RequestEventsListener {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
     public void onNegotiationCancelled(NegotiationCancelledEvent e) {
+        var text = NotificationTexts.negotiationEnded(e.byName());
         dispatcher.notifyUser(
             e.toUserId(),
-            "Négociation terminée",
-            e.byName() + " a mis fin à la négociation.",
+            text.title(),
+            text.body(),
             Map.of(
                 "type", "negotiation",
                 "threadId", e.threadId().toString()
@@ -316,10 +324,11 @@ public class RequestEventsListener {
     @Async
     public void onNegotiationExpired(NegotiationExpiredEvent e) {
         // Notify traveler
+        var text = NotificationTexts.negotiationExpired();
         dispatcher.notifyUser(
             e.travelerId(),
-            "Négociation expirée",
-            "Cette négociation a expiré faute d'activité.",
+            text.title(),
+            text.body(),
             Map.of(
                 "type", "negotiation_expired",
                 "threadId", e.threadId().toString(),
@@ -332,8 +341,8 @@ public class RequestEventsListener {
         if (e.senderId() != null) {
             dispatcher.notifyUser(
                 e.senderId(),
-                "Négociation expirée",
-                "Cette négociation a expiré faute d'activité.",
+                text.title(),
+                text.body(),
                 Map.of(
                     "type", "negotiation_expired",
                     "threadId", e.threadId().toString(),

@@ -168,12 +168,11 @@ public class AdminReportsController {
                              Authentication authentication, UUID adminId) {
         switch (action) {
             case DISMISS -> { }
-            case WARN -> notificationDispatcher.notifyUser(report.getTargetId(),
-                    "Avertissement Yadony",
-                    note != null && !note.isBlank()
-                            ? note
-                            : "Un comportement signalé sur votre compte a été examiné par notre équipe.",
-                    Map.of("type", "ADMIN_WARNING", "reportId", reportId.toString()));
+            case WARN -> {
+                var text = com.yadony.api.notifications.NotificationTexts.adminWarning(note);
+                notificationDispatcher.notifyUser(report.getTargetId(), text.title(), text.body(),
+                        Map.of("type", "ADMIN_WARNING", "reportId", reportId.toString()));
+            }
             case SUSPEND_TARGET -> {
                 requireAuthority(authentication, AdminPermission.USER_SUSPEND.name());
                 userService.suspendUser(report.getTargetId(), note, adminId);

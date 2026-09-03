@@ -81,7 +81,7 @@ class CorridorAlertTripMatchListenerTest {
         listener.onAnnouncementCreated(event());
 
         verify(notificationDispatcher).notifyUnlessBlocked(
-                eq(alert.getOwnerId()), eq(travelerId), contains("Nouveau trajet"), any(),
+                eq(alert.getOwnerId()), eq(travelerId), contains("trajet pour votre alerte"), any(),
                 argThat(d -> tripId.toString().equals(d.get("announcementId"))));
         assertThat(alert.getLastNotifiedAt()).isNotNull();
         verify(alertRepository).save(alert);

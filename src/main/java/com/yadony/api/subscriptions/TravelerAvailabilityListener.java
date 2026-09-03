@@ -32,8 +32,10 @@ public class TravelerAvailabilityListener {
             subscriptionRepository.findAllByTravelerId(event.travelerId());
         if (subs.isEmpty()) return;
 
-        String title = event.travelerName() + " a publié un nouveau trajet";
-        String body  = event.departureCity() + " → " + event.arrivalCity();
+        var text = com.yadony.api.notifications.NotificationTexts.travelerNewAnnouncement(
+                event.travelerName(), event.departureCity(), event.arrivalCity());
+        String title = text.title();
+        String body = text.body();
         Map<String, String> data = Map.of(
             "type", "TRAVELER_NEW_ANNOUNCEMENT",
             "announcementId", event.announcementId().toString(),

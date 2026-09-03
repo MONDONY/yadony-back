@@ -128,11 +128,8 @@ public class KycAdminService {
                         "previousStatus", previousStatus.name(),
                         "previousSessionId", previousSessionId != null ? previousSessionId : ""));
 
-        notificationDispatcher.notifyUser(userId,
-                "Vérification d'identité réinitialisée",
-                "Votre vérification d'identité a été réinitialisée par un administrateur. "
-                        + "Vous pouvez la relancer depuis l'application.",
-                Map.of("type", "KYC_RESET"));
+        var text = com.yadony.api.notifications.NotificationTexts.kycReset();
+        notificationDispatcher.notifyUser(userId, text.title(), text.body(), Map.of("type", "KYC_RESET"));
 
         log.info("KYC reset for user {} by admin {}", userId, adminId);
 

@@ -43,9 +43,13 @@ public class NotificationService {
                                       Map<String, String> data, boolean isCritical) {
         var entity = new NotificationEntity(userId, type, title, body, data, isCritical);
         if (entity.getCategory() == NotificationCategory.ANNONCE) {
+            // Le titre d'une annonce est saisi librement en back-office : la liste le
+            // clampe sur une ligne, le détail l'affiche entier. Seul le corps est résumé.
             entity.summarize(NotificationCaps.truncateAtWord(body, NotificationCaps.BODY_MAX), body);
+            capsPolicy.check(type, null, entity.getBody());
+        } else {
+            capsPolicy.check(type, entity.getTitle(), entity.getBody());
         }
-        capsPolicy.check(type, entity.getTitle(), entity.getBody());
         return repository.save(entity);
     }
 
