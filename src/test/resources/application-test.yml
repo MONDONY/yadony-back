@@ -52,6 +52,11 @@ stripe:
     billing-secret: whsec_test_billing
 
 yadony:
+  notifications:
+    caps:
+      # Un libellé qui dépasse les caps (titre 28, corps 72) doit échouer au
+      # test, jamais en production : strict ici, warn en prod.
+      mode: strict
   exchange-rates:
     # Pas de flux externe ni d'horloge dans les tests d'intégration.
     sync-enabled: false

@@ -304,10 +304,11 @@ public class TrackingService {
                 bid.setConfirmationCode(code);
                 bid.setConfirmationCodeAttempts(0);
                 bid.setConfirmationCodeExpiry(computeCodeExpiry(announcement));
+                var text = com.yadony.api.notifications.NotificationTexts.confirmationCodeReady();
                 notificationDispatcher.notifyUser(
                         bid.getSenderId(),
-                        "Code de livraison disponible",
-                        "Le voyageur est prêt à remettre votre colis. Partagez le code.",
+                        text.title(),
+                        text.body(),
                         Map.of("type", "CONFIRMATION_CODE_READY", "bidId", bid.getId().toString()));
                 auditService.log("TRACKING_CONFIRMATION_CODE", bid.getId(), "CODE_GENERATED",
                         traveler.getId(), Map.of("bidId", bid.getId().toString()));

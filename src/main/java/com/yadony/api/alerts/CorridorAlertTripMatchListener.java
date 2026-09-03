@@ -79,11 +79,13 @@ public class CorridorAlertTripMatchListener {
                 // Confidentialité — l'alerte porte sur le contenu d'un tiers : rien ne part
                 // si le voyageur et le propriétaire de l'alerte sont masqués l'un pour
                 // l'autre. Le blocage reste silencieux, l'alerte n'est ni coupée ni marquée.
+                var text = com.yadony.api.notifications.NotificationTexts.corridorAlertTrip(
+                        trip.getDepartureCity(), trip.getArrivalCity());
                 boolean notified = notificationDispatcher.notifyUnlessBlocked(
                         alert.getOwnerId(),
                         trip.getTravelerId(),
-                        "Nouveau trajet sur " + corridor,
-                        "Un trajet correspond à votre alerte",
+                        text.title(),
+                        text.body(),
                         Map.of(
                                 "type", "CORRIDOR_ALERT",
                                 "alertId", alert.getId().toString(),

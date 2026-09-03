@@ -178,16 +178,16 @@ public class TravelerStatsController {
                     "Request Not Open", "Cette demande n'est plus disponible.");
         }
 
-        String travelerName = buildTravelerName(traveler);
-        String corridor = announcement.getDepartureCity() + " → " + announcement.getArrivalCity();
+        var text = com.yadony.api.notifications.NotificationTexts.travelerInvite(
+                buildTravelerName(traveler), announcement.getDepartureCity(), announcement.getArrivalCity());
         // Confidentialité — sollicitation directe d'un tiers, donc exactement ce qu'un
         // blocage doit faire taire. Rien n'est renvoyé au voyageur : le 200 est conservé
         // pour que le blocage reste indétectable côté émetteur.
         notificationDispatcher.notifyUnlessBlocked(
                 request.getSenderId(),
                 traveler.getId(),
-                "Invitation d'un voyageur",
-                travelerName + " vous invite à envoyer votre colis sur le trajet " + corridor + ".",
+                text.title(),
+                text.body(),
                 Map.of(
                         "type", "TRAVELER_INVITE",
                         "announcementId", body.announcementId().toString(),

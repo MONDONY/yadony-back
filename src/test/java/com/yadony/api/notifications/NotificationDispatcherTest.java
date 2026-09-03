@@ -145,11 +145,11 @@ class NotificationDispatcherTest {
         var dataCaptor = ArgumentCaptor.forClass(Map.class);
         verify(notificationService).persist(
                 eq(senderId), eq("HANDOVER_REMINDER_H2"),
-                eq("Plus que 2 heures pour déposer"), contains("Gare du Nord"),
+                eq("Plus que 2 h pour déposer"), contains("Gare du Nord"),
                 any(), eq(true));
         verify(fcmService).sendToUser(
-                eq(senderId), eq("Plus que 2 heures pour déposer"),
-                contains("confirmation du voyageur"), dataCaptor.capture());
+                eq(senderId), eq("Plus que 2 h pour déposer"),
+                contains("Le voyageur attend"), dataCaptor.capture());
         assertThat(dataCaptor.getValue())
                 .containsEntry("type", "HANDOVER_REMINDER_H2")
                 .containsEntry("bidId", bidId.toString());
@@ -180,7 +180,7 @@ class NotificationDispatcherTest {
         var dataCaptor = ArgumentCaptor.forClass(Map.class);
         verify(fcmService).sendToUser(
                 eq(senderId), eq("Vérification à compléter"),
-                contains("identité"), dataCaptor.capture());
+                contains("vérification"), dataCaptor.capture());
         assertThat(dataCaptor.getValue())
                 .containsEntry("type", "KYC_ACTION_REQUIRED")
                 .doesNotContainKey("reasonCode");
@@ -226,7 +226,7 @@ class NotificationDispatcherTest {
         dispatcher.onReturnDeadlineWarning(new ReturnDeadlineWarningEvent(
                 bidId, senderId, travelerId, LocalDateTime.now().plusHours(20)));
 
-        verify(fcmService).sendToUser(eq(senderId), eq("Communiquez votre code de retour"),
+        verify(fcmService).sendToUser(eq(senderId), eq("Code de retour à partager"),
                 any(), argThat(data -> "RETURN_DEADLINE_WARNING".equals(data.get("type"))));
         verify(fcmService).sendToUser(eq(travelerId), eq("Retour du colis à effectuer"),
                 any(), argThat(data -> "RETURN_DEADLINE_WARNING".equals(data.get("type"))));
@@ -305,7 +305,7 @@ class NotificationDispatcherTest {
 
         dispatcher.onBidAccepted(new BidAcceptedEvent(bidId, senderId, travelerId, annId));
 
-        verify(fcmService).sendToUser(eq(senderId), eq("Demande acceptée !"), contains("Le voyageur"), any());
+        verify(fcmService).sendToUser(eq(senderId), eq("Demande acceptée !"), eq("Le voyageur accepte votre colis."), any());
     }
 
     /**
@@ -374,7 +374,7 @@ class NotificationDispatcherTest {
 
         var dataCaptor = ArgumentCaptor.forClass(Map.class);
         verify(fcmService).sendToUser(eq(senderId), eq("Trajet retiré"),
-                eq("Ce trajet n'est plus disponible — votre remboursement est en cours"),
+                eq("Ce trajet n'est plus disponible. Remboursement en cours."),
                 dataCaptor.capture());
         assertThat(dataCaptor.getValue()).containsEntry("type", "BID_REJECTED");
     }
@@ -391,8 +391,7 @@ class NotificationDispatcherTest {
 
         var dataCaptor = ArgumentCaptor.forClass(Map.class);
         verify(fcmService).sendToUser(eq(senderId), eq("Transport annulé"),
-                eq("Le voyageur a annulé le transport de votre colis — remboursement en cours. "
-                        + "3 voyageurs alternatifs disponibles"),
+                eq("Le voyageur a annulé le transport. 3 voyageurs alternatifs proposés."),
                 dataCaptor.capture());
         assertThat(dataCaptor.getValue()).containsEntry("type", "BID_REJECTED");
         assertThat(dataCaptor.getValue()).containsEntry("bidId", bidId.toString());
@@ -409,8 +408,7 @@ class NotificationDispatcherTest {
 
         var dataCaptor = ArgumentCaptor.forClass(Map.class);
         verify(fcmService).sendToUser(eq(senderId), eq("Transport annulé"),
-                eq("Le voyageur a annulé le transport de votre colis — remboursement en cours. "
-                        + "1 voyageur alternatif disponible"),
+                eq("Le voyageur a annulé le transport. 1 voyageur alternatif proposé."),
                 dataCaptor.capture());
         assertThat(dataCaptor.getValue()).containsEntry("cancellationId", cancellationId.toString());
     }
@@ -424,7 +422,7 @@ class NotificationDispatcherTest {
 
         var dataCaptor = ArgumentCaptor.forClass(Map.class);
         verify(fcmService).sendToUser(eq(senderId), eq("Transport annulé"),
-                eq("Le voyageur a annulé le transport de votre colis — votre remboursement est en cours"),
+                eq("Le voyageur a annulé le transport. Remboursement en cours."),
                 dataCaptor.capture());
         assertThat(dataCaptor.getValue()).containsEntry("type", "BID_REJECTED");
         assertThat(dataCaptor.getValue()).containsEntry("bidId", bidId.toString());
@@ -441,8 +439,7 @@ class NotificationDispatcherTest {
 
         var dataCaptor = ArgumentCaptor.forClass(Map.class);
         verify(fcmService).sendToUser(eq(senderId), eq("Demande refusée"),
-                eq("Le voyageur a refusé votre demande — remboursement en cours. "
-                        + "2 voyageurs alternatifs disponibles"),
+                eq("Le voyageur a refusé votre demande. 2 voyageurs alternatifs proposés."),
                 dataCaptor.capture());
         assertThat(dataCaptor.getValue()).containsEntry("cancellationId", cancellationId.toString());
     }
@@ -456,7 +453,7 @@ class NotificationDispatcherTest {
 
         var dataCaptor = ArgumentCaptor.forClass(Map.class);
         verify(fcmService).sendToUser(eq(senderId), eq("Demande refusée"),
-                eq("Le voyageur a refusé votre demande — votre remboursement est en cours"),
+                eq("Le voyageur a refusé votre demande. Remboursement en cours."),
                 dataCaptor.capture());
         assertThat(dataCaptor.getValue()).doesNotContainKey("cancellationId");
     }
@@ -472,7 +469,7 @@ class NotificationDispatcherTest {
 
         var dataCaptor = ArgumentCaptor.forClass(Map.class);
         verify(fcmService).sendToUser(eq(senderId), eq("Transport annulé"),
-                eq("Le voyageur a annulé le transport de votre colis — votre remboursement est en cours"),
+                eq("Le voyageur a annulé le transport. Remboursement en cours."),
                 dataCaptor.capture());
         assertThat(dataCaptor.getValue()).doesNotContainKey("cancellationId");
     }
@@ -491,7 +488,7 @@ class NotificationDispatcherTest {
 
         var dataCaptor = ArgumentCaptor.forClass(Map.class);
         verify(fcmService).sendToUser(eq(senderId), eq("Trajet supprimé"),
-                eq("Le voyageur a supprimé son trajet — votre remboursement est en cours"),
+                eq("Le voyageur a supprimé son trajet. Remboursement en cours."),
                 dataCaptor.capture());
         assertThat(dataCaptor.getValue()).containsEntry("type", "BID_REJECTED");
     }
@@ -534,7 +531,7 @@ class NotificationDispatcherTest {
 
         var dataCaptor = ArgumentCaptor.forClass(Map.class);
         verify(fcmService).sendToUser(eq(senderId), eq("Trajet annulé"),
-                eq("Trajet annulé — remboursement en cours. 3 voyageurs alternatifs disponibles"),
+                eq("Remboursement en cours. 3 voyageurs alternatifs proposés."),
                 dataCaptor.capture());
         assertThat(dataCaptor.getValue()).containsEntry("type", "TRIP_CANCELLED");
         assertThat(dataCaptor.getValue()).containsEntry("cancellationId", cancellationId.toString());
@@ -554,7 +551,7 @@ class NotificationDispatcherTest {
 
         var dataCaptor = ArgumentCaptor.forClass(Map.class);
         verify(fcmService).sendToUser(eq(senderId), eq("Trajet annulé"),
-                eq("Trajet annulé — remboursement en cours. 1 voyageur alternatif disponible"),
+                eq("Remboursement en cours. 1 voyageur alternatif proposé."),
                 dataCaptor.capture());
         assertThat(dataCaptor.getValue()).containsEntry("type", "TRIP_CANCELLED");
         assertThat(dataCaptor.getValue()).containsEntry("cancellationId", cancellationId.toString());
@@ -574,7 +571,7 @@ class NotificationDispatcherTest {
 
         var dataCaptor = ArgumentCaptor.forClass(Map.class);
         verify(fcmService).sendToUser(eq(senderId), eq("Trajet annulé"),
-                eq("Trajet annulé — Aucun voyageur disponible dans les 72h, votre remboursement est traité"),
+                eq("Aucun voyageur disponible sous 72 h. Remboursement traité."),
                 dataCaptor.capture());
         assertThat(dataCaptor.getValue()).containsEntry("type", "TRIP_CANCELLED");
         assertThat(dataCaptor.getValue()).doesNotContainKey("cancellationId");
@@ -819,6 +816,33 @@ class NotificationDispatcherTest {
 
         assertThat(recipientUid).isEqualTo("uid-traveler");
         verify(fcmService).sendToUser(eq(travelerId), contains("Mariama"), eq("Bonjour"), anyMap());
+        // Push seul : la messagerie porte déjà son badge, le feed ne garde pas de ligne.
+        verifyNoInteractions(notificationService);
+    }
+
+    @Test
+    void sendMessageNotification_shortensSenderNameAndCutsPreviewAtWord() {
+        UserEntity messageSender = new UserEntity();
+        setUserId(messageSender, senderId);
+        messageSender.setFirstName("Mohammed");
+        messageSender.setLastName("Abdoulaye Diallo");
+        UserEntity recipient = new UserEntity();
+        recipient.setFirebaseUid("uid-traveler");
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(messageSender));
+        when(userRepository.findById(travelerId)).thenReturn(Optional.of(recipient));
+        when(blockVisibility.isHidden(travelerId, senderId)).thenReturn(false);
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+        String longPreview = "Bonjour, je serai à Roissy vendredi vers 18h, est-ce que vous pouvez me confirmer le point de remise";
+
+        dispatcher.sendMessageNotification(senderId, travelerId, "uid-sender", longPreview, "conv_1");
+
+        var title = ArgumentCaptor.forClass(String.class);
+        var body = ArgumentCaptor.forClass(String.class);
+        verify(fcmService).sendToUser(eq(travelerId), title.capture(), body.capture(), anyMap());
+        assertThat(title.getValue()).startsWith("Message de ");
+        assertThat(title.getValue().length()).isLessThanOrEqualTo(NotificationCaps.TITLE_MAX);
+        assertThat(body.getValue().length()).isLessThanOrEqualTo(NotificationCaps.BODY_MAX);
+        assertThat(body.getValue()).endsWith("…").doesNotContain("...");
     }
 
     /** L'id de BaseEntity n'a pas de setter : il se pose par réflexion, comme setEntityId. */

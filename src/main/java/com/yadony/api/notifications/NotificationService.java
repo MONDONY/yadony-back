@@ -5,6 +5,7 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.PageResponse;
 import com.yadony.api.notifications.dto.NotificationDTO;
+import com.yadony.api.notifications.dto.NotificationDetailDTO;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -21,15 +22,35 @@ public class NotificationService {
 
     private final NotificationRepository repository;
     private final UserRepository userRepository;
+    private final NotificationCapsPolicy capsPolicy;
 
-    public NotificationService(NotificationRepository repository, UserRepository userRepository) {
+    public NotificationService(NotificationRepository repository, UserRepository userRepository,
+                               NotificationCapsPolicy capsPolicy) {
         this.repository = repository;
         this.userRepository = userRepository;
+        this.capsPolicy = capsPolicy;
     }
 
+    /**
+     * Seul point de persistance d'une notification : c'est ici que le contrat de
+     * forme s'applique à tous les points d'émission d'un coup. Catégorie, clé de
+     * groupe et deeplink sont dérivés par l'entité ; les caps sont contrôlés par
+     * {@link NotificationCapsPolicy}. Une annonce plateforme est la seule dont le
+     * corps est raccourci : son texte complet est gardé dans {@code fullBody},
+     * parce qu'il n'existe nulle part ailleurs dans l'app.
+     */
     public NotificationEntity persist(UUID userId, String type, String title, String body,
                                       Map<String, String> data, boolean isCritical) {
-        return repository.save(new NotificationEntity(userId, type, title, body, data, isCritical));
+        var entity = new NotificationEntity(userId, type, title, body, data, isCritical);
+        if (entity.getCategory() == NotificationCategory.ANNONCE) {
+            // Le titre d'une annonce est saisi librement en back-office : la liste le
+            // clampe sur une ligne, le détail l'affiche entier. Seul le corps est résumé.
+            entity.summarize(NotificationCaps.truncateAtWord(body, NotificationCaps.BODY_MAX), body);
+            capsPolicy.check(type, null, entity.getBody());
+        } else {
+            capsPolicy.check(type, entity.getTitle(), entity.getBody());
+        }
+        return repository.save(entity);
     }
 
     public NotificationEntity persist(UUID userId, String type, String title, String body,
@@ -43,6 +64,11 @@ public class NotificationService {
         return PageResponse.from(
                 repository.findByUserIdOrderByCreatedAtDesc(userId, PageRequest.of(page, size))
                           .map(NotificationDTO::from));
+    }
+
+    @Transactional(readOnly = true)
+    public NotificationDetailDTO detail(String firebaseUid, UUID notificationId) {
+        return NotificationDetailDTO.from(requireOwned(firebaseUid, notificationId));
     }
 
     @Transactional(readOnly = true)
@@ -86,7 +112,8 @@ public class NotificationService {
         return entity;
     }
 
-    private UUID resolveUserId(String firebaseUid) {
+    /** Partagé avec {@link NotificationFeedService} : même résolution, même erreur 401. */
+    UUID resolveUserId(String firebaseUid) {
         return userRepository.findByFirebaseUid(firebaseUid)
                 .map(UserEntity::getId)
                 .orElseThrow(() -> new YadonyBusinessException(

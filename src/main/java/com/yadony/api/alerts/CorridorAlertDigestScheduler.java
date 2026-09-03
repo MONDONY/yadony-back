@@ -84,10 +84,11 @@ public class CorridorAlertDigestScheduler {
                 }
 
                 String corridor = MatchingTextUtil.corridorLabel(alert.getDepartureCity(), alert.getArrivalCity());
-                String title = isTrips ? "Nouveaux trajets sur " + corridor
-                                       : "Nouveaux colis sur " + corridor;
-                String body = isTrips ? count + " trajets correspondent à votre alerte"
-                                      : count + " colis correspondent à votre alerte";
+                var text = com.yadony.api.notifications.NotificationTexts.corridorAlertDigest(
+                        isTrips, (int) Math.min(count, Integer.MAX_VALUE),
+                        alert.getDepartureCity(), alert.getArrivalCity());
+                String title = text.title();
+                String body = text.body();
                 Map<String, String> data = Map.of(
                         "type", "CORRIDOR_ALERT",
                         "alertId", alert.getId().toString(),

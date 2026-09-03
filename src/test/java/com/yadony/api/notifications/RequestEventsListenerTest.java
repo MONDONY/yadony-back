@@ -113,7 +113,7 @@ class RequestEventsListenerTest {
 
         listener.onNegotiationAwaitingPayment(event);
 
-        verify(dispatcher).notifyUser(eq(senderId), contains("paiement"), anyString(), anyMap());
+        verify(dispatcher).notifyUser(eq(senderId), eq("Paiement requis"), anyString(), anyMap());
     }
 
     @Test
@@ -154,7 +154,7 @@ class RequestEventsListenerTest {
 
         listener.onNegotiationCommissionDeclined(event);
 
-        verify(dispatcher).notifyUser(eq(senderId), anyString(), contains("disponible"), anyMap());
+        verify(dispatcher).notifyUser(eq(senderId), anyString(), contains("reste ouverte"), anyMap());
         verify(dispatcher, never()).notifyUser(eq(travelerId), anyString(), anyString(), anyMap());
     }
 
@@ -170,8 +170,8 @@ class RequestEventsListenerTest {
 
         verify(dispatcher).notifyUser(eq(travelerId), anyString(), anyString(), anyMap(), eq(false));
         // L'expéditeur doit apprendre que sa demande repart à d'autres voyageurs :
-        // c'est le corps du message qui le dit, le titre porte « disponible ».
-        verify(dispatcher).notifyUser(eq(senderId), contains("disponible"), contains("ouverte"),
+        // titre et corps le disent tous les deux (« ouverte »).
+        verify(dispatcher).notifyUser(eq(senderId), contains("ouverte"), contains("ouverte"),
             anyMap(), eq(false));
         verify(dispatcher, never()).notifyUser(any(), anyString(), anyString(), anyMap());
     }

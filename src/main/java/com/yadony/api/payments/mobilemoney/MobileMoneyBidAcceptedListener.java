@@ -51,10 +51,11 @@ public class MobileMoneyBidAcceptedListener {
 
         try {
             MobileMoneyPaymentEntity mmPayment = mmPaymentService.initiate(event.getBidId(), bid.getSenderId());
+            var text = com.yadony.api.notifications.NotificationTexts.mobileMoneyPaymentPending(pm.name());
             notificationDispatcher.notifyUser(
                     event.getSenderId(),
-                    "Payez votre trajet",
-                    "Le voyageur a accepté. Cliquez pour payer via " + pm.name(),
+                    text.title(),
+                    text.body(),
                     Map.of("type", "MM_PAYMENT_PENDING",
                            "bidId", event.getBidId().toString(),
                            "paymentLink", mmPayment.getPaymentLink() != null ? mmPayment.getPaymentLink() : "")
@@ -68,10 +69,11 @@ public class MobileMoneyBidAcceptedListener {
             // en amont parce que celui-ci était censé le remplacer. Sans ce repli, un échec
             // d'initiation (passerelle non déployée, gateway injoignable) laisserait
             // l'expéditeur sans AUCUNE notification alors que son colis vient d'être accepté.
+            var fallback = com.yadony.api.notifications.NotificationTexts.bidAcceptedPayNow();
             notificationDispatcher.notifyUser(
                     event.getSenderId(),
-                    "Demande acceptée !",
-                    "Votre colis est accepté. Ouvrez l'application pour régler le paiement.",
+                    fallback.title(),
+                    fallback.body(),
                     Map.of("type", "BID_ACCEPTED", "bidId", event.getBidId().toString())
             );
         }

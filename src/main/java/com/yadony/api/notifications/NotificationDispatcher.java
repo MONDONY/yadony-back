@@ -52,7 +52,6 @@ import java.util.UUID;
 public class NotificationDispatcher {
 
     private static final Logger log = LoggerFactory.getLogger(NotificationDispatcher.class);
-    private static final int MESSAGE_PREVIEW_MAX_LENGTH = 60;
 
     private final FcmService fcmService;
     private final SmsService smsService;
@@ -152,23 +151,18 @@ public class NotificationDispatcher {
 
     private void notifyNewBid(UUID bidId, UUID announcementId, UUID travelerId, UUID senderId,
                               String senderFirstName, BigDecimal weightKg, String corridor) {
-        String body = weightKg != null
-                ? String.format("%s veut envoyer %.1f kg — %s",
-                        senderFirstName, weightKg.doubleValue(), corridor)
-                : String.format("%s a une demande d'envoi — %s",
-                        senderFirstName, corridor);
+        var text = NotificationTexts.newBid(senderFirstName, weightKg, corridor);
         // Une nouvelle demande est déclenchée par l'expéditeur : rien ne part si le
         // voyageur et lui sont masqués l'un pour l'autre.
-        notifyUnlessBlocked(travelerId, senderId, "Nouvelle demande d'envoi", body,
+        notifyUnlessBlocked(travelerId, senderId, text.title(), text.body(),
                 Map.of("type", "BID_CREATED",
                        "bidId", bidId.toString(),
                        "announcementId", announcementId.toString()));
     }
 
     public void onHandoverAlert(HandoverAlertEvent event) {
-        String body = "Dernier créneau pour déposer votre colis à " + event.handoverLocation()
-                + " — confirmation du voyageur en attente.";
-        notifyCritical(event.senderId(), "Plus que 2 heures pour déposer", body,
+        var text = NotificationTexts.handoverReminder(event.handoverLocation());
+        notifyCritical(event.senderId(), text.title(), text.body(),
                 Map.of("type", "HANDOVER_REMINDER_H2",
                        "bidId", event.bidId().toString()));
     }
@@ -176,24 +170,22 @@ public class NotificationDispatcher {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
     public void onUserKycVerified(UserKycVerifiedEvent event) {
-        notifyUser(event.getUserId(), "Identité vérifiée",
-                "Votre identité est vérifiée. Vous pouvez maintenant publier et effectuer vos transactions.",
-                Map.of("type", "KYC_VERIFIED"));
+        var text = NotificationTexts.kycVerified();
+        notifyUser(event.getUserId(), text.title(), text.body(), Map.of("type", "KYC_VERIFIED"));
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
     public void onUserKycActionRequired(UserKycActionRequiredEvent event) {
-        notifyUser(event.userId(), "Vérification à compléter",
-                "Une action est nécessaire pour terminer la vérification de votre identité.",
-                Map.of("type", "KYC_ACTION_REQUIRED"));
+        var text = NotificationTexts.kycActionRequired();
+        notifyUser(event.userId(), text.title(), text.body(), Map.of("type", "KYC_ACTION_REQUIRED"));
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
     public void onBidPaidByMobileMoney(BidPaidByMobileMoneyEvent event) {
-        notifyUser(event.getTravelerId(), "Paiement confirmé",
-                "Le paiement Mobile Money de cet envoi est confirmé.",
+        var text = NotificationTexts.mobileMoneyPaymentConfirmed();
+        notifyUser(event.getTravelerId(), text.title(), text.body(),
                 Map.of("type", "MOBILE_MONEY_PAYMENT_CONFIRMED",
                        "bidId", event.getBidId().toString()));
     }
@@ -203,10 +195,10 @@ public class NotificationDispatcher {
     public void onParcelReturned(ParcelReturnedEvent event) {
         Map<String, String> data = Map.of(
                 "type", "PARCEL_RETURNED", "bidId", event.bidId().toString());
-        notifyUser(event.senderId(), "Colis rendu",
-                "Le retour de votre colis a été confirmé.", data);
-        notifyUser(event.travelerId(), "Retour confirmé",
-                "La restitution du colis est enregistrée.", data);
+        var forSender = NotificationTexts.parcelReturnedForSender();
+        var forTraveler = NotificationTexts.parcelReturnedForTraveler();
+        notifyUser(event.senderId(), forSender.title(), forSender.body(), data);
+        notifyUser(event.travelerId(), forTraveler.title(), forTraveler.body(), data);
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -214,10 +206,10 @@ public class NotificationDispatcher {
     public void onReturnDeadlineWarning(ReturnDeadlineWarningEvent event) {
         Map<String, String> data = Map.of(
                 "type", "RETURN_DEADLINE_WARNING", "bidId", event.bidId().toString());
-        notifyUser(event.senderId(), "Communiquez votre code de retour",
-                "Le délai de retour expire dans moins de 24 heures.", data);
-        notifyUser(event.travelerId(), "Retour du colis à effectuer",
-                "Confirmez la restitution avant l'expiration du délai.", data);
+        var forSender = NotificationTexts.returnDeadlineWarningForSender();
+        var forTraveler = NotificationTexts.returnDeadlineWarningForTraveler();
+        notifyUser(event.senderId(), forSender.title(), forSender.body(), data);
+        notifyUser(event.travelerId(), forTraveler.title(), forTraveler.body(), data);
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -225,22 +217,23 @@ public class NotificationDispatcher {
     public void onReturnDeadlineExpired(ReturnDeadlineExpiredEvent event) {
         Map<String, String> data = Map.of(
                 "type", "RETURN_DEADLINE_EXPIRED", "bidId", event.bidId().toString());
+        var text = NotificationTexts.returnDeadlineExpired();
         if (event.senderId() != null) {
-            notifyUser(event.senderId(), "Délai de retour dépassé",
-                    "Le retour du colis n'a pas été confirmé. Notre équipe a été alertée.", data);
+            notifyUser(event.senderId(), text.title(), text.body(), data);
         }
         if (event.travelerId() != null) {
-            notifyUser(event.travelerId(), "Délai de retour dépassé",
-                    "Le retour du colis n'a pas été confirmé. Notre équipe a été alertée.", data);
+            notifyUser(event.travelerId(), text.title(), text.body(), data);
         }
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
     public void onBidAccepted(BidAcceptedEvent event) {
+        // publicDisplayName : source unique du nom d'affichage ; le catalogue le réduit
+        // ensuite à « Prénom I. » pour tenir dans le corps, et reste générique sans nom.
         String name = userRepository.findById(event.getTravelerId())
-                .map(u -> u.getFirstName() != null ? u.getFirstName() : "Le voyageur")
-                .orElse("Le voyageur");
+                .map(com.yadony.api.auth.UserEntity::publicDisplayName)
+                .orElse(null);
         // Paiement par lien externe : MobileMoneyBidAcceptedListener envoie « Payez votre
         // trajet », qui annonce déjà l'acceptation ET porte le lien de paiement. Pousser en
         // plus « Demande acceptée ! » ferait deux push pour la même action, le second
@@ -248,8 +241,8 @@ public class NotificationDispatcher {
         // Acceptation déclenchée par le voyageur. La transaction qui démarre rend de toute
         // façon les deux comptes visibles l'un pour l'autre : la garde ne coupe donc que
         // les cas où l'acceptation ne noue aucune transaction.
-        notifyUnlessBlocked(event.getSenderId(), event.getTravelerId(), "Demande acceptée !",
-                name + " accepte votre colis",
+        var text = NotificationTexts.bidAccepted(name);
+        notifyUnlessBlocked(event.getSenderId(), event.getTravelerId(), text.title(), text.body(),
                 Map.of("type", "BID_ACCEPTED", "bidId", event.getBidId().toString()),
                 !event.isMobileMoney());
     }
@@ -263,13 +256,13 @@ public class NotificationDispatcher {
         // refusée » accusait à tort un voyageur qui n'avait rien fait, et ne mentionnait
         // jamais que l'expéditeur allait être remboursé.
         if (BidEntity.REJECTION_ANNOUNCEMENT_DELETED.equals(event.getReason())) {
-            notifyUser(event.getSenderId(), "Trajet retiré",
-                    "Ce trajet n'est plus disponible — votre remboursement est en cours",
+            var withdrawn = NotificationTexts.bidRejectedTripWithdrawn();
+            notifyUser(event.getSenderId(), withdrawn.title(), withdrawn.body(),
                     Map.of("type", "BID_REJECTED", "bidId", event.getBidId().toString()));
             return;
         }
-        notifyUser(event.getSenderId(), "Demande refusée",
-                "Le voyageur a refusé votre demande",
+        var rejected = NotificationTexts.bidRejected();
+        notifyUser(event.getSenderId(), rejected.title(), rejected.body(),
                 Map.of("type", "BID_REJECTED", "bidId", event.getBidId().toString()));
     }
 
@@ -283,33 +276,27 @@ public class NotificationDispatcher {
         // Lot B (revue round 3) : au sein des motifs « initiés par le voyageur »
         // (cancelledByTraveler=true), une suppression de trajet (deleteAnnouncement) n'est
         // pas une annulation de transport — libellé dédié plutôt que le texte générique.
-        String title;
-        String prefix;
+        NotificationTexts.BidLoss loss;
         if (BidEntity.REJECTION_ANNOUNCEMENT_DELETED.equals(event.reason())) {
-            title = "Trajet supprimé";
-            prefix = "Le voyageur a supprimé son trajet";
+            loss = NotificationTexts.BidLoss.TRIP_DELETED;
         } else if (event.cancelledByTraveler()) {
-            title = "Transport annulé";
-            prefix = "Le voyageur a annulé le transport de votre colis";
+            loss = NotificationTexts.BidLoss.TRANSPORT_CANCELLED;
         } else {
-            title = "Demande refusée";
-            prefix = "Le voyageur a refusé votre demande";
+            loss = NotificationTexts.BidLoss.REFUSED;
         }
         int n = event.suggestionCount();
         // Défense : count > 0 avec cancellationId null ne devrait pas arriver (contrat X2 garantit
         // cancellationId non-null dès que suggestionCount > 0), mais si ça survient on retombe
         // sur le corps "remboursement en cours" sans deep link plutôt que de risquer un NPE.
         if (n > 0 && event.cancellationId() != null) {
-            notifyUser(event.senderId(), title,
-                    prefix + " — remboursement en cours. " + n
-                            + " voyageur" + (n > 1 ? "s" : "") + " alternatif" + (n > 1 ? "s" : "")
-                            + " disponible" + (n > 1 ? "s" : ""),
+            var text = NotificationTexts.bidLostWithRematch(loss, n);
+            notifyUser(event.senderId(), text.title(), text.body(),
                     Map.of("type", "BID_REJECTED",
                            "bidId", event.bidId().toString(),
                            "cancellationId", event.cancellationId().toString()));
         } else {
-            notifyUser(event.senderId(), title,
-                    prefix + " — votre remboursement est en cours",
+            var text = NotificationTexts.bidLostRefund(loss);
+            notifyUser(event.senderId(), text.title(), text.body(),
                     Map.of("type", "BID_REJECTED", "bidId", event.bidId().toString()));
         }
     }
@@ -325,21 +312,16 @@ public class NotificationDispatcher {
         for (UUID senderId : event.getAffectedSenderIds()) {
             TripCancelledEvent.RematchBySenderInfo info = event.getRematchBySender().get(senderId);
             if (info == null) {
-                notifyUser(senderId, "Trajet annulé",
-                        "Le voyageur a annulé son trajet. Remboursement en cours.",
-                        Map.of("type", "TRIP_CANCELLED"));
+                var text = NotificationTexts.tripCancelledRefund();
+                notifyUser(senderId, text.title(), text.body(), Map.of("type", "TRIP_CANCELLED"));
             } else if (info.suggestionCount() > 0) {
-                int n = info.suggestionCount();
-                notifyUser(senderId, "Trajet annulé",
-                        "Trajet annulé — remboursement en cours. "
-                                + n + " voyageur" + (n > 1 ? "s" : "") + " alternatif"
-                                + (n > 1 ? "s" : "") + " disponible" + (n > 1 ? "s" : ""),
+                var text = NotificationTexts.tripCancelledWithRematch(info.suggestionCount());
+                notifyUser(senderId, text.title(), text.body(),
                         Map.of("type", "TRIP_CANCELLED",
                                "cancellationId", info.cancellationId().toString()));
             } else {
-                notifyUser(senderId, "Trajet annulé",
-                        "Trajet annulé — Aucun voyageur disponible dans les 72h, votre remboursement est traité",
-                        Map.of("type", "TRIP_CANCELLED"));
+                var text = NotificationTexts.tripCancelledNoTraveler();
+                notifyUser(senderId, text.title(), text.body(), Map.of("type", "TRIP_CANCELLED"));
             }
         }
     }
@@ -348,11 +330,11 @@ public class NotificationDispatcher {
     public void onDeliveryNoShowReported(DeliveryNoShowReportedEvent event) {
         Map<String, String> data = Map.of("type", "DELIVERY_NOSHOW_REPORTED", "bidId", event.getBidId().toString());
         if (event.isReportedByTraveler()) {
-            notifyUser(event.getSenderId(), "Absence signalée à la livraison",
-                    "Le voyageur signale que votre destinataire ne s'est pas présenté", data);
+            var text = NotificationTexts.deliveryNoShowForSender();
+            notifyUser(event.getSenderId(), text.title(), text.body(), data);
         } else {
-            notifyUser(event.getTravelerId(), "Absence signalée à la livraison",
-                    "L'expéditeur signale que vous n'avez pas livré le colis", data);
+            var text = NotificationTexts.deliveryNoShowForTraveler();
+            notifyUser(event.getTravelerId(), text.title(), text.body(), data);
         }
     }
 
@@ -360,8 +342,8 @@ public class NotificationDispatcher {
 
     @EventListener @Async
     public void onDeliveryConfirmed(DeliveryConfirmedEvent event) {
-        notifyCritical(event.getSenderId(), "Livraison confirmée",
-                "Votre colis est arrivé à destination",
+        var text = NotificationTexts.deliveryConfirmed();
+        notifyCritical(event.getSenderId(), text.title(), text.body(),
                 Map.of("type", "DELIVERY_CONFIRMED", "bidId", event.getBidId().toString()));
     }
 
@@ -370,25 +352,26 @@ public class NotificationDispatcher {
     public void onTripArrived(TripArrivedEvent event) {
         Map<String, String> data = Map.of("type", "TRIP_ARRIVED",
                 "announcementId", event.getAnnouncementId().toString());
+        var text = NotificationTexts.tripArrived();
         for (TripArrivedEvent.BidTarget target : event.getTargets()) {
-            notifyUser(target.senderId(), "Votre voyageur est arrivé",
-                    "Instructions de retrait disponibles dans le suivi de votre colis", data);
+            notifyUser(target.senderId(), text.title(), text.body(), data);
         }
     }
 
     @EventListener @Async
     public void onPaymentReleased(PaymentReleasedEvent event) {
-        String amount = String.format(java.util.Locale.FRENCH, "%.2f €", event.getAmount().doubleValue());
-        notifyCritical(event.getTravelerId(), "Paiement reçu !",
-                amount + " — virement en cours, sous 24h",
+        var text = NotificationTexts.paymentReleased(NotificationTexts.eur(event.getAmount()));
+        notifyCritical(event.getTravelerId(), text.title(), text.body(),
                 Map.of("type", "PAYMENT_RELEASED", "bidId", event.getBidId().toString()));
     }
 
     @EventListener @Async
     public void onDisputeOpened(DisputeOpenedEvent event) {
         Map<String, String> data = Map.of("type", "DISPUTE_OPENED", "bidId", event.getBidId().toString());
-        notifyCritical(event.getSenderId(),  "Litige ouvert", "Un incident a été signalé sur votre envoi",  data);
-        notifyCritical(event.getTravelerId(), "Litige ouvert", "Un incident a été signalé sur votre colis", data);
+        var forSender = NotificationTexts.disputeOpenedForSender();
+        var forTraveler = NotificationTexts.disputeOpenedForTraveler();
+        notifyCritical(event.getSenderId(), forSender.title(), forSender.body(), data);
+        notifyCritical(event.getTravelerId(), forTraveler.title(), forTraveler.body(), data);
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -396,9 +379,8 @@ public class NotificationDispatcher {
     public void onDisputeUpdated(DisputeUpdatedEvent event) {
         Map<String, String> data = disputeData(
                 "DISPUTE_UPDATED", event.disputeId(), event.bidId());
-        notifyDisputeParties(event.senderId(), event.travelerId(),
-                "Litige mis à jour",
-                "Une nouvelle décision financière a été enregistrée sur votre litige.", data);
+        var text = NotificationTexts.disputeUpdated();
+        notifyDisputeParties(event.senderId(), event.travelerId(), text.title(), text.body(), data);
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -406,9 +388,8 @@ public class NotificationDispatcher {
     public void onDisputeResolved(DisputeResolvedEvent event) {
         Map<String, String> data = disputeData(
                 "DISPUTE_RESOLVED", event.disputeId(), event.bidId());
-        notifyDisputeParties(event.senderId(), event.travelerId(),
-                "Litige résolu",
-                "Une décision finale a été prise. Consultez le détail du litige.", data);
+        var text = NotificationTexts.disputeResolved();
+        notifyDisputeParties(event.senderId(), event.travelerId(), text.title(), text.body(), data);
     }
 
     private Map<String, String> disputeData(String type, UUID disputeId, UUID bidId) {
@@ -428,17 +409,16 @@ public class NotificationDispatcher {
     // Story 9.4 — Notification expéditeur : colis refusé
     @EventListener @Async
     public void onParcelRefused(ParcelRefusedEvent event) {
-        String reason = event.getReason() != null ? event.getReason() : "contenu non conforme";
-        notifyUser(event.getSenderId(), "Colis refusé",
-                "Votre colis a été refusé par le voyageur — raison : " + reason,
+        var text = NotificationTexts.parcelRefused(event.getReason());
+        notifyUser(event.getSenderId(), text.title(), text.body(),
                 Map.of("type", "PARCEL_REFUSED", "bidId", event.getBidId().toString()));
     }
 
     // Story 9.6 — Notification expéditeur : voyageur no-show
     @EventListener @Async
     public void onVoyageurNoShow(VoyageurNoShowEvent event) {
-        notifyUser(event.getSenderId(), "Voyageur absent",
-                "Le voyageur ne s'est pas présenté à la remise. Remboursement en cours.",
+        var text = NotificationTexts.travelerNoShow();
+        notifyUser(event.getSenderId(), text.title(), text.body(),
                 Map.of("type", "TRIP_CANCELLED", "bidId", event.getBidId().toString()));
     }
 
@@ -449,8 +429,8 @@ public class NotificationDispatcher {
     // codes garde son utilité dans la boîte de réception, mais ne justifie pas d'interrompre.
     @EventListener @Async
     public void onAnnouncementInProgress(AnnouncementInProgressEvent event) {
-        notifyUser(event.getTravelerId(), "Bon voyage !",
-                "N'oublie pas de scanner les QR codes à la remise et à la livraison.",
+        var text = NotificationTexts.tripInProgress();
+        notifyUser(event.getTravelerId(), text.title(), text.body(),
                 Map.of("type", "TRIP_IN_PROGRESS",
                        "announcementId", event.getAnnouncementId().toString()),
                 false);
@@ -459,8 +439,8 @@ public class NotificationDispatcher {
     // Bid expiré au départ — notif expéditeur "Demande expirée"
     @EventListener @Async
     public void onBidExpiredOnDeparture(BidExpiredOnDepartureEvent event) {
-        notifyUser(event.getSenderId(), "Demande expirée",
-                "Le voyageur est parti avant d'avoir accepté votre demande. Remboursement en cours.",
+        var text = NotificationTexts.bidExpired();
+        notifyUser(event.getSenderId(), text.title(), text.body(),
                 Map.of("type", "BID_EXPIRED",
                        "bidId", event.getBidId().toString()));
     }
@@ -468,9 +448,8 @@ public class NotificationDispatcher {
     // Story 9.5 — Notification utilisateur : compte suspendu
     @EventListener @Async
     public void onUserSuspended(UserSuspendedEvent event) {
-        notifyUser(event.getUserId(), "Compte suspendu",
-                "Votre compte a été suspendu suite à des incidents répétés",
-                Map.of("type", "ACCOUNT_SUSPENDED"));
+        var text = NotificationTexts.accountSuspended();
+        notifyUser(event.getUserId(), text.title(), text.body(), Map.of("type", "ACCOUNT_SUSPENDED"));
     }
 
     // Messaging — new message notification (called by MessagingNotifyController)
@@ -495,19 +474,21 @@ public class NotificationDispatcher {
         String senderName = senderUser.publicDisplayName();
         UUID recipientId = senderUser.getId().equals(senderId) ? travelerId : senderId;
 
-        String truncated = preview.length() > MESSAGE_PREVIEW_MAX_LENGTH
-                ? preview.substring(0, MESSAGE_PREVIEW_MAX_LENGTH - 3) + "..."
-                : preview;
-        boolean notified = notifyUnlessBlocked(recipientId, senderUser.getId(),
-                "Message de " + senderName, truncated,
-                Map.of("type", "NEW_MESSAGE", "conversationId", conversationId));
-
         // Fil masqué : ni push, ni UID renvoyé. La Cloud Function se sert de cet UID pour
         // créditer le compteur de non-lus ; le renvoyer ferait apparaître un badge pour un
         // message que le destinataire n'est pas censé voir.
-        if (!notified) {
+        if (blockVisibility.isHidden(recipientId, senderUser.getId())) {
+            log.debug("Notification supprimée : émetteur {} masqué pour {}", senderUser.getId(), recipientId);
             return null;
         }
+
+        // Push seul, rien en base : la messagerie porte déjà son badge et sa liste,
+        // une ligne de plus dans le feed ferait deux endroits à vider pour un même
+        // message (refonte du sheet, 2026-09). L'aperçu est coupé au mot, jamais
+        // au milieu, à la longueur que deux lignes tiennent.
+        String truncated = NotificationCaps.truncateAtWord(preview, NotificationCaps.BODY_MAX);
+        fcmService.sendToUser(recipientId, "Message de " + NotificationCaps.shortDisplayName(senderName), truncated,
+                Map.of("type", "NEW_MESSAGE", "conversationId", conversationId));
 
         return userRepository.findById(recipientId)
                 .map(com.yadony.api.auth.UserEntity::getFirebaseUid)
@@ -515,12 +496,7 @@ public class NotificationDispatcher {
     }
 
     public void sendCardExpiringNotice(com.yadony.api.auth.UserEntity user) {
-        String brand = user.getCommissionCardBrand() != null ? user.getCommissionCardBrand() : "Carte";
-        String last4 = user.getCommissionCardLast4() != null ? user.getCommissionCardLast4() : "****";
-        notifyUser(user.getId(),
-                "Votre carte de débit expire bientôt",
-                brand + " se terminant par " + last4 + " expire ce mois-ci. " +
-                "Mettez-la à jour pour continuer à accepter des paiements cash.",
-                Map.of("type", "CARD_EXPIRING"));
+        var text = NotificationTexts.cardExpiring(user.getCommissionCardBrand(), user.getCommissionCardLast4());
+        notifyUser(user.getId(), text.title(), text.body(), Map.of("type", "CARD_EXPIRING"));
     }
 }

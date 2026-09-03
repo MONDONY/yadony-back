@@ -423,9 +423,8 @@ public class UserService {
         auditService.log("USER", userId, "USER_MESSAGING_MUTED", adminId,
                 Map.of("reason", reason != null ? reason : "", "until", until.toString()));
 
-        notificationDispatcher.notifyUser(userId, "Messagerie suspendue",
-                "Votre accès à la messagerie a été suspendu par un administrateur.",
-                Map.of("type", "MESSAGING_MUTED"));
+        var text = com.yadony.api.notifications.NotificationTexts.messagingMuted();
+        notificationDispatcher.notifyUser(userId, text.title(), text.body(), Map.of("type", "MESSAGING_MUTED"));
 
         // En dernier, délibérément : un échec de l'audit ou de la notification annulerait la
         // transaction, mais l'écriture Firestore, elle, n'est pas transactionnelle. La faire

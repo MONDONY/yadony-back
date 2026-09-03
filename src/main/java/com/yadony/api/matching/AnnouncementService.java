@@ -1512,9 +1512,8 @@ public class AnnouncementService {
         // ⚠️ SEUL le libellé catalogué part au voyageur. La note interne ne doit JAMAIS entrer
         // ici : le même champ servait auparavant aux deux usages, si bien qu'un modérateur
         // écrivant « signalé par X, ticket #4821 » nommait le signalant auprès du sanctionné.
-        notificationDispatcher.notifyUser(ann.getTravelerId(),
-                "Annonce retirée",
-                "Votre annonce a été retirée par la modération. Motif : " + publicReason.publicLabel(),
+        var text = com.yadony.api.notifications.NotificationTexts.announcementRemoved(publicReason.publicLabel());
+        notificationDispatcher.notifyUser(ann.getTravelerId(), text.title(), text.body(),
                 Map.of("type", "ANNOUNCEMENT_REMOVED", "announcementId", announcementId.toString()));
 
         return saved;

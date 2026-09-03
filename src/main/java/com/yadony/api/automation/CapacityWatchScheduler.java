@@ -119,11 +119,10 @@ public class CapacityWatchScheduler {
                 watermark.getLastAlertedAt() != null && !watermark.getLastAlertedAt().isBefore(watermark.getFreeSince());
 
         if (heldLongEnough && !alreadyAlertedThisWindow) {
-            notificationDispatcher.notifyUser(rule.getTravelerId(),
-                    "De la capacité s'est libérée",
-                    "Tu as retrouvé " + announcement.getAvailableKg() + " kg de disponible depuis plus de "
-                            + consecutiveHours + "h sur " + announcement.getDepartureCity()
-                            + " → " + announcement.getArrivalCity() + ".",
+            var text = com.yadony.api.notifications.NotificationTexts.capacityFree(
+                    announcement.getAvailableKg(), consecutiveHours,
+                    announcement.getDepartureCity(), announcement.getArrivalCity());
+            notificationDispatcher.notifyUser(rule.getTravelerId(), text.title(), text.body(),
                     Map.of("type", "automation_capacity_free", "announcementId", announcementId.toString()));
             watermark.setLastAlertedAt(OffsetDateTime.now());
             watermarkRepository.save(watermark);

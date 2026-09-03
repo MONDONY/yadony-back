@@ -31,11 +31,12 @@ public class BidNegotiationEventsListener {
         // Message posté par l'autre partie : supprimé si les deux comptes sont masqués
         // l'un pour l'autre. Une négociation liée à une transaction en cours passe quand
         // même, isHidden portant cette exception.
+        var text = textFor(e);
         dispatcher.notifyUnlessBlocked(
                 e.recipientId(),
                 e.authorId(),
-                titleFor(e.kind()),
-                bodyFor(e),
+                text.title(),
+                text.body(),
                 Map.of(
                         "type", "bid_negotiation_message",
                         "bidId", e.bidId().toString(),
@@ -53,37 +54,36 @@ public class BidNegotiationEventsListener {
                 "bidId", e.bidId().toString(),
                 "announcementId", e.announcementId().toString()
         );
-        String body = "Faute de réponse, la discussion de prix sur ce trajet s'est refermée.";
+        var text = NotificationTexts.bidNegotiationExpired();
         // Chacun est prévenu au sujet de l'autre : si les deux comptes sont masqués l'un
         // pour l'autre, la discussion morte n'a plus à être annoncée. Aucun risque de
         // couper une coordination, une négociation expirée ne liant plus personne.
-        dispatcher.notifyUnlessBlocked(e.senderId(), e.travelerId(),
-                "Discussion de prix expirée", body, data);
-        dispatcher.notifyUnlessBlocked(e.travelerId(), e.senderId(),
-                "Discussion de prix expirée", body, data);
+        dispatcher.notifyUnlessBlocked(e.senderId(), e.travelerId(), text.title(), text.body(), data);
+        dispatcher.notifyUnlessBlocked(e.travelerId(), e.senderId(), text.title(), text.body(), data);
     }
 
-    private String titleFor(BidNegotiationMessageKind kind) {
-        return switch (kind) {
-            case PROPOSAL -> "Nouvelle proposition de prix";
-            case COUNTER -> "Nouvelle contre-proposition";
-            case ACCEPT -> "Prix accepté";
-            case REJECT -> "Discussion de prix close";
+    private static NotificationText textFor(BidNegotiationMessagePostedEvent e) {
+        // Sans montant, quel que soit le genre, la discussion est close.
+        if (e.proposedGrossEur() == null) {
+            return e.kind() == BidNegotiationMessageKind.REJECT
+                    ? NotificationTexts.bidNegotiationClosed()
+                    : new NotificationText(titleFor(e.kind()), NotificationTexts.bidNegotiationClosed().body());
+        }
+        String gross = e.proposedGrossEur().toPlainString();
+        return switch (e.kind()) {
+            case PROPOSAL -> NotificationTexts.bidNegotiationProposal(gross);
+            case COUNTER -> NotificationTexts.bidNegotiationCounter(gross, e.round());
+            case ACCEPT -> NotificationTexts.bidNegotiationAccepted(gross);
+            case REJECT -> NotificationTexts.bidNegotiationClosed();
         };
     }
 
-    private String bodyFor(BidNegotiationMessagePostedEvent e) {
-        if (e.proposedGrossEur() == null) {
-            return "La discussion de prix sur ce trajet est terminée.";
-        }
-        return switch (e.kind()) {
-            case PROPOSAL -> String.format("Un expéditeur propose %s € pour votre trajet",
-                    e.proposedGrossEur().toPlainString());
-            case COUNTER -> String.format("Nouvelle offre : %s € (tour %d)",
-                    e.proposedGrossEur().toPlainString(), e.round());
-            case ACCEPT -> String.format("Accord trouvé à %s €",
-                    e.proposedGrossEur().toPlainString());
-            case REJECT -> "La discussion de prix sur ce trajet est terminée.";
+    private static String titleFor(BidNegotiationMessageKind kind) {
+        return switch (kind) {
+            case PROPOSAL -> NotificationTexts.bidNegotiationProposal("0").title();
+            case COUNTER -> NotificationTexts.bidNegotiationCounter("0", 1).title();
+            case ACCEPT -> NotificationTexts.bidNegotiationAccepted("0").title();
+            case REJECT -> NotificationTexts.bidNegotiationClosed().title();
         };
     }
 }

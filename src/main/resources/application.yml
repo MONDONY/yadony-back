@@ -127,6 +127,12 @@ yadony:
       password: ${ADMIN_BOOTSTRAP_PASSWORD:}
     sentry-webhook:
       secret: ${SENTRY_WEBHOOK_SECRET:}
+  notifications:
+    caps:
+      # Que faire d'un libellé qui dépasse NotificationCaps (titre 28, corps 72) :
+      # off | warn | strict. « warn » tant que les points d'émission ne sont pas
+      # tous réécrits ; « strict » ensuite, dans les tests d'abord.
+      mode: ${YADONY_NOTIFICATIONS_CAPS_MODE:warn}
   commission:
     rate: ${YADONY_COMMISSION_RATE:0.05}
     minimum-amount: ${YADONY_COMMISSION_MINIMUM_AMOUNT:1.00}
