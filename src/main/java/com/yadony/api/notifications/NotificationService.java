@@ -112,7 +112,8 @@ public class NotificationService {
         return entity;
     }
 
-    private UUID resolveUserId(String firebaseUid) {
+    /** Partagé avec {@link NotificationFeedService} : même résolution, même erreur 401. */
+    UUID resolveUserId(String firebaseUid) {
         return userRepository.findByFirebaseUid(firebaseUid)
                 .map(UserEntity::getId)
                 .orElseThrow(() -> new YadonyBusinessException(
