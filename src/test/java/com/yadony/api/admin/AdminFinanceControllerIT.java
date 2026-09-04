@@ -106,16 +106,13 @@ class AdminFinanceControllerIT {
     // ── Permission ───────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("Sans PAYMENT_VIEW, les trois routes sont fermees et aucune lecture n'a lieu")
-    void withoutPaymentView_allThreeRoutesAreForbidden() throws Exception {
-        mockMvc.perform(get("/admin/wallets").with(authentication(withoutPaymentView())))
-                .andExpect(status().isForbidden());
+    @DisplayName("Sans PAYMENT_VIEW, les deux routes sont fermees et aucune lecture n'a lieu")
+    void withoutPaymentView_bothRoutesAreForbidden() throws Exception {
         mockMvc.perform(get("/admin/wallets").with(authentication(withoutPaymentView())))
                 .andExpect(status().isForbidden());
         mockMvc.perform(get("/admin/cash-commissions").with(authentication(withoutPaymentView())))
                 .andExpect(status().isForbidden());
 
-        verify(walletRepository, never()).findAll(any(Pageable.class));
         verify(walletRepository, never()).findAll(any(Pageable.class));
         verify(bidRepository, never()).findCashCommissions(any(Pageable.class));
     }
