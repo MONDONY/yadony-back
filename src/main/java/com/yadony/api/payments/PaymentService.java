@@ -341,6 +341,10 @@ public class PaymentService {
 
     // ── Story 6.3 : Paiement expéditeur avec création d'escrow ───────────────
 
+    // noRollbackFor : l'auto-réparation ci-dessous promeut le bid PUIS lève
+    // bid-already-paid. La classe est @Transactional : sans cette exclusion, le
+    // 409 annulerait la promotion et l'expéditeur resterait coincé « à payer ».
+    @Transactional(noRollbackFor = BidAlreadyPaidException.class)
     public PaymentResponse createEscrow(CreatePaymentRequest request, String firebaseUid) {
         UserEntity sender = findUser(firebaseUid);
         UUID bidId = request.getBidId();
@@ -386,6 +390,20 @@ public class PaymentService {
             PaymentEntity payment = existing.get();
             if (payment.getStatus() == PaymentStatus.ESCROW
                     || payment.getStatus() == PaymentStatus.RELEASED) {
+                // Auto-réparation : l'escrow est actif mais le bid n'a jamais été promu.
+                // Cas réel : bid négocié payé depuis « Mes colis » (POST /payments) à une
+                // époque où createEscrow ne reportait pas le PaymentIntent sur le bid —
+                // le webhook (findByPaymentIntentId) et confirm-payment (piId null) ne
+                // pouvaient donc pas le retrouver, et l'expéditeur restait coincé entre
+                // « à payer » et « déjà payé ». Le PaymentEntity n'atteint ESCROW/RELEASED
+                // qu'après vérification Stripe : il fait foi, on promeut sans re-vérifier.
+                if (bid.getStatus() == BidStatus.AWAITING_PAYMENT) {
+                    if (bid.getPaymentIntentId() == null) {
+                        bid.setPaymentIntentId(payment.getStripePaymentIntentId());
+                    }
+                    promoteBid(bid, payment.getStripePaymentIntentId());
+                    throw new BidAlreadyPaidException();
+                }
                 throw new YadonyBusinessException(HttpStatus.CONFLICT,
                         "payment-already-completed", "Payment Already Completed",
                         "Le paiement pour cette demande a déjà été effectué");
@@ -507,6 +525,7 @@ public class PaymentService {
                     if ("requires_payment_method".equals(piStatus)
                             || "requires_confirmation".equals(piStatus)) {
                         if (matchesExpectedAmountAndCurrency(payment, pi, localAmount)) {
+                            attachPaymentIntentToBid(bid, pi.getId());
                             return toPaymentResponse(payment, pi);
                         }
                         log.info("Canceling incompatible legacy PaymentIntent {} for bid {}",
@@ -611,6 +630,7 @@ public class PaymentService {
                 payment.clearLegacyFxData();
             }
             paymentRepository.save(payment);
+            attachPaymentIntentToBid(bid, pi.getId());
 
             auditService.log("PAYMENT", payment.getId(), "PAYMENT_ESCROW_CREATED", sender.getId(),
                     Map.of("bidId", bidId, "amount", localAmount.major(), "commission", localCommission.major(),
@@ -914,31 +934,56 @@ public class PaymentService {
      */
     @Transactional
     public void promoteBidOnPaymentAuthorized(String paymentIntentId) {
-        bidRepository.findByPaymentIntentId(paymentIntentId).ifPresent(bid -> {
-            if (bid.getStatus() != BidStatus.AWAITING_PAYMENT) return;
+        bidRepository.findByPaymentIntentId(paymentIntentId).ifPresent(bid -> promoteBid(bid, paymentIntentId));
+    }
 
-            bid.setStatus(BidStatus.PAYMENT_ESCROWED);
-            bid.setAwaitingPaymentExpiresAt(null);
-            bidRepository.save(bid);
+    /**
+     * Reporte le PaymentIntent sur le bid s'il n'en porte pas déjà un.
+     *
+     * <p>Indispensable, et pas seulement cosmétique : le webhook
+     * {@code amount_capturable_updated} retrouve le bid par {@code findByPaymentIntentId},
+     * {@link #confirmBidPayment} et {@code AwaitingPaymentCleanupScheduler} lisent
+     * {@code bid.paymentIntentId}. Historiquement seuls {@code BidCheckoutService.checkout}
+     * et {@code negotiationCheckout} le posaient ; un bid payé via {@code POST /payments}
+     * (bouton « Payer mon envoi » de Mes colis sur un accord négocié) restait donc
+     * invisible pour ces trois filets et ne quittait jamais {@code AWAITING_PAYMENT}.
+     */
+    private void attachPaymentIntentToBid(BidEntity bid, String paymentIntentId) {
+        if (paymentIntentId == null || paymentIntentId.equals(bid.getPaymentIntentId())) {
+            return;
+        }
+        bid.setPaymentIntentId(paymentIntentId);
+        bidRepository.save(bid);
+    }
 
-            AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
-                    .orElseThrow(() -> new IllegalStateException("announcement not found for bid " + bid.getId()));
-            UserEntity sender = userRepository.findById(bid.getSenderId()).orElse(null);
-            String senderName = (sender != null && sender.getFirstName() != null && !sender.getFirstName().isBlank())
-                    ? sender.getFirstName() : "Un expéditeur";
-            String corridor = announcement.getDepartureCity() + " → " + announcement.getArrivalCity();
+    /**
+     * Promotion effective {@code AWAITING_PAYMENT → PAYMENT_ESCROWED} d'un bid déjà
+     * chargé. Idempotente : silencieuse si le bid n'est pas en {@code AWAITING_PAYMENT}.
+     */
+    private void promoteBid(BidEntity bid, String paymentIntentId) {
+        if (bid.getStatus() != BidStatus.AWAITING_PAYMENT) return;
 
-            auditService.log("BID", bid.getId(), "BID_CREATED", bid.getSenderId(),
-                    Map.of("announcementId", bid.getAnnouncementId().toString(),
-                            "weightKg", bid.getWeightKg() != null ? bid.getWeightKg().toString() : "0",
-                            "paymentIntentId", paymentIntentId));
+        bid.setStatus(BidStatus.PAYMENT_ESCROWED);
+        bid.setAwaitingPaymentExpiresAt(null);
+        bidRepository.save(bid);
 
-            eventPublisher.publishEvent(new BidCreatedEvent(
-                    bid.getId(), announcement.getId(), announcement.getTravelerId(), bid.getSenderId(),
-                    senderName, bid.getWeightKg(), corridor));
+        AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
+                .orElseThrow(() -> new IllegalStateException("announcement not found for bid " + bid.getId()));
+        UserEntity sender = userRepository.findById(bid.getSenderId()).orElse(null);
+        String senderName = (sender != null && sender.getFirstName() != null && !sender.getFirstName().isBlank())
+                ? sender.getFirstName() : "Un expéditeur";
+        String corridor = announcement.getDepartureCity() + " → " + announcement.getArrivalCity();
 
-            log.info("Bid {} promoted to PENDING (PI={})", bid.getId(), paymentIntentId);
-        });
+        auditService.log("BID", bid.getId(), "BID_CREATED", bid.getSenderId(),
+                Map.of("announcementId", bid.getAnnouncementId().toString(),
+                        "weightKg", bid.getWeightKg() != null ? bid.getWeightKg().toString() : "0",
+                        "paymentIntentId", paymentIntentId));
+
+        eventPublisher.publishEvent(new BidCreatedEvent(
+                bid.getId(), announcement.getId(), announcement.getTravelerId(), bid.getSenderId(),
+                senderName, bid.getWeightKg(), corridor));
+
+        log.info("Bid {} promoted to PAYMENT_ESCROWED (PI={})", bid.getId(), paymentIntentId);
     }
 
     /**

@@ -157,4 +157,60 @@ class BidNegotiationRepositoryTest {
         assertThat(bidRepository.findNegotiationsOnDepartedTrips(LocalDate.now())).isEmpty();
         assertThat(bidRepository.findNegotiationsForUser(senderId)).isEmpty();
     }
+
+    private UUID newBid(UUID announcementId, UUID senderId, BidStatus status, boolean negotiated) {
+        BidEntity b = new BidEntity();
+        b.setAnnouncementId(announcementId);
+        b.setSenderId(senderId);
+        b.setStatus(status);
+        b.setNegotiationRound(negotiated ? 2 : 0);
+        if (negotiated) {
+            b.setNegotiatedGrossEur(new BigDecimal("45.00"));
+            b.setNegotiatedNetEur(new BigDecimal("42.86"));
+        }
+        return em.persistAndFlush(b).getId();
+    }
+
+    @Test
+    @DisplayName("un accord négocié reste listé tant que l'expéditeur n'a pas payé (carte ou espèces)")
+    void agreedNegotiationStaysListedUntilPaid() {
+        UUID travelerId = UUID.randomUUID();
+        UUID senderId = UUID.randomUUID();
+        UUID announcementId = newAnnouncement(travelerId, LocalDate.now().plusDays(10));
+        UUID cardAgreement = newBid(announcementId, senderId, BidStatus.AWAITING_PAYMENT, true);
+        UUID cashAgreement = newBid(announcementId, UUID.randomUUID(), BidStatus.PENDING, true);
+
+        // Sans cela, l'acceptation du voyageur faisait disparaître le fil de
+        // « Discussions de prix » sans laisser à l'expéditeur de chemin vers le paiement.
+        assertThat(bidRepository.findNegotiationsForUser(travelerId))
+                .extracting(BidEntity::getId).containsExactlyInAnyOrder(cardAgreement, cashAgreement);
+        assertThat(bidRepository.findNegotiationsForUser(senderId))
+                .extracting(BidEntity::getId).containsExactly(cardAgreement);
+    }
+
+    @Test
+    @DisplayName("une demande ferme en attente de paiement n'est pas une discussion de prix")
+    void firmBidAwaitingPaymentIsNotANegotiation() {
+        UUID travelerId = UUID.randomUUID();
+        UUID senderId = UUID.randomUUID();
+        UUID announcementId = newAnnouncement(travelerId, LocalDate.now().plusDays(10));
+        newBid(announcementId, senderId, BidStatus.AWAITING_PAYMENT, false);
+        newBid(announcementId, UUID.randomUUID(), BidStatus.PENDING, false);
+
+        assertThat(bidRepository.findNegotiationsForUser(travelerId)).isEmpty();
+        assertThat(bidRepository.findNegotiationsForUser(senderId)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("un accord négocié payé quitte la liste : il vit désormais dans Mes colis")
+    void paidNegotiationLeavesTheList() {
+        UUID travelerId = UUID.randomUUID();
+        UUID senderId = UUID.randomUUID();
+        UUID announcementId = newAnnouncement(travelerId, LocalDate.now().plusDays(10));
+        newBid(announcementId, senderId, BidStatus.PAYMENT_ESCROWED, true);
+        newBid(announcementId, senderId, BidStatus.ACCEPTED, true);
+        newBid(announcementId, senderId, BidStatus.NEGOTIATION_CLOSED, true);
+
+        assertThat(bidRepository.findNegotiationsForUser(senderId)).isEmpty();
+    }
 }

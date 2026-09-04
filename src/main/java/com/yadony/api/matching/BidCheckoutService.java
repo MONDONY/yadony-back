@@ -9,6 +9,7 @@ import com.yadony.api.config.ContentCategoryNormalizer;
 import com.yadony.api.matching.dto.BidCheckoutRequest;
 import com.yadony.api.matching.dto.BidCheckoutResponse;
 import com.yadony.api.matching.dto.BidGridItemRequest;
+import com.yadony.api.payments.BidAlreadyPaidException;
 import com.yadony.api.payments.PaymentService;
 import com.yadony.api.payments.dto.CreatePaymentRequest;
 import com.yadony.api.payments.dto.PaymentResponse;
@@ -62,7 +63,7 @@ public class BidCheckoutService {
         this.bidPhotoService = bidPhotoService;
     }
 
-    @Transactional
+    @Transactional(noRollbackFor = BidAlreadyPaidException.class)
     @CacheEvict(value = "announcements-search", allEntries = true)
     public BidCheckoutResponse checkout(String firebaseUid,
                                        BidCheckoutRequest req,
@@ -267,7 +268,7 @@ public class BidCheckoutService {
      * la sheet Stripe, {@code confirm-payment} (ou le webhook) promeut le bid en
      * {@code PAYMENT_ESCROWED}, puis le voyageur l'accepte.
      */
-    @Transactional
+    @Transactional(noRollbackFor = BidAlreadyPaidException.class)
     @CacheEvict(value = "announcements-search", allEntries = true)
     public BidCheckoutResponse negotiationCheckout(String firebaseUid, UUID bidId) {
         UserEntity sender = userRepository.findByFirebaseUid(firebaseUid)
@@ -375,9 +376,11 @@ public class BidCheckoutService {
             return;
         }
         if (settled) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                "bid-already-paid", "Bid Already Paid",
-                "Ce colis est déjà payé. Actualisez pour voir son état à jour.");
+            // Exception dédiée, déclarée en noRollbackFor sur checkout et
+            // negotiationCheckout : la promotion du bid que confirmBidPayment vient de
+            // faire dans CETTE transaction doit survivre au 409, sinon l'expéditeur lit
+            // « déjà payé » et retrouve un colis toujours « à payer ».
+            throw new BidAlreadyPaidException();
         }
     }
 

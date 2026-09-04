@@ -224,4 +224,98 @@ class PaymentServiceNegotiatedEscrowTest {
                 .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
                         .isEqualTo("amount-mismatch"));
     }
+
+    @Test
+    @DisplayName("le PaymentIntent est reporté sur le bid : sans lui, webhook et confirm-payment sont aveugles")
+    void attachesThePaymentIntentToTheBid() {
+        BidEntity bid = buildNegotiatedBid();
+        stubRepositories(bid);
+
+        try (MockedStatic<com.stripe.model.Account> acctStatic = mockStatic(com.stripe.model.Account.class);
+             MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class)) {
+            stubStripe(acctStatic, piStatic);
+
+            service.createEscrow(request(null), "uid-sender");
+
+            // Chemin POST /payments (« Payer mon envoi » depuis Mes colis) : seul
+            // BidCheckoutService posait le PI jusqu'ici, ce bid restait donc introuvable
+            // par promoteBidOnPaymentAuthorized (findByPaymentIntentId) et confirmBidPayment.
+            assertThat(bid.getPaymentIntentId()).isEqualTo("pi_nego");
+            verify(bidRepository, org.mockito.Mockito.atLeastOnce()).save(bid);
+        }
+    }
+
+    @Test
+    @DisplayName("escrow déjà actif mais bid jamais promu : promotion puis 409 bid-already-paid")
+    void healsABidStuckInAwaitingPaymentWhenEscrowIsAlreadyActive() {
+        BidEntity bid = buildNegotiatedBid();
+        assertThat(bid.getPaymentIntentId()).isNull();
+
+        UserEntity sender = new UserEntity();
+        setId(sender, senderId);
+        sender.setFirebaseUid("uid-sender");
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+
+        PaymentEntity escrowed = new PaymentEntity();
+        escrowed.setBidId(bidId);
+        escrowed.setStripePaymentIntentId("pi_stuck");
+        escrowed.setStatus(PaymentStatus.ESCROW);
+        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.of(escrowed));
+
+        AnnouncementEntity ann = new AnnouncementEntity();
+        setId(ann, annId);
+        ann.setTravelerId(travelerId);
+        ann.setDepartureCity("Paris");
+        ann.setArrivalCity("Dakar");
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+
+        assertThatThrownBy(() -> service.createEscrow(request(null), "uid-sender"))
+                .isInstanceOf(BidAlreadyPaidException.class);
+
+        // L'expéditeur voyait « à payer » puis « déjà payé » sans que rien ne bouge :
+        // le bid rejoint l'état que le webhook aurait dû lui donner.
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.PAYMENT_ESCROWED);
+        assertThat(bid.getPaymentIntentId()).isEqualTo("pi_stuck");
+        assertThat(bid.getAwaitingPaymentExpiresAt()).isNull();
+        verify(bidRepository).save(bid);
+        verify(eventPublisher).publishEvent(any(com.yadony.api.matching.events.BidCreatedEvent.class));
+    }
+
+    @Test
+    @DisplayName("escrow déjà actif sur un bid déjà promu : 409 payment-already-completed inchangé")
+    void alreadyPromotedBidKeepsThePlainConflict() {
+        BidEntity bid = buildNegotiatedBid();
+        bid.setStatus(BidStatus.PAYMENT_ESCROWED);
+
+        UserEntity sender = new UserEntity();
+        setId(sender, senderId);
+        sender.setFirebaseUid("uid-sender");
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+
+        PaymentEntity escrowed = new PaymentEntity();
+        escrowed.setBidId(bidId);
+        escrowed.setStripePaymentIntentId("pi_done");
+        escrowed.setStatus(PaymentStatus.ESCROW);
+        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.of(escrowed));
+
+        assertThatThrownBy(() -> service.createEscrow(request(null), "uid-sender"))
+                .isInstanceOf(YadonyBusinessException.class)
+                .isNotInstanceOf(BidAlreadyPaidException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                        .isEqualTo("payment-already-completed"));
+        verify(bidRepository, org.mockito.Mockito.never()).save(any());
+    }
+
+    @Test
+    @DisplayName("createEscrow exclut bid-already-paid du rollback, sinon la réparation est annulée")
+    void createEscrowDoesNotRollBackOnBidAlreadyPaid() throws NoSuchMethodException {
+        var tx = PaymentService.class
+                .getMethod("createEscrow", CreatePaymentRequest.class, String.class)
+                .getAnnotation(org.springframework.transaction.annotation.Transactional.class);
+
+        assertThat(tx).isNotNull();
+        assertThat(tx.noRollbackFor()).contains(BidAlreadyPaidException.class);
+    }
 }

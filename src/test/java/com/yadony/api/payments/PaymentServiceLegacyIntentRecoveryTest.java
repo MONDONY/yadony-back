@@ -148,7 +148,7 @@ class PaymentServiceLegacyIntentRecoveryTest {
     @Test
     void bidRetryAfterConfirmedCancelAndFailedCreate_recyclesCanceledIntent() throws Exception {
         PaymentEntity existing = bidPayment("pi_legacy", "25.00", "eur");
-        stubExistingBid(existing, new BigDecimal("0.12"), null);
+        BidEntity bid = stubExistingBid(existing, new BigDecimal("0.12"), null);
 
         PaymentIntent incompatible = incompatibleIntent("requires_payment_method", 2500L, "eur");
         PaymentIntent canceled = mock(PaymentIntent.class);
@@ -179,7 +179,13 @@ class PaymentServiceLegacyIntentRecoveryTest {
         verify(incompatible).cancel(any(PaymentIntentCancelParams.class));
         verify(stripeGateway, org.mockito.Mockito.times(2)).createPaymentIntent(any());
         verify(paymentRepository).save(existing);
-        verify(bidRepository, never()).save(any());
+        // Le retry ne re-résout jamais le taux figé… mais le bid doit porter le
+        // PaymentIntent frais : c'est par lui que le webhook, confirm-payment et
+        // le nettoyage AWAITING_PAYMENT retrouvent le bid (l'ancien est annulé).
+        verify(commissionRateResolver, never()).resolve(any(), any());
+        assertThat(bid.getCommissionRate()).isEqualByComparingTo("0.12");
+        assertThat(bid.getPaymentIntentId()).isEqualTo("pi_fresh");
+        verify(bidRepository).save(bid);
     }
 
     @Test
