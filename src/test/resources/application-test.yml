@@ -108,16 +108,6 @@ yadony:
     auto-expire-check-cron: "-"
   negotiation:
     commission-expire-check-cron: "-"
-  mobilemoney:
-    wave:
-      api-key: test-wave-key
-      api-url: https://wave-stub.test
-      webhook-secret: test-wave-secret
-    orange-money:
-      api-key: test-om-key
-      api-url: https://om-stub.test
-      webhook-secret: test-om-secret
-    link-expiry-minutes: 30
 
 app:
   encryption:

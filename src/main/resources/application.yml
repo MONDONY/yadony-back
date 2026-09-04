@@ -257,16 +257,6 @@ yadony:
     # fenêtre par défaut étant de 2 h) + rattrapage des commissions débitées
     # jamais remboursées sur les fils perdants (AUTO_REJECTED/EXPIRED/CANCELLED).
     commission-expire-check-cron: ${YADONY_NEGOTIATION_COMMISSION_EXPIRE_CRON:0 */5 * * * *}
-  mobilemoney:
-    wave:
-      api-key: ${WAVE_API_KEY:}
-      api-url: ${WAVE_API_URL:https://api.wave.com/v1}
-      webhook-secret: ${WAVE_WEBHOOK_SECRET:}
-    orange-money:
-      api-key: ${ORANGE_MONEY_API_KEY:}
-      api-url: ${ORANGE_MONEY_API_URL:https://api.orange.com/orange-money-webpay/v1}
-      webhook-secret: ${ORANGE_MONEY_WEBHOOK_SECRET:}
-    link-expiry-minutes: ${YADONY_MOBILEMONEY_LINK_EXPIRY_MINUTES:30}
   email:
     resend-api-key: ${RESEND_API_KEY:}
     from-address: ${YADONY_EMAIL_FROM_ADDRESS:noreply@yadony.com}

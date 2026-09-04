@@ -102,7 +102,6 @@ class NotificationTextsTest {
         m.put("lastMinuteOffer", NotificationTexts.lastMinuteOffer(24, DEPART + " → " + ARRIVEE));
         m.put("loyalSender", NotificationTexts.loyalSender(NOM, DEPART, ARRIVEE));
         m.put("paymentReleased", NotificationTexts.paymentReleased("12500,00 €"));
-        m.put("mobileMoneyPaymentPending", NotificationTexts.mobileMoneyPaymentPending("ORANGE_MONEY"));
         m.put("mobileMoneyPaymentConfirmed", NotificationTexts.mobileMoneyPaymentConfirmed());
         m.put("kycVerified", NotificationTexts.kycVerified());
         m.put("kycActionRequired", NotificationTexts.kycActionRequired());

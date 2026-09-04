@@ -174,9 +174,6 @@ public class SecurityConfig {
                     "/payments/onboarding/refresh",
                     // Public traveler profile: list active/full announcements without auth
                     "/travelers/*/announcements",
-                    // MM webhooks: no Firebase token (provider-to-server call). Security is
-                    // enforced via HMAC signature verification in MobileMoneyPaymentService.
-                    "/webhooks/mobile-money/**",
                     // Public shareable traveler profile (minimal, no-auth)
                     "/public/**",
                     // Alias court de /public/annonce/{id}, pensé pour l'URL visible par le

@@ -21,7 +21,6 @@ import com.yadony.api.matching.events.BidRejectedEvent;
 import com.yadony.api.matching.events.HandoverAlertEvent;
 import com.yadony.api.matching.events.TripArrivedEvent;
 import com.yadony.api.payments.events.PaymentReleasedEvent;
-import com.yadony.api.payments.mobilemoney.events.BidPaidByMobileMoneyEvent;
 import com.yadony.api.tracking.events.DeliveryConfirmedEvent;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -184,24 +183,6 @@ class NotificationDispatcherTest {
         assertThat(dataCaptor.getValue())
                 .containsEntry("type", "KYC_ACTION_REQUIRED")
                 .doesNotContainKey("reasonCode");
-    }
-
-    // ── Mobile Money ─────────────────────────────────────────────────────────
-
-    @Test
-    void onBidPaidByMobileMoney_notifiesTraveler() {
-        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
-
-        dispatcher.onBidPaidByMobileMoney(
-                new BidPaidByMobileMoneyEvent(bidId, travelerId));
-
-        var dataCaptor = ArgumentCaptor.forClass(Map.class);
-        verify(fcmService).sendToUser(
-                eq(travelerId), eq("Paiement confirmé"),
-                contains("Mobile Money"), dataCaptor.capture());
-        assertThat(dataCaptor.getValue())
-                .containsEntry("type", "MOBILE_MONEY_PAYMENT_CONFIRMED")
-                .containsEntry("bidId", bidId.toString());
     }
 
     // ── Parcel return ────────────────────────────────────────────────────────

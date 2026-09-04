@@ -26,7 +26,6 @@ import com.yadony.api.matching.events.ParcelRefusedEvent;
 import com.yadony.api.matching.events.TripArrivedEvent;
 import com.yadony.api.matching.events.VoyageurNoShowEvent;
 import com.yadony.api.payments.events.PaymentReleasedEvent;
-import com.yadony.api.payments.mobilemoney.events.BidPaidByMobileMoneyEvent;
 import com.yadony.api.tracking.events.DeliveryConfirmedEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -179,15 +178,6 @@ public class NotificationDispatcher {
     public void onUserKycActionRequired(UserKycActionRequiredEvent event) {
         var text = NotificationTexts.kycActionRequired();
         notifyUser(event.userId(), text.title(), text.body(), Map.of("type", "KYC_ACTION_REQUIRED"));
-    }
-
-    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
-    @Async
-    public void onBidPaidByMobileMoney(BidPaidByMobileMoneyEvent event) {
-        var text = NotificationTexts.mobileMoneyPaymentConfirmed();
-        notifyUser(event.getTravelerId(), text.title(), text.body(),
-                Map.of("type", "MOBILE_MONEY_PAYMENT_CONFIRMED",
-                       "bidId", event.getBidId().toString()));
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)

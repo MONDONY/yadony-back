@@ -1,10 +1,8 @@
 package com.yadony.api.admin;
 
 import com.yadony.api.admin.dto.AdminCashCommissionResponse;
-import com.yadony.api.admin.dto.AdminMobileMoneyResponse;
 import com.yadony.api.admin.dto.AdminWalletResponse;
 import com.yadony.api.matching.BidRepository;
-import com.yadony.api.payments.mobilemoney.MobileMoneyPaymentRepository;
 import com.yadony.api.payments.wallet.WalletAccountRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -40,14 +38,11 @@ public class AdminFinanceController {
     private static final int MAX_PAGE_SIZE = 100;
 
     private final WalletAccountRepository walletRepository;
-    private final MobileMoneyPaymentRepository mobileMoneyRepository;
     private final BidRepository bidRepository;
 
     public AdminFinanceController(WalletAccountRepository walletRepository,
-                                  MobileMoneyPaymentRepository mobileMoneyRepository,
                                   BidRepository bidRepository) {
         this.walletRepository = walletRepository;
-        this.mobileMoneyRepository = mobileMoneyRepository;
         this.bidRepository = bidRepository;
     }
 
@@ -56,13 +51,6 @@ public class AdminFinanceController {
     public Page<AdminWalletResponse> wallets(@RequestParam(defaultValue = "0") int page,
                                              @RequestParam(defaultValue = "20") int size) {
         return walletRepository.findAll(pageable(page, size)).map(AdminWalletResponse::from);
-    }
-
-    @PreAuthorize("hasRole('ADMIN') and hasAuthority('PAYMENT_VIEW')")
-    @GetMapping("/mobile-money-payments")
-    public Page<AdminMobileMoneyResponse> mobileMoneyPayments(@RequestParam(defaultValue = "0") int page,
-                                                              @RequestParam(defaultValue = "20") int size) {
-        return mobileMoneyRepository.findAll(pageable(page, size)).map(AdminMobileMoneyResponse::from);
     }
 
     @PreAuthorize("hasRole('ADMIN') and hasAuthority('PAYMENT_VIEW')")

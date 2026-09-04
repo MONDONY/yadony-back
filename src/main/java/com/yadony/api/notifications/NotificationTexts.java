@@ -413,11 +413,6 @@ public final class NotificationTexts {
         return new NotificationText("Paiement reçu !", formattedAmount + ", virement en cours sous 24 h.");
     }
 
-    public static NotificationText mobileMoneyPaymentPending(String providerEnumName) {
-        return new NotificationText("Payez votre envoi",
-                "Le voyageur a accepté. Payez via " + provider(providerEnumName) + ".");
-    }
-
     public static NotificationText mobileMoneyPaymentConfirmed() {
         return new NotificationText("Paiement confirmé", "Le paiement Mobile Money de cet envoi est confirmé.");
     }

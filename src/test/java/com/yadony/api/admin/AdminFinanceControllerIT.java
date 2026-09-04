@@ -6,8 +6,6 @@ import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.payments.cash.CommissionChargedVia;
 import com.yadony.api.payments.cash.CommissionStatus;
-import com.yadony.api.payments.mobilemoney.MobileMoneyPaymentEntity;
-import com.yadony.api.payments.mobilemoney.MobileMoneyPaymentRepository;
 import com.yadony.api.payments.wallet.WalletAccountEntity;
 import com.yadony.api.payments.wallet.WalletAccountRepository;
 import org.junit.jupiter.api.DisplayName;
@@ -53,13 +51,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest
 @ActiveProfiles("test")
 @AutoConfigureMockMvc
-@DisplayName("AdminFinanceControllerIT — /admin/wallets, /admin/mobile-money-payments, /admin/cash-commissions")
+@DisplayName("AdminFinanceControllerIT — /admin/wallets, /admin/cash-commissions")
 class AdminFinanceControllerIT {
 
     @Autowired MockMvc mockMvc;
 
     @MockitoBean WalletAccountRepository walletRepository;
-    @MockitoBean MobileMoneyPaymentRepository mobileMoneyRepository;
     @MockitoBean BidRepository bidRepository;
 
     private static final UUID USER_ID = UUID.randomUUID();
@@ -93,20 +90,6 @@ class AdminFinanceControllerIT {
         return entity;
     }
 
-    private static MobileMoneyPaymentEntity mobileMoneyPayment() {
-        MobileMoneyPaymentEntity entity = new MobileMoneyPaymentEntity();
-        ReflectionTestUtils.setField(entity, "id", UUID.randomUUID());
-        entity.setBidId(BID_ID);
-        entity.setProvider("WAVE");
-        entity.setCountryCode("SN");
-        entity.setPhoneNumber("221771234567");
-        entity.setAmount(new BigDecimal("5000.00"));
-        entity.setCurrency("XOF");
-        entity.setStatus("COMPLETED");
-        ReflectionTestUtils.setField(entity, "createdAt", WHEN);
-        return entity;
-    }
-
     private static BidEntity cashBid() {
         BidEntity bid = new BidEntity();
         ReflectionTestUtils.setField(bid, "id", BID_ID);
@@ -127,13 +110,13 @@ class AdminFinanceControllerIT {
     void withoutPaymentView_allThreeRoutesAreForbidden() throws Exception {
         mockMvc.perform(get("/admin/wallets").with(authentication(withoutPaymentView())))
                 .andExpect(status().isForbidden());
-        mockMvc.perform(get("/admin/mobile-money-payments").with(authentication(withoutPaymentView())))
+        mockMvc.perform(get("/admin/wallets").with(authentication(withoutPaymentView())))
                 .andExpect(status().isForbidden());
         mockMvc.perform(get("/admin/cash-commissions").with(authentication(withoutPaymentView())))
                 .andExpect(status().isForbidden());
 
         verify(walletRepository, never()).findAll(any(Pageable.class));
-        verify(mobileMoneyRepository, never()).findAll(any(Pageable.class));
+        verify(walletRepository, never()).findAll(any(Pageable.class));
         verify(bidRepository, never()).findCashCommissions(any(Pageable.class));
     }
 
@@ -153,41 +136,6 @@ class AdminFinanceControllerIT {
                 .andExpect(jsonPath("$.content[0].balanceCents").value(1234))
                 .andExpect(jsonPath("$.content[0].currency").value("EUR"))
                 .andExpect(jsonPath("$.totalElements").value(1));
-    }
-
-    // ── Mobile Money ─────────────────────────────────────────────────────────
-
-    @Test
-    @DisplayName("GET /admin/mobile-money-payments — montant en centimes et numero masque des le serveur")
-    void mobileMoney_masksPhoneNumberServerSide() throws Exception {
-        when(mobileMoneyRepository.findAll(any(Pageable.class)))
-                .thenReturn(new PageImpl<>(List.of(mobileMoneyPayment()), PageRequest.of(0, 20), 1));
-
-        mockMvc.perform(get("/admin/mobile-money-payments").with(authentication(supportAuth())))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.content[0].bidId").value(BID_ID.toString()))
-                .andExpect(jsonPath("$.content[0].provider").value("WAVE"))
-                .andExpect(jsonPath("$.content[0].countryCode").value("SN"))
-                // Le numero ne doit JAMAIS quitter le serveur en clair : l'ecran ne l'affiche
-                // pas, rien ne justifie de l'envoyer au navigateur.
-                .andExpect(jsonPath("$.content[0].phoneNumber").value("••••••••4567"))
-                .andExpect(jsonPath("$.content[0].amountCents").value(500000))
-                .andExpect(jsonPath("$.content[0].currency").value("XOF"))
-                .andExpect(jsonPath("$.content[0].status").value("COMPLETED"));
-    }
-
-    @Test
-    @DisplayName("GET /admin/mobile-money-payments — le numero en clair n'apparait nulle part dans la reponse")
-    void mobileMoney_clearNumberIsAbsentFromTheWholeBody() throws Exception {
-        when(mobileMoneyRepository.findAll(any(Pageable.class)))
-                .thenReturn(new PageImpl<>(List.of(mobileMoneyPayment()), PageRequest.of(0, 20), 1));
-
-        String body = mockMvc.perform(get("/admin/mobile-money-payments")
-                        .with(authentication(supportAuth())))
-                .andExpect(status().isOk())
-                .andReturn().getResponse().getContentAsString();
-
-        org.assertj.core.api.Assertions.assertThat(body).doesNotContain("221771234567");
     }
 
     // ── Commissions cash ─────────────────────────────────────────────────────
