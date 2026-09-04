@@ -159,6 +159,46 @@ class AlertServiceTripMatchesTest {
         assertThat(matches.get(0).announcementId()).isEqualTo(fromVisible.getId());
     }
 
+    /** Le trajet du propriétaire de l'alerte ne remonte pas dans ses correspondances. */
+    @Test
+    void getTripMatches_omitsOwnTrips() {
+        UUID otherTraveler = UUID.randomUUID();
+        AnnouncementEntity mine = trip(ownerId, LocalDate.of(2026, 7, 10),
+                new BigDecimal("15.00"), new BigDecimal("8.50"));
+        AnnouncementEntity theirs = trip(otherTraveler, LocalDate.of(2026, 7, 12),
+                new BigDecimal("10.00"), new BigDecimal("7.00"));
+
+        when(alertRepository.findById(alertId)).thenReturn(Optional.of(senderAlert()));
+        when(announcementRepository.findActiveByCorridor("Paris", "Bamako"))
+                .thenReturn(List.of(mine, theirs));
+        when(userRepository.findAllById(anyCollection()))
+                .thenReturn(List.of(traveler(otherTraveler, "Awa", "Keita", null)));
+
+        List<AlertTripMatchDto> matches = service.getTripMatches(uid, alertId);
+
+        assertThat(matches).hasSize(1);
+        assertThat(matches.get(0).announcementId()).isEqualTo(theirs.getId());
+    }
+
+    /** Matching temps réel : un voyageur qui publie ne déclenche pas sa propre alerte. */
+    @Test
+    void findSenderAlertsMatchingTrip_skipsAlertOwnedByTraveler() {
+        CorridorAlertEntity mine = senderAlert();
+        CorridorAlertEntity someoneElses = senderAlert();
+        setId(someoneElses, UUID.randomUUID());
+        someoneElses.setOwnerId(UUID.randomUUID());
+        AnnouncementEntity published = trip(ownerId, LocalDate.of(2026, 7, 10),
+                new BigDecimal("15.00"), new BigDecimal("8.50"));
+        published.setStatus(AnnouncementStatus.ACTIVE);
+
+        when(alertRepository.findAllByActiveTrueAndDirection(AlertDirection.SENDER_WANTS_TRIPS))
+                .thenReturn(List.of(mine, someoneElses));
+
+        List<CorridorAlertEntity> hits = service.findSenderAlertsMatchingTrip(published);
+
+        assertThat(hits).containsExactly(someoneElses);
+    }
+
     @Test
     void getTripMatches_ratingNull_defaultsToZero() {
         UUID travelerId = UUID.randomUUID();

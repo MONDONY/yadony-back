@@ -50,6 +50,15 @@ public class CorridorAlertEntity extends BaseEntity {
     @Column(name = "last_notified_at")
     private LocalDateTime lastNotifiedAt;
 
+    /**
+     * Dernière ouverture des correspondances par le propriétaire. {@code null}
+     * tant qu'il ne les a jamais consultées : tout ce qui matche est alors
+     * « nouveau » pour lui. Indépendant de {@link #lastNotifiedAt}, qui ne
+     * concerne que l'envoi des notifications.
+     */
+    @Column(name = "last_seen_at")
+    private LocalDateTime lastSeenAt;
+
     @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(
             name = "corridor_alert_content_categories",
@@ -105,6 +114,9 @@ public class CorridorAlertEntity extends BaseEntity {
 
     public LocalDateTime getLastNotifiedAt() { return lastNotifiedAt; }
     public void setLastNotifiedAt(LocalDateTime lastNotifiedAt) { this.lastNotifiedAt = lastNotifiedAt; }
+
+    public LocalDateTime getLastSeenAt() { return lastSeenAt; }
+    public void setLastSeenAt(LocalDateTime lastSeenAt) { this.lastSeenAt = lastSeenAt; }
 
     public List<String> getContentCategories() { return contentCategories; }
     public void setContentCategories(List<String> contentCategories) {

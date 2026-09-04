@@ -26,7 +26,14 @@ public record CorridorAlertResponse(
         BigDecimal centerLat,
         BigDecimal centerLng,
         Integer radiusKm,
-        String centerLabel
+        String centerLabel,
+        /**
+         * Correspondances apparues depuis la dernière consultation des matchs
+         * par le propriétaire (toutes, s'il ne les a jamais ouverts). C'est ce
+         * chiffre que le hub Activités et la liste mettent en avant, jamais
+         * {@link #matchCount} qui ne dit rien de ce qui a changé.
+         */
+        long newMatchCount
 ) {
     /** Constructeur de compat (sans zone de remise) — délègue avec une zone nulle. */
     public CorridorAlertResponse(
@@ -37,6 +44,6 @@ public record CorridorAlertResponse(
             boolean active, long matchCount, LocalDateTime createdAt) {
         this(id, departureCity, arrivalCity, departureCountryCode, arrivalCountryCode,
                 dateFrom, dateTo, minWeightKg, contentCategories, direction,
-                active, matchCount, createdAt, null, null, null, null);
+                active, matchCount, createdAt, null, null, null, null, 0L);
     }
 }

@@ -51,6 +51,21 @@ public class AlertController {
         alertService.delete(firebaseUid, id);
     }
 
+    @GetMapping("/me/corridor-alerts/{id}")
+    @PreAuthorize("hasAnyRole('TRAVELER','SENDER')")
+    public CorridorAlertResponse get(@AuthenticationPrincipal String firebaseUid,
+                                     @PathVariable UUID id) {
+        return alertService.get(firebaseUid, id);
+    }
+
+    /** Le propriétaire a ouvert les correspondances : remet le compteur de nouveautés à zéro. */
+    @PostMapping("/me/corridor-alerts/{id}/seen")
+    @PreAuthorize("hasAnyRole('TRAVELER','SENDER')")
+    public CorridorAlertResponse markSeen(@AuthenticationPrincipal String firebaseUid,
+                                          @PathVariable UUID id) {
+        return alertService.markSeen(firebaseUid, id);
+    }
+
     @GetMapping("/me/corridor-alerts/{id}/matches")
     @PreAuthorize("hasAnyRole('TRAVELER','SENDER')")
     public List<?> matches(@AuthenticationPrincipal String firebaseUid,

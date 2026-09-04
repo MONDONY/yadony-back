@@ -251,4 +251,114 @@ class AlertServiceMatchesTest {
         assertThat(existing.getDeletedAt()).isNotNull();
         verify(alertRepository).save(existing);
     }
+
+    // ── Contenu propre, nouveautés, consultation ───────────────────────────
+
+    private static void setCreatedAt(Object target, java.time.LocalDateTime at) {
+        try {
+            var f = com.yadony.api.common.BaseEntity.class.getDeclaredField("createdAt");
+            f.setAccessible(true);
+            f.set(target, at);
+        } catch (Exception e) { throw new RuntimeException(e); }
+    }
+
+    /** Un utilisateur double rôle publie un colis sur le corridor de sa propre alerte :
+     *  il ne doit pas se retrouver dans ses propres correspondances. */
+    @Test
+    void getMatches_omitsOwnPackages() {
+        PackageRequestEntity mine = pkg("Documents", new BigDecimal("3.00"), LocalDate.of(2026, 7, 10));
+        mine.setSenderId(ownerId);
+        PackageRequestEntity other = pkg("Documents", new BigDecimal("3.00"), LocalDate.of(2026, 7, 11));
+
+        when(alertRepository.findById(alertId)).thenReturn(Optional.of(alert(true)));
+        when(packageRequestRepository.findOpenByCorridor("Paris", "Bamako"))
+                .thenReturn(List.of(mine, other));
+        when(userRepository.findAllById(anyCollection()))
+                .thenReturn(List.of(senderWithId(other.getSenderId())));
+
+        List<MatchingRequestDto> matches = service.getMatches(uid, alertId);
+
+        assertThat(matches).hasSize(1);
+        assertThat(matches.get(0).id()).isEqualTo(other.getId().toString());
+    }
+
+    @Test
+    void list_neverSeen_everyMatchIsNew() {
+        PackageRequestEntity a = pkg("Documents", new BigDecimal("3.00"), LocalDate.of(2026, 7, 10));
+        PackageRequestEntity b = pkg("Documents", new BigDecimal("3.00"), LocalDate.of(2026, 7, 11));
+        setCreatedAt(a, java.time.LocalDateTime.of(2026, 6, 1, 10, 0));
+        setCreatedAt(b, java.time.LocalDateTime.of(2026, 6, 20, 10, 0));
+
+        when(alertRepository.findAllByOwnerId(ownerId)).thenReturn(List.of(alert(true)));
+        when(packageRequestRepository.findOpenByCorridor("Paris", "Bamako")).thenReturn(List.of(a, b));
+
+        List<CorridorAlertResponse> list = service.list(uid, null);
+
+        assertThat(list).hasSize(1);
+        assertThat(list.get(0).matchCount()).isEqualTo(2);
+        assertThat(list.get(0).newMatchCount()).isEqualTo(2);
+    }
+
+    @Test
+    void list_seenOnce_onlyLaterMatchesAreNew() {
+        PackageRequestEntity before = pkg("Documents", new BigDecimal("3.00"), LocalDate.of(2026, 7, 10));
+        PackageRequestEntity after = pkg("Documents", new BigDecimal("3.00"), LocalDate.of(2026, 7, 11));
+        PackageRequestEntity undated = pkg("Documents", new BigDecimal("3.00"), LocalDate.of(2026, 7, 12));
+        setCreatedAt(before, java.time.LocalDateTime.of(2026, 6, 1, 10, 0));
+        setCreatedAt(after, java.time.LocalDateTime.of(2026, 6, 20, 10, 0));
+        CorridorAlertEntity seen = alert(true);
+        seen.setLastSeenAt(java.time.LocalDateTime.of(2026, 6, 10, 9, 0));
+
+        when(alertRepository.findAllByOwnerId(ownerId)).thenReturn(List.of(seen));
+        when(packageRequestRepository.findOpenByCorridor("Paris", "Bamako"))
+                .thenReturn(List.of(before, after, undated));
+
+        CorridorAlertResponse r = service.list(uid, null).get(0);
+
+        // Trois correspondances, une seule postérieure à la consultation ; un colis
+        // sans horodatage ne compte jamais comme nouveau.
+        assertThat(r.matchCount()).isEqualTo(3);
+        assertThat(r.newMatchCount()).isEqualTo(1);
+    }
+
+    @Test
+    void markSeen_stampsNowAndResetsNewMatchCount() {
+        PackageRequestEntity old = pkg("Documents", new BigDecimal("3.00"), LocalDate.of(2026, 7, 10));
+        setCreatedAt(old, java.time.LocalDateTime.of(2026, 6, 1, 10, 0));
+        CorridorAlertEntity entity = alert(true);
+
+        when(alertRepository.findById(alertId)).thenReturn(Optional.of(entity));
+        when(alertRepository.save(entity)).thenReturn(entity);
+        when(packageRequestRepository.findOpenByCorridor("Paris", "Bamako")).thenReturn(List.of(old));
+
+        CorridorAlertResponse r = service.markSeen(uid, alertId);
+
+        assertThat(entity.getLastSeenAt()).isNotNull();
+        assertThat(r.matchCount()).isEqualTo(1);
+        assertThat(r.newMatchCount()).isZero();
+    }
+
+    @Test
+    void markSeen_foreignAlert_notFound() {
+        CorridorAlertEntity foreign = alert(true);
+        foreign.setOwnerId(UUID.randomUUID());
+        when(alertRepository.findById(alertId)).thenReturn(Optional.of(foreign));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.markSeen(uid, alertId))
+                .isInstanceOf(com.yadony.api.common.YadonyNotFoundException.class);
+    }
+
+    @Test
+    void get_returnsOwnedAlertWithCounters() {
+        PackageRequestEntity a = pkg("Documents", new BigDecimal("3.00"), LocalDate.of(2026, 7, 10));
+        setCreatedAt(a, java.time.LocalDateTime.of(2026, 6, 1, 10, 0));
+        when(alertRepository.findById(alertId)).thenReturn(Optional.of(alert(true)));
+        when(packageRequestRepository.findOpenByCorridor("Paris", "Bamako")).thenReturn(List.of(a));
+
+        CorridorAlertResponse r = service.get(uid, alertId);
+
+        assertThat(r.id()).isEqualTo(alertId);
+        assertThat(r.matchCount()).isEqualTo(1);
+        assertThat(r.newMatchCount()).isEqualTo(1);
+    }
 }
