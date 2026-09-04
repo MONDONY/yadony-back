@@ -6,6 +6,7 @@ import com.yadony.api.alerts.dto.CorridorAlertResponse;
 import com.yadony.api.auth.Role;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
+import com.yadony.api.common.BaseEntity;
 import com.yadony.api.common.BlockVisibility;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.YadonyNotFoundException;
@@ -16,13 +17,17 @@ import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.AnnouncementStatus;
 import com.yadony.api.matching.dto.MatchingRequestDto;
 import com.yadony.api.requests.entity.PackageRequestEntity;
+import com.yadony.api.requests.entity.PackageRequestStatus;
 import com.yadony.api.requests.repository.PackageRequestRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.Clock;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -114,10 +119,11 @@ public class AlertService {
         entity.setContentCategories(categories);
         entity.setActive(true);
         entity.setDirection(req.direction());
+        entity.setNotifyMode(req.effectiveNotifyMode());
         applyZone(entity, req);
 
         CorridorAlertEntity saved = alertRepository.save(entity);
-        return toResponse(saved, 0L);
+        return toResponse(saved, 0L, 0L);
     }
 
     /** Recopie la zone de remise (centre + rayon + label) du payload vers l'entité. */
@@ -210,8 +216,27 @@ public class AlertService {
         UUID oid = ownerId(firebaseUid);
         return alertRepository.findAllByOwnerId(oid).stream()
                 .filter(a -> direction == null || a.getDirection() == direction)
-                .map(a -> toResponse(a, countMatches(a)))
+                .map(this::toResponse)
                 .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public CorridorAlertResponse get(String firebaseUid, UUID alertId) {
+        UUID oid = ownerId(firebaseUid);
+        return toResponse(ownedAlert(oid, alertId));
+    }
+
+    /**
+     * Le propriétaire vient d'ouvrir les correspondances : tout ce qui matche
+     * aujourd'hui est désormais « vu ». Le compteur de nouveautés repart de zéro,
+     * la pastille du hub s'éteint.
+     */
+    public CorridorAlertResponse markSeen(String firebaseUid, UUID alertId) {
+        UUID oid = ownerId(firebaseUid);
+        CorridorAlertEntity entity = ownedAlert(oid, alertId);
+        entity.setLastSeenAt(LocalDateTime.now(ZoneOffset.UTC));
+        CorridorAlertEntity saved = alertRepository.save(entity);
+        return toResponse(saved);
     }
 
     public CorridorAlertResponse update(String firebaseUid, UUID alertId,
@@ -229,11 +254,16 @@ public class AlertService {
                 req.contentCategories() != null ? req.contentCategories() : List.of()));
         validateZone(entity.getDirection(), req.centerLat(), req.centerLng(), req.radiusKm());
         applyZone(entity, req);
+        // Un client antérieur n'envoie pas de fréquence : on garde celle en place
+        // plutôt que de la remettre à INSTANT à chaque édition.
+        if (req.notifyMode() != null) {
+            entity.setNotifyMode(req.notifyMode());
+        }
         if (active != null) {
             entity.setActive(active);
         }
         CorridorAlertEntity saved = alertRepository.save(entity);
-        return toResponse(saved, countMatches(saved));
+        return toResponse(saved);
     }
 
     public void delete(String firebaseUid, UUID alertId) {
@@ -275,10 +305,27 @@ public class AlertService {
         return entity;
     }
 
-    private long countMatches(CorridorAlertEntity alert) {
+    /** Correspondances courantes, quelle que soit la direction. */
+    private List<? extends BaseEntity> matchesOf(CorridorAlertEntity alert) {
         return alert.getDirection() == AlertDirection.SENDER_WANTS_TRIPS
-                ? findMatchingTrips(alert).size()
-                : findMatchingPackages(alert).size();
+                ? findMatchingTrips(alert)
+                : findMatchingPackages(alert);
+    }
+
+    /**
+     * Une seule passe de matching pour les deux compteurs : {@code matchCount}
+     * (tout ce qui matche) et {@code newMatchCount} (ce qui est apparu depuis
+     * {@code lastSeenAt}, ou tout si l'alerte n'a jamais été consultée).
+     */
+    private CorridorAlertResponse toResponse(CorridorAlertEntity alert) {
+        List<? extends BaseEntity> matches = matchesOf(alert);
+        LocalDateTime seen = alert.getLastSeenAt();
+        long fresh = seen == null
+                ? matches.size()
+                : matches.stream()
+                        .filter(m -> m.getCreatedAt() != null && m.getCreatedAt().isAfter(seen))
+                        .count();
+        return toResponse(alert, matches.size(), fresh);
     }
 
     public List<PackageRequestEntity> findRecentMatches(CorridorAlertEntity alert, java.time.LocalDateTime since) {
@@ -296,12 +343,15 @@ public class AlertService {
     /**
      * Les correspondances sont filtrées par les blocages du propriétaire de l'alerte :
      * c'est la même liste que la recherche, elle doit masquer les mêmes comptes.
+     * Son propre contenu est exclu aussi : un utilisateur double rôle qui publie
+     * un colis sur le corridor de sa propre alerte ne doit pas se notifier lui-même.
      */
     private List<PackageRequestEntity> findMatchingPackages(CorridorAlertEntity alert) {
         Set<UUID> hidden = blockVisibility.hiddenUserIdsFor(alert.getOwnerId());
         return packageRequestRepository
                 .findOpenByCorridor(alert.getDepartureCity(), alert.getArrivalCity())
                 .stream()
+                .filter(p -> !alert.getOwnerId().equals(p.getSenderId()))
                 .filter(p -> !hidden.contains(p.getSenderId()))
                 .filter(p -> fitsAlertDate(p.getDesiredDate(), alert))
                 .filter(p -> fitsAlertWeight(p, alert))
@@ -321,6 +371,7 @@ public class AlertService {
                         alert.getDepartureCity(), alert.getArrivalCity());
         Set<UUID> hidden = blockVisibility.hiddenUserIdsFor(alert.getOwnerId());
         return candidates.stream()
+                .filter(a -> !alert.getOwnerId().equals(a.getTravelerId()))
                 .filter(a -> !hidden.contains(a.getTravelerId()))
                 .filter(a -> fitsAlertDate(a.getDepartureDate(), alert))
                 .toList();
@@ -331,6 +382,26 @@ public class AlertService {
             return false;
         }
         return alert.getDateTo() == null || !date.isAfter(alert.getDateTo());
+    }
+
+    /**
+     * Fenêtre de dates dépassée : l'alerte ne peut plus rien trouver de neuf et
+     * ne doit plus déclencher ni push instantané ni digest. Sans {@code dateTo},
+     * une alerte est permanente.
+     */
+    public static boolean isExpired(CorridorAlertEntity alert, LocalDate today) {
+        return alert.getDateTo() != null && alert.getDateTo().isBefore(today);
+    }
+
+    /** Horloge du « aujourd'hui » de l'expiration ; figée dans les tests. */
+    private Clock clock = Clock.systemUTC();
+
+    void useClock(Clock clock) {
+        this.clock = clock;
+    }
+
+    private LocalDate today() {
+        return LocalDate.now(clock);
     }
 
     /**
@@ -346,13 +417,43 @@ public class AlertService {
                 && trip.getStatus() != AnnouncementStatus.FULL) {
             return List.of();
         }
+        LocalDate today = today();
         return alertRepository
                 .findAllByActiveTrueAndDirection(AlertDirection.SENDER_WANTS_TRIPS)
                 .stream()
+                .filter(a -> !isExpired(a, today))
+                // Le voyageur qui publie ne se notifie pas lui-même via sa propre alerte.
+                .filter(a -> !a.getOwnerId().equals(trip.getTravelerId()))
                 .filter(a -> a.getDepartureCity().equalsIgnoreCase(trip.getDepartureCity())
                         && a.getArrivalCity().equalsIgnoreCase(trip.getArrivalCity()))
                 .filter(a -> fitsAlertDate(trip.getDepartureDate(), a))
                 .filter(a -> zoneContainsPickup(a, trip))
+                .toList();
+    }
+
+    /**
+     * Symétrique de {@link #findSenderAlertsMatchingTrip} côté colis : pour une
+     * demande qui vient d'être publiée, renvoie les alertes colis
+     * (TRAVELER_WANTS_PACKAGES) actives qui matchent — corridor, fenêtre de dates,
+     * poids minimal, catégories — hors alertes de l'expéditeur lui-même. Utilisé
+     * par le matching temps réel (listener PackageRequestCreatedEvent).
+     */
+    @Transactional(readOnly = true)
+    public List<CorridorAlertEntity> findTravelerAlertsMatchingPackage(PackageRequestEntity p) {
+        if (p.getStatus() != PackageRequestStatus.OPEN) {
+            return List.of();
+        }
+        LocalDate today = today();
+        return alertRepository
+                .findAllByActiveTrueAndDirection(AlertDirection.TRAVELER_WANTS_PACKAGES)
+                .stream()
+                .filter(a -> !isExpired(a, today))
+                .filter(a -> !a.getOwnerId().equals(p.getSenderId()))
+                .filter(a -> a.getDepartureCity().equalsIgnoreCase(p.getDepartureCity())
+                        && a.getArrivalCity().equalsIgnoreCase(p.getArrivalCity()))
+                .filter(a -> fitsAlertDate(p.getDesiredDate(), a))
+                .filter(a -> fitsAlertWeight(p, a))
+                .filter(a -> fitsAlertCategory(p, a))
                 .toList();
     }
 
@@ -395,7 +496,8 @@ public class AlertService {
                     a.getId(), a.getDepartureCity(), a.getArrivalCity(), a.getDepartureDate(),
                     traveler.getId(), MatchingTextUtil.buildPublicName(traveler),
                     MatchingTextUtil.buildInitials(traveler), rating,
-                    a.getAvailableKg(), a.getPricePerKg(), a.getTransportMode(), null, a.getCurrency()));
+                    a.getAvailableKg(), a.getPricePerKg(), a.getTransportMode(), null, a.getCurrency(),
+                    a.getCreatedAt()));
         }
         return result;
     }
@@ -483,7 +585,7 @@ public class AlertService {
                 p.getCurrency());
     }
 
-    private CorridorAlertResponse toResponse(CorridorAlertEntity e, long matchCount) {
+    private CorridorAlertResponse toResponse(CorridorAlertEntity e, long matchCount, long newMatchCount) {
         return new CorridorAlertResponse(
                 e.getId(),
                 e.getDepartureCity(),
@@ -501,6 +603,9 @@ public class AlertService {
                 e.getCenterLat(),
                 e.getCenterLng(),
                 e.getRadiusKm(),
-                e.getCenterLabel());
+                e.getCenterLabel(),
+                newMatchCount,
+                e.getLastSeenAt(),
+                e.getNotifyMode());
     }
 }

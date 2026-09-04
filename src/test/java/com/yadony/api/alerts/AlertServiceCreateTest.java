@@ -88,6 +88,65 @@ class AlertServiceCreateTest {
     }
 
     @Test
+    void create_withoutNotifyMode_defaultsToInstant() {
+        when(userRepository.findByFirebaseUid(uid)).thenReturn(Optional.of(owner));
+        when(alertRepository.findAllByOwnerId(ownerId)).thenReturn(List.of());
+        when(alertRepository.save(any(CorridorAlertEntity.class)))
+                .thenAnswer(inv -> inv.getArgument(0));
+
+        CorridorAlertResponse resp = service.create(uid, req());
+
+        assertThat(resp.notifyMode()).isEqualTo(AlertNotifyMode.INSTANT);
+    }
+
+    @Test
+    void create_withNotifyMode_storesIt() {
+        when(userRepository.findByFirebaseUid(uid)).thenReturn(Optional.of(owner));
+        when(alertRepository.findAllByOwnerId(ownerId)).thenReturn(List.of());
+        when(alertRepository.save(any(CorridorAlertEntity.class)))
+                .thenAnswer(inv -> inv.getArgument(0));
+        CorridorAlertRequest daily = new CorridorAlertRequest("Paris", "FR", "Bamako", "ML",
+                null, null, new BigDecimal("2.00"), List.of("Documents"),
+                AlertDirection.TRAVELER_WANTS_PACKAGES, null,
+                null, null, null, null, AlertNotifyMode.DAILY);
+
+        CorridorAlertResponse resp = service.create(uid, daily);
+
+        assertThat(resp.notifyMode()).isEqualTo(AlertNotifyMode.DAILY);
+    }
+
+    /** Un client antérieur (sans fréquence) ne doit pas remettre une alerte silencieuse en INSTANT. */
+    @Test
+    void update_withoutNotifyMode_keepsExistingMode() {
+        CorridorAlertEntity existing = new CorridorAlertEntity();
+        try {
+            var f = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+            f.setAccessible(true);
+            f.set(existing, UUID.randomUUID());
+        } catch (Exception e) { throw new RuntimeException(e); }
+        existing.setOwnerId(ownerId);
+        existing.setDepartureCity("Paris");
+        existing.setArrivalCity("Bamako");
+        existing.setDirection(AlertDirection.TRAVELER_WANTS_PACKAGES);
+        existing.setNotifyMode(AlertNotifyMode.MUTED);
+        when(userRepository.findByFirebaseUid(uid)).thenReturn(Optional.of(owner));
+        when(alertRepository.findById(existing.getId())).thenReturn(Optional.of(existing));
+        when(alertRepository.save(any(CorridorAlertEntity.class)))
+                .thenAnswer(inv -> inv.getArgument(0));
+        when(packageRequestRepository.findOpenByCorridor("Paris", "Bamako")).thenReturn(List.of());
+
+        CorridorAlertResponse kept = service.update(uid, existing.getId(), req(), null);
+        assertThat(kept.notifyMode()).isEqualTo(AlertNotifyMode.MUTED);
+
+        CorridorAlertRequest daily = new CorridorAlertRequest("Paris", "FR", "Bamako", "ML",
+                null, null, new BigDecimal("2.00"), List.of("Documents"),
+                AlertDirection.TRAVELER_WANTS_PACKAGES, null,
+                null, null, null, null, AlertNotifyMode.DAILY);
+        CorridorAlertResponse changed = service.update(uid, existing.getId(), daily, null);
+        assertThat(changed.notifyMode()).isEqualTo(AlertNotifyMode.DAILY);
+    }
+
+    @Test
     void create_unknownUser_throwsNotFound() {
         when(userRepository.findByFirebaseUid(uid)).thenReturn(Optional.empty());
         assertThatThrownBy(() -> service.create(uid, req()))

@@ -50,6 +50,9 @@ class AlertServiceTripMatchesTest {
         owner = new UserEntity();
         setId(owner, ownerId);
         lenient().when(userRepository.findByFirebaseUid(uid)).thenReturn(Optional.of(owner));
+        // Les fixtures vivent en juillet 2026 : l'horloge réelle les rendrait expirées.
+        service.useClock(java.time.Clock.fixed(
+                java.time.Instant.parse("2026-07-15T12:00:00Z"), java.time.ZoneOffset.UTC));
     }
 
     private static void setId(Object target, UUID id) {
@@ -157,6 +160,83 @@ class AlertServiceTripMatchesTest {
 
         assertThat(matches).hasSize(1);
         assertThat(matches.get(0).announcementId()).isEqualTo(fromVisible.getId());
+    }
+
+    /** Le trajet du propriétaire de l'alerte ne remonte pas dans ses correspondances. */
+    @Test
+    void getTripMatches_omitsOwnTrips() {
+        UUID otherTraveler = UUID.randomUUID();
+        AnnouncementEntity mine = trip(ownerId, LocalDate.of(2026, 7, 10),
+                new BigDecimal("15.00"), new BigDecimal("8.50"));
+        AnnouncementEntity theirs = trip(otherTraveler, LocalDate.of(2026, 7, 12),
+                new BigDecimal("10.00"), new BigDecimal("7.00"));
+
+        when(alertRepository.findById(alertId)).thenReturn(Optional.of(senderAlert()));
+        when(announcementRepository.findActiveByCorridor("Paris", "Bamako"))
+                .thenReturn(List.of(mine, theirs));
+        when(userRepository.findAllById(anyCollection()))
+                .thenReturn(List.of(traveler(otherTraveler, "Awa", "Keita", null)));
+
+        List<AlertTripMatchDto> matches = service.getTripMatches(uid, alertId);
+
+        assertThat(matches).hasSize(1);
+        assertThat(matches.get(0).announcementId()).isEqualTo(theirs.getId());
+    }
+
+    /** Matching temps réel : un voyageur qui publie ne déclenche pas sa propre alerte. */
+    @Test
+    void findSenderAlertsMatchingTrip_skipsAlertOwnedByTraveler() {
+        CorridorAlertEntity mine = senderAlert();
+        CorridorAlertEntity someoneElses = senderAlert();
+        setId(someoneElses, UUID.randomUUID());
+        someoneElses.setOwnerId(UUID.randomUUID());
+        AnnouncementEntity published = trip(ownerId, LocalDate.of(2026, 7, 10),
+                new BigDecimal("15.00"), new BigDecimal("8.50"));
+        published.setStatus(AnnouncementStatus.ACTIVE);
+
+        when(alertRepository.findAllByActiveTrueAndDirection(AlertDirection.SENDER_WANTS_TRIPS))
+                .thenReturn(List.of(mine, someoneElses));
+
+        List<CorridorAlertEntity> hits = service.findSenderAlertsMatchingTrip(published);
+
+        assertThat(hits).containsExactly(someoneElses);
+    }
+
+    /** Fenêtre de dates passée : l'alerte ne déclenche plus le matching temps réel. */
+    @Test
+    void findSenderAlertsMatchingTrip_skipsExpiredAlert() {
+        CorridorAlertEntity expired = senderAlert();
+        expired.setDateFrom(LocalDate.of(2020, 1, 1));
+        expired.setDateTo(LocalDate.of(2020, 1, 31));
+        AnnouncementEntity published = trip(UUID.randomUUID(), LocalDate.of(2020, 1, 10),
+                new BigDecimal("15.00"), new BigDecimal("8.50"));
+        published.setStatus(AnnouncementStatus.ACTIVE);
+
+        when(alertRepository.findAllByActiveTrueAndDirection(AlertDirection.SENDER_WANTS_TRIPS))
+                .thenReturn(List.of(expired));
+
+        assertThat(service.findSenderAlertsMatchingTrip(published)).isEmpty();
+    }
+
+    @Test
+    void getTripMatches_carriesPublishedAt() {
+        UUID travelerId = UUID.randomUUID();
+        AnnouncementEntity t = trip(travelerId, LocalDate.of(2026, 7, 10),
+                new BigDecimal("15.00"), new BigDecimal("8.50"));
+        try {
+            var f = com.yadony.api.common.BaseEntity.class.getDeclaredField("createdAt");
+            f.setAccessible(true);
+            f.set(t, java.time.LocalDateTime.of(2026, 6, 1, 10, 0));
+        } catch (Exception e) { throw new RuntimeException(e); }
+
+        when(alertRepository.findById(alertId)).thenReturn(Optional.of(senderAlert()));
+        when(announcementRepository.findActiveByCorridor("Paris", "Bamako")).thenReturn(List.of(t));
+        when(userRepository.findAllById(anyCollection()))
+                .thenReturn(List.of(traveler(travelerId, "Awa", "Keita", null)));
+
+        List<AlertTripMatchDto> matches = service.getTripMatches(uid, alertId);
+
+        assertThat(matches.get(0).publishedAt()).isEqualTo(java.time.LocalDateTime.of(2026, 6, 1, 10, 0));
     }
 
     @Test

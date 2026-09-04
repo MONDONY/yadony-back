@@ -108,6 +108,23 @@ class CorridorAlertTripMatchListenerTest {
         verify(notificationDispatcher, never()).notifyUser(any(), any(), any(), anyMap());
     }
 
+    /** Fréquence quotidienne ou silencieuse : rien ne part en temps réel. */
+    @Test
+    void onCreated_nonInstantAlert_doesNotNotify() {
+        AnnouncementEntity trip = trip();
+        CorridorAlertEntity daily = alert(null);
+        daily.setNotifyMode(AlertNotifyMode.DAILY);
+        CorridorAlertEntity muted = alert(null);
+        muted.setNotifyMode(AlertNotifyMode.MUTED);
+        when(announcementRepository.findById(tripId)).thenReturn(Optional.of(trip));
+        when(alertService.findSenderAlertsMatchingTrip(trip)).thenReturn(List.of(daily, muted));
+
+        listener.onAnnouncementCreated(event());
+
+        verifyNoInteractions(notificationDispatcher);
+        verify(alertRepository, never()).save(any());
+    }
+
     @Test
     void onCreated_withinCooldown_doesNotNotify() {
         AnnouncementEntity trip = trip();

@@ -273,13 +273,54 @@ class AlertControllerTest {
         AlertTripMatchDto tripDto = new AlertTripMatchDto(
                 UUID.randomUUID(), "Paris", "Dakar", LocalDate.of(2026, 8, 10),
                 UUID.randomUUID(), "Mamadou D", "MD", 4.8,
-                BigDecimal.valueOf(15), BigDecimal.valueOf(8), TransportMode.PLANE, null, "EUR");
+                BigDecimal.valueOf(15), BigDecimal.valueOf(8), TransportMode.PLANE, null, "EUR",
+                java.time.LocalDateTime.of(2026, 8, 1, 10, 0));
         doReturn(List.of(tripDto)).when(alertService).getMatchesForDirection(FIREBASE_UID, id);
 
         mockMvc.perform(get("/me/corridor-alerts/{id}/matches", id)
                         .with(authentication(asSender())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].availableKg").value(15))
-                .andExpect(jsonPath("$[0].travelerName").value("Mamadou D"));
+                .andExpect(jsonPath("$[0].travelerName").value("Mamadou D"))
+                .andExpect(jsonPath("$[0].publishedAt").exists());
+    }
+
+    // ── GET /{id} et POST /{id}/seen ────────────────────────────────────────
+
+    @Test
+    void get_asSender_returns200WithCounters() throws Exception {
+        UUID id = UUID.randomUUID();
+        CorridorAlertResponse r = new CorridorAlertResponse(id, "Paris", "Dakar", "FR", "SN",
+                null, null, null, List.of(), AlertDirection.SENDER_WANTS_TRIPS, true, 5L,
+                java.time.LocalDateTime.now(), null, null, null, null, 2L, null, AlertNotifyMode.DAILY);
+        when(alertService.get(FIREBASE_UID, id)).thenReturn(r);
+
+        mockMvc.perform(get("/me/corridor-alerts/" + id).with(authentication(asSender())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(id.toString()))
+                .andExpect(jsonPath("$.matchCount").value(5))
+                .andExpect(jsonPath("$.newMatchCount").value(2))
+                .andExpect(jsonPath("$.notifyMode").value("DAILY"));
+    }
+
+    @Test
+    void markSeen_asTraveler_returns200AndDelegates() throws Exception {
+        UUID id = UUID.randomUUID();
+        CorridorAlertResponse r = new CorridorAlertResponse(id, "Paris", "Bamako", "FR", "ML",
+                null, null, null, List.of(), AlertDirection.TRAVELER_WANTS_PACKAGES, true, 3L,
+                java.time.LocalDateTime.now(), null, null, null, null, 0L, null, AlertNotifyMode.INSTANT);
+        when(alertService.markSeen(FIREBASE_UID, id)).thenReturn(r);
+
+        mockMvc.perform(post("/me/corridor-alerts/" + id + "/seen").with(authentication(asTraveler())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.newMatchCount").value(0));
+
+        verify(alertService).markSeen(FIREBASE_UID, id);
+    }
+
+    @Test
+    void markSeen_unauthenticated_returns401() throws Exception {
+        mockMvc.perform(post("/me/corridor-alerts/" + UUID.randomUUID() + "/seen"))
+                .andExpect(status().isUnauthorized());
     }
 }

@@ -47,8 +47,21 @@ public class CorridorAlertEntity extends BaseEntity {
     @Column(name = "active", nullable = false)
     private boolean active = true;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "notify_mode", nullable = false, length = 16)
+    private AlertNotifyMode notifyMode = AlertNotifyMode.INSTANT;
+
     @Column(name = "last_notified_at")
     private LocalDateTime lastNotifiedAt;
+
+    /**
+     * Dernière ouverture des correspondances par le propriétaire. {@code null}
+     * tant qu'il ne les a jamais consultées : tout ce qui matche est alors
+     * « nouveau » pour lui. Indépendant de {@link #lastNotifiedAt}, qui ne
+     * concerne que l'envoi des notifications.
+     */
+    @Column(name = "last_seen_at")
+    private LocalDateTime lastSeenAt;
 
     @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(
@@ -103,8 +116,16 @@ public class CorridorAlertEntity extends BaseEntity {
     public boolean isActive() { return active; }
     public void setActive(boolean active) { this.active = active; }
 
+    public AlertNotifyMode getNotifyMode() { return notifyMode; }
+    public void setNotifyMode(AlertNotifyMode notifyMode) {
+        this.notifyMode = notifyMode != null ? notifyMode : AlertNotifyMode.INSTANT;
+    }
+
     public LocalDateTime getLastNotifiedAt() { return lastNotifiedAt; }
     public void setLastNotifiedAt(LocalDateTime lastNotifiedAt) { this.lastNotifiedAt = lastNotifiedAt; }
+
+    public LocalDateTime getLastSeenAt() { return lastSeenAt; }
+    public void setLastSeenAt(LocalDateTime lastSeenAt) { this.lastSeenAt = lastSeenAt; }
 
     public List<String> getContentCategories() { return contentCategories; }
     public void setContentCategories(List<String> contentCategories) {

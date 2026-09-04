@@ -11,6 +11,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.HashMap;
@@ -56,7 +57,17 @@ public class CorridorAlertDigestScheduler {
         // élément trouvé ferait exploser le nombre de requêtes sur un digest quotidien.
         Map<UUID, Set<UUID>> hiddenByOwner = new HashMap<>();
 
+        LocalDate today = LocalDate.now(ZoneOffset.UTC);
         for (CorridorAlertEntity alert : active) {
+            // Fenêtre de dates passée : plus rien à annoncer, même si un ancien
+            // match traîne dans la fenêtre « depuis ».
+            if (AlertService.isExpired(alert, today)) {
+                continue;
+            }
+            // Silencieuse : le compteur de nouveautés vit sa vie, rien ne part.
+            if (alert.getNotifyMode() == AlertNotifyMode.MUTED) {
+                continue;
+            }
             try {
                 LocalDateTime since = alert.getLastNotifiedAt() != null
                         ? alert.getLastNotifiedAt()
