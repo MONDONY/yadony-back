@@ -1,7 +1,9 @@
 package com.yadony.api.payments.pawapay;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
@@ -9,11 +11,15 @@ import java.security.KeyPairGenerator;
 import java.security.MessageDigest;
 import java.security.Signature;
 import java.security.spec.ECGenParameterSpec;
+import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.Base64;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -59,8 +65,58 @@ class PawapaySignatureVerifierTest {
         return h;
     }
 
+    /**
+     * Variante de {@link #signedHeaders} qui expose directement la liste des composants couverts
+     * et le suffixe de paramètres bruts — pour tester couverture réduite, {@code created}
+     * absent, ou les espaces RFC 8941 après {@code ;}. Les en-têtes non dérivés éventuellement
+     * référencés par {@code componentNames} prennent des valeurs par défaut cohérentes (digest
+     * du corps réel, horodatage courant, JSON).
+     */
+    private static Map<String, String> signedHeadersCustom(byte[] body, List<String> componentNames, String paramsSuffix) throws Exception {
+        String digest = "sha-512=:" + Base64.getEncoder().encodeToString(MessageDigest.getInstance("SHA-512").digest(body)) + ":";
+        String date = Instant.now().toString();
+        Map<String, String> headerValues = new HashMap<>();
+        headerValues.put("content-type", "application/json");
+        headerValues.put("content-digest", digest);
+        headerValues.put("signature-date", date);
+
+        StringBuilder componentsList = new StringBuilder();
+        for (int i = 0; i < componentNames.size(); i++) {
+            if (i > 0) componentsList.append(' ');
+            componentsList.append('"').append(componentNames.get(i)).append('"');
+        }
+        String params = "(" + componentsList + ")" + paramsSuffix;
+
+        StringBuilder base = new StringBuilder();
+        for (String c : componentNames) {
+            String value = switch (c) {
+                case "@method" -> METHOD;
+                case "@authority" -> AUTHORITY;
+                case "@path" -> PATH;
+                default -> headerValues.get(c);
+            };
+            base.append('"').append(c).append("\": ").append(value).append('\n');
+        }
+        base.append("\"@signature-params\": ").append(params);
+
+        Signature signer = Signature.getInstance("SHA256withECDSAinP1363Format");
+        signer.initSign(keys.getPrivate());
+        signer.update(base.toString().getBytes(StandardCharsets.UTF_8));
+        String sig = Base64.getEncoder().encodeToString(signer.sign());
+
+        Map<String, String> h = new HashMap<>(headerValues);
+        h.put("signature-input", "sig-pp=" + params);
+        h.put("signature", "sig-pp=:" + sig + ":");
+        return h;
+    }
+
     private static PawapaySignatureVerifier verifier() {
         return new PawapaySignatureVerifier(keyId -> KEY_ID.equals(keyId) ? Optional.of(keys.getPublic()) : Optional.empty());
+    }
+
+    private static PawapaySignatureVerifier verifierWithClock(Clock clock) {
+        return new PawapaySignatureVerifier(
+                keyId -> KEY_ID.equals(keyId) ? Optional.of(keys.getPublic()) : Optional.empty(), clock);
     }
 
     @Test
@@ -84,7 +140,7 @@ class PawapaySignatureVerifierTest {
         long now = Instant.now().getEpochSecond();
         Map<String, String> h = signedHeaders(BODY, now, now + 60, KEY_ID);
         assertThatThrownBy(() -> verifier().verify(METHOD, AUTHORITY, "/api/v1/pawapay/callbacks/payouts", h, BODY))
-                .isInstanceOf(PawapaySignatureException.class);
+                .isInstanceOf(PawapaySignatureException.class).hasMessageContaining("invalide");
     }
 
     @Test
@@ -97,8 +153,9 @@ class PawapaySignatureVerifierTest {
 
     @Test
     void expiredSignature_fails() throws Exception {
-        long past = Instant.now().getEpochSecond() - 3600;
-        Map<String, String> h = signedHeaders(BODY, past, past + 60, KEY_ID);
+        // created reste dans la fenêtre de validité (< 300 s) : seul expires doit motiver le refus.
+        long created = Instant.now().getEpochSecond() - 200;
+        Map<String, String> h = signedHeaders(BODY, created, created + 60, KEY_ID);
         assertThatThrownBy(() -> verifier().verify(METHOD, AUTHORITY, PATH, h, BODY))
                 .isInstanceOf(PawapaySignatureException.class).hasMessageContaining("expir");
     }
@@ -116,5 +173,145 @@ class PawapaySignatureVerifierTest {
         h.put("signature-input", h.get("signature-input").replace("ecdsa-p256-sha256", "hmac-sha256"));
         assertThatThrownBy(() -> verifier().verify(METHOD, AUTHORITY, PATH, h, BODY))
                 .isInstanceOf(PawapaySignatureException.class).hasMessageContaining("alg");
+    }
+
+    // ── Ronde 2 - point 1 : couverture minimale obligatoire (RFC 9421 §3.2) ────────────────────
+
+    @Test
+    void insufficientCoverage_onlyMethodCovered_fails() throws Exception {
+        long now = Instant.now().getEpochSecond();
+        String suffix = ";alg=\"ecdsa-p256-sha256\";keyid=\"" + KEY_ID + "\";created=" + now + ";expires=" + (now + 60);
+        Map<String, String> h = signedHeadersCustom(BODY, List.of("@method"), suffix);
+        assertThatThrownBy(() -> verifier().verify(METHOD, AUTHORITY, PATH, h, BODY))
+                .isInstanceOf(PawapaySignatureException.class).hasMessageContaining("couverture");
+    }
+
+    // ── Ronde 2 - point 2 : trois 500 non authentifiés → doivent devenir des 401 ────────────────
+
+    @Test
+    void contentDigestWithEmptyByteSequence_isRejectedNotCrashed() throws Exception {
+        long now = Instant.now().getEpochSecond();
+        Map<String, String> h = new HashMap<>(signedHeaders(BODY, now, now + 60, KEY_ID));
+        h.put("content-digest", "sha-512=:");
+        assertThatThrownBy(() -> verifier().verify(METHOD, AUTHORITY, PATH, h, BODY))
+                .isInstanceOf(PawapaySignatureException.class).hasMessageContaining("Content-Digest");
+    }
+
+    @Test
+    void signatureWithEmptyByteSequence_isRejectedNotCrashed() throws Exception {
+        long now = Instant.now().getEpochSecond();
+        Map<String, String> h = new HashMap<>(signedHeaders(BODY, now, now + 60, KEY_ID));
+        h.put("signature", "sig-pp=:");
+        assertThatThrownBy(() -> verifier().verify(METHOD, AUTHORITY, PATH, h, BODY))
+                .isInstanceOf(PawapaySignatureException.class).hasMessageContaining("Signature");
+    }
+
+    @Test
+    void expiresNonNumeric_isRejectedNotCrashed() throws Exception {
+        long now = Instant.now().getEpochSecond();
+        Map<String, String> h = new HashMap<>(signedHeaders(BODY, now, now + 60, KEY_ID));
+        h.put("signature-input", h.get("signature-input").replace("expires=" + (now + 60), "expires=x"));
+        assertThatThrownBy(() -> verifier().verify(METHOD, AUTHORITY, PATH, h, BODY))
+                .isInstanceOf(PawapaySignatureException.class);
+    }
+
+    @Test
+    void expiresOverflowsLong_isRejectedNotCrashed() throws Exception {
+        long now = Instant.now().getEpochSecond();
+        Map<String, String> h = new HashMap<>(signedHeaders(BODY, now, now + 60, KEY_ID));
+        h.put("signature-input", h.get("signature-input").replace("expires=" + (now + 60), "expires=99999999999999999999"));
+        assertThatThrownBy(() -> verifier().verify(METHOD, AUTHORITY, PATH, h, BODY))
+                .isInstanceOf(PawapaySignatureException.class);
+    }
+
+    // ── Ronde 2 - point 4 : created obligatoire et borné (anti-rejeu) ───────────────────────────
+
+    @Test
+    void missingCreated_fails() throws Exception {
+        long now = Instant.now().getEpochSecond();
+        List<String> components = List.of("@method", "@authority", "@path", "signature-date", "content-digest", "content-type");
+        String suffix = ";alg=\"ecdsa-p256-sha256\";keyid=\"" + KEY_ID + "\";expires=" + (now + 60);
+        Map<String, String> h = signedHeadersCustom(BODY, components, suffix);
+        assertThatThrownBy(() -> verifier().verify(METHOD, AUTHORITY, PATH, h, BODY))
+                .isInstanceOf(PawapaySignatureException.class).hasMessageContaining("created");
+    }
+
+    @Test
+    void createdTooOld_fails() throws Exception {
+        Instant fixedNow = Instant.parse("2026-01-01T00:00:00Z");
+        Clock clock = Clock.fixed(fixedNow, ZoneOffset.UTC);
+        long created = fixedNow.getEpochSecond() - 301;
+        Map<String, String> h = signedHeaders(BODY, created, created + 60, KEY_ID);
+        assertThatThrownBy(() -> verifierWithClock(clock).verify(METHOD, AUTHORITY, PATH, h, BODY))
+                .isInstanceOf(PawapaySignatureException.class).hasMessageContaining("ancien");
+    }
+
+    @Test
+    void createdTooFarInFuture_fails() throws Exception {
+        Instant fixedNow = Instant.parse("2026-01-01T00:00:00Z");
+        Clock clock = Clock.fixed(fixedNow, ZoneOffset.UTC);
+        long created = fixedNow.getEpochSecond() + 61;
+        Map<String, String> h = signedHeaders(BODY, created, created + 60, KEY_ID);
+        assertThatThrownBy(() -> verifierWithClock(clock).verify(METHOD, AUTHORITY, PATH, h, BODY))
+                .isInstanceOf(PawapaySignatureException.class).hasMessageContaining("futur");
+    }
+
+    @Test
+    void createdWithinBounds_passes() throws Exception {
+        Instant fixedNow = Instant.parse("2026-01-01T00:00:00Z");
+        Clock clock = Clock.fixed(fixedNow, ZoneOffset.UTC);
+        long created = fixedNow.getEpochSecond() - 100;
+        Map<String, String> h = signedHeaders(BODY, created, created + 60, KEY_ID);
+        assertThatCode(() -> verifierWithClock(clock).verify(METHOD, AUTHORITY, PATH, h, BODY)).doesNotThrowAnyException();
+    }
+
+    // ── Ronde 2 - point 5 : whitelist alg appliquée avant toute résolution de clé ───────────────
+
+    @Test
+    void unsupportedAlgorithm_neverConsultsKeyResolver() throws Exception {
+        long now = Instant.now().getEpochSecond();
+        Map<String, String> h = new HashMap<>(signedHeaders(BODY, now, now + 60, KEY_ID));
+        h.put("signature-input", h.get("signature-input").replace("ecdsa-p256-sha256", "hmac-sha256"));
+        AtomicBoolean resolverCalled = new AtomicBoolean(false);
+        PawapaySignatureVerifier v = new PawapaySignatureVerifier(keyId -> {
+            resolverCalled.set(true);
+            return Optional.of(keys.getPublic());
+        });
+        assertThatThrownBy(() -> v.verify(METHOD, AUTHORITY, PATH, h, BODY)).isInstanceOf(PawapaySignatureException.class);
+        assertThat(resolverCalled.get()).isFalse();
+    }
+
+    // ── Ronde 2 - point 6 : espace optionnel après ';' dans les paramètres (RFC 8941 §4.1.1.2) ──
+
+    @Test
+    void spacedParams_afterSemicolon_areAccepted() throws Exception {
+        long now = Instant.now().getEpochSecond();
+        List<String> components = List.of("@method", "@authority", "@path", "signature-date", "content-digest", "content-type");
+        String suffix = "; alg=\"ecdsa-p256-sha256\"; keyid=\"" + KEY_ID + "\"; created=" + now + "; expires=" + (now + 60);
+        Map<String, String> h = signedHeadersCustom(BODY, components, suffix);
+        assertThatCode(() -> verifier().verify(METHOD, AUTHORITY, PATH, h, BODY)).doesNotThrowAnyException();
+    }
+
+    // ── Ronde 2 - point 7 : entrée non authentifiée tronquée à 64 caractères dans le detail ─────
+
+    @Test
+    void unknownKey_longKeyId_truncatedTo64CharsInMessage() throws Exception {
+        long now = Instant.now().getEpochSecond();
+        String longKeyId = "K".repeat(200);
+        Map<String, String> h = signedHeaders(BODY, now, now + 60, longKeyId);
+        Throwable thrown = catchThrowable(() -> verifier().verify(METHOD, AUTHORITY, PATH, h, BODY));
+        assertThat(thrown).isInstanceOf(PawapaySignatureException.class);
+        assertThat(thrown.getMessage()).contains("K".repeat(64)).doesNotContain("K".repeat(65));
+    }
+
+    @Test
+    void unsupportedAlgorithm_longValue_truncatedTo64CharsInMessage() throws Exception {
+        long now = Instant.now().getEpochSecond();
+        String longAlg = "a".repeat(200);
+        Map<String, String> h = new HashMap<>(signedHeaders(BODY, now, now + 60, KEY_ID));
+        h.put("signature-input", h.get("signature-input").replace("ecdsa-p256-sha256", longAlg));
+        Throwable thrown = catchThrowable(() -> verifier().verify(METHOD, AUTHORITY, PATH, h, BODY));
+        assertThat(thrown).isInstanceOf(PawapaySignatureException.class);
+        assertThat(thrown.getMessage()).contains("a".repeat(64)).doesNotContain("a".repeat(65));
     }
 }

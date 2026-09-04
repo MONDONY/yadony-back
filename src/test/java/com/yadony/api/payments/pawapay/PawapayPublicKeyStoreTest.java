@@ -11,6 +11,10 @@ import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.PublicKey;
 import java.security.spec.ECGenParameterSpec;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.util.Base64;
 import java.util.List;
 import java.util.Optional;
@@ -28,6 +32,10 @@ import org.springframework.web.client.RestClientException;
  * épinglé : {@link #keyFoundOnFirstLookup_neverEvictsCache()} est le test le plus important de
  * cette classe — si le store vidait le cache (1 h) de {@link PawapayClient#publicKeys()} à
  * chaque callback, yadony martèlerait l'API pawaPay à chaque notification reçue.
+ *
+ * <p>Ronde 2 (point 3) : le rafraîchissement est en plus limité à une fois par fenêtre de 60 s,
+ * horodatée via une {@link Clock} injectable — {@link MutableClock} pilote le temps sans
+ * dépendre de l'horloge murale.
  */
 @ExtendWith(MockitoExtension.class)
 class PawapayPublicKeyStoreTest {
@@ -63,6 +71,34 @@ class PawapayPublicKeyStoreTest {
         return new PawapayPublicKey(KEY_ID, pem(ecKeys.getPublic()));
     }
 
+    /** Horloge de test dont l'instant peut être avancé manuellement pour piloter la fenêtre d'éviction. */
+    private static final class MutableClock extends Clock {
+        private Instant now;
+
+        MutableClock(Instant now) {
+            this.now = now;
+        }
+
+        void advance(Duration duration) {
+            now = now.plus(duration);
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return ZoneId.of("UTC");
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            return this;
+        }
+
+        @Override
+        public Instant instant() {
+            return now;
+        }
+    }
+
     @Test
     void keyFoundOnFirstLookup_neverEvictsCache() {
         when(client.publicKeys()).thenReturn(List.of(knownEcKey()));
@@ -89,13 +125,48 @@ class PawapayPublicKeyStoreTest {
 
     @Test
     void keyMissingAfterRotationToo_returnsEmptyWithoutLooping() {
+        // Horloge explicite : rend visible la précondition « premier rafraîchissement, donc autorisé »
+        // plutôt que de dépendre implicitement du sentinel Instant.MIN d'un store neuf.
+        MutableClock clock = new MutableClock(Instant.parse("2026-01-01T00:00:00Z"));
+        PawapayPublicKeyStore clockedStore = new PawapayPublicKeyStore(client, clock);
         when(client.publicKeys()).thenReturn(List.of());
 
-        Optional<PublicKey> result = store.resolve("UNKNOWN:9");
+        Optional<PublicKey> result = clockedStore.resolve("UNKNOWN:9");
 
         assertThat(result).isEmpty();
         verify(client, times(1)).evictCaches();
         verify(client, times(2)).publicKeys();
+    }
+
+    @Test
+    void secondUnknownKeyWithinWindow_doesNotEvictAgain() {
+        MutableClock clock = new MutableClock(Instant.parse("2026-01-01T00:00:00Z"));
+        PawapayPublicKeyStore clockedStore = new PawapayPublicKeyStore(client, clock);
+        when(client.publicKeys()).thenReturn(List.of());
+
+        Optional<PublicKey> first = clockedStore.resolve("UNKNOWN:1");
+        // Même horloge (aucun temps écoulé), keyId différent : la fenêtre de 60 s n'est pas
+        // encore ouverte, la deuxième éviction doit être refusée.
+        Optional<PublicKey> second = clockedStore.resolve("UNKNOWN:2");
+
+        assertThat(first).isEmpty();
+        assertThat(second).isEmpty();
+        verify(client, times(1)).evictCaches();
+        verify(client, times(3)).publicKeys();
+    }
+
+    @Test
+    void evictionAllowedAgain_afterWindowElapses() {
+        MutableClock clock = new MutableClock(Instant.parse("2026-01-01T00:00:00Z"));
+        PawapayPublicKeyStore clockedStore = new PawapayPublicKeyStore(client, clock);
+        when(client.publicKeys()).thenReturn(List.of());
+
+        clockedStore.resolve("UNKNOWN:1");
+        clock.advance(Duration.ofSeconds(61));
+        clockedStore.resolve("UNKNOWN:3");
+
+        verify(client, times(2)).evictCaches();
+        verify(client, times(4)).publicKeys();
     }
 
     @Test

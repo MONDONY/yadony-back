@@ -4,29 +4,65 @@ import com.yadony.api.payments.pawapay.dto.PawapayPublicKey;
 import java.security.KeyFactory;
 import java.security.PublicKey;
 import java.security.spec.X509EncodedKeySpec;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Base64;
 import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
-/** Résout un {@code keyid} de callback en clé publique (PEM SPKI, EC ou RSA), avec un rafraîchissement si inconnu. */
+/**
+ * Résout un {@code keyid} de callback en clé publique (PEM SPKI, EC ou RSA), avec un
+ * rafraîchissement si inconnu.
+ *
+ * <p>Le rafraîchissement ({@link PawapayClient#evictCaches()}) est limité à une fois par
+ * fenêtre de 60 secondes. Il est déclenché par un {@code keyid} entièrement choisi par
+ * l'appelant, avant toute vérification cryptographique, et coûte deux appels sortants vers
+ * pawaPay : sans cette limite, un flot de callbacks à {@code keyid} inconnu pourrait épuiser le
+ * quota pawaPay, faisant tomber en 401 des callbacks légitimes — le rail cesserait alors de
+ * confirmer les paiements. Une rotation de clé réelle reste rattrapée au pire en 60 s, ce qui est
+ * sans effet puisque pawaPay réessaie ses callbacks non acquittés.
+ */
 @Component
 public class PawapayPublicKeyStore implements PawapaySignatureVerifier.KeyResolver {
 
     private static final Logger log = LoggerFactory.getLogger(PawapayPublicKeyStore.class);
-    private final PawapayClient client;
+    private static final Duration EVICTION_MIN_INTERVAL = Duration.ofSeconds(60);
 
+    private final PawapayClient client;
+    private final Clock clock;
+    private Instant lastEvictionAt = Instant.MIN;
+
+    @Autowired
     public PawapayPublicKeyStore(PawapayClient client) {
+        this(client, Clock.systemUTC());
+    }
+
+    PawapayPublicKeyStore(PawapayClient client, Clock clock) {
         this.client = client;
+        this.clock = clock;
     }
 
     @Override
     public Optional<PublicKey> resolve(String keyId) {
         Optional<PublicKey> found = lookup(keyId);
         if (found.isPresent()) return found;
+        if (!allowEviction()) return Optional.empty();
         client.evictCaches();
         return lookup(keyId);
+    }
+
+    /** Autorise un rafraîchissement si le précédent date d'au moins 60 s ; marque immédiatement (anti-rafale). */
+    private synchronized boolean allowEviction() {
+        Instant now = clock.instant();
+        if (Duration.between(lastEvictionAt, now).compareTo(EVICTION_MIN_INTERVAL) < 0) {
+            return false;
+        }
+        lastEvictionAt = now;
+        return true;
     }
 
     private Optional<PublicKey> lookup(String keyId) {

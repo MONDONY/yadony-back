@@ -6,15 +6,17 @@ import java.security.PublicKey;
 import java.security.Signature;
 import java.security.spec.MGF1ParameterSpec;
 import java.security.spec.PSSParameterSpec;
-import java.time.Instant;
+import java.time.Clock;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 /**
@@ -22,6 +24,19 @@ import org.springframework.stereotype.Component;
  * ({@code Content-Digest}). Base de signature : une ligne {@code "composant": valeur} par
  * composant couvert, dans l'ordre de {@code Signature-Input}, puis
  * {@code "@signature-params": …}. Signature ECDSA au format P1363 (r||s) comme l'exige la RFC.
+ *
+ * <p>Le vérifieur applique sa propre politique de sécurité indépendamment de ce que le signataire
+ * a choisi de couvrir (RFC 9421 §3.2, MUST côté vérifieur) :
+ * <ul>
+ *   <li>couverture minimale obligatoire ({@code @method}, {@code @authority}, {@code @path},
+ *       {@code content-digest}) — sinon un signataire pourrait ne rien couvrir d'utile ;</li>
+ *   <li>liste fermée d'algorithmes ({@code alg}), validée avant toute résolution de clé, pour ne
+ *       pas faire travailler {@link PawapaySignatureVerifier.KeyResolver} sur une requête déjà
+ *       condamnée ;</li>
+ *   <li>{@code created} obligatoire et borné ({@code [now-300s, now+60s]}) pour empêcher le
+ *       rejeu indéfini d'un callback authentique capturé ; {@code expires}, quand pawaPay
+ *       l'envoie, reste contrôlé mais n'est jamais exigé.</li>
+ * </ul>
  */
 @Component
 public class PawapaySignatureVerifier {
@@ -32,13 +47,25 @@ public class PawapaySignatureVerifier {
     }
 
     private static final Pattern INPUT = Pattern.compile("^([A-Za-z0-9_-]+)=\\((.*?)\\)(.*)$");
-    private static final Pattern PARAM = Pattern.compile(";([a-z]+)=(\"([^\"]*)\"|([0-9]+))");
+    private static final Pattern PARAM = Pattern.compile(";\\s*([a-z]+)=(\"([^\"]*)\"|([0-9]+))");
+    private static final Set<String> REQUIRED_COMPONENTS = Set.of("@method", "@authority", "@path", "content-digest");
+    private static final Set<String> SUPPORTED_ALGORITHMS =
+            Set.of("ecdsa-p256-sha256", "ecdsa-p384-sha384", "rsa-v1_5-sha256", "rsa-pss-sha512");
     private static final long CLOCK_SKEW_SECONDS = 60;
+    private static final long MAX_SIGNATURE_AGE_SECONDS = 300;
+    private static final int MAX_REFLECTED_INPUT_LENGTH = 64;
 
     private final KeyResolver keys;
+    private final Clock clock;
 
+    @Autowired
     public PawapaySignatureVerifier(KeyResolver keys) {
+        this(keys, Clock.systemUTC());
+    }
+
+    public PawapaySignatureVerifier(KeyResolver keys, Clock clock) {
         this.keys = keys;
+        this.clock = clock;
     }
 
     public void verify(String method, String authority, String path, Map<String, String> headers, byte[] body) {
@@ -54,16 +81,17 @@ public class PawapaySignatureVerifier {
         for (String c : m.group(2).trim().split("\\s+")) {
             if (!c.isBlank()) components.add(c.replace("\"", ""));
         }
+        if (!components.containsAll(REQUIRED_COMPONENTS)) {
+            throw new PawapaySignatureException("couverture de signature insuffisante");
+        }
+
         String params = m.group(3);
         String alg = param(params, "alg");
         String keyId = param(params, "keyid");
-        String expires = param(params, "expires");
         if (alg == null) throw new PawapaySignatureException("Paramètre alg absent");
         if (keyId == null) throw new PawapaySignatureException("Paramètre keyid absent");
-        long now = Instant.now().getEpochSecond();
-        if (expires != null && Long.parseLong(expires) + CLOCK_SKEW_SECONDS < now) {
-            throw new PawapaySignatureException("Signature expirée");
-        }
+        requireSupportedAlgorithm(alg);
+        verifyTemporalWindow(params);
 
         StringBuilder base = new StringBuilder();
         for (String c : components) {
@@ -80,9 +108,50 @@ public class PawapaySignatureVerifier {
 
         byte[] sig = extractSignature(signature, label);
         PublicKey key = keys.resolve(keyId)
-                .orElseThrow(() -> new PawapaySignatureException("keyid inconnu : " + keyId));
+                .orElseThrow(() -> new PawapaySignatureException("keyid inconnu : " + truncate(keyId)));
         if (!verifySignature(alg, key, base.toString().getBytes(StandardCharsets.UTF_8), sig)) {
             throw new PawapaySignatureException("Signature invalide");
+        }
+    }
+
+    /**
+     * {@code created} est obligatoire et borné à {@code [now-300s, now+60s]} : sans cette
+     * fenêtre, un callback {@code COMPLETED} authentique intercepté serait rejouable
+     * indéfiniment (sa signature restant valide indépendamment du temps). {@code expires}, quand
+     * pawaPay l'envoie, reste contrôlé avec la même tolérance d'horloge, mais n'est jamais exigé.
+     */
+    private void verifyTemporalWindow(String params) {
+        long now = clock.instant().getEpochSecond();
+        String createdRaw = param(params, "created");
+        if (createdRaw == null) throw new PawapaySignatureException("Paramètre created absent");
+        long created = parseEpochSeconds(createdRaw, "created");
+        if (created > now + CLOCK_SKEW_SECONDS) {
+            throw new PawapaySignatureException("Signature-Input : created dans le futur (dérive d'horloge)");
+        }
+        if (created < now - MAX_SIGNATURE_AGE_SECONDS) {
+            throw new PawapaySignatureException("Signature-Input : created trop ancien");
+        }
+        String expiresRaw = param(params, "expires");
+        if (expiresRaw != null) {
+            long expires = parseEpochSeconds(expiresRaw, "expires");
+            if (expires + CLOCK_SKEW_SECONDS < now) {
+                throw new PawapaySignatureException("Signature expirée");
+            }
+        }
+    }
+
+    /** Convertit un paramètre numérique de {@code Signature-Input} sans jamais laisser fuir une {@link NumberFormatException}. */
+    private static long parseEpochSeconds(String raw, String paramName) {
+        try {
+            return Long.parseLong(raw);
+        } catch (NumberFormatException e) {
+            throw new PawapaySignatureException("Paramètre " + paramName + " illisible");
+        }
+    }
+
+    private static void requireSupportedAlgorithm(String alg) {
+        if (!SUPPORTED_ALGORITHMS.contains(alg)) {
+            throw new PawapaySignatureException("alg non supporté : " + truncate(alg));
         }
     }
 
@@ -91,7 +160,7 @@ public class PawapaySignatureVerifier {
         if (eq < 0) throw new PawapaySignatureException("Content-Digest illisible");
         String algo = header.substring(0, eq).trim().toLowerCase(Locale.ROOT);
         String encoded = header.substring(eq + 1).trim();
-        if (encoded.startsWith(":") && encoded.endsWith(":")) encoded = encoded.substring(1, encoded.length() - 1);
+        if (isWrappedByteSequence(encoded)) encoded = encoded.substring(1, encoded.length() - 1);
         String jca = switch (algo) {
             case "sha-256" -> "SHA-256";
             case "sha-512" -> "SHA-512";
@@ -113,12 +182,17 @@ public class PawapaySignatureVerifier {
         String v = header.trim();
         if (!v.startsWith(prefix)) throw new PawapaySignatureException("Signature : label " + label + " absent");
         String encoded = v.substring(prefix.length()).trim();
-        if (encoded.startsWith(":") && encoded.endsWith(":")) encoded = encoded.substring(1, encoded.length() - 1);
+        if (isWrappedByteSequence(encoded)) encoded = encoded.substring(1, encoded.length() - 1);
         try {
             return Base64.getDecoder().decode(encoded);
         } catch (IllegalArgumentException e) {
             throw new PawapaySignatureException("Signature illisible");
         }
+    }
+
+    /** {@code true} seulement pour une vraie séquence d'octets RFC 8941 {@code :…:} (au moins les deux bornes présentes). */
+    private static boolean isWrappedByteSequence(String value) {
+        return value.length() >= 2 && value.startsWith(":") && value.endsWith(":");
     }
 
     private static boolean verifySignature(String alg, PublicKey key, byte[] data, byte[] sig) {
@@ -132,7 +206,7 @@ public class PawapaySignatureVerifier {
                     s.setParameter(new PSSParameterSpec("SHA-512", "MGF1", MGF1ParameterSpec.SHA512, 64, 1));
                     yield s;
                 }
-                default -> throw new PawapaySignatureException("alg non supporté : " + alg);
+                default -> throw new PawapaySignatureException("alg non supporté : " + truncate(alg));
             };
             verifier.initVerify(key);
             verifier.update(data);
@@ -156,5 +230,11 @@ public class PawapaySignatureVerifier {
         String v = headers.get(name);
         if (v == null || v.isBlank()) throw new PawapaySignatureException("En-tête " + name + " absent");
         return v;
+    }
+
+    /** Borne à 64 caractères une valeur non authentifiée avant de la refléter dans un message d'exception. */
+    private static String truncate(String value) {
+        if (value == null) return "?";
+        return value.length() > MAX_REFLECTED_INPUT_LENGTH ? value.substring(0, MAX_REFLECTED_INPUT_LENGTH) : value;
     }
 }
