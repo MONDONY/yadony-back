@@ -1052,8 +1052,10 @@ public class PackageRequestService {
             : null;
         List<PackageRequestPhotoResponse> photos = photoService.activePhotos(e.getId());
         String photoUrl = photos.isEmpty() ? e.getPhotoUrl() : photos.get(0).url();
+        // Mobile money pas encore cable sur les demandes de colis (hors perimetre de cette
+        // tache) : comportement inchange, comme avant l'ajout du rail pawaPay.
         Set<PaymentMethod> availablePaymentMethods = com.yadony.api.payments.currency.AnnouncementPaymentRails
-                .availableFor(e.getCurrency(), viewerHasConnect);
+                .availableFor(e.getCurrency(), viewerHasConnect, false);
         return new PackageRequestResponse(
             e.getId(), e.getSenderId(),
             e.getDepartureCity(), e.getArrivalCity(),

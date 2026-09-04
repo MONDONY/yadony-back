@@ -3,18 +3,21 @@ package com.yadony.api.payments.cash;
 public enum PaymentMethod {
     STRIPE,
     CASH,
+    /** Legacy : bids et demandes historiques. Plus jamais proposé ni traité. */
     WAVE,
-    ORANGE_MONEY;
+    /** Legacy : idem. */
+    ORANGE_MONEY,
+    /** Rail pawaPay : l'opérateur réel (Orange, Wave, MTN…) vit sur l'opération, prédit depuis le numéro. */
+    MOBILE_MONEY;
 
     /**
-     * Modes où l'expéditeur doit payer via un lien externe après l'acceptation du bid, et
-     * reçoit donc une notification de paiement dédiée portant ce lien.
-     *
-     * <p>Source unique de la liste : elle décide à la fois de l'initiation du paiement
-     * ({@code MobileMoneyBidAcceptedListener}) et de la suppression du push générique
-     * « Demande acceptée », qui ferait doublon sur la même action.
+     * Modes où l'expéditeur paie après l'acceptation, dans l'application, et reçoit donc
+     * une notification « Payez votre envoi » à la place du push générique « Demande
+     * acceptée ! » (cf. {@code BidAcceptedEvent#isMobileMoney} et
+     * {@code NotificationDispatcher#onBidAccepted}). Les valeurs legacy ne déclenchent
+     * plus rien : un bid WAVE historique retrouve le push générique.
      */
     public boolean isMobileMoney() {
-        return this == WAVE || this == ORANGE_MONEY;
+        return this == MOBILE_MONEY;
     }
 }

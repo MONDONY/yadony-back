@@ -2007,12 +2007,14 @@ public class NegotiationService {
      * the given payment method.
      * <ul>
      *   <li>STRIPE requires a fully onboarded Stripe Connect account.</li>
+     *   <li>MOBILE_MONEY requires an active mobile money payout account (pawaPay).</li>
      *   <li>CASH / WAVE / ORANGE_MONEY are always available.</li>
      * </ul>
      */
     private boolean travelerCanOffer(UserEntity t, PaymentMethod m) {
         return switch (m) {
             case STRIPE -> t.getStripeAccountStatus() == StripeAccountStatus.ONBOARDING_COMPLETE;
+            case MOBILE_MONEY -> t.hasActiveMobileMoney();
             case CASH, WAVE, ORANGE_MONEY -> true;
         };
     }

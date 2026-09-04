@@ -33,8 +33,11 @@ public final class CurrencyPaymentRails {
         table.put(SupportedCurrency.CAD, connectRails);
         table.put(SupportedCurrency.GBP, connectRails);
         table.put(SupportedCurrency.CHF, connectRails);
+        // Zone CFA : la carte reste structurellement impossible (pas de Connect), le
+        // mobile money pawaPay est le rail electronique. Disponible sur une annonce
+        // seulement si le voyageur a active son compte de versement (AnnouncementPaymentRails).
         Set<PaymentMethod> cfaRails =
-                EnumSet.of(PaymentMethod.CASH, PaymentMethod.WAVE, PaymentMethod.ORANGE_MONEY);
+                EnumSet.of(PaymentMethod.CASH, PaymentMethod.MOBILE_MONEY);
         table.put(SupportedCurrency.XOF, cfaRails);
         table.put(SupportedCurrency.XAF, cfaRails);
         return table.entrySet().stream()

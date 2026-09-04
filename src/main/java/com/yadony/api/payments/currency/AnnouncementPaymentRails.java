@@ -10,8 +10,9 @@ import java.util.Set;
  *
  * <p>Règle, verbatim :
  * <pre>
- * carte disponible   = travelerHasConnect ET CurrencyPaymentRails.accepte(devise, STRIPE)
- * especes disponible = toujours
+ * carte disponible        = travelerHasConnect ET CurrencyPaymentRails.accepte(devise, STRIPE)
+ * mobile money disponible = travelerHasMobileMoney ET CurrencyPaymentRails.accepte(devise, MOBILE_MONEY)
+ * especes disponible      = toujours
  * </pre>
  *
  * <p>L'espèce n'est jamais retirée : c'est l'invariant qui garde une annonce vendable même
@@ -24,21 +25,27 @@ public final class AnnouncementPaymentRails {
     }
 
     /**
-     * @param currency          code devise libre (repli EUR via {@link SupportedCurrency#fromCodeOrDefault}
-     *                          si absent ou inconnu)
-     * @param travelerHasConnect true si le voyageur a un compte Stripe Connect actif
-     *                           (onboarding terminé)
-     * @return les moyens de paiement effectivement disponibles pour cette annonce ;
-     *         jamais vide (l'espèce est toujours présente)
+     * @param currency               code devise libre (repli EUR)
+     * @param travelerHasConnect     compte Stripe Connect actif
+     * @param travelerHasMobileMoney compte de versement mobile money actif
+     *                               ({@code UserEntity#hasActiveMobileMoney()}, un champ déjà chargé :
+     *                               aucune requête supplémentaire sur le fil de recherche)
+     * @return jamais vide (l'espèce est toujours présente)
      */
-    public static Set<PaymentMethod> availableFor(String currency, boolean travelerHasConnect) {
+    public static Set<PaymentMethod> availableFor(String currency, boolean travelerHasConnect,
+                                                  boolean travelerHasMobileMoney) {
         SupportedCurrency supportedCurrency = SupportedCurrency.fromCodeOrDefault(currency);
         boolean cardAvailable = travelerHasConnect
                 && CurrencyPaymentRails.allows(supportedCurrency, PaymentMethod.STRIPE);
+        boolean mobileMoneyAvailable = travelerHasMobileMoney
+                && CurrencyPaymentRails.allows(supportedCurrency, PaymentMethod.MOBILE_MONEY);
 
         EnumSet<PaymentMethod> available = EnumSet.of(PaymentMethod.CASH);
         if (cardAvailable) {
             available.add(PaymentMethod.STRIPE);
+        }
+        if (mobileMoneyAvailable) {
+            available.add(PaymentMethod.MOBILE_MONEY);
         }
         return Set.copyOf(available);
     }

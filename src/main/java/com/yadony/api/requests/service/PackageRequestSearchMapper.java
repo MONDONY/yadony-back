@@ -116,8 +116,10 @@ public class PackageRequestSearchMapper {
         var arrCity = cityMap.get(entity.getArrivalCity() != null ? entity.getArrivalCity().toLowerCase() : "");
         List<PackageRequestPhotoResponse> photos = photoMap.getOrDefault(entity.getId(), List.of());
         String photoUrl = photos.isEmpty() ? entity.getPhotoUrl() : photos.get(0).url();
+        // Mobile money pas encore cable sur les demandes de colis (hors perimetre de cette
+        // tache) : comportement inchange, comme avant l'ajout du rail pawaPay.
         Set<com.yadony.api.payments.cash.PaymentMethod> availablePaymentMethods =
-                AnnouncementPaymentRails.availableFor(entity.getCurrency(), viewerHasConnect);
+                AnnouncementPaymentRails.availableFor(entity.getCurrency(), viewerHasConnect, false);
         return new PackageRequestSearchResponse(
                 entity.getId(), entity.getDepartureCity(), entity.getArrivalCity(),
                 depCity != null ? depCity.getLatitude() : null,
@@ -168,8 +170,10 @@ public class PackageRequestSearchMapper {
         var arrCity = cityRepository.findFirstByNameIgnoreCase(entity.getArrivalCity()).orElse(null);
         List<PackageRequestPhotoResponse> photos = photoService.activePhotos(entity.getId());
         String photoUrl = photos.isEmpty() ? entity.getPhotoUrl() : photos.get(0).url();
+        // Mobile money pas encore cable sur les demandes de colis (hors perimetre de cette
+        // tache) : comportement inchange, comme avant l'ajout du rail pawaPay.
         Set<com.yadony.api.payments.cash.PaymentMethod> availablePaymentMethods =
-                AnnouncementPaymentRails.availableFor(entity.getCurrency(), viewerHasConnect);
+                AnnouncementPaymentRails.availableFor(entity.getCurrency(), viewerHasConnect, false);
         return new PackageRequestSearchResponse(
                 entity.getId(), entity.getDepartureCity(), entity.getArrivalCity(),
                 depCity != null ? depCity.getLatitude() : null,
