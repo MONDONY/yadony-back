@@ -100,7 +100,7 @@ public class PawapaySignatureVerifier {
                 case "@authority" -> authority.toLowerCase(Locale.ROOT);
                 case "@path" -> path;
                 default -> Optional.ofNullable(headers.get(c.toLowerCase(Locale.ROOT)))
-                        .orElseThrow(() -> new PawapaySignatureException("En-tête couvert absent : " + c));
+                        .orElseThrow(() -> new PawapaySignatureException("En-tête couvert absent : " + truncate(c)));
             };
             base.append('"').append(c).append("\": ").append(value.trim()).append('\n');
         }
@@ -164,7 +164,7 @@ public class PawapaySignatureVerifier {
         String jca = switch (algo) {
             case "sha-256" -> "SHA-256";
             case "sha-512" -> "SHA-512";
-            default -> throw new PawapaySignatureException("Content-Digest : algorithme non supporté " + algo);
+            default -> throw new PawapaySignatureException("Content-Digest : algorithme non supporté " + truncate(algo));
         };
         try {
             byte[] expected = MessageDigest.getInstance(jca).digest(body);
@@ -180,7 +180,7 @@ public class PawapaySignatureVerifier {
     private static byte[] extractSignature(String header, String label) {
         String prefix = label + "=";
         String v = header.trim();
-        if (!v.startsWith(prefix)) throw new PawapaySignatureException("Signature : label " + label + " absent");
+        if (!v.startsWith(prefix)) throw new PawapaySignatureException("Signature : label " + truncate(label) + " absent");
         String encoded = v.substring(prefix.length()).trim();
         if (isWrappedByteSequence(encoded)) encoded = encoded.substring(1, encoded.length() - 1);
         try {

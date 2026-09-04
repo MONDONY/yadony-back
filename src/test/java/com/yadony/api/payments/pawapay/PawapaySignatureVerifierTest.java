@@ -208,11 +208,16 @@ class PawapaySignatureVerifierTest {
 
     @Test
     void expiresNonNumeric_isRejectedNotCrashed() throws Exception {
+        // "x" doit être ENTRE GUILLEMETS : la regex PARAM n'accepte après '=' qu'une chaîne
+        // quotée ou des chiffres nus — un "expires=x" non quoté ne matche PARAM à aucune
+        // position, param(...) renvoie null et parseEpochSeconds n'est alors jamais atteint (le
+        // test échouerait uniquement sur la signature invalidée par la mutation, pas sur le
+        // garde-fou testé ici).
         long now = Instant.now().getEpochSecond();
         Map<String, String> h = new HashMap<>(signedHeaders(BODY, now, now + 60, KEY_ID));
-        h.put("signature-input", h.get("signature-input").replace("expires=" + (now + 60), "expires=x"));
+        h.put("signature-input", h.get("signature-input").replace("expires=" + (now + 60), "expires=\"x\""));
         assertThatThrownBy(() -> verifier().verify(METHOD, AUTHORITY, PATH, h, BODY))
-                .isInstanceOf(PawapaySignatureException.class);
+                .isInstanceOf(PawapaySignatureException.class).hasMessageContaining("expires");
     }
 
     @Test
