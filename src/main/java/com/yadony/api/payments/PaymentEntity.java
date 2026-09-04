@@ -28,8 +28,31 @@ public class PaymentEntity extends BaseEntity {
     @Column(name = "negotiation_thread_id", unique = true)
     private UUID negotiationThreadId;
 
-    @Column(name = "stripe_payment_intent_id", nullable = false, unique = true, length = 255)
+    // Nullable depuis V243 : un paiement mobile money n'a pas de PaymentIntent. L'UNIQUE
+    // reste (PostgreSQL et H2 acceptent plusieurs NULL).
+    @Column(name = "stripe_payment_intent_id", unique = true, length = 255)
     private String stripePaymentIntentId;
+
+    /**
+     * Discriminant du rail. DEFAULT STRIPE en base (V243) et ici : un paiement construit
+     * sans rail explicite reste un paiement carte, ce qui protège tous les chemins existants.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "rail", nullable = false, length = 10)
+    @org.hibernate.annotations.ColumnDefault("'STRIPE'")
+    private PaymentRail rail = PaymentRail.STRIPE;
+
+    // Confort de lecture (admin, export). Le lien qui fait autorité est
+    // pawapay_operations.payment_id : ces colonnes peuvent être vides alors que
+    // l'opération existe (cf. spec §7.1). Aucune décision ne se prend en les lisant.
+    @Column(name = "pawapay_deposit_id")
+    private UUID pawapayDepositId;
+
+    @Column(name = "pawapay_payout_id")
+    private UUID pawapayPayoutId;
+
+    @Column(name = "pawapay_refund_id")
+    private UUID pawapayRefundId;
 
     @Column(name = "amount", nullable = false, precision = 10, scale = 2)
     private BigDecimal amount;
@@ -136,4 +159,13 @@ public class PaymentEntity extends BaseEntity {
 
     public boolean isDisputed() { return disputed; }
     public void setDisputed(boolean disputed) { this.disputed = disputed; }
+
+    public PaymentRail getRail() { return rail; }
+    public void setRail(PaymentRail rail) { this.rail = rail; }
+    public UUID getPawapayDepositId() { return pawapayDepositId; }
+    public void setPawapayDepositId(UUID pawapayDepositId) { this.pawapayDepositId = pawapayDepositId; }
+    public UUID getPawapayPayoutId() { return pawapayPayoutId; }
+    public void setPawapayPayoutId(UUID pawapayPayoutId) { this.pawapayPayoutId = pawapayPayoutId; }
+    public UUID getPawapayRefundId() { return pawapayRefundId; }
+    public void setPawapayRefundId(UUID pawapayRefundId) { this.pawapayRefundId = pawapayRefundId; }
 }

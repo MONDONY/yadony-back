@@ -62,6 +62,36 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
     int markRefundedIfEscrow(@Param("id") UUID id);
 
     /**
+     * Verrou pessimiste sur le paiement d'un bid : sérialise deux initiations de deposit
+     * mobile money concurrentes (deux appuis, deux appareils).
+     *
+     * <p>Verrou JPQL {@code PESSIMISTIC_WRITE} (Hibernate émet {@code FOR NO KEY UPDATE} sur
+     * PostgreSQL) et surtout pas un {@code FOR UPDATE} natif : l'INSERT d'une opération pawaPay
+     * (FK vers {@code payments.id}, transaction REQUIRES_NEW) prend un {@code KEY SHARE} sur le
+     * paiement, compatible avec NO KEY UPDATE, bloqué par FOR UPDATE. Non exécutable sous H2
+     * avec le dialecte PostgreSQL forcé : couvert par les tests unitaires des appelants et par
+     * PostgreSQL.
+     */
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT p FROM PaymentEntity p WHERE p.bidId = :bidId")
+    Optional<PaymentEntity> findByBidIdForUpdate(@Param("bidId") UUID bidId);
+
+    /**
+     * Séquestre mobile money : PENDING → ESCROW, une seule fois, en mémorisant le deposit
+     * pawaPay qui l'a financé. 0 = déjà en ESCROW (rejeu) ou déjà CANCELLED (deadline
+     * passée pendant la saisie du PIN — l'appelant rembourse alors).
+     */
+    @Modifying
+    @Query("UPDATE PaymentEntity p SET p.status = 'ESCROW', p.capturedAt = :now, p.pawapayDepositId = :opId "
+            + "WHERE p.id = :id AND p.status = 'PENDING'")
+    int markEscrowIfPending(@Param("id") UUID id, @Param("opId") UUID opId, @Param("now") Instant now);
+
+    /** PENDING → CANCELLED (deadline mobile money dépassée, ou remboursement d'un paiement jamais encaissé). */
+    @Modifying
+    @Query("UPDATE PaymentEntity p SET p.status = 'CANCELLED' WHERE p.id = :id AND p.status = 'PENDING'")
+    int markCancelledIfPending(@Param("id") UUID id);
+
+    /**
      * Vrai si l'utilisateur a au moins un paiement en séquestre actif, qu'il soit
      * expéditeur ou voyageur, quel que soit le flux (bid direct ou négociation).
      *
