@@ -257,6 +257,25 @@ yadony:
     # fenêtre par défaut étant de 2 h) + rattrapage des commissions débitées
     # jamais remboursées sur les fils perdants (AUTO_REJECTED/EXPIRED/CANCELLED).
     commission-expire-check-cron: ${YADONY_NEGOTIATION_COMMISSION_EXPIRE_CRON:0 */5 * * * *}
+  pawapay:
+    # Rail mobile money (deposits, payouts, refunds). Fermé par défaut : le rail n'est
+    # proposé sur aucune annonce tant que PAWAPAY_ENABLED n'est pas true.
+    enabled: ${PAWAPAY_ENABLED:false}
+    base-url: ${PAWAPAY_BASE_URL:https://api.sandbox.pawapay.io}
+    api-token: ${PAWAPAY_API_TOKEN:}
+    # Obligatoire en prod (PawapayConfig refuse de démarrer sinon), activé aussi dans le
+    # dashboard pawaPay (« Signed callbacks »).
+    callback-signatures-required: ${PAWAPAY_CALLBACK_SIGNATURES:false}
+    deposit-deadline-minutes: ${PAWAPAY_DEPOSIT_DEADLINE_MINUTES:30}
+    # Page de rebond Wave (HTTPS, jamais le deep link : refusé par les PSP).
+    return-base-url: ${PAWAPAY_RETURN_BASE_URL:https://api.yadony.com}
+    deep-link-awaiting: ${PAWAPAY_DEEP_LINK_AWAITING:yadony://bids/%s/mobile-money/awaiting}
+    poll-cron: ${PAWAPAY_POLL_CRON:0 */2 * * * *}
+    balance-cron: ${PAWAPAY_BALANCE_CRON:0 15 * * * *}
+    deadline-cron: ${PAWAPAY_DEADLINE_CRON:0 * * * * *}
+    balance-min:
+      xof: ${PAWAPAY_BALANCE_MIN_XOF:0}
+      xaf: ${PAWAPAY_BALANCE_MIN_XAF:0}
   email:
     resend-api-key: ${RESEND_API_KEY:}
     from-address: ${YADONY_EMAIL_FROM_ADDRESS:noreply@yadony.com}
