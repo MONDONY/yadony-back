@@ -47,6 +47,10 @@ public class CorridorAlertEntity extends BaseEntity {
     @Column(name = "active", nullable = false)
     private boolean active = true;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "notify_mode", nullable = false, length = 16)
+    private AlertNotifyMode notifyMode = AlertNotifyMode.INSTANT;
+
     @Column(name = "last_notified_at")
     private LocalDateTime lastNotifiedAt;
 
@@ -111,6 +115,11 @@ public class CorridorAlertEntity extends BaseEntity {
 
     public boolean isActive() { return active; }
     public void setActive(boolean active) { this.active = active; }
+
+    public AlertNotifyMode getNotifyMode() { return notifyMode; }
+    public void setNotifyMode(AlertNotifyMode notifyMode) {
+        this.notifyMode = notifyMode != null ? notifyMode : AlertNotifyMode.INSTANT;
+    }
 
     public LocalDateTime getLastNotifiedAt() { return lastNotifiedAt; }
     public void setLastNotifiedAt(LocalDateTime lastNotifiedAt) { this.lastNotifiedAt = lastNotifiedAt; }

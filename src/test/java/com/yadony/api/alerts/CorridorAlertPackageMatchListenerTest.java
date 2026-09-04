@@ -109,6 +109,21 @@ class CorridorAlertPackageMatchListenerTest {
         verify(alertRepository, never()).save(any());
     }
 
+    /** Fréquence quotidienne : le colis attendra le digest. */
+    @Test
+    void onCreated_dailyAlert_doesNotNotify() {
+        PackageRequestEntity p = pkg();
+        CorridorAlertEntity daily = alert(null);
+        daily.setNotifyMode(AlertNotifyMode.DAILY);
+        when(packageRequestRepository.findById(requestId)).thenReturn(Optional.of(p));
+        when(alertService.findTravelerAlertsMatchingPackage(p)).thenReturn(List.of(daily));
+
+        listener.onPackageRequestCreated(event());
+
+        verifyNoInteractions(notificationDispatcher);
+        verify(alertRepository, never()).save(any());
+    }
+
     @Test
     void onCreated_withinCooldown_doesNotNotify() {
         PackageRequestEntity p = pkg();

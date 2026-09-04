@@ -64,6 +64,10 @@ public class CorridorAlertDigestScheduler {
             if (AlertService.isExpired(alert, today)) {
                 continue;
             }
+            // Silencieuse : le compteur de nouveautés vit sa vie, rien ne part.
+            if (alert.getNotifyMode() == AlertNotifyMode.MUTED) {
+                continue;
+            }
             try {
                 LocalDateTime since = alert.getLastNotifiedAt() != null
                         ? alert.getLastNotifiedAt()

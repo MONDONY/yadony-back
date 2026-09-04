@@ -86,6 +86,26 @@ class CorridorAlertDigestSchedulerTest {
         verify(alertRepository, never()).save(any());
     }
 
+    /** Silencieuse : le digest ne la regarde pas ; quotidienne : traitée comme avant. */
+    @Test
+    void skipsMutedAlerts_butDigestsDailyOnes() {
+        CorridorAlertEntity muted = alert(null);
+        muted.setNotifyMode(AlertNotifyMode.MUTED);
+        CorridorAlertEntity daily = alert(null);
+        daily.setNotifyMode(AlertNotifyMode.DAILY);
+        when(alertRepository.findAllByActiveTrue()).thenReturn(List.of(muted, daily));
+        when(blockVisibility.hiddenUserIdsFor(ownerId)).thenReturn(Set.of());
+        when(alertService.findRecentMatches(eq(daily), any()))
+                .thenReturn(List.of(pkg(UUID.randomUUID())));
+
+        scheduler.runDigest();
+
+        verify(alertService, never()).findRecentMatches(eq(muted), any());
+        verify(notificationDispatcher).notifyUser(eq(ownerId), anyString(), anyString(), anyMap());
+        assertThat(daily.getLastNotifiedAt()).isNotNull();
+        assertThat(muted.getLastNotifiedAt()).isNull();
+    }
+
     @Test
     void dispatchesAndBumpsLastNotified_whenMatchesExist() {
         CorridorAlertEntity a = alert(null);

@@ -73,6 +73,10 @@ public class CorridorAlertPackageMatchListener {
 
         for (CorridorAlertEntity alert : matches) {
             try {
+                // Seules les alertes en mode instantané poussent tout de suite.
+                if (alert.getNotifyMode() != AlertNotifyMode.INSTANT) {
+                    continue;
+                }
                 if (alert.getLastNotifiedAt() != null
                         && Duration.between(alert.getLastNotifiedAt(), now).compareTo(COOLDOWN) < 0) {
                     continue; // cooldown anti-rafale

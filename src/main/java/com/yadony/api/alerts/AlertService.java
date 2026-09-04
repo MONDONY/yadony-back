@@ -119,6 +119,7 @@ public class AlertService {
         entity.setContentCategories(categories);
         entity.setActive(true);
         entity.setDirection(req.direction());
+        entity.setNotifyMode(req.effectiveNotifyMode());
         applyZone(entity, req);
 
         CorridorAlertEntity saved = alertRepository.save(entity);
@@ -253,6 +254,11 @@ public class AlertService {
                 req.contentCategories() != null ? req.contentCategories() : List.of()));
         validateZone(entity.getDirection(), req.centerLat(), req.centerLng(), req.radiusKm());
         applyZone(entity, req);
+        // Un client antérieur n'envoie pas de fréquence : on garde celle en place
+        // plutôt que de la remettre à INSTANT à chaque édition.
+        if (req.notifyMode() != null) {
+            entity.setNotifyMode(req.notifyMode());
+        }
         if (active != null) {
             entity.setActive(active);
         }
@@ -599,6 +605,7 @@ public class AlertService {
                 e.getRadiusKm(),
                 e.getCenterLabel(),
                 newMatchCount,
-                e.getLastSeenAt());
+                e.getLastSeenAt(),
+                e.getNotifyMode());
     }
 }

@@ -1,6 +1,7 @@
 package com.yadony.api.alerts.dto;
 
 import com.yadony.api.alerts.AlertDirection;
+import com.yadony.api.alerts.AlertNotifyMode;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -35,7 +36,8 @@ public record CorridorAlertResponse(
          */
         long newMatchCount,
         /** Dernière ouverture des correspondances ; {@code null} = jamais. */
-        LocalDateTime lastSeenAt
+        LocalDateTime lastSeenAt,
+        AlertNotifyMode notifyMode
 ) {
     /** Constructeur de compat (sans zone de remise) — délègue avec une zone nulle. */
     public CorridorAlertResponse(
@@ -46,6 +48,7 @@ public record CorridorAlertResponse(
             boolean active, long matchCount, LocalDateTime createdAt) {
         this(id, departureCity, arrivalCity, departureCountryCode, arrivalCountryCode,
                 dateFrom, dateTo, minWeightKg, contentCategories, direction,
-                active, matchCount, createdAt, null, null, null, null, 0L, null);
+                active, matchCount, createdAt, null, null, null, null, 0L, null,
+                AlertNotifyMode.INSTANT);
     }
 }
