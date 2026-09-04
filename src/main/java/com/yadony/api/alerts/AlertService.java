@@ -17,12 +17,14 @@ import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.AnnouncementStatus;
 import com.yadony.api.matching.dto.MatchingRequestDto;
 import com.yadony.api.requests.entity.PackageRequestEntity;
+import com.yadony.api.requests.entity.PackageRequestStatus;
 import com.yadony.api.requests.repository.PackageRequestRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -377,6 +379,26 @@ public class AlertService {
     }
 
     /**
+     * Fenêtre de dates dépassée : l'alerte ne peut plus rien trouver de neuf et
+     * ne doit plus déclencher ni push instantané ni digest. Sans {@code dateTo},
+     * une alerte est permanente.
+     */
+    public static boolean isExpired(CorridorAlertEntity alert, LocalDate today) {
+        return alert.getDateTo() != null && alert.getDateTo().isBefore(today);
+    }
+
+    /** Horloge du « aujourd'hui » de l'expiration ; figée dans les tests. */
+    private Clock clock = Clock.systemUTC();
+
+    void useClock(Clock clock) {
+        this.clock = clock;
+    }
+
+    private LocalDate today() {
+        return LocalDate.now(clock);
+    }
+
+    /**
      * Inverse de {@link #findMatchingTrips} : pour un trajet donné (qui vient
      * d'être créé), renvoie les alertes trajet (SENDER_WANTS_TRIPS) actives qui
      * matchent — corridor (ville→ville, insensible casse) + fenêtre de dates +
@@ -389,15 +411,43 @@ public class AlertService {
                 && trip.getStatus() != AnnouncementStatus.FULL) {
             return List.of();
         }
+        LocalDate today = today();
         return alertRepository
                 .findAllByActiveTrueAndDirection(AlertDirection.SENDER_WANTS_TRIPS)
                 .stream()
+                .filter(a -> !isExpired(a, today))
                 // Le voyageur qui publie ne se notifie pas lui-même via sa propre alerte.
                 .filter(a -> !a.getOwnerId().equals(trip.getTravelerId()))
                 .filter(a -> a.getDepartureCity().equalsIgnoreCase(trip.getDepartureCity())
                         && a.getArrivalCity().equalsIgnoreCase(trip.getArrivalCity()))
                 .filter(a -> fitsAlertDate(trip.getDepartureDate(), a))
                 .filter(a -> zoneContainsPickup(a, trip))
+                .toList();
+    }
+
+    /**
+     * Symétrique de {@link #findSenderAlertsMatchingTrip} côté colis : pour une
+     * demande qui vient d'être publiée, renvoie les alertes colis
+     * (TRAVELER_WANTS_PACKAGES) actives qui matchent — corridor, fenêtre de dates,
+     * poids minimal, catégories — hors alertes de l'expéditeur lui-même. Utilisé
+     * par le matching temps réel (listener PackageRequestCreatedEvent).
+     */
+    @Transactional(readOnly = true)
+    public List<CorridorAlertEntity> findTravelerAlertsMatchingPackage(PackageRequestEntity p) {
+        if (p.getStatus() != PackageRequestStatus.OPEN) {
+            return List.of();
+        }
+        LocalDate today = today();
+        return alertRepository
+                .findAllByActiveTrueAndDirection(AlertDirection.TRAVELER_WANTS_PACKAGES)
+                .stream()
+                .filter(a -> !isExpired(a, today))
+                .filter(a -> !a.getOwnerId().equals(p.getSenderId()))
+                .filter(a -> a.getDepartureCity().equalsIgnoreCase(p.getDepartureCity())
+                        && a.getArrivalCity().equalsIgnoreCase(p.getArrivalCity()))
+                .filter(a -> fitsAlertDate(p.getDesiredDate(), a))
+                .filter(a -> fitsAlertWeight(p, a))
+                .filter(a -> fitsAlertCategory(p, a))
                 .toList();
     }
 
@@ -440,7 +490,8 @@ public class AlertService {
                     a.getId(), a.getDepartureCity(), a.getArrivalCity(), a.getDepartureDate(),
                     traveler.getId(), MatchingTextUtil.buildPublicName(traveler),
                     MatchingTextUtil.buildInitials(traveler), rating,
-                    a.getAvailableKg(), a.getPricePerKg(), a.getTransportMode(), null, a.getCurrency()));
+                    a.getAvailableKg(), a.getPricePerKg(), a.getTransportMode(), null, a.getCurrency(),
+                    a.getCreatedAt()));
         }
         return result;
     }
@@ -547,6 +598,7 @@ public class AlertService {
                 e.getCenterLng(),
                 e.getRadiusKm(),
                 e.getCenterLabel(),
-                newMatchCount);
+                newMatchCount,
+                e.getLastSeenAt());
     }
 }

@@ -49,7 +49,10 @@ class AlertServiceMatchesTest {
     void setup() {
         owner = new UserEntity();
         setId(owner, ownerId);
-        when(userRepository.findByFirebaseUid(uid)).thenReturn(Optional.of(owner));
+        lenient().when(userRepository.findByFirebaseUid(uid)).thenReturn(Optional.of(owner));
+        // Les fixtures vivent en juillet 2026 : l'horloge réelle les rendrait expirées.
+        service.useClock(java.time.Clock.fixed(
+                java.time.Instant.parse("2026-07-15T12:00:00Z"), java.time.ZoneOffset.UTC));
     }
 
     private static void setId(Object target, UUID id) {
@@ -346,6 +349,53 @@ class AlertServiceMatchesTest {
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.markSeen(uid, alertId))
                 .isInstanceOf(com.yadony.api.common.YadonyNotFoundException.class);
+    }
+
+    // ── Matching temps réel côté colis ─────────────────────────────────────
+
+    @Test
+    void findTravelerAlertsMatchingPackage_keepsOnlyMatchingLiveForeignAlerts() {
+        PackageRequestEntity p = pkg("Documents", new BigDecimal("3.00"), LocalDate.of(2026, 7, 10));
+
+        CorridorAlertEntity match = alert(true);
+        CorridorAlertEntity mine = alert(true);
+        setId(mine, UUID.randomUUID());
+        mine.setOwnerId(p.getSenderId());
+        CorridorAlertEntity expired = alert(true);
+        setId(expired, UUID.randomUUID());
+        expired.setDateFrom(LocalDate.of(2020, 1, 1));
+        expired.setDateTo(LocalDate.of(2020, 1, 31));
+        CorridorAlertEntity otherCorridor = alert(true);
+        setId(otherCorridor, UUID.randomUUID());
+        otherCorridor.setArrivalCity("Dakar");
+        CorridorAlertEntity tooHeavy = alert(true);
+        setId(tooHeavy, UUID.randomUUID());
+        tooHeavy.setMinWeightKg(new BigDecimal("10.00"));
+
+        when(alertRepository.findAllByActiveTrueAndDirection(AlertDirection.TRAVELER_WANTS_PACKAGES))
+                .thenReturn(List.of(match, mine, expired, otherCorridor, tooHeavy));
+
+        List<CorridorAlertEntity> hits = service.findTravelerAlertsMatchingPackage(p);
+
+        assertThat(hits).containsExactly(match);
+    }
+
+    @Test
+    void findTravelerAlertsMatchingPackage_ignoresNonOpenRequest() {
+        PackageRequestEntity p = pkg("Documents", new BigDecimal("3.00"), LocalDate.of(2026, 7, 10));
+        p.setStatus(PackageRequestStatus.CANCELLED);
+
+        assertThat(service.findTravelerAlertsMatchingPackage(p)).isEmpty();
+        org.mockito.Mockito.verifyNoInteractions(alertRepository);
+    }
+
+    @Test
+    void isExpired_onlyAfterDateTo() {
+        CorridorAlertEntity a = alert(true); // dateTo = 2026-07-31
+        assertThat(AlertService.isExpired(a, LocalDate.of(2026, 7, 31))).isFalse();
+        assertThat(AlertService.isExpired(a, LocalDate.of(2026, 8, 1))).isTrue();
+        a.setDateTo(null);
+        assertThat(AlertService.isExpired(a, LocalDate.of(2030, 1, 1))).isFalse();
     }
 
     @Test

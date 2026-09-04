@@ -273,14 +273,16 @@ class AlertControllerTest {
         AlertTripMatchDto tripDto = new AlertTripMatchDto(
                 UUID.randomUUID(), "Paris", "Dakar", LocalDate.of(2026, 8, 10),
                 UUID.randomUUID(), "Mamadou D", "MD", 4.8,
-                BigDecimal.valueOf(15), BigDecimal.valueOf(8), TransportMode.PLANE, null, "EUR");
+                BigDecimal.valueOf(15), BigDecimal.valueOf(8), TransportMode.PLANE, null, "EUR",
+                java.time.LocalDateTime.of(2026, 8, 1, 10, 0));
         doReturn(List.of(tripDto)).when(alertService).getMatchesForDirection(FIREBASE_UID, id);
 
         mockMvc.perform(get("/me/corridor-alerts/{id}/matches", id)
                         .with(authentication(asSender())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].availableKg").value(15))
-                .andExpect(jsonPath("$[0].travelerName").value("Mamadou D"));
+                .andExpect(jsonPath("$[0].travelerName").value("Mamadou D"))
+                .andExpect(jsonPath("$[0].publishedAt").exists());
     }
 
     // ── GET /{id} et POST /{id}/seen ────────────────────────────────────────
@@ -290,7 +292,7 @@ class AlertControllerTest {
         UUID id = UUID.randomUUID();
         CorridorAlertResponse r = new CorridorAlertResponse(id, "Paris", "Dakar", "FR", "SN",
                 null, null, null, List.of(), AlertDirection.SENDER_WANTS_TRIPS, true, 5L,
-                java.time.LocalDateTime.now(), null, null, null, null, 2L);
+                java.time.LocalDateTime.now(), null, null, null, null, 2L, null);
         when(alertService.get(FIREBASE_UID, id)).thenReturn(r);
 
         mockMvc.perform(get("/me/corridor-alerts/" + id).with(authentication(asSender())))
@@ -305,7 +307,7 @@ class AlertControllerTest {
         UUID id = UUID.randomUUID();
         CorridorAlertResponse r = new CorridorAlertResponse(id, "Paris", "Bamako", "FR", "ML",
                 null, null, null, List.of(), AlertDirection.TRAVELER_WANTS_PACKAGES, true, 3L,
-                java.time.LocalDateTime.now(), null, null, null, null, 0L);
+                java.time.LocalDateTime.now(), null, null, null, null, 0L, null);
         when(alertService.markSeen(FIREBASE_UID, id)).thenReturn(r);
 
         mockMvc.perform(post("/me/corridor-alerts/" + id + "/seen").with(authentication(asTraveler())))

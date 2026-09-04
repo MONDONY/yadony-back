@@ -11,6 +11,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -69,6 +70,20 @@ class CorridorAlertDigestSchedulerTest {
         AnnouncementEntity a = new AnnouncementEntity();
         a.setTravelerId(travelerId);
         return a;
+    }
+
+    /** Fenêtre de dates passée : le digest ne cherche même plus de correspondances. */
+    @Test
+    void skipsExpiredAlerts() {
+        CorridorAlertEntity expired = alert(null);
+        expired.setDateFrom(LocalDate.of(2020, 1, 1));
+        expired.setDateTo(LocalDate.of(2020, 1, 31));
+        when(alertRepository.findAllByActiveTrue()).thenReturn(List.of(expired));
+
+        scheduler.runDigest();
+
+        verifyNoInteractions(alertService, notificationDispatcher);
+        verify(alertRepository, never()).save(any());
     }
 
     @Test

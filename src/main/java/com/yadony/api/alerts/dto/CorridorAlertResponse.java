@@ -33,7 +33,9 @@ public record CorridorAlertResponse(
          * chiffre que le hub Activités et la liste mettent en avant, jamais
          * {@link #matchCount} qui ne dit rien de ce qui a changé.
          */
-        long newMatchCount
+        long newMatchCount,
+        /** Dernière ouverture des correspondances ; {@code null} = jamais. */
+        LocalDateTime lastSeenAt
 ) {
     /** Constructeur de compat (sans zone de remise) — délègue avec une zone nulle. */
     public CorridorAlertResponse(
@@ -44,6 +46,6 @@ public record CorridorAlertResponse(
             boolean active, long matchCount, LocalDateTime createdAt) {
         this(id, departureCity, arrivalCity, departureCountryCode, arrivalCountryCode,
                 dateFrom, dateTo, minWeightKg, contentCategories, direction,
-                active, matchCount, createdAt, null, null, null, null, 0L);
+                active, matchCount, createdAt, null, null, null, null, 0L, null);
     }
 }
