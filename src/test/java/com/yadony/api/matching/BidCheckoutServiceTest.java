@@ -392,7 +392,9 @@ class BidCheckoutServiceTest {
         when(paymentService.confirmBidPayment(bid.getId())).thenReturn(true);
 
         assertThatThrownBy(() -> service.negotiationCheckout("uid-sender", bid.getId()))
-                .isInstanceOf(YadonyBusinessException.class)
+                // Type dédié, déclaré en noRollbackFor : la promotion faite par
+                // confirmBidPayment dans la même transaction doit survivre au 409.
+                .isInstanceOf(com.yadony.api.payments.BidAlreadyPaidException.class)
                 .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
                         .isEqualTo("bid-already-paid"));
         // Aucun second escrow ouvert : c'est bien la promotion qui débloque.
@@ -568,5 +570,21 @@ class BidCheckoutServiceTest {
 
         assertThat(resp.bidId()).isEqualTo(bid.getId());
         verify(paymentService).createEscrow(any(), eq("uid-sender"));
+    }
+
+    @Test
+    void bothCheckoutsExcludeBidAlreadyPaidFromRollback() throws NoSuchMethodException {
+        // Sans cette exclusion, la promotion faite par settleIfAlreadyEscrowed est
+        // annulée avec le 409 : « déjà payé » à l'écran, toujours « à payer » en base.
+        for (java.lang.reflect.Method m : java.util.List.of(
+                BidCheckoutService.class.getMethod("negotiationCheckout", String.class, UUID.class),
+                BidCheckoutService.class.getMethod("checkout", String.class,
+                        com.yadony.api.matching.dto.BidCheckoutRequest.class,
+                        jakarta.servlet.http.HttpServletRequest.class))) {
+            var tx = m.getAnnotation(org.springframework.transaction.annotation.Transactional.class);
+            assertThat(tx).describedAs(m.getName()).isNotNull();
+            assertThat(tx.noRollbackFor()).describedAs(m.getName())
+                    .contains(com.yadony.api.payments.BidAlreadyPaidException.class);
+        }
     }
 }

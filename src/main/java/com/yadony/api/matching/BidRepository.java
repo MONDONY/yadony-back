@@ -500,7 +500,10 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
     @Query("""
         SELECT b FROM BidEntity b
         JOIN AnnouncementEntity a ON b.announcementId = a.id
-        WHERE b.status = com.yadony.api.matching.BidStatus.NEGOTIATING
+        WHERE (b.status = com.yadony.api.matching.BidStatus.NEGOTIATING
+               OR (b.status IN (com.yadony.api.matching.BidStatus.AWAITING_PAYMENT,
+                                com.yadony.api.matching.BidStatus.PENDING)
+                   AND b.negotiatedGrossEur IS NOT NULL))
           AND (b.senderId = :userId OR a.travelerId = :userId)
           AND b.deletedAt IS NULL
         ORDER BY b.updatedAt DESC
