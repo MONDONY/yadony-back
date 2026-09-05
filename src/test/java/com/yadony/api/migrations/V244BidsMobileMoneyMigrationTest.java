@@ -165,15 +165,19 @@ class V244BidsMobileMoneyMigrationTest {
 
     @Test
     void afterV244_bidWithoutPhoneValue_isUntouchedRegardlessOfPaymentMethod() throws Exception {
-        // Contrôle négatif : le nettoyage élargi ne doit pas introduire de valeur là où il
-        // n'y en avait pas (WHERE mobile_money_phone IS NOT NULL, pas un UPDATE inconditionnel).
+        // Contrôle négatif du WHERE mobile_money_phone IS NOT NULL — pas un UPDATE
+        // inconditionnel. Semer (null, null) ne discriminerait rien : un UPDATE sans aucun
+        // WHERE produirait le même résultat sur une ligne déjà doublement nulle. Le seul
+        // seed qui distingue les deux est (phone NULL, country_code NON NULL) : la version
+        // gardée laisse la ligne intacte (WHERE faux car phone est déjà NULL) et conserve
+        // "SN", la version inconditionnelle écraserait aussi country_code à NULL.
         UUID senderId = seedUser();
         UUID announcementId = seedAnnouncement(seedUser());
-        UUID bidId = seedBid(announcementId, senderId, "STRIPE", null, null);
+        UUID bidId = seedBid(announcementId, senderId, "STRIPE", null, "SN");
 
         migrateToV244();
 
-        assertPhoneAndCountryCode(bidId, null, null);
+        assertPhoneAndCountryCode(bidId, null, "SN");
     }
 
     // ─── Élargissement de la colonne mobile_money_phone ──────────────────────────
