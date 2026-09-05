@@ -26,6 +26,12 @@ public class DiditClient {
     private final RestClient restClient;
     private final DiditProperties properties;
 
+    /**
+     * Deux constructeurs coexistent (celui-ci et celui des tests) : sans {@code @Autowired},
+     * Spring ne sait pas lequel choisir et cherche un constructeur sans argument, qui n'existe
+     * pas — le contexte entier refuse alors de demarrer.
+     */
+    @org.springframework.beans.factory.annotation.Autowired
     public DiditClient(DiditProperties properties) {
         this(withTimeouts(), properties);
     }

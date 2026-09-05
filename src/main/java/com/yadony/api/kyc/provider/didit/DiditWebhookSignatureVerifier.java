@@ -40,6 +40,8 @@ public class DiditWebhookSignatureVerifier {
     private final DiditProperties properties;
     private final Clock clock;
 
+    /** {@code @Autowired} obligatoire : deux constructeurs, dont un reserve aux tests. */
+    @org.springframework.beans.factory.annotation.Autowired
     public DiditWebhookSignatureVerifier(DiditProperties properties) {
         this(properties, Clock.systemUTC());
     }

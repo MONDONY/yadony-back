@@ -230,6 +230,22 @@ class KycDiditWebhookControllerTest {
         verifyNoInteractions(kycRepository, userRepository);
     }
 
+    /**
+     * L'environnement est exigé, pas seulement vérifié s'il est présent : sinon la garde
+     * serait contournable en omettant simplement le champ.
+     */
+    @Test
+    void missingEnvironment_isIgnored() {
+        signatureIsValid();
+
+        ResponseEntity<Void> response = post("""
+                {"webhook_type":"status.updated","session_id":"sess_1","status":"Approved"}
+                """);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        verifyNoInteractions(kycRepository, userRepository);
+    }
+
     @Test
     void unreadableBody_returns200_withoutTouchingAnything() {
         signatureIsValid();

@@ -86,8 +86,11 @@ public class KycDiditWebhookController {
             return ResponseEntity.ok().build();
         }
 
+        // Champ EXIGE, pas seulement verifie s'il est la : cette garde n'existe que parce
+        // qu'un meme secret peut signer du bac a sable et de la production (sinon la
+        // signature suffirait). L'accepter absent la rendrait contournable par omission.
         String environment = text(payload, "environment");
-        if (environment != null && !environment.equalsIgnoreCase(properties.environment())) {
+        if (environment == null || !environment.equalsIgnoreCase(properties.environment())) {
             log.warn("Webhook Didit d'un autre environnement ({}) — ignoré", environment);
             return ResponseEntity.ok().build();
         }
