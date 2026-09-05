@@ -488,8 +488,13 @@ public class MobileMoneyBidPaymentService {
         if (bid.getStatus() != BidStatus.AWAITING_PAYMENT) {
             // Annulé entre-temps : le claim ESCROW qu'on vient de gagner est immédiatement
             // retourné en REFUNDED — jamais gardé sans colis en face.
+            // Ronde 1 (revue tâche 17, point 1 — étendu ici) : PAS de payment.setStatus(REFUNDED)
+            // après ce claim bulk — refundAfterCancel pose désormais pawapay_refund_id par
+            // attachRefundId (UPDATE ciblé), jamais par un setter ; laisser l'entité sale ici
+            // aurait réintroduit exactement le même risque (une écriture ultérieure sur
+            // `payments` peut, selon l'ordre exact des opérations, faire flusher un statut
+            // périmé — voir PaymentRepositoryMobileMoneyTest, Ronde 1, et task-17-report.md).
             if (paymentRepository.markRefundedIfEscrow(paymentId) == 1) {
-                payment.setStatus(PaymentStatus.REFUNDED);
                 refundAfterCancel(payment, operationId, "MM_DEPOSIT_AFTER_CANCEL_REFUNDED");
             }
             return;
@@ -527,16 +532,35 @@ public class MobileMoneyBidPaymentService {
     private void refundAfterCancel(PaymentEntity payment, UUID depositOperationId, String auditAction) {
         PawapayOperationEntity deposit = operations.get(depositOperationId);
         PawapayOperationEntity refund = submission.submitRefund(payment.getId(), deposit, payment.getAmount());
-        payment.setPawapayRefundId(refund.getId());
-        // Ronde 1, point 3 : même défaut que MM_DEPOSIT_INITIATED (tâche 13). À ce point,
-        // submitRefund a DÉJÀ commité sa ligne d'opération (REQUIRES_NEW) et l'appel HTTP à
-        // pawaPay est déjà parti — irréversible. Si cette écriture d'audit rejoignait la
-        // transaction ambiante (celle du listener) et qu'un throw plus loin l'annulait,
-        // l'audit disparaîtrait alors que l'argent a réellement bougé. Transaction
-        // INDÉPENDANTE, comme initiateDeposit.
+        // Ronde 1, point 3 (CRITIQUE) : cette méthode ne testait jamais SUBMIT_REJECTED — un
+        // refus pawaPay était audité/alerté puis la méthode retournait normalement (donc
+        // commitait), alors que RefundProcessor#refundEscrowedMobileMoney lève dans le même cas
+        // (rollback du claim). Deux issues opposées pour le même mouvement d'argent selon le
+        // point d'entrée : aligné ici sur RefundProcessor — alerte puis throw.
+        if (refund.getStatus() == PawapayOperationStatus.SUBMIT_REJECTED) {
+            if (adminAlert != null) {
+                adminAlert.raise("PAWAPAY_DEPOSIT_AFTER_CANCEL_REJECTED",
+                        "pawaPay a refusé le remboursement du deposit après annulation (payment "
+                                + payment.getId() + ") : " + refund.getFailureCode(),
+                        Map.of("paymentId", payment.getId().toString(), "depositOperationId", depositOperationId.toString(),
+                                "operationId", refund.getId().toString(), "failureCode", String.valueOf(refund.getFailureCode())));
+            }
+            throw new IllegalStateException("pawaPay refund rejected after cancel: " + refund.getFailureCode());
+        }
+        // Ronde 1, point 3 (préexistant, Important) : même défaut que MM_DEPOSIT_INITIATED
+        // (tâche 13). À ce point, submitRefund a DÉJÀ commité sa ligne d'opération
+        // (REQUIRES_NEW) et l'appel HTTP à pawaPay est déjà parti — irréversible. Audit AVANT
+        // rattachement, dans sa propre transaction (motif MobileMoneyPayoutInitiator#release,
+        // repris par RefundProcessor tâche 17 Ronde 1 point 2) : la trace du remboursement
+        // survit même si l'écriture ambiante suivante (attachRefundId) échouait.
         independentAuditTransaction.executeWithoutResult(status -> audit.log("PAYMENT", payment.getId(), auditAction, null,
                 Map.of("depositOperationId", depositOperationId.toString(), "refundOperationId", refund.getId().toString(),
                         "refundStatus", refund.getStatus().name())));
+        // Ronde 1, point 4 : UPDATE ciblé, jamais payment.setPawapayRefundId(...) sur l'entité
+        // gérée — même piège que RefundProcessor (tâche 17 Ronde 1 point 1), latent ici tant
+        // qu'aucun autre bulk ne touche `payments` dans le même appel, mais qui deviendrait actif
+        // au moindre changement futur touchant cette méthode ou son appelant.
+        paymentRepository.attachRefundId(payment.getId(), refund.getId());
         if (adminAlert != null) {
             adminAlert.raise("PAWAPAY_DEPOSIT_AFTER_CANCEL",
                     "Deposit encaissé après annulation du bid, remboursement " + refund.getStatus() + " (payment " + payment.getId() + ")",

@@ -1,5 +1,7 @@
 package com.yadony.api.payments;
 
+import com.yadony.api.admin.AdminAlertEntity;
+import com.yadony.api.admin.AdminAlertRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.payments.pawapay.PawapayOperationEntity;
@@ -15,10 +17,12 @@ import com.stripe.param.PaymentIntentCancelParams;
 import com.stripe.param.RefundCreateParams;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -46,38 +50,57 @@ import java.util.UUID;
  *
  * <p><b>Rail mobile money (tâche 17)</b> — {@code payment.getRail() == PAWAPAY} bascule sur un
  * second chemin, complètement séparé du chemin Stripe ci-dessus (aucune ligne du chemin Stripe
- * n'est modifiée par cette branche) : voir {@link #refundMobileMoney}. Les sept listeners
- * appelants de {@link #processRefund} (annulations, litiges, rejets d'annonce, suppressions de
- * compte) ne changent pas — le dispatch sur le rail est entièrement interne à cette classe.
+ * n'est modifiée par cette branche) : voir {@link #refundMobileMoney}. Les six listeners
+ * appelants existants de {@link #processRefund} (annulations, litiges, rejets d'annonce) ne
+ * changent pas — le dispatch sur le rail est entièrement interne à cette classe.
  */
 @Component
 public class RefundProcessor {
 
     private static final Logger log = LoggerFactory.getLogger(RefundProcessor.class);
 
+    /**
+     * Ronde 1, point 5 : {@code admin_alerts.type} est {@code VARCHAR(60)}. Préfixe + UUID (36)
+     * doit rester sous 60. Dédupliqué PAR PAIEMENT (pas un type global) — sinon la dédup
+     * empêcherait à tort l'alerte d'un paiement B sous prétexte qu'un paiement A a déjà le même
+     * problème non résolu. Voir {@code RefundProcessorMobileMoneyTest#noDepositAlertType_fitsInAdminAlertsTypeColumn}.
+     */
+    static final String NO_DEPOSIT_ALERT_PREFIX = "PAWAPAY_REFUND_NO_DEP_";
+
+    /** Idem, pour le refus pawaPay du refund. Voir {@code ...#rejectedAlertType_fitsInAdminAlertsTypeColumn}. */
+    static final String REJECTED_ALERT_PREFIX = "PAWAPAY_REFUND_REJECTED_";
+
     private final PaymentRepository paymentRepository;
     private final AuditService auditService;
     private final AdminAlertService adminAlert;
+    private final PawapayOperationService pawapayOperations;
+    private final PawapaySubmissionService pawapaySubmission;
+    private final AdminAlertRepository alertRepository;
 
     /**
-     * Injection par champ, pas par constructeur : {@code RefundProcessorTest} (chemin Stripe,
-     * antérieur à cette tâche) construit ce processor avec le constructeur à 3 paramètres —
-     * ajouter les dépendances mobile money au constructeur l'aurait cassé sans aucun bénéfice
-     * pour ces tests-là. Même convention que {@code MobileMoneyBidPaymentService#adminAlert}
-     * (tâche 14).
+     * Transaction INDÉPENDANTE réservée à l'audit du remboursement mobile money (Ronde 1,
+     * point 2) — même outil, même motif que {@code MobileMoneyPayoutInitiator#independentAuditTransaction} :
+     * l'audit doit exister AVANT le rattachement (écriture ambiante, faillible) pour que la
+     * trace d'un remboursement réellement soumis survive même si ce rattachement échoue et fait
+     * rollback le claim.
      */
-    @Autowired
-    private PawapayOperationService pawapayOperations;
-
-    @Autowired
-    private PawapaySubmissionService pawapaySubmission;
+    private final TransactionTemplate independentAuditTransaction;
 
     public RefundProcessor(PaymentRepository paymentRepository,
                            AuditService auditService,
-                           AdminAlertService adminAlert) {
+                           AdminAlertService adminAlert,
+                           PawapayOperationService pawapayOperations,
+                           PawapaySubmissionService pawapaySubmission,
+                           AdminAlertRepository alertRepository,
+                           PlatformTransactionManager transactionManager) {
         this.paymentRepository = paymentRepository;
         this.auditService = auditService;
         this.adminAlert = adminAlert;
+        this.pawapayOperations = pawapayOperations;
+        this.pawapaySubmission = pawapaySubmission;
+        this.alertRepository = alertRepository;
+        this.independentAuditTransaction = new TransactionTemplate(transactionManager);
+        this.independentAuditTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     /**
@@ -198,17 +221,23 @@ public class RefundProcessor {
      * colonne {@code status} : un double remboursement reste structurellement impossible quel
      * que soit le rail ou le nombre de chemins d'appel. Puis refund pawaPay du deposit
      * {@code COMPLETED} d'origine (trouvé via {@code findLatest}, jamais recalculé : le montant
-     * remboursé est celui du deposit). Un refund déjà vivant ({@code findLive}) est rattaché tel
-     * quel, jamais resoumis (spec §7.1, protégé structurellement par l'index unique partiel
-     * {@code uq_pawapay_ops_live_per_payment}). L'absence de deposit {@code COMPLETED} ou un
-     * refus pawaPay (statut {@code SUBMIT_REJECTED}) remontent en exception : la transaction
-     * {@code REQUIRES_NEW} annule alors le claim, le paiement redevient {@code ESCROW} et donc
-     * remboursable plus tard.
+     * remboursé est celui du deposit, {@link PawapayOperationEntity#getAmount()} — jamais
+     * {@code payment.getAmount()}, égaux aujourd'hui mais sans garantie contractuelle). Un
+     * refund déjà vivant ({@code findLive}) est rattaché tel quel, jamais resoumis (spec §7.1,
+     * protégé structurellement par l'index unique partiel {@code uq_pawapay_ops_live_per_payment}).
+     * L'absence de deposit {@code COMPLETED} ou un refus pawaPay (statut {@code SUBMIT_REJECTED})
+     * remontent en exception : la transaction {@code REQUIRES_NEW} annule alors le claim, le
+     * paiement redevient {@code ESCROW} et donc remboursable plus tard.
      *
-     * <p><b>Piège hérité des tâches 14/16</b> : après le claim bulk, plus aucune écriture sur
-     * l'entité {@code payment} gérée — le refund id est posé par l'UPDATE ciblé
-     * {@link PaymentRepository#attachRefundId}, jamais par {@code payment.setPawapayRefundId(...)}
-     * (voir le Javadoc détaillé d'{@link PaymentRepository#attachPayoutId}, même mécanisme exact).
+     * <p><b>Ronde 1, point 1 (CRITIQUE)</b> : cette méthode et {@link #refundEscrowedMobileMoney}
+     * ne font JAMAIS {@code payment.setStatus(...)} après un claim bulk — {@code enrich(...)}
+     * n'utilise pas {@code status}, rien d'autre ne le lit non plus. Un tel setter rendrait
+     * l'entité sale ; le mécanisme exact par lequel une écriture ultérieure sur {@code payments}
+     * (ex. {@link #attachRefundId}) peut alors être écrasée au flush suivant dépend de l'ORDRE
+     * d'exécution (vérifié empiriquement, voir
+     * {@code PaymentRepositoryMobileMoneyTest#markRefundedIfEscrow_thenAttachRefundId_doesNotRevertStatus},
+     * Ronde 1, et task-17-report.md) — ne JAMAIS dépendre de cet ordre : la seule garantie sûre
+     * est de ne jamais salir l'entité gérée après le claim.
      */
     private boolean refundMobileMoney(PaymentEntity payment, String auditAction, UUID auditActor,
                                       Map<String, String> auditPayload) {
@@ -219,7 +248,6 @@ public class RefundProcessor {
                 if (cancelled == 0) {
                     yield false;
                 }
-                payment.setStatus(PaymentStatus.CANCELLED);
                 auditService.log("PAYMENT", paymentId, auditAction, auditActor, enrich(auditPayload, payment));
                 log.info("Paiement mobile money {} annulé avant encaissement ({})", paymentId, auditAction);
                 yield true;
@@ -240,38 +268,72 @@ public class RefundProcessor {
             log.info("Paiement {} déjà sorti d'ESCROW — remboursement mobile money ignoré", paymentId);
             return false;
         }
-        payment.setStatus(PaymentStatus.REFUNDED);
 
         Optional<PawapayOperationEntity> completedDeposit = pawapayOperations
                 .findLatest(paymentId, PawapayOperationKind.DEPOSIT)
                 .filter(deposit -> deposit.getStatus() == PawapayOperationStatus.COMPLETED);
         if (completedDeposit.isEmpty()) {
-            adminAlert.raise("PAWAPAY_REFUND_NO_DEPOSIT",
+            escalate(NO_DEPOSIT_ALERT_PREFIX, paymentId,
                     "Paiement " + paymentId + " en ESCROW sans deposit pawaPay COMPLETED : remboursement manuel requis",
-                    Map.of("paymentId", paymentId.toString()));
+                    Map.of("paymentId", paymentId.toString()),
+                    "{\"paymentId\":\"" + paymentId + "\"}");
             throw new IllegalStateException("No completed pawaPay deposit for payment " + paymentId);
         }
         PawapayOperationEntity deposit = completedDeposit.get();
 
+        // Ronde 1, point 9 : ce contrôle SUBMIT_REJECTED ne peut jamais se déclencher pour un
+        // refund RÉCUPÉRÉ via findLive — PawapayOperationStatus.LIVE_OR_DONE (l'ensemble filtré
+        // par findLive) exclut structurellement SUBMIT_REJECTED (rangé dans DEAD). Il n'est
+        // donc jamais atteignable que pour un refund tout juste soumis par submitRefund
+        // ci-dessous — pas un bug latent, juste une conséquence de la structure des deux
+        // ensembles qui mérite ce commentaire pour le prochain lecteur.
         PawapayOperationEntity refund = pawapayOperations.findLive(paymentId, PawapayOperationKind.REFUND)
-                .orElseGet(() -> pawapaySubmission.submitRefund(paymentId, deposit, payment.getAmount()));
+                .orElseGet(() -> pawapaySubmission.submitRefund(paymentId, deposit, deposit.getAmount()));
         if (refund.getStatus() == PawapayOperationStatus.SUBMIT_REJECTED) {
-            adminAlert.raise("PAWAPAY_REFUND_REJECTED",
+            escalate(REJECTED_ALERT_PREFIX, paymentId,
                     "pawaPay a refusé le remboursement du paiement " + paymentId + " : " + refund.getFailureCode(),
                     Map.of("paymentId", paymentId.toString(), "operationId", refund.getId().toString(),
-                            "failureCode", String.valueOf(refund.getFailureCode())));
+                            "failureCode", String.valueOf(refund.getFailureCode())),
+                    "{\"paymentId\":\"" + paymentId + "\",\"operationId\":\"" + refund.getId() + "\"}");
             throw new IllegalStateException("pawaPay refund rejected: " + refund.getFailureCode());
         }
 
-        // Piège hérité des tâches 14/16 (voir Javadoc de refundMobileMoney) : UPDATE ciblé,
-        // jamais payment.setPawapayRefundId(...) sur l'entité gérée après le claim bulk ci-dessus.
-        paymentRepository.attachRefundId(paymentId, refund.getId());
-
+        // Ronde 1, point 2 : audit AVANT rattachement, dans sa propre transaction — motif repris
+        // de MobileMoneyPayoutInitiator#release. L'audit part et commite indépendamment de la
+        // transaction ambiante ; si attachRefundId (écriture ambiante, faillible) levait ensuite,
+        // la trace du remboursement survivrait quand même au rollback du claim qu'il provoquerait.
         Map<String, Object> enriched = enrich(auditPayload, payment);
         enriched.put("refundOperationId", refund.getId().toString());
-        auditService.log("PAYMENT", paymentId, auditAction, auditActor, enriched);
+        independentAuditTransaction.executeWithoutResult(status ->
+                auditService.log("PAYMENT", paymentId, auditAction, auditActor, enriched));
+        // Ronde 1, point 1 : UPDATE ciblé, jamais un setter sur l'entité gérée après le claim
+        // bulk ci-dessus (voir Javadoc de refundMobileMoney). Rien de faillible ne suit ce point.
+        paymentRepository.attachRefundId(paymentId, refund.getId());
         log.info("Remboursement mobile money {} soumis pour le paiement {} ({})", refund.getId(), paymentId, auditAction);
         return true;
+    }
+
+    /**
+     * Ronde 1, point 5 : dédupliquée par paiement, structure reprise à l'identique de
+     * {@code MobileMoneyPayoutInitiator#escalateOrphan} / {@code PawapayReconciliationPoller#escalateUnknown}
+     * — une alerte non résolue du même type est cherchée AVANT d'en créer une nouvelle et
+     * d'appeler {@link AdminAlertService#raise}. Sans cette dédup, chaque nouvel appel à
+     * {@code processRefund} sur le même paiement bloqué (retry, ou un second événement métier
+     * visant le même paiement) reposterait une alerte Telegram identique — et
+     * {@code PAWAPAY_REFUND_NO_DEPOSIT} demande elle-même « un remboursement manuel », dont la
+     * reprise passera par la relance admin de la tâche 18.
+     */
+    private void escalate(String prefix, UUID paymentId, String detail, Map<String, Object> context, String payloadJson) {
+        String type = prefix + paymentId;
+        if (!alertRepository.findByTypeAndResolved(type, false).isEmpty()) {
+            return;
+        }
+        AdminAlertEntity alert = new AdminAlertEntity();
+        alert.setType(type);
+        alert.setPayload(payloadJson);
+        alert.setResolved(false);
+        alertRepository.save(alert);
+        adminAlert.raise(type, detail, context);
     }
 
     private Map<String, Object> enrich(Map<String, String> payload, PaymentEntity payment) {

@@ -8,6 +8,8 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.yadony.api.admin.AdminAlertEntity;
+import com.yadony.api.admin.AdminAlertRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.payments.pawapay.PawapayOperationEntity;
@@ -16,6 +18,7 @@ import com.yadony.api.payments.pawapay.PawapayOperationService;
 import com.yadony.api.payments.pawapay.PawapayOperationStatus;
 import com.yadony.api.payments.pawapay.PawapaySubmissionService;
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -25,12 +28,16 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.PlatformTransactionManager;
 
 /**
- * Rail PAWAPAY de {@link RefundProcessor} (tâche 17). Le constructeur reste à 3 paramètres
- * (partagé avec {@link RefundProcessorTest}, chemin Stripe) — {@code pawapayOperations} et
- * {@code pawapaySubmission} sont injectés par champ et posés ici via
- * {@link ReflectionTestUtils}, même convention que {@code MobileMoneyBidPaymentService#adminAlert}.
+ * Rail PAWAPAY de {@link RefundProcessor} (tâche 17).
+ *
+ * <p><b>Ronde 1, point 10</b> : le constructeur est passé à 7 paramètres (dépendances mobile
+ * money + {@code AdminAlertRepository} + {@code PlatformTransactionManager}, injectées par
+ * constructeur — plus par champ). {@link RefundProcessorTest} (chemin Stripe) est mis à jour en
+ * conséquence, mécaniquement (mêmes 3 premiers mocks, 4 mocks supplémentaires jamais exercés par
+ * ses tests).
  *
  * <p><b>Écart déclaré par rapport au cahier des charges (piège 1 du brief)</b> : les deux tests
  * qui aboutissent à un refund posé ({@code escrow_claimsOnce_...} et
@@ -42,9 +49,7 @@ import org.springframework.test.util.ReflectionTestUtils;
  * {@code REFUNDED} en base au prochain flush de l'entité. Le refund id est posé par l'UPDATE
  * ciblé {@code PaymentRepository#attachRefundId} : l'entité en mémoire ne le voit jamais, d'où
  * {@code isNull()} — et {@code verify(paymentRepository).attachRefundId(...)} prouve
- * positivement que la bonne méthode a été appelée (une régression réintroduisant le setter
- * ferait tomber CETTE assertion rouge : {@code isNull()} échouerait dès que le setter est
- * réintroduit).
+ * positivement que la bonne méthode a été appelée.
  */
 @ExtendWith(MockitoExtension.class)
 class RefundProcessorMobileMoneyTest {
@@ -54,15 +59,16 @@ class RefundProcessorMobileMoneyTest {
     @Mock AdminAlertService adminAlert;
     @Mock PawapayOperationService operations;
     @Mock PawapaySubmissionService submission;
+    @Mock AdminAlertRepository alertRepository;
+    @Mock PlatformTransactionManager transactionManager;
 
     private RefundProcessor processor;
     private PaymentEntity payment;
 
     @BeforeEach
     void setUp() {
-        processor = new RefundProcessor(paymentRepository, auditService, adminAlert);
-        ReflectionTestUtils.setField(processor, "pawapayOperations", operations);
-        ReflectionTestUtils.setField(processor, "pawapaySubmission", submission);
+        processor = new RefundProcessor(paymentRepository, auditService, adminAlert,
+                operations, submission, alertRepository, transactionManager);
         payment = new PaymentEntity();
         ReflectionTestUtils.setField(payment, "id", UUID.randomUUID());
         payment.setBidId(UUID.randomUUID());
@@ -70,7 +76,10 @@ class RefundProcessorMobileMoneyTest {
         payment.setAmount(new BigDecimal("16800"));
         payment.setCommissionAmount(new BigDecimal("1800"));
         payment.setCurrency("XOF");
-        when(paymentRepository.findById(payment.getId())).thenReturn(Optional.of(payment));
+        // lenient : les deux tests de longueur de préfixe (noDepositAlertType_.../rejectedAlertType_...)
+        // n'appellent jamais processRefund et n'exercent donc jamais ce stub — sans lenient,
+        // MockitoExtension (STRICT_STUBS par défaut) les ferait échouer en UnnecessaryStubbingException.
+        org.mockito.Mockito.lenient().when(paymentRepository.findById(payment.getId())).thenReturn(Optional.of(payment));
     }
 
     private PawapayOperationEntity op(PawapayOperationKind kind, PawapayOperationStatus status) {
@@ -100,7 +109,9 @@ class RefundProcessorMobileMoneyTest {
         when(paymentRepository.markRefundedIfEscrow(payment.getId())).thenReturn(1);
         when(operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.of(deposit));
         when(operations.findLive(payment.getId(), PawapayOperationKind.REFUND)).thenReturn(Optional.empty());
-        when(submission.submitRefund(payment.getId(), deposit, new BigDecimal("16800"))).thenReturn(refund);
+        // Ronde 1, point 7 : le montant soumis est celui du DEPOSIT (deposit.getAmount()),
+        // jamais payment.getAmount() — égaux dans ce fixture, distingués par le stub exact.
+        when(submission.submitRefund(payment.getId(), deposit, deposit.getAmount())).thenReturn(refund);
 
         boolean done = processor.processRefund(payment.getId(), "PAYMENT_REFUNDED_BID_REJECTED", null, Map.of("reason", "bid_rejected"));
 
@@ -148,8 +159,29 @@ class RefundProcessorMobileMoneyTest {
 
         assertThatThrownBy(() -> processor.processRefund(payment.getId(), "X", null, Map.of()))
                 .isInstanceOf(IllegalStateException.class);
-        verify(adminAlert).raise(eq("PAWAPAY_REFUND_REJECTED"), any(), any());
+        // Ronde 1, point 5 : type dédupliqué PAR PAIEMENT (préfixe + paymentId), plus le
+        // constant bare du brief.
+        verify(adminAlert).raise(eq(RefundProcessor.REJECTED_ALERT_PREFIX + payment.getId()), any(), any());
+        verify(alertRepository).save(any(AdminAlertEntity.class));
         verify(paymentRepository, never()).attachRefundId(any(), any());
+    }
+
+    @Test
+    void escrow_rejectedRefund_dedupedWhenAlreadyAlertedAndUnresolved() {
+        payment.setStatus(PaymentStatus.ESCROW);
+        PawapayOperationEntity deposit = op(PawapayOperationKind.DEPOSIT, PawapayOperationStatus.COMPLETED);
+        PawapayOperationEntity rejected = op(PawapayOperationKind.REFUND, PawapayOperationStatus.SUBMIT_REJECTED);
+        when(paymentRepository.markRefundedIfEscrow(payment.getId())).thenReturn(1);
+        when(operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.of(deposit));
+        when(operations.findLive(any(), any())).thenReturn(Optional.empty());
+        when(submission.submitRefund(any(), any(), any())).thenReturn(rejected);
+        when(alertRepository.findByTypeAndResolved(RefundProcessor.REJECTED_ALERT_PREFIX + payment.getId(), false))
+                .thenReturn(List.of(new AdminAlertEntity()));
+
+        assertThatThrownBy(() -> processor.processRefund(payment.getId(), "X", null, Map.of()))
+                .isInstanceOf(IllegalStateException.class);
+        verify(adminAlert, never()).raise(any(), any(), any());
+        verify(alertRepository, never()).save(any());
     }
 
     @Test
@@ -160,7 +192,27 @@ class RefundProcessorMobileMoneyTest {
 
         assertThatThrownBy(() -> processor.processRefund(payment.getId(), "X", null, Map.of()))
                 .isInstanceOf(IllegalStateException.class);
-        verify(adminAlert).raise(eq("PAWAPAY_REFUND_NO_DEPOSIT"), any(), any());
+        verify(adminAlert).raise(eq(RefundProcessor.NO_DEPOSIT_ALERT_PREFIX + payment.getId()), any(), any());
+    }
+
+    /**
+     * Ronde 1, point 6 : le brief ne testait que l'ABSENCE totale de deposit
+     * ({@code Optional.empty()}) — le prédicat {@code .filter(d -> d.getStatus() == COMPLETED)}
+     * n'était donc jamais exercé (on peut le supprimer sans faire rougir aucun test existant).
+     * Ce test stub un deposit PRÉSENT mais {@code FAILED} : sans le filtre, le code
+     * rembourserait contre un dépôt qui n'a jamais abouti.
+     */
+    @Test
+    void escrow_depositExistsButFailed_alertsAndThrows() {
+        payment.setStatus(PaymentStatus.ESCROW);
+        PawapayOperationEntity failedDeposit = op(PawapayOperationKind.DEPOSIT, PawapayOperationStatus.FAILED);
+        when(paymentRepository.markRefundedIfEscrow(payment.getId())).thenReturn(1);
+        when(operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.of(failedDeposit));
+
+        assertThatThrownBy(() -> processor.processRefund(payment.getId(), "X", null, Map.of()))
+                .isInstanceOf(IllegalStateException.class);
+        verify(adminAlert).raise(eq(RefundProcessor.NO_DEPOSIT_ALERT_PREFIX + payment.getId()), any(), any());
+        verify(submission, never()).submitRefund(any(), any(), any());
     }
 
     @Test
@@ -168,5 +220,16 @@ class RefundProcessorMobileMoneyTest {
         payment.setStatus(PaymentStatus.RELEASED);
         assertThat(processor.processRefund(payment.getId(), "X", null, Map.of())).isFalse();
         verify(submission, never()).submitRefund(any(), any(), any());
+    }
+
+    /** Ronde 1, point 5 : admin_alerts.type est VARCHAR(60) — préfixe + UUID (36) doit tenir. */
+    @Test
+    void noDepositAlertType_fitsInAdminAlertsTypeColumn() {
+        assertThat((RefundProcessor.NO_DEPOSIT_ALERT_PREFIX + UUID.randomUUID()).length()).isLessThanOrEqualTo(60);
+    }
+
+    @Test
+    void rejectedAlertType_fitsInAdminAlertsTypeColumn() {
+        assertThat((RefundProcessor.REJECTED_ALERT_PREFIX + UUID.randomUUID()).length()).isLessThanOrEqualTo(60);
     }
 }

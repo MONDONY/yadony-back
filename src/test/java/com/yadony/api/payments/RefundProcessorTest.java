@@ -33,12 +33,20 @@ class RefundProcessorTest {
     @Mock private PaymentRepository paymentRepository;
     @Mock private AuditService auditService;
     @Mock private AdminAlertService adminAlert;
+    // Ronde 1, point 10 : RefundProcessor prend désormais 7 paramètres constructeur (rail
+    // mobile money, tâche 17) — ces 4 mocks supplémentaires ne sont jamais exercés par les
+    // tests de cette classe (chemin Stripe uniquement, chaque paiement est de rail STRIPE).
+    @Mock private com.yadony.api.payments.pawapay.PawapayOperationService pawapayOperations;
+    @Mock private com.yadony.api.payments.pawapay.PawapaySubmissionService pawapaySubmission;
+    @Mock private com.yadony.api.admin.AdminAlertRepository alertRepository;
+    @Mock private org.springframework.transaction.PlatformTransactionManager transactionManager;
 
     private RefundProcessor processor;
 
     @BeforeEach
     void setUp() {
-        processor = new RefundProcessor(paymentRepository, auditService, adminAlert);
+        processor = new RefundProcessor(paymentRepository, auditService, adminAlert,
+                pawapayOperations, pawapaySubmission, alertRepository, transactionManager);
     }
 
     private PaymentEntity payment(PaymentStatus status) {

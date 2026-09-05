@@ -108,8 +108,39 @@ class PaymentRepositoryMobileMoneyTest {
      * {@code @Modifying} SANS {@code clearAutomatically} — la base passe {@code REFUNDED}, mais
      * l'entité {@code p} chargée en amont par {@code saveAndFlush} garde son snapshot
      * {@code ESCROW} en mémoire. {@code p.setPawapayRefundId(opId)} à la place de l'appel
-     * ci-dessous ferait retomber ce test rouge ("expected REFUNDED but was ESCROW") — corrigé
-     * par {@link PaymentRepository#attachRefundId}, qui n'écrit QUE la colonne visée.
+     * ci-dessous ferait retomber ce test rouge — corrigé par {@link PaymentRepository#attachRefundId},
+     * qui n'écrit QUE la colonne visée.
+     *
+     * <p><b>Ronde 1 (revue) — deux reproductions empiriques, résultats opposés.</b> Point 1 de
+     * la revue affirmait qu'un {@code payment.setStatus(REFUNDED)} intercalé ENTRE le claim et
+     * {@code attachRefundId} (l'ordre exact que {@code RefundProcessor} utilisait) romprait ce
+     * test au flush final. Vérifié empiriquement dans les deux ordres :
+     * <ul>
+     *   <li>{@code setStatus} PUIS {@code attachRefundId} (ordre réellement utilisé par
+     *       {@code RefundProcessor} avant correction) : **test resté vert**. Hibernate déclenche
+     *       son propre auto-flush AVANT d'exécuter {@code attachRefundId} — dont l'espace de
+     *       requête ({@code payments}) recoupe l'entité sale — ce qui écrit {@code status}
+     *       (valeur en mémoire, identique à celle du claim, donc sans dégât) AVANT que
+     *       {@code attachRefundId} ne pose la bonne valeur de {@code pawapay_refund_id} juste
+     *       après ; rien ne la re-déloge ensuite. Le {@code flushAutomatically=false} de Spring
+     *       Data ne supprime que le flush EXPLICITE que Spring ajouterait lui-même — il ne
+     *       désactive pas l'auto-flush interne d'Hibernate déclenché par le recoupement
+     *       d'espace de requête.</li>
+     *   <li>{@code attachRefundId} PUIS {@code setStatus} (ordre inverse, qui aurait pu résulter
+     *       d'un réordonnancement futur — exactement le risque que la règle « jamais d'écriture
+     *       sur l'entité après un claim bulk » entend prévenir) : **rouge, reproduit à
+     *       l'identique** — {@code expected: <uuid> but was: null}. Aucune requête ne recoupe
+     *       plus l'espace {@code payments} après {@code setStatus}, rien ne déclenche
+     *       l'auto-flush avant le flush explicite final, qui régénère alors un UPDATE de toutes
+     *       les colonnes et écrase {@code pawapay_refund_id} avec la valeur en mémoire
+     *       ({@code null}, jamais posée par un setter).</li>
+     * </ul>
+     * Conclusion retenue (voir task-17-report.md, section Ronde 1, pour le détail et le résultat
+     * exact du second cas) : le mécanisme précis dépend d'un ordre d'exécution que rien ne
+     * garantit dans la durée (un futur réordonnancement — exactement ce que fait la Ronde 1 pour
+     * l'audit, point 2 — suffirait à faire basculer le premier cas dans le second). La correction
+     * appliquée (suppression de tout {@code setStatus} après le claim dans
+     * {@code RefundProcessor}) élimine la dépendance à cet ordre plutôt que de s'y fier.
      */
     @Test
     void markRefundedIfEscrow_thenAttachRefundId_doesNotRevertStatus() {

@@ -2,12 +2,13 @@
 
 ## Statut
 
-DONE_WITH_CONCERNS. Aucun sous-agent dispatché, travail réalisé directement dans le worktree.
-Une seule réserve, substantielle et documentée en détail plus bas : le point 2 du brief
-(« un seul chemin de remboursement », `refundAfterCancel` délègue à `RefundProcessor`) n'a
-**pas** été implémenté tel quel — analyse de risque de deadlock transactionnel à l'appui. Tout
-le reste (branche PAWAPAY dans `RefundProcessor`, `attachRefundId`, `MobileMoneyRefundOutcomeListener`,
-contrat centralisé) est fait, testé, vert.
+DONE. Aucun sous-agent dispatché, travail réalisé directement dans le worktree.
+
+Soumission initiale marquée DONE_WITH_CONCERNS — réserve principale : le point 2 du brief
+(« un seul chemin de remboursement », `refundAfterCancel` délègue à `RefundProcessor`) n'avait
+**pas** été implémenté tel quel, analyse de risque de deadlock transactionnel à l'appui. Revue du
+coordinateur : analyse validée après vérification indépendante, consigne annulée. Douze
+corrections demandées en Ronde 1 (voir section dédiée) — toutes traitées, testées, vertes.
 
 ## Fichiers créés
 
@@ -366,3 +367,172 @@ incidence sur des assertions qui utilisent toutes `any(Map.class)`, jamais un co
 
 Voir SHA rapporté séparément. Message de commit vérifié sans trailer/mention Claude via
 `/usr/bin/git log -1 --format=%B` avant de le rapporter.
+
+---
+
+## Ronde 1 (revue du coordinateur)
+
+Le coordinateur a vérifié indépendamment l'analyse de deadlock (écart 3 de la soumission
+initiale) et l'a validée : la consigne « `refundAfterCancel` délègue à `RefundProcessor` » était
+irréalisable telle quelle, annulée. Périmètre élargi : `MobileMoneyBidPaymentService.java`
+autorisé pour les points 3 et 4. Douze corrections, traitées ci-dessous.
+
+### Point 1 (CRITIQUE) — le setter `setStatus` après le claim, réexaminé
+
+Corrigé : les deux `payment.setStatus(...)` de `RefundProcessor` (branches PENDING et ESCROW)
+sont supprimés — `enrich(...)` n'utilise pas `status`, rien d'autre ne le lit. Étendu à
+`MobileMoneyBidPaymentService.confirmEscrow` (cas B, « bid annulé entre-temps ») : le
+`payment.setStatus(REFUNDED)` qui précédait l'appel à `refundAfterCancel` est également
+supprimé — nécessaire une fois `refundAfterCancel` converti à `attachRefundId` (point 4), sous
+peine de réintroduire exactement le même risque par un autre chemin.
+
+**Vérification empirique demandée, avec un résultat plus nuancé que la revue ne l'affirmait.**
+J'ai reproduit la séquence exacte dans `PaymentRepositoryMobileMoneyTest` (claim, PUIS
+`p.setStatus(REFUNDED)`, PUIS `attachRefundId`, PUIS `flush()` explicite — l'ordre que
+`RefundProcessor` utilisait réellement avant correction) : **le test est resté vert**
+(`Tests run: 1, Failures: 0`). En creusant : Hibernate déclenche son propre auto-flush AVANT
+d'exécuter `attachRefundId` (dont l'espace de requête, `payments`, recoupe l'entité sale) — ce
+qui écrit `status` (valeur en mémoire, identique à celle que le claim vient de poser, donc sans
+dégât) AVANT que `attachRefundId` ne pose la bonne valeur de `pawapay_refund_id`, valeur que
+plus rien ne délogeait ensuite. Le `flushAutomatically=false` de Spring Data ne supprime que le
+flush EXPLICITE que Spring ajouterait lui-même — pas l'auto-flush interne d'Hibernate déclenché
+par le recoupement d'espace de requête.
+
+J'ai ensuite testé l'ordre INVERSE (`attachRefundId` PUIS `p.setStatus(REFUNDED)` PUIS
+`flush()`) — celui que produirait, par exemple, un futur réordonnancement (exactement ce que
+fait le point 2 pour l'audit) : **rouge, reproduit à l'identique** —
+
+```
+org.opentest4j.AssertionFailedError:
+expected: bd7a8385-fe18-4efd-b500-c2ed1dfdfe1c
+ but was: null
+	at com.yadony.api.payments.PaymentRepositoryMobileMoneyTest.markRefundedIfEscrow_thenAttachRefundId_doesNotRevertStatus(PaymentRepositoryMobileMoneyTest.java:136)
+```
+
+Aucune requête ne recoupe plus l'espace `payments` après `setStatus` dans cet ordre, rien ne
+déclenche l'auto-flush avant le flush explicite final, qui régénère alors un UPDATE de toutes
+les colonnes et écrase `pawapay_refund_id` avec la valeur en mémoire (`null`).
+
+**Conclusion retenue** : le mécanisme précis dépend d'un ordre d'exécution que rien ne garantit
+dans la durée — la correction (ne jamais salir l'entité après le claim) est appliquée
+intégralement, indépendamment de cette nuance, précisément parce qu'elle élimine la dépendance à
+cet ordre plutôt que de s'y fier. Le test d'intégration final (celui commité) ne contient plus
+aucun `setStatus` artificiel — il reproduit la séquence CORRIGÉE (claim → `attachRefundId` →
+`flush()`), et reste vert. Le détail des deux reproductions est conservé dans le Javadoc du test
+pour la prochaine personne qui touchera ce code.
+
+### Point 2 (CRITIQUE) — audit avant rattachement, transaction indépendante
+
+Corrigé dans `RefundProcessor.refundEscrowedMobileMoney` ET dans
+`MobileMoneyBidPaymentService.refundAfterCancel`, motif reprix de
+`MobileMoneyPayoutInitiator#release` (audit d'abord, dans une `TransactionTemplate`
+`REQUIRES_NEW` dédiée, puis `attachRefundId`, puis plus rien de faillible). `RefundProcessor`
+gagne un septième paramètre constructeur pour cela (`PlatformTransactionManager`, voir point 10).
+
+### Point 3 (Important) — `SUBMIT_REJECTED` non testé dans `refundAfterCancel`
+
+Corrigé : garde ajoutée, symétrique de `RefundProcessor` — alerte
+`PAWAPAY_DEPOSIT_AFTER_CANCEL_REJECTED` (nouveau type, pas de suffixe UUID : ce chemin n'est
+atteignable qu'une fois par deposit, l'événement pawaPay qui le déclenche est publié au plus une
+fois) puis `throw`. Testé : `MobileMoneyBidPaymentServiceEscrowTest#confirmEscrow_afterDeadlineCancellation_refundRejected_alertsAndThrows`
+(nouveau — vérifie l'alerte, l'absence d'`attachRefundId`, l'absence d'audit, l'absence
+d'event).
+
+### Point 4 (Important) — setter interdit toujours présent dans `refundAfterCancel`
+
+Corrigé : `payment.setPawapayRefundId(refund.getId())` remplacé par
+`paymentRepository.attachRefundId(payment.getId(), refund.getId())`. Testé positivement :
+`verify(paymentRepository).attachRefundId(...)` ajouté au test existant
+`confirmEscrow_afterDeadlineCancellation_refundsAutomatically`.
+
+### Point 5 (Important) — déduplication des deux alertes `RefundProcessor`
+
+Corrigé : nouvelle méthode privée `escalate(...)` dans `RefundProcessor`, motif repris à
+l'identique de `MobileMoneyPayoutInitiator#escalateOrphan` / `PawapayReconciliationPoller#escalateUnknown` —
+`alertRepository.findByTypeAndResolved(type, false)` avant de créer un `AdminAlertEntity` et
+d'appeler `raise`. Types dédupliqués par paiement : `PAWAPAY_REFUND_NO_DEP_<paymentId>` (préfixe
+22 caractères) et `PAWAPAY_REFUND_REJECTED_<paymentId>` (préfixe 24 caractères, la limite
+exacte) — les deux `+ 36` (UUID) tiennent sous 60. `RefundProcessor` gagne un sixième paramètre
+constructeur, `AdminAlertRepository` (voir point 10). Tests ajoutés :
+`noDepositAlertType_fitsInAdminAlertsTypeColumn`, `rejectedAlertType_fitsInAdminAlertsTypeColumn`
+(longueur), `escrow_rejectedRefund_dedupedWhenAlreadyAlertedAndUnresolved` (dédup effective :
+`alertRepository.findByTypeAndResolved` renvoie une alerte non résolue → ni `raise` ni `save`
+appelés une seconde fois).
+
+### Point 6 (Important) — tests qui n'assertaient pas ce qu'ils prétendaient
+
+Corrigé : nouveau test `escrow_depositExistsButFailed_alertsAndThrows` — un deposit PRÉSENT mais
+`FAILED` (pas `Optional.empty()`) déclenche la même alerte `PAWAPAY_REFUND_NO_DEPOSIT`-préfixée
+et le même throw, exerçant réellement le prédicat `.filter(d -> d.getStatus() == COMPLETED)`.
+Le test « sans dépôt abouti » d'origine (`Optional.empty()`) est conservé tel quel — il teste un
+cas réellement distinct (absence totale de deposit) — les deux coexistent désormais.
+
+### Point 7 (Mineur) — montant du deposit, pas du paiement
+
+Corrigé : `pawapaySubmission.submitRefund(paymentId, deposit, deposit.getAmount())` — le test
+`escrow_claimsOnce_thenSubmitsRefundOfTheCompletedDeposit` stubbe désormais explicitement
+`deposit.getAmount()` (identique à `payment.getAmount()` dans le fixture, mais distingué dans le
+stub pour que le code puisse changer l'un sans casser l'autre silencieusement).
+
+### Point 8 (Mineur) — « sept listeners » → six
+
+Corrigé dans le Javadoc de classe de `RefundProcessor`. Recherche `grep -rn "sept listeners\|sept
+appelants"` sur tout `src` : aucune occurrence restante.
+
+### Point 9 (Mineur) — commentaire sur le contrôle `SUBMIT_REJECTED` inatteignable via `findLive`
+
+Ajouté en commentaire inline dans `refundEscrowedMobileMoney`, juste avant l'appel à
+`findLive`/`orElseGet` (voir extrait dans le code).
+
+### Point 10 (Mineur) — injection par constructeur
+
+`RefundProcessor` passe à 7 paramètres constructeur (`paymentRepository`, `auditService`,
+`adminAlert`, `pawapayOperations`, `pawapaySubmission`, `alertRepository`, `transactionManager`)
+— plus aucun champ `@Autowired`. `RefundProcessorTest` (chemin Stripe) mis à jour mécaniquement :
+4 mocks supplémentaires ajoutés à son `setUp()`, jamais exercés par ses propres tests (rail
+STRIPE uniquement) — 8/8 toujours vert.
+
+### Point 11 (Mineur) — gardes non testées de `MobileMoneyRefundOutcomeListener`
+
+Trois tests ajoutés : `failed_otherKind_ignored` (kind PAYOUT sur `onFailed` — seul
+`onCompleted` avait ce test), `completed_nullPaymentId_ignored`, `failed_nullPaymentId_ignored`.
+
+### Point 12 — non fait (différé, comme demandé)
+
+Aucune unification du vocabulaire d'audit entre les deux chemins (`MM_DEPOSIT_AFTER_CANCEL_REFUNDED`
+vs les actions passées par les listeners à `RefundProcessor`) — dette explicitement portée par
+le coordinateur, non touchée.
+
+### Tests relancés — totaux
+
+```
+./mvnw test -q -Dtest='RefundProcessorTest,RefundProcessorMobileMoneyTest,PaymentRepositoryMobileMoneyTest,PaymentListenerTransactionalContractTest,MobileMoneyRefundOutcomeListenerTest,MobileMoneyBidPaymentServiceEscrowTest'
+```
+- `RefundProcessorTest` (chemin Stripe) : **8/8**
+- `RefundProcessorMobileMoneyTest` : **11/11** (7 + 4 ajoutés : dédup rejetée, deposit FAILED, 2 tests de longueur)
+- `PaymentRepositoryMobileMoneyTest` : **6/6**
+- `PaymentListenerTransactionalContractTest` : **17/17**
+- `MobileMoneyRefundOutcomeListenerTest` : **7/7** (4 + 3 ajoutés, point 11)
+- `MobileMoneyBidPaymentServiceEscrowTest` : **8/8** (7 + 1 ajouté, point 3)
+
+```
+./mvnw test -q -Dtest='BidRejectedEventListenerTest,ParcelRefusedEventListenerTest,NoShowEventListenerTest,BidExpiredOnDepartureEventListenerTest,TripCancelledEventListenerTest,SenderNoShowConfirmedListenerTest,MobileMoneyBidPaymentServiceTest,MobileMoneyBidPaymentServiceExpireTest,MobileMoneyDepositOutcomeListenerTest,MobileMoneyPayoutOutcomeListenerTest'
+```
+- Six appelants directs : `BidRejectedEventListenerTest` 2/2, `ParcelRefusedEventListenerTest`
+  2/2, `NoShowEventListenerTest` 2/2, `BidExpiredOnDepartureEventListenerTest` 2/2,
+  `TripCancelledEventListenerTest` 5/5, `SenderNoShowConfirmedListenerTest` 3/3
+- `MobileMoneyBidPaymentServiceTest` : **29/29** — `MobileMoneyBidPaymentServiceExpireTest` :
+  **10/10** — `MobileMoneyDepositOutcomeListenerTest` : **5/5** — `MobileMoneyPayoutOutcomeListenerTest` : **4/4**
+
+**Total Ronde 1 : 141 tests exécutés sur 16 classes, 0 échec, 0 erreur.** Aucune suite Maven
+complète lancée ; jamais deux commandes Maven en parallèle.
+
+### Fichiers touchés en Ronde 1
+
+- `src/main/java/com/yadony/api/payments/RefundProcessor.java` — points 1, 2, 5, 7, 8, 9, 10
+- `src/main/java/com/yadony/api/payments/mobilemoney/MobileMoneyBidPaymentService.java` — points 1 (étendu), 2, 3, 4 (périmètre élargi explicitement par le coordinateur)
+- `src/test/java/com/yadony/api/payments/RefundProcessorMobileMoneyTest.java` — points 5, 6, 7, 10
+- `src/test/java/com/yadony/api/payments/RefundProcessorTest.java` — point 10 (mécanique)
+- `src/test/java/com/yadony/api/payments/PaymentRepositoryMobileMoneyTest.java` — point 1 (Javadoc enrichi, reproduction empirique documentée)
+- `src/test/java/com/yadony/api/payments/mobilemoney/MobileMoneyBidPaymentServiceEscrowTest.java` — points 3, 4
+- `src/test/java/com/yadony/api/payments/mobilemoney/MobileMoneyRefundOutcomeListenerTest.java` — point 11

@@ -44,9 +44,31 @@ class MobileMoneyRefundOutcomeListenerTest {
     }
 
     @Test
-    void otherKinds_ignored() {
+    void completed_otherKind_ignored() {
         listener.onCompleted(new PawapayOperationCompletedEvent(UUID.randomUUID(), PawapayOperationKind.DEPOSIT, UUID.randomUUID()));
         verify(audit, never()).log(any(), any(), any(), any(), any());
+    }
+
+    /** Ronde 1, point 11 : la garde de kind sur onFailed n'était pas testée (seul onCompleted l'était). */
+    @Test
+    void failed_otherKind_ignored() {
+        listener.onFailed(new PawapayOperationFailedEvent(UUID.randomUUID(), PawapayOperationKind.PAYOUT, UUID.randomUUID(), "X", "y"));
+        verify(audit, never()).log(any(), any(), any(), any(), any());
+        verify(adminAlert, never()).raise(any(), any(), any());
+    }
+
+    /** Ronde 1, point 11 : la garde de paymentId nul n'était testée pour aucune des deux méthodes. */
+    @Test
+    void completed_nullPaymentId_ignored() {
+        listener.onCompleted(new PawapayOperationCompletedEvent(UUID.randomUUID(), PawapayOperationKind.REFUND, null));
+        verify(audit, never()).log(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void failed_nullPaymentId_ignored() {
+        listener.onFailed(new PawapayOperationFailedEvent(UUID.randomUUID(), PawapayOperationKind.REFUND, null, "X", "y"));
+        verify(audit, never()).log(any(), any(), any(), any(), any());
+        verify(adminAlert, never()).raise(any(), any(), any());
     }
 
     /**
