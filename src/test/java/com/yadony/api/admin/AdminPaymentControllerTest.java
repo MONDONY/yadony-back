@@ -53,6 +53,16 @@ class AdminPaymentControllerTest {
     @Mock private UserRepository userRepository;
     @Mock private ApplicationEventPublisher eventPublisher;
     @Mock private ChargebackRepository chargebackRepository;
+    // Tâche 18, Ronde 1, point 5 : dépendances mobile money du contrôleur, injectées par
+    // constructeur (plus par champ) — jamais exercées par les tests de cette classe (rail
+    // STRIPE uniquement), comme les 4 mocks supplémentaires déjà passés en revue pour
+    // RefundProcessorTest à la tâche 17.
+    @Mock private com.yadony.api.payments.mobilemoney.MobileMoneyPayoutInitiator payoutInitiator;
+    @Mock private com.yadony.api.payments.pawapay.PawapayOperationService pawapayOperations;
+    @Mock private com.yadony.api.payments.pawapay.PawapaySubmissionService pawapaySubmission;
+    @Mock private com.yadony.api.payments.RefundProcessor refundProcessor;
+    @Mock private jakarta.persistence.EntityManager entityManager;
+    @Mock private org.springframework.transaction.PlatformTransactionManager transactionManager;
 
     private AdminPaymentController controller;
 
@@ -66,7 +76,9 @@ class AdminPaymentControllerTest {
     @BeforeEach
     void setUp() {
         controller = new AdminPaymentController(paymentRepository, adminAlertRepository, auditService,
-                bidRepository, announcementRepository, userRepository, eventPublisher, chargebackRepository);
+                bidRepository, announcementRepository, userRepository, eventPublisher, chargebackRepository,
+                payoutInitiator, pawapayOperations, pawapaySubmission, refundProcessor, entityManager,
+                transactionManager);
     }
 
     private PaymentEntity threadPayment(PaymentStatus status, boolean legacy, String chargeId) {

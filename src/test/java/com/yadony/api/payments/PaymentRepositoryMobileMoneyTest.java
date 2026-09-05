@@ -2,11 +2,14 @@ package com.yadony.api.payments;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import jakarta.persistence.EntityManager;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.UUID;
+import org.hibernate.SessionFactory;
+import org.hibernate.stat.Statistics;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -21,6 +24,7 @@ class PaymentRepositoryMobileMoneyTest {
 
     @Autowired private PaymentRepository repository;
     @Autowired private JdbcTemplate jdbc;
+    @Autowired private EntityManager entityManager;
 
     private PaymentEntity pawapayPayment(PaymentStatus status) {
         PaymentEntity p = new PaymentEntity();
@@ -157,6 +161,50 @@ class PaymentRepositoryMobileMoneyTest {
         UUID stored = jdbc.queryForObject("SELECT pawapay_refund_id FROM payments WHERE id = ?", UUID.class, p.getId());
         assertThat(status).isEqualTo("REFUNDED");
         assertThat(stored).isEqualTo(opId);
+    }
+
+    // ── Tâche 18, Ronde 1, point 1 : entityManager.refresh remplace la liste de setters
+    // (devenue incomplète — escrowReleasedAt notamment) dans AdminPaymentController ────────────
+
+    /**
+     * Preuve du correctif retenu à la tâche 18 (Ronde 1, point 1) : après le claim {@code
+     * markReleasedIfEscrow} et l'attachement {@code attachPayoutId} — les deux mêmes écritures
+     * ciblées que {@link #markReleasedIfEscrow_thenAttachPayoutId_doesNotRevertStatus} ci-dessus
+     * — {@code entityManager.refresh(p)} relit la ligne réelle DANS la même transaction (elle y
+     * voit ses propres écritures non commitées) et rend l'entité {@code p} à nouveau PROPRE :
+     * Hibernate n'a plus rien à réécrire pour elle. Contrairement à une liste de
+     * {@code p.setXxx(...)} — qui salit l'entité et ne protège que les colonnes explicitement
+     * listées (piège reproduit une deuxième fois y compris APRÈS la correction de la tâche 17,
+     * cette fois sur {@code escrowReleasedAt} dans {@code AdminPaymentController}, avec un écart
+     * d'un aller-retour HTTP pawaPay entier, pas de quelques millisecondes) — un refresh couvre
+     * TOUTES les colonnes, présentes et futures, sans liste à tenir à jour. La preuve porte sur
+     * {@code Statistics#getEntityUpdateCount()} : aucun UPDATE supplémentaire n'est généré au
+     * flush qui suit le refresh, alors qu'un simple setter en aurait régénéré un (voir les deux
+     * tests ci-dessus, dont la note démontre qu'un setter EST parfois absorbé sans dégât selon un
+     * ordre non garanti — ici, aucun UPDATE du tout, quel que soit cet ordre).
+     */
+    @Test
+    void markReleasedIfEscrow_thenAttachPayoutId_thenRefresh_generatesNoUpdate() {
+        PaymentEntity p = pawapayPayment(PaymentStatus.ESCROW);
+        UUID opId = UUID.randomUUID();
+
+        assertThat(repository.markReleasedIfEscrow(p.getId(), LocalDateTime.now(ZoneOffset.UTC))).isEqualTo(1);
+        repository.attachPayoutId(p.getId(), opId);
+
+        Statistics stats = entityManager.getEntityManagerFactory().unwrap(SessionFactory.class).getStatistics();
+        stats.setStatisticsEnabled(true);
+        long updatesBeforeRefresh = stats.getEntityUpdateCount();
+
+        entityManager.refresh(p);
+        repository.flush(); // matérialise toute écriture Hibernate encore en attente sur l'entité
+
+        assertThat(stats.getEntityUpdateCount())
+                .as("refresh doit rendre l'entité propre : aucun UPDATE ne doit être régénéré au flush qui suit")
+                .isEqualTo(updatesBeforeRefresh);
+        // Et la relecture reflète bien les DEUX écritures ciblées — status ET pawapayPayoutId,
+        // dans le même geste, sans setter.
+        assertThat(p.getStatus()).isEqualTo(PaymentStatus.RELEASED);
+        assertThat(p.getPawapayPayoutId()).isEqualTo(opId);
     }
 
     @Test

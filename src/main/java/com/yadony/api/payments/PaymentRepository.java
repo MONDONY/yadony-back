@@ -262,12 +262,19 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
             @Param("from") LocalDateTime from,
             @Param("to") LocalDateTime to);
 
+    /**
+     * Tâche 18, Ronde 1, point 6 : {@code rail} (STRIPE/PAWAPAY) filtre désormais réellement la
+     * requête — avant cette ronde, le contrôleur admin traduisait tout {@code method != STRIPE}
+     * en page vide, un raccourci devenu faux depuis que les paiements mobile money (tâche 12/16)
+     * créent aussi une ligne {@code payments}.
+     */
     @Query(value = """
             SELECT p.* FROM payments p
             WHERE p.deleted_at IS NULL
               AND (CAST(:status AS VARCHAR) IS NULL OR p.status = :status)
               AND (CAST(:from AS TIMESTAMP) IS NULL OR p.created_at >= CAST(:from AS TIMESTAMP))
               AND (CAST(:to AS TIMESTAMP) IS NULL OR p.created_at <= CAST(:to AS TIMESTAMP))
+              AND (CAST(:rail AS VARCHAR) IS NULL OR p.rail = :rail)
             ORDER BY p.created_at DESC
             """,
            countQuery = """
@@ -276,11 +283,13 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
               AND (CAST(:status AS VARCHAR) IS NULL OR p.status = :status)
               AND (CAST(:from AS TIMESTAMP) IS NULL OR p.created_at >= CAST(:from AS TIMESTAMP))
               AND (CAST(:to AS TIMESTAMP) IS NULL OR p.created_at <= CAST(:to AS TIMESTAMP))
+              AND (CAST(:rail AS VARCHAR) IS NULL OR p.rail = :rail)
             """,
            nativeQuery = true)
     Page<PaymentEntity> findAdminFiltered(
             @Param("status") String status,
             @Param("from") java.time.LocalDateTime from,
             @Param("to") java.time.LocalDateTime to,
+            @Param("rail") String rail,
             Pageable pageable);
 }

@@ -19,7 +19,7 @@ public record AdminPaymentListItemResponse(
                 p.getId(),
                 p.getBidId(),
                 p.getStatus().name(),
-                "STRIPE",
+                p.getRail().name(),
                 p.getAmount().multiply(java.math.BigDecimal.valueOf(100)).longValue(),
                 p.getCommissionAmount().multiply(java.math.BigDecimal.valueOf(100)).longValue(),
                 p.getCreatedAt()

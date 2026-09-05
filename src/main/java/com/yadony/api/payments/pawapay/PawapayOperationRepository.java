@@ -37,8 +37,6 @@ public interface PawapayOperationRepository extends JpaRepository<PawapayOperati
     List<PawapayOperationEntity> findByStatusInAndUpdatedAtBefore(
             Collection<PawapayOperationStatus> statuses, LocalDateTime before, Pageable pageable);
 
-    List<PawapayOperationEntity> findByPaymentIdOrderByCreatedAtDesc(UUID paymentId);
-
     Page<PawapayOperationEntity> findAllByOrderByCreatedAtDesc(Pageable pageable);
 
     /**
