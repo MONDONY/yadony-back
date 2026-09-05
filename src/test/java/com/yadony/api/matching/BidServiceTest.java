@@ -1074,14 +1074,68 @@ class BidServiceTest {
             return b;
         }
 
+        /** Voyageur au compte de versement actif, dans la même devise que l'annonce XOF —
+         *  le seul état qui satisfait à la fois {@link #eurAnnouncement_is422} (zone) et la
+         *  nouvelle garde de devise du compte (point 4 de la ronde 1). */
+        private UserEntity activeXofTraveler() {
+            UserEntity traveler = buildTraveler();
+            traveler.setMobileMoneyStatus(com.yadony.api.auth.MobileMoneyPayoutStatus.ACTIVE);
+            traveler.setMobileMoneyCurrency("XOF");
+            return traveler;
+        }
+
         @Test
-        @DisplayName("voyageur avec compte actif, rail activé → bid PENDING MOBILE_MONEY avec numéro payeur normalisé")
+        @DisplayName("voyageur avec compte actif dans la bonne devise, rail activé → bid PENDING MOBILE_MONEY avec numéro payeur normalisé")
         void createsPendingMobileMoneyBid() {
             org.springframework.test.util.ReflectionTestUtils.setField(bidService, "pawapayEnabled", true);
             UserEntity sender = buildSender();
             sender.setKycStatus(com.yadony.api.auth.KycStatus.VERIFIED);
-            UserEntity traveler = buildTraveler();
-            traveler.setMobileMoneyStatus(com.yadony.api.auth.MobileMoneyPayoutStatus.ACTIVE);
+            UserEntity traveler = activeXofTraveler();
+            AnnouncementEntity a = xofAnnouncement(traveler);
+            when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
+            when(announcementRepository.findById(a.getId())).thenReturn(Optional.of(a));
+            when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+            when(bidRepository.existsBySenderIdAndAnnouncementIdAndStatusIn(any(), any(), any()))
+                    .thenReturn(false);
+            when(bidRepository.save(any(BidEntity.class))).thenAnswer(inv -> {
+                BidEntity b = inv.getArgument(0);
+                setId(b, BID_ID);
+                return b;
+            });
+
+            // "+221771234567" est la forme RÉELLE qui peut venir de l'API : le @Pattern du
+            // DTO n'autorise aucun espace ("+221 77 123 45 67" ne le passerait jamais — cf.
+            // point 9 de la ronde 1). La normalisation observée ici n'est donc que le retrait
+            // du '+', jamais d'espaces.
+            BidRequest req = new BidRequest(new BigDecimal("5"), "Documents", "documents", "Awa Ndiaye",
+                    "+221770000000", true, "MOBILE_MONEY", "+221771234567", "SN", null, null, null);
+            bidService.createBid(a.getId(), SENDER_UID, req, httpRequest);
+
+            ArgumentCaptor<BidEntity> saved = ArgumentCaptor.forClass(BidEntity.class);
+            verify(bidRepository, atLeastOnce()).save(saved.capture());
+            BidEntity bid = saved.getValue();
+            assertThat(bid.getPaymentMethod()).isEqualTo(com.yadony.api.payments.cash.PaymentMethod.MOBILE_MONEY);
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.PENDING);
+            assertThat(bid.getMobileMoneyPhone()).isEqualTo("221771234567");
+            assertThat(bid.getMobileMoneyCountryCode()).isEqualTo("SN");
+
+            // Le voyageur doit être notifié tout de suite : c'est son geste manuel, pas une
+            // autorisation Stripe, qui fait avancer le dossier (même événement que CASH,
+            // dont le texte du listener est déjà générique).
+            ArgumentCaptor<Object> eventCaptor = ArgumentCaptor.forClass(Object.class);
+            verify(eventPublisher, atLeastOnce()).publishEvent(eventCaptor.capture());
+            assertThat(eventCaptor.getAllValues())
+                    .extracting(ev -> ev.getClass().getSimpleName())
+                    .contains("CashBidCreatedEvent");
+        }
+
+        @Test
+        @DisplayName("numéro payeur absent (optionnel à la création) → bid créé sans numéro, pas d'exception")
+        void nullPhoneNumber_isAcceptedAsOptional() {
+            org.springframework.test.util.ReflectionTestUtils.setField(bidService, "pawapayEnabled", true);
+            UserEntity sender = buildSender();
+            sender.setKycStatus(com.yadony.api.auth.KycStatus.VERIFIED);
+            UserEntity traveler = activeXofTraveler();
             AnnouncementEntity a = xofAnnouncement(traveler);
             when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
             when(announcementRepository.findById(a.getId())).thenReturn(Optional.of(a));
@@ -1095,16 +1149,69 @@ class BidServiceTest {
             });
 
             BidRequest req = new BidRequest(new BigDecimal("5"), "Documents", "documents", "Awa Ndiaye",
-                    "+221770000000", true, "MOBILE_MONEY", "+221 77 123 45 67", "SN", null, null, null);
+                    "+221770000000", true, "MOBILE_MONEY", null, "SN", null, null, null);
             bidService.createBid(a.getId(), SENDER_UID, req, httpRequest);
 
             ArgumentCaptor<BidEntity> saved = ArgumentCaptor.forClass(BidEntity.class);
             verify(bidRepository, atLeastOnce()).save(saved.capture());
-            BidEntity bid = saved.getValue();
-            assertThat(bid.getPaymentMethod()).isEqualTo(com.yadony.api.payments.cash.PaymentMethod.MOBILE_MONEY);
-            assertThat(bid.getStatus()).isEqualTo(BidStatus.PENDING);
-            assertThat(bid.getMobileMoneyPhone()).isEqualTo("221771234567");
-            assertThat(bid.getMobileMoneyCountryCode()).isEqualTo("SN");
+            assertThat(saved.getValue().getMobileMoneyPhone()).isNull();
+            assertThat(saved.getValue().getMobileMoneyCountryCode()).isEqualTo("SN");
+        }
+
+        @Test
+        @DisplayName("numéro trop court pour Msisdn.normalize mais valide pour le @Pattern du DTO → 422 mobile-money-invalid-phone, pas 500")
+        void phoneTooShortForNormalize_is422NotServerError() {
+            // "+1234567" : 7 chiffres, passe le @Pattern de BidRequest.phoneNumber
+            // (7 à 20 chiffres) mais Msisdn.normalize exige 8 à 15 chiffres — l'écart entre
+            // les deux bornes est une entrée que le DTO accepte et que le service doit
+            // donc absorber lui-même, sans laisser fuiter l'IllegalArgumentException vers
+            // le filet générique (500 + Sentry).
+            org.springframework.test.util.ReflectionTestUtils.setField(bidService, "pawapayEnabled", true);
+            UserEntity sender = buildSender();
+            sender.setKycStatus(com.yadony.api.auth.KycStatus.VERIFIED);
+            UserEntity traveler = activeXofTraveler();
+            AnnouncementEntity a = xofAnnouncement(traveler);
+            when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
+            when(announcementRepository.findById(a.getId())).thenReturn(Optional.of(a));
+            when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+
+            BidRequest req = new BidRequest(new BigDecimal("5"), "Documents", "documents", "Awa Ndiaye",
+                    "+221770000000", true, "MOBILE_MONEY", "+1234567", "SN", null, null, null);
+
+            assertThatThrownBy(() -> bidService.createBid(a.getId(), SENDER_UID, req, httpRequest))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> {
+                        YadonyBusinessException ex = (YadonyBusinessException) e;
+                        assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                        assertThat(ex.getErrorCode()).isEqualTo("mobile-money-invalid-phone");
+                    });
+        }
+
+        @Test
+        @DisplayName("compte de versement du voyageur dans une autre devise que l'annonce → 422 mobile-money-currency-mismatch")
+        void travelerAccountCurrencyMismatch_is422() {
+            org.springframework.test.util.ReflectionTestUtils.setField(bidService, "pawapayEnabled", true);
+            UserEntity traveler = buildTraveler();
+            traveler.setMobileMoneyStatus(com.yadony.api.auth.MobileMoneyPayoutStatus.ACTIVE);
+            traveler.setMobileMoneyCurrency("XAF"); // compte activé zone CEMAC
+            AnnouncementEntity a = xofAnnouncement(traveler); // trajet publié en XOF (zone UEMOA)
+            when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+
+            assertThatThrownBy(() -> bidService.resolvePaymentMethodFor(a, "MOBILE_MONEY"))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .extracting(e -> ((YadonyBusinessException) e).getErrorCode())
+                    .isEqualTo("mobile-money-currency-mismatch");
+        }
+
+        @Test
+        @DisplayName("countryCode trop long (colonne à 5 caractères) → violation de bean validation")
+        void oversizedCountryCode_failsBeanValidation() {
+            BidRequest req = new BidRequest(new BigDecimal("5"), "Documents", "documents", "Awa Ndiaye",
+                    "+221770000000", true, "MOBILE_MONEY", "+221771234567", "SENEGAL", null, null, null);
+            jakarta.validation.Validator validator =
+                    jakarta.validation.Validation.buildDefaultValidatorFactory().getValidator();
+
+            assertThat(validator.validate(req)).isNotEmpty();
         }
 
         @Test
@@ -1136,20 +1243,28 @@ class BidServiceTest {
         @Test
         @DisplayName("annonce EUR → 422 payment-method-unavailable-for-currency")
         void eurAnnouncement_is422() {
+            // Le voyageur a un compte de versement pleinement configuré et actif (même
+            // devise que rien, ici) : la garde de devise doit répondre EN PREMIER pour ce
+            // rail (ronde 1, point 7) — jamais « ce voyageur n'accepte pas », qui laisserait
+            // croire à tort qu'un autre voyageur EUR pourrait, lui, l'accepter. userRepository
+            // n'est donc plus consulté du tout ici (la garde de devise court-circuite avant),
+            // d'où l'absence de tout stub dessus.
             org.springframework.test.util.ReflectionTestUtils.setField(bidService, "pawapayEnabled", true);
             UserEntity traveler = buildTraveler();
             traveler.setMobileMoneyStatus(com.yadony.api.auth.MobileMoneyPayoutStatus.ACTIVE);
+            traveler.setMobileMoneyCurrency("EUR");
             AnnouncementEntity a = buildAnnouncement();
             a.setTravelerId(traveler.getId());
             a.setAcceptedPaymentMethods(
                     java.util.EnumSet.of(com.yadony.api.payments.cash.PaymentMethod.CASH));
             a.setCurrency("EUR");
-            when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
 
             assertThatThrownBy(() -> bidService.resolvePaymentMethodFor(a, "MOBILE_MONEY"))
                     .isInstanceOf(YadonyBusinessException.class)
                     .extracting(e -> ((YadonyBusinessException) e).getErrorCode())
                     .isEqualTo("payment-method-unavailable-for-currency");
+
+            verifyNoInteractions(userRepository);
         }
 
         @Test

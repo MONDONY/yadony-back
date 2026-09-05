@@ -22,15 +22,20 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * V244 — rail mobile money sur les bids : {@code payment_method} accepte désormais
  * {@code MOBILE_MONEY}, la colonne {@code mobile_money_phone} est élargie pour porter une
  * valeur chiffrée ({@code EncryptedStringConverter}, bien plus longue qu'un MSISDN en clair),
- * et les valeurs {@code WAVE}/{@code ORANGE_MONEY} legacy (jamais payables, saisies en clair
- * avant l'introduction de ce chiffrement) sont vidées pour ne pas faire échouer le
- * déchiffrement au chargement de l'entité.
+ * et TOUTE ligne portant encore un numéro en clair est vidée pour ne pas faire échouer le
+ * déchiffrement à la matérialisation de l'entité — pas seulement à l'usage du bid : une simple
+ * lecture de la ligne (ex. « Mes colis » de l'expéditeur) suffirait à faire échouer Hibernate.
+ * Le nettoyage n'est donc PAS scopé à {@code WAVE}/{@code ORANGE_MONEY} (ronde 1, point 3) :
+ * le convertisseur s'applique à toute ligne non nulle, quel que soit {@code payment_method} —
+ * or plus aucun code n'écrit ce champ en clair (l'écrivain historique a disparu avec le
+ * paquet supprimé à la tâche 1), vider n'importe quelle ligne existante ne perd donc rien
+ * d'exploitable.
  *
  * <p>Le profil "test" tourne sur H2 avec Flyway désactivé : les migrations n'y sont jamais
  * exécutées. On démarre donc un PostgreSQL embarqué (zonky, même dépendance que les autres
  * suites {@code V*MigrationTest}), on migre jusqu'à V243, on sème des données représentatives
  * de l'état legacy, puis on applique V244 et on vérifie le résultat sur le vrai moteur de
- * contraintes PostgreSQL (CHECK, largeur de colonne, index) — H2 ne les porte pas toutes.
+ * contraintes PostgreSQL (CHECK, largeur de colonne) — H2 ne les porte pas toutes.
  *
  * <p>Helpers de seed repris de {@link V241PawapayOperationsMigrationTest} : le schéma de
  * {@code users}/{@code announcements}/{@code bids} est stable entre V241 et V243 (V242
@@ -144,16 +149,31 @@ class V244BidsMobileMoneyMigrationTest {
     }
 
     @Test
-    void afterV244_cashBidWithIncidentalPhoneValue_isNotTouchedByLegacyCleanup() throws Exception {
-        // Contrôle négatif du bloc 2 de la migration : le WHERE payment_method IN
-        // ('WAVE','ORANGE_MONEY') ne doit vider aucune autre ligne.
+    void afterV244_anyBidWithPhoneValue_isNulledRegardlessOfPaymentMethod() throws Exception {
+        // Ronde 1, point 3 : le nettoyage n'est plus scopé à WAVE/ORANGE_MONEY (le
+        // convertisseur chiffré s'applique à TOUTE ligne non nulle, quel que soit
+        // payment_method). Ce test fige désormais le comportement inverse de l'original :
+        // même un bid CASH portant incidemment un numéro doit être vidé.
         UUID senderId = seedUser();
         UUID announcementId = seedAnnouncement(seedUser());
         UUID bidId = seedBid(announcementId, senderId, "CASH", "221771234567", "SN");
 
         migrateToV244();
 
-        assertPhoneAndCountryCode(bidId, "221771234567", "SN");
+        assertPhoneAndCountryCode(bidId, null, null);
+    }
+
+    @Test
+    void afterV244_bidWithoutPhoneValue_isUntouchedRegardlessOfPaymentMethod() throws Exception {
+        // Contrôle négatif : le nettoyage élargi ne doit pas introduire de valeur là où il
+        // n'y en avait pas (WHERE mobile_money_phone IS NOT NULL, pas un UPDATE inconditionnel).
+        UUID senderId = seedUser();
+        UUID announcementId = seedAnnouncement(seedUser());
+        UUID bidId = seedBid(announcementId, senderId, "STRIPE", null, null);
+
+        migrateToV244();
+
+        assertPhoneAndCountryCode(bidId, null, null);
     }
 
     // ─── Élargissement de la colonne mobile_money_phone ──────────────────────────
@@ -182,19 +202,11 @@ class V244BidsMobileMoneyMigrationTest {
         assertPhoneAndCountryCode(bidId, cipherLike, "SN");
     }
 
-    // ─── Index d'expiration des bids en attente de paiement ──────────────────────
-
-    @Test
-    void afterV244_awaitingPaymentExpiryIndex_exists() throws Exception {
-        migrateToV244();
-
-        try (Connection connection = dataSource.getConnection(); Statement statement = connection.createStatement();
-             ResultSet rs = statement.executeQuery(
-                     "SELECT indexname FROM pg_indexes WHERE tablename = 'bids' "
-                             + "AND indexname = 'idx_bids_awaiting_payment_expiry'")) {
-            assertThat(rs.next()).as("l'index partiel doit exister après V244").isTrue();
-        }
-    }
+    // Ronde 1, point 6 : le lot « index d'expiration des bids en attente de paiement » a
+    // été retiré de V244 — V37 (idx_bids_awaiting_payment) porte déjà un index partiel sur
+    // (status, awaiting_payment_expires_at) WHERE status = 'AWAITING_PAYMENT', qui sert
+    // exactement le même besoin (la colonne de tête status est constante dans ce filtre :
+    // un index dédié n'y ajoutait aucun gain, seulement une écriture de plus par bid).
 
     // ─── Helpers de seed (repris de V241PawapayOperationsMigrationTest) ──────────
 
