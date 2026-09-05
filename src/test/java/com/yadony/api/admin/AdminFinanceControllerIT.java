@@ -6,6 +6,10 @@ import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.payments.cash.CommissionChargedVia;
 import com.yadony.api.payments.cash.CommissionStatus;
+import com.yadony.api.payments.pawapay.PawapayOperationEntity;
+import com.yadony.api.payments.pawapay.PawapayOperationKind;
+import com.yadony.api.payments.pawapay.PawapayOperationRepository;
+import com.yadony.api.payments.pawapay.PawapayOperationStatus;
 import com.yadony.api.payments.wallet.WalletAccountEntity;
 import com.yadony.api.payments.wallet.WalletAccountRepository;
 import org.junit.jupiter.api.DisplayName;
@@ -58,6 +62,7 @@ class AdminFinanceControllerIT {
 
     @MockitoBean WalletAccountRepository walletRepository;
     @MockitoBean BidRepository bidRepository;
+    @MockitoBean PawapayOperationRepository pawapayOperationRepository;
 
     private static final UUID USER_ID = UUID.randomUUID();
     private static final UUID BID_ID = UUID.randomUUID();
@@ -101,6 +106,14 @@ class AdminFinanceControllerIT {
         ReflectionTestUtils.setField(bid, "currency", "EUR");
         ReflectionTestUtils.setField(bid, "createdAt", WHEN);
         return bid;
+    }
+
+    /** Tâche 18 — une opération pawaPay COMPLETED, telle que rendue par {@code AdminMobileMoneyResponse}. */
+    private static PawapayOperationEntity operation() {
+        PawapayOperationEntity op = new PawapayOperationEntity(UUID.randomUUID(), PawapayOperationKind.DEPOSIT, UUID.randomUUID(), null,
+                new BigDecimal("16800"), "XOF", "ORANGE_SEN", "SN", "221771234567");
+        op.setStatus(PawapayOperationStatus.COMPLETED);
+        return op;
     }
 
     // ── Permission ───────────────────────────────────────────────────────────
@@ -176,6 +189,35 @@ class AdminFinanceControllerIT {
                 .andExpect(jsonPath("$.content[0].commissionCents").doesNotExist())
                 .andExpect(jsonPath("$.content[0].status").value("PENDING"))
                 .andExpect(jsonPath("$.content[0].chargedVia").doesNotExist());
+    }
+
+    // ── Mobile money (tâche 18) ─────────────────────────────────────────────
+
+    @Test
+    @DisplayName("GET /admin/mobile-money-payments — operations pawaPay, montant en centimes, numero masque")
+    void mobileMoney_listsOperations_masked() throws Exception {
+        when(pawapayOperationRepository.findAllByOrderByCreatedAtDesc(any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(operation()), PageRequest.of(0, 20), 1));
+
+        String body = mockMvc.perform(get("/admin/mobile-money-payments").with(authentication(supportAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].kind").value("DEPOSIT"))
+                .andExpect(jsonPath("$.content[0].provider").value("ORANGE_SEN"))
+                .andExpect(jsonPath("$.content[0].countryCode").value("SN"))
+                .andExpect(jsonPath("$.content[0].phoneNumber").value("+221 •••• 67"))
+                .andExpect(jsonPath("$.content[0].amountCents").value(1680000))
+                .andExpect(jsonPath("$.content[0].currency").value("XOF"))
+                .andExpect(jsonPath("$.content[0].status").value("COMPLETED"))
+                .andReturn().getResponse().getContentAsString();
+        org.assertj.core.api.Assertions.assertThat(body).doesNotContain("221771234567");
+    }
+
+    @Test
+    @DisplayName("GET /admin/mobile-money-payments — sans PAYMENT_VIEW → 403")
+    void mobileMoney_requiresPaymentView() throws Exception {
+        mockMvc.perform(get("/admin/mobile-money-payments").with(authentication(withoutPaymentView())))
+                .andExpect(status().isForbidden());
+        verify(pawapayOperationRepository, never()).findAllByOrderByCreatedAtDesc(any(Pageable.class));
     }
 
     // ── Pagination ───────────────────────────────────────────────────────────

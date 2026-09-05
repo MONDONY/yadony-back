@@ -13,10 +13,18 @@ import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
 import com.yadony.api.payments.PaymentEntity;
+import com.yadony.api.payments.PaymentRail;
 import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.PaymentStatus;
 import com.yadony.api.payments.chargeback.ChargebackRepository;
 import com.yadony.api.payments.events.PaymentReleasedEvent;
+import com.yadony.api.payments.mobilemoney.MobileMoneyPayoutInitiator;
+import com.yadony.api.payments.pawapay.PawapayAmounts;
+import com.yadony.api.payments.pawapay.PawapayOperationEntity;
+import com.yadony.api.payments.pawapay.PawapayOperationKind;
+import com.yadony.api.payments.pawapay.PawapayOperationService;
+import com.yadony.api.payments.pawapay.PawapayOperationStatus;
+import com.yadony.api.payments.pawapay.PawapaySubmissionService;
 import com.stripe.exception.StripeException;
 import com.stripe.model.PaymentIntent;
 import com.stripe.model.Refund;
@@ -25,6 +33,7 @@ import com.stripe.param.RefundCreateParams;
 import com.stripe.param.TransferCreateParams;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -74,6 +83,24 @@ public class AdminPaymentController {
     private final UserRepository userRepository;
     private final ApplicationEventPublisher eventPublisher;
     private final ChargebackRepository chargebackRepository;
+
+    /**
+     * Tâche 18 — injectées PAR CHAMP, volontairement, et non par le constructeur.
+     * {@code AdminPaymentControllerTest} (hors périmètre de cette tâche) construit ce contrôleur
+     * à la main avec les huit dépendances historiques
+     * ({@code new AdminPaymentController(paymentRepository, ..., chargebackRepository)}) : un
+     * neuvième/dixième/onzième paramètre casserait sa compilation. Ces trois champs y restent
+     * {@code null}, sans conséquence — tous ses paiements sont de rail STRIPE (défaut de
+     * {@link PaymentEntity}), la branche PAWAPAY de {@link #forceRelease} n'y est donc jamais
+     * atteinte et ces champs n'y sont jamais déréférencés (même raisonnement que le
+     * {@code payoutInitiator} de {@code DeliveryEventListener} pour ses propres tests).
+     */
+    @Autowired
+    private MobileMoneyPayoutInitiator payoutInitiator;
+    @Autowired
+    private PawapayOperationService pawapayOperations;
+    @Autowired
+    private PawapaySubmissionService pawapaySubmission;
 
     public AdminPaymentController(PaymentRepository paymentRepository,
                                   AdminAlertRepository adminAlertRepository,
@@ -181,6 +208,50 @@ public class AdminPaymentController {
                     HttpStatus.UNPROCESSABLE_ENTITY, "payment-not-in-escrow",
                     "Invalid Status",
                     "Seuls les paiements en statut ESCROW peuvent faire l'objet d'une libération forcée");
+        }
+
+        // Tâche 18 — rail mobile money : bifurque juste après le claim, avant tout appel Stripe.
+        // Réutilise EXACTEMENT le chemin de la tâche 16 (DeliveryEventListener#releaseMobileMoney) :
+        // MobileMoneyPayoutInitiator#release porte toute la logique (compte de versement, payout
+        // orphelin déjà vivant rattaché sans jamais en resoumettre un second, soumission pawaPay),
+        // rien n'est réimplémenté ici.
+        if (payment.getRail() == PaymentRail.PAWAPAY) {
+            if (travelerId == null) {
+                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "traveler-not-found",
+                        "Invalid Traveler", "Voyageur introuvable pour ce paiement");
+            }
+            BigDecimal net = PawapayAmounts.round(
+                    payment.getAmount().subtract(payment.getCommissionAmount()), payment.getCurrency());
+            PawapayOperationEntity op;
+            try {
+                op = payoutInitiator.release(payment, bidId, travelerId, net, "admin-force-release");
+            } catch (IllegalStateException e) {
+                // @Transactional : l'exception annule le claim, le paiement reste ESCROW.
+                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-payout-failed",
+                        "Mobile Money Payout Failed", "Versement mobile money impossible : " + e.getMessage());
+            }
+            // payoutInitiator.release a déjà posé pawapay_payout_id par un UPDATE ciblé
+            // (PaymentRepository#attachPayoutId), AVANT ce point. PaymentEntity n'a ni
+            // @DynamicUpdate ni @Version (voir PaymentRepositoryMobileMoneyTest —
+            // markReleasedIfEscrow_thenAttachPayoutId_doesNotRevertStatus /
+            // markRefundedIfEscrow_thenAttachRefundId_doesNotRevertStatus, tâches 16/17, Ronde 1) :
+            // si on ne posait QUE status/escrowReleasedAt ci-dessous, l'entité gérée redeviendrait
+            // sale et un flush ultérieur (implicite, à un moment qui dépend de l'ordre interne des
+            // requêtes Hibernate — prouvé fragile empiriquement dans ce test) régénérerait un
+            // UPDATE de TOUTES les colonnes avec les valeurs en mémoire, dont pawapayPayoutId resté
+            // à sa valeur chargée (null) — écrasant silencieusement l'attachement qui vient d'avoir
+            // lieu. On réconcilie donc ICI, dans le même geste, TOUTES les colonnes que le rail a pu
+            // toucher : le flush (immédiat ou différé au commit) ne fait alors que réaffirmer une
+            // vérité déjà en base, quel que soit son moment réel.
+            payment.setStatus(PaymentStatus.RELEASED);
+            payment.setEscrowReleasedAt(LocalDateTime.now(ZoneOffset.UTC));
+            payment.setPawapayPayoutId(op.getId());
+            resolveRelatedAlerts(id);
+            auditService.log("PAYMENT", payment.getId(), "ESCROW_FORCE_RELEASED", bidId,
+                    Map.of("paymentId", id.toString(), "bidId", String.valueOf(bidId), "rail", "PAWAPAY",
+                            "amount", payment.getAmount().toPlainString()));
+            log.info("Admin force-released mobile money escrow for payment {} (bid={})", id, bidId);
+            return ResponseEntity.ok(AdminPaymentDetailResponse.from(payment));
         }
 
         try {
@@ -352,7 +423,110 @@ public class AdminPaymentController {
         return ResponseEntity.ok(AdminPaymentDetailResponse.from(payment));
     }
 
+    /**
+     * POST /admin/payments/{id}/mobile-money/retry-payout
+     * Relance un versement mobile money dont la DERNIÈRE tentative connue est morte (FAILED ou
+     * SUBMIT_REJECTED). Passe par {@link MobileMoneyPayoutInitiator#release}, exactement le
+     * chemin de la livraison (tâche 16) et du force-release ci-dessus : sa déduplication de
+     * l'alerte orpheline ({@code MM_PAYOUT_ORPHAN_<paymentId>}) protège donc aussi cette relance
+     * sans code séparé — c'est précisément son cas nominal (§ tâche 18 du cahier des charges).
+     *
+     * <p>Le paiement doit déjà être {@code RELEASED} : aucun nouveau claim n'a lieu ici, celui-ci
+     * a eu lieu à la livraison ou à un force-release antérieur. Refuse (422
+     * {@code mobile-money-retry-not-allowed}) si la dernière opération PAYOUT connue n'est ni
+     * FAILED ni SUBMIT_REJECTED — vivante ou déjà COMPLETED, la relancer serait un second
+     * versement déclenché par un administrateur.
+     */
+    @PreAuthorize("hasAuthority('PAYMENT_RELEASE')")
+    @PostMapping("/{id}/mobile-money/retry-payout")
+    @Transactional
+    public ResponseEntity<AdminPaymentDetailResponse> retryMobileMoneyPayout(@PathVariable UUID id) {
+        PaymentEntity payment = requirePawapayPayment(id);
+        if (payment.getStatus() != PaymentStatus.RELEASED) {
+            throw retryNotAllowed("Le paiement doit être RELEASED pour relancer le versement");
+        }
+        boolean lastIsDead = pawapayOperations.findLatest(id, PawapayOperationKind.PAYOUT)
+                .map(op -> PawapayOperationStatus.DEAD.contains(op.getStatus()))
+                .orElse(true);
+        if (!lastIsDead) {
+            throw retryNotAllowed("Un versement est encore en cours ou déjà abouti");
+        }
+        BidEntity bid = resolveBid(payment);
+        AnnouncementEntity announcement = bid != null
+                ? announcementRepository.findById(bid.getAnnouncementId()).orElse(null)
+                : null;
+        if (bid == null || announcement == null) {
+            throw retryNotAllowed("Colis ou trajet introuvable");
+        }
+        BigDecimal net = PawapayAmounts.round(
+                payment.getAmount().subtract(payment.getCommissionAmount()), payment.getCurrency());
+        PawapayOperationEntity op;
+        try {
+            op = payoutInitiator.release(payment, bid.getId(), announcement.getTravelerId(), net, "admin-retry");
+        } catch (IllegalStateException e) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-payout-failed",
+                    "Mobile Money Payout Failed", "Versement mobile money impossible : " + e.getMessage());
+        }
+        // Même réconciliation que dans forceRelease ci-dessus (voir son commentaire) : release()
+        // a déjà posé pawapay_payout_id par un UPDATE ciblé, on réaligne l'entité gérée dessus
+        // avant de construire la réponse.
+        payment.setPawapayPayoutId(op.getId());
+        auditService.log("PAYMENT", id, "MM_PAYOUT_RETRIED", bid.getId(),
+                Map.of("operationId", op.getId().toString()));
+        return ResponseEntity.ok(AdminPaymentDetailResponse.from(payment));
+    }
+
+    /**
+     * POST /admin/payments/{id}/mobile-money/retry-refund
+     * Relance un remboursement mobile money dont la dernière tentative connue est morte — même
+     * filet que la relance de versement, mais sur {@code pawapay_operations} de type REFUND.
+     * Ne mute jamais {@code payments.status} (déjà REFUNDED) : seul le refund pawaPay est rejoué.
+     */
+    @PreAuthorize("hasAuthority('PAYMENT_RELEASE')")
+    @PostMapping("/{id}/mobile-money/retry-refund")
+    @Transactional
+    public ResponseEntity<AdminPaymentDetailResponse> retryMobileMoneyRefund(@PathVariable UUID id) {
+        PaymentEntity payment = requirePawapayPayment(id);
+        if (payment.getStatus() != PaymentStatus.REFUNDED) {
+            throw retryNotAllowed("Le paiement doit être REFUNDED pour relancer le remboursement");
+        }
+        boolean lastIsDead = pawapayOperations.findLatest(id, PawapayOperationKind.REFUND)
+                .map(op -> PawapayOperationStatus.DEAD.contains(op.getStatus()))
+                .orElse(true);
+        if (!lastIsDead) {
+            throw retryNotAllowed("Un remboursement est encore en cours ou déjà abouti");
+        }
+        PawapayOperationEntity deposit = pawapayOperations.findLatest(id, PawapayOperationKind.DEPOSIT)
+                .filter(d -> d.getStatus() == PawapayOperationStatus.COMPLETED)
+                .orElseThrow(() -> retryNotAllowed("Aucun deposit abouti à rembourser"));
+        PawapayOperationEntity refund = pawapaySubmission.submitRefund(id, deposit, payment.getAmount());
+        if (refund.getStatus() == PawapayOperationStatus.SUBMIT_REJECTED) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-payout-failed",
+                    "Mobile Money Refund Failed", "Remboursement refusé : " + refund.getFailureCode());
+        }
+        payment.setPawapayRefundId(refund.getId());
+        auditService.log("PAYMENT", id, "MM_REFUND_RETRIED", null,
+                Map.of("operationId", refund.getId().toString()));
+        return ResponseEntity.ok(AdminPaymentDetailResponse.from(payment));
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /** Charge le paiement et vérifie qu'il s'agit bien d'un paiement mobile money (rail PAWAPAY). */
+    private PaymentEntity requirePawapayPayment(UUID id) {
+        PaymentEntity payment = paymentRepository.findById(id)
+                .orElseThrow(() -> new YadonyBusinessException(
+                        HttpStatus.NOT_FOUND, "payment-not-found", "Not Found", "Paiement introuvable"));
+        if (payment.getRail() != PaymentRail.PAWAPAY) {
+            throw retryNotAllowed("Ce paiement n'est pas un paiement mobile money");
+        }
+        return payment;
+    }
+
+    private static YadonyBusinessException retryNotAllowed(String detail) {
+        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-retry-not-allowed",
+                "Retry Not Allowed", detail);
+    }
 
     /**
      * Resolves the bid behind a payment. Classic payments key on {@code bid_id};

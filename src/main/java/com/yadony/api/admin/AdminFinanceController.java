@@ -1,8 +1,10 @@
 package com.yadony.api.admin;
 
 import com.yadony.api.admin.dto.AdminCashCommissionResponse;
+import com.yadony.api.admin.dto.AdminMobileMoneyResponse;
 import com.yadony.api.admin.dto.AdminWalletResponse;
 import com.yadony.api.matching.BidRepository;
+import com.yadony.api.payments.pawapay.PawapayOperationRepository;
 import com.yadony.api.payments.wallet.WalletAccountRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -39,11 +41,14 @@ public class AdminFinanceController {
 
     private final WalletAccountRepository walletRepository;
     private final BidRepository bidRepository;
+    private final PawapayOperationRepository pawapayOperationRepository;
 
     public AdminFinanceController(WalletAccountRepository walletRepository,
-                                  BidRepository bidRepository) {
+                                  BidRepository bidRepository,
+                                  PawapayOperationRepository pawapayOperationRepository) {
         this.walletRepository = walletRepository;
         this.bidRepository = bidRepository;
+        this.pawapayOperationRepository = pawapayOperationRepository;
     }
 
     @PreAuthorize("hasRole('ADMIN') and hasAuthority('PAYMENT_VIEW')")
@@ -59,6 +64,17 @@ public class AdminFinanceController {
                                                              @RequestParam(defaultValue = "20") int size) {
         return bidRepository.findCashCommissions(pageable(page, size))
                 .map(AdminCashCommissionResponse::from);
+    }
+
+    /**
+     * Tâche 18 — liste des opérations pawaPay (deposit/payout/refund), plus récentes d'abord.
+     * Même onglet Transactions, même garde {@code PAYMENT_VIEW} que les deux vues ci-dessus.
+     */
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('PAYMENT_VIEW')")
+    @GetMapping("/mobile-money-payments")
+    public Page<AdminMobileMoneyResponse> mobileMoneyPayments(@RequestParam(defaultValue = "0") int page,
+                                                              @RequestParam(defaultValue = "20") int size) {
+        return pawapayOperationRepository.findAllByOrderByCreatedAtDesc(pageable(page, size)).map(AdminMobileMoneyResponse::from);
     }
 
     /** Borne les parametres plutot que de les refuser : un ecran ne doit pas casser sur une URL bricolee. */
