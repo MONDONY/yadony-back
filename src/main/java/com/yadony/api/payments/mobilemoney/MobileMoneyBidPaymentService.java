@@ -267,13 +267,6 @@ public class MobileMoneyBidPaymentService {
 
     @Transactional
     public MobileMoneyPaymentStatusResponse initiateDeposit(UUID bidId, UUID senderId, String phoneOverride) {
-        // Ronde 1, point 4 : même interrupteur d'urgence qu'acceptBid — sans lui, couper
-        // yadony.pawapay.enabled pendant un incident laisserait les initiations déjà en cours
-        // continuer à déclencher des débits réels.
-        if (!props.enabled()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-disabled",
-                    "Mobile Money Disabled", "Le mobile money n'est pas encore disponible.");
-        }
         PaymentEntity payment = paymentRepository.findByBidIdForUpdate(bidId)
                 .filter(p -> p.getRail() == PaymentRail.PAWAPAY)
                 .orElseThrow(() -> notFound("mobile-money-payment-not-found", "Aucun paiement mobile money pour ce colis"));
@@ -295,6 +288,19 @@ public class MobileMoneyBidPaymentService {
         Optional<PawapayOperationEntity> live = operations.findLive(payment.getId(), PawapayOperationKind.DEPOSIT);
         if (live.isPresent()) {
             return status(bid, null, Optional.of(payment), live);
+        }
+
+        // Ronde 2, point 3 (tranché par le coordinateur) : l'interrupteur d'urgence est
+        // vérifié ICI, APRÈS la branche idempotente ci-dessus, jamais avant. Il doit empêcher
+        // tout NOUVEAU mouvement d'argent (tout ce qui suit : résolution du numéro, appels
+        // pawaPay, soumission), pas empêcher de relire une opération déjà en vol — relire
+        // n'engage aucun débit. Placé avant, un expéditeur dont le dépôt est déjà en cours et
+        // qui relance (ou dont l'app repolle le statut) recevrait un 422 au lieu de son
+        // opération, alors que couper le rail pendant un incident ne devrait affecter que les
+        // dépôts pas encore soumis.
+        if (!props.enabled()) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-disabled",
+                    "Mobile Money Disabled", "Le mobile money n'est pas encore disponible.");
         }
 
         String msisdn = resolvePayerMsisdn(bid, phoneOverride);

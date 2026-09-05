@@ -72,12 +72,17 @@ public class MobileMoneyBidPricing {
             rate = rates.resolve(announcement.getTravelerId(), bid.getSenderId(), null, null, bid.getId());
         }
         // Le taux PERSISTÉ (ci-dessus) et le taux UTILISÉ pour le calcul de la commission
-        // doivent être IDENTIQUES — jamais l'un arrondi et l'autre non. Le rail espèces
-        // (CashCommissionService#computeBidCommission) n'arrondit jamais ce taux avant de
-        // s'en servir ; un ré-arrondi à 4 décimales ici ferait diverger silencieusement les
-        // deux rails dès qu'un taux dérogatoire (override, promo) porterait plus de 4
-        // décimales — la commission réellement prélevée ne correspondrait alors plus au
-        // taux que le bid affiche.
+        // qui suit doivent être IDENTIQUES — jamais l'un arrondi et l'autre non. Le rail
+        // espèces (CashCommissionService#computeBidCommission) n'arrondit jamais ce taux
+        // avant de s'en servir ; un ré-arrondi à 4 décimales ici ferait diverger
+        // silencieusement les deux rails dès qu'un taux dérogatoire (override, promo)
+        // porterait plus de décimales que ce qui est utilisé pour calculer la commission.
+        // Cette identité ne vaut qu'EN MÉMOIRE, pour ce seul appel : bids.commission_rate est
+        // en base DECIMAL(4,3) (V117), donc un taux à plus de 3 décimales est silencieusement
+        // arrondi par PostgreSQL à la sauvegarde puis au rechargement — sans conséquence
+        // monétaire, puisque c'est payments.commission_amount (déjà calculé ici, avec le taux
+        // complet, avant toute sauvegarde) qui fait foi pour le versement, jamais une
+        // relecture de ce taux snapshoté.
         bid.setCommissionRate(rate);
         return rate;
     }

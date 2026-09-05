@@ -472,10 +472,7 @@ class MobileMoneyBidPaymentServiceTest {
     void acceptBid_railDisabled_is422_beforeAnyRepositoryAccess() {
         service = new MobileMoneyBidPaymentService(bidRepository, announcementRepository, userRepository, paymentRepository,
                 operations, submission, client, pricing, firebaseContact, audit, events,
-                commissionRateResolver, promoService, voucherService, transactionManager,
-                new PawapayProperties(false, "https://x", "t", false, 30, "https://api.test",
-                        "yadony://bids/%s/mobile-money/awaiting",
-                        new PawapayProperties.BalanceMin(BigDecimal.ZERO, BigDecimal.ZERO)));
+                commissionRateResolver, promoService, voucherService, transactionManager, disabledProps());
 
         assertThatThrownBy(() -> service.acceptBid(bid.getId(), traveler.getId()))
                 .isInstanceOf(YadonyBusinessException.class)
@@ -483,19 +480,58 @@ class MobileMoneyBidPaymentServiceTest {
         verifyNoInteractions(bidRepository, announcementRepository);
     }
 
+    private static PawapayProperties disabledProps() {
+        return new PawapayProperties(false, "https://x", "t", false, 30, "https://api.test",
+                "yadony://bids/%s/mobile-money/awaiting",
+                new PawapayProperties.BalanceMin(BigDecimal.ZERO, BigDecimal.ZERO));
+    }
+
+    /**
+     * Ronde 2, point 3 (tranché par le coordinateur) : la garde a été déplacée APRÈS la
+     * branche idempotente — elle bloque encore toute NOUVELLE soumission (rien n'a été
+     * appelé côté pawaPay), mais seulement une fois établi qu'aucun deposit n'est déjà en vol.
+     */
     @Test
-    void initiateDeposit_railDisabled_is422_beforeAnyRepositoryAccess() {
+    void initiateDeposit_railDisabled_blocksOnlyANewSubmission() {
         service = new MobileMoneyBidPaymentService(bidRepository, announcementRepository, userRepository, paymentRepository,
                 operations, submission, client, pricing, firebaseContact, audit, events,
-                commissionRateResolver, promoService, voucherService, transactionManager,
-                new PawapayProperties(false, "https://x", "t", false, 30, "https://api.test",
-                        "yadony://bids/%s/mobile-money/awaiting",
-                        new PawapayProperties.BalanceMin(BigDecimal.ZERO, BigDecimal.ZERO)));
+                commissionRateResolver, promoService, voucherService, transactionManager, disabledProps());
+        bid.setStatus(BidStatus.AWAITING_PAYMENT);
+        bid.setAwaitingPaymentExpiresAt(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20));
+        PaymentEntity payment = pendingPayment();
+        when(paymentRepository.findByBidIdForUpdate(bid.getId())).thenReturn(Optional.of(payment));
+        when(bidRepository.findById(bid.getId())).thenReturn(Optional.of(bid));
+        when(operations.findLive(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.initiateDeposit(bid.getId(), sender.getId(), null))
                 .isInstanceOf(YadonyBusinessException.class)
                 .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-disabled");
-        verifyNoInteractions(paymentRepository, bidRepository, submission, client);
+        verifyNoInteractions(submission, client);
+    }
+
+    /**
+     * Ronde 2, point 3 : un dépôt déjà en vol reste consultable même rail coupé — relire une
+     * opération existante n'engage aucun débit, l'interrupteur d'urgence ne doit donc jamais
+     * bloquer ce chemin (sinon un expéditeur qui relance en pleine saisie de PIN, ou dont
+     * l'app repolle simplement le statut, recevrait un 422 au lieu de son opération).
+     */
+    @Test
+    void initiateDeposit_railDisabled_stillReturnsAnAlreadyLiveDeposit() {
+        service = new MobileMoneyBidPaymentService(bidRepository, announcementRepository, userRepository, paymentRepository,
+                operations, submission, client, pricing, firebaseContact, audit, events,
+                commissionRateResolver, promoService, voucherService, transactionManager, disabledProps());
+        bid.setStatus(BidStatus.AWAITING_PAYMENT);
+        bid.setAwaitingPaymentExpiresAt(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20));
+        PaymentEntity payment = pendingPayment();
+        when(paymentRepository.findByBidIdForUpdate(bid.getId())).thenReturn(Optional.of(payment));
+        when(bidRepository.findById(bid.getId())).thenReturn(Optional.of(bid));
+        when(operations.findLive(payment.getId(), PawapayOperationKind.DEPOSIT))
+                .thenReturn(Optional.of(op(payment.getId(), PawapayOperationStatus.PROCESSING)));
+
+        MobileMoneyPaymentStatusResponse r = service.initiateDeposit(bid.getId(), sender.getId(), null);
+
+        assertThat(r.deposit().status()).isEqualTo("PROCESSING");
+        verifyNoInteractions(submission, client);
     }
 
     // ── Ronde 1, point 1 : rachat du promo et consommation du bon de parrainage ─────────────
@@ -521,24 +557,37 @@ class MobileMoneyBidPaymentServiceTest {
         inOrder.verify(paymentRepository).save(any());
     }
 
+    /**
+     * Ronde 2, point 2 : {@code pricing} est mocké et ne pose donc jamais
+     * {@code bid.commissionRate} tout seul — le stub doit le faire lui-même (via
+     * {@code thenAnswer}), exactement comme le ferait la vraie
+     * {@link MobileMoneyBidPricing#price}. Sans ça, le test appelait {@code redeem} avec
+     * {@code null} (masqué par le matcher {@code any()} qui matche aussi null) sur une
+     * colonne {@code NOT NULL} — le seul piège latent qui restait. La valeur EXACTE transmise
+     * à {@code redeem} est maintenant assertée, pas seulement « un argument quelconque ».
+     */
     @Test
     void acceptBid_redeemsPromoCode_whenStillValidAtAcceptance() {
         bid.setPromoCode("WELCOME10");
         stubLocks();
         when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
         when(paymentRepository.findByBidId(bid.getId())).thenReturn(Optional.empty());
-        when(pricing.price(bid, announcement)).thenReturn(new PriceBreakdown(new BigDecimal("15000"), new BigDecimal("1500"), new BigDecimal("16500")));
+        BigDecimal appliedRate = new BigDecimal("0.10");
+        when(pricing.price(bid, announcement)).thenAnswer(inv -> {
+            bid.setCommissionRate(appliedRate);
+            return new PriceBreakdown(new BigDecimal("15000"), new BigDecimal("1500"), new BigDecimal("16500"));
+        });
         when(commissionRateResolver.resolve(announcement.getTravelerId(), sender.getId(), "WELCOME10", sender.getId(), bid.getId()))
-                .thenReturn(new BigDecimal("0.10"));
+                .thenReturn(appliedRate);
         UUID promoCodeId = UUID.randomUUID();
         PromoRedemptionEntity redemption = mock(PromoRedemptionEntity.class);
         when(redemption.getPromoCodeId()).thenReturn(promoCodeId);
-        when(promoService.redeem(eq("WELCOME10"), eq(sender.getId()), eq(bid.getId()), any())).thenReturn(redemption);
+        when(promoService.redeem(eq("WELCOME10"), eq(sender.getId()), eq(bid.getId()), eq(appliedRate))).thenReturn(redemption);
         when(paymentRepository.save(any())).thenAnswer(inv -> { PaymentEntity p = inv.getArgument(0); ReflectionTestUtils.setField(p, "id", UUID.randomUUID()); return p; });
 
         service.acceptBid(bid.getId(), traveler.getId());
 
-        verify(promoService).redeem(eq("WELCOME10"), eq(sender.getId()), eq(bid.getId()), any());
+        verify(promoService).redeem(eq("WELCOME10"), eq(sender.getId()), eq(bid.getId()), eq(appliedRate));
         assertThat(bid.getPromoCodeId()).isEqualTo(promoCodeId);
     }
 
@@ -562,29 +611,35 @@ class MobileMoneyBidPaymentServiceTest {
     }
 
     /**
-     * Preuve explicitement demandée par le coordinateur : un même bon ne réduit pas la
-     * commission d'un second envoi. La logique qui rend le bon indisponible après
-     * consommation (CommissionRateResolver/CommissionVoucherService, filtrées sur
-     * consumedAt IS NULL) est déjà testée ailleurs (CommissionVoucherServiceTest) et n'est
-     * pas reproduite ici — {@code pricing} (mocké) reflète directement cet état pour
-     * chaque bid. Ce test-ci prouve la partie qui relève de CETTE classe : acceptBid
-     * consomme fidèlement le bon pour CHAQUE bid qu'il accepte, jamais une seule fois pour
-     * tous les envois d'un même expéditeur.
+     * Ronde 2, point 4 : renommé — l'ancien nom
+     * ({@code acceptBid_secondEnvoiFromSameSender_getsFullRateBecauseVoucherAlreadyConsumed})
+     * affirmait que ce test prouvait la disparition de la remise sur un second envoi.
+     * {@code pricing} étant mocké, la commission « pleine » du bid 2 est dictée par SON
+     * PROPRE stub, pas par une consommation réelle du bon : ce test ne peut pas établir
+     * qu'un bon devient indisponible après consommation. Ce qu'il établit RÉELLEMENT, et qui
+     * reste utile, c'est qu'{@link MobileMoneyBidPaymentService#acceptBid} appelle
+     * {@code voucherService.consume(sender, bidId)} pour CHAQUE bid accepté, avec
+     * l'identifiant DE CE bid comme clé — jamais une seule fois pour tous les envois d'un
+     * même expéditeur. C'est cette fidélité (une clé par bid, jamais partagée ni omise) qui
+     * rend opérant le filtre {@code consumedAt IS NULL} de
+     * {@code CommissionVoucherService}/{@code CommissionRateResolver} (logique déjà testée
+     * par {@code CommissionVoucherServiceTest}, pas reproduite ici). La preuve d'ORDRE (après
+     * {@code pricing.price}, avant la création du paiement) est ailleurs :
+     * {@link #acceptBid_consumesSenderVoucher_afterPricing_beforePaymentCreation()}.
      */
     @Test
-    void acceptBid_secondEnvoiFromSameSender_getsFullRateBecauseVoucherAlreadyConsumed() {
+    void acceptBid_consumesVoucher_withEachAcceptedBidsOwnIdAsKey() {
         stubLocks();
         when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
         when(paymentRepository.findByBidId(bid.getId())).thenReturn(Optional.empty());
-        // Bid 1 : bon encore actif, commission réduite de moitié (0,5 : 1800 -> 900).
         when(pricing.price(bid, announcement)).thenReturn(new PriceBreakdown(new BigDecimal("15000"), new BigDecimal("900"), new BigDecimal("15900")));
         when(paymentRepository.save(any())).thenAnswer(inv -> { PaymentEntity p = inv.getArgument(0); ReflectionTestUtils.setField(p, "id", UUID.randomUUID()); return p; });
 
         service.acceptBid(bid.getId(), traveler.getId());
         verify(voucherService).consume(sender.getId(), bid.getId());
 
-        // Bid 2 : même expéditeur, même voyageur/annonce — le bon est déjà consommé par le
-        // bid 1, pricing renvoie donc le taux plein pour CE bid (aucune remise).
+        // Un second bid, même expéditeur/voyageur/annonce — sa propre clé, distincte de celle
+        // du premier bid.
         BidEntity bid2 = new BidEntity();
         ReflectionTestUtils.setField(bid2, "id", UUID.randomUUID());
         bid2.setAnnouncementId(announcement.getId());
@@ -599,11 +654,6 @@ class MobileMoneyBidPaymentServiceTest {
 
         service.acceptBid(bid2.getId(), traveler.getId());
 
-        ArgumentCaptor<PaymentEntity> saved = ArgumentCaptor.forClass(PaymentEntity.class);
-        verify(paymentRepository, org.mockito.Mockito.times(2)).save(saved.capture());
-        assertThat(saved.getAllValues().get(1).getCommissionAmount())
-                .as("second envoi du même expéditeur : taux plein, le bon n'est plus disponible")
-                .isEqualByComparingTo("1800");
         verify(voucherService).consume(sender.getId(), bid2.getId());
     }
 
@@ -682,6 +732,14 @@ class MobileMoneyBidPaymentServiceTest {
 
     // ── Ronde 1, point 3 : l'audit d'un dépôt refusé survit au rollback ─────────────────────
 
+    /**
+     * Ronde 2, point 1 : la version précédente ne vérifiait qu'un appel à
+     * {@code transactionManager.getTransaction(any())} — un {@code TransactionTemplate} resté
+     * en propagation par défaut (REQUIRED, donc rejoignant la transaction d'initiateDeposit,
+     * donc de nouveau effaçable par son rollback) aurait produit exactement le même appel et
+     * laissé ce test vert. La propagation EXACTE demandée au gestionnaire est maintenant
+     * capturée et assertée.
+     */
     @Test
     void initiateDeposit_auditOfRejectedDeposit_usesItsOwnTransaction() {
         bid.setStatus(BidStatus.AWAITING_PAYMENT);
@@ -702,7 +760,11 @@ class MobileMoneyBidPaymentServiceTest {
         // L'audit du dépôt refusé est bien écrit (comme avant), mais désormais via sa PROPRE
         // transaction (sollicitation explicite de transactionManager) — pas celle
         // d'initiateDeposit, vouée au rollback par le throw qui suit dans le code.
-        verify(transactionManager).getTransaction(any());
+        ArgumentCaptor<org.springframework.transaction.TransactionDefinition> definition =
+                ArgumentCaptor.forClass(org.springframework.transaction.TransactionDefinition.class);
+        verify(transactionManager).getTransaction(definition.capture());
+        assertThat(definition.getValue().getPropagationBehavior())
+                .isEqualTo(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         verify(audit).log(eq("PAYMENT"), eq(payment.getId()), eq("MM_DEPOSIT_INITIATED"), eq(sender.getId()), any());
     }
 }
