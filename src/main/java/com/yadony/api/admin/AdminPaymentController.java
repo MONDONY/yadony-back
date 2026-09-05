@@ -562,15 +562,25 @@ public class AdminPaymentController {
      * POST /admin/payments/{id}/mobile-money/retry-refund
      * Relance un remboursement mobile money dont la dernière tentative connue est morte — même
      * filet que la relance de versement, mais sur {@code pawapay_operations} de type REFUND.
-     * Ne mute jamais {@code payments.status} (déjà REFUNDED) : seul le refund pawaPay est rejoué.
+     * Ne mute jamais {@code payments.status} (déjà REFUNDED ou CANCELLED) : seul le refund
+     * pawaPay est rejoué.
+     *
+     * <p>Revue finale, point 3(b) (Important) : élargi à {@code CANCELLED}. Un paiement mobile
+     * money {@code PENDING} remboursé devient {@code CANCELLED} — jamais {@code REFUNDED} comme
+     * sur le rail Stripe (voir {@code RefundProcessor#refundMobileMoney}, cas {@code PENDING}).
+     * Un deposit arrivé tard sur un tel paiement ({@code MobileMoneyBidPaymentService#confirmEscrow}
+     * → {@code refundAfterCancel}) peut y soumettre un refund qui échoue à son tour : sans cet
+     * élargissement, l'alerte {@code PAWAPAY_REFUND_*} demandait une reprise humaine que ce
+     * endpoint ne permettait pas (il exigeait {@code REFUNDED}, statut que ce paiement
+     * n'atteindra jamais).
      */
     @PreAuthorize("hasAuthority('PAYMENT_RELEASE')")
     @PostMapping("/{id}/mobile-money/retry-refund")
     @Transactional
     public ResponseEntity<AdminPaymentDetailResponse> retryMobileMoneyRefund(@PathVariable UUID id) {
         PaymentEntity payment = requirePawapayPayment(id);
-        if (payment.getStatus() != PaymentStatus.REFUNDED) {
-            throw retryNotAllowed("Le paiement doit être REFUNDED pour relancer le remboursement");
+        if (payment.getStatus() != PaymentStatus.REFUNDED && payment.getStatus() != PaymentStatus.CANCELLED) {
+            throw retryNotAllowed("Le paiement doit être REFUNDED ou CANCELLED pour relancer le remboursement");
         }
         Optional<PawapayOperationEntity> lastRefund = pawapayOperations.findLatest(id, PawapayOperationKind.REFUND);
         if (lastRefund.isEmpty() || !PawapayOperationStatus.DEAD.contains(lastRefund.get().getStatus())) {

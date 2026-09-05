@@ -164,8 +164,12 @@ public class PaymentEntity extends BaseEntity {
     public void setRail(PaymentRail rail) { this.rail = rail; }
     public UUID getPawapayDepositId() { return pawapayDepositId; }
     public void setPawapayDepositId(UUID pawapayDepositId) { this.pawapayDepositId = pawapayDepositId; }
+    // Revue finale, point 8 : setPawapayPayoutId/setPawapayRefundId supprimés — aucun appelant
+    // (vérifié par grep), et quatre Javadoc de la branche expliquaient qu'il ne fallait jamais
+    // les appeler sur l'entité gérée après un claim bulk (voir PaymentRepository, MobileMoneyPayoutInitiator,
+    // MobileMoneyBidPaymentService) : les supprimer rend l'invariant structurellement infranchissable
+    // au lieu de reposer sur des commentaires. attachPayoutId/attachRefundId (UPDATE ciblé) restent
+    // les seuls chemins qui posent ces colonnes. getPawapayDepositId/setPawapayDepositId conservés : utilisé.
     public UUID getPawapayPayoutId() { return pawapayPayoutId; }
-    public void setPawapayPayoutId(UUID pawapayPayoutId) { this.pawapayPayoutId = pawapayPayoutId; }
     public UUID getPawapayRefundId() { return pawapayRefundId; }
-    public void setPawapayRefundId(UUID pawapayRefundId) { this.pawapayRefundId = pawapayRefundId; }
 }

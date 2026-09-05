@@ -55,11 +55,15 @@ import org.springframework.stereotype.Component;
  *       éviction totale que {@code AnnouncementSearchBlockEvictionListener}, ici programmatique
  *       via {@link CacheManager} plutôt que déclarative : {@code expire} n'est pas toujours
  *       appelée depuis un contexte où l'annotation aurait un effet utile à chaque retour) ;</li>
- *   <li>{@code PAYMENT_MISSING} / {@code DEPOSIT_COMPLETED_NOT_APPLIED} → alerte administrateur
- *       dédupliquée par bid, structure reprise à l'identique de
- *       {@code PawapayReconciliationPoller#escalateUnknown} : sans cette dédup, un bid resté en
- *       échec fermé (donc resélectionné à chaque tick) spammerait Sentry et Telegram
- *       indéfiniment — le défaut déjà corrigé à la tâche 10, revenu ici avant cette ronde ;</li>
+ *   <li>{@code PAYMENT_MISSING} → alerte administrateur dédupliquée par bid, structure reprise à
+ *       l'identique de {@code PawapayReconciliationPoller#escalateUnknown} : sans cette dédup,
+ *       un bid resté en échec fermé (donc resélectionné à chaque tick) spammerait Sentry et
+ *       Telegram indéfiniment — le défaut déjà corrigé à la tâche 10, revenu ici avant cette
+ *       ronde ;</li>
+ *   <li>{@code DEPOSIT_COMPLETED_NOT_APPLIED} → réparation (revue finale, point 3(a)) : rejoue
+ *       {@code MobileMoneyBidPaymentService#confirmEscrow} via {@link #repairDepositCompletedNotApplied}
+ *       au lieu de seulement alerter — la même alerte que ci-dessus ne reste qu'un FILET si la
+ *       réparation échoue elle-même ;</li>
  *   <li>{@code IGNORED} → rien.</li>
  * </ul>
  */
@@ -128,9 +132,31 @@ public class MobileMoneyPaymentDeadlineScheduler {
             case CANCELLED -> evictSearchCache();
             case PAYMENT_MISSING -> escalate(PAYMENT_MISSING_ALERT_PREFIX + bidId,
                     "Bid " + bidId + " AWAITING_PAYMENT mobile money sans paiement PAWAPAY associé", bidId);
-            case DEPOSIT_COMPLETED_NOT_APPLIED -> escalate(DEPOSIT_COMPLETED_ALERT_PREFIX + bidId,
-                    "Deposit pawaPay COMPLETED mais paiement encore PENDING pour le bid " + bidId, bidId);
+            case DEPOSIT_COMPLETED_NOT_APPLIED -> repairDepositCompletedNotApplied(bidId);
             case IGNORED -> { }
+        }
+    }
+
+    /**
+     * Revue finale, point 3(a) (Important) : ce scheduler détecte déjà cette issue (deposit
+     * pawaPay COMPLETED, paiement encore PENDING côté yadony — confirmation perdue, ex.
+     * redémarrage ou exception dans l'écouteur) mais se contentait d'alerter, sans jamais rien
+     * réparer : le bid restait figé pour toujours, la capacité réservée, l'expéditeur débité.
+     * Rejoue {@code confirmEscrow} via {@link MobileMoneyBidPaymentService#repairDepositCompletedNotApplied}
+     * — idempotente par construction ({@code markEscrowIfPending} ne laisse jamais passer qu'un
+     * seul gagnant). Garde l'alerte existante comme FILET si la réparation échoue à son tour
+     * (deposit ou paiement disparus entre-temps — état structurellement incohérent qui mérite
+     * toujours l'œil d'un humain) : le comportement précédent (alerte inconditionnelle) devient
+     * le repli, jamais le chemin nominal.
+     */
+    private void repairDepositCompletedNotApplied(UUID bidId) {
+        try {
+            service.repairDepositCompletedNotApplied(bidId);
+        } catch (Exception e) {
+            log.error("Réparation du deposit mobile money bloqué pour le bid {} échouée : {}", bidId, e.toString());
+            escalate(DEPOSIT_COMPLETED_ALERT_PREFIX + bidId,
+                    "Deposit pawaPay COMPLETED mais paiement encore PENDING pour le bid " + bidId
+                            + " — réparation automatique échouée : " + e.getMessage(), bidId);
         }
     }
 

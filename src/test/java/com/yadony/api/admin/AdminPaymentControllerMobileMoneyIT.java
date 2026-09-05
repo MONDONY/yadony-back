@@ -306,6 +306,50 @@ class AdminPaymentControllerMobileMoneyIT {
         assertThat(payment.getPawapayRefundId()).isNull();
     }
 
+    /**
+     * Revue finale, point 3(b) (Important) : un paiement mobile money {@code PENDING} remboursé
+     * devient {@code CANCELLED} — jamais {@code REFUNDED} comme sur le rail Stripe (voir
+     * {@code RefundProcessor#refundMobileMoney}, cas {@code PENDING}). Un deposit arrivé tard sur
+     * un tel paiement ({@code MobileMoneyBidPaymentService#confirmEscrow} →
+     * {@code refundAfterCancel}) peut y soumettre un refund qui échoue à son tour : sans cet
+     * élargissement, {@code retry-refund} exigeait {@code REFUNDED} et une reprise humaine était
+     * structurellement impossible sur ce paiement — alors même que l'alerte
+     * {@code PAWAPAY_REFUND_*} la demande. LE TEST DEMANDÉ PAR LA REVUE FINALE, point 3(b).
+     */
+    @Test
+    void retryRefund_resubmitsTheRefund_whenPaymentIsCancelledAndLastOneIsDead() throws Exception {
+        payment.setStatus(PaymentStatus.CANCELLED);
+        PawapayOperationEntity deposit = new PawapayOperationEntity(UUID.randomUUID(), PawapayOperationKind.DEPOSIT, payment.getId(), null,
+                new BigDecimal("16800"), "XOF", "ORANGE_SEN", "SN", "221771234567");
+        deposit.setStatus(PawapayOperationStatus.COMPLETED);
+        PawapayOperationEntity dead = new PawapayOperationEntity(UUID.randomUUID(), PawapayOperationKind.REFUND, payment.getId(), deposit.getId(),
+                new BigDecimal("16800"), "XOF", "ORANGE_SEN", "SN", "221771234567");
+        dead.setStatus(PawapayOperationStatus.FAILED);
+        PawapayOperationEntity fresh = new PawapayOperationEntity(UUID.randomUUID(), PawapayOperationKind.REFUND, payment.getId(), deposit.getId(),
+                new BigDecimal("16800"), "XOF", "ORANGE_SEN", "SN", "221771234567");
+        fresh.setStatus(PawapayOperationStatus.ACCEPTED);
+        when(operations.findLatest(payment.getId(), PawapayOperationKind.REFUND)).thenReturn(Optional.of(dead));
+        when(operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.of(deposit));
+        when(submission.submitRefund(payment.getId(), deposit, new BigDecimal("16800"))).thenReturn(fresh);
+
+        mockMvc.perform(post("/admin/payments/{id}/mobile-money/retry-refund", payment.getId()).with(authentication(releaseAdmin())))
+                .andExpect(status().isOk());
+
+        verify(paymentRepository).attachRefundId(payment.getId(), fresh.getId());
+        verify(entityManager).refresh(payment);
+    }
+
+    /** Le garde-fou reste fermé aux autres statuts — élargi à CANCELLED, pas à n'importe quoi. */
+    @Test
+    void retryRefund_rejectedWhenPaymentIsNeitherRefundedNorCancelled() throws Exception {
+        payment.setStatus(PaymentStatus.ESCROW);
+
+        mockMvc.perform(post("/admin/payments/{id}/mobile-money/retry-refund", payment.getId()).with(authentication(releaseAdmin())))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("mobile-money-retry-not-allowed"));
+        verify(operations, never()).findLatest(any(), any());
+    }
+
     @Test
     void retryRefund_rejectedWhenLastRefundIsLive() throws Exception {
         // Symétrique de retryPayout_onlyWhenLastPayoutIsDead : une relance sur un refund encore

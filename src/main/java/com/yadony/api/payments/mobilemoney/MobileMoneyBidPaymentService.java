@@ -524,6 +524,38 @@ public class MobileMoneyBidPaymentService {
     }
 
     /**
+     * Revue finale, point 3(a) (Important) : {@link MobileMoneyPaymentDeadlineScheduler} détecte
+     * déjà cette situation (issue {@code DEPOSIT_COMPLETED_NOT_APPLIED} d'{@link #expire}) — un
+     * deposit COMPLETED côté pawaPay pendant que le paiement reste PENDING côté yadony, la
+     * confirmation ayant été perdue (redémarrage, exception dans l'écouteur) — mais se
+     * contentait jusqu'ici d'alerter, sans jamais rejouer la confirmation : le bid restait figé
+     * pour toujours, la capacité réservée, l'expéditeur débité. Cette méthode répare : elle
+     * retrouve le dernier deposit COMPLETED du paiement PAWAPAY du bid et rejoue
+     * {@link #confirmEscrow}, idempotente par construction ({@link PaymentRepository#markEscrowIfPending}
+     * ne laisse jamais passer qu'un seul gagnant) — sans risque même si la confirmation est
+     * entre-temps arrivée par un autre chemin (callback enfin traité, poller de réconciliation).
+     *
+     * <p>Ne lève PAS d'alerte elle-même : c'est à l'appelant ({@code MobileMoneyPaymentDeadlineScheduler})
+     * de garder son alerte existante en filet si CETTE méthode échoue à son tour (deposit ou
+     * paiement disparus entre-temps — état structurellement incohérent qui mérite toujours
+     * l'œil d'un humain).
+     *
+     * @throws IllegalStateException si le paiement PAWAPAY ou le deposit COMPLETED attendu par
+     *         le diagnostic du scheduler a disparu entre les deux lectures.
+     */
+    @Transactional
+    public void repairDepositCompletedNotApplied(UUID bidId) {
+        PaymentEntity payment = paymentRepository.findByBidId(bidId)
+                .filter(p -> p.getRail() == PaymentRail.PAWAPAY)
+                .orElseThrow(() -> new IllegalStateException("Paiement PAWAPAY introuvable pour le bid " + bidId));
+        PawapayOperationEntity deposit = operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT)
+                .filter(o -> o.getStatus() == PawapayOperationStatus.COMPLETED)
+                .orElseThrow(() -> new IllegalStateException(
+                        "Deposit pawaPay COMPLETED introuvable pour le paiement " + payment.getId()));
+        confirmEscrow(deposit.getId(), payment.getId());
+    }
+
+    /**
      * Un deposit a été encaissé par pawaPay pour un paiement qui, côté yadony, n'est déjà
      * plus réclamable (deadline de paiement dépassée, ou bid annulé entre-temps) :
      * l'argent ne peut rester en séquestre sans colis en face, il est donc reversé
@@ -706,8 +738,9 @@ public class MobileMoneyBidPaymentService {
      * cette même branche : un bid sans poids ne rend donc jamais une annonce complète, et si elle
      * l'est, c'est un autre bid qui l'a remplie. Rebasculer {@code ACTIVE} sans avoir rendu le
      * moindre kilo ferait réapparaître en recherche un trajet réellement encore à zéro kilo
-     * disponible — défaut présent dans {@code BidService#restoreCapacityIfNeeded}, hors
-     * périmètre de cette tâche, à ne surtout pas reproduire ici).
+     * disponible — défaut qui existait dans {@code BidService#restoreCapacityIfNeeded}, hors
+     * périmètre de cette tâche à l'origine et donc pas reproduit ici ; aligné depuis sur cette
+     * même condition combinée par la revue finale, point 4).
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public ExpireOutcome expire(UUID bidId) {

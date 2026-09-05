@@ -118,11 +118,22 @@ public class MobileMoneyAccountService {
         } catch (IllegalArgumentException e) {
             throw providerUnavailable(userId, "msisdn-normalize", e);
         }
+        String country = PawapayCountries.toAlpha2(prediction.countryAlpha3());
+        // Revue finale, point 5 (Important) : PawapayCountries.toAlpha2 rend null pour un
+        // alpha-3 non couvert par la table ISO du JDK. Sans cette garde, la valeur nulle était
+        // acceptée en silence ici (users.mobile_money_country est nullable) et l'échec reporté
+        // au versement (pawapay_operations.country est NOT NULL), en 500 générique et sans
+        // alerte — sur le chemin qui engage l'argent. Même garde, même motif que
+        // MobileMoneyBidPaymentService#initiateDeposit (tâche 13, Ronde 1 point 9), remontée ici
+        // pour l'activation (tâche 11, écrite avant, qui ne l'avait pas reçue).
+        if (country == null) {
+            throw unsupported(userId, "Pays non reconnu pour ce numéro.");
+        }
         user.setMobileMoneyStatus(MobileMoneyPayoutStatus.ACTIVE);
         user.setMobileMoneyMsisdn(msisdn);
         user.setMobileMoneyMsisdnMasked(Msisdn.mask(msisdn));
         user.setMobileMoneyProvider(prediction.provider());
-        user.setMobileMoneyCountry(PawapayCountries.toAlpha2(prediction.countryAlpha3()));
+        user.setMobileMoneyCountry(country);
         user.setMobileMoneyCurrency(conf.currency().toUpperCase(Locale.ROOT));
         user.setMobileMoneyVerifiedAt(Instant.now());
         userRepository.save(user);

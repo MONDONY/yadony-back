@@ -111,6 +111,9 @@ class RefundProcessorMobileMoneyTest {
         PawapayOperationEntity deposit = op(PawapayOperationKind.DEPOSIT, PawapayOperationStatus.COMPLETED);
         PawapayOperationEntity refund = op(PawapayOperationKind.REFUND, PawapayOperationStatus.ACCEPTED);
         when(paymentRepository.markRefundedIfEscrow(payment.getId())).thenReturn(1);
+        // Revue finale, point 2 : la garde en tête de refundEscrowedMobileMoney interroge
+        // maintenant aussi findLive(..., PAYOUT), avant le claim — aucun versement ici.
+        when(operations.findLive(payment.getId(), PawapayOperationKind.PAYOUT)).thenReturn(Optional.empty());
         when(operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.of(deposit));
         when(operations.findLive(payment.getId(), PawapayOperationKind.REFUND)).thenReturn(Optional.empty());
         // Ronde 1, point 7 : le montant soumis est celui du DEPOSIT (deposit.getAmount()),
@@ -127,6 +130,54 @@ class RefundProcessorMobileMoneyTest {
         verify(auditService).log(eq("PAYMENT"), eq(payment.getId()), eq("PAYMENT_REFUNDED_BID_REJECTED"), any(), any());
     }
 
+    /**
+     * Revue finale, point 2 (CRITIQUE) : {@code refundEscrowedMobileMoney} ne consultait jamais
+     * les opérations PAYOUT — sa seule protection était {@code payment.status == ESCROW}. Or la
+     * branche crée elle-même l'état « paiement ESCROW alors qu'un versement est parti »
+     * ({@code MobileMoneyPayoutInitiator} : soumission acceptée, timeout HTTP, rollback du
+     * claim ; le poller mène ensuite l'opération à COMPLETED pendant que le paiement redevient
+     * ESCROW). Sans cette garde, un opérateur pouvait rembourser le brut à l'expéditeur pendant
+     * que le net était déjà chez le voyageur — perte sèche, sans alerte. {@code findLive} couvre
+     * aussi COMPLETED (LIVE_OR_DONE) : LE TEST DEMANDÉ PAR LA REVUE FINALE, point 2.
+     */
+    @Test
+    void escrow_payoutAlreadyLiveOrCompleted_alertsAndThrows_withoutClaimingOrRefunding() {
+        payment.setStatus(PaymentStatus.ESCROW);
+        PawapayOperationEntity payout = op(PawapayOperationKind.PAYOUT, PawapayOperationStatus.COMPLETED);
+        when(operations.findLive(payment.getId(), PawapayOperationKind.PAYOUT)).thenReturn(Optional.of(payout));
+
+        assertThatThrownBy(() -> processor.processRefund(payment.getId(), "X", null, Map.of()))
+                .isInstanceOf(IllegalStateException.class);
+
+        verify(adminAlert).raise(eq(RefundProcessor.PAYOUT_EXISTS_ALERT_PREFIX + payment.getId()), any(), any());
+        verify(alertRepository).save(any(AdminAlertEntity.class));
+        // La garde agit AVANT le claim : jamais de tentative de remboursement, même annulée.
+        verify(paymentRepository, never()).markRefundedIfEscrow(any());
+        verify(submission, never()).submitRefund(any(), any(), any());
+        verify(paymentRepository, never()).attachRefundId(any(), any());
+    }
+
+    @Test
+    void escrow_payoutAlreadyLiveOrCompleted_dedupedWhenAlreadyAlertedAndUnresolved() {
+        payment.setStatus(PaymentStatus.ESCROW);
+        PawapayOperationEntity payout = op(PawapayOperationKind.PAYOUT, PawapayOperationStatus.COMPLETED);
+        when(operations.findLive(payment.getId(), PawapayOperationKind.PAYOUT)).thenReturn(Optional.of(payout));
+        when(alertRepository.findByTypeAndResolved(RefundProcessor.PAYOUT_EXISTS_ALERT_PREFIX + payment.getId(), false))
+                .thenReturn(List.of(new AdminAlertEntity()));
+
+        assertThatThrownBy(() -> processor.processRefund(payment.getId(), "X", null, Map.of()))
+                .isInstanceOf(IllegalStateException.class);
+        verify(adminAlert, never()).raise(any(), any(), any());
+        verify(alertRepository, never()).save(any());
+    }
+
+    /** Ronde 1, point 5 (motif repris) : préfixe ≤ 24 caractères, préfixe + UUID ≤ 60. */
+    @Test
+    void payoutExistsAlertType_fitsInAdminAlertsTypeColumn() {
+        assertThat(RefundProcessor.PAYOUT_EXISTS_ALERT_PREFIX.length()).isLessThanOrEqualTo(24);
+        assertThat((RefundProcessor.PAYOUT_EXISTS_ALERT_PREFIX + UUID.randomUUID()).length()).isLessThanOrEqualTo(60);
+    }
+
     @Test
     void escrow_secondCall_isNoop() {
         payment.setStatus(PaymentStatus.ESCROW);
@@ -141,6 +192,8 @@ class RefundProcessorMobileMoneyTest {
         PawapayOperationEntity deposit = op(PawapayOperationKind.DEPOSIT, PawapayOperationStatus.COMPLETED);
         PawapayOperationEntity live = op(PawapayOperationKind.REFUND, PawapayOperationStatus.PROCESSING);
         when(paymentRepository.markRefundedIfEscrow(payment.getId())).thenReturn(1);
+        // Revue finale, point 2 : garde en tête, aucun versement ici.
+        when(operations.findLive(payment.getId(), PawapayOperationKind.PAYOUT)).thenReturn(Optional.empty());
         when(operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.of(deposit));
         when(operations.findLive(payment.getId(), PawapayOperationKind.REFUND)).thenReturn(Optional.of(live));
 
@@ -285,6 +338,8 @@ class RefundProcessorMobileMoneyTest {
         PawapayOperationEntity deposit = op(PawapayOperationKind.DEPOSIT, PawapayOperationStatus.COMPLETED);
         PawapayOperationEntity refund = op(PawapayOperationKind.REFUND, PawapayOperationStatus.ACCEPTED);
         when(paymentRepository.markRefundedIfEscrow(payment.getId())).thenReturn(1);
+        // Revue finale, point 2 : garde en tête, aucun versement ici.
+        when(operations.findLive(payment.getId(), PawapayOperationKind.PAYOUT)).thenReturn(Optional.empty());
         when(operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.of(deposit));
         when(operations.findLive(payment.getId(), PawapayOperationKind.REFUND)).thenReturn(Optional.empty());
         when(submission.submitRefund(payment.getId(), deposit, deposit.getAmount())).thenReturn(refund);

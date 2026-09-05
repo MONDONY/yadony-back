@@ -118,10 +118,22 @@ class PawapayReconciliationPollerTest {
                 isNull(), isNull(), eq("{}"), eq(PawapayOperationService.Source.POLL));
     }
 
+    /**
+     * Revue finale, point 6 (Important) : ce poller était gardé par {@code props.enabled()},
+     * alors que {@code MobileMoneyPaymentDeadlineScheduler} ne l'est DÉLIBÉRÉMENT PAS (voir sa
+     * Javadoc). L'asymétrie était l'erreur : couper le rail pendant un incident arrêtait la
+     * réconciliation pendant que l'expiration continuait — un dépôt bloqué n'était alors plus
+     * jamais rattrapé, sans la moindre alerte puisque l'escalade vit précisément dans ce poller.
+     * Un interrupteur d'urgence doit arrêter les NOUVEAUX mouvements d'argent, pas la
+     * réconciliation de ceux déjà en vol. LE TEST DEMANDÉ PAR LA REVUE FINALE, point 6.
+     */
     @Test
-    void disabled_doesNothing() {
+    void disabled_stillReconciles() {
+        when(repository.findByStatusInAndUpdatedAtBefore(any(), any(), any())).thenReturn(List.of());
+
         new PawapayReconciliationPoller(repository, client, operations, alerts, alertRepository, props(false)).reconcile();
-        verify(repository, never()).findByStatusInAndUpdatedAtBefore(any(), any(), any());
+
+        verify(repository).findByStatusInAndUpdatedAtBefore(eq(PawapayOperationStatus.OPEN), any(), any());
     }
 
     // Revue ronde 1, point 3 : sans borne, un incident prolongé chez pawaPay accumulerait

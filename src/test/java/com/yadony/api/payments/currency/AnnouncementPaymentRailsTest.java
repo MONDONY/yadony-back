@@ -12,6 +12,13 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 class AnnouncementPaymentRailsTest {
 
+    /**
+     * Table de vérité : 7 devises croisées avec Connect présent/absent (mobile money ajouté pour
+     * les deux devises CFA où ce rail existe) = 14 cas exhaustifs. Revue finale, point 7 : chaque
+     * devise à rail carte (EUR, USD, CAD, GBP, CHF) doit démontrer AU MOINS UNE FOIS, avec
+     * Connect=true, que la carte est effectivement proposée — sans cette assertion pour une
+     * devise donnée, la retirer du rail carte ne ferait rougir aucun test.
+     */
     static Stream<Arguments> truthTable() {
         return Stream.of(
                 Arguments.of("EUR", true, false, Set.of(PaymentMethod.STRIPE, PaymentMethod.CASH)),
@@ -19,8 +26,10 @@ class AnnouncementPaymentRailsTest {
                 // un compte mobile money ne change rien hors zone CFA
                 Arguments.of("EUR", true, true, Set.of(PaymentMethod.STRIPE, PaymentMethod.CASH)),
                 Arguments.of("USD", true, false, Set.of(PaymentMethod.STRIPE, PaymentMethod.CASH)),
+                Arguments.of("CAD", true, false, Set.of(PaymentMethod.STRIPE, PaymentMethod.CASH)),
                 Arguments.of("CAD", false, true, Set.of(PaymentMethod.CASH)),
                 Arguments.of("GBP", true, false, Set.of(PaymentMethod.STRIPE, PaymentMethod.CASH)),
+                Arguments.of("CHF", true, false, Set.of(PaymentMethod.STRIPE, PaymentMethod.CASH)),
                 Arguments.of("CHF", false, false, Set.of(PaymentMethod.CASH)),
                 // zone CFA : jamais de carte, mobile money seulement avec un compte actif
                 Arguments.of("XOF", true, false, Set.of(PaymentMethod.CASH)),

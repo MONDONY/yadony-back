@@ -1748,6 +1748,28 @@ class BidServiceTest {
         }
 
         @Test
+        @DisplayName("bid MOBILE_MONEY en PENDING → rejectBid réussit sans exception (bypass off-platform)")
+        void rejectBid_mobileMoneyPending_succeeds() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement();
+            BidEntity bid = buildBid();
+            bid.setStatus(BidStatus.PENDING);
+            bid.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.MOBILE_MONEY);
+
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+            when(bidRepository.save(any())).thenReturn(bid);
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.empty());
+
+            assertThatCode(() ->
+                bidService.rejectBid(BID_ID, TRAVELER_UID, new BidRejectRequest("Non compatible"))
+            ).doesNotThrowAnyException();
+
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.REJECTED);
+        }
+
+        @Test
         @DisplayName("bid STRIPE en PENDING → rejectBid lève 409 (STRIPE doit être en PAYMENT_ESCROWED)")
         void rejectBid_stripePending_throwsConflict() {
             UserEntity traveler = buildTraveler();
@@ -1796,6 +1818,36 @@ class BidServiceTest {
             BidEntity bid = buildBid();
             bid.setStatus(BidStatus.PENDING);
             bid.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.WAVE);
+
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+            when(bidRepository.save(any())).thenReturn(bid);
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.empty());
+
+            bidService.rejectBid(BID_ID, TRAVELER_UID, new BidRejectRequest("Non compatible"));
+
+            ArgumentCaptor<BidRejectedEvent> captor = ArgumentCaptor.forClass(BidRejectedEvent.class);
+            verify(eventPublisher).publishEvent(captor.capture());
+            assertThat(captor.getValue().isRematchEligible()).isFalse();
+        }
+
+        /**
+         * Revue finale, point 1 (CRITIQUE) : un bid MOBILE_MONEY naît PENDING et n'atteint jamais
+         * PAYMENT_ESCROWED (paiement géré par le rail pawaPay, pas par l'escrow carte) — sans
+         * MOBILE_MONEY dans isOffPlatformPending, requireBidStatus rendait un 409 et le refus
+         * était structurellement impossible. Couvre aussi le second effet (non demandé par le
+         * cahier des charges d'origine) : rematchEligible dérive du MÊME booléen, donc un refus
+         * mobile money ne doit PAS déclencher de rematch — le colis n'a jamais été payé.
+         */
+        @Test
+        @DisplayName("bid MOBILE_MONEY PENDING (off-platform) rejeté → event rematchEligible=false")
+        void rejectBid_onMobileMoneyPendingBid_publishesNonEligibleEvent() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement();
+            BidEntity bid = buildBid();
+            bid.setStatus(BidStatus.PENDING);
+            bid.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.MOBILE_MONEY);
 
             when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
             when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
@@ -1974,6 +2026,39 @@ class BidServiceTest {
 
             assertThat(announcement.getStatus()).isEqualTo(AnnouncementStatus.ACTIVE);
             assertThat(announcement.getAvailableKg()).isEqualByComparingTo(BigDecimal.valueOf(5));
+        }
+
+        /**
+         * Revue finale, point 4 (Important) : restoreCapacityIfNeeded gardait deux conditions
+         * INDÉPENDANTES (ajout du poids d'un côté, bascule FULL→ACTIVE de l'autre), alors que
+         * {@code MobileMoneyBidPaymentService#expire} (tâche 15) utilise une condition COMBINÉE
+         * {@code !kgFree && weightKg != null} pour les deux effets à la fois — voir le Javadoc des
+         * deux méthodes. Un bid de grille SANS poids (weightKg null, ex. un item de grille par
+         * pièce) sur une annonce FULL faisait donc réapparaître l'annonce en ACTIVE alors qu'aucun
+         * kilo n'a été rendu : un trajet réellement à zéro kilo disponible redevenait visible en
+         * recherche. Après alignement sur expire(), l'annonce reste FULL et rien n'est écrit.
+         */
+        @Test
+        @DisplayName("bid ACCEPTED SANS poids annulé sur annonce FULL → annonce reste FULL (rien n'est rendu)")
+        void cancelBid_acceptedBidWithoutWeightOnFullAnnouncement_staysFullBecauseNothingWasReturned() {
+            UserEntity sender = buildSender();
+            AnnouncementEntity announcement = buildAnnouncement();
+            announcement.setAvailableKg(BigDecimal.ZERO);
+            announcement.setStatus(AnnouncementStatus.FULL);
+            BidEntity bid = buildBid();
+            bid.setStatus(BidStatus.ACCEPTED);
+            bid.setWeightKg(null);
+
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(bidRepository.save(any())).thenReturn(bid);
+
+            bidService.cancelBid(BID_ID, SENDER_UID);
+
+            assertThat(announcement.getStatus()).isEqualTo(AnnouncementStatus.FULL);
+            assertThat(announcement.getAvailableKg()).isEqualByComparingTo(BigDecimal.ZERO);
+            verify(announcementRepository, never()).save(announcement);
         }
 
         @Test

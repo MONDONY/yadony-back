@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.catchThrowableOfType;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -148,6 +149,27 @@ class MobileMoneyAccountServiceTest {
 
         assertThat(ex.getStatus()).isEqualTo(HttpStatus.BAD_GATEWAY);
         assertThat(ex.getErrorCode()).isEqualTo("mobile-money-provider-unavailable");
+    }
+
+    /**
+     * Revue finale, point 5 (Important) : {@code PawapayCountries.toAlpha2} rend {@code null}
+     * pour un alpha-3 non couvert par la table ISO du JDK ("ZZZ" n'est le code d'aucun pays
+     * réel) — même fixture que {@code MobileMoneyBidPaymentServiceTest#initiateDeposit_unmappableCountry_is422}
+     * (Ronde 1, point 9), dont la garde n'avait pas été remontée ici (tâche 11, écrite avant la
+     * tâche 13). Sans garde, {@code user.mobileMoneyCountry} était persisté à {@code null} en
+     * silence : l'échec n'apparaissait qu'au versement (pawapay_operations.country NOT NULL),
+     * en 500 générique et sans alerte.
+     */
+    @Test
+    void activate_countryNotRecognized_is422() {
+        when(firebaseContact.getContact("uid-1")).thenReturn(new FirebaseContactService.Contact("+221771234567", null));
+        when(client.predictProvider("+221771234567")).thenReturn(Optional.of(new PawapayProviderPrediction("ZZZ", "ORANGE_SEN", "221771234567")));
+        when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", new PawapayProviderConfig("ORANGE_SEN", "ZZZ", "XOF", OK, OK, OK)));
+        when(currencyResolver.resolve(userId)).thenReturn("XOF");
+
+        assertThatThrownBy(() -> service.activate(userId)).isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-account-unsupported");
+        verify(userRepository, never()).save(any());
     }
 
     @Test

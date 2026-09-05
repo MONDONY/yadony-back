@@ -64,11 +64,19 @@ public class PawapayReconciliationPoller {
         this.props = props;
     }
 
+    /**
+     * Revue finale, point 6 (Important) : ne dépend PAS de {@code yadony.pawapay.enabled} —
+     * volontairement, comme {@code MobileMoneyPaymentDeadlineScheduler} (voir sa Javadoc), et
+     * l'asymétrie précédente (ce poller gardé, l'expiration non gardée) était l'erreur. Un
+     * interrupteur d'urgence doit arrêter les NOUVEAUX mouvements d'argent (initiations —
+     * {@code MobileMoneyBidPaymentService#initiateDeposit}, {@code MobileMoneyAccountService#activate}
+     * restent bien gardés par {@code props.enabled()}), jamais la réconciliation de ceux déjà en
+     * vol : couper le rail pendant un incident ne doit pas aussi arrêter le filet de sécurité qui
+     * rattrape un dépôt bloqué — sinon plus rien ne le rattrape jamais, et sans la moindre alerte
+     * puisque l'escalade ({@link #escalateUnknown}) vit précisément dans ce poller.
+     */
     @Scheduled(cron = "${yadony.pawapay.poll-cron}")
     public void reconcile() {
-        if (!props.enabled()) {
-            return;
-        }
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         List<PawapayOperationEntity> open = repository.findByStatusInAndUpdatedAtBefore(
                 PawapayOperationStatus.OPEN, now.minus(MIN_AGE),

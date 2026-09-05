@@ -14,9 +14,11 @@ import java.util.UUID;
  * et c'est un fait historique volontairement non corrigé ici : le rail carte (constructeur
  * 4-arg, et {@code DeliveryEventListener} qui l'appelle) publie {@code payment.getAmount()},
  * c'est-à-dire le BRUT payé par l'expéditeur — jamais {@code amount − commission}. Le rail
- * pawaPay, lui, publie {@code op.getAmount()}, le NET réellement crédité au voyageur (le
- * séquestre pawaPay ne portait déjà que sur le net, la commission ayant été retenue à la
- * source par {@code MobileMoneyBidPricing}). Un futur agrégat qui lirait {@code getAmount()}
+ * pawaPay, lui, publie {@code op.getAmount()}, le NET réellement crédité au voyageur — mais le
+ * séquestre pawaPay (le deposit) porte, comme le rail carte, sur le BRUT payé par l'expéditeur :
+ * c'est le VERSEMENT (payout) qui vaut le net, la commission n'étant retenue qu'à ce moment-là,
+ * jamais au dépôt (revue finale, point 9 — corrige une affirmation inverse et erronée). Un futur
+ * agrégat qui lirait {@code getAmount()}
  * en pensant systématiquement lire un net surcompterait la commission à chaque livraison
  * carte. Ne pas homogénéiser cette différence en changeant le publieur Stripe : c'est un
  * comportement historique déjà en production, hors périmètre de cette tâche.

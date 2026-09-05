@@ -844,10 +844,17 @@ public class BidService {
     private BidResponse doRejectBid(BidEntity bid, AnnouncementEntity announcement,
                                     UserEntity traveler, BidRejectRequest request,
                                     boolean systemInitiated) {
+        // Revue finale, point 1 (CRITIQUE) : MOBILE_MONEY manquait à cette liste, symétrique de la
+        // garde posée par la tâche 12 sur doAcceptBid. Un bid MOBILE_MONEY naît PENDING et
+        // n'atteint JAMAIS PAYMENT_ESCROWED (paiement porté par le rail pawaPay, pas par l'escrow
+        // carte) : sans lui ici, requireBidStatus rendait systématiquement un 409 et le refus
+        // était impossible. rematchEligible (ci-dessous) dérive du même booléen — la correction
+        // ferme donc aussi le rematch à tort d'un colis jamais payé (cf. commentaire plus bas).
         boolean isOffPlatformPending =
                 (bid.getPaymentMethod() == PaymentMethod.CASH
                  || bid.getPaymentMethod() == PaymentMethod.WAVE
-                 || bid.getPaymentMethod() == PaymentMethod.ORANGE_MONEY)
+                 || bid.getPaymentMethod() == PaymentMethod.ORANGE_MONEY
+                 || bid.getPaymentMethod() == PaymentMethod.MOBILE_MONEY)
                 && bid.getStatus() == BidStatus.PENDING;
         if (!isOffPlatformPending) {
             requireBidStatus(bid, BidStatus.PAYMENT_ESCROWED);
@@ -982,14 +989,21 @@ public class BidService {
         if (announcement == null) {
             return;
         }
+        // Revue finale, point 4 (Important) : condition COMBINÉE, jamais deux gardes
+        // indépendantes — alignée sur MobileMoneyBidPaymentService#expire (tâche 15, Ronde 1
+        // point 3). Deux gardes séparées (poids d'un côté, bascule FULL→ACTIVE de l'autre)
+        // permettaient à un bid de grille SANS poids (weightKg null) sur une annonce FULL de
+        // rebasculer celle-ci ACTIVE sans qu'aucun kilo ne soit rendu — un trajet réellement à
+        // zéro kilo disponible réapparaissait alors en recherche. Le save() reste nesté dans ce
+        // même bloc, comme dans acceptBid/expire.
         boolean isKgFreeCancel = announcement.getCapacityUnit() == CapacityUnit.KG_FREE;
         if (!isKgFreeCancel && bid.getWeightKg() != null) {
             announcement.setAvailableKg(announcement.getAvailableKg().add(bid.getWeightKg()));
+            if (announcement.getStatus() == AnnouncementStatus.FULL) {
+                announcement.setStatus(AnnouncementStatus.ACTIVE);
+            }
+            announcementRepository.save(announcement);
         }
-        if (!isKgFreeCancel && announcement.getStatus() == AnnouncementStatus.FULL) {
-            announcement.setStatus(AnnouncementStatus.ACTIVE);
-        }
-        announcementRepository.save(announcement);
     }
 
     /** Statuts pour lesquels {@link #cancelBidForDeletedSender} agit encore. Exposé pour que

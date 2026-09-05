@@ -149,11 +149,41 @@ class MobileMoneyPaymentDeadlineSchedulerTest {
         verify(alerts).raise(eq(expectedType), any(), any());
     }
 
+    // ── Revue finale, point 3(a) : DEPOSIT_COMPLETED_NOT_APPLIED est réparé, pas seulement alerté ──
+
+    /**
+     * Ce scheduler détectait déjà cette condition (deposit COMPLETED côté pawaPay, paiement
+     * encore PENDING côté yadony — confirmation perdue, ex. redémarrage ou exception dans
+     * l'écouteur) mais se contentait d'alerter : rien ne rejouait jamais la confirmation, le bid
+     * restait figé pour toujours, la capacité réservée, l'expéditeur débité. LE TEST DEMANDÉ PAR
+     * LA REVUE FINALE, point 3(a) : quand la réparation (confirmEscrow, idempotent par
+     * construction) réussit, AUCUNE alerte ne part — le filet ne doit crier que si la
+     * réparation échoue elle-même.
+     */
     @Test
-    void expireUnpaidBids_escalatesDepositCompletedNotApplied() {
+    void expireUnpaidBids_repairsDepositCompletedNotApplied_whenRepairSucceeds() {
         BidEntity a = bid();
         stubDue(a);
         when(service.expire(a.getId())).thenReturn(ExpireOutcome.DEPOSIT_COMPLETED_NOT_APPLIED);
+
+        scheduler.expireUnpaidBids();
+
+        verify(service).repairDepositCompletedNotApplied(a.getId());
+        verifyNoInteractions(alerts);
+        verify(alertRepository, never()).save(any());
+    }
+
+    /**
+     * Le comportement précédent (alerte inconditionnelle) devient le repli : si la réparation
+     * échoue à son tour (deposit ou paiement disparus entre-temps — état structurellement
+     * incohérent), l'alerte dédupliquée part comme avant.
+     */
+    @Test
+    void expireUnpaidBids_escalatesDepositCompletedNotApplied_whenRepairFails() {
+        BidEntity a = bid();
+        stubDue(a);
+        when(service.expire(a.getId())).thenReturn(ExpireOutcome.DEPOSIT_COMPLETED_NOT_APPLIED);
+        doThrow(new IllegalStateException("deposit disparu")).when(service).repairDepositCompletedNotApplied(a.getId());
         String expectedType = "MM_EXP_DEPOSIT_DONE_" + a.getId();
         when(alertRepository.findByTypeAndResolved(expectedType, false)).thenReturn(List.of());
 

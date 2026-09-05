@@ -70,6 +70,13 @@ public class RefundProcessor {
     /** Idem, pour le refus pawaPay du refund. Voir {@code ...#rejectedAlertType_fitsInAdminAlertsTypeColumn}. */
     static final String REJECTED_ALERT_PREFIX = "PAWAPAY_REFUND_REJECTED_";
 
+    /**
+     * Revue finale, point 2 (CRITIQUE). Idem : préfixe ≤ 24 caractères pour laisser sa marge à
+     * l'UUID (36) sous les 60 de {@code admin_alerts.type}. Voir
+     * {@code RefundProcessorMobileMoneyTest#payoutExistsAlertType_fitsInAdminAlertsTypeColumn}.
+     */
+    static final String PAYOUT_EXISTS_ALERT_PREFIX = "PAWAPAY_REFUND_PAYOUT_";
+
     private final PaymentRepository paymentRepository;
     private final AuditService auditService;
     private final AdminAlertService adminAlert;
@@ -263,6 +270,29 @@ public class RefundProcessor {
 
     private boolean refundEscrowedMobileMoney(PaymentEntity payment, UUID paymentId, String auditAction,
                                               UUID auditActor, Map<String, String> auditPayload) {
+        // Revue finale, point 2 (CRITIQUE) : EN TÊTE, avant toute soumission — y compris avant le
+        // claim ci-dessous. La branche crée elle-même l'état « paiement ESCROW alors qu'un
+        // versement est parti » (MobileMoneyPayoutInitiator : soumission acceptée puis timeout
+        // HTTP, rollback du claim ; le poller mène ensuite l'opération à COMPLETED pendant que le
+        // paiement redevient ESCROW avec un pawapay_payout_id resté nul). Sans cette garde, un
+        // opérateur voit une fiche qui indique qu'aucun versement n'a été tenté, clique
+        // « Rembourser », et le brut repart à l'expéditeur pendant que le net est déjà chez le
+        // voyageur — perte sèche, sans alerte. findLive couvre aussi COMPLETED (LIVE_OR_DONE).
+        Optional<PawapayOperationEntity> existingPayout =
+                pawapayOperations.findLive(paymentId, PawapayOperationKind.PAYOUT);
+        if (existingPayout.isPresent()) {
+            PawapayOperationEntity payout = existingPayout.get();
+            escalate(PAYOUT_EXISTS_ALERT_PREFIX, paymentId,
+                    "Paiement " + paymentId + " en ESCROW alors qu'un versement pawaPay existe déjà (opération "
+                            + payout.getId() + ", statut " + payout.getStatus()
+                            + ") : remboursement bloqué, vérification manuelle requise",
+                    Map.of("paymentId", paymentId.toString(), "operationId", payout.getId().toString(),
+                            "payoutStatus", payout.getStatus().name()),
+                    "{\"paymentId\":\"" + paymentId + "\",\"operationId\":\"" + payout.getId() + "\"}");
+            throw new IllegalStateException(
+                    "pawaPay payout already exists for payment " + paymentId + " — refund refused");
+        }
+
         int claimed = paymentRepository.markRefundedIfEscrow(paymentId);
         if (claimed == 0) {
             log.info("Paiement {} déjà sorti d'ESCROW — remboursement mobile money ignoré", paymentId);
