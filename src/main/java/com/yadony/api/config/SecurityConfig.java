@@ -172,6 +172,11 @@ public class SecurityConfig {
                     // Stripe redirige ici après onboarding — pas de token Firebase (browser Stripe)
                     "/payments/onboarding/return",
                     "/payments/onboarding/refresh",
+                    // Callbacks pawaPay : pas de token Firebase (serveur à serveur). Sécurité =
+                    // signature RFC 9421 vérifiée dans PawapayCallbackController, obligatoire en prod.
+                    "/pawapay/callbacks/**",
+                    // Retour Wave après autorisation : simple redirection vers le deep link.
+                    "/pawapay/return/**",
                     // Public traveler profile: list active/full announcements without auth
                     "/travelers/*/announcements",
                     // Public shareable traveler profile (minimal, no-auth)
