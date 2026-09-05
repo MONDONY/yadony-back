@@ -48,14 +48,30 @@ public class PlatformSettingsService {
                                    YadonyConfigProperties config,
                                    @Value("${app.sms.enabled:false}") boolean smsEnabledProperty,
                                    @Value("${yadony.pro.enabled:false}") boolean proEnabledProperty,
-                                   @Value("${yadony.kyc.didit.enabled:false}") boolean kycDiditEnabledProperty) {
+                                   @Value("${yadony.kyc.didit.enabled:}") String kycDiditEnabledProperty) {
         this.repository = repository;
         this.cache = cache;
         this.auditService = auditService;
         this.config = config;
         this.smsEnabledProperty = smsEnabledProperty;
         this.proEnabledProperty = proEnabledProperty;
-        this.kycDiditEnabledProperty = kycDiditEnabledProperty;
+        this.kycDiditEnabledProperty = parseBooleanOrFalse(kycDiditEnabledProperty);
+    }
+
+    /**
+     * Lit un drapeau booleen sans jamais faire echouer le demarrage.
+     *
+     * <p>Une variable d'environnement <em>declaree mais vide</em> — ce que produit un
+     * {@code VAR=${{ vars.VAR }}} de workflow quand la variable n'existe pas cote GitHub —
+     * definit bel et bien la propriete. Le defaut {@code :false} ne s'applique donc pas, et
+     * la conversion vers {@code boolean} echoue avec « Invalid boolean value [] », ce qui
+     * fait tomber TOUT le contexte Spring au demarrage. Constate en staging le 2026-09-05.
+     *
+     * <p>Absente ou vide vaut donc {@code false} : un drapeau qu'on n'a pas su lire est un
+     * drapeau eteint, jamais un backend mort.
+     */
+    private static boolean parseBooleanOrFalse(String valeur) {
+        return valeur != null && !valeur.isBlank() && Boolean.parseBoolean(valeur.trim());
     }
 
     // ── Lecture ──────────────────────────────────────────────────────────────

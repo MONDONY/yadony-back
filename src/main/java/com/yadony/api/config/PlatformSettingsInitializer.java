@@ -35,12 +35,16 @@ public class PlatformSettingsInitializer {
                                        YadonyConfigProperties config,
                                        @Value("${app.sms.enabled:false}") boolean smsEnabledProperty,
                                        @Value("${yadony.pro.enabled:false}") boolean proEnabledProperty,
-                                       @Value("${yadony.kyc.didit.enabled:false}") boolean kycDiditEnabledProperty) {
+                                       @Value("${yadony.kyc.didit.enabled:}") String kycDiditEnabledProperty) {
         this.repository = repository;
         this.config = config;
         this.smsEnabledProperty = smsEnabledProperty;
         this.proEnabledProperty = proEnabledProperty;
-        this.kycDiditEnabledProperty = kycDiditEnabledProperty;
+        // Vide vaut faux — voir PlatformSettingsService.parseBooleanOrFalse : une variable
+        // d'environnement declaree mais vide ferait sinon echouer le demarrage entier.
+        this.kycDiditEnabledProperty = kycDiditEnabledProperty != null
+                && !kycDiditEnabledProperty.isBlank()
+                && Boolean.parseBoolean(kycDiditEnabledProperty.trim());
     }
 
     @EventListener(ApplicationReadyEvent.class)
