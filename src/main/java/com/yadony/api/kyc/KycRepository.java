@@ -11,5 +11,5 @@ public interface KycRepository extends JpaRepository<KycVerificationEntity, UUID
 
     Optional<KycVerificationEntity> findByUserId(UUID userId);
 
-    Optional<KycVerificationEntity> findByStripeVerificationSessionId(String sessionId);
+    Optional<KycVerificationEntity> findByVerificationSessionId(String sessionId);
 }

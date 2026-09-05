@@ -1,6 +1,7 @@
 package com.yadony.api.kyc;
 
 import com.yadony.api.common.BaseEntity;
+import com.yadony.api.kyc.provider.VerificationProviderKind;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -18,8 +19,17 @@ public class KycVerificationEntity extends BaseEntity {
     @Column(name = "user_id", nullable = false, unique = true)
     private UUID userId;
 
-    @Column(name = "stripe_verification_session_id", length = 255)
-    private String stripeVerificationSessionId;
+    @Column(name = "verification_session_id", length = 255)
+    private String verificationSessionId;
+
+    /**
+     * Fournisseur ayant produit la session courante. Toute relecture (abandon, nom verifie,
+     * vue admin) passe par lui et non par le fournisseur actif : une ligne verifiee du temps
+     * de Stripe reste lisible apres la bascule vers Didit.
+     */
+    @Column(name = "provider", nullable = false, length = 20)
+    @Enumerated(EnumType.STRING)
+    private VerificationProviderKind provider = VerificationProviderKind.STRIPE;
 
     @Column(name = "status", nullable = false, length = 30)
     @Enumerated(EnumType.STRING)
@@ -34,8 +44,11 @@ public class KycVerificationEntity extends BaseEntity {
     public UUID getUserId() { return userId; }
     public void setUserId(UUID userId) { this.userId = userId; }
 
-    public String getStripeVerificationSessionId() { return stripeVerificationSessionId; }
-    public void setStripeVerificationSessionId(String id) { this.stripeVerificationSessionId = id; }
+    public String getVerificationSessionId() { return verificationSessionId; }
+    public void setVerificationSessionId(String id) { this.verificationSessionId = id; }
+
+    public VerificationProviderKind getProvider() { return provider; }
+    public void setProvider(VerificationProviderKind provider) { this.provider = provider; }
 
     public KycVerificationStatus getStatus() { return status; }
     public void setStatus(KycVerificationStatus status) { this.status = status; }

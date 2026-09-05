@@ -81,7 +81,7 @@ class AdminUserKycControllerIT {
     private static KycAdminStatusResponse sampleResponse() {
         return new KycAdminStatusResponse(USER_ID, "REJECTED", "REJECTED",
                 "document_expired", "document_expired", "vs_001", "requires_input",
-                "document_expired", "The document has expired.", null, false);
+                "document_expired", "The document has expired.", null, false, "STRIPE");
     }
 
     // ── GET /admin/users/{userId}/kyc ─────────────────────────────────────────
@@ -122,7 +122,7 @@ class AdminUserKycControllerIT {
     @DisplayName("GET — Stripe indisponible → 200 avec stripeUnavailable, jamais 500")
     void get_stripeUnavailable_returns200() throws Exception {
         when(kycAdminService.getForUser(USER_ID)).thenReturn(new KycAdminStatusResponse(
-                USER_ID, "PENDING", "PENDING", null, null, "vs_001", null, null, null, null, true));
+                USER_ID, "PENDING", "PENDING", null, null, "vs_001", null, null, null, null, true, "STRIPE"));
 
         mockMvc.perform(get("/admin/users/{userId}/kyc", USER_ID)
                         .with(authentication(adminAuth())))
@@ -148,7 +148,7 @@ class AdminUserKycControllerIT {
     void reset_withUserKyc_returns200() throws Exception {
         when(kycAdminService.resetForUser(eq(USER_ID), any(), eq("document illisible")))
                 .thenReturn(new KycAdminStatusResponse(USER_ID, "NOT_STARTED", "PENDING",
-                        null, null, null, null, null, null, null, false));
+                        null, null, null, null, null, null, null, false, "STRIPE"));
 
         mockMvc.perform(post("/admin/users/{userId}/kyc/reset", USER_ID)
                         .contentType(MediaType.APPLICATION_JSON)

@@ -35,6 +35,13 @@ jobs:
       - name: Upload rapport couverture
         uses: actions/upload-artifact@v4
         if: always()
+        # L'archivage du rapport est un confort, jamais un critere : le verdict des
+        # tests et du seuil de couverture est deja rendu par l'etape precedente. Sans
+        # ce drapeau, un quota de stockage d'artefacts sature — quota du COMPTE, et
+        # recalcule seulement toutes les 6 a 12 h — fait echouer une CI dont tous les
+        # tests sont verts, et bloque au passage le deploiement staging qui exige une
+        # CI reussie. Constate le 2026-09-05.
+        continue-on-error: true
         with:
           name: jacoco-report
           path: target/site/jacoco/
@@ -59,6 +66,9 @@ jobs:
       - name: Upload rapport SpotBugs
         uses: actions/upload-artifact@v4
         if: always()
+        # Meme raison que pour le rapport de couverture : l'etape « bugs HIGH = echec »
+        # ci-dessus porte deja le verdict, l'archive n'est qu'une commodite de lecture.
+        continue-on-error: true
         with:
           name: spotbugs-report
           path: target/spotbugsXml.xml

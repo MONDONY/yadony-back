@@ -150,6 +150,7 @@ public class SecurityConfig {
                     "/actuator/prometheus",
                     "/config/**",
                     "/kyc/webhook",
+                    "/kyc/webhook/didit",
                     "/payments/webhook",
                     "/payments/stripe/webhook",
                     "/billing/webhook",
