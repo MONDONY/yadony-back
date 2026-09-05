@@ -256,6 +256,10 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
     List<BidEntity> findByStatusAndAwaitingPaymentExpiresAtBefore(
             BidStatus status, LocalDateTime threshold);
 
+    /** Expiration des bids mobile money en attente de paiement (MobileMoneyPaymentDeadlineScheduler). */
+    List<BidEntity> findByStatusAndPaymentMethodAndAwaitingPaymentExpiresAtBefore(
+            BidStatus status, com.yadony.api.payments.cash.PaymentMethod paymentMethod, LocalDateTime threshold);
+
     // Rappel H-2 : l'alerte se cale désormais sur la date limite de dépôt (il
     // n'y a plus de début de fenêtre). On prévient donc l'expéditeur quand il
     // ne lui reste que 2 h pour remettre son colis, ce qui est le moment utile.

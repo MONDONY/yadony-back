@@ -76,6 +76,14 @@ public class BidService {
     private final BidPhotoService bidPhotoService;
     private final FirebaseContactService firebaseContact;
 
+    /**
+     * Rail mobile money (pawaPay) actif au niveau plateforme. Injection par champ
+     * (et non par le constructeur) pour ne pas alourdir ce dernier ; positionné par
+     * {@code ReflectionTestUtils} dans les tests unitaires.
+     */
+    @org.springframework.beans.factory.annotation.Value("${yadony.pawapay.enabled:false}")
+    private boolean pawapayEnabled;
+
     public BidService(BidRepository bidRepository, AnnouncementRepository announcementRepository,
                       UserRepository userRepository, AuditService auditService,
                       ApplicationEventPublisher eventPublisher, RatingRepository ratingRepository,
@@ -254,6 +262,13 @@ public class BidService {
         bid.setDisclaimerSignedAt(LocalDateTime.now(ZoneOffset.UTC));
         bid.setDisclaimerSignedIp(clientIp);
         bid.setPaymentMethod(pm);
+        if (pm == PaymentMethod.MOBILE_MONEY) {
+            // Numéro payeur optionnel à la création (repli sur le téléphone Firebase à
+            // l'initiation) ; validé par pawaPay (predict-provider) au moment de payer.
+            String payer = request.phoneNumber();
+            bid.setMobileMoneyPhone(payer == null || payer.isBlank() ? null : com.yadony.api.common.Msisdn.normalize(payer));
+            bid.setMobileMoneyCountryCode(request.countryCode());
+        }
         bid.setStatus(BidStatus.PENDING);
         bid.setCurrency(announcement.getCurrency());
 
@@ -431,6 +446,23 @@ public class BidService {
                     "mobile-money-bid-payment-retired", "Mobile Money Bid Payment Retired",
                     "Le paiement mobile money direct par l'expéditeur n'est plus disponible "
                     + "pour les nouveaux envois. Choisissez Cash ou Carte bancaire.");
+        }
+
+        if (pm == PaymentMethod.MOBILE_MONEY) {
+            if (!pawapayEnabled) {
+                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "mobile-money-disabled", "Mobile Money Disabled",
+                        "Le mobile money n'est pas encore disponible.");
+            }
+            // Le rail n'existe que si le voyageur a activé son compte de versement : sans
+            // lui, l'argent encaissé n'aurait aucune destination à la livraison.
+            boolean travelerHasMobileMoney = userRepository.findById(announcement.getTravelerId())
+                    .map(UserEntity::hasActiveMobileMoney).orElse(false);
+            if (!travelerHasMobileMoney) {
+                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "mobile-money-not-available", "Mobile Money Not Available",
+                        "Ce voyageur n'accepte pas le paiement mobile money.");
+            }
         }
 
         // Zone CFA = pas un pays Stripe Connect (country_unsupported empirique) : le
@@ -683,6 +715,15 @@ public class BidService {
     }
 
     private BidResponse doAcceptBid(BidEntity bid, AnnouncementEntity announcement, UserEntity traveler) {
+        if (bid.getPaymentMethod() == PaymentMethod.MOBILE_MONEY) {
+            // Le parcours mobile money accepte par POST /bids/{id}/mobile-money/accept, qui
+            // crée le paiement en attente dans la même transaction (comme accept-with-commission
+            // pour le cash). Ce chemin exigerait PAYMENT_ESCROWED, que ce bid n'atteint jamais.
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "mobile-money-accept-endpoint", "Mobile Money Accept Endpoint",
+                    "Acceptez ce colis via le parcours mobile money.");
+        }
+
         requireBidStatus(bid, BidStatus.PAYMENT_ESCROWED);
 
         if (announcement.getStatus() == AnnouncementStatus.IN_PROGRESS
@@ -876,13 +917,17 @@ public class BidService {
         return toResponse(bid, senderUser);
     }
 
-    /** Si le bid était déjà accepté ou remis, on rend le kilo au voyageur
-     *  (sauf pour KG_FREE où la capacité n'est jamais décrémentée).
+    /** Si le bid était déjà accepté ou remis, ou en attente de paiement mobile money, dont la
+     *  capacité est réservée dès l'acceptation, on rend le kilo au voyageur (sauf pour KG_FREE
+     *  où la capacité n'est jamais décrémentée).
      *  Volontairement muet sur IN_TRANSIT/ARRIVED : ses deux appelants
      *  ({@link #cancelBid} via CancellationGuard, {@link #cancelBidForDeletedSender}
      *  via CANCELLABLE_BID_STATUSES) refusent déjà ces statuts en amont. */
     private void restoreCapacityIfNeeded(BidEntity bid, AnnouncementEntity announcement) {
-        if (bid.getStatus() != BidStatus.ACCEPTED && bid.getStatus() != BidStatus.HANDED_OVER) {
+        boolean awaitingMobileMoney = bid.getStatus() == BidStatus.AWAITING_PAYMENT
+                && bid.getPaymentMethod() == PaymentMethod.MOBILE_MONEY;
+        if (bid.getStatus() != BidStatus.ACCEPTED && bid.getStatus() != BidStatus.HANDED_OVER
+                && !awaitingMobileMoney) {
             return;
         }
         if (announcement == null) {
@@ -1082,7 +1127,7 @@ public class BidService {
     private static final String TRACKING_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
     private static final java.security.SecureRandom SECURE_RNG = new java.security.SecureRandom();
 
-    static String generateTrackingNumber() {
+    public static String generateTrackingNumber() {
         StringBuilder sb = new StringBuilder("DON-");
         for (int i = 0; i < 8; i++) {
             sb.append(TRACKING_CHARS.charAt(SECURE_RNG.nextInt(TRACKING_CHARS.length())));

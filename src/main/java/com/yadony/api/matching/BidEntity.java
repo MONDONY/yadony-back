@@ -203,7 +203,9 @@ public class BidEntity extends BaseEntity {
     @Column(name = "payment_method", nullable = false, length = 20)
     private PaymentMethod paymentMethod = PaymentMethod.STRIPE;
 
-    @Column(name = "mobile_money_phone", length = 30)
+    /** MSISDN du payeur (chiffres seuls), chiffré ; V244 élargit la colonne et vide les valeurs legacy. */
+    @jakarta.persistence.Convert(converter = com.yadony.api.common.EncryptedStringConverter.class)
+    @Column(name = "mobile_money_phone", length = 255)
     private String mobileMoneyPhone;
 
     @Column(name = "mobile_money_country_code", length = 5)

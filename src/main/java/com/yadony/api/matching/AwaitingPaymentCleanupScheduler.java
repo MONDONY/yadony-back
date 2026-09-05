@@ -44,6 +44,12 @@ public class AwaitingPaymentCleanupScheduler {
             .findByStatusAndAwaitingPaymentExpiresAtBefore(BidStatus.AWAITING_PAYMENT, now);
 
         for (BidEntity bid : expired) {
+            // Un bid mobile money AWAITING_PAYMENT n'a pas de PaymentIntent : son expiration
+            // (annulation + restitution de capacité + notifications) est portée par
+            // MobileMoneyPaymentDeadlineScheduler.
+            if (bid.getPaymentMethod() == com.yadony.api.payments.cash.PaymentMethod.MOBILE_MONEY) {
+                continue;
+            }
             String piId = bid.getPaymentIntentId();
             try {
                 paymentService.cancelPaymentIntent(piId);

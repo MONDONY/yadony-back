@@ -1048,6 +1048,148 @@ class BidServiceTest {
         }
     }
 
+    @Nested
+    @DisplayName("createBid — MOBILE_MONEY")
+    class CreateBidMobileMoney {
+
+        @BeforeEach
+        void setupHttpRequest() {
+            lenient().when(httpRequest.getHeader("X-Forwarded-For")).thenReturn(null);
+            lenient().when(httpRequest.getRemoteAddr()).thenReturn("127.0.0.1");
+        }
+
+        private AnnouncementEntity xofAnnouncement(UserEntity traveler) {
+            AnnouncementEntity a = buildAnnouncement();
+            a.setTravelerId(traveler.getId());
+            a.setAcceptedPaymentMethods(
+                    java.util.EnumSet.of(com.yadony.api.payments.cash.PaymentMethod.CASH));
+            a.setCurrency("XOF");
+            return a;
+        }
+
+        private BidEntity pendingBid(AnnouncementEntity a) {
+            BidEntity b = buildBid();
+            b.setAnnouncementId(a.getId());
+            b.setStatus(BidStatus.PENDING);
+            return b;
+        }
+
+        @Test
+        @DisplayName("voyageur avec compte actif, rail activé → bid PENDING MOBILE_MONEY avec numéro payeur normalisé")
+        void createsPendingMobileMoneyBid() {
+            org.springframework.test.util.ReflectionTestUtils.setField(bidService, "pawapayEnabled", true);
+            UserEntity sender = buildSender();
+            sender.setKycStatus(com.yadony.api.auth.KycStatus.VERIFIED);
+            UserEntity traveler = buildTraveler();
+            traveler.setMobileMoneyStatus(com.yadony.api.auth.MobileMoneyPayoutStatus.ACTIVE);
+            AnnouncementEntity a = xofAnnouncement(traveler);
+            when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
+            when(announcementRepository.findById(a.getId())).thenReturn(Optional.of(a));
+            when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+            when(bidRepository.existsBySenderIdAndAnnouncementIdAndStatusIn(any(), any(), any()))
+                    .thenReturn(false);
+            when(bidRepository.save(any(BidEntity.class))).thenAnswer(inv -> {
+                BidEntity b = inv.getArgument(0);
+                setId(b, BID_ID);
+                return b;
+            });
+
+            BidRequest req = new BidRequest(new BigDecimal("5"), "Documents", "documents", "Awa Ndiaye",
+                    "+221770000000", true, "MOBILE_MONEY", "+221 77 123 45 67", "SN", null, null, null);
+            bidService.createBid(a.getId(), SENDER_UID, req, httpRequest);
+
+            ArgumentCaptor<BidEntity> saved = ArgumentCaptor.forClass(BidEntity.class);
+            verify(bidRepository, atLeastOnce()).save(saved.capture());
+            BidEntity bid = saved.getValue();
+            assertThat(bid.getPaymentMethod()).isEqualTo(com.yadony.api.payments.cash.PaymentMethod.MOBILE_MONEY);
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.PENDING);
+            assertThat(bid.getMobileMoneyPhone()).isEqualTo("221771234567");
+            assertThat(bid.getMobileMoneyCountryCode()).isEqualTo("SN");
+        }
+
+        @Test
+        @DisplayName("voyageur sans compte mobile money → 422 mobile-money-not-available")
+        void travelerWithoutAccount_is422() {
+            org.springframework.test.util.ReflectionTestUtils.setField(bidService, "pawapayEnabled", true);
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity a = xofAnnouncement(traveler);
+            when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+
+            assertThatThrownBy(() -> bidService.resolvePaymentMethodFor(a, "MOBILE_MONEY"))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .extracting(e -> ((YadonyBusinessException) e).getErrorCode())
+                    .isEqualTo("mobile-money-not-available");
+        }
+
+        @Test
+        @DisplayName("rail désactivé → 422 mobile-money-disabled avant tout autre contrôle")
+        void disabled_is422() {
+            org.springframework.test.util.ReflectionTestUtils.setField(bidService, "pawapayEnabled", false);
+            AnnouncementEntity a = xofAnnouncement(buildTraveler());
+
+            assertThatThrownBy(() -> bidService.resolvePaymentMethodFor(a, "MOBILE_MONEY"))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .extracting(e -> ((YadonyBusinessException) e).getErrorCode())
+                    .isEqualTo("mobile-money-disabled");
+        }
+
+        @Test
+        @DisplayName("annonce EUR → 422 payment-method-unavailable-for-currency")
+        void eurAnnouncement_is422() {
+            org.springframework.test.util.ReflectionTestUtils.setField(bidService, "pawapayEnabled", true);
+            UserEntity traveler = buildTraveler();
+            traveler.setMobileMoneyStatus(com.yadony.api.auth.MobileMoneyPayoutStatus.ACTIVE);
+            AnnouncementEntity a = buildAnnouncement();
+            a.setTravelerId(traveler.getId());
+            a.setAcceptedPaymentMethods(
+                    java.util.EnumSet.of(com.yadony.api.payments.cash.PaymentMethod.CASH));
+            a.setCurrency("EUR");
+            when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+
+            assertThatThrownBy(() -> bidService.resolvePaymentMethodFor(a, "MOBILE_MONEY"))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .extracting(e -> ((YadonyBusinessException) e).getErrorCode())
+                    .isEqualTo("payment-method-unavailable-for-currency");
+        }
+
+        @Test
+        @DisplayName("acceptBid générique sur un bid MOBILE_MONEY → 422 mobile-money-accept-endpoint")
+        void genericAccept_isRefused() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity a = xofAnnouncement(traveler);
+            BidEntity bid = pendingBid(a);
+            bid.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.MOBILE_MONEY);
+            when(bidRepository.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
+            when(announcementRepository.findByIdForUpdate(a.getId())).thenReturn(Optional.of(a));
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+
+            assertThatThrownBy(() -> bidService.acceptBid(bid.getId(), TRAVELER_UID))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .extracting(e -> ((YadonyBusinessException) e).getErrorCode())
+                    .isEqualTo("mobile-money-accept-endpoint");
+        }
+
+        @Test
+        @DisplayName("cancelBid d'un bid AWAITING_PAYMENT mobile money rend la capacité réservée")
+        void cancel_restoresReservedCapacity() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity a = xofAnnouncement(traveler);
+            a.setAvailableKg(new BigDecimal("15"));
+            BidEntity bid = pendingBid(a);
+            bid.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.MOBILE_MONEY);
+            bid.setStatus(BidStatus.AWAITING_PAYMENT);
+            bid.setWeightKg(new BigDecimal("5"));
+            when(bidRepository.findById(bid.getId())).thenReturn(Optional.of(bid));
+            when(announcementRepository.findById(a.getId())).thenReturn(Optional.of(a));
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+
+            bidService.cancelBid(bid.getId(), TRAVELER_UID);
+
+            assertThat(a.getAvailableKg()).isEqualByComparingTo("20");
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.CANCELLED);
+        }
+    }
+
     // ─── acceptBid ─────────────────────────────────────────────────────────────
 
     @Nested
