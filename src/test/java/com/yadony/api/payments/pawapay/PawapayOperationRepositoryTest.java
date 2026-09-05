@@ -10,6 +10,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -19,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 class PawapayOperationRepositoryTest {
 
     @Autowired private PawapayOperationRepository repository;
+    @Autowired private JdbcTemplate jdbc;
 
     private PawapayOperationEntity op(UUID paymentId, PawapayOperationKind kind) {
         return repository.saveAndFlush(new PawapayOperationEntity(UUID.randomUUID(), kind, paymentId, null,
@@ -57,6 +59,85 @@ class PawapayOperationRepositoryTest {
         assertThat(reloaded.getAuthorizationUrl()).as("COALESCE garde l'URL Wave").isEqualTo("https://wave.test/auth");
         assertThat(reloaded.getProviderTransactionId()).isEqualTo("ptx-1");
         assertThat(reloaded.getFinalizedAt()).isNotNull();
+    }
+
+    // Revue ronde 1, point 1 (CRITIQUE) : markSubmittedIfStillCreated est le UPDATE gardé
+    // qui remplace le read-modify-write de markSubmitted. Preuve directe, base réelle
+    // (H2), que la garde WHERE status = CREATED est bien ce qui protège cette paire —
+    // pas @Version, jamais incrémenté par applyTransition (bulk JPQL).
+
+    @Test
+    void markSubmittedIfStillCreated_onlyFromCreated() {
+        PawapayOperationEntity o = op(UUID.randomUUID(), PawapayOperationKind.DEPOSIT);
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        // Un callback (applyTransition, bulk JPQL) fait sortir la ligne de CREATED sans
+        // toucher version : c'est précisément la condition du désastre décrit en revue.
+        int movedByCallback = repository.applyTransition(o.getId(), PawapayOperationStatus.COMPLETED, null, null,
+                "ptx", null, "{}", now, null, now, now);
+        assertThat(movedByCallback).isEqualTo(1);
+
+        int result = repository.markSubmittedIfStillCreated(o.getId(), PawapayOperationStatus.ACCEPTED, now,
+                null, null, null, now);
+
+        assertThat(result).as("la ligne n'est plus CREATED, markSubmitted ne doit rien écraser").isZero();
+        assertThat(repository.findById(o.getId()).orElseThrow().getStatus())
+                .as("le statut posé par le callback doit survivre").isEqualTo(PawapayOperationStatus.COMPLETED);
+    }
+
+    @Test
+    void markSubmittedIfStillCreated_fromCreated_succeeds_andSetsFinalizedAtOnlyWhenRejected() {
+        PawapayOperationEntity accepted = op(UUID.randomUUID(), PawapayOperationKind.PAYOUT);
+        PawapayOperationEntity rejected = op(UUID.randomUUID(), PawapayOperationKind.PAYOUT);
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+
+        int acceptedResult = repository.markSubmittedIfStillCreated(accepted.getId(), PawapayOperationStatus.ACCEPTED,
+                now, null, null, null, now);
+        int rejectedResult = repository.markSubmittedIfStillCreated(rejected.getId(), PawapayOperationStatus.SUBMIT_REJECTED,
+                now, "PROVIDER_TEMPORARILY_UNAVAILABLE", "down", now, now);
+
+        assertThat(acceptedResult).isEqualTo(1);
+        assertThat(rejectedResult).isEqualTo(1);
+        PawapayOperationEntity reloadedAccepted = repository.findById(accepted.getId()).orElseThrow();
+        assertThat(reloadedAccepted.getStatus()).isEqualTo(PawapayOperationStatus.ACCEPTED);
+        assertThat(reloadedAccepted.getSubmittedAt()).isNotNull();
+        assertThat(reloadedAccepted.getFinalizedAt()).isNull();
+        PawapayOperationEntity reloadedRejected = repository.findById(rejected.getId()).orElseThrow();
+        assertThat(reloadedRejected.getStatus()).isEqualTo(PawapayOperationStatus.SUBMIT_REJECTED);
+        assertThat(reloadedRejected.getFailureCode()).isEqualTo("PROVIDER_TEMPORARILY_UNAVAILABLE");
+        assertThat(reloadedRejected.getFinalizedAt()).isNotNull();
+    }
+
+    // Revue ronde 1, point 5 : raw_callback transporte accountDetails.phoneNumber en
+    // clair (callback tâche 9, réponse de statut tâche 10) — sans chiffrement, le
+    // chiffrement de msisdn juste à côté serait décoratif.
+
+    @Test
+    void applyTransition_encryptsRawCallback_roundTripsThroughJpa() {
+        PawapayOperationEntity o = op(UUID.randomUUID(), PawapayOperationKind.DEPOSIT);
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        String raw = "{\"status\":\"COMPLETED\",\"payer\":{\"accountDetails\":{\"phoneNumber\":\"221771234567\"}}}";
+
+        repository.applyTransition(o.getId(), PawapayOperationStatus.COMPLETED, null, null, "ptx", null, raw,
+                now, null, now, now);
+
+        assertThat(repository.findById(o.getId()).orElseThrow().getRawCallback()).isEqualTo(raw);
+    }
+
+    @Test
+    void applyTransition_rawCallback_isNotStoredInPlaintext() {
+        PawapayOperationEntity o = op(UUID.randomUUID(), PawapayOperationKind.DEPOSIT);
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        String raw = "{\"status\":\"COMPLETED\",\"payer\":{\"accountDetails\":{\"phoneNumber\":\"221771234567\"}}}";
+
+        repository.applyTransition(o.getId(), PawapayOperationStatus.COMPLETED, null, null, "ptx", null, raw,
+                now, null, now, now);
+
+        String storedColumn = jdbc.queryForObject(
+                "SELECT raw_callback FROM pawapay_operations WHERE id = ?", String.class, o.getId());
+        assertThat(storedColumn).as("colonne chiffrée : ne doit pas contenir le JSON en clair")
+                .isNotEqualTo(raw)
+                .doesNotContain("221771234567")
+                .doesNotContain("phoneNumber");
     }
 
     @Test

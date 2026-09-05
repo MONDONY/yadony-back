@@ -88,7 +88,13 @@ class PawapaySubmissionServiceTest {
     }
 
     @Test
-    void networkFailure_leavesOperationCreated_andAnswers502() {
+    void networkFailure_translatesTo502_andNeverMarksSubmitted() {
+        // Revue ronde 1, point 3 : PawapayOperationService est mocké ici, donc rien ne
+        // "reste CREATED" au sens base de données dans ce test — seuls le code d'erreur
+        // et l'absence d'appel à markSubmitted sont vérifiables à ce niveau. La
+        // persistance réelle de create() malgré un rollback appelant (le REQUIRES_NEW
+        // qui rend cette phrase vraie en production) est prouvée séparément par
+        // PawapayOperationServiceConcurrencyIT#create_commitsInItsOwnTransaction_evenWhenCallerRollsBack.
         UUID paymentId = UUID.randomUUID();
         PawapayOperationEntity op = created(PawapayOperationKind.DEPOSIT, paymentId);
         when(operations.create(any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(op);

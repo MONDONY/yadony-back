@@ -1,9 +1,11 @@
 package com.yadony.api.payments.pawapay;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -62,6 +64,22 @@ class PawapayOperationServiceTest {
     }
 
     @Test
+    void create_rethrowsOtherIntegrityViolations_notTranslatedTo409() {
+        // Revue ronde 1, point 2 : un catch trop large traduirait AUSSI une FK/NOT NULL/CHECK
+        // sans rapport avec l'index unique en faux 409 "operation en cours", cause perdue.
+        UUID paymentId = UUID.randomUUID();
+        when(repository.existsByPaymentIdAndKindAndStatusIn(any(), any(), any())).thenReturn(false);
+        when(repository.saveAndFlush(any())).thenThrow(new DataIntegrityViolationException(
+                "insert or update on table \"pawapay_operations\" violates foreign key constraint "
+                        + "\"pawapay_operations_payment_id_fkey\""));
+
+        assertThatThrownBy(() -> service.create(PawapayOperationKind.DEPOSIT, paymentId, null,
+                new BigDecimal("15000"), "XOF", "ORANGE_SEN", "SN", "221771234567"))
+                .isInstanceOf(DataIntegrityViolationException.class)
+                .isNotInstanceOf(YadonyBusinessException.class);
+    }
+
+    @Test
     void create_persistsCreatedWithAssignedId() {
         when(repository.existsByPaymentIdAndKindAndStatusIn(any(), any(), any())).thenReturn(false);
         when(repository.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -74,28 +92,59 @@ class PawapayOperationServiceTest {
         assertThat(created.getMsisdn()).isEqualTo("221771234567");
     }
 
+    // Revue ronde 1, point 1 (CRITIQUE) : markSubmitted ne fait plus de read-modify-write
+    // d'entite (sans protection reelle face a un applyTransition concurrent, bulk JPQL qui
+    // n'incremente jamais @Version) mais un UPDATE garde par WHERE status = CREATED. Les
+    // 4 tests suivants verifient les arguments passes a ce garde-fou, plus son cas de defaite.
+
     @Test
-    void markSubmitted_accepted_rejected_duplicate() {
-        PawapayOperationEntity accepted = op(UUID.randomUUID(), PawapayOperationKind.DEPOSIT);
-        PawapayOperationEntity rejected = op(UUID.randomUUID(), PawapayOperationKind.DEPOSIT);
-        PawapayOperationEntity dup = op(UUID.randomUUID(), PawapayOperationKind.DEPOSIT);
-        when(repository.findById(accepted.getId())).thenReturn(Optional.of(accepted));
-        when(repository.findById(rejected.getId())).thenReturn(Optional.of(rejected));
-        when(repository.findById(dup.getId())).thenReturn(Optional.of(dup));
+    void markSubmitted_accepted_callsGuardedUpdate_withAcceptedStatus_noFailureDetails() {
+        UUID id = UUID.randomUUID();
+        when(repository.markSubmittedIfStillCreated(eq(id), eq(PawapayOperationStatus.ACCEPTED), any(),
+                isNull(), isNull(), isNull(), any())).thenReturn(1);
 
-        service.markSubmitted(accepted.getId(), PawapayInitiationResult.accepted());
-        service.markSubmitted(rejected.getId(), new PawapayInitiationResult(
+        service.markSubmitted(id, PawapayInitiationResult.accepted());
+
+        verify(repository).markSubmittedIfStillCreated(eq(id), eq(PawapayOperationStatus.ACCEPTED), any(),
+                isNull(), isNull(), isNull(), any());
+    }
+
+    @Test
+    void markSubmitted_rejected_callsGuardedUpdate_withFailureDetailsAndFinalizedAt() {
+        UUID id = UUID.randomUUID();
+        when(repository.markSubmittedIfStillCreated(eq(id), eq(PawapayOperationStatus.SUBMIT_REJECTED), any(),
+                eq("PROVIDER_TEMPORARILY_UNAVAILABLE"), eq("down"), any(), any())).thenReturn(1);
+
+        service.markSubmitted(id, new PawapayInitiationResult(
                 PawapayInitiationResult.Outcome.REJECTED, "PROVIDER_TEMPORARILY_UNAVAILABLE", "down"));
-        service.markSubmitted(dup.getId(), new PawapayInitiationResult(
-                PawapayInitiationResult.Outcome.DUPLICATE_IGNORED, null, null));
 
-        assertThat(accepted.getStatus()).isEqualTo(PawapayOperationStatus.ACCEPTED);
-        assertThat(accepted.getSubmittedAt()).isNotNull();
-        assertThat(rejected.getStatus()).isEqualTo(PawapayOperationStatus.SUBMIT_REJECTED);
-        assertThat(rejected.getFailureCode()).isEqualTo("PROVIDER_TEMPORARILY_UNAVAILABLE");
-        assertThat(rejected.getFinalizedAt()).isNotNull();
-        assertThat(dup.getStatus()).as("DUPLICATE_IGNORED : le poller tranche").isEqualTo(PawapayOperationStatus.CREATED);
-        assertThat(dup.getSubmittedAt()).isNotNull();
+        verify(repository).markSubmittedIfStillCreated(eq(id), eq(PawapayOperationStatus.SUBMIT_REJECTED), any(),
+                eq("PROVIDER_TEMPORARILY_UNAVAILABLE"), eq("down"), any(), any());
+    }
+
+    @Test
+    void markSubmitted_duplicateIgnored_callsGuardedUpdate_statusUnchangedAtCreated() {
+        UUID id = UUID.randomUUID();
+        when(repository.markSubmittedIfStillCreated(eq(id), eq(PawapayOperationStatus.CREATED), any(),
+                isNull(), isNull(), isNull(), any())).thenReturn(1);
+
+        service.markSubmitted(id, new PawapayInitiationResult(PawapayInitiationResult.Outcome.DUPLICATE_IGNORED, null, null));
+
+        verify(repository).markSubmittedIfStillCreated(eq(id), eq(PawapayOperationStatus.CREATED), any(),
+                isNull(), isNull(), isNull(), any());
+    }
+
+    @Test
+    void markSubmitted_whenGuardLoses_doesNotThrow_justLogsAndReturns() {
+        // La ligne n'est deja plus CREATED (callback deja passe devant) : 0 ligne touchee,
+        // markSubmitted ne doit ni lever, ni tenter un autre acces au depot.
+        UUID id = UUID.randomUUID();
+        when(repository.markSubmittedIfStillCreated(any(), any(), any(), any(), any(), any(), any())).thenReturn(0);
+
+        assertThatCode(() -> service.markSubmitted(id, PawapayInitiationResult.accepted()))
+                .doesNotThrowAnyException();
+        verify(repository, never()).findById(any());
+        verify(repository, never()).save(any());
     }
 
     @Test
@@ -117,18 +166,36 @@ class PawapayOperationServiceTest {
     }
 
     @Test
-    void apply_failed_publishesFailedEvent_withCode() {
-        PawapayOperationEntity o = op(UUID.randomUUID(), PawapayOperationKind.PAYOUT);
-        when(repository.findById(o.getId())).thenReturn(Optional.of(o));
+    void apply_failed_publishesEvent_withValuesReloadedFromDb_notRawParams() {
+        // Revue ronde 1, point 6 : applyTransition applique COALESCE(:failureCode,
+        // o.failureCode) — un null ne rase rien. Si cet appel n'apporte pas de nouveau
+        // code (poller sans failureReason cette fois), la base garde un code anterieur
+        // different du parametre recu ici ; l'evenement DOIT refleter la base, pas le
+        // parametre. On simule ce COALESCE avec un deuxieme findById renvoyant un etat
+        // "apres transition" different du premier ("avant").
+        UUID id = UUID.randomUUID();
+        UUID paymentId = UUID.randomUUID();
+        PawapayOperationEntity beforeTransition = new PawapayOperationEntity(id, PawapayOperationKind.PAYOUT, paymentId,
+                null, new BigDecimal("15000"), "XOF", "ORANGE_SEN", "SN", "221771234567");
+        PawapayOperationEntity afterTransition = new PawapayOperationEntity(id, PawapayOperationKind.PAYOUT, paymentId,
+                null, new BigDecimal("15000"), "XOF", "ORANGE_SEN", "SN", "221771234567");
+        afterTransition.setFailureCode("INSUFFICIENT_BALANCE"); // conserve par COALESCE, pose par un etat anterieur
+        afterTransition.setFailureMessage("no funds (code pose plus tot)");
+        when(repository.findById(id)).thenReturn(Optional.of(beforeTransition)).thenReturn(Optional.of(afterTransition));
         when(repository.applyTransition(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
 
-        service.apply(o.getId(), PawapayOperationStatus.FAILED, "INSUFFICIENT_BALANCE", "no funds", null, null, "{}",
+        // Cet appel-ci n'apporte aucun failureCode/failureMessage (poller sans raison cette fois).
+        service.apply(id, PawapayOperationStatus.FAILED, null, null, null, null, "{}",
                 PawapayOperationService.Source.POLL);
 
         ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
         verify(events).publishEvent(captor.capture());
         assertThat(captor.getValue()).isInstanceOf(PawapayOperationFailedEvent.class)
-                .extracting(e -> ((PawapayOperationFailedEvent) e).failureCode()).isEqualTo("INSUFFICIENT_BALANCE");
+                .satisfies(e -> {
+                    PawapayOperationFailedEvent failed = (PawapayOperationFailedEvent) e;
+                    assertThat(failed.failureCode()).as("code de la base, pas le parametre null recu").isEqualTo("INSUFFICIENT_BALANCE");
+                    assertThat(failed.failureMessage()).isEqualTo("no funds (code pose plus tot)");
+                });
     }
 
     @Test

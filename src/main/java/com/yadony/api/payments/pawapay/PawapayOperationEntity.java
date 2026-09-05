@@ -32,6 +32,16 @@ public class PawapayOperationEntity {
     @Column(name = "id", nullable = false, updatable = false)
     private UUID id;
 
+    /**
+     * Verrou optimiste JPA — ne protège QUE les écritures faites via une entité
+     * gérée (save/persist classique). {@code applyTransition} et
+     * {@code markSubmittedIfStillCreated} du repository sont des bulk UPDATE
+     * JPQL : Hibernate ne les fait jamais passer par le cycle de vie de
+     * l'entité et n'incrémente donc jamais cette colonne pour eux. Sur ces
+     * deux méthodes, la protection contre l'écrasement concurrent est portée
+     * par leur clause {@code WHERE} sur {@code status} (voir le commentaire de
+     * chacune dans {@code PawapayOperationRepository}), pas par cette version.
+     */
     @Version
     @Column(name = "version")
     private Long version;
@@ -83,6 +93,11 @@ public class PawapayOperationEntity {
     @Column(name = "failure_message", columnDefinition = "TEXT")
     private String failureMessage;
 
+    // Chiffré : ce JSON transporte accountDetails.phoneNumber en clair côté
+    // pawaPay (corps du callback tâche 9, réponse de statut tâche 10) — sans
+    // ce @Convert, le chiffrement de `msisdn` juste au-dessus serait
+    // décoratif puisque le même numéro ressortirait ici en clair.
+    @Convert(converter = EncryptedStringConverter.class)
     @Column(name = "raw_callback", columnDefinition = "TEXT")
     private String rawCallback;
 

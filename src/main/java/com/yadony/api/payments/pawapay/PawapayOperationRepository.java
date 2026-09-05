@@ -72,4 +72,43 @@ public interface PawapayOperationRepository extends JpaRepository<PawapayOperati
                         @Param("polledAt") LocalDateTime polledAt,
                         @Param("finalizedAt") LocalDateTime finalizedAt,
                         @Param("now") LocalDateTime now);
+
+    /**
+     * Marque la soumission (ACCEPTED / SUBMIT_REJECTED, ou statut inchangé
+     * pour un DUPLICATE_IGNORED qui repasse {@code status = CREATED}) — mais
+     * seulement si l'opération est encore CREATED au moment de l'écriture.
+     * <p>
+     * Sur cette paire précise (ce UPDATE vs {@link #applyTransition}), le
+     * verrou optimiste {@code @Version} de l'entité ne protège rien :
+     * {@code applyTransition} est un bulk UPDATE JPQL qui ne l'incrémente
+     * jamais, donc un {@code save()} d'entité classique passerait toujours son
+     * contrôle de version même après qu'un callback ait fait avancer la ligne.
+     * Sans cette clause {@code WHERE ... = CREATED}, un callback pawaPay plus
+     * rapide que la réponse HTTP de notre propre appel d'initiation serait
+     * silencieusement écrasé par ce {@code markSubmitted} tardif — y compris
+     * dans le sens inverse : un SUBMIT_REJECTED (final) poserait
+     * {@code finalizedAt} sur une opération en réalité déjà COMPLETED chez
+     * pawaPay, et plus aucun poller ne pourrait la corriger.
+     * @return 1 si la ligne a été marquée, 0 si elle n'était déjà plus CREATED
+     *         (callback ou poller déjà passés devant)
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+        UPDATE PawapayOperationEntity o
+           SET o.status = :status,
+               o.submittedAt = :submittedAt,
+               o.failureCode = COALESCE(:failureCode, o.failureCode),
+               o.failureMessage = COALESCE(:failureMessage, o.failureMessage),
+               o.finalizedAt = COALESCE(:finalizedAt, o.finalizedAt),
+               o.updatedAt = :now
+         WHERE o.id = :id
+           AND o.status = com.yadony.api.payments.pawapay.PawapayOperationStatus.CREATED
+        """)
+    int markSubmittedIfStillCreated(@Param("id") UUID id,
+                                    @Param("status") PawapayOperationStatus status,
+                                    @Param("submittedAt") LocalDateTime submittedAt,
+                                    @Param("failureCode") String failureCode,
+                                    @Param("failureMessage") String failureMessage,
+                                    @Param("finalizedAt") LocalDateTime finalizedAt,
+                                    @Param("now") LocalDateTime now);
 }
