@@ -531,7 +531,10 @@ public class MobileMoneyBidPaymentService {
      */
     private void refundAfterCancel(PaymentEntity payment, UUID depositOperationId, String auditAction) {
         PawapayOperationEntity deposit = operations.get(depositOperationId);
-        PawapayOperationEntity refund = submission.submitRefund(payment.getId(), deposit, payment.getAmount());
+        // Ronde 2 (contre-revue), point 2 : montant soumis = celui du DEPOSIT, jamais
+        // payment.getAmount() — même mouvement d'argent, même raison que RefundProcessor
+        // (Ronde 1, point 7) : égaux aujourd'hui mais sans garantie contractuelle.
+        PawapayOperationEntity refund = submission.submitRefund(payment.getId(), deposit, deposit.getAmount());
         // Ronde 1, point 3 (CRITIQUE) : cette méthode ne testait jamais SUBMIT_REJECTED — un
         // refus pawaPay était audité/alerté puis la méthode retournait normalement (donc
         // commitait), alors que RefundProcessor#refundEscrowedMobileMoney lève dans le même cas

@@ -10,6 +10,9 @@ Soumission initiale marquée DONE_WITH_CONCERNS — réserve principale : le poi
 coordinateur : analyse validée après vérification indépendante, consigne annulée. Douze
 corrections demandées en Ronde 1 (voir section dédiée) — toutes traitées, testées, vertes.
 
+Contre-revue (Ronde 2) : 10/12 points de la Ronde 1 fermés, dont les deux critiques. Trois points
+restants (aucun ne touchant l'argent), traités en Ronde 2 — voir section dédiée.
+
 ## Fichiers créés
 
 - `src/main/java/com/yadony/api/payments/mobilemoney/MobileMoneyRefundOutcomeListener.java` — écoute `PawapayOperationCompletedEvent`/`PawapayOperationFailedEvent` pour `kind == REFUND` : audit sur `COMPLETED`, alerte admin (`PAWAPAY_REFUND_FAILED`) + audit sur `FAILED`.
@@ -536,3 +539,84 @@ complète lancée ; jamais deux commandes Maven en parallèle.
 - `src/test/java/com/yadony/api/payments/PaymentRepositoryMobileMoneyTest.java` — point 1 (Javadoc enrichi, reproduction empirique documentée)
 - `src/test/java/com/yadony/api/payments/mobilemoney/MobileMoneyBidPaymentServiceEscrowTest.java` — points 3, 4
 - `src/test/java/com/yadony/api/payments/mobilemoney/MobileMoneyRefundOutcomeListenerTest.java` — point 11
+
+---
+
+## Ronde 2 (contre-revue)
+
+10/12 points fermés, dont les deux critiques et la garde `SUBMIT_REJECTED`. Trois points
+restants, traités ci-dessous.
+
+### Point 1 (CRITIQUE) — la déduplication était du code mort, annulée par le rollback
+
+`escalate()` faisait `alertRepository.save(alert)` dans la transaction ambiante de
+`processRefund` (`REQUIRES_NEW`) — et les deux appelants (`NO_DEPOSIT`, `REJECTED`) lèvent
+IMMÉDIATEMENT après l'avoir appelée. Le `throw` annule donc systématiquement cette transaction,
+donc la ligne de dédup, à CHAQUE appel — `findByTypeAndResolved` retrouve toujours une liste vide
+au passage suivant, la dédup ajoutée en Ronde 1 ne servait jamais.
+
+**Rouge constaté avant correction**, test ajouté d'abord (`escrow_rejectedRefund_alertDedupLine_survivesTheRollback_viaIndependentTransaction`),
+capturant la `TransactionDefinition` passée à `transactionManager.getTransaction(...)` :
+
+```
+Wanted but not invoked:
+transactionManager.getTransaction(
+    <Capturing argument: TransactionDefinition>
+);
+Actually, there were zero interactions with this mock.
+```
+
+Confirme exactement le diagnostic : `escalate()` ne touchait jamais `transactionManager` — aucune
+transaction indépendante n'existait pour cette ligne.
+
+**Correction** : le corps entier d'`escalate()` (recherche de dédup, création, sauvegarde,
+`raise`) est désormais exécuté dans `independentAuditTransaction.executeWithoutResult(...)` —
+elle commite donc indépendamment, AVANT que l'appelant n'atteigne son `throw`. Vert après
+correction (13/13 sur `RefundProcessorMobileMoneyTest`, dont ce nouveau test).
+
+### Point 2 (Mineur) — dernière divergence de montant fermée
+
+`MobileMoneyBidPaymentService.refundAfterCancel` soumettait `payment.getAmount()` ; passé à
+`deposit.getAmount()`, symétrique de la correction déjà faite dans `RefundProcessor` (Ronde 1,
+point 7) et pour la même raison exacte (montants égaux aujourd'hui, sans garantie contractuelle).
+`MobileMoneyBidPaymentServiceEscrowTest` reste vert sans modification (8/8) — les fixtures des
+deux tests concernés stubbent `deposit`/`op` avec le même montant que `payment`.
+
+### Point 3 (Important) — l'ordre et l'isolement de l'audit `RefundProcessor` n'étaient gardés par aucun test
+
+Ajouté `escrow_claimsOnce_auditsBeforeAttach_usingIndependentTransaction`, combinant `InOrder`
+(`auditService.log` avant `paymentRepository.attachRefundId`) et capture de
+`TransactionDefinition` (`PROPAGATION_REQUIRES_NEW`).
+
+**Preuve empirique que le test mord réellement** : le code de production étant déjà correct
+depuis la Ronde 1, ce nouveau test passait dès l'écriture — pour vérifier qu'il constitue une
+vraie garde de non-régression (pas un test tautologique), j'ai temporairement inversé l'ordre
+dans `RefundProcessor.refundEscrowedMobileMoney` (`attachRefundId` avant l'audit) et relancé ce
+seul test :
+
+```
+Verification in order failure
+Wanted but not invoked:
+paymentRepository.attachRefundId(...)
+Wanted anywhere AFTER following interaction:
+auditService.log(...)
+```
+
+Rouge confirmé, ordre restauré immédiatement après (revert), test revérifié vert.
+
+### Tests relancés — totaux
+
+```
+./mvnw test -q -Dtest='RefundProcessorMobileMoneyTest,RefundProcessorTest,MobileMoneyBidPaymentServiceEscrowTest'
+```
+- `RefundProcessorMobileMoneyTest` : **13/13** (11 + 2 ajoutés : dédup survit au rollback, ordre/isolement de l'audit)
+- `RefundProcessorTest` (chemin Stripe) : **8/8**, inchangé
+- `MobileMoneyBidPaymentServiceEscrowTest` : **8/8**, inchangé
+
+**29/29, 0 échec.** Aucune suite Maven complète lancée ; jamais deux commandes en parallèle.
+
+### Fichiers touchés en Ronde 2
+
+- `src/main/java/com/yadony/api/payments/RefundProcessor.java` — point 1
+- `src/main/java/com/yadony/api/payments/mobilemoney/MobileMoneyBidPaymentService.java` — point 2
+- `src/test/java/com/yadony/api/payments/RefundProcessorMobileMoneyTest.java` — points 1, 3

@@ -322,18 +322,32 @@ public class RefundProcessor {
      * visant le même paiement) reposterait une alerte Telegram identique — et
      * {@code PAWAPAY_REFUND_NO_DEPOSIT} demande elle-même « un remboursement manuel », dont la
      * reprise passera par la relance admin de la tâche 18.
+     *
+     * <p><b>Ronde 2 (contre-revue), point 1 (CRITIQUE)</b> : les deux appelants de cette méthode
+     * ({@code refundEscrowedMobileMoney}, branches NO_DEPOSIT et REJECTED) lèvent IMMÉDIATEMENT
+     * après l'avoir appelée — la transaction ambiante de {@code processRefund}
+     * ({@code REQUIRES_NEW}) est donc annulée à chaque fois. Un {@code alertRepository.save(...)}
+     * exécuté dans cette même transaction ambiante ne survivrait JAMAIS : la ligne de dédup
+     * serait créée puis systématiquement effacée par le rollback, rendant
+     * {@code findByTypeAndResolved} éternellement vide et la dédup totalement inerte (contraste
+     * avec {@code MobileMoneyPayoutInitiator#escalateOrphan}, dont le seul appelant RETOURNE
+     * normalement — sa ligne commite donc bien). Tout le corps est exécuté dans
+     * {@link #independentAuditTransaction} : la ligne de dédup commite indépendamment, AVANT que
+     * la méthode n'atteigne le {@code throw} qui suit dans l'appelant.
      */
     private void escalate(String prefix, UUID paymentId, String detail, Map<String, Object> context, String payloadJson) {
         String type = prefix + paymentId;
-        if (!alertRepository.findByTypeAndResolved(type, false).isEmpty()) {
-            return;
-        }
-        AdminAlertEntity alert = new AdminAlertEntity();
-        alert.setType(type);
-        alert.setPayload(payloadJson);
-        alert.setResolved(false);
-        alertRepository.save(alert);
-        adminAlert.raise(type, detail, context);
+        independentAuditTransaction.executeWithoutResult(status -> {
+            if (!alertRepository.findByTypeAndResolved(type, false).isEmpty()) {
+                return;
+            }
+            AdminAlertEntity alert = new AdminAlertEntity();
+            alert.setType(type);
+            alert.setPayload(payloadJson);
+            alert.setResolved(false);
+            alertRepository.save(alert);
+            adminAlert.raise(type, detail, context);
+        });
     }
 
     private Map<String, Object> enrich(Map<String, String> payload, PaymentEntity payment) {

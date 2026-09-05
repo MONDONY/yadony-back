@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -25,10 +26,13 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 
 /**
  * Rail PAWAPAY de {@link RefundProcessor} (tâche 17).
@@ -231,5 +235,70 @@ class RefundProcessorMobileMoneyTest {
     @Test
     void rejectedAlertType_fitsInAdminAlertsTypeColumn() {
         assertThat((RefundProcessor.REJECTED_ALERT_PREFIX + UUID.randomUUID()).length()).isLessThanOrEqualTo(60);
+    }
+
+    /**
+     * Ronde 2 (contre-revue), point 1 (CRITIQUE) : {@code escalate()} sauvegardait
+     * l'{@code AdminAlertEntity} dans la transaction AMBIANTE de {@code processRefund}
+     * ({@code REQUIRES_NEW}) — annulée par le {@code throw} qui suit IMMÉDIATEMENT chez les deux
+     * appelants (NO_DEPOSIT, REJECTED). La ligne de dédup ne survivait donc JAMAIS au rollback :
+     * au prochain appel, {@code findByTypeAndResolved} retrouvait de nouveau une liste vide et
+     * l'alerte repartait — le code de dédup ajouté en Ronde 1 était mort. Un mock ne peut pas
+     * observer un rollback réel ; la seule preuve disponible ici est que {@code escalate()}
+     * ouvre bien SA PROPRE transaction {@code REQUIRES_NEW} (donc commitée indépendamment,
+     * AVANT que la méthode n'atteigne son {@code throw}) — capturée via le
+     * {@code PlatformTransactionManager} mocké, exactement comme
+     * {@code MobileMoneyBidPaymentServiceEscrowTest#confirmEscrow_afterDeadlineCancellation_auditUsesItsOwnIndependentTransaction}
+     * le fait pour {@code refundAfterCancel}.
+     */
+    @Test
+    void escrow_rejectedRefund_alertDedupLine_survivesTheRollback_viaIndependentTransaction() {
+        payment.setStatus(PaymentStatus.ESCROW);
+        PawapayOperationEntity deposit = op(PawapayOperationKind.DEPOSIT, PawapayOperationStatus.COMPLETED);
+        PawapayOperationEntity rejected = op(PawapayOperationKind.REFUND, PawapayOperationStatus.SUBMIT_REJECTED);
+        when(paymentRepository.markRefundedIfEscrow(payment.getId())).thenReturn(1);
+        when(operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.of(deposit));
+        when(operations.findLive(any(), any())).thenReturn(Optional.empty());
+        when(submission.submitRefund(any(), any(), any())).thenReturn(rejected);
+
+        assertThatThrownBy(() -> processor.processRefund(payment.getId(), "X", null, Map.of()))
+                .isInstanceOf(IllegalStateException.class);
+
+        ArgumentCaptor<TransactionDefinition> definition = ArgumentCaptor.forClass(TransactionDefinition.class);
+        verify(transactionManager).getTransaction(definition.capture());
+        assertThat(definition.getValue().getPropagationBehavior())
+                .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    }
+
+    /**
+     * Ronde 2 (contre-revue), point 3 : aucun test ne gardait l'ORDRE (audit AVANT rattachement)
+     * ni l'ISOLATION (transaction {@code REQUIRES_NEW} indépendante) de l'audit du chemin ESCROW
+     * accepté — les onze tests de la Ronde 1 restaient tous verts même en remettant l'audit en
+     * ligne dans la transaction ambiante, ou après {@code attachRefundId}. Motif combiné
+     * d'{@code InOrder} ({@code MobileMoneyBidPaymentServiceExpireTest}) et de capture de
+     * {@code TransactionDefinition}
+     * ({@code MobileMoneyBidPaymentServiceEscrowTest#confirmEscrow_afterDeadlineCancellation_auditUsesItsOwnIndependentTransaction}).
+     */
+    @Test
+    void escrow_claimsOnce_auditsBeforeAttach_usingIndependentTransaction() {
+        payment.setStatus(PaymentStatus.ESCROW);
+        PawapayOperationEntity deposit = op(PawapayOperationKind.DEPOSIT, PawapayOperationStatus.COMPLETED);
+        PawapayOperationEntity refund = op(PawapayOperationKind.REFUND, PawapayOperationStatus.ACCEPTED);
+        when(paymentRepository.markRefundedIfEscrow(payment.getId())).thenReturn(1);
+        when(operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.of(deposit));
+        when(operations.findLive(payment.getId(), PawapayOperationKind.REFUND)).thenReturn(Optional.empty());
+        when(submission.submitRefund(payment.getId(), deposit, deposit.getAmount())).thenReturn(refund);
+
+        boolean done = processor.processRefund(payment.getId(), "PAYMENT_REFUNDED_BID_REJECTED", null, Map.of());
+
+        assertThat(done).isTrue();
+        InOrder order = inOrder(auditService, paymentRepository);
+        order.verify(auditService).log(eq("PAYMENT"), eq(payment.getId()), eq("PAYMENT_REFUNDED_BID_REJECTED"), any(), any());
+        order.verify(paymentRepository).attachRefundId(payment.getId(), refund.getId());
+
+        ArgumentCaptor<TransactionDefinition> definition = ArgumentCaptor.forClass(TransactionDefinition.class);
+        verify(transactionManager).getTransaction(definition.capture());
+        assertThat(definition.getValue().getPropagationBehavior())
+                .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 }
