@@ -74,8 +74,18 @@ public class MobileMoneyPaymentDeadlineScheduler {
     static final int BATCH_SIZE = 200;
 
     static final String SEARCH_CACHE_NAME = "announcements-search";
-    static final String PAYMENT_MISSING_ALERT_PREFIX = "MM_EXPIRE_PAYMENT_MISSING_";
-    static final String DEPOSIT_COMPLETED_ALERT_PREFIX = "MM_EXPIRE_DEPOSIT_COMPLETED_";
+    /**
+     * Ronde 3 : {@code admin_alerts.type} est {@code VARCHAR(60)} (migration V20). Un préfixe
+     * concaténé à un UUID (36 caractères) doit donc rester sous 24 caractères pour laisser une
+     * marge — {@code MM_EXPIRE_PAYMENT_MISSING_} (26) et {@code MM_EXPIRE_DEPOSIT_COMPLETED_}
+     * (28) dépassaient (62 et 64), faisant échouer silencieusement l'INSERT
+     * ({@code DataIntegrityViolationException} avalée par le {@code catch} de la boucle) : même
+     * mode de panne que celui déjà signalé à la tâche 10 pour {@code PAWAPAY_UNKNOWN_OP_} (55,
+     * marge de cinq). Voir {@code MobileMoneyPaymentDeadlineSchedulerTest} pour la garde qui
+     * l'empêche de revenir.
+     */
+    static final String PAYMENT_MISSING_ALERT_PREFIX = "MM_EXP_NO_PAYMENT_";
+    static final String DEPOSIT_COMPLETED_ALERT_PREFIX = "MM_EXP_DEPOSIT_DONE_";
 
     private static final Logger log = LoggerFactory.getLogger(MobileMoneyPaymentDeadlineScheduler.class);
 

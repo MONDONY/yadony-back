@@ -140,7 +140,7 @@ class MobileMoneyPaymentDeadlineSchedulerTest {
         BidEntity a = bid();
         stubDue(a);
         when(service.expire(a.getId())).thenReturn(ExpireOutcome.PAYMENT_MISSING);
-        String expectedType = "MM_EXPIRE_PAYMENT_MISSING_" + a.getId();
+        String expectedType = "MM_EXP_NO_PAYMENT_" + a.getId();
         when(alertRepository.findByTypeAndResolved(expectedType, false)).thenReturn(List.of());
 
         scheduler.expireUnpaidBids();
@@ -154,7 +154,7 @@ class MobileMoneyPaymentDeadlineSchedulerTest {
         BidEntity a = bid();
         stubDue(a);
         when(service.expire(a.getId())).thenReturn(ExpireOutcome.DEPOSIT_COMPLETED_NOT_APPLIED);
-        String expectedType = "MM_EXPIRE_DEPOSIT_COMPLETED_" + a.getId();
+        String expectedType = "MM_EXP_DEPOSIT_DONE_" + a.getId();
         when(alertRepository.findByTypeAndResolved(expectedType, false)).thenReturn(List.of());
 
         scheduler.expireUnpaidBids();
@@ -174,7 +174,7 @@ class MobileMoneyPaymentDeadlineSchedulerTest {
         BidEntity a = bid();
         stubDue(a);
         when(service.expire(a.getId())).thenReturn(ExpireOutcome.PAYMENT_MISSING);
-        String expectedType = "MM_EXPIRE_PAYMENT_MISSING_" + a.getId();
+        String expectedType = "MM_EXP_NO_PAYMENT_" + a.getId();
         // Premier tick : pas encore d'alerte. Second tick : l'alerte créée par le premier tick
         // existe déjà (simule la ligne admin_alerts posée par escalate() au premier passage).
         when(alertRepository.findByTypeAndResolved(expectedType, false))
@@ -194,7 +194,7 @@ class MobileMoneyPaymentDeadlineSchedulerTest {
         BidEntity a = bid();
         stubDue(a);
         when(service.expire(a.getId())).thenReturn(ExpireOutcome.PAYMENT_MISSING);
-        String expectedType = "MM_EXPIRE_PAYMENT_MISSING_" + a.getId();
+        String expectedType = "MM_EXP_NO_PAYMENT_" + a.getId();
         AdminAlertEntity existing = new AdminAlertEntity();
         existing.setType(expectedType);
         when(alertRepository.findByTypeAndResolved(expectedType, false)).thenReturn(List.of(existing));
@@ -216,5 +216,29 @@ class MobileMoneyPaymentDeadlineSchedulerTest {
         verifyNoInteractions(alerts);
         verifyNoInteractions(alertRepository);
         verifyNoInteractions(cacheManager);
+    }
+
+    // ── Ronde 3 : admin_alerts.type est VARCHAR(60) (migration V20) ─────────────────────────
+
+    /**
+     * Ronde 3 — sans cette garde, un préfixe trop long fait dépasser {@code admin_alerts.type}
+     * ({@code VARCHAR(60)}, migration V20) une fois l'UUID du bid concaténé (36 caractères) :
+     * l'INSERT lève une {@code DataIntegrityViolationException}, avalée par le
+     * {@code catch (Exception e)} de {@link MobileMoneyPaymentDeadlineScheduler#expireUnpaidBids},
+     * journalisée en ERROR — l'alerte n'est alors jamais créée ni envoyée, à chaque tick,
+     * indéfiniment. Même mode de panne que celui déjà signalé à la tâche 10 pour
+     * {@code PAWAPAY_UNKNOWN_OP_} (55 caractères, marge de cinq).
+     */
+    @Test
+    void paymentMissingAlertType_fitsInAdminAlertsTypeColumn() {
+        String type = MobileMoneyPaymentDeadlineScheduler.PAYMENT_MISSING_ALERT_PREFIX + UUID.randomUUID();
+        assertThat(type.length()).isLessThanOrEqualTo(60);
+    }
+
+    /** Ronde 3 — même garde que {@link #paymentMissingAlertType_fitsInAdminAlertsTypeColumn}. */
+    @Test
+    void depositCompletedAlertType_fitsInAdminAlertsTypeColumn() {
+        String type = MobileMoneyPaymentDeadlineScheduler.DEPOSIT_COMPLETED_ALERT_PREFIX + UUID.randomUUID();
+        assertThat(type.length()).isLessThanOrEqualTo(60);
     }
 }
