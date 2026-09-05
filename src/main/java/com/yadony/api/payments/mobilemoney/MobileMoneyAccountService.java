@@ -18,10 +18,14 @@ import com.yadony.api.payments.pawapay.dto.PawapayProviderPrediction;
 import java.time.Instant;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.RestClientException;
 
 /**
  * Compte de versement mobile money : snapshot du téléphone Firebase (déjà vérifié par OTP),
@@ -30,6 +34,8 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Service
 public class MobileMoneyAccountService {
+
+    private static final Logger log = LoggerFactory.getLogger(MobileMoneyAccountService.class);
 
     private final UserRepository userRepository;
     private final FirebaseContactService firebaseContact;
@@ -71,20 +77,47 @@ public class MobileMoneyAccountService {
         UserEntity user = userRepository.findByIdForUpdate(userId).orElseThrow(() -> notFound(userId));
         String phone = firebaseContact.getContact(user.getFirebaseUid()).phoneNumber();
         if (phone == null || phone.isBlank()) {
+            log.warn("Activation mobile money refusée pour {} : aucun numéro vérifié chez Firebase", userId);
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-phone-required",
                     "Phone Required", "Ajoutez un numéro de téléphone vérifié à votre compte.");
         }
-        PawapayProviderPrediction prediction = client.predictProvider(phone)
-                .orElseThrow(() -> unsupported("Aucun opérateur mobile money reconnu pour votre numéro."));
-        PawapayProviderConfig conf = client.activeConfiguration().get(prediction.provider());
+        // predictProvider et activeConfiguration sont deux appels HTTP pawaPay : une panne
+        // réseau ou un 5xx y lève RestClientException (jamais catchée avant ce correctif —
+        // remontait en 500 générique tout en laissant la ligne users verrouillée jusqu'au
+        // timeout HTTP). Repris à l'identique de PawapaySubmissionService#submit.
+        Optional<PawapayProviderPrediction> predicted;
+        try {
+            predicted = client.predictProvider(phone);
+        } catch (RestClientException e) {
+            throw providerUnavailable(userId, "predict-provider", e);
+        }
+        PawapayProviderPrediction prediction = predicted.orElse(null);
+        if (prediction == null) {
+            throw unsupported(userId, "Aucun opérateur mobile money reconnu pour votre numéro.");
+        }
+        Map<String, PawapayProviderConfig> configuration;
+        try {
+            configuration = client.activeConfiguration();
+        } catch (RestClientException e) {
+            throw providerUnavailable(userId, "active-configuration", e);
+        }
+        PawapayProviderConfig conf = configuration.get(prediction.provider());
         if (conf == null || !conf.supportsPayout()) {
-            throw unsupported(PawapayProviders.label(prediction.provider()) + " ne permet pas encore le versement.");
+            throw unsupported(userId, PawapayProviders.label(prediction.provider()) + " ne permet pas encore le versement.");
         }
         String active = currencyResolver.resolve(userId);
         if (!conf.currency().equalsIgnoreCase(active)) {
-            throw unsupported("Votre portefeuille est en " + active + ", ce numéro reçoit du " + conf.currency() + ".");
+            throw unsupported(userId, "Votre portefeuille est en " + active + ", ce numéro reçoit du " + conf.currency() + ".");
         }
-        String msisdn = Msisdn.normalize(prediction.phoneNumber() != null ? prediction.phoneNumber() : phone);
+        // Même famille que les deux appels ci-dessus : un numéro prédit hors bornes n'est pas
+        // une erreur de saisie utilisateur (il n'a rien saisi), c'est pawaPay qui répond une
+        // donnée inexploitable — même 502, pas un 422 métier.
+        String msisdn;
+        try {
+            msisdn = Msisdn.normalize(prediction.phoneNumber() != null ? prediction.phoneNumber() : phone);
+        } catch (IllegalArgumentException e) {
+            throw providerUnavailable(userId, "msisdn-normalize", e);
+        }
         user.setMobileMoneyStatus(MobileMoneyPayoutStatus.ACTIVE);
         user.setMobileMoneyMsisdn(msisdn);
         user.setMobileMoneyMsisdnMasked(Msisdn.mask(msisdn));
@@ -121,9 +154,24 @@ public class MobileMoneyAccountService {
                 u.getMobileMoneyCountry(), u.getMobileMoneyCurrency(), u.getMobileMoneyVerifiedAt());
     }
 
-    private static YadonyBusinessException unsupported(String detail) {
+    /** Rejet métier (422) : trace la branche d'échec pour le support, sans jamais loguer le numéro. */
+    private static YadonyBusinessException unsupported(UUID userId, String detail) {
+        log.warn("Activation mobile money refusée pour {} : {}", userId, detail);
         return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-account-unsupported",
                 "Mobile Money Account Unsupported", detail);
+    }
+
+    /**
+     * pawaPay indisponible (panne réseau/5xx) ou réponse inexploitable (numéro prédit hors
+     * bornes) : dans les deux cas ce n'est pas la faute de l'utilisateur, donc 502 et non 422
+     * — motif et message repris à l'identique de {@code PawapaySubmissionService#submit}.
+     * Ne journalise jamais le numéro : uniquement l'étape et le message de l'exception source
+     * (jamais le contenu d'une charge pawaPay).
+     */
+    private static YadonyBusinessException providerUnavailable(UUID userId, String step, Exception cause) {
+        log.error("pawaPay indisponible ({}) lors de l'activation mobile money de {} : {}", step, userId, cause.toString());
+        return new YadonyBusinessException(HttpStatus.BAD_GATEWAY, "mobile-money-provider-unavailable",
+                "Mobile Money Provider Unavailable", "Le service mobile money ne répond pas. Réessayez dans quelques instants.");
     }
 
     private static YadonyBusinessException notFound(UUID userId) {

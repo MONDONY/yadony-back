@@ -2,6 +2,7 @@ package com.yadony.api.payments.mobilemoney;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowableOfType;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
@@ -29,7 +30,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.web.client.RestClientException;
 
 @ExtendWith(MockitoExtension.class)
 class MobileMoneyAccountServiceTest {
@@ -118,6 +121,33 @@ class MobileMoneyAccountServiceTest {
         when(currencyResolver.resolve(userId)).thenReturn("EUR");
         assertThatThrownBy(() -> service.activate(userId)).isInstanceOf(YadonyBusinessException.class)
                 .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-account-unsupported");
+    }
+
+    @Test
+    void activate_pawapayUnavailable_is502() {
+        when(firebaseContact.getContact("uid-1")).thenReturn(new FirebaseContactService.Contact("+221771234567", null));
+        when(client.predictProvider("+221771234567")).thenThrow(new RestClientException("pawaPay indisponible"));
+
+        YadonyBusinessException ex = catchThrowableOfType(() -> service.activate(userId), YadonyBusinessException.class);
+
+        assertThat(ex.getStatus()).isEqualTo(HttpStatus.BAD_GATEWAY);
+        assertThat(ex.getErrorCode()).isEqualTo("mobile-money-provider-unavailable");
+    }
+
+    // Même famille que la panne réseau ci-dessus : pawaPay a répondu, mais avec un numéro
+    // prédit inexploitable (Msisdn.normalize lève IllegalArgumentException). Pas un cas à
+    // part métier (l'utilisateur n'y peut rien) : même 502, pas un 422.
+    @Test
+    void activate_pawapayPredictsUnusablePhoneNumber_is502() {
+        when(firebaseContact.getContact("uid-1")).thenReturn(new FirebaseContactService.Contact("+221771234567", null));
+        when(client.predictProvider("+221771234567")).thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "123")));
+        when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", new PawapayProviderConfig("ORANGE_SEN", "SEN", "XOF", OK, OK, OK)));
+        when(currencyResolver.resolve(userId)).thenReturn("XOF");
+
+        YadonyBusinessException ex = catchThrowableOfType(() -> service.activate(userId), YadonyBusinessException.class);
+
+        assertThat(ex.getStatus()).isEqualTo(HttpStatus.BAD_GATEWAY);
+        assertThat(ex.getErrorCode()).isEqualTo("mobile-money-provider-unavailable");
     }
 
     @Test
