@@ -49,6 +49,7 @@ public final class NotificationDeeplink {
             case "BID_ACCEPTED", "DELIVERY_CONFIRMED", "PAYMENT_RELEASED", "DISPUTE_OPENED", "PARCEL_REFUSED",
                  "BID_EXPIRED", "CONFIRMATION_CODE_READY", "DELIVERY_NOSHOW_REPORTED", "MM_PAYMENT_PENDING",
                  "HANDOVER_REMINDER_H2", "MOBILE_MONEY_PAYMENT_CONFIRMED", "MOBILE_MONEY_PAYMENT_FAILED",
+                 "MM_PAYMENT_EXPIRED",
                  "PARCEL_RETURNED", "RETURN_DEADLINE_WARNING", "RETURN_DEADLINE_EXPIRED", "automation_last_minute" ->
                     bidId.map(id -> "bids/" + id);
 

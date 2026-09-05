@@ -27,6 +27,7 @@ import com.yadony.api.matching.events.TripArrivedEvent;
 import com.yadony.api.matching.events.VoyageurNoShowEvent;
 import com.yadony.api.payments.events.MobileMoneyDepositFailedEvent;
 import com.yadony.api.payments.events.MobileMoneyPaymentConfirmedEvent;
+import com.yadony.api.payments.events.MobileMoneyPaymentExpiredEvent;
 import com.yadony.api.payments.events.PaymentReleasedEvent;
 import com.yadony.api.tracking.events.DeliveryConfirmedEvent;
 import org.slf4j.Logger;
@@ -290,6 +291,27 @@ public class NotificationDispatcher {
         var text = NotificationTexts.mobileMoneyPaymentFailed();
         notifyUser(event.senderId(), text.title(), text.body(),
                 Map.of("type", "MOBILE_MONEY_PAYMENT_FAILED", "bidId", event.bidId().toString()));
+    }
+
+    /**
+     * Tâche 15 — deadline de paiement dépassée : expéditeur et voyageur reçoivent chacun une
+     * notification. {@code notifyUser}, jamais {@code notifyCritical} : {@code MM_PAYMENT_EXPIRED}
+     * n'est pas dans {@link NotificationTypes#CRITICAL} (même motif que
+     * {@code onMobileMoneyPaymentConfirmed}, tâche 14) — un SMS de repli 60 s après CHAQUE
+     * expiration serait un défaut, pas une amélioration. Type enregistré dans les trois
+     * catalogues ({@link NotificationCategory}, {@link NotificationDeeplink},
+     * {@code NotificationPrefsService}) et leurs trois tests d'énumération manuelle.
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
+    public void onMobileMoneyPaymentExpired(MobileMoneyPaymentExpiredEvent event) {
+        Map<String, String> data = Map.of("type", "MM_PAYMENT_EXPIRED", "bidId", event.bidId().toString());
+        var forSender = NotificationTexts.mobileMoneyPaymentExpired();
+        notifyUser(event.senderId(), forSender.title(), forSender.body(), data);
+        if (event.travelerId() != null) {
+            var forTraveler = NotificationTexts.mobileMoneyPaymentExpiredForTraveler();
+            notifyUser(event.travelerId(), forTraveler.title(), forTraveler.body(), data);
+        }
     }
 
     @EventListener @Async

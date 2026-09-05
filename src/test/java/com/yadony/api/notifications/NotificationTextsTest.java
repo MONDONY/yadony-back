@@ -106,6 +106,8 @@ class NotificationTextsTest {
         m.put("mobileMoneyPaymentReceived", NotificationTexts.mobileMoneyPaymentReceived());
         m.put("mobileMoneyPaymentPending", NotificationTexts.mobileMoneyPaymentPending(99));
         m.put("mobileMoneyPaymentFailed", NotificationTexts.mobileMoneyPaymentFailed());
+        m.put("mobileMoneyPaymentExpired", NotificationTexts.mobileMoneyPaymentExpired());
+        m.put("mobileMoneyPaymentExpiredForTraveler", NotificationTexts.mobileMoneyPaymentExpiredForTraveler());
         m.put("kycVerified", NotificationTexts.kycVerified());
         m.put("kycActionRequired", NotificationTexts.kycActionRequired());
         m.put("kycReset", NotificationTexts.kycReset());

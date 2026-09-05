@@ -29,7 +29,7 @@ public enum NotificationCategory {
 
     private static final Set<String> PAIEMENTS_TYPES = Set.of(
             "PAYMENT_RELEASED", "MM_PAYMENT_PENDING", "MOBILE_MONEY_PAYMENT_CONFIRMED",
-            "MOBILE_MONEY_PAYMENT_FAILED",
+            "MOBILE_MONEY_PAYMENT_FAILED", "MM_PAYMENT_EXPIRED",
             "KYC_VERIFIED", "KYC_ACTION_REQUIRED", "KYC_RESET",
             "STRIPE_ONBOARDING_INCOMPLETE", "CARD_EXPIRING",
             "negotiation_awaiting_payment", "negotiation_commission_pending",

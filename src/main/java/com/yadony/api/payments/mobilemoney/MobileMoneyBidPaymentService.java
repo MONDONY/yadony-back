@@ -25,6 +25,7 @@ import com.yadony.api.payments.PriceBreakdown;
 import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.payments.events.MobileMoneyDepositFailedEvent;
 import com.yadony.api.payments.events.MobileMoneyPaymentConfirmedEvent;
+import com.yadony.api.payments.events.MobileMoneyPaymentExpiredEvent;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPaymentStatusResponse;
 import com.yadony.api.payments.pawapay.PawapayClient;
 import com.yadony.api.payments.pawapay.PawapayCountries;
@@ -55,6 +56,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.client.RestClientException;
@@ -571,6 +573,96 @@ public class MobileMoneyBidPaymentService {
         audit.log("PAYMENT", paymentId, "MM_DEPOSIT_FAILED", bid.getSenderId(),
                 Map.of("operationId", operationId.toString(), "failureCode", safeFailureCode == null ? "" : safeFailureCode));
         events.publishEvent(new MobileMoneyDepositFailedEvent(bid.getId(), bid.getSenderId(), safeFailureCode));
+    }
+
+    // ── Expiration (tâche 15) ────────────────────────────────────────────────
+
+    /**
+     * Deadline de paiement mobile money dépassée (30 min après acceptation) : bid
+     * {@code AWAITING_PAYMENT} annulé, capacité rendue à l'annonce, paiement {@code PENDING}
+     * annulé, deux notifications (expéditeur, voyageur).
+     *
+     * <p><b>Idempotent</b> par la primitive atomique {@link PaymentRepository#markCancelledIfPending},
+     * jamais par la sélection du scheduler appelant (qui peut repasser sur la même ligne tant
+     * qu'elle n'a pas bougé) : un bid qui a déjà quitté {@code AWAITING_PAYMENT} (confirmEscrow,
+     * cancelBid…) fait sortir tôt, sans rien lire de plus. Re-vérifie aussi
+     * {@code paymentMethod == MOBILE_MONEY} : {@code AWAITING_PAYMENT} est partagé avec le rail
+     * carte, où ce statut précède l'acceptation et ne réserve jamais de capacité (voir
+     * {@code BidService#restoreCapacityIfNeeded}) — ne jamais faire confiance au seul filtre du
+     * scheduler appelant pour cette distinction.
+     *
+     * <p><b>Course avec {@link #confirmEscrow}</b> : les deux méthodes s'affrontent sur le même
+     * {@code UPDATE … WHERE status = PENDING} du paiement — un seul gagne. Si
+     * {@code markCancelledIfPending} rend 0 (confirmEscrow est passé en premier, ou rejeu de
+     * cette méthode elle-même), on ne fait RIEN D'AUTRE : ni bid, ni annonce, ni audit, ni
+     * événement. Agir quand même annulerait un colis déjà payé et regonflerait à tort la
+     * capacité du trajet — c'est l'invariant central de cette méthode. Le verrou pessimiste pris
+     * ci-dessous sur le bid, avant même de toucher au paiement, sérialise l'autre sens de la
+     * course : si {@code confirmEscrow} a déjà gagné sur le paiement mais n'a pas encore posé
+     * {@code ACCEPTED} sur le bid, cette méthode attend son commit avant de lire un statut à
+     * jour (et sort alors par la garde de statut ci-dessus).
+     *
+     * <p>Un dépôt pawaPay encore ouvert (jamais final — {@link PawapayOperationStatus#isFinal()})
+     * n'est jamais annulé ici : l'expéditeur peut être en train de saisir son code PIN au moment
+     * même où la deadline tombe. On attend ; le poller de réconciliation (tâche 10) mènera ce
+     * dépôt à son état final, et s'il aboutit après cette fenêtre d'attente, {@link #confirmEscrow}
+     * gagnera la course suivante. N'écrit jamais sur {@code pawapay_operations}.
+     *
+     * <p>Restitution de capacité : inverse exact de la réservation faite par {@link #acceptBid}
+     * — même verrou pessimiste {@link AnnouncementRepository#findByIdForUpdate}, même exclusion
+     * {@code KG_FREE}, même bascule {@code FULL → ACTIVE}. Reproduit ici, à l'identique, la
+     * structure de {@code BidService#restoreCapacityIfNeeded} (privée, autre paquet — invoquée
+     * par {@code cancelBid} pour ce même invariant AWAITING_PAYMENT/MOBILE_MONEY posé à la
+     * tâche 12) plutôt que celle, plus resserrée, de {@link #acceptBid} : les deux guardent
+     * indépendamment l'ajout de poids et la bascule de statut sur {@code !kgFree}, sans exiger
+     * {@code weightKg != null} pour la seconde — voir task-15-report.md pour le détail de cette
+     * vérification.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void expire(UUID bidId) {
+        BidEntity bid = bidRepository.findByIdForUpdate(bidId).orElse(null);
+        if (bid == null || bid.getStatus() != BidStatus.AWAITING_PAYMENT
+                || bid.getPaymentMethod() != PaymentMethod.MOBILE_MONEY) {
+            return;
+        }
+        Optional<PaymentEntity> payment = paymentRepository.findByBidId(bidId)
+                .filter(p -> p.getRail() == PaymentRail.PAWAPAY);
+        if (payment.isPresent()) {
+            boolean depositOpen = operations.findLatest(payment.get().getId(), PawapayOperationKind.DEPOSIT)
+                    .map(o -> !o.getStatus().isFinal())
+                    .orElse(false);
+            if (depositOpen) {
+                log.info("Bid {} : délai de paiement dépassé mais un deposit est encore ouvert, on attend", bidId);
+                return;
+            }
+            if (paymentRepository.markCancelledIfPending(payment.get().getId()) == 0) {
+                // confirmEscrow a gagné la course (ou rejeu de cette même méthode) : le paiement
+                // n'est plus PENDING. Rien à faire : ni bid, ni annonce, ni audit, ni événement.
+                log.info("Bid {} : paiement {} déjà sorti de PENDING, expiration abandonnée", bidId, payment.get().getId());
+                return;
+            }
+        }
+
+        AnnouncementEntity announcement = announcementRepository.findByIdForUpdate(bid.getAnnouncementId()).orElse(null);
+        if (announcement != null) {
+            boolean kgFree = announcement.getCapacityUnit() == CapacityUnit.KG_FREE;
+            if (!kgFree && bid.getWeightKg() != null) {
+                announcement.setAvailableKg(announcement.getAvailableKg().add(bid.getWeightKg()));
+            }
+            if (!kgFree && announcement.getStatus() == AnnouncementStatus.FULL) {
+                announcement.setStatus(AnnouncementStatus.ACTIVE);
+            }
+            announcementRepository.save(announcement);
+        }
+        bid.setStatus(BidStatus.CANCELLED);
+        bid.setAwaitingPaymentExpiresAt(null);
+        bidRepository.save(bid);
+
+        audit.log("BID", bidId, "MM_PAYMENT_EXPIRED", null,
+                Map.of("paymentId", payment.map(p -> p.getId().toString()).orElse("")));
+        events.publishEvent(new MobileMoneyPaymentExpiredEvent(
+                bidId, bid.getSenderId(), announcement != null ? announcement.getTravelerId() : null));
+        log.info("Bid {} annulé : paiement mobile money non reçu dans le délai", bidId);
     }
 
     // ── Statut ──────────────────────────────────────────────────────────────

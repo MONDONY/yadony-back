@@ -440,6 +440,21 @@ public final class NotificationTexts {
         return new NotificationText("Paiement refusé", "Le paiement mobile money a échoué. Réessayez depuis l'app.");
     }
 
+    /**
+     * Tâche 15 — deadline de paiement (30 min après acceptation) dépassée côté expéditeur :
+     * le bid est annulé, la capacité rendue au voyageur.
+     */
+    public static NotificationText mobileMoneyPaymentExpired() {
+        return new NotificationText("Délai de paiement dépassé",
+                "Votre envoi est annulé, le paiement n'a pas été reçu à temps.");
+    }
+
+    /** Même événement, côté voyageur : la capacité qu'il avait cédée lui est rendue. */
+    public static NotificationText mobileMoneyPaymentExpiredForTraveler() {
+        return new NotificationText("Colis annulé",
+                "L'expéditeur n'a pas payé dans le délai. Le colis est annulé.");
+    }
+
     public static NotificationText kycVerified() {
         return new NotificationText("Identité vérifiée",
                 "Vous pouvez maintenant publier et effectuer vos transactions.");

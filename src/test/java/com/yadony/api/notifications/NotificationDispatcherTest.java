@@ -22,6 +22,7 @@ import com.yadony.api.matching.events.HandoverAlertEvent;
 import com.yadony.api.matching.events.TripArrivedEvent;
 import com.yadony.api.payments.events.MobileMoneyDepositFailedEvent;
 import com.yadony.api.payments.events.MobileMoneyPaymentConfirmedEvent;
+import com.yadony.api.payments.events.MobileMoneyPaymentExpiredEvent;
 import com.yadony.api.payments.events.PaymentReleasedEvent;
 import com.yadony.api.tracking.events.DeliveryConfirmedEvent;
 import org.junit.jupiter.api.BeforeEach;
@@ -388,6 +389,17 @@ class NotificationDispatcherTest {
         when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
         dispatcher.onMobileMoneyDepositFailed(new MobileMoneyDepositFailedEvent(UUID.randomUUID(), senderId, "PAYMENT_NOT_APPROVED"));
         verify(fcmService).sendToUser(eq(senderId), eq("Paiement refusé"), any(), argThat(d -> "MOBILE_MONEY_PAYMENT_FAILED".equals(d.get("type"))));
+    }
+
+    /** Tâche 15 : deux notifications, une par partie, type dédié {@code MM_PAYMENT_EXPIRED}. */
+    @Test
+    void onMobileMoneyPaymentExpired_notifiesBoth() {
+        UUID senderId = UUID.randomUUID();
+        UUID travelerId = UUID.randomUUID();
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+        dispatcher.onMobileMoneyPaymentExpired(new MobileMoneyPaymentExpiredEvent(UUID.randomUUID(), senderId, travelerId));
+        verify(fcmService).sendToUser(eq(senderId), eq("Délai de paiement dépassé"), any(), argThat(d -> "MM_PAYMENT_EXPIRED".equals(d.get("type"))));
+        verify(fcmService).sendToUser(eq(travelerId), eq("Colis annulé"), any(), argThat(d -> "MM_PAYMENT_EXPIRED".equals(d.get("type"))));
     }
 
     // ── BidRejectedEvent ──────────────────────────────────────────────────────

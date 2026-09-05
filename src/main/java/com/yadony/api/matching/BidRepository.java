@@ -256,9 +256,21 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
     List<BidEntity> findByStatusAndAwaitingPaymentExpiresAtBefore(
             BidStatus status, LocalDateTime threshold);
 
-    /** Expiration des bids mobile money en attente de paiement (MobileMoneyPaymentDeadlineScheduler). */
+    /**
+     * Expiration des bids mobile money en attente de paiement (MobileMoneyPaymentDeadlineScheduler).
+     *
+     * <p>Bornée par {@code pageable} — même motif que
+     * {@code PawapayOperationRepository#findByStatusInAndUpdatedAtBefore} /
+     * {@code PawapayReconciliationPoller#reconcile} (tâche 10) : un incident laissant
+     * s'accumuler des bids en souffrance ne doit jamais faire durer un passage du scheduler
+     * indéfiniment, sur l'unique pool de scheduling partagé par tous les crons du dépôt.
+     * Écart par rapport au brief de la tâche 15, qui appelait cette méthode à 3 arguments
+     * (non bornée) : ce 4e paramètre a été ajouté à la place, cette méthode n'ayant encore
+     * aucun appelant avant la tâche 15 (voir task-15-report.md).
+     */
     List<BidEntity> findByStatusAndPaymentMethodAndAwaitingPaymentExpiresAtBefore(
-            BidStatus status, com.yadony.api.payments.cash.PaymentMethod paymentMethod, LocalDateTime threshold);
+            BidStatus status, com.yadony.api.payments.cash.PaymentMethod paymentMethod, LocalDateTime threshold,
+            Pageable pageable);
 
     // Rappel H-2 : l'alerte se cale désormais sur la date limite de dépôt (il
     // n'y a plus de début de fenêtre). On prévient donc l'expéditeur quand il
