@@ -194,6 +194,17 @@ yadony:
   kyc:
     return-url: ${YADONY_KYC_RETURN_URL:https://yadony.com/kyc/complete}
     verification-flow-id: ${YADONY_KYC_VERIFICATION_FLOW_ID:}
+    didit:
+      # Valeur d'AMORCAGE seulement : une fois la ligne kyc_didit_enabled presente dans
+      # platform_settings, c'est elle qui fait autorite et se bascule depuis le back-office.
+      # Faux = Stripe Identity, vrai = Didit. Ne concerne que les NOUVELLES sessions : une
+      # session existante se relit toujours chez le fournisseur qui l'a produite.
+      enabled: ${KYC_DIDIT_ENABLED:false}
+  didit:
+    base-url: ${DIDIT_BASE_URL:https://verification.didit.me}
+    api-key: ${DIDIT_API_KEY:}
+    workflow-id: ${DIDIT_WORKFLOW_ID:}
+    webhook-secret: ${DIDIT_WEBHOOK_SECRET:}
   stripe:
     connect:
       mcc: "4215"
