@@ -65,8 +65,22 @@ public class BidAcceptedEventListener {
         }
 
         // CASH bids : commission traitée en synchrone dans CashCommissionService.acceptCashBid.
-        // Ce listener ne fait rien pour éviter tout risque de double prélèvement.
-        if (bid.getPaymentMethod() == com.yadony.api.payments.cash.PaymentMethod.CASH) {
+        // MOBILE_MONEY bids : rail pawaPay entièrement porté par MobileMoneyBidPaymentService —
+        // aucun PaymentIntent Stripe n'existe jamais pour ces paiements. Ce listener ne fait
+        // rien pour éviter tout risque de double prélèvement (CASH) ou une exception sur un
+        // PaymentIntent inexistant (MOBILE_MONEY).
+        //
+        // Ronde 1, point 5 : avant cette garde explicite, un bid mobile money n'échappait au
+        // chemin STRIPE ci-dessous que par coïncidence — payment.getStatus() != ESCROW au
+        // moment précis où CE listener asynchrone le lisait. Sous un pool @Async saturé, nul
+        // besoin d'attendre la tâche 14 (confirmation d'escrow mobile money) pour le déclencher
+        // : n'importe quel retard suffisant fait passer ce listener sur la branche
+        // « traveler.getStripeAccountStatus() != ONBOARDING_COMPLETE » (vrai pour TOUT
+        // voyageur mobile money, qui n'a jamais de compte Stripe Connect) et tenter
+        // PaymentIntent.retrieve(null) — une exception en pleine transaction REQUIRES_NEW sur
+        // le chemin de l'argent, pour un bid que ce listener n'a jamais eu à traiter.
+        if (bid.getPaymentMethod() == com.yadony.api.payments.cash.PaymentMethod.CASH
+                || bid.getPaymentMethod() == com.yadony.api.payments.cash.PaymentMethod.MOBILE_MONEY) {
             return;
         }
 

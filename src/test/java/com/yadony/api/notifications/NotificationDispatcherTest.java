@@ -58,10 +58,16 @@ class NotificationDispatcherTest {
     private final UUID bidId      = UUID.randomUUID();
     private final UUID annId      = UUID.randomUUID();
 
+    private final com.yadony.api.payments.pawapay.PawapayProperties pawapayProperties =
+            new com.yadony.api.payments.pawapay.PawapayProperties(true, "https://x", "t", false, 30,
+                    "https://api.test", "yadony://bids/%s/mobile-money/awaiting",
+                    new com.yadony.api.payments.pawapay.PawapayProperties.BalanceMin(
+                            java.math.BigDecimal.ZERO, java.math.BigDecimal.ZERO));
+
     @BeforeEach
     void setUp() {
         dispatcher = new NotificationDispatcher(fcmService, smsService, userRepository, notificationService,
-                blockVisibility);
+                blockVisibility, pawapayProperties);
         // persist() must return an entity with a non-null ID (JPA doesn't run in unit tests)
         var stubEntity = new NotificationEntity(UUID.randomUUID(), "STUB", "stub", "stub", Map.of(), false);
         setEntityId(stubEntity, UUID.randomUUID());
@@ -308,6 +314,11 @@ class NotificationDispatcherTest {
         verify(fcmService).sendToUser(eq(senderId), eq("Payez votre envoi"), any(),
                 argThat(data -> "MM_PAYMENT_PENDING".equals(data.get("type")) && bidId.toString().equals(data.get("bidId"))));
         verify(fcmService, never()).sendToUser(eq(senderId), eq("Demande acceptée !"), any(), any());
+        // Ronde 1, point 7 : rétablit la preuve de persistance (perdue au remplacement de ce
+        // test) — un futur passage au push direct sans persist() doit rougir ce test, pas
+        // seulement supprimer silencieusement la trace de boîte de réception.
+        verify(notificationService).persist(eq(senderId), eq("MM_PAYMENT_PENDING"),
+                eq("Payez votre envoi"), any(), any(), eq(false));
     }
 
     @Test

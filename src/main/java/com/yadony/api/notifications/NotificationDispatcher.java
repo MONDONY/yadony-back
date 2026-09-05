@@ -57,16 +57,19 @@ public class NotificationDispatcher {
     private final UserRepository userRepository;
     private final NotificationService notificationService;
     private final BlockVisibility blockVisibility;
+    private final com.yadony.api.payments.pawapay.PawapayProperties pawapayProperties;
 
     public NotificationDispatcher(FcmService fcmService, SmsService smsService,
                                   UserRepository userRepository,
                                   NotificationService notificationService,
-                                  BlockVisibility blockVisibility) {
+                                  BlockVisibility blockVisibility,
+                                  com.yadony.api.payments.pawapay.PawapayProperties pawapayProperties) {
         this.fcmService = fcmService;
         this.smsService = smsService;
         this.userRepository = userRepository;
         this.notificationService = notificationService;
         this.blockVisibility = blockVisibility;
+        this.pawapayProperties = pawapayProperties;
     }
 
     // ── Public API ───────────────────────────────────────────────────────────
@@ -221,8 +224,11 @@ public class NotificationDispatcher {
     public void onBidAccepted(BidAcceptedEvent event) {
         if (event.isMobileMoney()) {
             // Le paiement suit dans l'application : ce push remplace « Demande acceptée ! »
-            // et ouvre l'écran d'attente. Persisté ET poussé.
-            var pay = NotificationTexts.mobileMoneyPaymentPending();
+            // et ouvre l'écran d'attente. Persisté ET poussé. Le délai vient de la
+            // configuration (jamais en dur : "sous 30 min" mentirait dès que
+            // yadony.pawapay.deposit-deadline-minutes changerait, sans qu'aucun test ne
+            // le remarque).
+            var pay = NotificationTexts.mobileMoneyPaymentPending(pawapayProperties.depositDeadlineMinutes());
             notifyUser(event.getSenderId(), pay.title(), pay.body(),
                     Map.of("type", "MM_PAYMENT_PENDING", "bidId", event.getBidId().toString()));
             return;

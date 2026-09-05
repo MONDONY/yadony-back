@@ -417,10 +417,14 @@ public final class NotificationTexts {
         return new NotificationText("Paiement confirmé", "Le paiement Mobile Money de cet envoi est confirmé.");
     }
 
-    /** Push à l'acceptation d'un bid mobile money, à la place de « Demande acceptée ! ». */
-    public static NotificationText mobileMoneyPaymentPending() {
+    /**
+     * Push à l'acceptation d'un bid mobile money, à la place de « Demande acceptée ! ».
+     * {@code depositDeadlineMinutes} vient de la configuration ({@code yadony.pawapay.deposit-deadline-minutes})
+     * — jamais en dur, sous peine de mentir si le délai est reconfiguré.
+     */
+    public static NotificationText mobileMoneyPaymentPending(int depositDeadlineMinutes) {
         return new NotificationText("Payez votre envoi",
-                "Le voyageur a accepté. Réglez en mobile money sous 30 min.");
+                "Le voyageur a accepté. Réglez en mobile money sous " + depositDeadlineMinutes + " min.");
     }
 
     public static NotificationText kycVerified() {

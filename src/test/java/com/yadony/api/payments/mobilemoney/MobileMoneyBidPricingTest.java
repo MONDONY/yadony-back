@@ -107,4 +107,25 @@ class MobileMoneyBidPricingTest {
 
         assertThat(pricing.price(b, a).commission()).isEqualByComparingTo("360");
     }
+
+    /**
+     * Ronde 1, point 8 : le taux PERSISTÉ sur le bid et celui UTILISÉ pour la commission
+     * doivent être identiques (comme le rail espèces, qui n'arrondit jamais ce taux avant de
+     * s'en servir). Avec un arrondi intermédiaire à 4 décimales (comportement précédent), le
+     * taux 0,123456 devenait 0,1235 pour le calcul : 15000 × 0,1235 = 1852,5 → 1853 — alors
+     * que le taux réellement persisté (0,123456) donne 15000 × 0,123456 = 1851,84 → 1852.
+     */
+    @Test
+    void rateWithMoreThanFourDecimals_commissionMatchesThePersistedRate() {
+        AnnouncementEntity a = xof(new BigDecimal("3000"));
+        BidEntity b = bid(new BigDecimal("5"));
+        when(gridItems.findByBidId(b.getId())).thenReturn(List.of());
+        when(rates.resolve(eq(a.getTravelerId()), eq(b.getSenderId()), isNull(), isNull(), eq(b.getId())))
+                .thenReturn(new BigDecimal("0.123456"));
+
+        PriceBreakdown p = pricing.price(b, a);
+
+        assertThat(b.getCommissionRate()).isEqualByComparingTo("0.123456");
+        assertThat(p.commission()).as("1851.84 arrondi, pas 1852.5 arrondi").isEqualByComparingTo("1852");
+    }
 }

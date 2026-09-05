@@ -4,6 +4,7 @@ import com.yadony.api.auth.FirebaseContactService;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
+import com.yadony.api.common.CommissionRateResolver;
 import com.yadony.api.common.Msisdn;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.matching.AnnouncementEntity;
@@ -32,6 +33,9 @@ import com.yadony.api.payments.pawapay.PawapayProviders;
 import com.yadony.api.payments.pawapay.PawapaySubmissionService;
 import com.yadony.api.payments.pawapay.dto.PawapayProviderConfig;
 import com.yadony.api.payments.pawapay.dto.PawapayProviderPrediction;
+import com.yadony.api.promo.PromoRedemptionEntity;
+import com.yadony.api.promo.PromoService;
+import com.yadony.api.voucher.CommissionVoucherService;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -43,7 +47,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.web.client.RestClientException;
 
 /**
  * Rail mobile money côté bid. Acceptation dans la même transaction que la création du
@@ -84,14 +92,27 @@ public class MobileMoneyBidPaymentService {
     private final FirebaseContactService firebaseContact;
     private final AuditService audit;
     private final ApplicationEventPublisher events;
+    private final CommissionRateResolver commissionRateResolver;
+    private final PromoService promoService;
+    private final CommissionVoucherService voucherService;
     private final PawapayProperties props;
+
+    /**
+     * Transaction INDÉPENDANTE, réservée à l'entrée d'audit d'un dépôt refusé (Ronde 1,
+     * point 3) — {@code @Transactional(REQUIRES_NEW)} sur une méthode privée ne servirait
+     * à rien ici (auto-invocation : l'appel `this.xxx()` ne passe jamais par le proxy Spring
+     * qui porte l'annotation). Même motif que {@code GuestUserCleanupScheduler}.
+     */
+    private final TransactionTemplate independentAuditTransaction;
 
     public MobileMoneyBidPaymentService(BidRepository bidRepository, AnnouncementRepository announcementRepository,
                                         UserRepository userRepository, PaymentRepository paymentRepository,
                                         PawapayOperationService operations, PawapaySubmissionService submission,
                                         PawapayClient client, MobileMoneyBidPricing pricing,
                                         FirebaseContactService firebaseContact, AuditService audit,
-                                        ApplicationEventPublisher events, PawapayProperties props) {
+                                        ApplicationEventPublisher events, CommissionRateResolver commissionRateResolver,
+                                        PromoService promoService, CommissionVoucherService voucherService,
+                                        PlatformTransactionManager transactionManager, PawapayProperties props) {
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.userRepository = userRepository;
@@ -103,13 +124,28 @@ public class MobileMoneyBidPaymentService {
         this.firebaseContact = firebaseContact;
         this.audit = audit;
         this.events = events;
+        this.commissionRateResolver = commissionRateResolver;
+        this.promoService = promoService;
+        this.voucherService = voucherService;
         this.props = props;
+        this.independentAuditTransaction = new TransactionTemplate(transactionManager);
+        this.independentAuditTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     // ── Acceptation ─────────────────────────────────────────────────────────
 
     @Transactional
     public MobileMoneyPaymentStatusResponse acceptBid(UUID bidId, UUID travelerId) {
+        // Ronde 1, point 4 : interrupteur d'urgence. Vérifié à la création du bid
+        // (BidService.resolvePaymentMethodFor, tâche 12) mais jamais ici — un exploitant qui
+        // coupe yadony.pawapay.enabled après incident/fraude constatée doit empêcher TOUTE
+        // acceptation et TOUTE initiation ultérieure, pas seulement les nouveaux bids. Vérifié
+        // avant tout accès repository : couper le rail ne doit jamais dépendre d'un verrou
+        // pessimiste pris pour rien.
+        if (!props.enabled()) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-disabled",
+                    "Mobile Money Disabled", "Le mobile money n'est pas encore disponible.");
+        }
         BidEntity bid = bidRepository.findByIdForUpdate(bidId).orElseThrow(() -> notFound("bid-not-found", "Demande introuvable"));
         AnnouncementEntity announcement = announcementRepository.findByIdForUpdate(bid.getAnnouncementId())
                 .orElseThrow(() -> notFound("announcement-not-found", "Annonce introuvable"));
@@ -120,7 +156,12 @@ public class MobileMoneyBidPaymentService {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-payment-method",
                     "Invalid Payment Method", "Ce colis n'est pas payé en mobile money");
         }
-        Optional<PaymentEntity> existing = paymentRepository.findByBidId(bidId);
+        // Ronde 1, point 10 : filtré par rail comme les deux autres lectures de ce même
+        // paiement dans ce fichier (initiateDeposit, status) — un paiement d'un autre rail
+        // sur ce bid (état incohérent, jamais rencontré aujourd'hui) ne doit jamais déclencher
+        // ce retour idempotent.
+        Optional<PaymentEntity> existing = paymentRepository.findByBidId(bidId)
+                .filter(p -> p.getRail() == PaymentRail.PAWAPAY);
         if (bid.getStatus() == BidStatus.AWAITING_PAYMENT && existing.isPresent()) {
             return status(bid, announcement, existing, operations.findLatest(existing.get().getId(), PawapayOperationKind.DEPOSIT));
         }
@@ -157,6 +198,36 @@ public class MobileMoneyBidPaymentService {
         }
 
         PriceBreakdown price = pricing.price(bid, announcement);
+
+        // Ronde 1, point 1 (CRITIQUE) : rachat du promo et consommation du bon de
+        // parrainage — même motif et même position que le rail espèces
+        // (PaymentService.createEscrow) : APRÈS le calcul du taux (sinon la remise déjà
+        // figée dans `price`/`bid.commissionRate` disparaîtrait du taux qu'on vient de
+        // recalculer), AVANT la création du PaymentEntity. MobileMoneyBidPricing ne fait
+        // que LIRE le bon/le promo (CommissionRateResolver#resolve, lecture pure, cf. son
+        // propre Javadoc) pour calculer le taux — sans ce rachat/cette consommation ici,
+        // un même code promo à usage unique ou un même bon de parrainage réduirait la
+        // commission d'un nombre illimité d'envois mobile money.
+        boolean promoApplied = false;
+        if (bid.getPromoCode() != null) {
+            try {
+                commissionRateResolver.resolve(announcement.getTravelerId(), bid.getSenderId(), bid.getPromoCode(),
+                        bid.getSenderId(), bid.getId());
+                promoApplied = true;
+            } catch (YadonyBusinessException e) {
+                log.warn("Promo {} non rachetable pour le bid mobile money {} (invalide au moment de "
+                        + "l'acceptation) — pas de rachat, taux déjà replié par MobileMoneyBidPricing",
+                        bid.getPromoCode(), bidId);
+            }
+        }
+        if (promoApplied) {
+            PromoRedemptionEntity redemption = promoService.redeem(bid.getPromoCode(), bid.getSenderId(), bidId,
+                    bid.getCommissionRate());
+            bid.setPromoCodeId(redemption.getPromoCodeId());
+        }
+        // Best-effort, idempotent par (bid, expéditeur) : no-op silencieux si l'expéditeur ne
+        // détient aucun bon actif.
+        voucherService.consume(bid.getSenderId(), bidId);
 
         // Capacité réservée dès l'acceptation, rendue par expire() ou cancelBid.
         if (!kgFree && bid.getWeightKg() != null) {
@@ -196,6 +267,13 @@ public class MobileMoneyBidPaymentService {
 
     @Transactional
     public MobileMoneyPaymentStatusResponse initiateDeposit(UUID bidId, UUID senderId, String phoneOverride) {
+        // Ronde 1, point 4 : même interrupteur d'urgence qu'acceptBid — sans lui, couper
+        // yadony.pawapay.enabled pendant un incident laisserait les initiations déjà en cours
+        // continuer à déclencher des débits réels.
+        if (!props.enabled()) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-disabled",
+                    "Mobile Money Disabled", "Le mobile money n'est pas encore disponible.");
+        }
         PaymentEntity payment = paymentRepository.findByBidIdForUpdate(bidId)
                 .filter(p -> p.getRail() == PaymentRail.PAWAPAY)
                 .orElseThrow(() -> notFound("mobile-money-payment-not-found", "Aucun paiement mobile money pour ce colis"));
@@ -220,9 +298,29 @@ public class MobileMoneyBidPaymentService {
         }
 
         String msisdn = resolvePayerMsisdn(bid, phoneOverride);
-        PawapayProviderPrediction prediction = client.predictProvider(msisdn)
+        // Ronde 1, point 2 : les deux appels réseau pawaPay ci-dessous n'étaient pas encadrés
+        // — exactement le défaut déjà corrigé à la tâche 11 dans PawapaySubmissionService#submit
+        // (cité en commentaire plus bas dans cette même méthode) et repris par
+        // MobileMoneyAccountService#activate pour ces deux mêmes appels. Sans ce garde-fou,
+        // une panne pawaPay remontait en 500 générique au lieu du 502
+        // mobile-money-provider-unavailable déjà normalisé pour ce rail — et le verrou
+        // PESSIMISTIC_WRITE pris sur `payments` par findByBidIdForUpdate restait posé pendant
+        // tout le timeout HTTP, bloquant toute initiation concurrente derrière.
+        Optional<PawapayProviderPrediction> predicted;
+        try {
+            predicted = client.predictProvider(msisdn);
+        } catch (RestClientException e) {
+            throw providerUnavailable(bidId, "predict-provider", e);
+        }
+        PawapayProviderPrediction prediction = predicted
                 .orElseThrow(() -> payerUnsupported("Aucun opérateur mobile money reconnu pour ce numéro."));
-        PawapayProviderConfig conf = client.activeConfiguration().get(prediction.provider());
+        Map<String, PawapayProviderConfig> configuration;
+        try {
+            configuration = client.activeConfiguration();
+        } catch (RestClientException e) {
+            throw providerUnavailable(bidId, "active-configuration", e);
+        }
+        PawapayProviderConfig conf = configuration.get(prediction.provider());
         if (conf == null || !conf.supportsDeposit()) {
             throw payerUnsupported(PawapayProviders.label(prediction.provider()) + " ne permet pas le paiement pour le moment.");
         }
@@ -234,6 +332,13 @@ public class MobileMoneyBidPaymentService {
             throw payerUnsupported("Montant hors des limites de " + PawapayProviders.label(prediction.provider()) + ".");
         }
         String country = PawapayCountries.toAlpha2(prediction.countryAlpha3());
+        // Ronde 1, point 9 : PawapayCountries.toAlpha2 rend null pour un alpha-3 non couvert
+        // par la table ISO du JDK. pawapay_operations.country est NOT NULL (PawapayOperationEntity) :
+        // sans cette garde, submission.submitDeposit lèverait une violation de contrainte brute
+        // (500) au lieu d'un 422 propre — sur le chemin qui engage l'argent.
+        if (country == null) {
+            throw payerUnsupported("Pays non reconnu pour ce numéro.");
+        }
         // Écart déclaré (voir task-13-report.md) : phoneOverride est déjà encadré ci-dessous
         // dans resolvePayerMsisdn, mais ce numéro-ci vient de pawaPay (prédiction, après un
         // appel réseau réussi) et n'est pas une saisie de l'expéditeur — même famille de
@@ -245,9 +350,7 @@ public class MobileMoneyBidPaymentService {
         try {
             normalized = Msisdn.normalize(prediction.phoneNumber() != null ? prediction.phoneNumber() : msisdn);
         } catch (IllegalArgumentException e) {
-            log.error("pawaPay a renvoyé un numéro hors bornes pour le bid {} (provider={})", bidId, prediction.provider());
-            throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY, "mobile-money-provider-unavailable",
-                    "Mobile Money Provider Unavailable", "Le service mobile money ne répond pas. Réessayez dans quelques instants.");
+            throw providerUnavailable(bidId, "msisdn-normalize", e);
         }
         if (!normalized.equals(bid.getMobileMoneyPhone())) {
             bid.setMobileMoneyPhone(normalized);
@@ -263,9 +366,16 @@ public class MobileMoneyBidPaymentService {
         }
         PawapayOperationEntity op = submission.submitDeposit(payment.getId(), normalized, prediction.provider(), country,
                 payment.getAmount(), payment.getCurrency(), "bid-" + bidId, successfulUrl, failedUrl);
-        audit.log("PAYMENT", payment.getId(), "MM_DEPOSIT_INITIATED", senderId,
+        // Ronde 1, point 3 : transaction INDÉPENDANTE — AuditService.log() n'est pas annoté,
+        // il rejoindrait sinon la transaction d'initiateDeposit. Sur un SUBMIT_REJECTED, le
+        // throw juste en dessous annule cette transaction ; la ligne pawapay_operations créée
+        // par submitDeposit (REQUIRES_NEW, déjà commitée avant ce point) y survit, mais cette
+        // entrée d'audit disparaissait avec elle — précisément pour les tentatives de débit
+        // refusées, celles où la trace compte le plus.
+        independentAuditTransaction.executeWithoutResult(status -> audit.log("PAYMENT", payment.getId(),
+                "MM_DEPOSIT_INITIATED", senderId,
                 Map.of("operationId", op.getId().toString(), "provider", op.getProvider(),
-                        "msisdnMasked", op.getMsisdnMasked(), "status", op.getStatus().name()));
+                        "msisdnMasked", op.getMsisdnMasked(), "status", op.getStatus().name())));
         if (op.getStatus() == PawapayOperationStatus.SUBMIT_REJECTED) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-deposit-rejected",
                     "Deposit Rejected", "Paiement refusé par l'opérateur : "
@@ -340,5 +450,19 @@ public class MobileMoneyBidPaymentService {
     private static YadonyBusinessException payerUnsupported(String detail) {
         return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-payer-unsupported",
                 "Mobile Money Payer Unsupported", detail);
+    }
+
+    /**
+     * pawaPay indisponible (panne réseau/5xx) ou réponse inexploitable (numéro hors bornes) :
+     * dans les deux cas ce n'est pas la faute de l'expéditeur, donc 502 et non 422 — motif et
+     * message repris à l'identique de {@code PawapaySubmissionService#submit} /
+     * {@code MobileMoneyAccountService#activate}. Ne journalise jamais le numéro : uniquement
+     * l'étape et le bid concerné.
+     */
+    private static YadonyBusinessException providerUnavailable(UUID bidId, String step, Exception cause) {
+        log.error("pawaPay indisponible ({}) lors de l'initiation du deposit pour le bid {} : {}",
+                step, bidId, cause.toString());
+        return new YadonyBusinessException(HttpStatus.BAD_GATEWAY, "mobile-money-provider-unavailable",
+                "Mobile Money Provider Unavailable", "Le service mobile money ne répond pas. Réessayez dans quelques instants.");
     }
 }

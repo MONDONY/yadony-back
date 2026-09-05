@@ -76,6 +76,33 @@ class BidAcceptedEventListenerTest {
         return bid;
     }
 
+    /** Stub bidRepository to return a MOBILE_MONEY bid — le listener doit s'arrêter net (Ronde 1, point 5). */
+    private BidEntity stubMobileMoneyBid(UUID bidId) {
+        BidEntity bid = new BidEntity();
+        bid.setPaymentMethod(PaymentMethod.MOBILE_MONEY);
+        bid.setStatus(BidStatus.AWAITING_PAYMENT);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        return bid;
+    }
+
+    // ── Ronde 1, point 5 : rail mobile money ──────────────────────────────────
+
+    /**
+     * Preuve que le listener s'arrête AVANT tout accès à paymentRepository/auditService —
+     * pas seulement qu'il ne capture rien. Sans cette garde explicite, ce même test aurait pu
+     * passer « par coïncidence » (payment absent, ou statut != ESCROW) sans jamais prouver
+     * que le rail mobile money est structurellement exclu.
+     */
+    @Test
+    void skips_mobileMoney_bid_entirely() {
+        UUID bidId = UUID.randomUUID();
+        stubMobileMoneyBid(bidId);
+
+        listener.onBidAccepted(eventFor(bidId));
+
+        verifyNoInteractions(paymentRepository, auditService);
+    }
+
     // ── Existing behaviour ────────────────────────────────────────────────────
 
     @Test

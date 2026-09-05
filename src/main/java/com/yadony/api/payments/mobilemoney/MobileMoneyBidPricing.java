@@ -8,7 +8,6 @@ import com.yadony.api.matching.BidGridItemRepository;
 import com.yadony.api.payments.PriceBreakdown;
 import com.yadony.api.payments.pawapay.PawapayAmounts;
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -72,7 +71,14 @@ public class MobileMoneyBidPricing {
         } else {
             rate = rates.resolve(announcement.getTravelerId(), bid.getSenderId(), null, null, bid.getId());
         }
+        // Le taux PERSISTÉ (ci-dessus) et le taux UTILISÉ pour le calcul de la commission
+        // doivent être IDENTIQUES — jamais l'un arrondi et l'autre non. Le rail espèces
+        // (CashCommissionService#computeBidCommission) n'arrondit jamais ce taux avant de
+        // s'en servir ; un ré-arrondi à 4 décimales ici ferait diverger silencieusement les
+        // deux rails dès qu'un taux dérogatoire (override, promo) porterait plus de 4
+        // décimales — la commission réellement prélevée ne correspondrait alors plus au
+        // taux que le bid affiche.
         bid.setCommissionRate(rate);
-        return rate.setScale(4, RoundingMode.HALF_UP);
+        return rate;
     }
 }

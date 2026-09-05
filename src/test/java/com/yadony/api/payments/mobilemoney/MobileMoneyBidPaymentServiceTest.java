@@ -5,8 +5,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.yadony.api.auth.FirebaseContactService;
@@ -14,6 +16,7 @@ import com.yadony.api.auth.MobileMoneyPayoutStatus;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
+import com.yadony.api.common.CommissionRateResolver;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
@@ -39,6 +42,9 @@ import com.yadony.api.payments.pawapay.PawapayProperties;
 import com.yadony.api.payments.pawapay.PawapaySubmissionService;
 import com.yadony.api.payments.pawapay.dto.PawapayProviderConfig;
 import com.yadony.api.payments.pawapay.dto.PawapayProviderPrediction;
+import com.yadony.api.promo.PromoRedemptionEntity;
+import com.yadony.api.promo.PromoService;
+import com.yadony.api.voucher.CommissionVoucherService;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -53,6 +59,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.web.client.RestClientException;
 
 @ExtendWith(MockitoExtension.class)
 class MobileMoneyBidPaymentServiceTest {
@@ -68,6 +76,12 @@ class MobileMoneyBidPaymentServiceTest {
     @Mock FirebaseContactService firebaseContact;
     @Mock AuditService audit;
     @Mock ApplicationEventPublisher events;
+    // Ronde 1 : point 1 (rachat promo / consommation du bon), point 3 (transaction
+    // indépendante pour l'audit d'un dépôt refusé).
+    @Mock CommissionRateResolver commissionRateResolver;
+    @Mock PromoService promoService;
+    @Mock CommissionVoucherService voucherService;
+    @Mock PlatformTransactionManager transactionManager;
 
     private MobileMoneyBidPaymentService service;
     private UserEntity traveler;
@@ -78,12 +92,17 @@ class MobileMoneyBidPaymentServiceTest {
     private static final PawapayProviderConfig.Limits OK =
             new PawapayProviderConfig.Limits(new BigDecimal("100"), new BigDecimal("1500000"), "NONE", "PROVIDER_AUTH", "OPERATIONAL");
 
+    private static PawapayProperties enabledProps() {
+        return new PawapayProperties(true, "https://x", "t", false, 30, "https://api.test",
+                "yadony://bids/%s/mobile-money/awaiting",
+                new PawapayProperties.BalanceMin(BigDecimal.ZERO, BigDecimal.ZERO));
+    }
+
     @BeforeEach
     void setUp() {
         service = new MobileMoneyBidPaymentService(bidRepository, announcementRepository, userRepository, paymentRepository,
                 operations, submission, client, pricing, firebaseContact, audit, events,
-                new PawapayProperties(true, "https://x", "t", false, 30, "https://api.test", "yadony://bids/%s/mobile-money/awaiting",
-                        new PawapayProperties.BalanceMin(BigDecimal.ZERO, BigDecimal.ZERO)));
+                commissionRateResolver, promoService, voucherService, transactionManager, enabledProps());
         traveler = new UserEntity();
         ReflectionTestUtils.setField(traveler, "id", UUID.randomUUID());
         traveler.setFirebaseUid("t-uid");
@@ -445,5 +464,245 @@ class MobileMoneyBidPaymentServiceTest {
         assertThat(service.status(bid.getId(), traveler.getId()).bidStatus()).isEqualTo("AWAITING_PAYMENT");
         assertThatThrownBy(() -> service.status(bid.getId(), UUID.randomUUID()))
                 .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("forbidden");
+    }
+
+    // ── Ronde 1, point 4 : l'interrupteur d'urgence coupe aussi accept/initiate ─────────────
+
+    @Test
+    void acceptBid_railDisabled_is422_beforeAnyRepositoryAccess() {
+        service = new MobileMoneyBidPaymentService(bidRepository, announcementRepository, userRepository, paymentRepository,
+                operations, submission, client, pricing, firebaseContact, audit, events,
+                commissionRateResolver, promoService, voucherService, transactionManager,
+                new PawapayProperties(false, "https://x", "t", false, 30, "https://api.test",
+                        "yadony://bids/%s/mobile-money/awaiting",
+                        new PawapayProperties.BalanceMin(BigDecimal.ZERO, BigDecimal.ZERO)));
+
+        assertThatThrownBy(() -> service.acceptBid(bid.getId(), traveler.getId()))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-disabled");
+        verifyNoInteractions(bidRepository, announcementRepository);
+    }
+
+    @Test
+    void initiateDeposit_railDisabled_is422_beforeAnyRepositoryAccess() {
+        service = new MobileMoneyBidPaymentService(bidRepository, announcementRepository, userRepository, paymentRepository,
+                operations, submission, client, pricing, firebaseContact, audit, events,
+                commissionRateResolver, promoService, voucherService, transactionManager,
+                new PawapayProperties(false, "https://x", "t", false, 30, "https://api.test",
+                        "yadony://bids/%s/mobile-money/awaiting",
+                        new PawapayProperties.BalanceMin(BigDecimal.ZERO, BigDecimal.ZERO)));
+
+        assertThatThrownBy(() -> service.initiateDeposit(bid.getId(), sender.getId(), null))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-disabled");
+        verifyNoInteractions(paymentRepository, bidRepository, submission, client);
+    }
+
+    // ── Ronde 1, point 1 : rachat du promo et consommation du bon de parrainage ─────────────
+
+    /**
+     * Ordre exact exigé par la revue : après pricing.price (sinon la remise déjà figée dans
+     * le taux disparaîtrait), avant la création du PaymentEntity — même position que le rail
+     * espèces (PaymentService.createEscrow).
+     */
+    @Test
+    void acceptBid_consumesSenderVoucher_afterPricing_beforePaymentCreation() {
+        stubLocks();
+        when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+        when(paymentRepository.findByBidId(bid.getId())).thenReturn(Optional.empty());
+        when(pricing.price(bid, announcement)).thenReturn(new PriceBreakdown(new BigDecimal("15000"), new BigDecimal("1800"), new BigDecimal("16800")));
+        when(paymentRepository.save(any())).thenAnswer(inv -> { PaymentEntity p = inv.getArgument(0); ReflectionTestUtils.setField(p, "id", UUID.randomUUID()); return p; });
+
+        service.acceptBid(bid.getId(), traveler.getId());
+
+        var inOrder = org.mockito.Mockito.inOrder(pricing, voucherService, paymentRepository);
+        inOrder.verify(pricing).price(bid, announcement);
+        inOrder.verify(voucherService).consume(sender.getId(), bid.getId());
+        inOrder.verify(paymentRepository).save(any());
+    }
+
+    @Test
+    void acceptBid_redeemsPromoCode_whenStillValidAtAcceptance() {
+        bid.setPromoCode("WELCOME10");
+        stubLocks();
+        when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+        when(paymentRepository.findByBidId(bid.getId())).thenReturn(Optional.empty());
+        when(pricing.price(bid, announcement)).thenReturn(new PriceBreakdown(new BigDecimal("15000"), new BigDecimal("1500"), new BigDecimal("16500")));
+        when(commissionRateResolver.resolve(announcement.getTravelerId(), sender.getId(), "WELCOME10", sender.getId(), bid.getId()))
+                .thenReturn(new BigDecimal("0.10"));
+        UUID promoCodeId = UUID.randomUUID();
+        PromoRedemptionEntity redemption = mock(PromoRedemptionEntity.class);
+        when(redemption.getPromoCodeId()).thenReturn(promoCodeId);
+        when(promoService.redeem(eq("WELCOME10"), eq(sender.getId()), eq(bid.getId()), any())).thenReturn(redemption);
+        when(paymentRepository.save(any())).thenAnswer(inv -> { PaymentEntity p = inv.getArgument(0); ReflectionTestUtils.setField(p, "id", UUID.randomUUID()); return p; });
+
+        service.acceptBid(bid.getId(), traveler.getId());
+
+        verify(promoService).redeem(eq("WELCOME10"), eq(sender.getId()), eq(bid.getId()), any());
+        assertThat(bid.getPromoCodeId()).isEqualTo(promoCodeId);
+    }
+
+    /** Même repli silencieux que MobileMoneyBidPricing : un promo devenu invalide entre la
+     * création et l'acceptation ne doit ni faire échouer acceptBid, ni être racheté. */
+    @Test
+    void acceptBid_promoNoLongerValidAtAcceptance_doesNotRedeem() {
+        bid.setPromoCode("EXPIRED");
+        stubLocks();
+        when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+        when(paymentRepository.findByBidId(bid.getId())).thenReturn(Optional.empty());
+        when(pricing.price(bid, announcement)).thenReturn(new PriceBreakdown(new BigDecimal("15000"), new BigDecimal("1800"), new BigDecimal("16800")));
+        when(commissionRateResolver.resolve(announcement.getTravelerId(), sender.getId(), "EXPIRED", sender.getId(), bid.getId()))
+                .thenThrow(new YadonyBusinessException(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY, "promo-expired", "x", "x"));
+        when(paymentRepository.save(any())).thenAnswer(inv -> { PaymentEntity p = inv.getArgument(0); ReflectionTestUtils.setField(p, "id", UUID.randomUUID()); return p; });
+
+        service.acceptBid(bid.getId(), traveler.getId());
+
+        verify(promoService, never()).redeem(any(), any(), any(), any());
+        verify(voucherService).consume(sender.getId(), bid.getId());
+    }
+
+    /**
+     * Preuve explicitement demandée par le coordinateur : un même bon ne réduit pas la
+     * commission d'un second envoi. La logique qui rend le bon indisponible après
+     * consommation (CommissionRateResolver/CommissionVoucherService, filtrées sur
+     * consumedAt IS NULL) est déjà testée ailleurs (CommissionVoucherServiceTest) et n'est
+     * pas reproduite ici — {@code pricing} (mocké) reflète directement cet état pour
+     * chaque bid. Ce test-ci prouve la partie qui relève de CETTE classe : acceptBid
+     * consomme fidèlement le bon pour CHAQUE bid qu'il accepte, jamais une seule fois pour
+     * tous les envois d'un même expéditeur.
+     */
+    @Test
+    void acceptBid_secondEnvoiFromSameSender_getsFullRateBecauseVoucherAlreadyConsumed() {
+        stubLocks();
+        when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+        when(paymentRepository.findByBidId(bid.getId())).thenReturn(Optional.empty());
+        // Bid 1 : bon encore actif, commission réduite de moitié (0,5 : 1800 -> 900).
+        when(pricing.price(bid, announcement)).thenReturn(new PriceBreakdown(new BigDecimal("15000"), new BigDecimal("900"), new BigDecimal("15900")));
+        when(paymentRepository.save(any())).thenAnswer(inv -> { PaymentEntity p = inv.getArgument(0); ReflectionTestUtils.setField(p, "id", UUID.randomUUID()); return p; });
+
+        service.acceptBid(bid.getId(), traveler.getId());
+        verify(voucherService).consume(sender.getId(), bid.getId());
+
+        // Bid 2 : même expéditeur, même voyageur/annonce — le bon est déjà consommé par le
+        // bid 1, pricing renvoie donc le taux plein pour CE bid (aucune remise).
+        BidEntity bid2 = new BidEntity();
+        ReflectionTestUtils.setField(bid2, "id", UUID.randomUUID());
+        bid2.setAnnouncementId(announcement.getId());
+        bid2.setSenderId(sender.getId());
+        bid2.setPaymentMethod(PaymentMethod.MOBILE_MONEY);
+        bid2.setStatus(BidStatus.PENDING);
+        bid2.setWeightKg(new BigDecimal("5"));
+        bid2.setMobileMoneyPhone("221771234567");
+        when(bidRepository.findByIdForUpdate(bid2.getId())).thenReturn(Optional.of(bid2));
+        when(paymentRepository.findByBidId(bid2.getId())).thenReturn(Optional.empty());
+        when(pricing.price(bid2, announcement)).thenReturn(new PriceBreakdown(new BigDecimal("15000"), new BigDecimal("1800"), new BigDecimal("16800")));
+
+        service.acceptBid(bid2.getId(), traveler.getId());
+
+        ArgumentCaptor<PaymentEntity> saved = ArgumentCaptor.forClass(PaymentEntity.class);
+        verify(paymentRepository, org.mockito.Mockito.times(2)).save(saved.capture());
+        assertThat(saved.getAllValues().get(1).getCommissionAmount())
+                .as("second envoi du même expéditeur : taux plein, le bon n'est plus disponible")
+                .isEqualByComparingTo("1800");
+        verify(voucherService).consume(sender.getId(), bid2.getId());
+    }
+
+    // ── Ronde 1, point 10 : le bilan idempotent ignore un paiement d'un autre rail ──────────
+
+    @Test
+    void acceptBid_idempotentBranch_ignoresPaymentOfAnotherRail() {
+        bid.setStatus(BidStatus.AWAITING_PAYMENT);
+        stubLocks();
+        PaymentEntity stripePayment = new PaymentEntity();
+        stripePayment.setRail(PaymentRail.STRIPE);
+        stripePayment.setStatus(PaymentStatus.PENDING);
+        stripePayment.setAmount(new BigDecimal("16800"));
+        stripePayment.setCurrency("XOF");
+        when(paymentRepository.findByBidId(bid.getId())).thenReturn(Optional.of(stripePayment));
+
+        assertThatThrownBy(() -> service.acceptBid(bid.getId(), traveler.getId()))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("invalid-status");
+    }
+
+    // ── Ronde 1, point 2 : predictProvider / activeConfiguration encadrés ───────────────────
+
+    @Test
+    void initiateDeposit_predictProviderNetworkFailure_is502() {
+        bid.setStatus(BidStatus.AWAITING_PAYMENT);
+        bid.setAwaitingPaymentExpiresAt(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20));
+        PaymentEntity payment = pendingPayment();
+        when(paymentRepository.findByBidIdForUpdate(bid.getId())).thenReturn(Optional.of(payment));
+        when(bidRepository.findById(bid.getId())).thenReturn(Optional.of(bid));
+        when(operations.findLive(any(), any())).thenReturn(Optional.empty());
+        when(client.predictProvider("221771234567")).thenThrow(new RestClientException("pawaPay indisponible"));
+
+        assertThatThrownBy(() -> service.initiateDeposit(bid.getId(), sender.getId(), null))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-provider-unavailable");
+        verify(submission, never()).submitDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void initiateDeposit_activeConfigurationNetworkFailure_is502() {
+        bid.setStatus(BidStatus.AWAITING_PAYMENT);
+        bid.setAwaitingPaymentExpiresAt(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20));
+        PaymentEntity payment = pendingPayment();
+        when(paymentRepository.findByBidIdForUpdate(bid.getId())).thenReturn(Optional.of(payment));
+        when(bidRepository.findById(bid.getId())).thenReturn(Optional.of(bid));
+        when(operations.findLive(any(), any())).thenReturn(Optional.empty());
+        when(client.predictProvider("221771234567")).thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "221771234567")));
+        when(client.activeConfiguration()).thenThrow(new RestClientException("pawaPay indisponible"));
+
+        assertThatThrownBy(() -> service.initiateDeposit(bid.getId(), sender.getId(), null))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-provider-unavailable");
+        verify(submission, never()).submitDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    // ── Ronde 1, point 9 : pays non convertible ─────────────────────────────────────────────
+
+    @Test
+    void initiateDeposit_unmappableCountry_is422() {
+        bid.setStatus(BidStatus.AWAITING_PAYMENT);
+        bid.setAwaitingPaymentExpiresAt(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20));
+        PaymentEntity payment = pendingPayment();
+        when(paymentRepository.findByBidIdForUpdate(bid.getId())).thenReturn(Optional.of(payment));
+        when(bidRepository.findById(bid.getId())).thenReturn(Optional.of(bid));
+        when(operations.findLive(any(), any())).thenReturn(Optional.empty());
+        // "ZZZ" n'est un alpha-3 ISO d'aucun pays réel : PawapayCountries.toAlpha2 renvoie null.
+        when(client.predictProvider("221771234567")).thenReturn(Optional.of(new PawapayProviderPrediction("ZZZ", "ORANGE_SEN", "221771234567")));
+        when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", new PawapayProviderConfig("ORANGE_SEN", "ZZZ", "XOF", OK, OK, OK)));
+
+        assertThatThrownBy(() -> service.initiateDeposit(bid.getId(), sender.getId(), null))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-payer-unsupported");
+        verify(submission, never()).submitDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    // ── Ronde 1, point 3 : l'audit d'un dépôt refusé survit au rollback ─────────────────────
+
+    @Test
+    void initiateDeposit_auditOfRejectedDeposit_usesItsOwnTransaction() {
+        bid.setStatus(BidStatus.AWAITING_PAYMENT);
+        bid.setAwaitingPaymentExpiresAt(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20));
+        PaymentEntity payment = pendingPayment();
+        when(paymentRepository.findByBidIdForUpdate(bid.getId())).thenReturn(Optional.of(payment));
+        when(bidRepository.findById(bid.getId())).thenReturn(Optional.of(bid));
+        when(operations.findLive(any(), any())).thenReturn(Optional.empty());
+        when(client.predictProvider(any())).thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "221771234567")));
+        when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", new PawapayProviderConfig("ORANGE_SEN", "SEN", "XOF", OK, OK, OK)));
+        PawapayOperationEntity rejected = op(payment.getId(), PawapayOperationStatus.SUBMIT_REJECTED);
+        rejected.setFailureMessage("Provider down");
+        when(submission.submitDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(rejected);
+
+        assertThatThrownBy(() -> service.initiateDeposit(bid.getId(), sender.getId(), null))
+                .isInstanceOf(YadonyBusinessException.class);
+
+        // L'audit du dépôt refusé est bien écrit (comme avant), mais désormais via sa PROPRE
+        // transaction (sollicitation explicite de transactionManager) — pas celle
+        // d'initiateDeposit, vouée au rollback par le throw qui suit dans le code.
+        verify(transactionManager).getTransaction(any());
+        verify(audit).log(eq("PAYMENT"), eq(payment.getId()), eq("MM_DEPOSIT_INITIATED"), eq(sender.getId()), any());
     }
 }
