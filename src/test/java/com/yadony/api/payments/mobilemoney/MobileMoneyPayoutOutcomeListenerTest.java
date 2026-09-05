@@ -116,4 +116,140 @@ class MobileMoneyPayoutOutcomeListenerTest {
         listener.onCompleted(new PawapayOperationCompletedEvent(UUID.randomUUID(), PawapayOperationKind.DEPOSIT, UUID.randomUUID()));
         verify(events, never()).publishEvent(any());
     }
+
+    /**
+     * Second volet de la garde ligne 82 : {@code kind == PAYOUT} mais {@code paymentId == null}.
+     * Le seul test {@code depositEvents_areIgnoredHere} ne couvre que le court-circuit sur
+     * {@code kind}, jamais celui sur {@code paymentId} — sans ce test, un appelant qui publierait
+     * un {@code PawapayOperationCompletedEvent} de kind PAYOUT sans paymentId ferait planter
+     * {@code operations.get(event.operationId())} avec un NPE en aval plutôt que d'être ignoré
+     * proprement.
+     */
+    @Test
+    void completedPayout_withNullPaymentId_isIgnored() {
+        listener.onCompleted(new PawapayOperationCompletedEvent(UUID.randomUUID(), PawapayOperationKind.PAYOUT, null));
+
+        verify(operations, never()).get(any());
+        verify(paymentRepository, never()).findById(any());
+        verify(events, never()).publishEvent(any());
+        verify(audit, never()).log(any(), any(), any(), any(), any());
+    }
+
+    /**
+     * Les trois tests suivants couvrent les gardes {@code isEmpty()} des lignes 89/95/101 :
+     * des cas jugés « structurellement impossibles aujourd'hui » par le commentaire du listener
+     * (le paiement, son bid et son annonce existent nécessairement pour avoir pu être versés),
+     * mais qui restent de vrais chemins défensifs — s'ils se déclenchent un jour (incohérence de
+     * données), la notification doit être abandonnée silencieusement plutôt que de publier un
+     * {@link PaymentReleasedEvent} à moitié rempli ou de lever une NPE.
+     */
+    @Test
+    void completedPayout_whenPaymentNotFound_abandonsWithoutSideEffects() {
+        UUID paymentId = UUID.randomUUID();
+        UUID operationId = UUID.randomUUID();
+        PawapayOperationEntity op = new PawapayOperationEntity(operationId, PawapayOperationKind.PAYOUT, paymentId, null,
+                new BigDecimal("15000"), "XOF", "ORANGE_SEN", "SN", "221771234567");
+        when(operations.get(operationId)).thenReturn(op);
+        when(paymentRepository.findById(paymentId)).thenReturn(Optional.empty());
+
+        listener.onCompleted(new PawapayOperationCompletedEvent(operationId, PawapayOperationKind.PAYOUT, paymentId));
+
+        verify(bidRepository, never()).findById(any());
+        verify(events, never()).publishEvent(any());
+        verify(audit, never()).log(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void completedPayout_whenBidNotFound_abandonsWithoutSideEffects() {
+        UUID paymentId = UUID.randomUUID();
+        UUID operationId = UUID.randomUUID();
+        UUID bidId = UUID.randomUUID();
+        PawapayOperationEntity op = new PawapayOperationEntity(operationId, PawapayOperationKind.PAYOUT, paymentId, null,
+                new BigDecimal("15000"), "XOF", "ORANGE_SEN", "SN", "221771234567");
+        PaymentEntity payment = new PaymentEntity();
+        ReflectionTestUtils.setField(payment, "id", paymentId);
+        payment.setBidId(bidId);
+        when(operations.get(operationId)).thenReturn(op);
+        when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(payment));
+        when(bidRepository.findById(bidId)).thenReturn(Optional.empty());
+
+        listener.onCompleted(new PawapayOperationCompletedEvent(operationId, PawapayOperationKind.PAYOUT, paymentId));
+
+        verify(announcementRepository, never()).findById(any());
+        verify(events, never()).publishEvent(any());
+        verify(audit, never()).log(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void completedPayout_whenAnnouncementNotFound_abandonsWithoutSideEffects() {
+        UUID paymentId = UUID.randomUUID();
+        UUID operationId = UUID.randomUUID();
+        UUID bidId = UUID.randomUUID();
+        UUID announcementId = UUID.randomUUID();
+        PawapayOperationEntity op = new PawapayOperationEntity(operationId, PawapayOperationKind.PAYOUT, paymentId, null,
+                new BigDecimal("15000"), "XOF", "ORANGE_SEN", "SN", "221771234567");
+        PaymentEntity payment = new PaymentEntity();
+        ReflectionTestUtils.setField(payment, "id", paymentId);
+        payment.setBidId(bidId);
+        BidEntity bid = new BidEntity();
+        ReflectionTestUtils.setField(bid, "id", bidId);
+        bid.setAnnouncementId(announcementId);
+        when(operations.get(operationId)).thenReturn(op);
+        when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(payment));
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(announcementId)).thenReturn(Optional.empty());
+
+        listener.onCompleted(new PawapayOperationCompletedEvent(operationId, PawapayOperationKind.PAYOUT, paymentId));
+
+        verify(events, never()).publishEvent(any());
+        verify(audit, never()).log(any(), any(), any(), any(), any());
+    }
+
+    /**
+     * Pendant de {@code depositEvents_areIgnoredHere} pour {@code onFailed} : la garde ligne 116
+     * a sa propre paire de branches (kind, paymentId) distincte de celle de {@code onCompleted},
+     * JaCoCo les compte séparément. Sans ce test, un événement FAILED de kind DEPOSIT/REFUND
+     * déclencherait à tort une alerte admin PAWAPAY_PAYOUT_FAILED.
+     */
+    @Test
+    void failedPayout_withDepositKind_isIgnored() {
+        listener.onFailed(new PawapayOperationFailedEvent(UUID.randomUUID(), PawapayOperationKind.DEPOSIT, UUID.randomUUID(),
+                "CODE", "message"));
+
+        verify(audit, never()).log(any(), any(), any(), any(), any());
+        verify(adminAlert, never()).raise(any(), any(), any());
+    }
+
+    @Test
+    void failedPayout_withNullPaymentId_isIgnored() {
+        listener.onFailed(new PawapayOperationFailedEvent(UUID.randomUUID(), PawapayOperationKind.PAYOUT, null,
+                "CODE", "message"));
+
+        verify(audit, never()).log(any(), any(), any(), any(), any());
+        verify(adminAlert, never()).raise(any(), any(), any());
+    }
+
+    /**
+     * Couvre la branche {@code value == null} de {@code truncate()} (ligne 135), jamais atteinte
+     * par les deux tests existants qui passent tous deux des chaînes non nulles. pawaPay ne
+     * garantit pas {@code failureCode}/{@code failureMessage} sur tous les échecs : la défense en
+     * profondeur du commentaire de {@code truncate} doit produire la chaîne littérale
+     * {@code "null"} (via {@code String.valueOf}), jamais une NPE, dans l'audit et l'alerte.
+     */
+    @Test
+    void failedPayout_withNullFailureCodeAndMessage_stringifiesToLiteralNull() {
+        UUID paymentId = UUID.randomUUID();
+        listener.onFailed(new PawapayOperationFailedEvent(UUID.randomUUID(), PawapayOperationKind.PAYOUT, paymentId, null, null));
+
+        org.mockito.ArgumentCaptor<java.util.Map<String, Object>> auditPayload =
+                org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+        verify(audit).log(eq("PAYMENT"), eq(paymentId), eq("MM_PAYOUT_FAILED"), any(), auditPayload.capture());
+        assertThat(auditPayload.getValue().get("failureCode")).isEqualTo("null");
+
+        org.mockito.ArgumentCaptor<java.util.Map<String, Object>> alertContext =
+                org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+        verify(adminAlert).raise(eq("PAWAPAY_PAYOUT_FAILED"), any(), alertContext.capture());
+        assertThat(alertContext.getValue().get("failureCode")).isEqualTo("null");
+        assertThat(alertContext.getValue().get("failureMessage")).isEqualTo("null");
+    }
 }
