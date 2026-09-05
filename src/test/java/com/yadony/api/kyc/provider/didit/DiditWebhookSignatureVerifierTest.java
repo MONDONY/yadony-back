@@ -19,7 +19,7 @@ class DiditWebhookSignatureVerifierTest {
     private static final long NOW = 1_760_000_000L;
 
     private final DiditWebhookSignatureVerifier verifier = new DiditWebhookSignatureVerifier(
-            new DiditProperties("https://verification.didit.me", "cle", "wf_1", SECRET),
+            new DiditProperties("https://verification.didit.me", "cle", "wf_1", SECRET, "live"),
             Clock.fixed(Instant.ofEpochSecond(NOW), ZoneOffset.UTC));
 
     private static String hmac(String body) throws Exception {
@@ -108,7 +108,7 @@ class DiditWebhookSignatureVerifierTest {
     @Test
     void rejects_everything_whenNoSecretIsConfigured() throws Exception {
         DiditWebhookSignatureVerifier unconfigured = new DiditWebhookSignatureVerifier(
-                new DiditProperties("https://verification.didit.me", "cle", "wf_1", ""),
+                new DiditProperties("https://verification.didit.me", "cle", "wf_1", "", "live"),
                 Clock.fixed(Instant.ofEpochSecond(NOW), ZoneOffset.UTC));
         String body = "{\"status\":\"Approved\"}";
 

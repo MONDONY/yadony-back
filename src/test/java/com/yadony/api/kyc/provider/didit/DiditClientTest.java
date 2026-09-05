@@ -26,7 +26,7 @@ class DiditClientTest {
     private final MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
     private final DiditClient client = new DiditClient(
             builder.build(),
-            new DiditProperties("https://verification.didit.me", "cle", "wf_1", "secret"));
+            new DiditProperties("https://verification.didit.me", "cle", "wf_1", "secret", "live"));
 
     @Test
     void createSession_sendsWorkflowVendorDataAndCallback() {
