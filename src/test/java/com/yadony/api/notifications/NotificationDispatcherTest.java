@@ -20,6 +20,8 @@ import com.yadony.api.matching.events.CashBidCreatedEvent;
 import com.yadony.api.matching.events.BidRejectedEvent;
 import com.yadony.api.matching.events.HandoverAlertEvent;
 import com.yadony.api.matching.events.TripArrivedEvent;
+import com.yadony.api.payments.events.MobileMoneyDepositFailedEvent;
+import com.yadony.api.payments.events.MobileMoneyPaymentConfirmedEvent;
 import com.yadony.api.payments.events.PaymentReleasedEvent;
 import com.yadony.api.tracking.events.DeliveryConfirmedEvent;
 import org.junit.jupiter.api.BeforeEach;
@@ -331,6 +333,29 @@ class NotificationDispatcherTest {
         dispatcher.onBidAccepted(new BidAcceptedEvent(bidId, senderId, travelerId, annId, false));
 
         verify(fcmService).sendToUser(eq(senderId), eq("Demande acceptée !"), any(), any());
+    }
+
+    // ── MobileMoneyPaymentConfirmedEvent / MobileMoneyDepositFailedEvent (tâche 14) ──────────
+
+    @Test
+    void onMobileMoneyPaymentConfirmed_notifiesBothParties() {
+        UUID senderId = UUID.randomUUID();
+        UUID travelerId = UUID.randomUUID();
+        UUID bidId = UUID.randomUUID();
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onMobileMoneyPaymentConfirmed(new MobileMoneyPaymentConfirmedEvent(bidId, senderId, travelerId, new BigDecimal("16800"), "XOF"));
+
+        verify(fcmService).sendToUser(eq(senderId), eq("Paiement confirmé"), any(), argThat(d -> "MM_PAYMENT_CONFIRMED".equals(d.get("type"))));
+        verify(fcmService).sendToUser(eq(travelerId), eq("Colis payé"), any(), argThat(d -> "MM_PAYMENT_CONFIRMED".equals(d.get("type"))));
+    }
+
+    @Test
+    void onMobileMoneyDepositFailed_notifiesSender() {
+        UUID senderId = UUID.randomUUID();
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+        dispatcher.onMobileMoneyDepositFailed(new MobileMoneyDepositFailedEvent(UUID.randomUUID(), senderId, "PAYMENT_NOT_APPROVED"));
+        verify(fcmService).sendToUser(eq(senderId), eq("Paiement refusé"), any(), argThat(d -> "MM_PAYMENT_FAILED".equals(d.get("type"))));
     }
 
     // ── BidRejectedEvent ──────────────────────────────────────────────────────

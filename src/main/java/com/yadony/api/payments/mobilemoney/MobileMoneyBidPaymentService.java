@@ -7,11 +7,13 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.CommissionRateResolver;
 import com.yadony.api.common.Msisdn;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.AnnouncementStatus;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
+import com.yadony.api.matching.BidService;
 import com.yadony.api.matching.BidStatus;
 import com.yadony.api.matching.CapacityUnit;
 import com.yadony.api.matching.events.BidAcceptedEvent;
@@ -21,6 +23,8 @@ import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.PaymentStatus;
 import com.yadony.api.payments.PriceBreakdown;
 import com.yadony.api.payments.cash.PaymentMethod;
+import com.yadony.api.payments.events.MobileMoneyDepositFailedEvent;
+import com.yadony.api.payments.events.MobileMoneyPaymentConfirmedEvent;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPaymentStatusResponse;
 import com.yadony.api.payments.pawapay.PawapayClient;
 import com.yadony.api.payments.pawapay.PawapayCountries;
@@ -37,6 +41,7 @@ import com.yadony.api.promo.PromoRedemptionEntity;
 import com.yadony.api.promo.PromoService;
 import com.yadony.api.voucher.CommissionVoucherService;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Map;
@@ -44,6 +49,7 @@ import java.util.Optional;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -104,6 +110,18 @@ public class MobileMoneyBidPaymentService {
      * qui porte l'annotation). Même motif que {@code GuestUserCleanupScheduler}.
      */
     private final TransactionTemplate independentAuditTransaction;
+
+    /**
+     * Injection par champ, pas par constructeur : {@code AdminAlertService} n'est utile
+     * qu'à {@link #confirmEscrow} (alerte admin sur un deposit encaissé après annulation),
+     * ajouter un 17e paramètre constructeur aurait cassé tous les appels déjà couverts par
+     * {@code MobileMoneyBidPaymentServiceTest} (tâche 13) sans aucun bénéfice pour ces
+     * tests-là. {@code required = false} : reste {@code null} si jamais non résolu, auquel
+     * cas {@link #confirmEscrow} continue de fonctionner sans lever d'alerte (garde
+     * explicite dans {@code refundAfterCancel}).
+     */
+    @Autowired(required = false)
+    private AdminAlertService adminAlert;
 
     public MobileMoneyBidPaymentService(BidRepository bidRepository, AnnouncementRepository announcementRepository,
                                         UserRepository userRepository, PaymentRepository paymentRepository,
@@ -420,6 +438,118 @@ public class MobileMoneyBidPaymentService {
         }
     }
 
+    // ── Séquestre (tâche 14) ────────────────────────────────────────────────
+
+    /**
+     * Deposit COMPLETED : PENDING → ESCROW une seule fois, via l'UPDATE gardé
+     * {@link PaymentRepository#markEscrowIfPending} — jamais une lecture d'entité suivie
+     * d'une écriture. Un dépôt confirmé peut être notifié deux fois (le callback pawaPay
+     * et le poller de réconciliation peuvent tous deux atteindre l'état final) : cette
+     * méthode doit donc être idempotente par construction, pas par confiance dans
+     * l'appelant. {@code moved == 1} : j'ai gagné la course, je finalise (numéro de suivi,
+     * QR, événement, notification). {@code moved == 0} : quelqu'un est déjà passé, je sors
+     * silencieusement, sans rien refaire.
+     *
+     * <p>Deux cas de course supplémentaires, au-delà du simple rejeu, sont couverts :
+     * <ul>
+     *   <li>le paiement est déjà CANCELLED (la deadline de dépôt est passée pendant que
+     *       l'expéditeur saisissait son code PIN, {@code markEscrowIfPending} échoue
+     *       donc) : pawaPay a quand même encaissé le deposit, il est immédiatement
+     *       remboursé ;</li>
+     *   <li>le bid est sorti d'AWAITING_PAYMENT entre-temps (annulation concurrente)
+     *       alors que le paiement, lui, vient tout juste de passer en ESCROW : le claim
+     *       est aussitôt retourné en REFUNDED via
+     *       {@link PaymentRepository#markRefundedIfEscrow}.</li>
+     * </ul>
+     * Dans les deux cas, l'argent est rendu sur-le-champ, jamais gardé sans colis en face.
+     */
+    @Transactional
+    public void confirmEscrow(UUID operationId, UUID paymentId) {
+        int moved = paymentRepository.markEscrowIfPending(paymentId, operationId, Instant.now());
+        PaymentEntity payment = paymentRepository.findById(paymentId).orElseThrow(
+                () -> new IllegalStateException("Paiement introuvable : " + paymentId));
+        if (moved == 0) {
+            if (payment.getStatus() == PaymentStatus.CANCELLED) {
+                refundAfterCancel(payment, operationId, "MM_DEPOSIT_AFTER_CANCEL_REFUNDED");
+            } else {
+                log.info("Deposit {} déjà appliqué sur le paiement {} ({})", operationId, paymentId, payment.getStatus());
+            }
+            return;
+        }
+        payment.setStatus(PaymentStatus.ESCROW);
+        payment.setPawapayDepositId(operationId);
+
+        BidEntity bid = bidRepository.findByIdForUpdate(payment.getBidId())
+                .orElseThrow(() -> new IllegalStateException("Bid introuvable : " + payment.getBidId()));
+        if (bid.getStatus() != BidStatus.AWAITING_PAYMENT) {
+            // Annulé entre-temps : le claim ESCROW qu'on vient de gagner est immédiatement
+            // retourné en REFUNDED — jamais gardé sans colis en face.
+            if (paymentRepository.markRefundedIfEscrow(paymentId) == 1) {
+                payment.setStatus(PaymentStatus.REFUNDED);
+                refundAfterCancel(payment, operationId, "MM_DEPOSIT_AFTER_CANCEL_REFUNDED");
+            }
+            return;
+        }
+        AnnouncementEntity announcement = announcementRepository.findByIdForUpdate(bid.getAnnouncementId())
+                .orElseThrow(() -> new IllegalStateException("Annonce introuvable : " + bid.getAnnouncementId()));
+        bid.setStatus(BidStatus.ACCEPTED);
+        bid.setAwaitingPaymentExpiresAt(null);
+        if (bid.getQrToken() == null) bid.setQrToken(UUID.randomUUID().toString());
+        if (bid.getTrackingToken() == null) bid.setTrackingToken(UUID.randomUUID().toString());
+        if (bid.getTrackingNumber() == null) bid.setTrackingNumber(BidService.generateTrackingNumber());
+        bid.applyHandoverFrom(announcement);
+        bidRepository.save(bid);
+
+        audit.log("PAYMENT", paymentId, "MM_ESCROW", bid.getSenderId(),
+                Map.of("bidId", bid.getId().toString(), "operationId", operationId.toString(),
+                        "amount", payment.getAmount().toPlainString(), "currency", payment.getCurrency()));
+        events.publishEvent(new MobileMoneyPaymentConfirmedEvent(
+                bid.getId(), bid.getSenderId(), announcement.getTravelerId(), payment.getAmount(), payment.getCurrency()));
+        log.info("Séquestre mobile money : paiement {} ESCROW, bid {} ACCEPTED", paymentId, bid.getId());
+    }
+
+    /**
+     * Un deposit a été encaissé par pawaPay pour un paiement qui, côté yadony, n'est déjà
+     * plus réclamable (deadline de paiement dépassée, ou bid annulé entre-temps) :
+     * l'argent ne peut rester en séquestre sans colis en face, il est donc reversé
+     * immédiatement via un REFUND pawaPay du même montant.
+     */
+    private void refundAfterCancel(PaymentEntity payment, UUID depositOperationId, String auditAction) {
+        PawapayOperationEntity deposit = operations.get(depositOperationId);
+        PawapayOperationEntity refund = submission.submitRefund(payment.getId(), deposit, payment.getAmount());
+        payment.setPawapayRefundId(refund.getId());
+        audit.log("PAYMENT", payment.getId(), auditAction, null,
+                Map.of("depositOperationId", depositOperationId.toString(), "refundOperationId", refund.getId().toString(),
+                        "refundStatus", refund.getStatus().name()));
+        if (adminAlert != null) {
+            adminAlert.raise("PAWAPAY_DEPOSIT_AFTER_CANCEL",
+                    "Deposit encaissé après annulation du bid, remboursement " + refund.getStatus() + " (payment " + payment.getId() + ")",
+                    Map.of("paymentId", payment.getId().toString(), "refundOperationId", refund.getId().toString()));
+        }
+    }
+
+    /**
+     * Deposit FAILED ou SUBMIT_REJECTED détecté par le poller (PIN refusé, solde
+     * insuffisant, opérateur indisponible…) : le paiement reste PENDING, l'expéditeur est
+     * notifié et peut relancer {@link #initiateDeposit} depuis l'app.
+     *
+     * <p>{@code failureCode} vient de pawaPay (callback non authentifié en staging, ou
+     * poller) : borné à 64 caractères avant toute écriture, comme toute valeur externe
+     * non authentifiée de ce rail (même convention que
+     * {@code PawapayCallbackController#truncate}).
+     */
+    @Transactional
+    public void notifyDepositFailed(UUID operationId, UUID paymentId, String failureCode) {
+        PaymentEntity payment = paymentRepository.findById(paymentId).orElse(null);
+        if (payment == null) return;
+        BidEntity bid = bidRepository.findById(payment.getBidId()).orElse(null);
+        if (bid == null) return;
+        String safeFailureCode = truncate(failureCode);
+        audit.log("PAYMENT", paymentId, "MM_DEPOSIT_FAILED", bid.getSenderId(),
+                Map.of("operationId", operationId.toString(), "failureCode", safeFailureCode == null ? "" : safeFailureCode));
+        events.publishEvent(new MobileMoneyDepositFailedEvent(bid.getId(), bid.getSenderId(), safeFailureCode));
+    }
+
     // ── Statut ──────────────────────────────────────────────────────────────
 
     @Transactional(readOnly = true)
@@ -470,5 +600,15 @@ public class MobileMoneyBidPaymentService {
                 step, bidId, cause.toString());
         return new YadonyBusinessException(HttpStatus.BAD_GATEWAY, "mobile-money-provider-unavailable",
                 "Mobile Money Provider Unavailable", "Le service mobile money ne répond pas. Réessayez dans quelques instants.");
+    }
+
+    /**
+     * Borne à 64 caractères une valeur non authentifiée avant qu'elle ne soit écrite en
+     * base (audit) ou publiée dans un événement — même convention que
+     * {@code PawapayCallbackController#truncate} : {@code failureCode} vient de pawaPay
+     * (callback ou poller), jamais garanti dans une borne raisonnable avant ce point.
+     */
+    private static String truncate(String value) {
+        return value != null && value.length() > 64 ? value.substring(0, 64) : value;
     }
 }

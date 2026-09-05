@@ -25,6 +25,8 @@ import com.yadony.api.matching.events.HandoverAlertEvent;
 import com.yadony.api.matching.events.ParcelRefusedEvent;
 import com.yadony.api.matching.events.TripArrivedEvent;
 import com.yadony.api.matching.events.VoyageurNoShowEvent;
+import com.yadony.api.payments.events.MobileMoneyDepositFailedEvent;
+import com.yadony.api.payments.events.MobileMoneyPaymentConfirmedEvent;
 import com.yadony.api.payments.events.PaymentReleasedEvent;
 import com.yadony.api.tracking.events.DeliveryConfirmedEvent;
 import org.slf4j.Logger;
@@ -241,6 +243,32 @@ public class NotificationDispatcher {
         var text = NotificationTexts.bidAccepted(name);
         notifyUnlessBlocked(event.getSenderId(), event.getTravelerId(), text.title(), text.body(),
                 Map.of("type", "BID_ACCEPTED", "bidId", event.getBidId().toString()), true);
+    }
+
+    // ── MobileMoneyPaymentConfirmedEvent / MobileMoneyDepositFailedEvent (tâche 14) ──────────
+
+    /**
+     * Deposit COMPLETED : le voyageur doit préparer la remise (notification critique, SMS
+     * de secours si pas d'accusé sous 60 s) ; l'expéditeur reçoit une simple confirmation,
+     * sans urgence de son côté.
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
+    public void onMobileMoneyPaymentConfirmed(MobileMoneyPaymentConfirmedEvent event) {
+        Map<String, String> data = Map.of("type", "MM_PAYMENT_CONFIRMED", "bidId", event.bidId().toString());
+        var forSender = NotificationTexts.mobileMoneyPaymentConfirmed();
+        var forTraveler = NotificationTexts.mobileMoneyPaymentReceived();
+        notifyUser(event.senderId(), forSender.title(), forSender.body(), data);
+        notifyCritical(event.travelerId(), forTraveler.title(), forTraveler.body(), data);
+    }
+
+    /** Deposit FAILED : seul l'expéditeur est notifié, c'est lui qui peut relancer un paiement. */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
+    public void onMobileMoneyDepositFailed(MobileMoneyDepositFailedEvent event) {
+        var text = NotificationTexts.mobileMoneyPaymentFailed();
+        notifyUser(event.senderId(), text.title(), text.body(),
+                Map.of("type", "MM_PAYMENT_FAILED", "bidId", event.bidId().toString()));
     }
 
     @EventListener @Async

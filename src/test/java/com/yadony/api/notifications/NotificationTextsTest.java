@@ -103,7 +103,9 @@ class NotificationTextsTest {
         m.put("loyalSender", NotificationTexts.loyalSender(NOM, DEPART, ARRIVEE));
         m.put("paymentReleased", NotificationTexts.paymentReleased("12500,00 €"));
         m.put("mobileMoneyPaymentConfirmed", NotificationTexts.mobileMoneyPaymentConfirmed());
+        m.put("mobileMoneyPaymentReceived", NotificationTexts.mobileMoneyPaymentReceived());
         m.put("mobileMoneyPaymentPending", NotificationTexts.mobileMoneyPaymentPending(99));
+        m.put("mobileMoneyPaymentFailed", NotificationTexts.mobileMoneyPaymentFailed());
         m.put("kycVerified", NotificationTexts.kycVerified());
         m.put("kycActionRequired", NotificationTexts.kycActionRequired());
         m.put("kycReset", NotificationTexts.kycReset());

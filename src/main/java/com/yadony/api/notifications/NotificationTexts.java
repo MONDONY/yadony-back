@@ -417,6 +417,11 @@ public final class NotificationTexts {
         return new NotificationText("Paiement confirmé", "Le paiement Mobile Money de cet envoi est confirmé.");
     }
 
+    /** Push voyageur au deposit COMPLETED (séquestre acquis) : la préparation de la remise peut commencer. */
+    public static NotificationText mobileMoneyPaymentReceived() {
+        return new NotificationText("Colis payé", "L'expéditeur a payé en mobile money. Préparez la remise.");
+    }
+
     /**
      * Push à l'acceptation d'un bid mobile money, à la place de « Demande acceptée ! ».
      * {@code depositDeadlineMinutes} vient de la configuration ({@code yadony.pawapay.deposit-deadline-minutes})
@@ -425,6 +430,14 @@ public final class NotificationTexts {
     public static NotificationText mobileMoneyPaymentPending(int depositDeadlineMinutes) {
         return new NotificationText("Payez votre envoi",
                 "Le voyageur a accepté. Réglez en mobile money sous " + depositDeadlineMinutes + " min.");
+    }
+
+    /**
+     * Deposit FAILED (PIN refusé, solde insuffisant, opérateur indisponible…) : le motif
+     * technique pawaPay n'est jamais exposé, l'expéditeur est seulement invité à réessayer.
+     */
+    public static NotificationText mobileMoneyPaymentFailed() {
+        return new NotificationText("Paiement refusé", "Le paiement mobile money a échoué. Réessayez depuis l'app.");
     }
 
     public static NotificationText kycVerified() {
