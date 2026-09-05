@@ -58,7 +58,7 @@ class KycAdminServiceTest {
         setId(kyc, UUID.randomUUID());
         kyc.setUserId(userId);
         kyc.setStatus(status);
-        kyc.setStripeVerificationSessionId(sessionId);
+        kyc.setVerificationSessionId(sessionId);
         return kyc;
     }
 
@@ -178,7 +178,7 @@ class KycAdminServiceTest {
 
             assertThat(user.getKycStatus()).isEqualTo(KycStatus.NOT_STARTED);
             assertThat(kyc.getStatus()).isEqualTo(KycVerificationStatus.PENDING);
-            assertThat(kyc.getStripeVerificationSessionId()).isNull();
+            assertThat(kyc.getVerificationSessionId()).isNull();
             assertThat(kyc.getRejectionReason()).isNull();
             assertThat(kyc.getRejectionCode()).isNull();
             // La ligne n'est JAMAIS soft-deletée : uq_kyc_user_id est une contrainte UNIQUE
@@ -223,7 +223,7 @@ class KycAdminServiceTest {
             service.resetForUser(user.getId(), ADMIN_ID, "motif");
 
             assertThat(user.getKycStatus()).isEqualTo(KycStatus.NOT_STARTED);
-            assertThat(kyc.getStripeVerificationSessionId()).isNull();
+            assertThat(kyc.getVerificationSessionId()).isNull();
         }
     }
 

@@ -56,7 +56,7 @@ class KycServiceTest {
         KycVerificationEntity kyc = new KycVerificationEntity();
         setId(kyc, UUID.randomUUID());
         kyc.setUserId(userId);
-        kyc.setStripeVerificationSessionId("vs_test_001");
+        kyc.setVerificationSessionId("vs_test_001");
         kyc.setStatus(status);
         return kyc;
     }

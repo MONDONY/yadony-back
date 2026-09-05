@@ -37,7 +37,7 @@ public class KycVerifiedIdentityService {
         try {
             Optional<KycVerificationEntity> verification = kycRepository.findByUserId(userId);
             if (verification.isEmpty()
-                    || verification.get().getStripeVerificationSessionId() == null
+                    || verification.get().getVerificationSessionId() == null
                     || verification.get().getStatus() != KycVerificationStatus.VERIFIED) {
                 return Optional.empty();
             }
@@ -59,7 +59,7 @@ public class KycVerifiedIdentityService {
             // demande la date de naissance dans son propre formulaire, et l'economie
             // porterait sur un seul champ, saisi une fois dans la vie du compte.
             VerificationSession session = VerificationSession.retrieve(
-                    verification.get().getStripeVerificationSessionId(),
+                    verification.get().getVerificationSessionId(),
                     VerificationSessionRetrieveParams.builder()
                             .addExpand("verified_outputs")
                             .build(),

@@ -61,8 +61,8 @@ public class KycService {
         // indéfiniment avec l'ancienne configuration.
         if (user.getKycStatus() == KycStatus.PENDING) {
             Optional<KycVerificationEntity> existing = kycRepository.findByUserId(user.getId());
-            if (existing.isPresent() && existing.get().getStripeVerificationSessionId() != null) {
-                String existingSessionId = existing.get().getStripeVerificationSessionId();
+            if (existing.isPresent() && existing.get().getVerificationSessionId() != null) {
+                String existingSessionId = existing.get().getVerificationSessionId();
                 try {
                     VerificationSession existingSession = VerificationSession.retrieve(existingSessionId);
                     if (!"requires_input".equals(existingSession.getStatus())) {
@@ -122,7 +122,7 @@ public class KycService {
                         return newKyc;
                     });
 
-            kyc.setStripeVerificationSessionId(session.getId());
+            kyc.setVerificationSessionId(session.getId());
             kyc.setStatus(KycVerificationStatus.PENDING);
             kyc.setRejectionReason(null);
             kycRepository.save(kyc);
@@ -167,7 +167,7 @@ public class KycService {
         // Best-effort: cancel the Stripe session so it doesn't linger PENDING forever.
         // Never blocks the local abandon if Stripe is unreachable or the session already terminated.
         kycRepository.findByUserId(user.getId())
-                .map(KycVerificationEntity::getStripeVerificationSessionId)
+                .map(KycVerificationEntity::getVerificationSessionId)
                 .ifPresent(sessionId -> {
                     try {
                         VerificationSession.retrieve(sessionId).cancel();

@@ -38,7 +38,7 @@ class KycVerifiedIdentityServiceTest {
         KycVerificationEntity entity = new KycVerificationEntity();
         entity.setUserId(userId);
         entity.setStatus(status);
-        entity.setStripeVerificationSessionId(sessionId);
+        entity.setVerificationSessionId(sessionId);
         return entity;
     }
 

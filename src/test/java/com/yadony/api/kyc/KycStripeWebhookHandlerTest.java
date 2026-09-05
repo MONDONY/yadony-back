@@ -69,7 +69,7 @@ class KycStripeWebhookHandlerTest {
         var user = new UserEntity();
         user.setKycStatus(KycStatus.PENDING);
 
-        when(kycRepository.findByStripeVerificationSessionId("vs_001")).thenReturn(Optional.of(kyc));
+        when(kycRepository.findByVerificationSessionId("vs_001")).thenReturn(Optional.of(kyc));
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
 
         handler.handle(buildEvent("identity.verification_session.verified", "vs_001"));
@@ -91,7 +91,7 @@ class KycStripeWebhookHandlerTest {
         var user = new UserEntity();
         user.setKycStatus(KycStatus.VERIFIED);
 
-        when(kycRepository.findByStripeVerificationSessionId("vs_002")).thenReturn(Optional.of(kyc));
+        when(kycRepository.findByVerificationSessionId("vs_002")).thenReturn(Optional.of(kyc));
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
 
         handler.handle(buildEvent("identity.verification_session.verified", "vs_002"));
@@ -109,7 +109,7 @@ class KycStripeWebhookHandlerTest {
         var user = new UserEntity();
         user.setKycStatus(KycStatus.PENDING);
 
-        when(kycRepository.findByStripeVerificationSessionId("vs_003")).thenReturn(Optional.of(kyc));
+        when(kycRepository.findByVerificationSessionId("vs_003")).thenReturn(Optional.of(kyc));
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
 
         handler.handle(buildEvent("identity.verification_session.requires_input", "vs_003"));
@@ -131,7 +131,7 @@ class KycStripeWebhookHandlerTest {
         var user = new UserEntity();
         user.setKycStatus(KycStatus.PENDING);
 
-        when(kycRepository.findByStripeVerificationSessionId("vs_004")).thenReturn(Optional.of(kyc));
+        when(kycRepository.findByVerificationSessionId("vs_004")).thenReturn(Optional.of(kyc));
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
 
         handler.handle(buildEvent("identity.verification_session.canceled", "vs_004"));
@@ -146,7 +146,7 @@ class KycStripeWebhookHandlerTest {
 
     @Test
     void handle_noKycRecord_returnsEarlyWithoutSave() {
-        when(kycRepository.findByStripeVerificationSessionId("vs_unknown")).thenReturn(Optional.empty());
+        when(kycRepository.findByVerificationSessionId("vs_unknown")).thenReturn(Optional.empty());
 
         handler.handle(buildEvent("identity.verification_session.verified", "vs_unknown"));
 
@@ -161,7 +161,7 @@ class KycStripeWebhookHandlerTest {
         kyc.setUserId(userId);
         kyc.setStatus(KycVerificationStatus.PENDING);
 
-        when(kycRepository.findByStripeVerificationSessionId("vs_005")).thenReturn(Optional.of(kyc));
+        when(kycRepository.findByVerificationSessionId("vs_005")).thenReturn(Optional.of(kyc));
         when(userRepository.findById(userId)).thenReturn(Optional.empty());
 
         handler.handle(buildEvent("identity.verification_session.verified", "vs_005"));
@@ -178,7 +178,7 @@ class KycStripeWebhookHandlerTest {
         var user = new UserEntity();
         user.setKycStatus(KycStatus.VERIFIED);
 
-        when(kycRepository.findByStripeVerificationSessionId("vs_004")).thenReturn(Optional.of(kyc));
+        when(kycRepository.findByVerificationSessionId("vs_004")).thenReturn(Optional.of(kyc));
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
 
         handler.handle(buildEvent("identity.verification_session.canceled", "vs_004"));
@@ -197,7 +197,7 @@ class KycStripeWebhookHandlerTest {
         var user = new UserEntity();
         user.setKycStatus(KycStatus.VERIFIED);
 
-        when(kycRepository.findByStripeVerificationSessionId("vs_006")).thenReturn(Optional.of(kyc));
+        when(kycRepository.findByVerificationSessionId("vs_006")).thenReturn(Optional.of(kyc));
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
 
         handler.handle(buildEvent("identity.verification_session.requires_input", "vs_006"));
@@ -216,7 +216,7 @@ class KycStripeWebhookHandlerTest {
         var user = new UserEntity();
         user.setKycStatus(KycStatus.PENDING);
 
-        when(kycRepository.findByStripeVerificationSessionId("vs_007")).thenReturn(Optional.of(kyc));
+        when(kycRepository.findByVerificationSessionId("vs_007")).thenReturn(Optional.of(kyc));
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
 
         // Event with last_error.reason populated
@@ -240,7 +240,7 @@ class KycStripeWebhookHandlerTest {
         var user = new UserEntity();
         user.setKycStatus(KycStatus.PENDING);
 
-        when(kycRepository.findByStripeVerificationSessionId("vs_011")).thenReturn(Optional.of(kyc));
+        when(kycRepository.findByVerificationSessionId("vs_011")).thenReturn(Optional.of(kyc));
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
 
         String json = "{\"id\":\"evt_kyc11\",\"object\":\"event\"," +
@@ -264,7 +264,7 @@ class KycStripeWebhookHandlerTest {
         var user = new UserEntity();
         user.setKycStatus(KycStatus.PENDING);
 
-        when(kycRepository.findByStripeVerificationSessionId("vs_012")).thenReturn(Optional.of(kyc));
+        when(kycRepository.findByVerificationSessionId("vs_012")).thenReturn(Optional.of(kyc));
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
 
         handler.handle(buildEvent("identity.verification_session.canceled", "vs_012"));
@@ -282,7 +282,7 @@ class KycStripeWebhookHandlerTest {
 
         handler.handle(event);
 
-        verify(kycRepository, never()).findByStripeVerificationSessionId(any());
+        verify(kycRepository, never()).findByVerificationSessionId(any());
         verify(kycRepository, never()).save(any());
     }
 
@@ -296,7 +296,7 @@ class KycStripeWebhookHandlerTest {
 
         handler.handle(event);
 
-        verify(kycRepository, never()).findByStripeVerificationSessionId(any());
+        verify(kycRepository, never()).findByVerificationSessionId(any());
     }
 
     @Test
@@ -308,7 +308,7 @@ class KycStripeWebhookHandlerTest {
         var user = new UserEntity();
         user.setKycStatus(KycStatus.PENDING);
 
-        when(kycRepository.findByStripeVerificationSessionId("vs_010")).thenReturn(Optional.of(kyc));
+        when(kycRepository.findByVerificationSessionId("vs_010")).thenReturn(Optional.of(kyc));
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
 
         // Event with last_error: null (explicit JSON null)

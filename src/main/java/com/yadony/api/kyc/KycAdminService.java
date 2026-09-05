@@ -56,7 +56,7 @@ public class KycAdminService {
     public KycAdminStatusResponse getForUser(UUID userId) {
         UserEntity user = requireUser(userId);
         Optional<KycVerificationEntity> kyc = kycRepository.findByUserId(userId);
-        String sessionId = kyc.map(KycVerificationEntity::getStripeVerificationSessionId).orElse(null);
+        String sessionId = kyc.map(KycVerificationEntity::getVerificationSessionId).orElse(null);
 
         StripeView stripe = sessionId != null ? retrieveStripeView(sessionId) : StripeView.absent();
 
@@ -97,7 +97,7 @@ public class KycAdminService {
                         "kyc-not-started", "Unprocessable",
                         "Cet utilisateur n'a jamais démarré de vérification d'identité"));
 
-        String previousSessionId = kyc.getStripeVerificationSessionId();
+        String previousSessionId = kyc.getVerificationSessionId();
         KycVerificationStatus previousStatus = kyc.getStatus();
 
         // Best-effort : une session Stripe injoignable ou déjà terminée ne doit jamais bloquer
@@ -112,7 +112,7 @@ public class KycAdminService {
         }
 
         kyc.setStatus(KycVerificationStatus.PENDING);
-        kyc.setStripeVerificationSessionId(null);
+        kyc.setVerificationSessionId(null);
         kyc.setRejectionReason(null);
         kyc.setRejectionCode(null);
         kycRepository.save(kyc);

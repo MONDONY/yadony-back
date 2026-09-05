@@ -82,7 +82,7 @@ public class KycStripeWebhookHandler implements StripeWebhookHandler {
             return;
         }
 
-        KycVerificationEntity kyc = kycRepository.findByStripeVerificationSessionId(sessionId)
+        KycVerificationEntity kyc = kycRepository.findByVerificationSessionId(sessionId)
                 .orElse(null);
         if (kyc == null) { log.warn("No KYC record for session {}", sessionId); return; }
 
