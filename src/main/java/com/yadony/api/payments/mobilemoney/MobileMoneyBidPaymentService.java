@@ -580,9 +580,46 @@ public class MobileMoneyBidPaymentService {
     // ── Expiration (tâche 15) ────────────────────────────────────────────────
 
     /**
+     * Issue d'un appel à {@link #expire}, à l'usage exclusif du scheduler appelant.
+     *
+     * <p><b>Ronde 2, points 1 et 2</b> : {@code expire()} ne lève plus d'alerte administrateur et
+     * n'évince plus lui-même le cache de recherche — les deux étaient exécutés PENDANT que
+     * {@code expire()} tenait ses deux verrous (paiement, bid), l'un et l'autre synchrones
+     * ({@code AdminAlertService#raise} poste sur Telegram par HTTP ; l'éviction, elle, était sans
+     * conséquence tant qu'aucun bid ne restait en échec fermé — mais ces échecs fermés en créent
+     * justement, par construction). Retarder {@link #confirmEscrow} — la transaction même qu'on
+     * attend pour résoudre l'anomalie qui a déclenché l'alerte — par les verrous d'{@code expire}
+     * était le pire endroit possible pour un appel réseau synchrone. Les deux actions sont
+     * désormais décidées par {@code MobileMoneyPaymentDeadlineScheduler}, APRÈS le retour de
+     * cette méthode (donc après le commit de son {@code REQUIRES_NEW}, hors verrou), à partir de
+     * la seule valeur de retour :
+     * <ul>
+     *   <li>{@link #CANCELLED} → le scheduler évince le cache {@code announcements-search} ;</li>
+     *   <li>{@link #PAYMENT_MISSING} / {@link #DEPOSIT_COMPLETED_NOT_APPLIED} → le scheduler
+     *       lève une alerte administrateur, dédupliquée par bid (même motif que
+     *       {@code PawapayReconciliationPoller#escalateUnknown}) — sans cette dédup, un bid
+     *       resté en échec fermé (donc resélectionné à chaque tick) spammerait Sentry et
+     *       Telegram indéfiniment ;</li>
+     *   <li>{@link #IGNORED} → rien.</li>
+     * </ul>
+     */
+    public enum ExpireOutcome {
+        /** Bid annulé, capacité rendue, notifications publiées. */
+        CANCELLED,
+        /** Rien à faire : bid déjà sorti d'AWAITING_PAYMENT, deadline pas encore atteinte, dépôt
+         *  encore ouvert, ou course perdue contre {@code confirmEscrow}. */
+        IGNORED,
+        /** Paiement introuvable pour un bid AWAITING_PAYMENT/MOBILE_MONEY — anomalie. */
+        PAYMENT_MISSING,
+        /** Dépôt pawaPay COMPLETED mais paiement encore PENDING — en vol, pas mort — anomalie. */
+        DEPOSIT_COMPLETED_NOT_APPLIED
+    }
+
+    /**
      * Deadline de paiement mobile money dépassée (30 min après acceptation) : bid
      * {@code AWAITING_PAYMENT} annulé, capacité rendue à l'annonce, paiement {@code PENDING}
-     * annulé, deux notifications (expéditeur, voyageur).
+     * annulé, deux notifications (expéditeur, voyageur). Rend l'{@link ExpireOutcome} de
+     * l'opération — voir sa Javadoc pour ce que le scheduler appelant en fait (cache, alerte).
      *
      * <p><b>Idempotent</b> par la primitive atomique {@link PaymentRepository#markCancelledIfPending},
      * jamais par la sélection du scheduler appelant (qui peut repasser sur la même ligne tant
@@ -618,8 +655,9 @@ public class MobileMoneyBidPaymentService {
      * l'interblocage ci-dessus). L'annuler solderait en silence un colis déjà payé : bid annulé,
      * capacité regonflée, et « paiement non reçu » notifié à un expéditeur pourtant débité — sans
      * qu'aucun chemin ne puisse plus jamais soumettre de remboursement (le poller ne relit pas
-     * les opérations finales). On ne touche à rien, on journalise en ERROR et on lève une alerte
-     * administrateur dédiée : l'invariant est rompu, un humain doit le savoir.
+     * les opérations finales). On ne touche à rien, on journalise en ERROR et on rend
+     * {@link ExpireOutcome#DEPOSIT_COMPLETED_NOT_APPLIED} : l'invariant est rompu, un humain doit
+     * le savoir — c'est au scheduler d'alerter, dédupliqué, hors des verrous tenus ici.
      *
      * <p>Un dépôt encore ouvert (jamais final — {@link PawapayOperationStatus#isFinal()}, donc ni
      * {@code COMPLETED} ni mort) n'est pas davantage annulé : l'expéditeur peut être en train de
@@ -630,8 +668,9 @@ public class MobileMoneyBidPaymentService {
      * <p><b>Paiement introuvable (Ronde 1, point 6)</b> : un bid {@code AWAITING_PAYMENT} en
      * mobile money a normalement toujours un paiement PAWAPAY associé (créé dans la même
      * transaction qu'{@link #acceptBid}) — état structurellement impossible en théorie, mais sur
-     * le chemin de l'argent on échoue fermé : on n'annule rien, on journalise et on alerte,
-     * plutôt que de risquer d'annuler un bid dont on ne sait rien du paiement réel.
+     * le chemin de l'argent on échoue fermé : on n'annule rien, on journalise, et on rend
+     * {@link ExpireOutcome#PAYMENT_MISSING} plutôt que de risquer d'annuler un bid dont on ne
+     * sait rien du paiement réel.
      *
      * <p>Restitution de capacité : inverse exact de la réservation faite par {@link #acceptBid}
      * — même verrou pessimiste {@link AnnouncementRepository#findByIdForUpdate}, même condition
@@ -644,8 +683,7 @@ public class MobileMoneyBidPaymentService {
      * périmètre de cette tâche, à ne surtout pas reproduire ici).
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    @CacheEvict(value = "announcements-search", allEntries = true)
-    public void expire(UUID bidId) {
+    public ExpireOutcome expire(UUID bidId) {
         // Ronde 1, point 1 : paiement verrouillé AVANT le bid — voir Javadoc.
         Optional<PaymentEntity> payment = paymentRepository.findByBidIdForUpdate(bidId)
                 .filter(p -> p.getRail() == PaymentRail.PAWAPAY);
@@ -654,43 +692,34 @@ public class MobileMoneyBidPaymentService {
         if (bid == null || bid.getStatus() != BidStatus.AWAITING_PAYMENT
                 || bid.getPaymentMethod() != PaymentMethod.MOBILE_MONEY
                 || bid.getAwaitingPaymentExpiresAt() == null || bid.getAwaitingPaymentExpiresAt().isAfter(now)) {
-            return;
+            return ExpireOutcome.IGNORED;
         }
         if (payment.isEmpty()) {
             // Ronde 1, point 6 : échoue fermé, jamais d'annulation à l'aveugle sur le chemin de
-            // l'argent — voir Javadoc.
+            // l'argent — voir Javadoc. Ronde 2, point 1 : ne lève plus l'alerte ici, la rend.
             log.error("Bid {} AWAITING_PAYMENT/MOBILE_MONEY sans paiement PAWAPAY associé, expiration abandonnée", bidId);
-            if (adminAlert != null) {
-                adminAlert.raise("PAWAPAY_EXPIRE_PAYMENT_MISSING",
-                        "Bid " + bidId + " AWAITING_PAYMENT mobile money sans paiement PAWAPAY associé",
-                        Map.of("bidId", bidId.toString()));
-            }
-            return;
+            return ExpireOutcome.PAYMENT_MISSING;
         }
         PaymentEntity p = payment.get();
         Optional<PawapayOperationEntity> deposit = operations.findLatest(p.getId(), PawapayOperationKind.DEPOSIT);
         boolean depositOpen = deposit.map(o -> !o.getStatus().isFinal()).orElse(false);
         if (depositOpen) {
             log.info("Bid {} : délai de paiement dépassé mais un deposit est encore ouvert, on attend", bidId);
-            return;
+            return ExpireOutcome.IGNORED;
         }
         boolean depositCompletedNotApplied = deposit.map(o -> o.getStatus() == PawapayOperationStatus.COMPLETED).orElse(false);
         if (depositCompletedNotApplied) {
-            // Ronde 1, point 2 (CRITIQUE) : en vol, pas mort — voir Javadoc.
+            // Ronde 1, point 2 (CRITIQUE) : en vol, pas mort — voir Javadoc. Ronde 2, point 1 :
+            // ne lève plus l'alerte ici, la rend.
             log.error("Bid {} : deposit COMPLETED mais paiement {} encore PENDING, expiration abandonnée "
                     + "(confirmEscrow n'est pas encore passé)", bidId, p.getId());
-            if (adminAlert != null) {
-                adminAlert.raise("PAWAPAY_DEPOSIT_COMPLETED_PAYMENT_PENDING",
-                        "Deposit pawaPay COMPLETED mais paiement " + p.getId() + " encore PENDING (bid " + bidId + ")",
-                        Map.of("bidId", bidId.toString(), "paymentId", p.getId().toString()));
-            }
-            return;
+            return ExpireOutcome.DEPOSIT_COMPLETED_NOT_APPLIED;
         }
         if (paymentRepository.markCancelledIfPending(p.getId()) == 0) {
             // confirmEscrow a gagné la course (ou rejeu de cette même méthode) : le paiement
             // n'est plus PENDING. Rien à faire : ni bid, ni annonce, ni audit, ni événement.
             log.info("Bid {} : paiement {} déjà sorti de PENDING, expiration abandonnée", bidId, p.getId());
-            return;
+            return ExpireOutcome.IGNORED;
         }
 
         AnnouncementEntity announcement = announcementRepository.findByIdForUpdate(bid.getAnnouncementId()).orElse(null);
@@ -714,6 +743,9 @@ public class MobileMoneyBidPaymentService {
         events.publishEvent(new MobileMoneyPaymentExpiredEvent(
                 bidId, bid.getSenderId(), announcement != null ? announcement.getTravelerId() : null));
         log.info("Bid {} annulé : paiement mobile money non reçu dans le délai", bidId);
+        // Ronde 2, point 2 : n'évince plus le cache ici (@CacheEvict retiré) — le scheduler le
+        // fait après le commit de cette transaction REQUIRES_NEW, sur CANCELLED uniquement.
+        return ExpireOutcome.CANCELLED;
     }
 
     // ── Statut ──────────────────────────────────────────────────────────────

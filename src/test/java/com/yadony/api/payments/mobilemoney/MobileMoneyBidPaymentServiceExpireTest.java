@@ -23,6 +23,7 @@ import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.PaymentStatus;
 import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.payments.events.MobileMoneyPaymentExpiredEvent;
+import com.yadony.api.payments.mobilemoney.MobileMoneyBidPaymentService.ExpireOutcome;
 import com.yadony.api.payments.pawapay.PawapayOperationEntity;
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
 import com.yadony.api.payments.pawapay.PawapayOperationService;
@@ -45,19 +46,18 @@ import org.springframework.test.util.ReflectionTestUtils;
 /**
  * Tâche 15 — expiration du délai de paiement mobile money.
  *
+ * <p><b>Ronde 2 (revue)</b> : {@code expire()} ne lève plus d'alerte administrateur et n'évince
+ * plus le cache lui-même (voir Javadoc de {@link MobileMoneyBidPaymentService.ExpireOutcome}) —
+ * c'est désormais {@code MobileMoneyPaymentDeadlineScheduler} qui agit sur la valeur de retour,
+ * hors des verrous tenus par {@code expire}. Chaque test asserte donc en plus l'
+ * {@link ExpireOutcome} rendu, et les deux tests d'anomalie (paiement absent, dépôt
+ * {@code COMPLETED} non appliqué) vérifient {@code verifyNoInteractions(adminAlert)} — la preuve
+ * que {@code expire()} elle-même ne touche plus jamais à l'alerte.
+ *
  * <p><b>Ronde 1 (revue)</b> : le fichier a été entièrement réécrit après trois corrections de
- * fond (voir task-15-report.md, section Ronde 1) :
- * <ul>
- *   <li>point 1 — l'ordre des verrous s'est inversé (paiement AVANT bid, comme
- *       {@code confirmEscrow}/{@code initiateDeposit}) : tous les stubs qui portaient sur
- *       {@code paymentRepository.findByBidId} portent désormais sur
- *       {@code paymentRepository.findByBidIdForUpdate} ;</li>
- *   <li>point 2 — un dépôt {@code COMPLETED} avec paiement encore {@code PENDING} n'est plus
- *       traité comme mort (test dédié {@link #expire_doesNotCancel_whenDepositCompletedButPaymentStillPending}) ;</li>
- *   <li>point 7 — la deadline elle-même est revérifiée : {@code setUp} pose désormais
- *       {@code awaitingPaymentExpiresAt} dans le passé (il ne l'était pas avant, ce qui aurait
- *       fait échouer tous les tests existants avec la nouvelle garde).</li>
- * </ul>
+ * fond (voir task-15-report.md, section Ronde 1) — ordre des verrous (paiement avant bid),
+ * dépôt {@code COMPLETED} traité comme en vol et non comme mort, deadline revérifiée
+ * ({@code setUp} pose désormais {@code awaitingPaymentExpiresAt} dans le passé).
  *
  * <p>Écart par rapport au cahier des charges (voir task-15-report.md) : le constructeur de
  * {@link MobileMoneyBidPaymentService} prend 16 paramètres depuis les tâches 13/14 ; le
@@ -99,9 +99,9 @@ class MobileMoneyBidPaymentServiceExpireTest {
         bid.setPaymentMethod(PaymentMethod.MOBILE_MONEY);
         bid.setStatus(BidStatus.AWAITING_PAYMENT);
         bid.setWeightKg(new BigDecimal("5"));
-        // Ronde 1, point 7 : la deadline doit être dans le passé pour que la nouvelle garde de
-        // expire() laisse passer les scénarios "délai dépassé" — sans cette ligne, TOUS les
-        // tests échoueraient (champ null par défaut, jamais renseigné par le brief d'origine).
+        // Ronde 1, point 7 : la deadline doit être dans le passé pour que la garde de expire()
+        // laisse passer les scénarios "délai dépassé" — sans cette ligne, TOUS les tests
+        // échoueraient (champ null par défaut, jamais renseigné par le brief d'origine).
         bid.setAwaitingPaymentExpiresAt(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(5));
         payment = new PaymentEntity();
         ReflectionTestUtils.setField(payment, "id", UUID.randomUUID());
@@ -118,8 +118,9 @@ class MobileMoneyBidPaymentServiceExpireTest {
         when(paymentRepository.markCancelledIfPending(payment.getId())).thenReturn(1);
         when(announcementRepository.findByIdForUpdate(announcement.getId())).thenReturn(Optional.of(announcement));
 
-        service.expire(bid.getId());
+        ExpireOutcome outcome = service.expire(bid.getId());
 
+        assertThat(outcome).isEqualTo(ExpireOutcome.CANCELLED);
         verify(paymentRepository).markCancelledIfPending(payment.getId());
         assertThat(bid.getStatus()).isEqualTo(BidStatus.CANCELLED);
         assertThat(bid.getAwaitingPaymentExpiresAt()).isNull();
@@ -145,8 +146,9 @@ class MobileMoneyBidPaymentServiceExpireTest {
         open.setStatus(PawapayOperationStatus.PROCESSING);
         when(operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.of(open));
 
-        service.expire(bid.getId());
+        ExpireOutcome outcome = service.expire(bid.getId());
 
+        assertThat(outcome).isEqualTo(ExpireOutcome.IGNORED);
         assertThat(bid.getStatus()).isEqualTo(BidStatus.AWAITING_PAYMENT);
         verify(paymentRepository, never()).markCancelledIfPending(any());
         verify(events, never()).publishEvent(any());
@@ -157,7 +159,8 @@ class MobileMoneyBidPaymentServiceExpireTest {
     void expire_isIdempotent_whenBidAlreadyLeftAwaiting() {
         bid.setStatus(BidStatus.ACCEPTED);
         when(bidRepository.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
-        service.expire(bid.getId());
+        ExpireOutcome outcome = service.expire(bid.getId());
+        assertThat(outcome).isEqualTo(ExpireOutcome.IGNORED);
         verify(paymentRepository, never()).markCancelledIfPending(any());
         verify(events, never()).publishEvent(any());
     }
@@ -175,8 +178,9 @@ class MobileMoneyBidPaymentServiceExpireTest {
         when(operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.empty());
         when(paymentRepository.markCancelledIfPending(payment.getId())).thenReturn(0);
 
-        service.expire(bid.getId());
+        ExpireOutcome outcome = service.expire(bid.getId());
 
+        assertThat(outcome).isEqualTo(ExpireOutcome.IGNORED);
         assertThat(bid.getStatus()).isEqualTo(BidStatus.AWAITING_PAYMENT);
         verify(bidRepository, never()).save(any());
         verifyNoInteractions(announcementRepository);
@@ -185,13 +189,12 @@ class MobileMoneyBidPaymentServiceExpireTest {
     }
 
     /**
-     * Ronde 1, point 2 (CRITIQUE) — LE TEST EXPLICITEMENT DEMANDÉ PAR LA REVUE : un dépôt
-     * pawaPay {@code COMPLETED} avec un paiement encore {@code PENDING} n'est PAS mort, il est
-     * EN VOL ({@code confirmEscrow} n'est pas encore passé). L'annuler solderait en silence un
-     * colis déjà payé — bid annulé, capacité regonflée, notification « paiement non reçu »
-     * envoyée à un expéditeur pourtant débité, sans plus aucun chemin de remboursement. Preuve :
-     * ni {@code markCancelledIfPending}, ni bid, ni événement — seulement un log ERROR et une
-     * alerte administrateur dédiée.
+     * Ronde 1, point 2 (CRITIQUE) — un dépôt pawaPay {@code COMPLETED} avec un paiement encore
+     * {@code PENDING} n'est PAS mort, il est EN VOL ({@code confirmEscrow} n'est pas encore
+     * passé). Preuve : ni {@code markCancelledIfPending}, ni bid, ni événement — seulement un
+     * log ERROR et l'issue {@link ExpireOutcome#DEPOSIT_COMPLETED_NOT_APPLIED}. Ronde 2, point 1 :
+     * {@code expire()} elle-même ne lève plus d'alerte — {@code verifyNoInteractions(adminAlert)}
+     * le prouve ; c'est au scheduler appelant de le faire, dédupliqué, hors verrou.
      */
     @Test
     void expire_doesNotCancel_whenDepositCompletedButPaymentStillPending() {
@@ -202,33 +205,36 @@ class MobileMoneyBidPaymentServiceExpireTest {
         completed.setStatus(PawapayOperationStatus.COMPLETED);
         when(operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.of(completed));
 
-        service.expire(bid.getId());
+        ExpireOutcome outcome = service.expire(bid.getId());
 
+        assertThat(outcome).isEqualTo(ExpireOutcome.DEPOSIT_COMPLETED_NOT_APPLIED);
         assertThat(bid.getStatus()).isEqualTo(BidStatus.AWAITING_PAYMENT);
         verify(paymentRepository, never()).markCancelledIfPending(any());
         verify(bidRepository, never()).save(any());
         verifyNoInteractions(announcementRepository);
         verify(events, never()).publishEvent(any());
-        verify(adminAlert).raise(eq("PAWAPAY_DEPOSIT_COMPLETED_PAYMENT_PENDING"), any(), any());
+        verifyNoInteractions(adminAlert);
     }
 
     /**
      * Ronde 1, point 6 — paiement introuvable : état structurellement impossible (invariant
      * tâche 12), mais sur le chemin de l'argent on échoue fermé plutôt que d'annuler à
-     * l'aveugle. Le bid reste inchangé, une alerte administrateur est levée.
+     * l'aveugle. Ronde 2, point 1 : {@code expire()} ne lève plus l'alerte elle-même — elle rend
+     * {@link ExpireOutcome#PAYMENT_MISSING}, au scheduler d'alerter.
      */
     @Test
     void expire_doesNothing_whenNoPaymentFound() {
         when(paymentRepository.findByBidIdForUpdate(bid.getId())).thenReturn(Optional.empty());
         when(bidRepository.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
 
-        service.expire(bid.getId());
+        ExpireOutcome outcome = service.expire(bid.getId());
 
+        assertThat(outcome).isEqualTo(ExpireOutcome.PAYMENT_MISSING);
         assertThat(bid.getStatus()).isEqualTo(BidStatus.AWAITING_PAYMENT);
         verify(bidRepository, never()).save(any());
         verifyNoInteractions(announcementRepository);
         verify(events, never()).publishEvent(any());
-        verify(adminAlert).raise(eq("PAWAPAY_EXPIRE_PAYMENT_MISSING"), any(), any());
+        verifyNoInteractions(adminAlert);
     }
 
     /**
@@ -244,8 +250,9 @@ class MobileMoneyBidPaymentServiceExpireTest {
         when(paymentRepository.markCancelledIfPending(payment.getId())).thenReturn(1);
         when(announcementRepository.findByIdForUpdate(announcement.getId())).thenReturn(Optional.empty());
 
-        service.expire(bid.getId());
+        ExpireOutcome outcome = service.expire(bid.getId());
 
+        assertThat(outcome).isEqualTo(ExpireOutcome.CANCELLED);
         assertThat(bid.getStatus()).isEqualTo(BidStatus.CANCELLED);
         verify(announcementRepository, never()).save(any());
         ArgumentCaptor<MobileMoneyPaymentExpiredEvent> captor = ArgumentCaptor.forClass(MobileMoneyPaymentExpiredEvent.class);
@@ -269,8 +276,9 @@ class MobileMoneyBidPaymentServiceExpireTest {
         when(paymentRepository.markCancelledIfPending(payment.getId())).thenReturn(1);
         when(announcementRepository.findByIdForUpdate(announcement.getId())).thenReturn(Optional.of(announcement));
 
-        service.expire(bid.getId());
+        ExpireOutcome outcome = service.expire(bid.getId());
 
+        assertThat(outcome).isEqualTo(ExpireOutcome.CANCELLED);
         assertThat(bid.getStatus()).isEqualTo(BidStatus.CANCELLED);
         assertThat(announcement.getAvailableKg()).isEqualByComparingTo(BigDecimal.ZERO);
         assertThat(announcement.getStatus()).isEqualTo(AnnouncementStatus.ACTIVE);
@@ -283,8 +291,9 @@ class MobileMoneyBidPaymentServiceExpireTest {
         bid.setAwaitingPaymentExpiresAt(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(10));
         when(bidRepository.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
 
-        service.expire(bid.getId());
+        ExpireOutcome outcome = service.expire(bid.getId());
 
+        assertThat(outcome).isEqualTo(ExpireOutcome.IGNORED);
         assertThat(bid.getStatus()).isEqualTo(BidStatus.AWAITING_PAYMENT);
         verify(paymentRepository, never()).markCancelledIfPending(any());
         verify(events, never()).publishEvent(any());
@@ -303,8 +312,9 @@ class MobileMoneyBidPaymentServiceExpireTest {
         when(paymentRepository.findByBidIdForUpdate(bid.getId())).thenReturn(Optional.of(payment));
         when(bidRepository.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
 
-        service.expire(bid.getId());
+        ExpireOutcome outcome = service.expire(bid.getId());
 
+        assertThat(outcome).isEqualTo(ExpireOutcome.IGNORED);
         InOrder order = inOrder(paymentRepository, bidRepository);
         order.verify(paymentRepository).findByBidIdForUpdate(bid.getId());
         order.verify(bidRepository).findByIdForUpdate(bid.getId());
