@@ -19,10 +19,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * V241 : les trois tables de la messagerie support et le catalogue initial de
+ * V244 : les trois tables de la messagerie support et le catalogue initial de
  * reponses predefinies.
  */
-class V241SupportMessagingMigrationTest {
+class V244SupportMessagingMigrationTest {
 
     private static EmbeddedPostgres postgres;
     private static DataSource dataSource;
@@ -52,7 +52,7 @@ class V241SupportMessagingMigrationTest {
 
     @Test
     void createsTheThreeSupportTables() throws Exception {
-        flywayUpTo("241").migrate();
+        flywayUpTo("244").migrate();
 
         assertThat(tableExists("support_tickets")).isTrue();
         assertThat(tableExists("support_messages")).isTrue();
@@ -61,7 +61,7 @@ class V241SupportMessagingMigrationTest {
 
     @Test
     void seedsAnActivePredefinedReplyCatalogue() throws Exception {
-        flywayUpTo("241").migrate();
+        flywayUpTo("244").migrate();
 
         try (Connection connection = dataSource.getConnection(); Statement statement = connection.createStatement()) {
             ResultSet rs = statement.executeQuery(
@@ -78,7 +78,7 @@ class V241SupportMessagingMigrationTest {
 
     @Test
     void storesATicketAndItsFirstMessage() throws Exception {
-        flywayUpTo("241").migrate();
+        flywayUpTo("244").migrate();
 
         try (Connection connection = dataSource.getConnection()) {
             UUID userId = seedUser(connection);
@@ -105,7 +105,7 @@ class V241SupportMessagingMigrationTest {
     /** Un ticket orphelin n'a aucun sens : la cle etrangere vers users doit tenir. */
     @Test
     void rejectsATicketWithoutAnExistingUser() throws Exception {
-        flywayUpTo("241").migrate();
+        flywayUpTo("244").migrate();
 
         try (Connection connection = dataSource.getConnection()) {
             assertThatThrownBy(() -> seedTicket(connection, UUID.randomUUID()))

@@ -35,8 +35,8 @@
 - Create: `src/main/java/com/yadony/api/support/SupportTicketRepository.java`
 - Create: `src/main/java/com/yadony/api/support/SupportMessageRepository.java`
 - Create: `src/main/java/com/yadony/api/support/SupportPredefinedReplyRepository.java`
-- Create: `src/main/resources/db/migration/V241__support_messaging.sql`
-- Test: `src/test/java/com/yadony/api/migrations/V241SupportMessagingMigrationTest.java`
+- Create: `src/main/resources/db/migration/V244__support_messaging.sql`
+- Test: `src/test/java/com/yadony/api/migrations/V244SupportMessagingMigrationTest.java`
 
 **Interfaces:**
 - Produces entities and repositories consumed by `SupportTicketService`.
@@ -44,8 +44,12 @@
 - `SupportMessageRepository.findByTicketIdOrderByCreatedAtAsc(UUID ticketId)`.
 
 **Ecarts assumes par rapport au plan initial :**
-- `V240` etait deja pris par `V240__corridor_alerts_notify_mode.sql` — la migration
-  support est donc `V241`.
+- La migration support est `V244`. `V240` etait deja pris par
+  `V240__corridor_alerts_notify_mode.sql`, et `main` porte desormais
+  `V243__kyc_provider_column.sql` deja appliquee en production : numeroter en
+  dessous de 243 ferait echouer Flyway au demarrage (out-of-order non active).
+  `V241` et `V242` restent libres pour la branche pawaPay, qui devra elle aussi
+  se renumeroter au-dessus de `V244`.
 - Le tri se fait sur `last_message_at` et non `updated_at` : `updated_at` bouge
   aussi sur une simple reassignation, ce qui remonterait un ticket sans nouveau
   message en tete de file.
