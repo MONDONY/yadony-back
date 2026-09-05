@@ -490,7 +490,13 @@ public class MobileMoneyBidPaymentService {
             }
             return;
         }
-        AnnouncementEntity announcement = announcementRepository.findByIdForUpdate(bid.getAnnouncementId())
+        // Ronde 1, point 5 : simple lecture, jamais findByIdForUpdate — rien n'est écrit sur
+        // l'annonce ici (la capacité a été réservée à l'acceptation, dans acceptBid). Un
+        // verrou pessimiste pris pour ne lire qu'un identifiant sérialiserait inutilement
+        // toutes les confirmations de dépôt entre elles et contre chaque acceptation sur la
+        // même annonce, tenu jusqu'au commit — et un dépassement de délai sur ce verrou
+        // ferait directement échouer confirmEscrow après le point irréversible (point 4).
+        AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
                 .orElseThrow(() -> new IllegalStateException("Annonce introuvable : " + bid.getAnnouncementId()));
         bid.setStatus(BidStatus.ACCEPTED);
         bid.setAwaitingPaymentExpiresAt(null);
@@ -518,9 +524,15 @@ public class MobileMoneyBidPaymentService {
         PawapayOperationEntity deposit = operations.get(depositOperationId);
         PawapayOperationEntity refund = submission.submitRefund(payment.getId(), deposit, payment.getAmount());
         payment.setPawapayRefundId(refund.getId());
-        audit.log("PAYMENT", payment.getId(), auditAction, null,
+        // Ronde 1, point 3 : même défaut que MM_DEPOSIT_INITIATED (tâche 13). À ce point,
+        // submitRefund a DÉJÀ commité sa ligne d'opération (REQUIRES_NEW) et l'appel HTTP à
+        // pawaPay est déjà parti — irréversible. Si cette écriture d'audit rejoignait la
+        // transaction ambiante (celle du listener) et qu'un throw plus loin l'annulait,
+        // l'audit disparaîtrait alors que l'argent a réellement bougé. Transaction
+        // INDÉPENDANTE, comme initiateDeposit.
+        independentAuditTransaction.executeWithoutResult(status -> audit.log("PAYMENT", payment.getId(), auditAction, null,
                 Map.of("depositOperationId", depositOperationId.toString(), "refundOperationId", refund.getId().toString(),
-                        "refundStatus", refund.getStatus().name()));
+                        "refundStatus", refund.getStatus().name())));
         if (adminAlert != null) {
             adminAlert.raise("PAWAPAY_DEPOSIT_AFTER_CANCEL",
                     "Deposit encaissé après annulation du bid, remboursement " + refund.getStatus() + " (payment " + payment.getId() + ")",
@@ -540,10 +552,21 @@ public class MobileMoneyBidPaymentService {
      */
     @Transactional
     public void notifyDepositFailed(UUID operationId, UUID paymentId, String failureCode) {
+        // Ronde 1, point 6 : ce retour silencieux (cas structurellement impossible, comme
+        // les IllegalStateException de confirmEscrow) restait sans la moindre trace sur le
+        // chemin de l'argent — corrigé pour au moins journaliser, même si l'action jumelle
+        // de confirmEscrow choisit de lever plutôt que de sortir en silence.
         PaymentEntity payment = paymentRepository.findById(paymentId).orElse(null);
-        if (payment == null) return;
+        if (payment == null) {
+            log.warn("Deposit {} FAILED : paiement {} introuvable, notification abandonnée", operationId, paymentId);
+            return;
+        }
         BidEntity bid = bidRepository.findById(payment.getBidId()).orElse(null);
-        if (bid == null) return;
+        if (bid == null) {
+            log.warn("Deposit {} FAILED : bid {} introuvable (paiement {}), notification abandonnée",
+                    operationId, payment.getBidId(), paymentId);
+            return;
+        }
         String safeFailureCode = truncate(failureCode);
         audit.log("PAYMENT", paymentId, "MM_DEPOSIT_FAILED", bid.getSenderId(),
                 Map.of("operationId", operationId.toString(), "failureCode", safeFailureCode == null ? "" : safeFailureCode));

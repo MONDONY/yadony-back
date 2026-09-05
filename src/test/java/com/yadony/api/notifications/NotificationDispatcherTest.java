@@ -337,6 +337,12 @@ class NotificationDispatcherTest {
 
     // ── MobileMoneyPaymentConfirmedEvent / MobileMoneyDepositFailedEvent (tâche 14) ──────────
 
+    /**
+     * Ronde 1, point 2 : le type émis est le type EXISTANT {@code MOBILE_MONEY_PAYMENT_CONFIRMED}
+     * (catalogué dans NotificationCategory/NotificationDeeplink/NotificationPrefsService et
+     * déjà backfillé par V238) — pas un type inventé qui aurait manqué le deeplink, la
+     * catégorie Paiements et la préférence de push.
+     */
     @Test
     void onMobileMoneyPaymentConfirmed_notifiesBothParties() {
         UUID senderId = UUID.randomUUID();
@@ -346,16 +352,42 @@ class NotificationDispatcherTest {
 
         dispatcher.onMobileMoneyPaymentConfirmed(new MobileMoneyPaymentConfirmedEvent(bidId, senderId, travelerId, new BigDecimal("16800"), "XOF"));
 
-        verify(fcmService).sendToUser(eq(senderId), eq("Paiement confirmé"), any(), argThat(d -> "MM_PAYMENT_CONFIRMED".equals(d.get("type"))));
-        verify(fcmService).sendToUser(eq(travelerId), eq("Colis payé"), any(), argThat(d -> "MM_PAYMENT_CONFIRMED".equals(d.get("type"))));
+        verify(fcmService).sendToUser(eq(senderId), eq("Paiement confirmé"), any(), argThat(d -> "MOBILE_MONEY_PAYMENT_CONFIRMED".equals(d.get("type"))));
+        verify(fcmService).sendToUser(eq(travelerId), eq("Colis payé"), any(), argThat(d -> "MOBILE_MONEY_PAYMENT_CONFIRMED".equals(d.get("type"))));
     }
 
+    /**
+     * Ronde 1, point 1 (CRITIQUE) : preuve directement demandée par le relecteur. Le seul
+     * critère que consulte {@code SmsFallbackScheduler#processPendingFallbacks}
+     * ({@code NotificationRepository#findPendingSmsFallbacks}) est la colonne persistée
+     * {@code is_critical} — jamais le type. Prouver qu'elle est persistée à {@code false}
+     * exclut donc STRUCTURELLEMENT cette ligne de toute sélection par ce scheduler, quel
+     * que soit le contenu futur de {@link NotificationTypes#CRITICAL}. Complété par la
+     * vérification, à ce même niveau de configuration, que ce type n'y figure pas non plus
+     * (c'est ce que {@code FcmService} consulte pour décider {@code content-available} —
+     * la seconde moitié du mécanisme qui a permis à ce défaut de passer inaperçu).
+     */
+    @Test
+    void onMobileMoneyPaymentConfirmed_travelerNotification_neverPersistedAsCritical_cannotTriggerSmsFallback() {
+        UUID senderId = UUID.randomUUID();
+        UUID travelerId = UUID.randomUUID();
+        UUID bidId = UUID.randomUUID();
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onMobileMoneyPaymentConfirmed(new MobileMoneyPaymentConfirmedEvent(bidId, senderId, travelerId, new BigDecimal("16800"), "XOF"));
+
+        verify(notificationService).persist(eq(travelerId), eq("MOBILE_MONEY_PAYMENT_CONFIRMED"), eq("Colis payé"),
+                any(), any(), eq(false));
+        assertThat(NotificationTypes.isCritical("MOBILE_MONEY_PAYMENT_CONFIRMED")).isFalse();
+    }
+
+    /** Ronde 1, point 2 : type dédié {@code MOBILE_MONEY_PAYMENT_FAILED}, catalogué. */
     @Test
     void onMobileMoneyDepositFailed_notifiesSender() {
         UUID senderId = UUID.randomUUID();
         when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
         dispatcher.onMobileMoneyDepositFailed(new MobileMoneyDepositFailedEvent(UUID.randomUUID(), senderId, "PAYMENT_NOT_APPROVED"));
-        verify(fcmService).sendToUser(eq(senderId), eq("Paiement refusé"), any(), argThat(d -> "MM_PAYMENT_FAILED".equals(d.get("type"))));
+        verify(fcmService).sendToUser(eq(senderId), eq("Paiement refusé"), any(), argThat(d -> "MOBILE_MONEY_PAYMENT_FAILED".equals(d.get("type"))));
     }
 
     // ── BidRejectedEvent ──────────────────────────────────────────────────────

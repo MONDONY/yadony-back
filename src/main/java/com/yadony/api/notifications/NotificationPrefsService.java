@@ -38,6 +38,7 @@ public class NotificationPrefsService {
             Map.entry("DELIVERY_NOSHOW_REPORTED",     "pushActivityBids"),
             Map.entry("MM_PAYMENT_PENDING",           "pushActivityBids"),
             Map.entry("MOBILE_MONEY_PAYMENT_CONFIRMED", "pushActivityBids"),
+            Map.entry("MOBILE_MONEY_PAYMENT_FAILED",  "pushActivityBids"),
             Map.entry("PARCEL_RETURNED",              "pushActivityBids"),
             Map.entry("RETURN_DEADLINE_WARNING",      "pushActivityBids"),
             Map.entry("RETURN_DEADLINE_EXPIRED",      "pushActivityBids"),

@@ -248,27 +248,48 @@ public class NotificationDispatcher {
     // ── MobileMoneyPaymentConfirmedEvent / MobileMoneyDepositFailedEvent (tâche 14) ──────────
 
     /**
-     * Deposit COMPLETED : le voyageur doit préparer la remise (notification critique, SMS
-     * de secours si pas d'accusé sous 60 s) ; l'expéditeur reçoit une simple confirmation,
-     * sans urgence de son côté.
+     * Deposit COMPLETED : expéditeur et voyageur reçoivent chacun une simple confirmation.
+     *
+     * <p>Ronde 1, point 1 (CRITIQUE) : la notification voyageur est {@code notifyUser}, PAS
+     * {@code notifyCritical}. {@code MOBILE_MONEY_PAYMENT_CONFIRMED} n'est pas dans
+     * {@link NotificationTypes#CRITICAL} : {@code notifyCritical} persisterait quand même
+     * {@code is_critical=true} (il ne consulte jamais cette liste avant d'écrire), mais
+     * {@code FcmService} recalcule lui la criticité DEPUIS cette même liste pour décider
+     * {@code content-available} — ne l'y trouvant pas, iOS ne réveillerait jamais
+     * l'application, l'ACK ne partirait jamais, et {@code SmsFallbackScheduler} (qui, lui,
+     * ne sélectionne QUE sur la colonne persistée {@code is_critical}, jamais sur le type)
+     * enverrait un SMS 60 s plus tard À CHAQUE paiement confirmé. Le voyageur n'a rien
+     * d'urgent à faire dans la minute qui suit cette confirmation — l'urgence de la remise
+     * est déjà portée par {@code HANDOVER_REMINDER_H2}, qui reste critique.
+     *
+     * <p>Ronde 1, point 2 (Important) : le type émis est {@code MOBILE_MONEY_PAYMENT_CONFIRMED},
+     * pas un type inventé — déjà enregistré dans {@link NotificationCategory} (PAIEMENTS),
+     * {@link NotificationDeeplink} (ouvre le bid) et {@code NotificationPrefsService}
+     * (suit {@code pushActivityBids}), et déjà backfillé par la migration V238.
      */
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
     public void onMobileMoneyPaymentConfirmed(MobileMoneyPaymentConfirmedEvent event) {
-        Map<String, String> data = Map.of("type", "MM_PAYMENT_CONFIRMED", "bidId", event.bidId().toString());
+        Map<String, String> data = Map.of("type", "MOBILE_MONEY_PAYMENT_CONFIRMED", "bidId", event.bidId().toString());
         var forSender = NotificationTexts.mobileMoneyPaymentConfirmed();
         var forTraveler = NotificationTexts.mobileMoneyPaymentReceived();
         notifyUser(event.senderId(), forSender.title(), forSender.body(), data);
-        notifyCritical(event.travelerId(), forTraveler.title(), forTraveler.body(), data);
+        notifyUser(event.travelerId(), forTraveler.title(), forTraveler.body(), data);
     }
 
-    /** Deposit FAILED : seul l'expéditeur est notifié, c'est lui qui peut relancer un paiement. */
+    /**
+     * Deposit FAILED : seul l'expéditeur est notifié, c'est lui qui peut relancer un
+     * paiement. Ronde 1, point 2 : type dédié {@code MOBILE_MONEY_PAYMENT_FAILED},
+     * enregistré dans les trois catalogues (aucune ligne de migration nécessaire — un
+     * type qui n'a jamais été émis n'a aucune ligne historique à corriger, voir
+     * task-14-report.md, section Ronde 1).
+     */
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
     public void onMobileMoneyDepositFailed(MobileMoneyDepositFailedEvent event) {
         var text = NotificationTexts.mobileMoneyPaymentFailed();
         notifyUser(event.senderId(), text.title(), text.body(),
-                Map.of("type", "MM_PAYMENT_FAILED", "bidId", event.bidId().toString()));
+                Map.of("type", "MOBILE_MONEY_PAYMENT_FAILED", "bidId", event.bidId().toString()));
     }
 
     @EventListener @Async

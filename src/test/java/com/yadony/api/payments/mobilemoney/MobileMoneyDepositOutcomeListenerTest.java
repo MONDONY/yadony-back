@@ -1,28 +1,28 @@
 package com.yadony.api.payments.mobilemoney;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
+import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
 import com.yadony.api.payments.pawapay.events.PawapayOperationCompletedEvent;
 import com.yadony.api.payments.pawapay.events.PawapayOperationFailedEvent;
-import java.lang.reflect.Method;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.event.TransactionPhase;
-import org.springframework.transaction.event.TransactionalEventListener;
 
 @ExtendWith(MockitoExtension.class)
 class MobileMoneyDepositOutcomeListenerTest {
 
     @Mock MobileMoneyBidPaymentService service;
+    @Mock AdminAlertService adminAlert;
     @InjectMocks MobileMoneyDepositOutcomeListener listener;
 
     @Test
@@ -38,8 +38,8 @@ class MobileMoneyDepositOutcomeListenerTest {
         listener.onCompleted(new PawapayOperationCompletedEvent(UUID.randomUUID(), PawapayOperationKind.PAYOUT, UUID.randomUUID()));
         listener.onCompleted(new PawapayOperationCompletedEvent(UUID.randomUUID(), PawapayOperationKind.DEPOSIT, null));
         listener.onFailed(new PawapayOperationFailedEvent(UUID.randomUUID(), PawapayOperationKind.REFUND, UUID.randomUUID(), "X", "y"));
-        verify(service, never()).confirmEscrow(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
-        verify(service, never()).notifyDepositFailed(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+        verify(service, never()).confirmEscrow(any(), any());
+        verify(service, never()).notifyDepositFailed(any(), any(), any());
     }
 
     @Test
@@ -51,28 +51,34 @@ class MobileMoneyDepositOutcomeListenerTest {
     }
 
     /**
-     * Preuve exigée par la tâche 14 (au-delà du cahier des charges) : les deux écouteurs des
-     * tout premiers événements pawaPay portent bien les deux annotations non négociables —
-     * {@code @TransactionalEventListener(phase = AFTER_COMMIT)} ET
-     * {@code @Transactional(propagation = REQUIRES_NEW)}. Sans ce test réflexif, un futur
-     * retrait accidentel de l'une des deux annotations resterait vert : les trois tests
-     * ci-dessus appellent {@code onCompleted}/{@code onFailed} directement, en dehors de tout
-     * conteneur Spring, donc sans jamais exercer ces annotations.
+     * Ronde 1, point 4 (Important) : un échec réseau du remboursement automatique
+     * (deposit encaissé après annulation) survient APRÈS le point irréversible —
+     * l'opération pawaPay est déjà COMPLETED, jamais republiée, jamais relue par le
+     * poller (qui ne balaie que les opérations ouvertes). Sans alerte, l'argent reste
+     * bloqué sans qu'aucun humain ne le sache. {@code confirmEscrow} propage
+     * l'exception (comportement inchangé, la transaction doit toujours être annulée) ;
+     * l'écouteur doit intercepter, alerter, PUIS repropager à l'identique — jamais
+     * avaler l'erreur (qui commiterait silencieusement un état partiel).
      */
     @Test
-    void bothListeners_useAfterCommitTransactionalEventListener_andRequiresNewTransaction() throws NoSuchMethodException {
-        Method onCompleted = MobileMoneyDepositOutcomeListener.class
-                .getMethod("onCompleted", PawapayOperationCompletedEvent.class);
-        Method onFailed = MobileMoneyDepositOutcomeListener.class
-                .getMethod("onFailed", PawapayOperationFailedEvent.class);
+    void completedDeposit_confirmEscrowThrows_alertsAdminThenRethrows() {
+        UUID op = UUID.randomUUID();
+        UUID payment = UUID.randomUUID();
+        RuntimeException boom = new IllegalStateException("pawaPay indisponible");
+        doThrow(boom).when(service).confirmEscrow(op, payment);
 
-        for (Method method : new Method[] {onCompleted, onFailed}) {
-            TransactionalEventListener txListener = method.getAnnotation(TransactionalEventListener.class);
-            Transactional tx = method.getAnnotation(Transactional.class);
-            assertThat(txListener).as(method.getName() + " : @TransactionalEventListener").isNotNull();
-            assertThat(txListener.phase()).as(method.getName() + " : phase AFTER_COMMIT").isEqualTo(TransactionPhase.AFTER_COMMIT);
-            assertThat(tx).as(method.getName() + " : @Transactional").isNotNull();
-            assertThat(tx.propagation()).as(method.getName() + " : propagation REQUIRES_NEW").isEqualTo(Propagation.REQUIRES_NEW);
-        }
+        assertThatThrownBy(() -> listener.onCompleted(new PawapayOperationCompletedEvent(op, PawapayOperationKind.DEPOSIT, payment)))
+                .isSameAs(boom);
+
+        verify(adminAlert).raise(any(), any(), any());
+    }
+
+    /** Symétrique du test précédent : pas d'exception, pas d'alerte. */
+    @Test
+    void completedDeposit_confirmEscrowSucceeds_neverAlerts() {
+        UUID op = UUID.randomUUID();
+        UUID payment = UUID.randomUUID();
+        listener.onCompleted(new PawapayOperationCompletedEvent(op, PawapayOperationKind.DEPOSIT, payment));
+        verify(adminAlert, never()).raise(any(), any(), any());
     }
 }
