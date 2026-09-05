@@ -417,6 +417,12 @@ public final class NotificationTexts {
         return new NotificationText("Paiement confirmé", "Le paiement Mobile Money de cet envoi est confirmé.");
     }
 
+    /** Push à l'acceptation d'un bid mobile money, à la place de « Demande acceptée ! ». */
+    public static NotificationText mobileMoneyPaymentPending() {
+        return new NotificationText("Payez votre envoi",
+                "Le voyageur a accepté. Réglez en mobile money sous 30 min.");
+    }
+
     public static NotificationText kycVerified() {
         return new NotificationText("Identité vérifiée",
                 "Vous pouvez maintenant publier et effectuer vos transactions.");

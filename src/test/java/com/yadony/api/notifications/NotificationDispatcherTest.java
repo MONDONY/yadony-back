@@ -290,22 +290,24 @@ class NotificationDispatcherTest {
     }
 
     /**
-     * Wave et Orange Money : {@code MobileMoneyBidAcceptedListener} envoie « Payez votre
-     * trajet », qui annonce déjà l'acceptation et porte le lien de paiement. Le push
-     * générique ferait un second réveil du téléphone pour la même action, en répétant la
-     * première. La trace reste persistée pour la boîte de réception.
+     * Rail pawaPay (tâche 13) : l'acceptation d'un bid mobile money ne pousse plus jamais
+     * « Demande acceptée ! » — ce push est remplacé par « Payez votre envoi », qui annonce
+     * déjà l'acceptation et invite l'expéditeur à régler sous 30 min. Contrairement à
+     * l'ancien flux Wave/Orange Money (paiement par lien externe, push seulement persisté),
+     * ce nouveau push est bien envoyé : l'expéditeur a un délai serré à respecter.
      */
     @Test
-    void onBidAccepted_mobileMoney_persistsWithoutPush() {
-        UserEntity traveler = new UserEntity();
-        traveler.setFirstName("Ibrahima");
-        when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler));
+    void onBidAccepted_mobileMoney_sendsPayNowInsteadOfGenericAccepted() {
+        UUID senderId = UUID.randomUUID();
+        UUID travelerId = UUID.randomUUID();
+        UUID bidId = UUID.randomUUID();
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
 
-        dispatcher.onBidAccepted(new BidAcceptedEvent(bidId, senderId, travelerId, annId, true));
+        dispatcher.onBidAccepted(new BidAcceptedEvent(bidId, senderId, travelerId, UUID.randomUUID(), true));
 
-        verify(notificationService).persist(eq(senderId), eq("BID_ACCEPTED"),
-                eq("Demande acceptée !"), any(), any(), eq(false));
-        verify(fcmService, never()).sendToUser(any(), any(), any(), any());
+        verify(fcmService).sendToUser(eq(senderId), eq("Payez votre envoi"), any(),
+                argThat(data -> "MM_PAYMENT_PENDING".equals(data.get("type")) && bidId.toString().equals(data.get("bidId"))));
+        verify(fcmService, never()).sendToUser(eq(senderId), eq("Demande acceptée !"), any(), any());
     }
 
     @Test

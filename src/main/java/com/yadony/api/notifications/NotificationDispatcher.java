@@ -219,22 +219,22 @@ public class NotificationDispatcher {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
     public void onBidAccepted(BidAcceptedEvent event) {
+        if (event.isMobileMoney()) {
+            // Le paiement suit dans l'application : ce push remplace « Demande acceptée ! »
+            // et ouvre l'écran d'attente. Persisté ET poussé.
+            var pay = NotificationTexts.mobileMoneyPaymentPending();
+            notifyUser(event.getSenderId(), pay.title(), pay.body(),
+                    Map.of("type", "MM_PAYMENT_PENDING", "bidId", event.getBidId().toString()));
+            return;
+        }
         // publicDisplayName : source unique du nom d'affichage ; le catalogue le réduit
         // ensuite à « Prénom I. » pour tenir dans le corps, et reste générique sans nom.
         String name = userRepository.findById(event.getTravelerId())
                 .map(com.yadony.api.auth.UserEntity::publicDisplayName)
                 .orElse(null);
-        // Paiement par lien externe : MobileMoneyBidAcceptedListener envoie « Payez votre
-        // trajet », qui annonce déjà l'acceptation ET porte le lien de paiement. Pousser en
-        // plus « Demande acceptée ! » ferait deux push pour la même action, le second
-        // répétant le premier. On persiste quand même la trace pour la boîte de réception.
-        // Acceptation déclenchée par le voyageur. La transaction qui démarre rend de toute
-        // façon les deux comptes visibles l'un pour l'autre : la garde ne coupe donc que
-        // les cas où l'acceptation ne noue aucune transaction.
         var text = NotificationTexts.bidAccepted(name);
         notifyUnlessBlocked(event.getSenderId(), event.getTravelerId(), text.title(), text.body(),
-                Map.of("type", "BID_ACCEPTED", "bidId", event.getBidId().toString()),
-                !event.isMobileMoney());
+                Map.of("type", "BID_ACCEPTED", "bidId", event.getBidId().toString()), true);
     }
 
     @EventListener @Async
