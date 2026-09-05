@@ -93,7 +93,7 @@ public class PawapayCallbackController {
         }
         Optional<PawapayOperationStatus> status = PawapayOperationStatus.fromApi(json.path("status").asText(null));
         if (status.isEmpty()) {
-            log.warn("pawaPay callback {} {} : statut inconnu {}", kind, id, json.path("status").asText());
+            log.warn("pawaPay callback {} {} : statut inconnu {}", kind, id, truncate(json.path("status").asText()));
             return ResponseEntity.ok().build();
         }
         operations.apply(id, status.get(),
@@ -112,5 +112,16 @@ public class PawapayCallbackController {
             out.put(name.toLowerCase(Locale.ROOT), request.getHeader(name));
         }
         return out;
+    }
+
+    /**
+     * Borne à 64 caractères une valeur non authentifiée avant de la journaliser — même
+     * convention que {@code PawapaySignatureVerifier#truncate} : un {@code status} n'est
+     * jamais vérifié par signature quand {@code callbackSignaturesRequired=false} (staging),
+     * un appelant anonyme pourrait donc y glisser une charge arbitrairement longue (avec
+     * retours à la ligne, pour forger de fausses entrées de journal).
+     */
+    private static String truncate(String value) {
+        return value.length() > 64 ? value.substring(0, 64) : value;
     }
 }
