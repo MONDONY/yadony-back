@@ -36,8 +36,12 @@ class KycStripeWebhookHandlerTest {
 
     @BeforeEach
     void setUp() {
+        // Vrai service de transition, dépendances moquées : le handler ne fait plus que
+        // traduire la charge utile Stripe, mais les effets vérifiés ici restent les mêmes.
         handler = new KycStripeWebhookHandler(kycRepository, userRepository,
-                auditService, eventPublisher, objectMapper, adminAlert);
+                new KycStatusTransitionService(kycRepository, userRepository, auditService,
+                        eventPublisher, adminAlert),
+                objectMapper);
     }
 
     private Event buildEvent(String type, String sessionId) {
@@ -136,12 +140,15 @@ class KycStripeWebhookHandlerTest {
 
         handler.handle(buildEvent("identity.verification_session.canceled", "vs_004"));
 
-        assertThat(kyc.getStatus()).isEqualTo(KycVerificationStatus.REJECTED);
-        assertThat(kyc.getRejectionReason()).isEqualTo("session_canceled");
+        // Une session annulée n'est pas un refus : la ligne redevient simplement reprenable,
+        // exactement comme après un abandon ou un reset administrateur. Aucune alerte non
+        // plus — l'annulation est le geste courant de l'utilisateur qui ferme la webview.
+        assertThat(kyc.getStatus()).isEqualTo(KycVerificationStatus.PENDING);
+        assertThat(kyc.getRejectionReason()).isNull();
         assertThat(user.getKycStatus()).isEqualTo(KycStatus.NOT_STARTED);
         verify(auditService).log(eq("kyc_verification"), any(), eq("KYC_CANCELED"), any(), any());
         verify(eventPublisher, never()).publishEvent(any());
-        verify(adminAlert).raise(eq("KYC_IDENTITY_CANCELED"), any(), any());
+        verifyNoInteractions(adminAlert);
     }
 
     @Test
@@ -256,7 +263,7 @@ class KycStripeWebhookHandlerTest {
     }
 
     @Test
-    void handle_canceled_setsRejectionCode() {
+    void handle_canceled_recordsNoRejectionCode() {
         UUID userId = UUID.randomUUID();
         var kyc = new KycVerificationEntity();
         kyc.setUserId(userId);
@@ -269,7 +276,10 @@ class KycStripeWebhookHandlerTest {
 
         handler.handle(buildEvent("identity.verification_session.canceled", "vs_012"));
 
-        assertThat(kyc.getRejectionCode()).isEqualTo("session_canceled");
+        // Un code de rejet ferait afficher un motif d'échec à un utilisateur qui a
+        // simplement fermé la webview : la session redevient reprenable, sans motif.
+        assertThat(kyc.getRejectionCode()).isNull();
+        assertThat(kyc.getStatus()).isEqualTo(KycVerificationStatus.PENDING);
     }
 
     @Test
