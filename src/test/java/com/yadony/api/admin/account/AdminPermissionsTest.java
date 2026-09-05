@@ -50,14 +50,15 @@ class AdminPermissionsTest {
     }
 
     @Test
-    @DisplayName("AdminRole.SUPPORT.permissions() contains exactly 16 specific permissions")
+    @DisplayName("AdminRole.SUPPORT.permissions() contains exactly 18 specific permissions")
     // 16 depuis le Lot C : USER_MESSAGE_MUTE accordee au support sur decision du
     // proprietaire du produit (il peut deja bannir, geste bien plus severe).
-    void testSupportHasExactly16Permissions() {
+    // 18 avec la messagerie support : SUPPORT_TICKET_VIEW + SUPPORT_TICKET_MANAGE.
+    void testSupportHasExactly18Permissions() {
         Set<AdminPermission> perms = AdminRole.SUPPORT.permissions();
 
-        assertEquals(16, perms.size(),
-                "SUPPORT should have exactly 16 permissions");
+        assertEquals(18, perms.size(),
+                "SUPPORT should have exactly 18 permissions");
 
         // Verify exact set
         assertTrue(perms.contains(AdminPermission.METRICS_VIEW));
@@ -78,6 +79,9 @@ class AdminPermissionsTest {
         // Lot C : le support modere les avis mais ne les efface pas definitivement.
         assertFalse(perms.contains(AdminPermission.RATING_DELETE));
         assertTrue(perms.contains(AdminPermission.USER_MESSAGE_MUTE));
+        // Messagerie support : le role SUPPORT lit ET traite les tickets.
+        assertTrue(perms.contains(AdminPermission.SUPPORT_TICKET_VIEW));
+        assertTrue(perms.contains(AdminPermission.SUPPORT_TICKET_MANAGE));
     }
 
     @Test

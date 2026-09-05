@@ -43,8 +43,9 @@ class AdminPermissionsLotBTest {
     // avec le Lot D, qui ajoute NOTIFICATION_SEND et CONFIG_MANAGE. Passe a 30 avec la
     // tache 3 de feature/suppression-compte-admin, qui ajoute USER_DELETE. Passe a 31
     // avec la tache 2 du lot billing (feature/pro-saas-abonnement), qui ajoute
-    // USER_PRO_GRANT.
-    void enumHasExactlyThirtyOneValues() {
-        assertThat(AdminPermission.values()).hasSize(31);
+    // USER_PRO_GRANT. Passe a 33 avec la messagerie support, qui ajoute
+    // SUPPORT_TICKET_VIEW et SUPPORT_TICKET_MANAGE.
+    void enumHasExactlyThirtyThreeValues() {
+        assertThat(AdminPermission.values()).hasSize(33);
     }
 }
