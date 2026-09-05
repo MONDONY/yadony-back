@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -61,6 +63,41 @@ class PaymentRepositoryMobileMoneyTest {
         PaymentEntity escrow = pawapayPayment(PaymentStatus.ESCROW);
         assertThat(repository.markCancelledIfPending(pending.getId())).isEqualTo(1);
         assertThat(repository.markCancelledIfPending(escrow.getId())).isZero();
+    }
+
+    // ── Ronde 1, point 1 : le claim atomique markReleasedIfEscrow ne doit JAMAIS être suivi
+    // d'une mutation de l'entité gérée chargée en amont (voir MobileMoneyPayoutInitiator) ────
+
+    /**
+     * Reproduit EXACTEMENT le défaut trouvé en revue : {@code p} est l'entité gérée renvoyée par
+     * {@code saveAndFlush} (snapshot Hibernate {@code status = ESCROW}). {@code markReleasedIfEscrow}
+     * est un bulk JPQL {@code @Modifying} SANS {@code clearAutomatically} : la base passe
+     * {@code RELEASED}, mais {@code p} reste {@code ESCROW} en mémoire. Un setter sur ce {@code p}
+     * après coup le rend sale ; au flush, Hibernate (pas de {@code @DynamicUpdate} sur
+     * {@code PaymentEntity}) régénère un UPDATE de TOUTES les colonnes avec les valeurs en
+     * mémoire — {@code status = 'ESCROW'} écrase silencieusement le {@code RELEASED} qui vient
+     * d'être posé. Constaté rouge (voir task-16-report.md, section Ronde 1) avec
+     * {@code p.setPawapayPayoutId(opId)} à la place de l'appel ci-dessous ; corrigé en
+     * remplaçant cette mutation par {@link PaymentRepository#attachPayoutId}, qui n'écrit QUE la
+     * colonne visée et ne touche jamais l'état Java de l'entité.
+     */
+    @Test
+    void markReleasedIfEscrow_thenAttachPayoutId_doesNotRevertStatus() {
+        PaymentEntity p = pawapayPayment(PaymentStatus.ESCROW);
+        UUID opId = UUID.randomUUID();
+
+        assertThat(repository.markReleasedIfEscrow(p.getId(), LocalDateTime.now(ZoneOffset.UTC))).isEqualTo(1);
+        // Constaté rouge (voir task-16-report.md, Ronde 1) avec p.setPawapayPayoutId(opId) à la
+        // place de la ligne ci-dessous : "expected RELEASED but was ESCROW" — le setter sur
+        // l'entité gérée redevenait sale et écrasait le RELEASED au flush. L'UPDATE ciblé ne
+        // touche jamais l'état Java de l'entité : rien à re-flusher.
+        repository.attachPayoutId(p.getId(), opId);
+        repository.flush();
+
+        String status = jdbc.queryForObject("SELECT status FROM payments WHERE id = ?", String.class, p.getId());
+        UUID stored = jdbc.queryForObject("SELECT pawapay_payout_id FROM payments WHERE id = ?", UUID.class, p.getId());
+        assertThat(status).isEqualTo("RELEASED");
+        assertThat(stored).isEqualTo(opId);
     }
 
     @Test

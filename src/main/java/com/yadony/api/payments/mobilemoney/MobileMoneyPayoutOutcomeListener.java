@@ -12,6 +12,8 @@ import com.yadony.api.payments.pawapay.PawapayOperationService;
 import com.yadony.api.payments.pawapay.events.PawapayOperationCompletedEvent;
 import com.yadony.api.payments.pawapay.events.PawapayOperationFailedEvent;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
@@ -50,6 +52,8 @@ import org.springframework.transaction.event.TransactionalEventListener;
 @Component
 public class MobileMoneyPayoutOutcomeListener {
 
+    private static final Logger log = LoggerFactory.getLogger(MobileMoneyPayoutOutcomeListener.class);
+
     private final PawapayOperationService operations;
     private final PaymentRepository paymentRepository;
     private final BidRepository bidRepository;
@@ -77,14 +81,32 @@ public class MobileMoneyPayoutOutcomeListener {
     public void onCompleted(PawapayOperationCompletedEvent event) {
         if (event.kind() != PawapayOperationKind.PAYOUT || event.paymentId() == null) return;
         PawapayOperationEntity op = operations.get(event.operationId());
-        paymentRepository.findById(event.paymentId()).ifPresent(payment ->
-                bidRepository.findById(payment.getBidId()).ifPresent(bid ->
-                        announcementRepository.findById(bid.getAnnouncementId()).ifPresent(announcement -> {
-                            audit.log("PAYMENT", payment.getId(), "MM_PAYOUT_COMPLETED", bid.getSenderId(),
-                                    Map.of("operationId", op.getId().toString(), "net", op.getAmount().toPlainString()));
-                            events.publishEvent(new PaymentReleasedEvent(bid.getId(), announcement.getTravelerId(),
-                                    bid.getSenderId(), op.getAmount(), op.getCurrency(), true));
-                        })));
+        // Ronde 1, point 7 : cas structurellement impossible aujourd'hui (le paiement, son bid
+        // et son annonce existent nécessairement pour avoir pu être versés), mais un log.warn
+        // coûte une ligne — même garde-fou que MobileMoneyBidPaymentService#notifyDepositFailed
+        // pour son cas jumeau, plutôt qu'un silence total si l'invariant venait à se rompre.
+        var payment = paymentRepository.findById(event.paymentId());
+        if (payment.isEmpty()) {
+            log.warn("Payout {} COMPLETED mais paiement {} introuvable, notification abandonnée",
+                    op.getId(), event.paymentId());
+            return;
+        }
+        var bid = bidRepository.findById(payment.get().getBidId());
+        if (bid.isEmpty()) {
+            log.warn("Payout {} COMPLETED : bid {} introuvable (paiement {}), notification abandonnée",
+                    op.getId(), payment.get().getBidId(), event.paymentId());
+            return;
+        }
+        var announcement = announcementRepository.findById(bid.get().getAnnouncementId());
+        if (announcement.isEmpty()) {
+            log.warn("Payout {} COMPLETED : annonce {} introuvable (bid {}), notification abandonnée",
+                    op.getId(), bid.get().getAnnouncementId(), bid.get().getId());
+            return;
+        }
+        audit.log("PAYMENT", payment.get().getId(), "MM_PAYOUT_COMPLETED", bid.get().getSenderId(),
+                Map.of("operationId", op.getId().toString(), "net", op.getAmount().toPlainString()));
+        events.publishEvent(new PaymentReleasedEvent(bid.get().getId(), announcement.get().getTravelerId(),
+                bid.get().getSenderId(), op.getAmount(), op.getCurrency(), true));
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)

@@ -69,13 +69,15 @@ public class DeliveryEventListener {
     private final com.yadony.api.voucher.CommissionVoucherService voucherService;
 
     /**
-     * Injection par champ (pas par constructeur) : le constructeur reste celui des tests
-     * Stripe existants ({@code DeliveryEventListenerTest}, {@code DeliveryEventListenerChargebackTest}),
-     * qui laissent ce champ à {@code null} sans jamais le toucher (leurs paiements sont tous
-     * de rail {@code STRIPE}, la branche pawaPay n'est jamais atteinte).
+     * Ronde 1 (revue), point 5 : injection par CONSTRUCTEUR, jamais par champ — une dépendance
+     * contournable (comme l'était le champ {@code @Autowired} précédent) est une NPE qui
+     * attend, si un futur test construit cette classe sans la fournir alors qu'un paiement
+     * PAWAPAY lui parvient. {@code DeliveryEventListenerTest} et
+     * {@code DeliveryEventListenerChargebackTest} passent tous deux {@code null} explicitement
+     * (leurs paiements sont tous de rail {@code STRIPE}, la branche pawaPay n'est jamais
+     * atteinte, donc jamais déréférencé).
      */
-    @org.springframework.beans.factory.annotation.Autowired
-    private com.yadony.api.payments.mobilemoney.MobileMoneyPayoutInitiator payoutInitiator;
+    private final com.yadony.api.payments.mobilemoney.MobileMoneyPayoutInitiator payoutInitiator;
 
     public DeliveryEventListener(PaymentRepository paymentRepository,
                                  UserRepository userRepository,
@@ -83,7 +85,8 @@ public class DeliveryEventListener {
                                  ApplicationEventPublisher eventPublisher,
                                  BidRepository bidRepository,
                                  AdminAlertService adminAlert,
-                                 com.yadony.api.voucher.CommissionVoucherService voucherService) {
+                                 com.yadony.api.voucher.CommissionVoucherService voucherService,
+                                 com.yadony.api.payments.mobilemoney.MobileMoneyPayoutInitiator payoutInitiator) {
         this.paymentRepository = paymentRepository;
         this.userRepository = userRepository;
         this.auditService = auditService;
@@ -91,6 +94,7 @@ public class DeliveryEventListener {
         this.bidRepository = bidRepository;
         this.adminAlert = adminAlert;
         this.voucherService = voucherService;
+        this.payoutInitiator = payoutInitiator;
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)

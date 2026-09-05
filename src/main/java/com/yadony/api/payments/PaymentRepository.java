@@ -92,6 +92,25 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
     int markCancelledIfPending(@Param("id") UUID id);
 
     /**
+     * Rail pawaPay (tâche 16, Ronde 1, point 1 — CRITIQUE) : pose {@code pawapay_payout_id} par
+     * un UPDATE ciblé, symétrique de {@link #markEscrowIfPending} qui pose déjà
+     * {@code pawapayDepositId} dans son propre bulk. À utiliser {@code TOUJOURS} à la place d'un
+     * {@code payment.setPawapayPayoutId(...)} sur l'entité gérée juste après
+     * {@link #markReleasedIfEscrow} : ce claim est un bulk JPQL {@code @Modifying} SANS
+     * {@code clearAutomatically} — la base passe {@code RELEASED} mais l'entité chargée en amont
+     * (ex. par {@code DeliveryEventListener#handleDeliveryConfirmed}) garde son ancien snapshot
+     * {@code ESCROW} en mémoire. {@code PaymentEntity} n'a ni {@code @DynamicUpdate} ni
+     * {@code @Version} : un setter sur cette entité la rend sale, et au flush (souvent au commit
+     * de la transaction) Hibernate régénère un UPDATE de TOUTES les colonnes avec les valeurs
+     * en mémoire — {@code status = 'ESCROW'} écraserait alors silencieusement le
+     * {@code RELEASED} tout juste posé, chaque livraison mobile money. Voir
+     * {@code PaymentRepositoryMobileMoneyTest#markReleasedIfEscrow_thenAttachPayoutId_doesNotRevertStatus}.
+     */
+    @Modifying
+    @Query("UPDATE PaymentEntity p SET p.pawapayPayoutId = :opId WHERE p.id = :id")
+    int attachPayoutId(@Param("id") UUID id, @Param("opId") UUID opId);
+
+    /**
      * Vrai si l'utilisateur a au moins un paiement en séquestre actif, qu'il soit
      * expéditeur ou voyageur, quel que soit le flux (bid direct ou négociation).
      *

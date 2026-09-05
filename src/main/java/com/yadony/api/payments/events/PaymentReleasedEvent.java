@@ -9,6 +9,17 @@ import java.util.UUID;
  * mobile money (payout pawaPay, publié par {@code MobileMoneyPayoutOutcomeListener} à la
  * confirmation {@code COMPLETED} — jamais à la simple soumission, pour ne pas annoncer un
  * versement qui pourrait encore échouer côté opérateur).
+ *
+ * <p><b>Ronde 1 (revue), point 4</b> — {@code amount} n'a PAS la même sémantique selon le rail,
+ * et c'est un fait historique volontairement non corrigé ici : le rail carte (constructeur
+ * 4-arg, et {@code DeliveryEventListener} qui l'appelle) publie {@code payment.getAmount()},
+ * c'est-à-dire le BRUT payé par l'expéditeur — jamais {@code amount − commission}. Le rail
+ * pawaPay, lui, publie {@code op.getAmount()}, le NET réellement crédité au voyageur (le
+ * séquestre pawaPay ne portait déjà que sur le net, la commission ayant été retenue à la
+ * source par {@code MobileMoneyBidPricing}). Un futur agrégat qui lirait {@code getAmount()}
+ * en pensant systématiquement lire un net surcompterait la commission à chaque livraison
+ * carte. Ne pas homogénéiser cette différence en changeant le publieur Stripe : c'est un
+ * comportement historique déjà en production, hors périmètre de cette tâche.
  */
 public class PaymentReleasedEvent {
     private final UUID bidId;
@@ -24,7 +35,9 @@ public class PaymentReleasedEvent {
     }
 
     /**
-     * @param amount      net effectivement versé au voyageur, dans {@code currency}
+     * @param amount      montant du versement dans {@code currency} — sémantique dépendante du
+     *                    rail, voir le Javadoc de la classe (net pour pawaPay, brut historique
+     *                    pour le rail carte)
      * @param currency    devise du versement (« EUR » pour le rail carte, « XOF »/« XAF »… pour pawaPay)
      * @param mobileMoney vrai si ce versement est un payout pawaPay (texte et catalogue de notification distincts)
      */

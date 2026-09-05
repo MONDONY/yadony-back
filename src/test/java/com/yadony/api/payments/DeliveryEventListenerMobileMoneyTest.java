@@ -47,9 +47,10 @@ class DeliveryEventListenerMobileMoneyTest {
 
     @BeforeEach
     void setUp() {
+        // Ronde 1, point 5 : payoutInitiator est désormais un paramètre constructeur (jamais un
+        // champ contournable) — plus besoin de ReflectionTestUtils pour l'injecter.
         listener = new DeliveryEventListener(paymentRepository, userRepository, auditService, eventPublisher,
-                bidRepository, adminAlert, voucherService);
-        ReflectionTestUtils.setField(listener, "payoutInitiator", payoutInitiator);
+                bidRepository, adminAlert, voucherService, payoutInitiator);
         bid = new BidEntity();
         ReflectionTestUtils.setField(bid, "id", UUID.randomUUID());
         bid.setPaymentMethod(PaymentMethod.MOBILE_MONEY);
