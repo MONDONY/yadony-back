@@ -3,6 +3,7 @@ package com.yadony.api.payments;
 import com.yadony.api.matching.AnnouncementService;
 import com.yadony.api.payments.mobilemoney.MobileMoneyDepositOutcomeListener;
 import com.yadony.api.payments.mobilemoney.MobileMoneyPayoutOutcomeListener;
+import com.yadony.api.payments.mobilemoney.MobileMoneyRefundOutcomeListener;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -60,7 +61,11 @@ class PaymentListenerTransactionalContractTest {
                 Arguments.of(MobileMoneyDepositOutcomeListener.class, "onFailed"),
                 // Tâche 16 : jumeaux payout des deux écouteurs ci-dessus — même contrat.
                 Arguments.of(MobileMoneyPayoutOutcomeListener.class, "onCompleted"),
-                Arguments.of(MobileMoneyPayoutOutcomeListener.class, "onFailed")
+                Arguments.of(MobileMoneyPayoutOutcomeListener.class, "onFailed"),
+                // Tâche 17 : jumeaux refund — même contrat, même raison (transition appliquée
+                // à l'intérieur de la transaction de PawapayOperationService#apply).
+                Arguments.of(MobileMoneyRefundOutcomeListener.class, "onCompleted"),
+                Arguments.of(MobileMoneyRefundOutcomeListener.class, "onFailed")
         );
     }
 

@@ -100,6 +100,34 @@ class PaymentRepositoryMobileMoneyTest {
         assertThat(stored).isEqualTo(opId);
     }
 
+    // ── Tâche 17 : même piège, symétrique côté remboursement ────────────────────────────────
+
+    /**
+     * Reproduit EXACTEMENT le défaut de {@link #markReleasedIfEscrow_thenAttachPayoutId_doesNotRevertStatus}
+     * pour le remboursement : {@code markRefundedIfEscrow} est le même genre de bulk JPQL
+     * {@code @Modifying} SANS {@code clearAutomatically} — la base passe {@code REFUNDED}, mais
+     * l'entité {@code p} chargée en amont par {@code saveAndFlush} garde son snapshot
+     * {@code ESCROW} en mémoire. {@code p.setPawapayRefundId(opId)} à la place de l'appel
+     * ci-dessous ferait retomber ce test rouge ("expected REFUNDED but was ESCROW") — corrigé
+     * par {@link PaymentRepository#attachRefundId}, qui n'écrit QUE la colonne visée.
+     */
+    @Test
+    void markRefundedIfEscrow_thenAttachRefundId_doesNotRevertStatus() {
+        PaymentEntity p = pawapayPayment(PaymentStatus.ESCROW);
+        UUID opId = UUID.randomUUID();
+
+        assertThat(repository.markRefundedIfEscrow(p.getId())).isEqualTo(1);
+        // Constaté rouge avec p.setPawapayRefundId(opId) à la place de la ligne ci-dessous.
+        // L'UPDATE ciblé ne touche jamais l'état Java de l'entité : rien à re-flusher.
+        repository.attachRefundId(p.getId(), opId);
+        repository.flush();
+
+        String status = jdbc.queryForObject("SELECT status FROM payments WHERE id = ?", String.class, p.getId());
+        UUID stored = jdbc.queryForObject("SELECT pawapay_refund_id FROM payments WHERE id = ?", UUID.class, p.getId());
+        assertThat(status).isEqualTo("REFUNDED");
+        assertThat(stored).isEqualTo(opId);
+    }
+
     @Test
     void rawInsertWithoutRail_stillWorks_thanksToColumnDefault() {
         UUID id = UUID.randomUUID();

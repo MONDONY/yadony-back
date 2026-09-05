@@ -111,6 +111,22 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
     int attachPayoutId(@Param("id") UUID id, @Param("opId") UUID opId);
 
     /**
+     * Tâche 17, symétrique de {@link #attachPayoutId} (tâche 16) : pose {@code pawapay_refund_id}
+     * par un UPDATE ciblé, à utiliser {@code TOUJOURS} à la place d'un
+     * {@code payment.setPawapayRefundId(...)} sur l'entité gérée juste après
+     * {@link #markRefundedIfEscrow} — même piège exactement (claim bulk JPQL {@code @Modifying}
+     * SANS {@code clearAutomatically} : la base passe {@code REFUNDED} mais l'entité chargée en
+     * amont garde son ancien snapshot {@code ESCROW} en mémoire ; {@code PaymentEntity} n'a ni
+     * {@code @DynamicUpdate} ni {@code @Version}, un setter la rend sale et le flush régénère un
+     * UPDATE de toutes les colonnes, {@code status = 'ESCROW'} écrasant silencieusement le
+     * {@code REFUNDED} tout juste posé). Voir le Javadoc détaillé d'{@link #attachPayoutId} et
+     * {@code PaymentRepositoryMobileMoneyTest#markRefundedIfEscrow_thenAttachRefundId_doesNotRevertStatus}.
+     */
+    @Modifying
+    @Query("UPDATE PaymentEntity p SET p.pawapayRefundId = :opId WHERE p.id = :id")
+    int attachRefundId(@Param("id") UUID id, @Param("opId") UUID opId);
+
+    /**
      * Vrai si l'utilisateur a au moins un paiement en séquestre actif, qu'il soit
      * expéditeur ou voyageur, quel que soit le flux (bid direct ou négociation).
      *
