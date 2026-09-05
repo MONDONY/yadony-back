@@ -102,6 +102,25 @@ jobs:
           TWILIO_AUTH_TOKEN=${{ secrets.TWILIO_AUTH_TOKEN }}
           AT_API_KEY=${{ secrets.AT_API_KEY }}
           YADONY_KYC_VERIFICATION_FLOW_ID=${{ secrets.YADONY_KYC_VERIFICATION_FLOW_ID }}
+          # Didit — vérification d'identité. Les cinq valeurs sont des secrets de
+          # l'environnement `production`, distincts de ceux du bac à sable : une clé
+          # de sandbox ne doit jamais pouvoir vérifier un compte réel.
+          #
+          # DIDIT_WEBHOOK_SECRET est le `secret_shared_key` de la destination webhook
+          # POINTANT VERS api.yadony.com — pas celle de staging. Sans lui, le
+          # vérificateur refuse tout webhook (fail-closed volontaire).
+          #
+          # DIDIT_ENVIRONMENT doit valoir `live` ici : un événement portant un autre
+          # environnement est ignoré, c'est la garde qui isole prod du bac à sable.
+          #
+          # KYC_DIDIT_ENABLED n'est qu'une valeur d'AMORÇAGE : dès que la ligne
+          # kyc_didit_enabled existe dans platform_settings, c'est le back-office qui
+          # décide, et cette variable n'a plus aucun effet.
+          DIDIT_API_KEY=${{ secrets.DIDIT_API_KEY }}
+          DIDIT_WORKFLOW_ID=${{ secrets.DIDIT_WORKFLOW_ID }}
+          DIDIT_WEBHOOK_SECRET=${{ secrets.DIDIT_WEBHOOK_SECRET }}
+          DIDIT_ENVIRONMENT=${{ secrets.DIDIT_ENVIRONMENT }}
+          KYC_DIDIT_ENABLED=${{ secrets.KYC_DIDIT_ENABLED }}
 
           # Config métier (non sensible) — modifiable dans Settings > Environments > production > Variables
           CORS_ALLOWED_ORIGINS=${{ vars.CORS_ALLOWED_ORIGINS }}
