@@ -103,6 +103,13 @@ class MobileMoneyPayoutInitiatorTest {
         // Ronde 1, point 1 (CRITIQUE) : JAMAIS payment.setPawapayPayoutId(...) sur l'entité gérée
         // après le claim — UPDATE ciblé via le repository, seule façon vérifiable ici.
         verify(paymentRepository).attachPayoutId(payment.getId(), accepted.getId());
+        // Ronde 2, point 1 : verify(...) seul n'est pas exclusif — un setter réintroduit EN PLUS
+        // de l'appel repository laisserait ce test vert. Cette assertion sur le POJO passé par
+        // l'appelant est la sentinelle réelle : elle exige qu'aucune mutation n'ait jamais eu
+        // lieu sur cette entité, quel que soit ce qui a pu être appelé par ailleurs. Constatée
+        // rouge avec un payment.setPawapayPayoutId(accepted.getId()) réintroduit dans release()
+        // juste après l'appel repository, verte sans (voir task-16-report.md, Ronde 2).
+        assertThat(payment.getPawapayPayoutId()).isNull();
         verify(audit).log(eq("PAYMENT"), eq(payment.getId()), eq("ESCROW_RELEASED_MOBILE_MONEY"), eq(bidId), any());
     }
 
@@ -158,6 +165,9 @@ class MobileMoneyPayoutInitiatorTest {
 
         assertThat(op).isSameAs(live);
         verify(paymentRepository).attachPayoutId(payment.getId(), live.getId());
+        // Ronde 2, point 1 : même sentinelle que le test nominal ci-dessus — verify(...) n'est
+        // pas exclusif, cette assertion sur le POJO l'est.
+        assertThat(payment.getPawapayPayoutId()).isNull();
         verify(submission, never()).submitPayout(any(), any(), any(), any(), any(), any(), any());
         verify(alertRepository).save(any(AdminAlertEntity.class));
         verify(adminAlert).raise(eq(expectedType), any(), any());

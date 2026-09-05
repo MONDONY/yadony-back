@@ -112,10 +112,11 @@ public class MobileMoneyPayoutInitiator {
      *       Telegram ;</li>
      *   <li><b>soumission</b> : {@link PawapaySubmissionService#submitPayout} appelle
      *       pawaPay. Un {@code SUBMIT_REJECTED} (rien n'est parti) lève après une alerte
-     *       {@code PAWAPAY_PAYOUT_REJECTED}. Un {@code ACCEPTED} enregistre l'id du payout
-     *       via {@code attachPayoutId} et audite dans {@link #independentAuditTransaction} —
-     *       après ce point, la seule chose qui suit sur le chemin nominal est un
-     *       {@code log.info}, qui ne peut pas faire annuler quoi que ce soit.</li>
+     *       {@code PAWAPAY_PAYOUT_REJECTED}. Un {@code ACCEPTED} audite d'abord dans
+     *       {@link #independentAuditTransaction} (Ronde 2, point 2 : la trace du versement
+     *       existe avant toute écriture ambiante faillible), puis rattache l'id du payout via
+     *       {@code attachPayoutId} — après ce point, la seule chose qui suit sur le chemin
+     *       nominal est un {@code log.info}, qui ne peut pas faire annuler quoi que ce soit.</li>
      * </ol>
      */
     public PawapayOperationEntity release(PaymentEntity payment, UUID bidId, UUID travelerId, BigDecimal net, String source) {
@@ -156,13 +157,16 @@ public class MobileMoneyPayoutInitiator {
                             "failureCode", String.valueOf(op.getFailureCode()), "source", source));
             throw new IllegalStateException("pawaPay payout rejected: " + op.getFailureCode());
         }
-        // Ronde 1, point 1 : UPDATE ciblé, jamais un setter sur l'entité gérée (voir Javadoc de
-        // la classe). Ronde 1, point 2 : audit dans sa propre transaction.
-        paymentRepository.attachPayoutId(payment.getId(), op.getId());
+        // Ronde 2, point 2 : audit AVANT rattachement sur la branche nominale — l'audit part
+        // dans sa propre transaction déjà commitée par le temps que le rattachement (écriture
+        // ambiante, faillible) s'exécute ; si ce dernier levait, la trace du versement survivrait
+        // quand même au rollback du claim qu'il provoquerait. Ronde 1, point 1 : UPDATE ciblé,
+        // jamais un setter sur l'entité gérée (voir Javadoc de la classe).
         independentAuditTransaction.executeWithoutResult(status -> audit.log("PAYMENT", payment.getId(),
                 "ESCROW_RELEASED_MOBILE_MONEY", bidId,
                 Map.of("bidId", String.valueOf(bidId), "operationId", op.getId().toString(), "net", net.toPlainString(),
                         "currency", payment.getCurrency(), "msisdnMasked", op.getMsisdnMasked(), "source", source)));
+        paymentRepository.attachPayoutId(payment.getId(), op.getId());
         log.info("Payout mobile money {} soumis pour le paiement {} ({})", op.getId(), payment.getId(), source);
         return op;
     }
