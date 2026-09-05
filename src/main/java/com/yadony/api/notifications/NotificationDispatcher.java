@@ -425,11 +425,34 @@ public class NotificationDispatcher {
         }
     }
 
+    /**
+     * Rail carte (constructeur 4-arg legacy, EUR/mobileMoney=false) : inchangé, même type
+     * "PAYMENT_RELEASED", même {@code notifyCritical} (délai de virement J+1, suivi ACK / SMS
+     * de repli historique).
+     *
+     * <p>Rail pawaPay (tâche 16) : texte et devise locale dédiés
+     * ({@link NotificationTexts#mobileMoneyPayoutSent}), mais {@code notifyUser} — JAMAIS
+     * {@code notifyCritical}. Un versement mobile money n'est publié qu'à la confirmation
+     * {@code COMPLETED} du payout ({@code MobileMoneyPayoutOutcomeListener}) : l'argent est
+     * déjà arrivé, rien d'urgent ne reste à faire dans la minute qui suit — un SMS de repli
+     * 60 s plus tard serait un défaut, pas une amélioration (même motif que
+     * {@code onMobileMoneyPaymentConfirmed}, tâche 14). Type "PAYMENT_RELEASED" réutilisé
+     * volontairement (déjà catalogué dans NotificationCategory/NotificationDeeplink) plutôt
+     * qu'un type inventé : {@code notifyUser} persiste toujours {@code is_critical=false}
+     * quel que soit le type, donc aucun risque de déclencher le repli SMS malgré ce type
+     * présent dans {@link NotificationTypes#CRITICAL} pour le rail carte.
+     */
     @EventListener @Async
     public void onPaymentReleased(PaymentReleasedEvent event) {
+        Map<String, String> data = Map.of("type", "PAYMENT_RELEASED", "bidId", event.getBidId().toString());
+        if (event.isMobileMoney()) {
+            var text = NotificationTexts.mobileMoneyPayoutSent(
+                    NotificationTexts.mobileMoneyAmount(event.getAmount(), event.getCurrency()));
+            notifyUser(event.getTravelerId(), text.title(), text.body(), data);
+            return;
+        }
         var text = NotificationTexts.paymentReleased(NotificationTexts.eur(event.getAmount()));
-        notifyCritical(event.getTravelerId(), text.title(), text.body(),
-                Map.of("type", "PAYMENT_RELEASED", "bidId", event.getBidId().toString()));
+        notifyCritical(event.getTravelerId(), text.title(), text.body(), data);
     }
 
     @EventListener @Async

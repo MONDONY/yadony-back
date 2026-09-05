@@ -701,6 +701,46 @@ class NotificationDispatcherTest {
         verify(fcmService).sendToUser(eq(travelerId), eq("Paiement reçu !"), contains("45,00 €"), any());
     }
 
+    /**
+     * Tâche 16 (pawaPay) : le rail mobile money bascule sur un texte "Versement envoyé" dans
+     * la devise locale ; le rail carte (constructeur 4-arg legacy, EUR/mobileMoney=false par
+     * défaut) reste inchangé — même type "PAYMENT_RELEASED", même notifyCritical, même texte.
+     */
+    @Test
+    void onPaymentReleased_mobileMoney_usesLocalCurrencyText_stripeUnchanged() {
+        UUID travelerId = UUID.randomUUID();
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onPaymentReleased(new PaymentReleasedEvent(UUID.randomUUID(), travelerId, UUID.randomUUID(), new BigDecimal("15000"), "XOF", true));
+        dispatcher.onPaymentReleased(new PaymentReleasedEvent(UUID.randomUUID(), travelerId, UUID.randomUUID(), new BigDecimal("45.00")));
+
+        verify(fcmService).sendToUser(eq(travelerId), eq("Versement envoyé"), org.mockito.ArgumentMatchers.contains("F CFA"), any());
+        verify(fcmService).sendToUser(eq(travelerId), eq("Paiement reçu !"), org.mockito.ArgumentMatchers.contains("€"), any());
+    }
+
+    /**
+     * Preuve directe de l'instruction du cahier des charges : mobileMoneyPayoutSent part en
+     * notifyUser, JAMAIS en notifyCritical — un versement mobile money déjà confirmé par
+     * pawaPay n'a rien d'urgent à faire dans la minute (pas de SMS de repli à déclencher),
+     * contrairement au virement carte (J+1, d'où le suivi ACK historique du rail Stripe).
+     * Même famille de preuve que onMobileMoneyPaymentConfirmed_travelerNotification_neverPersistedAsCritical...
+     * (tâche 14) : le seul critère consulté par SmsFallbackScheduler est la colonne persistée
+     * is_critical, jamais le type — la prouver à false exclut structurellement cette ligne de
+     * toute sélection par ce scheduler, même si "PAYMENT_RELEASED" reste par ailleurs dans
+     * NotificationTypes.CRITICAL pour le rail carte inchangé.
+     */
+    @Test
+    void onPaymentReleased_mobileMoney_neverPersistedAsCritical_cannotTriggerSmsFallback() {
+        UUID travelerId = UUID.randomUUID();
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onPaymentReleased(new PaymentReleasedEvent(UUID.randomUUID(), travelerId, UUID.randomUUID(),
+                new BigDecimal("15000"), "XOF", true));
+
+        verify(notificationService).persist(eq(travelerId), eq("PAYMENT_RELEASED"), eq("Versement envoyé"),
+                any(), any(), eq(false));
+    }
+
     // ── DisputeOpenedEvent ────────────────────────────────────────────────────
 
     @Test

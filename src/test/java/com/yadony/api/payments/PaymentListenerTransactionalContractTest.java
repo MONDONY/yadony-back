@@ -2,6 +2,7 @@ package com.yadony.api.payments;
 
 import com.yadony.api.matching.AnnouncementService;
 import com.yadony.api.payments.mobilemoney.MobileMoneyDepositOutcomeListener;
+import com.yadony.api.payments.mobilemoney.MobileMoneyPayoutOutcomeListener;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -56,7 +57,10 @@ class PaymentListenerTransactionalContractTest {
                 // FailedEvent), publiés à l'intérieur de la transaction qui applique la
                 // transition — mêmes enjeux, même contrat, doivent être découvrables ici.
                 Arguments.of(MobileMoneyDepositOutcomeListener.class, "onCompleted"),
-                Arguments.of(MobileMoneyDepositOutcomeListener.class, "onFailed")
+                Arguments.of(MobileMoneyDepositOutcomeListener.class, "onFailed"),
+                // Tâche 16 : jumeaux payout des deux écouteurs ci-dessus — même contrat.
+                Arguments.of(MobileMoneyPayoutOutcomeListener.class, "onCompleted"),
+                Arguments.of(MobileMoneyPayoutOutcomeListener.class, "onFailed")
         );
     }
 

@@ -61,6 +61,25 @@ public final class NotificationTexts {
         return String.format(Locale.FRENCH, "%.2f %s", amount.setScale(2, RoundingMode.HALF_UP), currency.toUpperCase(Locale.ROOT));
     }
 
+    /**
+     * Montant tel qu'affiché dans un push mobile money (tâche 16) : « 15000 F CFA », sans
+     * décimale pour les deux francs CFA (XOF, XAF), symbole du catalogue
+     * {@link com.yadony.api.payments.currency.SupportedCurrency} plutôt que le code ISO —
+     * plus lisible dans un push qu'un code à trois lettres, et cohérent avec le rendu déjà
+     * utilisé côté admin ({@code ProAnalyticsService#formatAmount}). Distinct de
+     * {@link #amount(BigDecimal, String)}, dont le contrat (code ISO, toujours deux
+     * décimales) est déjà figé par {@code formattingHelpers()} et utilisé ailleurs (ex.
+     * {@code commissionPending}) — jamais modifié ici.
+     */
+    public static String mobileMoneyAmount(BigDecimal amount, String currencyCode) {
+        if (amount == null) return "";
+        com.yadony.api.payments.currency.SupportedCurrency currency =
+                com.yadony.api.payments.currency.SupportedCurrency.fromCodeOrDefault(currencyCode);
+        String number = String.format(Locale.FRENCH, "%." + currency.minorUnit() + "f",
+                amount.setScale(currency.minorUnit(), RoundingMode.HALF_UP));
+        return number + " " + currency.symbol();
+    }
+
     /** « ORANGE_MONEY » → « Orange Money ». */
     public static String provider(String enumName) {
         if (enumName == null || enumName.isBlank()) return "Mobile Money";
@@ -411,6 +430,19 @@ public final class NotificationTexts {
     /** {@code amount} déjà formaté par l'appelant (« 45,00 € »). */
     public static NotificationText paymentReleased(String formattedAmount) {
         return new NotificationText("Paiement reçu !", formattedAmount + ", virement en cours sous 24 h.");
+    }
+
+    /**
+     * Rail pawaPay (tâche 16) : jumeau mobile money de {@link #paymentReleased(String)},
+     * poussé à la confirmation {@code COMPLETED} du payout (pas à la simple soumission).
+     * {@code formattedAmount} déjà formaté par l'appelant (« 13200 F CFA », voir
+     * {@link #mobileMoneyAmount(BigDecimal, String)}). Toujours envoyé en {@code notifyUser},
+     * jamais {@code notifyCritical} (voir {@code NotificationDispatcher#onPaymentReleased}) :
+     * un versement déjà confirmé par pawaPay n'a rien d'urgent à faire dans la minute qui
+     * suit, contrairement au virement carte (délai J+1, d'où le suivi ACK historique).
+     */
+    public static NotificationText mobileMoneyPayoutSent(String formattedAmount) {
+        return new NotificationText("Versement envoyé", formattedAmount + " envoyés sur votre mobile money.");
     }
 
     public static NotificationText mobileMoneyPaymentConfirmed() {
