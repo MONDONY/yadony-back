@@ -12,6 +12,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
@@ -64,8 +65,8 @@ public class DiditIdentityProvider implements IdentityVerificationProvider {
             }
             return new ProviderSession(url, sessionId);
         } catch (Exception e) {
-            log.error("Failed to create Didit session for user {} ({})",
-                    user.getId(), e.getClass().getSimpleName());
+            log.error("Failed to create Didit session for user {} ({}){}",
+                    user.getId(), e.getClass().getSimpleName(), diagnostic(e));
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
                     "Impossible de créer la session de vérification");
         }
@@ -136,6 +137,33 @@ public class DiditIdentityProvider implements IdentityVerificationProvider {
                 return null;
             }
         }
+    }
+
+    /**
+     * Detail exploitable quand Didit refuse la requete.
+     *
+     * <p>Un 4xx signale une requete mal formee de NOTRE cote : le corps liste alors les
+     * champs fautifs ({@code {"workflow_id":["Must be a valid UUID."]}}), ce qui est la
+     * seule information permettant de diagnostiquer sans rejouer l'appel a la main. Sans
+     * elle, le journal ne disait que « BadRequest » — insuffisant pour agir.
+     *
+     * <p>Reserve aux 4xx et tronque : un 5xx n'apprend rien, et un corps de reponse n'a
+     * jamais vocation a remplir les journaux. La requete n'envoyant aucune donnee
+     * personnelle, le corps d'erreur n'en renvoie pas non plus.
+     */
+    private static String diagnostic(Exception e) {
+        if (e instanceof HttpClientErrorException erreur) {
+            String corps = erreur.getResponseBodyAsString();
+            if (corps != null && !corps.isBlank()) {
+                return " — " + erreur.getStatusCode() + " " + abrege(corps);
+            }
+            return " — " + erreur.getStatusCode();
+        }
+        return "";
+    }
+
+    private static String abrege(String texte) {
+        return texte.length() <= 300 ? texte : texte.substring(0, 300) + "…";
     }
 
     private static String text(JsonNode node, String field) {

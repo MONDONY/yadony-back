@@ -4,10 +4,12 @@ import com.fasterxml.jackson.databind.JsonNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
+import org.springframework.boot.http.client.ClientHttpRequestFactorySettings;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
+import java.time.Duration;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -46,12 +48,25 @@ public class DiditClient {
      * (connexion et lecture INFINIES). Le 2026-09-02, un connect pendu vers un service externe
      * a gele une synchronisation sans exception, donc sans alerte. Echouer vite, ne jamais
      * pendre — d'autant qu'ici l'appel se fait dans la requete d'un utilisateur qui attend.
+     *
+     * <p>NE PAS revenir a {@code SimpleClientHttpRequestFactory} pour poser ces timeouts. Elle
+     * s'appuie sur {@code HttpURLConnection}, qui suit les redirections en REPOSTANT SANS LE
+     * CORPS : Didit repondait alors {@code 400 {"workflow_id":["This field is required."]}},
+     * comme si la requete etait vide — diagnostic couteux, car les valeurs envoyees etaient
+     * toutes correctes. Constate en staging le 2026-09-05. {@code EcbRateClient} utilise la
+     * meme fabrique sans dommage parce qu'il ne fait que des GET, qui n'ont pas de corps.
+     *
+     * <p>{@code ClientHttpRequestFactoryBuilder.detect()} choisit la meilleure implementation
+     * disponible au classpath (Apache HttpClient, sinon le client JDK) : toutes reemettent
+     * correctement le corps d'un POST redirige.
      */
     private static RestClient withTimeouts() {
-        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(5_000);
-        factory.setReadTimeout(10_000);
-        return RestClient.builder().requestFactory(factory).build();
+        return RestClient.builder()
+                .requestFactory(ClientHttpRequestFactoryBuilder.detect()
+                        .build(ClientHttpRequestFactorySettings.defaults()
+                                .withConnectTimeout(Duration.ofSeconds(5))
+                                .withReadTimeout(Duration.ofSeconds(10))))
+                .build();
     }
 
     /**
