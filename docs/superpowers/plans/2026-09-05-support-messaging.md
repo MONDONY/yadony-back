@@ -120,9 +120,9 @@ premiere version du test melangeait les deux referentiels.
 - Repository methods: `loadReplies()`, `loadTickets()`, `createTicket(category, subject, message)`, `loadTicket(id)`, `sendMessage(id, content)`.
 
 - [x] Write BLoC tests for loading replies, creating ticket after predefined answer, loading ticket detail and blocking send on resolved ticket.
-- [ ] Run tests and confirm they fail. (Bash indisponible — tests et impl écrits ensemble, exécution différée.)
+- [ ] Run tests and confirm they fail. (Bash indisponible ce jour-là — tests et impl écrits ensemble, exécution différée.)
 - [x] Implement data models, repository and BLoC. (+ DI injection.dart, + AnalyticsEvents supportTicketCreated/supportTicketMessageSent.)
-- [ ] Run tests and confirm they pass. (À faire dès Bash : `flutter pub get` d'abord — worktree neuf sans .dart_tool — puis `flutter test test/features/support/`.)
+- [x] Run tests and confirm they pass. (18 tests support verts, `flutter analyze` propre.)
 
 ### Task 5: Flutter screens and routing
 
@@ -138,11 +138,20 @@ premiere version du test melangeait les deux referentiels.
 - Routes: `/support` and `/support/tickets/:id`.
 
 - [x] Write widget tests for predefined replies, ticket creation CTA, ticket list and resolved ticket without input field.
-- [ ] Run tests and confirm they fail. (Bash indisponible — écrit avec l'implémentation, exécution différée.)
-- [x] Implement screens using existing design components. (Routes `/support` + `/support/tickets/:id` dans router.dart ; CTA « Contacter le support » de FaqScreen redirigé de `/profile/help/contact` vers `/support` ; sheet de création avec bloc partagé via `wrapper` + `stickyBottom` ValueListenableBuilder→BlocBuilder ; AnalyticsEvents + table CLAUDE.md mises à jour.)
-- [ ] Run tests and confirm they pass. (À faire dès Bash : `flutter pub get` puis `flutter test test/features/support/` puis `flutter analyze` projet entier.)
+- [ ] Run tests and confirm they fail. (Bash indisponible ce jour-là — écrit avec l'implémentation, exécution différée.)
+- [x] Implement screens using existing design components. (Routes `/support` + `/support/tickets/:id` dans router.dart ; sheet de création avec bloc partagé via `wrapper` + `stickyBottom` ValueListenableBuilder→BlocBuilder ; AnalyticsEvents + table CLAUDE.md mises à jour.)
+- [x] Run tests and confirm they pass. (`flutter analyze` propre, suite complète verte.)
 
-**Décision à trancher à la revue :** `SupportContactScreen`/`SupportContactBloc` (mailto) ne sont plus atteignables depuis la FAQ ; la route `/profile/help/contact` existe encore. Supprimer le parcours mailto (règle « pas de code mort ») ou le garder en secours — vérifier par grep les autres appelants avant.
+### Task 5b : le parcours mailto est retiré (décision du propriétaire du produit)
+
+Le mailto n'était pas du code mort : quatre écrans y menaient (FAQ, tuile
+« Contacter le support » du profil, liste et détail des litiges). Deux canaux
+concurrents auraient laissé une partie des demandes hors du back-office, donc
+tout bascule vers `/support` et le parcours mail disparaît.
+
+- [x] Rediriger les quatre points d'entrée vers `/support`.
+- [x] Supprimer `SupportContactScreen`, `SupportContactBloc` (+ event/state), leurs deux tests, la route `/profile/help/contact`, l'enregistrement DI et les events `support_email_composer_opened` / `support_contact_failed` (code et table CLAUDE.md).
+- [x] Reporter les stubs de route des tests existants (FAQ, litiges ×2, profil) sur `/support`.
 
 ### Task 6: Admin support service, store/composable and page
 
@@ -164,11 +173,11 @@ premiere version du test melangeait les deux referentiels.
 - Service methods mirror backend admin endpoints.
 - Page permission: `SUPPORT_TICKET_VIEW`.
 
-- [ ] Run `npm run postinstall` once in the admin worktree to generate `.nuxt`. (Bash indisponible.)
+- [x] Run `npm run postinstall` once in the admin worktree to generate `.nuxt`.
 - [x] Write tests for service URLs, scope switching, assign/reassign/reply/resolve and sidebar gating. (supportService.spec 7 cas, useSupportTickets.spec 7 cas, AppSidebar.spec +2, auth.spec 31→33 +2 cas.)
-- [ ] Run tests and confirm they fail. (Écrits avec l'implémentation, exécution différée.)
+- [ ] Run tests and confirm they fail. (Bash indisponible ce jour-là — écrits avec l'implémentation.)
 - [x] Implement service, composable, page, components and permission mirror. (types/, utils/format.ts, supportService, useSupportTickets, SupportTicketsTable, SupportTicketThread, pages/support/index.vue avec definePageMeta permission SUPPORT_TICKET_VIEW, sidebar NavItem LifeBuoy, auth.ts 33 perms + rôle SUPPORT 18.)
-- [ ] Run tests and confirm they pass. (Dès Bash : `npm run postinstall` puis Vitest ciblé puis `npm test -- --run`.)
+- [x] Run tests and confirm they pass. (Suite complète : 747 verts. Seul `permissionCoverage` échoue, et pour une raison d'environnement : il lit l'énumération dans le checkout principal `dony-back`, resté sur `main` — 0 occurrence de `SUPPORT_TICKET` contre 3 dans le worktree. Il repassera au vert dès la fusion de la branche backend, sans rien changer au code.)
 
 **Choix UI assumé (tâche 6) :** la réassignation vers un tiers arbitraire n'a pas d'UI (l'API existe) ; le bouton « Reprendre ce ticket » fait un reassign vers soi-même — c'est le cas d'usage de la spec (reprendre le ticket d'un collègue).
 
