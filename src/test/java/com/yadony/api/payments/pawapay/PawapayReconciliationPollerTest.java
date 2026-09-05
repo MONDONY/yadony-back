@@ -1,12 +1,17 @@
 package com.yadony.api.payments.pawapay;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.yadony.api.admin.AdminAlertEntity;
+import com.yadony.api.admin.AdminAlertRepository;
+import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.payments.pawapay.dto.PawapayOperationSnapshot;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -16,8 +21,11 @@ import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.client.ResourceAccessException;
 
@@ -27,9 +35,11 @@ class PawapayReconciliationPollerTest {
     @Mock PawapayOperationRepository repository;
     @Mock PawapayClient client;
     @Mock PawapayOperationService operations;
+    @Mock AdminAlertService alerts;
+    @Mock AdminAlertRepository alertRepository;
 
     private PawapayReconciliationPoller poller() {
-        return new PawapayReconciliationPoller(repository, client, operations, props(true));
+        return new PawapayReconciliationPoller(repository, client, operations, alerts, alertRepository, props(true));
     }
 
     private static PawapayProperties props(boolean enabled) {
@@ -49,7 +59,7 @@ class PawapayReconciliationPollerTest {
     @Test
     void openOperation_isReconciledFromPawapayStatus() {
         PawapayOperationEntity o = op(PawapayOperationStatus.ACCEPTED, LocalDateTime.now(ZoneOffset.UTC).minusMinutes(5));
-        when(repository.findByStatusInAndUpdatedAtBefore(eq(PawapayOperationStatus.OPEN), any())).thenReturn(List.of(o));
+        when(repository.findByStatusInAndUpdatedAtBefore(eq(PawapayOperationStatus.OPEN), any(), any())).thenReturn(List.of(o));
         when(client.getStatus(PawapayOperationKind.DEPOSIT, o.getId())).thenReturn(Optional.of(
                 new PawapayOperationSnapshot(PawapayOperationStatus.COMPLETED, null, null, "ptx", null, "{}")));
 
@@ -62,7 +72,7 @@ class PawapayReconciliationPollerTest {
     @Test
     void createdForLong_andUnknownAtPawapay_becomesSubmitRejected() {
         PawapayOperationEntity o = op(PawapayOperationStatus.CREATED, LocalDateTime.now(ZoneOffset.UTC).minusMinutes(5));
-        when(repository.findByStatusInAndUpdatedAtBefore(any(), any())).thenReturn(List.of(o));
+        when(repository.findByStatusInAndUpdatedAtBefore(any(), any(), any())).thenReturn(List.of(o));
         when(client.getStatus(PawapayOperationKind.DEPOSIT, o.getId())).thenReturn(Optional.empty());
 
         poller().reconcile();
@@ -74,7 +84,7 @@ class PawapayReconciliationPollerTest {
     @Test
     void createdRecently_andUnknown_isLeftAlone() {
         PawapayOperationEntity o = op(PawapayOperationStatus.CREATED, LocalDateTime.now(ZoneOffset.UTC).minusSeconds(90));
-        when(repository.findByStatusInAndUpdatedAtBefore(any(), any())).thenReturn(List.of(o));
+        when(repository.findByStatusInAndUpdatedAtBefore(any(), any(), any())).thenReturn(List.of(o));
         when(client.getStatus(PawapayOperationKind.DEPOSIT, o.getId())).thenReturn(Optional.empty());
 
         poller().reconcile();
@@ -85,7 +95,7 @@ class PawapayReconciliationPollerTest {
     @Test
     void acceptedButUnknown_isNotRejected_onlyLogged() {
         PawapayOperationEntity o = op(PawapayOperationStatus.ACCEPTED, LocalDateTime.now(ZoneOffset.UTC).minusMinutes(10));
-        when(repository.findByStatusInAndUpdatedAtBefore(any(), any())).thenReturn(List.of(o));
+        when(repository.findByStatusInAndUpdatedAtBefore(any(), any(), any())).thenReturn(List.of(o));
         when(client.getStatus(PawapayOperationKind.DEPOSIT, o.getId())).thenReturn(Optional.empty());
 
         poller().reconcile();
@@ -97,7 +107,7 @@ class PawapayReconciliationPollerTest {
     void networkError_onOne_doesNotStopTheOthers() {
         PawapayOperationEntity a = op(PawapayOperationStatus.PROCESSING, LocalDateTime.now(ZoneOffset.UTC).minusMinutes(5));
         PawapayOperationEntity b = op(PawapayOperationStatus.PROCESSING, LocalDateTime.now(ZoneOffset.UTC).minusMinutes(5));
-        when(repository.findByStatusInAndUpdatedAtBefore(any(), any())).thenReturn(List.of(a, b));
+        when(repository.findByStatusInAndUpdatedAtBefore(any(), any(), any())).thenReturn(List.of(a, b));
         when(client.getStatus(PawapayOperationKind.DEPOSIT, a.getId())).thenThrow(new ResourceAccessException("boom"));
         when(client.getStatus(PawapayOperationKind.DEPOSIT, b.getId())).thenReturn(Optional.of(
                 new PawapayOperationSnapshot(PawapayOperationStatus.FAILED, "PAYMENT_NOT_APPROVED", "no", null, null, "{}")));
@@ -110,7 +120,72 @@ class PawapayReconciliationPollerTest {
 
     @Test
     void disabled_doesNothing() {
-        new PawapayReconciliationPoller(repository, client, operations, props(false)).reconcile();
-        verify(repository, never()).findByStatusInAndUpdatedAtBefore(any(), any());
+        new PawapayReconciliationPoller(repository, client, operations, alerts, alertRepository, props(false)).reconcile();
+        verify(repository, never()).findByStatusInAndUpdatedAtBefore(any(), any(), any());
+    }
+
+    // Revue ronde 1, point 3 : sans borne, un incident prolongé chez pawaPay accumulerait
+    // des centaines d'opérations OPEN et ferait durer un passage des heures sur l'unique
+    // pool de scheduling partagé par tous les crons du dépôt.
+
+    @Test
+    void reconcile_requestsBoundedOldestUpdatedFirstPage() {
+        when(repository.findByStatusInAndUpdatedAtBefore(any(), any(), any())).thenReturn(List.of());
+
+        poller().reconcile();
+
+        ArgumentCaptor<Pageable> captor = ArgumentCaptor.forClass(Pageable.class);
+        verify(repository).findByStatusInAndUpdatedAtBefore(eq(PawapayOperationStatus.OPEN), any(), captor.capture());
+        Pageable page = captor.getValue();
+        assertThat(page.getPageNumber()).isZero();
+        assertThat(page.getPageSize()).isEqualTo(200);
+        assertThat(page.getSort()).isEqualTo(Sort.by("updatedAt").ascending());
+    }
+
+    // Revue ronde 1, point 4 : une opération non-CREATED inconnue de pawaPay ne fait
+    // qu'un log.warn, qui ne rafraîchit pas updatedAt (donc rest sélectionnée pour
+    // toujours) et ne crée aucun événement Sentry (minimum-event-level = ERROR). Un
+    // versement réellement perdu ne serait jamais payé, et personne ne le saurait.
+
+    @Test
+    void acceptedAndUnknownForOverAnHour_escalatesToAdmin() {
+        PawapayOperationEntity o = op(PawapayOperationStatus.ACCEPTED, LocalDateTime.now(ZoneOffset.UTC).minusHours(2));
+        when(repository.findByStatusInAndUpdatedAtBefore(any(), any(), any())).thenReturn(List.of(o));
+        when(client.getStatus(PawapayOperationKind.DEPOSIT, o.getId())).thenReturn(Optional.empty());
+        String expectedType = "PAWAPAY_UNKNOWN_OP_" + o.getId();
+        when(alertRepository.findByTypeAndResolved(expectedType, false)).thenReturn(List.of());
+
+        poller().reconcile();
+
+        verify(alertRepository).save(any(AdminAlertEntity.class));
+        verify(alerts).raise(eq(expectedType), any(), any());
+    }
+
+    @Test
+    void acceptedAndUnknownForOverAnHour_doesNotDuplicateWhenAlreadyEscalated() {
+        PawapayOperationEntity o = op(PawapayOperationStatus.ACCEPTED, LocalDateTime.now(ZoneOffset.UTC).minusHours(2));
+        when(repository.findByStatusInAndUpdatedAtBefore(any(), any(), any())).thenReturn(List.of(o));
+        when(client.getStatus(PawapayOperationKind.DEPOSIT, o.getId())).thenReturn(Optional.empty());
+        String expectedType = "PAWAPAY_UNKNOWN_OP_" + o.getId();
+        AdminAlertEntity existing = new AdminAlertEntity();
+        existing.setType(expectedType);
+        when(alertRepository.findByTypeAndResolved(expectedType, false)).thenReturn(List.of(existing));
+
+        poller().reconcile();
+
+        verify(alertRepository, never()).save(any());
+        verify(alerts, never()).raise(any(), any(), any());
+    }
+
+    @Test
+    void acceptedAndUnknownWithinTheHour_doesNotEscalateYet() {
+        PawapayOperationEntity o = op(PawapayOperationStatus.ACCEPTED, LocalDateTime.now(ZoneOffset.UTC).minusMinutes(30));
+        when(repository.findByStatusInAndUpdatedAtBefore(any(), any(), any())).thenReturn(List.of(o));
+        when(client.getStatus(PawapayOperationKind.DEPOSIT, o.getId())).thenReturn(Optional.empty());
+
+        poller().reconcile();
+
+        verify(alertRepository, never()).findByTypeAndResolved(any(), anyBoolean());
+        verify(alerts, never()).raise(any(), any(), any());
     }
 }

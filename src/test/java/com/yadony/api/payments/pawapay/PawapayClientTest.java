@@ -134,6 +134,41 @@ class PawapayClientTest {
         assertThat(client.getStatus(PawapayOperationKind.PAYOUT, id)).isEmpty();
     }
 
+    // Revue ronde 1, point 1 (CRITIQUE) : un 401/403/429 porte un corps JSON parfaitement
+    // lisible mais qui ne dit rien sur l'opération demandée. Le confondre avec NOT_FOUND
+    // finaliserait à tort en SUBMIT_REJECTED une opération que pawaPay a peut-être très
+    // bien acceptée — un token tourné en production suffirait à casser tout le rail.
+
+    @Test
+    void getStatus_401WithJsonBody_throwsInsteadOfBeingTreatedAsNotFound() {
+        UUID id = UUID.randomUUID();
+        server.expect(requestTo(BASE + "/v2/deposits/" + id))
+                .andRespond(withStatus(HttpStatus.UNAUTHORIZED).contentType(MediaType.APPLICATION_JSON)
+                        .body("{\"errorId\":\"INVALID_AUTH_TOKEN\"}"));
+
+        assertThatThrownBy(() -> client.getStatus(PawapayOperationKind.DEPOSIT, id))
+                .isInstanceOf(RestClientException.class);
+    }
+
+    @Test
+    void getStatus_emptyBodyOn200_throwsInsteadOfBeingTreatedAsNotFound() {
+        UUID id = UUID.randomUUID();
+        server.expect(requestTo(BASE + "/v2/deposits/" + id)).andRespond(withSuccess());
+
+        assertThatThrownBy(() -> client.getStatus(PawapayOperationKind.DEPOSIT, id))
+                .isInstanceOf(RestClientException.class);
+    }
+
+    @Test
+    void getStatus_foundWithUnmappableStatus_throwsInsteadOfBeingTreatedAsNotFound() {
+        UUID id = UUID.randomUUID();
+        server.expect(requestTo(BASE + "/v2/deposits/" + id))
+                .andRespond(withSuccess("{\"status\":\"FOUND\",\"data\":{\"status\":\"BOGUS\"}}", MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(() -> client.getStatus(PawapayOperationKind.DEPOSIT, id))
+                .isInstanceOf(RestClientException.class);
+    }
+
     @Test
     void predictProvider_ok_andRejected() {
         server.expect(requestTo(BASE + "/v2/predict-provider")).andExpect(jsonPath("$.phoneNumber").value("+221771234567"))

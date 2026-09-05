@@ -26,6 +26,17 @@ public interface PawapayOperationRepository extends JpaRepository<PawapayOperati
     List<PawapayOperationEntity> findByStatusInAndUpdatedAtBefore(
             Collection<PawapayOperationStatus> statuses, LocalDateTime before);
 
+    /**
+     * Même sélection, bornée par {@code pageable} (revue ronde 1, point 3) : sans borne, un
+     * incident prolongé chez pawaPay pourrait accumuler des centaines d'opérations `OPEN` et
+     * faire durer un seul passage du poller des heures durant, sur l'unique pool de
+     * scheduling partagé par tous les crons du dépôt. Le poller l'appelle triée par
+     * {@code updatedAt} croissant : les plus anciennes d'abord, la fenêtre finit par se
+     * vider passage après passage même si le flux entrant ne tarit jamais.
+     */
+    List<PawapayOperationEntity> findByStatusInAndUpdatedAtBefore(
+            Collection<PawapayOperationStatus> statuses, LocalDateTime before, Pageable pageable);
+
     List<PawapayOperationEntity> findByPaymentIdOrderByCreatedAtDesc(UUID paymentId);
 
     Page<PawapayOperationEntity> findAllByOrderByCreatedAtDesc(Pageable pageable);

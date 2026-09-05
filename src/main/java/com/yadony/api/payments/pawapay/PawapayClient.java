@@ -25,6 +25,7 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.client.ClientHttpResponse;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
@@ -87,13 +88,27 @@ public class PawapayClient {
     }
 
     public Optional<PawapayOperationSnapshot> getStatus(PawapayOperationKind kind, UUID id) {
-        JsonNode json = get(kind.path() + "/" + id);
-        if (!"FOUND".equalsIgnoreCase(json.path("status").asText())) {
+        String path = kind.path() + "/" + id;
+        JsonNode json = rest.get().uri(path).exchange((req, res) -> readStatusBody(path, res));
+        String status = json.path("status").asText(null);
+        if ("NOT_FOUND".equalsIgnoreCase(status)) {
             return Optional.empty();
         }
+        if (!"FOUND".equalsIgnoreCase(status)) {
+            // pawaPay n'a positivement dit ni FOUND ni NOT_FOUND (champ absent, ou valeur
+            // imprévue) : on ne sait pas ce qu'il en est, donc on ne conclut surtout pas
+            // « jamais partie » — le poller réessaiera dans deux minutes.
+            throw new RestClientException("pawaPay " + path + " : champ status inattendu (" + status + ")");
+        }
         JsonNode data = json.path("data");
-        Optional<PawapayOperationStatus> status = PawapayOperationStatus.fromApi(data.path("status").asText(null));
-        return status.map(s -> new PawapayOperationSnapshot(s,
+        Optional<PawapayOperationStatus> mapped = PawapayOperationStatus.fromApi(data.path("status").asText(null));
+        if (mapped.isEmpty()) {
+            // pawaPay affirme connaître l'opération (FOUND) mais avec un statut que nous ne
+            // savons pas mapper : en conclure « jamais partie » serait faux et dangereux.
+            throw new RestClientException("pawaPay " + path + " : FOUND avec un statut de donnée non mappable");
+        }
+        PawapayOperationStatus s = mapped.get();
+        return Optional.of(new PawapayOperationSnapshot(s,
                 data.path("failureReason").path("failureCode").asText(null),
                 data.path("failureReason").path("failureMessage").asText(null),
                 data.path("providerTransactionId").asText(null),
@@ -200,6 +215,29 @@ public class PawapayClient {
 
     private JsonNode get(String path) {
         return rest.get().uri(path).exchange((req, res) -> readBody(path, res));
+    }
+
+    /**
+     * Lecture stricte réservée à {@link #getStatus} : contrairement à {@link #readBody}
+     * (utilisé par les appels d'initiation, où un 4xx {@code REJECTED} est une réponse
+     * normale), seul un 2xx est exploitable ici. Un 401/403/429 porte un corps JSON
+     * parfaitement lisible mais qui ne dit rien sur l'opération demandée — le confondre
+     * avec « pawaPay ne connaît pas cet id » finaliserait à tort une opération qui n'a
+     * simplement pas pu être interrogée (revue ronde 1, point 1).
+     */
+    private JsonNode readStatusBody(String path, ClientHttpResponse res) throws IOException {
+        if (!res.getStatusCode().is2xxSuccessful()) {
+            throw new RestClientException("pawaPay " + path + " HTTP " + res.getStatusCode().value());
+        }
+        byte[] bytes = res.getBody().readAllBytes();
+        if (bytes.length == 0) {
+            throw new RestClientException("pawaPay " + path + " réponse vide");
+        }
+        try {
+            return mapper.readTree(bytes);
+        } catch (IOException e) {
+            throw new RestClientException("pawaPay " + path + " réponse illisible", e);
+        }
     }
 
     private JsonNode readBody(String path, org.springframework.http.client.ClientHttpResponse res) throws IOException {
