@@ -169,8 +169,21 @@ jobs:
           TWILIO_ACCOUNT_SID=${{ secrets.TWILIO_ACCOUNT_SID }}
           TWILIO_AUTH_TOKEN=${{ secrets.TWILIO_AUTH_TOKEN }}
           AT_API_KEY=${{ secrets.AT_API_KEY }}
+          # Didit — vérification d'identité. DIDIT_WEBHOOK_SECRET est le
+          # `secret_shared_key` rendu UNE SEULE FOIS par POST /v3/webhook/destinations/ :
+          # sans lui, le vérificateur refuse tout webhook (fail-closed volontaire).
+          DIDIT_API_KEY=${{ secrets.DIDIT_API_KEY }}
+          DIDIT_WORKFLOW_ID=${{ secrets.DIDIT_WORKFLOW_ID }}
+          DIDIT_WEBHOOK_SECRET=${{ secrets.DIDIT_WEBHOOK_SECRET }}
 
           # Config métier (non sensible) — modifiable dans Settings > Environments > staging > Variables
+          # `sandbox` en staging : un événement portant l'autre environnement est ignoré,
+          # ce qui empêche un test bac à sable de vérifier un compte de production.
+          DIDIT_ENVIRONMENT=${{ vars.DIDIT_ENVIRONMENT }}
+          # Valeur d'AMORÇAGE seulement : une fois la ligne kyc_didit_enabled créée au
+          # premier démarrage, c'est le back-office qui décide et cette variable n'a plus
+          # d'effet. Vrai en staging pour pouvoir tester le parcours Didit.
+          KYC_DIDIT_ENABLED=${{ vars.KYC_DIDIT_ENABLED }}
           CORS_ALLOWED_ORIGINS=${{ vars.CORS_ALLOWED_ORIGINS }}
           APP_BASE_URL=${{ vars.APP_BASE_URL }}
           # Domaine NU (sans /api/v1) servant les URL publiques partageables :
