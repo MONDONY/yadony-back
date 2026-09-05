@@ -1,82 +1,51 @@
 package com.yadony.api.kyc;
 
-import com.stripe.model.identity.VerificationSession;
-import com.stripe.param.identity.VerificationSessionRetrieveParams;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.yadony.api.kyc.provider.IdentityProviderResolver;
 import org.springframework.stereotype.Service;
 
 import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Relit les {@code verified_outputs} de la session Stripe Identity d'un utilisateur, pour
- * preremplir son onboarding Stripe Connect avec l'identite deja verifiee plutot que de la
- * lui redemander champ par champ.
+ * Relit l'identite verifiee d'un utilisateur pour preremplir son onboarding Stripe Connect
+ * plutot que de la lui redemander champ par champ.
  *
- * <p>Rien n'est stocke : {@code kyc_verifications} ne garde que l'identifiant de session,
- * et Stripe reste la seule source des donnees verifiees. Elles ne sont relues qu'a l'instant
- * du provisioning, cote serveur, et jamais journalisees.
+ * <p>Connect et la verification d'identite sont deux choses independantes : Connect n'a
+ * jamais consomme Stripe Identity, seulement des champs nom/prenom. Le prefill fonctionne
+ * donc a l'identique quel que soit le fournisseur d'identite.
  *
- * <p>Best-effort assume : tout echec (session purgee, reseau, outputs absents) rend
- * {@code empty} et l'appelant cree le compte sans prefill — l'utilisateur ressaisit alors
- * dans le formulaire Stripe, comme avant cette classe. Un prefill ne vaut jamais un 502.
+ * <p>Rien n'est stocke : {@code kyc_verifications} ne garde que l'identifiant de session, et
+ * le fournisseur reste la seule source des donnees verifiees. Elles ne sont relues qu'a
+ * l'instant du provisioning, cote serveur, et jamais journalisees.
+ *
+ * <p>Best-effort assume : tout echec (session purgee, reseau, implementation du fournisseur
+ * retiree) rend {@code empty} et l'appelant cree le compte sans prefill — l'utilisateur
+ * ressaisit alors dans le formulaire Connect. Un prefill ne vaut jamais un 502.
  */
 @Service
 public class KycVerifiedIdentityService {
 
-    private static final Logger log = LoggerFactory.getLogger(KycVerifiedIdentityService.class);
-
     private final KycRepository kycRepository;
+    private final IdentityProviderResolver providers;
 
-    public KycVerifiedIdentityService(KycRepository kycRepository) {
+    public KycVerifiedIdentityService(KycRepository kycRepository,
+                                      IdentityProviderResolver providers) {
         this.kycRepository = kycRepository;
+        this.providers = providers;
     }
 
     public Optional<VerifiedIdentitySnapshot> forUser(UUID userId) {
-        try {
-            Optional<KycVerificationEntity> verification = kycRepository.findByUserId(userId);
-            if (verification.isEmpty()
-                    || verification.get().getVerificationSessionId() == null
-                    || verification.get().getStatus() != KycVerificationStatus.VERIFIED) {
-                return Optional.empty();
-            }
-
-            // verified_outputs n'est pas dans la reponse par defaut : il faut l'expand.
-            //
-            // NE PAS y ajouter "verified_outputs.dob" avec CETTE cle. La date de naissance
-            // est un champ sensible : elle n'est pas accessible a une cle secrete standard
-            // (doc Stripe « Access verification results », tableau des permissions). La
-            // demander ici ferait echouer l'appel entier, et le catch plus bas viderait
-            // alors AUSSI le prefill du nom, qui lui fonctionne.
-            //
-            // La lire est possible, mais exige une cle restreinte dediee : permission
-            // Identity « Access recent sensitive verification results » pour les 48
-            // dernieres heures, ou « Access all sensitive verification results » + une
-            // allowlist d'IP pour un acces sans limite de temps (obligatoire ici : un
-            // compte Connect peut se creer des semaines apres la verification). Stripe
-            // decourage explicitement cet acces long terme. Non mis en place : Connect
-            // demande la date de naissance dans son propre formulaire, et l'economie
-            // porterait sur un seul champ, saisi une fois dans la vie du compte.
-            VerificationSession session = VerificationSession.retrieve(
-                    verification.get().getVerificationSessionId(),
-                    VerificationSessionRetrieveParams.builder()
-                            .addExpand("verified_outputs")
-                            .build(),
-                    null);
-
-            VerificationSession.VerifiedOutputs outputs = session.getVerifiedOutputs();
-            if (outputs == null) {
-                return Optional.empty();
-            }
-
-            return Optional.of(new VerifiedIdentitySnapshot(
-                    outputs.getFirstName(), outputs.getLastName()));
-        } catch (Exception e) {
-            // Jamais de donnees dans le log : seulement l'utilisateur et la classe d'erreur.
-            log.warn("verified_outputs indisponibles pour l'utilisateur {} ({}) — provisioning sans prefill",
-                    userId, e.getClass().getSimpleName());
+        Optional<KycVerificationEntity> verification = kycRepository.findByUserId(userId);
+        if (verification.isEmpty()
+                || verification.get().getVerificationSessionId() == null
+                || verification.get().getStatus() != KycVerificationStatus.VERIFIED) {
             return Optional.empty();
         }
+
+        // Le fournisseur de la LIGNE, jamais le fournisseur actif : une identite verifiee du
+        // temps de Stripe se relit chez Stripe, meme apres la bascule vers Didit.
+        return providers.forRecord(verification.get().getProvider())
+                .flatMap(provider -> provider.fetchVerifiedName(
+                        verification.get().getVerificationSessionId()));
     }
 }

@@ -34,12 +34,26 @@ class KycServiceTest {
     @Mock KycRepository kycRepository;
     @Mock UserRepository userRepository;
     @Mock AuditService auditService;
+    @Mock com.yadony.api.config.PlatformSettingsService settings;
 
     KycService service;
 
     @BeforeEach
     void setUp() {
-        service = new KycService(kycRepository, userRepository, auditService);
+        service = buildService("");
+    }
+
+    /**
+     * Vrai fournisseur Stripe derrière un vrai resolver : ces tests décrivent le parcours
+     * complet, et le SDK Stripe reste intercepté par {@code mockStatic} comme avant.
+     */
+    private KycService buildService(String verificationFlowId) {
+        lenient().when(settings.kycDiditEnabled()).thenReturn(false);
+        return new KycService(kycRepository, userRepository, auditService,
+                new com.yadony.api.kyc.provider.IdentityProviderResolver(
+                        java.util.List.of(new com.yadony.api.kyc.provider.stripe.StripeIdentityProvider(
+                                "https://yadony.com/kyc/complete", verificationFlowId)),
+                        settings));
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -203,7 +217,7 @@ class KycServiceTest {
     void createSession_pendingSessionFromPreviousFlowConfig_createsFreshSession() {
         // Une session inachevée est `requires_input` même si elle date d'avant l'activation du flow :
         // seul le flow porté par la session permet de détecter qu'elle est périmée.
-        ReflectionTestUtils.setField(service, "kycVerificationFlowId", "vf_current");
+        service = buildService("vf_current");
         UserEntity user = buildUser(KycStatus.PENDING);
         KycVerificationEntity kyc = buildKyc(user.getId(), KycVerificationStatus.PENDING);
         when(userRepository.findByFirebaseUid("uid-001")).thenReturn(Optional.of(user));
@@ -230,7 +244,7 @@ class KycServiceTest {
 
     @Test
     void createSession_pendingSessionMatchingConfiguredFlow_isReused() {
-        ReflectionTestUtils.setField(service, "kycVerificationFlowId", "vf_current");
+        service = buildService("vf_current");
         UserEntity user = buildUser(KycStatus.PENDING);
         KycVerificationEntity kyc = buildKyc(user.getId(), KycVerificationStatus.PENDING);
         when(userRepository.findByFirebaseUid("uid-001")).thenReturn(Optional.of(user));

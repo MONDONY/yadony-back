@@ -29,15 +29,18 @@ public class PlatformSettingsInitializer {
     private final YadonyConfigProperties config;
     private final boolean smsEnabledProperty;
     private final boolean proEnabledProperty;
+    private final boolean kycDiditEnabledProperty;
 
     public PlatformSettingsInitializer(PlatformSettingRepository repository,
                                        YadonyConfigProperties config,
                                        @Value("${app.sms.enabled:false}") boolean smsEnabledProperty,
-                                       @Value("${yadony.pro.enabled:false}") boolean proEnabledProperty) {
+                                       @Value("${yadony.pro.enabled:false}") boolean proEnabledProperty,
+                                       @Value("${yadony.kyc.didit.enabled:false}") boolean kycDiditEnabledProperty) {
         this.repository = repository;
         this.config = config;
         this.smsEnabledProperty = smsEnabledProperty;
         this.proEnabledProperty = proEnabledProperty;
+        this.kycDiditEnabledProperty = kycDiditEnabledProperty;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -62,6 +65,8 @@ public class PlatformSettingsInitializer {
                 String.valueOf(smsEnabledProperty));
         defaults.put(PlatformSettingKey.PRO_ENABLED,
                 String.valueOf(proEnabledProperty));
+        defaults.put(PlatformSettingKey.KYC_DIDIT_ENABLED,
+                String.valueOf(kycDiditEnabledProperty));
 
         int inserted = 0;
         for (Map.Entry<PlatformSettingKey, String> entry : defaults.entrySet()) {

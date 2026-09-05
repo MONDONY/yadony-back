@@ -7,16 +7,14 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.kyc.dto.KycAdminStatusResponse;
 import com.yadony.api.notifications.NotificationDispatcher;
-import com.stripe.model.identity.VerificationSession;
+import com.yadony.api.kyc.provider.IdentityProviderResolver;
+import com.yadony.api.kyc.provider.ProviderAdminView;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Instant;
-import java.time.LocalDateTime;
-import java.time.ZoneOffset;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -41,15 +39,18 @@ public class KycAdminService {
     private final UserRepository userRepository;
     private final AuditService auditService;
     private final NotificationDispatcher notificationDispatcher;
+    private final IdentityProviderResolver providers;
 
     public KycAdminService(KycRepository kycRepository,
                            UserRepository userRepository,
                            AuditService auditService,
-                           NotificationDispatcher notificationDispatcher) {
+                           NotificationDispatcher notificationDispatcher,
+                           IdentityProviderResolver providers) {
         this.kycRepository = kycRepository;
         this.userRepository = userRepository;
         this.auditService = auditService;
         this.notificationDispatcher = notificationDispatcher;
+        this.providers = providers;
     }
 
     @Transactional(readOnly = true)
@@ -58,7 +59,13 @@ public class KycAdminService {
         Optional<KycVerificationEntity> kyc = kycRepository.findByUserId(userId);
         String sessionId = kyc.map(KycVerificationEntity::getVerificationSessionId).orElse(null);
 
-        StripeView stripe = sessionId != null ? retrieveStripeView(sessionId) : StripeView.absent();
+        // Vue live chez le fournisseur de la LIGNE. Implementation retiree ou fournisseur
+        // injoignable : la vue est marquee indisponible, jamais une 5xx renvoyee a l'admin.
+        ProviderAdminView view = sessionId == null
+                ? ProviderAdminView.absent()
+                : kyc.flatMap(k -> providers.forRecord(k.getProvider()))
+                        .map(provider -> provider.fetchAdminView(sessionId))
+                        .orElseGet(ProviderAdminView::unreachable);
 
         return new KycAdminStatusResponse(
                 userId,
@@ -67,16 +74,17 @@ public class KycAdminService {
                 kyc.map(KycVerificationEntity::getRejectionReason).orElse(null),
                 kyc.map(KycVerificationEntity::getRejectionCode).orElse(null),
                 sessionId,
-                stripe.status(),
-                stripe.lastErrorCode(),
-                stripe.lastErrorReason(),
-                stripe.createdAt(),
-                stripe.unavailable()
+                view.status(),
+                view.lastErrorCode(),
+                view.lastErrorReason(),
+                view.createdAt(),
+                view.unavailable(),
+                kyc.map(k -> k.getProvider().name()).orElse(null)
         );
     }
 
     /**
-     * Réinitialise le KYC d'un utilisateur : annule la session Identity en cours côté Stripe
+     * Réinitialise le KYC d'un utilisateur : abandonne la session en cours chez son fournisseur
      * (best-effort), puis remet la ligne locale à zéro <strong>par UPDATE en place</strong>.
      *
      * <p>Jamais de soft-delete suivi d'une recréation : {@code uq_kyc_user_id}
@@ -100,15 +108,11 @@ public class KycAdminService {
         String previousSessionId = kyc.getVerificationSessionId();
         KycVerificationStatus previousStatus = kyc.getStatus();
 
-        // Best-effort : une session Stripe injoignable ou déjà terminée ne doit jamais bloquer
-        // la remise à zéro locale (même politique que KycService.abandonSession).
+        // Best-effort : une session injoignable ou déjà terminée ne doit jamais bloquer la
+        // remise à zéro locale (même politique que KycService.abandonSession).
         if (previousSessionId != null) {
-            try {
-                VerificationSession.retrieve(previousSessionId).cancel();
-            } catch (Exception e) {
-                log.warn("Could not cancel Stripe KYC session {} on admin reset: {}",
-                        previousSessionId, e.getMessage());
-            }
+            providers.forRecord(kyc.getProvider())
+                    .ifPresent(provider -> provider.abandonSession(previousSessionId));
         }
 
         kyc.setStatus(KycVerificationStatus.PENDING);
@@ -133,9 +137,11 @@ public class KycAdminService {
 
         log.info("KYC reset for user {} by admin {}", userId, adminId);
 
+        // `provider` est conservé : la colonne est NOT NULL, et la valeur devient sans objet
+        // dès que la session est effacée — elle sera réécrite au prochain createSession.
         return new KycAdminStatusResponse(
                 userId, KycStatus.NOT_STARTED.name(), KycVerificationStatus.PENDING.name(),
-                null, null, null, null, null, null, null, false);
+                null, null, null, null, null, null, null, false, kyc.getProvider().name());
     }
 
     private UserEntity requireUser(UUID userId) {
@@ -144,34 +150,4 @@ public class KycAdminService {
                         "user-not-found", "Not Found", "Utilisateur introuvable"));
     }
 
-    /**
-     * Lecture Stripe en dégradation propre : toute erreur devient {@code unavailable = true},
-     * jamais une 5xx renvoyée à l'admin.
-     */
-    private StripeView retrieveStripeView(String sessionId) {
-        try {
-            VerificationSession session = VerificationSession.retrieve(sessionId);
-            VerificationSession.LastError lastError = session.getLastError();
-            LocalDateTime createdAt = session.getCreated() != null
-                    ? LocalDateTime.ofInstant(Instant.ofEpochSecond(session.getCreated()), ZoneOffset.UTC)
-                    : null;
-            return new StripeView(
-                    session.getStatus(),
-                    lastError != null ? lastError.getCode() : null,
-                    lastError != null ? lastError.getReason() : null,
-                    createdAt,
-                    false);
-        } catch (Exception e) {
-            log.warn("Stripe Identity unavailable for session {}: {}", sessionId, e.getMessage());
-            return new StripeView(null, null, null, null, true);
-        }
-    }
-
-    private record StripeView(String status, String lastErrorCode, String lastErrorReason,
-                              LocalDateTime createdAt, boolean unavailable) {
-        /** Aucune session à interroger : ce n'est pas une indisponibilité Stripe. */
-        static StripeView absent() {
-            return new StripeView(null, null, null, null, false);
-        }
-    }
 }

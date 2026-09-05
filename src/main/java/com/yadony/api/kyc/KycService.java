@@ -7,18 +7,17 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyNotFoundException;
 import com.yadony.api.kyc.dto.KycSessionResponse;
 import com.yadony.api.kyc.dto.KycStatusResponse;
-import com.stripe.model.identity.VerificationSession;
-import com.stripe.param.identity.VerificationSessionCreateParams;
+import com.yadony.api.kyc.provider.IdentityProviderResolver;
+import com.yadony.api.kyc.provider.IdentityVerificationProvider;
+import com.yadony.api.kyc.provider.ProviderSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 
 @Service
@@ -29,19 +28,16 @@ public class KycService {
     private final KycRepository kycRepository;
     private final UserRepository userRepository;
     private final AuditService auditService;
-
-    @Value("${yadony.kyc.return-url:https://yadony.com/kyc/complete}")
-    private String kycReturnUrl;
-
-    @Value("${yadony.kyc.verification-flow-id:}")
-    private String kycVerificationFlowId;
+    private final IdentityProviderResolver providers;
 
     public KycService(KycRepository kycRepository,
                       UserRepository userRepository,
-                      AuditService auditService) {
+                      AuditService auditService,
+                      IdentityProviderResolver providers) {
         this.kycRepository = kycRepository;
         this.userRepository = userRepository;
         this.auditService = auditService;
+        this.providers = providers;
     }
 
     @Transactional
@@ -53,32 +49,17 @@ public class KycService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "KYC déjà vérifié");
         }
 
-        // Idempotency: return existing session if already PENDING to avoid duplicate Stripe sessions —
-        // à deux conditions. La session doit rester utilisable (`requires_input` : ni verified, ni
-        // canceled, ni processing), et avoir été créée avec la configuration de flow courante. Sans ce
-        // second test, un changement de `verification-flow-id` ne prend jamais effet pour les comptes
-        // déjà PENDING : leur session inachevée est elle aussi `requires_input`, donc resservie
-        // indéfiniment avec l'ancienne configuration.
-        if (user.getKycStatus() == KycStatus.PENDING) {
-            Optional<KycVerificationEntity> existing = kycRepository.findByUserId(user.getId());
-            if (existing.isPresent() && existing.get().getVerificationSessionId() != null) {
-                String existingSessionId = existing.get().getVerificationSessionId();
-                try {
-                    VerificationSession existingSession = VerificationSession.retrieve(existingSessionId);
-                    if (!"requires_input".equals(existingSession.getStatus())) {
-                        log.info("Existing KYC session {} no longer resumable (status={}), creating new one",
-                                existingSessionId, existingSession.getStatus());
-                    } else if (!matchesConfiguredFlow(existingSession)) {
-                        log.info("Existing KYC session {} was created with flow {} but {} is configured, creating new one",
-                                existingSessionId, existingSession.getVerificationFlow(), kycVerificationFlowId);
-                    } else {
-                        return new KycSessionResponse(existingSession.getUrl(), existingSessionId, "PENDING");
-                    }
-                } catch (Exception e) {
-                    log.warn("Could not retrieve existing KYC session {}, creating new one", existingSessionId);
-                }
-            }
-        }
+        IdentityVerificationProvider provider = providers.forCreation();
+        Optional<KycVerificationEntity> existing = kycRepository.findByUserId(user.getId());
+
+        // Une session ne se reprend que chez le fournisseur qui l'a produite : apres une
+        // bascule, l'identifiant de l'ancienne session ne veut plus rien dire pour le nouveau.
+        // La reutilisation elle-meme appartient au fournisseur — Stripe la teste a la main,
+        // Didit la fait seul.
+        String resumableSessionId = existing
+                .filter(kyc -> kyc.getProvider() == provider.kind())
+                .map(KycVerificationEntity::getVerificationSessionId)
+                .orElse(null);
 
         // Transition NOT_STARTED → PENDING when session is created
         if (user.getKycStatus() == KycStatus.NOT_STARTED) {
@@ -86,72 +67,31 @@ public class KycService {
             userRepository.save(user);
         }
 
-        try {
-            VerificationSessionCreateParams.Builder paramsBuilder = VerificationSessionCreateParams.builder()
-                    .setReturnUrl(kycReturnUrl)
-                    .putMetadata("user_id", user.getId().toString());
+        ProviderSession session = provider.createSession(user, resumableSessionId);
 
-            if (kycVerificationFlowId != null && !kycVerificationFlowId.isBlank()) {
-                // Le flow (configuré dans le Dashboard Stripe) pilote type + options : mutuellement
-                // exclusif avec setType/setOptions d'après la doc Stripe, donc on ne les fixe pas ici.
-                paramsBuilder.setVerificationFlow(kycVerificationFlowId);
-            } else {
-                paramsBuilder.setType(VerificationSessionCreateParams.Type.DOCUMENT)
-                        .setOptions(
-                                VerificationSessionCreateParams.Options.builder()
-                                        .setDocument(
-                                                VerificationSessionCreateParams.Options.Document.builder()
-                                                        .setRequireLiveCapture(true)
-                                                        .setRequireMatchingSelfie(true)
-                                                        .addAllowedType(VerificationSessionCreateParams.Options.Document.AllowedType.ID_CARD)
-                                                        .addAllowedType(VerificationSessionCreateParams.Options.Document.AllowedType.PASSPORT)
-                                                        .addAllowedType(VerificationSessionCreateParams.Options.Document.AllowedType.DRIVING_LICENSE)
-                                                        .build()
-                                        )
-                                        .build()
-                        );
-            }
-
-            VerificationSession session = VerificationSession.create(paramsBuilder.build());
-
-            // Find existing or create new KYC record
-            KycVerificationEntity kyc = kycRepository.findByUserId(user.getId())
-                    .orElseGet(() -> {
-                        KycVerificationEntity newKyc = new KycVerificationEntity();
-                        newKyc.setUserId(user.getId());
-                        return newKyc;
-                    });
-
-            kyc.setVerificationSessionId(session.getId());
-            kyc.setStatus(KycVerificationStatus.PENDING);
-            kyc.setRejectionReason(null);
-            kycRepository.save(kyc);
-
-            auditService.log("kyc_verification", kyc.getId(), "KYC_SESSION_CREATED",
-                    user.getId(), Map.of("sessionId", session.getId()));
-
-            return new KycSessionResponse(session.getUrl(), session.getId(), "PENDING");
-
-        } catch (ResponseStatusException e) {
-            throw e;
-        } catch (Exception e) {
-            log.error("Failed to create Stripe Identity session for user {}", user.getId(), e);
-            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
-                    "Impossible de créer la session de vérification");
+        if (session.sessionId().equals(resumableSessionId)) {
+            // Session reprise telle quelle : rien a reecrire en base.
+            return new KycSessionResponse(session.url(), session.sessionId(), "PENDING");
         }
-    }
 
-    /**
-     * Une session Stripe porte le flow avec lequel elle a été créée, ou {@code null} si elle
-     * provient de l'ancien chemin type/options. Elle n'est réutilisable que si ce flow correspond
-     * exactement à la configuration courante — flow retiré compris, auquel cas seules les sessions
-     * sans flow restent valables.
-     */
-    private boolean matchesConfiguredFlow(VerificationSession session) {
-        String configured = (kycVerificationFlowId == null || kycVerificationFlowId.isBlank())
-                ? null
-                : kycVerificationFlowId;
-        return Objects.equals(configured, session.getVerificationFlow());
+        KycVerificationEntity kyc = existing.orElseGet(() -> {
+            KycVerificationEntity newKyc = new KycVerificationEntity();
+            newKyc.setUserId(user.getId());
+            return newKyc;
+        });
+
+        kyc.setVerificationSessionId(session.sessionId());
+        kyc.setProvider(provider.kind());
+        kyc.setStatus(KycVerificationStatus.PENDING);
+        kyc.setRejectionReason(null);
+        kyc.setRejectionCode(null);
+        kycRepository.save(kyc);
+
+        auditService.log("kyc_verification", kyc.getId(), "KYC_SESSION_CREATED",
+                user.getId(), Map.of("sessionId", session.sessionId(),
+                        "provider", provider.kind().name()));
+
+        return new KycSessionResponse(session.url(), session.sessionId(), "PENDING");
     }
 
     @Transactional
@@ -164,17 +104,12 @@ public class KycService {
         user.setKycStatus(KycStatus.NOT_STARTED);
         userRepository.save(user);
 
-        // Best-effort: cancel the Stripe session so it doesn't linger PENDING forever.
-        // Never blocks the local abandon if Stripe is unreachable or the session already terminated.
-        kycRepository.findByUserId(user.getId())
-                .map(KycVerificationEntity::getVerificationSessionId)
-                .ifPresent(sessionId -> {
-                    try {
-                        VerificationSession.retrieve(sessionId).cancel();
-                    } catch (Exception e) {
-                        log.warn("Could not cancel Stripe KYC session {} on abandon: {}", sessionId, e.getMessage());
-                    }
-                });
+        // Best-effort, et chez le fournisseur de la ligne : l'abandon local ne doit jamais
+        // dependre du distant. Didit n'a pas d'annulation — sa session inachevee sera
+        // resservie au prochain demarrage, ce qui est le comportement voulu.
+        kycRepository.findByUserId(user.getId()).ifPresent(kyc ->
+                providers.forRecord(kyc.getProvider())
+                        .ifPresent(provider -> provider.abandonSession(kyc.getVerificationSessionId())));
 
         auditService.log("kyc_verification", user.getId(), "KYC_SESSION_ABANDONED",
                 user.getId(), Map.of("reason", "user_closed_webview"));

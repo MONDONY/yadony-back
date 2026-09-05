@@ -35,6 +35,7 @@ class KycAdminServiceTest {
     @Mock UserRepository userRepository;
     @Mock AuditService auditService;
     @Mock NotificationDispatcher notificationDispatcher;
+    @Mock com.yadony.api.config.PlatformSettingsService settings;
 
     KycAdminService service;
 
@@ -42,7 +43,13 @@ class KycAdminServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new KycAdminService(kycRepository, userRepository, auditService, notificationDispatcher);
+        // Vrai fournisseur Stripe derrière un vrai resolver : le SDK reste intercepté par
+        // mockStatic, et le service passe par le même chemin qu'en production.
+        service = new KycAdminService(kycRepository, userRepository, auditService, notificationDispatcher,
+                new com.yadony.api.kyc.provider.IdentityProviderResolver(
+                        java.util.List.of(new com.yadony.api.kyc.provider.stripe.StripeIdentityProvider(
+                                "https://yadony.com/kyc/complete", "")),
+                        settings));
     }
 
     private UserEntity buildUser(KycStatus status) {
