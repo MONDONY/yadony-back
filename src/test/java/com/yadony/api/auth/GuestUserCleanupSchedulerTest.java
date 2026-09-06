@@ -315,7 +315,7 @@ class GuestUserCleanupSchedulerTest {
         backdate(ownerId, 400);
         KycVerificationEntity kyc = new KycVerificationEntity();
         kyc.setUserId(ownerId);
-        kyc.setStripeVerificationSessionId("vs_test_" + UUID.randomUUID());
+        kyc.setVerificationSessionId("vs_test_" + UUID.randomUUID());
         entityManager.persist(kyc);
         entityManager.flush();
 

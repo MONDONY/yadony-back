@@ -153,7 +153,7 @@ class AccountFinalizationServiceTest {
         UserEntity user = makeUser();
         UUID userId = user.getId();
         KycVerificationEntity kyc = new KycVerificationEntity();
-        kyc.setStripeVerificationSessionId("vs_test_123");
+        kyc.setVerificationSessionId("vs_test_123");
         when(kycRepository.findByUserId(userId)).thenReturn(Optional.of(kyc));
         com.google.firebase.auth.FirebaseAuth mockAuth = mock(com.google.firebase.auth.FirebaseAuth.class);
 
@@ -162,7 +162,7 @@ class AccountFinalizationServiceTest {
             service.finalize(user, FinalizationReason.HARD_IMMEDIATE);
         }
 
-        assertThat(kyc.getStripeVerificationSessionId()).isNull();
+        assertThat(kyc.getVerificationSessionId()).isNull();
         assertThat(kyc.getDeletedAt()).isNotNull();
     }
 

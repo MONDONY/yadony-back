@@ -16,8 +16,10 @@ import java.util.UUID;
  * utilisateur, chaque nouvelle session écrasant l'identifiant précédent. Cette vue décrit
  * donc la <em>session courante</em>.
  *
- * @param stripeUnavailable {@code true} uniquement si l'appel Stripe a échoué — jamais
+ * @param stripeUnavailable {@code true} uniquement si l'appel au fournisseur a échoué — jamais
  *                          quand il n'y a simplement aucune session à interroger.
+ * @param provider          fournisseur de la session courante ({@code STRIPE} ou {@code DIDIT}),
+ *                          {@code null} si aucune ligne KYC n'existe.
  */
 public record KycAdminStatusResponse(
         UUID userId,
@@ -25,10 +27,14 @@ public record KycAdminStatusResponse(
         String verificationStatus,
         String rejectionReason,
         String rejectionCode,
+        // Les cinq champs préfixés `stripe` décrivent en réalité le fournisseur courant, quel
+        // qu'il soit. Le nom est conservé parce que dony-admin, dépôt séparé, les consomme
+        // tels quels ; le renommage se fera avec le retrait de Stripe Identity, en une fois.
         String stripeSessionId,
         String stripeStatus,
         String stripeLastErrorCode,
         String stripeLastErrorReason,
         LocalDateTime stripeCreatedAt,
-        boolean stripeUnavailable
+        boolean stripeUnavailable,
+        String provider
 ) {}

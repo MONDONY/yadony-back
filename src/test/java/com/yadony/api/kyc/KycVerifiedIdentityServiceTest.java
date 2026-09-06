@@ -31,14 +31,18 @@ class KycVerifiedIdentityServiceTest {
     private final UUID userId = UUID.randomUUID();
 
     private KycVerifiedIdentityService service() {
-        return new KycVerifiedIdentityService(kycRepository);
+        return new KycVerifiedIdentityService(kycRepository,
+                new com.yadony.api.kyc.provider.IdentityProviderResolver(
+                        java.util.List.of(new com.yadony.api.kyc.provider.stripe.StripeIdentityProvider(
+                                "https://yadony.com/kyc/complete", "")),
+                        org.mockito.Mockito.mock(com.yadony.api.config.PlatformSettingsService.class)));
     }
 
     private KycVerificationEntity verification(KycVerificationStatus status, String sessionId) {
         KycVerificationEntity entity = new KycVerificationEntity();
         entity.setUserId(userId);
         entity.setStatus(status);
-        entity.setStripeVerificationSessionId(sessionId);
+        entity.setVerificationSessionId(sessionId);
         return entity;
     }
 

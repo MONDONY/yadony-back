@@ -78,7 +78,7 @@ public class AccountFinalizationService {
             // Lot C — le soft-delete seul laissait intact le pointeur de session Stripe, qui
             // mene aux pieces d'identite detenues par Stripe : la suppression du compte
             // laissait donc un chemin d'acces vivant vers les documents de l'utilisateur.
-            kyc.setStripeVerificationSessionId(null);
+            kyc.setVerificationSessionId(null);
             kyc.setRejectionReason(null);
             kyc.setRejectionCode(null);
             kyc.softDelete();

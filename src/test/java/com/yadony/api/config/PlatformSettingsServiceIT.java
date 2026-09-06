@@ -99,7 +99,7 @@ class PlatformSettingsServiceIT {
     }
 
     @Test
-    @DisplayName("la vue par cle sert les cinq reglages dans l'ordre de l'enum, meme sans aucune ligne")
+    @DisplayName("la vue par cle sert tous les reglages dans l'ordre de l'enum, meme sans aucune ligne")
     void listByKeyServesEveryKeyEvenWithoutRows() {
         // Base restauree d'avant l'amorcage : l'ecran admin doit rester complet, chaque
         // cle portee par sa valeur effective (celle du contrat public), sans auteur.
@@ -110,8 +110,11 @@ class PlatformSettingsServiceIT {
 
         assertThat(views).extracting(PlatformSettingView::key)
                 .containsExactly(PlatformSettingKey.values());
-        PlatformSettingView pro = views.get(views.size() - 1);
-        assertThat(pro.key()).isEqualTo(PlatformSettingKey.PRO_ENABLED);
+        // Cherchee par cle, jamais par position : ajouter un reglage deplacerait la derniere ligne.
+        PlatformSettingView pro = views.stream()
+                .filter(view -> view.key() == PlatformSettingKey.PRO_ENABLED)
+                .findFirst()
+                .orElseThrow();
         assertThat(pro.value()).isEqualTo("false");
         assertThat(pro.updatedAt()).isNull();
         assertThat(pro.updatedBy()).isNull();

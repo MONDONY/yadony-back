@@ -222,7 +222,8 @@ public class FirebaseTokenFilter extends OncePerRequestFilter {
 - `/api/v1/auth/**`
 - `/actuator/health`
 - `/tracking/{token}` (page HTML destinataire)
-- `/api/v1/kyc/webhook` (webhook Stripe Identity)
+- `/api/v1/kyc/webhook` (webhook Stripe Identity, signature `Stripe-Signature`)
+- `/api/v1/kyc/webhook/didit` (webhook Didit, signature `X-Signature` + fenêtre `X-Timestamp` de 300 s)
 - `/api/v1/ratings/recipient` (évaluation anonyme du destinataire)
 
 #### RBAC (Role-Based Access Control)
