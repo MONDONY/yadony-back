@@ -1,4 +1,4 @@
--- V242: compte de versement mobile money (rail pawaPay), porté par users comme le compte
+-- V247: compte de versement mobile money (rail pawaPay), porté par users comme le compte
 -- Stripe Connect. Seule mobile_money_status est NOT NULL, avec DEFAULT : les lignes
 -- existantes ne bougent pas.
 ALTER TABLE users

@@ -15,7 +15,7 @@ import java.util.Set;
  * <p>Deux partitions seulement sont déclarées ({@link #FINAL}, {@link #DEAD}) ; les deux
  * autres en sont les compléments, calculés — ajouter un statut ne demande de trancher que
  * ces deux questions : est-il terminal ? est-il mort (n'empêche pas une nouvelle opération) ?
- * Le {@code NOT IN} de {@code applyTransition} et le {@code CHECK} de la migration V241
+ * Le {@code NOT IN} de {@code applyTransition} et le {@code CHECK} de la migration V246
  * énumèrent, eux, les finaux à la main : à aligner si {@link #FINAL} change.
  */
 public enum PawapayOperationStatus {
@@ -33,7 +33,7 @@ public enum PawapayOperationStatus {
     public static final Set<PawapayOperationStatus> OPEN =
             Collections.unmodifiableSet(EnumSet.complementOf(EnumSet.copyOf(FINAL)));
 
-    /** Vivantes ou abouties : au plus une par (paiement, type) — index unique partiel V241. */
+    /** Vivantes ou abouties : au plus une par (paiement, type) — index unique partiel V246. */
     public static final Set<PawapayOperationStatus> LIVE_OR_DONE =
             Collections.unmodifiableSet(EnumSet.complementOf(EnumSet.copyOf(DEAD)));
 

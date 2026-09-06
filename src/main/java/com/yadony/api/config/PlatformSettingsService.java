@@ -40,19 +40,38 @@ public class PlatformSettingsService {
     private final YadonyConfigProperties config;
     private final boolean smsEnabledProperty;
     private final boolean proEnabledProperty;
+    private final boolean kycDiditEnabledProperty;
 
     public PlatformSettingsService(PlatformSettingRepository repository,
                                    PlatformSettingsCache cache,
                                    AuditService auditService,
                                    YadonyConfigProperties config,
                                    @Value("${app.sms.enabled:false}") boolean smsEnabledProperty,
-                                   @Value("${yadony.pro.enabled:false}") boolean proEnabledProperty) {
+                                   @Value("${yadony.pro.enabled:false}") boolean proEnabledProperty,
+                                   @Value("${yadony.kyc.didit.enabled:}") String kycDiditEnabledProperty) {
         this.repository = repository;
         this.cache = cache;
         this.auditService = auditService;
         this.config = config;
         this.smsEnabledProperty = smsEnabledProperty;
         this.proEnabledProperty = proEnabledProperty;
+        this.kycDiditEnabledProperty = parseBooleanOrFalse(kycDiditEnabledProperty);
+    }
+
+    /**
+     * Lit un drapeau booleen sans jamais faire echouer le demarrage.
+     *
+     * <p>Une variable d'environnement <em>declaree mais vide</em> — ce que produit un
+     * {@code VAR=${{ vars.VAR }}} de workflow quand la variable n'existe pas cote GitHub —
+     * definit bel et bien la propriete. Le defaut {@code :false} ne s'applique donc pas, et
+     * la conversion vers {@code boolean} echoue avec « Invalid boolean value [] », ce qui
+     * fait tomber TOUT le contexte Spring au demarrage. Constate en staging le 2026-09-05.
+     *
+     * <p>Absente ou vide vaut donc {@code false} : un drapeau qu'on n'a pas su lire est un
+     * drapeau eteint, jamais un backend mort.
+     */
+    private static boolean parseBooleanOrFalse(String valeur) {
+        return valeur != null && !valeur.isBlank() && Boolean.parseBoolean(valeur.trim());
     }
 
     // ── Lecture ──────────────────────────────────────────────────────────────
@@ -81,6 +100,15 @@ public class PlatformSettingsService {
     public boolean proEnabled() {
         String raw = cache.all().get(PlatformSettingKey.PRO_ENABLED.key());
         return raw == null ? proEnabledProperty : Boolean.parseBoolean(raw);
+    }
+
+    /**
+     * Vrai : les nouvelles verifications d'identite passent par Didit plutot que par Stripe
+     * Identity. Voir {@link PlatformSettingKey#KYC_DIDIT_ENABLED}.
+     */
+    public boolean kycDiditEnabled() {
+        String raw = cache.all().get(PlatformSettingKey.KYC_DIDIT_ENABLED.key());
+        return raw == null ? kycDiditEnabledProperty : Boolean.parseBoolean(raw);
     }
 
     /**
@@ -144,6 +172,7 @@ public class PlatformSettingsService {
             case REIMBURSEMENT_CAP_EUR -> reimbursementCapEur().toPlainString();
             case SMS_ENABLED -> String.valueOf(smsEnabled());
             case PRO_ENABLED -> String.valueOf(proEnabled());
+            case KYC_DIDIT_ENABLED -> String.valueOf(kycDiditEnabled());
         };
     }
 
@@ -251,6 +280,12 @@ public class PlatformSettingsService {
             case PRO_ENABLED -> {
                 if (!"true".equalsIgnoreCase(value) && !"false".equalsIgnoreCase(value)) {
                     throw invalid("L'activation de l'offre PRO attend true ou false");
+                }
+                yield String.valueOf(Boolean.parseBoolean(value));
+            }
+            case KYC_DIDIT_ENABLED -> {
+                if (!"true".equalsIgnoreCase(value) && !"false".equalsIgnoreCase(value)) {
+                    throw invalid("L'activation de Didit attend true ou false");
                 }
                 yield String.valueOf(Boolean.parseBoolean(value));
             }

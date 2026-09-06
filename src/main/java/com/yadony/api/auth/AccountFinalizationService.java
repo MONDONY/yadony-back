@@ -78,7 +78,7 @@ public class AccountFinalizationService {
             // Lot C — le soft-delete seul laissait intact le pointeur de session Stripe, qui
             // mene aux pieces d'identite detenues par Stripe : la suppression du compte
             // laissait donc un chemin d'acces vivant vers les documents de l'utilisateur.
-            kyc.setStripeVerificationSessionId(null);
+            kyc.setVerificationSessionId(null);
             kyc.setRejectionReason(null);
             kyc.setRejectionCode(null);
             kyc.softDelete();
@@ -87,6 +87,7 @@ public class AccountFinalizationService {
 
         // 3. Delete Cloudflare R2 files
         storageService.deleteByPrefix("kyc/" + userId + "/");
+        storageService.deleteByPrefix("support/" + userId + "/");
 
         // 4. Publish events → cross-package cleanup
         // AccountDeletionRequestedEvent : nécessaire ici car les chemins HARD_IMMEDIATE et

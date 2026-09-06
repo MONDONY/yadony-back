@@ -16,14 +16,14 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 /**
- * V245 — retrait des trois colonnes de confort {@code payments.pawapay_{deposit,payout,refund}_id}
- * posées par V243 : elles dupliquaient {@code pawapay_operations.payment_id} (le lien qui fait
+ * V250 — retrait des trois colonnes de confort {@code payments.pawapay_{deposit,payout,refund}_id}
+ * posées par V248 : elles dupliquaient {@code pawapay_operations.payment_id} (le lien qui fait
  * autorité) et n'avaient qu'un lecteur. Le profil "test" tourne sur H2 avec Flyway désactivé :
  * on migre un PostgreSQL embarqué (zonky, même dépendance que les autres {@code V*MigrationTest})
- * jusqu'à V244 pour constater les colonnes, puis V245 pour constater leur retrait — le reste de
- * la table (dont {@code rail}, V243) doit rester intact.
+ * jusqu'à V249 pour constater les colonnes, puis V250 pour constater leur retrait — le reste de
+ * la table (dont {@code rail}, V248) doit rester intact.
  */
-class V245PaymentsDropPawapayRefsMigrationTest {
+class V250PaymentsDropPawapayRefsMigrationTest {
 
     private static final List<String> DROPPED = List.of("pawapay_deposit_id", "pawapay_payout_id", "pawapay_refund_id");
 
@@ -67,13 +67,13 @@ class V245PaymentsDropPawapayRefsMigrationTest {
     }
 
     @Test
-    void v245_dropsTheThreePawapayReferenceColumns_andKeepsTheRail() throws Exception {
-        Flyway upTo244 = flywayUpTo("244");
-        upTo244.clean();
-        upTo244.migrate();
-        assertThat(paymentColumns()).as("V243 les avait posées").containsAll(DROPPED).contains("rail");
+    void v250_dropsTheThreePawapayReferenceColumns_andKeepsTheRail() throws Exception {
+        Flyway upTo249 = flywayUpTo("249");
+        upTo249.clean();
+        upTo249.migrate();
+        assertThat(paymentColumns()).as("V248 les avait posées").containsAll(DROPPED).contains("rail");
 
-        flywayUpTo("245").migrate();
+        flywayUpTo("250").migrate();
 
         List<String> after = paymentColumns();
         assertThat(after).doesNotContainAnyElementsOf(DROPPED);

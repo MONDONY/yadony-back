@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * V244 — rail mobile money sur les bids : {@code payment_method} accepte désormais
+ * V249 — rail mobile money sur les bids : {@code payment_method} accepte désormais
  * {@code MOBILE_MONEY}, la colonne {@code mobile_money_phone} est élargie pour porter une
  * valeur chiffrée ({@code EncryptedStringConverter}, bien plus longue qu'un MSISDN en clair),
  * et TOUTE ligne portant encore un numéro en clair est vidée pour ne pas faire échouer le
@@ -33,16 +33,16 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  *
  * <p>Le profil "test" tourne sur H2 avec Flyway désactivé : les migrations n'y sont jamais
  * exécutées. On démarre donc un PostgreSQL embarqué (zonky, même dépendance que les autres
- * suites {@code V*MigrationTest}), on migre jusqu'à V243, on sème des données représentatives
- * de l'état legacy, puis on applique V244 et on vérifie le résultat sur le vrai moteur de
+ * suites {@code V*MigrationTest}), on migre jusqu'à V248, on sème des données représentatives
+ * de l'état legacy, puis on applique V249 et on vérifie le résultat sur le vrai moteur de
  * contraintes PostgreSQL (CHECK, largeur de colonne) — H2 ne les porte pas toutes.
  *
- * <p>Helpers de seed repris de {@link V241PawapayOperationsMigrationTest} : le schéma de
- * {@code users}/{@code announcements}/{@code bids} est stable entre V241 et V243 (V242
- * ajoute des colonnes à {@code users}, V243 à {@code payments} — aucune des deux n'ajoute de
+ * <p>Helpers de seed repris de {@link V246PawapayOperationsMigrationTest} : le schéma de
+ * {@code users}/{@code announcements}/{@code bids} est stable entre V246 et V248 (V247
+ * ajoute des colonnes à {@code users}, V248 à {@code payments} — aucune des deux n'ajoute de
  * colonne NOT NULL sans DEFAULT sur les tables ici seedées).
  */
-class V244BidsMobileMoneyMigrationTest {
+class V249BidsMobileMoneyMigrationTest {
 
     private static EmbeddedPostgres postgres;
     private static DataSource dataSource;
@@ -62,10 +62,10 @@ class V244BidsMobileMoneyMigrationTest {
     }
 
     @BeforeEach
-    void resetSchemaUpToV243() {
-        Flyway upTo243 = flywayUpTo("243");
-        upTo243.clean();
-        upTo243.migrate();
+    void resetSchemaUpToV248() {
+        Flyway upTo248 = flywayUpTo("248");
+        upTo248.clean();
+        upTo248.migrate();
     }
 
     private Flyway flywayUpTo(String targetVersion) {
@@ -78,14 +78,14 @@ class V244BidsMobileMoneyMigrationTest {
                 .load();
     }
 
-    private void migrateToV244() {
-        flywayUpTo("244").migrate();
+    private void migrateToV249() {
+        flywayUpTo("249").migrate();
     }
 
     // ─── Contrainte payment_method ────────────────────────────────────────────────
 
     @Test
-    void beforeV244_mobileMoneyPaymentMethod_isRejectedByCheckConstraint() throws Exception {
+    void beforeV249_mobileMoneyPaymentMethod_isRejectedByCheckConstraint() throws Exception {
         UUID senderId = seedUser();
         UUID announcementId = seedAnnouncement(seedUser());
 
@@ -95,10 +95,10 @@ class V244BidsMobileMoneyMigrationTest {
     }
 
     @Test
-    void afterV244_mobileMoneyPaymentMethod_isAccepted() throws Exception {
+    void afterV249_mobileMoneyPaymentMethod_isAccepted() throws Exception {
         UUID senderId = seedUser();
         UUID announcementId = seedAnnouncement(seedUser());
-        migrateToV244();
+        migrateToV249();
 
         UUID bidId = seedBid(announcementId, senderId, "MOBILE_MONEY", "encrypted-payload", "SN");
 
@@ -111,12 +111,12 @@ class V244BidsMobileMoneyMigrationTest {
     }
 
     @Test
-    void afterV244_historicalPaymentMethodValues_remainAccepted() throws Exception {
+    void afterV249_historicalPaymentMethodValues_remainAccepted() throws Exception {
         // Contrôle négatif : la contrainte élargie ne doit pas s'être resserrée sur les
         // valeurs encore utilisées (STRIPE/CASH) ou legacy (WAVE/ORANGE_MONEY).
         UUID senderId = seedUser();
         UUID announcementId = seedAnnouncement(seedUser());
-        migrateToV244();
+        migrateToV249();
 
         for (String method : new String[] {"STRIPE", "CASH", "WAVE", "ORANGE_MONEY"}) {
             seedBid(announcementId, senderId, method, null, null);
@@ -127,29 +127,29 @@ class V244BidsMobileMoneyMigrationTest {
     // ─── Nettoyage des valeurs legacy WAVE/ORANGE_MONEY ──────────────────────────
 
     @Test
-    void afterV244_legacyWaveBid_hasPhoneAndCountryCodeNulled() throws Exception {
+    void afterV249_legacyWaveBid_hasPhoneAndCountryCodeNulled() throws Exception {
         UUID senderId = seedUser();
         UUID announcementId = seedAnnouncement(seedUser());
         UUID bidId = seedBid(announcementId, senderId, "WAVE", "221771234567", "SN");
 
-        migrateToV244();
+        migrateToV249();
 
         assertPhoneAndCountryCode(bidId, null, null);
     }
 
     @Test
-    void afterV244_legacyOrangeMoneyBid_hasPhoneAndCountryCodeNulled() throws Exception {
+    void afterV249_legacyOrangeMoneyBid_hasPhoneAndCountryCodeNulled() throws Exception {
         UUID senderId = seedUser();
         UUID announcementId = seedAnnouncement(seedUser());
         UUID bidId = seedBid(announcementId, senderId, "ORANGE_MONEY", "221771234567", "CI");
 
-        migrateToV244();
+        migrateToV249();
 
         assertPhoneAndCountryCode(bidId, null, null);
     }
 
     @Test
-    void afterV244_anyBidWithPhoneValue_isNulledRegardlessOfPaymentMethod() throws Exception {
+    void afterV249_anyBidWithPhoneValue_isNulledRegardlessOfPaymentMethod() throws Exception {
         // Ronde 1, point 3 : le nettoyage n'est plus scopé à WAVE/ORANGE_MONEY (le
         // convertisseur chiffré s'applique à TOUTE ligne non nulle, quel que soit
         // payment_method). Ce test fige désormais le comportement inverse de l'original :
@@ -158,13 +158,13 @@ class V244BidsMobileMoneyMigrationTest {
         UUID announcementId = seedAnnouncement(seedUser());
         UUID bidId = seedBid(announcementId, senderId, "CASH", "221771234567", "SN");
 
-        migrateToV244();
+        migrateToV249();
 
         assertPhoneAndCountryCode(bidId, null, null);
     }
 
     @Test
-    void afterV244_bidWithoutPhoneValue_isUntouchedRegardlessOfPaymentMethod() throws Exception {
+    void afterV249_bidWithoutPhoneValue_isUntouchedRegardlessOfPaymentMethod() throws Exception {
         // Contrôle négatif du WHERE mobile_money_phone IS NOT NULL — pas un UPDATE
         // inconditionnel. Semer (null, null) ne discriminerait rien : un UPDATE sans aucun
         // WHERE produirait le même résultat sur une ligne déjà doublement nulle. Le seul
@@ -175,7 +175,7 @@ class V244BidsMobileMoneyMigrationTest {
         UUID announcementId = seedAnnouncement(seedUser());
         UUID bidId = seedBid(announcementId, senderId, "STRIPE", null, "SN");
 
-        migrateToV244();
+        migrateToV249();
 
         assertPhoneAndCountryCode(bidId, null, "SN");
     }
@@ -183,10 +183,10 @@ class V244BidsMobileMoneyMigrationTest {
     // ─── Élargissement de la colonne mobile_money_phone ──────────────────────────
 
     @Test
-    void beforeV244_longEncryptedLikeValue_isRejectedByColumnWidth() throws Exception {
+    void beforeV249_longEncryptedLikeValue_isRejectedByColumnWidth() throws Exception {
         UUID senderId = seedUser();
         UUID announcementId = seedAnnouncement(seedUser());
-        String tooLong = "x".repeat(40); // > VARCHAR(30), la largeur d'avant V244
+        String tooLong = "x".repeat(40); // > VARCHAR(30), la largeur d'avant V249
 
         assertThatThrownBy(() -> seedBid(announcementId, senderId, "STRIPE", tooLong, null))
                 .isInstanceOf(SQLException.class)
@@ -194,10 +194,10 @@ class V244BidsMobileMoneyMigrationTest {
     }
 
     @Test
-    void afterV244_longEncryptedLikeValue_fitsInWidenedColumn() throws Exception {
+    void afterV249_longEncryptedLikeValue_fitsInWidenedColumn() throws Exception {
         UUID senderId = seedUser();
         UUID announcementId = seedAnnouncement(seedUser());
-        migrateToV244();
+        migrateToV249();
 
         // Simule un chiffré AES-256-GCM (base64), largement plus long qu'un MSISDN en clair.
         String cipherLike = "v1:" + "A".repeat(120);
@@ -207,12 +207,12 @@ class V244BidsMobileMoneyMigrationTest {
     }
 
     // Ronde 1, point 6 : le lot « index d'expiration des bids en attente de paiement » a
-    // été retiré de V244 — V37 (idx_bids_awaiting_payment) porte déjà un index partiel sur
+    // été retiré de V249 — V37 (idx_bids_awaiting_payment) porte déjà un index partiel sur
     // (status, awaiting_payment_expires_at) WHERE status = 'AWAITING_PAYMENT', qui sert
     // exactement le même besoin (la colonne de tête status est constante dans ce filtre :
     // un index dédié n'y ajoutait aucun gain, seulement une écriture de plus par bid).
 
-    // ─── Helpers de seed (repris de V241PawapayOperationsMigrationTest) ──────────
+    // ─── Helpers de seed (repris de V246PawapayOperationsMigrationTest) ──────────
 
     private UUID seedUser() throws SQLException {
         UUID id = UUID.randomUUID();

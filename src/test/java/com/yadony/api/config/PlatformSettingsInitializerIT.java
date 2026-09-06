@@ -47,11 +47,12 @@ class PlatformSettingsInitializerIT {
     }
 
     @Test
-    @DisplayName("insere les cinq cles depuis les properties resolues")
-    void seedsAllFiveKeysFromProperties() {
+    @DisplayName("insere toutes les cles declarees depuis les properties resolues")
+    void seedsEveryDeclaredKeyFromProperties() {
         int inserted = initializer.seedMissingKeys();
 
-        assertThat(inserted).isEqualTo(5);
+        // Compte tiré de l'enum : ajouter un réglage ne doit pas casser ce test.
+        assertThat(inserted).isEqualTo(PlatformSettingKey.values().length);
         // Offre PRO fermee tant qu'un administrateur ne l'ouvre pas : le defaut de la
         // property, et le seul defaut sur qui permet de livrer l'application avant l'offre.
         assertThat(repository.findBySettingKey("pro_enabled")).isPresent()
@@ -77,7 +78,7 @@ class PlatformSettingsInitializerIT {
         initializer.seedMissingKeys();
 
         assertThat(initializer.seedMissingKeys()).isZero();
-        assertThat(repository.count()).isEqualTo(5);
+        assertThat(repository.count()).isEqualTo(PlatformSettingKey.values().length);
     }
 
     @Test

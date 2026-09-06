@@ -1,4 +1,4 @@
--- V241: opérations pawaPay (deposits, payouts, refunds). L'id est l'identifiant envoyé à
+-- V246: opérations pawaPay (deposits, payouts, refunds). L'id est l'identifiant envoyé à
 -- pawaPay, généré par yadony et persisté avant l'appel HTTP. Jamais supprimée.
 CREATE TABLE pawapay_operations (
     id                      UUID          PRIMARY KEY,

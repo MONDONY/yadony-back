@@ -1,4 +1,4 @@
--- V244: bids mobile money (rail pawaPay).
+-- V249: bids mobile money (rail pawaPay).
 -- 1. payment_method accepte MOBILE_MONEY (WAVE/ORANGE_MONEY restent pour l'historique).
 ALTER TABLE public.bids DROP CONSTRAINT IF EXISTS bids_payment_method_check;
 ALTER TABLE public.bids

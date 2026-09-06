@@ -1,4 +1,4 @@
--- V245 : retrait des colonnes de confort payments.pawapay_{deposit,payout,refund}_id (V243).
+-- V250 : retrait des colonnes de confort payments.pawapay_{deposit,payout,refund}_id (V248).
 -- Elles dupliquaient pawapay_operations.payment_id (le lien qui fait autorité), n'avaient qu'un
 -- seul lecteur (le détail admin, qui lit désormais pawapay_operations) et imposaient à chaque
 -- écriture toute la discipline « jamais de setter sur l'entité après un claim bulk ».

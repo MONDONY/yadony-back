@@ -28,13 +28,13 @@ public class PaymentEntity extends BaseEntity {
     @Column(name = "negotiation_thread_id", unique = true)
     private UUID negotiationThreadId;
 
-    // Nullable depuis V243 : un paiement mobile money n'a pas de PaymentIntent. L'UNIQUE
+    // Nullable depuis V248 : un paiement mobile money n'a pas de PaymentIntent. L'UNIQUE
     // reste (PostgreSQL et H2 acceptent plusieurs NULL).
     @Column(name = "stripe_payment_intent_id", unique = true, length = 255)
     private String stripePaymentIntentId;
 
     /**
-     * Discriminant du rail. DEFAULT STRIPE en base (V243) et ici : un paiement construit
+     * Discriminant du rail. DEFAULT STRIPE en base (V248) et ici : un paiement construit
      * sans rail explicite reste un paiement carte, ce qui protège tous les chemins existants.
      */
     @Enumerated(EnumType.STRING)

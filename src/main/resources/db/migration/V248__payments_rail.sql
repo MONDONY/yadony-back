@@ -1,4 +1,4 @@
--- V243: discriminant de rail sur payments + références des opérations pawaPay.
+-- V248: discriminant de rail sur payments + références des opérations pawaPay.
 -- stripe_payment_intent_id devient nullable (un paiement mobile money n'a pas de
 -- PaymentIntent) ; uq_payments_stripe_pi_id est conservé, PostgreSQL accepte plusieurs NULL.
 ALTER TABLE payments ALTER COLUMN stripe_payment_intent_id DROP NOT NULL;

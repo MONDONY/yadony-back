@@ -2,7 +2,7 @@ package com.yadony.api.admin.account;
 
 /**
  * Admin permissions enum (Task 2).
- * 29 granular permissions for role-based access control.
+ * 33 granular permissions for role-based access control.
  */
 public enum AdminPermission {
     // Account management
@@ -68,6 +68,19 @@ public enum AdminPermission {
      * support : couper les SMS coupe aussi l'authentification par OTP.
      */
     CONFIG_MANAGE,
+
+    /**
+     * Lecture de la file des tickets support et du fil d'un ticket. Accordee au
+     * support : c'est son metier.
+     */
+    SUPPORT_TICKET_VIEW,
+
+    /**
+     * S'assigner un ticket, le reassigner, y repondre, le resoudre. Separee de
+     * {@link #SUPPORT_TICKET_VIEW} pour qu'un profil lecture seule (audit,
+     * direction) puisse consulter la file sans jamais ecrire a un utilisateur.
+     */
+    SUPPORT_TICKET_MANAGE,
 
     // Content & operations
     PROMO_MANAGE,

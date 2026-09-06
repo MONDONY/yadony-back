@@ -35,6 +35,7 @@ class KycAdminServiceTest {
     @Mock UserRepository userRepository;
     @Mock AuditService auditService;
     @Mock NotificationDispatcher notificationDispatcher;
+    @Mock com.yadony.api.config.PlatformSettingsService settings;
 
     KycAdminService service;
 
@@ -42,7 +43,13 @@ class KycAdminServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new KycAdminService(kycRepository, userRepository, auditService, notificationDispatcher);
+        // Vrai fournisseur Stripe derrière un vrai resolver : le SDK reste intercepté par
+        // mockStatic, et le service passe par le même chemin qu'en production.
+        service = new KycAdminService(kycRepository, userRepository, auditService, notificationDispatcher,
+                new com.yadony.api.kyc.provider.IdentityProviderResolver(
+                        java.util.List.of(new com.yadony.api.kyc.provider.stripe.StripeIdentityProvider(
+                                "https://yadony.com/kyc/complete", "")),
+                        settings));
     }
 
     private UserEntity buildUser(KycStatus status) {
@@ -58,7 +65,7 @@ class KycAdminServiceTest {
         setId(kyc, UUID.randomUUID());
         kyc.setUserId(userId);
         kyc.setStatus(status);
-        kyc.setStripeVerificationSessionId(sessionId);
+        kyc.setVerificationSessionId(sessionId);
         return kyc;
     }
 
@@ -178,7 +185,7 @@ class KycAdminServiceTest {
 
             assertThat(user.getKycStatus()).isEqualTo(KycStatus.NOT_STARTED);
             assertThat(kyc.getStatus()).isEqualTo(KycVerificationStatus.PENDING);
-            assertThat(kyc.getStripeVerificationSessionId()).isNull();
+            assertThat(kyc.getVerificationSessionId()).isNull();
             assertThat(kyc.getRejectionReason()).isNull();
             assertThat(kyc.getRejectionCode()).isNull();
             // La ligne n'est JAMAIS soft-deletée : uq_kyc_user_id est une contrainte UNIQUE
@@ -223,7 +230,7 @@ class KycAdminServiceTest {
             service.resetForUser(user.getId(), ADMIN_ID, "motif");
 
             assertThat(user.getKycStatus()).isEqualTo(KycStatus.NOT_STARTED);
-            assertThat(kyc.getStripeVerificationSessionId()).isNull();
+            assertThat(kyc.getVerificationSessionId()).isNull();
         }
     }
 

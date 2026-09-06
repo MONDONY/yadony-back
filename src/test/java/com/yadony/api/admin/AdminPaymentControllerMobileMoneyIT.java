@@ -489,7 +489,7 @@ class AdminPaymentControllerMobileMoneyIT {
     // ── détail (GET /admin/payments/{id}) ───────────────────────────────────────────────────
 
     /**
-     * Depuis V245, {@code payments} ne porte plus aucune colonne {@code pawapay_*_id} : le
+     * Depuis V250, {@code payments} ne porte plus aucune colonne {@code pawapay_*_id} : le
      * détail lit la dernière opération de chaque type dans {@code pawapay_operations}.
      * {@code dony-admin} consomme ces trois champs.
      */

@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * V241 : verrou base contre le double deposit/payout/refund — au plus une opération
+ * V246 : verrou base contre le double deposit/payout/refund — au plus une opération
  * vivante ou aboutie par {@code (payment_id, kind)}, via l'index unique partiel
  * {@code uq_pawapay_ops_live_per_payment}. H2 (profil test des autres suites, Flyway
  * désactivé, schéma dérivé des entités JPA) ne porte pas cet index : ce test est la
@@ -27,7 +27,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * une {@code DataIntegrityViolationException} (ça, {@code PawapayOperationServiceTest}
  * le prouve déjà, mais sur un dépôt mocké qui la lève artificiellement).
  */
-class V241PawapayOperationsMigrationTest {
+class V246PawapayOperationsMigrationTest {
 
     private static EmbeddedPostgres postgres;
     private static DataSource dataSource;
