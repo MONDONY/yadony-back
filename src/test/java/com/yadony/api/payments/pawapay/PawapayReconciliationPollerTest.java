@@ -1,6 +1,7 @@
 package com.yadony.api.payments.pawapay;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -162,5 +163,24 @@ class PawapayReconciliationPollerTest {
     void unknownAlertType_fitsInAdminAlertsTypeColumn() {
         String type = PawapayReconciliationPoller.UNKNOWN_ALERT_TYPE_PREFIX + UUID.randomUUID();
         assertThat(type.length()).isLessThanOrEqualTo(AdminAlertEscalator.TYPE_MAX_LENGTH);
+    }
+
+    // Symétrique de networkError_onOne_doesNotStopTheOthers pour un défaut inattendu (bug,
+    // donnée incohérente) : journalisé avec sa pile, jamais propagé au scheduler, et les
+    // opérations suivantes du même passage sont quand même réconciliées.
+
+    @Test
+    void unexpectedError_onOne_doesNotStopTheOthers() {
+        PawapayOpenOperation a = op(PawapayOperationStatus.PROCESSING, LocalDateTime.now(ZoneOffset.UTC).minusMinutes(5));
+        PawapayOpenOperation b = op(PawapayOperationStatus.PROCESSING, LocalDateTime.now(ZoneOffset.UTC).minusMinutes(5));
+        stubOpen(a, b);
+        when(client.getStatus(PawapayOperationKind.DEPOSIT, a.id())).thenThrow(new IllegalStateException("bug"));
+        when(client.getStatus(PawapayOperationKind.DEPOSIT, b.id())).thenReturn(Optional.of(
+                new PawapayOperationSnapshot(PawapayOperationStatus.COMPLETED, null, null, "ptx", null, "{}")));
+
+        assertThatCode(poller::reconcile).doesNotThrowAnyException();
+
+        verify(operations).apply(eq(b.id()), eq(PawapayOperationStatus.COMPLETED), isNull(), isNull(), eq("ptx"),
+                isNull(), eq("{}"), eq(PawapayOperationService.Source.POLL));
     }
 }

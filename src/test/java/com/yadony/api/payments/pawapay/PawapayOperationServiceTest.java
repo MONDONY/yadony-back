@@ -217,4 +217,55 @@ class PawapayOperationServiceTest {
                 PawapayOperationService.Source.CALLBACK)).isFalse();
         verify(repository, never()).applyTransition(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
+
+    @Test
+    void apply_final_whenRowDisappearsRightAfterTransition_failsLoudly() {
+        // Structurellement impossible (aucune suppression physique), mais jamais silencieux :
+        // publier un événement d'échec aux champs nuls masquerait la disparition.
+        PawapayOperationEntity o = op(UUID.randomUUID(), PawapayOperationKind.DEPOSIT);
+        when(repository.findById(o.getId())).thenReturn(Optional.of(o)).thenReturn(Optional.empty());
+        when(repository.applyTransition(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
+
+        assertThatThrownBy(() -> service.apply(o.getId(), PawapayOperationStatus.FAILED, "PAYMENT_NOT_APPROVED", null, null,
+                null, "{}", PawapayOperationService.Source.POLL))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(o.getId().toString());
+        verify(events, never()).publishEvent(any());
+    }
+
+    // ── Lectures déléguées : findLive (vivante ou aboutie), findLatest (quel que soit l'état), get ──
+
+    @Test
+    void findLive_looksUpTheNewestOperation_amongLiveOrDoneOnly() {
+        UUID paymentId = UUID.randomUUID();
+        PawapayOperationEntity live = op(paymentId, PawapayOperationKind.PAYOUT);
+        when(repository.findFirstByPaymentIdAndKindAndStatusInOrderByCreatedAtDesc(paymentId, PawapayOperationKind.PAYOUT,
+                PawapayOperationStatus.LIVE_OR_DONE)).thenReturn(Optional.of(live));
+
+        assertThat(service.findLive(paymentId, PawapayOperationKind.PAYOUT)).contains(live);
+    }
+
+    @Test
+    void findLatest_looksUpTheNewestOperation_whateverItsStatus() {
+        UUID paymentId = UUID.randomUUID();
+        PawapayOperationEntity dead = op(paymentId, PawapayOperationKind.REFUND);
+        dead.setStatus(PawapayOperationStatus.FAILED);
+        when(repository.findFirstByPaymentIdAndKindOrderByCreatedAtDesc(paymentId, PawapayOperationKind.REFUND))
+                .thenReturn(Optional.of(dead));
+
+        assertThat(service.findLatest(paymentId, PawapayOperationKind.REFUND)).contains(dead);
+    }
+
+    @Test
+    void get_returnsTheOperation_orFailsLoudlyWhenUnknown() {
+        PawapayOperationEntity o = op(UUID.randomUUID(), PawapayOperationKind.DEPOSIT);
+        when(repository.findById(o.getId())).thenReturn(Optional.of(o));
+        UUID unknown = UUID.randomUUID();
+        when(repository.findById(unknown)).thenReturn(Optional.empty());
+
+        assertThat(service.get(o.getId())).isSameAs(o);
+        assertThatThrownBy(() -> service.get(unknown))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(unknown.toString());
+    }
 }

@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.yadony.api.common.stripe.AdminAlertService;
@@ -286,5 +287,80 @@ class MobileMoneyBidPaymentServiceEscrowTest {
         assertThat(((MobileMoneyDepositFailedEvent) ev.getValue()).failureCode())
                 .hasSize(64)
                 .isEqualTo(longCode.substring(0, 64));
+    }
+
+    // ── Cas structurellement impossibles : jamais silencieux, jamais d'événement fantôme ──
+
+    @Test
+    void confirmEscrow_unknownPayment_failsLoudly() {
+        UUID unknown = UUID.randomUUID();
+        when(paymentRepository.findById(unknown)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.confirmEscrow(UUID.randomUUID(), unknown))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(unknown.toString());
+        verifyNoInteractions(events, audit);
+    }
+
+    @Test
+    void notifyDepositFailed_unknownPayment_logsAndPublishesNothing() {
+        UUID unknown = UUID.randomUUID();
+        when(paymentRepository.findById(unknown)).thenReturn(Optional.empty());
+
+        service.notifyDepositFailed(UUID.randomUUID(), unknown, "PAYMENT_NOT_APPROVED");
+
+        verifyNoInteractions(events, audit);
+    }
+
+    @Test
+    void notifyDepositFailed_paymentWithoutBid_logsAndPublishesNothing() {
+        when(paymentRepository.findById(payment.getId())).thenReturn(Optional.of(payment));
+        when(bidRepository.findById(bid.getId())).thenReturn(Optional.empty());
+
+        service.notifyDepositFailed(UUID.randomUUID(), payment.getId(), "PAYMENT_NOT_APPROVED");
+
+        verifyNoInteractions(events, audit);
+    }
+
+    // ── repairDepositCompletedNotApplied : la réparation admin rejoue confirmEscrow ─────────
+
+    @Test
+    void repairDepositCompletedNotApplied_reappliesTheCompletedDeposit() {
+        PawapayOperationEntity completed = deposit(PawapayOperationStatus.COMPLETED);
+        when(paymentRepository.findByBidId(bid.getId())).thenReturn(Optional.of(payment));
+        when(operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.of(completed));
+        when(paymentRepository.markEscrowIfPending(eq(payment.getId()), any())).thenReturn(1);
+        when(paymentRepository.findById(payment.getId())).thenReturn(Optional.of(payment));
+        when(bidRepository.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(announcement.getId())).thenReturn(Optional.of(announcement));
+
+        service.repairDepositCompletedNotApplied(bid.getId());
+
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.ACCEPTED);
+        verify(audit).log(eq("PAYMENT"), eq(payment.getId()), eq("MM_ESCROW"), eq(bid.getSenderId()), any());
+    }
+
+    @Test
+    void repairDepositCompletedNotApplied_withoutPawapayPayment_failsLoudly() {
+        // Un paiement d'un autre rail sur ce bid ne compte pas : filtré, donc « introuvable ».
+        payment.setRail(PaymentRail.STRIPE);
+        when(paymentRepository.findByBidId(bid.getId())).thenReturn(Optional.of(payment));
+
+        assertThatThrownBy(() -> service.repairDepositCompletedNotApplied(bid.getId()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(bid.getId().toString());
+        verify(paymentRepository, never()).markEscrowIfPending(any(), any());
+    }
+
+    @Test
+    void repairDepositCompletedNotApplied_whenLatestDepositIsNotCompleted_failsLoudly() {
+        when(paymentRepository.findByBidId(bid.getId())).thenReturn(Optional.of(payment));
+        when(operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT))
+                .thenReturn(Optional.of(deposit(PawapayOperationStatus.FAILED)));
+
+        assertThatThrownBy(() -> service.repairDepositCompletedNotApplied(bid.getId()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(payment.getId().toString());
+        verify(paymentRepository, never()).markEscrowIfPending(any(), any());
     }
 }

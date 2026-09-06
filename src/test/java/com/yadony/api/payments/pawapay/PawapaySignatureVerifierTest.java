@@ -11,6 +11,8 @@ import java.security.KeyPairGenerator;
 import java.security.MessageDigest;
 import java.security.Signature;
 import java.security.spec.ECGenParameterSpec;
+import java.security.spec.MGF1ParameterSpec;
+import java.security.spec.PSSParameterSpec;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -318,5 +320,93 @@ class PawapaySignatureVerifierTest {
         Throwable thrown = catchThrowable(() -> verifier().verify(METHOD, AUTHORITY, PATH, h, BODY));
         assertThat(thrown).isInstanceOf(PawapaySignatureException.class);
         assertThat(thrown.getMessage()).contains("a".repeat(64)).doesNotContain("a".repeat(65));
+    }
+
+    // ── Les quatre algorithmes de la fabrique signatureFor ──────────────────────────────────
+
+    /**
+     * Comme {@link #signedHeaders}, mais avec la paire de clés, l'{@code alg} RFC 9421, le
+     * {@link Signature} JCA et l'algorithme de {@code Content-Digest} en paramètres : pawaPay
+     * annonce quatre algorithmes, seul ECDSA P-256 est exercé par le reste de la classe.
+     */
+    private static Map<String, String> signedHeadersWith(KeyPair pair, String alg, Signature signer, String keyId,
+                                                          String digestJca) throws Exception {
+        String digestLabel = "SHA-256".equals(digestJca) ? "sha-256" : "sha-512";
+        String digest = digestLabel + "=:" + Base64.getEncoder().encodeToString(MessageDigest.getInstance(digestJca).digest(BODY)) + ":";
+        long now = Instant.now().getEpochSecond();
+        String date = Instant.ofEpochSecond(now).toString();
+        String params = "(\"@method\" \"@authority\" \"@path\" \"signature-date\" \"content-digest\" \"content-type\")"
+                + ";alg=\"" + alg + "\";keyid=\"" + keyId + "\";created=" + now + ";expires=" + (now + 60);
+        String base = "\"@method\": " + METHOD + "\n"
+                + "\"@authority\": " + AUTHORITY + "\n"
+                + "\"@path\": " + PATH + "\n"
+                + "\"signature-date\": " + date + "\n"
+                + "\"content-digest\": " + digest + "\n"
+                + "\"content-type\": application/json\n"
+                + "\"@signature-params\": " + params;
+        signer.initSign(pair.getPrivate());
+        signer.update(base.getBytes(StandardCharsets.UTF_8));
+        String sig = Base64.getEncoder().encodeToString(signer.sign());
+
+        Map<String, String> h = new HashMap<>();
+        h.put("content-type", "application/json");
+        h.put("content-digest", digest);
+        h.put("signature-date", date);
+        h.put("signature-input", "sig-pp=" + params);
+        h.put("signature", "sig-pp=:" + sig + ":");
+        return h;
+    }
+
+    private static PawapaySignatureVerifier verifierFor(String keyId, KeyPair pair) {
+        return new PawapaySignatureVerifier(id -> keyId.equals(id) ? Optional.of(pair.getPublic()) : Optional.empty());
+    }
+
+    @Test
+    void ecdsaP384Signature_passes() throws Exception {
+        KeyPairGenerator gen = KeyPairGenerator.getInstance("EC");
+        gen.initialize(new ECGenParameterSpec("secp384r1"));
+        KeyPair pair = gen.generateKeyPair();
+        Map<String, String> h = signedHeadersWith(pair, "ecdsa-p384-sha384",
+                Signature.getInstance("SHA384withECDSAinP1363Format"), "HTTP_EC_P384_KEY:1", "SHA-512");
+
+        assertThatCode(() -> verifierFor("HTTP_EC_P384_KEY:1", pair).verify(METHOD, AUTHORITY, PATH, h, BODY))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void rsaV15Signature_withSha256ContentDigest_passes() throws Exception {
+        KeyPairGenerator gen = KeyPairGenerator.getInstance("RSA");
+        gen.initialize(2048);
+        KeyPair pair = gen.generateKeyPair();
+        Map<String, String> h = signedHeadersWith(pair, "rsa-v1_5-sha256",
+                Signature.getInstance("SHA256withRSA"), "HTTP_RSA_KEY:1", "SHA-256");
+
+        assertThatCode(() -> verifierFor("HTTP_RSA_KEY:1", pair).verify(METHOD, AUTHORITY, PATH, h, BODY))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void rsaPssSha512Signature_passes() throws Exception {
+        KeyPairGenerator gen = KeyPairGenerator.getInstance("RSA");
+        gen.initialize(2048);
+        KeyPair pair = gen.generateKeyPair();
+        Signature signer = Signature.getInstance("RSASSA-PSS");
+        signer.setParameter(new PSSParameterSpec("SHA-512", "MGF1", MGF1ParameterSpec.SHA512, 64, 1));
+        Map<String, String> h = signedHeadersWith(pair, "rsa-pss-sha512", signer, "HTTP_RSA_PSS_KEY:1", "SHA-512");
+
+        assertThatCode(() -> verifierFor("HTTP_RSA_PSS_KEY:1", pair).verify(METHOD, AUTHORITY, PATH, h, BODY))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void keyOfAnotherType_thanTheAnnouncedAlg_isRejected_notCrashed() throws Exception {
+        // alg RSA annoncé, clé EC résolue : initVerify lève InvalidKeyException — traduite en
+        // signature invalide (exception métier du vérifieur), jamais en 500.
+        long now = Instant.now().getEpochSecond();
+        Map<String, String> h = new HashMap<>(signedHeaders(BODY, now, now + 60, KEY_ID));
+        h.put("signature-input", h.get("signature-input").replace("ecdsa-p256-sha256", "rsa-v1_5-sha256"));
+
+        assertThatThrownBy(() -> verifier().verify(METHOD, AUTHORITY, PATH, h, BODY))
+                .isInstanceOf(PawapaySignatureException.class);
     }
 }

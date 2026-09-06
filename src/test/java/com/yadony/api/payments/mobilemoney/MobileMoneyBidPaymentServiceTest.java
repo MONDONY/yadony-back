@@ -766,4 +766,148 @@ class MobileMoneyBidPaymentServiceTest {
                 .isEqualTo(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         verify(audit).log(eq("PAYMENT"), eq(payment.getId()), eq("MM_DEPOSIT_INITIATED"), eq(sender.getId()), any());
     }
+
+    // ── Branches d'erreur d'acceptBid ───────────────────────────────────────
+
+    @Test
+    void acceptBid_unknownBid_is404() {
+        when(bidRepository.findByIdForUpdate(bid.getId())).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.acceptBid(bid.getId(), traveler.getId()))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("bid-not-found");
+    }
+
+    @Test
+    void acceptBid_bidNotPaidByMobileMoney_is422_beforeAnyPaymentRead() {
+        stubLocks();
+        bid.setPaymentMethod(PaymentMethod.CASH);
+
+        assertThatThrownBy(() -> service.acceptBid(bid.getId(), traveler.getId()))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("invalid-payment-method");
+        verifyNoInteractions(paymentRepository);
+        assertThat(announcement.getAvailableKg()).as("aucune capacité réservée").isEqualByComparingTo("20");
+    }
+
+    @Test
+    void acceptBid_announcementNoLongerAccepting_is409_withoutReservingCapacity() {
+        stubLocks();
+        when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+        when(paymentRepository.findByBidId(bid.getId())).thenReturn(Optional.empty());
+        announcement.setStatus(AnnouncementStatus.CANCELLED);
+
+        assertThatThrownBy(() -> service.acceptBid(bid.getId(), traveler.getId()))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("announcement-not-accepting");
+        verify(paymentRepository, never()).save(any());
+        assertThat(announcement.getAvailableKg()).isEqualByComparingTo("20");
+    }
+
+    // ── Branches d'erreur d'initiateDeposit (résolution du payeur) ──────────
+
+    @Test
+    void initiateDeposit_noProviderForNumber_is422_withoutReadingTheConfiguration() {
+        bid.setStatus(BidStatus.AWAITING_PAYMENT);
+        bid.setAwaitingPaymentExpiresAt(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20));
+        PaymentEntity payment = pendingPayment();
+        when(paymentRepository.findByBidIdForUpdate(bid.getId())).thenReturn(Optional.of(payment));
+        when(bidRepository.findById(bid.getId())).thenReturn(Optional.of(bid));
+        when(operations.findLive(any(), any())).thenReturn(Optional.empty());
+        when(client.predictProvider("221771234567")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.initiateDeposit(bid.getId(), sender.getId(), null))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> {
+                    YadonyBusinessException b = (YadonyBusinessException) e;
+                    assertThat(b.getErrorCode()).isEqualTo("mobile-money-payer-unsupported");
+                    assertThat(b.getMessage()).contains("Aucun opérateur");
+                });
+        verify(client, never()).activeConfiguration();
+        verify(submission, never()).submitDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void initiateDeposit_providerClosedForDeposits_is422_namingTheProvider() {
+        bid.setStatus(BidStatus.AWAITING_PAYMENT);
+        bid.setAwaitingPaymentExpiresAt(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20));
+        PaymentEntity payment = pendingPayment();
+        when(paymentRepository.findByBidIdForUpdate(bid.getId())).thenReturn(Optional.of(payment));
+        when(bidRepository.findById(bid.getId())).thenReturn(Optional.of(bid));
+        when(operations.findLive(any(), any())).thenReturn(Optional.empty());
+        when(client.predictProvider("221771234567")).thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "221771234567")));
+        PawapayProviderConfig.Limits closed =
+                new PawapayProviderConfig.Limits(new BigDecimal("100"), new BigDecimal("1500000"), "PROVIDER_AUTH", "CLOSED");
+        when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", new PawapayProviderConfig("ORANGE_SEN", "SEN", "XOF", closed, OK)));
+
+        assertThatThrownBy(() -> service.initiateDeposit(bid.getId(), sender.getId(), null))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> {
+                    YadonyBusinessException b = (YadonyBusinessException) e;
+                    assertThat(b.getErrorCode()).isEqualTo("mobile-money-payer-unsupported");
+                    assertThat(b.getMessage()).contains("Orange Money");
+                });
+        verify(submission, never()).submitDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void initiateDeposit_amountAboveProviderDepositCap_is422() {
+        bid.setStatus(BidStatus.AWAITING_PAYMENT);
+        bid.setAwaitingPaymentExpiresAt(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20));
+        PaymentEntity payment = pendingPayment();
+        when(paymentRepository.findByBidIdForUpdate(bid.getId())).thenReturn(Optional.of(payment));
+        when(bidRepository.findById(bid.getId())).thenReturn(Optional.of(bid));
+        when(operations.findLive(any(), any())).thenReturn(Optional.empty());
+        when(client.predictProvider("221771234567")).thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "221771234567")));
+        // Plafond deposit de l'opérateur (10 000) sous le montant du colis (16 800).
+        PawapayProviderConfig.Limits capped =
+                new PawapayProviderConfig.Limits(new BigDecimal("100"), new BigDecimal("10000"), "PROVIDER_AUTH", "OPERATIONAL");
+        when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", new PawapayProviderConfig("ORANGE_SEN", "SEN", "XOF", capped, OK)));
+
+        assertThatThrownBy(() -> service.initiateDeposit(bid.getId(), sender.getId(), null))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> {
+                    YadonyBusinessException b = (YadonyBusinessException) e;
+                    assertThat(b.getErrorCode()).isEqualTo("mobile-money-payer-unsupported");
+                    assertThat(b.getMessage()).contains("limites");
+                });
+        verify(submission, never()).submitDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void initiateDeposit_invalidOverrideNumber_is422_beforeAnyPawapayCall() {
+        bid.setStatus(BidStatus.AWAITING_PAYMENT);
+        bid.setAwaitingPaymentExpiresAt(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20));
+        PaymentEntity payment = pendingPayment();
+        when(paymentRepository.findByBidIdForUpdate(bid.getId())).thenReturn(Optional.of(payment));
+        when(bidRepository.findById(bid.getId())).thenReturn(Optional.of(bid));
+        when(operations.findLive(any(), any())).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.initiateDeposit(bid.getId(), sender.getId(), "pas un numéro"))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> {
+                    YadonyBusinessException b = (YadonyBusinessException) e;
+                    assertThat(b.getErrorCode()).isEqualTo("mobile-money-payer-unsupported");
+                    assertThat(b.getMessage()).contains("invalide");
+                });
+        verifyNoInteractions(client);
+    }
+
+    @Test
+    void initiateDeposit_withoutAnyPayerNumber_is422_phoneRequired() {
+        bid.setStatus(BidStatus.AWAITING_PAYMENT);
+        bid.setAwaitingPaymentExpiresAt(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20));
+        bid.setMobileMoneyPhone(null);
+        PaymentEntity payment = pendingPayment();
+        when(paymentRepository.findByBidIdForUpdate(bid.getId())).thenReturn(Optional.of(payment));
+        when(bidRepository.findById(bid.getId())).thenReturn(Optional.of(bid));
+        when(operations.findLive(any(), any())).thenReturn(Optional.empty());
+        when(userRepository.findById(sender.getId())).thenReturn(Optional.of(sender));
+        when(firebaseContact.getContact(sender.getFirebaseUid())).thenReturn(new FirebaseContactService.Contact(null, null));
+
+        assertThatThrownBy(() -> service.initiateDeposit(bid.getId(), sender.getId(), null))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-phone-required");
+        verifyNoInteractions(client);
+    }
 }

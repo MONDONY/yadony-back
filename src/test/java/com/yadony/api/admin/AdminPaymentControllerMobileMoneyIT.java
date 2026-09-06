@@ -485,4 +485,94 @@ class AdminPaymentControllerMobileMoneyIT {
         verify(operations, never()).findLatest(any(), any());
         verify(submission, never()).submitRefund(any(), any(), any());
     }
+
+    // ── détail (GET /admin/payments/{id}) ───────────────────────────────────────────────────
+
+    /**
+     * Depuis V245, {@code payments} ne porte plus aucune colonne {@code pawapay_*_id} : le
+     * détail lit la dernière opération de chaque type dans {@code pawapay_operations}.
+     * {@code dony-admin} consomme ces trois champs.
+     */
+    @Test
+    void getById_pawapay_exposesTheLatestOperationIds_readFromPawapayOperations() throws Exception {
+        PawapayOperationEntity deposit = new PawapayOperationEntity(UUID.randomUUID(), PawapayOperationKind.DEPOSIT, payment.getId(), null,
+                new BigDecimal("16800"), "XOF", "ORANGE_SEN", "SN", "221771234567");
+        PawapayOperationEntity deadPayout = payout(PawapayOperationStatus.FAILED);
+        when(operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.of(deposit));
+        when(operations.findLatest(payment.getId(), PawapayOperationKind.PAYOUT)).thenReturn(Optional.of(deadPayout));
+        when(operations.findLatest(payment.getId(), PawapayOperationKind.REFUND)).thenReturn(Optional.empty());
+
+        mockMvc.perform(get("/admin/payments/{id}", payment.getId()).with(authentication(viewAdmin())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.rail").value("PAWAPAY"))
+                .andExpect(jsonPath("$.pawapayDepositId").value(deposit.getId().toString()))
+                .andExpect(jsonPath("$.pawapayPayoutId").value(deadPayout.getId().toString()))
+                .andExpect(jsonPath("$.pawapayRefundId").doesNotExist());
+    }
+
+    @Test
+    void getById_unknownPayment_is404() throws Exception {
+        mockMvc.perform(get("/admin/payments/{id}", UUID.randomUUID()).with(authentication(viewAdmin())))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("payment-not-found"));
+    }
+
+    // ── code d'erreur propre au remboursement (mobile-money-refund-failed) ─────────────────
+
+    @Test
+    void retryRefund_rejectedByPawapay_is422_withTheRefundErrorCode() throws Exception {
+        payment.setStatus(PaymentStatus.REFUNDED);
+        PawapayOperationEntity deposit = new PawapayOperationEntity(UUID.randomUUID(), PawapayOperationKind.DEPOSIT, payment.getId(), null,
+                new BigDecimal("16800"), "XOF", "ORANGE_SEN", "SN", "221771234567");
+        deposit.setStatus(PawapayOperationStatus.COMPLETED);
+        PawapayOperationEntity dead = new PawapayOperationEntity(UUID.randomUUID(), PawapayOperationKind.REFUND, payment.getId(), deposit.getId(),
+                new BigDecimal("16800"), "XOF", "ORANGE_SEN", "SN", "221771234567");
+        dead.setStatus(PawapayOperationStatus.FAILED);
+        PawapayOperationEntity rejected = new PawapayOperationEntity(UUID.randomUUID(), PawapayOperationKind.REFUND, payment.getId(), deposit.getId(),
+                new BigDecimal("16800"), "XOF", "ORANGE_SEN", "SN", "221771234567");
+        rejected.setStatus(PawapayOperationStatus.SUBMIT_REJECTED);
+        rejected.setFailureCode("DEPOSIT_NOT_REFUNDABLE");
+        when(operations.findLatest(payment.getId(), PawapayOperationKind.REFUND)).thenReturn(Optional.of(dead));
+        when(operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.of(deposit));
+        when(submission.submitRefund(payment.getId(), deposit, new BigDecimal("16800"))).thenReturn(rejected);
+
+        mockMvc.perform(post("/admin/payments/{id}/mobile-money/retry-refund", payment.getId()).with(authentication(releaseAdmin())))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("mobile-money-refund-failed"));
+    }
+
+    @Test
+    void refund_pawapay_processorFailure_is422_withTheRefundErrorCode() throws Exception {
+        when(refundProcessor.processRefund(any(), any(), any(), anyMap())).thenThrow(new IllegalStateException("aucun deposit abouti"));
+
+        mockMvc.perform(post("/admin/payments/{id}/refund", payment.getId()).with(authentication(refundAdmin())))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("mobile-money-refund-failed"));
+        verify(entityManager, never()).refresh(any());
+    }
+
+    // ── retry-payout : préconditions et échec de l'initiateur ──────────────────────────────
+
+    @Test
+    void retryPayout_paymentNotReleased_isRejected_beforeReadingAnyOperation() throws Exception {
+        // payment reste ESCROW (setUp) : rien à relancer tant que le versement n'a pas été déclenché.
+        mockMvc.perform(post("/admin/payments/{id}/mobile-money/retry-payout", payment.getId()).with(authentication(releaseAdmin())))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("mobile-money-retry-not-allowed"));
+        verify(operations, never()).findLatest(any(), any());
+        verify(payoutInitiator, never()).release(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void retryPayout_initiatorFailure_is422() throws Exception {
+        payment.setStatus(PaymentStatus.RELEASED);
+        when(operations.findLatest(payment.getId(), PawapayOperationKind.PAYOUT))
+                .thenReturn(Optional.of(payout(PawapayOperationStatus.FAILED)));
+        when(payoutInitiator.release(any(), any(), any(), any(), eq("admin-retry")))
+                .thenThrow(new IllegalStateException("compte de versement inactif"));
+
+        mockMvc.perform(post("/admin/payments/{id}/mobile-money/retry-payout", payment.getId()).with(authentication(releaseAdmin())))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("mobile-money-payout-failed"));
+    }
 }
