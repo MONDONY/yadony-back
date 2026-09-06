@@ -7,7 +7,7 @@ import java.util.Set;
  * Admin roles enum with permission mapping (Task 2).
  * - SUPER_ADMIN: all permissions
  * - ADMIN: all except ADMIN_MANAGE
- * - SUPPORT: limited read + action permissions (16 total)
+ * - SUPPORT: limited read + action permissions (18 total)
  */
 public enum AdminRole {
     SUPER_ADMIN,
@@ -42,7 +42,11 @@ public enum AdminRole {
                     AdminPermission.MESSAGE_DELETE,
                     AdminPermission.REPORT_VIEW,
                     AdminPermission.REPORT_RESOLVE,
-                    AdminPermission.RATING_MODERATE
+                    AdminPermission.RATING_MODERATE,
+                    // Messagerie support : le role SUPPORT est precisement celui
+                    // qui traite ces tickets, il recoit donc les deux permissions.
+                    AdminPermission.SUPPORT_TICKET_VIEW,
+                    AdminPermission.SUPPORT_TICKET_MANAGE
             );
         };
     }
