@@ -34,7 +34,8 @@ public class StorageService {
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(StorageService.class);
 
     private static final Set<String> ALLOWED_PREFIXES = Set.of(
-            "tracking/", "users/", "messaging/", "kyc/", "package_requests/", "requests/", "bids/", "reports/");
+            "tracking/", "users/", "messaging/", "kyc/", "package_requests/", "requests/", "bids/", "reports/",
+            "support/");
     private static final long MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
     private static final Set<String> ALLOWED_CONTENT_TYPES = Set.of(
             "image/jpeg", "image/jpg", "image/png", "image/webp");
@@ -239,6 +240,28 @@ public class StorageService {
             }
             continuationToken = list.isTruncated() ? list.nextContinuationToken() : null;
         } while (continuationToken != null);
+    }
+
+    /**
+     * Cles d'un prefixe dont la date de derniere modification precede le seuil.
+     * Utilise pour la purge des pieces jointes orphelines du support.
+     */
+    public List<String> listKeysOlderThan(String prefix, Instant cutoff) {
+        validatePrefix(prefix);
+        String continuationToken = null;
+        List<String> result = new java.util.ArrayList<>();
+        do {
+            ListObjectsV2Request.Builder reqBuilder = ListObjectsV2Request.builder()
+                    .bucket(bucket).prefix(prefix);
+            if (continuationToken != null) reqBuilder.continuationToken(continuationToken);
+            ListObjectsV2Response list = s3Client.listObjectsV2(reqBuilder.build());
+            list.contents().stream()
+                    .filter(o -> o.lastModified().isBefore(cutoff))
+                    .map(software.amazon.awssdk.services.s3.model.S3Object::key)
+                    .forEach(result::add);
+            continuationToken = list.isTruncated() ? list.nextContinuationToken() : null;
+        } while (continuationToken != null);
+        return result;
     }
 
     private void validateFile(MultipartFile file) {

@@ -2,9 +2,11 @@ package com.yadony.api.support;
 
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
+import com.yadony.api.common.StorageService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.support.dto.CreateSupportMessageRequest;
 import com.yadony.api.support.dto.CreateSupportTicketRequest;
+import com.yadony.api.support.dto.SupportAttachmentResponse;
 import com.yadony.api.support.dto.SupportMessageResponse;
 import com.yadony.api.support.dto.SupportPredefinedReplyResponse;
 import com.yadony.api.support.dto.SupportTicketResponse;
@@ -21,8 +23,12 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
+import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -37,10 +43,17 @@ public class SupportController {
     private static final int MAX_PAGE_SIZE = 50;
 
     private final SupportTicketService supportTicketService;
+    private final SupportAttachmentService attachmentService;
+    private final StorageService storageService;
     private final UserRepository userRepository;
 
-    public SupportController(SupportTicketService supportTicketService, UserRepository userRepository) {
+    public SupportController(SupportTicketService supportTicketService,
+                             SupportAttachmentService attachmentService,
+                             StorageService storageService,
+                             UserRepository userRepository) {
         this.supportTicketService = supportTicketService;
+        this.attachmentService = attachmentService;
+        this.storageService = storageService;
         this.userRepository = userRepository;
     }
 
@@ -58,7 +71,7 @@ public class SupportController {
         UserEntity user = requireUser(firebaseUid);
         return supportTicketService
                 .listUserTickets(user.getId(), PageRequest.of(Math.max(page, 0), clampSize(size)))
-                .map(SupportTicketResponse::summary);
+                .map(t -> SupportTicketResponse.summary(t, supportTicketService.unreadCount(t)));
     }
 
     @PostMapping("/tickets")
@@ -67,8 +80,16 @@ public class SupportController {
                                               @Valid @RequestBody CreateSupportTicketRequest request) {
         UserEntity user = requireUser(firebaseUid);
         SupportTicketEntity ticket = supportTicketService.createTicket(
-                user, request.category(), request.subject(), request.message());
-        return SupportTicketResponse.withMessages(ticket, supportTicketService.listMessages(ticket.getId()));
+                user, request.category(), request.subject(), request.message(),
+                request.attachmentKeys());
+        List<SupportMessageEntity> messages = supportTicketService.listMessages(ticket.getId());
+        List<UUID> messageIds = messages.stream().map(SupportMessageEntity::getId).toList();
+        Map<UUID, List<SupportAttachmentResponse>> attachMap = attachmentService.responsesFor(messageIds);
+        List<SupportMessageResponse> mapped = messages.stream()
+                .map(m -> SupportMessageResponse.from(m, attachMap.getOrDefault(m.getId(), List.of())))
+                .toList();
+        // unreadCount = 0 : le seul message est celui de l'utilisateur, pas un message admin
+        return SupportTicketResponse.withMessages(ticket, mapped, 0L);
     }
 
     @GetMapping("/tickets/{ticketId}")
@@ -76,7 +97,13 @@ public class SupportController {
                                            @PathVariable UUID ticketId) {
         UserEntity user = requireUser(firebaseUid);
         SupportTicketEntity ticket = supportTicketService.getUserTicket(user, ticketId);
-        return SupportTicketResponse.withMessages(ticket, supportTicketService.listMessages(ticketId));
+        List<SupportMessageEntity> messages = supportTicketService.listMessages(ticketId);
+        List<UUID> messageIds = messages.stream().map(SupportMessageEntity::getId).toList();
+        Map<UUID, List<SupportAttachmentResponse>> attachMap = attachmentService.responsesFor(messageIds);
+        List<SupportMessageResponse> mapped = messages.stream()
+                .map(m -> SupportMessageResponse.from(m, attachMap.getOrDefault(m.getId(), List.of())))
+                .toList();
+        return SupportTicketResponse.withMessages(ticket, mapped, supportTicketService.unreadCount(ticket));
     }
 
     @PostMapping("/tickets/{ticketId}/messages")
@@ -85,8 +112,34 @@ public class SupportController {
                                              @PathVariable UUID ticketId,
                                              @Valid @RequestBody CreateSupportMessageRequest request) {
         UserEntity user = requireUser(firebaseUid);
-        return SupportMessageResponse.from(
-                supportTicketService.userReply(user, ticketId, request.content()));
+        SupportMessageEntity message = supportTicketService.userReply(
+                user, ticketId, request.content(), request.attachmentKeys());
+        List<SupportAttachmentResponse> attachments =
+                attachmentService.responsesFor(List.of(message.getId()))
+                        .getOrDefault(message.getId(), List.of());
+        return SupportMessageResponse.from(message, attachments);
+    }
+
+    @PostMapping("/attachments")
+    public Map<String, String> uploadAttachment(@AuthenticationPrincipal String firebaseUid,
+                                                @RequestParam("file") MultipartFile file) throws IOException {
+        UserEntity user = requireUser(firebaseUid);
+        String key = attachmentService.uploadForUser(user.getId(), file);
+        return Map.of("key", key,
+                "url", storageService.generatePresignedUrl(key, Duration.ofHours(1)));
+    }
+
+    @PostMapping("/tickets/{ticketId}/read")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void markRead(@AuthenticationPrincipal String firebaseUid,
+                         @PathVariable UUID ticketId) {
+        supportTicketService.markRead(requireUser(firebaseUid), ticketId);
+    }
+
+    @GetMapping("/unread-count")
+    public Map<String, Long> unreadCount(@AuthenticationPrincipal String firebaseUid) {
+        UserEntity user = requireUser(firebaseUid);
+        return Map.of("count", supportTicketService.totalUnread(user.getId()));
     }
 
     private UserEntity requireUser(String firebaseUid) {

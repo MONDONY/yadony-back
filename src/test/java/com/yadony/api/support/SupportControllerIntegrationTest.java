@@ -22,6 +22,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -73,7 +74,7 @@ class SupportControllerIntegrationTest {
                         .with(authentication(asUser(OWNER_UID)))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(new CreateSupportTicketRequest(
-                                "PAYMENT", "Paiement bloque", "Je ne vois pas le remboursement."))))
+                                "PAYMENT", "Paiement bloque", "Je ne vois pas le remboursement.", null))))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.status").value("NEW"))
                 .andExpect(jsonPath("$.subject").value("Paiement bloque"))
@@ -87,7 +88,7 @@ class SupportControllerIntegrationTest {
                         .with(authentication(asUser(OWNER_UID)))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(new CreateSupportTicketRequest(
-                                "MYSTERE", "Sujet", "Message"))))
+                                "MYSTERE", "Sujet", "Message", null))))
                 .andExpect(status().isUnprocessableEntity());
     }
 
@@ -119,7 +120,7 @@ class SupportControllerIntegrationTest {
                         .with(authentication(asUser(OWNER_UID)))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new CreateSupportMessageRequest("Toujours bloque"))))
+                                new CreateSupportMessageRequest("Toujours bloque", null))))
                 .andExpect(status().isUnprocessableEntity());
     }
 
@@ -131,7 +132,7 @@ class SupportControllerIntegrationTest {
                         .with(authentication(asUser(OWNER_UID)))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new CreateSupportMessageRequest("Toujours bloque"))))
+                                new CreateSupportMessageRequest("Toujours bloque", null))))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.authorType").value("USER"));
 
@@ -139,6 +140,43 @@ class SupportControllerIntegrationTest {
                         .with(authentication(asUser(OWNER_UID))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("WAITING_SUPPORT"));
+    }
+
+    @Test
+    void markingATicketReadResetsItsUnreadCount() throws Exception {
+        // Semer un ticket appartenant a owner avec un message ADMIN non lu
+        SupportTicketEntity ticket = persistTicket(owner, SupportTicketStatus.WAITING_USER);
+        SupportMessageEntity adminMsg = new SupportMessageEntity();
+        adminMsg.setTicketId(ticket.getId());
+        adminMsg.setAuthorType(SupportMessageAuthorType.ADMIN);
+        adminMsg.setAuthorId(UUID.randomUUID());
+        adminMsg.setContent("Bonjour, nous avons bien recu votre demande.");
+        messageRepository.save(adminMsg);
+
+        // Avant lecture : unreadCount = 1
+        mockMvc.perform(get("/support/tickets").with(authentication(asUser(OWNER_UID))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].unreadCount").value(1));
+
+        // Marquer comme lu
+        mockMvc.perform(post("/support/tickets/" + ticket.getId() + "/read")
+                        .with(authentication(asUser(OWNER_UID))))
+                .andExpect(status().isNoContent());
+
+        // Apres lecture : total unread = 0
+        mockMvc.perform(get("/support/unread-count").with(authentication(asUser(OWNER_UID))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.count").value(0));
+    }
+
+    @Test
+    void markingSomeoneElsesTicketReturns404() throws Exception {
+        SupportTicketEntity ticket = persistTicket(owner, SupportTicketStatus.WAITING_USER);
+
+        // intruder tente de marquer le ticket de owner comme lu
+        mockMvc.perform(post("/support/tickets/" + ticket.getId() + "/read")
+                        .with(authentication(asUser(INTRUDER_UID))))
+                .andExpect(status().isNotFound());
     }
 
     // ---------------------------------------------------------------- helpers

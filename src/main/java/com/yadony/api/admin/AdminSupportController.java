@@ -8,13 +8,16 @@ import com.yadony.api.admin.dto.AdminSupportTicketResponse;
 import com.yadony.api.admin.dto.ReassignSupportTicketRequest;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
+import com.yadony.api.common.StorageService;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.support.SupportAttachmentService;
 import com.yadony.api.support.SupportMessageEntity;
 import com.yadony.api.support.SupportTicketEntity;
 import com.yadony.api.support.SupportTicketScope;
 import com.yadony.api.support.SupportTicketService;
 import com.yadony.api.support.SupportTicketStatus;
 import com.yadony.api.support.dto.CreateSupportMessageRequest;
+import com.yadony.api.support.dto.SupportAttachmentResponse;
 import com.yadony.api.support.dto.SupportMessageResponse;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
@@ -29,7 +32,10 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
+import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -52,13 +58,19 @@ public class AdminSupportController {
     private static final int MAX_PAGE_SIZE = 100;
 
     private final SupportTicketService supportTicketService;
+    private final SupportAttachmentService attachmentService;
+    private final StorageService storageService;
     private final UserRepository userRepository;
     private final AdminUserRepository adminUserRepository;
 
     public AdminSupportController(SupportTicketService supportTicketService,
+                                  SupportAttachmentService attachmentService,
+                                  StorageService storageService,
                                   UserRepository userRepository,
                                   AdminUserRepository adminUserRepository) {
         this.supportTicketService = supportTicketService;
+        this.attachmentService = attachmentService;
+        this.storageService = storageService;
         this.userRepository = userRepository;
         this.adminUserRepository = adminUserRepository;
     }
@@ -112,8 +124,23 @@ public class AdminSupportController {
     public SupportMessageResponse reply(Authentication auth,
                                         @PathVariable UUID ticketId,
                                         @Valid @RequestBody CreateSupportMessageRequest request) {
-        return SupportMessageResponse.from(
-                supportTicketService.adminReply(ticketId, adminId(auth), request.content()));
+        UUID adminId = adminId(auth);
+        SupportMessageEntity message = supportTicketService.adminReply(
+                ticketId, adminId, request.content(), request.attachmentKeys());
+        List<SupportAttachmentResponse> attachments =
+                attachmentService.responsesFor(List.of(message.getId()))
+                        .getOrDefault(message.getId(), List.of());
+        return SupportMessageResponse.from(message, attachments);
+    }
+
+    @PostMapping("/attachments")
+    @PreAuthorize("hasAuthority('SUPPORT_TICKET_MANAGE')")
+    public Map<String, String> uploadAttachment(Authentication auth,
+                                                @RequestParam("file") MultipartFile file) throws IOException {
+        UUID adminId = adminId(auth);
+        String key = attachmentService.uploadForAdmin(adminId, file);
+        return Map.of("key", key,
+                "url", storageService.generatePresignedUrl(key, Duration.ofHours(1)));
     }
 
     @PostMapping("/{ticketId}/resolve")
@@ -126,12 +153,14 @@ public class AdminSupportController {
 
     private AdminSupportTicketResponse detail(SupportTicketEntity ticket) {
         List<SupportMessageEntity> messages = supportTicketService.listMessages(ticket.getId());
+        List<UUID> messageIds = messages.stream().map(SupportMessageEntity::getId).toList();
+        Map<UUID, List<SupportAttachmentResponse>> attachMap = attachmentService.responsesFor(messageIds);
         UserEntity user = userRepository.findById(ticket.getUserId()).orElse(null);
         String adminEmail = ticket.getAssignedAdminId() == null ? null
                 : adminUserRepository.findById(ticket.getAssignedAdminId())
                         .map(AdminUserEntity::getEmail)
                         .orElse(null);
-        return AdminSupportTicketResponse.withMessages(ticket, user, adminEmail, messages);
+        return AdminSupportTicketResponse.withMessages(ticket, user, adminEmail, messages, attachMap);
     }
 
     private Map<UUID, UserEntity> loadUsers(List<SupportTicketEntity> tickets) {

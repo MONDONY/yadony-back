@@ -4,6 +4,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.util.List;
 import java.util.UUID;
 
 public interface SupportTicketRepository extends JpaRepository<SupportTicketEntity, UUID> {
@@ -30,4 +31,6 @@ public interface SupportTicketRepository extends JpaRepository<SupportTicketEnti
             UUID assignedAdminId, SupportTicketStatus status, Pageable pageable);
 
     long countByAssignedAdminIdIsNull();
+
+    List<SupportTicketEntity> findByUserId(UUID userId);
 }

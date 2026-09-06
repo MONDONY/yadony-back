@@ -52,6 +52,13 @@ public class SupportTicketEntity extends BaseEntity {
     @Column(name = "resolved_at")
     private LocalDateTime resolvedAt;
 
+    /**
+     * Date de derniere ouverture du fil par l'utilisateur. NULL = jamais
+     * ouvert. Ne bouge pas le statut : lire n'est pas repondre.
+     */
+    @Column(name = "user_last_read_at")
+    private LocalDateTime userLastReadAt;
+
     public UUID getUserId() { return userId; }
 
     public void setUserId(UUID userId) { this.userId = userId; }
@@ -83,6 +90,10 @@ public class SupportTicketEntity extends BaseEntity {
     public LocalDateTime getResolvedAt() { return resolvedAt; }
 
     public void setResolvedAt(LocalDateTime resolvedAt) { this.resolvedAt = resolvedAt; }
+
+    public LocalDateTime getUserLastReadAt() { return userLastReadAt; }
+
+    public void setUserLastReadAt(LocalDateTime userLastReadAt) { this.userLastReadAt = userLastReadAt; }
 
     public boolean isResolved() { return status == SupportTicketStatus.RESOLVED; }
 }

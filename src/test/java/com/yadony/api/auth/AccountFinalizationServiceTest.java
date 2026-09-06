@@ -209,6 +209,7 @@ class AccountFinalizationServiceTest {
         }
 
         verify(storageService).deleteByPrefix("kyc/" + user.getId() + "/");
+        verify(storageService).deleteByPrefix("support/" + user.getId() + "/");
     }
 
     @Test

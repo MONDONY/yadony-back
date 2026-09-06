@@ -3,16 +3,22 @@ package com.yadony.api.admin.dto;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.support.SupportMessageEntity;
 import com.yadony.api.support.SupportTicketEntity;
+import com.yadony.api.support.dto.SupportAttachmentResponse;
 import com.yadony.api.support.dto.SupportMessageResponse;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
  * Vue back-office d'un ticket. Expose l'identite de l'utilisateur (le support ne
  * peut pas traiter un ticket sans savoir qui l'a ouvert) mais jamais son numero
  * de telephone ni son email — le back-office a des ecrans dedies pour cela.
+ *
+ * <p>Les messages embarquent leurs pieces jointes (même mecanique responsesFor que
+ * le DTO utilisateur) : un fil ou l'utilisateur envoie une photo doit etre visible
+ * cote admin.
  */
 public record AdminSupportTicketResponse(
         UUID id,
@@ -38,9 +44,12 @@ public record AdminSupportTicketResponse(
     public static AdminSupportTicketResponse withMessages(SupportTicketEntity ticket,
                                                           UserEntity user,
                                                           String assignedAdminEmail,
-                                                          List<SupportMessageEntity> messages) {
-        return build(ticket, user, assignedAdminEmail,
-                messages.stream().map(SupportMessageResponse::from).toList());
+                                                          List<SupportMessageEntity> messages,
+                                                          Map<UUID, List<SupportAttachmentResponse>> attachMap) {
+        List<SupportMessageResponse> mapped = messages.stream()
+                .map(m -> SupportMessageResponse.from(m, attachMap.getOrDefault(m.getId(), List.of())))
+                .toList();
+        return build(ticket, user, assignedAdminEmail, mapped);
     }
 
     private static AdminSupportTicketResponse build(SupportTicketEntity ticket,

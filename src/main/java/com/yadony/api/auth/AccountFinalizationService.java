@@ -87,6 +87,7 @@ public class AccountFinalizationService {
 
         // 3. Delete Cloudflare R2 files
         storageService.deleteByPrefix("kyc/" + userId + "/");
+        storageService.deleteByPrefix("support/" + userId + "/");
 
         // 4. Publish events → cross-package cleanup
         // AccountDeletionRequestedEvent : nécessaire ici car les chemins HARD_IMMEDIATE et
