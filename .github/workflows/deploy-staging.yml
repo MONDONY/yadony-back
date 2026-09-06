@@ -169,6 +169,11 @@ jobs:
           TWILIO_ACCOUNT_SID=${{ secrets.TWILIO_ACCOUNT_SID }}
           TWILIO_AUTH_TOKEN=${{ secrets.TWILIO_AUTH_TOKEN }}
           AT_API_KEY=${{ secrets.AT_API_KEY }}
+          # Rail mobile money pawaPay : token API du dashboard SANDBOX (staging ne parle
+          # jamais à la production pawaPay, PAWAPAY_BASE_URL garde son défaut sandbox).
+          # Secret d environnement staging. Le rail reste fermé tant que PAWAPAY_ENABLED
+          # (variable, plus bas) n est pas true : un token absent ne casse rien au démarrage.
+          PAWAPAY_API_TOKEN=${{ secrets.PAWAPAY_API_TOKEN }}
 
           # Config métier (non sensible) — modifiable dans Settings > Environments > staging > Variables
           CORS_ALLOWED_ORIGINS=${{ vars.CORS_ALLOWED_ORIGINS }}
@@ -192,6 +197,15 @@ jobs:
           TWILIO_FROM=${{ vars.TWILIO_FROM }}
           WAVE_API_URL=${{ vars.WAVE_API_URL }}
           ORANGE_MONEY_API_URL=${{ vars.ORANGE_MONEY_API_URL }}
+          # Rail mobile money pawaPay. PAWAPAY_ENABLED=true ouvre le rail (annonces XOF/XAF,
+          # activation de compte, poller, moniteur de solde). PAWAPAY_CALLBACK_SIGNATURES=true
+          # va de pair avec « Sign all callbacks » dans le dashboard pawaPay : l un sans
+          # l autre rejette 100 % des callbacks ou n en vérifie aucun. Seuils de solde vides =
+          # alerte désactivée. Voir docs/runbooks/pawapay.md.
+          PAWAPAY_ENABLED=${{ vars.PAWAPAY_ENABLED }}
+          PAWAPAY_CALLBACK_SIGNATURES=${{ vars.PAWAPAY_CALLBACK_SIGNATURES }}
+          PAWAPAY_BALANCE_MIN_XOF=${{ vars.PAWAPAY_BALANCE_MIN_XOF }}
+          PAWAPAY_BALANCE_MIN_XAF=${{ vars.PAWAPAY_BALANCE_MIN_XAF }}
           # Essai gratuit de l abonnement PRO, en jours. Absente ou nulle : pas d essai.
           YADONY_BILLING_TRIAL_DAYS=${{ vars.YADONY_BILLING_TRIAL_DAYS }}
           YADONY_COMMISSION_RATE=${{ vars.YADONY_COMMISSION_RATE }}

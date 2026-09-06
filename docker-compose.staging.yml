@@ -11,6 +11,9 @@ services:
       SPRING_PROFILES_ACTIVE: staging
       GOOGLE_APPLICATION_CREDENTIALS: /app/firebase-service-account.json
       APP_BASE_URL: https://api-staging.yadony.com
+      # Base HTTPS de la page de rebond Wave (pawaPay) : le domaine staging, jamais le
+      # défaut de production ni un schéma applicatif (refusé par les PSP).
+      PAWAPAY_RETURN_BASE_URL: https://api-staging.yadony.com
       SPRING_DATASOURCE_URL: jdbc:postgresql://yadony_db_staging:5432/yadony_staging
       SPRING_DATASOURCE_USERNAME: ${DB_USERNAME}
       SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}

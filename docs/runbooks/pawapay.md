@@ -47,6 +47,17 @@ Le vérifieur de signature (`PawapaySignatureVerifier`) et le contrôleur de cal
 2. Activer **« Signed callbacks »** côté pawaPay en production, en cohérence avec `PAWAPAY_CALLBACK_SIGNATURES=true`.
 3. Récupérer le token API et le poser en variable d'environnement (`PAWAPAY_API_TOKEN`), jamais en dur.
 
+### Sandbox pawaPay sur staging
+
+Même mécanique, pointée sur `https://api-staging.yadony.com` et sur le dashboard **sandbox** (jamais le dashboard de production depuis staging) :
+
+1. Callback URLs : `https://api-staging.yadony.com/api/v1/pawapay/callbacks/deposits`, `.../payouts`, `.../refunds`. Champ Checkouts vide (produit non utilisé) ou recopie de l'URL des deposits si le formulaire l'exige. Case « I do not wish to receive callbacks » **décochée** : cochée, seul le poller ferait avancer les opérations, toutes les 2 minutes.
+2. API Security : « Sign all callbacks » activé. **Ne pas** ajouter de clé publique dans « Your Public Keys » : cette section sert à vérifier des requêtes signées par le marchand, or le backend authentifie ses appels par le bearer token seul.
+3. Create API Token : le token sandbox va dans le secret GitHub `PAWAPAY_API_TOKEN` de l'environnement `staging` (Settings > Environments > staging > Secrets).
+4. Variables GitHub du même environnement : `PAWAPAY_ENABLED=true`, `PAWAPAY_CALLBACK_SIGNATURES=true`, seuils `PAWAPAY_BALANCE_MIN_XOF`/`_XAF` optionnels. `PAWAPAY_BASE_URL` garde son défaut sandbox ; `PAWAPAY_RETURN_BASE_URL` est fixé à `https://api-staging.yadony.com` dans `docker-compose.staging.yml`.
+5. Déployer la branche : `git push origin <branche>:staging/<branche>`. La CI tourne sur `staging/**`, le workflow de déploiement staging part quand elle est verte (`workflow_run`), jamais sur un push direct de la branche de travail.
+6. Le premier callback signé reçu valide le vérifieur : dérouler les points 1 à 4 de la section « Avant d'activer le rail » sur les logs de `PawapayCallbackController`.
+
 ## Configuration nginx
 
 - `proxy_set_header Host $host;` est **indispensable** sur les routes pawaPay : le contrôleur signe `@authority` à partir de l'en-tête `Host` reçu (avec repli sur `getServerName()`). Sans ce header transmis tel quel, la vérification de signature échoue systématiquement.
