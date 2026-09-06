@@ -17,8 +17,8 @@ import org.springframework.transaction.event.TransactionalEventListener;
 /**
  * Écoute {@link PawapayOperationCompletedEvent} / {@link PawapayOperationFailedEvent} pour le
  * seul {@code kind == REFUND} — jumeau, côté remboursement, de
- * {@link MobileMoneyPayoutOutcomeListener} (payout, tâche 16) et
- * {@link MobileMoneyDepositOutcomeListener} (deposit, tâche 14).
+ * {@link MobileMoneyPayoutOutcomeListener} (payout) et
+ * {@link MobileMoneyDepositOutcomeListener} (deposit).
  *
  * <p>La décision métier (claim {@code ESCROW → REFUNDED}, choix du deposit à rembourser) est
  * déjà prise par {@link com.yadony.api.payments.RefundProcessor#processRefund} AVANT que le
@@ -31,7 +31,7 @@ import org.springframework.transaction.event.TransactionalEventListener;
  * <p>{@code FAILED} : l'argent n'est PAS revenu bien que le paiement soit déjà {@code REFUNDED}
  * en base — {@code RefundProcessor} a validé le claim au moment de la soumission, il n'y a pas
  * de retour automatique en {@code ESCROW} ici (la décision REFUNDED a déjà été auditée et
- * communiquée) : alerte admin pour reprise manuelle (relance, tâche 18).
+ * communiquée) : alerte admin pour reprise manuelle (relance admin).
  *
  * <p><b>Règle 18 du projet, non négociable</b> — {@code @TransactionalEventListener(phase =
  * AFTER_COMMIT)} combiné à {@code @Transactional(propagation = REQUIRES_NEW)} sur les deux

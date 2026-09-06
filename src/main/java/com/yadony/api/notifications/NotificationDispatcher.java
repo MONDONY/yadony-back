@@ -246,12 +246,12 @@ public class NotificationDispatcher {
                 Map.of("type", "BID_ACCEPTED", "bidId", event.getBidId().toString()), true);
     }
 
-    // ── MobileMoneyPaymentConfirmedEvent / MobileMoneyDepositFailedEvent (tâche 14) ──────────
+    // ── MobileMoneyPaymentConfirmedEvent / MobileMoneyDepositFailedEvent ─────────────────────
 
     /**
      * Deposit COMPLETED : expéditeur et voyageur reçoivent chacun une simple confirmation.
      *
-     * <p>Ronde 1, point 1 (CRITIQUE) : la notification voyageur est {@code notifyUser}, PAS
+     * <p>La notification voyageur est {@code notifyUser}, PAS
      * {@code notifyCritical}. {@code MOBILE_MONEY_PAYMENT_CONFIRMED} n'est pas dans
      * {@link NotificationTypes#CRITICAL} : {@code notifyCritical} persisterait quand même
      * {@code is_critical=true} (il ne consulte jamais cette liste avant d'écrire), mais
@@ -263,7 +263,7 @@ public class NotificationDispatcher {
      * d'urgent à faire dans la minute qui suit cette confirmation — l'urgence de la remise
      * est déjà portée par {@code HANDOVER_REMINDER_H2}, qui reste critique.
      *
-     * <p>Ronde 1, point 2 (Important) : le type émis est {@code MOBILE_MONEY_PAYMENT_CONFIRMED},
+     * <p>Le type émis est {@code MOBILE_MONEY_PAYMENT_CONFIRMED},
      * pas un type inventé — déjà enregistré dans {@link NotificationCategory} (PAIEMENTS),
      * {@link NotificationDeeplink} (ouvre le bid) et {@code NotificationPrefsService}
      * (suit {@code pushActivityBids}), et déjà backfillé par la migration V238.
@@ -280,10 +280,9 @@ public class NotificationDispatcher {
 
     /**
      * Deposit FAILED : seul l'expéditeur est notifié, c'est lui qui peut relancer un
-     * paiement. Ronde 1, point 2 : type dédié {@code MOBILE_MONEY_PAYMENT_FAILED},
-     * enregistré dans les trois catalogues (aucune ligne de migration nécessaire — un
-     * type qui n'a jamais été émis n'a aucune ligne historique à corriger, voir
-     * task-14-report.md, section Ronde 1).
+     * paiement. Type dédié {@code MOBILE_MONEY_PAYMENT_FAILED}, enregistré dans les trois
+     * catalogues (aucune ligne de migration nécessaire — un type qui n'a jamais été émis n'a
+     * aucune ligne historique à corriger).
      */
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
@@ -294,10 +293,10 @@ public class NotificationDispatcher {
     }
 
     /**
-     * Tâche 15 — deadline de paiement dépassée : expéditeur et voyageur reçoivent chacun une
+     * Deadline de paiement dépassée : expéditeur et voyageur reçoivent chacun une
      * notification. {@code notifyUser}, jamais {@code notifyCritical} : {@code MM_PAYMENT_EXPIRED}
      * n'est pas dans {@link NotificationTypes#CRITICAL} (même motif que
-     * {@code onMobileMoneyPaymentConfirmed}, tâche 14) — un SMS de repli 60 s après CHAQUE
+     * {@code onMobileMoneyPaymentConfirmed}) — un SMS de repli 60 s après CHAQUE
      * expiration serait un défaut, pas une amélioration. Type enregistré dans les trois
      * catalogues ({@link NotificationCategory}, {@link NotificationDeeplink},
      * {@code NotificationPrefsService}) et leurs trois tests d'énumération manuelle.
@@ -430,13 +429,13 @@ public class NotificationDispatcher {
      * "PAYMENT_RELEASED", même {@code notifyCritical} (délai de virement J+1, suivi ACK / SMS
      * de repli historique).
      *
-     * <p>Rail pawaPay (tâche 16) : texte et devise locale dédiés
+     * <p>Rail pawaPay : texte et devise locale dédiés
      * ({@link NotificationTexts#mobileMoneyPayoutSent}), mais {@code notifyUser} — JAMAIS
      * {@code notifyCritical}. Un versement mobile money n'est publié qu'à la confirmation
      * {@code COMPLETED} du payout ({@code MobileMoneyPayoutOutcomeListener}) : l'argent est
      * déjà arrivé, rien d'urgent ne reste à faire dans la minute qui suit — un SMS de repli
      * 60 s plus tard serait un défaut, pas une amélioration (même motif que
-     * {@code onMobileMoneyPaymentConfirmed}, tâche 14). Type "PAYMENT_RELEASED" réutilisé
+     * {@code onMobileMoneyPaymentConfirmed}). Type "PAYMENT_RELEASED" réutilisé
      * volontairement (déjà catalogué dans NotificationCategory/NotificationDeeplink) plutôt
      * qu'un type inventé : {@code notifyUser} persiste toujours {@code is_critical=false}
      * quel que soit le type, donc aucun risque de déclencher le repli SMS malgré ce type

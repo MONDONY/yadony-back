@@ -10,7 +10,7 @@ import java.util.UUID;
  * confirmation {@code COMPLETED} — jamais à la simple soumission, pour ne pas annoncer un
  * versement qui pourrait encore échouer côté opérateur).
  *
- * <p><b>Ronde 1 (revue), point 4</b> — {@code amount} n'a PAS la même sémantique selon le rail,
+ * <p>{@code amount} n'a PAS la même sémantique selon le rail,
  * et c'est un fait historique volontairement non corrigé ici : le rail carte (constructeur
  * 4-arg, et {@code DeliveryEventListener} qui l'appelle) publie {@code payment.getAmount()},
  * c'est-à-dire le BRUT payé par l'expéditeur — jamais {@code amount − commission}. Le rail

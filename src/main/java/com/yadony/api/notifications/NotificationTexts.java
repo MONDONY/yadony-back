@@ -62,7 +62,7 @@ public final class NotificationTexts {
     }
 
     /**
-     * Montant tel qu'affiché dans un push mobile money (tâche 16) : « 15000 F CFA », sans
+     * Montant tel qu'affiché dans un push mobile money : « 15000 F CFA », sans
      * décimale pour les deux francs CFA (XOF, XAF), symbole du catalogue
      * {@link com.yadony.api.payments.currency.SupportedCurrency} plutôt que le code ISO —
      * plus lisible dans un push qu'un code à trois lettres, et cohérent avec le rendu déjà
@@ -421,7 +421,7 @@ public final class NotificationTexts {
     }
 
     /**
-     * Rail pawaPay (tâche 16) : jumeau mobile money de {@link #paymentReleased(String)},
+     * Rail pawaPay : jumeau mobile money de {@link #paymentReleased(String)},
      * poussé à la confirmation {@code COMPLETED} du payout (pas à la simple soumission).
      * {@code formattedAmount} déjà formaté par l'appelant (« 13200 F CFA », voir
      * {@link #mobileMoneyAmount(BigDecimal, String)}). Toujours envoyé en {@code notifyUser},
@@ -461,7 +461,7 @@ public final class NotificationTexts {
     }
 
     /**
-     * Tâche 15 — deadline de paiement (30 min après acceptation) dépassée côté expéditeur :
+     * Deadline de paiement (30 min après acceptation) dépassée côté expéditeur :
      * le bid est annulé, la capacité rendue au voyageur.
      */
     public static NotificationText mobileMoneyPaymentExpired() {

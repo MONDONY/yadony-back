@@ -47,7 +47,7 @@ import java.util.Optional;
  *
  * Cross-package communication via Spring Events only.
  *
- * <p><b>Tâche 16 (pawaPay)</b> : un troisième chemin, gardé par
+ * <p><b>Rail pawaPay</b> : un troisième chemin, gardé par
  * {@code payment.getRail() == PaymentRail.PAWAPAY}, bifurque vers
  * {@link com.yadony.api.payments.mobilemoney.MobileMoneyPayoutInitiator} juste après le
  * claim atomique ci-dessous, avant tout appel Stripe. Aucun appel Stripe, aucun
@@ -69,7 +69,7 @@ public class DeliveryEventListener {
     private final com.yadony.api.voucher.CommissionVoucherService voucherService;
 
     /**
-     * Ronde 1 (revue), point 5 : injection par CONSTRUCTEUR, jamais par champ — une dépendance
+     * Injection par CONSTRUCTEUR, jamais par champ — une dépendance
      * contournable (comme l'était le champ {@code @Autowired} précédent) est une NPE qui
      * attend, si un futur test construit cette classe sans la fournir alors qu'un paiement
      * PAWAPAY lui parvient. {@code DeliveryEventListenerTest} et
@@ -211,7 +211,7 @@ public class DeliveryEventListener {
     }
 
     /**
-     * Rail pawaPay (tâche 16) : même formule de net que {@link #releaseV2}, volontairement
+     * Rail pawaPay : même formule de net que {@link #releaseV2}, volontairement
      * recopiée pour laisser le chemin Stripe byte pour byte identique (aucune régression
      * possible sur le rail carte). {@code payoutInitiator.release} porte toute la logique
      * mobile money (compte de versement, payout orphelin, soumission pawaPay) ; un échec y

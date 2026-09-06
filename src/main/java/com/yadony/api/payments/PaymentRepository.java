@@ -235,9 +235,9 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
             @Param("to") LocalDateTime to);
 
     /**
-     * Tâche 18, Ronde 1, point 6 : {@code rail} (STRIPE/PAWAPAY) filtre désormais réellement la
+     * {@code rail} (STRIPE/PAWAPAY) filtre réellement la
      * requête — avant cette ronde, le contrôleur admin traduisait tout {@code method != STRIPE}
-     * en page vide, un raccourci devenu faux depuis que les paiements mobile money (tâche 12/16)
+     * en page vide, un raccourci devenu faux depuis que les paiements mobile money
      * créent aussi une ligne {@code payments}.
      */
     @Query(value = """

@@ -70,10 +70,10 @@ public class BidAcceptedEventListener {
         // rien pour éviter tout risque de double prélèvement (CASH) ou une exception sur un
         // PaymentIntent inexistant (MOBILE_MONEY).
         //
-        // Ronde 1, point 5 : avant cette garde explicite, un bid mobile money n'échappait au
+        // Avant cette garde explicite, un bid mobile money n'échappait au
         // chemin STRIPE ci-dessous que par coïncidence — payment.getStatus() != ESCROW au
         // moment précis où CE listener asynchrone le lisait. Sous un pool @Async saturé, nul
-        // besoin d'attendre la tâche 14 (confirmation d'escrow mobile money) pour le déclencher
+        // besoin d'attendre la confirmation d'escrow mobile money pour le déclencher
         // : n'importe quel retard suffisant fait passer ce listener sur la branche
         // « traveler.getStripeAccountStatus() != ONBOARDING_COMPLETE » (vrai pour TOUT
         // voyageur mobile money, qui n'a jamais de compte Stripe Connect) et tenter

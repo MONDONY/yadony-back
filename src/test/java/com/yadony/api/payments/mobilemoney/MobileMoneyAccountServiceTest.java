@@ -20,6 +20,7 @@ import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyAccountResponse;
 import com.yadony.api.payments.pawapay.PawapayClient;
 import com.yadony.api.payments.pawapay.PawapayProperties;
+import com.yadony.api.payments.pawapay.PawapayProviderResolver;
 import com.yadony.api.payments.pawapay.dto.PawapayProviderConfig;
 import com.yadony.api.payments.pawapay.dto.PawapayProviderPrediction;
 import java.math.BigDecimal;
@@ -56,7 +57,8 @@ class MobileMoneyAccountServiceTest {
         user = new UserEntity();
         ReflectionTestUtils.setField(user, "id", userId);
         user.setFirebaseUid("uid-1");
-        service = new MobileMoneyAccountService(userRepository, firebaseContact, client, currencyResolver, audit, props(true));
+        service = new MobileMoneyAccountService(userRepository, firebaseContact, new PawapayProviderResolver(client),
+                currencyResolver, audit, props(true));
         // lenient : get_notConfigured_isAStateNotAnError (findById, pas findByIdForUpdate) et
         // activate_whenDisabledGlobally_is422 (rejeté avant tout accès repository) ne consomment
         // jamais ce stub — cf. les ~60 autres classes de test du projet qui suivent le même motif.
@@ -242,7 +244,8 @@ class MobileMoneyAccountServiceTest {
 
     @Test
     void activate_whenDisabledGlobally_is422() {
-        MobileMoneyAccountService off = new MobileMoneyAccountService(userRepository, firebaseContact, client, currencyResolver, audit, props(false));
+        MobileMoneyAccountService off = new MobileMoneyAccountService(userRepository, firebaseContact,
+                new PawapayProviderResolver(client), currencyResolver, audit, props(false));
         assertThatThrownBy(() -> off.activate(userId)).isInstanceOf(YadonyBusinessException.class)
                 .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-disabled");
     }

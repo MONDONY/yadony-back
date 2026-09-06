@@ -26,19 +26,17 @@ import com.yadony.api.payments.events.MobileMoneyDepositFailedEvent;
 import com.yadony.api.payments.events.MobileMoneyPaymentConfirmedEvent;
 import com.yadony.api.payments.events.MobileMoneyPaymentExpiredEvent;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPaymentStatusResponse;
-import com.yadony.api.payments.pawapay.PawapayClient;
-import com.yadony.api.payments.pawapay.PawapayCountries;
 import com.yadony.api.payments.pawapay.PawapayErrors;
 import com.yadony.api.payments.pawapay.PawapayOperationEntity;
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
 import com.yadony.api.payments.pawapay.PawapayOperationService;
 import com.yadony.api.payments.pawapay.PawapayOperationStatus;
 import com.yadony.api.payments.pawapay.PawapayProperties;
+import com.yadony.api.payments.pawapay.PawapayProviderResolver;
 import com.yadony.api.payments.pawapay.PawapayProviders;
 import com.yadony.api.payments.pawapay.PawapaySubmissionService;
 import com.yadony.api.payments.pawapay.PawapayText;
 import com.yadony.api.payments.pawapay.dto.PawapayProviderConfig;
-import com.yadony.api.payments.pawapay.dto.PawapayProviderPrediction;
 import com.yadony.api.promo.PromoRedemptionEntity;
 import com.yadony.api.promo.PromoService;
 import com.yadony.api.voucher.CommissionVoucherService;
@@ -60,7 +58,6 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.springframework.web.client.RestClientException;
 
 /**
  * Rail mobile money côté bid. Acceptation dans la même transaction que la création du
@@ -97,7 +94,7 @@ public class MobileMoneyBidPaymentService {
     private final PaymentRepository paymentRepository;
     private final PawapayOperationService operations;
     private final PawapaySubmissionService submission;
-    private final PawapayClient client;
+    private final PawapayProviderResolver providers;
     private final MobileMoneyBidPricing pricing;
     private final FirebaseContactService firebaseContact;
     private final AuditService audit;
@@ -107,8 +104,8 @@ public class MobileMoneyBidPaymentService {
     private final PawapayProperties props;
 
     /**
-     * Transaction INDÉPENDANTE, réservée à l'entrée d'audit d'un dépôt refusé (Ronde 1,
-     * point 3) — {@code @Transactional(REQUIRES_NEW)} sur une méthode privée ne servirait
+     * Transaction INDÉPENDANTE, réservée à l'entrée d'audit d'un dépôt refusé —
+     * {@code @Transactional(REQUIRES_NEW)} sur une méthode privée ne servirait
      * à rien ici (auto-invocation : l'appel `this.xxx()` ne passe jamais par le proxy Spring
      * qui porte l'annotation). Même motif que {@code GuestUserCleanupScheduler}.
      */
@@ -118,7 +115,7 @@ public class MobileMoneyBidPaymentService {
      * Injection par champ, pas par constructeur : {@code AdminAlertService} n'est utile
      * qu'à {@link #confirmEscrow} (alerte admin sur un deposit encaissé après annulation),
      * ajouter un 17e paramètre constructeur aurait cassé tous les appels déjà couverts par
-     * {@code MobileMoneyBidPaymentServiceTest} (tâche 13) sans aucun bénéfice pour ces
+     * {@code MobileMoneyBidPaymentServiceTest} sans aucun bénéfice pour ces
      * tests-là. {@code required = false} : reste {@code null} si jamais non résolu, auquel
      * cas {@link #confirmEscrow} continue de fonctionner sans lever d'alerte (garde
      * explicite dans {@code refundAfterCancel}).
@@ -129,7 +126,7 @@ public class MobileMoneyBidPaymentService {
     public MobileMoneyBidPaymentService(BidRepository bidRepository, AnnouncementRepository announcementRepository,
                                         UserRepository userRepository, PaymentRepository paymentRepository,
                                         PawapayOperationService operations, PawapaySubmissionService submission,
-                                        PawapayClient client, MobileMoneyBidPricing pricing,
+                                        PawapayProviderResolver providers, MobileMoneyBidPricing pricing,
                                         FirebaseContactService firebaseContact, AuditService audit,
                                         ApplicationEventPublisher events,
                                         PromoService promoService, CommissionVoucherService voucherService,
@@ -140,7 +137,7 @@ public class MobileMoneyBidPaymentService {
         this.paymentRepository = paymentRepository;
         this.operations = operations;
         this.submission = submission;
-        this.client = client;
+        this.providers = providers;
         this.pricing = pricing;
         this.firebaseContact = firebaseContact;
         this.audit = audit;
@@ -301,66 +298,41 @@ public class MobileMoneyBidPaymentService {
         }
 
         String msisdn = resolvePayerMsisdn(bid, phoneOverride);
-        // Les deux appels réseau pawaPay ci-dessous remontent en 502 normalisé du rail : en 500
-        // générique, le verrou PESSIMISTIC_WRITE pris sur `payments` par findByBidIdForUpdate
-        // resterait posé pendant tout le timeout HTTP, bloquant toute initiation concurrente.
-        String context = "l'initiation du deposit pour le bid " + bidId;
-        Optional<PawapayProviderPrediction> predicted;
+        // Une panne pawaPay remonte en 502 normalisé du rail : en 500 générique, le verrou
+        // PESSIMISTIC_WRITE pris sur `payments` par findByBidIdForUpdate resterait posé pendant
+        // tout le timeout HTTP, bloquant toute initiation concurrente. Un numéro reconnu mais
+        // inexploitable devient le 422 du payeur, avec ses libellés.
+        PawapayProviderResolver.Resolved resolved;
         try {
-            predicted = client.predictProvider(msisdn);
-        } catch (RestClientException e) {
-            throw PawapayErrors.providerUnavailable("predict-provider", context, e);
+            resolved = providers.resolve(msisdn, PawapayOperationKind.DEPOSIT, payment.getCurrency(),
+                    "l'initiation du deposit pour le bid " + bidId);
+        } catch (PawapayProviderResolver.UnsupportedNumberException e) {
+            throw payerUnsupported(switch (e.reason()) {
+                case NO_PROVIDER -> "Aucun opérateur mobile money reconnu pour ce numéro.";
+                case OPERATION_CLOSED -> e.providerLabel() + " ne permet pas le paiement pour le moment.";
+                case CURRENCY_MISMATCH -> "Ce numéro paie en " + e.providerCurrency() + ", ce colis est en " + payment.getCurrency() + ".";
+                case COUNTRY_UNKNOWN -> "Pays non reconnu pour ce numéro.";
+            });
         }
-        PawapayProviderPrediction prediction = predicted
-                .orElseThrow(() -> payerUnsupported("Aucun opérateur mobile money reconnu pour ce numéro."));
-        Map<String, PawapayProviderConfig> configuration;
-        try {
-            configuration = client.activeConfiguration();
-        } catch (RestClientException e) {
-            throw PawapayErrors.providerUnavailable("active-configuration", context, e);
+        PawapayProviderConfig.Limits deposit = resolved.config().deposit();
+        if (deposit.minAmount() != null && payment.getAmount().compareTo(deposit.minAmount()) < 0
+                || deposit.maxAmount() != null && payment.getAmount().compareTo(deposit.maxAmount()) > 0) {
+            throw payerUnsupported("Montant hors des limites de " + resolved.providerLabel() + ".");
         }
-        PawapayProviderConfig conf = configuration.get(prediction.provider());
-        if (conf == null || !conf.supportsDeposit()) {
-            throw payerUnsupported(PawapayProviders.label(prediction.provider()) + " ne permet pas le paiement pour le moment.");
-        }
-        if (!conf.currency().equalsIgnoreCase(payment.getCurrency())) {
-            throw payerUnsupported("Ce numéro paie en " + conf.currency() + ", ce colis est en " + payment.getCurrency() + ".");
-        }
-        if (conf.deposit().minAmount() != null && payment.getAmount().compareTo(conf.deposit().minAmount()) < 0
-                || conf.deposit().maxAmount() != null && payment.getAmount().compareTo(conf.deposit().maxAmount()) > 0) {
-            throw payerUnsupported("Montant hors des limites de " + PawapayProviders.label(prediction.provider()) + ".");
-        }
-        // PawapayCountries.toAlpha2 rend null pour un alpha-3 non couvert par la table ISO du
-        // JDK. pawapay_operations.country est NOT NULL : sans cette garde, submitDeposit
-        // lèverait une violation de contrainte brute (500) au lieu d'un 422 propre — sur le
-        // chemin qui engage l'argent.
-        String country = PawapayCountries.toAlpha2(prediction.countryAlpha3());
-        if (country == null) {
-            throw payerUnsupported("Pays non reconnu pour ce numéro.");
-        }
-        // Ce numéro-ci vient de pawaPay (prédiction, après un appel réseau réussi), pas d'une
-        // saisie de l'expéditeur — hors bornes de Msisdn.normalize, c'est pawaPay qui répond
-        // une donnée inexploitable : 502, pas 422 (même traitement que l'activation du compte).
-        String normalized;
-        try {
-            normalized = Msisdn.normalize(prediction.phoneNumber() != null ? prediction.phoneNumber() : msisdn);
-        } catch (IllegalArgumentException e) {
-            throw PawapayErrors.providerUnavailable("msisdn-normalize", context, e);
-        }
-        if (!normalized.equals(bid.getMobileMoneyPhone())) {
-            bid.setMobileMoneyPhone(normalized);
-            bid.setMobileMoneyCountryCode(country);
+        if (!resolved.msisdn().equals(bid.getMobileMoneyPhone())) {
+            bid.setMobileMoneyPhone(resolved.msisdn());
+            bid.setMobileMoneyCountryCode(resolved.countryAlpha2());
             bidRepository.save(bid);
         }
         String successfulUrl = null;
         String failedUrl = null;
-        if (conf.isRedirectDeposit()) {
+        if (resolved.config().isRedirectDeposit()) {
             String base = props.returnBaseUrl() + "/api/v1/pawapay/return/" + bidId;
             successfulUrl = base + "?outcome=success";
             failedUrl = base + "?outcome=failed";
         }
-        PawapayOperationEntity op = submission.submitDeposit(payment.getId(), normalized, prediction.provider(), country,
-                payment.getAmount(), payment.getCurrency(), "bid-" + bidId, successfulUrl, failedUrl);
+        PawapayOperationEntity op = submission.submitDeposit(payment.getId(), resolved.msisdn(), resolved.provider(),
+                resolved.countryAlpha2(), payment.getAmount(), payment.getCurrency(), "bid-" + bidId, successfulUrl, failedUrl);
         // Transaction INDÉPENDANTE — AuditService.log() n'est pas annoté, il rejoindrait sinon
         // la transaction d'initiateDeposit. Sur un SUBMIT_REJECTED, le throw juste en dessous
         // annule cette transaction ; la ligne pawapay_operations créée par submitDeposit
@@ -407,7 +379,7 @@ public class MobileMoneyBidPaymentService {
         }
     }
 
-    // ── Séquestre (tâche 14) ────────────────────────────────────────────────
+    // ── Séquestre ───────────────────────────────────────────────────────────
 
     /**
      * Deposit COMPLETED : PENDING → ESCROW une seule fois, via l'UPDATE gardé
@@ -585,27 +557,23 @@ public class MobileMoneyBidPaymentService {
         events.publishEvent(new MobileMoneyDepositFailedEvent(bid.getId(), bid.getSenderId(), safeFailureCode));
     }
 
-    // ── Expiration (tâche 15) ────────────────────────────────────────────────
+    // ── Expiration ──────────────────────────────────────────────────────────
 
     /**
      * Issue d'un appel à {@link #expire}, à l'usage exclusif du scheduler appelant.
      *
-     * <p><b>Ronde 2, points 1 et 2</b> : {@code expire()} ne lève plus d'alerte administrateur et
-     * n'évince plus lui-même le cache de recherche — les deux étaient exécutés PENDANT que
-     * {@code expire()} tenait ses deux verrous (paiement, bid), l'un et l'autre synchrones
-     * ({@code AdminAlertService#raise} poste sur Telegram par HTTP ; l'éviction, elle, était sans
-     * conséquence tant qu'aucun bid ne restait en échec fermé — mais ces échecs fermés en créent
-     * justement, par construction). Retarder {@link #confirmEscrow} — la transaction même qu'on
-     * attend pour résoudre l'anomalie qui a déclenché l'alerte — par les verrous d'{@code expire}
-     * était le pire endroit possible pour un appel réseau synchrone. Les deux actions sont
-     * désormais décidées par {@code MobileMoneyPaymentDeadlineScheduler}, APRÈS le retour de
-     * cette méthode (donc après le commit de son {@code REQUIRES_NEW}, hors verrou), à partir de
-     * la seule valeur de retour :
+     * <p>{@code expire()} ne lève pas d'alerte administrateur et n'évince pas elle-même le cache
+     * de recherche : elle tient deux verrous (paiement, bid), et {@code AdminAlertService#raise}
+     * poste sur Telegram par HTTP — retarder {@link #confirmEscrow} (la transaction même qu'on
+     * attend pour résoudre l'anomalie qui a déclenché l'alerte) par ces verrous serait le pire
+     * endroit possible pour un appel réseau synchrone. Les deux actions sont décidées par
+     * {@code MobileMoneyPaymentDeadlineScheduler}, APRÈS le retour de cette méthode (donc après
+     * le commit de son {@code REQUIRES_NEW}, hors verrou), à partir de la seule valeur de retour :
      * <ul>
      *   <li>{@link #CANCELLED} → le scheduler évince le cache {@code announcements-search} ;</li>
      *   <li>{@link #PAYMENT_MISSING} / {@link #DEPOSIT_COMPLETED_NOT_APPLIED} → le scheduler
-     *       lève une alerte administrateur, dédupliquée par bid (même motif que
-     *       {@code PawapayReconciliationPoller#escalateUnknown}) — sans cette dédup, un bid
+     *       lève une alerte administrateur, dédupliquée par bid ({@code AdminAlertEscalator})
+     *       — sans cette dédup, un bid
      *       resté en échec fermé (donc resélectionné à chaque tick) spammerait Sentry et
      *       Telegram indéfiniment ;</li>
      *   <li>{@link #IGNORED} → rien.</li>
@@ -638,7 +606,7 @@ public class MobileMoneyBidPaymentService {
      * lui-même — le champ qui définit l'opération : ne jamais faire confiance au seul filtre du
      * scheduler appelant pour ces trois conditions.
      *
-     * <p><b>Ordre des verrous (Ronde 1, point 1 — CRITIQUE)</b> : le paiement est verrouillé
+     * <p><b>Ordre des verrous</b> : le paiement est verrouillé
      * ({@link PaymentRepository#findByBidIdForUpdate}) AVANT le bid
      * ({@link com.yadony.api.matching.BidRepository#findByIdForUpdate}) — exactement comme
      * {@link #confirmEscrow} (qui touche le paiement en premier via {@code markEscrowIfPending})
@@ -657,8 +625,8 @@ public class MobileMoneyBidPaymentService {
      * événement. Agir quand même annulerait un colis déjà payé et regonflerait à tort la
      * capacité du trajet — c'est l'invariant central de cette méthode.
      *
-     * <p><b>Dépôt {@code COMPLETED} mais paiement encore {@code PENDING} (Ronde 1, point 2 —
-     * CRITIQUE)</b> : ce n'est PAS un dépôt mort, c'est un dépôt EN VOL — {@link #confirmEscrow}
+     * <p><b>Dépôt {@code COMPLETED} mais paiement encore {@code PENDING}</b> : ce n'est PAS un
+     * dépôt mort, c'est un dépôt EN VOL — {@link #confirmEscrow}
      * n'est simplement pas encore passé (listener asynchrone en file, redémarrage, ou victime de
      * l'interblocage ci-dessus). L'annuler solderait en silence un colis déjà payé : bid annulé,
      * capacité regonflée, et « paiement non reçu » notifié à un expéditeur pourtant débité — sans
@@ -670,10 +638,10 @@ public class MobileMoneyBidPaymentService {
      * <p>Un dépôt encore ouvert (jamais final — {@link PawapayOperationStatus#isFinal()}, donc ni
      * {@code COMPLETED} ni mort) n'est pas davantage annulé : l'expéditeur peut être en train de
      * saisir son code PIN au moment même où la deadline tombe. On attend ; le poller de
-     * réconciliation (tâche 10) mènera ce dépôt à son état final. N'écrit jamais sur
+     * réconciliation mènera ce dépôt à son état final. N'écrit jamais sur
      * {@code pawapay_operations}.
      *
-     * <p><b>Paiement introuvable (Ronde 1, point 6)</b> : un bid {@code AWAITING_PAYMENT} en
+     * <p><b>Paiement introuvable</b> : un bid {@code AWAITING_PAYMENT} en
      * mobile money a normalement toujours un paiement PAWAPAY associé (créé dans la même
      * transaction qu'{@link #acceptBid}) — état structurellement impossible en théorie, mais sur
      * le chemin de l'argent on échoue fermé : on n'annule rien, on journalise, et on rend
@@ -681,19 +649,15 @@ public class MobileMoneyBidPaymentService {
      * sait rien du paiement réel.
      *
      * <p>Restitution de capacité : inverse exact de la réservation faite par {@link #acceptBid}
-     * — même verrou pessimiste {@link AnnouncementRepository#findByIdForUpdate}, même condition
-     * COMBINÉE {@code !kgFree && weightKg != null} pour l'ajout de poids ET la bascule
-     * {@code FULL → ACTIVE} (Ronde 1, point 3 — {@link #acceptBid} ne pose {@code FULL} QUE dans
-     * cette même branche : un bid sans poids ne rend donc jamais une annonce complète, et si elle
-     * l'est, c'est un autre bid qui l'a remplie. Rebasculer {@code ACTIVE} sans avoir rendu le
-     * moindre kilo ferait réapparaître en recherche un trajet réellement encore à zéro kilo
-     * disponible — défaut qui existait dans {@code BidService#restoreCapacityIfNeeded}, hors
-     * périmètre de cette tâche à l'origine et donc pas reproduit ici ; aligné depuis sur cette
-     * même condition combinée par la revue finale, point 4).
+     * — même verrou pessimiste {@link AnnouncementRepository#findByIdForUpdate}, même méthode
+     * d'entité ({@code AnnouncementEntity#releaseCapacity}, condition COMBINÉE portée une seule
+     * fois) : un bid sans poids ne rend jamais une annonce complète, et si elle l'est, c'est un
+     * autre bid qui l'a remplie — la rebasculer {@code ACTIVE} sans avoir rendu le moindre kilo
+     * ferait réapparaître en recherche un trajet réellement encore à zéro kilo disponible.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public ExpireOutcome expire(UUID bidId) {
-        // Ronde 1, point 1 : paiement verrouillé AVANT le bid — voir Javadoc.
+        // Paiement verrouillé AVANT le bid — voir Javadoc (ordre des verrous).
         Optional<PaymentEntity> payment = paymentRepository.findByBidIdForUpdate(bidId)
                 .filter(p -> p.getRail() == PaymentRail.PAWAPAY);
         BidEntity bid = bidRepository.findByIdForUpdate(bidId).orElse(null);
@@ -704,8 +668,8 @@ public class MobileMoneyBidPaymentService {
             return ExpireOutcome.IGNORED;
         }
         if (payment.isEmpty()) {
-            // Ronde 1, point 6 : échoue fermé, jamais d'annulation à l'aveugle sur le chemin de
-            // l'argent — voir Javadoc. Ronde 2, point 1 : ne lève plus l'alerte ici, la rend.
+            // Échoue fermé, jamais d'annulation à l'aveugle sur le chemin de l'argent — voir
+            // Javadoc. Ne lève pas l'alerte ici (verrous tenus), la rend au scheduler.
             log.error("Bid {} AWAITING_PAYMENT/MOBILE_MONEY sans paiement PAWAPAY associé, expiration abandonnée", bidId);
             return ExpireOutcome.PAYMENT_MISSING;
         }
@@ -718,8 +682,8 @@ public class MobileMoneyBidPaymentService {
         }
         boolean depositCompletedNotApplied = deposit.map(o -> o.getStatus() == PawapayOperationStatus.COMPLETED).orElse(false);
         if (depositCompletedNotApplied) {
-            // Ronde 1, point 2 (CRITIQUE) : en vol, pas mort — voir Javadoc. Ronde 2, point 1 :
-            // ne lève plus l'alerte ici, la rend.
+            // En vol, pas mort — voir Javadoc. Ne lève pas l'alerte ici (verrous tenus), la
+            // rend au scheduler.
             log.error("Bid {} : deposit COMPLETED mais paiement {} encore PENDING, expiration abandonnée "
                     + "(confirmEscrow n'est pas encore passé)", bidId, p.getId());
             return ExpireOutcome.DEPOSIT_COMPLETED_NOT_APPLIED;
@@ -743,8 +707,8 @@ public class MobileMoneyBidPaymentService {
         events.publishEvent(new MobileMoneyPaymentExpiredEvent(
                 bidId, bid.getSenderId(), announcement != null ? announcement.getTravelerId() : null));
         log.info("Bid {} annulé : paiement mobile money non reçu dans le délai", bidId);
-        // Ronde 2, point 2 : n'évince plus le cache ici (@CacheEvict retiré) — le scheduler le
-        // fait après le commit de cette transaction REQUIRES_NEW, sur CANCELLED uniquement.
+        // Pas d'éviction du cache ici — le scheduler le fait après le commit de cette
+        // transaction REQUIRES_NEW, sur CANCELLED uniquement.
         return ExpireOutcome.CANCELLED;
     }
 

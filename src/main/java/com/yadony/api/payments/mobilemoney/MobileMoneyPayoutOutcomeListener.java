@@ -39,7 +39,7 @@ import org.springframework.transaction.event.TransactionalEventListener;
  * a déjà validé le claim avant la soumission, et rien ici ne le fait revenir en {@code ESCROW}
  * automatiquement : ce cas est anormal (pawaPay a ACCEPTED puis FAILED un payout dont les
  * comptes/montants ont été validés à la soumission) et attend une reprise par un administrateur
- * (relance de la tâche 18), d'où l'alerte {@code PAWAPAY_PAYOUT_FAILED} plutôt qu'une
+ * (relance admin), d'où l'alerte {@code PAWAPAY_PAYOUT_FAILED} plutôt qu'une
  * correction automatique.
  *
  * <p><b>Règle 18 du projet, non négociable</b> — {@code @TransactionalEventListener(phase =
@@ -82,7 +82,7 @@ public class MobileMoneyPayoutOutcomeListener {
     public void onCompleted(PawapayOperationCompletedEvent event) {
         if (event.kind() != PawapayOperationKind.PAYOUT || event.paymentId() == null) return;
         PawapayOperationEntity op = operations.get(event.operationId());
-        // Ronde 1, point 7 : cas structurellement impossible aujourd'hui (le paiement, son bid
+        // Cas structurellement impossible aujourd'hui (le paiement, son bid
         // et son annonce existent nécessairement pour avoir pu être versés), mais un log.warn
         // coûte une ligne — même garde-fou que MobileMoneyBidPaymentService#notifyDepositFailed
         // pour son cas jumeau, plutôt qu'un silence total si l'invariant venait à se rompre.

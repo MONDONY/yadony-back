@@ -29,6 +29,7 @@ Ajout d'un troisième rail de paiement, à côté de la carte (Stripe Connect) e
 - `PawapayAmounts.java` : formatage des montants pour pawaPay (XOF/XAF sans décimale) ; l'arrondi est celui de `CurrencyAmount`, jamais une seconde arithmétique.
 - `PawapayCountries.java` : conversion alpha-3 (pawaPay) vers alpha-2 (yadony).
 - `PawapayProviders.java` : libellés lisibles des opérateurs, constante `REDIRECT_AUTH` (Wave).
+- `PawapayProviderResolver.java` : ce que pawaPay sait faire d'un numéro pour un type d'opération (opérateur prédit → configuration active → devise → numéro normalisé → pays alpha-2), séquence unique partagée par l'activation du compte (PAYOUT) et l'initiation du dépôt (DEPOSIT) ; pawaPay indisponible → 502, numéro reconnu mais inexploitable → `UnsupportedNumberException` que chaque appelant traduit en son 422 avec ses libellés.
 - `PawapayErrors.java` : les deux erreurs RFC 7807 partagées par tout le rail (`mobile-money-disabled`, `mobile-money-provider-unavailable`), définies une seule fois.
 - `PawapayText.java` : bornage commun (64 caractères, largeur de `failure_code`) de toute valeur non authentifiée avant audit, journal ou message d'erreur.
 - `admin/AdminAlertEscalator.java` : alerte administrateur dédupliquée par incident (ligne `admin_alerts` non résolue du même type), écrite dans sa propre transaction `REQUIRES_NEW`, garde intégrée sur `VARCHAR(60)` — l'unique implémentation, appelée par le poller, le moniteur de solde, le scheduler d'expiration, le versement et le remboursement.

@@ -223,7 +223,7 @@ public class PawapayClient {
      * normale), seul un 2xx est exploitable ici. Un 401/403/429 porte un corps JSON
      * parfaitement lisible mais qui ne dit rien sur l'opération demandée — le confondre
      * avec « pawaPay ne connaît pas cet id » finaliserait à tort une opération qui n'a
-     * simplement pas pu être interrogée (revue ronde 1, point 1).
+     * simplement pas pu être interrogée.
      */
     private JsonNode readStatusBody(String path, ClientHttpResponse res) throws IOException {
         if (!res.getStatusCode().is2xxSuccessful()) {

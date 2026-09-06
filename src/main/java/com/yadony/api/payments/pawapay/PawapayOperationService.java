@@ -86,7 +86,7 @@ public class PawapayOperationService {
      * COMPLETED avant que cette réponse HTTP d'initiation ne revienne serait
      * écrasé silencieusement, sans la moindre {@code OptimisticLockException}.
      * Si la garde perd la course (0 ligne touchée), on se contente de
-     * journaliser : le poller (tâche 10) relira le vrai statut auprès de
+     * journaliser : le poller relira le vrai statut auprès de
      * pawaPay.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)

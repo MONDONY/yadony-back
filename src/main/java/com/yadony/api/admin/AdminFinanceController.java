@@ -67,7 +67,7 @@ public class AdminFinanceController {
     }
 
     /**
-     * Tâche 18 — liste des opérations pawaPay (deposit/payout/refund), plus récentes d'abord.
+     * Liste des opérations pawaPay (deposit/payout/refund), plus récentes d'abord.
      * Même onglet Transactions, même garde {@code PAYMENT_VIEW} que les deux vues ci-dessus.
      */
     @PreAuthorize("hasRole('ADMIN') and hasAuthority('PAYMENT_VIEW')")

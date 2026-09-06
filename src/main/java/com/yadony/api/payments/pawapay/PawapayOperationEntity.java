@@ -94,7 +94,7 @@ public class PawapayOperationEntity {
     private String failureMessage;
 
     // Chiffré : ce JSON transporte accountDetails.phoneNumber en clair côté
-    // pawaPay (corps du callback tâche 9, réponse de statut tâche 10) — sans
+    // pawaPay (corps du callback, réponse de statut) — sans
     // ce @Convert, le chiffrement de `msisdn` juste au-dessus serait
     // décoratif puisque le même numéro ressortirait ici en clair.
     @Convert(converter = EncryptedStringConverter.class)

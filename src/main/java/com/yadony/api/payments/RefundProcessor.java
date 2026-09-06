@@ -47,7 +47,7 @@ import java.util.UUID;
  * <p>{@code REQUIRES_NEW} : chaque paiement vit dans sa propre transaction — un échec dans un
  * traitement par lot (annulation de trajet) n'annule pas les remboursements déjà réussis.
  *
- * <p><b>Rail mobile money (tâche 17)</b> — {@code payment.getRail() == PAWAPAY} bascule sur un
+ * <p><b>Rail mobile money</b> — {@code payment.getRail() == PAWAPAY} bascule sur un
  * second chemin, complètement séparé du chemin Stripe ci-dessus (aucune ligne du chemin Stripe
  * n'est modifiée par cette branche) : voir {@link #refundMobileMoney}. Les six listeners
  * appelants existants de {@link #processRefund} (annulations, litiges, rejets d'annonce) ne

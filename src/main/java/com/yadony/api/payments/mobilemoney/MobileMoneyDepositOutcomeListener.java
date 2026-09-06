@@ -39,7 +39,7 @@ public class MobileMoneyDepositOutcomeListener {
     }
 
     /**
-     * Ronde 1, point 4 (Important) : {@code confirmEscrow} peut atteindre un point
+     * {@code confirmEscrow} peut atteindre un point
      * irréversible (deposit après annulation : refund déjà soumis, appel HTTP déjà parti)
      * puis échouer juste après pour une raison purement réseau — la transaction ambiante
      * est alors annulée, mais rien ne rejouera jamais cette confirmation :

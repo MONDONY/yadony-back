@@ -9,24 +9,20 @@ import com.yadony.api.common.Msisdn;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyAccountResponse;
-import com.yadony.api.payments.pawapay.PawapayClient;
-import com.yadony.api.payments.pawapay.PawapayCountries;
 import com.yadony.api.payments.pawapay.PawapayErrors;
+import com.yadony.api.payments.pawapay.PawapayOperationKind;
 import com.yadony.api.payments.pawapay.PawapayProperties;
+import com.yadony.api.payments.pawapay.PawapayProviderResolver;
 import com.yadony.api.payments.pawapay.PawapayProviders;
-import com.yadony.api.payments.pawapay.dto.PawapayProviderConfig;
-import com.yadony.api.payments.pawapay.dto.PawapayProviderPrediction;
 import java.time.Instant;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Optional;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.client.RestClientException;
 
 /**
  * Compte de versement mobile money : snapshot du téléphone Firebase (déjà vérifié par OTP),
@@ -40,17 +36,17 @@ public class MobileMoneyAccountService {
 
     private final UserRepository userRepository;
     private final FirebaseContactService firebaseContact;
-    private final PawapayClient client;
+    private final PawapayProviderResolver providers;
     private final ActiveCurrencyResolver currencyResolver;
     private final AuditService audit;
     private final PawapayProperties props;
 
     public MobileMoneyAccountService(UserRepository userRepository, FirebaseContactService firebaseContact,
-                                     PawapayClient client, ActiveCurrencyResolver currencyResolver,
+                                     PawapayProviderResolver providers, ActiveCurrencyResolver currencyResolver,
                                      AuditService audit, PawapayProperties props) {
         this.userRepository = userRepository;
         this.firebaseContact = firebaseContact;
-        this.client = client;
+        this.providers = providers;
         this.currencyResolver = currencyResolver;
         this.audit = audit;
         this.props = props;
@@ -81,65 +77,36 @@ public class MobileMoneyAccountService {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-phone-required",
                     "Phone Required", "Ajoutez un numéro de téléphone vérifié à votre compte.");
         }
-        // predictProvider et activeConfiguration sont deux appels HTTP pawaPay : une panne
-        // réseau ou un 5xx y lève RestClientException — 502 normalisé du rail, sinon un 500
-        // générique laisserait la ligne users verrouillée jusqu'au timeout HTTP.
-        String context = "l'activation mobile money de " + userId;
-        Optional<PawapayProviderPrediction> predicted;
-        try {
-            predicted = client.predictProvider(phone);
-        } catch (RestClientException e) {
-            throw PawapayErrors.providerUnavailable("predict-provider", context, e);
-        }
-        PawapayProviderPrediction prediction = predicted.orElse(null);
-        if (prediction == null) {
-            throw unsupported(userId, "Aucun opérateur mobile money reconnu pour votre numéro.");
-        }
-        Map<String, PawapayProviderConfig> configuration;
-        try {
-            configuration = client.activeConfiguration();
-        } catch (RestClientException e) {
-            throw PawapayErrors.providerUnavailable("active-configuration", context, e);
-        }
-        PawapayProviderConfig conf = configuration.get(prediction.provider());
-        if (conf == null || !conf.supportsPayout()) {
-            throw unsupported(userId, PawapayProviders.label(prediction.provider()) + " ne permet pas encore le versement.");
-        }
+        // Le compte reçoit dans la devise active du voyageur : c'est elle que l'opérateur prédit
+        // doit servir. Une panne pawaPay remonte en 502 normalisé du rail (sinon un 500 générique
+        // laisserait la ligne users verrouillée jusqu'au timeout HTTP) ; un numéro reconnu mais
+        // inexploitable devient le 422 métier de l'activation, avec ses libellés.
         String active = currencyResolver.resolve(userId);
-        if (!conf.currency().equalsIgnoreCase(active)) {
-            throw unsupported(userId, "Votre portefeuille est en " + active + ", ce numéro reçoit du " + conf.currency() + ".");
-        }
-        // Même famille que les deux appels ci-dessus : un numéro prédit hors bornes n'est pas
-        // une erreur de saisie utilisateur (il n'a rien saisi), c'est pawaPay qui répond une
-        // donnée inexploitable — même 502, pas un 422 métier.
-        String msisdn;
+        PawapayProviderResolver.Resolved resolved;
         try {
-            msisdn = Msisdn.normalize(prediction.phoneNumber() != null ? prediction.phoneNumber() : phone);
-        } catch (IllegalArgumentException e) {
-            throw PawapayErrors.providerUnavailable("msisdn-normalize", context, e);
-        }
-        // PawapayCountries.toAlpha2 rend null pour un alpha-3 non couvert par la table ISO du
-        // JDK : sans cette garde, la valeur nulle serait acceptée en silence ici
-        // (users.mobile_money_country est nullable) et l'échec reporté au versement
-        // (pawapay_operations.country est NOT NULL), en 500 générique et sans alerte — sur le
-        // chemin qui engage l'argent. Même garde que MobileMoneyBidPaymentService#initiateDeposit.
-        String country = PawapayCountries.toAlpha2(prediction.countryAlpha3());
-        if (country == null) {
-            throw unsupported(userId, "Pays non reconnu pour ce numéro.");
+            resolved = providers.resolve(phone, PawapayOperationKind.PAYOUT, active,
+                    "l'activation mobile money de " + userId);
+        } catch (PawapayProviderResolver.UnsupportedNumberException e) {
+            throw unsupported(userId, switch (e.reason()) {
+                case NO_PROVIDER -> "Aucun opérateur mobile money reconnu pour votre numéro.";
+                case OPERATION_CLOSED -> e.providerLabel() + " ne permet pas encore le versement.";
+                case CURRENCY_MISMATCH -> "Votre portefeuille est en " + active + ", ce numéro reçoit du " + e.providerCurrency() + ".";
+                case COUNTRY_UNKNOWN -> "Pays non reconnu pour ce numéro.";
+            });
         }
         user.setMobileMoneyStatus(MobileMoneyPayoutStatus.ACTIVE);
-        user.setMobileMoneyMsisdn(msisdn);
-        user.setMobileMoneyMsisdnMasked(Msisdn.mask(msisdn));
-        user.setMobileMoneyProvider(prediction.provider());
-        user.setMobileMoneyCountry(country);
-        user.setMobileMoneyCurrency(conf.currency().toUpperCase(Locale.ROOT));
+        user.setMobileMoneyMsisdn(resolved.msisdn());
+        user.setMobileMoneyMsisdnMasked(Msisdn.mask(resolved.msisdn()));
+        user.setMobileMoneyProvider(resolved.provider());
+        user.setMobileMoneyCountry(resolved.countryAlpha2());
+        user.setMobileMoneyCurrency(resolved.config().currency().toUpperCase(Locale.ROOT));
         user.setMobileMoneyVerifiedAt(Instant.now());
         userRepository.save(user);
         // Le payload d'audit ne porte que le masqué : AuditService le rédigerait de toute
         // façon (clé "msisdnMasked" ne matche pas le denylist "phone", donc conservé tel quel
         // volontairement — c'est déjà la forme publique, pas une PII en clair).
         audit.log("USER", userId, "MM_ACCOUNT_ACTIVATED", userId,
-                Map.of("provider", prediction.provider(), "msisdnMasked", user.getMobileMoneyMsisdnMasked(),
+                Map.of("provider", resolved.provider(), "msisdnMasked", user.getMobileMoneyMsisdnMasked(),
                         "currency", user.getMobileMoneyCurrency()));
         return toResponse(user);
     }
