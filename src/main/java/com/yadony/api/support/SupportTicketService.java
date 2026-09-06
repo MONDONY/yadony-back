@@ -4,8 +4,10 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.stripe.AdminAlertService;
+import com.yadony.api.support.events.SupportMessageCreatedEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
@@ -37,24 +39,30 @@ public class SupportTicketService {
 
     private static final String AUDIT_ENTITY = "support_ticket";
     private static final int MAX_SUBJECT_LENGTH = 200;
-    private static final int MAX_MESSAGE_LENGTH = 4000;
+    static final int MAX_MESSAGE_LENGTH = 4000;
 
     private final SupportTicketRepository ticketRepository;
     private final SupportMessageRepository messageRepository;
     private final SupportPredefinedReplyRepository replyRepository;
     private final AdminAlertService adminAlertService;
     private final AuditService auditService;
+    private final SupportAttachmentService attachmentService;
+    private final ApplicationEventPublisher eventPublisher;
 
     public SupportTicketService(SupportTicketRepository ticketRepository,
                                 SupportMessageRepository messageRepository,
                                 SupportPredefinedReplyRepository replyRepository,
                                 AdminAlertService adminAlertService,
-                                AuditService auditService) {
+                                AuditService auditService,
+                                SupportAttachmentService attachmentService,
+                                ApplicationEventPublisher eventPublisher) {
         this.ticketRepository = ticketRepository;
         this.messageRepository = messageRepository;
         this.replyRepository = replyRepository;
         this.adminAlertService = adminAlertService;
         this.auditService = auditService;
+        this.attachmentService = attachmentService;
+        this.eventPublisher = eventPublisher;
     }
 
     // ---------------------------------------------------------------- lecture
@@ -107,12 +115,46 @@ public class SupportTicketService {
         return ticketRepository.countByAssignedAdminIdIsNull();
     }
 
+    // --------------------------------------------------------- compteur non-lus
+
+    /**
+     * Nombre de messages admin que l'utilisateur n'a pas encore vus. Une date de
+     * lecture nulle signifie « jamais ouvert », donc tout le fil admin compte.
+     */
+    @Transactional(readOnly = true)
+    public long unreadCount(SupportTicketEntity ticket) {
+        LocalDateTime readAt = ticket.getUserLastReadAt();
+        return readAt == null
+                ? messageRepository.countByTicketIdAndAuthorType(
+                        ticket.getId(), SupportMessageAuthorType.ADMIN)
+                : messageRepository.countByTicketIdAndAuthorTypeAndCreatedAtAfter(
+                        ticket.getId(), SupportMessageAuthorType.ADMIN, readAt);
+    }
+
+    @Transactional(readOnly = true)
+    public long totalUnread(UUID userId) {
+        return ticketRepository.findByUserId(userId).stream()
+                .mapToLong(this::unreadCount)
+                .sum();
+    }
+
     // ------------------------------------------------------------- cote user
 
-    public SupportTicketEntity createTicket(UserEntity user, String category, String subject, String firstMessage) {
+    /** Idempotent : reposer la date sur un fil deja lu ne change rien de visible. */
+    public void markRead(UserEntity user, UUID ticketId) {
+        SupportTicketEntity ticket = requireOwnedTicket(user, ticketId);
+        ticket.setUserLastReadAt(now());
+        ticketRepository.save(ticket);
+    }
+
+    public SupportTicketEntity createTicket(UserEntity user, String category, String subject,
+                                            String firstMessage, List<String> attachmentKeys) {
         String normalizedCategory = normalizeCategory(category);
         String normalizedSubject = requireText(subject, "subject", MAX_SUBJECT_LENGTH);
-        String normalizedMessage = requireText(firstMessage, "message", MAX_MESSAGE_LENGTH);
+        String normalizedMessage = requireContentOrAttachments(firstMessage, attachmentKeys);
+
+        List<String> ownedKeys = attachmentService.requireOwnedKeys(
+                attachmentKeys, attachmentService.userPrefix(user.getId()));
 
         SupportTicketEntity ticket = new SupportTicketEntity();
         ticket.setUserId(user.getId());
@@ -123,7 +165,8 @@ public class SupportTicketService {
         ticket.setLastMessageAt(now());
         SupportTicketEntity saved = ticketRepository.save(ticket);
 
-        appendMessage(saved, SupportMessageAuthorType.USER, user.getId(), normalizedMessage);
+        SupportMessageEntity message = appendMessage(saved, SupportMessageAuthorType.USER, user.getId(), normalizedMessage);
+        attachmentService.attach(message.getId(), ownedKeys, guessContentType(ownedKeys));
 
         auditService.log(AUDIT_ENTITY, saved.getId(), "SUPPORT_TICKET_CREATED", user.getId(),
                 payload("category", normalizedCategory, "status", saved.getStatus().name()));
@@ -132,17 +175,21 @@ public class SupportTicketService {
         return saved;
     }
 
-    public SupportMessageEntity userReply(UserEntity user, UUID ticketId, String content) {
+    public SupportMessageEntity userReply(UserEntity user, UUID ticketId, String content,
+                                          List<String> attachmentKeys) {
         SupportTicketEntity ticket = requireOwnedTicket(user, ticketId);
         if (ticket.isResolved()) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "support-ticket-resolved", "Ticket resolu",
                     "Ce ticket est resolu. Ouvrez-en un nouveau pour un autre probleme.");
         }
-        String normalized = requireText(content, "message", MAX_MESSAGE_LENGTH);
+        String normalized = requireContentOrAttachments(content, attachmentKeys);
+        List<String> ownedKeys = attachmentService.requireOwnedKeys(
+                attachmentKeys, attachmentService.userPrefix(user.getId()));
 
         SupportMessageEntity message =
                 appendMessage(ticket, SupportMessageAuthorType.USER, user.getId(), normalized);
+        attachmentService.attach(message.getId(), ownedKeys, guessContentType(ownedKeys));
         ticket.setStatus(SupportTicketStatus.WAITING_SUPPORT);
         ticketRepository.save(ticket);
         return message;
@@ -191,19 +238,30 @@ public class SupportTicketService {
         return ticket;
     }
 
-    public SupportMessageEntity adminReply(UUID ticketId, UUID adminId, String content) {
+    public SupportMessageEntity adminReply(UUID ticketId, UUID adminId, String content,
+                                           List<String> attachmentKeys) {
         SupportTicketEntity ticket = requireTicket(ticketId);
         requireAssignedTo(ticket, adminId);
         requireNotResolved(ticket);
-        String normalized = requireText(content, "message", MAX_MESSAGE_LENGTH);
+        String normalized = requireContentOrAttachments(content, attachmentKeys);
+        List<String> ownedKeys = attachmentService.requireOwnedKeys(
+                attachmentKeys, attachmentService.adminPrefix(adminId));
 
         SupportMessageEntity message =
                 appendMessage(ticket, SupportMessageAuthorType.ADMIN, adminId, normalized);
+        attachmentService.attach(message.getId(), ownedKeys, guessContentType(ownedKeys));
         ticket.setStatus(SupportTicketStatus.WAITING_USER);
         ticketRepository.save(ticket);
 
         auditService.log(AUDIT_ENTITY, ticket.getId(), "SUPPORT_TICKET_ADMIN_REPLIED", adminId,
                 payload("status", ticket.getStatus().name(), "messageId", String.valueOf(message.getId())));
+
+        if (!ownedKeys.isEmpty()) {
+            auditService.log(AUDIT_ENTITY, ticket.getId(), "SUPPORT_TICKET_ADMIN_ATTACHED", adminId,
+                    payload("messageId", String.valueOf(message.getId()),
+                            "attachmentCount", String.valueOf(ownedKeys.size())));
+        }
+
         return message;
     }
 
@@ -234,6 +292,8 @@ public class SupportTicketService {
         message.setContent(content);
         SupportMessageEntity saved = messageRepository.save(message);
         ticket.setLastMessageAt(now());
+        eventPublisher.publishEvent(new SupportMessageCreatedEvent(
+                ticket.getId(), saved.getId(), ticket.getUserId(), authorType));
         return saved;
     }
 
@@ -314,6 +374,44 @@ public class SupportTicketService {
             throw invalidField(field, "Le champ " + field + " depasse " + maxLength + " caracteres");
         }
         return trimmed;
+    }
+
+    /**
+     * Texte non vide OU au moins une image. Rend une chaine vide plutot que
+     * null : la colonne content est NOT NULL depuis V244.
+     */
+    private static String requireContentOrAttachments(String content, List<String> keys) {
+        boolean hasText = content != null && !content.isBlank();
+        boolean hasImage = keys != null && !keys.isEmpty();
+        if (!hasText && !hasImage) {
+            throw invalidField("message", "Ecrivez un message ou joignez une image");
+        }
+        if (!hasText) {
+            return "";
+        }
+        String trimmed = content.trim();
+        if (trimmed.length() > MAX_MESSAGE_LENGTH) {
+            throw invalidField("message", "Le champ message depasse " + MAX_MESSAGE_LENGTH + " caracteres");
+        }
+        return trimmed;
+    }
+
+    /**
+     * Content-type deduit de l'extension de la premiere cle. Approximation
+     * assumee : un lot de pieces jointes partage un seul content-type.
+     */
+    private static String guessContentType(List<String> keys) {
+        if (keys == null || keys.isEmpty()) {
+            return "image/jpeg";
+        }
+        String key = keys.get(0).toLowerCase(Locale.ROOT);
+        if (key.endsWith(".png")) {
+            return "image/png";
+        }
+        if (key.endsWith(".webp")) {
+            return "image/webp";
+        }
+        return "image/jpeg";
     }
 
     private static YadonyBusinessException invalidField(String field, String detail) {

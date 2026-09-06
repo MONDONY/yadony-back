@@ -114,7 +114,7 @@ class AdminSupportControllerIntegrationTest {
                         .with(authentication(asAdmin(firstAdmin)))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new CreateSupportMessageRequest("On verifie le paiement."))))
+                                new CreateSupportMessageRequest("On verifie le paiement.", null))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.authorType").value("ADMIN"));
 
@@ -134,7 +134,7 @@ class AdminSupportControllerIntegrationTest {
                         .with(authentication(asAdmin(secondAdmin)))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new CreateSupportMessageRequest("Je reprends."))))
+                                new CreateSupportMessageRequest("Je reprends.", null))))
                 .andExpect(status().isConflict());
     }
 

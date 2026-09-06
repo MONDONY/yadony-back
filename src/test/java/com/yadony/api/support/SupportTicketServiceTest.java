@@ -4,11 +4,14 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.stripe.AdminAlertService;
+import com.yadony.api.support.events.SupportMessageCreatedEvent;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -48,6 +51,8 @@ class SupportTicketServiceTest {
     @Mock SupportPredefinedReplyRepository replyRepository;
     @Mock AdminAlertService adminAlertService;
     @Mock AuditService auditService;
+    @Mock SupportAttachmentService attachmentService;
+    @Mock private ApplicationEventPublisher eventPublisher;
 
     private SupportTicketService service;
 
@@ -58,7 +63,9 @@ class SupportTicketServiceTest {
                 messageRepository,
                 replyRepository,
                 adminAlertService,
-                auditService);
+                auditService,
+                attachmentService,
+                eventPublisher);
     }
 
     @Test
@@ -71,11 +78,13 @@ class SupportTicketServiceTest {
         });
         when(messageRepository.save(any(SupportMessageEntity.class))).thenAnswer(inv -> inv.getArgument(0));
 
+        when(attachmentService.requireOwnedKeys(any(), any())).thenReturn(List.of());
         SupportTicketEntity ticket = service.createTicket(
                 user,
                 "PAYMENT",
                 "Paiement bloque",
-                "Je ne vois pas le remboursement.");
+                "Je ne vois pas le remboursement.",
+                null);
 
         assertThat(ticket.getId()).isEqualTo(TICKET_ID);
         assertThat(ticket.getUserId()).isEqualTo(USER_ID);
@@ -88,6 +97,13 @@ class SupportTicketServiceTest {
                 eq("Nouveau ticket support: Paiement bloque"),
                 any(Map.class));
         verify(auditService).log(eq("support_ticket"), eq(TICKET_ID), eq("SUPPORT_TICKET_CREATED"), eq(USER_ID), any(Map.class));
+
+        ArgumentCaptor<SupportMessageCreatedEvent> eventCaptor = ArgumentCaptor.forClass(SupportMessageCreatedEvent.class);
+        verify(eventPublisher).publishEvent(eventCaptor.capture());
+        SupportMessageCreatedEvent event = eventCaptor.getValue();
+        assertThat(event.getOwnerUserId()).isEqualTo(USER_ID);
+        assertThat(event.getTicketId()).isEqualTo(TICKET_ID);
+        assertThat(event.getAuthorType()).isEqualTo(SupportMessageAuthorType.USER);
     }
 
     @Test
@@ -102,15 +118,16 @@ class SupportTicketServiceTest {
         doThrow(new IllegalStateException("telegram down"))
                 .when(adminAlertService).raise(any(), any(), any());
 
+        when(attachmentService.requireOwnedKeys(any(), any())).thenReturn(List.of());
         SupportTicketEntity ticket = service.createTicket(
-                user, "payment", "Paiement bloque", "Je ne vois pas le remboursement.");
+                user, "payment", "Paiement bloque", "Je ne vois pas le remboursement.", null);
 
         assertThat(ticket.getId()).isEqualTo(TICKET_ID);
     }
 
     @Test
     void createTicket_rejectsUnknownCategory() {
-        assertThatThrownBy(() -> service.createTicket(user(USER_ID), "NOPE", "Sujet", "Message"))
+        assertThatThrownBy(() -> service.createTicket(user(USER_ID), "NOPE", "Sujet", "Message", null))
                 .isInstanceOf(YadonyBusinessException.class)
                 .extracting(SupportTicketServiceTest::statusOf)
                 .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
@@ -119,7 +136,7 @@ class SupportTicketServiceTest {
 
     @Test
     void createTicket_rejectsBlankSubject() {
-        assertThatThrownBy(() -> service.createTicket(user(USER_ID), "PAYMENT", "   ", "Message"))
+        assertThatThrownBy(() -> service.createTicket(user(USER_ID), "PAYMENT", "   ", "Message", null))
                 .isInstanceOf(YadonyBusinessException.class)
                 .extracting(SupportTicketServiceTest::statusOf)
                 .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
@@ -128,7 +145,7 @@ class SupportTicketServiceTest {
     @Test
     void createTicket_rejectsOverlongMessage() {
         String tooLong = "x".repeat(4001);
-        assertThatThrownBy(() -> service.createTicket(user(USER_ID), "PAYMENT", "Sujet", tooLong))
+        assertThatThrownBy(() -> service.createTicket(user(USER_ID), "PAYMENT", "Sujet", tooLong, null))
                 .isInstanceOf(YadonyBusinessException.class)
                 .extracting(SupportTicketServiceTest::statusOf)
                 .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
@@ -140,7 +157,8 @@ class SupportTicketServiceTest {
         when(ticketRepository.findById(TICKET_ID)).thenReturn(Optional.of(ticket));
         when(messageRepository.save(any(SupportMessageEntity.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        SupportMessageEntity message = service.userReply(user(USER_ID), TICKET_ID, "  Toujours bloque  ");
+        when(attachmentService.requireOwnedKeys(any(), any())).thenReturn(List.of());
+        SupportMessageEntity message = service.userReply(user(USER_ID), TICKET_ID, "  Toujours bloque  ", null);
 
         assertThat(message.getAuthorType()).isEqualTo(SupportMessageAuthorType.USER);
         assertThat(message.getAuthorId()).isEqualTo(USER_ID);
@@ -153,7 +171,7 @@ class SupportTicketServiceTest {
         SupportTicketEntity ticket = ticket(USER_ID, SupportTicketStatus.RESOLVED);
         when(ticketRepository.findById(TICKET_ID)).thenReturn(Optional.of(ticket));
 
-        assertThatThrownBy(() -> service.userReply(user(USER_ID), TICKET_ID, "Toujours bloque"))
+        assertThatThrownBy(() -> service.userReply(user(USER_ID), TICKET_ID, "Toujours bloque", null))
                 .isInstanceOf(YadonyBusinessException.class)
                 .extracting(SupportTicketServiceTest::statusOf)
                 .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
@@ -165,7 +183,7 @@ class SupportTicketServiceTest {
         SupportTicketEntity ticket = ticket(OTHER_USER_ID, SupportTicketStatus.WAITING_USER);
         when(ticketRepository.findById(TICKET_ID)).thenReturn(Optional.of(ticket));
 
-        assertThatThrownBy(() -> service.userReply(user(USER_ID), TICKET_ID, "Bonjour"))
+        assertThatThrownBy(() -> service.userReply(user(USER_ID), TICKET_ID, "Bonjour", null))
                 .isInstanceOf(YadonyBusinessException.class)
                 .extracting(SupportTicketServiceTest::statusOf)
                 .isEqualTo(HttpStatus.NOT_FOUND);
@@ -187,7 +205,7 @@ class SupportTicketServiceTest {
         ticket.setAssignedAdminId(OTHER_ADMIN_ID);
         when(ticketRepository.findById(TICKET_ID)).thenReturn(Optional.of(ticket));
 
-        assertThatThrownBy(() -> service.adminReply(TICKET_ID, ADMIN_ID, "Je regarde."))
+        assertThatThrownBy(() -> service.adminReply(TICKET_ID, ADMIN_ID, "Je regarde.", null))
                 .isInstanceOf(YadonyBusinessException.class)
                 .extracting(SupportTicketServiceTest::statusOf)
                 .isEqualTo(HttpStatus.CONFLICT);
@@ -198,7 +216,7 @@ class SupportTicketServiceTest {
         SupportTicketEntity ticket = ticket(USER_ID, SupportTicketStatus.NEW);
         when(ticketRepository.findById(TICKET_ID)).thenReturn(Optional.of(ticket));
 
-        assertThatThrownBy(() -> service.adminReply(TICKET_ID, ADMIN_ID, "Je regarde."))
+        assertThatThrownBy(() -> service.adminReply(TICKET_ID, ADMIN_ID, "Je regarde.", null))
                 .isInstanceOf(YadonyBusinessException.class)
                 .extracting(SupportTicketServiceTest::statusOf)
                 .isEqualTo(HttpStatus.CONFLICT);
@@ -210,8 +228,9 @@ class SupportTicketServiceTest {
         when(ticketRepository.findById(TICKET_ID)).thenReturn(Optional.of(ticket));
         when(messageRepository.save(any(SupportMessageEntity.class))).thenAnswer(inv -> inv.getArgument(0));
 
+        when(attachmentService.requireOwnedKeys(any(), any())).thenReturn(List.of());
         SupportTicketEntity assigned = service.assign(TICKET_ID, ADMIN_ID);
-        SupportMessageEntity reply = service.adminReply(TICKET_ID, ADMIN_ID, "On verifie le paiement.");
+        SupportMessageEntity reply = service.adminReply(TICKET_ID, ADMIN_ID, "On verifie le paiement.", null);
         SupportTicketEntity resolved = service.resolve(TICKET_ID, ADMIN_ID);
 
         assertThat(assigned.getAssignedAdminId()).isEqualTo(ADMIN_ID);
