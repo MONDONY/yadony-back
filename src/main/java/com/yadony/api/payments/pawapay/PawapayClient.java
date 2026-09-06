@@ -168,7 +168,7 @@ public class PawapayClient {
                 for (JsonNode currency : provider.path("currencies")) {
                     JsonNode ops = currency.path("operationTypes");
                     out.put(code, new PawapayProviderConfig(code, alpha3, currency.path("currency").asText(null),
-                            limits(ops.get("DEPOSIT")), limits(ops.get("PAYOUT")), limits(ops.get("REFUND"))));
+                            limits(ops.get("DEPOSIT")), limits(ops.get("PAYOUT"))));
                 }
             }
         }
@@ -180,7 +180,7 @@ public class PawapayClient {
         return new PawapayProviderConfig.Limits(
                 n.hasNonNull("minAmount") ? new BigDecimal(n.get("minAmount").asText()) : null,
                 n.hasNonNull("maxAmount") ? new BigDecimal(n.get("maxAmount").asText()) : null,
-                n.path("decimalsInAmount").asText(null), n.path("authType").asText(null), n.path("status").asText(null));
+                n.path("authType").asText(null), n.path("status").asText(null));
     }
 
     private ObjectNode party(String phoneNumber, String provider) {

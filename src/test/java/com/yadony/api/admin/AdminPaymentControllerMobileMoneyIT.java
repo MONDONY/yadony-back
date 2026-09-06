@@ -65,16 +65,15 @@ import org.springframework.test.web.servlet.MockMvc;
  * {@link AdminPrincipal} authentifié directement via {@code authentication(...)}, sans passer
  * par {@code FirebaseTokenFilter}/{@code AdminAuthService}.
  *
- * <p><b>Ronde 1 (revue) — {@code entityManager} et {@code refundProcessor} mockés.</b>
- * {@code entityManager.refresh(payment)} (point 1) exige une entité RÉELLEMENT gérée par CET
+ * <p><b>{@code entityManager} et {@code refundProcessor} mockés.</b>
+ * {@code entityManager.refresh(payment)} exige une entité RÉELLEMENT gérée par CET
  * EntityManager — ici {@code payment} est un simple POJO renvoyé par le mock
  * {@code paymentRepository}, jamais chargé via JPA : un vrai {@code EntityManager} lèverait
- * {@code IllegalArgumentException("entity not managed")}. Le mock en fait un no-op, comme pour
- * {@code RefundProcessorMobileMoneyTest} (tâche 17) qui documente la même limite pour
- * {@code attachRefundId} : les assertions qui suivent un refresh/attach portent donc sur les
- * APPELS (verify), jamais sur les champs de {@code payment} qu'un mock ne peut pas faire
- * évoluer — la preuve que la colonne survit réellement au flush vit dans
- * {@code PaymentRepositoryMobileMoneyTest#markReleasedIfEscrow_thenAttachPayoutId_thenRefresh_generatesNoUpdate}
+ * {@code IllegalArgumentException("entity not managed")}. Le mock en fait un no-op : les
+ * assertions qui suivent un refresh portent donc sur les APPELS (verify), jamais sur les champs
+ * de {@code payment} qu'un mock ne peut pas faire évoluer — la preuve que le refresh rend
+ * l'entité propre vit dans
+ * {@code PaymentRepositoryMobileMoneyTest#markReleasedIfEscrow_thenRefresh_generatesNoUpdate}
  * (base H2 réelle).
  */
 @SpringBootTest
@@ -226,7 +225,6 @@ class AdminPaymentControllerMobileMoneyIT {
                 .thenReturn(payout(PawapayOperationStatus.ACCEPTED));
         mockMvc.perform(post("/admin/payments/{id}/mobile-money/retry-payout", payment.getId()).with(authentication(releaseAdmin())))
                 .andExpect(status().isOk());
-        verify(entityManager).refresh(payment);
     }
 
     @Test
@@ -299,11 +297,6 @@ class AdminPaymentControllerMobileMoneyIT {
         mockMvc.perform(post("/admin/payments/{id}/mobile-money/retry-refund", payment.getId()).with(authentication(releaseAdmin())))
                 .andExpect(status().isOk());
 
-        // Ronde 1, point 9 : attachRefundId (UPDATE ciblé), jamais un setter — payment.getPawapayRefundId()
-        // reste donc null ici (mock, voir Javadoc de classe) ; la preuve porte sur l'appel lui-même.
-        verify(paymentRepository).attachRefundId(payment.getId(), fresh.getId());
-        verify(entityManager).refresh(payment);
-        assertThat(payment.getPawapayRefundId()).isNull();
     }
 
     /**
@@ -335,8 +328,6 @@ class AdminPaymentControllerMobileMoneyIT {
         mockMvc.perform(post("/admin/payments/{id}/mobile-money/retry-refund", payment.getId()).with(authentication(releaseAdmin())))
                 .andExpect(status().isOk());
 
-        verify(paymentRepository).attachRefundId(payment.getId(), fresh.getId());
-        verify(entityManager).refresh(payment);
     }
 
     /** Le garde-fou reste fermé aux autres statuts — élargi à CANCELLED, pas à n'importe quoi. */

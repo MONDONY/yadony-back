@@ -20,8 +20,8 @@ public record AdminPaymentListItemResponse(
                 p.getBidId(),
                 p.getStatus().name(),
                 p.getRail().name(),
-                p.getAmount().multiply(java.math.BigDecimal.valueOf(100)).longValue(),
-                p.getCommissionAmount().multiply(java.math.BigDecimal.valueOf(100)).longValue(),
+                AdminWalletResponse.toCents(p.getAmount()),
+                AdminWalletResponse.toCents(p.getCommissionAmount()),
                 p.getCreatedAt()
         );
     }

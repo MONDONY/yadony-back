@@ -1,6 +1,7 @@
 package com.yadony.api.matching;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -13,6 +14,12 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+/**
+ * Le partage des bids {@code AWAITING_PAYMENT} entre les deux crons est une règle de requête,
+ * pas un filtre Java : ce nettoyage carte demande au dépôt d'écarter le mobile money (expiré par
+ * {@code MobileMoneyPaymentDeadlineScheduler}), et ne charge donc jamais ces lignes pour les
+ * ignorer.
+ */
 @ExtendWith(MockitoExtension.class)
 class AwaitingPaymentCleanupSchedulerMobileMoneyTest {
 
@@ -20,14 +27,14 @@ class AwaitingPaymentCleanupSchedulerMobileMoneyTest {
     @Mock PaymentService paymentService;
 
     @Test
-    void mobileMoneyBids_areLeftToTheirOwnScheduler() throws Exception {
-        BidEntity mm = new BidEntity();
-        mm.setPaymentMethod(PaymentMethod.MOBILE_MONEY);
-        mm.setStatus(BidStatus.AWAITING_PAYMENT);
-        when(bidRepository.findByStatusAndAwaitingPaymentExpiresAtBefore(any(), any())).thenReturn(List.of(mm));
+    void mobileMoneyBids_areExcludedByTheQuery_notInJava() throws Exception {
+        when(bidRepository.findByStatusAndPaymentMethodNotAndAwaitingPaymentExpiresAtBefore(
+                eq(BidStatus.AWAITING_PAYMENT), eq(PaymentMethod.MOBILE_MONEY), any())).thenReturn(List.of());
 
         new AwaitingPaymentCleanupScheduler(bidRepository, paymentService).cleanupUnpaidBids();
 
+        verify(bidRepository).findByStatusAndPaymentMethodNotAndAwaitingPaymentExpiresAtBefore(
+                eq(BidStatus.AWAITING_PAYMENT), eq(PaymentMethod.MOBILE_MONEY), any());
         verify(paymentService, never()).cancelPaymentIntent(any());
         verify(bidRepository, never()).save(any());
     }

@@ -1,5 +1,6 @@
 package com.yadony.api.payments.pawapay;
 
+import com.yadony.api.payments.pawapay.dto.PawapayOpenOperation;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
@@ -23,19 +24,23 @@ public interface PawapayOperationRepository extends JpaRepository<PawapayOperati
     boolean existsByPaymentIdAndKindAndStatusIn(
             UUID paymentId, PawapayOperationKind kind, Collection<PawapayOperationStatus> statuses);
 
-    List<PawapayOperationEntity> findByStatusInAndUpdatedAtBefore(
-            Collection<PawapayOperationStatus> statuses, LocalDateTime before);
-
     /**
-     * Même sélection, bornée par {@code pageable} (revue ronde 1, point 3) : sans borne, un
-     * incident prolongé chez pawaPay pourrait accumuler des centaines d'opérations `OPEN` et
-     * faire durer un seul passage du poller des heures durant, sur l'unique pool de
+     * Opérations encore ouvertes à réconcilier, bornées par {@code pageable} : sans borne, un
+     * incident prolongé chez pawaPay pourrait accumuler des centaines d'opérations {@code OPEN}
+     * et faire durer un seul passage du poller des heures durant, sur l'unique pool de
      * scheduling partagé par tous les crons du dépôt. Le poller l'appelle triée par
-     * {@code updatedAt} croissant : les plus anciennes d'abord, la fenêtre finit par se
-     * vider passage après passage même si le flux entrant ne tarit jamais.
+     * {@code updatedAt} croissant : les plus anciennes d'abord, la fenêtre finit par se vider
+     * passage après passage même si le flux entrant ne tarit jamais. Projection : le poller ne
+     * lit que quatre colonnes scalaires, inutile d'hydrater (et de déchiffrer) {@code msisdn}
+     * et {@code raw_callback} pour chaque ligne du lot.
      */
-    List<PawapayOperationEntity> findByStatusInAndUpdatedAtBefore(
-            Collection<PawapayOperationStatus> statuses, LocalDateTime before, Pageable pageable);
+    @Query("""
+        SELECT new com.yadony.api.payments.pawapay.dto.PawapayOpenOperation(o.id, o.kind, o.status, o.createdAt)
+          FROM PawapayOperationEntity o
+         WHERE o.status IN :statuses AND o.updatedAt < :before
+        """)
+    List<PawapayOpenOperation> findOpenForReconciliation(@Param("statuses") Collection<PawapayOperationStatus> statuses,
+                                                          @Param("before") LocalDateTime before, Pageable pageable);
 
     Page<PawapayOperationEntity> findAllByOrderByCreatedAtDesc(Pageable pageable);
 
@@ -105,7 +110,7 @@ public interface PawapayOperationRepository extends JpaRepository<PawapayOperati
     @Query("""
         UPDATE PawapayOperationEntity o
            SET o.status = :status,
-               o.submittedAt = :submittedAt,
+               o.submittedAt = :now,
                o.failureCode = COALESCE(:failureCode, o.failureCode),
                o.failureMessage = COALESCE(:failureMessage, o.failureMessage),
                o.finalizedAt = COALESCE(:finalizedAt, o.finalizedAt),
@@ -115,7 +120,6 @@ public interface PawapayOperationRepository extends JpaRepository<PawapayOperati
         """)
     int markSubmittedIfStillCreated(@Param("id") UUID id,
                                     @Param("status") PawapayOperationStatus status,
-                                    @Param("submittedAt") LocalDateTime submittedAt,
                                     @Param("failureCode") String failureCode,
                                     @Param("failureMessage") String failureMessage,
                                     @Param("finalizedAt") LocalDateTime finalizedAt,

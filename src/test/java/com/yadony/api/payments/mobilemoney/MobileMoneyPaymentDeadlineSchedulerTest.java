@@ -4,16 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import com.yadony.api.admin.AdminAlertEntity;
-import com.yadony.api.admin.AdminAlertRepository;
-import com.yadony.api.common.stripe.AdminAlertService;
-import com.yadony.api.matching.BidEntity;
+import com.yadony.api.admin.AdminAlertEscalator;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
 import com.yadony.api.payments.cash.PaymentMethod;
@@ -29,71 +24,53 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
 import org.springframework.data.domain.Pageable;
-import org.springframework.test.util.ReflectionTestUtils;
 
 /**
- * Tâche 15 — scheduler d'expiration mobile money.
- *
- * <p><b>Ronde 2 (revue)</b> : {@code expire()} rend désormais un {@link ExpireOutcome} au lieu de
- * lever elle-même une alerte ou d'évincer le cache — c'est ce scheduler qui agit sur cette valeur,
- * hors des verrous tenus par {@code expire}. Nouveaux mocks : {@code alerts}/{@code alertRepository}
- * (dédup par bid, structure reprise d'{@code escalateUnknown}) et {@code cacheManager} (éviction
- * programmatique de {@code announcements-search}, seulement sur {@code CANCELLED}).
- *
- * <p>Écart par rapport au cahier des charges (voir task-15-report.md) : le brief appelait
- * {@code BidRepository#findByStatusAndPaymentMethodAndAwaitingPaymentExpiresAtBefore} à 3
- * arguments (non bornée). Consigne explicite de la tâche : le lot doit être borné, sur le
- * modèle de {@code PawapayReconciliationPoller} (tâche 10). La méthode a donc gagné un 4e
- * paramètre {@code Pageable}.
+ * Scheduler d'expiration mobile money. {@code expire()} rend un {@link ExpireOutcome} au lieu de
+ * lever elle-même une alerte ou d'évincer le cache — c'est ce scheduler qui agit sur cette
+ * valeur, hors des verrous tenus par {@code expire}. La déduplication des alertes appartient à
+ * {@link AdminAlertEscalator} (testée à part) : ici on vérifie seulement quel type est levé, et
+ * quand rien ne doit l'être.
  */
 @ExtendWith(MockitoExtension.class)
 class MobileMoneyPaymentDeadlineSchedulerTest {
 
     @Mock BidRepository bidRepository;
     @Mock MobileMoneyBidPaymentService service;
-    @Mock AdminAlertService alerts;
-    @Mock AdminAlertRepository alertRepository;
+    @Mock AdminAlertEscalator alerts;
     @Mock CacheManager cacheManager;
     @Mock Cache cache;
     @InjectMocks MobileMoneyPaymentDeadlineScheduler scheduler;
 
-    private static BidEntity bid() {
-        BidEntity b = new BidEntity();
-        ReflectionTestUtils.setField(b, "id", UUID.randomUUID());
-        b.setStatus(BidStatus.AWAITING_PAYMENT);
-        b.setPaymentMethod(PaymentMethod.MOBILE_MONEY);
-        return b;
-    }
-
-    private void stubDue(BidEntity... bids) {
-        when(bidRepository.findByStatusAndPaymentMethodAndAwaitingPaymentExpiresAtBefore(
+    private void stubDue(UUID... bidIds) {
+        when(bidRepository.findIdsByStatusAndPaymentMethodAndAwaitingPaymentExpiresAtBefore(
                 eq(BidStatus.AWAITING_PAYMENT), eq(PaymentMethod.MOBILE_MONEY), any(), any()))
-                .thenReturn(List.of(bids));
+                .thenReturn(List.of(bidIds));
     }
 
     @Test
     void expiresEachBid_independently() {
-        BidEntity a = bid();
-        BidEntity b = bid();
+        UUID a = UUID.randomUUID();
+        UUID b = UUID.randomUUID();
         stubDue(a, b);
-        doThrow(new IllegalStateException("boom")).when(service).expire(a.getId());
-        when(service.expire(b.getId())).thenReturn(ExpireOutcome.IGNORED);
+        doThrow(new IllegalStateException("boom")).when(service).expire(a);
+        when(service.expire(b)).thenReturn(ExpireOutcome.IGNORED);
 
         scheduler.expireUnpaidBids();
 
-        verify(service).expire(a.getId());
-        verify(service).expire(b.getId());
+        verify(service).expire(a);
+        verify(service).expire(b);
     }
 
     /**
      * Preuve du borné : le scheduler ne demande jamais une liste illimitée, mais une page de
      * taille fixe {@link MobileMoneyPaymentDeadlineScheduler#BATCH_SIZE} — même motif, même
-     * valeur que {@code PawapayReconciliationPoller} (tâche 10).
+     * valeur que {@code PawapayReconciliationPoller}.
      */
     @Test
     void expireUnpaidBids_boundsTheBatch() {
         ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
-        when(bidRepository.findByStatusAndPaymentMethodAndAwaitingPaymentExpiresAtBefore(
+        when(bidRepository.findIdsByStatusAndPaymentMethodAndAwaitingPaymentExpiresAtBefore(
                 eq(BidStatus.AWAITING_PAYMENT), eq(PaymentMethod.MOBILE_MONEY), any(), pageable.capture()))
                 .thenReturn(List.of());
 
@@ -103,13 +80,13 @@ class MobileMoneyPaymentDeadlineSchedulerTest {
         assertThat(pageable.getValue().getPageNumber()).isZero();
     }
 
-    // ── Ronde 2, point 2 : éviction du cache hors verrou, sur CANCELLED uniquement ──────────
+    // ── Éviction du cache hors verrou, sur CANCELLED uniquement ─────────────────────────────
 
     @Test
     void expireUnpaidBids_evictsSearchCache_whenBidWasCancelled() {
-        BidEntity a = bid();
+        UUID a = UUID.randomUUID();
         stubDue(a);
-        when(service.expire(a.getId())).thenReturn(ExpireOutcome.CANCELLED);
+        when(service.expire(a)).thenReturn(ExpireOutcome.CANCELLED);
         when(cacheManager.getCache(MobileMoneyPaymentDeadlineScheduler.SEARCH_CACHE_NAME)).thenReturn(cache);
 
         scheduler.expireUnpaidBids();
@@ -118,59 +95,52 @@ class MobileMoneyPaymentDeadlineSchedulerTest {
     }
 
     /**
-     * Ronde 2, point 2 — un tick qui n'annule rien n'évince pas : sans cette garde, dès qu'un
-     * seul bid reste en échec fermé dans la file (dépôt bloqué en PROCESSING, par exemple), le
-     * cache de recherche serait intégralement purgé toutes les minutes, indéfiniment.
+     * Un tick qui n'annule rien n'évince pas : sans cette garde, dès qu'un seul bid reste en
+     * échec fermé dans la file (dépôt bloqué en PROCESSING, par exemple), le cache de recherche
+     * serait intégralement purgé toutes les minutes, indéfiniment.
      */
     @Test
     void expireUnpaidBids_doesNotEvictSearchCache_whenNothingCancelled() {
-        BidEntity a = bid();
+        UUID a = UUID.randomUUID();
         stubDue(a);
-        when(service.expire(a.getId())).thenReturn(ExpireOutcome.IGNORED);
+        when(service.expire(a)).thenReturn(ExpireOutcome.IGNORED);
 
         scheduler.expireUnpaidBids();
 
         verifyNoInteractions(cacheManager);
     }
 
-    // ── Ronde 2, point 1 : alerte dédupliquée, hors verrou ──────────────────────────────────
+    // ── Alerte dédupliquée par bid, hors verrou ─────────────────────────────────────────────
 
     @Test
-    void expireUnpaidBids_escalatesPaymentMissing() {
-        BidEntity a = bid();
+    void expireUnpaidBids_escalatesPaymentMissing_dedupedByBid() {
+        UUID a = UUID.randomUUID();
         stubDue(a);
-        when(service.expire(a.getId())).thenReturn(ExpireOutcome.PAYMENT_MISSING);
-        String expectedType = "MM_EXP_NO_PAYMENT_" + a.getId();
-        when(alertRepository.findByTypeAndResolved(expectedType, false)).thenReturn(List.of());
+        when(service.expire(a)).thenReturn(ExpireOutcome.PAYMENT_MISSING);
 
         scheduler.expireUnpaidBids();
 
-        verify(alertRepository).save(any(AdminAlertEntity.class));
-        verify(alerts).raise(eq(expectedType), any(), any());
+        verify(alerts).raiseOnce(eq("MM_EXP_NO_PAYMENT_" + a), any(), any());
     }
 
-    // ── Revue finale, point 3(a) : DEPOSIT_COMPLETED_NOT_APPLIED est réparé, pas seulement alerté ──
+    // ── DEPOSIT_COMPLETED_NOT_APPLIED est réparé, pas seulement alerté ──────────────────────
 
     /**
-     * Ce scheduler détectait déjà cette condition (deposit COMPLETED côté pawaPay, paiement
-     * encore PENDING côté yadony — confirmation perdue, ex. redémarrage ou exception dans
-     * l'écouteur) mais se contentait d'alerter : rien ne rejouait jamais la confirmation, le bid
-     * restait figé pour toujours, la capacité réservée, l'expéditeur débité. LE TEST DEMANDÉ PAR
-     * LA REVUE FINALE, point 3(a) : quand la réparation (confirmEscrow, idempotent par
-     * construction) réussit, AUCUNE alerte ne part — le filet ne doit crier que si la
-     * réparation échoue elle-même.
+     * Deposit COMPLETED côté pawaPay, paiement encore PENDING côté yadony (confirmation perdue,
+     * ex. redémarrage ou exception dans l'écouteur) : quand la réparation (confirmEscrow,
+     * idempotent par construction) réussit, AUCUNE alerte ne part — le filet ne doit crier que
+     * si la réparation échoue elle-même.
      */
     @Test
     void expireUnpaidBids_repairsDepositCompletedNotApplied_whenRepairSucceeds() {
-        BidEntity a = bid();
+        UUID a = UUID.randomUUID();
         stubDue(a);
-        when(service.expire(a.getId())).thenReturn(ExpireOutcome.DEPOSIT_COMPLETED_NOT_APPLIED);
+        when(service.expire(a)).thenReturn(ExpireOutcome.DEPOSIT_COMPLETED_NOT_APPLIED);
 
         scheduler.expireUnpaidBids();
 
-        verify(service).repairDepositCompletedNotApplied(a.getId());
+        verify(service).repairDepositCompletedNotApplied(a);
         verifyNoInteractions(alerts);
-        verify(alertRepository, never()).save(any());
     }
 
     /**
@@ -180,95 +150,44 @@ class MobileMoneyPaymentDeadlineSchedulerTest {
      */
     @Test
     void expireUnpaidBids_escalatesDepositCompletedNotApplied_whenRepairFails() {
-        BidEntity a = bid();
+        UUID a = UUID.randomUUID();
         stubDue(a);
-        when(service.expire(a.getId())).thenReturn(ExpireOutcome.DEPOSIT_COMPLETED_NOT_APPLIED);
-        doThrow(new IllegalStateException("deposit disparu")).when(service).repairDepositCompletedNotApplied(a.getId());
-        String expectedType = "MM_EXP_DEPOSIT_DONE_" + a.getId();
-        when(alertRepository.findByTypeAndResolved(expectedType, false)).thenReturn(List.of());
+        when(service.expire(a)).thenReturn(ExpireOutcome.DEPOSIT_COMPLETED_NOT_APPLIED);
+        doThrow(new IllegalStateException("deposit disparu")).when(service).repairDepositCompletedNotApplied(a);
 
         scheduler.expireUnpaidBids();
 
-        verify(alertRepository).save(any(AdminAlertEntity.class));
-        verify(alerts).raise(eq(expectedType), any(), any());
-    }
-
-    /**
-     * LE TEST DEMANDÉ PAR LA REVUE (Ronde 2, point 1) : le bid bloqué reste dans la file (échec
-     * fermé, deadline toujours dépassée) et le scheduler le resélectionne au tick suivant — sans
-     * dédup, chaque tick relèverait une alerte (Sentry + Telegram synchrone) indéfiniment. Deux
-     * ticks consécutifs sur le même bid ne doivent produire qu'UN SEUL {@code raise}.
-     */
-    @Test
-    void expireUnpaidBids_deduplicatesAlert_acrossTwoConsecutiveTicks() {
-        BidEntity a = bid();
-        stubDue(a);
-        when(service.expire(a.getId())).thenReturn(ExpireOutcome.PAYMENT_MISSING);
-        String expectedType = "MM_EXP_NO_PAYMENT_" + a.getId();
-        // Premier tick : pas encore d'alerte. Second tick : l'alerte créée par le premier tick
-        // existe déjà (simule la ligne admin_alerts posée par escalate() au premier passage).
-        when(alertRepository.findByTypeAndResolved(expectedType, false))
-                .thenReturn(List.of())
-                .thenReturn(List.of(new AdminAlertEntity()));
-
-        scheduler.expireUnpaidBids();
-        scheduler.expireUnpaidBids();
-
-        verify(service, times(2)).expire(a.getId());
-        verify(alertRepository, times(1)).save(any());
-        verify(alerts, times(1)).raise(eq(expectedType), any(), any());
-    }
-
-    @Test
-    void expireUnpaidBids_doesNotEscalate_whenAlreadyEscalated() {
-        BidEntity a = bid();
-        stubDue(a);
-        when(service.expire(a.getId())).thenReturn(ExpireOutcome.PAYMENT_MISSING);
-        String expectedType = "MM_EXP_NO_PAYMENT_" + a.getId();
-        AdminAlertEntity existing = new AdminAlertEntity();
-        existing.setType(expectedType);
-        when(alertRepository.findByTypeAndResolved(expectedType, false)).thenReturn(List.of(existing));
-
-        scheduler.expireUnpaidBids();
-
-        verify(alertRepository, never()).save(any());
-        verify(alerts, never()).raise(any(), any(), any());
+        verify(alerts).raiseOnce(eq("MM_EXP_DEPOSIT_DONE_" + a), any(), any());
     }
 
     @Test
     void expireUnpaidBids_ignoresOutcome_raisesNothingAndEvictsNothing() {
-        BidEntity a = bid();
+        UUID a = UUID.randomUUID();
         stubDue(a);
-        when(service.expire(a.getId())).thenReturn(ExpireOutcome.IGNORED);
+        when(service.expire(a)).thenReturn(ExpireOutcome.IGNORED);
 
         scheduler.expireUnpaidBids();
 
         verifyNoInteractions(alerts);
-        verifyNoInteractions(alertRepository);
         verifyNoInteractions(cacheManager);
     }
 
-    // ── Ronde 3 : admin_alerts.type est VARCHAR(60) (migration V20) ─────────────────────────
+    // ── admin_alerts.type est VARCHAR(60) (migration V20) ───────────────────────────────────
 
     /**
-     * Ronde 3 — sans cette garde, un préfixe trop long fait dépasser {@code admin_alerts.type}
-     * ({@code VARCHAR(60)}, migration V20) une fois l'UUID du bid concaténé (36 caractères) :
-     * l'INSERT lève une {@code DataIntegrityViolationException}, avalée par le
-     * {@code catch (Exception e)} de {@link MobileMoneyPaymentDeadlineScheduler#expireUnpaidBids},
-     * journalisée en ERROR — l'alerte n'est alors jamais créée ni envoyée, à chaque tick,
-     * indéfiniment. Même mode de panne que celui déjà signalé à la tâche 10 pour
-     * {@code PAWAPAY_UNKNOWN_OP_} (55 caractères, marge de cinq).
+     * Sans cette garde, un préfixe trop long fait dépasser {@code admin_alerts.type}
+     * ({@code VARCHAR(60)}) une fois l'UUID du bid concaténé (36 caractères) : l'escalateur
+     * refuse alors bruyamment, à chaque tick, et l'alerte ne part jamais.
      */
     @Test
     void paymentMissingAlertType_fitsInAdminAlertsTypeColumn() {
         String type = MobileMoneyPaymentDeadlineScheduler.PAYMENT_MISSING_ALERT_PREFIX + UUID.randomUUID();
-        assertThat(type.length()).isLessThanOrEqualTo(60);
+        assertThat(type.length()).isLessThanOrEqualTo(AdminAlertEscalator.TYPE_MAX_LENGTH);
     }
 
-    /** Ronde 3 — même garde que {@link #paymentMissingAlertType_fitsInAdminAlertsTypeColumn}. */
     @Test
     void depositCompletedAlertType_fitsInAdminAlertsTypeColumn() {
         String type = MobileMoneyPaymentDeadlineScheduler.DEPOSIT_COMPLETED_ALERT_PREFIX + UUID.randomUUID();
-        assertThat(type.length()).isLessThanOrEqualTo(60);
+        assertThat(type.length()).isLessThanOrEqualTo(AdminAlertEscalator.TYPE_MAX_LENGTH);
     }
 }

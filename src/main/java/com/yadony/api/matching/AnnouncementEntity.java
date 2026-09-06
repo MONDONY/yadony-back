@@ -349,6 +349,45 @@ public class AnnouncementEntity extends BaseEntity {
     public BigDecimal getAvailableKg() { return availableKg; }
     public void setAvailableKg(BigDecimal availableKg) { this.availableKg = availableKg; }
 
+    /**
+     * Réserve {@code weightKg} sur la capacité restante et bascule l'annonce {@code FULL} quand
+     * elle tombe à zéro (sauf si elle est déjà hors marché). Sans effet — et sans bascule — pour
+     * une capacité libre ({@code KG_FREE}) ou un bid sans poids : condition COMBINÉE, jamais deux
+     * gardes séparées, sinon un bid de grille sans poids pouvait marquer ou démarquer
+     * {@code FULL} sans qu'aucun kilo n'ait bougé. Miroir exact de {@link #releaseCapacity}.
+     *
+     * @return {@code true} si l'annonce a changé (l'appelant la sauvegarde alors)
+     */
+    public boolean reserveCapacity(BigDecimal weightKg) {
+        if (capacityUnit == CapacityUnit.KG_FREE || weightKg == null) {
+            return false;
+        }
+        availableKg = availableKg.subtract(weightKg);
+        if (availableKg.compareTo(BigDecimal.ZERO) <= 0 && !AnnouncementStatus.OUT_OF_MARKET.contains(status)) {
+            status = AnnouncementStatus.FULL;
+        }
+        return true;
+    }
+
+    /**
+     * Rend {@code weightKg} à la capacité restante et rouvre une annonce {@code FULL}. Inverse
+     * exact de {@link #reserveCapacity} : même condition combinée pour l'ajout de poids ET la
+     * bascule {@code FULL → ACTIVE} — un bid sans poids n'a jamais rempli une annonce, il ne
+     * doit jamais en rouvrir une (elle réapparaîtrait en recherche avec zéro kilo disponible).
+     *
+     * @return {@code true} si l'annonce a changé (l'appelant la sauvegarde alors)
+     */
+    public boolean releaseCapacity(BigDecimal weightKg) {
+        if (capacityUnit == CapacityUnit.KG_FREE || weightKg == null) {
+            return false;
+        }
+        availableKg = availableKg.add(weightKg);
+        if (status == AnnouncementStatus.FULL) {
+            status = AnnouncementStatus.ACTIVE;
+        }
+        return true;
+    }
+
     public BigDecimal getTotalKg() { return totalKg; }
     public void setTotalKg(BigDecimal totalKg) { this.totalKg = totalKg; }
 

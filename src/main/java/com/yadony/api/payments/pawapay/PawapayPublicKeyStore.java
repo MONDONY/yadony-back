@@ -8,7 +8,9 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -25,6 +27,11 @@ import org.springframework.stereotype.Component;
  * quota pawaPay, faisant tomber en 401 des callbacks légitimes — le rail cesserait alors de
  * confirmer les paiements. Une rotation de clé réelle reste rattrapée au pire en 60 s, ce qui est
  * sans effet puisque pawaPay réessaie ses callbacks non acquittés.
+ *
+ * <p>Les clés parsées sont mémorisées par contenu PEM : décoder le Base64 et interroger la
+ * {@code KeyFactory} à chaque callback (plusieurs par dépôt) est une fonction pure d'une donnée
+ * que {@link PawapayClient} cache déjà une heure. Vidée en même temps que ce cache ; une clé au
+ * contenu changé est une entrée différente, jamais servie depuis l'ancienne.
  */
 @Component
 public class PawapayPublicKeyStore implements PawapaySignatureVerifier.KeyResolver {
@@ -34,6 +41,7 @@ public class PawapayPublicKeyStore implements PawapaySignatureVerifier.KeyResolv
 
     private final PawapayClient client;
     private final Clock clock;
+    private final Map<String, PublicKey> parsedByPem = new ConcurrentHashMap<>();
     private Instant lastEvictionAt = Instant.MIN;
 
     @Autowired
@@ -52,6 +60,7 @@ public class PawapayPublicKeyStore implements PawapaySignatureVerifier.KeyResolv
         if (found.isPresent()) return found;
         if (!allowEviction()) return Optional.empty();
         client.evictCaches();
+        parsedByPem.clear();
         return lookup(keyId);
     }
 
@@ -68,12 +77,20 @@ public class PawapayPublicKeyStore implements PawapaySignatureVerifier.KeyResolv
     private Optional<PublicKey> lookup(String keyId) {
         try {
             for (PawapayPublicKey k : client.publicKeys()) {
-                if (keyId.equals(k.id())) return Optional.of(parsePem(k.pem()));
+                if (keyId.equals(k.id())) return Optional.of(parsed(k.pem()));
             }
         } catch (Exception e) {
             log.error("pawaPay : clés publiques indisponibles ({})", e.toString());
         }
         return Optional.empty();
+    }
+
+    private PublicKey parsed(String pem) throws Exception {
+        PublicKey cached = parsedByPem.get(pem);
+        if (cached != null) return cached;
+        PublicKey key = parsePem(pem);
+        parsedByPem.put(pem, key);
+        return key;
     }
 
     static PublicKey parsePem(String pem) throws Exception {

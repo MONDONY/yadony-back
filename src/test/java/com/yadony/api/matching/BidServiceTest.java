@@ -66,6 +66,7 @@ class BidServiceTest {
     @Mock private StorageService storageService;
     @Mock private BidPhotoService bidPhotoService;
     @Mock private com.yadony.api.auth.FirebaseContactService firebaseContact;
+    @Mock private com.yadony.api.payments.pawapay.PawapayProperties pawapayProperties;
     @Mock private HttpServletRequest httpRequest;
 
     @InjectMocks private BidService bidService;
@@ -1087,7 +1088,7 @@ class BidServiceTest {
         @Test
         @DisplayName("voyageur avec compte actif dans la bonne devise, rail activé → bid PENDING MOBILE_MONEY avec numéro payeur normalisé")
         void createsPendingMobileMoneyBid() {
-            org.springframework.test.util.ReflectionTestUtils.setField(bidService, "pawapayEnabled", true);
+            lenient().when(pawapayProperties.enabled()).thenReturn(true);
             UserEntity sender = buildSender();
             sender.setKycStatus(com.yadony.api.auth.KycStatus.VERIFIED);
             UserEntity traveler = activeXofTraveler();
@@ -1132,7 +1133,7 @@ class BidServiceTest {
         @Test
         @DisplayName("numéro payeur absent (optionnel à la création) → bid créé sans numéro, pas d'exception")
         void nullPhoneNumber_isAcceptedAsOptional() {
-            org.springframework.test.util.ReflectionTestUtils.setField(bidService, "pawapayEnabled", true);
+            lenient().when(pawapayProperties.enabled()).thenReturn(true);
             UserEntity sender = buildSender();
             sender.setKycStatus(com.yadony.api.auth.KycStatus.VERIFIED);
             UserEntity traveler = activeXofTraveler();
@@ -1166,7 +1167,7 @@ class BidServiceTest {
             // les deux bornes est une entrée que le DTO accepte et que le service doit
             // donc absorber lui-même, sans laisser fuiter l'IllegalArgumentException vers
             // le filet générique (500 + Sentry).
-            org.springframework.test.util.ReflectionTestUtils.setField(bidService, "pawapayEnabled", true);
+            lenient().when(pawapayProperties.enabled()).thenReturn(true);
             UserEntity sender = buildSender();
             sender.setKycStatus(com.yadony.api.auth.KycStatus.VERIFIED);
             UserEntity traveler = activeXofTraveler();
@@ -1190,7 +1191,7 @@ class BidServiceTest {
         @Test
         @DisplayName("compte de versement du voyageur dans une autre devise que l'annonce → 422 mobile-money-currency-mismatch")
         void travelerAccountCurrencyMismatch_is422() {
-            org.springframework.test.util.ReflectionTestUtils.setField(bidService, "pawapayEnabled", true);
+            lenient().when(pawapayProperties.enabled()).thenReturn(true);
             UserEntity traveler = buildTraveler();
             traveler.setMobileMoneyStatus(com.yadony.api.auth.MobileMoneyPayoutStatus.ACTIVE);
             traveler.setMobileMoneyCurrency("XAF"); // compte activé zone CEMAC
@@ -1217,7 +1218,7 @@ class BidServiceTest {
         @Test
         @DisplayName("voyageur sans compte mobile money → 422 mobile-money-not-available")
         void travelerWithoutAccount_is422() {
-            org.springframework.test.util.ReflectionTestUtils.setField(bidService, "pawapayEnabled", true);
+            lenient().when(pawapayProperties.enabled()).thenReturn(true);
             UserEntity traveler = buildTraveler();
             AnnouncementEntity a = xofAnnouncement(traveler);
             when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
@@ -1231,7 +1232,7 @@ class BidServiceTest {
         @Test
         @DisplayName("rail désactivé → 422 mobile-money-disabled avant tout autre contrôle")
         void disabled_is422() {
-            org.springframework.test.util.ReflectionTestUtils.setField(bidService, "pawapayEnabled", false);
+            lenient().when(pawapayProperties.enabled()).thenReturn(false);
             AnnouncementEntity a = xofAnnouncement(buildTraveler());
 
             assertThatThrownBy(() -> bidService.resolvePaymentMethodFor(a, "MOBILE_MONEY"))
@@ -1249,7 +1250,7 @@ class BidServiceTest {
             // croire à tort qu'un autre voyageur EUR pourrait, lui, l'accepter. userRepository
             // n'est donc plus consulté du tout ici (la garde de devise court-circuite avant),
             // d'où l'absence de tout stub dessus.
-            org.springframework.test.util.ReflectionTestUtils.setField(bidService, "pawapayEnabled", true);
+            lenient().when(pawapayProperties.enabled()).thenReturn(true);
             UserEntity traveler = buildTraveler();
             traveler.setMobileMoneyStatus(com.yadony.api.auth.MobileMoneyPayoutStatus.ACTIVE);
             traveler.setMobileMoneyCurrency("EUR");

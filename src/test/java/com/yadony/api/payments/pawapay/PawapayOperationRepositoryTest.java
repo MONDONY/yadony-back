@@ -76,7 +76,7 @@ class PawapayOperationRepositoryTest {
                 "ptx", null, "{}", now, null, now, now);
         assertThat(movedByCallback).isEqualTo(1);
 
-        int result = repository.markSubmittedIfStillCreated(o.getId(), PawapayOperationStatus.ACCEPTED, now,
+        int result = repository.markSubmittedIfStillCreated(o.getId(), PawapayOperationStatus.ACCEPTED,
                 null, null, null, now);
 
         assertThat(result).as("la ligne n'est plus CREATED, markSubmitted ne doit rien écraser").isZero();
@@ -91,9 +91,9 @@ class PawapayOperationRepositoryTest {
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
 
         int acceptedResult = repository.markSubmittedIfStillCreated(accepted.getId(), PawapayOperationStatus.ACCEPTED,
-                now, null, null, null, now);
+                null, null, null, now);
         int rejectedResult = repository.markSubmittedIfStillCreated(rejected.getId(), PawapayOperationStatus.SUBMIT_REJECTED,
-                now, "PROVIDER_TEMPORARILY_UNAVAILABLE", "down", now, now);
+                "PROVIDER_TEMPORARILY_UNAVAILABLE", "down", now, now);
 
         assertThat(acceptedResult).isEqualTo(1);
         assertThat(rejectedResult).isEqualTo(1);

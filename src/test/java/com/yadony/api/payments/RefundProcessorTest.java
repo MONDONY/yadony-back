@@ -38,7 +38,7 @@ class RefundProcessorTest {
     // tests de cette classe (chemin Stripe uniquement, chaque paiement est de rail STRIPE).
     @Mock private com.yadony.api.payments.pawapay.PawapayOperationService pawapayOperations;
     @Mock private com.yadony.api.payments.pawapay.PawapaySubmissionService pawapaySubmission;
-    @Mock private com.yadony.api.admin.AdminAlertRepository alertRepository;
+    @Mock private com.yadony.api.admin.AdminAlertEscalator alerts;
     @Mock private org.springframework.transaction.PlatformTransactionManager transactionManager;
 
     private RefundProcessor processor;
@@ -46,7 +46,7 @@ class RefundProcessorTest {
     @BeforeEach
     void setUp() {
         processor = new RefundProcessor(paymentRepository, auditService, adminAlert,
-                pawapayOperations, pawapaySubmission, alertRepository, transactionManager);
+                pawapayOperations, pawapaySubmission, alerts, transactionManager);
     }
 
     private PaymentEntity payment(PaymentStatus status) {

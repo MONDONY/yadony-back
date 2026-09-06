@@ -1,6 +1,7 @@
 package com.yadony.api.matching;
 
 import com.yadony.api.payments.PaymentService;
+import com.yadony.api.payments.cash.PaymentMethod;
 import com.stripe.exception.InvalidRequestException;
 import com.stripe.exception.StripeException;
 import com.stripe.model.PaymentIntent;
@@ -47,8 +48,8 @@ class AwaitingPaymentCleanupSchedulerTest {
     @Test
     void deletes_bid_when_cancel_succeeds() throws StripeException {
         BidEntity bid = expired("pi_xxx");
-        when(bidRepository.findByStatusAndAwaitingPaymentExpiresAtBefore(
-                eq(BidStatus.AWAITING_PAYMENT), any())).thenReturn(List.of(bid));
+        when(bidRepository.findByStatusAndPaymentMethodNotAndAwaitingPaymentExpiresAtBefore(
+                eq(BidStatus.AWAITING_PAYMENT), eq(PaymentMethod.MOBILE_MONEY), any())).thenReturn(List.of(bid));
 
         scheduler.cleanupUnpaidBids();
 
@@ -61,8 +62,8 @@ class AwaitingPaymentCleanupSchedulerTest {
     @Test
     void promotes_when_PI_already_succeeded_race_condition() throws StripeException {
         BidEntity bid = expired("pi_race");
-        when(bidRepository.findByStatusAndAwaitingPaymentExpiresAtBefore(
-                eq(BidStatus.AWAITING_PAYMENT), any())).thenReturn(List.of(bid));
+        when(bidRepository.findByStatusAndPaymentMethodNotAndAwaitingPaymentExpiresAtBefore(
+                eq(BidStatus.AWAITING_PAYMENT), eq(PaymentMethod.MOBILE_MONEY), any())).thenReturn(List.of(bid));
 
         InvalidRequestException ex = mock(InvalidRequestException.class);
         when(ex.getCode()).thenReturn("payment_intent_unexpected_state");
@@ -84,8 +85,8 @@ class AwaitingPaymentCleanupSchedulerTest {
     @Test
     void leaves_bid_alone_on_generic_stripe_error() throws StripeException {
         BidEntity bid = expired("pi_err");
-        when(bidRepository.findByStatusAndAwaitingPaymentExpiresAtBefore(
-                eq(BidStatus.AWAITING_PAYMENT), any())).thenReturn(List.of(bid));
+        when(bidRepository.findByStatusAndPaymentMethodNotAndAwaitingPaymentExpiresAtBefore(
+                eq(BidStatus.AWAITING_PAYMENT), eq(PaymentMethod.MOBILE_MONEY), any())).thenReturn(List.of(bid));
 
         InvalidRequestException ex = mock(InvalidRequestException.class);
         when(ex.getCode()).thenReturn("rate_limit");
@@ -100,8 +101,8 @@ class AwaitingPaymentCleanupSchedulerTest {
     @Test
     void deletes_bid_when_PI_is_canceled() throws StripeException {
         BidEntity bid = expired("pi_canceled");
-        when(bidRepository.findByStatusAndAwaitingPaymentExpiresAtBefore(
-                eq(BidStatus.AWAITING_PAYMENT), any())).thenReturn(List.of(bid));
+        when(bidRepository.findByStatusAndPaymentMethodNotAndAwaitingPaymentExpiresAtBefore(
+                eq(BidStatus.AWAITING_PAYMENT), eq(PaymentMethod.MOBILE_MONEY), any())).thenReturn(List.of(bid));
 
         InvalidRequestException ex = mock(InvalidRequestException.class);
         when(ex.getCode()).thenReturn("payment_intent_unexpected_state");
@@ -124,8 +125,8 @@ class AwaitingPaymentCleanupSchedulerTest {
     @Test
     void retries_when_unexpected_state_with_unknown_PI_status() throws StripeException {
         BidEntity bid = expired("pi_unknown");
-        when(bidRepository.findByStatusAndAwaitingPaymentExpiresAtBefore(
-                eq(BidStatus.AWAITING_PAYMENT), any())).thenReturn(List.of(bid));
+        when(bidRepository.findByStatusAndPaymentMethodNotAndAwaitingPaymentExpiresAtBefore(
+                eq(BidStatus.AWAITING_PAYMENT), eq(PaymentMethod.MOBILE_MONEY), any())).thenReturn(List.of(bid));
 
         InvalidRequestException ex = mock(InvalidRequestException.class);
         when(ex.getCode()).thenReturn("payment_intent_unexpected_state");
@@ -147,8 +148,8 @@ class AwaitingPaymentCleanupSchedulerTest {
     @Test
     void leaves_bid_alone_when_retrieve_throws_in_race_check() throws StripeException {
         BidEntity bid = expired("pi_throw");
-        when(bidRepository.findByStatusAndAwaitingPaymentExpiresAtBefore(
-                eq(BidStatus.AWAITING_PAYMENT), any())).thenReturn(List.of(bid));
+        when(bidRepository.findByStatusAndPaymentMethodNotAndAwaitingPaymentExpiresAtBefore(
+                eq(BidStatus.AWAITING_PAYMENT), eq(PaymentMethod.MOBILE_MONEY), any())).thenReturn(List.of(bid));
 
         InvalidRequestException ex = mock(InvalidRequestException.class);
         when(ex.getCode()).thenReturn("payment_intent_unexpected_state");
@@ -169,8 +170,8 @@ class AwaitingPaymentCleanupSchedulerTest {
 
     @Test
     void no_op_when_no_expired_bids() {
-        when(bidRepository.findByStatusAndAwaitingPaymentExpiresAtBefore(
-                eq(BidStatus.AWAITING_PAYMENT), any())).thenReturn(List.of());
+        when(bidRepository.findByStatusAndPaymentMethodNotAndAwaitingPaymentExpiresAtBefore(
+                eq(BidStatus.AWAITING_PAYMENT), eq(PaymentMethod.MOBILE_MONEY), any())).thenReturn(List.of());
 
         scheduler.cleanupUnpaidBids();
 

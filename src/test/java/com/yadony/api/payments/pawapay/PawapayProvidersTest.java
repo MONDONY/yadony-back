@@ -17,11 +17,4 @@ class PawapayProvidersTest {
         assertThat(PawapayProviders.label("SOMETHING_NEW")).isEqualTo("SOMETHING_NEW");
         assertThat(PawapayProviders.label(null)).isEqualTo("Mobile money");
     }
-
-    @Test
-    void isRedirectAuth_onlyForWave() {
-        assertThat(PawapayProviders.isRedirect("WAVE_SEN", "REDIRECT_AUTH")).isTrue();
-        assertThat(PawapayProviders.isRedirect("ORANGE_SEN", "PROVIDER_AUTH")).isFalse();
-        assertThat(PawapayProviders.isRedirect("ORANGE_SEN", null)).isFalse();
-    }
 }

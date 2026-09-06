@@ -76,7 +76,7 @@ class MobileMoneyBidPaymentServiceEscrowTest {
     @BeforeEach
     void setUp() {
         service = new MobileMoneyBidPaymentService(bidRepository, announcementRepository, null, paymentRepository,
-                operations, submission, null, null, null, audit, events, null, null, null, transactionManager, null);
+                operations, submission, null, null, null, audit, events, null, null, transactionManager, null);
         ReflectionTestUtils.setField(service, "adminAlert", adminAlert);
         announcement = new AnnouncementEntity();
         ReflectionTestUtils.setField(announcement, "id", UUID.randomUUID());
@@ -107,7 +107,7 @@ class MobileMoneyBidPaymentServiceEscrowTest {
     @Test
     void confirmEscrow_movesPaymentToEscrow_finalizesBid_andPublishesConfirmed() {
         PawapayOperationEntity op = deposit(PawapayOperationStatus.COMPLETED);
-        when(paymentRepository.markEscrowIfPending(eq(payment.getId()), eq(op.getId()), any())).thenReturn(1);
+        when(paymentRepository.markEscrowIfPending(eq(payment.getId()), any())).thenReturn(1);
         when(paymentRepository.findById(payment.getId())).thenReturn(Optional.of(payment));
         when(bidRepository.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
         // Ronde 1, point 5 : simple lecture, plus de verrou pessimiste sur l'annonce — rien
@@ -138,7 +138,7 @@ class MobileMoneyBidPaymentServiceEscrowTest {
     void confirmEscrow_replay_isNoop() {
         PawapayOperationEntity op = deposit(PawapayOperationStatus.COMPLETED);
         payment.setStatus(PaymentStatus.ESCROW);
-        when(paymentRepository.markEscrowIfPending(any(), any(), any())).thenReturn(0);
+        when(paymentRepository.markEscrowIfPending(any(), any())).thenReturn(0);
         when(paymentRepository.findById(payment.getId())).thenReturn(Optional.of(payment));
 
         service.confirmEscrow(op.getId(), payment.getId());
@@ -151,7 +151,7 @@ class MobileMoneyBidPaymentServiceEscrowTest {
     void confirmEscrow_afterDeadlineCancellation_refundsAutomatically() {
         PawapayOperationEntity op = deposit(PawapayOperationStatus.COMPLETED);
         payment.setStatus(PaymentStatus.CANCELLED);
-        when(paymentRepository.markEscrowIfPending(any(), any(), any())).thenReturn(0);
+        when(paymentRepository.markEscrowIfPending(any(), any())).thenReturn(0);
         when(paymentRepository.findById(payment.getId())).thenReturn(Optional.of(payment));
         when(operations.get(op.getId())).thenReturn(op);
         PawapayOperationEntity refund = new PawapayOperationEntity(UUID.randomUUID(), PawapayOperationKind.REFUND, payment.getId(), op.getId(),
@@ -162,9 +162,6 @@ class MobileMoneyBidPaymentServiceEscrowTest {
         service.confirmEscrow(op.getId(), payment.getId());
 
         verify(submission).submitRefund(payment.getId(), op, new BigDecimal("16800"));
-        // Ronde 1 (revue tâche 17), point 4 : le refund id est posé par l'UPDATE ciblé
-        // attachRefundId, jamais par un setter sur l'entité gérée.
-        verify(paymentRepository).attachRefundId(payment.getId(), refund.getId());
         verify(adminAlert).raise(eq("PAWAPAY_DEPOSIT_AFTER_CANCEL"), any(), any());
         verify(audit).log(eq("PAYMENT"), eq(payment.getId()), eq("MM_DEPOSIT_AFTER_CANCEL_REFUNDED"), any(), any());
         verify(events, never()).publishEvent(any());
@@ -175,13 +172,13 @@ class MobileMoneyBidPaymentServiceEscrowTest {
      * (SUBMIT_REJECTED) sur ce chemin était audité/alerté puis la méthode retournait
      * normalement (donc commitait) — alors que {@code RefundProcessor#refundEscrowedMobileMoney}
      * lève dans le même cas exact (rollback du claim). Aligné : alerte
-     * {@code PAWAPAY_DEPOSIT_AFTER_CANCEL_REJECTED} puis throw, aucun audit ni rattachement.
+     * {@code PAWAPAY_DEPOSIT_AFTER_CANCEL_REJECTED} puis throw, aucun audit.
      */
     @Test
     void confirmEscrow_afterDeadlineCancellation_refundRejected_alertsAndThrows() {
         PawapayOperationEntity op = deposit(PawapayOperationStatus.COMPLETED);
         payment.setStatus(PaymentStatus.CANCELLED);
-        when(paymentRepository.markEscrowIfPending(any(), any(), any())).thenReturn(0);
+        when(paymentRepository.markEscrowIfPending(any(), any())).thenReturn(0);
         when(paymentRepository.findById(payment.getId())).thenReturn(Optional.of(payment));
         when(operations.get(op.getId())).thenReturn(op);
         PawapayOperationEntity rejected = new PawapayOperationEntity(UUID.randomUUID(), PawapayOperationKind.REFUND, payment.getId(), op.getId(),
@@ -194,7 +191,6 @@ class MobileMoneyBidPaymentServiceEscrowTest {
                 .isInstanceOf(IllegalStateException.class);
 
         verify(adminAlert).raise(eq("PAWAPAY_DEPOSIT_AFTER_CANCEL_REJECTED"), any(), any());
-        verify(paymentRepository, never()).attachRefundId(any(), any());
         verify(audit, never()).log(any(), any(), any(), any(), any());
         verify(events, never()).publishEvent(any());
     }
@@ -216,7 +212,7 @@ class MobileMoneyBidPaymentServiceEscrowTest {
     void confirmEscrow_afterDeadlineCancellation_auditUsesItsOwnIndependentTransaction() {
         PawapayOperationEntity op = deposit(PawapayOperationStatus.COMPLETED);
         payment.setStatus(PaymentStatus.CANCELLED);
-        when(paymentRepository.markEscrowIfPending(any(), any(), any())).thenReturn(0);
+        when(paymentRepository.markEscrowIfPending(any(), any())).thenReturn(0);
         when(paymentRepository.findById(payment.getId())).thenReturn(Optional.of(payment));
         when(operations.get(op.getId())).thenReturn(op);
         PawapayOperationEntity refund = new PawapayOperationEntity(UUID.randomUUID(), PawapayOperationKind.REFUND, payment.getId(), op.getId(),
@@ -237,7 +233,7 @@ class MobileMoneyBidPaymentServiceEscrowTest {
     void confirmEscrow_bidNoLongerAwaiting_refundsAndMarksRefunded() {
         PawapayOperationEntity op = deposit(PawapayOperationStatus.COMPLETED);
         bid.setStatus(BidStatus.CANCELLED);
-        when(paymentRepository.markEscrowIfPending(any(), any(), any())).thenReturn(1);
+        when(paymentRepository.markEscrowIfPending(any(), any())).thenReturn(1);
         when(paymentRepository.findById(payment.getId())).thenReturn(Optional.of(payment));
         when(bidRepository.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
         when(paymentRepository.markRefundedIfEscrow(payment.getId())).thenReturn(1);

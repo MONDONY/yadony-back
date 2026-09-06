@@ -80,18 +80,6 @@ public final class NotificationTexts {
         return number + " " + currency.symbol();
     }
 
-    /** « ORANGE_MONEY » → « Orange Money ». */
-    public static String provider(String enumName) {
-        if (enumName == null || enumName.isBlank()) return "Mobile Money";
-        StringBuilder out = new StringBuilder();
-        for (String part : enumName.toLowerCase(Locale.ROOT).split("_")) {
-            if (part.isEmpty()) continue;
-            if (!out.isEmpty()) out.append(' ');
-            out.append(Character.toUpperCase(part.charAt(0))).append(part.substring(1));
-        }
-        return out.toString();
-    }
-
     private static String plural(int n, String singular) {
         return n + " " + singular + (n > 1 ? "s" : "");
     }

@@ -77,54 +77,26 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
     Optional<PaymentEntity> findByBidIdForUpdate(@Param("bidId") UUID bidId);
 
     /**
-     * Séquestre mobile money : PENDING → ESCROW, une seule fois, en mémorisant le deposit
-     * pawaPay qui l'a financé. 0 = déjà en ESCROW (rejeu) ou déjà CANCELLED (deadline
-     * passée pendant la saisie du PIN — l'appelant rembourse alors).
+     * Séquestre mobile money : PENDING → ESCROW, une seule fois. 0 = déjà en ESCROW (rejeu) ou
+     * déjà CANCELLED (deadline passée pendant la saisie du PIN — l'appelant rembourse alors).
+     * Le deposit qui a financé le séquestre se retrouve par {@code pawapay_operations.payment_id},
+     * jamais par une colonne de {@code payments}.
+     *
+     * <p>Comme tout claim bulk de cette interface ({@code @Modifying} sans
+     * {@code clearAutomatically}) : une entité {@code PaymentEntity} chargée AVANT l'appel garde
+     * son snapshot périmé en mémoire — ne jamais lui appliquer de setter ensuite (voir
+     * {@code PaymentRepositoryMobileMoneyTest}), relire par {@code entityManager.refresh} si une
+     * réponse doit refléter la ligne réelle.
      */
     @Modifying
-    @Query("UPDATE PaymentEntity p SET p.status = 'ESCROW', p.capturedAt = :now, p.pawapayDepositId = :opId "
+    @Query("UPDATE PaymentEntity p SET p.status = 'ESCROW', p.capturedAt = :now "
             + "WHERE p.id = :id AND p.status = 'PENDING'")
-    int markEscrowIfPending(@Param("id") UUID id, @Param("opId") UUID opId, @Param("now") Instant now);
+    int markEscrowIfPending(@Param("id") UUID id, @Param("now") Instant now);
 
     /** PENDING → CANCELLED (deadline mobile money dépassée, ou remboursement d'un paiement jamais encaissé). */
     @Modifying
     @Query("UPDATE PaymentEntity p SET p.status = 'CANCELLED' WHERE p.id = :id AND p.status = 'PENDING'")
     int markCancelledIfPending(@Param("id") UUID id);
-
-    /**
-     * Rail pawaPay (tâche 16, Ronde 1, point 1 — CRITIQUE) : pose {@code pawapay_payout_id} par
-     * un UPDATE ciblé, symétrique de {@link #markEscrowIfPending} qui pose déjà
-     * {@code pawapayDepositId} dans son propre bulk. À utiliser {@code TOUJOURS} à la place d'un
-     * {@code payment.setPawapayPayoutId(...)} sur l'entité gérée juste après
-     * {@link #markReleasedIfEscrow} : ce claim est un bulk JPQL {@code @Modifying} SANS
-     * {@code clearAutomatically} — la base passe {@code RELEASED} mais l'entité chargée en amont
-     * (ex. par {@code DeliveryEventListener#handleDeliveryConfirmed}) garde son ancien snapshot
-     * {@code ESCROW} en mémoire. {@code PaymentEntity} n'a ni {@code @DynamicUpdate} ni
-     * {@code @Version} : un setter sur cette entité la rend sale, et au flush (souvent au commit
-     * de la transaction) Hibernate régénère un UPDATE de TOUTES les colonnes avec les valeurs
-     * en mémoire — {@code status = 'ESCROW'} écraserait alors silencieusement le
-     * {@code RELEASED} tout juste posé, chaque livraison mobile money. Voir
-     * {@code PaymentRepositoryMobileMoneyTest#markReleasedIfEscrow_thenAttachPayoutId_doesNotRevertStatus}.
-     */
-    @Modifying
-    @Query("UPDATE PaymentEntity p SET p.pawapayPayoutId = :opId WHERE p.id = :id")
-    int attachPayoutId(@Param("id") UUID id, @Param("opId") UUID opId);
-
-    /**
-     * Tâche 17, symétrique de {@link #attachPayoutId} (tâche 16) : pose {@code pawapay_refund_id}
-     * par un UPDATE ciblé, à utiliser {@code TOUJOURS} à la place d'un
-     * {@code payment.setPawapayRefundId(...)} sur l'entité gérée juste après
-     * {@link #markRefundedIfEscrow} — même piège exactement (claim bulk JPQL {@code @Modifying}
-     * SANS {@code clearAutomatically} : la base passe {@code REFUNDED} mais l'entité chargée en
-     * amont garde son ancien snapshot {@code ESCROW} en mémoire ; {@code PaymentEntity} n'a ni
-     * {@code @DynamicUpdate} ni {@code @Version}, un setter la rend sale et le flush régénère un
-     * UPDATE de toutes les colonnes, {@code status = 'ESCROW'} écrasant silencieusement le
-     * {@code REFUNDED} tout juste posé). Voir le Javadoc détaillé d'{@link #attachPayoutId} et
-     * {@code PaymentRepositoryMobileMoneyTest#markRefundedIfEscrow_thenAttachRefundId_doesNotRevertStatus}.
-     */
-    @Modifying
-    @Query("UPDATE PaymentEntity p SET p.pawapayRefundId = :opId WHERE p.id = :id")
-    int attachRefundId(@Param("id") UUID id, @Param("opId") UUID opId);
 
     /**
      * Vrai si l'utilisateur a au moins un paiement en séquestre actif, qu'il soit

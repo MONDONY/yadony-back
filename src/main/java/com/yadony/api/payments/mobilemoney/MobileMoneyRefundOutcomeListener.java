@@ -3,6 +3,7 @@ package com.yadony.api.payments.mobilemoney;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
+import com.yadony.api.payments.pawapay.PawapayText;
 import com.yadony.api.payments.pawapay.events.PawapayOperationCompletedEvent;
 import com.yadony.api.payments.pawapay.events.PawapayOperationFailedEvent;
 import java.util.Map;
@@ -65,22 +66,13 @@ public class MobileMoneyRefundOutcomeListener {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onFailed(PawapayOperationFailedEvent event) {
         if (event.kind() != PawapayOperationKind.REFUND || event.paymentId() == null) return;
-        String failureCode = truncate(event.failureCode());
-        String failureMessage = truncate(event.failureMessage());
+        String failureCode = PawapayText.clamp(event.failureCode());
+        String failureMessage = PawapayText.clamp(event.failureMessage());
         audit.log("PAYMENT", event.paymentId(), "MM_REFUND_FAILED", null,
                 Map.of("operationId", event.operationId().toString(), "failureCode", String.valueOf(failureCode)));
         adminAlert.raise("PAWAPAY_REFUND_FAILED",
                 "Remboursement mobile money échoué pour le paiement " + event.paymentId() + " : " + failureCode,
                 Map.of("paymentId", event.paymentId().toString(), "operationId", event.operationId().toString(),
                         "failureCode", String.valueOf(failureCode), "failureMessage", String.valueOf(failureMessage)));
-    }
-
-    /**
-     * Borne à 64 caractères une valeur non authentifiée (pawaPay) avant qu'elle ne soit écrite
-     * en audit ou postée sur Telegram — même convention que
-     * {@code MobileMoneyPayoutOutcomeListener#truncate} / {@code PawapayCallbackController#truncate}.
-     */
-    private static String truncate(String value) {
-        return value != null && value.length() > 64 ? value.substring(0, 64) : value;
     }
 }

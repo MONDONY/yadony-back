@@ -152,9 +152,7 @@ public class PawapayOperationEntity {
     public String getMsisdn() { return msisdn; }
     public String getMsisdnMasked() { return msisdnMasked; }
     public UUID getPaymentId() { return paymentId; }
-    public UUID getRelatedOperationId() { return relatedOperationId; }
     public String getAuthorizationUrl() { return authorizationUrl; }
-    public void setAuthorizationUrl(String authorizationUrl) { this.authorizationUrl = authorizationUrl; }
     public String getProviderTransactionId() { return providerTransactionId; }
     public String getFailureCode() { return failureCode; }
     public void setFailureCode(String failureCode) { this.failureCode = failureCode; }
@@ -162,11 +160,7 @@ public class PawapayOperationEntity {
     public void setFailureMessage(String failureMessage) { this.failureMessage = failureMessage; }
     public String getRawCallback() { return rawCallback; }
     public LocalDateTime getSubmittedAt() { return submittedAt; }
-    public void setSubmittedAt(LocalDateTime submittedAt) { this.submittedAt = submittedAt; }
-    public LocalDateTime getCallbackReceivedAt() { return callbackReceivedAt; }
-    public LocalDateTime getLastPolledAt() { return lastPolledAt; }
     public LocalDateTime getFinalizedAt() { return finalizedAt; }
-    public void setFinalizedAt(LocalDateTime finalizedAt) { this.finalizedAt = finalizedAt; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public LocalDateTime getUpdatedAt() { return updatedAt; }
 }

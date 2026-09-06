@@ -42,17 +42,12 @@ public class PaymentEntity extends BaseEntity {
     @org.hibernate.annotations.ColumnDefault("'STRIPE'")
     private PaymentRail rail = PaymentRail.STRIPE;
 
-    // Confort de lecture (admin, export). Le lien qui fait autorité est
-    // pawapay_operations.payment_id : ces colonnes peuvent être vides alors que
-    // l'opération existe (cf. spec §7.1). Aucune décision ne se prend en les lisant.
-    @Column(name = "pawapay_deposit_id")
-    private UUID pawapayDepositId;
-
-    @Column(name = "pawapay_payout_id")
-    private UUID pawapayPayoutId;
-
-    @Column(name = "pawapay_refund_id")
-    private UUID pawapayRefundId;
+    // Aucune référence aux opérations pawaPay ici : le lien qui fait autorité est
+    // pawapay_operations.payment_id (spec §7.1), lu via PawapayOperationService. Cette entité
+    // n'a ni @DynamicUpdate ni @Version : tout champ posé par setter après un claim bulk
+    // (markReleasedIfEscrow, markRefundedIfEscrow…) rendrait l'entité sale avec un statut
+    // périmé, et le flush réécrirait TOUTES les colonnes — ne rien lui ajouter que le rail
+    // pawaPay devrait écrire après un claim.
 
     @Column(name = "amount", nullable = false, precision = 10, scale = 2)
     private BigDecimal amount;
@@ -162,14 +157,4 @@ public class PaymentEntity extends BaseEntity {
 
     public PaymentRail getRail() { return rail; }
     public void setRail(PaymentRail rail) { this.rail = rail; }
-    public UUID getPawapayDepositId() { return pawapayDepositId; }
-    public void setPawapayDepositId(UUID pawapayDepositId) { this.pawapayDepositId = pawapayDepositId; }
-    // Revue finale, point 8 : setPawapayPayoutId/setPawapayRefundId supprimés — aucun appelant
-    // (vérifié par grep), et quatre Javadoc de la branche expliquaient qu'il ne fallait jamais
-    // les appeler sur l'entité gérée après un claim bulk (voir PaymentRepository, MobileMoneyPayoutInitiator,
-    // MobileMoneyBidPaymentService) : les supprimer rend l'invariant structurellement infranchissable
-    // au lieu de reposer sur des commentaires. attachPayoutId/attachRefundId (UPDATE ciblé) restent
-    // les seuls chemins qui posent ces colonnes. getPawapayDepositId/setPawapayDepositId conservés : utilisé.
-    public UUID getPawapayPayoutId() { return pawapayPayoutId; }
-    public UUID getPawapayRefundId() { return pawapayRefundId; }
 }

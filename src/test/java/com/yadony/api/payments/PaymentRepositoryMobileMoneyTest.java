@@ -50,15 +50,14 @@ class PaymentRepositoryMobileMoneyTest {
     }
 
     @Test
-    void markEscrowIfPending_movesOnce_andRecordsDepositId() {
+    void markEscrowIfPending_movesOnce_andRecordsCaptureTime() {
         PaymentEntity p = pawapayPayment(PaymentStatus.PENDING);
-        UUID opId = UUID.randomUUID();
-        assertThat(repository.markEscrowIfPending(p.getId(), opId, Instant.now())).isEqualTo(1);
-        assertThat(repository.markEscrowIfPending(p.getId(), UUID.randomUUID(), Instant.now())).isZero();
+        assertThat(repository.markEscrowIfPending(p.getId(), Instant.now())).isEqualTo(1);
+        assertThat(repository.markEscrowIfPending(p.getId(), Instant.now())).isZero();
         String status = jdbc.queryForObject("SELECT status FROM payments WHERE id = ?", String.class, p.getId());
-        UUID stored = jdbc.queryForObject("SELECT pawapay_deposit_id FROM payments WHERE id = ?", UUID.class, p.getId());
+        Object capturedAt = jdbc.queryForObject("SELECT captured_at FROM payments WHERE id = ?", Object.class, p.getId());
         assertThat(status).isEqualTo("ESCROW");
-        assertThat(stored).isEqualTo(opId);
+        assertThat(capturedAt).isNotNull();
     }
 
     @Test
@@ -69,127 +68,44 @@ class PaymentRepositoryMobileMoneyTest {
         assertThat(repository.markCancelledIfPending(escrow.getId())).isZero();
     }
 
-    // ── Ronde 1, point 1 : le claim atomique markReleasedIfEscrow ne doit JAMAIS être suivi
-    // d'une mutation de l'entité gérée chargée en amont (voir MobileMoneyPayoutInitiator) ────
+    // ── Un claim atomique ne doit JAMAIS être suivi d'une mutation de l'entité gérée chargée
+    // en amont : PaymentEntity n'a ni @DynamicUpdate ni @Version, un setter la rend sale et le
+    // flush régénère un UPDATE de TOUTES les colonnes avec les valeurs en mémoire, écrasant le
+    // claim. Les deux tests ci-dessous fixent les deux seules façons sûres de continuer après
+    // un claim : ne rien toucher, ou relire l'entité par entityManager.refresh. ───────────────
 
     /**
-     * Reproduit EXACTEMENT le défaut trouvé en revue : {@code p} est l'entité gérée renvoyée par
-     * {@code saveAndFlush} (snapshot Hibernate {@code status = ESCROW}). {@code markReleasedIfEscrow}
-     * est un bulk JPQL {@code @Modifying} SANS {@code clearAutomatically} : la base passe
-     * {@code RELEASED}, mais {@code p} reste {@code ESCROW} en mémoire. Un setter sur ce {@code p}
-     * après coup le rend sale ; au flush, Hibernate (pas de {@code @DynamicUpdate} sur
-     * {@code PaymentEntity}) régénère un UPDATE de TOUTES les colonnes avec les valeurs en
-     * mémoire — {@code status = 'ESCROW'} écrase silencieusement le {@code RELEASED} qui vient
-     * d'être posé. Constaté rouge (voir task-16-report.md, section Ronde 1) avec
-     * {@code p.setPawapayPayoutId(opId)} à la place de l'appel ci-dessous ; corrigé en
-     * remplaçant cette mutation par {@link PaymentRepository#attachPayoutId}, qui n'écrit QUE la
-     * colonne visée et ne touche jamais l'état Java de l'entité.
+     * Sans setter après le claim, rien n'est re-flushé : le {@code RELEASED} posé par
+     * {@code markReleasedIfEscrow} survit au flush final malgré le snapshot {@code ESCROW} que
+     * l'entité {@code p} garde en mémoire (bulk JPQL sans {@code clearAutomatically}).
      */
     @Test
-    void markReleasedIfEscrow_thenAttachPayoutId_doesNotRevertStatus() {
+    void markReleasedIfEscrow_withoutTouchingTheEntity_doesNotRevertStatus() {
         PaymentEntity p = pawapayPayment(PaymentStatus.ESCROW);
-        UUID opId = UUID.randomUUID();
 
         assertThat(repository.markReleasedIfEscrow(p.getId(), LocalDateTime.now(ZoneOffset.UTC))).isEqualTo(1);
-        // Constaté rouge (voir task-16-report.md, Ronde 1) avec p.setPawapayPayoutId(opId) à la
-        // place de la ligne ci-dessous : "expected RELEASED but was ESCROW" — le setter sur
-        // l'entité gérée redevenait sale et écrasait le RELEASED au flush. L'UPDATE ciblé ne
-        // touche jamais l'état Java de l'entité : rien à re-flusher.
-        repository.attachPayoutId(p.getId(), opId);
         repository.flush();
 
         String status = jdbc.queryForObject("SELECT status FROM payments WHERE id = ?", String.class, p.getId());
-        UUID stored = jdbc.queryForObject("SELECT pawapay_payout_id FROM payments WHERE id = ?", UUID.class, p.getId());
         assertThat(status).isEqualTo("RELEASED");
-        assertThat(stored).isEqualTo(opId);
+        assertThat(p.getStatus()).as("snapshot périmé en mémoire, jamais ré-écrit").isEqualTo(PaymentStatus.ESCROW);
     }
 
-    // ── Tâche 17 : même piège, symétrique côté remboursement ────────────────────────────────
-
     /**
-     * Reproduit EXACTEMENT le défaut de {@link #markReleasedIfEscrow_thenAttachPayoutId_doesNotRevertStatus}
-     * pour le remboursement : {@code markRefundedIfEscrow} est le même genre de bulk JPQL
-     * {@code @Modifying} SANS {@code clearAutomatically} — la base passe {@code REFUNDED}, mais
-     * l'entité {@code p} chargée en amont par {@code saveAndFlush} garde son snapshot
-     * {@code ESCROW} en mémoire. {@code p.setPawapayRefundId(opId)} à la place de l'appel
-     * ci-dessous ferait retomber ce test rouge — corrigé par {@link PaymentRepository#attachRefundId},
-     * qui n'écrit QUE la colonne visée.
-     *
-     * <p><b>Ronde 1 (revue) — deux reproductions empiriques, résultats opposés.</b> Point 1 de
-     * la revue affirmait qu'un {@code payment.setStatus(REFUNDED)} intercalé ENTRE le claim et
-     * {@code attachRefundId} (l'ordre exact que {@code RefundProcessor} utilisait) romprait ce
-     * test au flush final. Vérifié empiriquement dans les deux ordres :
-     * <ul>
-     *   <li>{@code setStatus} PUIS {@code attachRefundId} (ordre réellement utilisé par
-     *       {@code RefundProcessor} avant correction) : **test resté vert**. Hibernate déclenche
-     *       son propre auto-flush AVANT d'exécuter {@code attachRefundId} — dont l'espace de
-     *       requête ({@code payments}) recoupe l'entité sale — ce qui écrit {@code status}
-     *       (valeur en mémoire, identique à celle du claim, donc sans dégât) AVANT que
-     *       {@code attachRefundId} ne pose la bonne valeur de {@code pawapay_refund_id} juste
-     *       après ; rien ne la re-déloge ensuite. Le {@code flushAutomatically=false} de Spring
-     *       Data ne supprime que le flush EXPLICITE que Spring ajouterait lui-même — il ne
-     *       désactive pas l'auto-flush interne d'Hibernate déclenché par le recoupement
-     *       d'espace de requête.</li>
-     *   <li>{@code attachRefundId} PUIS {@code setStatus} (ordre inverse, qui aurait pu résulter
-     *       d'un réordonnancement futur — exactement le risque que la règle « jamais d'écriture
-     *       sur l'entité après un claim bulk » entend prévenir) : **rouge, reproduit à
-     *       l'identique** — {@code expected: <uuid> but was: null}. Aucune requête ne recoupe
-     *       plus l'espace {@code payments} après {@code setStatus}, rien ne déclenche
-     *       l'auto-flush avant le flush explicite final, qui régénère alors un UPDATE de toutes
-     *       les colonnes et écrase {@code pawapay_refund_id} avec la valeur en mémoire
-     *       ({@code null}, jamais posée par un setter).</li>
-     * </ul>
-     * Conclusion retenue (voir task-17-report.md, section Ronde 1, pour le détail et le résultat
-     * exact du second cas) : le mécanisme précis dépend d'un ordre d'exécution que rien ne
-     * garantit dans la durée (un futur réordonnancement — exactement ce que fait la Ronde 1 pour
-     * l'audit, point 2 — suffirait à faire basculer le premier cas dans le second). La correction
-     * appliquée (suppression de tout {@code setStatus} après le claim dans
-     * {@code RefundProcessor}) élimine la dépendance à cet ordre plutôt que de s'y fier.
-     */
-    @Test
-    void markRefundedIfEscrow_thenAttachRefundId_doesNotRevertStatus() {
-        PaymentEntity p = pawapayPayment(PaymentStatus.ESCROW);
-        UUID opId = UUID.randomUUID();
-
-        assertThat(repository.markRefundedIfEscrow(p.getId())).isEqualTo(1);
-        // Constaté rouge avec p.setPawapayRefundId(opId) à la place de la ligne ci-dessous.
-        // L'UPDATE ciblé ne touche jamais l'état Java de l'entité : rien à re-flusher.
-        repository.attachRefundId(p.getId(), opId);
-        repository.flush();
-
-        String status = jdbc.queryForObject("SELECT status FROM payments WHERE id = ?", String.class, p.getId());
-        UUID stored = jdbc.queryForObject("SELECT pawapay_refund_id FROM payments WHERE id = ?", UUID.class, p.getId());
-        assertThat(status).isEqualTo("REFUNDED");
-        assertThat(stored).isEqualTo(opId);
-    }
-
-    // ── Tâche 18, Ronde 1, point 1 : entityManager.refresh remplace la liste de setters
-    // (devenue incomplète — escrowReleasedAt notamment) dans AdminPaymentController ────────────
-
-    /**
-     * Preuve du correctif retenu à la tâche 18 (Ronde 1, point 1) : après le claim {@code
-     * markReleasedIfEscrow} et l'attachement {@code attachPayoutId} — les deux mêmes écritures
-     * ciblées que {@link #markReleasedIfEscrow_thenAttachPayoutId_doesNotRevertStatus} ci-dessus
-     * — {@code entityManager.refresh(p)} relit la ligne réelle DANS la même transaction (elle y
-     * voit ses propres écritures non commitées) et rend l'entité {@code p} à nouveau PROPRE :
-     * Hibernate n'a plus rien à réécrire pour elle. Contrairement à une liste de
-     * {@code p.setXxx(...)} — qui salit l'entité et ne protège que les colonnes explicitement
-     * listées (piège reproduit une deuxième fois y compris APRÈS la correction de la tâche 17,
-     * cette fois sur {@code escrowReleasedAt} dans {@code AdminPaymentController}, avec un écart
-     * d'un aller-retour HTTP pawaPay entier, pas de quelques millisecondes) — un refresh couvre
-     * TOUTES les colonnes, présentes et futures, sans liste à tenir à jour. La preuve porte sur
+     * {@code entityManager.refresh(p)} relit la ligne réelle DANS la même transaction (elle y
+     * voit ses propres écritures non commitées) et rend l'entité à nouveau PROPRE : Hibernate
+     * n'a plus rien à réécrire pour elle. Contrairement à une liste de {@code p.setXxx(...)} —
+     * qui salit l'entité et ne protège que les colonnes explicitement listées — un refresh
+     * couvre TOUTES les colonnes, présentes et futures. La preuve porte sur
      * {@code Statistics#getEntityUpdateCount()} : aucun UPDATE supplémentaire n'est généré au
-     * flush qui suit le refresh, alors qu'un simple setter en aurait régénéré un (voir les deux
-     * tests ci-dessus, dont la note démontre qu'un setter EST parfois absorbé sans dégât selon un
-     * ordre non garanti — ici, aucun UPDATE du tout, quel que soit cet ordre).
+     * flush qui suit le refresh. C'est le geste des endpoints admin (force-release, refund)
+     * avant de construire leur réponse.
      */
     @Test
-    void markReleasedIfEscrow_thenAttachPayoutId_thenRefresh_generatesNoUpdate() {
+    void markReleasedIfEscrow_thenRefresh_generatesNoUpdate() {
         PaymentEntity p = pawapayPayment(PaymentStatus.ESCROW);
-        UUID opId = UUID.randomUUID();
 
         assertThat(repository.markReleasedIfEscrow(p.getId(), LocalDateTime.now(ZoneOffset.UTC))).isEqualTo(1);
-        repository.attachPayoutId(p.getId(), opId);
 
         Statistics stats = entityManager.getEntityManagerFactory().unwrap(SessionFactory.class).getStatistics();
         stats.setStatisticsEnabled(true);
@@ -201,10 +117,8 @@ class PaymentRepositoryMobileMoneyTest {
         assertThat(stats.getEntityUpdateCount())
                 .as("refresh doit rendre l'entité propre : aucun UPDATE ne doit être régénéré au flush qui suit")
                 .isEqualTo(updatesBeforeRefresh);
-        // Et la relecture reflète bien les DEUX écritures ciblées — status ET pawapayPayoutId,
-        // dans le même geste, sans setter.
         assertThat(p.getStatus()).isEqualTo(PaymentStatus.RELEASED);
-        assertThat(p.getPawapayPayoutId()).isEqualTo(opId);
+        assertThat(p.getEscrowReleasedAt()).isNotNull();
     }
 
     @Test

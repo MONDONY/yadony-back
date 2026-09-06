@@ -108,7 +108,7 @@ public class PawapayOperationService {
             // (no-op), seul submittedAt avance ; le poller relira le vrai statut.
             case DUPLICATE_IGNORED -> log.warn("pawaPay {} : DUPLICATE_IGNORED, statut laissé au poller", id);
         }
-        int updated = repository.markSubmittedIfStillCreated(id, status, now, failureCode, failureMessage, finalizedAt, now);
+        int updated = repository.markSubmittedIfStillCreated(id, status, failureCode, failureMessage, finalizedAt, now);
         if (updated == 0) {
             log.warn("pawaPay {} : callback plus rapide que la réponse pawaPay, statut du callback conservé", id);
         }

@@ -11,6 +11,7 @@ import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyAccountResponse;
 import com.yadony.api.payments.pawapay.PawapayClient;
 import com.yadony.api.payments.pawapay.PawapayCountries;
+import com.yadony.api.payments.pawapay.PawapayErrors;
 import com.yadony.api.payments.pawapay.PawapayProperties;
 import com.yadony.api.payments.pawapay.PawapayProviders;
 import com.yadony.api.payments.pawapay.dto.PawapayProviderConfig;
@@ -69,8 +70,7 @@ public class MobileMoneyAccountService {
     @Transactional
     public MobileMoneyAccountResponse activate(UUID userId) {
         if (!props.enabled()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-disabled",
-                    "Mobile Money Disabled", "Le mobile money n'est pas encore disponible.");
+            throw PawapayErrors.disabled();
         }
         // Verrou pessimiste : sans lui, deux activations concurrentes pourraient toutes
         // deux lire l'état initial et écrire deux fois (règle projet #17).
@@ -82,14 +82,14 @@ public class MobileMoneyAccountService {
                     "Phone Required", "Ajoutez un numéro de téléphone vérifié à votre compte.");
         }
         // predictProvider et activeConfiguration sont deux appels HTTP pawaPay : une panne
-        // réseau ou un 5xx y lève RestClientException (jamais catchée avant ce correctif —
-        // remontait en 500 générique tout en laissant la ligne users verrouillée jusqu'au
-        // timeout HTTP). Repris à l'identique de PawapaySubmissionService#submit.
+        // réseau ou un 5xx y lève RestClientException — 502 normalisé du rail, sinon un 500
+        // générique laisserait la ligne users verrouillée jusqu'au timeout HTTP.
+        String context = "l'activation mobile money de " + userId;
         Optional<PawapayProviderPrediction> predicted;
         try {
             predicted = client.predictProvider(phone);
         } catch (RestClientException e) {
-            throw providerUnavailable(userId, "predict-provider", e);
+            throw PawapayErrors.providerUnavailable("predict-provider", context, e);
         }
         PawapayProviderPrediction prediction = predicted.orElse(null);
         if (prediction == null) {
@@ -99,7 +99,7 @@ public class MobileMoneyAccountService {
         try {
             configuration = client.activeConfiguration();
         } catch (RestClientException e) {
-            throw providerUnavailable(userId, "active-configuration", e);
+            throw PawapayErrors.providerUnavailable("active-configuration", context, e);
         }
         PawapayProviderConfig conf = configuration.get(prediction.provider());
         if (conf == null || !conf.supportsPayout()) {
@@ -116,16 +116,14 @@ public class MobileMoneyAccountService {
         try {
             msisdn = Msisdn.normalize(prediction.phoneNumber() != null ? prediction.phoneNumber() : phone);
         } catch (IllegalArgumentException e) {
-            throw providerUnavailable(userId, "msisdn-normalize", e);
+            throw PawapayErrors.providerUnavailable("msisdn-normalize", context, e);
         }
+        // PawapayCountries.toAlpha2 rend null pour un alpha-3 non couvert par la table ISO du
+        // JDK : sans cette garde, la valeur nulle serait acceptée en silence ici
+        // (users.mobile_money_country est nullable) et l'échec reporté au versement
+        // (pawapay_operations.country est NOT NULL), en 500 générique et sans alerte — sur le
+        // chemin qui engage l'argent. Même garde que MobileMoneyBidPaymentService#initiateDeposit.
         String country = PawapayCountries.toAlpha2(prediction.countryAlpha3());
-        // Revue finale, point 5 (Important) : PawapayCountries.toAlpha2 rend null pour un
-        // alpha-3 non couvert par la table ISO du JDK. Sans cette garde, la valeur nulle était
-        // acceptée en silence ici (users.mobile_money_country est nullable) et l'échec reporté
-        // au versement (pawapay_operations.country est NOT NULL), en 500 générique et sans
-        // alerte — sur le chemin qui engage l'argent. Même garde, même motif que
-        // MobileMoneyBidPaymentService#initiateDeposit (tâche 13, Ronde 1 point 9), remontée ici
-        // pour l'activation (tâche 11, écrite avant, qui ne l'avait pas reçue).
         if (country == null) {
             throw unsupported(userId, "Pays non reconnu pour ce numéro.");
         }
@@ -170,19 +168,6 @@ public class MobileMoneyAccountService {
         log.warn("Activation mobile money refusée pour {} : {}", userId, detail);
         return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-account-unsupported",
                 "Mobile Money Account Unsupported", detail);
-    }
-
-    /**
-     * pawaPay indisponible (panne réseau/5xx) ou réponse inexploitable (numéro prédit hors
-     * bornes) : dans les deux cas ce n'est pas la faute de l'utilisateur, donc 502 et non 422
-     * — motif et message repris à l'identique de {@code PawapaySubmissionService#submit}.
-     * Ne journalise jamais le numéro : uniquement l'étape et le message de l'exception source
-     * (jamais le contenu d'une charge pawaPay).
-     */
-    private static YadonyBusinessException providerUnavailable(UUID userId, String step, Exception cause) {
-        log.error("pawaPay indisponible ({}) lors de l'activation mobile money de {} : {}", step, userId, cause.toString());
-        return new YadonyBusinessException(HttpStatus.BAD_GATEWAY, "mobile-money-provider-unavailable",
-                "Mobile Money Provider Unavailable", "Le service mobile money ne répond pas. Réessayez dans quelques instants.");
     }
 
     private static YadonyBusinessException notFound(UUID userId) {

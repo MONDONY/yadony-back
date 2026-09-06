@@ -30,6 +30,8 @@ import com.yadony.api.cancellation.CancellationRepository;
 import com.yadony.api.cancellation.CancellationScope;
 import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.payments.currency.CurrencyPaymentRails;
+import com.yadony.api.payments.pawapay.PawapayErrors;
+import com.yadony.api.payments.pawapay.PawapayProperties;
 import com.yadony.api.ratings.RatingRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.cache.annotation.CacheEvict;
@@ -76,13 +78,8 @@ public class BidService {
     private final BidPhotoService bidPhotoService;
     private final FirebaseContactService firebaseContact;
 
-    /**
-     * Rail mobile money (pawaPay) actif au niveau plateforme. Injection par champ
-     * (et non par le constructeur) pour ne pas alourdir ce dernier ; positionné par
-     * {@code ReflectionTestUtils} dans les tests unitaires.
-     */
-    @org.springframework.beans.factory.annotation.Value("${yadony.pawapay.enabled:false}")
-    private boolean pawapayEnabled;
+    /** Rail mobile money (pawaPay) : la même source que tous les autres lecteurs de l'interrupteur. */
+    private final PawapayProperties pawapayProperties;
 
     public BidService(BidRepository bidRepository, AnnouncementRepository announcementRepository,
                       UserRepository userRepository, AuditService auditService,
@@ -96,7 +93,8 @@ public class BidService {
                       PromoService promoService,
                       StorageService storageService,
                       BidPhotoService bidPhotoService,
-                      FirebaseContactService firebaseContact) {
+                      FirebaseContactService firebaseContact,
+                      PawapayProperties pawapayProperties) {
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.userRepository = userRepository;
@@ -113,6 +111,7 @@ public class BidService {
         this.storageService = storageService;
         this.bidPhotoService = bidPhotoService;
         this.firebaseContact = firebaseContact;
+        this.pawapayProperties = pawapayProperties;
     }
 
     /**
@@ -466,10 +465,8 @@ public class BidService {
         }
 
         if (pm == PaymentMethod.MOBILE_MONEY) {
-            if (!pawapayEnabled) {
-                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                        "mobile-money-disabled", "Mobile Money Disabled",
-                        "Le mobile money n'est pas encore disponible.");
+            if (!pawapayProperties.enabled()) {
+                throw PawapayErrors.disabled();
             }
             // Garde de devise structurelle EN PREMIER pour ce rail : une annonce dont la
             // devise ne supporte pas le mobile money (ex. EUR) doit toujours répondre par un
@@ -493,7 +490,7 @@ public class BidService {
             // (MobileMoneyAccountService#activate). Si elle ne correspond pas à celle de
             // l'annonce, le versement à la livraison serait rejeté par pawaPay une fois
             // l'argent déjà encaissé auprès de l'expéditeur — donc bloqué ici, en amont.
-            if (!announcement.getCurrency().equalsIgnoreCase(traveler.getMobileMoneyCurrency())) {
+            if (!traveler.canReceiveMobileMoney(announcement.getCurrency())) {
                 throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
                         "mobile-money-currency-mismatch", "Mobile Money Currency Mismatch",
                         "Le compte de versement mobile money de ce voyageur ne correspond pas "
@@ -844,18 +841,13 @@ public class BidService {
     private BidResponse doRejectBid(BidEntity bid, AnnouncementEntity announcement,
                                     UserEntity traveler, BidRejectRequest request,
                                     boolean systemInitiated) {
-        // Revue finale, point 1 (CRITIQUE) : MOBILE_MONEY manquait à cette liste, symétrique de la
-        // garde posée par la tâche 12 sur doAcceptBid. Un bid MOBILE_MONEY naît PENDING et
-        // n'atteint JAMAIS PAYMENT_ESCROWED (paiement porté par le rail pawaPay, pas par l'escrow
-        // carte) : sans lui ici, requireBidStatus rendait systématiquement un 409 et le refus
-        // était impossible. rematchEligible (ci-dessous) dérive du même booléen — la correction
-        // ferme donc aussi le rematch à tort d'un colis jamais payé (cf. commentaire plus bas).
+        // Tout mode hors escrow carte (espèces, mobile money pawaPay, legacy) naît PENDING et
+        // n'atteint JAMAIS PAYMENT_ESCROWED : le refus se fait depuis PENDING. Un prédicat sur
+        // l'énumération plutôt qu'une liste : la liste écrite à la main avait oublié
+        // MOBILE_MONEY, rendant tout refus d'un bid mobile money impossible (409 systématique)
+        // et ouvrant à tort le rematch (ci-dessous, même booléen) d'un colis jamais payé.
         boolean isOffPlatformPending =
-                (bid.getPaymentMethod() == PaymentMethod.CASH
-                 || bid.getPaymentMethod() == PaymentMethod.WAVE
-                 || bid.getPaymentMethod() == PaymentMethod.ORANGE_MONEY
-                 || bid.getPaymentMethod() == PaymentMethod.MOBILE_MONEY)
-                && bid.getStatus() == BidStatus.PENDING;
+                !bid.getPaymentMethod().isCardEscrow() && bid.getStatus() == BidStatus.PENDING;
         if (!isOffPlatformPending) {
             requireBidStatus(bid, BidStatus.PAYMENT_ESCROWED);
         }
@@ -989,19 +981,11 @@ public class BidService {
         if (announcement == null) {
             return;
         }
-        // Revue finale, point 4 (Important) : condition COMBINÉE, jamais deux gardes
-        // indépendantes — alignée sur MobileMoneyBidPaymentService#expire (tâche 15, Ronde 1
-        // point 3). Deux gardes séparées (poids d'un côté, bascule FULL→ACTIVE de l'autre)
-        // permettaient à un bid de grille SANS poids (weightKg null) sur une annonce FULL de
-        // rebasculer celle-ci ACTIVE sans qu'aucun kilo ne soit rendu — un trajet réellement à
-        // zéro kilo disponible réapparaissait alors en recherche. Le save() reste nesté dans ce
-        // même bloc, comme dans acceptBid/expire.
-        boolean isKgFreeCancel = announcement.getCapacityUnit() == CapacityUnit.KG_FREE;
-        if (!isKgFreeCancel && bid.getWeightKg() != null) {
-            announcement.setAvailableKg(announcement.getAvailableKg().add(bid.getWeightKg()));
-            if (announcement.getStatus() == AnnouncementStatus.FULL) {
-                announcement.setStatus(AnnouncementStatus.ACTIVE);
-            }
+        // Condition combinée portée par l'entité (voir AnnouncementEntity#releaseCapacity) :
+        // deux gardes séparées permettaient à un bid de grille SANS poids sur une annonce FULL
+        // de la rebasculer ACTIVE sans qu'aucun kilo ne soit rendu — un trajet réellement à
+        // zéro kilo disponible réapparaissait alors en recherche.
+        if (announcement.releaseCapacity(bid.getWeightKg())) {
             announcementRepository.save(announcement);
         }
     }

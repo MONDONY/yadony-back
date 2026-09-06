@@ -168,15 +168,13 @@ class NotificationTextsTest {
         // symbole du catalogue SupportedCurrency (« F CFA »), sans décimale pour les francs CFA.
         assertThat(NotificationTexts.mobileMoneyAmount(new BigDecimal("15000"), "XOF")).isEqualTo("15000 F CFA");
         assertThat(NotificationTexts.mobileMoneyAmount(new BigDecimal("45"), "EUR")).isEqualTo("45,00 €");
-        assertThat(NotificationTexts.provider("ORANGE_MONEY")).isEqualTo("Orange Money");
-        assertThat(NotificationTexts.provider("WAVE")).isEqualTo("Wave");
         assertThat(NotificationTexts.corridorFromLabel("Paris → Dakar")).isEqualTo("Paris vers Dakar");
         assertThat(NotificationTexts.corridor("Paris", "Dakar")).isEqualTo("Paris vers Dakar");
     }
 
     @Test
     void everyCatalogueEntryIsCoveredByTheWorstCase() {
-        Set<String> helpers = Set.of("corridor", "corridorFromLabel", "kg", "eur", "amount", "provider");
+        Set<String> helpers = Set.of("corridor", "corridorFromLabel", "kg", "eur", "amount");
         List<String> declared = new ArrayList<>();
         for (Method m : NotificationTexts.class.getDeclaredMethods()) {
             if (Modifier.isPublic(m.getModifiers()) && Modifier.isStatic(m.getModifiers())

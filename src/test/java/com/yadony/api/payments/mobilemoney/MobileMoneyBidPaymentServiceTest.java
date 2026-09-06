@@ -16,7 +16,6 @@ import com.yadony.api.auth.MobileMoneyPayoutStatus;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
-import com.yadony.api.common.CommissionRateResolver;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
@@ -78,7 +77,6 @@ class MobileMoneyBidPaymentServiceTest {
     @Mock ApplicationEventPublisher events;
     // Ronde 1 : point 1 (rachat promo / consommation du bon), point 3 (transaction
     // indépendante pour l'audit d'un dépôt refusé).
-    @Mock CommissionRateResolver commissionRateResolver;
     @Mock PromoService promoService;
     @Mock CommissionVoucherService voucherService;
     @Mock PlatformTransactionManager transactionManager;
@@ -90,7 +88,11 @@ class MobileMoneyBidPaymentServiceTest {
     private BidEntity bid;
 
     private static final PawapayProviderConfig.Limits OK =
-            new PawapayProviderConfig.Limits(new BigDecimal("100"), new BigDecimal("1500000"), "NONE", "PROVIDER_AUTH", "OPERATIONAL");
+            new PawapayProviderConfig.Limits(new BigDecimal("100"), new BigDecimal("1500000"), "PROVIDER_AUTH", "OPERATIONAL");
+
+    private static MobileMoneyBidPricing.Quote quote(PriceBreakdown price) {
+        return new MobileMoneyBidPricing.Quote(price, false);
+    }
 
     private static PawapayProperties enabledProps() {
         return new PawapayProperties(true, "https://x", "t", false, 30, "https://api.test",
@@ -102,7 +104,7 @@ class MobileMoneyBidPaymentServiceTest {
     void setUp() {
         service = new MobileMoneyBidPaymentService(bidRepository, announcementRepository, userRepository, paymentRepository,
                 operations, submission, client, pricing, firebaseContact, audit, events,
-                commissionRateResolver, promoService, voucherService, transactionManager, enabledProps());
+                promoService, voucherService, transactionManager, enabledProps());
         traveler = new UserEntity();
         ReflectionTestUtils.setField(traveler, "id", UUID.randomUUID());
         traveler.setFirebaseUid("t-uid");
@@ -147,7 +149,7 @@ class MobileMoneyBidPaymentServiceTest {
         stubLocks();
         when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
         when(paymentRepository.findByBidId(bid.getId())).thenReturn(Optional.empty());
-        when(pricing.price(bid, announcement)).thenReturn(new PriceBreakdown(new BigDecimal("15000"), new BigDecimal("1800"), new BigDecimal("16800")));
+        when(pricing.price(bid, announcement)).thenReturn(quote(new PriceBreakdown(new BigDecimal("15000"), new BigDecimal("1800"), new BigDecimal("16800"))));
         when(paymentRepository.save(any())).thenAnswer(inv -> { PaymentEntity p = inv.getArgument(0); ReflectionTestUtils.setField(p, "id", UUID.randomUUID()); return p; });
 
         MobileMoneyPaymentStatusResponse r = service.acceptBid(bid.getId(), traveler.getId());
@@ -271,7 +273,7 @@ class MobileMoneyBidPaymentServiceTest {
         when(bidRepository.findById(bid.getId())).thenReturn(Optional.of(bid));
         when(operations.findLive(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.empty());
         when(client.predictProvider("221771234567")).thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "221771234567")));
-        when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", new PawapayProviderConfig("ORANGE_SEN", "SEN", "XOF", OK, OK, OK)));
+        when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", new PawapayProviderConfig("ORANGE_SEN", "SEN", "XOF", OK, OK)));
         PawapayOperationEntity accepted = op(payment.getId(), PawapayOperationStatus.ACCEPTED);
         when(submission.submitDeposit(eq(payment.getId()), eq("221771234567"), eq("ORANGE_SEN"), eq("SN"),
                 eq(new BigDecimal("16800")), eq("XOF"), anyString(), any(), any())).thenReturn(accepted);
@@ -293,8 +295,8 @@ class MobileMoneyBidPaymentServiceTest {
         when(bidRepository.findById(bid.getId())).thenReturn(Optional.of(bid));
         when(operations.findLive(any(), any())).thenReturn(Optional.empty());
         when(client.predictProvider("221771234567")).thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "WAVE_SEN", "221771234567")));
-        PawapayProviderConfig.Limits redirect = new PawapayProviderConfig.Limits(new BigDecimal("100"), new BigDecimal("1500000"), "NONE", "REDIRECT_AUTH", "OPERATIONAL");
-        when(client.activeConfiguration()).thenReturn(Map.of("WAVE_SEN", new PawapayProviderConfig("WAVE_SEN", "SEN", "XOF", redirect, null, null)));
+        PawapayProviderConfig.Limits redirect = new PawapayProviderConfig.Limits(new BigDecimal("100"), new BigDecimal("1500000"), "REDIRECT_AUTH", "OPERATIONAL");
+        when(client.activeConfiguration()).thenReturn(Map.of("WAVE_SEN", new PawapayProviderConfig("WAVE_SEN", "SEN", "XOF", redirect, null)));
         when(submission.submitDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(op(payment.getId(), PawapayOperationStatus.ACCEPTED));
 
         service.initiateDeposit(bid.getId(), sender.getId(), null);
@@ -329,7 +331,7 @@ class MobileMoneyBidPaymentServiceTest {
         when(bidRepository.findById(bid.getId())).thenReturn(Optional.of(bid));
         when(operations.findLive(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.empty());
         when(client.predictProvider("225070000000")).thenReturn(Optional.of(new PawapayProviderPrediction("CIV", "MTN_MOMO_CIV", "225070000000")));
-        when(client.activeConfiguration()).thenReturn(Map.of("MTN_MOMO_CIV", new PawapayProviderConfig("MTN_MOMO_CIV", "CIV", "XOF", OK, OK, OK)));
+        when(client.activeConfiguration()).thenReturn(Map.of("MTN_MOMO_CIV", new PawapayProviderConfig("MTN_MOMO_CIV", "CIV", "XOF", OK, OK)));
         when(submission.submitDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(op(payment.getId(), PawapayOperationStatus.ACCEPTED));
 
         service.initiateDeposit(bid.getId(), sender.getId(), "+225 07 00 00 000");
@@ -347,7 +349,7 @@ class MobileMoneyBidPaymentServiceTest {
         when(bidRepository.findById(bid.getId())).thenReturn(Optional.of(bid));
         when(operations.findLive(any(), any())).thenReturn(Optional.empty());
         when(client.predictProvider("221771234567")).thenReturn(Optional.of(new PawapayProviderPrediction("CMR", "MTN_MOMO_CMR", "221771234567")));
-        when(client.activeConfiguration()).thenReturn(Map.of("MTN_MOMO_CMR", new PawapayProviderConfig("MTN_MOMO_CMR", "CMR", "XAF", OK, OK, OK)));
+        when(client.activeConfiguration()).thenReturn(Map.of("MTN_MOMO_CMR", new PawapayProviderConfig("MTN_MOMO_CMR", "CMR", "XAF", OK, OK)));
 
         assertThatThrownBy(() -> service.initiateDeposit(bid.getId(), sender.getId(), null))
                 .isInstanceOf(YadonyBusinessException.class)
@@ -363,7 +365,7 @@ class MobileMoneyBidPaymentServiceTest {
         when(bidRepository.findById(bid.getId())).thenReturn(Optional.of(bid));
         when(operations.findLive(any(), any())).thenReturn(Optional.empty());
         when(client.predictProvider(any())).thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "221771234567")));
-        when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", new PawapayProviderConfig("ORANGE_SEN", "SEN", "XOF", OK, OK, OK)));
+        when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", new PawapayProviderConfig("ORANGE_SEN", "SEN", "XOF", OK, OK)));
         PawapayOperationEntity rejected = op(payment.getId(), PawapayOperationStatus.SUBMIT_REJECTED);
         rejected.setFailureMessage("Provider down");
         when(submission.submitDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(rejected);
@@ -419,7 +421,7 @@ class MobileMoneyBidPaymentServiceTest {
         // pawaPay renvoie un numéro hors bornes Msisdn (2 chiffres) : ce n'est pas l'expéditeur
         // qui l'a saisi, il n'a rien tapé de faux.
         when(client.predictProvider("221771234567")).thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "12")));
-        when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", new PawapayProviderConfig("ORANGE_SEN", "SEN", "XOF", OK, OK, OK)));
+        when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", new PawapayProviderConfig("ORANGE_SEN", "SEN", "XOF", OK, OK)));
 
         assertThatThrownBy(() -> service.initiateDeposit(bid.getId(), sender.getId(), null))
                 .isInstanceOf(YadonyBusinessException.class)
@@ -472,7 +474,7 @@ class MobileMoneyBidPaymentServiceTest {
     void acceptBid_railDisabled_is422_beforeAnyRepositoryAccess() {
         service = new MobileMoneyBidPaymentService(bidRepository, announcementRepository, userRepository, paymentRepository,
                 operations, submission, client, pricing, firebaseContact, audit, events,
-                commissionRateResolver, promoService, voucherService, transactionManager, disabledProps());
+                promoService, voucherService, transactionManager, disabledProps());
 
         assertThatThrownBy(() -> service.acceptBid(bid.getId(), traveler.getId()))
                 .isInstanceOf(YadonyBusinessException.class)
@@ -495,7 +497,7 @@ class MobileMoneyBidPaymentServiceTest {
     void initiateDeposit_railDisabled_blocksOnlyANewSubmission() {
         service = new MobileMoneyBidPaymentService(bidRepository, announcementRepository, userRepository, paymentRepository,
                 operations, submission, client, pricing, firebaseContact, audit, events,
-                commissionRateResolver, promoService, voucherService, transactionManager, disabledProps());
+                promoService, voucherService, transactionManager, disabledProps());
         bid.setStatus(BidStatus.AWAITING_PAYMENT);
         bid.setAwaitingPaymentExpiresAt(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20));
         PaymentEntity payment = pendingPayment();
@@ -519,7 +521,7 @@ class MobileMoneyBidPaymentServiceTest {
     void initiateDeposit_railDisabled_stillReturnsAnAlreadyLiveDeposit() {
         service = new MobileMoneyBidPaymentService(bidRepository, announcementRepository, userRepository, paymentRepository,
                 operations, submission, client, pricing, firebaseContact, audit, events,
-                commissionRateResolver, promoService, voucherService, transactionManager, disabledProps());
+                promoService, voucherService, transactionManager, disabledProps());
         bid.setStatus(BidStatus.AWAITING_PAYMENT);
         bid.setAwaitingPaymentExpiresAt(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20));
         PaymentEntity payment = pendingPayment();
@@ -546,7 +548,7 @@ class MobileMoneyBidPaymentServiceTest {
         stubLocks();
         when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
         when(paymentRepository.findByBidId(bid.getId())).thenReturn(Optional.empty());
-        when(pricing.price(bid, announcement)).thenReturn(new PriceBreakdown(new BigDecimal("15000"), new BigDecimal("1800"), new BigDecimal("16800")));
+        when(pricing.price(bid, announcement)).thenReturn(quote(new PriceBreakdown(new BigDecimal("15000"), new BigDecimal("1800"), new BigDecimal("16800"))));
         when(paymentRepository.save(any())).thenAnswer(inv -> { PaymentEntity p = inv.getArgument(0); ReflectionTestUtils.setField(p, "id", UUID.randomUUID()); return p; });
 
         service.acceptBid(bid.getId(), traveler.getId());
@@ -575,10 +577,8 @@ class MobileMoneyBidPaymentServiceTest {
         BigDecimal appliedRate = new BigDecimal("0.10");
         when(pricing.price(bid, announcement)).thenAnswer(inv -> {
             bid.setCommissionRate(appliedRate);
-            return new PriceBreakdown(new BigDecimal("15000"), new BigDecimal("1500"), new BigDecimal("16500"));
+            return new MobileMoneyBidPricing.Quote(new PriceBreakdown(new BigDecimal("15000"), new BigDecimal("1500"), new BigDecimal("16500")), true);
         });
-        when(commissionRateResolver.resolve(announcement.getTravelerId(), sender.getId(), "WELCOME10", sender.getId(), bid.getId()))
-                .thenReturn(appliedRate);
         UUID promoCodeId = UUID.randomUUID();
         PromoRedemptionEntity redemption = mock(PromoRedemptionEntity.class);
         when(redemption.getPromoCodeId()).thenReturn(promoCodeId);
@@ -599,9 +599,7 @@ class MobileMoneyBidPaymentServiceTest {
         stubLocks();
         when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
         when(paymentRepository.findByBidId(bid.getId())).thenReturn(Optional.empty());
-        when(pricing.price(bid, announcement)).thenReturn(new PriceBreakdown(new BigDecimal("15000"), new BigDecimal("1800"), new BigDecimal("16800")));
-        when(commissionRateResolver.resolve(announcement.getTravelerId(), sender.getId(), "EXPIRED", sender.getId(), bid.getId()))
-                .thenThrow(new YadonyBusinessException(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY, "promo-expired", "x", "x"));
+        when(pricing.price(bid, announcement)).thenReturn(quote(new PriceBreakdown(new BigDecimal("15000"), new BigDecimal("1800"), new BigDecimal("16800"))));
         when(paymentRepository.save(any())).thenAnswer(inv -> { PaymentEntity p = inv.getArgument(0); ReflectionTestUtils.setField(p, "id", UUID.randomUUID()); return p; });
 
         service.acceptBid(bid.getId(), traveler.getId());
@@ -632,7 +630,7 @@ class MobileMoneyBidPaymentServiceTest {
         stubLocks();
         when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
         when(paymentRepository.findByBidId(bid.getId())).thenReturn(Optional.empty());
-        when(pricing.price(bid, announcement)).thenReturn(new PriceBreakdown(new BigDecimal("15000"), new BigDecimal("900"), new BigDecimal("15900")));
+        when(pricing.price(bid, announcement)).thenReturn(quote(new PriceBreakdown(new BigDecimal("15000"), new BigDecimal("900"), new BigDecimal("15900"))));
         when(paymentRepository.save(any())).thenAnswer(inv -> { PaymentEntity p = inv.getArgument(0); ReflectionTestUtils.setField(p, "id", UUID.randomUUID()); return p; });
 
         service.acceptBid(bid.getId(), traveler.getId());
@@ -650,7 +648,7 @@ class MobileMoneyBidPaymentServiceTest {
         bid2.setMobileMoneyPhone("221771234567");
         when(bidRepository.findByIdForUpdate(bid2.getId())).thenReturn(Optional.of(bid2));
         when(paymentRepository.findByBidId(bid2.getId())).thenReturn(Optional.empty());
-        when(pricing.price(bid2, announcement)).thenReturn(new PriceBreakdown(new BigDecimal("15000"), new BigDecimal("1800"), new BigDecimal("16800")));
+        when(pricing.price(bid2, announcement)).thenReturn(quote(new PriceBreakdown(new BigDecimal("15000"), new BigDecimal("1800"), new BigDecimal("16800"))));
 
         service.acceptBid(bid2.getId(), traveler.getId());
 
@@ -722,7 +720,7 @@ class MobileMoneyBidPaymentServiceTest {
         when(operations.findLive(any(), any())).thenReturn(Optional.empty());
         // "ZZZ" n'est un alpha-3 ISO d'aucun pays réel : PawapayCountries.toAlpha2 renvoie null.
         when(client.predictProvider("221771234567")).thenReturn(Optional.of(new PawapayProviderPrediction("ZZZ", "ORANGE_SEN", "221771234567")));
-        when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", new PawapayProviderConfig("ORANGE_SEN", "ZZZ", "XOF", OK, OK, OK)));
+        when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", new PawapayProviderConfig("ORANGE_SEN", "ZZZ", "XOF", OK, OK)));
 
         assertThatThrownBy(() -> service.initiateDeposit(bid.getId(), sender.getId(), null))
                 .isInstanceOf(YadonyBusinessException.class)
@@ -749,7 +747,7 @@ class MobileMoneyBidPaymentServiceTest {
         when(bidRepository.findById(bid.getId())).thenReturn(Optional.of(bid));
         when(operations.findLive(any(), any())).thenReturn(Optional.empty());
         when(client.predictProvider(any())).thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "221771234567")));
-        when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", new PawapayProviderConfig("ORANGE_SEN", "SEN", "XOF", OK, OK, OK)));
+        when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", new PawapayProviderConfig("ORANGE_SEN", "SEN", "XOF", OK, OK)));
         PawapayOperationEntity rejected = op(payment.getId(), PawapayOperationStatus.SUBMIT_REJECTED);
         rejected.setFailureMessage("Provider down");
         when(submission.submitDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(rejected);

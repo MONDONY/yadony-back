@@ -8,23 +8,17 @@ import java.util.Map;
 public final class PawapayCountries {
 
     private static final Map<String, String> ALPHA3_TO_2 = new HashMap<>();
-    private static final Map<String, String> ALPHA2_TO_3 = new HashMap<>();
 
     static {
         for (String a2 : Locale.getISOCountries()) {
-            String a3 = new Locale("", a2).getISO3Country();
-            ALPHA3_TO_2.put(a3, a2);
-            ALPHA2_TO_3.put(a2, a3);
+            ALPHA3_TO_2.put(new Locale("", a2).getISO3Country(), a2);
         }
     }
 
     private PawapayCountries() {}
 
+    /** {@code null} si l'alpha-3 est absent de la table ISO du JDK — à garder par l'appelant, jamais accepté tel quel. */
     public static String toAlpha2(String alpha3) {
         return alpha3 == null ? null : ALPHA3_TO_2.get(alpha3.trim().toUpperCase(Locale.ROOT));
-    }
-
-    public static String toAlpha3(String alpha2) {
-        return alpha2 == null ? null : ALPHA2_TO_3.get(alpha2.trim().toUpperCase(Locale.ROOT));
     }
 }

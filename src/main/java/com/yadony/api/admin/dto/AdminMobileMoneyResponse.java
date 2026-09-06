@@ -6,7 +6,7 @@ import java.util.UUID;
 
 /**
  * Une opération pawaPay en lecture seule. Le numéro ne quitte le serveur que masqué
- * ({@code msisdn_masked}, calculé à l'écriture) : la colonne chiffrée n'est jamais lue ici.
+ * ({@code msisdn_masked}, calculé à l'écriture) : la colonne chiffrée n'est jamais exposée.
  */
 public record AdminMobileMoneyResponse(
         UUID id,

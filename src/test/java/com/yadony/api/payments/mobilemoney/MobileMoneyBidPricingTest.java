@@ -54,7 +54,7 @@ class MobileMoneyBidPricingTest {
         when(rates.resolve(eq(a.getTravelerId()), eq(b.getSenderId()), isNull(), isNull(), eq(b.getId())))
                 .thenReturn(new BigDecimal("0.12"));
 
-        PriceBreakdown p = pricing.price(b, a);
+        PriceBreakdown p = pricing.price(b, a).price();
 
         assertThat(p.net()).isEqualByComparingTo("15000");
         assertThat(p.commission()).isEqualByComparingTo("1800");
@@ -73,7 +73,7 @@ class MobileMoneyBidPricingTest {
         when(gridItems.findByBidId(b.getId())).thenReturn(List.of(item));
         when(rates.resolve(any(), any(), isNull(), isNull(), any())).thenReturn(new BigDecimal("0.12"));
 
-        PriceBreakdown p = pricing.price(b, a);
+        PriceBreakdown p = pricing.price(b, a).price();
 
         assertThat(p.net()).isEqualByComparingTo("2505");
         assertThat(p.commission()).as("300.6 → 301").isEqualByComparingTo("301");
@@ -87,11 +87,41 @@ class MobileMoneyBidPricingTest {
         b.setNegotiatedNetEur(new BigDecimal("12000"));
         b.setNegotiatedGrossEur(new BigDecimal("13440"));
 
-        PriceBreakdown p = pricing.price(b, a);
+        PriceBreakdown p = pricing.price(b, a).price();
 
         assertThat(p.net()).isEqualByComparingTo("12000");
         assertThat(p.gross()).isEqualByComparingTo("13440");
         assertThat(p.commission()).isEqualByComparingTo("1440");
+    }
+
+    /**
+     * Le drapeau {@code promoApplied} est calculé par la MÊME résolution que le taux — jamais
+     * par une seconde sonde à l'acceptation : vrai seulement si le promo a réellement été pris.
+     */
+    @Test
+    void validPromo_isReportedAsApplied() {
+        AnnouncementEntity a = xof(new BigDecimal("3000"));
+        BidEntity b = bid(new BigDecimal("1"));
+        b.setPromoCode("WELCOME10");
+        when(gridItems.findByBidId(b.getId())).thenReturn(List.of());
+        when(rates.resolve(eq(a.getTravelerId()), eq(b.getSenderId()), eq("WELCOME10"), eq(b.getSenderId()), eq(b.getId())))
+                .thenReturn(new BigDecimal("0.02"));
+
+        MobileMoneyBidPricing.Quote quote = pricing.price(b, a);
+
+        assertThat(quote.promoApplied()).isTrue();
+        assertThat(quote.price().commission()).isEqualByComparingTo("60");
+        assertThat(b.getCommissionRate()).isEqualByComparingTo("0.02");
+    }
+
+    @Test
+    void noPromo_isNotReportedAsApplied() {
+        AnnouncementEntity a = xof(new BigDecimal("3000"));
+        BidEntity b = bid(new BigDecimal("1"));
+        when(gridItems.findByBidId(b.getId())).thenReturn(List.of());
+        when(rates.resolve(any(), any(), isNull(), isNull(), any())).thenReturn(new BigDecimal("0.12"));
+
+        assertThat(pricing.price(b, a).promoApplied()).isFalse();
     }
 
     @Test
@@ -105,7 +135,10 @@ class MobileMoneyBidPricingTest {
         when(rates.resolve(eq(a.getTravelerId()), eq(b.getSenderId()), isNull(), isNull(), eq(b.getId())))
                 .thenReturn(new BigDecimal("0.12"));
 
-        assertThat(pricing.price(b, a).commission()).isEqualByComparingTo("360");
+        MobileMoneyBidPricing.Quote quote = pricing.price(b, a);
+
+        assertThat(quote.price().commission()).isEqualByComparingTo("360");
+        assertThat(quote.promoApplied()).as("replié : rien à racheter à l'acceptation").isFalse();
     }
 
     /**
@@ -123,7 +156,7 @@ class MobileMoneyBidPricingTest {
         when(rates.resolve(eq(a.getTravelerId()), eq(b.getSenderId()), isNull(), isNull(), eq(b.getId())))
                 .thenReturn(new BigDecimal("0.123456"));
 
-        PriceBreakdown p = pricing.price(b, a);
+        PriceBreakdown p = pricing.price(b, a).price();
 
         assertThat(b.getCommissionRate()).isEqualByComparingTo("0.123456");
         assertThat(p.commission()).as("1851.84 arrondi, pas 1852.5 arrondi").isEqualByComparingTo("1852");

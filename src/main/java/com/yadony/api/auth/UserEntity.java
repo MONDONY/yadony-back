@@ -414,6 +414,16 @@ public class UserEntity extends BaseEntity {
         return mobileMoneyStatus == MobileMoneyPayoutStatus.ACTIVE;
     }
 
+    /**
+     * Compte de versement actif ET dans la devise donnée (celle de l'annonce ou du paiement) :
+     * la seule combinaison qui permet un payout. Source unique de cette règle pour les trois
+     * portails qui la vérifient (création du bid, acceptation, versement) — un compte
+     * réactivé dans une autre devise entre deux portails doit être refusé partout pareil.
+     */
+    public boolean canReceiveMobileMoney(String currency) {
+        return hasActiveMobileMoney() && mobileMoneyCurrency != null && mobileMoneyCurrency.equalsIgnoreCase(currency);
+    }
+
     public MobileMoneyPayoutStatus getMobileMoneyStatus() { return mobileMoneyStatus; }
     public void setMobileMoneyStatus(MobileMoneyPayoutStatus mobileMoneyStatus) { this.mobileMoneyStatus = mobileMoneyStatus; }
     public String getMobileMoneyMsisdn() { return mobileMoneyMsisdn; }

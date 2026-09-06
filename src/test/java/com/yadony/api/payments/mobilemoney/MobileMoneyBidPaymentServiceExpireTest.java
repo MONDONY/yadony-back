@@ -84,7 +84,7 @@ class MobileMoneyBidPaymentServiceExpireTest {
     @BeforeEach
     void setUp() {
         service = new MobileMoneyBidPaymentService(bidRepository, announcementRepository, null, paymentRepository,
-                operations, null, null, null, null, audit, events, null, null, null, null, null);
+                operations, null, null, null, null, audit, events, null, null, null, null);
         ReflectionTestUtils.setField(service, "adminAlert", adminAlert);
         announcement = new AnnouncementEntity();
         ReflectionTestUtils.setField(announcement, "id", UUID.randomUUID());

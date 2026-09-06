@@ -9,6 +9,7 @@ import com.yadony.api.payments.events.PaymentReleasedEvent;
 import com.yadony.api.payments.pawapay.PawapayOperationEntity;
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
 import com.yadony.api.payments.pawapay.PawapayOperationService;
+import com.yadony.api.payments.pawapay.PawapayText;
 import com.yadony.api.payments.pawapay.events.PawapayOperationCompletedEvent;
 import com.yadony.api.payments.pawapay.events.PawapayOperationFailedEvent;
 import java.util.Map;
@@ -114,24 +115,15 @@ public class MobileMoneyPayoutOutcomeListener {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onFailed(PawapayOperationFailedEvent event) {
         if (event.kind() != PawapayOperationKind.PAYOUT || event.paymentId() == null) return;
-        String failureCode = truncate(event.failureCode());
-        String failureMessage = truncate(event.failureMessage());
+        // Bornés avant audit, journal ou Telegram : failureMessage est TEXT en base (non borné),
+        // failureCode l'est déjà à 64 par sa colonne — même garde ici, par défense en profondeur.
+        String failureCode = PawapayText.clamp(event.failureCode());
+        String failureMessage = PawapayText.clamp(event.failureMessage());
         audit.log("PAYMENT", event.paymentId(), "MM_PAYOUT_FAILED", null,
                 Map.of("operationId", event.operationId().toString(), "failureCode", String.valueOf(failureCode)));
         adminAlert.raise("PAWAPAY_PAYOUT_FAILED",
                 "Payout mobile money échoué pour le paiement " + event.paymentId() + " : " + failureCode,
                 Map.of("paymentId", event.paymentId().toString(), "operationId", event.operationId().toString(),
                         "failureCode", String.valueOf(failureCode), "failureMessage", String.valueOf(failureMessage)));
-    }
-
-    /**
-     * Borne à 64 caractères une valeur non authentifiée (pawaPay) avant qu'elle ne soit
-     * écrite en audit, journalisée ou postée sur Telegram — {@code failureMessage} est
-     * {@code TEXT} en base (non bornée), {@code failureCode} l'est déjà à 64 par la colonne
-     * mais on applique la même garde ici par défense en profondeur. Même convention que
-     * {@code MobileMoneyBidPaymentService#truncate} / {@code PawapayCallbackController#truncate}.
-     */
-    private static String truncate(String value) {
-        return value != null && value.length() > 64 ? value.substring(0, 64) : value;
     }
 }

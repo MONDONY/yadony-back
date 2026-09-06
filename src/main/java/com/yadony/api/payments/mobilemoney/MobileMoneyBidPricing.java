@@ -17,12 +17,21 @@ import org.springframework.stereotype.Component;
  * ({@code CashCommissionService#computeBidCommission}) : accord négocié figé, sinon
  * (poids × prix/kg + articles) × taux résolu (promo > overrides > global, bon de parrainage).
  * Tout est arrondi à l'unité mineure de la devise (XOF/XAF : aucune décimale) pour que
- * {@code net = brut − commission} reste exact au payout.
+ * {@code net = brut − commission} reste exact au payout. Seul écart assumé avec le rail cash :
+ * aucun plancher de commission ({@code yadony.commission.minimum-amount}, un montant en euros
+ * qui n'aurait pas de sens en francs CFA).
  */
 @Component
 public class MobileMoneyBidPricing {
 
     private static final Logger log = LoggerFactory.getLogger(MobileMoneyBidPricing.class);
+
+    /**
+     * Prix calculé, et si le code promo porté par le bid a effectivement été pris dans le taux
+     * — c'est alors à l'acceptation de le racheter ({@code PromoService#redeem}), jamais ici
+     * (lecture pure). Même contrat que {@code BidQuoteResponse#promoApplied} sur le rail carte.
+     */
+    public record Quote(PriceBreakdown price, boolean promoApplied) {}
 
     private final BidGridItemRepository gridItems;
     private final CommissionRateResolver rates;
@@ -32,16 +41,22 @@ public class MobileMoneyBidPricing {
         this.rates = rates;
     }
 
-    public PriceBreakdown price(BidEntity bid, AnnouncementEntity announcement) {
+    public Quote price(BidEntity bid, AnnouncementEntity announcement) {
         String currency = announcement.getCurrency();
         if (bid.getNegotiatedNetEur() != null && bid.getNegotiatedGrossEur() != null) {
             BigDecimal net = PawapayAmounts.round(bid.getNegotiatedNetEur(), currency);
             BigDecimal gross = PawapayAmounts.round(bid.getNegotiatedGrossEur(), currency);
-            return new PriceBreakdown(net, gross.subtract(net), gross);
+            return new Quote(new PriceBreakdown(net, gross.subtract(net), gross), false);
         }
-        BigDecimal rate = bid.getNegotiatedNetEur() != null && bid.getCommissionRate() != null
-                ? bid.getCommissionRate()
-                : resolveRate(bid, announcement);
+        BigDecimal rate;
+        boolean promoApplied = false;
+        if (bid.getNegotiatedNetEur() != null && bid.getCommissionRate() != null) {
+            rate = bid.getCommissionRate();
+        } else {
+            ResolvedRate resolved = resolveRate(bid, announcement);
+            rate = resolved.rate();
+            promoApplied = resolved.promoApplied();
+        }
         BigDecimal net;
         if (bid.getNegotiatedNetEur() != null) {
             net = bid.getNegotiatedNetEur();
@@ -55,15 +70,19 @@ public class MobileMoneyBidPricing {
         }
         net = PawapayAmounts.round(net, currency);
         BigDecimal commission = PawapayAmounts.round(net.multiply(rate), currency);
-        return new PriceBreakdown(net, commission, net.add(commission));
+        return new Quote(new PriceBreakdown(net, commission, net.add(commission)), promoApplied);
     }
 
-    private BigDecimal resolveRate(BidEntity bid, AnnouncementEntity announcement) {
+    private record ResolvedRate(BigDecimal rate, boolean promoApplied) {}
+
+    private ResolvedRate resolveRate(BidEntity bid, AnnouncementEntity announcement) {
         BigDecimal rate;
+        boolean promoApplied = false;
         if (bid.getPromoCode() != null) {
             try {
                 rate = rates.resolve(announcement.getTravelerId(), bid.getSenderId(), bid.getPromoCode(),
                         bid.getSenderId(), bid.getId());
+                promoApplied = true;
             } catch (YadonyBusinessException e) {
                 log.warn("Promo {} invalide pour le bid mobile money {} — repli", bid.getPromoCode(), bid.getId());
                 rate = rates.resolve(announcement.getTravelerId(), bid.getSenderId(), null, null, bid.getId());
@@ -71,7 +90,7 @@ public class MobileMoneyBidPricing {
         } else {
             rate = rates.resolve(announcement.getTravelerId(), bid.getSenderId(), null, null, bid.getId());
         }
-        // Le taux PERSISTÉ (ci-dessus) et le taux UTILISÉ pour le calcul de la commission
+        // Le taux PERSISTÉ (ci-dessous) et le taux UTILISÉ pour le calcul de la commission
         // qui suit doivent être IDENTIQUES — jamais l'un arrondi et l'autre non. Le rail
         // espèces (CashCommissionService#computeBidCommission) n'arrondit jamais ce taux
         // avant de s'en servir ; un ré-arrondi à 4 décimales ici ferait diverger
@@ -84,6 +103,6 @@ public class MobileMoneyBidPricing {
         // complet, avant toute sauvegarde) qui fait foi pour le versement, jamais une
         // relecture de ce taux snapshoté.
         bid.setCommissionRate(rate);
-        return rate;
+        return new ResolvedRate(rate, promoApplied);
     }
 }

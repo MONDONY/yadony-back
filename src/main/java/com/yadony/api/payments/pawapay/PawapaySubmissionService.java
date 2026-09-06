@@ -1,6 +1,5 @@
 package com.yadony.api.payments.pawapay;
 
-import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.pawapay.dto.PawapayDepositRequest;
 import com.yadony.api.payments.pawapay.dto.PawapayInitiationResult;
 import com.yadony.api.payments.pawapay.dto.PawapayPayoutRequest;
@@ -10,7 +9,6 @@ import java.util.UUID;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClientException;
 
@@ -67,9 +65,7 @@ public class PawapaySubmissionService {
         } catch (RestClientException e) {
             log.error("pawaPay {} {} : initiation sans réponse ({}) — laissée CREATED pour le poller",
                     op.getKind(), op.getId(), e.toString());
-            throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY, "mobile-money-provider-unavailable",
-                    "Mobile Money Provider Unavailable",
-                    "Le service mobile money ne répond pas. Réessayez dans quelques instants.");
+            throw PawapayErrors.providerUnavailable();
         }
         operations.markSubmitted(op.getId(), result);
         return operations.get(op.getId());

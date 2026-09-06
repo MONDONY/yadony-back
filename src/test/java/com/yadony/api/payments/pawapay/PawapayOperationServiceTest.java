@@ -100,37 +100,37 @@ class PawapayOperationServiceTest {
     @Test
     void markSubmitted_accepted_callsGuardedUpdate_withAcceptedStatus_noFailureDetails() {
         UUID id = UUID.randomUUID();
-        when(repository.markSubmittedIfStillCreated(eq(id), eq(PawapayOperationStatus.ACCEPTED), any(),
+        when(repository.markSubmittedIfStillCreated(eq(id), eq(PawapayOperationStatus.ACCEPTED),
                 isNull(), isNull(), isNull(), any())).thenReturn(1);
 
         service.markSubmitted(id, PawapayInitiationResult.accepted());
 
-        verify(repository).markSubmittedIfStillCreated(eq(id), eq(PawapayOperationStatus.ACCEPTED), any(),
+        verify(repository).markSubmittedIfStillCreated(eq(id), eq(PawapayOperationStatus.ACCEPTED),
                 isNull(), isNull(), isNull(), any());
     }
 
     @Test
     void markSubmitted_rejected_callsGuardedUpdate_withFailureDetailsAndFinalizedAt() {
         UUID id = UUID.randomUUID();
-        when(repository.markSubmittedIfStillCreated(eq(id), eq(PawapayOperationStatus.SUBMIT_REJECTED), any(),
+        when(repository.markSubmittedIfStillCreated(eq(id), eq(PawapayOperationStatus.SUBMIT_REJECTED),
                 eq("PROVIDER_TEMPORARILY_UNAVAILABLE"), eq("down"), any(), any())).thenReturn(1);
 
         service.markSubmitted(id, new PawapayInitiationResult(
                 PawapayInitiationResult.Outcome.REJECTED, "PROVIDER_TEMPORARILY_UNAVAILABLE", "down"));
 
-        verify(repository).markSubmittedIfStillCreated(eq(id), eq(PawapayOperationStatus.SUBMIT_REJECTED), any(),
+        verify(repository).markSubmittedIfStillCreated(eq(id), eq(PawapayOperationStatus.SUBMIT_REJECTED),
                 eq("PROVIDER_TEMPORARILY_UNAVAILABLE"), eq("down"), any(), any());
     }
 
     @Test
     void markSubmitted_duplicateIgnored_callsGuardedUpdate_statusUnchangedAtCreated() {
         UUID id = UUID.randomUUID();
-        when(repository.markSubmittedIfStillCreated(eq(id), eq(PawapayOperationStatus.CREATED), any(),
+        when(repository.markSubmittedIfStillCreated(eq(id), eq(PawapayOperationStatus.CREATED),
                 isNull(), isNull(), isNull(), any())).thenReturn(1);
 
         service.markSubmitted(id, new PawapayInitiationResult(PawapayInitiationResult.Outcome.DUPLICATE_IGNORED, null, null));
 
-        verify(repository).markSubmittedIfStillCreated(eq(id), eq(PawapayOperationStatus.CREATED), any(),
+        verify(repository).markSubmittedIfStillCreated(eq(id), eq(PawapayOperationStatus.CREATED),
                 isNull(), isNull(), isNull(), any());
     }
 
@@ -139,7 +139,7 @@ class PawapayOperationServiceTest {
         // La ligne n'est deja plus CREATED (callback deja passe devant) : 0 ligne touchee,
         // markSubmitted ne doit ni lever, ni tenter un autre acces au depot.
         UUID id = UUID.randomUUID();
-        when(repository.markSubmittedIfStillCreated(any(), any(), any(), any(), any(), any(), any())).thenReturn(0);
+        when(repository.markSubmittedIfStillCreated(any(), any(), any(), any(), any(), any())).thenReturn(0);
 
         assertThatCode(() -> service.markSubmitted(id, PawapayInitiationResult.accepted()))
                 .doesNotThrowAnyException();
