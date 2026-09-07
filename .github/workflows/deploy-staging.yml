@@ -214,9 +214,11 @@ jobs:
           # activation de compte, poller, moniteur de solde). PAWAPAY_CALLBACK_SIGNATURES=true
           # va de pair avec « Sign all callbacks » dans le dashboard pawaPay : l un sans
           # l autre rejette 100 % des callbacks ou n en vérifie aucun. Seuils de solde vides =
-          # alerte désactivée. Voir docs/runbooks/pawapay.md.
-          PAWAPAY_ENABLED=${{ vars.PAWAPAY_ENABLED }}
-          PAWAPAY_CALLBACK_SIGNATURES=${{ vars.PAWAPAY_CALLBACK_SIGNATURES }}
+          # alerte désactivée. Les deux drapeaux sont lus en variable OU en secret d environnement
+          # (posés en secrets le 2026-09-06), la variable prime si les deux existent. Voir
+          # docs/runbooks/pawapay.md.
+          PAWAPAY_ENABLED=${{ vars.PAWAPAY_ENABLED || secrets.PAWAPAY_ENABLED }}
+          PAWAPAY_CALLBACK_SIGNATURES=${{ vars.PAWAPAY_CALLBACK_SIGNATURES || secrets.PAWAPAY_CALLBACK_SIGNATURES }}
           PAWAPAY_BALANCE_MIN_XOF=${{ vars.PAWAPAY_BALANCE_MIN_XOF }}
           PAWAPAY_BALANCE_MIN_XAF=${{ vars.PAWAPAY_BALANCE_MIN_XAF }}
           # Essai gratuit de l abonnement PRO, en jours. Absente ou nulle : pas d essai.
