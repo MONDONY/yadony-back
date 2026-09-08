@@ -58,6 +58,29 @@ Même mécanique, pointée sur `https://api-staging.yadony.com` et sur le dashbo
 5. Déployer la branche : `git push origin <branche>:staging/<branche>`. La CI tourne sur `staging/**`, le workflow de déploiement staging part quand elle est verte (`workflow_run`), jamais sur un push direct de la branche de travail.
 6. Le premier callback signé reçu valide le vérifieur : dérouler les points 1 à 4 de la section « Avant d'activer le rail » sur les logs de `PawapayCallbackController`.
 
+### Recette pas à pas du rail sur staging (par l'API)
+
+Tant que l'app n'a pas ses écrans mobile money, le parcours se déroule en curl. Base : `https://api-staging.yadony.com/api/v1`.
+
+**Comptes.** Voyageur dont le numéro Firebase est un numéro de test pawaPay capable de recevoir un payout, par exemple `+221773456789` (Orange Sénégal) : le déclarer dans la console Firebase staging (Authentication > Sign-in method > Phone > numéros de test, code fixe) et se connecter avec dans l'app une première fois, ce qui crée l'utilisateur et son rôle côté backend. Expéditeur : n'importe quel compte connecté au moins une fois.
+
+**Jetons.** `scripts/staging-firebase-token.py <uid>` (uid dans la console Firebase, Authentication > Users) signe un jeton personnalisé avec le compte de service du projet staging (`FIREBASE_SERVICE_ACCOUNT`, refus de tout autre projet) et l'échange contre un ID token d'une heure via l'API REST Firebase (clé lue dans `../dony_app/env.staging.json` ou `FIREBASE_WEB_API_KEY`). À lancer par un développeur, jamais par un automate : c'est la credential la plus privilégiée du projet.
+
+**Parcours.**
+
+1. Voyageur : `POST /payments/mobile-money/account` sans corps. Attendu `status: ACTIVE`, `providerLabel: Orange Money`, numéro masqué. `422 mobile-money-disabled` = rail fermé (`PAWAPAY_ENABLED` absent de `.env.staging`).
+2. Voyageur : trajet en XOF créé normalement dans l'app (prix au kg). Les modes acceptés de l'annonce n'ont pas à mentionner le mobile money.
+3. Expéditeur : `POST /announcements/{annonceId}/bids` avec `{"weightKg": 5, "description": "...", "contentCategory": "...", "recipientName": "...", "recipientPhone": "+221770000000", "disclaimerSigned": true, "paymentMethod": "MOBILE_MONEY", "phoneNumber": "+221773456789"}`.
+4. Voyageur : `POST /bids/{bidId}/mobile-money/accept` (endpoint dédié, jamais l'accept classique). Attendu `bidStatus: AWAITING_PAYMENT`, `deadlineAt` à +30 min.
+5. Expéditeur : `POST /bids/{bidId}/mobile-money/initiate` avec `{"phoneNumber": "+221773456789"}`. Attendu 201, `deposit.status: ACCEPTED`.
+6. `GET /bids/{bidId}/mobile-money/status` jusqu'à `paymentStatus: ESCROW` et `bidStatus: ACCEPTED` : callback signé en quelques secondes, sinon le poller rattrape sous 2 minutes.
+7. Versement : confirmation de livraison par scan du QR dans l'app, ou force-release dans dony-admin ; le sandbox conclut le payout, le voyageur reçoit le push de versement.
+8. Variantes : dépôt refusé avec `+221773456069`, dépôt laissé en attente avec `+221773456129`, annulation puis refund admin, expiration après 30 minutes sans paiement.
+
+**Numéros de test du sandbox** (source : docs.pawapay.io, « Sandbox test numbers ») : Orange Sénégal `221773456789` réussi, `221773456129` en attente, `221773456069` échec ; Free Sénégal `221763456789` réussi ; Orange Côte d'Ivoire `2250734567890` réussi, `2250734567060` échec ; MTN Côte d'Ivoire `2250503456789` réussi, `2250503456069` échec.
+
+**Où regarder** : `GET /admin/mobile-money-payments` (dony-admin), l'onglet Transactions du dashboard sandbox, et `docker logs -f yadony_api` filtré sur `pawapay` sur le VPS.
+
 ## Configuration nginx
 
 - `proxy_set_header Host $host;` est **indispensable** sur les routes pawaPay : le contrôleur signe `@authority` à partir de l'en-tête `Host` reçu (avec repli sur `getServerName()`). Sans ce header transmis tel quel, la vérification de signature échoue systématiquement.
