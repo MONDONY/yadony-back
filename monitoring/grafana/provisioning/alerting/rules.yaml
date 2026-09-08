@@ -97,7 +97,14 @@ groups:
             datasourceUid: prometheus
             model:
               editorMode: code
-              expr: 'sum(rate(http_server_requests_seconds_count{job="yadony-api", status=~"5.."}[5m])) / clamp_min(sum(rate(http_server_requests_seconds_count{job="yadony-api"}[5m])), 0.0001)'
+              # Le `and` exige AU MOINS 4 erreurs 5xx sur la fenetre, en plus du
+              # ratio. Sans ce garde-fou une seule 5xx pendant une heure creuse
+              # donne un ratio de 100% et alerte. Un plancher de TRAFIC ne
+              # conviendrait pas : la prod tourne a ~0.07 req/s, elle passerait
+              # sous n'importe quel seuil credible et la regle serait aveugle.
+              # En dessous de 4 erreurs l'expression ne rend aucune serie, donc
+              # noDataState: OK s'applique.
+              expr: '(sum(rate(http_server_requests_seconds_count{job="yadony-api", status=~"5.."}[5m])) / clamp_min(sum(rate(http_server_requests_seconds_count{job="yadony-api"}[5m])), 0.0001)) and (sum(increase(http_server_requests_seconds_count{job="yadony-api", status=~"5.."}[5m])) > 3)'
               instant: true
               range: false
               refId: A
