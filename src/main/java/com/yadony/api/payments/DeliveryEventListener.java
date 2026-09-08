@@ -46,6 +46,14 @@ import java.util.Optional;
  *                   balance. Trigger a Transfer to the traveler's Connect account.
  *
  * Cross-package communication via Spring Events only.
+ *
+ * <p><b>Rail pawaPay</b> : un troisième chemin, gardé par
+ * {@code payment.getRail() == PaymentRail.PAWAPAY}, bifurque vers
+ * {@link com.yadony.api.payments.mobilemoney.MobileMoneyPayoutInitiator} juste après le
+ * claim atomique ci-dessous, avant tout appel Stripe. Aucun appel Stripe, aucun
+ * {@link com.yadony.api.payments.events.PaymentReleasedEvent} publié ici pour ce rail :
+ * il part plus tard, quand pawaPay confirme le payout
+ * ({@code MobileMoneyPayoutOutcomeListener}).
  */
 @Component
 public class DeliveryEventListener {
@@ -60,13 +68,25 @@ public class DeliveryEventListener {
     private final AdminAlertService adminAlert;
     private final com.yadony.api.voucher.CommissionVoucherService voucherService;
 
+    /**
+     * Injection par CONSTRUCTEUR, jamais par champ — une dépendance
+     * contournable (comme l'était le champ {@code @Autowired} précédent) est une NPE qui
+     * attend, si un futur test construit cette classe sans la fournir alors qu'un paiement
+     * PAWAPAY lui parvient. {@code DeliveryEventListenerTest} et
+     * {@code DeliveryEventListenerChargebackTest} passent tous deux {@code null} explicitement
+     * (leurs paiements sont tous de rail {@code STRIPE}, la branche pawaPay n'est jamais
+     * atteinte, donc jamais déréférencé).
+     */
+    private final com.yadony.api.payments.mobilemoney.MobileMoneyPayoutInitiator payoutInitiator;
+
     public DeliveryEventListener(PaymentRepository paymentRepository,
                                  UserRepository userRepository,
                                  AuditService auditService,
                                  ApplicationEventPublisher eventPublisher,
                                  BidRepository bidRepository,
                                  AdminAlertService adminAlert,
-                                 com.yadony.api.voucher.CommissionVoucherService voucherService) {
+                                 com.yadony.api.voucher.CommissionVoucherService voucherService,
+                                 com.yadony.api.payments.mobilemoney.MobileMoneyPayoutInitiator payoutInitiator) {
         this.paymentRepository = paymentRepository;
         this.userRepository = userRepository;
         this.auditService = auditService;
@@ -74,6 +94,7 @@ public class DeliveryEventListener {
         this.bidRepository = bidRepository;
         this.adminAlert = adminAlert;
         this.voucherService = voucherService;
+        this.payoutInitiator = payoutInitiator;
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -121,14 +142,26 @@ public class DeliveryEventListener {
             return;
         }
 
-        // Claim atomique ESCROW → RELEASED avant les appels Stripe : empêche un
-        // double versement (double capture / double Transfer) si l'événement de
-        // livraison est traité deux fois en parallèle.
+        // Claim atomique ESCROW → RELEASED, PARTAGÉ par les deux rails (Stripe et pawaPay) :
+        // empêche un double versement (double capture / double Transfer / double payout) si
+        // l'événement de livraison est traité deux fois en parallèle. Le branchement par rail
+        // ci-dessous se fait TOUJOURS après ce claim, jamais avant — un seul thread doit
+        // pouvoir gagner, quel que soit le rail.
         int claimed = paymentRepository.markReleasedIfEscrow(
                 payment.getId(), LocalDateTime.now(ZoneOffset.UTC));
         if (claimed == 0) {
             log.info("Payment {} for bid {} already left ESCROW — skipping release",
                     payment.getId(), event.getBidId());
+            return;
+        }
+
+        if (payment.getRail() == PaymentRail.PAWAPAY) {
+            // Rail mobile money : le séquestre est sur le solde pawaPay de yadony, le
+            // versement est un payout pawaPay du net. Aucun appel Stripe, aucun
+            // PaymentReleasedEvent ici : il part quand pawaPay confirme le payout
+            // (MobileMoneyPayoutOutcomeListener). Un échec remonte pour annuler le claim
+            // ci-dessus (rollback de la transaction REQUIRES_NEW ambiante).
+            releaseMobileMoney(payment, event);
             return;
         }
 
@@ -175,6 +208,22 @@ public class DeliveryEventListener {
         // is NULL for negotiation/thread payments.
         eventPublisher.publishEvent(new PaymentReleasedEvent(
                 event.getBidId(), event.getTravelerId(), event.getSenderId(), payment.getAmount()));
+    }
+
+    /**
+     * Rail pawaPay : même formule de net que {@link #releaseV2}, volontairement
+     * recopiée pour laisser le chemin Stripe byte pour byte identique (aucune régression
+     * possible sur le rail carte). {@code payoutInitiator.release} porte toute la logique
+     * mobile money (compte de versement, payout orphelin, soumission pawaPay) ; un échec y
+     * lève une {@link IllegalStateException} qui remonte ici sans être interceptée, pour que
+     * la transaction {@code REQUIRES_NEW} ambiante annule le claim posé juste au-dessus.
+     */
+    private void releaseMobileMoney(PaymentEntity payment, DeliveryConfirmedEvent event) {
+        BigDecimal net = payment.getAmount().subtract(payment.getCommissionAmount());
+        net = net.add(travelerVoucherTopUp(event.getTravelerId(), event.getBidId(), payment.getCommissionAmount()));
+        net = com.yadony.api.payments.pawapay.PawapayAmounts.round(net, payment.getCurrency());
+        payoutInitiator.release(payment, event.getBidId(), event.getTravelerId(), net, "delivery");
+        log.info("Escrow released (mobile money) for payment {} (bid={})", payment.getId(), event.getBidId());
     }
 
     private void releaseLegacy(PaymentEntity payment) throws StripeException {

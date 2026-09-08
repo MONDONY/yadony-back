@@ -66,6 +66,7 @@ class BidServiceTest {
     @Mock private StorageService storageService;
     @Mock private BidPhotoService bidPhotoService;
     @Mock private com.yadony.api.auth.FirebaseContactService firebaseContact;
+    @Mock private com.yadony.api.payments.pawapay.PawapayProperties pawapayProperties;
     @Mock private HttpServletRequest httpRequest;
 
     @InjectMocks private BidService bidService;
@@ -1048,6 +1049,263 @@ class BidServiceTest {
         }
     }
 
+    @Nested
+    @DisplayName("createBid — MOBILE_MONEY")
+    class CreateBidMobileMoney {
+
+        @BeforeEach
+        void setupHttpRequest() {
+            lenient().when(httpRequest.getHeader("X-Forwarded-For")).thenReturn(null);
+            lenient().when(httpRequest.getRemoteAddr()).thenReturn("127.0.0.1");
+        }
+
+        private AnnouncementEntity xofAnnouncement(UserEntity traveler) {
+            AnnouncementEntity a = buildAnnouncement();
+            a.setTravelerId(traveler.getId());
+            a.setAcceptedPaymentMethods(
+                    java.util.EnumSet.of(com.yadony.api.payments.cash.PaymentMethod.CASH));
+            a.setCurrency("XOF");
+            return a;
+        }
+
+        private BidEntity pendingBid(AnnouncementEntity a) {
+            BidEntity b = buildBid();
+            b.setAnnouncementId(a.getId());
+            b.setStatus(BidStatus.PENDING);
+            return b;
+        }
+
+        /** Voyageur au compte de versement actif, dans la même devise que l'annonce XOF —
+         *  le seul état qui satisfait à la fois {@link #eurAnnouncement_is422} (zone) et la
+         *  nouvelle garde de devise du compte (point 4 de la ronde 1). */
+        private UserEntity activeXofTraveler() {
+            UserEntity traveler = buildTraveler();
+            traveler.setMobileMoneyStatus(com.yadony.api.auth.MobileMoneyPayoutStatus.ACTIVE);
+            traveler.setMobileMoneyCurrency("XOF");
+            return traveler;
+        }
+
+        @Test
+        @DisplayName("voyageur avec compte actif dans la bonne devise, rail activé → bid PENDING MOBILE_MONEY avec numéro payeur normalisé")
+        void createsPendingMobileMoneyBid() {
+            lenient().when(pawapayProperties.enabled()).thenReturn(true);
+            UserEntity sender = buildSender();
+            sender.setKycStatus(com.yadony.api.auth.KycStatus.VERIFIED);
+            UserEntity traveler = activeXofTraveler();
+            AnnouncementEntity a = xofAnnouncement(traveler);
+            when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
+            when(announcementRepository.findById(a.getId())).thenReturn(Optional.of(a));
+            when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+            when(bidRepository.existsBySenderIdAndAnnouncementIdAndStatusIn(any(), any(), any()))
+                    .thenReturn(false);
+            when(bidRepository.save(any(BidEntity.class))).thenAnswer(inv -> {
+                BidEntity b = inv.getArgument(0);
+                setId(b, BID_ID);
+                return b;
+            });
+
+            // "+221771234567" est la forme RÉELLE qui peut venir de l'API : le @Pattern du
+            // DTO n'autorise aucun espace ("+221 77 123 45 67" ne le passerait jamais — cf.
+            // point 9 de la ronde 1). La normalisation observée ici n'est donc que le retrait
+            // du '+', jamais d'espaces.
+            BidRequest req = new BidRequest(new BigDecimal("5"), "Documents", "documents", "Awa Ndiaye",
+                    "+221770000000", true, "MOBILE_MONEY", "+221771234567", "SN", null, null, null);
+            bidService.createBid(a.getId(), SENDER_UID, req, httpRequest);
+
+            ArgumentCaptor<BidEntity> saved = ArgumentCaptor.forClass(BidEntity.class);
+            verify(bidRepository, atLeastOnce()).save(saved.capture());
+            BidEntity bid = saved.getValue();
+            assertThat(bid.getPaymentMethod()).isEqualTo(com.yadony.api.payments.cash.PaymentMethod.MOBILE_MONEY);
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.PENDING);
+            assertThat(bid.getMobileMoneyPhone()).isEqualTo("221771234567");
+            assertThat(bid.getMobileMoneyCountryCode()).isEqualTo("SN");
+
+            // Le voyageur doit être notifié tout de suite : c'est son geste manuel, pas une
+            // autorisation Stripe, qui fait avancer le dossier (même événement que CASH,
+            // dont le texte du listener est déjà générique).
+            ArgumentCaptor<Object> eventCaptor = ArgumentCaptor.forClass(Object.class);
+            verify(eventPublisher, atLeastOnce()).publishEvent(eventCaptor.capture());
+            assertThat(eventCaptor.getAllValues())
+                    .extracting(ev -> ev.getClass().getSimpleName())
+                    .contains("CashBidCreatedEvent");
+        }
+
+        @Test
+        @DisplayName("numéro payeur absent (optionnel à la création) → bid créé sans numéro, pas d'exception")
+        void nullPhoneNumber_isAcceptedAsOptional() {
+            lenient().when(pawapayProperties.enabled()).thenReturn(true);
+            UserEntity sender = buildSender();
+            sender.setKycStatus(com.yadony.api.auth.KycStatus.VERIFIED);
+            UserEntity traveler = activeXofTraveler();
+            AnnouncementEntity a = xofAnnouncement(traveler);
+            when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
+            when(announcementRepository.findById(a.getId())).thenReturn(Optional.of(a));
+            when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+            when(bidRepository.existsBySenderIdAndAnnouncementIdAndStatusIn(any(), any(), any()))
+                    .thenReturn(false);
+            when(bidRepository.save(any(BidEntity.class))).thenAnswer(inv -> {
+                BidEntity b = inv.getArgument(0);
+                setId(b, BID_ID);
+                return b;
+            });
+
+            BidRequest req = new BidRequest(new BigDecimal("5"), "Documents", "documents", "Awa Ndiaye",
+                    "+221770000000", true, "MOBILE_MONEY", null, "SN", null, null, null);
+            bidService.createBid(a.getId(), SENDER_UID, req, httpRequest);
+
+            ArgumentCaptor<BidEntity> saved = ArgumentCaptor.forClass(BidEntity.class);
+            verify(bidRepository, atLeastOnce()).save(saved.capture());
+            assertThat(saved.getValue().getMobileMoneyPhone()).isNull();
+            assertThat(saved.getValue().getMobileMoneyCountryCode()).isEqualTo("SN");
+        }
+
+        @Test
+        @DisplayName("numéro trop court pour Msisdn.normalize mais valide pour le @Pattern du DTO → 422 mobile-money-invalid-phone, pas 500")
+        void phoneTooShortForNormalize_is422NotServerError() {
+            // "+1234567" : 7 chiffres, passe le @Pattern de BidRequest.phoneNumber
+            // (7 à 20 chiffres) mais Msisdn.normalize exige 8 à 15 chiffres — l'écart entre
+            // les deux bornes est une entrée que le DTO accepte et que le service doit
+            // donc absorber lui-même, sans laisser fuiter l'IllegalArgumentException vers
+            // le filet générique (500 + Sentry).
+            lenient().when(pawapayProperties.enabled()).thenReturn(true);
+            UserEntity sender = buildSender();
+            sender.setKycStatus(com.yadony.api.auth.KycStatus.VERIFIED);
+            UserEntity traveler = activeXofTraveler();
+            AnnouncementEntity a = xofAnnouncement(traveler);
+            when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
+            when(announcementRepository.findById(a.getId())).thenReturn(Optional.of(a));
+            when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+
+            BidRequest req = new BidRequest(new BigDecimal("5"), "Documents", "documents", "Awa Ndiaye",
+                    "+221770000000", true, "MOBILE_MONEY", "+1234567", "SN", null, null, null);
+
+            assertThatThrownBy(() -> bidService.createBid(a.getId(), SENDER_UID, req, httpRequest))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> {
+                        YadonyBusinessException ex = (YadonyBusinessException) e;
+                        assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                        assertThat(ex.getErrorCode()).isEqualTo("mobile-money-invalid-phone");
+                    });
+        }
+
+        @Test
+        @DisplayName("compte de versement du voyageur dans une autre devise que l'annonce → 422 mobile-money-currency-mismatch")
+        void travelerAccountCurrencyMismatch_is422() {
+            lenient().when(pawapayProperties.enabled()).thenReturn(true);
+            UserEntity traveler = buildTraveler();
+            traveler.setMobileMoneyStatus(com.yadony.api.auth.MobileMoneyPayoutStatus.ACTIVE);
+            traveler.setMobileMoneyCurrency("XAF"); // compte activé zone CEMAC
+            AnnouncementEntity a = xofAnnouncement(traveler); // trajet publié en XOF (zone UEMOA)
+            when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+
+            assertThatThrownBy(() -> bidService.resolvePaymentMethodFor(a, "MOBILE_MONEY"))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .extracting(e -> ((YadonyBusinessException) e).getErrorCode())
+                    .isEqualTo("mobile-money-currency-mismatch");
+        }
+
+        @Test
+        @DisplayName("countryCode trop long (colonne à 5 caractères) → violation de bean validation")
+        void oversizedCountryCode_failsBeanValidation() {
+            BidRequest req = new BidRequest(new BigDecimal("5"), "Documents", "documents", "Awa Ndiaye",
+                    "+221770000000", true, "MOBILE_MONEY", "+221771234567", "SENEGAL", null, null, null);
+            jakarta.validation.Validator validator =
+                    jakarta.validation.Validation.buildDefaultValidatorFactory().getValidator();
+
+            assertThat(validator.validate(req)).isNotEmpty();
+        }
+
+        @Test
+        @DisplayName("voyageur sans compte mobile money → 422 mobile-money-not-available")
+        void travelerWithoutAccount_is422() {
+            lenient().when(pawapayProperties.enabled()).thenReturn(true);
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity a = xofAnnouncement(traveler);
+            when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+
+            assertThatThrownBy(() -> bidService.resolvePaymentMethodFor(a, "MOBILE_MONEY"))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .extracting(e -> ((YadonyBusinessException) e).getErrorCode())
+                    .isEqualTo("mobile-money-not-available");
+        }
+
+        @Test
+        @DisplayName("rail désactivé → 422 mobile-money-disabled avant tout autre contrôle")
+        void disabled_is422() {
+            lenient().when(pawapayProperties.enabled()).thenReturn(false);
+            AnnouncementEntity a = xofAnnouncement(buildTraveler());
+
+            assertThatThrownBy(() -> bidService.resolvePaymentMethodFor(a, "MOBILE_MONEY"))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .extracting(e -> ((YadonyBusinessException) e).getErrorCode())
+                    .isEqualTo("mobile-money-disabled");
+        }
+
+        @Test
+        @DisplayName("annonce EUR → 422 payment-method-unavailable-for-currency")
+        void eurAnnouncement_is422() {
+            // Le voyageur a un compte de versement pleinement configuré et actif (même
+            // devise que rien, ici) : la garde de devise doit répondre EN PREMIER pour ce
+            // rail (ronde 1, point 7) — jamais « ce voyageur n'accepte pas », qui laisserait
+            // croire à tort qu'un autre voyageur EUR pourrait, lui, l'accepter. userRepository
+            // n'est donc plus consulté du tout ici (la garde de devise court-circuite avant),
+            // d'où l'absence de tout stub dessus.
+            lenient().when(pawapayProperties.enabled()).thenReturn(true);
+            UserEntity traveler = buildTraveler();
+            traveler.setMobileMoneyStatus(com.yadony.api.auth.MobileMoneyPayoutStatus.ACTIVE);
+            traveler.setMobileMoneyCurrency("EUR");
+            AnnouncementEntity a = buildAnnouncement();
+            a.setTravelerId(traveler.getId());
+            a.setAcceptedPaymentMethods(
+                    java.util.EnumSet.of(com.yadony.api.payments.cash.PaymentMethod.CASH));
+            a.setCurrency("EUR");
+
+            assertThatThrownBy(() -> bidService.resolvePaymentMethodFor(a, "MOBILE_MONEY"))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .extracting(e -> ((YadonyBusinessException) e).getErrorCode())
+                    .isEqualTo("payment-method-unavailable-for-currency");
+
+            verifyNoInteractions(userRepository);
+        }
+
+        @Test
+        @DisplayName("acceptBid générique sur un bid MOBILE_MONEY → 422 mobile-money-accept-endpoint")
+        void genericAccept_isRefused() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity a = xofAnnouncement(traveler);
+            BidEntity bid = pendingBid(a);
+            bid.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.MOBILE_MONEY);
+            when(bidRepository.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
+            when(announcementRepository.findByIdForUpdate(a.getId())).thenReturn(Optional.of(a));
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+
+            assertThatThrownBy(() -> bidService.acceptBid(bid.getId(), TRAVELER_UID))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .extracting(e -> ((YadonyBusinessException) e).getErrorCode())
+                    .isEqualTo("mobile-money-accept-endpoint");
+        }
+
+        @Test
+        @DisplayName("cancelBid d'un bid AWAITING_PAYMENT mobile money rend la capacité réservée")
+        void cancel_restoresReservedCapacity() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity a = xofAnnouncement(traveler);
+            a.setAvailableKg(new BigDecimal("15"));
+            BidEntity bid = pendingBid(a);
+            bid.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.MOBILE_MONEY);
+            bid.setStatus(BidStatus.AWAITING_PAYMENT);
+            bid.setWeightKg(new BigDecimal("5"));
+            when(bidRepository.findById(bid.getId())).thenReturn(Optional.of(bid));
+            when(announcementRepository.findById(a.getId())).thenReturn(Optional.of(a));
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+
+            bidService.cancelBid(bid.getId(), TRAVELER_UID);
+
+            assertThat(a.getAvailableKg()).isEqualByComparingTo("20");
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.CANCELLED);
+        }
+    }
+
     // ─── acceptBid ─────────────────────────────────────────────────────────────
 
     @Nested
@@ -1491,6 +1749,28 @@ class BidServiceTest {
         }
 
         @Test
+        @DisplayName("bid MOBILE_MONEY en PENDING → rejectBid réussit sans exception (bypass off-platform)")
+        void rejectBid_mobileMoneyPending_succeeds() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement();
+            BidEntity bid = buildBid();
+            bid.setStatus(BidStatus.PENDING);
+            bid.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.MOBILE_MONEY);
+
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+            when(bidRepository.save(any())).thenReturn(bid);
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.empty());
+
+            assertThatCode(() ->
+                bidService.rejectBid(BID_ID, TRAVELER_UID, new BidRejectRequest("Non compatible"))
+            ).doesNotThrowAnyException();
+
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.REJECTED);
+        }
+
+        @Test
         @DisplayName("bid STRIPE en PENDING → rejectBid lève 409 (STRIPE doit être en PAYMENT_ESCROWED)")
         void rejectBid_stripePending_throwsConflict() {
             UserEntity traveler = buildTraveler();
@@ -1539,6 +1819,36 @@ class BidServiceTest {
             BidEntity bid = buildBid();
             bid.setStatus(BidStatus.PENDING);
             bid.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.WAVE);
+
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+            when(bidRepository.save(any())).thenReturn(bid);
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.empty());
+
+            bidService.rejectBid(BID_ID, TRAVELER_UID, new BidRejectRequest("Non compatible"));
+
+            ArgumentCaptor<BidRejectedEvent> captor = ArgumentCaptor.forClass(BidRejectedEvent.class);
+            verify(eventPublisher).publishEvent(captor.capture());
+            assertThat(captor.getValue().isRematchEligible()).isFalse();
+        }
+
+        /**
+         * Revue finale, point 1 (CRITIQUE) : un bid MOBILE_MONEY naît PENDING et n'atteint jamais
+         * PAYMENT_ESCROWED (paiement géré par le rail pawaPay, pas par l'escrow carte) — sans
+         * MOBILE_MONEY dans isOffPlatformPending, requireBidStatus rendait un 409 et le refus
+         * était structurellement impossible. Couvre aussi le second effet (non demandé par le
+         * cahier des charges d'origine) : rematchEligible dérive du MÊME booléen, donc un refus
+         * mobile money ne doit PAS déclencher de rematch — le colis n'a jamais été payé.
+         */
+        @Test
+        @DisplayName("bid MOBILE_MONEY PENDING (off-platform) rejeté → event rematchEligible=false")
+        void rejectBid_onMobileMoneyPendingBid_publishesNonEligibleEvent() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement();
+            BidEntity bid = buildBid();
+            bid.setStatus(BidStatus.PENDING);
+            bid.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.MOBILE_MONEY);
 
             when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
             when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
@@ -1717,6 +2027,39 @@ class BidServiceTest {
 
             assertThat(announcement.getStatus()).isEqualTo(AnnouncementStatus.ACTIVE);
             assertThat(announcement.getAvailableKg()).isEqualByComparingTo(BigDecimal.valueOf(5));
+        }
+
+        /**
+         * Revue finale, point 4 (Important) : restoreCapacityIfNeeded gardait deux conditions
+         * INDÉPENDANTES (ajout du poids d'un côté, bascule FULL→ACTIVE de l'autre), alors que
+         * {@code MobileMoneyBidPaymentService#expire} (tâche 15) utilise une condition COMBINÉE
+         * {@code !kgFree && weightKg != null} pour les deux effets à la fois — voir le Javadoc des
+         * deux méthodes. Un bid de grille SANS poids (weightKg null, ex. un item de grille par
+         * pièce) sur une annonce FULL faisait donc réapparaître l'annonce en ACTIVE alors qu'aucun
+         * kilo n'a été rendu : un trajet réellement à zéro kilo disponible redevenait visible en
+         * recherche. Après alignement sur expire(), l'annonce reste FULL et rien n'est écrit.
+         */
+        @Test
+        @DisplayName("bid ACCEPTED SANS poids annulé sur annonce FULL → annonce reste FULL (rien n'est rendu)")
+        void cancelBid_acceptedBidWithoutWeightOnFullAnnouncement_staysFullBecauseNothingWasReturned() {
+            UserEntity sender = buildSender();
+            AnnouncementEntity announcement = buildAnnouncement();
+            announcement.setAvailableKg(BigDecimal.ZERO);
+            announcement.setStatus(AnnouncementStatus.FULL);
+            BidEntity bid = buildBid();
+            bid.setStatus(BidStatus.ACCEPTED);
+            bid.setWeightKg(null);
+
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(bidRepository.save(any())).thenReturn(bid);
+
+            bidService.cancelBid(BID_ID, SENDER_UID);
+
+            assertThat(announcement.getStatus()).isEqualTo(AnnouncementStatus.FULL);
+            assertThat(announcement.getAvailableKg()).isEqualByComparingTo(BigDecimal.ZERO);
+            verify(announcementRepository, never()).save(announcement);
         }
 
         @Test

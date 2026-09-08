@@ -102,8 +102,13 @@ class NotificationTextsTest {
         m.put("lastMinuteOffer", NotificationTexts.lastMinuteOffer(24, DEPART + " → " + ARRIVEE));
         m.put("loyalSender", NotificationTexts.loyalSender(NOM, DEPART, ARRIVEE));
         m.put("paymentReleased", NotificationTexts.paymentReleased("12500,00 €"));
-        m.put("mobileMoneyPaymentPending", NotificationTexts.mobileMoneyPaymentPending("ORANGE_MONEY"));
+        m.put("mobileMoneyPayoutSent", NotificationTexts.mobileMoneyPayoutSent(NotificationTexts.amount(MONTANT, "XOF")));
         m.put("mobileMoneyPaymentConfirmed", NotificationTexts.mobileMoneyPaymentConfirmed());
+        m.put("mobileMoneyPaymentReceived", NotificationTexts.mobileMoneyPaymentReceived());
+        m.put("mobileMoneyPaymentPending", NotificationTexts.mobileMoneyPaymentPending(99));
+        m.put("mobileMoneyPaymentFailed", NotificationTexts.mobileMoneyPaymentFailed());
+        m.put("mobileMoneyPaymentExpired", NotificationTexts.mobileMoneyPaymentExpired());
+        m.put("mobileMoneyPaymentExpiredForTraveler", NotificationTexts.mobileMoneyPaymentExpiredForTraveler());
         m.put("kycVerified", NotificationTexts.kycVerified());
         m.put("kycActionRequired", NotificationTexts.kycActionRequired());
         m.put("kycReset", NotificationTexts.kycReset());
@@ -158,15 +163,18 @@ class NotificationTextsTest {
         assertThat(NotificationTexts.eur(new BigDecimal("45"))).isEqualTo("45,00 €");
         assertThat(NotificationTexts.amount(new BigDecimal("1250"), "XOF")).isEqualTo("1250,00 XOF");
         assertThat(NotificationTexts.amount(new BigDecimal("12.5"), "eur")).isEqualTo("12,50 €");
-        assertThat(NotificationTexts.provider("ORANGE_MONEY")).isEqualTo("Orange Money");
-        assertThat(NotificationTexts.provider("WAVE")).isEqualTo("Wave");
+        // mobileMoneyAmount (tâche 16) : distinct de amount() ci-dessus (jamais modifié, son
+        // contrat "code ISO, deux décimales" est utilisé ailleurs, ex. commissionPending) —
+        // symbole du catalogue SupportedCurrency (« F CFA »), sans décimale pour les francs CFA.
+        assertThat(NotificationTexts.mobileMoneyAmount(new BigDecimal("15000"), "XOF")).isEqualTo("15000 F CFA");
+        assertThat(NotificationTexts.mobileMoneyAmount(new BigDecimal("45"), "EUR")).isEqualTo("45,00 €");
         assertThat(NotificationTexts.corridorFromLabel("Paris → Dakar")).isEqualTo("Paris vers Dakar");
         assertThat(NotificationTexts.corridor("Paris", "Dakar")).isEqualTo("Paris vers Dakar");
     }
 
     @Test
     void everyCatalogueEntryIsCoveredByTheWorstCase() {
-        Set<String> helpers = Set.of("corridor", "corridorFromLabel", "kg", "eur", "amount", "provider");
+        Set<String> helpers = Set.of("corridor", "corridorFromLabel", "kg", "eur", "amount");
         List<String> declared = new ArrayList<>();
         for (Method m : NotificationTexts.class.getDeclaredMethods()) {
             if (Modifier.isPublic(m.getModifiers()) && Modifier.isStatic(m.getModifiers())

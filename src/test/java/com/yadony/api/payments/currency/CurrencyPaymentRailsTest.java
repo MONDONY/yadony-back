@@ -42,8 +42,22 @@ class CurrencyPaymentRailsTest {
     void cfaRefusesStripe(SupportedCurrency cfa) {
         assertThat(CurrencyPaymentRails.allowedFor(cfa))
                 .containsExactlyInAnyOrder(
-                        PaymentMethod.CASH, PaymentMethod.WAVE, PaymentMethod.ORANGE_MONEY)
+                        PaymentMethod.CASH, PaymentMethod.MOBILE_MONEY)
                 .doesNotContain(PaymentMethod.STRIPE);
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = SupportedCurrency.class, names = {"XOF", "XAF"})
+    void cfa_allowsMobileMoney_neverWaveNorOrangeLegacy(SupportedCurrency currency) {
+        assertThat(CurrencyPaymentRails.allows(currency, PaymentMethod.MOBILE_MONEY)).isTrue();
+        assertThat(CurrencyPaymentRails.allows(currency, PaymentMethod.WAVE)).isFalse();
+        assertThat(CurrencyPaymentRails.allows(currency, PaymentMethod.ORANGE_MONEY)).isFalse();
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = SupportedCurrency.class, names = {"EUR", "USD", "CAD", "GBP", "CHF"})
+    void nonCfa_neverAllowsMobileMoney(SupportedCurrency currency) {
+        assertThat(CurrencyPaymentRails.allows(currency, PaymentMethod.MOBILE_MONEY)).isFalse();
     }
 
     @ParameterizedTest
@@ -94,6 +108,6 @@ class CurrencyPaymentRailsTest {
                                 .count())
                 .isEqualTo(2);
         org.junit.jupiter.api.Assertions.assertThrows(
-                UnsupportedOperationException.class, () -> rails.add(PaymentMethod.WAVE));
+                UnsupportedOperationException.class, () -> rails.add(PaymentMethod.STRIPE));
     }
 }

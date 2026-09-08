@@ -149,6 +149,37 @@ public class UserEntity extends BaseEntity {
     @Enumerated(EnumType.STRING)
     private StripeAccountStatus stripeAccountStatus = StripeAccountStatus.NOT_CREATED;
 
+    // ── Compte de versement mobile money (rail pawaPay) ─────────────────────
+    // Sur l'entité et non dans une table jointe : AnnouncementPaymentRails.availableFor
+    // est appelé en mappant des listes d'annonces (fil de recherche) et lit ce champ
+    // déjà chargé, comme hasActiveStripeConnect(). DEFAULT porté par @ColumnDefault pour
+    // que le schéma H2 des tests (généré des entités) accepte les INSERT bruts existants.
+    @Enumerated(EnumType.STRING)
+    @Column(name = "mobile_money_status", nullable = false, length = 32)
+    @org.hibernate.annotations.ColumnDefault("'NOT_CONFIGURED'")
+    private MobileMoneyPayoutStatus mobileMoneyStatus = MobileMoneyPayoutStatus.NOT_CONFIGURED;
+
+    /** MSISDN chiffré (AES-256-GCM randomisé) : jamais dans un WHERE, un tri ni un UNIQUE. */
+    @jakarta.persistence.Convert(converter = com.yadony.api.common.EncryptedStringConverter.class)
+    @Column(name = "mobile_money_msisdn", length = 255)
+    private String mobileMoneyMsisdn;
+
+    @Column(name = "mobile_money_msisdn_masked", length = 32)
+    private String mobileMoneyMsisdnMasked;
+
+    /** Code opérateur pawaPay, ex. {@code ORANGE_SEN}, {@code WAVE_CIV}. */
+    @Column(name = "mobile_money_provider", length = 30)
+    private String mobileMoneyProvider;
+
+    @Column(name = "mobile_money_country", length = 2)
+    private String mobileMoneyCountry;
+
+    @Column(name = "mobile_money_currency", length = 3)
+    private String mobileMoneyCurrency;
+
+    @Column(name = "mobile_money_verified_at")
+    private Instant mobileMoneyVerifiedAt;
+
     @Column(name = "stripe_account_created_at")
     private Instant stripeAccountCreatedAt;
 
@@ -374,6 +405,39 @@ public class UserEntity extends BaseEntity {
     public boolean hasActiveStripeConnect() {
         return stripeAccountStatus == StripeAccountStatus.ONBOARDING_COMPLETE;
     }
+
+    /**
+     * Vrai si l'utilisateur peut recevoir un versement mobile money. Source unique de la
+     * condition, jumelle de {@link #hasActiveStripeConnect()}.
+     */
+    public boolean hasActiveMobileMoney() {
+        return mobileMoneyStatus == MobileMoneyPayoutStatus.ACTIVE;
+    }
+
+    /**
+     * Compte de versement actif ET dans la devise donnée (celle de l'annonce ou du paiement) :
+     * la seule combinaison qui permet un payout. Source unique de cette règle pour les trois
+     * portails qui la vérifient (création du bid, acceptation, versement) — un compte
+     * réactivé dans une autre devise entre deux portails doit être refusé partout pareil.
+     */
+    public boolean canReceiveMobileMoney(String currency) {
+        return hasActiveMobileMoney() && mobileMoneyCurrency != null && mobileMoneyCurrency.equalsIgnoreCase(currency);
+    }
+
+    public MobileMoneyPayoutStatus getMobileMoneyStatus() { return mobileMoneyStatus; }
+    public void setMobileMoneyStatus(MobileMoneyPayoutStatus mobileMoneyStatus) { this.mobileMoneyStatus = mobileMoneyStatus; }
+    public String getMobileMoneyMsisdn() { return mobileMoneyMsisdn; }
+    public void setMobileMoneyMsisdn(String mobileMoneyMsisdn) { this.mobileMoneyMsisdn = mobileMoneyMsisdn; }
+    public String getMobileMoneyMsisdnMasked() { return mobileMoneyMsisdnMasked; }
+    public void setMobileMoneyMsisdnMasked(String mobileMoneyMsisdnMasked) { this.mobileMoneyMsisdnMasked = mobileMoneyMsisdnMasked; }
+    public String getMobileMoneyProvider() { return mobileMoneyProvider; }
+    public void setMobileMoneyProvider(String mobileMoneyProvider) { this.mobileMoneyProvider = mobileMoneyProvider; }
+    public String getMobileMoneyCountry() { return mobileMoneyCountry; }
+    public void setMobileMoneyCountry(String mobileMoneyCountry) { this.mobileMoneyCountry = mobileMoneyCountry; }
+    public String getMobileMoneyCurrency() { return mobileMoneyCurrency; }
+    public void setMobileMoneyCurrency(String mobileMoneyCurrency) { this.mobileMoneyCurrency = mobileMoneyCurrency; }
+    public Instant getMobileMoneyVerifiedAt() { return mobileMoneyVerifiedAt; }
+    public void setMobileMoneyVerifiedAt(Instant mobileMoneyVerifiedAt) { this.mobileMoneyVerifiedAt = mobileMoneyVerifiedAt; }
 
     public Instant getStripeAccountCreatedAt() { return stripeAccountCreatedAt; }
     public void setStripeAccountCreatedAt(Instant stripeAccountCreatedAt) { this.stripeAccountCreatedAt = stripeAccountCreatedAt; }

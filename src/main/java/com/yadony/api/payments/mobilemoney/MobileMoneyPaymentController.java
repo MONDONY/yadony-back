@@ -2,67 +2,61 @@ package com.yadony.api.payments.mobilemoney;
 
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
-import com.yadony.api.payments.mobilemoney.dto.MobileMoneyStatusResponse;
+import com.yadony.api.payments.mobilemoney.dto.MobileMoneyInitiateRequest;
+import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPaymentStatusResponse;
+import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.web.bind.annotation.*;
-
-import java.util.UUID;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/bids")
 public class MobileMoneyPaymentController {
 
-    private final MobileMoneyPaymentService service;
+    private final MobileMoneyBidPaymentService service;
     private final UserRepository userRepository;
 
-    public MobileMoneyPaymentController(MobileMoneyPaymentService service,
-                                        UserRepository userRepository) {
+    public MobileMoneyPaymentController(MobileMoneyBidPaymentService service, UserRepository userRepository) {
         this.service = service;
         this.userRepository = userRepository;
     }
 
+    /** Acceptation par le voyageur : réserve la capacité et crée le paiement en attente (30 min). */
+    @PostMapping("/{bidId}/mobile-money/accept")
+    @PreAuthorize("hasRole('TRAVELER')")
+    public MobileMoneyPaymentStatusResponse accept(@AuthenticationPrincipal String firebaseUid, @PathVariable UUID bidId) {
+        return service.acceptBid(bidId, callerId(firebaseUid));
+    }
+
+    /** L'expéditeur déclenche le push PIN (ou la redirection Wave). Corps optionnel : autre numéro payeur. */
     @PostMapping("/{bidId}/mobile-money/initiate")
     @PreAuthorize("hasRole('SENDER')")
-    public ResponseEntity<MobileMoneyStatusResponse> initiate(
-            @AuthenticationPrincipal String firebaseUid, @PathVariable UUID bidId) {
-        UUID callerId = requireCallerId(firebaseUid);
-        MobileMoneyPaymentEntity entity = service.initiate(bidId, callerId);
-        return ResponseEntity.status(HttpStatus.CREATED).body(toResponse(entity));
+    public ResponseEntity<MobileMoneyPaymentStatusResponse> initiate(@AuthenticationPrincipal String firebaseUid,
+                                                                     @PathVariable UUID bidId,
+                                                                     @RequestBody(required = false) MobileMoneyInitiateRequest body) {
+        String phone = body == null ? null : body.phoneNumber();
+        return ResponseEntity.status(HttpStatus.CREATED).body(service.initiateDeposit(bidId, callerId(firebaseUid), phone));
     }
 
     @GetMapping("/{bidId}/mobile-money/status")
     @PreAuthorize("hasAnyRole('SENDER', 'TRAVELER')")
-    public ResponseEntity<MobileMoneyStatusResponse> getStatus(
-            @AuthenticationPrincipal String firebaseUid, @PathVariable UUID bidId) {
-        UUID callerId = requireCallerId(firebaseUid);
-        return service.getStatus(bidId, callerId)
-                .map(e -> ResponseEntity.ok(toResponse(e)))
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "mm-payment-not-found", "Not Found",
-                        "Aucun paiement Mobile Money trouvé pour ce bid"));
+    public MobileMoneyPaymentStatusResponse status(@AuthenticationPrincipal String firebaseUid, @PathVariable UUID bidId) {
+        return service.status(bidId, callerId(firebaseUid));
     }
 
-    // Le principal Spring Security est l'UID Firebase (String), jamais une UserEntity
-    // (cf. FirebaseTokenFilter qui pose `uid` comme principal). On résout l'utilisateur
-    // via le repository — même pattern que les autres contrôleurs (findByFirebaseUid).
-    // L'ancien cast `(UserEntity) getPrincipal()` levait une ClassCastException → 500.
-    private UUID requireCallerId(String firebaseUid) {
+    private UUID callerId(String firebaseUid) {
         if (firebaseUid == null) {
-            throw new YadonyBusinessException(HttpStatus.UNAUTHORIZED,
-                    "unauthenticated", "Unauthenticated", "Authentification requise");
+            throw new YadonyBusinessException(HttpStatus.UNAUTHORIZED, "unauthenticated", "Unauthenticated", "Authentification requise");
         }
         return userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.UNAUTHORIZED,
-                        "unauthenticated", "Unauthenticated", "Authentification requise"))
+                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.UNAUTHORIZED, "unauthenticated", "Unauthenticated", "Authentification requise"))
                 .getId();
-    }
-
-    private MobileMoneyStatusResponse toResponse(MobileMoneyPaymentEntity e) {
-        return new MobileMoneyStatusResponse(
-                e.getId(), e.getStatus(), e.getPaymentLink(),
-                e.getExpiresAt(), e.getAmount(), e.getCurrency(), e.getFailureReason());
     }
 }

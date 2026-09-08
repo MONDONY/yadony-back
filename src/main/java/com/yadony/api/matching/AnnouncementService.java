@@ -858,7 +858,8 @@ public class AnnouncementService {
                 announcement.isNegotiable(),
                 com.yadony.api.payments.currency.AnnouncementPaymentRails.availableFor(
                         announcement.getCurrency(),
-                        traveler != null && traveler.hasActiveStripeConnect()),
+                        traveler != null && traveler.hasActiveStripeConnect(),
+                        traveler != null && traveler.hasActiveMobileMoney()),
                 // Convertis joints juste en dessous (withConvertedPrices).
                 null, null, null
         );
@@ -1082,7 +1083,8 @@ public class AnnouncementService {
                 saved.isNegotiable(),
                 com.yadony.api.payments.currency.AnnouncementPaymentRails.availableFor(
                         saved.getCurrency(),
-                        user.hasActiveStripeConnect()),
+                        user.hasActiveStripeConnect(),
+                        user.hasActiveMobileMoney()),
                 // Retour d'écriture : le lecteur est le propriétaire, qui lit dans la
                 // devise de sa propre annonce — rien à convertir.
                 null, null, null
@@ -1667,9 +1669,10 @@ public class AnnouncementService {
     private AnnouncementResponse toResponse(AnnouncementEntity entity) {
         UserEntity traveler = userRepository.findById(entity.getTravelerId()).orElse(null);
         boolean travelerHasConnect = traveler != null && traveler.hasActiveStripeConnect();
+        boolean travelerHasMobileMoney = traveler != null && traveler.hasActiveMobileMoney();
         java.util.Set<PaymentMethod> availablePaymentMethods =
                 com.yadony.api.payments.currency.AnnouncementPaymentRails.availableFor(
-                        entity.getCurrency(), travelerHasConnect);
+                        entity.getCurrency(), travelerHasConnect, travelerHasMobileMoney);
         long pendingBidCount = bidRepository.countVisibleByAnnouncementId(entity.getId());
         long confirmedParcelCount = bidRepository.countByAnnouncementIdAndStatusIn(
                 entity.getId(),

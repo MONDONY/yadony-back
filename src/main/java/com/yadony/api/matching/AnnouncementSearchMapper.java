@@ -92,7 +92,8 @@ public class AnnouncementSearchMapper {
                 : null;
         Set<com.yadony.api.payments.cash.PaymentMethod> availablePaymentMethods =
                 AnnouncementPaymentRails.availableFor(entity.getCurrency(),
-                        traveler != null && traveler.hasActiveStripeConnect());
+                        traveler != null && traveler.hasActiveStripeConnect(),
+                        traveler != null && traveler.hasActiveMobileMoney());
         long bidsCount = bidCountMap.getOrDefault(entity.getId(), 0L);
         List<AnnouncementPriceGridItemResponse> gridItems =
                 entity.getPricingMode() == PricingMode.MIXED
@@ -157,7 +158,8 @@ public class AnnouncementSearchMapper {
                 : null;
         Set<com.yadony.api.payments.cash.PaymentMethod> availablePaymentMethods =
                 AnnouncementPaymentRails.availableFor(entity.getCurrency(),
-                        traveler != null && traveler.hasActiveStripeConnect());
+                        traveler != null && traveler.hasActiveStripeConnect(),
+                        traveler != null && traveler.hasActiveMobileMoney());
         long bidsCount = bidRepository.countVisibleByAnnouncementId(entity.getId());
         List<AnnouncementPriceGridItemResponse> gridItems =
                 entity.getPricingMode() == PricingMode.MIXED

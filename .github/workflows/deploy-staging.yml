@@ -175,6 +175,11 @@ jobs:
           DIDIT_API_KEY=${{ secrets.DIDIT_API_KEY }}
           DIDIT_WORKFLOW_ID=${{ secrets.DIDIT_WORKFLOW_ID }}
           DIDIT_WEBHOOK_SECRET=${{ secrets.DIDIT_WEBHOOK_SECRET }}
+          # Rail mobile money pawaPay : token API du dashboard SANDBOX (staging ne parle
+          # jamais à la production pawaPay, PAWAPAY_BASE_URL garde son défaut sandbox).
+          # Secret d environnement staging. Le rail reste fermé tant que PAWAPAY_ENABLED
+          # (variable, plus bas) n est pas true : un token absent ne casse rien au démarrage.
+          PAWAPAY_API_TOKEN=${{ secrets.PAWAPAY_API_TOKEN }}
 
           # Config métier (non sensible) — modifiable dans Settings > Environments > staging > Variables
           # `sandbox` en staging : un événement portant l'autre environnement est ignoré,
@@ -205,6 +210,17 @@ jobs:
           TWILIO_FROM=${{ vars.TWILIO_FROM }}
           WAVE_API_URL=${{ vars.WAVE_API_URL }}
           ORANGE_MONEY_API_URL=${{ vars.ORANGE_MONEY_API_URL }}
+          # Rail mobile money pawaPay. PAWAPAY_ENABLED=true ouvre le rail (annonces XOF/XAF,
+          # activation de compte, poller, moniteur de solde). PAWAPAY_CALLBACK_SIGNATURES=true
+          # va de pair avec « Sign all callbacks » dans le dashboard pawaPay : l un sans
+          # l autre rejette 100 % des callbacks ou n en vérifie aucun. Seuils de solde vides =
+          # alerte désactivée. Les deux drapeaux sont lus en variable OU en secret d environnement
+          # (posés en secrets le 2026-09-06), la variable prime si les deux existent. Voir
+          # docs/runbooks/pawapay.md.
+          PAWAPAY_ENABLED=${{ vars.PAWAPAY_ENABLED || secrets.PAWAPAY_ENABLED }}
+          PAWAPAY_CALLBACK_SIGNATURES=${{ vars.PAWAPAY_CALLBACK_SIGNATURES || secrets.PAWAPAY_CALLBACK_SIGNATURES }}
+          PAWAPAY_BALANCE_MIN_XOF=${{ vars.PAWAPAY_BALANCE_MIN_XOF }}
+          PAWAPAY_BALANCE_MIN_XAF=${{ vars.PAWAPAY_BALANCE_MIN_XAF }}
           # Essai gratuit de l abonnement PRO, en jours. Absente ou nulle : pas d essai.
           YADONY_BILLING_TRIAL_DAYS=${{ vars.YADONY_BILLING_TRIAL_DAYS }}
           YADONY_COMMISSION_RATE=${{ vars.YADONY_COMMISSION_RATE }}

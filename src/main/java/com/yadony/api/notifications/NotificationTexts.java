@@ -61,16 +61,23 @@ public final class NotificationTexts {
         return String.format(Locale.FRENCH, "%.2f %s", amount.setScale(2, RoundingMode.HALF_UP), currency.toUpperCase(Locale.ROOT));
     }
 
-    /** « ORANGE_MONEY » → « Orange Money ». */
-    public static String provider(String enumName) {
-        if (enumName == null || enumName.isBlank()) return "Mobile Money";
-        StringBuilder out = new StringBuilder();
-        for (String part : enumName.toLowerCase(Locale.ROOT).split("_")) {
-            if (part.isEmpty()) continue;
-            if (!out.isEmpty()) out.append(' ');
-            out.append(Character.toUpperCase(part.charAt(0))).append(part.substring(1));
-        }
-        return out.toString();
+    /**
+     * Montant tel qu'affiché dans un push mobile money : « 15000 F CFA », sans
+     * décimale pour les deux francs CFA (XOF, XAF), symbole du catalogue
+     * {@link com.yadony.api.payments.currency.SupportedCurrency} plutôt que le code ISO —
+     * plus lisible dans un push qu'un code à trois lettres, et cohérent avec le rendu déjà
+     * utilisé côté admin ({@code ProAnalyticsService#formatAmount}). Distinct de
+     * {@link #amount(BigDecimal, String)}, dont le contrat (code ISO, toujours deux
+     * décimales) est déjà figé par {@code formattingHelpers()} et utilisé ailleurs (ex.
+     * {@code commissionPending}) — jamais modifié ici.
+     */
+    public static String mobileMoneyAmount(BigDecimal amount, String currencyCode) {
+        if (amount == null) return "";
+        com.yadony.api.payments.currency.SupportedCurrency currency =
+                com.yadony.api.payments.currency.SupportedCurrency.fromCodeOrDefault(currencyCode);
+        String number = String.format(Locale.FRENCH, "%." + currency.minorUnit() + "f",
+                amount.setScale(currency.minorUnit(), RoundingMode.HALF_UP));
+        return number + " " + currency.symbol();
     }
 
     private static String plural(int n, String singular) {
@@ -413,13 +420,59 @@ public final class NotificationTexts {
         return new NotificationText("Paiement reçu !", formattedAmount + ", virement en cours sous 24 h.");
     }
 
-    public static NotificationText mobileMoneyPaymentPending(String providerEnumName) {
-        return new NotificationText("Payez votre envoi",
-                "Le voyageur a accepté. Payez via " + provider(providerEnumName) + ".");
+    /**
+     * Rail pawaPay : jumeau mobile money de {@link #paymentReleased(String)},
+     * poussé à la confirmation {@code COMPLETED} du payout (pas à la simple soumission).
+     * {@code formattedAmount} déjà formaté par l'appelant (« 13200 F CFA », voir
+     * {@link #mobileMoneyAmount(BigDecimal, String)}). Toujours envoyé en {@code notifyUser},
+     * jamais {@code notifyCritical} (voir {@code NotificationDispatcher#onPaymentReleased}) :
+     * un versement déjà confirmé par pawaPay n'a rien d'urgent à faire dans la minute qui
+     * suit, contrairement au virement carte (délai J+1, d'où le suivi ACK historique).
+     */
+    public static NotificationText mobileMoneyPayoutSent(String formattedAmount) {
+        return new NotificationText("Versement envoyé", formattedAmount + " envoyés sur votre mobile money.");
     }
 
     public static NotificationText mobileMoneyPaymentConfirmed() {
         return new NotificationText("Paiement confirmé", "Le paiement Mobile Money de cet envoi est confirmé.");
+    }
+
+    /** Push voyageur au deposit COMPLETED (séquestre acquis) : la préparation de la remise peut commencer. */
+    public static NotificationText mobileMoneyPaymentReceived() {
+        return new NotificationText("Colis payé", "L'expéditeur a payé en mobile money. Préparez la remise.");
+    }
+
+    /**
+     * Push à l'acceptation d'un bid mobile money, à la place de « Demande acceptée ! ».
+     * {@code depositDeadlineMinutes} vient de la configuration ({@code yadony.pawapay.deposit-deadline-minutes})
+     * — jamais en dur, sous peine de mentir si le délai est reconfiguré.
+     */
+    public static NotificationText mobileMoneyPaymentPending(int depositDeadlineMinutes) {
+        return new NotificationText("Payez votre envoi",
+                "Le voyageur a accepté. Réglez en mobile money sous " + depositDeadlineMinutes + " min.");
+    }
+
+    /**
+     * Deposit FAILED (PIN refusé, solde insuffisant, opérateur indisponible…) : le motif
+     * technique pawaPay n'est jamais exposé, l'expéditeur est seulement invité à réessayer.
+     */
+    public static NotificationText mobileMoneyPaymentFailed() {
+        return new NotificationText("Paiement refusé", "Le paiement mobile money a échoué. Réessayez depuis l'app.");
+    }
+
+    /**
+     * Deadline de paiement (30 min après acceptation) dépassée côté expéditeur :
+     * le bid est annulé, la capacité rendue au voyageur.
+     */
+    public static NotificationText mobileMoneyPaymentExpired() {
+        return new NotificationText("Délai de paiement dépassé",
+                "Votre envoi est annulé, le paiement n'a pas été reçu à temps.");
+    }
+
+    /** Même événement, côté voyageur : la capacité qu'il avait cédée lui est rendue. */
+    public static NotificationText mobileMoneyPaymentExpiredForTraveler() {
+        return new NotificationText("Colis annulé",
+                "L'expéditeur n'a pas payé dans le délai. Le colis est annulé.");
     }
 
     public static NotificationText kycVerified() {

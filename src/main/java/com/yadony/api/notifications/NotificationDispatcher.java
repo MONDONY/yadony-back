@@ -25,8 +25,10 @@ import com.yadony.api.matching.events.HandoverAlertEvent;
 import com.yadony.api.matching.events.ParcelRefusedEvent;
 import com.yadony.api.matching.events.TripArrivedEvent;
 import com.yadony.api.matching.events.VoyageurNoShowEvent;
+import com.yadony.api.payments.events.MobileMoneyDepositFailedEvent;
+import com.yadony.api.payments.events.MobileMoneyPaymentConfirmedEvent;
+import com.yadony.api.payments.events.MobileMoneyPaymentExpiredEvent;
 import com.yadony.api.payments.events.PaymentReleasedEvent;
-import com.yadony.api.payments.mobilemoney.events.BidPaidByMobileMoneyEvent;
 import com.yadony.api.tracking.events.DeliveryConfirmedEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -58,16 +60,19 @@ public class NotificationDispatcher {
     private final UserRepository userRepository;
     private final NotificationService notificationService;
     private final BlockVisibility blockVisibility;
+    private final com.yadony.api.payments.pawapay.PawapayProperties pawapayProperties;
 
     public NotificationDispatcher(FcmService fcmService, SmsService smsService,
                                   UserRepository userRepository,
                                   NotificationService notificationService,
-                                  BlockVisibility blockVisibility) {
+                                  BlockVisibility blockVisibility,
+                                  com.yadony.api.payments.pawapay.PawapayProperties pawapayProperties) {
         this.fcmService = fcmService;
         this.smsService = smsService;
         this.userRepository = userRepository;
         this.notificationService = notificationService;
         this.blockVisibility = blockVisibility;
+        this.pawapayProperties = pawapayProperties;
     }
 
     // ── Public API ───────────────────────────────────────────────────────────
@@ -183,15 +188,6 @@ public class NotificationDispatcher {
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
-    public void onBidPaidByMobileMoney(BidPaidByMobileMoneyEvent event) {
-        var text = NotificationTexts.mobileMoneyPaymentConfirmed();
-        notifyUser(event.getTravelerId(), text.title(), text.body(),
-                Map.of("type", "MOBILE_MONEY_PAYMENT_CONFIRMED",
-                       "bidId", event.getBidId().toString()));
-    }
-
-    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
-    @Async
     public void onParcelReturned(ParcelReturnedEvent event) {
         Map<String, String> data = Map.of(
                 "type", "PARCEL_RETURNED", "bidId", event.bidId().toString());
@@ -229,22 +225,92 @@ public class NotificationDispatcher {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
     public void onBidAccepted(BidAcceptedEvent event) {
+        if (event.isMobileMoney()) {
+            // Le paiement suit dans l'application : ce push remplace « Demande acceptée ! »
+            // et ouvre l'écran d'attente. Persisté ET poussé. Le délai vient de la
+            // configuration (jamais en dur : "sous 30 min" mentirait dès que
+            // yadony.pawapay.deposit-deadline-minutes changerait, sans qu'aucun test ne
+            // le remarque).
+            var pay = NotificationTexts.mobileMoneyPaymentPending(pawapayProperties.depositDeadlineMinutes());
+            notifyUser(event.getSenderId(), pay.title(), pay.body(),
+                    Map.of("type", "MM_PAYMENT_PENDING", "bidId", event.getBidId().toString()));
+            return;
+        }
         // publicDisplayName : source unique du nom d'affichage ; le catalogue le réduit
         // ensuite à « Prénom I. » pour tenir dans le corps, et reste générique sans nom.
         String name = userRepository.findById(event.getTravelerId())
                 .map(com.yadony.api.auth.UserEntity::publicDisplayName)
                 .orElse(null);
-        // Paiement par lien externe : MobileMoneyBidAcceptedListener envoie « Payez votre
-        // trajet », qui annonce déjà l'acceptation ET porte le lien de paiement. Pousser en
-        // plus « Demande acceptée ! » ferait deux push pour la même action, le second
-        // répétant le premier. On persiste quand même la trace pour la boîte de réception.
-        // Acceptation déclenchée par le voyageur. La transaction qui démarre rend de toute
-        // façon les deux comptes visibles l'un pour l'autre : la garde ne coupe donc que
-        // les cas où l'acceptation ne noue aucune transaction.
         var text = NotificationTexts.bidAccepted(name);
         notifyUnlessBlocked(event.getSenderId(), event.getTravelerId(), text.title(), text.body(),
-                Map.of("type", "BID_ACCEPTED", "bidId", event.getBidId().toString()),
-                !event.isMobileMoney());
+                Map.of("type", "BID_ACCEPTED", "bidId", event.getBidId().toString()), true);
+    }
+
+    // ── MobileMoneyPaymentConfirmedEvent / MobileMoneyDepositFailedEvent ─────────────────────
+
+    /**
+     * Deposit COMPLETED : expéditeur et voyageur reçoivent chacun une simple confirmation.
+     *
+     * <p>La notification voyageur est {@code notifyUser}, PAS
+     * {@code notifyCritical}. {@code MOBILE_MONEY_PAYMENT_CONFIRMED} n'est pas dans
+     * {@link NotificationTypes#CRITICAL} : {@code notifyCritical} persisterait quand même
+     * {@code is_critical=true} (il ne consulte jamais cette liste avant d'écrire), mais
+     * {@code FcmService} recalcule lui la criticité DEPUIS cette même liste pour décider
+     * {@code content-available} — ne l'y trouvant pas, iOS ne réveillerait jamais
+     * l'application, l'ACK ne partirait jamais, et {@code SmsFallbackScheduler} (qui, lui,
+     * ne sélectionne QUE sur la colonne persistée {@code is_critical}, jamais sur le type)
+     * enverrait un SMS 60 s plus tard À CHAQUE paiement confirmé. Le voyageur n'a rien
+     * d'urgent à faire dans la minute qui suit cette confirmation — l'urgence de la remise
+     * est déjà portée par {@code HANDOVER_REMINDER_H2}, qui reste critique.
+     *
+     * <p>Le type émis est {@code MOBILE_MONEY_PAYMENT_CONFIRMED},
+     * pas un type inventé — déjà enregistré dans {@link NotificationCategory} (PAIEMENTS),
+     * {@link NotificationDeeplink} (ouvre le bid) et {@code NotificationPrefsService}
+     * (suit {@code pushActivityBids}), et déjà backfillé par la migration V238.
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
+    public void onMobileMoneyPaymentConfirmed(MobileMoneyPaymentConfirmedEvent event) {
+        Map<String, String> data = Map.of("type", "MOBILE_MONEY_PAYMENT_CONFIRMED", "bidId", event.bidId().toString());
+        var forSender = NotificationTexts.mobileMoneyPaymentConfirmed();
+        var forTraveler = NotificationTexts.mobileMoneyPaymentReceived();
+        notifyUser(event.senderId(), forSender.title(), forSender.body(), data);
+        notifyUser(event.travelerId(), forTraveler.title(), forTraveler.body(), data);
+    }
+
+    /**
+     * Deposit FAILED : seul l'expéditeur est notifié, c'est lui qui peut relancer un
+     * paiement. Type dédié {@code MOBILE_MONEY_PAYMENT_FAILED}, enregistré dans les trois
+     * catalogues (aucune ligne de migration nécessaire — un type qui n'a jamais été émis n'a
+     * aucune ligne historique à corriger).
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
+    public void onMobileMoneyDepositFailed(MobileMoneyDepositFailedEvent event) {
+        var text = NotificationTexts.mobileMoneyPaymentFailed();
+        notifyUser(event.senderId(), text.title(), text.body(),
+                Map.of("type", "MOBILE_MONEY_PAYMENT_FAILED", "bidId", event.bidId().toString()));
+    }
+
+    /**
+     * Deadline de paiement dépassée : expéditeur et voyageur reçoivent chacun une
+     * notification. {@code notifyUser}, jamais {@code notifyCritical} : {@code MM_PAYMENT_EXPIRED}
+     * n'est pas dans {@link NotificationTypes#CRITICAL} (même motif que
+     * {@code onMobileMoneyPaymentConfirmed}) — un SMS de repli 60 s après CHAQUE
+     * expiration serait un défaut, pas une amélioration. Type enregistré dans les trois
+     * catalogues ({@link NotificationCategory}, {@link NotificationDeeplink},
+     * {@code NotificationPrefsService}) et leurs trois tests d'énumération manuelle.
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
+    public void onMobileMoneyPaymentExpired(MobileMoneyPaymentExpiredEvent event) {
+        Map<String, String> data = Map.of("type", "MM_PAYMENT_EXPIRED", "bidId", event.bidId().toString());
+        var forSender = NotificationTexts.mobileMoneyPaymentExpired();
+        notifyUser(event.senderId(), forSender.title(), forSender.body(), data);
+        if (event.travelerId() != null) {
+            var forTraveler = NotificationTexts.mobileMoneyPaymentExpiredForTraveler();
+            notifyUser(event.travelerId(), forTraveler.title(), forTraveler.body(), data);
+        }
     }
 
     @EventListener @Async
@@ -358,11 +424,34 @@ public class NotificationDispatcher {
         }
     }
 
+    /**
+     * Rail carte (constructeur 4-arg legacy, EUR/mobileMoney=false) : inchangé, même type
+     * "PAYMENT_RELEASED", même {@code notifyCritical} (délai de virement J+1, suivi ACK / SMS
+     * de repli historique).
+     *
+     * <p>Rail pawaPay : texte et devise locale dédiés
+     * ({@link NotificationTexts#mobileMoneyPayoutSent}), mais {@code notifyUser} — JAMAIS
+     * {@code notifyCritical}. Un versement mobile money n'est publié qu'à la confirmation
+     * {@code COMPLETED} du payout ({@code MobileMoneyPayoutOutcomeListener}) : l'argent est
+     * déjà arrivé, rien d'urgent ne reste à faire dans la minute qui suit — un SMS de repli
+     * 60 s plus tard serait un défaut, pas une amélioration (même motif que
+     * {@code onMobileMoneyPaymentConfirmed}). Type "PAYMENT_RELEASED" réutilisé
+     * volontairement (déjà catalogué dans NotificationCategory/NotificationDeeplink) plutôt
+     * qu'un type inventé : {@code notifyUser} persiste toujours {@code is_critical=false}
+     * quel que soit le type, donc aucun risque de déclencher le repli SMS malgré ce type
+     * présent dans {@link NotificationTypes#CRITICAL} pour le rail carte.
+     */
     @EventListener @Async
     public void onPaymentReleased(PaymentReleasedEvent event) {
+        Map<String, String> data = Map.of("type", "PAYMENT_RELEASED", "bidId", event.getBidId().toString());
+        if (event.isMobileMoney()) {
+            var text = NotificationTexts.mobileMoneyPayoutSent(
+                    NotificationTexts.mobileMoneyAmount(event.getAmount(), event.getCurrency()));
+            notifyUser(event.getTravelerId(), text.title(), text.body(), data);
+            return;
+        }
         var text = NotificationTexts.paymentReleased(NotificationTexts.eur(event.getAmount()));
-        notifyCritical(event.getTravelerId(), text.title(), text.body(),
-                Map.of("type", "PAYMENT_RELEASED", "bidId", event.getBidId().toString()));
+        notifyCritical(event.getTravelerId(), text.title(), text.body(), data);
     }
 
     @EventListener @Async

@@ -28,8 +28,26 @@ public class PaymentEntity extends BaseEntity {
     @Column(name = "negotiation_thread_id", unique = true)
     private UUID negotiationThreadId;
 
-    @Column(name = "stripe_payment_intent_id", nullable = false, unique = true, length = 255)
+    // Nullable depuis V248 : un paiement mobile money n'a pas de PaymentIntent. L'UNIQUE
+    // reste (PostgreSQL et H2 acceptent plusieurs NULL).
+    @Column(name = "stripe_payment_intent_id", unique = true, length = 255)
     private String stripePaymentIntentId;
+
+    /**
+     * Discriminant du rail. DEFAULT STRIPE en base (V248) et ici : un paiement construit
+     * sans rail explicite reste un paiement carte, ce qui protège tous les chemins existants.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "rail", nullable = false, length = 10)
+    @org.hibernate.annotations.ColumnDefault("'STRIPE'")
+    private PaymentRail rail = PaymentRail.STRIPE;
+
+    // Aucune référence aux opérations pawaPay ici : le lien qui fait autorité est
+    // pawapay_operations.payment_id (spec §7.1), lu via PawapayOperationService. Cette entité
+    // n'a ni @DynamicUpdate ni @Version : tout champ posé par setter après un claim bulk
+    // (markReleasedIfEscrow, markRefundedIfEscrow…) rendrait l'entité sale avec un statut
+    // périmé, et le flush réécrirait TOUTES les colonnes — ne rien lui ajouter que le rail
+    // pawaPay devrait écrire après un claim.
 
     @Column(name = "amount", nullable = false, precision = 10, scale = 2)
     private BigDecimal amount;
@@ -136,4 +154,7 @@ public class PaymentEntity extends BaseEntity {
 
     public boolean isDisputed() { return disputed; }
     public void setDisputed(boolean disputed) { this.disputed = disputed; }
+
+    public PaymentRail getRail() { return rail; }
+    public void setRail(PaymentRail rail) { this.rail = rail; }
 }

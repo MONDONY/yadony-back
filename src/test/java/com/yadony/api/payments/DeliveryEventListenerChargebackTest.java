@@ -42,8 +42,10 @@ class DeliveryEventListenerChargebackTest {
 
     @BeforeEach
     void setUp() {
+        // Ronde 1, point 5 : payoutInitiator est désormais un paramètre constructeur — null ici,
+        // jamais déréférencé (paiement disputé, bloqué avant tout branchement par rail).
         listener = new DeliveryEventListener(paymentRepository, userRepository,
-                auditService, eventPublisher, bidRepository, adminAlert, voucherService);
+                auditService, eventPublisher, bidRepository, adminAlert, voucherService, null);
     }
 
     private static void setId(Object entity, UUID id) throws Exception {

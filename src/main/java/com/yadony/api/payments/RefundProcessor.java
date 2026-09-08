@@ -1,7 +1,13 @@
 package com.yadony.api.payments;
 
+import com.yadony.api.admin.AdminAlertEscalator;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.stripe.AdminAlertService;
+import com.yadony.api.payments.pawapay.PawapayOperationEntity;
+import com.yadony.api.payments.pawapay.PawapayOperationKind;
+import com.yadony.api.payments.pawapay.PawapayOperationService;
+import com.yadony.api.payments.pawapay.PawapayOperationStatus;
+import com.yadony.api.payments.pawapay.PawapaySubmissionService;
 import com.stripe.exception.StripeException;
 import com.stripe.model.PaymentIntent;
 import com.stripe.model.Refund;
@@ -11,11 +17,15 @@ import com.stripe.param.RefundCreateParams;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -36,22 +46,62 @@ import java.util.UUID;
  *
  * <p>{@code REQUIRES_NEW} : chaque paiement vit dans sa propre transaction — un échec dans un
  * traitement par lot (annulation de trajet) n'annule pas les remboursements déjà réussis.
+ *
+ * <p><b>Rail mobile money</b> — {@code payment.getRail() == PAWAPAY} bascule sur un
+ * second chemin, complètement séparé du chemin Stripe ci-dessus (aucune ligne du chemin Stripe
+ * n'est modifiée par cette branche) : voir {@link #refundMobileMoney}. Les six listeners
+ * appelants existants de {@link #processRefund} (annulations, litiges, rejets d'annonce) ne
+ * changent pas — le dispatch sur le rail est entièrement interne à cette classe.
  */
 @Component
 public class RefundProcessor {
 
     private static final Logger log = LoggerFactory.getLogger(RefundProcessor.class);
 
+    /**
+     * {@code admin_alerts.type} est {@code VARCHAR(60)} : préfixe + UUID (36) doit rester sous
+     * 60 ({@link AdminAlertEscalator} refuse bruyamment un type trop long). Dédupliqué PAR
+     * PAIEMENT (pas un type global) — sinon la dédup empêcherait à tort l'alerte d'un paiement B
+     * sous prétexte qu'un paiement A a déjà le même problème non résolu.
+     */
+    static final String NO_DEPOSIT_ALERT_PREFIX = "PAWAPAY_REFUND_NO_DEP_";
+
+    /** Idem, pour le refus pawaPay du refund. */
+    static final String REJECTED_ALERT_PREFIX = "PAWAPAY_REFUND_REJECTED_";
+
+    /** Idem, pour un remboursement refusé parce qu'un versement existe déjà. */
+    static final String PAYOUT_EXISTS_ALERT_PREFIX = "PAWAPAY_REFUND_PAYOUT_";
+
     private final PaymentRepository paymentRepository;
     private final AuditService auditService;
     private final AdminAlertService adminAlert;
+    private final PawapayOperationService pawapayOperations;
+    private final PawapaySubmissionService pawapaySubmission;
+    private final AdminAlertEscalator alerts;
+
+    /**
+     * Transaction INDÉPENDANTE réservée à l'audit du remboursement mobile money — même outil,
+     * même motif que {@code MobileMoneyPayoutInitiator#independentAuditTransaction} : la trace
+     * d'un remboursement réellement soumis doit survivre même si la transaction ambiante (qui
+     * porte le claim) échouait ensuite.
+     */
+    private final TransactionTemplate independentAuditTransaction;
 
     public RefundProcessor(PaymentRepository paymentRepository,
                            AuditService auditService,
-                           AdminAlertService adminAlert) {
+                           AdminAlertService adminAlert,
+                           PawapayOperationService pawapayOperations,
+                           PawapaySubmissionService pawapaySubmission,
+                           AdminAlertEscalator alerts,
+                           PlatformTransactionManager transactionManager) {
         this.paymentRepository = paymentRepository;
         this.auditService = auditService;
         this.adminAlert = adminAlert;
+        this.pawapayOperations = pawapayOperations;
+        this.pawapaySubmission = pawapaySubmission;
+        this.alerts = alerts;
+        this.independentAuditTransaction = new TransactionTemplate(transactionManager);
+        this.independentAuditTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     /**
@@ -65,6 +115,10 @@ public class RefundProcessor {
         if (payment == null) {
             log.debug("processRefund: payment {} introuvable — no-op", paymentId);
             return false;
+        }
+
+        if (payment.getRail() == PaymentRail.PAWAPAY) {
+            return refundMobileMoney(payment, auditAction, auditActor, auditPayload);
         }
 
         return switch (payment.getStatus()) {
@@ -156,10 +210,126 @@ public class RefundProcessor {
         return true;
     }
 
+    /**
+     * Rail mobile money. {@code PENDING} (jamais encaissé) → {@code CANCELLED}, sans aucun appel
+     * pawaPay : si un deposit est encore en vol (par ex. {@code PROCESSING}) et aboutit ensuite,
+     * c'est {@code MobileMoneyBidPaymentService#confirmEscrow} qui verra le paiement
+     * {@code CANCELLED} et remboursera lui-même ce deposit tardif — volontairement PAS le rôle
+     * de cette méthode (voir le Javadoc de {@code confirmEscrow}).
+     *
+     * <p>{@code ESCROW} → claim atomique {@link PaymentRepository#markRefundedIfEscrow} — LA
+     * MÊME primitive que le chemin Stripe ci-dessus, partagée entre les deux rails sur la même
+     * colonne {@code status} : un double remboursement reste structurellement impossible quel
+     * que soit le rail ou le nombre de chemins d'appel. Puis refund pawaPay du deposit
+     * {@code COMPLETED} d'origine (trouvé via {@code findLatest}, jamais recalculé : le montant
+     * remboursé est celui du deposit, {@link PawapayOperationEntity#getAmount()} — jamais
+     * {@code payment.getAmount()}, égaux aujourd'hui mais sans garantie contractuelle). Un
+     * refund déjà vivant ({@code findLive}) est repris tel quel, jamais resoumis (spec §7.1,
+     * protégé structurellement par l'index unique partiel {@code uq_pawapay_ops_live_per_payment}).
+     * L'absence de deposit {@code COMPLETED} ou un refus pawaPay (statut {@code SUBMIT_REJECTED})
+     * remontent en exception : la transaction {@code REQUIRES_NEW} annule alors le claim, le
+     * paiement redevient {@code ESCROW} et donc remboursable plus tard.
+     *
+     * <p>Cette méthode et {@link #refundEscrowedMobileMoney} ne font JAMAIS
+     * {@code payment.setStatus(...)} après un claim bulk — {@code enrich(...)} n'utilise pas
+     * {@code status}, rien d'autre ne le lit non plus. Un tel setter rendrait l'entité sale et
+     * le flush suivant écraserait le claim avec le statut périmé en mémoire.
+     */
+    private boolean refundMobileMoney(PaymentEntity payment, String auditAction, UUID auditActor,
+                                      Map<String, String> auditPayload) {
+        UUID paymentId = payment.getId();
+        return switch (payment.getStatus()) {
+            case PENDING -> {
+                int cancelled = paymentRepository.markCancelledIfPending(paymentId);
+                if (cancelled == 0) {
+                    yield false;
+                }
+                auditService.log("PAYMENT", paymentId, auditAction, auditActor, enrich(auditPayload, payment));
+                log.info("Paiement mobile money {} annulé avant encaissement ({})", paymentId, auditAction);
+                yield true;
+            }
+            case ESCROW -> refundEscrowedMobileMoney(payment, paymentId, auditAction, auditActor, auditPayload);
+            default -> {
+                log.info("processRefund: paiement mobile money {} en statut {} — aucune action",
+                        paymentId, payment.getStatus());
+                yield false;
+            }
+        };
+    }
+
+    private boolean refundEscrowedMobileMoney(PaymentEntity payment, UUID paymentId, String auditAction,
+                                              UUID auditActor, Map<String, String> auditPayload) {
+        // EN TÊTE, avant toute soumission — y compris avant le claim ci-dessous. La branche crée
+        // elle-même l'état « paiement ESCROW alors qu'un versement est parti »
+        // (MobileMoneyPayoutInitiator : soumission acceptée puis timeout HTTP, rollback du
+        // claim ; le poller mène ensuite l'opération à COMPLETED pendant que le paiement
+        // redevient ESCROW). Sans cette garde, un opérateur voit une fiche qui indique qu'aucun
+        // versement n'a été tenté, clique « Rembourser », et le brut repart à l'expéditeur
+        // pendant que le net est déjà chez le voyageur — perte sèche, sans alerte. findLive
+        // couvre aussi COMPLETED (LIVE_OR_DONE). Les trois alertes de cette méthode précèdent
+        // un throw qui annule la transaction ambiante : leur dédup ne tient que parce que
+        // AdminAlertEscalator commite sa ligne dans sa propre transaction.
+        Optional<PawapayOperationEntity> existingPayout =
+                pawapayOperations.findLive(paymentId, PawapayOperationKind.PAYOUT);
+        if (existingPayout.isPresent()) {
+            PawapayOperationEntity payout = existingPayout.get();
+            alerts.raiseOnce(PAYOUT_EXISTS_ALERT_PREFIX + paymentId,
+                    "Paiement " + paymentId + " en ESCROW alors qu'un versement pawaPay existe déjà (opération "
+                            + payout.getId() + ", statut " + payout.getStatus()
+                            + ") : remboursement bloqué, vérification manuelle requise",
+                    Map.of("paymentId", paymentId.toString(), "operationId", payout.getId().toString(),
+                            "payoutStatus", payout.getStatus().name()));
+            throw new IllegalStateException(
+                    "pawaPay payout already exists for payment " + paymentId + " — refund refused");
+        }
+
+        int claimed = paymentRepository.markRefundedIfEscrow(paymentId);
+        if (claimed == 0) {
+            log.info("Paiement {} déjà sorti d'ESCROW — remboursement mobile money ignoré", paymentId);
+            return false;
+        }
+
+        Optional<PawapayOperationEntity> completedDeposit = pawapayOperations
+                .findLatest(paymentId, PawapayOperationKind.DEPOSIT)
+                .filter(deposit -> deposit.getStatus() == PawapayOperationStatus.COMPLETED);
+        if (completedDeposit.isEmpty()) {
+            alerts.raiseOnce(NO_DEPOSIT_ALERT_PREFIX + paymentId,
+                    "Paiement " + paymentId + " en ESCROW sans deposit pawaPay COMPLETED : remboursement manuel requis",
+                    Map.of("paymentId", paymentId.toString()));
+            throw new IllegalStateException("No completed pawaPay deposit for payment " + paymentId);
+        }
+        PawapayOperationEntity deposit = completedDeposit.get();
+
+        // Ce contrôle SUBMIT_REJECTED ne peut jamais se déclencher pour un refund RÉCUPÉRÉ via
+        // findLive — LIVE_OR_DONE (l'ensemble filtré par findLive) exclut structurellement
+        // SUBMIT_REJECTED (rangé dans DEAD). Il n'est atteignable que pour un refund tout juste
+        // soumis par submitRefund ci-dessous.
+        PawapayOperationEntity refund = pawapayOperations.findLive(paymentId, PawapayOperationKind.REFUND)
+                .orElseGet(() -> pawapaySubmission.submitRefund(paymentId, deposit, deposit.getAmount()));
+        if (refund.getStatus() == PawapayOperationStatus.SUBMIT_REJECTED) {
+            alerts.raiseOnce(REJECTED_ALERT_PREFIX + paymentId,
+                    "pawaPay a refusé le remboursement du paiement " + paymentId + " : " + refund.getFailureCode(),
+                    Map.of("paymentId", paymentId.toString(), "operationId", refund.getId().toString(),
+                            "failureCode", String.valueOf(refund.getFailureCode())));
+            throw new IllegalStateException("pawaPay refund rejected: " + refund.getFailureCode());
+        }
+
+        // Audit dans sa propre transaction — motif repris de MobileMoneyPayoutInitiator#release :
+        // la trace du remboursement survit même si la transaction ambiante (le claim) échouait
+        // ensuite. Rien de faillible ne suit ce point.
+        Map<String, Object> enriched = enrich(auditPayload, payment);
+        enriched.put("refundOperationId", refund.getId().toString());
+        independentAuditTransaction.executeWithoutResult(status ->
+                auditService.log("PAYMENT", paymentId, auditAction, auditActor, enriched));
+        log.info("Remboursement mobile money {} soumis pour le paiement {} ({})", refund.getId(), paymentId, auditAction);
+        return true;
+    }
+
     private Map<String, Object> enrich(Map<String, String> payload, PaymentEntity payment) {
         Map<String, Object> out = new HashMap<>(payload);
         out.put("piId", payment.getStripePaymentIntentId());
         out.put("amount", payment.getAmount().toPlainString());
+        out.put("rail", payment.getRail().name());
         return out;
     }
 }

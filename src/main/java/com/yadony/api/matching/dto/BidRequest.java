@@ -38,6 +38,7 @@ public record BidRequest(
         @Pattern(regexp = "^\\+?[1-9]\\d{6,19}$", message = "Numéro de téléphone invalide (format E.164 attendu)")
         String phoneNumber,
 
+        @Size(max = 5, message = "Code pays invalide")
         String countryCode,
 
         /** Code promo optionnel (insensible à la casse) — validé et racheté au paiement. */

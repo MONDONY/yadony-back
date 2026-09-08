@@ -1,6 +1,7 @@
 package com.yadony.api.matching;
 
 import com.yadony.api.payments.PaymentService;
+import com.yadony.api.payments.cash.PaymentMethod;
 import com.stripe.exception.StripeException;
 import com.stripe.model.PaymentIntent;
 import org.slf4j.Logger;
@@ -40,8 +41,11 @@ public class AwaitingPaymentCleanupScheduler {
     @Transactional
     public void cleanupUnpaidBids() {
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
-        List<BidEntity> expired = bidRepository
-            .findByStatusAndAwaitingPaymentExpiresAtBefore(BidStatus.AWAITING_PAYMENT, now);
+        // Un bid mobile money AWAITING_PAYMENT n'a pas de PaymentIntent : son expiration
+        // (annulation + restitution de capacité + notifications) est portée par
+        // MobileMoneyPaymentDeadlineScheduler — écarté dès la requête.
+        List<BidEntity> expired = bidRepository.findByStatusAndPaymentMethodNotAndAwaitingPaymentExpiresAtBefore(
+                BidStatus.AWAITING_PAYMENT, PaymentMethod.MOBILE_MONEY, now);
 
         for (BidEntity bid : expired) {
             String piId = bid.getPaymentIntentId();

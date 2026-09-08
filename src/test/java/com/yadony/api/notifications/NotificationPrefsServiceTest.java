@@ -153,6 +153,7 @@ class NotificationPrefsServiceTest {
         assertThat(service.isAllowed(USER_ID, "CONFIRMATION_CODE_READY")).isFalse();
         assertThat(service.isAllowed(USER_ID, "DELIVERY_NOSHOW_REPORTED")).isFalse();
         assertThat(service.isAllowed(USER_ID, "MM_PAYMENT_PENDING")).isFalse();
+        assertThat(service.isAllowed(USER_ID, "MM_PAYMENT_EXPIRED")).isFalse();
     }
 
     @Test
@@ -160,6 +161,7 @@ class NotificationPrefsServiceTest {
         when(repository.findById(USER_ID)).thenReturn(Optional.of(buildEntity(false, true, true, true, false)));
 
         assertThat(service.isAllowed(USER_ID, "MOBILE_MONEY_PAYMENT_CONFIRMED")).isFalse();
+        assertThat(service.isAllowed(USER_ID, "MOBILE_MONEY_PAYMENT_FAILED")).isFalse();
         assertThat(service.isAllowed(USER_ID, "PARCEL_RETURNED")).isFalse();
         assertThat(service.isAllowed(USER_ID, "RETURN_DEADLINE_WARNING")).isFalse();
         assertThat(service.isAllowed(USER_ID, "RETURN_DEADLINE_EXPIRED")).isFalse();

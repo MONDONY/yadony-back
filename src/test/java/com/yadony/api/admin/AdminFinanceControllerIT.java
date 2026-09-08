@@ -6,8 +6,10 @@ import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.payments.cash.CommissionChargedVia;
 import com.yadony.api.payments.cash.CommissionStatus;
-import com.yadony.api.payments.mobilemoney.MobileMoneyPaymentEntity;
-import com.yadony.api.payments.mobilemoney.MobileMoneyPaymentRepository;
+import com.yadony.api.payments.pawapay.PawapayOperationEntity;
+import com.yadony.api.payments.pawapay.PawapayOperationKind;
+import com.yadony.api.payments.pawapay.PawapayOperationRepository;
+import com.yadony.api.payments.pawapay.PawapayOperationStatus;
 import com.yadony.api.payments.wallet.WalletAccountEntity;
 import com.yadony.api.payments.wallet.WalletAccountRepository;
 import org.junit.jupiter.api.DisplayName;
@@ -53,14 +55,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest
 @ActiveProfiles("test")
 @AutoConfigureMockMvc
-@DisplayName("AdminFinanceControllerIT — /admin/wallets, /admin/mobile-money-payments, /admin/cash-commissions")
+@DisplayName("AdminFinanceControllerIT — /admin/wallets, /admin/cash-commissions")
 class AdminFinanceControllerIT {
 
     @Autowired MockMvc mockMvc;
 
     @MockitoBean WalletAccountRepository walletRepository;
-    @MockitoBean MobileMoneyPaymentRepository mobileMoneyRepository;
     @MockitoBean BidRepository bidRepository;
+    @MockitoBean PawapayOperationRepository pawapayOperationRepository;
 
     private static final UUID USER_ID = UUID.randomUUID();
     private static final UUID BID_ID = UUID.randomUUID();
@@ -93,20 +95,6 @@ class AdminFinanceControllerIT {
         return entity;
     }
 
-    private static MobileMoneyPaymentEntity mobileMoneyPayment() {
-        MobileMoneyPaymentEntity entity = new MobileMoneyPaymentEntity();
-        ReflectionTestUtils.setField(entity, "id", UUID.randomUUID());
-        entity.setBidId(BID_ID);
-        entity.setProvider("WAVE");
-        entity.setCountryCode("SN");
-        entity.setPhoneNumber("221771234567");
-        entity.setAmount(new BigDecimal("5000.00"));
-        entity.setCurrency("XOF");
-        entity.setStatus("COMPLETED");
-        ReflectionTestUtils.setField(entity, "createdAt", WHEN);
-        return entity;
-    }
-
     private static BidEntity cashBid() {
         BidEntity bid = new BidEntity();
         ReflectionTestUtils.setField(bid, "id", BID_ID);
@@ -120,20 +108,25 @@ class AdminFinanceControllerIT {
         return bid;
     }
 
+    /** Tâche 18 — une opération pawaPay COMPLETED, telle que rendue par {@code AdminMobileMoneyResponse}. */
+    private static PawapayOperationEntity operation() {
+        PawapayOperationEntity op = new PawapayOperationEntity(UUID.randomUUID(), PawapayOperationKind.DEPOSIT, UUID.randomUUID(), null,
+                new BigDecimal("16800"), "XOF", "ORANGE_SEN", "SN", "221771234567");
+        op.setStatus(PawapayOperationStatus.COMPLETED);
+        return op;
+    }
+
     // ── Permission ───────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("Sans PAYMENT_VIEW, les trois routes sont fermees et aucune lecture n'a lieu")
-    void withoutPaymentView_allThreeRoutesAreForbidden() throws Exception {
+    @DisplayName("Sans PAYMENT_VIEW, les deux routes sont fermees et aucune lecture n'a lieu")
+    void withoutPaymentView_bothRoutesAreForbidden() throws Exception {
         mockMvc.perform(get("/admin/wallets").with(authentication(withoutPaymentView())))
-                .andExpect(status().isForbidden());
-        mockMvc.perform(get("/admin/mobile-money-payments").with(authentication(withoutPaymentView())))
                 .andExpect(status().isForbidden());
         mockMvc.perform(get("/admin/cash-commissions").with(authentication(withoutPaymentView())))
                 .andExpect(status().isForbidden());
 
         verify(walletRepository, never()).findAll(any(Pageable.class));
-        verify(mobileMoneyRepository, never()).findAll(any(Pageable.class));
         verify(bidRepository, never()).findCashCommissions(any(Pageable.class));
     }
 
@@ -153,41 +146,6 @@ class AdminFinanceControllerIT {
                 .andExpect(jsonPath("$.content[0].balanceCents").value(1234))
                 .andExpect(jsonPath("$.content[0].currency").value("EUR"))
                 .andExpect(jsonPath("$.totalElements").value(1));
-    }
-
-    // ── Mobile Money ─────────────────────────────────────────────────────────
-
-    @Test
-    @DisplayName("GET /admin/mobile-money-payments — montant en centimes et numero masque des le serveur")
-    void mobileMoney_masksPhoneNumberServerSide() throws Exception {
-        when(mobileMoneyRepository.findAll(any(Pageable.class)))
-                .thenReturn(new PageImpl<>(List.of(mobileMoneyPayment()), PageRequest.of(0, 20), 1));
-
-        mockMvc.perform(get("/admin/mobile-money-payments").with(authentication(supportAuth())))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.content[0].bidId").value(BID_ID.toString()))
-                .andExpect(jsonPath("$.content[0].provider").value("WAVE"))
-                .andExpect(jsonPath("$.content[0].countryCode").value("SN"))
-                // Le numero ne doit JAMAIS quitter le serveur en clair : l'ecran ne l'affiche
-                // pas, rien ne justifie de l'envoyer au navigateur.
-                .andExpect(jsonPath("$.content[0].phoneNumber").value("••••••••4567"))
-                .andExpect(jsonPath("$.content[0].amountCents").value(500000))
-                .andExpect(jsonPath("$.content[0].currency").value("XOF"))
-                .andExpect(jsonPath("$.content[0].status").value("COMPLETED"));
-    }
-
-    @Test
-    @DisplayName("GET /admin/mobile-money-payments — le numero en clair n'apparait nulle part dans la reponse")
-    void mobileMoney_clearNumberIsAbsentFromTheWholeBody() throws Exception {
-        when(mobileMoneyRepository.findAll(any(Pageable.class)))
-                .thenReturn(new PageImpl<>(List.of(mobileMoneyPayment()), PageRequest.of(0, 20), 1));
-
-        String body = mockMvc.perform(get("/admin/mobile-money-payments")
-                        .with(authentication(supportAuth())))
-                .andExpect(status().isOk())
-                .andReturn().getResponse().getContentAsString();
-
-        org.assertj.core.api.Assertions.assertThat(body).doesNotContain("221771234567");
     }
 
     // ── Commissions cash ─────────────────────────────────────────────────────
@@ -231,6 +189,35 @@ class AdminFinanceControllerIT {
                 .andExpect(jsonPath("$.content[0].commissionCents").doesNotExist())
                 .andExpect(jsonPath("$.content[0].status").value("PENDING"))
                 .andExpect(jsonPath("$.content[0].chargedVia").doesNotExist());
+    }
+
+    // ── Mobile money (tâche 18) ─────────────────────────────────────────────
+
+    @Test
+    @DisplayName("GET /admin/mobile-money-payments — operations pawaPay, montant en centimes, numero masque")
+    void mobileMoney_listsOperations_masked() throws Exception {
+        when(pawapayOperationRepository.findAllByOrderByCreatedAtDesc(any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(operation()), PageRequest.of(0, 20), 1));
+
+        String body = mockMvc.perform(get("/admin/mobile-money-payments").with(authentication(supportAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].kind").value("DEPOSIT"))
+                .andExpect(jsonPath("$.content[0].provider").value("ORANGE_SEN"))
+                .andExpect(jsonPath("$.content[0].countryCode").value("SN"))
+                .andExpect(jsonPath("$.content[0].phoneNumber").value("+221 •••• 67"))
+                .andExpect(jsonPath("$.content[0].amountCents").value(1680000))
+                .andExpect(jsonPath("$.content[0].currency").value("XOF"))
+                .andExpect(jsonPath("$.content[0].status").value("COMPLETED"))
+                .andReturn().getResponse().getContentAsString();
+        org.assertj.core.api.Assertions.assertThat(body).doesNotContain("221771234567");
+    }
+
+    @Test
+    @DisplayName("GET /admin/mobile-money-payments — sans PAYMENT_VIEW → 403")
+    void mobileMoney_requiresPaymentView() throws Exception {
+        mockMvc.perform(get("/admin/mobile-money-payments").with(authentication(withoutPaymentView())))
+                .andExpect(status().isForbidden());
+        verify(pawapayOperationRepository, never()).findAllByOrderByCreatedAtDesc(any(Pageable.class));
     }
 
     // ── Pagination ───────────────────────────────────────────────────────────

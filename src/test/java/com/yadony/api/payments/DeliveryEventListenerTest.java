@@ -50,8 +50,10 @@ class DeliveryEventListenerTest {
 
     @BeforeEach
     void setUp() {
+        // Ronde 1, point 5 : payoutInitiator est désormais un paramètre constructeur — null ici,
+        // jamais déréférencé puisque tous les paiements de cette classe sont de rail STRIPE.
         listener = new DeliveryEventListener(paymentRepository, userRepository,
-                auditService, eventPublisher, bidRepository, adminAlert, voucherService);
+                auditService, eventPublisher, bidRepository, adminAlert, voucherService, null);
     }
 
     private PaymentEntity payment(boolean legacy, PaymentStatus status, String chargeId) {

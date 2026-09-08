@@ -2007,12 +2007,16 @@ public class NegotiationService {
      * the given payment method.
      * <ul>
      *   <li>STRIPE requires a fully onboarded Stripe Connect account.</li>
+     *   <li>MOBILE_MONEY is never offerable here (see below).</li>
      *   <li>CASH / WAVE / ORANGE_MONEY are always available.</li>
      * </ul>
      */
     private boolean travelerCanOffer(UserEntity t, PaymentMethod m) {
         return switch (m) {
             case STRIPE -> t.getStripeAccountStatus() == StripeAccountStatus.ONBOARDING_COMPLETE;
+            // Hors périmètre de ce lot : la négociation (paiement sur le fil, checkout Stripe)
+            // ne porte pas encore le rail mobile money. Un lot dédié l'ouvrira.
+            case MOBILE_MONEY -> false;
             case CASH, WAVE, ORANGE_MONEY -> true;
         };
     }

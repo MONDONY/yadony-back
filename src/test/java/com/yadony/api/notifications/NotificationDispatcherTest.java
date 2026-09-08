@@ -20,8 +20,10 @@ import com.yadony.api.matching.events.CashBidCreatedEvent;
 import com.yadony.api.matching.events.BidRejectedEvent;
 import com.yadony.api.matching.events.HandoverAlertEvent;
 import com.yadony.api.matching.events.TripArrivedEvent;
+import com.yadony.api.payments.events.MobileMoneyDepositFailedEvent;
+import com.yadony.api.payments.events.MobileMoneyPaymentConfirmedEvent;
+import com.yadony.api.payments.events.MobileMoneyPaymentExpiredEvent;
 import com.yadony.api.payments.events.PaymentReleasedEvent;
-import com.yadony.api.payments.mobilemoney.events.BidPaidByMobileMoneyEvent;
 import com.yadony.api.tracking.events.DeliveryConfirmedEvent;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -59,10 +61,16 @@ class NotificationDispatcherTest {
     private final UUID bidId      = UUID.randomUUID();
     private final UUID annId      = UUID.randomUUID();
 
+    private final com.yadony.api.payments.pawapay.PawapayProperties pawapayProperties =
+            new com.yadony.api.payments.pawapay.PawapayProperties(true, "https://x", "t", false, 30,
+                    "https://api.test", "yadony://bids/%s/mobile-money/awaiting",
+                    new com.yadony.api.payments.pawapay.PawapayProperties.BalanceMin(
+                            java.math.BigDecimal.ZERO, java.math.BigDecimal.ZERO));
+
     @BeforeEach
     void setUp() {
         dispatcher = new NotificationDispatcher(fcmService, smsService, userRepository, notificationService,
-                blockVisibility);
+                blockVisibility, pawapayProperties);
         // persist() must return an entity with a non-null ID (JPA doesn't run in unit tests)
         var stubEntity = new NotificationEntity(UUID.randomUUID(), "STUB", "stub", "stub", Map.of(), false);
         setEntityId(stubEntity, UUID.randomUUID());
@@ -186,24 +194,6 @@ class NotificationDispatcherTest {
                 .doesNotContainKey("reasonCode");
     }
 
-    // ── Mobile Money ─────────────────────────────────────────────────────────
-
-    @Test
-    void onBidPaidByMobileMoney_notifiesTraveler() {
-        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
-
-        dispatcher.onBidPaidByMobileMoney(
-                new BidPaidByMobileMoneyEvent(bidId, travelerId));
-
-        var dataCaptor = ArgumentCaptor.forClass(Map.class);
-        verify(fcmService).sendToUser(
-                eq(travelerId), eq("Paiement confirmé"),
-                contains("Mobile Money"), dataCaptor.capture());
-        assertThat(dataCaptor.getValue())
-                .containsEntry("type", "MOBILE_MONEY_PAYMENT_CONFIRMED")
-                .containsEntry("bidId", bidId.toString());
-    }
-
     // ── Parcel return ────────────────────────────────────────────────────────
 
     @Test
@@ -309,22 +299,29 @@ class NotificationDispatcherTest {
     }
 
     /**
-     * Wave et Orange Money : {@code MobileMoneyBidAcceptedListener} envoie « Payez votre
-     * trajet », qui annonce déjà l'acceptation et porte le lien de paiement. Le push
-     * générique ferait un second réveil du téléphone pour la même action, en répétant la
-     * première. La trace reste persistée pour la boîte de réception.
+     * Rail pawaPay (tâche 13) : l'acceptation d'un bid mobile money ne pousse plus jamais
+     * « Demande acceptée ! » — ce push est remplacé par « Payez votre envoi », qui annonce
+     * déjà l'acceptation et invite l'expéditeur à régler sous 30 min. Contrairement à
+     * l'ancien flux Wave/Orange Money (paiement par lien externe, push seulement persisté),
+     * ce nouveau push est bien envoyé : l'expéditeur a un délai serré à respecter.
      */
     @Test
-    void onBidAccepted_mobileMoney_persistsWithoutPush() {
-        UserEntity traveler = new UserEntity();
-        traveler.setFirstName("Ibrahima");
-        when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler));
+    void onBidAccepted_mobileMoney_sendsPayNowInsteadOfGenericAccepted() {
+        UUID senderId = UUID.randomUUID();
+        UUID travelerId = UUID.randomUUID();
+        UUID bidId = UUID.randomUUID();
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
 
-        dispatcher.onBidAccepted(new BidAcceptedEvent(bidId, senderId, travelerId, annId, true));
+        dispatcher.onBidAccepted(new BidAcceptedEvent(bidId, senderId, travelerId, UUID.randomUUID(), true));
 
-        verify(notificationService).persist(eq(senderId), eq("BID_ACCEPTED"),
-                eq("Demande acceptée !"), any(), any(), eq(false));
-        verify(fcmService, never()).sendToUser(any(), any(), any(), any());
+        verify(fcmService).sendToUser(eq(senderId), eq("Payez votre envoi"), any(),
+                argThat(data -> "MM_PAYMENT_PENDING".equals(data.get("type")) && bidId.toString().equals(data.get("bidId"))));
+        verify(fcmService, never()).sendToUser(eq(senderId), eq("Demande acceptée !"), any(), any());
+        // Ronde 1, point 7 : rétablit la preuve de persistance (perdue au remplacement de ce
+        // test) — un futur passage au push direct sans persist() doit rougir ce test, pas
+        // seulement supprimer silencieusement la trace de boîte de réception.
+        verify(notificationService).persist(eq(senderId), eq("MM_PAYMENT_PENDING"),
+                eq("Payez votre envoi"), any(), any(), eq(false));
     }
 
     @Test
@@ -337,6 +334,72 @@ class NotificationDispatcherTest {
         dispatcher.onBidAccepted(new BidAcceptedEvent(bidId, senderId, travelerId, annId, false));
 
         verify(fcmService).sendToUser(eq(senderId), eq("Demande acceptée !"), any(), any());
+    }
+
+    // ── MobileMoneyPaymentConfirmedEvent / MobileMoneyDepositFailedEvent (tâche 14) ──────────
+
+    /**
+     * Ronde 1, point 2 : le type émis est le type EXISTANT {@code MOBILE_MONEY_PAYMENT_CONFIRMED}
+     * (catalogué dans NotificationCategory/NotificationDeeplink/NotificationPrefsService et
+     * déjà backfillé par V238) — pas un type inventé qui aurait manqué le deeplink, la
+     * catégorie Paiements et la préférence de push.
+     */
+    @Test
+    void onMobileMoneyPaymentConfirmed_notifiesBothParties() {
+        UUID senderId = UUID.randomUUID();
+        UUID travelerId = UUID.randomUUID();
+        UUID bidId = UUID.randomUUID();
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onMobileMoneyPaymentConfirmed(new MobileMoneyPaymentConfirmedEvent(bidId, senderId, travelerId, new BigDecimal("16800"), "XOF"));
+
+        verify(fcmService).sendToUser(eq(senderId), eq("Paiement confirmé"), any(), argThat(d -> "MOBILE_MONEY_PAYMENT_CONFIRMED".equals(d.get("type"))));
+        verify(fcmService).sendToUser(eq(travelerId), eq("Colis payé"), any(), argThat(d -> "MOBILE_MONEY_PAYMENT_CONFIRMED".equals(d.get("type"))));
+    }
+
+    /**
+     * Ronde 1, point 1 (CRITIQUE) : preuve directement demandée par le relecteur. Le seul
+     * critère que consulte {@code SmsFallbackScheduler#processPendingFallbacks}
+     * ({@code NotificationRepository#findPendingSmsFallbacks}) est la colonne persistée
+     * {@code is_critical} — jamais le type. Prouver qu'elle est persistée à {@code false}
+     * exclut donc STRUCTURELLEMENT cette ligne de toute sélection par ce scheduler, quel
+     * que soit le contenu futur de {@link NotificationTypes#CRITICAL}. Complété par la
+     * vérification, à ce même niveau de configuration, que ce type n'y figure pas non plus
+     * (c'est ce que {@code FcmService} consulte pour décider {@code content-available} —
+     * la seconde moitié du mécanisme qui a permis à ce défaut de passer inaperçu).
+     */
+    @Test
+    void onMobileMoneyPaymentConfirmed_travelerNotification_neverPersistedAsCritical_cannotTriggerSmsFallback() {
+        UUID senderId = UUID.randomUUID();
+        UUID travelerId = UUID.randomUUID();
+        UUID bidId = UUID.randomUUID();
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onMobileMoneyPaymentConfirmed(new MobileMoneyPaymentConfirmedEvent(bidId, senderId, travelerId, new BigDecimal("16800"), "XOF"));
+
+        verify(notificationService).persist(eq(travelerId), eq("MOBILE_MONEY_PAYMENT_CONFIRMED"), eq("Colis payé"),
+                any(), any(), eq(false));
+        assertThat(NotificationTypes.isCritical("MOBILE_MONEY_PAYMENT_CONFIRMED")).isFalse();
+    }
+
+    /** Ronde 1, point 2 : type dédié {@code MOBILE_MONEY_PAYMENT_FAILED}, catalogué. */
+    @Test
+    void onMobileMoneyDepositFailed_notifiesSender() {
+        UUID senderId = UUID.randomUUID();
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+        dispatcher.onMobileMoneyDepositFailed(new MobileMoneyDepositFailedEvent(UUID.randomUUID(), senderId, "PAYMENT_NOT_APPROVED"));
+        verify(fcmService).sendToUser(eq(senderId), eq("Paiement refusé"), any(), argThat(d -> "MOBILE_MONEY_PAYMENT_FAILED".equals(d.get("type"))));
+    }
+
+    /** Tâche 15 : deux notifications, une par partie, type dédié {@code MM_PAYMENT_EXPIRED}. */
+    @Test
+    void onMobileMoneyPaymentExpired_notifiesBoth() {
+        UUID senderId = UUID.randomUUID();
+        UUID travelerId = UUID.randomUUID();
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+        dispatcher.onMobileMoneyPaymentExpired(new MobileMoneyPaymentExpiredEvent(UUID.randomUUID(), senderId, travelerId));
+        verify(fcmService).sendToUser(eq(senderId), eq("Délai de paiement dépassé"), any(), argThat(d -> "MM_PAYMENT_EXPIRED".equals(d.get("type"))));
+        verify(fcmService).sendToUser(eq(travelerId), eq("Colis annulé"), any(), argThat(d -> "MM_PAYMENT_EXPIRED".equals(d.get("type"))));
     }
 
     // ── BidRejectedEvent ──────────────────────────────────────────────────────
@@ -636,6 +699,46 @@ class NotificationDispatcherTest {
         dispatcher.onPaymentReleased(new PaymentReleasedEvent(bidId, travelerId, senderId, BigDecimal.valueOf(45.00)));
 
         verify(fcmService).sendToUser(eq(travelerId), eq("Paiement reçu !"), contains("45,00 €"), any());
+    }
+
+    /**
+     * Tâche 16 (pawaPay) : le rail mobile money bascule sur un texte "Versement envoyé" dans
+     * la devise locale ; le rail carte (constructeur 4-arg legacy, EUR/mobileMoney=false par
+     * défaut) reste inchangé — même type "PAYMENT_RELEASED", même notifyCritical, même texte.
+     */
+    @Test
+    void onPaymentReleased_mobileMoney_usesLocalCurrencyText_stripeUnchanged() {
+        UUID travelerId = UUID.randomUUID();
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onPaymentReleased(new PaymentReleasedEvent(UUID.randomUUID(), travelerId, UUID.randomUUID(), new BigDecimal("15000"), "XOF", true));
+        dispatcher.onPaymentReleased(new PaymentReleasedEvent(UUID.randomUUID(), travelerId, UUID.randomUUID(), new BigDecimal("45.00")));
+
+        verify(fcmService).sendToUser(eq(travelerId), eq("Versement envoyé"), org.mockito.ArgumentMatchers.contains("F CFA"), any());
+        verify(fcmService).sendToUser(eq(travelerId), eq("Paiement reçu !"), org.mockito.ArgumentMatchers.contains("€"), any());
+    }
+
+    /**
+     * Preuve directe de l'instruction du cahier des charges : mobileMoneyPayoutSent part en
+     * notifyUser, JAMAIS en notifyCritical — un versement mobile money déjà confirmé par
+     * pawaPay n'a rien d'urgent à faire dans la minute (pas de SMS de repli à déclencher),
+     * contrairement au virement carte (J+1, d'où le suivi ACK historique du rail Stripe).
+     * Même famille de preuve que onMobileMoneyPaymentConfirmed_travelerNotification_neverPersistedAsCritical...
+     * (tâche 14) : le seul critère consulté par SmsFallbackScheduler est la colonne persistée
+     * is_critical, jamais le type — la prouver à false exclut structurellement cette ligne de
+     * toute sélection par ce scheduler, même si "PAYMENT_RELEASED" reste par ailleurs dans
+     * NotificationTypes.CRITICAL pour le rail carte inchangé.
+     */
+    @Test
+    void onPaymentReleased_mobileMoney_neverPersistedAsCritical_cannotTriggerSmsFallback() {
+        UUID travelerId = UUID.randomUUID();
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onPaymentReleased(new PaymentReleasedEvent(UUID.randomUUID(), travelerId, UUID.randomUUID(),
+                new BigDecimal("15000"), "XOF", true));
+
+        verify(notificationService).persist(eq(travelerId), eq("PAYMENT_RELEASED"), eq("Versement envoyé"),
+                any(), any(), eq(false));
     }
 
     // ── DisputeOpenedEvent ────────────────────────────────────────────────────

@@ -17,7 +17,8 @@ class NotificationDeeplinkTest {
     void bidLifecycleOpensTheBid() {
         for (String type : new String[]{"BID_ACCEPTED", "DELIVERY_CONFIRMED", "PAYMENT_RELEASED", "DISPUTE_OPENED",
                 "PARCEL_REFUSED", "BID_EXPIRED", "CONFIRMATION_CODE_READY", "DELIVERY_NOSHOW_REPORTED",
-                "MM_PAYMENT_PENDING", "HANDOVER_REMINDER_H2", "MOBILE_MONEY_PAYMENT_CONFIRMED", "PARCEL_RETURNED",
+                "MM_PAYMENT_PENDING", "HANDOVER_REMINDER_H2", "MOBILE_MONEY_PAYMENT_CONFIRMED",
+                "MOBILE_MONEY_PAYMENT_FAILED", "MM_PAYMENT_EXPIRED", "PARCEL_RETURNED",
                 "RETURN_DEADLINE_WARNING", "RETURN_DEADLINE_EXPIRED", "automation_last_minute"}) {
             assertThat(NotificationDeeplink.of(type, Map.of("bidId", bidId)))
                     .as(type).contains("yadony://bids/" + bidId);

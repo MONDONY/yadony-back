@@ -253,8 +253,31 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
 
     Optional<BidEntity> findByLinkedNegotiationThreadId(UUID linkedNegotiationThreadId);
 
-    List<BidEntity> findByStatusAndAwaitingPaymentExpiresAtBefore(
-            BidStatus status, LocalDateTime threshold);
+    /**
+     * Nettoyage des bids carte dont la fenêtre de paiement est dépassée
+     * ({@code AwaitingPaymentCleanupScheduler}) : {@code excludedMethod} écarte en SQL le rail
+     * qui partage le statut {@code AWAITING_PAYMENT} mais pas le PaymentIntent (mobile money,
+     * expiré par {@code MobileMoneyPaymentDeadlineScheduler}) — jamais filtré en Java après
+     * avoir chargé les lignes pour rien.
+     */
+    List<BidEntity> findByStatusAndPaymentMethodNotAndAwaitingPaymentExpiresAtBefore(
+            BidStatus status, PaymentMethod excludedMethod, LocalDateTime threshold);
+
+    /**
+     * Expiration des bids mobile money en attente de paiement (MobileMoneyPaymentDeadlineScheduler).
+     * Identifiants seulement : le scheduler relit chaque bid sous verrou dans sa propre
+     * transaction, hydrater l'entité complète ici (dont le numéro payeur chiffré) serait jeté.
+     *
+     * <p>Bornée par {@code pageable} — même motif que
+     * {@code PawapayOperationRepository#findOpenForReconciliation} : un incident laissant
+     * s'accumuler des bids en souffrance ne doit jamais faire durer un passage du scheduler
+     * indéfiniment, sur l'unique pool de scheduling partagé par tous les crons du dépôt.
+     */
+    @Query("SELECT b.id FROM BidEntity b WHERE b.status = :status AND b.paymentMethod = :method "
+            + "AND b.awaitingPaymentExpiresAt < :threshold")
+    List<UUID> findIdsByStatusAndPaymentMethodAndAwaitingPaymentExpiresAtBefore(
+            @Param("status") BidStatus status, @Param("method") PaymentMethod paymentMethod,
+            @Param("threshold") LocalDateTime threshold, Pageable pageable);
 
     // Rappel H-2 : l'alerte se cale désormais sur la date limite de dépôt (il
     // n'y a plus de début de fenêtre). On prévient donc l'expéditeur quand il

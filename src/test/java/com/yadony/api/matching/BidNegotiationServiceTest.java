@@ -405,6 +405,41 @@ class BidNegotiationServiceTest {
                     .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
                             .isEqualTo("negotiation-closed"));
         }
+
+        @Test
+        @DisplayName("paymentMethod résolu en MOBILE_MONEY → 422 mobile-money-negotiation-unsupported, aucun bid créé")
+        void propose_mobileMoney_isRejected() {
+            // Ce test échoue si la garde de ce test est retirée : sans elle, propose()
+            // construirait et sauvegarderait un bid NEGOTIATING en MOBILE_MONEY, qu'aucun
+            // rail ne peut ensuite payer (accept() ne sait faire transiter que CASH/carte
+            // vers un aval qui règle vraiment le voyageur — cf. BidService.restoreCapacityIfNeeded).
+            UserEntity sender = buildSender();
+            AnnouncementEntity announcement = buildAnnouncement();
+
+            when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
+            when(announcementRepository.findByIdForUpdate(ANNOUNCEMENT_ID))
+                    .thenReturn(Optional.of(announcement));
+            when(bidService.assertCanBidOn(sender, announcement, "CLOTHING")).thenReturn("CLOTHING");
+            when(bidService.resolvePaymentMethodFor(announcement, "MOBILE_MONEY"))
+                    .thenReturn(com.yadony.api.payments.cash.PaymentMethod.MOBILE_MONEY);
+
+            BidNegotiationStartRequest request = new BidNegotiationStartRequest(
+                    new BigDecimal("5.0"), "Vêtements", "CLOTHING",
+                    "Fatou Sarr", "+221701234567", true,
+                    "MOBILE_MONEY", "+221701234567", "SN", null,
+                    new BigDecimal("45.00"), null, null);
+
+            assertThatThrownBy(() -> service.propose(ANNOUNCEMENT_ID, SENDER_UID, request, httpRequest))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> {
+                        YadonyBusinessException ex = (YadonyBusinessException) e;
+                        assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                        assertThat(ex.getErrorCode()).isEqualTo("mobile-money-negotiation-unsupported");
+                    });
+
+            verify(bidRepository, never()).save(any(BidEntity.class));
+            verifyNoInteractions(auditService);
+        }
     }
 
     // ─── counter ────────────────────────────────────────────────────────────────
