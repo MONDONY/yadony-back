@@ -133,15 +133,13 @@ class MobileMoneyAccountServiceTest {
     }
 
     /**
-     * Décision produit : tant que la vérification par SMS n'est pas câblée, un compte Firebase
-     * sans téléphone peut activer le versement avec un numéro saisi dans le corps de la requête.
-     * Il est normalisé ({@code Msisdn.normalize}, espaces retirés) avant d'être transmis à
-     * pawaPay exactement comme le numéro Firebase l'est habituellement, et sa provenance est
-     * tracée dans l'audit sous {@code source: "provided"}.
+     * Un numéro fourni est accepté et devient la source, normalisé ({@code Msisdn.normalize},
+     * espaces retirés) avant d'être transmis à pawaPay, sa provenance tracée dans l'audit sous
+     * {@code source: "provided"}. Aucun stub sur {@code firebaseContact} : le compte Firebase
+     * n'est même pas interrogé dès qu'un numéro est fourni, quel que soit son propre état.
      */
     @Test
     void activate_providedPhone_usedWhenNoFirebasePhone() {
-        when(firebaseContact.getContact("uid-1")).thenReturn(FirebaseContactService.Contact.EMPTY);
         when(client.predictProvider("221773456789"))
                 .thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "221773456789")));
         when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", new PawapayProviderConfig("ORANGE_SEN", "SEN", "XOF", OK, OK)));
@@ -159,12 +157,38 @@ class MobileMoneyAccountServiceTest {
     }
 
     /**
-     * Le compte Firebase a un téléphone : il reste la SEULE source, même si un numéro (différent)
-     * est fourni dans le corps — il est ignoré en silence, sans erreur. Le numéro persisté et la
-     * source d'audit prouvent que seul le téléphone Firebase a été utilisé.
+     * Changement de règle (2026-09-09) : le numéro fourni est TOUJOURS prioritaire, même quand
+     * le compte Firebase a déjà un téléphone (différent ici, pour le prouver) — il peut
+     * légitimement différer du numéro Firebase. Le stub Firebase est {@code lenient} : le
+     * nouveau code-chemin ne le consulte plus du tout dès qu'un numéro est fourni, ce que
+     * {@code verify(never())} prouve directement, pas seulement que sa valeur est ignorée.
      */
     @Test
-    void activate_firebasePhone_takesPriorityOverProvidedPhone() {
+    void activate_providedPhone_takesPriorityOverFirebasePhone() {
+        lenient().when(firebaseContact.getContact("uid-1")).thenReturn(new FirebaseContactService.Contact("+221771234567", null));
+        when(client.predictProvider("221770000001"))
+                .thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "221770000001")));
+        when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", new PawapayProviderConfig("ORANGE_SEN", "SEN", "XOF", OK, OK)));
+        when(currencyResolver.resolve(userId)).thenReturn("XOF");
+        when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        MobileMoneyAccountResponse r = service.activate(userId, "+221 77 000 00 01");
+
+        assertThat(user.getMobileMoneyMsisdn()).isEqualTo("221770000001");
+        assertThat(r.status()).isEqualTo("ACTIVE");
+        ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
+        verify(audit).log(eq("USER"), eq(userId), eq("MM_ACCOUNT_ACTIVATED"), eq(userId), payload.capture());
+        assertThat(payload.getValue()).containsEntry("source", "provided");
+        verify(firebaseContact, never()).getContact(any());
+    }
+
+    /**
+     * Numéro fourni vide ou uniquement composé d'espaces : traité comme absent ({@code
+     * isBlank()}, pas {@code isEmpty()}), retombe sur le téléphone Firebase déjà vérifié par
+     * OTP — exactement comme un {@code providedPhone} {@code null}.
+     */
+    @Test
+    void activate_blankProvidedPhone_fallsBackToFirebasePhone() {
         when(firebaseContact.getContact("uid-1")).thenReturn(new FirebaseContactService.Contact("+221771234567", null));
         when(client.predictProvider("+221771234567"))
                 .thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "221771234567")));
@@ -172,7 +196,7 @@ class MobileMoneyAccountServiceTest {
         when(currencyResolver.resolve(userId)).thenReturn("XOF");
         when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        MobileMoneyAccountResponse r = service.activate(userId, "+33612345678");
+        MobileMoneyAccountResponse r = service.activate(userId, "   ");
 
         assertThat(user.getMobileMoneyMsisdn()).isEqualTo("221771234567");
         assertThat(r.status()).isEqualTo("ACTIVE");
@@ -182,21 +206,21 @@ class MobileMoneyAccountServiceTest {
     }
 
     /**
-     * Sans téléphone Firebase, un numéro fourni mais inexploitable par {@code Msisdn.normalize}
-     * (trop court) est une erreur de saisie CLIENT — 422 {@code mobile-money-invalid-phone},
-     * distinct de {@code mobile-money-account-unsupported} (numéro reconnu par pawaPay mais
-     * inexploitable) — et n'atteint jamais pawaPay ni la base : aucune écriture.
+     * Un numéro fourni mais inexploitable par {@code Msisdn.normalize} (trop court) est une
+     * erreur de saisie CLIENT — 422 {@code mobile-money-invalid-phone}, distinct de {@code
+     * mobile-money-account-unsupported} (numéro reconnu par pawaPay mais inexploitable) —
+     * n'atteint jamais pawaPay ni la base (aucune écriture) et ne consulte jamais Firebase : le
+     * numéro fourni est prioritaire sans condition, y compris pour être rejeté.
      */
     @Test
-    void activate_invalidProvidedPhone_withoutFirebasePhone_is422InvalidPhone() {
-        when(firebaseContact.getContact("uid-1")).thenReturn(FirebaseContactService.Contact.EMPTY);
-
+    void activate_invalidProvidedPhone_is422InvalidPhone() {
         YadonyBusinessException ex = catchThrowableOfType(() -> service.activate(userId, "123"), YadonyBusinessException.class);
 
         assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
         assertThat(ex.getErrorCode()).isEqualTo("mobile-money-invalid-phone");
         verify(userRepository, never()).save(any());
         verify(audit, never()).log(any(), any(), any(), any(), any());
+        verify(firebaseContact, never()).getContact(any());
     }
 
     /**

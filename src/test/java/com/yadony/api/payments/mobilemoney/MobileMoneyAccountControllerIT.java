@@ -66,8 +66,9 @@ class MobileMoneyAccountControllerIT {
                 .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("ACTIVE"))
                 .andExpect(jsonPath("$.msisdnMasked").value("+221 •••• 67"))
                 .andExpect(jsonPath("$.providerLabel").value("Orange Money"));
-        // Sans corps : toujours accepté, le numéro Firebase reste la source (@RequestBody
-        // required = false, comme MobileMoneyPaymentController#initiate).
+        // Sans corps : toujours accepté (@RequestBody required = false, comme
+        // MobileMoneyPaymentController#initiate) ; sans numéro fourni, le service retombe sur
+        // le téléphone Firebase.
         mockMvc.perform(post("/payments/mobile-money/account").with(authentication(traveler())))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("ACTIVE"));
         mockMvc.perform(delete("/payments/mobile-money/account").with(authentication(traveler())))
@@ -75,9 +76,9 @@ class MobileMoneyAccountControllerIT {
     }
 
     /**
-     * Corps facultatif avec un numéro : transmis tel quel (brut, non normalisé) au service,
-     * qui décide seul de l'utiliser ou de l'ignorer selon que le compte Firebase a ou non un
-     * téléphone — la normalisation elle-même est testée côté service, pas ici.
+     * Corps facultatif avec un numéro : transmis tel quel (brut, non normalisé) au service, qui
+     * le priorise TOUJOURS sur le téléphone Firebase s'il est renseigné — la normalisation et
+     * la priorité elles-mêmes sont testées côté service, pas ici.
      */
     @Test
     void activate_withPhoneBody_passesRawPhoneToService() throws Exception {

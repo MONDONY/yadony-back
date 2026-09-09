@@ -16,13 +16,14 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Compte de versement mobile money du voyageur. Le numéro du compte Firebase de l'appelant
- * (vérifié par OTP) reste TOUJOURS prioritaire : {@link MobileMoneyAccountService#activate}
- * l'utilise dès qu'il existe et ignore alors silencieusement tout numéro fourni dans le corps
- * de {@link #activate}. Ce corps est facultatif et n'est lu que si le compte Firebase n'a pas
- * de téléphone (voir la javadoc du service pour le motif). L'identifiant utilisateur vient
- * uniquement du contexte de sécurité (jamais d'un paramètre d'URL ou de corps), ce qui garantit
- * qu'un appelant n'agit que sur son propre compte.
+ * Compte de versement mobile money du voyageur. Le numéro fourni dans le corps de
+ * {@link #activate} est TOUJOURS prioritaire s'il est renseigné, même si le compte Firebase de
+ * l'appelant a déjà un téléphone (il peut légitimement différer) ; sans corps, ou avec un corps
+ * sans numéro, le téléphone Firebase (déjà vérifié par OTP) est utilisé. Voir la javadoc de
+ * {@link MobileMoneyAccountService#activate} pour le risque accepté (numéro fourni non vérifié
+ * par OTP) et les garde-fous en place. L'identifiant utilisateur vient uniquement du contexte
+ * de sécurité (jamais d'un paramètre d'URL ou de corps), ce qui garantit qu'un appelant n'agit
+ * que sur son propre compte.
  */
 @RestController
 @RequestMapping("/payments/mobile-money/account")
@@ -42,7 +43,7 @@ public class MobileMoneyAccountController {
         return service.get(callerId(firebaseUid));
     }
 
-    /** Corps facultatif : numéro de versement, utilisé seulement si le compte Firebase n'en a pas. */
+    /** Corps facultatif mais recommandé : numéro de versement, prioritaire sur le numéro Firebase s'il est fourni. */
     @PostMapping
     public MobileMoneyAccountResponse activate(@AuthenticationPrincipal String firebaseUid,
                                                 @RequestBody(required = false) MobileMoneyActivateRequest body) {
