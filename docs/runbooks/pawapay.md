@@ -68,7 +68,7 @@ Tant que l'app n'a pas ses écrans mobile money, le parcours se déroule en curl
 
 **Parcours.**
 
-1. Voyageur : `POST /payments/mobile-money/account` sans corps. Attendu `status: ACTIVE`, `providerLabel: Orange Money`, numéro masqué. `422 mobile-money-disabled` = rail fermé (`PAWAPAY_ENABLED` absent de `.env.staging`).
+1. Voyageur : `POST /payments/mobile-money/account` sans corps (le compte Firebase a un numéro de test pawaPay). Attendu `status: ACTIVE`, `providerLabel: Orange Money`, numéro masqué. `422 mobile-money-disabled` = rail fermé (`PAWAPAY_ENABLED` absent de `.env.staging`). Corps facultatif `{"phoneNumber": "+221773456789"}` : utilisé seulement si le compte Firebase de l'appelant n'a pas de téléphone (`422 mobile-money-phone-required` sinon) — ignoré en silence si un numéro Firebase existe déjà, qui reste toujours prioritaire.
 2. Voyageur : trajet en XOF créé normalement dans l'app (prix au kg). Les modes acceptés de l'annonce n'ont pas à mentionner le mobile money.
 3. Expéditeur : `POST /announcements/{annonceId}/bids` avec `{"weightKg": 5, "description": "...", "contentCategory": "...", "recipientName": "...", "recipientPhone": "+221770000000", "disclaimerSigned": true, "paymentMethod": "MOBILE_MONEY", "phoneNumber": "+221773456789"}`.
 4. Voyageur : `POST /bids/{bidId}/mobile-money/accept` (endpoint dédié, jamais l'accept classique). Attendu `bidStatus: AWAITING_PAYMENT`, `deadlineAt` à +30 min.

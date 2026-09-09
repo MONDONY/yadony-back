@@ -25,9 +25,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Compte de versement mobile money : snapshot du téléphone Firebase (déjà vérifié par OTP),
- * opérateur prédit par pawaPay, devise contrôlée contre la devise active. Aucune saisie
- * libre : un mauvais numéro de versement est de l'argent perdu.
+ * Compte de versement mobile money : numéro du compte Firebase de l'appelant (déjà vérifié
+ * par OTP), toujours prioritaire, opérateur prédit par pawaPay, devise contrôlée contre la
+ * devise active. Une saisie libre n'est tolérée qu'en l'absence de numéro Firebase — voir la
+ * javadoc de {@link #activate} pour le motif et les garanties.
  */
 @Service
 public class MobileMoneyAccountService {
@@ -58,24 +59,47 @@ public class MobileMoneyAccountService {
     }
 
     /**
-     * Active le versement mobile money. Le numéro n'est JAMAIS reçu en paramètre :
-     * il est relu chez Firebase à partir de l'UID du compte, seule source de vérité pour
-     * un téléphone déjà vérifié par OTP. Un numéro saisi librement ouvrirait la voie à un
-     * détournement de tous les versements futurs dès qu'un compte serait compromis.
+     * Active le versement mobile money. Le numéro du compte Firebase de l'appelant (déjà
+     * vérifié par OTP) est TOUJOURS prioritaire dès qu'il existe : {@code providedPhone} est
+     * alors ignoré en silence, sans erreur. Il n'est lu que si le compte Firebase n'a aucun
+     * téléphone — saisie tolérée uniquement dans ce cas précis, tant que la vérification par
+     * SMS (Twilio) n'est pas disponible pour ces comptes, faute de quoi ils n'auraient aucun
+     * moyen d'activer le rail. Un numéro ainsi saisi n'est PAS vérifié par OTP : le risque
+     * (versement dirigé vers un mauvais numéro) est documenté et assumé par le produit, tracé
+     * dans l'audit ({@code source: "provided"} vs {@code "firebase"}). Sans numéro d'aucune
+     * source, l'activation échoue en 422 {@code mobile-money-phone-required}.
      */
     @Transactional
-    public MobileMoneyAccountResponse activate(UUID userId) {
+    public MobileMoneyAccountResponse activate(UUID userId, String providedPhone) {
         if (!props.enabled()) {
             throw PawapayErrors.disabled();
         }
         // Verrou pessimiste : sans lui, deux activations concurrentes pourraient toutes
         // deux lire l'état initial et écrire deux fois (règle projet #17).
         UserEntity user = userRepository.findByIdForUpdate(userId).orElseThrow(() -> notFound(userId));
-        String phone = firebaseContact.getContact(user.getFirebaseUid()).phoneNumber();
-        if (phone == null || phone.isBlank()) {
-            log.warn("Activation mobile money refusée pour {} : aucun numéro vérifié chez Firebase", userId);
+        String firebasePhone = firebaseContact.getContact(user.getFirebaseUid()).phoneNumber();
+        String phone;
+        String source;
+        if (firebasePhone != null && !firebasePhone.isBlank()) {
+            phone = firebasePhone;
+            source = "firebase";
+        } else if (providedPhone != null && !providedPhone.isBlank()) {
+            // Erreur de saisie CLIENT (comme BidService#createBid, le même motif de
+            // normalisation d'un numéro saisi) — contrairement au numéro prédit par pawaPay
+            // plus bas, qui devient un 502 s'il est hors bornes : ici c'est l'utilisateur qui
+            // peut corriger sa saisie, donc 422, jamais un 500 générique.
+            try {
+                phone = Msisdn.normalize(providedPhone);
+            } catch (IllegalArgumentException e) {
+                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-invalid-phone",
+                        "Mobile Money Invalid Phone", "Numéro de téléphone invalide pour le versement mobile money.");
+            }
+            source = "provided";
+            log.info("Activation mobile money pour {} avec un numéro saisi (aucun téléphone Firebase)", userId);
+        } else {
+            log.warn("Activation mobile money refusée pour {} : aucun numéro vérifié ni saisi", userId);
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-phone-required",
-                    "Phone Required", "Ajoutez un numéro de téléphone vérifié à votre compte.");
+                    "Phone Required", "Indiquez le numéro mobile money qui recevra vos versements.");
         }
         // Le compte reçoit dans la devise active du voyageur : c'est elle que l'opérateur prédit
         // doit servir. Une panne pawaPay remonte en 502 normalisé du rail (sinon un 500 générique
@@ -102,12 +126,13 @@ public class MobileMoneyAccountService {
         user.setMobileMoneyCurrency(resolved.config().currency().toUpperCase(Locale.ROOT));
         user.setMobileMoneyVerifiedAt(Instant.now());
         userRepository.save(user);
-        // Le payload d'audit ne porte que le masqué : AuditService le rédigerait de toute
-        // façon (clé "msisdnMasked" ne matche pas le denylist "phone", donc conservé tel quel
-        // volontairement — c'est déjà la forme publique, pas une PII en clair).
+        // Le payload d'audit ne porte que le masqué (+ la source, "firebase"/"provided", jamais
+        // le numéro en clair) : AuditService le rédigerait de toute façon (clé "msisdnMasked" ne
+        // matche pas le denylist "phone", donc conservé tel quel volontairement — c'est déjà la
+        // forme publique, pas une PII en clair).
         audit.log("USER", userId, "MM_ACCOUNT_ACTIVATED", userId,
                 Map.of("provider", resolved.provider(), "msisdnMasked", user.getMobileMoneyMsisdnMasked(),
-                        "currency", user.getMobileMoneyCurrency()));
+                        "currency", user.getMobileMoneyCurrency(), "source", source));
         return toResponse(user);
     }
 

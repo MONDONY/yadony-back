@@ -21,6 +21,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.ActiveProfiles;
@@ -58,17 +59,33 @@ class MobileMoneyAccountControllerIT {
     @Test
     void get_post_delete_routeToService() throws Exception {
         when(service.get(USER_ID)).thenReturn(active());
-        when(service.activate(USER_ID)).thenReturn(active());
+        when(service.activate(USER_ID, null)).thenReturn(active());
         when(service.disable(USER_ID)).thenReturn(new MobileMoneyAccountResponse("DISABLED", "+221 •••• 67", "ORANGE_SEN", "Orange Money", "SN", "XOF", null));
 
         mockMvc.perform(get("/payments/mobile-money/account").with(authentication(traveler())))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("ACTIVE"))
                 .andExpect(jsonPath("$.msisdnMasked").value("+221 •••• 67"))
                 .andExpect(jsonPath("$.providerLabel").value("Orange Money"));
+        // Sans corps : toujours accepté, le numéro Firebase reste la source (@RequestBody
+        // required = false, comme MobileMoneyPaymentController#initiate).
         mockMvc.perform(post("/payments/mobile-money/account").with(authentication(traveler())))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("ACTIVE"));
         mockMvc.perform(delete("/payments/mobile-money/account").with(authentication(traveler())))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("DISABLED"));
+    }
+
+    /**
+     * Corps facultatif avec un numéro : transmis tel quel (brut, non normalisé) au service,
+     * qui décide seul de l'utiliser ou de l'ignorer selon que le compte Firebase a ou non un
+     * téléphone — la normalisation elle-même est testée côté service, pas ici.
+     */
+    @Test
+    void activate_withPhoneBody_passesRawPhoneToService() throws Exception {
+        when(service.activate(USER_ID, "+221 77 345 67 89")).thenReturn(active());
+
+        mockMvc.perform(post("/payments/mobile-money/account").with(authentication(traveler()))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"phoneNumber\":\"+221 77 345 67 89\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("ACTIVE"));
     }
 
     @Test
