@@ -10,6 +10,7 @@ import com.yadony.api.matching.dto.BidCheckoutRequest;
 import com.yadony.api.matching.dto.BidCheckoutResponse;
 import com.yadony.api.matching.dto.BidGridItemRequest;
 import com.yadony.api.payments.BidAlreadyPaidException;
+import com.yadony.api.payments.currency.CurrencyPaymentRails;
 import com.yadony.api.payments.PaymentService;
 import com.yadony.api.payments.dto.CreatePaymentRequest;
 import com.yadony.api.payments.dto.PaymentResponse;
@@ -88,6 +89,17 @@ public class BidCheckoutService {
                 "Cette annonce n'est plus disponible");
         }
 
+        // Recette du 2026-09-09 : une annonce XOF acceptait la carte ; le bid naissait avec la
+        // devise par défaut de l'entité (EUR) et Stripe recevait 6 600 « euros » pour
+        // 6 600 XOF. Le rail carte n'existe pas dans cette devise : refus avant tout effet,
+        // reprise d'un bid en attente comprise.
+        if (!CurrencyPaymentRails.allowsCode(announcement.getCurrency(),
+                com.yadony.api.payments.cash.PaymentMethod.STRIPE)) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                "payment-method-unavailable-for-currency", "Payment Method Unavailable For Currency",
+                "La zone CFA n'accepte pas le paiement par carte pour un colis.");
+        }
+
         // Dedicated trip (tied to a negotiation): a fresh dedicated trip is ACTIVE with
         // availableKg == the negotiating sender's reserved weight. Without this guard a
         // third-party sender could drive a Stripe escrow against that reserved capacity.
@@ -123,6 +135,13 @@ public class BidCheckoutService {
             sender.getId(), announcement.getId(), BidStatus.AWAITING_PAYMENT);
         if (awaitingBid.isPresent()) {
             BidEntity existing = awaitingBid.get();
+            // Une demande mobile money en attente de dépôt a déjà été acceptée par le
+            // voyageur : elle ne se « reprend » pas par carte.
+            if (existing.getPaymentMethod() == com.yadony.api.payments.cash.PaymentMethod.MOBILE_MONEY) {
+                throw new YadonyBusinessException(HttpStatus.CONFLICT,
+                    "already-bid", "Demande existante",
+                    "Vous avez déjà une demande en attente de paiement mobile money pour ce trajet");
+            }
             // Auto-réparation : sans elle, un bid dont l'escrow est déjà actif est
             // « repris » ici et repart dans createEscrow, qui répond 409
             // payment-already-completed — l'expéditeur ne peut alors ni payer ni
@@ -185,6 +204,8 @@ public class BidCheckoutService {
         BidEntity bid = new BidEntity();
         bid.setAnnouncementId(announcement.getId());
         bid.setSenderId(sender.getId());
+        // La devise est celle de l'annonce, jamais le défaut de l'entité.
+        bid.setCurrency(announcement.getCurrency());
         bid.setWeightKg(hasKg ? req.weightKg() : null);
         bid.setPricingMode(bidMode);
         bid.setDescription(req.description());

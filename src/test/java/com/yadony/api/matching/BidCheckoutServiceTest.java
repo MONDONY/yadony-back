@@ -587,4 +587,52 @@ class BidCheckoutServiceTest {
                     .contains(com.yadony.api.payments.BidAlreadyPaidException.class);
         }
     }
+
+    // Recette du 2026-09-09 : le bid carte naissait sans devise (défaut EUR de l'entité) sur
+    // une annonce XOF, et Stripe recevait 6 600 « euros » pour 6 600 XOF.
+    @Test
+    void checkout_copiesTheAnnouncementCurrencyOnTheBid() {
+        announcement.setCurrency("USD");
+        ArgumentCaptor<BidEntity> savedBid = ArgumentCaptor.forClass(BidEntity.class);
+        when(bidRepository.save(savedBid.capture())).thenAnswer(inv -> {
+            BidEntity b = inv.getArgument(0);
+            if (b.getId() == null) ReflectionTestUtils.setField(b, "id", UUID.randomUUID());
+            return b;
+        });
+        when(paymentService.createEscrow(any(CreatePaymentRequest.class), eq("uid-sender")))
+            .thenReturn(stubPaymentResponse("usd"));
+
+        service.checkout("uid-sender", req, httpRequest);
+
+        assertThat(savedBid.getAllValues().get(0).getCurrency()).isEqualTo("USD");
+    }
+
+    @Test
+    void checkout_cfaAnnouncement_refusesTheCardBeforeAnyBidOrEscrow() {
+        announcement.setCurrency("XOF");
+
+        assertThatThrownBy(() -> service.checkout("uid-sender", req, httpRequest))
+            .isInstanceOf(YadonyBusinessException.class)
+            .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                .isEqualTo("payment-method-unavailable-for-currency"));
+        verify(bidRepository, never()).save(any());
+        verifyNoInteractions(paymentService);
+    }
+
+    @Test
+    void checkout_awaitingMobileMoneyBid_isNotResumedByCard() {
+        BidEntity awaitingDeposit = new BidEntity();
+        ReflectionTestUtils.setField(awaitingDeposit, "id", UUID.randomUUID());
+        awaitingDeposit.setStatus(BidStatus.AWAITING_PAYMENT);
+        awaitingDeposit.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.MOBILE_MONEY);
+        when(bidRepository.findBySenderIdAndAnnouncementIdAndStatus(
+                sender.getId(), announcement.getId(), BidStatus.AWAITING_PAYMENT))
+            .thenReturn(Optional.of(awaitingDeposit));
+
+        assertThatThrownBy(() -> service.checkout("uid-sender", req, httpRequest))
+            .isInstanceOf(YadonyBusinessException.class)
+            .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                .isEqualTo("already-bid"));
+        verifyNoInteractions(paymentService);
+    }
 }

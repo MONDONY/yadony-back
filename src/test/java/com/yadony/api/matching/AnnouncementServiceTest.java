@@ -245,6 +245,25 @@ class AnnouncementServiceTest {
                 null);
     }
 
+    private AnnouncementRequest requestWithPaymentMethodsAndCurrency(java.util.Set<PaymentMethod> methods,
+                                                                     String currency) {
+        LocalDate departure = LocalDate.now().plusDays(10);
+        return new AnnouncementRequest(
+                "Paris", "Dakar",
+                departure,
+                LocalTime.of(10, 0), LocalTime.of(22, 0),
+                new AddressDto("CDG Terminal 2E", 49.009, 2.547),
+                new AddressDto("Aéroport LSS", 14.739, -17.490),
+                BigDecimal.valueOf(20), BigDecimal.valueOf(5),
+                TransportMode.PLANE,
+                null, null, null, methods, null, null,
+                null, null,
+                departure.atTime(9, 0),
+                null,
+                null,
+                currency);
+    }
+
     private UserEntity buildTravelerWithCommissionMethod() {
         UserEntity u = buildTraveler();
         u.setCommissionPaymentMethodId("pm_test");
@@ -684,6 +703,57 @@ class AnnouncementServiceTest {
             when(bidRepository.countByAnnouncementIdAndStatusIn(any(), any())).thenReturn(0L);
 
             AnnouncementRequest req = requestWithPaymentMethods(null);
+
+            AnnouncementResponse resp = announcementService.createAnnouncement(FIREBASE_UID, req);
+
+            assertThat(resp.acceptedPaymentMethods()).containsExactlyInAnyOrder("STRIPE", "CASH");
+        }
+
+        // Recette du 2026-09-09 : une annonce XOF enregistrait la carte parmi ses moyens de
+        // paiement, l'app la proposait, et le séquestre Stripe partait en euros.
+        @Test
+        @DisplayName("annonce XOF déclarée avec la carte → STRIPE retiré, CASH et MOBILE_MONEY gardés")
+        void resolvePaymentMethods_cfaCurrency_dropsTheCard() {
+            UserEntity traveler = buildTraveler();
+            traveler.setStripeAccountStatus(StripeAccountStatus.ONBOARDING_COMPLETE);
+            traveler.setKycStatus(KycStatus.VERIFIED);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.save(any())).thenAnswer(inv -> {
+                AnnouncementEntity a = inv.getArgument(0);
+                setId(a, ANNOUNCEMENT_ID);
+                return a;
+            });
+            when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
+            when(bidRepository.countByAnnouncementIdAndStatusIn(any(), any())).thenReturn(0L);
+
+            AnnouncementRequest req = requestWithPaymentMethodsAndCurrency(
+                    java.util.EnumSet.of(PaymentMethod.STRIPE, PaymentMethod.CASH, PaymentMethod.MOBILE_MONEY),
+                    "XOF");
+
+            AnnouncementResponse resp = announcementService.createAnnouncement(FIREBASE_UID, req);
+
+            assertThat(resp.currency()).isEqualTo("XOF");
+            assertThat(resp.acceptedPaymentMethods()).containsExactlyInAnyOrder("CASH", "MOBILE_MONEY");
+        }
+
+        @Test
+        @DisplayName("annonce EUR déclarée avec le mobile money → MOBILE_MONEY retiré, STRIPE et CASH gardés")
+        void resolvePaymentMethods_euroCurrency_dropsMobileMoney() {
+            UserEntity traveler = buildTraveler();
+            traveler.setStripeAccountStatus(StripeAccountStatus.ONBOARDING_COMPLETE);
+            traveler.setKycStatus(KycStatus.VERIFIED);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.save(any())).thenAnswer(inv -> {
+                AnnouncementEntity a = inv.getArgument(0);
+                setId(a, ANNOUNCEMENT_ID);
+                return a;
+            });
+            when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
+            when(bidRepository.countByAnnouncementIdAndStatusIn(any(), any())).thenReturn(0L);
+
+            AnnouncementRequest req = requestWithPaymentMethodsAndCurrency(
+                    java.util.EnumSet.of(PaymentMethod.STRIPE, PaymentMethod.CASH, PaymentMethod.MOBILE_MONEY),
+                    "EUR");
 
             AnnouncementResponse resp = announcementService.createAnnouncement(FIREBASE_UID, req);
 

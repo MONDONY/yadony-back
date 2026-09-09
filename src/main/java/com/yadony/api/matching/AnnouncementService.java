@@ -496,7 +496,8 @@ public class AnnouncementService {
             userRepository.save(user);
         }
 
-        Set<PaymentMethod> paymentMethods = resolvePaymentMethods(request.acceptedPaymentMethods(), user);
+        String currency = resolveAnnouncementCurrency(request.currency(), user.getId());
+        Set<PaymentMethod> paymentMethods = resolvePaymentMethods(request.acceptedPaymentMethods(), user, currency);
 
         if (!isDraft) {
             // La capacité « carte » exige Stripe Connect ; le cash-only est libre.
@@ -506,7 +507,7 @@ public class AnnouncementService {
         AnnouncementEntity announcement = new AnnouncementEntity();
         announcement.setTravelerId(user.getId());
         announcement.setSourceRecurrenceId(recurrenceId);
-        announcement.setCurrency(resolveAnnouncementCurrency(request.currency(), user.getId()));
+        announcement.setCurrency(currency);
         announcement.setTravelerIsPro(user.isProAccount());
         announcement.setDepartureCity(request.departureCity());
         announcement.setArrivalCity(request.arrivalCity());
@@ -998,7 +999,8 @@ public class AnnouncementService {
         if (request.refusedTypes() != null)
             announcement.setRefusedTypes(ContentCategoryNormalizer.normalizeList(request.refusedTypes()));
         if (request.acceptedPaymentMethods() != null) {
-            Set<PaymentMethod> updatedMethods = resolvePaymentMethods(request.acceptedPaymentMethods(), user);
+            Set<PaymentMethod> updatedMethods = resolvePaymentMethods(
+                    request.acceptedPaymentMethods(), user, announcement.getCurrency());
             if (announcement.getStatus() != AnnouncementStatus.DRAFT) {
                 assertStripeCapability(user, updatedMethods);
             }
@@ -1755,19 +1757,27 @@ public class AnnouncementService {
                 event.userId(), event.isPro(), updated);
     }
 
-    private Set<PaymentMethod> resolvePaymentMethods(Set<PaymentMethod> requested, UserEntity traveler) {
+    private Set<PaymentMethod> resolvePaymentMethods(Set<PaymentMethod> requested, UserEntity traveler,
+                                                     String currency) {
+        Set<PaymentMethod> chosen;
         if (requested == null || requested.isEmpty()) {
             // Défaut aligné sur la capacité réelle : jamais STRIPE pour un
             // voyageur sans onboarding complet (le trajet serait invendable).
-            return traveler.hasActiveStripeConnect()
+            chosen = traveler.hasActiveStripeConnect()
                     ? EnumSet.of(PaymentMethod.STRIPE, PaymentMethod.CASH)
                     : EnumSet.of(PaymentMethod.CASH);
+        } else {
+            // La vérification de la capacité de paiement de la commission (wallet ou carte)
+            // est reportée à l'acceptation du bid (CashCommissionService.acceptCashBid).
+            // Un voyageur peut offrir le cash dès lors qu'il a un compte Yadony,
+            // même sans carte de commission enregistrée (le wallet prend en charge).
+            chosen = EnumSet.copyOf(requested);
         }
-        // La vérification de la capacité de paiement de la commission (wallet ou carte)
-        // est reportée à l'acceptation du bid (CashCommissionService.acceptCashBid).
-        // Un voyageur peut offrir le cash dès lors qu'il a un compte Yadony,
-        // même sans carte de commission enregistrée (le wallet prend en charge).
-        return EnumSet.copyOf(requested);
+        // La devise borne les rails (pas de carte en zone CFA, pas de mobile money ailleurs) :
+        // une annonce n'enregistre jamais un moyen qu'elle ne pourra pas honorer. Recette du
+        // 2026-09-09 : une annonce XOF acceptait la carte, et le séquestre Stripe partait en
+        // euros pour un montant en francs CFA.
+        return com.yadony.api.payments.currency.AnnouncementPaymentRails.restrictToCurrency(chosen, currency);
     }
 
     /**

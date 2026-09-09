@@ -339,6 +339,40 @@ public class PaymentService {
         }
     }
 
+    /**
+     * La devise d'un bid est celle de son annonce (gel au premier mouvement d'argent). Un bid
+     * né par l'ancien checkout carte portait le défaut EUR de l'entité sur une annonce XOF :
+     * Stripe recevait 6 600 « euros » pour 6 600 XOF (recette du 2026-09-09). La garde carte
+     * se relit donc sur la devise de l'annonce, puis le bid est réaligné avant tout calcul.
+     */
+    private SupportedCurrency settleBidCurrency(BidEntity bid, AnnouncementEntity announcement,
+                                               SupportedCurrency bidCurrency) {
+        // Bid négocié : les montants figés (negotiated_*_eur) vivent dans la devise du bid,
+        // héritée du fil ; un trajet dédié a pu naître après, dans une autre devise. Seul un
+        // bid direct, dont le montant se calcule sur le prix au kilo de l'annonce, se réaligne.
+        boolean negotiated = bid.getNegotiatedGrossEur() != null && bid.getNegotiatedNetEur() != null;
+        if (negotiated) {
+            return bidCurrency;
+        }
+        String announcementCurrency = announcement.getCurrency();
+        if (announcementCurrency == null || announcementCurrency.equalsIgnoreCase(bid.getCurrency())) {
+            return bidCurrency;
+        }
+        SupportedCurrency settled = SupportedCurrency.fromCodeOrDefault(announcementCurrency);
+        if (!CurrencyPaymentRails.allows(settled, com.yadony.api.payments.cash.PaymentMethod.STRIPE)) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "payment-method-unavailable-for-currency", "Payment Method Unavailable For Currency",
+                    "La zone CFA n'accepte pas le paiement par carte pour un colis.");
+        }
+        String upper = announcementCurrency.toUpperCase(java.util.Locale.ROOT);
+        log.warn("Bid {} en {} sur une annonce en {} : devise réalignée sur l'annonce",
+                bid.getId(), bid.getCurrency(), upper);
+        // Même convention que BidService.createBid : le code ISO en majuscules, jamais le
+        // code Stripe en minuscules de SupportedCurrency.
+        bid.setCurrency(upper);
+        return settled;
+    }
+
     // ── Story 6.3 : Paiement expéditeur avec création d'escrow ───────────────
 
     // noRollbackFor : l'auto-réparation ci-dessous promeut le bid PUIS lève
@@ -371,14 +405,14 @@ public class PaymentService {
         // Devise figée au bid, pas la préférence courante de l'expéditeur : elle a pu
         // changer depuis la création du bid (lot 2 — gel au premier mouvement d'argent).
         // Comparer les deux ici renvoyait 422 à un expéditeur payant son propre colis.
-        SupportedCurrency currency = SupportedCurrency.fromCode(bid.getCurrency());
+        SupportedCurrency bidCurrency = SupportedCurrency.fromCode(bid.getCurrency());
 
         // Zone CFA = pas un pays Stripe Connect (country_unsupported empirique) : le
         // versement au voyageur y est impossible, donc aucun PaymentIntent ne doit
         // jamais être créé dans cette devise. BidService.resolvePaymentMethodFor
         // referme déjà cette porte à la création du bid, mais createEscrow est un
         // endpoint atteignable indépendamment — la garde doit être répétée ici.
-        if (!CurrencyPaymentRails.allows(currency, com.yadony.api.payments.cash.PaymentMethod.STRIPE)) {
+        if (!CurrencyPaymentRails.allows(bidCurrency, com.yadony.api.payments.cash.PaymentMethod.STRIPE)) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "payment-method-unavailable-for-currency", "Payment Method Unavailable For Currency",
                     "La zone CFA n'accepte pas le paiement par carte pour un colis.");
@@ -428,6 +462,8 @@ public class PaymentService {
                     "announcement-not-active", "Announcement Not Active",
                     "Cette annonce n'est plus disponible");
         }
+
+        SupportedCurrency currency = settleBidCurrency(bid, announcement, bidCurrency);
 
         // SECURITE : le montant net est TOUJOURS recalculé côté serveur à partir
         // des données persistées du bid (grid items snapshotés + poids × prix/kg
