@@ -62,6 +62,17 @@ class PawapayBalanceMonitorTest {
         verify(client, never()).walletBalances();
     }
 
+    // Régression staging 2026-09-09 : PAWAPAY_BALANCE_MIN_XOF/XAF écrites vides dans .env
+    // → Spring ne construit pas le record BalanceMin → NPE à chaque passage planifié.
+    @Test
+    void nullBalanceMin_disablesTheCheckWithoutThrowing() {
+        PawapayBalanceMonitor m = new PawapayBalanceMonitor(client, alerts, new PawapayProperties(true,
+                "https://x", "t", false, 30, "https://r", "yadony://bids/%s/mobile-money/awaiting", null));
+        m.check();
+        verify(client, never()).walletBalances();
+        verifyNoInteractions(alerts);
+    }
+
     // Symétrique du test du poller — verrouille que rien ne part vers pawaPay quand le rail est
     // fermé (état par défaut, yadony.pawapay.enabled=false).
 
