@@ -86,6 +86,16 @@ public class AuthController {
         return ResponseEntity.noContent().build();
     }
 
+    /**
+     * Déconnexion : l'app l'appelle avant {@code signOut}, tant que la session est encore
+     * authentifiée, pour que ce téléphone cesse de recevoir les pushs du compte. Idempotent.
+     */
+    @DeleteMapping("/me/fcm-token")
+    public ResponseEntity<Void> forgetFcmToken(@RequestParam(required = false) String deviceId) {
+        authService.forgetFcmToken(requireFirebaseUid(), deviceId);
+        return ResponseEntity.noContent().build();
+    }
+
     @GetMapping("/me/privacy-settings")
     public ResponseEntity<com.yadony.api.auth.dto.PrivacySettingsResponse> getPrivacySettings() {
         return ResponseEntity.ok(authService.getPrivacySettings(requireFirebaseUid()));

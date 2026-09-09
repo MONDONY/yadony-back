@@ -41,6 +41,16 @@ class ConnectedDevicesControllerTest {
     }
 
     @Test
+    void DELETE_auth_me_fcm_token_retourne204_etOublieLAppareilCourant() throws Exception {
+        mvc.perform(delete("/auth/me/fcm-token")
+                        .param("deviceId", "dev-1")
+                        .with(authentication(auth())))
+                .andExpect(status().isNoContent());
+
+        verify(authService).forgetFcmToken(FIREBASE_UID, "dev-1");
+    }
+
+    @Test
     void GET_devices_retourne200() throws Exception {
         when(authService.requireUserId()).thenReturn(USER_ID);
         when(devicesService.listDevices(eq(USER_ID), any())).thenReturn(List.of(
