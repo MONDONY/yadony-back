@@ -151,13 +151,17 @@ public class AdminPaymentController {
             @RequestParam(required = false) String method,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime dateFrom,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime dateTo,
+            @RequestParam(required = false) String currency,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
         // method filtre réellement par rail (STRIPE/PAWAPAY) — l'ancien raccourci
         // « method != STRIPE → page vide » rendait la liste incohérente avec le détail, qui rend
         // PAWAPAY pour les paiements mobile money.
         String rail = (method != null && !method.isBlank()) ? method.toUpperCase(Locale.ROOT) : null;
-        Page<PaymentEntity> raw = paymentRepository.findAdminFiltered(status, dateFrom, dateTo, rail, PageRequest.of(page, size));
+        // currency sépare les devises : un tableau qui mêle des EUR et des XOF n'est lisible
+        // qu'à condition de pouvoir n'en garder qu'une.
+        String cur = (currency != null && !currency.isBlank()) ? currency.toUpperCase(Locale.ROOT) : null;
+        Page<PaymentEntity> raw = paymentRepository.findAdminFiltered(status, dateFrom, dateTo, rail, cur, PageRequest.of(page, size));
         return ResponseEntity.ok(raw.map(AdminPaymentListItemResponse::from));
     }
 

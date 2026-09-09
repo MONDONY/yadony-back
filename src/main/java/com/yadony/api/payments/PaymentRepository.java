@@ -249,6 +249,7 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
               AND (CAST(:from AS TIMESTAMP) IS NULL OR p.created_at >= CAST(:from AS TIMESTAMP))
               AND (CAST(:to AS TIMESTAMP) IS NULL OR p.created_at <= CAST(:to AS TIMESTAMP))
               AND (CAST(:rail AS VARCHAR) IS NULL OR p.rail = :rail)
+              AND (CAST(:currency AS VARCHAR) IS NULL OR UPPER(p.currency) = :currency)
             ORDER BY p.created_at DESC
             """,
            countQuery = """
@@ -258,6 +259,7 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
               AND (CAST(:from AS TIMESTAMP) IS NULL OR p.created_at >= CAST(:from AS TIMESTAMP))
               AND (CAST(:to AS TIMESTAMP) IS NULL OR p.created_at <= CAST(:to AS TIMESTAMP))
               AND (CAST(:rail AS VARCHAR) IS NULL OR p.rail = :rail)
+              AND (CAST(:currency AS VARCHAR) IS NULL OR UPPER(p.currency) = :currency)
             """,
            nativeQuery = true)
     Page<PaymentEntity> findAdminFiltered(
@@ -265,6 +267,7 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
             @Param("from") java.time.LocalDateTime from,
             @Param("to") java.time.LocalDateTime to,
             @Param("rail") String rail,
+            @Param("currency") String currency,
             Pageable pageable);
 
     /**

@@ -3,6 +3,7 @@ package com.yadony.api.admin.dto;
 import com.yadony.api.payments.PaymentEntity;
 
 import java.time.LocalDateTime;
+import java.util.Locale;
 import java.util.UUID;
 
 public record AdminPaymentListItemResponse(
@@ -12,6 +13,8 @@ public record AdminPaymentListItemResponse(
         String method,
         long amountCents,
         long commissionCents,
+        /** Devise du paiement en majuscules : sans elle, le back-office affichait tout en euros. */
+        String currency,
         LocalDateTime createdAt
 ) {
     public static AdminPaymentListItemResponse from(PaymentEntity p) {
@@ -22,6 +25,7 @@ public record AdminPaymentListItemResponse(
                 p.getRail().name(),
                 AdminWalletResponse.toCents(p.getAmount()),
                 AdminWalletResponse.toCents(p.getCommissionAmount()),
+                p.getCurrency().toUpperCase(Locale.ROOT),
                 p.getCreatedAt()
         );
     }
