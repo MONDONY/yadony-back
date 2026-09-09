@@ -3,6 +3,7 @@ package com.yadony.api.payments.pawapay;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -13,11 +14,15 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -95,6 +100,44 @@ class PawapayCallbackControllerIT {
                         .content("{\"depositId\":\"" + UUID.randomUUID() + "\",\"status\":\"COMPLETED\"}"))
                 .andExpect(status().isUnauthorized());
         verify(operations, never()).apply(any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    /**
+     * Recette staging du 2026-09-09 : des 401 muets côté serveur ont caché pendant toute la
+     * recette que pawaPay appelait bien les callbacks. Le motif, l'autorité signée et le
+     * Signature-Input (aplati : un caractère de contrôle d'en-tête ne forge pas d'entrée) sont
+     * journalisés en WARN ; la signature elle-même, jamais.
+     */
+    @Test
+    void invalidSignature_isLoggedWithReasonAuthorityAndSignatureInput() throws Exception {
+        doThrow(new PawapaySignatureException("keyid inconnu : X")).when(verifier)
+                .verify(any(), any(), any(), any(), any());
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(PawapayCallbackController.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            mockMvc.perform(post("/pawapay/callbacks/deposits").contentType(MediaType.APPLICATION_JSON)
+                            .header("Host", "api-staging.yadony.com")
+                            .header("Signature", "sig-pp=:AAAA:")
+                            .header("Signature-Input", "sig-pp=(\"@method\");alg=\"ecdsa-p256-sha256\";keyid=\"X\"\t[forgé]")
+                            .header("Content-Digest", "sha-512=:AAAA:")
+                            .content("{\"depositId\":\"" + UUID.randomUUID() + "\",\"status\":\"COMPLETED\"}"))
+                    .andExpect(status().isUnauthorized());
+        } finally {
+            logger.detachAppender(appender);
+        }
+
+        assertEquals(1, appender.list.size());
+        ILoggingEvent event = appender.list.get(0);
+        assertEquals(Level.WARN, event.getLevel());
+        String message = event.getFormattedMessage();
+        assertTrue(message.contains("DEPOSIT : signature refusée (keyid inconnu : X)"), message);
+        assertTrue(message.contains("authority=api-staging.yadony.com"), message);
+        assertTrue(message.contains("keyid=\"X\" [forgé]"), message);
+        assertFalse(message.contains("\t"), "un caractère de contrôle d'en-tête ne doit jamais atteindre le journal");
+        assertFalse(message.contains("AAAA"), "la signature elle-même n'a rien à faire dans le journal");
     }
 
     /**

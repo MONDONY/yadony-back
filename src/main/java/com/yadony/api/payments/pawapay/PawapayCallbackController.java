@@ -73,7 +73,19 @@ public class PawapayCallbackController {
         // (dé)sérialisation intermédiaire.
         if (props.callbackSignaturesRequired() || headers.containsKey("signature")) {
             String authority = Optional.ofNullable(request.getHeader("Host")).orElse(request.getServerName());
-            verifier.verify(request.getMethod(), authority, request.getRequestURI(), headers, body);
+            try {
+                verifier.verify(request.getMethod(), authority, request.getRequestURI(), headers, body);
+            } catch (PawapaySignatureException e) {
+                // Sans cette trace, un 401 systématique (keyid inconnu, encodage, horloge, en-tête
+                // Host réécrit) resterait invisible côté serveur : pawaPay retente puis abandonne,
+                // et seul le poller ferait avancer les opérations (recette du 2026-09-09).
+                // Signature-Input ne porte que des paramètres publics (composants, alg, keyid,
+                // created), jamais la signature elle-même ; aplati et borné avant journalisation.
+                log.warn("pawaPay callback {} : signature refusée ({}) ; authority={} signature-input={}", kind,
+                        e.getMessage(), PawapayText.forLog(authority, 128),
+                        PawapayText.forLog(headers.get("signature-input"), 320));
+                throw e;
+            }
         }
 
         JsonNode json;

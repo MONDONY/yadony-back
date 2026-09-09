@@ -373,6 +373,49 @@ class PawapaySignatureVerifierTest {
                 .doesNotThrowAnyException();
     }
 
+    /**
+     * Recette staging du 2026-09-09 : pawaPay encode ses signatures ECDSA en DER (comme
+     * l'exemple {@code sig-pp=:MEQCI…:} de sa documentation), jamais en {@code r || s} brut ;
+     * la forme brute reste acceptée (tests {@code ecdsaP256Signature_*} ci-dessus).
+     */
+    @Test
+    void ecdsaP256DerEncodedSignature_passes() throws Exception {
+        KeyPairGenerator gen = KeyPairGenerator.getInstance("EC");
+        gen.initialize(new ECGenParameterSpec("secp256r1"));
+        KeyPair pair = gen.generateKeyPair();
+        Map<String, String> h = signedHeadersWith(pair, "ecdsa-p256-sha256",
+                Signature.getInstance("SHA256withECDSA"), "HTTP_EC_P256_KEY:1", "SHA-512");
+
+        assertThatCode(() -> verifierFor("HTTP_EC_P256_KEY:1", pair).verify(METHOD, AUTHORITY, PATH, h, BODY))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void ecdsaP384DerEncodedSignature_passes() throws Exception {
+        KeyPairGenerator gen = KeyPairGenerator.getInstance("EC");
+        gen.initialize(new ECGenParameterSpec("secp384r1"));
+        KeyPair pair = gen.generateKeyPair();
+        Map<String, String> h = signedHeadersWith(pair, "ecdsa-p384-sha384",
+                Signature.getInstance("SHA384withECDSA"), "HTTP_EC_P384_KEY:1", "SHA-512");
+
+        assertThatCode(() -> verifierFor("HTTP_EC_P384_KEY:1", pair).verify(METHOD, AUTHORITY, PATH, h, BODY))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void ecdsaDerEncodedSignature_fromAnotherKey_isRejected() throws Exception {
+        KeyPairGenerator gen = KeyPairGenerator.getInstance("EC");
+        gen.initialize(new ECGenParameterSpec("secp256r1"));
+        KeyPair signer = gen.generateKeyPair();
+        KeyPair other = gen.generateKeyPair();
+        Map<String, String> h = signedHeadersWith(signer, "ecdsa-p256-sha256",
+                Signature.getInstance("SHA256withECDSA"), "HTTP_EC_P256_KEY:1", "SHA-512");
+
+        assertThatThrownBy(() -> verifierFor("HTTP_EC_P256_KEY:1", other).verify(METHOD, AUTHORITY, PATH, h, BODY))
+                .isInstanceOf(PawapaySignatureException.class)
+                .hasMessage("Signature invalide");
+    }
+
     @Test
     void rsaV15Signature_withSha256ContentDigest_passes() throws Exception {
         KeyPairGenerator gen = KeyPairGenerator.getInstance("RSA");

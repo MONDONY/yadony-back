@@ -44,9 +44,14 @@ public class PawapayBalanceMonitor {
         // tuer tout le passage, y compris pour les devises parfaitement lisibles du même
         // tableau. Map.of interdit purement et simplement toute clé de recherche nulle,
         // HashMap répond simplement le défaut.
+        // balanceMin() est nul quand PAWAPAY_BALANCE_MIN_XOF/XAF sont absents ou vides :
+        // le déploiement écrit ces variables vides dans .env, ce qui neutralise le défaut
+        // « :0 » du yml, et Spring ne construit pas le record imbriqué. Un seuil absent
+        // vaut zéro (contrôle désactivé), jamais un NPE à chaque passage planifié.
+        PawapayProperties.BalanceMin configured = props.balanceMin();
         Map<String, BigDecimal> thresholds = new HashMap<>();
-        thresholds.put("XOF", nz(props.balanceMin().xof()));
-        thresholds.put("XAF", nz(props.balanceMin().xaf()));
+        thresholds.put("XOF", configured == null ? BigDecimal.ZERO : nz(configured.xof()));
+        thresholds.put("XAF", configured == null ? BigDecimal.ZERO : nz(configured.xaf()));
         if (!props.enabled() || thresholds.values().stream().allMatch(t -> t.signum() <= 0)) {
             return;
         }
