@@ -50,6 +50,11 @@ public class PawapaySignatureVerifier {
     private static final Pattern INPUT = Pattern.compile("^([A-Za-z0-9_-]+)=\\((.*?)\\)(.*)$");
     private static final Pattern PARAM = Pattern.compile(";\\s*([a-z]+)=(\"([^\"]*)\"|([0-9]+))");
     private static final Set<String> REQUIRED_COMPONENTS = Set.of("@method", "@authority", "@path", "content-digest");
+    private static final Set<String> SUPPORTED_ALGS =
+            Set.of("ecdsa-p256-sha256", "ecdsa-p384-sha384", "rsa-v1_5-sha256", "rsa-pss-sha512");
+    /** Taille d'une signature ECDSA brute {@code r || s} (RFC 9421) : deux coordonnées de la courbe. */
+    private static final int ECDSA_P256_RAW_LENGTH = 64;
+    private static final int ECDSA_P384_RAW_LENGTH = 96;
     private static final long CLOCK_SKEW_SECONDS = 60;
     private static final long MAX_SIGNATURE_AGE_SECONDS = 300;
 
@@ -88,7 +93,7 @@ public class PawapaySignatureVerifier {
         String keyId = param(params, "keyid");
         if (alg == null) throw new PawapaySignatureException("Paramètre alg absent");
         if (keyId == null) throw new PawapaySignatureException("Paramètre keyid absent");
-        Signature verifier = signatureFor(alg);
+        requireSupported(alg);
         verifyTemporalWindow(params);
 
         StringBuilder base = new StringBuilder();
@@ -105,6 +110,7 @@ public class PawapaySignatureVerifier {
         base.append("\"@signature-params\": ").append("(").append(m.group(2)).append(")").append(params);
 
         byte[] sig = extractSignature(signature, label);
+        Signature verifier = signatureFor(alg, sig);
         PublicKey key = keys.resolve(keyId)
                 .orElseThrow(() -> new PawapaySignatureException("keyid inconnu : " + PawapayText.clamp(keyId)));
         if (!verifySignature(verifier, key, base.toString().getBytes(StandardCharsets.UTF_8), sig)) {
@@ -148,14 +154,30 @@ public class PawapaySignatureVerifier {
     }
 
     /**
-     * La liste fermée des algorithmes acceptés est CETTE fabrique, et elle seule : un {@code alg}
-     * hors liste est rejeté ici, avant toute résolution de clé.
+     * La liste fermée des algorithmes acceptés est {@link #SUPPORTED_ALGS}, et elle seule : un
+     * {@code alg} hors liste est rejeté ici, avant toute résolution de clé.
      */
-    private static Signature signatureFor(String alg) {
+    private static void requireSupported(String alg) {
+        if (!SUPPORTED_ALGS.contains(alg)) {
+            throw new PawapaySignatureException("alg non supporté : " + PawapayText.clamp(alg));
+        }
+    }
+
+    /**
+     * RFC 9421 prescrit pour ECDSA la forme brute {@code r || s} (64 octets en P-256, 96 en
+     * P-384), mais pawaPay émet la forme DER (séquence ASN.1 de deux entiers, longueur variable,
+     * {@code MEQCI…} en Base64), comme l'exemple de sa documentation « Signatures ». Les deux
+     * formes sont acceptées, discriminées par la longueur : seule la forme brute a exactement la
+     * taille de deux coordonnées de la courbe. Rien n'est relâché : dans les deux cas, la même
+     * clé publique doit avoir signé la même base.
+     */
+    private static Signature signatureFor(String alg, byte[] sig) {
         try {
             return switch (alg) {
-                case "ecdsa-p256-sha256" -> Signature.getInstance("SHA256withECDSAinP1363Format");
-                case "ecdsa-p384-sha384" -> Signature.getInstance("SHA384withECDSAinP1363Format");
+                case "ecdsa-p256-sha256" -> Signature.getInstance(
+                        sig.length == ECDSA_P256_RAW_LENGTH ? "SHA256withECDSAinP1363Format" : "SHA256withECDSA");
+                case "ecdsa-p384-sha384" -> Signature.getInstance(
+                        sig.length == ECDSA_P384_RAW_LENGTH ? "SHA384withECDSAinP1363Format" : "SHA384withECDSA");
                 case "rsa-v1_5-sha256" -> Signature.getInstance("SHA256withRSA");
                 case "rsa-pss-sha512" -> {
                     Signature s = Signature.getInstance("RSASSA-PSS");
