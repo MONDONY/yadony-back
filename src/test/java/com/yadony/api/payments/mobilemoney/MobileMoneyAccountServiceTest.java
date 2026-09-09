@@ -30,6 +30,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
@@ -78,7 +79,7 @@ class MobileMoneyAccountServiceTest {
         when(currencyResolver.resolve(userId)).thenReturn("XOF");
         when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        MobileMoneyAccountResponse r = service.activate(userId);
+        MobileMoneyAccountResponse r = service.activate(userId, null);
 
         assertThat(user.getMobileMoneyStatus()).isEqualTo(MobileMoneyPayoutStatus.ACTIVE);
         assertThat(user.getMobileMoneyMsisdn()).isEqualTo("221771234567");
@@ -106,7 +107,7 @@ class MobileMoneyAccountServiceTest {
         when(currencyResolver.resolve(userId)).thenReturn("XOF");
         when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        service.activate(userId);
+        service.activate(userId, null);
 
         assertThat(user.getMobileMoneyMsisdn()).isEqualTo("221771234567");
     }
@@ -114,7 +115,7 @@ class MobileMoneyAccountServiceTest {
     @Test
     void activate_withoutFirebasePhone_is422() {
         when(firebaseContact.getContact("uid-1")).thenReturn(FirebaseContactService.Contact.EMPTY);
-        assertThatThrownBy(() -> service.activate(userId)).isInstanceOf(YadonyBusinessException.class)
+        assertThatThrownBy(() -> service.activate(userId, null)).isInstanceOf(YadonyBusinessException.class)
                 .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-phone-required");
     }
 
@@ -127,15 +128,121 @@ class MobileMoneyAccountServiceTest {
     @Test
     void activate_withBlankFirebasePhone_is422() {
         when(firebaseContact.getContact("uid-1")).thenReturn(new FirebaseContactService.Contact("   ", null));
-        assertThatThrownBy(() -> service.activate(userId)).isInstanceOf(YadonyBusinessException.class)
+        assertThatThrownBy(() -> service.activate(userId, null)).isInstanceOf(YadonyBusinessException.class)
                 .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-phone-required");
+    }
+
+    /**
+     * Un numéro fourni est accepté et devient la source, normalisé ({@code Msisdn.normalize},
+     * espaces retirés) avant d'être transmis à pawaPay, sa provenance tracée dans l'audit sous
+     * {@code source: "provided"}. Aucun stub sur {@code firebaseContact} : le compte Firebase
+     * n'est même pas interrogé dès qu'un numéro est fourni, quel que soit son propre état.
+     */
+    @Test
+    void activate_providedPhone_usedWhenNoFirebasePhone() {
+        when(client.predictProvider("221773456789"))
+                .thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "221773456789")));
+        when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", new PawapayProviderConfig("ORANGE_SEN", "SEN", "XOF", OK, OK)));
+        when(currencyResolver.resolve(userId)).thenReturn("XOF");
+        when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        MobileMoneyAccountResponse r = service.activate(userId, "+221 77 345 67 89");
+
+        assertThat(user.getMobileMoneyStatus()).isEqualTo(MobileMoneyPayoutStatus.ACTIVE);
+        assertThat(user.getMobileMoneyMsisdn()).isEqualTo("221773456789");
+        assertThat(r.status()).isEqualTo("ACTIVE");
+        ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
+        verify(audit).log(eq("USER"), eq(userId), eq("MM_ACCOUNT_ACTIVATED"), eq(userId), payload.capture());
+        assertThat(payload.getValue()).containsEntry("source", "provided");
+    }
+
+    /**
+     * Changement de règle (2026-09-09) : le numéro fourni est TOUJOURS prioritaire, même quand
+     * le compte Firebase a déjà un téléphone (différent ici, pour le prouver) — il peut
+     * légitimement différer du numéro Firebase. Le stub Firebase est {@code lenient} : le
+     * nouveau code-chemin ne le consulte plus du tout dès qu'un numéro est fourni, ce que
+     * {@code verify(never())} prouve directement, pas seulement que sa valeur est ignorée.
+     */
+    @Test
+    void activate_providedPhone_takesPriorityOverFirebasePhone() {
+        lenient().when(firebaseContact.getContact("uid-1")).thenReturn(new FirebaseContactService.Contact("+221771234567", null));
+        when(client.predictProvider("221770000001"))
+                .thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "221770000001")));
+        when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", new PawapayProviderConfig("ORANGE_SEN", "SEN", "XOF", OK, OK)));
+        when(currencyResolver.resolve(userId)).thenReturn("XOF");
+        when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        MobileMoneyAccountResponse r = service.activate(userId, "+221 77 000 00 01");
+
+        assertThat(user.getMobileMoneyMsisdn()).isEqualTo("221770000001");
+        assertThat(r.status()).isEqualTo("ACTIVE");
+        ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
+        verify(audit).log(eq("USER"), eq(userId), eq("MM_ACCOUNT_ACTIVATED"), eq(userId), payload.capture());
+        assertThat(payload.getValue()).containsEntry("source", "provided");
+        verify(firebaseContact, never()).getContact(any());
+    }
+
+    /**
+     * Numéro fourni vide ou uniquement composé d'espaces : traité comme absent ({@code
+     * isBlank()}, pas {@code isEmpty()}), retombe sur le téléphone Firebase déjà vérifié par
+     * OTP — exactement comme un {@code providedPhone} {@code null}.
+     */
+    @Test
+    void activate_blankProvidedPhone_fallsBackToFirebasePhone() {
+        when(firebaseContact.getContact("uid-1")).thenReturn(new FirebaseContactService.Contact("+221771234567", null));
+        when(client.predictProvider("+221771234567"))
+                .thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "221771234567")));
+        when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", new PawapayProviderConfig("ORANGE_SEN", "SEN", "XOF", OK, OK)));
+        when(currencyResolver.resolve(userId)).thenReturn("XOF");
+        when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        MobileMoneyAccountResponse r = service.activate(userId, "   ");
+
+        assertThat(user.getMobileMoneyMsisdn()).isEqualTo("221771234567");
+        assertThat(r.status()).isEqualTo("ACTIVE");
+        ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
+        verify(audit).log(eq("USER"), eq(userId), eq("MM_ACCOUNT_ACTIVATED"), eq(userId), payload.capture());
+        assertThat(payload.getValue()).containsEntry("source", "firebase");
+    }
+
+    /**
+     * Un numéro fourni mais inexploitable par {@code Msisdn.normalize} (trop court) est une
+     * erreur de saisie CLIENT — 422 {@code mobile-money-invalid-phone}, distinct de {@code
+     * mobile-money-account-unsupported} (numéro reconnu par pawaPay mais inexploitable) —
+     * n'atteint jamais pawaPay ni la base (aucune écriture) et ne consulte jamais Firebase : le
+     * numéro fourni est prioritaire sans condition, y compris pour être rejeté.
+     */
+    @Test
+    void activate_invalidProvidedPhone_is422InvalidPhone() {
+        YadonyBusinessException ex = catchThrowableOfType(() -> service.activate(userId, "123"), YadonyBusinessException.class);
+
+        assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+        assertThat(ex.getErrorCode()).isEqualTo("mobile-money-invalid-phone");
+        verify(userRepository, never()).save(any());
+        verify(audit, never()).log(any(), any(), any(), any(), any());
+        verify(firebaseContact, never()).getContact(any());
+    }
+
+    /**
+     * Ni téléphone Firebase ni numéro fourni : 422 {@code mobile-money-phone-required}, avec le
+     * détail propre au versement (distinct de celui du paiement mobile money, « ... qui paiera »
+     * dans {@code MobileMoneyBidPaymentService}).
+     */
+    @Test
+    void activate_withoutFirebasePhoneAndWithoutProvidedPhone_is422WithDetail() {
+        when(firebaseContact.getContact("uid-1")).thenReturn(FirebaseContactService.Contact.EMPTY);
+
+        YadonyBusinessException ex = catchThrowableOfType(() -> service.activate(userId, null), YadonyBusinessException.class);
+
+        assertThat(ex.getErrorCode()).isEqualTo("mobile-money-phone-required");
+        assertThat(ex.getMessage()).isEqualTo("Indiquez le numéro mobile money qui recevra vos versements.");
     }
 
     @Test
     void activate_unknownProvider_is422() {
         when(firebaseContact.getContact("uid-1")).thenReturn(new FirebaseContactService.Contact("+33612345678", null));
         when(client.predictProvider("+33612345678")).thenReturn(Optional.empty());
-        assertThatThrownBy(() -> service.activate(userId)).isInstanceOf(YadonyBusinessException.class)
+        assertThatThrownBy(() -> service.activate(userId, null)).isInstanceOf(YadonyBusinessException.class)
                 .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-account-unsupported");
     }
 
@@ -144,7 +251,7 @@ class MobileMoneyAccountServiceTest {
         when(firebaseContact.getContact("uid-1")).thenReturn(new FirebaseContactService.Contact("+221771234567", null));
         when(client.predictProvider("+221771234567")).thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "WAVE_SEN", "221771234567")));
         when(client.activeConfiguration()).thenReturn(Map.of("WAVE_SEN", new PawapayProviderConfig("WAVE_SEN", "SEN", "XOF", OK, null)));
-        assertThatThrownBy(() -> service.activate(userId)).isInstanceOf(YadonyBusinessException.class)
+        assertThatThrownBy(() -> service.activate(userId, null)).isInstanceOf(YadonyBusinessException.class)
                 .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-account-unsupported");
     }
 
@@ -162,7 +269,7 @@ class MobileMoneyAccountServiceTest {
         when(client.predictProvider("+221771234567")).thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "221771234567")));
         when(client.activeConfiguration()).thenReturn(Map.of());
 
-        assertThatThrownBy(() -> service.activate(userId)).isInstanceOf(YadonyBusinessException.class)
+        assertThatThrownBy(() -> service.activate(userId, null)).isInstanceOf(YadonyBusinessException.class)
                 .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-account-unsupported");
     }
 
@@ -172,7 +279,7 @@ class MobileMoneyAccountServiceTest {
         when(client.predictProvider("+221771234567")).thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "221771234567")));
         when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", new PawapayProviderConfig("ORANGE_SEN", "SEN", "XOF", OK, OK)));
         when(currencyResolver.resolve(userId)).thenReturn("EUR");
-        assertThatThrownBy(() -> service.activate(userId)).isInstanceOf(YadonyBusinessException.class)
+        assertThatThrownBy(() -> service.activate(userId, null)).isInstanceOf(YadonyBusinessException.class)
                 .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-account-unsupported");
     }
 
@@ -181,7 +288,7 @@ class MobileMoneyAccountServiceTest {
         when(firebaseContact.getContact("uid-1")).thenReturn(new FirebaseContactService.Contact("+221771234567", null));
         when(client.predictProvider("+221771234567")).thenThrow(new RestClientException("pawaPay indisponible"));
 
-        YadonyBusinessException ex = catchThrowableOfType(() -> service.activate(userId), YadonyBusinessException.class);
+        YadonyBusinessException ex = catchThrowableOfType(() -> service.activate(userId, null), YadonyBusinessException.class);
 
         assertThat(ex.getStatus()).isEqualTo(HttpStatus.BAD_GATEWAY);
         assertThat(ex.getErrorCode()).isEqualTo("mobile-money-provider-unavailable");
@@ -199,7 +306,7 @@ class MobileMoneyAccountServiceTest {
         when(client.predictProvider("+221771234567")).thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "221771234567")));
         when(client.activeConfiguration()).thenThrow(new RestClientException("pawaPay indisponible"));
 
-        YadonyBusinessException ex = catchThrowableOfType(() -> service.activate(userId), YadonyBusinessException.class);
+        YadonyBusinessException ex = catchThrowableOfType(() -> service.activate(userId, null), YadonyBusinessException.class);
 
         assertThat(ex.getStatus()).isEqualTo(HttpStatus.BAD_GATEWAY);
         assertThat(ex.getErrorCode()).isEqualTo("mobile-money-provider-unavailable");
@@ -215,7 +322,7 @@ class MobileMoneyAccountServiceTest {
         when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", new PawapayProviderConfig("ORANGE_SEN", "SEN", "XOF", OK, OK)));
         when(currencyResolver.resolve(userId)).thenReturn("XOF");
 
-        YadonyBusinessException ex = catchThrowableOfType(() -> service.activate(userId), YadonyBusinessException.class);
+        YadonyBusinessException ex = catchThrowableOfType(() -> service.activate(userId, null), YadonyBusinessException.class);
 
         assertThat(ex.getStatus()).isEqualTo(HttpStatus.BAD_GATEWAY);
         assertThat(ex.getErrorCode()).isEqualTo("mobile-money-provider-unavailable");
@@ -237,7 +344,7 @@ class MobileMoneyAccountServiceTest {
         when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", new PawapayProviderConfig("ORANGE_SEN", "ZZZ", "XOF", OK, OK)));
         when(currencyResolver.resolve(userId)).thenReturn("XOF");
 
-        assertThatThrownBy(() -> service.activate(userId)).isInstanceOf(YadonyBusinessException.class)
+        assertThatThrownBy(() -> service.activate(userId, null)).isInstanceOf(YadonyBusinessException.class)
                 .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-account-unsupported");
         verify(userRepository, never()).save(any());
     }
@@ -246,7 +353,7 @@ class MobileMoneyAccountServiceTest {
     void activate_whenDisabledGlobally_is422() {
         MobileMoneyAccountService off = new MobileMoneyAccountService(userRepository, firebaseContact,
                 new PawapayProviderResolver(client), currencyResolver, audit, props(false));
-        assertThatThrownBy(() -> off.activate(userId)).isInstanceOf(YadonyBusinessException.class)
+        assertThatThrownBy(() -> off.activate(userId, null)).isInstanceOf(YadonyBusinessException.class)
                 .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-disabled");
     }
 
@@ -261,7 +368,7 @@ class MobileMoneyAccountServiceTest {
     void activate_userNotFound_is404() {
         when(userRepository.findByIdForUpdate(userId)).thenReturn(Optional.empty());
 
-        YadonyBusinessException ex = catchThrowableOfType(() -> service.activate(userId), YadonyBusinessException.class);
+        YadonyBusinessException ex = catchThrowableOfType(() -> service.activate(userId, null), YadonyBusinessException.class);
 
         assertThat(ex.getStatus()).isEqualTo(HttpStatus.NOT_FOUND);
         assertThat(ex.getErrorCode()).isEqualTo("user-not-found");
