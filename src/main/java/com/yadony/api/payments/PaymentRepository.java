@@ -8,6 +8,8 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import com.yadony.api.matching.dto.AnnouncementRevenueRow;
+import com.yadony.api.payments.dto.MobileMoneyCommissionMonthRow;
+import com.yadony.api.payments.dto.MobileMoneyCommissionRow;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -264,4 +266,49 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
             @Param("to") java.time.LocalDateTime to,
             @Param("rail") String rail,
             Pageable pageable);
+
+    /**
+     * Commissions du rail mobile money sur une période, groupées par devise ET par statut.
+     *
+     * <p>La commission n'existe comme mouvement nulle part : elle est la part du deposit de
+     * l'expéditeur qui n'est pas repartie au voyageur, et qui reste sur le solde pawaPay de
+     * yadony. Cette requête la reconstitue depuis la seule source de vérité qu'en garde le
+     * système, {@code payments.commission_amount}, figée à la création du paiement.
+     *
+     * <p>Groupée par devise, jamais sommée à plat (XOF et XAF ne s'additionnent pas), et par
+     * statut : seul {@code RELEASED} est acquis, {@code ESCROW} reste conditionnel à la
+     * livraison, {@code REFUNDED} a été rendu. {@code UPPER} sur la devise pour la même raison
+     * que les agrégats de revenus voisins (colonne historiquement minuscule avant V236).
+     */
+    @Query("""
+        SELECT new com.yadony.api.payments.dto.MobileMoneyCommissionRow(
+            UPPER(p.currency), p.status, COUNT(p), COALESCE(SUM(p.amount), 0), COALESCE(SUM(p.commissionAmount), 0))
+        FROM PaymentEntity p
+        WHERE p.rail = com.yadony.api.payments.PaymentRail.PAWAPAY
+          AND p.createdAt BETWEEN :from AND :to
+        GROUP BY UPPER(p.currency), p.status
+        ORDER BY UPPER(p.currency)
+    """)
+    List<MobileMoneyCommissionRow> sumMobileMoneyCommissionsByCurrencyAndStatus(
+            @Param("from") LocalDateTime from,
+            @Param("to") LocalDateTime to);
+
+    /**
+     * Ventilation mensuelle des commissions mobile money acquises ({@code RELEASED}), par devise.
+     * Mois de création du paiement — voir {@link MobileMoneyCommissionMonthRow}.
+     */
+    @Query("""
+        SELECT new com.yadony.api.payments.dto.MobileMoneyCommissionMonthRow(
+            YEAR(p.createdAt), MONTH(p.createdAt), UPPER(p.currency),
+            COUNT(p), COALESCE(SUM(p.amount), 0), COALESCE(SUM(p.commissionAmount), 0))
+        FROM PaymentEntity p
+        WHERE p.rail = com.yadony.api.payments.PaymentRail.PAWAPAY
+          AND p.status = com.yadony.api.payments.PaymentStatus.RELEASED
+          AND p.createdAt BETWEEN :from AND :to
+        GROUP BY YEAR(p.createdAt), MONTH(p.createdAt), UPPER(p.currency)
+        ORDER BY YEAR(p.createdAt) DESC, MONTH(p.createdAt) DESC, UPPER(p.currency)
+    """)
+    List<MobileMoneyCommissionMonthRow> sumMobileMoneyCommissionsByMonth(
+            @Param("from") LocalDateTime from,
+            @Param("to") LocalDateTime to);
 }

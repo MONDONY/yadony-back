@@ -1,5 +1,9 @@
 package com.yadony.api.admin;
 
+import com.yadony.api.payments.PaymentRepository;
+import com.yadony.api.payments.PaymentStatus;
+import com.yadony.api.payments.dto.MobileMoneyCommissionMonthRow;
+import com.yadony.api.payments.dto.MobileMoneyCommissionRow;
 import com.yadony.api.admin.account.AdminPrincipal;
 import com.yadony.api.admin.account.AdminRole;
 import com.yadony.api.matching.BidEntity;
@@ -13,6 +17,7 @@ import com.yadony.api.payments.pawapay.PawapayOperationStatus;
 import com.yadony.api.payments.wallet.WalletAccountEntity;
 import com.yadony.api.payments.wallet.WalletAccountRepository;
 import org.junit.jupiter.api.DisplayName;
+import org.mockito.ArgumentCaptor;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -29,9 +34,12 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -63,6 +71,7 @@ class AdminFinanceControllerIT {
     @MockitoBean WalletAccountRepository walletRepository;
     @MockitoBean BidRepository bidRepository;
     @MockitoBean PawapayOperationRepository pawapayOperationRepository;
+    @MockitoBean PaymentRepository paymentRepository;
 
     private static final UUID USER_ID = UUID.randomUUID();
     private static final UUID BID_ID = UUID.randomUUID();
@@ -221,6 +230,83 @@ class AdminFinanceControllerIT {
     }
 
     // ── Pagination ───────────────────────────────────────────────────────────
+
+    // ── Commissions mobile money ─────────────────────────────────────────────
+
+    @Test
+    @DisplayName("GET /admin/mobile-money-commissions — replie les statuts en un total par devise")
+    void mobileMoneyCommissions_foldsStatusesPerCurrency() throws Exception {
+        when(paymentRepository.sumMobileMoneyCommissionsByCurrencyAndStatus(any(), any())).thenReturn(List.of(
+                new MobileMoneyCommissionRow("XOF", PaymentStatus.RELEASED, 2,
+                        new BigDecimal("19800.00"), new BigDecimal("1800.00")),
+                new MobileMoneyCommissionRow("XOF", PaymentStatus.ESCROW, 1,
+                        new BigDecimal("9900.00"), new BigDecimal("900.00")),
+                new MobileMoneyCommissionRow("XAF", PaymentStatus.RELEASED, 1,
+                        new BigDecimal("5000.00"), new BigDecimal("500.00"))));
+        when(paymentRepository.sumMobileMoneyCommissionsByMonth(any(), any())).thenReturn(List.of(
+                new MobileMoneyCommissionMonthRow(2026, 9, "XOF", 2,
+                        new BigDecimal("19800.00"), new BigDecimal("1800.00"))));
+
+        mockMvc.perform(get("/admin/mobile-money-commissions").with(authentication(supportAuth())))
+                .andExpect(status().isOk())
+                // Une entrée par devise, jamais un total toutes devises confondues.
+                .andExpect(jsonPath("$.byCurrency.length()").value(2))
+                .andExpect(jsonPath("$.byCurrency[0].currency").value("XOF"))
+                .andExpect(jsonPath("$.byCurrency[0].earnedCount").value(2))
+                // Centièmes de l'unité principale : 1 800 XOF -> 180000, jamais l'unité mineure.
+                .andExpect(jsonPath("$.byCurrency[0].earnedCommissionCents").value(180000))
+                .andExpect(jsonPath("$.byCurrency[0].earnedGrossCents").value(1980000))
+                // Net versé au voyageur = brut - commission.
+                .andExpect(jsonPath("$.byCurrency[0].earnedNetCents").value(1800000))
+                .andExpect(jsonPath("$.byCurrency[0].escrowedCommissionCents").value(90000))
+                .andExpect(jsonPath("$.byCurrency[0].refundedCount").value(0))
+                .andExpect(jsonPath("$.byCurrency[1].currency").value("XAF"))
+                .andExpect(jsonPath("$.byCurrency[1].earnedCommissionCents").value(50000))
+                .andExpect(jsonPath("$.monthly[0].month").value("2026-09"))
+                .andExpect(jsonPath("$.monthly[0].netCents").value(1800000));
+    }
+
+    @Test
+    @DisplayName("GET /admin/mobile-money-commissions — période par défaut : les 12 derniers mois")
+    void mobileMoneyCommissions_defaultsToLastTwelveMonths() throws Exception {
+        when(paymentRepository.sumMobileMoneyCommissionsByCurrencyAndStatus(any(), any())).thenReturn(List.of());
+        when(paymentRepository.sumMobileMoneyCommissionsByMonth(any(), any())).thenReturn(List.of());
+
+        mockMvc.perform(get("/admin/mobile-money-commissions").with(authentication(supportAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.byCurrency.length()").value(0));
+
+        ArgumentCaptor<LocalDateTime> from = ArgumentCaptor.forClass(LocalDateTime.class);
+        ArgumentCaptor<LocalDateTime> to = ArgumentCaptor.forClass(LocalDateTime.class);
+        verify(paymentRepository).sumMobileMoneyCommissionsByCurrencyAndStatus(from.capture(), to.capture());
+        assertThat(from.getValue()).isCloseTo(to.getValue().minusMonths(12), within(1, ChronoUnit.MINUTES));
+    }
+
+    @Test
+    @DisplayName("GET /admin/mobile-money-commissions — les bornes passées sont transmises telles quelles")
+    void mobileMoneyCommissions_forwardsExplicitRange() throws Exception {
+        when(paymentRepository.sumMobileMoneyCommissionsByCurrencyAndStatus(any(), any())).thenReturn(List.of());
+        when(paymentRepository.sumMobileMoneyCommissionsByMonth(any(), any())).thenReturn(List.of());
+
+        mockMvc.perform(get("/admin/mobile-money-commissions")
+                        .param("from", "2026-08-01T00:00:00")
+                        .param("to", "2026-08-31T23:59:59")
+                        .with(authentication(supportAuth())))
+                .andExpect(status().isOk());
+
+        verify(paymentRepository).sumMobileMoneyCommissionsByCurrencyAndStatus(
+                LocalDateTime.of(2026, 8, 1, 0, 0, 0), LocalDateTime.of(2026, 8, 31, 23, 59, 59));
+    }
+
+    @Test
+    @DisplayName("GET /admin/mobile-money-commissions — sans PAYMENT_VIEW → 403, sans aucune lecture")
+    void mobileMoneyCommissions_requiresPaymentView() throws Exception {
+        mockMvc.perform(get("/admin/mobile-money-commissions").with(authentication(withoutPaymentView())))
+                .andExpect(status().isForbidden());
+
+        verify(paymentRepository, never()).sumMobileMoneyCommissionsByCurrencyAndStatus(any(), any());
+        verify(paymentRepository, never()).sumMobileMoneyCommissionsByMonth(any(), any());
+    }
 
     @Test
     @DisplayName("La pagination demandee est celle transmise au depot")
