@@ -39,6 +39,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
@@ -79,6 +80,46 @@ class AdminPaymentControllerTest {
                 bidRepository, announcementRepository, userRepository, eventPublisher, chargebackRepository,
                 payoutInitiator, pawapayOperations, pawapaySubmission, refundProcessor, entityManager,
                 transactionManager);
+    }
+
+    /**
+     * Recette du 2026-09-09 : le back-office affichait un paiement de 6 600 XOF comme
+     * « 6 600,00 € », faute de devise dans la réponse, et son filtre « Méthode » envoyait des
+     * valeurs (WAVE, ORANGE_MONEY) qu'aucun rail ne porte. La devise sort en majuscules, et le
+     * filtre {@code currency} est normalisé de la même façon que {@code method}.
+     */
+    @Test
+    void list_rendLaDeviseEtFiltreParDeviseNormalisee() {
+        PaymentEntity xof = new PaymentEntity();
+        xof.setBidId(bidId);
+        xof.setRail(com.yadony.api.payments.PaymentRail.PAWAPAY);
+        xof.setCurrency("XOF");
+        xof.setStatus(PaymentStatus.RELEASED);
+        xof.setStripePaymentIntentId("mm_" + bidId);
+        xof.setAmount(new BigDecimal("6600.00"));
+        xof.setCommissionAmount(new BigDecimal("600.00"));
+        when(paymentRepository.findAdminFiltered(isNull(), isNull(), isNull(), eq("PAWAPAY"), eq("XOF"), any()))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of(xof)));
+
+        var body = controller.list(null, "pawapay", null, null, "xof", 0, 20).getBody();
+
+        assertThat(body).isNotNull();
+        assertThat(body.getContent()).hasSize(1);
+        assertThat(body.getContent().get(0).currency()).isEqualTo("XOF");
+        assertThat(body.getContent().get(0).method()).isEqualTo("PAWAPAY");
+        // Centièmes de l'unité principale, convention du back-office : 6 600 XOF -> 660000.
+        assertThat(body.getContent().get(0).amountCents()).isEqualTo(660000L);
+        assertThat(body.getContent().get(0).commissionCents()).isEqualTo(60000L);
+    }
+
+    @Test
+    void list_sansFiltreDevise_passeNullAuDepot() {
+        when(paymentRepository.findAdminFiltered(isNull(), isNull(), isNull(), isNull(), isNull(), any()))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of()));
+
+        controller.list(null, " ", null, null, "", 0, 20);
+
+        verify(paymentRepository).findAdminFiltered(isNull(), isNull(), isNull(), isNull(), isNull(), any());
     }
 
     private PaymentEntity threadPayment(PaymentStatus status, boolean legacy, String chargeId) {

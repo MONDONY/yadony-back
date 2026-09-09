@@ -3,6 +3,7 @@ package com.yadony.api.admin.dto;
 import com.yadony.api.payments.PaymentEntity;
 
 import java.time.LocalDateTime;
+import java.util.Locale;
 import java.util.UUID;
 
 /**
@@ -21,6 +22,8 @@ public record AdminPaymentDetailResponse(
         String method,
         long amountCents,
         long commissionCents,
+        /** Devise du paiement en majuscules : un paiement mobile money est en XOF ou XAF, jamais en euros. */
+        String currency,
         LocalDateTime createdAt,
         long refundedCents,
         String stripePaymentIntentId,
@@ -45,6 +48,7 @@ public record AdminPaymentDetailResponse(
                 p.getRail().name(),
                 AdminWalletResponse.toCents(p.getAmount()),
                 AdminWalletResponse.toCents(p.getCommissionAmount()),
+                p.getCurrency().toUpperCase(Locale.ROOT),
                 p.getCreatedAt(),
                 AdminWalletResponse.toCents(p.getRefundedAmount()),
                 p.getStripePaymentIntentId(),
