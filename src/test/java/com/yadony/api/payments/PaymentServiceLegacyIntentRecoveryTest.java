@@ -402,6 +402,8 @@ class PaymentServiceLegacyIntentRecoveryTest {
         PaymentServiceTestFactory.setId(announcement, announcementId);
         announcement.setTravelerId(travelerId);
         announcement.setPricePerKg(new BigDecimal("5.00"));
+        // Même devise que le bid (CAD) : un bid direct copie celle de l'annonce.
+        announcement.setCurrency("CAD");
         return announcement;
     }
 

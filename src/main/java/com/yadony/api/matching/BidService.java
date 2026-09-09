@@ -28,12 +28,16 @@ import com.yadony.api.cancellation.CancellationEntity;
 import com.yadony.api.cancellation.CancellationReason;
 import com.yadony.api.cancellation.CancellationRepository;
 import com.yadony.api.cancellation.CancellationScope;
+import com.yadony.api.payments.PaymentService;
 import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.payments.currency.CurrencyPaymentRails;
 import com.yadony.api.payments.pawapay.PawapayErrors;
 import com.yadony.api.payments.pawapay.PawapayProperties;
 import com.yadony.api.ratings.RatingRepository;
+import com.stripe.exception.StripeException;
 import jakarta.servlet.http.HttpServletRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.context.ApplicationEventPublisher;
@@ -48,6 +52,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Optional;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -56,11 +61,14 @@ import java.util.concurrent.ThreadLocalRandom;
 @Service
 public class BidService {
 
+    private static final Logger log = LoggerFactory.getLogger(BidService.class);
+
     private final BidRepository bidRepository;
     private final AnnouncementRepository announcementRepository;
     private final UserRepository userRepository;
     private final AuditService auditService;
     private final ApplicationEventPublisher eventPublisher;
+    private final PaymentService paymentService;
     private final RatingRepository ratingRepository;
     private final CancellationRepository cancellationRepository;
     private final BidGridItemRepository bidGridItemRepository;
@@ -94,7 +102,8 @@ public class BidService {
                       StorageService storageService,
                       BidPhotoService bidPhotoService,
                       FirebaseContactService firebaseContact,
-                      PawapayProperties pawapayProperties) {
+                      PawapayProperties pawapayProperties,
+                      PaymentService paymentService) {
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.userRepository = userRepository;
@@ -112,6 +121,7 @@ public class BidService {
         this.bidPhotoService = bidPhotoService;
         this.firebaseContact = firebaseContact;
         this.pawapayProperties = pawapayProperties;
+        this.paymentService = paymentService;
     }
 
     /**
@@ -426,6 +436,8 @@ public class BidService {
             }
         }
 
+        abandonUnpaidCardBid(sender, announcement);
+
         boolean alreadyHasBid = bidRepository.existsBySenderIdAndAnnouncementIdAndStatusIn(
                 sender.getId(), announcement.getId(),
                 List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED,
@@ -437,6 +449,51 @@ public class BidService {
         }
 
         return normalizedContentCategory;
+    }
+
+    /**
+     * Recette du 2026-09-09 : une demande carte restée {@code AWAITING_PAYMENT} (feuille
+     * Stripe fermée sans payer) laissait passer une seconde demande mobile money ou espèces
+     * sur le même trajet : deux colis identiques pour l'expéditeur, deux paiements pour le
+     * voyageur. Une demande carte impayée n'engage encore personne : on l'abandonne
+     * (PaymentIntent annulé, bid supprimé, comme le nettoyeur des impayés) et la nouvelle
+     * demande prend sa place. Une demande mobile money en attente de dépôt, elle, a déjà été
+     * acceptée par le voyageur : elle bloque.
+     */
+    private void abandonUnpaidCardBid(UserEntity sender, AnnouncementEntity announcement) {
+        Optional<BidEntity> awaiting = bidRepository.findBySenderIdAndAnnouncementIdAndStatus(
+                sender.getId(), announcement.getId(), BidStatus.AWAITING_PAYMENT);
+        if (awaiting.isEmpty()) {
+            return;
+        }
+        BidEntity unpaid = awaiting.get();
+        if (unpaid.getPaymentMethod() == PaymentMethod.MOBILE_MONEY) {
+            throw new YadonyBusinessException(
+                    HttpStatus.CONFLICT, "already-bid", "Demande existante",
+                    "Vous avez déjà une demande en attente de paiement mobile money pour ce trajet");
+        }
+        String paymentIntentId = unpaid.getPaymentIntentId();
+        if (paymentIntentId != null) {
+            try {
+                paymentService.cancelPaymentIntent(paymentIntentId);
+            } catch (StripeException e) {
+                // Autorisé ou capturé entre-temps : ce n'est plus une demande impayée, le
+                // webhook Stripe la promeut. On ne touche à rien.
+                log.warn("Bid {} : PaymentIntent {} non annulable ({}), demande conservée",
+                        unpaid.getId(), paymentIntentId, e.getMessage());
+                throw new YadonyBusinessException(
+                        HttpStatus.CONFLICT, "already-bid", "Demande existante",
+                        "Votre demande carte sur ce trajet est déjà en cours de paiement");
+            }
+        }
+        unpaid.softDelete();
+        bidRepository.save(unpaid);
+        auditService.log("BID", unpaid.getId(), "BID_ABANDONED_UNPAID_CARD", sender.getId(),
+                Map.<String, Object>of(
+                        "announcementId", announcement.getId().toString(),
+                        "paymentIntentId", paymentIntentId != null ? paymentIntentId : "null"));
+        log.info("Bid {} (PI={}) abandonné : nouvelle demande du même expéditeur sur le trajet {}",
+                unpaid.getId(), paymentIntentId, announcement.getId());
     }
 
     /**

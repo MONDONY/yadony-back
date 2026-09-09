@@ -1308,4 +1308,76 @@ class PaymentServiceTest {
         when(deserializer.getObject()).thenReturn(Optional.of((com.stripe.model.StripeObject) stripeObj));
         return event;
     }
+
+    // Recette du 2026-09-09 : un bid né EUR (défaut de l'entité) sur une annonce XOF passait
+    // la garde CFA, lue sur le bid, et Stripe recevait 6 600 « euros » pour 6 600 XOF.
+    @Test
+    void createEscrow_eurBidOnCfaAnnouncement_isRefusedOnTheAnnouncementCurrency() {
+        UserEntity sender = buildUser(senderId, "uid-sender");
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
+        BidEntity bid = buildBid(BidStatus.AWAITING_PAYMENT);
+        bid.setCurrency("EUR");
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.empty());
+        AnnouncementEntity ann = buildAnnouncement();
+        ann.setStatus(AnnouncementStatus.ACTIVE);
+        ann.setCurrency("XOF");
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+        var request = mock(com.yadony.api.payments.dto.CreatePaymentRequest.class);
+        when(request.getBidId()).thenReturn(bidId);
+
+        assertYadonyError(() -> service.createEscrow(request, "uid-sender"),
+                "payment-method-unavailable-for-currency");
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    void createEscrow_bidCurrencyDiffersFromAnnouncement_isRealignedBeforeAnyAmount() {
+        UserEntity sender = buildUser(senderId, "uid-sender");
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
+        BidEntity bid = buildBid(BidStatus.ACCEPTED);
+        bid.setCurrency("EUR");
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.empty());
+        AnnouncementEntity ann = buildAnnouncement();
+        ann.setCurrency("USD");
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+        // Le voyageur n'est pas onboardé : le flux s'arrête après le réalignement, sans Stripe.
+        UserEntity traveler = buildUser(travelerId, "uid-traveler");
+        traveler.setStripeAccountStatus(StripeAccountStatus.PENDING_ONBOARDING);
+        when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler));
+        var request = mock(com.yadony.api.payments.dto.CreatePaymentRequest.class);
+        when(request.getBidId()).thenReturn(bidId);
+
+        Throwable thrown = catchThrowable(() -> service.createEscrow(request, "uid-sender"));
+
+        assertThat(thrown).isInstanceOf(TravelerNotEligibleForPaymentException.class);
+        assertThat(bid.getCurrency()).isEqualTo("USD");
+    }
+
+    @Test
+    void createEscrow_negotiatedBid_keepsItsOwnCurrencyEvenIfAnnouncementDiffers() {
+        UserEntity sender = buildUser(senderId, "uid-sender");
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
+        BidEntity bid = buildBid(BidStatus.ACCEPTED);
+        bid.setCurrency("EUR");
+        bid.setNegotiatedGrossEur(new BigDecimal("38.50"));
+        bid.setNegotiatedNetEur(new BigDecimal("35.00"));
+        bid.setCommissionRate(new BigDecimal("0.10"));
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.empty());
+        AnnouncementEntity ann = buildAnnouncement();
+        ann.setCurrency("USD");
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+        UserEntity traveler = buildUser(travelerId, "uid-traveler");
+        traveler.setStripeAccountStatus(StripeAccountStatus.PENDING_ONBOARDING);
+        when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler));
+        var request = mock(com.yadony.api.payments.dto.CreatePaymentRequest.class);
+        when(request.getBidId()).thenReturn(bidId);
+
+        Throwable thrown = catchThrowable(() -> service.createEscrow(request, "uid-sender"));
+
+        assertThat(thrown).isInstanceOf(TravelerNotEligibleForPaymentException.class);
+        assertThat(bid.getCurrency()).isEqualTo("EUR");
+    }
 }

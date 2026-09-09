@@ -133,6 +133,13 @@ class PaymentServiceOnBehalfOfTest {
         return ann;
     }
 
+    /** L'annonce porte la devise de son prix au kilo ; un bid direct la copie (BidService.createBid). */
+    private AnnouncementEntity buildAnnouncement(String currency) {
+        AnnouncementEntity ann = buildAnnouncement();
+        ann.setCurrency(currency);
+        return ann;
+    }
+
     private UserEntity buildTraveler(String stripeAccountId, StripeAccountStatus status) {
         UserEntity t = new UserEntity();
         setId(t, travelerId);
@@ -213,7 +220,7 @@ class PaymentServiceOnBehalfOfTest {
         when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
         when(bidRepository.findById(bidId)).thenReturn(Optional.of(buildBid("CAD")));
         when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.empty());
-        when(announcementRepository.findById(annId)).thenReturn(Optional.of(buildAnnouncement()));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(buildAnnouncement("CAD")));
         when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler));
         when(paymentRepository.save(any())).thenAnswer(inv -> {
             PaymentEntity payment = inv.getArgument(0);
@@ -277,7 +284,7 @@ class PaymentServiceOnBehalfOfTest {
         BidEntity bid = buildBid("CAD");
         bid.setCommissionRate(new BigDecimal("0.12"));
         when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
-        when(announcementRepository.findById(annId)).thenReturn(Optional.of(buildAnnouncement()));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(buildAnnouncement("CAD")));
         when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler));
 
         PaymentEntity legacy = new PaymentEntity();

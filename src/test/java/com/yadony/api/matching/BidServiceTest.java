@@ -67,6 +67,7 @@ class BidServiceTest {
     @Mock private BidPhotoService bidPhotoService;
     @Mock private com.yadony.api.auth.FirebaseContactService firebaseContact;
     @Mock private com.yadony.api.payments.pawapay.PawapayProperties pawapayProperties;
+    @Mock private com.yadony.api.payments.PaymentService paymentService;
     @Mock private HttpServletRequest httpRequest;
 
     @InjectMocks private BidService bidService;
@@ -403,6 +404,104 @@ class BidServiceTest {
                     .isInstanceOf(YadonyBusinessException.class)
                     .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
                             .isEqualTo("already-bid"));
+        }
+
+        // Recette du 2026-09-09 : une demande carte restée AWAITING_PAYMENT (feuille Stripe
+        // fermée sans payer) laissait passer une seconde demande sur le même trajet : deux
+        // colis identiques pour l'expéditeur, deux paiements pour le voyageur.
+        @Test
+        @DisplayName("demande carte impayée sur le trajet → abandonnée (PaymentIntent annulé, bid supprimé) et remplacée")
+        void createBid_unpaidCardBidOnSameTrip_isAbandonedThenReplaced() throws Exception {
+            UserEntity sender = buildSender();
+            AnnouncementEntity announcement = buildAnnouncement();
+            announcement.setCurrency("XOF");
+            announcement.setAcceptedPaymentMethods(
+                    java.util.EnumSet.of(com.yadony.api.payments.cash.PaymentMethod.CASH));
+            BidEntity unpaid = new BidEntity();
+            setId(unpaid, UUID.randomUUID());
+            unpaid.setStatus(BidStatus.AWAITING_PAYMENT);
+            unpaid.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.STRIPE);
+            unpaid.setPaymentIntentId("pi_unpaid");
+
+            when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(bidRepository.findBySenderIdAndAnnouncementIdAndStatus(
+                    SENDER_ID, ANNOUNCEMENT_ID, BidStatus.AWAITING_PAYMENT))
+                    .thenReturn(Optional.of(unpaid));
+            when(bidRepository.existsBySenderIdAndAnnouncementIdAndStatusIn(
+                    SENDER_ID, ANNOUNCEMENT_ID, List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED,
+                            BidStatus.ACCEPTED, BidStatus.NEGOTIATING)))
+                    .thenReturn(false);
+            when(bidRepository.save(any(BidEntity.class))).thenAnswer(inv -> {
+                BidEntity b = inv.getArgument(0);
+                if (b.getId() == null) setId(b, BID_ID);
+                return b;
+            });
+
+            BidResponse result = bidService.createBid(
+                    ANNOUNCEMENT_ID, SENDER_UID, buildRequestWithPaymentMethod(BigDecimal.valueOf(5), "CASH"),
+                    httpRequest);
+
+            assertThat(result).isNotNull();
+            verify(paymentService).cancelPaymentIntent("pi_unpaid");
+            assertThat(unpaid.getDeletedAt()).isNotNull();
+            verify(bidRepository).save(unpaid);
+            verify(auditService).log(eq("BID"), eq(unpaid.getId()), eq("BID_ABANDONED_UNPAID_CARD"),
+                    eq(SENDER_ID), any());
+            verify(auditService).log(eq("BID"), any(), eq("BID_CREATED"), any(), any());
+        }
+
+        @Test
+        @DisplayName("demande mobile money en attente de dépôt sur le trajet → 409 already-bid, rien n'est annulé")
+        void createBid_awaitingMobileMoneyBidOnSameTrip_throwsConflict() throws Exception {
+            UserEntity sender = buildSender();
+            AnnouncementEntity announcement = buildAnnouncement();
+            BidEntity awaitingDeposit = new BidEntity();
+            setId(awaitingDeposit, UUID.randomUUID());
+            awaitingDeposit.setStatus(BidStatus.AWAITING_PAYMENT);
+            awaitingDeposit.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.MOBILE_MONEY);
+
+            when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(bidRepository.findBySenderIdAndAnnouncementIdAndStatus(
+                    SENDER_ID, ANNOUNCEMENT_ID, BidStatus.AWAITING_PAYMENT))
+                    .thenReturn(Optional.of(awaitingDeposit));
+
+            assertThatThrownBy(() -> bidService.createBid(
+                    ANNOUNCEMENT_ID, SENDER_UID, buildRequest(BigDecimal.valueOf(5)), httpRequest))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                            .isEqualTo("already-bid"));
+            verify(paymentService, never()).cancelPaymentIntent(any());
+            assertThat(awaitingDeposit.getDeletedAt()).isNull();
+        }
+
+        @Test
+        @DisplayName("PaymentIntent de la demande carte non annulable (déjà autorisé) → 409 already-bid, demande conservée")
+        void createBid_unpaidCardBidWhoseIntentCannotBeCancelled_throwsConflictAndKeepsIt() throws Exception {
+            UserEntity sender = buildSender();
+            AnnouncementEntity announcement = buildAnnouncement();
+            BidEntity unpaid = new BidEntity();
+            setId(unpaid, UUID.randomUUID());
+            unpaid.setStatus(BidStatus.AWAITING_PAYMENT);
+            unpaid.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.STRIPE);
+            unpaid.setPaymentIntentId("pi_captured");
+
+            when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(bidRepository.findBySenderIdAndAnnouncementIdAndStatus(
+                    SENDER_ID, ANNOUNCEMENT_ID, BidStatus.AWAITING_PAYMENT))
+                    .thenReturn(Optional.of(unpaid));
+            doThrow(mock(com.stripe.exception.StripeException.class))
+                    .when(paymentService).cancelPaymentIntent("pi_captured");
+
+            assertThatThrownBy(() -> bidService.createBid(
+                    ANNOUNCEMENT_ID, SENDER_UID, buildRequest(BigDecimal.valueOf(5)), httpRequest))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                            .isEqualTo("already-bid"));
+            assertThat(unpaid.getDeletedAt()).isNull();
+            verify(bidRepository, never()).save(any());
         }
 
         @Test

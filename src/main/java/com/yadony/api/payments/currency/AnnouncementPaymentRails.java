@@ -49,4 +49,29 @@ public final class AnnouncementPaymentRails {
         }
         return Set.copyOf(available);
     }
+
+    /**
+     * Retire d'un choix de moyens de paiement ceux que la devise n'autorise pas
+     * ({@link CurrencyPaymentRails}) : la carte en zone CFA, le mobile money ailleurs.
+     * Jamais vide : sans rail restant, l'espèce, toujours possible.
+     *
+     * <p>Recette du 2026-09-09 : une annonce XOF enregistrait la carte parmi ses moyens de
+     * paiement, l'app la proposait, et le checkout carte ouvrait un séquestre Stripe de
+     * 6 600 « euros » pour 6 600 XOF. Le filtre s'applique à l'écriture de l'annonce.
+     */
+    public static Set<PaymentMethod> restrictToCurrency(Set<PaymentMethod> methods, String currency) {
+        SupportedCurrency supportedCurrency = SupportedCurrency.fromCodeOrDefault(currency);
+        EnumSet<PaymentMethod> kept = EnumSet.noneOf(PaymentMethod.class);
+        if (methods != null) {
+            for (PaymentMethod method : methods) {
+                if (CurrencyPaymentRails.allows(supportedCurrency, method)) {
+                    kept.add(method);
+                }
+            }
+        }
+        if (kept.isEmpty()) {
+            kept.add(PaymentMethod.CASH);
+        }
+        return kept;
+    }
 }
