@@ -9,10 +9,12 @@ import org.springframework.data.repository.query.Param;
 
 import com.yadony.api.matching.dto.AnnouncementRevenueRow;
 import com.yadony.api.payments.dto.MobileMoneyCommissionMonthRow;
+import com.yadony.api.payments.dto.PaymentVolumeRow;
 import com.yadony.api.payments.dto.MobileMoneyCommissionRow;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -314,4 +316,19 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
     List<MobileMoneyCommissionMonthRow> sumMobileMoneyCommissionsByMonth(
             @Param("from") LocalDateTime from,
             @Param("to") LocalDateTime to);
+
+    /**
+     * Volumes de la vue d'ensemble admin, par devise et statut, sur toute l'histoire des
+     * paiements. Jamais de total toutes devises confondues (voir {@link PaymentVolumeRow}).
+     */
+    @Query("""
+        SELECT new com.yadony.api.payments.dto.PaymentVolumeRow(
+            UPPER(p.currency), p.status,
+            COALESCE(SUM(p.amount), 0), COALESCE(SUM(p.commissionAmount), 0), COALESCE(SUM(p.refundedAmount), 0))
+        FROM PaymentEntity p
+        WHERE p.status IN :statuses
+        GROUP BY UPPER(p.currency), p.status
+        ORDER BY UPPER(p.currency)
+    """)
+    List<PaymentVolumeRow> sumVolumesByCurrencyAndStatus(@Param("statuses") Collection<PaymentStatus> statuses);
 }

@@ -42,7 +42,7 @@ public record AdminWalletResponse(
      * {@code CurrencyAmount.toMinor}, seule conversion canonique : Stripe attend de vraies
      * unites mineures, et l'ecart serait d'un facteur 100 sur XOF et XAF.
      */
-    static long toCents(BigDecimal amount) {
+    public static long toCents(BigDecimal amount) {
         return amount == null ? 0L : amount.movePointRight(2).setScale(0, java.math.RoundingMode.HALF_UP).longValueExact();
     }
 }

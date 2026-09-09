@@ -12,12 +12,13 @@ import com.yadony.api.matching.AnnouncementStatus;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidStatus;
 import com.yadony.api.payments.PaymentEntity;
+import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.PaymentStatus;
 import jakarta.persistence.EntityManager;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
+import java.util.List;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 
@@ -26,17 +27,21 @@ import java.time.ZoneOffset;
 public class AdminMetricsService {
 
     private final EntityManager em;
+    private final PaymentRepository paymentRepository;
 
-    public AdminMetricsService(EntityManager em) {
+    public AdminMetricsService(EntityManager em, PaymentRepository paymentRepository) {
         this.em = em;
+        this.paymentRepository = paymentRepository;
     }
 
     public AdminOverviewResponse buildOverview() {
+        List<AdminOverviewResponse.GmvByCurrency> gmvByCurrency = buildGmvByCurrency();
         return new AdminOverviewResponse(
                 buildUsers(),
                 buildAnnouncements(),
                 buildBids(),
-                buildGmv(),
+                AdminOverviewResponse.euroOnly(gmvByCurrency),
+                gmvByCurrency,
                 buildQueues()
         );
     }
@@ -147,22 +152,13 @@ public class AdminMetricsService {
     // GMV
     // -------------------------------------------------------------------------
 
-    private AdminOverviewResponse.Gmv buildGmv() {
-        return new AdminOverviewResponse.Gmv(
-                sumPayments("amount", PaymentStatus.ESCROW),
-                sumPayments("amount", PaymentStatus.RELEASED),
-                sumPayments("refundedAmount", PaymentStatus.REFUNDED),
-                sumPayments("commissionAmount", PaymentStatus.RELEASED)
-        );
-    }
-
-    private BigDecimal sumPayments(String field, PaymentStatus status) {
-        BigDecimal result = em.createQuery(
-                        "SELECT COALESCE(SUM(p." + field + "), 0) FROM PaymentEntity p WHERE p.status = :status",
-                        BigDecimal.class)
-                .setParameter("status", status)
-                .getSingleResult();
-        return result != null ? result : BigDecimal.ZERO;
+    /**
+     * Une ligne par devise et par statut, repliée par devise. L'ancien calcul additionnait des
+     * EUR, des XOF et des XAF dans un même {@code SUM} et le back-office affichait le tout en euros.
+     */
+    private List<AdminOverviewResponse.GmvByCurrency> buildGmvByCurrency() {
+        return AdminOverviewResponse.foldByCurrency(paymentRepository.sumVolumesByCurrencyAndStatus(
+                List.of(PaymentStatus.ESCROW, PaymentStatus.RELEASED, PaymentStatus.REFUNDED)));
     }
 
     // -------------------------------------------------------------------------
