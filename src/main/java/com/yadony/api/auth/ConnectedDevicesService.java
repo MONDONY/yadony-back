@@ -11,6 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -72,6 +73,57 @@ public class ConnectedDevicesService {
             }
         }
         deviceRepo.deleteByUserIdAndDeviceIdNot(userId, currentDeviceId);
+    }
+
+    /**
+     * Un jeton FCM désigne un appareil physique, pas un compte : quand un compte l'enregistre,
+     * l'appareil ne doit plus recevoir les pushs d'un compte précédent connecté sur le même
+     * téléphone. Recette du 2026-09-09 : les deux comptes du test portaient les deux mêmes
+     * appareils, chaque push arrivait sur les deux téléphones et ouvrait l'écran d'un autre
+     * compte (403). Retire le jeton des lignes {@code user_devices} des autres comptes et de
+     * leur colonne héritée {@code users.fcm_token}.
+     */
+    @Transactional
+    public void releaseTokenFromOtherUsers(UUID userId, String fcmToken) {
+        if (fcmToken == null || fcmToken.isBlank()) {
+            return;
+        }
+        int released = deviceRepo.deleteByFcmTokenAndUserIdNot(fcmToken, userId);
+        int legacyCleared = 0;
+        for (UserEntity other : userRepository.findAllByFcmToken(fcmToken)) {
+            if (!userId.equals(other.getId())) {
+                other.setFcmToken(null);
+                userRepository.save(other);
+                legacyCleared++;
+            }
+        }
+        if (released > 0 || legacyCleared > 0) {
+            log.info("[devices] jeton FCM repris par userId={} : {} appareil(s) et {} colonne(s) héritée(s) "
+                    + "d'autres comptes libérés", userId, released, legacyCleared);
+        }
+    }
+
+    /**
+     * Déconnexion de l'appareil courant : il ne doit plus recevoir les pushs de ce compte.
+     * Idempotent, jamais d'erreur : l'app l'appelle en meilleur effort juste avant
+     * {@code signOut}. Sans identifiant d'appareil, ou sans ligne pour cet identifiant, la
+     * colonne héritée est vidée quand même : mieux vaut une push manquée qu'une push sur un
+     * téléphone déconnecté.
+     */
+    @Transactional
+    public void forgetDevice(UserEntity user, String deviceId) {
+        boolean clearLegacy = true;
+        if (deviceId != null && !deviceId.isBlank()) {
+            Optional<UserDeviceEntity> device = deviceRepo.findByUserIdAndDeviceId(user.getId(), deviceId);
+            if (device.isPresent()) {
+                clearLegacy = Objects.equals(device.get().getFcmToken(), user.getFcmToken());
+                deviceRepo.delete(device.get());
+            }
+        }
+        if (clearLegacy && user.getFcmToken() != null) {
+            user.setFcmToken(null);
+            userRepository.save(user);
+        }
     }
 
     @Transactional

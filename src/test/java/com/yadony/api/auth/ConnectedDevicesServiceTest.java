@@ -2,6 +2,7 @@ package com.yadony.api.auth;
 
 import com.yadony.api.auth.dto.UserDeviceDto;
 import com.google.firebase.auth.FirebaseAuth;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -107,6 +108,83 @@ class ConnectedDevicesServiceTest {
                 && "web".equals(e.getPlatform())
                 && e.getFcmToken() == null
         ));
+    }
+
+    @Test
+    void releaseTokenFromOtherUsers_libereLesAppareilsEtLaColonneHeriteeDesAutresComptes() {
+        UserEntity other = userWithToken(UUID.randomUUID(), "token123");
+        UserEntity self = userWithToken(userId, "token123");
+        when(deviceRepo.deleteByFcmTokenAndUserIdNot("token123", userId)).thenReturn(2);
+        when(userRepository.findAllByFcmToken("token123")).thenReturn(List.of(other, self));
+
+        service.releaseTokenFromOtherUsers(userId, "token123");
+
+        verify(deviceRepo).deleteByFcmTokenAndUserIdNot("token123", userId);
+        assertThat(other.getFcmToken()).isNull();
+        assertThat(self.getFcmToken()).isEqualTo("token123");
+        verify(userRepository).save(other);
+        verify(userRepository, never()).save(self);
+    }
+
+    @Test
+    void releaseTokenFromOtherUsers_ignoreUnJetonVide() {
+        service.releaseTokenFromOtherUsers(userId, " ");
+        service.releaseTokenFromOtherUsers(userId, null);
+        verifyNoInteractions(deviceRepo, userRepository);
+    }
+
+    @Test
+    void forgetDevice_supprimeLaLigneEtVideLaColonneHeriteeSiMemeJeton() {
+        UserEntity user = userWithToken(userId, "token123");
+        UserDeviceEntity device = deviceEntity(userId, "device-abc", "iPhone 14", "ios");
+        device.setFcmToken("token123");
+        when(deviceRepo.findByUserIdAndDeviceId(userId, "device-abc")).thenReturn(Optional.of(device));
+
+        service.forgetDevice(user, "device-abc");
+
+        verify(deviceRepo).delete(device);
+        assertThat(user.getFcmToken()).isNull();
+        verify(userRepository).save(user);
+    }
+
+    @Test
+    void forgetDevice_gardeLaColonneHeriteeSiElleAppartientAUnAutreAppareil() {
+        UserEntity user = userWithToken(userId, "token-autre-appareil");
+        UserDeviceEntity device = deviceEntity(userId, "device-abc", "iPhone 14", "ios");
+        device.setFcmToken("token123");
+        when(deviceRepo.findByUserIdAndDeviceId(userId, "device-abc")).thenReturn(Optional.of(device));
+
+        service.forgetDevice(user, "device-abc");
+
+        verify(deviceRepo).delete(device);
+        assertThat(user.getFcmToken()).isEqualTo("token-autre-appareil");
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void forgetDevice_sansLigneNiIdentifiant_videLaColonneHeritee() {
+        UserEntity sansLigne = userWithToken(userId, "token123");
+        when(deviceRepo.findByUserIdAndDeviceId(userId, "inconnu")).thenReturn(Optional.empty());
+
+        service.forgetDevice(sansLigne, "inconnu");
+
+        assertThat(sansLigne.getFcmToken()).isNull();
+        verify(userRepository).save(sansLigne);
+        verify(deviceRepo, never()).delete(any(UserDeviceEntity.class));
+
+        UserEntity sansIdentifiant = userWithToken(userId, "token456");
+
+        service.forgetDevice(sansIdentifiant, null);
+
+        assertThat(sansIdentifiant.getFcmToken()).isNull();
+        verify(userRepository).save(sansIdentifiant);
+    }
+
+    private UserEntity userWithToken(UUID id, String token) {
+        UserEntity user = new UserEntity();
+        ReflectionTestUtils.setField(user, "id", id);
+        user.setFcmToken(token);
+        return user;
     }
 
     private UserDeviceEntity deviceEntity(UUID userId, String deviceId, String name, String platform) {

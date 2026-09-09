@@ -245,6 +245,8 @@ public class AuthService {
                         "User Not Found",
                         "Utilisateur introuvable"
                 ));
+        // Un jeton = un appareil = un seul compte à la fois (voir ConnectedDevicesService).
+        connectedDevicesService.releaseTokenFromOtherUsers(user.getId(), fcmToken);
         user.setFcmToken(fcmToken);
         userRepository.save(user);
 
@@ -252,6 +254,19 @@ public class AuthService {
                 && deviceName != null && platform != null) {
             connectedDevicesService.upsertDevice(user.getId(), deviceId, deviceName, platform, fcmToken);
         }
+    }
+
+    /** Déconnexion : l'appareil courant cesse de recevoir les pushs de ce compte (idempotent). */
+    @Transactional
+    public void forgetFcmToken(String firebaseUid, String deviceId) {
+        UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
+                .orElseThrow(() -> new YadonyBusinessException(
+                        HttpStatus.NOT_FOUND,
+                        "user-not-found",
+                        "User Not Found",
+                        "Utilisateur introuvable"
+                ));
+        connectedDevicesService.forgetDevice(user, deviceId);
     }
 
     @Transactional(readOnly = true)

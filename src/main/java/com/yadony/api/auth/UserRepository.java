@@ -17,6 +17,9 @@ import java.util.UUID;
 public interface UserRepository extends JpaRepository<UserEntity, UUID> {
 
     Optional<UserEntity> findByFirebaseUid(String firebaseUid);
+
+    /** Comptes dont la colonne héritée {@code fcm_token} porte encore ce jeton (au plus un attendu). */
+    List<UserEntity> findAllByFcmToken(String fcmToken);
     Optional<UserEntity> findByStripeAccountId(String stripeAccountId);
     Optional<UserEntity> findByStripeCustomerId(String stripeCustomerId);
     Optional<UserEntity> findByCommissionPaymentMethodId(String commissionPaymentMethodId);
