@@ -81,6 +81,15 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
     Optional<PaymentEntity> findByBidIdForUpdate(@Param("bidId") UUID bidId);
 
     /**
+     * Jumeau de {@link #findByBidIdForUpdate} pour le paiement d'un fil de négociation
+     * (rail mobile money) : même verrou {@code PESSIMISTIC_WRITE} (FOR NO KEY UPDATE), même
+     * compatibilité avec le KEY SHARE de l'INSERT d'une opération pawaPay en REQUIRES_NEW.
+     */
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT p FROM PaymentEntity p WHERE p.negotiationThreadId = :threadId")
+    Optional<PaymentEntity> findByNegotiationThreadIdForUpdate(@Param("threadId") UUID threadId);
+
+    /**
      * Séquestre mobile money : PENDING → ESCROW, une seule fois. 0 = déjà en ESCROW (rejeu) ou
      * déjà CANCELLED (deadline passée pendant la saisie du PIN — l'appelant rembourse alors).
      * Le deposit qui a financé le séquestre se retrouve par {@code pawapay_operations.payment_id},

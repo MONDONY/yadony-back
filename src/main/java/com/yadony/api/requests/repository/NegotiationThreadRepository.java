@@ -93,6 +93,15 @@ public interface NegotiationThreadRepository extends JpaRepository<NegotiationTh
     List<NegotiationThreadEntity> findAwaitingPaymentExpired(@Param("cutoff") LocalDateTime cutoff);
 
     /**
+     * Fils dont le dépôt mobile money a dépassé son échéance, les plus anciens d'abord,
+     * identifiants seulement : l'expiration relit le fil sous verrou de la demande.
+     */
+    @Query("SELECT t.id FROM NegotiationThreadEntity t WHERE t.status = 'AWAITING_DEPOSIT' "
+        + "AND t.depositExpiresAt < :now ORDER BY t.depositExpiresAt ASC")
+    List<UUID> findIdsAwaitingDepositExpiredBefore(@Param("now") LocalDateTime now,
+                                                   org.springframework.data.domain.Pageable page);
+
+    /**
      * Threads {@code AWAITING_COMMISSION} dont la fenêtre de règlement (délai
      * configurable, cf. {@code NegotiationProperties.commissionWindowMinutes})
      * est dépassée sans que le voyageur n'ait scellé l'accord. Consommée par
