@@ -1,10 +1,12 @@
 package com.yadony.api.payments.mobilemoney;
 
 import com.yadony.api.common.stripe.AdminAlertService;
+import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
 import com.yadony.api.payments.pawapay.events.PawapayOperationCompletedEvent;
 import com.yadony.api.payments.pawapay.events.PawapayOperationFailedEvent;
 import java.util.Map;
+import java.util.UUID;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
@@ -30,12 +32,23 @@ import org.springframework.transaction.event.TransactionalEventListener;
 @Component
 public class MobileMoneyDepositOutcomeListener {
 
-    private final MobileMoneyBidPaymentService service;
+    private final MobileMoneyBidPaymentService bidService;
+    private final MobileMoneyNegotiationPaymentService negotiationService;
+    private final PaymentRepository paymentRepository;
     private final AdminAlertService adminAlert;
 
-    public MobileMoneyDepositOutcomeListener(MobileMoneyBidPaymentService service, AdminAlertService adminAlert) {
-        this.service = service;
+    public MobileMoneyDepositOutcomeListener(MobileMoneyBidPaymentService bidService,
+                                             MobileMoneyNegotiationPaymentService negotiationService,
+                                             PaymentRepository paymentRepository, AdminAlertService adminAlert) {
+        this.bidService = bidService;
+        this.negotiationService = negotiationService;
+        this.paymentRepository = paymentRepository;
         this.adminAlert = adminAlert;
+    }
+
+    /** Un paiement porte SOIT un bid SOIT un fil (CHECK exclusif V62) : c'est ce qui aiguille. */
+    private boolean isThreadScoped(UUID paymentId) {
+        return paymentRepository.findById(paymentId).map(p -> p.getNegotiationThreadId() != null).orElse(false);
     }
 
     /**
@@ -58,7 +71,11 @@ public class MobileMoneyDepositOutcomeListener {
     public void onCompleted(PawapayOperationCompletedEvent event) {
         if (event.kind() != PawapayOperationKind.DEPOSIT || event.paymentId() == null) return;
         try {
-            service.confirmEscrow(event.operationId(), event.paymentId());
+            if (isThreadScoped(event.paymentId())) {
+                negotiationService.confirmEscrow(event.operationId(), event.paymentId());
+            } else {
+                bidService.confirmEscrow(event.operationId(), event.paymentId());
+            }
         } catch (RuntimeException e) {
             adminAlert.raise("PAWAPAY_ESCROW_CONFIRMATION_FAILED",
                     "confirmEscrow a échoué pour le deposit " + event.operationId() + " / paiement "
@@ -74,6 +91,10 @@ public class MobileMoneyDepositOutcomeListener {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onFailed(PawapayOperationFailedEvent event) {
         if (event.kind() != PawapayOperationKind.DEPOSIT || event.paymentId() == null) return;
-        service.notifyDepositFailed(event.operationId(), event.paymentId(), event.failureCode());
+        if (isThreadScoped(event.paymentId())) {
+            negotiationService.notifyDepositFailed(event.operationId(), event.paymentId(), event.failureCode());
+        } else {
+            bidService.notifyDepositFailed(event.operationId(), event.paymentId(), event.failureCode());
+        }
     }
 }

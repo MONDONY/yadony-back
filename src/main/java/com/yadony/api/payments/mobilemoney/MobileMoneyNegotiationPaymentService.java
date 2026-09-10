@@ -10,6 +10,8 @@ import com.yadony.api.payments.PaymentEntity;
 import com.yadony.api.payments.PaymentRail;
 import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.PaymentStatus;
+import com.yadony.api.payments.events.MobileMoneyNegotiationDepositConfirmedEvent;
+import com.yadony.api.payments.events.MobileMoneyNegotiationDepositFailedEvent;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyNegotiationStatusResponse;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPaymentStatusResponse;
 import com.yadony.api.payments.pawapay.PawapayAmounts;
@@ -22,8 +24,10 @@ import com.yadony.api.payments.pawapay.PawapayProperties;
 import com.yadony.api.payments.pawapay.PawapayProviderResolver;
 import com.yadony.api.payments.pawapay.PawapayProviders;
 import com.yadony.api.payments.pawapay.PawapaySubmissionService;
+import com.yadony.api.payments.pawapay.PawapayText;
 import com.yadony.api.requests.NegotiationMobileMoneyPort;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Map;
@@ -293,6 +297,48 @@ public class MobileMoneyNegotiationPaymentService {
                 .orElseThrow(() -> new IllegalStateException("Séquestre sans deposit COMPLETED : paiement " + p.getId()));
         submitRefund(p, deposit);
         return true;
+    }
+
+    // ── Séquestre ───────────────────────────────────────────────────────
+
+    /**
+     * Deposit COMPLETED : PENDING → ESCROW une seule fois (claim atomique). Jamais de setter sur
+     * {@code payment} après le claim. Le scellement du fil est délégué à {@code requests/} par
+     * {@link MobileMoneyNegotiationDepositConfirmedEvent} ; si le fil n'est plus scellable, ce
+     * package rappelle {@link #refundEscrowedDeposit} par le port.
+     */
+    @Transactional
+    public void confirmEscrow(UUID operationId, UUID paymentId) {
+        int moved = paymentRepository.markEscrowIfPending(paymentId, Instant.now());
+        PaymentEntity payment = paymentRepository.findById(paymentId)
+                .orElseThrow(() -> new IllegalStateException("Paiement introuvable : " + paymentId));
+        if (moved == 0) {
+            if (payment.getStatus() == PaymentStatus.CANCELLED) {
+                // Échéance passée pendant la saisie du PIN : encaissé quand même, rendu sur-le-champ.
+                submitRefund(payment, operations.get(operationId));
+            } else {
+                log.info("Deposit {} déjà appliqué sur le paiement {} ({})", operationId, paymentId, payment.getStatus());
+            }
+            return;
+        }
+        audit.log("PAYMENT", paymentId, AUDIT_CONFIRMED, null, Map.of("threadId", payment.getNegotiationThreadId().toString(),
+                "operationId", operationId.toString(), "amount", payment.getAmount().toPlainString(), "currency", payment.getCurrency()));
+        events.publishEvent(new MobileMoneyNegotiationDepositConfirmedEvent(payment.getNegotiationThreadId(), paymentId, operationId));
+        log.info("Séquestre mobile money : paiement {} ESCROW, fil {}", paymentId, payment.getNegotiationThreadId());
+    }
+
+    /** Deposit FAILED : le paiement reste PENDING (nouvel essai possible), le fil est prévenu par événement. */
+    @Transactional
+    public void notifyDepositFailed(UUID operationId, UUID paymentId, String failureCode) {
+        PaymentEntity payment = paymentRepository.findById(paymentId).orElse(null);
+        if (payment == null || payment.getNegotiationThreadId() == null) {
+            log.warn("Deposit {} FAILED : paiement {} introuvable ou sans fil, notification abandonnée", operationId, paymentId);
+            return;
+        }
+        String safe = PawapayText.clamp(failureCode);
+        audit.log("PAYMENT", paymentId, AUDIT_FAILED, null, Map.of("threadId", payment.getNegotiationThreadId().toString(),
+                "operationId", operationId.toString(), "failureCode", safe == null ? "" : safe));
+        events.publishEvent(new MobileMoneyNegotiationDepositFailedEvent(payment.getNegotiationThreadId(), paymentId, safe));
     }
 
     /** Montant soumis = celui du DEPOSIT, jamais payment.getAmount() (même règle que RefundProcessor). */

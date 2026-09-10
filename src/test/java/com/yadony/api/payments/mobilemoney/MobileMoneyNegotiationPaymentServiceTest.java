@@ -18,6 +18,8 @@ import com.yadony.api.payments.PaymentEntity;
 import com.yadony.api.payments.PaymentRail;
 import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.PaymentStatus;
+import com.yadony.api.payments.events.MobileMoneyNegotiationDepositConfirmedEvent;
+import com.yadony.api.payments.events.MobileMoneyNegotiationDepositFailedEvent;
 import com.yadony.api.payments.pawapay.PawapayClient;
 import com.yadony.api.payments.pawapay.PawapayOperationEntity;
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
@@ -260,6 +262,69 @@ class MobileMoneyNegotiationPaymentServiceTest {
 
         assertThat(service.refundEscrowedDeposit(threadId)).isFalse();
         verify(submission, never()).submitRefund(any(), any(), any());
+    }
+
+    // ── confirmEscrow / notifyDepositFailed ────────────────────────────────
+
+    @Test
+    void confirmEscrow_wins_publishesConfirmedEvent() {
+        PaymentEntity p = payment(PaymentStatus.PENDING);
+        UUID opId = UUID.randomUUID();
+        when(paymentRepository.markEscrowIfPending(eq(p.getId()), any())).thenReturn(1);
+        when(paymentRepository.findById(p.getId())).thenReturn(Optional.of(p));
+
+        service.confirmEscrow(opId, p.getId());
+
+        ArgumentCaptor<Object> ev = ArgumentCaptor.forClass(Object.class);
+        verify(events).publishEvent(ev.capture());
+        assertThat(ev.getValue()).isInstanceOf(MobileMoneyNegotiationDepositConfirmedEvent.class);
+        var e = (MobileMoneyNegotiationDepositConfirmedEvent) ev.getValue();
+        assertThat(e.threadId()).isEqualTo(threadId);
+        assertThat(e.operationId()).isEqualTo(opId);
+        verify(audit).log(eq("PAYMENT"), eq(p.getId()), eq("NEGOTIATION_DEPOSIT_CONFIRMED"), any(), any());
+    }
+
+    @Test
+    void confirmEscrow_replay_isSilent() {
+        PaymentEntity p = payment(PaymentStatus.ESCROW);
+        when(paymentRepository.markEscrowIfPending(eq(p.getId()), any())).thenReturn(0);
+        when(paymentRepository.findById(p.getId())).thenReturn(Optional.of(p));
+
+        service.confirmEscrow(UUID.randomUUID(), p.getId());
+
+        verify(events, never()).publishEvent(any());
+        verify(submission, never()).submitRefund(any(), any(), any());
+    }
+
+    @Test
+    void confirmEscrow_afterCancellation_refundsTheDeposit() {
+        PaymentEntity p = payment(PaymentStatus.CANCELLED);
+        UUID opId = UUID.randomUUID();
+        when(paymentRepository.markEscrowIfPending(eq(p.getId()), any())).thenReturn(0);
+        when(paymentRepository.findById(p.getId())).thenReturn(Optional.of(p));
+        PawapayOperationEntity deposit = operation(p.getId(), PawapayOperationStatus.COMPLETED, new BigDecimal("33000"));
+        when(operations.get(opId)).thenReturn(deposit);
+        PawapayOperationEntity refund = operation(p.getId(), PawapayOperationStatus.ACCEPTED, new BigDecimal("33000"));
+        when(submission.submitRefund(p.getId(), deposit, new BigDecimal("33000"))).thenReturn(refund);
+        when(transactionManager.getTransaction(any())).thenReturn(org.mockito.Mockito.mock(org.springframework.transaction.TransactionStatus.class));
+
+        service.confirmEscrow(opId, p.getId());
+
+        verify(submission).submitRefund(p.getId(), deposit, new BigDecimal("33000"));
+        verify(events, never()).publishEvent(any());
+    }
+
+    @Test
+    void notifyDepositFailed_publishesFailedEvent_paymentStaysPending() {
+        PaymentEntity p = payment(PaymentStatus.PENDING);
+        when(paymentRepository.findById(p.getId())).thenReturn(Optional.of(p));
+
+        service.notifyDepositFailed(UUID.randomUUID(), p.getId(), "PAYER_LIMIT_REACHED");
+
+        ArgumentCaptor<Object> ev = ArgumentCaptor.forClass(Object.class);
+        verify(events).publishEvent(ev.capture());
+        assertThat(ev.getValue()).isInstanceOf(MobileMoneyNegotiationDepositFailedEvent.class);
+        verify(paymentRepository, never()).markCancelledIfPending(any());
     }
 
     // ── initiateDeposit ──────────────────────────────────────────────────
