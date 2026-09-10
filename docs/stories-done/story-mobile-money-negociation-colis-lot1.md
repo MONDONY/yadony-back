@@ -2,7 +2,7 @@
 
 **Date :** 2026-09-10
 **Status :** Complète
-**Branche :** worktree `mobile-money-negociation-lot1` (base `18d3ca98`, HEAD `f28fb5e0`)
+**Branche :** worktree `mobile-money-negociation-lot1` (base `18d3ca98`, HEAD `5bf99dd8` après la vague de correction de la revue finale)
 **Spec :** `docs-claude/docs/superpowers/specs/2026-09-10-mobile-money-negociation-colis-design.md`
 
 ## Résumé
@@ -29,19 +29,21 @@ lot 2 (exposition + app) n'est pas fusionné. Déploiement sans effet visible c�
   la partie pawaPay commune (`PawapayProviderResolver`, `PawapaySubmissionService`,
   `PawapayOperationService`).
 - `src/main/java/com/yadony/api/payments/mobilemoney/NegotiationMobileMoneyAdapter.java` —
-  implémentation `payments/` de `NegotiationMobileMoneyPort`, délègue au service ci-dessus (3
+  implémentation `payments/` de `NegotiationMobileMoneyPort`, délègue au service ci-dessus (4
   méthodes). Symétrique de `NegotiationEscrowAdapter` côté carte.
 - `src/main/java/com/yadony/api/requests/NegotiationMobileMoneyPort.java` — port consommé par
-  `requests/` : `createPendingDeposit`, `releasePendingDeposit`, `refundEscrowedDeposit`, les
-  records `PendingDeposit` et l'énumération `ReleaseOutcome` (`CANCELLED`, `NOTHING_PENDING`,
-  `DEPOSIT_OPEN`, `DEPOSIT_COMPLETED_NOT_APPLIED`).
+  `requests/` : `createPendingDeposit`, `releasePendingDeposit`, `repairDepositCompletedNotApplied`,
+  `refundEscrowedDeposit`, le record `PendingDeposit` et l'énumération `ReleaseOutcome`
+  (`CANCELLED`, `NOTHING_PENDING`, `DEPOSIT_OPEN`, `DEPOSIT_COMPLETED_NOT_APPLIED`,
+  `ESCROW_NOT_SEALED`).
 - `src/main/java/com/yadony/api/requests/service/NegotiationDepositExpiryRunner.java` —
   scheduler minute (`yadony.pawapay.deadline-cron`) : fils `AWAITING_DEPOSIT` échus, un
-  `REQUIRES_NEW` par fil, alerte dédupliquée si un dépôt `COMPLETED` n'a pas encore été
-  appliqué.
+  `REQUIRES_NEW` par fil ; un maillon asynchrone perdu (dépôt `COMPLETED` jamais confirmé,
+  séquestre posé jamais scellé) est réparé plutôt qu'expiré, alerte dédupliquée seulement si la
+  réparation lève.
 - `src/main/java/com/yadony/api/requests/service/NegotiationDepositListener.java` — écoute
   `MobileMoneyNegotiationDepositConfirmedEvent`/`…FailedEvent` (`AFTER_COMMIT` + `REQUIRES_NEW`,
-  règle 18 du projet), appelle `finalizeAfterMobileMoneyDeposit` / `revertMobileMoneyDeposit`.
+  règle 18 du projet), appelle `finalizeAfterMobileMoneyDeposit` / `failMobileMoneyDeposit`.
 - `src/main/java/com/yadony/api/requests/event/NegotiationDepositPendingEvent.java` /
   `NegotiationDepositRevertedEvent.java` — événements consommés par `notifications/`.
 - `src/main/java/com/yadony/api/payments/events/MobileMoneyNegotiationDepositConfirmedEvent.java`
@@ -59,8 +61,9 @@ lot 2 (exposition + app) n'est pas fusionné. Déploiement sans effet visible c�
 
 - `src/main/java/com/yadony/api/requests/service/NegotiationService.java` (+173 lignes) —
   nouvelles méthodes `prepareMobileMoneyDeposit`, `finalizeAfterMobileMoneyDeposit`,
-  `revertMobileMoneyDeposit`, `cancelMobileMoneyDeposit`, `expireMobileMoneyDeposit`,
-  `requireParticipantThread`, records `PreparedDeposit` / `DepositExpiryOutcome`. Injection de
+  `revertMobileMoneyDeposit`, `failMobileMoneyDeposit`, `cancelMobileMoneyDeposit`,
+  `expireMobileMoneyDeposit`, `requireParticipantThread`, record `PreparedDeposit`, énumération
+  `DepositExpiryOutcome` (`REVERTED`, `IGNORED`, `REPAIRED`). Injection de
   `NegotiationMobileMoneyPort`. `travelerCanOffer` et `computeAvailableMethods` **non touchés**
   côté ouverture (voir Pièges).
 - `src/main/java/com/yadony/api/requests/controller/NegotiationController.java` (+36 lignes) —
@@ -72,17 +75,20 @@ lot 2 (exposition + app) n'est pas fusionné. Déploiement sans effet visible c�
 - `src/main/java/com/yadony/api/requests/event/NegotiationCancelledEvent.java` — porte
   l'information nécessaire au remboursement rail-aware.
 - `src/main/java/com/yadony/api/requests/repository/NegotiationThreadRepository.java` —
-  `findIdsAwaitingDepositExpiredBefore` (scheduler), `findPackageRequestIdById`,
-  `findByNegotiationThreadIdForUpdate` côté paiement (voir plus bas).
+  `findIdsAwaitingDepositExpiredBefore` (scheduler), `findPackageRequestIdById`, et
+  `AWAITING_DEPOSIT` ajouté aux deux requêtes de statuts actifs
+  (`findActiveByPackageRequestIdAndTravelerId`, `existsActiveByTravelerAnnouncementId`).
 - `src/main/java/com/yadony/api/payments/PaymentRepository.java` — `findByNegotiationThreadIdForUpdate`
-  (verrou `PESSIMISTIC_WRITE`, jumeau de `findByBidIdForUpdate`).
+  (verrou `PESSIMISTIC_WRITE`, jumeau de `findByBidIdForUpdate`), `isThreadScoped` (requête
+  scalaire d'aiguillage, jamais d'entité chargée avant un claim bulk).
 - `src/main/java/com/yadony/api/payments/PaymentService.java` — `cancelNegotiationEscrow`
   bifurque sur `payment.getRail() == PaymentRail.PAWAPAY` : jamais Stripe sur ce rail, libère un
   `PENDING` ou rembourse un `ESCROW` via `MobileMoneyNegotiationPaymentService` (injection
   `@Autowired(required = false)` pour ne pas casser les constructeurs des tests existants).
 - `src/main/java/com/yadony/api/payments/mobilemoney/MobileMoneyDepositOutcomeListener.java` /
-  `MobileMoneyPayoutOutcomeListener.java` — aiguillage par portée du paiement (`bidId` non nul
-  → service bid, `negotiationThreadId` non nul → service fil) ; le payout retrouve le bid via
+  `MobileMoneyPayoutOutcomeListener.java` — aiguillage par portée du paiement
+  (`negotiationThreadId` non nul → service fil, sinon service bid), par la requête scalaire
+  `PaymentRepository.isThreadScoped` pour le dépôt ; le payout retrouve le bid via
   `thread.materializedBidId` quand `payment.bidId` est nul.
 - `src/main/java/com/yadony/api/payments/pawapay/PawapayProperties.java` /
   `PawapayReturnController.java` — composant `deepLinkAwaitingThread`, route
@@ -93,7 +99,7 @@ lot 2 (exposition + app) n'est pas fusionné. Déploiement sans effet visible c�
 - `src/main/resources/application.yml` / `src/test/resources/application-test.yml` — clé de
   deep link du rail fil.
 
-Détail exhaustif : `git diff --stat 18d3ca98..HEAD` (48 fichiers, +2668/-37).
+Détail exhaustif : `git diff --stat 18d3ca98..HEAD` (51 fichiers, +3545/-37, hors commit de story).
 
 ## Comment ça fonctionne (pour la maintenance)
 
@@ -129,7 +135,9 @@ Détail exhaustif : `git diff --stat 18d3ca98..HEAD` (48 fichiers, +2668/-37).
 Issue non aboutie (échec pawaPay, expiration ou renoncement) : le fil revient à
 `AWAITING_PAYMENT`, l'accord tient, les fils concurrents ne bougent pas.
 `revertMobileMoneyDeposit` remet `depositExpiresAt = null`, publie
-`NegotiationDepositRevertedEvent`.
+`NegotiationDepositRevertedEvent`. Les trois chemins passent d'abord par
+`releasePendingDeposit` (port) : si un dépôt est en vol, encaissé pas encore confirmé ou déjà
+en séquestre, le fil ne bouge pas.
 
 ### Points d'entrée API
 
@@ -150,7 +158,8 @@ Préfixe `/negotiations/{id}/mobile-money` :
   Pièges).
 - `PaymentEntity` → table `payments` : une ligne `negotiation_thread_id` non nul, `bid_id` nul,
   `rail = PAWAPAY`. Cycle `PENDING` (créée) → `ESCROW` (deposit confirmé) → `RELEASED` (payout)
-  ou `FAILED`/`CANCELLED` (échec, expiration) ou `REFUNDED` (dépôt tardif après annulation).
+  ou `CANCELLED` (échec libéré, expiration, renoncement) ou `REFUNDED` (dépôt tardif après
+  annulation, séquestre orphelin). Pas de `PaymentStatus.FAILED` sur ce rail.
   Contrainte `UNIQUE(negotiation_thread_id)` réutilisée (recyclage d'une ligne `CANCELLED` à
   la bascule carte → mobile money).
 - `PawapayOperationEntity` (existant, inchangé) : lien vers l'opération pawaPay, `payment_id`
@@ -161,7 +170,7 @@ Préfixe `/negotiations/{id}/mobile-money` :
 | Événement | Publié par | Écouté par |
 |---|---|---|
 | `MobileMoneyNegotiationDepositConfirmedEvent` | `MobileMoneyNegotiationPaymentService.confirmEscrow` | `NegotiationDepositListener.onDepositConfirmed` → `finalizeAfterMobileMoneyDeposit` |
-| `MobileMoneyNegotiationDepositFailedEvent` | `MobileMoneyNegotiationPaymentService.notifyDepositFailed` | `NegotiationDepositListener.onDepositFailed` → `revertMobileMoneyDeposit` |
+| `MobileMoneyNegotiationDepositFailedEvent` | `MobileMoneyNegotiationPaymentService.notifyDepositFailed` | `NegotiationDepositListener.onDepositFailed` → `failMobileMoneyDeposit` |
 | `NegotiationDepositPendingEvent` | `NegotiationService.prepareMobileMoneyDeposit` | `RequestEventsListener.onNegotiationDepositPending` (notification expéditeur + voyageur) |
 | `NegotiationDepositRevertedEvent` | `NegotiationService.revertMobileMoneyDeposit` | `RequestEventsListener.onNegotiationDepositReverted` (notification expéditeur seul) |
 
@@ -181,7 +190,8 @@ existant, `negotiationThreadId` non nul → chemin fil ci-dessus). Communication
   retournant le nombre de lignes touchées ; après un claim réussi, l'entité relue n'est jamais
   ré-modifiée par un setter (le payload de l'audit et de l'événement vient des valeurs déjà
   connues, pas d'une relecture mutée).
-- **Fenêtre séquestre-posé/fil-pas-encore-scellé** : voir Pièges, ruling `DEPOSIT_COMPLETED_NOT_APPLIED`.
+- **Fenêtre séquestre-posé/fil-pas-encore-scellé** : `ESCROW_NOT_SEALED`, voir Décisions
+  techniques 1 et 8.
 - **Garde de modération** : `prepareMobileMoneyDeposit` appelle
   `assertTravelerAnnouncementActive` avant `createPendingDeposit`, comme la carte
   (`initiatePayment`) et l'espèce (`settleCommission`) — le trajet dédié du voyageur peut avoir
@@ -274,11 +284,25 @@ Les trois méthodes de délégation (`createPendingDeposit`, `releasePendingDepo
 trois tests de délégation pure, un par méthode, vérifiant l'argument transmis et la valeur
 rendue. `Tests run: 3, Failures: 0, Errors: 0`.
 
+### Vague de correction de la revue finale
+
+Tests ajoutés ou réécrits (chiffres de la suite complète à relire par le contrôleur) :
+`MobileMoneyDepositOutcomeListenerTest` (aiguillage sans `findById`, paiement inconnu),
+`PaymentRepositoryMobileMoneyTest` (`isThreadScoped` en H2), `MobileMoneyNegotiationPaymentServiceTest`
+(`ESCROW_NOT_SEALED`, `repairDepositCompletedNotApplied` x3, `paymentId` de l'événement),
+`NegotiationMobileMoneyAdapterTest` (4e délégation), `NegotiationServiceMobileMoneyTest` (promo
+valide / invalide / absent, expire sur `ESCROW_NOT_SEALED` et `DEPOSIT_COMPLETED_NOT_APPLIED`,
+réparation qui lève, `failMobileMoneyDeposit` x5, cancel sur `ESCROW_NOT_SEALED`),
+`NegotiationDepositListenerTest`, `NegotiationDepositExpiryRunnerTest` (`REPAIRED` sans alerte,
+alerte dédupliquée sur exception), `NegotiationThreadRepositoryDepositTest` (statuts actifs),
+`PaymentServiceCancelNegotiationEscrowTest` (T7 différé : `DEPOSIT_OPEN`,
+`DEPOSIT_COMPLETED_NOT_APPLIED`, `ESCROW_NOT_SEALED` → `false`).
+
 ## Décisions techniques
 
 Rulings actés pendant l'implémentation (registre `progress.md` de la tâche SDD) :
 
-1. **Séquestre posé, fil pas encore scellé → `DEPOSIT_COMPLETED_NOT_APPLIED` (pas
+1. **Séquestre posé, fil pas encore scellé → `ESCROW_NOT_SEALED` (pas
    `NOTHING_PENDING`)** : le plan initial faisait rendre `NOTHING_PENDING` par
    `releasePendingDeposit` pour tout statut de paiement différent de `PENDING`, y compris
    `ESCROW`. Conséquence si laissé tel quel : le balayage d'expiration ou un renoncement de
@@ -286,11 +310,10 @@ Rulings actés pendant l'implémentation (registre `progress.md` de la tâche SD
    déjà commité) et le scellement du fil (`finalizeAfterMobileMoneyDeposit`, encore en vol dans
    sa propre transaction asynchrone), aurait rétrogradé le fil à `AWAITING_PAYMENT` alors qu'un
    dépôt valide venait d'être encaissé — argent engagé, accord perdu côté fil. Décision :
-   `ESCROW` retourne `DEPOSIT_COMPLETED_NOT_APPLIED`, le fil ne bouge pas, une alerte admin
-   dédupliquée est levée (`NegotiationDepositExpiryRunner`), et le scellement arrive par la voie
-   normale (`finalize` dès que sa transaction commite). Coût si le ruling était infondé : un fil
-   pourrait rester coincé en `AWAITING_DEPOSIT` avec le séquestre posé jusqu'à intervention
-   manuelle — jamais un remboursement à tort d'un dépôt valide.
+   `ESCROW` retourne une issue dédiée (`DEPOSIT_COMPLETED_NOT_APPLIED` à l'origine, puis
+   `ESCROW_NOT_SEALED` depuis la revue finale, point 8), le fil ne bouge pas, et le scellement
+   arrive par la voie normale (`finalize` dès que sa transaction commite) ou, s'il s'est perdu,
+   par le balayage. Jamais un remboursement à tort d'un dépôt valide.
 2. **Garde de modération ajoutée dans `prepareMobileMoneyDeposit`** : le plan omettait l'appel à
    `assertTravelerAnnouncementActive` avant `createPendingDeposit`. Ajoutée par cohérence avec
    la carte (`initiatePayment`) et l'espèce (`settleCommission`), qui la portent déjà — sinon un
@@ -319,6 +342,60 @@ Rulings actés pendant l'implémentation (registre `progress.md` de la tâche SD
    dans `negotiation_threads`, dont les FK vers `package_requests`/`users` auraient rendu
    l'INSERT nu impossible sans données satellites. Coût : un test un peu moins comportemental,
    la contrainte reste bien exercée.
+
+### Vague de correction de la revue finale (commits `8d36883d` à `5bf99dd8`)
+
+7. **Aiguillage bid / fil par requête scalaire, jamais d'entité chargée avant le claim
+   (C1)** : `MobileMoneyDepositOutcomeListener.isThreadScoped` faisait `findById` dans sa
+   transaction `REQUIRES_NEW`, puis `confirmEscrow` (joint) exécutait le claim bulk
+   `markEscrowIfPending` (sans `clearAutomatically`) et un second `findById` qui rendait
+   l'instance déjà gérée sans relire la base : une annulation commitée entre les deux restait
+   invisible, la branche `CANCELLED` (remboursement) ne s'exécutait jamais, le dépôt encaissé
+   restait chez pawaPay. Les rails bid et fil héritaient de la régression. Remplacé par
+   `PaymentRepository.isThreadScoped` (`select (p.negotiationThreadId is not null) ...`,
+   `Optional<Boolean>`), vérifié en H2 (`PaymentRepositoryMobileMoneyTest`) et par
+   `verify(paymentRepository, never()).findById(any())` dans le test du listener.
+8. **Réparation des maillons asynchrones perdus par le balayage (I2)** : deux fenêtres à un
+   seul coup restaient sans rejeu : opération `DEPOSIT` `COMPLETED` commitée mais
+   `confirmEscrow` jamais exécuté (paiement `PENDING` pour toujours) ; paiement `ESCROW`
+   commité mais `finalizeAfterMobileMoneyDeposit` jamais exécuté (fil `AWAITING_DEPOSIT` pour
+   toujours). Le port distingue désormais `ESCROW_NOT_SEALED` (séquestre posé, scellement pas
+   passé) de `DEPOSIT_COMPLETED_NOT_APPLIED` (dépôt encaissé, paiement encore `PENDING`) et
+   gagne `repairDepositCompletedNotApplied` (rejeu idempotent de `confirmEscrow` sur le dernier
+   dépôt `COMPLETED`, modèle `MobileMoneyBidPaymentService`). `expireMobileMoneyDeposit` rejoue
+   le scellement (`ESCROW_NOT_SEALED`) ou la confirmation (`DEPOSIT_COMPLETED_NOT_APPLIED`,
+   l'événement republié scellera au tour suivant) et rend `REPAIRED` ; le runner n'alerte plus
+   que si une réparation lève (`NEGO_DEPOSIT_DONE_<threadId>`, dédupliquée, en filet).
+   `cancelMobileMoneyDeposit` répond 409 `negotiation/deposit-in-flight` et
+   `PaymentService.cancelNegotiationEscrow` rend `false` sur `ESCROW_NOT_SEALED`.
+9. **L'échec d'un dépôt passe par le port (I3)** : `revertMobileMoneyDeposit("deposit-failed")`
+   était appelé à l'aveugle par l'écouteur ; si l'expéditeur avait relancé une opération B
+   entre l'échec de A et ce rejeu asynchrone, le fil revenait à `AWAITING_PAYMENT` et
+   `finalize` remboursait ensuite le dépôt B valide. `failMobileMoneyDeposit` interroge
+   `releasePendingDeposit` : `DEPOSIT_OPEN`, `DEPOSIT_COMPLETED_NOT_APPLIED`, `ESCROW_NOT_SEALED`
+   laissent le fil intact ; `CANCELLED`, `NOTHING_PENDING` ramènent à payer.
+10. **Statuts de paiement sur échec** : le paiement reste `PENDING` à l'échec pawaPay (nouvel
+    essai possible), puis passe `CANCELLED` par la libération (`markCancelledIfPending`), à
+    l'expiration comme au renoncement ; `createPendingPayment` recycle une ligne `CANCELLED` en
+    `PENDING` au prochain essai (`UNIQUE(negotiation_thread_id)`). Il n'existe pas de
+    `PaymentStatus.FAILED` sur ce rail.
+11. **Code promo résolu au dépôt (I1)** : `prepareMobileMoneyDeposit` résolvait le taux sans
+    `thread.promoCode` alors que `start()` copie le promo de la demande sur le fil avec
+    `commissionRate` nul ; `sealAcceptedThread` émettait ensuite le promo et
+    `ThreadAcceptedBidListener` le rachetait au taux non remisé. Même contrat que la carte
+    (`PaymentService.createNegotiationEscrow`) : taux persisté prioritaire ; sinon promo résolu
+    à trois arguments, et s'il est invalide, repli sur le taux de base ET `promoCode` effacé du
+    fil (jamais racheté).
+12. **`AWAITING_DEPOSIT` dans les requêtes de statuts actifs (I4)** :
+    `findActiveByPackageRequestIdAndTravelerId` et `existsActiveByTravelerAnnouncementId`
+    l'ignoraient (dépublication du trajet lié pendant un dépôt, second fil sur la même demande,
+    fiche demande sans le fil). Ajouté aux deux. **V254 différée** : l'index unique partiel V63
+    (`negotiation_threads`, statuts actifs) n'inclut ni `AWAITING_COMMISSION` (dérive
+    préexistante) ni `AWAITING_DEPOSIT` ; toucher un index unique en prod mérite sa propre PR et
+    sa propre recette.
+13. **`deposit_expires_at` en `TIMESTAMP`** (sans fuseau), cohérent avec
+    `bids.awaiting_payment_expires_at` et le `LocalDateTime` UTC du code, alors que la spec
+    disait `TIMESTAMPTZ`. Toute l'horloge du rail est en UTC (`LocalDateTime.now(ZoneOffset.UTC)`).
 
 ## Vérifications de non-exposition (rail à blanc)
 
