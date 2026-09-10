@@ -238,6 +238,20 @@ class MobileMoneyNegotiationPaymentServiceTest {
         verify(audit).log(eq("PAYMENT"), eq(p.getId()), eq("NEGOTIATION_DEPOSIT_CANCELLED"), any(), any());
     }
 
+    @Test
+    void releasePendingDeposit_escrowed_isCompletedNotApplied_neverCancelled() {
+        // Le rappel pawaPay a déjà posé le séquestre (PENDING → ESCROW) et commité, mais le
+        // fil n'est pas encore scellé (finalizeAfterMobileMoneyDeposit en vol) : ne jamais
+        // rendre NOTHING_PENDING ici, sous peine de ramener le fil à AWAITING_PAYMENT alors
+        // qu'un dépôt valide est déjà encaissé.
+        PaymentEntity p = payment(PaymentStatus.ESCROW);
+        when(paymentRepository.findByNegotiationThreadIdForUpdate(threadId)).thenReturn(Optional.of(p));
+
+        assertThat(service.releasePendingDeposit(threadId)).isEqualTo(NegotiationMobileMoneyPort.ReleaseOutcome.DEPOSIT_COMPLETED_NOT_APPLIED);
+        verify(paymentRepository, never()).markCancelledIfPending(any());
+        verify(operations, never()).findLatest(any(), any());
+    }
+
     // ── refundEscrowedDeposit ────────────────────────────────────────────
 
     @Test

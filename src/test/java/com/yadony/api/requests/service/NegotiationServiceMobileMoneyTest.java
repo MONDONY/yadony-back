@@ -41,6 +41,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.atLeastOnce;
 
@@ -155,9 +156,9 @@ class NegotiationServiceMobileMoneyTest {
     void prepare_alreadyAwaitingDeposit_isIdempotent() {
         thread.setStatus(NegotiationThreadStatus.AWAITING_DEPOSIT);
         thread.setPaymentMethod(PaymentMethod.MOBILE_MONEY);
-        thread.setDepositExpiresAt(LocalDateTime.now().plusMinutes(10));
+        thread.setDepositExpiresAt(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(10));
         when(mobileMoneyPort.createPendingDeposit(any(), any(), any(), any(), any(), any()))
-                .thenReturn(new NegotiationMobileMoneyPort.PendingDeposit(UUID.randomUUID(), new BigDecimal("33000"), new BigDecimal("3000"), LocalDateTime.now().plusMinutes(30)));
+                .thenReturn(new NegotiationMobileMoneyPort.PendingDeposit(UUID.randomUUID(), new BigDecimal("33000"), new BigDecimal("3000"), LocalDateTime.now(ZoneOffset.UTC).plusMinutes(30)));
 
         var prepared = service.prepareMobileMoneyDeposit(senderId, thread.getId());
 
@@ -185,6 +186,43 @@ class NegotiationServiceMobileMoneyTest {
     void prepare_notSender_is403() {
         assertThatThrownBy(() -> service.prepareMobileMoneyDeposit(UUID.randomUUID(), thread.getId()))
                 .isInstanceOf(ResponseStatusException.class).hasMessageContaining("negotiation/not-thread-participant");
+    }
+
+    @Test
+    void prepare_methodNotAcceptedByRequest_is422() {
+        request.setAcceptedPaymentMethods(EnumSet.of(PaymentMethod.CASH));
+        assertThatThrownBy(() -> service.prepareMobileMoneyDeposit(senderId, thread.getId()))
+                .isInstanceOf(ResponseStatusException.class).hasMessageContaining("payment-method/not-accepted");
+    }
+
+    @Test
+    void prepare_recipientDetailsMissing_is422() {
+        request.setRecipientPhone(null);
+        assertThatThrownBy(() -> service.prepareMobileMoneyDeposit(senderId, thread.getId()))
+                .isInstanceOf(ResponseStatusException.class).hasMessageContaining("request/details-incomplete");
+    }
+
+    @Test
+    void prepare_awaitingDepositExpired_isConflict() {
+        // AWAITING_DEPOSIT dont l'échéance est passée n'est plus "déjà en cours" (alreadyPending
+        // faux) ni AWAITING_PAYMENT : ni idempotent, ni relançable tel quel.
+        thread.setStatus(NegotiationThreadStatus.AWAITING_DEPOSIT);
+        thread.setDepositExpiresAt(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1));
+        assertThatThrownBy(() -> service.prepareMobileMoneyDeposit(senderId, thread.getId()))
+                .isInstanceOf(ResponseStatusException.class).hasMessageContaining("thread/not-awaiting-payment");
+    }
+
+    @Test
+    void prepare_travelerAnnouncementRemovedByAdmin_isRefused() {
+        UUID announcementId = UUID.randomUUID();
+        thread.setTravelerAnnouncementId(announcementId);
+        com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
+        ann.setStatus(com.yadony.api.matching.AnnouncementStatus.REMOVED_BY_ADMIN);
+        when(announcementRepo.findById(announcementId)).thenReturn(Optional.of(ann));
+
+        assertThatThrownBy(() -> service.prepareMobileMoneyDeposit(senderId, thread.getId()))
+                .isInstanceOf(ResponseStatusException.class).hasMessageContaining("announcement/not-active");
+        verify(mobileMoneyPort, never()).createPendingDeposit(any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -235,7 +273,44 @@ class NegotiationServiceMobileMoneyTest {
     void revert_notAwaitingDeposit_isNoop() {
         service.revertMobileMoneyDeposit(thread.getId(), "deposit-failed");
         assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.AWAITING_PAYMENT);
-        verify(eventPublisher, never()).publishEvent(any());
+        verifyNoInteractions(eventPublisher);
+    }
+
+    @Test
+    void revert_requestMissing_publishesWithNullSenderId() {
+        thread.setStatus(NegotiationThreadStatus.AWAITING_DEPOSIT);
+        thread.setPackageRequestId(UUID.randomUUID()); // aucune demande stubbée pour cet id
+
+        service.revertMobileMoneyDeposit(thread.getId(), "deposit-expired");
+
+        ArgumentCaptor<NegotiationDepositRevertedEvent> ev = ArgumentCaptor.forClass(NegotiationDepositRevertedEvent.class);
+        verify(eventPublisher).publishEvent(ev.capture());
+        assertThat(ev.getValue().senderId()).isNull();
+    }
+
+    @Test
+    void cancelDeposit_notSender_is403_threadUntouched() {
+        thread.setStatus(NegotiationThreadStatus.AWAITING_DEPOSIT);
+        assertThatThrownBy(() -> service.cancelMobileMoneyDeposit(UUID.randomUUID(), thread.getId()))
+                .isInstanceOf(ResponseStatusException.class).hasMessageContaining("negotiation/not-thread-participant");
+        assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.AWAITING_DEPOSIT);
+    }
+
+    @Test
+    void cancelDeposit_notAwaitingDeposit_is409() {
+        // Statut par défaut du fil : AWAITING_PAYMENT.
+        assertThatThrownBy(() -> service.cancelMobileMoneyDeposit(senderId, thread.getId()))
+                .isInstanceOf(ResponseStatusException.class).hasMessageContaining("negotiation/not-awaiting-deposit");
+    }
+
+    @Test
+    void cancelDeposit_nothingPending_backToAwaitingPayment() {
+        thread.setStatus(NegotiationThreadStatus.AWAITING_DEPOSIT);
+        when(mobileMoneyPort.releasePendingDeposit(thread.getId())).thenReturn(NegotiationMobileMoneyPort.ReleaseOutcome.NOTHING_PENDING);
+
+        service.cancelMobileMoneyDeposit(senderId, thread.getId());
+
+        assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.AWAITING_PAYMENT);
     }
 
     @Test
@@ -285,6 +360,48 @@ class NegotiationServiceMobileMoneyTest {
 
         assertThat(service.expireMobileMoneyDeposit(thread.getId())).isEqualTo(NegotiationService.DepositExpiryOutcome.DEPOSIT_COMPLETED_NOT_APPLIED);
         assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.AWAITING_DEPOSIT);
+    }
+
+    @Test
+    void expire_nothingPending_isReverted() {
+        thread.setStatus(NegotiationThreadStatus.AWAITING_DEPOSIT);
+        thread.setDepositExpiresAt(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1));
+        when(mobileMoneyPort.releasePendingDeposit(thread.getId())).thenReturn(NegotiationMobileMoneyPort.ReleaseOutcome.NOTHING_PENDING);
+
+        assertThat(service.expireMobileMoneyDeposit(thread.getId())).isEqualTo(NegotiationService.DepositExpiryOutcome.REVERTED);
+        assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.AWAITING_PAYMENT);
+    }
+
+    @Test
+    void expire_depositOpen_isIgnored_threadUntouched() {
+        thread.setStatus(NegotiationThreadStatus.AWAITING_DEPOSIT);
+        thread.setDepositExpiresAt(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1));
+        when(mobileMoneyPort.releasePendingDeposit(thread.getId())).thenReturn(NegotiationMobileMoneyPort.ReleaseOutcome.DEPOSIT_OPEN);
+
+        assertThat(service.expireMobileMoneyDeposit(thread.getId())).isEqualTo(NegotiationService.DepositExpiryOutcome.IGNORED);
+        assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.AWAITING_DEPOSIT);
+    }
+
+    @Test
+    void expire_threadMissing_isIgnored() {
+        assertThat(service.expireMobileMoneyDeposit(UUID.randomUUID())).isEqualTo(NegotiationService.DepositExpiryOutcome.IGNORED);
+        verifyNoInteractions(mobileMoneyPort);
+    }
+
+    @Test
+    void requireParticipantThread_sender_ok() {
+        assertThat(service.requireParticipantThread(senderId, thread.getId())).isSameAs(thread);
+    }
+
+    @Test
+    void requireParticipantThread_traveler_ok() {
+        assertThat(service.requireParticipantThread(travelerId, thread.getId())).isSameAs(thread);
+    }
+
+    @Test
+    void requireParticipantThread_thirdParty_is403() {
+        assertThatThrownBy(() -> service.requireParticipantThread(UUID.randomUUID(), thread.getId()))
+                .isInstanceOf(ResponseStatusException.class).hasMessageContaining("negotiation/not-thread-participant");
     }
 
     @Test

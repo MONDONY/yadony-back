@@ -1084,6 +1084,10 @@ public class NegotiationService {
         BigDecimal rate = thread.getCommissionRate() != null
             ? thread.getCommissionRate()
             : commissionRateResolver.resolve(thread.getTravelerId(), request.getSenderId());
+        // Même garde que initiatePayment (carte) et settleCommission (cash), avant tout
+        // engagement d'argent : le trajet dédié du voyageur peut avoir été retiré par la
+        // modération entre l'accord de prix et ce dépôt.
+        assertTravelerAnnouncementActive(thread.getTravelerAnnouncementId());
         NegotiationMobileMoneyPort.PendingDeposit pending = mobileMoneyPort.createPendingDeposit(
             threadId, request.getSenderId(), thread.getTravelerId(), thread.getCurrentPriceEur(), rate, thread.getCurrency());
         if (alreadyPending) {
@@ -1120,9 +1124,9 @@ public class NegotiationService {
             return; // rejeu (rappel + poller)
         }
         if (thread.getStatus() != NegotiationThreadStatus.AWAITING_DEPOSIT) {
+            boolean refunded = mobileMoneyPort.refundEscrowedDeposit(threadId);
             auditService.log("NEGOTIATION_THREAD", threadId, "DEPOSIT_ORPHANED", null,
-                Map.of("status", thread.getStatus().name()));
-            mobileMoneyPort.refundEscrowedDeposit(threadId);
+                Map.of("status", thread.getStatus().name(), "refunded", String.valueOf(refunded)));
             return;
         }
         thread.setDepositExpiresAt(null);

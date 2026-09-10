@@ -264,6 +264,16 @@ public class MobileMoneyNegotiationPaymentService {
     public NegotiationMobileMoneyPort.ReleaseOutcome releasePendingDeposit(UUID threadId) {
         Optional<PaymentEntity> payment = paymentRepository.findByNegotiationThreadIdForUpdate(threadId)
                 .filter(p -> p.getRail() == PaymentRail.PAWAPAY);
+        if (payment.isPresent() && payment.get().getStatus() == PaymentStatus.ESCROW) {
+            // Le rappel pawaPay a déjà posé le séquestre (PENDING → ESCROW) et commité, mais
+            // le fil n'est pas encore ACCEPTED : le scellement (finalizeAfterMobileMoneyDeposit)
+            // est en vol dans sa propre transaction. Rendre NOTHING_PENDING ici ramènerait le
+            // fil à AWAITING_PAYMENT pendant qu'un dépôt valide est déjà encaissé, argent
+            // engagé, accord perdu. Ne rien faire, alerter.
+            log.error("Fil {} : séquestre posé, fil pas encore scellé, libération abandonnée (paiement {})",
+                    threadId, payment.get().getId());
+            return NegotiationMobileMoneyPort.ReleaseOutcome.DEPOSIT_COMPLETED_NOT_APPLIED;
+        }
         if (payment.isEmpty() || payment.get().getStatus() != PaymentStatus.PENDING) {
             return NegotiationMobileMoneyPort.ReleaseOutcome.NOTHING_PENDING;
         }

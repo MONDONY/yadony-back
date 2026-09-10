@@ -22,7 +22,10 @@ public interface NegotiationMobileMoneyPort {
         NOTHING_PENDING,
         /** Un dépôt pawaPay est encore en vol (PIN en cours de saisie) : ne rien faire, attendre. */
         DEPOSIT_OPEN,
-        /** Dépôt COMPLETED côté pawaPay mais séquestre pas encore appliqué : ne rien faire, alerter. */
+        /**
+         * Dépôt COMPLETED côté pawaPay mais paiement encore PENDING, OU paiement déjà ESCROW
+         * dont le scellement du fil n'est pas encore passé : ne rien faire, alerter.
+         */
         DEPOSIT_COMPLETED_NOT_APPLIED
     }
 
