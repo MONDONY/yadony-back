@@ -32,6 +32,7 @@ public interface NegotiationThreadRepository extends JpaRepository<NegotiationTh
               com.yadony.api.requests.entity.NegotiationThreadStatus.OPEN,
               com.yadony.api.requests.entity.NegotiationThreadStatus.AWAITING_TRIP,
               com.yadony.api.requests.entity.NegotiationThreadStatus.AWAITING_PAYMENT,
+              com.yadony.api.requests.entity.NegotiationThreadStatus.AWAITING_DEPOSIT,
               com.yadony.api.requests.entity.NegotiationThreadStatus.AWAITING_COMMISSION,
               com.yadony.api.requests.entity.NegotiationThreadStatus.ACCEPTED
           )
@@ -66,6 +67,7 @@ public interface NegotiationThreadRepository extends JpaRepository<NegotiationTh
               com.yadony.api.requests.entity.NegotiationThreadStatus.OPEN,
               com.yadony.api.requests.entity.NegotiationThreadStatus.AWAITING_TRIP,
               com.yadony.api.requests.entity.NegotiationThreadStatus.AWAITING_PAYMENT,
+              com.yadony.api.requests.entity.NegotiationThreadStatus.AWAITING_DEPOSIT,
               com.yadony.api.requests.entity.NegotiationThreadStatus.AWAITING_COMMISSION
           )
     """)
