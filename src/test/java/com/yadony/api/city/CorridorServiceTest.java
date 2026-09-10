@@ -51,6 +51,27 @@ class CorridorServiceTest {
     }
 
     @Test
+    void getPopular_clampsLimitAtOne() {
+        when(corridorRepository.findTopByUsageCount(1)).thenReturn(List.of());
+
+        corridorService.getPopular(0);
+        corridorService.getPopular(-5);
+
+        verify(corridorRepository, times(2)).findTopByUsageCount(1);
+    }
+
+    @Test
+    void clampLimit_boundsToOneAndTwenty() {
+        // Sert de clé de cache : toutes les valeurs hors bornes partagent l'entrée du
+        // plancher ou du plafond.
+        assertThat(CorridorService.clampLimit(-5)).isEqualTo(1);
+        assertThat(CorridorService.clampLimit(0)).isEqualTo(1);
+        assertThat(CorridorService.clampLimit(6)).isEqualTo(6);
+        assertThat(CorridorService.clampLimit(20)).isEqualTo(20);
+        assertThat(CorridorService.clampLimit(100)).isEqualTo(20);
+    }
+
+    @Test
     void upsertCorridor_insertsNewCorridor() {
         when(corridorRepository.existsByDepartureCityAndArrivalCity("Lyon", "Bamako"))
             .thenReturn(false);

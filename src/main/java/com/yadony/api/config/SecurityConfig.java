@@ -1,6 +1,7 @@
 package com.yadony.api.config;
 
 import com.yadony.api.auth.FirebaseTokenFilter;
+import com.yadony.api.common.RequestCorrelationFilter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Value;
@@ -55,7 +56,11 @@ public class SecurityConfig {
         CorsConfiguration config = new CorsConfiguration();
         config.setAllowedOrigins(allowedOrigins);
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
-        config.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Internal-Secret", "X-Device-Id", "X-Bootstrap-Secret"));
+        config.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Internal-Secret", "X-Device-Id",
+                "X-Bootstrap-Secret", RequestCorrelationFilter.HEADER));
+        // Sans exposition explicite, un navigateur (portails admin/pro) ne peut pas lire
+        // l'identifiant de corrélation renvoyé par RequestCorrelationFilter.
+        config.setExposedHeaders(List.of(RequestCorrelationFilter.HEADER));
         config.setAllowCredentials(true);
         config.setMaxAge(3600L);
 
