@@ -3,19 +3,24 @@ package com.yadony.api.payments.mobilemoney;
 import com.yadony.api.auth.FirebaseContactService;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
+import com.yadony.api.common.Msisdn;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.payments.PaymentEntity;
 import com.yadony.api.payments.PaymentRail;
 import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.PaymentStatus;
+import com.yadony.api.payments.mobilemoney.dto.MobileMoneyNegotiationStatusResponse;
+import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPaymentStatusResponse;
 import com.yadony.api.payments.pawapay.PawapayAmounts;
+import com.yadony.api.payments.pawapay.PawapayErrors;
 import com.yadony.api.payments.pawapay.PawapayOperationEntity;
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
 import com.yadony.api.payments.pawapay.PawapayOperationService;
 import com.yadony.api.payments.pawapay.PawapayOperationStatus;
 import com.yadony.api.payments.pawapay.PawapayProperties;
 import com.yadony.api.payments.pawapay.PawapayProviderResolver;
+import com.yadony.api.payments.pawapay.PawapayProviders;
 import com.yadony.api.payments.pawapay.PawapaySubmissionService;
 import com.yadony.api.requests.NegotiationMobileMoneyPort;
 import java.math.BigDecimal;
@@ -146,6 +151,107 @@ public class MobileMoneyNegotiationPaymentService {
                 "travelerId", travelerId.toString(), "amount", gross.toPlainString(),
                 "commission", commission.toPlainString(), "currency", currency));
         return new NegotiationMobileMoneyPort.PendingDeposit(payment.getId(), gross, commission, expiresAt);
+    }
+
+    // ── Initiation du deposit (transaction séparée de la création) ───────
+
+    @Transactional
+    public MobileMoneyNegotiationStatusResponse initiateDeposit(UUID threadId, UUID senderId, String phoneOverride,
+                                                                LocalDateTime deadline) {
+        PaymentEntity payment = paymentRepository.findByNegotiationThreadIdForUpdate(threadId)
+                .filter(p -> p.getRail() == PaymentRail.PAWAPAY)
+                .orElseThrow(() -> notFound("mobile-money-payment-not-found", "Aucun paiement mobile money pour cette négociation"));
+        if (payment.getStatus() != PaymentStatus.PENDING) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "mobile-money-payment-not-pending",
+                    "Payment Not Pending", "Ce paiement n'est plus en attente (" + payment.getStatus() + ")");
+        }
+        if (deadline == null || deadline.isBefore(LocalDateTime.now(ZoneOffset.UTC))) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-payment-expired",
+                    "Payment Expired", "Le délai de paiement est dépassé.");
+        }
+        Optional<PawapayOperationEntity> live = operations.findLive(payment.getId(), PawapayOperationKind.DEPOSIT);
+        if (live.isPresent()) {
+            return status(threadId, deadline, Optional.of(payment), live);
+        }
+        if (!props.enabled()) {
+            throw PawapayErrors.disabled();
+        }
+        String msisdn = resolvePayerMsisdn(senderId, phoneOverride);
+        PawapayProviderResolver.Resolved resolved;
+        try {
+            resolved = providers.resolve(msisdn, PawapayOperationKind.DEPOSIT, payment.getCurrency(),
+                    "l'initiation du deposit pour la négociation " + threadId);
+        } catch (PawapayProviderResolver.UnsupportedNumberException e) {
+            throw payerUnsupported(switch (e.reason()) {
+                case NO_PROVIDER -> "Aucun opérateur mobile money reconnu pour ce numéro.";
+                case OPERATION_CLOSED -> e.providerLabel() + " ne permet pas le paiement pour le moment.";
+                case CURRENCY_MISMATCH -> "Ce numéro paie en " + e.providerCurrency() + ", ce colis est en " + payment.getCurrency() + ".";
+                case COUNTRY_UNKNOWN -> "Pays non reconnu pour ce numéro.";
+            });
+        }
+        var limits = resolved.config().deposit();
+        if (limits.minAmount() != null && payment.getAmount().compareTo(limits.minAmount()) < 0
+                || limits.maxAmount() != null && payment.getAmount().compareTo(limits.maxAmount()) > 0) {
+            throw payerUnsupported("Montant hors des limites de " + resolved.providerLabel() + ".");
+        }
+        String successfulUrl = null;
+        String failedUrl = null;
+        if (resolved.config().isRedirectDeposit()) {
+            String base = props.returnBaseUrl() + "/api/v1/pawapay/return/thread/" + threadId;
+            successfulUrl = base + "?outcome=success";
+            failedUrl = base + "?outcome=failed";
+        }
+        PawapayOperationEntity op = submission.submitDeposit(payment.getId(), resolved.msisdn(), resolved.provider(),
+                resolved.countryAlpha2(), payment.getAmount(), payment.getCurrency(), "thread-" + threadId, successfulUrl, failedUrl);
+        independentAuditTransaction.executeWithoutResult(s -> audit.log("PAYMENT", payment.getId(), AUDIT_INITIATED, senderId,
+                Map.of("threadId", threadId.toString(), "operationId", op.getId().toString(), "provider", op.getProvider(),
+                        "msisdnMasked", op.getMsisdnMasked(), "status", op.getStatus().name())));
+        if (op.getStatus() == PawapayOperationStatus.SUBMIT_REJECTED) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-deposit-rejected",
+                    "Deposit Rejected", "Paiement refusé par l'opérateur : "
+                    + (op.getFailureMessage() != null ? op.getFailureMessage() : op.getFailureCode()));
+        }
+        return status(threadId, deadline, Optional.of(payment), Optional.of(op));
+    }
+
+    private String resolvePayerMsisdn(UUID senderId, String phoneOverride) {
+        if (phoneOverride != null && !phoneOverride.isBlank()) {
+            try {
+                return Msisdn.normalize(phoneOverride);
+            } catch (IllegalArgumentException e) {
+                throw payerUnsupported("Numéro de téléphone invalide.");
+            }
+        }
+        String firebasePhone = userRepository.findById(senderId)
+                .map(u -> firebaseContact.getContact(u.getFirebaseUid()).phoneNumber()).orElse(null);
+        if (firebasePhone == null || firebasePhone.isBlank()) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-phone-required",
+                    "Phone Required", "Indiquez le numéro mobile money qui paiera.");
+        }
+        try {
+            return Msisdn.normalize(firebasePhone);
+        } catch (IllegalArgumentException e) {
+            throw payerUnsupported("Le numéro enregistré n'est pas exploitable. Indiquez un autre numéro.");
+        }
+    }
+
+    // ── Statut ──────────────────────────────────────────────────────────
+
+    @Transactional(readOnly = true)
+    public MobileMoneyNegotiationStatusResponse status(UUID threadId, LocalDateTime deadline) {
+        Optional<PaymentEntity> payment = paymentRepository.findByNegotiationThreadId(threadId)
+                .filter(p -> p.getRail() == PaymentRail.PAWAPAY);
+        Optional<PawapayOperationEntity> deposit = payment.flatMap(p -> operations.findLatest(p.getId(), PawapayOperationKind.DEPOSIT));
+        return status(threadId, deadline, payment, deposit);
+    }
+
+    private MobileMoneyNegotiationStatusResponse status(UUID threadId, LocalDateTime deadline, Optional<PaymentEntity> payment,
+                                                        Optional<PawapayOperationEntity> deposit) {
+        var view = deposit.map(o -> new MobileMoneyPaymentStatusResponse.OperationView(
+                o.getId(), o.getStatus().name(), o.getProvider(), PawapayProviders.label(o.getProvider()),
+                o.getMsisdnMasked(), o.getAuthorizationUrl(), o.getFailureCode(), o.getFailureMessage())).orElse(null);
+        return new MobileMoneyNegotiationStatusResponse(threadId, payment.map(p -> p.getStatus().name()).orElse(null), deadline,
+                payment.map(PaymentEntity::getAmount).orElse(null), payment.map(PaymentEntity::getCurrency).orElse(null), view);
     }
 
     // ── Libération (échéance, renoncement de l'expéditeur) ───────────────

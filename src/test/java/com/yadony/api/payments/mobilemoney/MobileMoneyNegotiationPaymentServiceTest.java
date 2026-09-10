@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -23,6 +24,7 @@ import com.yadony.api.payments.pawapay.PawapayOperationStatus;
 import com.yadony.api.payments.pawapay.PawapayProperties;
 import com.yadony.api.payments.pawapay.PawapayProviderResolver;
 import com.yadony.api.payments.pawapay.PawapaySubmissionService;
+import com.yadony.api.payments.pawapay.dto.PawapayProviderConfig;
 import com.yadony.api.requests.NegotiationMobileMoneyPort;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -36,6 +38,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionStatus;
 
 @ExtendWith(MockitoExtension.class)
 class MobileMoneyNegotiationPaymentServiceTest {
@@ -231,5 +234,78 @@ class MobileMoneyNegotiationPaymentServiceTest {
 
         assertThat(service.refundEscrowedDeposit(threadId)).isFalse();
         verify(submission, never()).submitRefund(any(), any(), any());
+    }
+
+    // ── initiateDeposit ──────────────────────────────────────────────────
+
+    /** Même forme que le helper {@code resolved()} de {@code MobileMoneyBidPaymentServiceTest},
+     * mais avec un {@link PawapayProviderConfig} construit réellement (record) plutôt que mocké. */
+    private PawapayProviderResolver.Resolved resolved() {
+        var limits = new PawapayProviderConfig.Limits(new BigDecimal("100"), new BigDecimal("1000000"), null, null);
+        var config = new PawapayProviderConfig("ORANGE_SEN", "SEN", "XOF", limits, null);
+        return new PawapayProviderResolver.Resolved("ORANGE_SEN", "SN", "221771234567", config);
+    }
+
+    @Test
+    void initiateDeposit_pendingPayment_submitsDepositWithThreadReference() {
+        PaymentEntity p = payment(PaymentStatus.PENDING);
+        when(paymentRepository.findByNegotiationThreadIdForUpdate(threadId)).thenReturn(Optional.of(p));
+        when(operations.findLive(p.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.empty());
+        when(providers.resolve(eq("221771234567"), eq(PawapayOperationKind.DEPOSIT), eq("XOF"), any())).thenReturn(resolved());
+        PawapayOperationEntity op = operation(p.getId(), PawapayOperationStatus.ACCEPTED, new BigDecimal("33000"));
+        when(submission.submitDeposit(eq(p.getId()), eq("221771234567"), eq("ORANGE_SEN"), eq("SN"),
+                eq(new BigDecimal("33000")), eq("XOF"), eq("thread-" + threadId), any(), any())).thenReturn(op);
+        when(transactionManager.getTransaction(any())).thenReturn(mock(TransactionStatus.class));
+
+        var response = service.initiateDeposit(threadId, senderId, "+221 77 123 45 67", LocalDateTime.now().plusMinutes(20));
+
+        assertThat(response.threadId()).isEqualTo(threadId);
+        assertThat(response.paymentStatus()).isEqualTo("PENDING");
+        assertThat(response.deposit().status()).isEqualTo("ACCEPTED");
+        verify(audit).log(eq("PAYMENT"), eq(p.getId()), eq("NEGOTIATION_DEPOSIT_INITIATED"), eq(senderId), any());
+    }
+
+    @Test
+    void initiateDeposit_liveDeposit_isReturnedWithoutSecondSubmission() {
+        PaymentEntity p = payment(PaymentStatus.PENDING);
+        when(paymentRepository.findByNegotiationThreadIdForUpdate(threadId)).thenReturn(Optional.of(p));
+        PawapayOperationEntity live = operation(p.getId(), PawapayOperationStatus.ACCEPTED, new BigDecimal("33000"));
+        when(operations.findLive(p.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.of(live));
+
+        service.initiateDeposit(threadId, senderId, "+221771234567", LocalDateTime.now().plusMinutes(20));
+
+        verify(submission, never()).submitDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void initiateDeposit_deadlinePassed_is422() {
+        PaymentEntity p = payment(PaymentStatus.PENDING);
+        when(paymentRepository.findByNegotiationThreadIdForUpdate(threadId)).thenReturn(Optional.of(p));
+
+        assertThatThrownBy(() -> service.initiateDeposit(threadId, senderId, "+221771234567", LocalDateTime.now().minusMinutes(1)))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-payment-expired"));
+    }
+
+    @Test
+    void initiateDeposit_noPhoneAnywhere_is422() {
+        PaymentEntity p = payment(PaymentStatus.PENDING);
+        when(paymentRepository.findByNegotiationThreadIdForUpdate(threadId)).thenReturn(Optional.of(p));
+        when(operations.findLive(p.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.empty());
+        when(userRepository.findById(senderId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.initiateDeposit(threadId, senderId, null, LocalDateTime.now().plusMinutes(20)))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-phone-required"));
+    }
+
+    // ── status ──────────────────────────────────────────────────────────
+
+    @Test
+    void status_withoutPayment_isEmptyView() {
+        when(paymentRepository.findByNegotiationThreadId(threadId)).thenReturn(Optional.empty());
+        var r = service.status(threadId, null);
+        assertThat(r.paymentStatus()).isNull();
+        assertThat(r.deposit()).isNull();
     }
 }
