@@ -371,6 +371,50 @@ class PackageRequestServiceTest {
                 .hasMessageContaining("mobile-money-payment-retired");
         }
 
+        // Le budget se borne dans la devise de la demande : 560 € de référence, soit
+        // 367 335 F CFA. Avant, le DTO plafonnait à 560 quelle que soit la devise, et
+        // 560 F CFA valent 0,85 € : aucune demande en franc CFA ne passait.
+        @Test @DisplayName("budget au-dessus du plafond de la devise (EUR) → 422 request/budget-out-of-bounds")
+        void create_budgetAboveEurCeiling_throws422() {
+            when(config.maxOpenRequestsPerSender()).thenReturn(10);
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+            when(repository.countBySenderIdAndStatusIn(eq(SENDER_ID), any())).thenReturn(0L);
+
+            assertThatThrownBy(() -> service.create(SENDER_ID, requestWithBudget("600.00", "EUR")))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("request/budget-out-of-bounds");
+        }
+
+        @Test @DisplayName("budget au-dessus du plafond de la devise (XOF) → 422 request/budget-out-of-bounds")
+        void create_budgetAboveXofCeiling_throws422() {
+            when(config.maxOpenRequestsPerSender()).thenReturn(10);
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+            when(repository.countBySenderIdAndStatusIn(eq(SENDER_ID), any())).thenReturn(0L);
+
+            assertThatThrownBy(() -> service.create(SENDER_ID, requestWithBudget("400000", "XOF")))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("request/budget-out-of-bounds");
+        }
+
+        @Test @DisplayName("budget de 30 000 F CFA (au-dessus du chiffre 560, sous le plafond XOF) → accepté")
+        void create_xofBudgetAboveEurFigure_isAccepted() {
+            when(config.maxOpenRequestsPerSender()).thenReturn(10);
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+            when(repository.countBySenderIdAndStatusIn(eq(SENDER_ID), any())).thenReturn(0L);
+            ArgumentCaptor<PackageRequestEntity> captor = ArgumentCaptor.forClass(PackageRequestEntity.class);
+            when(repository.save(captor.capture())).thenAnswer(inv -> {
+                PackageRequestEntity e = inv.getArgument(0);
+                setId(e, UUID.randomUUID());
+                return e;
+            });
+
+            service.create(SENDER_ID, requestWithBudget("30000", "XOF"));
+
+            assertThat(captor.getValue().getCurrency()).isEqualTo("XOF");
+            // net = 30 000 / 1,12
+            assertThat(captor.getValue().getTargetPriceEur()).isEqualByComparingTo("26785.71");
+        }
+
         @Test @DisplayName("desired_date > 90j → 422")
         void create_desiredDateTooFar_throws422() {
             when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
@@ -983,6 +1027,17 @@ class PackageRequestServiceTest {
             assertThatThrownBy(() -> service.update(SENDER_ID, entity.getId(), req))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("target-price-required");
+        }
+
+        @Test @DisplayName("budget au-dessus du plafond de la devise de la demande → 422")
+        void update_budgetAboveCurrencyCeiling_throws422() {
+            PackageRequestEntity entity = buildEntity(SENDER_ID, PackageRequestStatus.OPEN);
+            entity.setCurrency("XOF");
+            when(repository.findById(entity.getId())).thenReturn(Optional.of(entity));
+
+            assertThatThrownBy(() -> service.update(SENDER_ID, entity.getId(), requestWithBudget("400000", "XOF")))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("request/budget-out-of-bounds");
         }
 
         @Test @DisplayName("prix négociable sans budget → 422")
@@ -1757,6 +1812,17 @@ class PackageRequestServiceTest {
             "Cadeau pour ma mère", new BigDecimal("28.00"), null,
             "10e arr", "Plateau",
             true, EnumSet.of(PaymentMethod.STRIPE), List.of(), null, null, currency);
+    }
+
+    /** Demande ferme (non négociable) au budget et à la devise donnés, carte + espèces. */
+    private PackageRequestCreateRequest requestWithBudget(String budget, String currency) {
+        return new PackageRequestCreateRequest(
+            "Paris", "Dakar",
+            LocalDate.now().plusDays(7), 2,
+            new BigDecimal("5"), "vetements",
+            "Cadeau pour ma mère", new BigDecimal(budget), null,
+            "10e arr", "Plateau",
+            false, EnumSet.of(PaymentMethod.STRIPE, PaymentMethod.CASH), List.of(), null, null, currency);
     }
 
     // ========== AvatarUrl in SenderPublicProfile ==========

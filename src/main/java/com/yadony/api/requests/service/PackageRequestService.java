@@ -285,6 +285,8 @@ public class PackageRequestService {
         PackageRequestEntity entity = new PackageRequestEntity();
         entity.setSenderId(senderId);
         String currency = resolvePackageRequestCurrency(req.currency(), senderId);
+        // C'est la devise qui fixe le plafond du budget, d'où la borne posée ici.
+        assertBudgetWithinBounds(req.totalBudgetEur(), currency);
         entity.setCurrency(currency);
         entity.setDepartureCity(req.departureCity());
         entity.setArrivalCity(req.arrivalCity());
@@ -388,6 +390,8 @@ public class PackageRequestService {
         if (entity.getStatus() != PackageRequestStatus.DRAFT) {
             requireTargetPrice(req.totalBudgetEur());
         }
+        // Une demande garde sa devise d'origine : le plafond du nouveau budget se lit dessus.
+        assertBudgetWithinBounds(req.totalBudgetEur(), entity.getCurrency());
 
         BigDecimal netTarget = null;
         if (req.totalBudgetEur() != null) {
@@ -1123,6 +1127,30 @@ public class PackageRequestService {
         if (targetPriceEur == null) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "request/target-price-required");
+        }
+    }
+
+    /**
+     * Le budget tient dans le plafond de sa devise (560 € de référence, mis à l'échelle
+     * par {@link com.yadony.api.payments.currency.CurrencyBounds#maxPackageBudget}).
+     *
+     * <p>Le DTO ne porte qu'un garde-fou large : une annotation Bean Validation est une
+     * constante de compilation et ne peut pas connaître la devise de la demande. Avant,
+     * {@code @DecimalMax("560.0")} s'appliquait tel quel à un budget en franc CFA, où
+     * 560 F CFA valent 0,85 € : aucune demande XOF ne pouvait être publiée, et l'app
+     * affichait « Erreur réseau » (recette iPhone du 2026-09-10, budget de 30 000 F CFA).
+     * Même approche que {@code NegotiationService.assertPriceWithinBounds}.
+     */
+    private static void assertBudgetWithinBounds(BigDecimal budget, String currencyCode) {
+        if (budget == null) {
+            return;
+        }
+        com.yadony.api.payments.currency.SupportedCurrency currency =
+                com.yadony.api.payments.currency.SupportedCurrency.fromCodeOrDefault(currencyCode);
+        BigDecimal max = com.yadony.api.payments.currency.CurrencyBounds.maxPackageBudget(currency);
+        if (budget.compareTo(max) > 0) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "request/budget-out-of-bounds");
         }
     }
 
