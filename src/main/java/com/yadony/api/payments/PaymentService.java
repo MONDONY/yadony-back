@@ -87,6 +87,10 @@ public class PaymentService {
     private final com.yadony.api.voucher.CommissionVoucherService voucherService;
     private final ConnectAccountProvisioner connectAccountProvisioner;
 
+    /** Rail mobile money d'un fil ; optionnel pour ne pas toucher aux constructeurs des tests existants. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.yadony.api.payments.mobilemoney.MobileMoneyNegotiationPaymentService mobileMoneyNegotiationPaymentService;
+
     public PaymentService(UserRepository userRepository,
                           BidRepository bidRepository,
                           BidGridItemRepository bidGridItemRepository,
@@ -1311,6 +1315,23 @@ public class PaymentService {
         if (payment.getStatus() != PaymentStatus.PENDING
                 && payment.getStatus() != PaymentStatus.ESCROW) {
             return true; // terminal — no live hold to release
+        }
+        if (payment.getRail() == PaymentRail.PAWAPAY) {
+            // Jamais Stripe sur ce rail : un PENDING est libéré, un ESCROW remboursé.
+            if (mobileMoneyNegotiationPaymentService == null) {
+                log.error("Rail PAWAPAY sur le fil {} mais service mobile money absent, annulation ignorée", threadId);
+                return false;
+            }
+            if (payment.getStatus() == PaymentStatus.PENDING) {
+                var outcome = mobileMoneyNegotiationPaymentService.releasePendingDeposit(threadId);
+                if (outcome == com.yadony.api.requests.NegotiationMobileMoneyPort.ReleaseOutcome.CANCELLED
+                        || outcome == com.yadony.api.requests.NegotiationMobileMoneyPort.ReleaseOutcome.NOTHING_PENDING) {
+                    return true;
+                }
+                log.warn("Libération du dépôt pawaPay abandonnée pour le fil {} : {}", threadId, outcome);
+                return false;
+            }
+            return mobileMoneyNegotiationPaymentService.refundEscrowedDeposit(threadId);
         }
         try {
             PaymentIntent pi = stripeGateway.retrievePaymentIntent(payment.getStripePaymentIntentId());
