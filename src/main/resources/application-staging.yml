@@ -50,3 +50,7 @@ yadony:
     success-url: "https://staging.yadony.com/pro/parametres/abonnement?success=1"
     cancel-url: "https://staging.yadony.com/pro/upgrade?canceled=1"
     portal-return-url: "https://staging.yadony.com/pro/parametres/abonnement"
+  wallet:
+    topup:
+      checkout-success-url: "https://staging.yadony.com/pro/parametres?topup=success"
+      checkout-cancel-url: "https://staging.yadony.com/pro/parametres?topup=canceled"

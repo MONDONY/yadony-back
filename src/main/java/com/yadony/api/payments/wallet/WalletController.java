@@ -8,6 +8,8 @@ import com.yadony.api.payments.wallet.dto.WalletCurrencyBalanceDto;
 import com.yadony.api.payments.wallet.dto.WalletEligibleTopupResponse;
 import com.yadony.api.payments.wallet.dto.WalletRefundRequestSummaryResponse;
 import com.yadony.api.payments.wallet.dto.WalletRefundSelectionRequest;
+import com.yadony.api.payments.wallet.dto.WalletTopupCheckoutRequest;
+import com.yadony.api.payments.wallet.dto.WalletTopupCheckoutResponse;
 import com.yadony.api.payments.wallet.dto.WalletTopupRequest;
 import com.yadony.api.payments.wallet.dto.WalletTopupResponse;
 import com.yadony.api.payments.wallet.dto.WalletTransactionDto;
@@ -86,6 +88,14 @@ public class WalletController {
             @Valid @RequestBody WalletTopupRequest request) {
         UUID userId = currentUserId();
         return ResponseEntity.ok(topupOrchestrator.initiate(userId, request));
+    }
+
+    /** Recharge par carte depuis le portail PRO : session Stripe Checkout hébergée. */
+    @PostMapping("/topup/checkout-session")
+    public ResponseEntity<WalletTopupCheckoutResponse> topupCheckoutSession(
+            @Valid @RequestBody WalletTopupCheckoutRequest request) {
+        UUID userId = currentUserId();
+        return ResponseEntity.ok(topupOrchestrator.createCheckoutSession(userId, request.amount()));
     }
 
     @GetMapping("/{currency}/refund-eligible-topups")
