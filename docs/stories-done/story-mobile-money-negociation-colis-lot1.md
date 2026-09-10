@@ -250,31 +250,29 @@ existant, `negotiationThreadId` non nul → chemin fil ci-dessus). Communication
   - `NegotiationDepositListener` : **100 %** (7/7 lignes).
   - `NegotiationController` (fichier entier, endpoints existants + les 3 nouveaux) : **93,94 %**
     (62/66 lignes).
-  - `NegotiationMobileMoneyAdapter` : **50 %** (3/6 lignes) — sous 90 %. Voir Écart de
-    couverture ci-dessous.
+  - `NegotiationMobileMoneyAdapter` : couvert par `NegotiationMobileMoneyAdapterTest`
+    (délégation pure — voir Tour de correction 1 ci-dessous).
 - Tests ajoutés (classes neuves ou étendues) : `NegotiationThreadsMobileMoneyMigrationTest`,
   `MobileMoneyNegotiationPaymentServiceTest`, `NegotiationDepositExpiryRunnerTest`,
   `NegotiationDepositListenerTest`, `NegotiationServiceMobileMoneyTest`,
   `NegotiationThreadRepositoryDepositTest`, `NegotiationThreadStatusTest`,
   `NegotiationControllerMobileMoneyIT`, `PaymentServiceCancelNegotiationEscrowTest`,
-  `PawapayReturnControllerIT` (cas thread), plus extensions de
-  `MobileMoneyDepositOutcomeListenerTest`, `MobileMoneyPayoutOutcomeListenerTest`,
+  `PawapayReturnControllerIT` (cas thread), `NegotiationMobileMoneyAdapterTest`, plus
+  extensions de `MobileMoneyDepositOutcomeListenerTest`, `MobileMoneyPayoutOutcomeListenerTest`,
   `NotificationTextsTest`, `RequestEventsListenerTest`, `NotificationDispatcherTest`,
   `PawapayBalanceMonitorTest`, `PawapayConfigGuardTest`, `MobileMoneyAccountServiceTest`,
   `MobileMoneyBidPaymentServiceTest`, `NegotiationServicePublishingSuspensionTest`,
   `NegotiationServiceTest`.
 
-### Écart de couverture : `NegotiationMobileMoneyAdapter` à 50 %
+### Tour de correction 1 : couverture de `NegotiationMobileMoneyAdapter`
 
 Les trois méthodes de délégation (`createPendingDeposit`, `releasePendingDeposit`,
-`refundEscrowedDeposit`) ne sont jamais exercées par un test qui passe par cette classe
-concrète : `MobileMoneyNegotiationPaymentServiceTest` teste le service directement,
-`NegotiationServiceMobileMoneyTest` mock l'interface `NegotiationMobileMoneyPort`. Seul le
-constructeur (instanciation Spring) est couvert. Aucun test IT ne fait tourner le contexte
-complet jusqu'à ce point précis de la chaîne. Conformément à la consigne de cette tâche
-(vérifier et rapporter plutôt qu'ajouter des tests hors périmètre), ce point n'a pas été corrigé
-ici — à couvrir par un test d'intégration ciblé (ou en fusionnant la classe si elle reste un
-pur pass-through) avant ou pendant le lot 2.
+`refundEscrowedDeposit`) n'étaient exercées par aucun test passant par cette classe concrète
+(`MobileMoneyNegotiationPaymentServiceTest` teste le service directement,
+`NegotiationServiceMobileMoneyTest` mock l'interface `NegotiationMobileMoneyPort`). Ajout de
+`NegotiationMobileMoneyAdapterTest` (`@ExtendWith(MockitoExtension.class)`, `@Mock`/`@InjectMocks`) :
+trois tests de délégation pure, un par méthode, vérifiant l'argument transmis et la valeur
+rendue. `Tests run: 3, Failures: 0, Errors: 0`.
 
 ## Décisions techniques
 
