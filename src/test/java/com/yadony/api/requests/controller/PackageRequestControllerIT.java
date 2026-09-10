@@ -536,6 +536,51 @@ class PackageRequestControllerIT {
                 org.hamcrest.Matchers.hasItems("STRIPE", "CASH")));
     }
 
+    /**
+     * Un budget de 30 000 F CFA passe le garde-fou du DTO. Avant, {@code @DecimalMax("560.0")}
+     * était lu en euros quelle que soit la devise : toute demande en franc CFA finissait en
+     * 422 « Validation failed » avant même d'atteindre le service, et l'app affichait
+     * « Erreur réseau ». Le plafond réel (560 € mis à l'échelle) vit dans le service.
+     */
+    @Test
+    void post_create_cfaBudget_passesDtoGuard_returns201() throws Exception {
+        UUID newId = UUID.randomUUID();
+        PackageRequestResponse response = new PackageRequestResponse(
+            newId, SENDER_UUID,
+            "Paris", "Dakar",
+            LocalDate.now().plusDays(7), 2,
+            new BigDecimal("5"), ParcelSize.SMALL,
+            com.yadony.api.matching.TransportMode.PLANE,
+            "vetements",
+            "Cadeau", new BigDecimal("26786"), null,
+            "10e", "Plateau",
+            PackageRequestStatus.OPEN, LocalDateTime.now(),
+            false,
+            java.util.EnumSet.of(com.yadony.api.payments.cash.PaymentMethod.CASH),
+            new BigDecimal("30000")
+        , List.of(), null, null);
+        when(service.create(eq(SENDER_UUID), any())).thenReturn(response);
+
+        PackageRequestCreateRequest req = new PackageRequestCreateRequest(
+            "Paris", "Dakar",
+            LocalDate.now().plusDays(7), 2,
+            new BigDecimal("5"), "vetements",
+            "Cadeau", new BigDecimal("30000"), null,
+            "10e", "Plateau",
+            false,
+            java.util.EnumSet.of(
+                com.yadony.api.payments.cash.PaymentMethod.STRIPE,
+                com.yadony.api.payments.cash.PaymentMethod.CASH),
+            List.of(), null, null, "XOF");
+
+        mockMvc.perform(post("/package-requests")
+                .with(authentication(authAs("uid-sender", "SENDER")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(req)))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.id").value(newId.toString()));
+    }
+
     // ─── Task 3 : publish() tests ──────────────────────────────────────────────
 
     @Test

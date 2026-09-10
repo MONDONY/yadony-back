@@ -18,7 +18,11 @@ public record PackageRequestCreateRequest(
     @NotBlank @Size(max = 500) String contentCategory,
     @Size(max = 500) String description,
     // Budget TOTAL (gross) obligatoire ; converti en net au service.
-    @DecimalMin("0.0") @DecimalMax("560.0") BigDecimal totalBudgetEur,
+    // Garde-fou large seulement : le plafond réel dépend de la devise de la demande
+    // (560 € mis à l'échelle par CurrencyBounds.maxPackageBudget, appliqué au service).
+    // Une annotation ne peut pas connaître la devise ; un plafond de 560 ici valait
+    // 0,85 € en franc CFA et rejetait toute demande XOF avant même le service.
+    @DecimalMin("0.0") @DecimalMax("1000000.0") BigDecimal totalBudgetEur,
     @Size(max = 500) String photoUrl,
     @Size(max = 100) String pickupNeighborhood,
     @Size(max = 100) String deliveryNeighborhood,
