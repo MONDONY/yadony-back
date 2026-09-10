@@ -64,6 +64,7 @@ class NotificationDispatcherTest {
     private final com.yadony.api.payments.pawapay.PawapayProperties pawapayProperties =
             new com.yadony.api.payments.pawapay.PawapayProperties(true, "https://x", "t", false, 30,
                     "https://api.test", "yadony://bids/%s/mobile-money/awaiting",
+                    "yadony://negotiations/%s/mobile-money/awaiting",
                     new com.yadony.api.payments.pawapay.PawapayProperties.BalanceMin(
                             java.math.BigDecimal.ZERO, java.math.BigDecimal.ZERO));
 

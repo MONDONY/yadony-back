@@ -68,6 +68,7 @@ class MobileMoneyAccountServiceTest {
 
     private static PawapayProperties props(boolean enabled) {
         return new PawapayProperties(enabled, "https://x", "t", false, 30, "https://r", "yadony://bids/%s/mobile-money/awaiting",
+                "yadony://negotiations/%s/mobile-money/awaiting",
                 new PawapayProperties.BalanceMin(BigDecimal.ZERO, BigDecimal.ZERO));
     }
 

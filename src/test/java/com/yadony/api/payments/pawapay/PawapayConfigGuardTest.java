@@ -11,6 +11,7 @@ class PawapayConfigGuardTest {
     private static PawapayProperties props(boolean enabled, boolean signatures) {
         return new PawapayProperties(enabled, "https://api.pawapay.io", "tok", signatures, 30,
                 "https://api.yadony.com", "yadony://bids/%s/mobile-money/awaiting",
+                "yadony://negotiations/%s/mobile-money/awaiting",
                 new PawapayProperties.BalanceMin(BigDecimal.ZERO, BigDecimal.ZERO));
     }
 
