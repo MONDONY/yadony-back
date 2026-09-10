@@ -25,13 +25,16 @@ public class NegotiationController {
 
     private final NegotiationService service;
     private final com.yadony.api.payments.PaymentService paymentService;
+    private final com.yadony.api.payments.mobilemoney.MobileMoneyNegotiationPaymentService mobileMoney;
     private final UserRepository userRepository;
 
     public NegotiationController(NegotiationService service,
                                  com.yadony.api.payments.PaymentService paymentService,
+                                 com.yadony.api.payments.mobilemoney.MobileMoneyNegotiationPaymentService mobileMoney,
                                  UserRepository userRepository) {
         this.service = service;
         this.paymentService = paymentService;
+        this.mobileMoney = mobileMoney;
         this.userRepository = userRepository;
     }
 
@@ -247,6 +250,39 @@ public class NegotiationController {
             service.recordAppliedPromo(id, null, null);
         }
         return response;
+    }
+
+    /**
+     * Mobile money (zone CFA) : l'expéditeur lance le dépôt pawaPay. Deux transactions, dans
+     * cet ordre : (1) le fil passe en AWAITING_DEPOSIT et le paiement PENDING est créé,
+     * (2) après commit, le dépôt est soumis à pawaPay. Jamais dans la même transaction (voir
+     * MobileMoneyNegotiationPaymentService). Corps optionnel : autre numéro payeur.
+     */
+    @PostMapping("/{id}/mobile-money/initiate")
+    @PreAuthorize("hasRole('SENDER')")
+    public ResponseEntity<com.yadony.api.payments.mobilemoney.dto.MobileMoneyNegotiationStatusResponse> initiateMobileMoney(
+            @PathVariable UUID id,
+            @RequestBody(required = false) com.yadony.api.payments.mobilemoney.dto.MobileMoneyInitiateRequest body) {
+        UUID senderId = requireUserId();
+        NegotiationService.PreparedDeposit prepared = service.prepareMobileMoneyDeposit(senderId, id);
+        String phone = body == null ? null : body.phoneNumber();
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(mobileMoney.initiateDeposit(id, senderId, phone, prepared.expiresAt()));
+    }
+
+    @GetMapping("/{id}/mobile-money/status")
+    @PreAuthorize("hasAnyRole('SENDER', 'TRAVELER')")
+    public com.yadony.api.payments.mobilemoney.dto.MobileMoneyNegotiationStatusResponse mobileMoneyStatus(@PathVariable UUID id) {
+        var thread = service.requireParticipantThread(requireUserId(), id);
+        return mobileMoney.status(id, thread.getDepositExpiresAt());
+    }
+
+    /** L'expéditeur renonce au dépôt en cours : le fil revient à « à payer ». 409 si un dépôt est en vol. */
+    @PostMapping("/{id}/mobile-money/cancel-deposit")
+    @PreAuthorize("hasRole('SENDER')")
+    public ResponseEntity<Void> cancelMobileMoneyDeposit(@PathVariable UUID id) {
+        service.cancelMobileMoneyDeposit(requireUserId(), id);
+        return ResponseEntity.noContent().build();
     }
 
     /**
