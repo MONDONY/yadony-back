@@ -188,6 +188,11 @@ yadony:
     success-url: ${YADONY_BILLING_SUCCESS_URL:https://yadony.com/pro/parametres/abonnement?success=1}
     cancel-url: ${YADONY_BILLING_CANCEL_URL:https://yadony.com/pro/upgrade?canceled=1}
     portal-return-url: ${YADONY_BILLING_PORTAL_RETURN_URL:https://yadony.com/pro/parametres/abonnement}
+  wallet:
+    topup:
+      # Retour du portail PRO après une recharge par carte (Stripe Checkout).
+      checkout-success-url: ${YADONY_WALLET_TOPUP_SUCCESS_URL:https://yadony.com/pro/parametres?topup=success}
+      checkout-cancel-url: ${YADONY_WALLET_TOPUP_CANCEL_URL:https://yadony.com/pro/parametres?topup=canceled}
   dispute-sla-hours: ${YADONY_DISPUTE_SLA_HOURS:72}
   reimbursement:
     max-amount-eur: ${YADONY_REIMBURSEMENT_MAX_AMOUNT_EUR:50}

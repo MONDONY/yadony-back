@@ -115,6 +115,23 @@ class WalletControllerIT {
     }
 
     @Test
+    void topupCheckoutSession_invalidAmount_returns422() throws Exception {
+        mockMvc.perform(post("/wallet/topup/checkout-session")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(Map.of("amount", 0.5)))
+                .with(authentication(authAs(FIREBASE_UID, "TRAVELER"))))
+            .andExpect(status().isUnprocessableEntity());
+    }
+
+    @Test
+    void topupCheckoutSession_withoutAuthentication_isRejected() throws Exception {
+        mockMvc.perform(post("/wallet/topup/checkout-session")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(Map.of("amount", 25))))
+            .andExpect(status().is4xxClientError());
+    }
+
+    @Test
     void topup_wave_returns422MobileMoneyTopupRetired() throws Exception {
         mockMvc.perform(post("/wallet/topup")
                 .contentType(MediaType.APPLICATION_JSON)

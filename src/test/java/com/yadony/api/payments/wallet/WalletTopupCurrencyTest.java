@@ -5,6 +5,7 @@ import com.stripe.param.PaymentIntentCreateParams;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import com.yadony.api.payments.currency.CurrencyCatalog;
+import com.yadony.api.payments.wallet.dto.WalletTopupCheckoutResponse;
 import com.yadony.api.payments.wallet.dto.WalletTopupRequest;
 import com.yadony.api.payments.wallet.dto.WalletTopupResponse;
 import org.junit.jupiter.api.Test;
@@ -143,6 +144,67 @@ class WalletTopupCurrencyTest {
     private static WalletTopupOrchestrator orchestrator(UUID userId, String resolvedCurrency) {
         ActiveCurrencyResolver resolver = mock(ActiveCurrencyResolver.class);
         when(resolver.resolve(userId)).thenReturn(resolvedCurrency);
-        return new WalletTopupOrchestrator(new CurrencyCatalog(), resolver);
+        return new WalletTopupOrchestrator(new CurrencyCatalog(), resolver, new WalletTopupProperties(
+                "https://pro.example/parametres?topup=success", "https://pro.example/parametres?topup=canceled"));
+    }
+
+    /**
+     * Recharge depuis le portail : la session Checkout doit produire un PaymentIntent
+     * portant exactement les métadonnées de la recharge mobile, dans la devise résolue
+     * côté serveur, sinon le webhook ne créditerait pas le portefeuille (ou pas le bon).
+     */
+    @ParameterizedTest
+    @CsvSource({
+            "EUR, 25.00, 2500, eur",
+            "XOF, 5000.00, 5000, xof"
+    })
+    void createCheckoutSession_buildsAPaymentSessionCarryingTheTopupMetadata(
+            String resolvedCurrency, String requestedAmount, long expectedMinor, String stripeCurrency) {
+        UUID userId = UUID.randomUUID();
+        WalletTopupOrchestrator orchestrator = orchestrator(userId, resolvedCurrency);
+        AtomicReference<com.stripe.param.checkout.SessionCreateParams> captured = new AtomicReference<>();
+
+        try (MockedStatic<com.stripe.model.checkout.Session> mocked = mockStatic(com.stripe.model.checkout.Session.class)) {
+            com.stripe.model.checkout.Session fake = mock(com.stripe.model.checkout.Session.class);
+            when(fake.getUrl()).thenReturn("https://checkout.stripe.com/c/pay/cs_test");
+            mocked.when(() -> com.stripe.model.checkout.Session.create(any(com.stripe.param.checkout.SessionCreateParams.class)))
+                    .thenAnswer(invocation -> {
+                        captured.set(invocation.getArgument(0));
+                        return fake;
+                    });
+
+            WalletTopupCheckoutResponse response =
+                    orchestrator.createCheckoutSession(userId, new BigDecimal(requestedAmount));
+
+            assertThat(response.url()).isEqualTo("https://checkout.stripe.com/c/pay/cs_test");
+        }
+
+        com.stripe.param.checkout.SessionCreateParams params = captured.get();
+        assertThat(params.getMode()).isEqualTo(com.stripe.param.checkout.SessionCreateParams.Mode.PAYMENT);
+        assertThat(params.getSuccessUrl()).isEqualTo("https://pro.example/parametres?topup=success");
+        assertThat(params.getCancelUrl()).isEqualTo("https://pro.example/parametres?topup=canceled");
+        assertThat(params.getClientReferenceId()).isEqualTo(userId.toString());
+        assertThat(params.getPaymentIntentData().getMetadata()).containsExactlyInAnyOrderEntriesOf(Map.of(
+                "wallet_topup", "true",
+                "user_id", userId.toString(),
+                "wallet_currency", stripeCurrency));
+        assertThat(params.getLineItems()).hasSize(1);
+        com.stripe.param.checkout.SessionCreateParams.LineItem.PriceData price = params.getLineItems().get(0).getPriceData();
+        assertThat(price.getCurrency()).isEqualTo(stripeCurrency);
+        assertThat(price.getUnitAmount()).isEqualTo(expectedMinor);
+    }
+
+    @Test
+    void createCheckoutSession_translatesAStripeFailureIntoABadGateway() {
+        UUID userId = UUID.randomUUID();
+        WalletTopupOrchestrator orchestrator = orchestrator(userId, "EUR");
+        try (MockedStatic<com.stripe.model.checkout.Session> mocked = mockStatic(com.stripe.model.checkout.Session.class)) {
+            mocked.when(() -> com.stripe.model.checkout.Session.create(any(com.stripe.param.checkout.SessionCreateParams.class)))
+                    .thenThrow(new com.stripe.exception.ApiException("boom", null, null, 500, null));
+
+            assertThatThrownBy(() -> orchestrator.createCheckoutSession(userId, new BigDecimal("10")))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .hasMessageContaining("recharge");
+        }
     }
 }
