@@ -15,6 +15,13 @@ public enum NegotiationThreadStatus {
      * thread expire.
      */
     AWAITING_COMMISSION,
+    /**
+     * Dépôt mobile money en cours : l'expéditeur a lancé le paiement pawaPay, le fil
+     * attend la confirmation du dépôt (rappel ou poller). Rien n'est scellé : la demande
+     * reste ouverte et les offres concurrentes vivantes. Un dépôt qui échoue ou dont
+     * l'échéance passe ramène le fil à AWAITING_PAYMENT, l'accord tient.
+     */
+    AWAITING_DEPOSIT,
     /** Paiement confirmé. Thread finalisé. Les threads concurrents passent à AUTO_REJECTED. */
     ACCEPTED,
     /** Rejet manuel par un participant. */
@@ -28,6 +35,6 @@ public enum NegotiationThreadStatus {
 
     public boolean isActive() {
         return this == OPEN || this == AWAITING_TRIP || this == AWAITING_PAYMENT
-            || this == AWAITING_COMMISSION;
+            || this == AWAITING_COMMISSION || this == AWAITING_DEPOSIT;
     }
 }

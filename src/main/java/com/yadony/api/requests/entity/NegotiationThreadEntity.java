@@ -135,6 +135,13 @@ public class NegotiationThreadEntity extends BaseEntity {
     @Column(name = "materialized_bid_id")
     private UUID materializedBidId;
 
+    /**
+     * Échéance du dépôt mobile money (30 min après l'initiation, {@code yadony.pawapay.deposit-deadline-minutes}).
+     * Non nulle seulement en AWAITING_DEPOSIT ; remise à null à chaque sortie de ce statut.
+     */
+    @Column(name = "deposit_expires_at")
+    private LocalDateTime depositExpiresAt;
+
     // === NO-ARG CONSTRUCTOR (required by JPA) ===
 
     public NegotiationThreadEntity() { /* JPA */ }
@@ -187,6 +194,8 @@ public class NegotiationThreadEntity extends BaseEntity {
 
     public UUID getMaterializedBidId() { return materializedBidId; }
 
+    public LocalDateTime getDepositExpiresAt() { return depositExpiresAt; }
+
     // === SETTERS ===
 
     public void setPackageRequestId(UUID packageRequestId) { this.packageRequestId = packageRequestId; }
@@ -234,4 +243,6 @@ public class NegotiationThreadEntity extends BaseEntity {
     public void setCommissionRetryCount(int commissionRetryCount) { this.commissionRetryCount = commissionRetryCount; }
 
     public void setMaterializedBidId(UUID materializedBidId) { this.materializedBidId = materializedBidId; }
+
+    public void setDepositExpiresAt(LocalDateTime depositExpiresAt) { this.depositExpiresAt = depositExpiresAt; }
 }
