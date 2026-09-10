@@ -1178,6 +1178,28 @@ public class NegotiationService {
             senderId, thread.getTravelerId(), reason));
     }
 
+    /**
+     * Dépôt FAILED côté pawaPay. Passe par le port avant de ramener le fil à payer (revue finale,
+     * I3) : entre l'échec de l'opération A et ce rejeu asynchrone, l'expéditeur a pu relancer et
+     * soumettre une opération B ; un retour aveugle à AWAITING_PAYMENT ferait ensuite rembourser
+     * ce dépôt B valide par {@link #finalizeAfterMobileMoneyDeposit}. Si un dépôt est en vol, un
+     * dépôt encaissé pas encore confirmé ou un séquestre pas encore scellé, le fil ne bouge pas.
+     * Sinon le paiement PENDING passe CANCELLED (recyclé en PENDING au prochain essai) et le fil
+     * revient à AWAITING_PAYMENT.
+     */
+    @Transactional
+    public void failMobileMoneyDeposit(UUID threadId) {
+        NegotiationThreadEntity thread = threadRepo.findById(threadId).orElse(null);
+        if (thread == null || thread.getStatus() != NegotiationThreadStatus.AWAITING_DEPOSIT) {
+            return;
+        }
+        switch (mobileMoneyPort.releasePendingDeposit(threadId)) {
+            case DEPOSIT_OPEN, DEPOSIT_COMPLETED_NOT_APPLIED, ESCROW_NOT_SEALED ->
+                log.info("Fil {} : dépôt échoué mais un autre dépôt est en vol ou encaissé, fil conservé en AWAITING_DEPOSIT", threadId);
+            case CANCELLED, NOTHING_PENDING -> revertMobileMoneyDeposit(threadId, "deposit-failed");
+        }
+    }
+
     /** L'expéditeur renonce au dépôt en cours (avant son issue). */
     @Transactional
     public void cancelMobileMoneyDeposit(UUID callerId, UUID threadId) {

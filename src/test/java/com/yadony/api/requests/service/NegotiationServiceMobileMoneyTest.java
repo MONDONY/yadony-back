@@ -337,6 +337,70 @@ class NegotiationServiceMobileMoneyTest {
         assertThat(ev.getValue().senderId()).isNull();
     }
 
+    // ── failMobileMoneyDeposit (revue finale, I3) ──────────────────────────
+
+    @Test
+    void fail_nothingInFlight_revertsToAwaitingPayment() {
+        thread.setStatus(NegotiationThreadStatus.AWAITING_DEPOSIT);
+        thread.setDepositExpiresAt(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(10));
+        when(mobileMoneyPort.releasePendingDeposit(thread.getId())).thenReturn(NegotiationMobileMoneyPort.ReleaseOutcome.CANCELLED);
+
+        service.failMobileMoneyDeposit(thread.getId());
+
+        assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.AWAITING_PAYMENT);
+        assertThat(thread.getDepositExpiresAt()).isNull();
+        ArgumentCaptor<NegotiationDepositRevertedEvent> ev = ArgumentCaptor.forClass(NegotiationDepositRevertedEvent.class);
+        verify(eventPublisher).publishEvent(ev.capture());
+        assertThat(ev.getValue().reason()).isEqualTo("deposit-failed");
+    }
+
+    @Test
+    void fail_nothingPending_revertsToAwaitingPayment() {
+        thread.setStatus(NegotiationThreadStatus.AWAITING_DEPOSIT);
+        when(mobileMoneyPort.releasePendingDeposit(thread.getId())).thenReturn(NegotiationMobileMoneyPort.ReleaseOutcome.NOTHING_PENDING);
+
+        service.failMobileMoneyDeposit(thread.getId());
+
+        assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.AWAITING_PAYMENT);
+    }
+
+    /**
+     * Opération A FAILED, mais l'expéditeur a déjà relancé une opération B (en vol, encaissée
+     * pas encore confirmée, ou séquestre pas encore scellé) : le fil reste AWAITING_DEPOSIT,
+     * sinon finalize rembourserait le dépôt B valide.
+     */
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.EnumSource(value = NegotiationMobileMoneyPort.ReleaseOutcome.class,
+            names = {"DEPOSIT_OPEN", "DEPOSIT_COMPLETED_NOT_APPLIED", "ESCROW_NOT_SEALED"})
+    void fail_anotherDepositInFlight_keepsThreadAwaitingDeposit(NegotiationMobileMoneyPort.ReleaseOutcome outcome) {
+        thread.setStatus(NegotiationThreadStatus.AWAITING_DEPOSIT);
+        LocalDateTime expiresAt = LocalDateTime.now(ZoneOffset.UTC).plusMinutes(10);
+        thread.setDepositExpiresAt(expiresAt);
+        when(mobileMoneyPort.releasePendingDeposit(thread.getId())).thenReturn(outcome);
+
+        service.failMobileMoneyDeposit(thread.getId());
+
+        assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.AWAITING_DEPOSIT);
+        assertThat(thread.getDepositExpiresAt()).isEqualTo(expiresAt);
+        verifyNoInteractions(eventPublisher);
+        verify(threadRepo, never()).save(any());
+    }
+
+    @Test
+    void fail_threadNotAwaitingDeposit_isNoop_withoutTouchingThePort() {
+        // Statut par défaut du fil : AWAITING_PAYMENT.
+        service.failMobileMoneyDeposit(thread.getId());
+
+        assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.AWAITING_PAYMENT);
+        verifyNoInteractions(mobileMoneyPort, eventPublisher);
+    }
+
+    @Test
+    void fail_threadMissing_isNoop() {
+        service.failMobileMoneyDeposit(UUID.randomUUID());
+        verifyNoInteractions(mobileMoneyPort, eventPublisher);
+    }
+
     @Test
     void cancelDeposit_notSender_is403_threadUntouched() {
         thread.setStatus(NegotiationThreadStatus.AWAITING_DEPOSIT);

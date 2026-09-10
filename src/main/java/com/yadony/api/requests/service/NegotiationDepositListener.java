@@ -35,6 +35,6 @@ public class NegotiationDepositListener {
     @Async
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onDepositFailed(MobileMoneyNegotiationDepositFailedEvent event) {
-        service.revertMobileMoneyDeposit(event.threadId(), "deposit-failed");
+        service.failMobileMoneyDeposit(event.threadId());
     }
 }

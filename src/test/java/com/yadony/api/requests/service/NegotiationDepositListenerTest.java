@@ -25,9 +25,9 @@ class NegotiationDepositListenerTest {
     }
 
     @Test
-    void failed_reverts() {
+    void failed_goesThroughThePort() {
         UUID threadId = UUID.randomUUID();
         listener.onDepositFailed(new MobileMoneyNegotiationDepositFailedEvent(threadId, UUID.randomUUID(), "PAYER_LIMIT_REACHED"));
-        verify(service).revertMobileMoneyDeposit(threadId, "deposit-failed");
+        verify(service).failMobileMoneyDeposit(threadId);
     }
 }
