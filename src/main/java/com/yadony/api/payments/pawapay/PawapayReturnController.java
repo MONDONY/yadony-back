@@ -34,4 +34,15 @@ public class PawapayReturnController {
         }
         return ResponseEntity.status(HttpStatus.FOUND).header(HttpHeaders.LOCATION, location).build();
     }
+
+    @GetMapping("/thread/{threadId}")
+    public ResponseEntity<Void> backThread(@PathVariable String threadId) {
+        String location;
+        try {
+            location = String.format(props.deepLinkAwaitingThread(), UUID.fromString(threadId));
+        } catch (IllegalArgumentException e) {
+            location = "yadony://";
+        }
+        return ResponseEntity.status(HttpStatus.FOUND).header(HttpHeaders.LOCATION, location).build();
+    }
 }

@@ -99,4 +99,24 @@ class PawapayReturnControllerIT {
         mockMvc.perform(get("/payments/onboarding/return"))
                 .andExpect(status().isFound());
     }
+
+    /**
+     * Tâche 8 : un paiement keyé sur un fil de négociation (pas de bidId) renvoie sur le
+     * même /pawapay/return, mais sous /thread/{threadId} — même leçon que {@link #back},
+     * l'écran d'attente relit le statut, cette page ne décide de rien.
+     */
+    @Test
+    void back_thread_redirectsToNegotiationAwaitingDeepLink() throws Exception {
+        UUID threadId = UUID.randomUUID();
+        mockMvc.perform(get("/pawapay/return/thread/{threadId}", threadId).param("outcome", "success"))
+                .andExpect(status().isFound())
+                .andExpect(header().string("Location", "yadony://negotiations/" + threadId + "/mobile-money/awaiting"));
+    }
+
+    @Test
+    void back_thread_withGarbageId_redirectsToAppRoot() throws Exception {
+        mockMvc.perform(get("/pawapay/return/thread/{threadId}", "not-a-uuid"))
+                .andExpect(status().isFound())
+                .andExpect(header().string("Location", "yadony://"));
+    }
 }
