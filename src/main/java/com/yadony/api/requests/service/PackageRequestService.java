@@ -284,7 +284,8 @@ public class PackageRequestService {
 
         PackageRequestEntity entity = new PackageRequestEntity();
         entity.setSenderId(senderId);
-        entity.setCurrency(resolvePackageRequestCurrency(req.currency(), senderId));
+        String currency = resolvePackageRequestCurrency(req.currency(), senderId);
+        entity.setCurrency(currency);
         entity.setDepartureCity(req.departureCity());
         entity.setArrivalCity(req.arrivalCity());
         entity.setDesiredDate(req.desiredDate());
@@ -300,7 +301,12 @@ public class PackageRequestService {
         entity.setPickupNeighborhood(req.pickupNeighborhood());
         entity.setDeliveryNeighborhood(req.deliveryNeighborhood());
         entity.setNegotiable(req.negotiable());
-        entity.setAcceptedPaymentMethods(req.acceptedPaymentMethods());
+        // La devise borne les rails (pas de carte en zone CFA, pas de mobile money ailleurs) :
+        // une demande n'enregistre jamais un moyen qu'aucun voyageur ne pourra honorer. Sinon
+        // le fil de négociation propose « Carte » sur une demande en francs CFA, et le paiement
+        // échoue au dernier moment (createNegotiationEscrow).
+        entity.setAcceptedPaymentMethods(com.yadony.api.payments.currency.AnnouncementPaymentRails
+                .restrictToCurrency(req.acceptedPaymentMethods(), currency));
         entity.setPromoCode(normalizePromoCode(req.promoCode()));
         entity.setStatus(isDraft ? PackageRequestStatus.DRAFT : PackageRequestStatus.OPEN);
         // Le disclaimer douanier est accepté à la publication. Tant que la demande
@@ -411,7 +417,8 @@ public class PackageRequestService {
         entity.setPickupNeighborhood(req.pickupNeighborhood());
         entity.setDeliveryNeighborhood(req.deliveryNeighborhood());
         entity.setNegotiable(req.negotiable());
-        entity.setAcceptedPaymentMethods(req.acceptedPaymentMethods());
+        entity.setAcceptedPaymentMethods(com.yadony.api.payments.currency.AnnouncementPaymentRails
+                .restrictToCurrency(req.acceptedPaymentMethods(), entity.getCurrency()));
         entity.setPromoCode(normalizePromoCode(req.promoCode()));
         // Repasser en OPEN sert à sortir d'une négociation dont les termes ont
         // changé. Un brouillon n'a pas de négociation et ne doit pas être publié

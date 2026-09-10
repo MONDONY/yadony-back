@@ -65,9 +65,42 @@ class TripRecurrenceServiceTest {
     }
 
     private void mockUser() {
+        mockUser(true);
+    }
+
+    private void mockUser(boolean stripeConnectActive) {
         UserEntity user = mock(UserEntity.class);
         when(user.getFirebaseUid()).thenReturn("firebase-uid");
+        lenient().when(user.hasActiveStripeConnect()).thenReturn(stripeConnectActive);
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+    }
+
+    // STRIPE était imposé à chaque occurrence : en zone CFA ou sans compte Connect, chaque
+    // génération échouait en silence et la récurrence ne publiait jamais rien.
+    @Test
+    void generate_cfaRecurrence_neverAsksForTheCard() {
+        mockUser();
+        TripRecurrenceEntity rec = entity("1111111", 0, null);
+        rec.setCurrency("XOF");
+        rec.setCashAccepted(true);
+
+        service.generateForRecurrence(rec);
+
+        ArgumentCaptor<AnnouncementRequest> cap = ArgumentCaptor.forClass(AnnouncementRequest.class);
+        verify(announcementService).createRecurringAnnouncement(eq("firebase-uid"), cap.capture(), eq(rec.getId()));
+        assertThat(cap.getValue().acceptedPaymentMethods()).containsExactly(PaymentMethod.CASH);
+    }
+
+    @Test
+    void generate_travelerWithoutConnect_fallsBackToCash() {
+        mockUser(false);
+        TripRecurrenceEntity rec = entity("1111111", 0, null);
+
+        service.generateForRecurrence(rec);
+
+        ArgumentCaptor<AnnouncementRequest> cap = ArgumentCaptor.forClass(AnnouncementRequest.class);
+        verify(announcementService).createRecurringAnnouncement(eq("firebase-uid"), cap.capture(), eq(rec.getId()));
+        assertThat(cap.getValue().acceptedPaymentMethods()).containsExactly(PaymentMethod.CASH);
     }
 
     @Test

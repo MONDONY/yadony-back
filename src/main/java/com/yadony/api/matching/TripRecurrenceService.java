@@ -147,7 +147,7 @@ public class TripRecurrenceService {
                 continue;
             }
             try {
-                announcementService.createRecurringAnnouncement(firebaseUid, buildRequest(rec, d), rec.getId());
+                announcementService.createRecurringAnnouncement(firebaseUid, buildRequest(rec, d, user), rec.getId());
                 created++;
             } catch (DataIntegrityViolationException exception) {
                 if (!isDuplicateOccurrence(exception)) {
@@ -176,10 +176,20 @@ public class TripRecurrenceService {
         return false;
     }
 
-    private AnnouncementRequest buildRequest(TripRecurrenceEntity rec, LocalDate date) {
-        Set<PaymentMethod> paymentMethods = rec.isCashAccepted()
-                ? Set.of(PaymentMethod.STRIPE, PaymentMethod.CASH)
-                : Set.of(PaymentMethod.STRIPE);
+    private AnnouncementRequest buildRequest(TripRecurrenceEntity rec, LocalDate date, UserEntity user) {
+        // STRIPE était imposé à chaque occurrence : en zone CFA, ou pour un voyageur sans compte
+        // Connect, chaque génération échouait en silence (assertStripeCapability) et la récurrence
+        // ne publiait jamais rien. La carte n'est demandée que si la devise et le compte le
+        // permettent ; l'espèce reste le repli qui garde le trajet vendable.
+        Set<PaymentMethod> paymentMethods = com.yadony.api.payments.currency.AnnouncementPaymentRails
+                .restrictToCurrency(
+                        rec.isCashAccepted()
+                                ? java.util.EnumSet.of(PaymentMethod.STRIPE, PaymentMethod.CASH)
+                                : java.util.EnumSet.of(PaymentMethod.STRIPE),
+                        rec.getCurrency());
+        if (!user.hasActiveStripeConnect()) {
+            paymentMethods = java.util.EnumSet.of(PaymentMethod.CASH);
+        }
         LocalTime depTime = rec.getDepartureTime();
         LocalDateTime departureDt = depTime != null
                 ? date.atTime(depTime) : date.atTime(12, 0);

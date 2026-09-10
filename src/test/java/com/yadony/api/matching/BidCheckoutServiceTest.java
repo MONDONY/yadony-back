@@ -635,4 +635,18 @@ class BidCheckoutServiceTest {
                 .isEqualTo("already-bid"));
         verifyNoInteractions(paymentService);
     }
+
+    @Test
+    void checkout_announcementWithoutCard_refusesTheCardBeforeAnyBidOrEscrow() {
+        announcement.setCurrency("EUR");
+        announcement.setAcceptedPaymentMethods(
+            java.util.EnumSet.of(com.yadony.api.payments.cash.PaymentMethod.CASH));
+
+        assertThatThrownBy(() -> service.checkout("uid-sender", req, httpRequest))
+            .isInstanceOf(YadonyBusinessException.class)
+            .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                .isEqualTo("card-not-accepted"));
+        verify(bidRepository, never()).save(any());
+        verifyNoInteractions(paymentService);
+    }
 }

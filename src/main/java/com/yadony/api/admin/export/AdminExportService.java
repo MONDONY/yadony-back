@@ -47,12 +47,17 @@ public class AdminExportService {
     public byte[] exportTransactions(LocalDate from, LocalDate to) {
         List<PaymentEntity> payments = paymentRepository
                 .findAllByCreatedAtBetweenOrderByCreatedAtAsc(lower(from), upper(to));
-        StringBuilder sb = header("id,bidId,statut,montantEur,commissionEur,rembourseEur,stripePaymentIntentId,creeLe,escrowLibereLe");
+        // Chaque ligne porte sa devise et son rail : les colonnes « montantEur » mêlaient des
+        // XOF, des USD et des EUR sous un même nom, et un paiement mobile money n'a pas de
+        // PaymentIntent Stripe.
+        StringBuilder sb = header("id,bidId,statut,rail,devise,montant,commission,rembourse,stripePaymentIntentId,creeLe,escrowLibereLe");
         for (PaymentEntity p : payments) {
             row(sb,
                 str(p.getId()),
                 str(p.getBidId()),
                 p.getStatus().name(),
+                p.getRail() != null ? p.getRail().name() : "",
+                p.getCurrency() != null ? p.getCurrency().toUpperCase(java.util.Locale.ROOT) : "",
                 money(p.getAmount()),
                 money(p.getCommissionAmount()),
                 money(p.getRefundedAmount()),

@@ -74,4 +74,24 @@ public final class AnnouncementPaymentRails {
         }
         return kept;
     }
+
+    /**
+     * Moyens réellement fournissables par un voyageur sur une transaction dans {@code currency},
+     * parmi ceux que l'expéditeur accepte : l'intersection de {@link #availableFor} (devise et
+     * capacités du voyageur) et du choix explicite. Jamais de moyen que la devise interdit,
+     * jamais de carte sans compte Connect, jamais de mobile money sans compte de versement.
+     */
+    public static Set<PaymentMethod> offerable(Set<PaymentMethod> accepted, String currency,
+                                               boolean travelerHasConnect, boolean travelerHasMobileMoney) {
+        Set<PaymentMethod> available = availableFor(currency, travelerHasConnect, travelerHasMobileMoney);
+        EnumSet<PaymentMethod> kept = EnumSet.noneOf(PaymentMethod.class);
+        if (accepted != null) {
+            for (PaymentMethod method : accepted) {
+                if (available.contains(method)) {
+                    kept.add(method);
+                }
+            }
+        }
+        return kept;
+    }
 }

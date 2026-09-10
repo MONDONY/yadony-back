@@ -99,6 +99,13 @@ public class BidCheckoutService {
                 "payment-method-unavailable-for-currency", "Payment Method Unavailable For Currency",
                 "La zone CFA n'accepte pas le paiement par carte pour un colis.");
         }
+        // Même règle que BidService.resolvePaymentMethodFor pour les autres moyens : un trajet
+        // déclaré « espèces uniquement » n'ouvre pas de séquestre carte, quel que soit le client.
+        if (!announcement.getAcceptedPaymentMethods().contains(com.yadony.api.payments.cash.PaymentMethod.STRIPE)) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                "card-not-accepted", "Card Not Accepted",
+                "Cette annonce n'accepte pas le paiement par carte");
+        }
 
         // Dedicated trip (tied to a negotiation): a fresh dedicated trip is ACTIVE with
         // availableKg == the negotiating sender's reserved weight. Without this guard a

@@ -134,6 +134,32 @@ class AdminPaymentControllerTest {
         return p;
     }
 
+    // Le Transfer partait toujours en « eur » x100 : un séquestre carte en dollars canadiens
+    // aurait été versé au voyageur en euros, au taux du jour.
+    @Test
+    void thread_payment_in_cad_transfers_in_the_payment_currency() throws StripeException {
+        PaymentEntity p = threadPayment(PaymentStatus.ESCROW, false, "ch_cad");
+        p.setCurrency("CAD");
+        when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(p));
+        stubResolutionChain("acct_traveler");
+        when(paymentRepository.markReleasedIfEscrow(eq(paymentId), any())).thenReturn(1);
+
+        try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class);
+             MockedStatic<Transfer> trStatic = mockStatic(Transfer.class)) {
+            PaymentIntent pi = mock(PaymentIntent.class);
+            when(pi.getStatus()).thenReturn("succeeded");
+            piStatic.when(() -> PaymentIntent.retrieve("pi_xxx")).thenReturn(pi);
+            ArgumentCaptor<TransferCreateParams> captor = ArgumentCaptor.forClass(TransferCreateParams.class);
+            trStatic.when(() -> Transfer.create(captor.capture())).thenReturn(mock(Transfer.class));
+
+            controller.forceRelease(paymentId);
+
+            TransferCreateParams params = captor.getValue();
+            assertThat(params.getCurrency()).isEqualTo("cad");
+            assertThat(params.getAmount()).isEqualTo(8929L);
+        }
+    }
+
     /** Wire the thread → bid → announcement → traveler resolution chain. */
     private void stubResolutionChain(String travelerAccountId) {
         BidEntity bid = mock(BidEntity.class);

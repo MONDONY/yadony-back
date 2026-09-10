@@ -753,6 +753,15 @@ public class NegotiationService {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
                 "announcement/corridor-mismatch");
         }
+        // Le prix proposé est validé et accepté dans la devise de la DEMANDE, puis copié tel quel
+        // sur le fil sous la devise du TRAJET : un trajet d'une autre devise transformait
+        // 50 000 XOF en un séquestre Stripe de 50 000 EUR (ou 50 EUR fermes en 50 XOF). Le
+        // corridor ne borne pas la devise : un même Paris → Abidjan porte des trajets EUR et XOF.
+        if (ann.getCurrency() != null && request.getCurrency() != null
+            && !ann.getCurrency().equalsIgnoreCase(request.getCurrency())) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                "announcement/currency-mismatch");
+        }
         java.time.LocalDate annDate = ann.getDepartureDate();
         java.time.LocalDate from = request.getDesiredDate().minusDays(request.getDateToleranceDays());
         java.time.LocalDate to = request.getDesiredDate().plusDays(request.getDateToleranceDays());
@@ -836,6 +845,14 @@ public class NegotiationService {
         // ensuite cette devise erronée.
         ann.setCurrency(request.getCurrency());
         ann.setPricePerKgEur(exchangeRateService.toEurPivot(derivedPricePerKg, request.getCurrency()));
+        // Sans cette ligne le trajet dédié gardait le défaut d'entité {STRIPE}, publié même en
+        // zone CFA ou pour un voyageur sans compte Connect : les moyens sont ceux que le voyageur
+        // peut réellement fournir sur cette demande, l'espèce en repli.
+        java.util.Set<PaymentMethod> offerable = com.yadony.api.payments.currency.AnnouncementPaymentRails
+                .offerable(request.getAcceptedPaymentMethods(), request.getCurrency(),
+                        traveler.hasActiveStripeConnect(), traveler.hasActiveMobileMoney());
+        ann.setAcceptedPaymentMethods(offerable.isEmpty()
+                ? java.util.EnumSet.of(PaymentMethod.CASH) : java.util.EnumSet.copyOf(offerable));
         ann.setTransportMode(request.getTransportMode());
         ann.setStatus(com.yadony.api.matching.AnnouncementStatus.ACTIVE);
         ann.setDescription(req.description());
@@ -2043,6 +2060,11 @@ public class NegotiationService {
         if (accepted.contains(PaymentMethod.CASH)) {
             set.add(PaymentMethod.CASH);
         }
+        // La devise borne les rails : une demande en francs CFA (données antérieures au filtrage
+        // à l'écriture, ou devise changée) ne propose jamais la carte, que createNegotiationEscrow
+        // refuserait de toute façon au moment de payer. L'espèce reste toujours possible.
+        set.removeIf(method -> !com.yadony.api.payments.currency.CurrencyPaymentRails
+                .allowsCode(request.getCurrency(), method));
         return set;
     }
 

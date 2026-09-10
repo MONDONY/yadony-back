@@ -272,12 +272,13 @@ class NegotiationServiceTest {
         }
 
         @Test
-        @DisplayName("le thread copie la devise du TRAJET, jamais celle de la demande — le prix payé par "
+        @DisplayName("le thread copie la devise du TRAJET lié, qui est celle de la demande — le prix payé par "
             + "l'expéditeur reste toujours dans la devise de l'annonce (régression bug devise-par-annonce)")
         void start_copiesTripCurrencyNeverRequestCurrency() {
-            // La demande est en EUR (devise de l'expéditeur), le trajet en CAD :
-            // le thread doit suivre le trajet, jamais la demande.
-            request.setCurrency("EUR");
+            // Demande et trajet lié partagent la même devise (un trajet d'une autre devise est
+            // refusé, cf. start_crossCurrency_isRefused…) : le fil suit le trajet, ici en CAD,
+            // lu sur l'annonce et non sur un défaut d'entité.
+            request.setCurrency("CAD");
 
             when(config.maxOpenThreadsPerTraveler()).thenReturn(5);
             when(config.threadsPerMinuteRateLimit()).thenReturn(1);
@@ -461,19 +462,42 @@ class NegotiationServiceTest {
         }
 
         @Test
-        @DisplayName("devise de la demande différente de celle du trajet → start() réussit quand même, "
-            + "le thread copie la devise du TRAJET (jamais celle de la demande)")
-        void start_crossCurrency_succeedsAndThreadCarriesTripCurrencyNotRequestCurrency() {
-            // Task 8 a retiré ce même garde-fou de BidService (un bid reprend la devise
-            // de l'annonce, pas celle de qui enchérit) et Task 10 a retiré le filtre de
-            // devise du fil unifié : un voyageur navigue désormais des demandes dans
-            // n'importe quelle devise. NegotiationService.start() est le seul chemin par
-            // lequel il peut répondre à une demande — il ne doit donc plus refuser
-            // l'appariement entre devises différentes, sous peine de rendre ces demandes
-            // visibles mais jamais actionnables. Le prix payé par l'expéditeur reste en
-            // revanche toujours dans la devise de l'annonce (trajet) — cf. spec
-            // 2026-08-20-devise-par-annonce — jamais celle de sa demande.
+        @DisplayName("devise de la demande différente de celle du trajet lié → 422 announcement/currency-mismatch, "
+            + "le prix proposé ne change jamais de devise sans conversion")
+        void start_crossCurrency_isRefused_priceNeverChangesCurrencyWithoutConversion() {
+            // Le prix proposé est validé dans la devise de la DEMANDE (bornes, égalité au budget
+            // ferme) puis copié tel quel sur le fil : lier un trajet d'une autre devise faisait de
+            // 50 000 XOF un séquestre Stripe de 50 000 USD. Un voyageur peut toujours répondre à
+            // une demande d'une autre devise, mais par un trajet dédié, qui naît dans la devise
+            // de la demande (buildDedicatedTripAnnouncement).
             request.setCurrency("USD");
+
+            when(config.maxOpenThreadsPerTraveler()).thenReturn(5);
+            when(config.threadsPerMinuteRateLimit()).thenReturn(1);
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(requestRepo.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(threadRepo.findActiveByPackageRequestIdAndTravelerId(REQUEST_ID, TRAVELER_ID))
+                .thenReturn(Optional.empty());
+            when(threadRepo.countByTravelerIdAndStatus(eq(TRAVELER_ID), eq(NegotiationThreadStatus.OPEN)))
+                .thenReturn(0L);
+            when(threadRepo.countCreatedBy(eq(TRAVELER_ID), any())).thenReturn(0L);
+            stubMatchingTrip();
+            com.yadony.api.matching.AnnouncementEntity tripAnn =
+                announcementRepo.findById(TRIP_ANNOUNCEMENT_ID).orElseThrow();
+            tripAnn.setCurrency("CAD");
+
+            assertThatThrownBy(() -> service.start(TRAVELER_ID, validStartReq()))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(e -> assertThat(((ResponseStatusException) e).getReason())
+                    .isEqualTo("announcement/currency-mismatch"));
+            verify(threadRepo, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("demande en XOF acceptant la carte (donnée ancienne) → le fil ne propose que les espèces")
+        void start_cfaRequest_neverOffersTheCard() {
+            request.setCurrency("XOF");
+            request.setAcceptedPaymentMethods(java.util.EnumSet.of(PaymentMethod.STRIPE, PaymentMethod.CASH));
 
             when(config.maxOpenThreadsPerTraveler()).thenReturn(5);
             when(config.threadsPerMinuteRateLimit()).thenReturn(1);
@@ -487,18 +511,15 @@ class NegotiationServiceTest {
             when(threadRepo.countCreatedBy(eq(TRAVELER_ID), any())).thenReturn(0L);
             when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
             stubMatchingTrip();
-            com.yadony.api.matching.AnnouncementEntity tripAnn =
-                announcementRepo.findById(TRIP_ANNOUNCEMENT_ID).orElseThrow();
-            tripAnn.setCurrency("CAD");
+            announcementRepo.findById(TRIP_ANNOUNCEMENT_ID).orElseThrow().setCurrency("XOF");
 
-            var response = service.start(TRAVELER_ID, validStartReq());
+            service.start(TRAVELER_ID, validStartReq());
 
             ArgumentCaptor<NegotiationThreadEntity> captor =
                 ArgumentCaptor.forClass(NegotiationThreadEntity.class);
             verify(threadRepo).save(captor.capture());
-            assertThat(response).isNotNull();
-            assertThat(response.status()).isEqualTo(NegotiationThreadStatus.OPEN);
-            assertThat(captor.getValue().getCurrency()).isEqualTo("CAD");
+            assertThat(captor.getValue().getCurrency()).isEqualTo("XOF");
+            assertThat(captor.getValue().getAvailablePaymentMethods()).containsExactly(PaymentMethod.CASH);
         }
 
         @Test
@@ -2086,6 +2107,14 @@ class NegotiationServiceTest {
             // tout est réservé au sender → availableKg = 0 (carte « 5/5 réservés »).
             assertThat(savedAnn.getAvailableKg()).isEqualByComparingTo("0");
             assertThat(savedAnn.getTotalKg()).isEqualByComparingTo("5");
+            // Les moyens du trajet dédié sont ceux que le voyageur peut réellement fournir sur
+            // cette demande (fixture : demande carte + espèces, voyageur Connect actif), jamais le
+            // défaut d'entité {STRIPE} publié même en zone CFA ou sans compte Connect.
+            assertThat(savedAnn.getAcceptedPaymentMethods())
+                .isEqualTo(java.util.EnumSet.copyOf(
+                    com.yadony.api.payments.currency.AnnouncementPaymentRails.offerable(
+                        request.getAcceptedPaymentMethods(), request.getCurrency(), true, false)));
+            assertThat(savedAnn.getAcceptedPaymentMethods()).doesNotContain(PaymentMethod.MOBILE_MONEY);
             assertThat(savedAnn.getTransportMode()).isEqualTo(com.yadony.api.matching.TransportMode.PLANE);
             assertThat(savedAnn.getLinkedPackageRequestId()).isEqualTo(REQUEST_ID);
             // Surplus capacity: reservedKg = request weight, surplus locked at creation

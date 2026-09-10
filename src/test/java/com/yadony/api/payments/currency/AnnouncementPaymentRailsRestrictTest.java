@@ -45,4 +45,24 @@ class AnnouncementPaymentRailsRestrictTest {
                 EnumSet.of(PaymentMethod.STRIPE, PaymentMethod.MOBILE_MONEY), null))
                 .containsExactly(PaymentMethod.STRIPE);
     }
+
+    @Test
+    void offerable_intersecteLeChoixAvecDeviseEtCapacites() {
+        // Zone CFA : la carte n'existe pas, le mobile money exige un compte de versement.
+        assertThat(AnnouncementPaymentRails.offerable(
+                EnumSet.of(PaymentMethod.STRIPE, PaymentMethod.CASH, PaymentMethod.MOBILE_MONEY), "XOF", true, false))
+                .containsExactly(PaymentMethod.CASH);
+        assertThat(AnnouncementPaymentRails.offerable(
+                EnumSet.of(PaymentMethod.CASH, PaymentMethod.MOBILE_MONEY), "XOF", false, true))
+                .containsExactlyInAnyOrder(PaymentMethod.CASH, PaymentMethod.MOBILE_MONEY);
+        // Hors zone CFA : la carte exige un compte Connect.
+        assertThat(AnnouncementPaymentRails.offerable(EnumSet.of(PaymentMethod.STRIPE), "EUR", false, false))
+                .isEmpty();
+        assertThat(AnnouncementPaymentRails.offerable(EnumSet.of(PaymentMethod.STRIPE), "EUR", true, false))
+                .containsExactly(PaymentMethod.STRIPE);
+        // Le choix explicite est respecté : espèces seules restent espèces seules.
+        assertThat(AnnouncementPaymentRails.offerable(EnumSet.of(PaymentMethod.CASH), "EUR", true, true))
+                .containsExactly(PaymentMethod.CASH);
+        assertThat(AnnouncementPaymentRails.offerable(null, "EUR", true, true)).isEmpty();
+    }
 }

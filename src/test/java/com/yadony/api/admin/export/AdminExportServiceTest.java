@@ -59,11 +59,37 @@ class AdminExportServiceTest {
 
         String csv = text(service().exportTransactions(null, null));
 
-        assertThat(csv).contains("id,bidId,statut,montantEur");
+        assertThat(csv).contains("id,bidId,statut,rail,devise,montant,commission,rembourse");
         assertThat(csv).contains("RELEASED");
         assertThat(csv).contains("100.00");
         assertThat(csv).contains("pi_123");
         assertThat(csv).startsWith("\uFEFF");
+    }
+
+    // Les colonnes « montantEur » mêlaient des XOF et des EUR sous un même nom.
+    @Test
+    void exportTransactions_writesRailAndCurrencyPerRow() {
+        PaymentEntity card = new PaymentEntity();
+        card.setBidId(UUID.randomUUID());
+        card.setAmount(new BigDecimal("100.00"));
+        card.setCommissionAmount(new BigDecimal("12.00"));
+        card.setCurrency("eur");
+        card.setStatus(PaymentStatus.RELEASED);
+        card.setStripePaymentIntentId("pi_card");
+        PaymentEntity mobileMoney = new PaymentEntity();
+        mobileMoney.setBidId(UUID.randomUUID());
+        mobileMoney.setRail(com.yadony.api.payments.PaymentRail.PAWAPAY);
+        mobileMoney.setCurrency("XOF");
+        mobileMoney.setAmount(new BigDecimal("6600.00"));
+        mobileMoney.setCommissionAmount(new BigDecimal("600.00"));
+        mobileMoney.setStatus(PaymentStatus.RELEASED);
+        when(paymentRepository.findAllByCreatedAtBetweenOrderByCreatedAtAsc(any(), any()))
+                .thenReturn(List.of(card, mobileMoney));
+
+        String csv = text(service().exportTransactions(null, null));
+
+        assertThat(csv).contains("RELEASED,STRIPE,EUR,100.00,12.00");
+        assertThat(csv).contains("RELEASED,PAWAPAY,XOF,6600.00,600.00");
     }
 
     @Test
