@@ -1328,6 +1328,8 @@ public class PaymentService {
                         || outcome == com.yadony.api.requests.NegotiationMobileMoneyPort.ReleaseOutcome.NOTHING_PENDING) {
                     return true;
                 }
+                // DEPOSIT_OPEN, DEPOSIT_COMPLETED_NOT_APPLIED, ESCROW_NOT_SEALED (le paiement lu
+                // PENDING ci-dessus a pu passer ESCROW entre-temps) : argent en vol, ne pas basculer.
                 log.warn("Libération du dépôt pawaPay abandonnée pour le fil {} : {}", threadId, outcome);
                 return false;
             }

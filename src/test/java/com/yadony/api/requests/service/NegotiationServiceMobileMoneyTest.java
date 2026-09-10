@@ -401,13 +401,63 @@ class NegotiationServiceMobileMoneyTest {
         verify(mobileMoneyPort, never()).releasePendingDeposit(any());
     }
 
+    /**
+     * Revue finale, I2 : dépôt COMPLETED mais confirmation jamais appliquée (paiement PENDING) :
+     * le balayage n'expire pas, il rejoue la confirmation par le port ; l'événement republié
+     * scellera le fil, qui reste AWAITING_DEPOSIT d'ici là.
+     */
     @Test
-    void expire_depositCompletedNotApplied_isReported_threadUntouched() {
+    void expire_depositCompletedNotApplied_replaysConfirmationViaPort_threadUntouched() {
         thread.setStatus(NegotiationThreadStatus.AWAITING_DEPOSIT);
         thread.setDepositExpiresAt(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1));
         when(mobileMoneyPort.releasePendingDeposit(thread.getId())).thenReturn(NegotiationMobileMoneyPort.ReleaseOutcome.DEPOSIT_COMPLETED_NOT_APPLIED);
 
-        assertThat(service.expireMobileMoneyDeposit(thread.getId())).isEqualTo(NegotiationService.DepositExpiryOutcome.DEPOSIT_COMPLETED_NOT_APPLIED);
+        assertThat(service.expireMobileMoneyDeposit(thread.getId())).isEqualTo(NegotiationService.DepositExpiryOutcome.REPAIRED);
+
+        verify(mobileMoneyPort).repairDepositCompletedNotApplied(thread.getId());
+        assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.AWAITING_DEPOSIT);
+        verify(eventPublisher, never()).publishEvent(any(NegotiationDepositRevertedEvent.class));
+    }
+
+    /** Revue finale, I2 : séquestre posé mais scellement jamais passé : le balayage scelle. */
+    @Test
+    void expire_escrowNotSealed_sealsTheThread() {
+        thread.setStatus(NegotiationThreadStatus.AWAITING_DEPOSIT);
+        thread.setPaymentMethod(PaymentMethod.MOBILE_MONEY);
+        thread.setDepositExpiresAt(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1));
+        when(mobileMoneyPort.releasePendingDeposit(thread.getId())).thenReturn(NegotiationMobileMoneyPort.ReleaseOutcome.ESCROW_NOT_SEALED);
+        when(threadRepo.findByPackageRequestId(request.getId())).thenReturn(List.of(thread));
+
+        assertThat(service.expireMobileMoneyDeposit(thread.getId())).isEqualTo(NegotiationService.DepositExpiryOutcome.REPAIRED);
+
+        assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.ACCEPTED);
+        assertThat(thread.getDepositExpiresAt()).isNull();
+        assertThat(request.getStatus()).isEqualTo(PackageRequestStatus.ACCEPTED);
+        verify(mobileMoneyPort, never()).repairDepositCompletedNotApplied(any());
+        verify(mobileMoneyPort, never()).refundEscrowedDeposit(any());
+        verify(eventPublisher, never()).publishEvent(any(NegotiationDepositRevertedEvent.class));
+    }
+
+    /** Une réparation qui lève remonte telle quelle : le runner attrape et alerte. */
+    @Test
+    void expire_repairThrows_propagates() {
+        thread.setStatus(NegotiationThreadStatus.AWAITING_DEPOSIT);
+        thread.setDepositExpiresAt(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1));
+        when(mobileMoneyPort.releasePendingDeposit(thread.getId())).thenReturn(NegotiationMobileMoneyPort.ReleaseOutcome.DEPOSIT_COMPLETED_NOT_APPLIED);
+        org.mockito.Mockito.doThrow(new IllegalStateException("deposit disparu")).when(mobileMoneyPort).repairDepositCompletedNotApplied(thread.getId());
+
+        assertThatThrownBy(() -> service.expireMobileMoneyDeposit(thread.getId()))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("deposit disparu");
+        assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.AWAITING_DEPOSIT);
+    }
+
+    @Test
+    void cancelDeposit_escrowNotSealed_is409_threadUntouched() {
+        thread.setStatus(NegotiationThreadStatus.AWAITING_DEPOSIT);
+        when(mobileMoneyPort.releasePendingDeposit(thread.getId())).thenReturn(NegotiationMobileMoneyPort.ReleaseOutcome.ESCROW_NOT_SEALED);
+
+        assertThatThrownBy(() -> service.cancelMobileMoneyDeposit(senderId, thread.getId()))
+                .isInstanceOf(ResponseStatusException.class).hasMessageContaining("negotiation/deposit-in-flight");
         assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.AWAITING_DEPOSIT);
     }
 

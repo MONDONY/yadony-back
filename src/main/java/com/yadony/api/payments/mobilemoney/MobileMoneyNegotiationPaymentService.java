@@ -267,12 +267,12 @@ public class MobileMoneyNegotiationPaymentService {
         if (payment.isPresent() && payment.get().getStatus() == PaymentStatus.ESCROW) {
             // Le rappel pawaPay a déjà posé le séquestre (PENDING → ESCROW) et commité, mais
             // le fil n'est pas encore ACCEPTED : le scellement (finalizeAfterMobileMoneyDeposit)
-            // est en vol dans sa propre transaction. Rendre NOTHING_PENDING ici ramènerait le
-            // fil à AWAITING_PAYMENT pendant qu'un dépôt valide est déjà encaissé, argent
-            // engagé, accord perdu. Ne rien faire, alerter.
-            log.error("Fil {} : séquestre posé, fil pas encore scellé, libération abandonnée (paiement {})",
+            // est en vol dans sa propre transaction, ou perdu. Rendre NOTHING_PENDING ici
+            // ramènerait le fil à AWAITING_PAYMENT pendant qu'un dépôt valide est déjà encaissé,
+            // argent engagé, accord perdu. Ne rien libérer : requests/ rejoue le scellement.
+            log.warn("Fil {} : séquestre posé, fil pas encore scellé, libération abandonnée (paiement {})",
                     threadId, payment.get().getId());
-            return NegotiationMobileMoneyPort.ReleaseOutcome.DEPOSIT_COMPLETED_NOT_APPLIED;
+            return NegotiationMobileMoneyPort.ReleaseOutcome.ESCROW_NOT_SEALED;
         }
         if (payment.isEmpty() || payment.get().getStatus() != PaymentStatus.PENDING) {
             return NegotiationMobileMoneyPort.ReleaseOutcome.NOTHING_PENDING;
@@ -291,6 +291,37 @@ public class MobileMoneyNegotiationPaymentService {
         }
         audit.log("PAYMENT", p.getId(), AUDIT_CANCELLED, null, Map.of("threadId", threadId.toString()));
         return NegotiationMobileMoneyPort.ReleaseOutcome.CANCELLED;
+    }
+
+    // ── Réparation d'une confirmation perdue ─────────────────────────────
+
+    /**
+     * Jumeau de {@link MobileMoneyBidPaymentService#repairDepositCompletedNotApplied} : le
+     * balayage d'expiration a diagnostiqué {@code DEPOSIT_COMPLETED_NOT_APPLIED} (dépôt
+     * COMPLETED côté pawaPay, paiement resté PENDING, la confirmation s'étant perdue :
+     * redémarrage, exception dans l'écouteur). Retrouve le dernier dépôt COMPLETED du
+     * paiement PAWAPAY du fil et rejoue {@link #confirmEscrow}, idempotente par construction
+     * ({@link PaymentRepository#markEscrowIfPending} n'a qu'un gagnant) ; le rejeu republie
+     * {@link MobileMoneyNegotiationDepositConfirmedEvent}, qui scellera le fil.
+     *
+     * <p>Ne lève pas d'alerte : l'appelant garde la sienne en filet si cette réparation échoue.
+     * L'entité chargée ici est celle que {@code confirmEscrow} relira après son claim (snapshot
+     * du même contexte) : sans conséquence, car un paiement PENDING dont le dépôt est COMPLETED
+     * n'est annulable par aucun chemin ({@link #releasePendingDeposit} le refuse), le seul
+     * concurrent possible est une autre confirmation, branche « déjà appliqué ».
+     *
+     * @throws IllegalStateException si le paiement PAWAPAY ou le dépôt COMPLETED a disparu.
+     */
+    @Transactional
+    public void repairDepositCompletedNotApplied(UUID threadId) {
+        PaymentEntity payment = paymentRepository.findByNegotiationThreadId(threadId)
+                .filter(p -> p.getRail() == PaymentRail.PAWAPAY)
+                .orElseThrow(() -> new IllegalStateException("Paiement PAWAPAY introuvable pour le fil " + threadId));
+        PawapayOperationEntity deposit = operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT)
+                .filter(o -> o.getStatus() == PawapayOperationStatus.COMPLETED)
+                .orElseThrow(() -> new IllegalStateException(
+                        "Deposit pawaPay COMPLETED introuvable pour le paiement " + payment.getId()));
+        confirmEscrow(deposit.getId(), payment.getId());
     }
 
     // ── Remboursement d'un séquestre orphelin ────────────────────────────

@@ -23,10 +23,17 @@ public interface NegotiationMobileMoneyPort {
         /** Un dépôt pawaPay est encore en vol (PIN en cours de saisie) : ne rien faire, attendre. */
         DEPOSIT_OPEN,
         /**
-         * Dépôt COMPLETED côté pawaPay mais paiement encore PENDING, OU paiement déjà ESCROW
-         * dont le scellement du fil n'est pas encore passé : ne rien faire, alerter.
+         * Dépôt COMPLETED côté pawaPay mais paiement encore PENDING : la confirmation du
+         * séquestre s'est perdue. Ne pas libérer ; réparable par
+         * {@link #repairDepositCompletedNotApplied}.
          */
-        DEPOSIT_COMPLETED_NOT_APPLIED
+        DEPOSIT_COMPLETED_NOT_APPLIED,
+        /**
+         * Séquestre posé (paiement ESCROW) mais le scellement du fil n'est pas encore passé :
+         * en vol dans sa propre transaction, ou perdu. Ne pas libérer ; réparable par un rejeu
+         * de {@code finalizeAfterMobileMoneyDeposit} côté {@code requests/}.
+         */
+        ESCROW_NOT_SEALED
     }
 
     /**
@@ -39,6 +46,16 @@ public interface NegotiationMobileMoneyPort {
 
     /** Annule le paiement PENDING du fil si aucun dépôt n'est en vol. */
     ReleaseOutcome releasePendingDeposit(UUID threadId);
+
+    /**
+     * Répare {@link ReleaseOutcome#DEPOSIT_COMPLETED_NOT_APPLIED} : rejoue la confirmation du
+     * séquestre sur le dernier dépôt COMPLETED du paiement PAWAPAY du fil (idempotent, un seul
+     * gagnant côté claim). Le rejeu republie l'événement de confirmation qui scellera le fil.
+     *
+     * @throws IllegalStateException si le paiement PAWAPAY ou le dépôt COMPLETED a disparu
+     *         entre le diagnostic et la réparation (état incohérent, à alerter par l'appelant).
+     */
+    void repairDepositCompletedNotApplied(UUID threadId);
 
     /**
      * Le séquestre existe mais le fil n'est plus scellable (auto-rejeté, annulé) : ESCROW → REFUNDED

@@ -1039,7 +1039,12 @@ public class NegotiationService {
 
     public record PreparedDeposit(UUID threadId, UUID paymentId, BigDecimal gross, String currency, LocalDateTime expiresAt) {}
 
-    public enum DepositExpiryOutcome { REVERTED, IGNORED, DEPOSIT_COMPLETED_NOT_APPLIED }
+    /**
+     * Issue du balayage d'expiration d'un fil AWAITING_DEPOSIT échu : ramené à payer, laissé tel
+     * quel (dépôt en vol, pas encore échu, fil absent), ou maillon asynchrone perdu réparé
+     * (scellement rejoué, ou confirmation du séquestre rejouée par le port).
+     */
+    public enum DepositExpiryOutcome { REVERTED, IGNORED, REPAIRED }
 
     /**
      * L'expéditeur lance le paiement mobile money : le fil passe en AWAITING_DEPOSIT avec une
@@ -1187,13 +1192,19 @@ public class NegotiationService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "negotiation/not-awaiting-deposit");
         }
         switch (mobileMoneyPort.releasePendingDeposit(threadId)) {
-            case DEPOSIT_OPEN, DEPOSIT_COMPLETED_NOT_APPLIED ->
+            case DEPOSIT_OPEN, DEPOSIT_COMPLETED_NOT_APPLIED, ESCROW_NOT_SEALED ->
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "negotiation/deposit-in-flight");
             case CANCELLED, NOTHING_PENDING -> revertMobileMoneyDeposit(threadId, "sender-cancelled");
         }
     }
 
-    /** Balayage d'expiration : idempotent, chaque fil dans sa propre transaction. */
+    /**
+     * Balayage d'expiration : idempotent, chaque fil dans sa propre transaction. Répare aussi
+     * les deux maillons asynchrones à un seul coup (revue finale, I2) : séquestre posé mais
+     * scellement jamais passé (rejoué ici), dépôt COMPLETED mais confirmation jamais appliquée
+     * (rejouée par le port, dont l'événement scellera le fil au tour suivant). Une réparation
+     * qui lève remonte à l'appelant, qui alerte.
+     */
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
     public DepositExpiryOutcome expireMobileMoneyDeposit(UUID threadId) {
         NegotiationThreadEntity thread = threadRepo.findById(threadId).orElse(null);
@@ -1204,7 +1215,16 @@ public class NegotiationService {
         }
         return switch (mobileMoneyPort.releasePendingDeposit(threadId)) {
             case DEPOSIT_OPEN -> DepositExpiryOutcome.IGNORED;
-            case DEPOSIT_COMPLETED_NOT_APPLIED -> DepositExpiryOutcome.DEPOSIT_COMPLETED_NOT_APPLIED;
+            case ESCROW_NOT_SEALED -> {
+                log.warn("Fil {} : séquestre posé mais scellement jamais passé, rejoué par le balayage", threadId);
+                finalizeAfterMobileMoneyDeposit(threadId);
+                yield DepositExpiryOutcome.REPAIRED;
+            }
+            case DEPOSIT_COMPLETED_NOT_APPLIED -> {
+                log.warn("Fil {} : dépôt COMPLETED mais confirmation jamais appliquée, rejouée par le balayage", threadId);
+                mobileMoneyPort.repairDepositCompletedNotApplied(threadId);
+                yield DepositExpiryOutcome.REPAIRED;
+            }
             case CANCELLED, NOTHING_PENDING -> {
                 revertMobileMoneyDeposit(threadId, "deposit-expired");
                 yield DepositExpiryOutcome.REVERTED;

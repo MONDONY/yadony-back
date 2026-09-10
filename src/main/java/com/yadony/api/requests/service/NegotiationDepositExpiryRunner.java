@@ -21,8 +21,10 @@ import org.springframework.stereotype.Component;
  * par un règlement concurrent entre la lecture du lot et le commit de
  * {@code expireMobileMoneyDeposit} lève une {@code ObjectOptimisticLockingFailureException} au
  * sortir du proxy REQUIRES_NEW : couverte par le même {@code catch} large que le reste du lot,
- * journalisée, le tick suivant repasse. Un dépôt COMPLETED côté pawaPay mais pas encore appliqué
- * n'est jamais expiré : alerte dédupliquée.
+ * journalisée, le tick suivant repasse. Un maillon asynchrone perdu (dépôt COMPLETED jamais
+ * confirmé, séquestre posé jamais scellé) n'est jamais expiré : il est réparé par
+ * {@code expireMobileMoneyDeposit} ; si la réparation lève, l'alerte dédupliquée
+ * {@value #DEPOSIT_COMPLETED_ALERT_PREFIX}{@code <threadId>} reste le filet.
  */
 @Component
 public class NegotiationDepositExpiryRunner {
@@ -48,14 +50,17 @@ public class NegotiationDepositExpiryRunner {
                 PageRequest.of(0, BATCH_SIZE));
         for (UUID threadId : due) {
             try {
-                if (service.expireMobileMoneyDeposit(threadId)
-                        == NegotiationService.DepositExpiryOutcome.DEPOSIT_COMPLETED_NOT_APPLIED) {
-                    alerts.raiseOnce(DEPOSIT_COMPLETED_ALERT_PREFIX + threadId,
-                            "Dépôt pawaPay COMPLETED mais paiement encore PENDING sur le fil " + threadId,
-                            Map.of("threadId", threadId.toString()));
+                if (service.expireMobileMoneyDeposit(threadId) == NegotiationService.DepositExpiryOutcome.REPAIRED) {
+                    log.info("Fil {} : maillon asynchrone du dépôt mobile money réparé par le balayage", threadId);
                 }
             } catch (Exception e) {
-                log.error("Expiration du dépôt mobile money du fil {} échouée : {}", threadId, e.toString());
+                // Une expiration ordinaire ne lève pas ; une exception ici vient d'une réparation
+                // (scellement ou confirmation rejoués) qui a échoué à son tour, ou d'un état
+                // incohérent : un humain doit regarder, une seule fois par fil.
+                log.error("Expiration ou réparation du dépôt mobile money du fil {} échouée : {}", threadId, e.toString());
+                alerts.raiseOnce(DEPOSIT_COMPLETED_ALERT_PREFIX + threadId,
+                        "Réparation du dépôt mobile money échouée sur le fil " + threadId + " : " + e,
+                        Map.of("threadId", threadId.toString()));
             }
         }
     }

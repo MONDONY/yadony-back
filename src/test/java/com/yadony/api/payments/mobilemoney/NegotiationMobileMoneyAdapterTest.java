@@ -17,7 +17,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
- * L'adaptateur ne fait que déléguer au service : ces trois tests vérifient uniquement le
+ * L'adaptateur ne fait que déléguer au service : ces quatre tests vérifient uniquement le
  * passage des arguments et le retour de la valeur du service, sans logique propre à tester.
  */
 @ExtendWith(MockitoExtension.class)
@@ -60,6 +60,14 @@ class NegotiationMobileMoneyAdapterTest {
 
         assertThat(result).isEqualTo(NegotiationMobileMoneyPort.ReleaseOutcome.DEPOSIT_OPEN);
         verify(service).releasePendingDeposit(threadId);
+    }
+
+    @Test
+    @DisplayName("repairDepositCompletedNotApplied délègue à service.repairDepositCompletedNotApplied")
+    void repairDepositCompletedNotApplied_delegates() {
+        adapter.repairDepositCompletedNotApplied(threadId);
+
+        verify(service).repairDepositCompletedNotApplied(threadId);
     }
 
     @Test

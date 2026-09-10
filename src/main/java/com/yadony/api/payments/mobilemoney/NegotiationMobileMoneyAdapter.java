@@ -27,6 +27,11 @@ public class NegotiationMobileMoneyAdapter implements NegotiationMobileMoneyPort
     }
 
     @Override
+    public void repairDepositCompletedNotApplied(UUID threadId) {
+        service.repairDepositCompletedNotApplied(threadId);
+    }
+
+    @Override
     public boolean refundEscrowedDeposit(UUID threadId) {
         return service.refundEscrowedDeposit(threadId);
     }

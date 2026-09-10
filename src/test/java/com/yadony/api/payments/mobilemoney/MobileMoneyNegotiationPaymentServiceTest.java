@@ -239,17 +239,61 @@ class MobileMoneyNegotiationPaymentServiceTest {
     }
 
     @Test
-    void releasePendingDeposit_escrowed_isCompletedNotApplied_neverCancelled() {
+    void releasePendingDeposit_escrowed_isEscrowNotSealed_neverCancelled() {
         // Le rappel pawaPay a déjà posé le séquestre (PENDING → ESCROW) et commité, mais le
-        // fil n'est pas encore scellé (finalizeAfterMobileMoneyDeposit en vol) : ne jamais
-        // rendre NOTHING_PENDING ici, sous peine de ramener le fil à AWAITING_PAYMENT alors
-        // qu'un dépôt valide est déjà encaissé.
+        // fil n'est pas encore scellé (finalizeAfterMobileMoneyDeposit en vol, ou perdu) : ne
+        // jamais rendre NOTHING_PENDING ici, sous peine de ramener le fil à AWAITING_PAYMENT
+        // alors qu'un dépôt valide est déjà encaissé. Issue dédiée : requests/ rejoue le scellement.
         PaymentEntity p = payment(PaymentStatus.ESCROW);
         when(paymentRepository.findByNegotiationThreadIdForUpdate(threadId)).thenReturn(Optional.of(p));
 
-        assertThat(service.releasePendingDeposit(threadId)).isEqualTo(NegotiationMobileMoneyPort.ReleaseOutcome.DEPOSIT_COMPLETED_NOT_APPLIED);
+        assertThat(service.releasePendingDeposit(threadId)).isEqualTo(NegotiationMobileMoneyPort.ReleaseOutcome.ESCROW_NOT_SEALED);
         verify(paymentRepository, never()).markCancelledIfPending(any());
         verify(operations, never()).findLatest(any(), any());
+    }
+
+    // ── repairDepositCompletedNotApplied ─────────────────────────────────
+
+    /** Revue finale, I2 : la confirmation perdue est rejouée sur le dernier dépôt COMPLETED. */
+    @Test
+    void repairDepositCompletedNotApplied_replaysConfirmEscrow_onTheCompletedDeposit() {
+        PaymentEntity p = payment(PaymentStatus.PENDING);
+        when(paymentRepository.findByNegotiationThreadId(threadId)).thenReturn(Optional.of(p));
+        PawapayOperationEntity done = operation(p.getId(), PawapayOperationStatus.COMPLETED, new BigDecimal("33000"));
+        when(operations.findLatest(p.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.of(done));
+        when(paymentRepository.markEscrowIfPending(eq(p.getId()), any())).thenReturn(1);
+        when(paymentRepository.findById(p.getId())).thenReturn(Optional.of(p));
+
+        service.repairDepositCompletedNotApplied(threadId);
+
+        verify(paymentRepository).markEscrowIfPending(eq(p.getId()), any());
+        ArgumentCaptor<Object> ev = ArgumentCaptor.forClass(Object.class);
+        verify(events).publishEvent(ev.capture());
+        var e = (MobileMoneyNegotiationDepositConfirmedEvent) ev.getValue();
+        assertThat(e.threadId()).isEqualTo(threadId);
+        assertThat(e.paymentId()).isEqualTo(p.getId());
+        assertThat(e.operationId()).isEqualTo(done.getId());
+    }
+
+    @Test
+    void repairDepositCompletedNotApplied_noPawapayPayment_throws() {
+        when(paymentRepository.findByNegotiationThreadId(threadId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.repairDepositCompletedNotApplied(threadId))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining(threadId.toString());
+        verify(paymentRepository, never()).markEscrowIfPending(any(), any());
+    }
+
+    @Test
+    void repairDepositCompletedNotApplied_noCompletedDeposit_throws() {
+        PaymentEntity p = payment(PaymentStatus.PENDING);
+        when(paymentRepository.findByNegotiationThreadId(threadId)).thenReturn(Optional.of(p));
+        PawapayOperationEntity open = operation(p.getId(), PawapayOperationStatus.ACCEPTED, new BigDecimal("33000"));
+        when(operations.findLatest(p.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.of(open));
+
+        assertThatThrownBy(() -> service.repairDepositCompletedNotApplied(threadId))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining(p.getId().toString());
+        verify(paymentRepository, never()).markEscrowIfPending(any(), any());
     }
 
     // ── refundEscrowedDeposit ────────────────────────────────────────────
