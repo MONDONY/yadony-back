@@ -46,9 +46,16 @@ public class MobileMoneyDepositOutcomeListener {
         this.adminAlert = adminAlert;
     }
 
-    /** Un paiement porte SOIT un bid SOIT un fil (CHECK exclusif V62) : c'est ce qui aiguille. */
+    /**
+     * Un paiement porte SOIT un bid SOIT un fil (CHECK exclusif V62) : c'est ce qui aiguille.
+     * Requête scalaire, JAMAIS {@code findById} : les deux méthodes ci-dessous sont
+     * {@code REQUIRES_NEW}, {@code confirmEscrow} y est joint, et une entité chargée ici avant
+     * son claim bulk ({@code markEscrowIfPending}, sans {@code clearAutomatically}) serait
+     * rendue telle quelle par le {@code findById} qui suit le claim : une annulation commitée
+     * entre les deux resterait invisible, le dépôt encaissé ne serait jamais remboursé.
+     */
     private boolean isThreadScoped(UUID paymentId) {
-        return paymentRepository.findById(paymentId).map(p -> p.getNegotiationThreadId() != null).orElse(false);
+        return paymentRepository.isThreadScoped(paymentId).orElse(false);
     }
 
     /**

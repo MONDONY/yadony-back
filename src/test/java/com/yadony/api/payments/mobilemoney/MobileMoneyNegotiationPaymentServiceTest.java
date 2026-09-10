@@ -294,6 +294,7 @@ class MobileMoneyNegotiationPaymentServiceTest {
         assertThat(ev.getValue()).isInstanceOf(MobileMoneyNegotiationDepositConfirmedEvent.class);
         var e = (MobileMoneyNegotiationDepositConfirmedEvent) ev.getValue();
         assertThat(e.threadId()).isEqualTo(threadId);
+        assertThat(e.paymentId()).isEqualTo(p.getId());
         assertThat(e.operationId()).isEqualTo(opId);
         verify(audit).log(eq("PAYMENT"), eq(p.getId()), eq("NEGOTIATION_DEPOSIT_CONFIRMED"), any(), any());
     }

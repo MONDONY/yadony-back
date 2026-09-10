@@ -131,4 +131,29 @@ class PaymentRepositoryMobileMoneyTest {
         String rail = jdbc.queryForObject("SELECT rail FROM payments WHERE id = ?", String.class, id);
         assertThat(rail).isEqualTo("STRIPE");
     }
+
+    /**
+     * Revue finale, C1 : l'aiguillage bid / fil de {@code MobileMoneyDepositOutcomeListener} se
+     * fait par cette requête scalaire, sans charger d'entité dans le contexte de persistance
+     * (le claim bulk qui suit rendrait sinon un snapshot périmé). Vide si le paiement n'existe pas.
+     */
+    @Test
+    void isThreadScoped_isScalar_trueForThreadPayment_falseForBidPayment_emptyIfUnknown() {
+        PaymentEntity bidPayment = pawapayPayment(PaymentStatus.PENDING);
+        PaymentEntity threadPayment = new PaymentEntity();
+        threadPayment.setNegotiationThreadId(UUID.randomUUID());
+        threadPayment.setRail(PaymentRail.PAWAPAY);
+        threadPayment.setAmount(new BigDecimal("33000"));
+        threadPayment.setCommissionAmount(new BigDecimal("3000"));
+        threadPayment.setCurrency("XOF");
+        threadPayment.setStatus(PaymentStatus.PENDING);
+        threadPayment = repository.saveAndFlush(threadPayment);
+        entityManager.clear();
+
+        assertThat(repository.isThreadScoped(threadPayment.getId())).contains(true);
+        assertThat(repository.isThreadScoped(bidPayment.getId())).contains(false);
+        assertThat(repository.isThreadScoped(UUID.randomUUID())).isEmpty();
+        assertThat(entityManager.contains(threadPayment)).isFalse();
+        assertThat(entityManager.contains(bidPayment)).isFalse();
+    }
 }
