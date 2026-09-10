@@ -91,7 +91,7 @@ public class AnnouncementSearchMapper {
                         !traveler.isContactKycOnly())
                 : null;
         Set<com.yadony.api.payments.cash.PaymentMethod> availablePaymentMethods =
-                AnnouncementPaymentRails.availableFor(entity.getCurrency(),
+                AnnouncementPaymentRails.offerable(entity.getAcceptedPaymentMethods(), entity.getCurrency(),
                         traveler != null && traveler.hasActiveStripeConnect(),
                         traveler != null && traveler.hasActiveMobileMoney());
         long bidsCount = bidCountMap.getOrDefault(entity.getId(), 0L);
@@ -157,7 +157,7 @@ public class AnnouncementSearchMapper {
                         !traveler.isContactKycOnly())
                 : null;
         Set<com.yadony.api.payments.cash.PaymentMethod> availablePaymentMethods =
-                AnnouncementPaymentRails.availableFor(entity.getCurrency(),
+                AnnouncementPaymentRails.offerable(entity.getAcceptedPaymentMethods(), entity.getCurrency(),
                         traveler != null && traveler.hasActiveStripeConnect(),
                         traveler != null && traveler.hasActiveMobileMoney());
         long bidsCount = bidRepository.countVisibleByAnnouncementId(entity.getId());

@@ -59,6 +59,22 @@ class AdminBidsControllerTest {
         assertThat(resp.getBody().getContent().get(0).commissionStatus()).isEqualTo("PENDING");
     }
 
+    // netEur est dans la devise du bid, que le back-office affichait toujours en euros.
+    @Test
+    void list_exposesTheBidCurrency_nextToNetEur() {
+        BidEntity bid = new BidEntity();
+        bid.setCurrency("xof");
+        bid.setNegotiatedNetEur(new java.math.BigDecimal("6000.00"));
+        Page<BidEntity> page = new PageImpl<>(List.of(bid));
+        when(bidRepo.findAdminFiltered(isNull(), isNull(), isNull(), isNull(), isNull(), any())).thenReturn(page);
+        when(announcementRepo.findAllById(any())).thenReturn(List.of());
+
+        ResponseEntity<Page<AdminBidListItemResponse>> resp = controller().listBids(null, null, null, null, null, 0, 20);
+
+        assertThat(resp.getBody().getContent().get(0).currency()).isEqualTo("XOF");
+        assertThat(resp.getBody().getContent().get(0).netEur()).isEqualByComparingTo("6000.00");
+    }
+
     @Test
     void getBid_notFound_throws404() {
         UUID id = UUID.randomUUID();
@@ -78,6 +94,21 @@ class AdminBidsControllerTest {
         ResponseEntity<AdminBidTimelineResponse> resp = controller().getTimeline(bidId);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(resp.getBody().bidId()).isEqualTo(bidId);
+    }
+
+    @Test
+    void listAnnouncements_exposesTheAnnouncementCurrency() {
+        AnnouncementEntity ann = new AnnouncementEntity();
+        ann.setStatus(AnnouncementStatus.ACTIVE);
+        ann.setCurrency("xof");
+        ann.setPricePerKg(new java.math.BigDecimal("2000.00"));
+        Page<AnnouncementEntity> page = new PageImpl<>(List.of(ann));
+        when(announcementRepo.findAll(any(Pageable.class))).thenReturn(page);
+        // Annonce sans voyageur : aucun nom à charger, loadUserNames court-circuite.
+
+        ResponseEntity<Page<AdminAnnouncementListItemResponse>> resp = controller().listAnnouncements(0, 20);
+
+        assertThat(resp.getBody().getContent().get(0).currency()).isEqualTo("XOF");
     }
 
     @Test

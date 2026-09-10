@@ -107,6 +107,22 @@ class BidQuoteServiceTest {
         assertThat(resp.totalEur()).isEqualByComparingTo("112.00");
         assertThat(resp.promoApplied()).isFalse();
         assertThat(resp.promoLabel()).isNull();
+        // Fixture sans devise explicite : le défaut d'entité, jamais un mélange.
+        assertThat(resp.currency()).isEqualTo("EUR");
+    }
+
+    @Test
+    void quote_carriesTheAnnouncementCurrency_evenWhenFieldsAreNamedEur() {
+        AnnouncementEntity xof = announcement();
+        xof.setCurrency("xof");
+        when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender()));
+        when(announcementRepository.findById(ANN_ID)).thenReturn(Optional.of(xof));
+        when(commissionRateResolver.resolve(TRAVELER_ID, SENDER_ID)).thenReturn(new BigDecimal("0.10"));
+
+        BidQuoteResponse resp = bidService.quote(SENDER_UID, new BidQuoteRequest(ANN_ID, new BigDecimal("5"), null, null));
+
+        assertThat(resp.currency()).isEqualTo("XOF");
+        assertThat(resp.netEur()).isEqualByComparingTo("100.00");
     }
 
     @Test

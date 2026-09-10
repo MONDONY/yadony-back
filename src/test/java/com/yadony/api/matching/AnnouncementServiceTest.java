@@ -737,6 +737,21 @@ class AnnouncementServiceTest {
         }
 
         @Test
+        @DisplayName("annonce déclarée avec Wave → 422 mobile-money-payment-retired, rien n'est enregistré")
+        void resolvePaymentMethods_retiredRail_isRefusedExplicitly() {
+            UserEntity traveler = buildTraveler();
+            traveler.setStripeAccountStatus(StripeAccountStatus.ONBOARDING_COMPLETE);
+            traveler.setKycStatus(KycStatus.VERIFIED);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+
+            assertThatThrownBy(() -> announcementService.createAnnouncement(FIREBASE_UID,
+                    requestWithPaymentMethods(java.util.EnumSet.of(PaymentMethod.WAVE, PaymentMethod.CASH))))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .hasFieldOrPropertyWithValue("errorCode", "mobile-money-payment-retired");
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
         @DisplayName("annonce EUR déclarée avec le mobile money → MOBILE_MONEY retiré, STRIPE et CASH gardés")
         void resolvePaymentMethods_euroCurrency_dropsMobileMoney() {
             UserEntity traveler = buildTraveler();

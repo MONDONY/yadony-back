@@ -22,5 +22,10 @@ public record BidQuoteResponse(
         /** true si un code promo a été appliqué. */
         boolean promoApplied,
         /** Ex. « Code WELCOME10 : −6 % » (null si pas de promo). */
-        String promoLabel
+        String promoLabel,
+        /**
+         * Devise de tous les montants ci-dessus, celle de l'annonce (code ISO en majuscules).
+         * Le suffixe « Eur » des champs est historique : un devis sur un trajet en XOF est en XOF.
+         */
+        String currency
 ) {}

@@ -319,6 +319,15 @@ public class BidCheckoutService {
                 "Cette demande n'est pas issue d'une négociation de prix");
         }
 
+        // Même garde que checkout() : le rail carte n'existe pas en zone CFA. createEscrow la
+        // répète en aval, mais un chemin de paiement ne doit pas dépendre d'un seul filet.
+        if (!CurrencyPaymentRails.allowsCode(bid.getCurrency(),
+                com.yadony.api.payments.cash.PaymentMethod.STRIPE)) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                "payment-method-unavailable-for-currency", "Payment Method Unavailable For Currency",
+                "La zone CFA n'accepte pas le paiement par carte pour un colis.");
+        }
+
         // Auto-réparation AVANT la garde de statut : voir settleIfAlreadyEscrowed.
         settleIfAlreadyEscrowed(bid);
 

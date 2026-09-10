@@ -857,8 +857,8 @@ public class AnnouncementService {
                 announcement.getCurrency(),
                 arrivalInstructions,
                 announcement.isNegotiable(),
-                com.yadony.api.payments.currency.AnnouncementPaymentRails.availableFor(
-                        announcement.getCurrency(),
+                com.yadony.api.payments.currency.AnnouncementPaymentRails.offerable(
+                        announcement.getAcceptedPaymentMethods(), announcement.getCurrency(),
                         traveler != null && traveler.hasActiveStripeConnect(),
                         traveler != null && traveler.hasActiveMobileMoney()),
                 // Convertis joints juste en dessous (withConvertedPrices).
@@ -1083,8 +1083,8 @@ public class AnnouncementService {
                 saved.getCurrency(),
                 saved.getArrivalInstructions(),
                 saved.isNegotiable(),
-                com.yadony.api.payments.currency.AnnouncementPaymentRails.availableFor(
-                        saved.getCurrency(),
+                com.yadony.api.payments.currency.AnnouncementPaymentRails.offerable(
+                        saved.getAcceptedPaymentMethods(), saved.getCurrency(),
                         user.hasActiveStripeConnect(),
                         user.hasActiveMobileMoney()),
                 // Retour d'écriture : le lecteur est le propriétaire, qui lit dans la
@@ -1672,9 +1672,13 @@ public class AnnouncementService {
         UserEntity traveler = userRepository.findById(entity.getTravelerId()).orElse(null);
         boolean travelerHasConnect = traveler != null && traveler.hasActiveStripeConnect();
         boolean travelerHasMobileMoney = traveler != null && traveler.hasActiveMobileMoney();
+        // Le choix explicite du voyageur borne aussi : un trajet déclaré « espèces
+        // uniquement » n'annonçait pas moins la carte dès que le compte Connect était actif,
+        // et l'expéditeur se heurtait à card-not-accepted au moment de la demande.
         java.util.Set<PaymentMethod> availablePaymentMethods =
-                com.yadony.api.payments.currency.AnnouncementPaymentRails.availableFor(
-                        entity.getCurrency(), travelerHasConnect, travelerHasMobileMoney);
+                com.yadony.api.payments.currency.AnnouncementPaymentRails.offerable(
+                        entity.getAcceptedPaymentMethods(), entity.getCurrency(),
+                        travelerHasConnect, travelerHasMobileMoney);
         long pendingBidCount = bidRepository.countVisibleByAnnouncementId(entity.getId());
         long confirmedParcelCount = bidRepository.countByAnnouncementIdAndStatusIn(
                 entity.getId(),
@@ -1759,6 +1763,15 @@ public class AnnouncementService {
 
     private Set<PaymentMethod> resolvePaymentMethods(Set<PaymentMethod> requested, UserEntity traveler,
                                                      String currency) {
+        // Moyens retirés : refus explicite, comme BidService et PackageRequestService, plutôt
+        // qu'un filtrage silencieux qui laissait croire au client que le choix était pris.
+        if (requested != null
+                && (requested.contains(PaymentMethod.WAVE) || requested.contains(PaymentMethod.ORANGE_MONEY))) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "mobile-money-payment-retired", "Mobile Money Payment Retired",
+                    "Wave et Orange Money ne sont plus proposés. Le mobile money passe par le compte "
+                    + "de versement du voyageur.");
+        }
         Set<PaymentMethod> chosen;
         if (requested == null || requested.isEmpty()) {
             // Défaut aligné sur la capacité réelle : jamais STRIPE pour un

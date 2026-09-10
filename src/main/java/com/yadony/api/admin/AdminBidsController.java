@@ -148,11 +148,12 @@ public class AdminBidsController {
                 ? MatchingTextUtil.corridorLabel(ann.getDepartureCity(), ann.getArrivalCity()) : "";
         String paymentMethod = b.getPaymentMethod() != null ? b.getPaymentMethod().name() : null;
         String commissionStatus = b.getCommissionStatus() != null ? b.getCommissionStatus().name() : null;
+        String currency = b.getCurrency() != null ? b.getCurrency().toUpperCase(java.util.Locale.ROOT) : null;
         return new AdminBidListItemResponse(
                 b.getId(), b.getStatus().name(), b.getAnnouncementId(),
                 senderName, travelerName, corridor,
                 b.getWeightKg(), b.getNegotiatedNetEur(),
-                paymentMethod, b.getCreatedAt(), commissionStatus);
+                paymentMethod, b.getCreatedAt(), commissionStatus, currency);
     }
 
     private AdminBidDetailResponse toBidDetail(BidEntity b, AnnouncementEntity ann,
@@ -163,7 +164,8 @@ public class AdminBidsController {
                 item.senderName(), item.travelerName(), item.corridor(),
                 item.weightKg(), item.netEur(), item.paymentMethod(), item.createdAt(),
                 b.getContentCategory(), b.getRecipientName(),
-                b.getTrackingNumber(), b.getCommissionRate(), b.getRefusalReason());
+                b.getTrackingNumber(), b.getCommissionRate(), b.getRefusalReason(),
+                item.currency());
     }
 
     private AdminAnnouncementListItemResponse toAnnouncementListItem(AnnouncementEntity a,
@@ -172,7 +174,8 @@ public class AdminBidsController {
         String corridor = MatchingTextUtil.corridorLabel(a.getDepartureCity(), a.getArrivalCity());
         return new AdminAnnouncementListItemResponse(
                 a.getId(), a.getStatus().name(), travelerName,
-                corridor, a.getDepartureDate(), a.getAvailableKg(), a.getPricePerKg());
+                corridor, a.getDepartureDate(), a.getAvailableKg(), a.getPricePerKg(),
+                a.getCurrency() != null ? a.getCurrency().toUpperCase(java.util.Locale.ROOT) : null);
     }
 
     private Map<UUID, String> loadUserNames(Set<UUID> userIds) {

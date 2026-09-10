@@ -18,5 +18,7 @@ public record AdminBidListItemResponse(
     // Statut du règlement de la commission Yadony (PENDING, REQUIRES_3DS, CHARGED,
     // FAILED, REFUNDED, REFUND_FAILED, ou null si non applicable) — expose une
     // commission cash jamais réglée qui resterait sinon invisible côté exploitation.
-    String commissionStatus
+    String commissionStatus,
+    /** Devise de netEur, celle de l'annonce (code ISO en majuscules). */
+    String currency
 ) {}
