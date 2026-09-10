@@ -173,6 +173,80 @@ class CashCommissionServiceTest {
                     .isEqualByComparingTo(new BigDecimal("1.00"));
         }
 
+        /**
+         * Le plancher est un barème que la plateforme fixe en euros : sur un trajet en
+         * francs CFA il vaut environ 656 F CFA, pas 1 F CFA. Avant ce correctif, un bid
+         * de 500 F CFA (60 F CFA de commission au taux) ne heurtait jamais le plancher.
+         */
+        @Test
+        void computeCommission_inXof_scalesThePlancherToTheCurrency() {
+            assertThat(service.computeCommission(new BigDecimal("500"), new BigDecimal("0.12"),
+                    com.yadony.api.payments.currency.SupportedCurrency.XOF))
+                    .isEqualByComparingTo("656");
+        }
+
+        @Test
+        void computeCommission_inXof_hasNoMinorUnit() {
+            // 100 000 × 12 % = 12 000 ; 6 837 × 12 % = 820,44 → 820 (XOF sans centimes)
+            assertThat(service.computeCommission(new BigDecimal("100000"), new BigDecimal("0.12"),
+                    com.yadony.api.payments.currency.SupportedCurrency.XOF))
+                    .isEqualByComparingTo("12000");
+            BigDecimal rounded = service.computeCommission(new BigDecimal("6837"), new BigDecimal("0.12"),
+                    com.yadony.api.payments.currency.SupportedCurrency.XOF);
+            assertThat(rounded).isEqualByComparingTo("820");
+            assertThat(rounded.scale()).isZero();
+        }
+
+        @Test
+        void computeCommission_inEur_keepsTheCentimePlancher() {
+            assertThat(service.computeCommission(new BigDecimal("5"), new BigDecimal("0.12"),
+                    com.yadony.api.payments.currency.SupportedCurrency.EUR))
+                    .isEqualByComparingTo("1.00");
+        }
+
+        @Test
+        void computeBidCommission_onXofAnnouncement_appliesTheScaledPlancher() {
+            UUID travelerId = UUID.randomUUID();
+            BidEntity bid = new BidEntity();
+            ReflectionTestUtils.setField(bid, "id", UUID.randomUUID());
+            bid.setSenderId(UUID.randomUUID());
+            bid.setWeightKg(new BigDecimal("1"));
+            bid.setCurrency("XOF");
+            AnnouncementEntity ann = new AnnouncementEntity();
+            ReflectionTestUtils.setField(ann, "id", UUID.randomUUID());
+            ann.setTravelerId(travelerId);
+            ann.setCurrency("XOF");
+            ann.setPricePerKg(new BigDecimal("500"));
+
+            // 1 kg × 500 = 500 F CFA → 60 F CFA au taux, sous le plancher de 656 F CFA.
+            BigDecimal commission = service.computeBidCommission(bid, ann);
+
+            assertThat(commission).isEqualByComparingTo("656");
+            assertThat(commission.scale()).isZero();
+        }
+
+        @Test
+        void computeBidCommission_onNegotiatedXofBid_hasNoMinorUnit() {
+            BidEntity bid = new BidEntity();
+            ReflectionTestUtils.setField(bid, "id", UUID.randomUUID());
+            bid.setSenderId(UUID.randomUUID());
+            bid.setWeightKg(new BigDecimal("10"));
+            bid.setCurrency("XOF");
+            bid.setNegotiatedGrossEur(new BigDecimal("30000"));
+            bid.setNegotiatedNetEur(new BigDecimal("28500"));
+            bid.setCommissionRate(new BigDecimal("0.05"));
+            AnnouncementEntity ann = new AnnouncementEntity();
+            ReflectionTestUtils.setField(ann, "id", UUID.randomUUID());
+            ann.setTravelerId(UUID.randomUUID());
+            ann.setCurrency("XOF");
+            ann.setPricePerKg(new BigDecimal("5000"));
+
+            BigDecimal commission = service.computeBidCommission(bid, ann);
+
+            assertThat(commission).isEqualByComparingTo("1500");
+            assertThat(commission.scale()).isZero();
+        }
+
         @Test
         void computeBidCommission_appliesUserOverride_andSnapshotsRateOnBid() {
             UUID travelerId = UUID.randomUUID();

@@ -16,6 +16,7 @@ import com.yadony.api.matching.events.BidAcceptedEvent;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import com.yadony.api.payments.currency.CurrencyAmount;
+import com.yadony.api.payments.currency.CurrencyBounds;
 import com.yadony.api.payments.currency.ExchangeRateService;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.cash.dto.AcceptBidResponse;
@@ -142,15 +143,30 @@ public class CashCommissionService {
 
     // --- Commission calculation ---
 
-    /** Commission au taux global (estimation sans contexte voyageur/expéditeur). */
+    /** Commission au taux global (estimation sans contexte voyageur/expéditeur), en euros. */
     public BigDecimal computeCommission(BigDecimal declaredValue) {
         return computeCommission(declaredValue, props.rate());
     }
 
-    /** Commission à un taux donné, avec plancher {@code minimumAmount}. */
+    /** Commission à un taux donné, en euros, avec plancher {@code minimumAmount}. */
     public BigDecimal computeCommission(BigDecimal declaredValue, BigDecimal rate) {
-        BigDecimal pct = declaredValue.multiply(rate).setScale(2, RoundingMode.HALF_UP);
-        return pct.compareTo(props.minimumAmount()) < 0 ? props.minimumAmount() : pct;
+        return computeCommission(declaredValue, rate, SupportedCurrency.EUR);
+    }
+
+    /**
+     * Commission à un taux donné, exprimée dans {@code currency}.
+     *
+     * <p>Le plancher {@code yadony.commission.minimum-amount} est un barème que la
+     * plateforme fixe en euros : il est mis à l'échelle de la devise du montant
+     * ({@link CurrencyBounds#scaleFromEur}), sinon un bid en francs CFA se voyait
+     * appliquer un plancher de 1 F CFA au lieu d'environ 656. Le résultat est arrondi
+     * à l'unité mineure de la devise : XOF et XAF n'ont pas de centimes, et un
+     * prélèvement de 60,48 F CFA n'est ni encaissable ni versable.
+     */
+    public BigDecimal computeCommission(BigDecimal declaredValue, BigDecimal rate, SupportedCurrency currency) {
+        BigDecimal pct = declaredValue.multiply(rate).setScale(currency.minorUnit(), RoundingMode.HALF_UP);
+        BigDecimal floor = CurrencyBounds.scaleFromEur(props.minimumAmount(), currency);
+        return pct.compareTo(floor) < 0 ? floor : pct;
     }
 
     /**
@@ -176,12 +192,15 @@ public class CashCommissionService {
      * Le fil de demande d'envoi, lui, ne fige que le net et garde donc le calcul au taux.
      */
     public BigDecimal computeBidCommission(BidEntity bid, AnnouncementEntity announcement) {
+        // Devise du trajet : celle dans laquelle le brut est remis en main propre et
+        // dans laquelle la commission est prélevée (le bid est réaligné dessus).
+        SupportedCurrency currency = SupportedCurrency.fromCodeOrDefault(announcement.getCurrency());
         if (bid.getNegotiatedNetEur() != null && bid.getNegotiatedGrossEur() != null) {
             return bid.getNegotiatedGrossEur().subtract(bid.getNegotiatedNetEur())
-                    .setScale(2, RoundingMode.HALF_UP);
+                    .setScale(currency.minorUnit(), RoundingMode.HALF_UP);
         }
         if (bid.getNegotiatedNetEur() != null && bid.getCommissionRate() != null) {
-            return computeCommission(bid.getNegotiatedNetEur(), bid.getCommissionRate());
+            return computeCommission(bid.getNegotiatedNetEur(), bid.getCommissionRate(), currency);
         }
         BigDecimal rate;
         if (bid.getPromoCode() != null) {
@@ -209,7 +228,7 @@ public class CashCommissionService {
                 .map(i -> i.getUnitPriceNetSnapshot().multiply(BigDecimal.valueOf(i.getQuantity())))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal cashAmount = kgNet.add(gridNet);
-        return computeCommission(cashAmount, rate);
+        return computeCommission(cashAmount, rate, currency);
     }
 
     // --- Card registration ---

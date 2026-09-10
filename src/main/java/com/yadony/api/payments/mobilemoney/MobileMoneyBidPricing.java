@@ -18,8 +18,8 @@ import org.springframework.stereotype.Component;
  * (poids × prix/kg + articles) × taux résolu (promo > overrides > global, bon de parrainage).
  * Tout est arrondi à l'unité mineure de la devise (XOF/XAF : aucune décimale) pour que
  * {@code net = brut − commission} reste exact au payout. Seul écart assumé avec le rail cash :
- * aucun plancher de commission ({@code yadony.commission.minimum-amount}, un montant en euros
- * qui n'aurait pas de sens en francs CFA).
+ * aucun plancher de commission ({@code yadony.commission.minimum-amount}, appliqué par le
+ * rail cash à l'échelle de la devise du trajet).
  */
 @Component
 public class MobileMoneyBidPricing {
