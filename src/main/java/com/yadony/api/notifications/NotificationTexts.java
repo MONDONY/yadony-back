@@ -321,6 +321,33 @@ public final class NotificationTexts {
                 "Accord en espèces abandonné. Votre demande reste ouverte.");
     }
 
+    /** Dépôt mobile money lancé sur un fil : à l'expéditeur de régler. */
+    public static NotificationText depositPendingSender(BigDecimal gross, String currency) {
+        return new NotificationText("Payez votre envoi",
+                "Offre acceptée. Réglez " + amount(gross, currency) + " par mobile money sous 30 min.");
+    }
+
+    /** Même dépôt, côté voyageur : simple information, rien à faire de son côté. */
+    public static NotificationText depositPendingTraveler() {
+        return new NotificationText("Paiement en cours",
+                "L'expéditeur paie par mobile money. Vous serez notifié dès validation.");
+    }
+
+    /**
+     * Le fil revient à « à payer » : dépôt échoué, échéance passée ou renoncement de
+     * l'expéditeur. {@code reason} vient de {@code NegotiationDepositRevertedEvent}
+     * (deposit-failed, deposit-expired, sender-cancelled) ; un motif technique pawaPay
+     * n'y apparaît jamais.
+     */
+    public static NotificationText depositReverted(String reason) {
+        String body = switch (reason) {
+            case "deposit-expired" -> "Le délai de paiement mobile money est dépassé. Vous pouvez relancer.";
+            case "sender-cancelled" -> "Vous avez interrompu le paiement. L'accord tient, vous pouvez relancer.";
+            default -> "Paiement mobile money refusé. Vérifiez votre solde puis réessayez.";
+        };
+        return new NotificationText("Paiement non reçu", body);
+    }
+
     public static NotificationText commissionExpiredForTraveler() {
         return new NotificationText("Délai de commission dépassé",
                 "Commission non réglée à temps : la demande n'est plus disponible.");

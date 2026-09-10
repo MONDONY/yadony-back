@@ -174,6 +174,48 @@ public class RequestEventsListener {
     }
 
     /**
+     * Dépôt mobile money lancé sur un fil (offre acceptée, en attente de règlement) :
+     * l'expéditeur doit payer, le voyageur est simplement informé. {@code AFTER_COMMIT} :
+     * même raison que {@link #onNegotiationCommissionPending} — pas de push avant que le
+     * dépôt initié ne soit acquis en base.
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
+    public void onNegotiationDepositPending(NegotiationDepositPendingEvent e) {
+        var data = Map.of(
+                "type", "negotiation_deposit_pending",
+                "threadId", e.threadId().toString(),
+                "packageRequestId", e.packageRequestId().toString()
+        );
+        var forSender = NotificationTexts.depositPendingSender(e.gross(), e.currency());
+        dispatcher.notifyUser(e.senderId(), forSender.title(), forSender.body(), data);
+        var forTraveler = NotificationTexts.depositPendingTraveler();
+        dispatcher.notifyUser(e.travelerId(), forTraveler.title(), forTraveler.body(), data);
+    }
+
+    /**
+     * Le dépôt mobile money n'a pas abouti (échec pawaPay, échéance passée ou
+     * renoncement de l'expéditeur) : le fil revient à « à payer », seul l'expéditeur
+     * est notifié — l'accord tient, rien ne change pour le voyageur.
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
+    public void onNegotiationDepositReverted(NegotiationDepositRevertedEvent e) {
+        if (e.senderId() == null) return;
+        var text = NotificationTexts.depositReverted(e.reason());
+        dispatcher.notifyUser(
+                e.senderId(),
+                text.title(),
+                text.body(),
+                Map.of(
+                        "type", "negotiation_deposit_reverted",
+                        "threadId", e.threadId().toString(),
+                        "packageRequestId", e.packageRequestId().toString()
+                )
+        );
+    }
+
+    /**
      * Le voyageur n'a pas réglé la commission dans le délai imparti. Rien n'était
      * scellé — les deux parties sont notifiées, chacune avec son propre message :
      * le voyageur a perdu la demande, l'expéditeur peut de nouveau la conclure.
