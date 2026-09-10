@@ -165,6 +165,32 @@ class PackageRequestServiceTest {
             verify(auditService).log(eq("PACKAGE_REQUEST"), any(UUID.class), eq("CREATED"), eq(SENDER_ID), anyMap());
         }
 
+        // La devise borne les rails : une demande en francs CFA n'enregistre jamais la carte,
+        // sinon le fil de négociation la propose et le paiement échoue au dernier moment.
+        @Test @DisplayName("création en XOF déclarant la carte → carte retirée, espèces gardées")
+        void create_cfaCurrency_dropsTheCard() {
+            when(config.maxOpenRequestsPerSender()).thenReturn(10);
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+            when(repository.countBySenderIdAndStatusIn(eq(SENDER_ID), any())).thenReturn(0L);
+            ArgumentCaptor<PackageRequestEntity> captor = ArgumentCaptor.forClass(PackageRequestEntity.class);
+            when(repository.save(captor.capture())).thenAnswer(inv -> {
+                PackageRequestEntity e = inv.getArgument(0);
+                setId(e, UUID.randomUUID());
+                return e;
+            });
+
+            service.create(SENDER_ID, new PackageRequestCreateRequest(
+                "Paris", "Dakar",
+                LocalDate.now().plusDays(7), 2,
+                new BigDecimal("5"), "vetements",
+                "Cadeau pour ma mère", new BigDecimal("28.00"), null,
+                "10e arr", "Plateau",
+                true, EnumSet.of(PaymentMethod.STRIPE, PaymentMethod.CASH), List.of(), null, null, "XOF"));
+
+            assertThat(captor.getValue().getCurrency()).isEqualTo("XOF");
+            assertThat(captor.getValue().getAcceptedPaymentMethods()).containsExactly(PaymentMethod.CASH);
+        }
+
         @Test @DisplayName("création → attache les photoKeys via replacePhotos(reqId, sender, keys)")
         void create_attachesPhotoKeys() {
             when(config.maxOpenRequestsPerSender()).thenReturn(10);

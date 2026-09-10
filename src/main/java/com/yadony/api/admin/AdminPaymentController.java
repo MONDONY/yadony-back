@@ -56,6 +56,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.yadony.api.payments.currency.CurrencyAmount;
+import com.yadony.api.payments.currency.SupportedCurrency;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -298,12 +300,16 @@ public class AdminPaymentController {
                         ? payment.getStripeChargeId()
                         : pi.getLatestCharge();
 
+                // Devise du paiement, jamais « eur » en dur : un séquestre carte existe aussi en
+                // USD, CAD, GBP ou CHF, et un Transfer libellé dans une autre devise que la charge
+                // est refusé par Stripe ou, pire, converti au taux du jour.
                 BigDecimal net = payment.getAmount().subtract(payment.getCommissionAmount());
-                long netCents = net.multiply(BigDecimal.valueOf(100)).longValueExact();
+                CurrencyAmount localNet = CurrencyAmount.of(net,
+                        SupportedCurrency.fromCodeOrDefault(payment.getCurrency()));
 
                 TransferCreateParams.Builder builder = TransferCreateParams.builder()
-                        .setAmount(netCents)
-                        .setCurrency("eur")
+                        .setAmount(localNet.minor())
+                        .setCurrency(localNet.currency().code())
                         .setDestination(traveler.getStripeAccountId())
                         .putMetadata("bid_id", bidId != null ? bidId.toString() : "")
                         .putMetadata("payment_id", id.toString())
