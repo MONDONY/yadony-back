@@ -11,6 +11,7 @@ import com.yadony.api.messaging.dto.ImageUploadResponse;
 import com.yadony.api.messaging.dto.LastMessageRequest;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
@@ -129,11 +130,17 @@ public class ConversationController {
         return ResponseEntity.noContent().build();
     }
 
-    // GET /conversations/archived — conversations archivées par l'utilisateur courant
+    // GET /conversations/archived — conversations archivées par l'utilisateur courant.
+    // Même enveloppe que GET /conversations : le client mobile lit `content` depuis
+    // dony_app #238 et une liste nue faisait échouer son écran des archivées. La liste
+    // est courte et filtrée en mémoire (cf. ConversationService), une page unique la
+    // porte entièrement.
     @GetMapping("/archived")
-    public ResponseEntity<List<ConversationResponse>> listArchivedConversations() {
+    public ResponseEntity<PageResponse<ConversationResponse>> listArchivedConversations() {
         UserEntity currentUser = resolveCurrentUser();
-        return ResponseEntity.ok(conversationService.getArchivedConversations(currentUser.getId()));
+        List<ConversationResponse> archived =
+                conversationService.getArchivedConversations(currentUser.getId());
+        return ResponseEntity.ok(PageResponse.from(new PageImpl<>(archived)));
     }
 
     // POST /conversations/{id}/archive — archiver une conversation
