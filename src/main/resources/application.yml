@@ -104,6 +104,15 @@ springdoc:
 
 # Logging
 logging:
+  # Identifiant de corrélation posé dans le MDC par RequestCorrelationFilter
+  # (en-tête X-Request-Id, repris ou généré). `pattern.correlation` est l'emplacement
+  # que le pattern Logback par défaut de Spring Boot réserve à cet usage
+  # (${LOG_CORRELATION_PATTERN}, juste après le nom du thread, console et fichier) :
+  # on ne réécrit pas tout le pattern. Hors requête HTTP (jobs planifiés, démarrage)
+  # les crochets sont imprimés vides. Sentry n'est pas concerné : son appender
+  # Logback lit le MDC directement.
+  pattern:
+    correlation: "[%X{requestId:-}] "
   level:
     com.yadony.api: INFO
     org.springframework.security: WARN

@@ -74,6 +74,37 @@ class CityServiceTest {
         verify(cityRepository).searchByName("Dak", 15);
     }
 
+    @Test
+    void search_clampsLimitAtOne() {
+        when(cityRepository.searchByName("Dak", 1)).thenReturn(List.of());
+
+        cityService.search("Dak", 0);
+        cityService.search("Dak", -10);
+
+        verify(cityRepository, times(2)).searchByName("Dak", 1);
+    }
+
+    @Test
+    void cacheKey_normalisesQueryAndClampsLimit() {
+        assertThat(CityService.cacheKey("Dak", 10)).isEqualTo("dak:10");
+        assertThat(CityService.cacheKey("  DAK  ", 50)).isEqualTo("dak:15");
+        assertThat(CityService.cacheKey("dak", -3)).isEqualTo("dak:1");
+    }
+
+    @Test
+    void cacheKey_sameResultsShareTheSameEntry() {
+        assertThat(CityService.cacheKey("Dak", 50)).isEqualTo(CityService.cacheKey(" dak ", 15));
+        assertThat(CityService.cacheKey("Dak", 10)).isNotEqualTo(CityService.cacheKey("Dak", 11));
+        assertThat(CityService.cacheKey("Dak", 10)).isNotEqualTo(CityService.cacheKey("Dakar", 10));
+    }
+
+    @Test
+    void cacheKey_toleratesNullQuery() {
+        // La clé est évaluée par SpEL avant l'appel : elle ne doit pas lever, c'est la
+        // validation de search() qui rejette ensuite la requête.
+        assertThat(CityService.cacheKey(null, 10)).isEqualTo(":10");
+    }
+
     private CityEntity makeCity(Long id, String name, String code, String country,
                                  Long pop, BigDecimal lat, BigDecimal lng) {
         CityEntity e = new CityEntity();

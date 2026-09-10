@@ -2788,12 +2788,49 @@ class BidServiceTest {
         when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
         when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
         when(bidRepository.findByAnnouncementId(ANNOUNCEMENT_ID)).thenReturn(List.of(visible, hidden));
-        when(userRepository.findById(SENDER_ID)).thenReturn(Optional.empty());
+        // Les expéditeurs sont résolus en un seul findAllById (plus de findById par bid) ;
+        // seuls les bids visibles y participent, d'où la liste réduite à SENDER_ID.
+        when(userRepository.findAllById(List.of(SENDER_ID))).thenReturn(List.of());
         when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
 
         List<BidResponse> result = bidService.getBidsForAnnouncement(ANNOUNCEMENT_ID, TRAVELER_UID);
 
         assertThat(result).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("getBidsForAnnouncement — les expéditeurs sont résolus en une seule requête batch")
+    void getBidsForAnnouncement_resolvesSendersInOneBatch() {
+        UserEntity traveler = buildTraveler();
+        AnnouncementEntity announcement = buildAnnouncement();
+        UserEntity sender = buildSender();
+        sender.setFirstName("abou");
+        UUID otherSenderId = UUID.randomUUID();
+        UserEntity otherSender = new UserEntity();
+        otherSender.setFirstName("fatou");
+        otherSender.setUsername("user1784907069");
+        setId(otherSender, otherSenderId);
+        BidEntity first = buildBid();                       // senderId = SENDER_ID
+        BidEntity second = buildBid();                      // même expéditeur
+        setId(second, UUID.randomUUID());
+        BidEntity third = buildBid();
+        setId(third, UUID.randomUUID());
+        third.setSenderId(otherSenderId);
+
+        when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+        when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+        when(bidRepository.findByAnnouncementId(ANNOUNCEMENT_ID)).thenReturn(List.of(first, second, third));
+        when(userRepository.findAllById(List.of(SENDER_ID, otherSenderId))).thenReturn(List.of(sender, otherSender));
+
+        List<BidResponse> result = bidService.getBidsForAnnouncement(ANNOUNCEMENT_ID, TRAVELER_UID);
+
+        assertThat(result).hasSize(3);
+        assertThat(result).extracting(BidResponse::senderName).containsExactly("abou", "abou", "fatou");
+        // Un seul aller-retour pour les expéditeurs, dédoublonné : plus de N+1 sur eux
+        // (le voyageur de l'annonce reste lu par toResponse, commun à tous ses appelants).
+        verify(userRepository, times(1)).findAllById(any());
+        verify(userRepository, never()).findById(SENDER_ID);
+        verify(userRepository, never()).findById(otherSenderId);
     }
 
     @Test

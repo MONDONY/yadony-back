@@ -719,11 +719,16 @@ public class BidService {
                 .filter(b -> b.getStatus() != BidStatus.AWAITING_PAYMENT
                           && !BidStatus.NEGOTIATION_ACTIVE.contains(b.getStatus()))
                 .toList();
+        // Les expéditeurs sont résolus en une seule requête (même approche que
+        // getTravelerBids) : un findById par colis faisait N+1 sur la liste que le
+        // voyageur ouvre le plus souvent. Un expéditeur absent (compte supprimé)
+        // donne un sender null, comme avant.
+        Map<UUID, UserEntity> sendersById = userRepository.findAllById(
+                        visible.stream().map(BidEntity::getSenderId).distinct().toList())
+                .stream().collect(Collectors.toMap(UserEntity::getId, u -> u));
         return visible.stream()
-                .map(b -> {
-                    UserEntity sender = userRepository.findById(b.getSenderId()).orElse(null);
-                    return toResponse(b, sender);
-                }).toList();
+                .map(b -> toResponse(b, sendersById.get(b.getSenderId())))
+                .toList();
     }
 
     // TTL courte (8 s, cf. CacheConfig) et volontairement SANS @CacheEvict : un

@@ -1,13 +1,17 @@
 package com.yadony.api.common;
 
+import io.sentry.IScope;
+import io.sentry.ScopeCallback;
 import io.sentry.Sentry;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
+import org.slf4j.MDC;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
@@ -26,6 +30,7 @@ import org.springframework.web.multipart.MultipartException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -235,13 +240,33 @@ class GlobalExceptionHandlerTest {
     @DisplayName("handleGeneric()")
     class GenericExceptionTests {
 
+        private final IScope scope = mock(IScope.class);
+
+        @AfterEach
+        void clearMdc() {
+            MDC.remove(RequestCorrelationFilter.MDC_KEY);
+        }
+
+        /**
+         * {@code Sentry.withScope} est statique et mocké : sans ce stub, le callback ne
+         * tournerait jamais et {@code captureException} ne serait pas appelé. On l'exécute
+         * avec un scope mocké, ce qui permet de vérifier à la fois la capture et le tag.
+         */
+        private void stubSentry(MockedStatic<Sentry> sentryMock) {
+            sentryMock.when(() -> Sentry.withScope(any(ScopeCallback.class))).thenAnswer(inv -> {
+                inv.getArgument(0, ScopeCallback.class).run(scope);
+                return null;
+            });
+            sentryMock.when(() -> Sentry.captureException(any())).thenAnswer(inv -> null);
+        }
+
         @Test
         @DisplayName("exception inattendue → 500 + Sentry capturé")
         void handleGeneric_returns500AndCapturesToSentry() {
             RuntimeException ex = new RuntimeException("Erreur inattendue");
 
             try (MockedStatic<Sentry> sentryMock = mockStatic(Sentry.class)) {
-                sentryMock.when(() -> Sentry.captureException(any())).thenAnswer(inv -> null);
+                stubSentry(sentryMock);
 
                 ResponseEntity<ProblemDetail> response = handler.handleGeneric(ex);
 
@@ -260,11 +285,47 @@ class GlobalExceptionHandlerTest {
             NullPointerException npe = new NullPointerException("null ref");
 
             try (MockedStatic<Sentry> sentryMock = mockStatic(Sentry.class)) {
-                sentryMock.when(() -> Sentry.captureException(any())).thenAnswer(inv -> null);
+                stubSentry(sentryMock);
 
                 ResponseEntity<ProblemDetail> response = handler.handleGeneric(npe);
 
                 assertThat(response.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+            }
+        }
+
+        @Test
+        @DisplayName("requestId dans le MDC → tag Sentry request_id + propriété requestId du ProblemDetail")
+        void handleGeneric_withRequestId_tagsSentryAndExposesRequestId() {
+            MDC.put(RequestCorrelationFilter.MDC_KEY, "abc123def456");
+            RuntimeException ex = new RuntimeException("Erreur corrélée");
+
+            try (MockedStatic<Sentry> sentryMock = mockStatic(Sentry.class)) {
+                stubSentry(sentryMock);
+
+                ResponseEntity<ProblemDetail> response = handler.handleGeneric(ex);
+
+                assertThat(response.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+                assertThat(response.getBody().getProperties()).containsEntry("requestId", "abc123def456");
+                verify(scope).setTag("request_id", "abc123def456");
+                sentryMock.verify(() -> Sentry.captureException(ex));
+            }
+        }
+
+        @Test
+        @DisplayName("pas de requestId (hors requête HTTP) → capture sans tag ni propriété")
+        void handleGeneric_withoutRequestId_capturesWithoutTag() {
+            RuntimeException ex = new RuntimeException("Erreur hors requête");
+
+            try (MockedStatic<Sentry> sentryMock = mockStatic(Sentry.class)) {
+                stubSentry(sentryMock);
+
+                ResponseEntity<ProblemDetail> response = handler.handleGeneric(ex);
+
+                Map<String, Object> properties = response.getBody().getProperties();
+                assertThat(properties == null || !properties.containsKey("requestId"))
+                        .as("aucune propriété requestId hors requête HTTP").isTrue();
+                verify(scope, never()).setTag(any(), any());
+                sentryMock.verify(() -> Sentry.captureException(ex));
             }
         }
     }
