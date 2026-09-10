@@ -104,6 +104,43 @@ class ConversationControllerTest {
     }
 
     // -------------------------------------------------------------------------
+    // listArchivedConversations : même enveloppe paginée que la liste active
+    // -------------------------------------------------------------------------
+
+    @Test
+    void listArchivedConversations_wrapsTheWholeListInASinglePage() {
+        ConversationResponse archived = new ConversationResponse(
+                conversationId, conversation.getBidId(),
+                conversation.getFirestoreConversationId(),
+                new ParticipantDTO(UUID.randomUUID().toString(), "Other User", null, false, null, false),
+                null, LocalDateTime.now(), false,
+                null, null, null, null, null, false, false);
+        when(conversationService.getArchivedConversations(currentUserId)).thenReturn(List.of(archived));
+
+        ResponseEntity<PageResponse<ConversationResponse>> response = controller.listArchivedConversations();
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        PageResponse<ConversationResponse> body = response.getBody();
+        assertThat(body).isNotNull();
+        assertThat(body.content()).containsExactly(archived);
+        assertThat(body.page()).isZero();
+        assertThat(body.totalElements()).isEqualTo(1);
+        assertThat(body.last()).isTrue();
+    }
+
+    @Test
+    void listArchivedConversations_emptyListStaysAPage() {
+        when(conversationService.getArchivedConversations(currentUserId)).thenReturn(List.of());
+
+        PageResponse<ConversationResponse> body = controller.listArchivedConversations().getBody();
+
+        assertThat(body).isNotNull();
+        assertThat(body.content()).isEmpty();
+        assertThat(body.totalElements()).isZero();
+        assertThat(body.last()).isTrue();
+    }
+
+    // -------------------------------------------------------------------------
     // listConversations_returnsPage
     // -------------------------------------------------------------------------
 
