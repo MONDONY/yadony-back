@@ -8,5 +8,13 @@ public record AdminDisputeDetailResponse(
     String senderName, String travelerName,
     boolean refundFrozen, LocalDateTime createdAt,
     String resolution, OffsetDateTime resolvedAt, String resolutionNote,
-    UUID beneficiaryUserId
+    UUID beneficiaryUserId,
+    /** Versement fonds de garantie : montant en centièmes et devise, null tant qu'aucun n'a été fait. */
+    Long guaranteeAmountCents,
+    String guaranteeCurrency,
+    /** Parties du litige, pour désigner le bénéficiaire d'un fonds de garantie. */
+    UUID senderId,
+    UUID travelerId,
+    /** Devise du colis (bid), celle d'un fonds de garantie ; null sans bid. */
+    String bidCurrency
 ) {}

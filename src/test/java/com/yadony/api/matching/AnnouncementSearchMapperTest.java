@@ -126,4 +126,23 @@ class AnnouncementSearchMapperTest {
 
         assertThat(result.negotiable()).isTrue();
     }
+
+    // Le choix explicite du voyageur borne les moyens annoncés : un trajet « espèces
+    // uniquement » affichait la carte dès que le compte Connect était actif, et l'expéditeur
+    // se heurtait à card-not-accepted au moment de la demande.
+    @Test
+    @DisplayName("availablePaymentMethods respecte les moyens décochés par le voyageur")
+    void toSearchResponse_availableMethods_intersectTravelerChoice() {
+        AnnouncementEntity cashOnly = buildAnnouncement();
+        cashOnly.setAcceptedPaymentMethods(java.util.EnumSet.of(com.yadony.api.payments.cash.PaymentMethod.CASH));
+        com.yadony.api.auth.UserEntity traveler = new com.yadony.api.auth.UserEntity();
+        traveler.setStripeAccountStatus(com.yadony.api.auth.StripeAccountStatus.ONBOARDING_COMPLETE);
+        when(userRepository.findById(TRAVELER_ID)).thenReturn(java.util.Optional.of(traveler));
+        when(bidRepository.countVisibleByAnnouncementId(ANNOUNCEMENT_ID)).thenReturn(0L);
+
+        var response = mapper.toSearchResponse(cashOnly, false);
+
+        assertThat(response.availablePaymentMethods())
+                .containsExactly(com.yadony.api.payments.cash.PaymentMethod.CASH);
+    }
 }

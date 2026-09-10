@@ -649,4 +649,17 @@ class BidCheckoutServiceTest {
         verify(bidRepository, never()).save(any());
         verifyNoInteractions(paymentService);
     }
+
+    @Test
+    void negotiationCheckout_cfaBid_refusesTheCardBeforeAnyEscrow() {
+        BidEntity bid = negotiatedBid();
+        bid.setCurrency("XOF");
+        when(bidRepository.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
+
+        assertThatThrownBy(() -> service.negotiationCheckout("uid-sender", bid.getId()))
+            .isInstanceOf(YadonyBusinessException.class)
+            .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                .isEqualTo("payment-method-unavailable-for-currency"));
+        verify(paymentService, never()).createEscrow(any(), anyString());
+    }
 }

@@ -10,6 +10,8 @@ public record AdminChargebackResponse(
         UUID id,
         UUID bidId,
         long amountCents,
+        /** Devise du litige Stripe (code ISO en majuscules) : un chargeback existe aussi en USD ou CAD. */
+        String currency,
         String reason,
         String status,
         LocalDateTime openedAt
@@ -19,6 +21,7 @@ public record AdminChargebackResponse(
                 c.getId(),
                 c.getBidId(),
                 c.getAmount(),
+                c.getCurrency() != null ? c.getCurrency().toUpperCase(java.util.Locale.ROOT) : null,
                 c.getReason(),
                 c.getStatus().name(),
                 c.getOpenedAt() != null

@@ -212,7 +212,10 @@ class WalletControllerIT {
                 .with(authentication(authAs(FIREBASE_UID, "SENDER"))))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.transactions[?(@.paymentRef == 'pi_refund_processing')].refundStatus")
-                .value("PROCESSING"));
+                .value("PROCESSING"))
+            // La liste mêle les portefeuilles d'un même utilisateur : chaque ligne porte sa devise.
+            .andExpect(jsonPath("$.transactions[?(@.paymentRef == 'pi_refund_processing')].currency")
+                .value("EUR"));
     }
 
     @Test

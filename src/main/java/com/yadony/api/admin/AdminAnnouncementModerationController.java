@@ -66,6 +66,7 @@ public class AdminAnnouncementModerationController {
         String corridor = MatchingTextUtil.corridorLabel(a.getDepartureCity(), a.getArrivalCity());
         return new AdminAnnouncementListItemResponse(
                 a.getId(), a.getStatus().name(), travelerName,
-                corridor, a.getDepartureDate(), a.getAvailableKg(), a.getPricePerKg());
+                corridor, a.getDepartureDate(), a.getAvailableKg(), a.getPricePerKg(),
+                a.getCurrency() != null ? a.getCurrency().toUpperCase(java.util.Locale.ROOT) : null);
     }
 }

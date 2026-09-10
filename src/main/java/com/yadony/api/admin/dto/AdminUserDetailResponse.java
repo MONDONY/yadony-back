@@ -37,7 +37,13 @@ public record AdminUserDetailResponse(
         int ratingCount,
         LocalDateTime deletionRequestedAt,
         LocalDateTime messagingMutedUntil,
-        AdminProSubscriptionView proSubscription
+        AdminProSubscriptionView proSubscription,
+        /** Compte de versement mobile money (pawaPay) : le rail de paiement des voyageurs en zone CFA. */
+        String mobileMoneyStatus,
+        String mobileMoneyProvider,
+        String mobileMoneyCurrency,
+        String mobileMoneyCountry,
+        String mobileMoneyMsisdnMasked
 ) {
     /**
      * Téléphone et email proviennent de Firebase : ils ne sont plus stockés en base.
@@ -76,7 +82,12 @@ public record AdminUserDetailResponse(
                 u.getMessagingMutedUntil() != null
                         ? java.time.LocalDateTime.ofInstant(u.getMessagingMutedUntil(), java.time.ZoneOffset.UTC)
                         : null,
-                AdminProSubscriptionView.from(sub)
+                AdminProSubscriptionView.from(sub),
+                u.getMobileMoneyStatus() != null ? u.getMobileMoneyStatus().name() : null,
+                u.getMobileMoneyProvider(),
+                u.getMobileMoneyCurrency(),
+                u.getMobileMoneyCountry(),
+                u.getMobileMoneyMsisdnMasked()
         );
     }
 }

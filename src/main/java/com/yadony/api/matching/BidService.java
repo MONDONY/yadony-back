@@ -203,7 +203,8 @@ public class BidService {
             totalEur = netEur.add(commissionEur).setScale(2, java.math.RoundingMode.HALF_UP);
         }
 
-        return new BidQuoteResponse(netEur, gridNet, kgNet, rate, commissionEur, totalEur, promoApplied, promoLabel);
+        return new BidQuoteResponse(netEur, gridNet, kgNet, rate, commissionEur, totalEur, promoApplied, promoLabel,
+                ann.getCurrency() != null ? ann.getCurrency().toUpperCase(java.util.Locale.ROOT) : "EUR");
     }
 
     @Transactional

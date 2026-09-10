@@ -44,9 +44,17 @@ class AdminDisputesControllerTest {
     @Mock UserRepository userRepo;
     @Mock ApplicationEventPublisher eventPublisher;
 
+    @Mock com.yadony.api.matching.BidRepository bidRepo;
+
     private AdminDisputesController controller() {
         return new AdminDisputesController(
-                disputeRepo, cancellationRepo, auditService, userRepo, eventPublisher);
+                disputeRepo, cancellationRepo, auditService, userRepo, eventPublisher, bidRepo);
+    }
+
+    private com.yadony.api.matching.BidEntity bidIn(String currency) {
+        com.yadony.api.matching.BidEntity bid = new com.yadony.api.matching.BidEntity();
+        bid.setCurrency(currency);
+        return bid;
     }
 
     // ---- listDisputes ----
@@ -245,7 +253,8 @@ class AdminDisputesControllerTest {
         when(disputeRepo.findById(id)).thenReturn(Optional.of(entity));
         when(disputeRepo.save(entity)).thenReturn(entity);
 
-        AdminGuaranteeFundRequest request = new AdminGuaranteeFundRequest(5000, beneficiary, "paiement fonds de garantie");
+        // Litige sans bid : la devise doit être explicite, elle ne se devine pas en euros.
+        AdminGuaranteeFundRequest request = new AdminGuaranteeFundRequest(5000, beneficiary, "paiement fonds de garantie", "EUR");
         ResponseEntity<AdminDisputeDetailResponse> resp = controller().payGuaranteeFund(id, request);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -253,6 +262,10 @@ class AdminDisputesControllerTest {
         assertThat(entity.getResolutionType()).isEqualTo("GUARANTEE_PAID");
         assertThat(entity.getBeneficiaryUserId()).isEqualTo(beneficiary);
         assertThat(entity.getResolvedAt()).isNotNull();
+        assertThat(entity.getGuaranteeAmountCents()).isEqualTo(5000L);
+        assertThat(entity.getGuaranteeCurrency()).isEqualTo("EUR");
+        assertThat(resp.getBody().guaranteeAmountCents()).isEqualTo(5000L);
+        assertThat(resp.getBody().guaranteeCurrency()).isEqualTo("EUR");
         verify(disputeRepo).save(entity);
         verify(auditService).log(eq("DISPUTE"), eq(entity.getId()), eq("GUARANTEE_FUND"), isNull(), any());
         verify(eventPublisher).publishEvent(ArgumentMatchers.<Object>argThat(event ->
@@ -272,6 +285,7 @@ class AdminDisputesControllerTest {
         entity.setType("TRAVELER_DELIVERY_NO_SHOW_CONTESTED");
         when(disputeRepo.findById(id)).thenReturn(Optional.of(entity));
         when(disputeRepo.save(entity)).thenReturn(entity);
+        when(bidRepo.findById(bidId)).thenReturn(Optional.of(bidIn("EUR")));
 
         CancellationEntity cancellation = new CancellationEntity();
         cancellation.setNoShowStatus(CancellationStatus.CONTESTED);
@@ -283,6 +297,77 @@ class AdminDisputesControllerTest {
 
         assertThat(cancellation.getNoShowStatus()).isEqualTo(CancellationStatus.RESOLVED);
         verify(cancellationRepo).save(cancellation);
+    }
+
+    // Audit du 2026-09-10 : le montant était saisi « en euros » quel que soit le colis, et un
+    // versement sans bénéficiaire passait. La devise est celle du bid du litige.
+    @Test
+    void payGuaranteeFund_takesTheBidCurrency_andRefusesAnotherOne() {
+        UUID id = UUID.randomUUID();
+        UUID bidId = UUID.randomUUID();
+        DisputeEntity entity = new DisputeEntity();
+        entity.setStatus("OPEN");
+        entity.setBidId(bidId);
+        when(disputeRepo.findById(id)).thenReturn(Optional.of(entity));
+        when(disputeRepo.save(entity)).thenReturn(entity);
+        when(bidRepo.findById(bidId)).thenReturn(Optional.of(bidIn("xof")));
+
+        controller().payGuaranteeFund(id, new AdminGuaranteeFundRequest(500000, UUID.randomUUID(), "colis perdu"));
+        assertThat(entity.getGuaranteeCurrency()).isEqualTo("XOF");
+        assertThat(entity.getGuaranteeAmountCents()).isEqualTo(500000L);
+
+        DisputeEntity other = new DisputeEntity();
+        other.setStatus("OPEN");
+        other.setBidId(bidId);
+        UUID otherId = UUID.randomUUID();
+        when(disputeRepo.findById(otherId)).thenReturn(Optional.of(other));
+
+        YadonyBusinessException error = assertThrows(YadonyBusinessException.class,
+                () -> controller().payGuaranteeFund(otherId,
+                        new AdminGuaranteeFundRequest(5000, UUID.randomUUID(), "colis perdu", "EUR")));
+        assertThat(error.getErrorCode()).isEqualTo("guarantee-currency-mismatch");
+        assertThat(other.getStatus()).isEqualTo("OPEN");
+    }
+
+    @Test
+    void getDispute_exposesPartiesAndBidCurrency_forTheGuaranteeFund() {
+        UUID id = UUID.randomUUID();
+        UUID bidId = UUID.randomUUID();
+        UUID senderId = UUID.randomUUID();
+        UUID travelerId = UUID.randomUUID();
+        DisputeEntity entity = new DisputeEntity();
+        entity.setStatus("OPEN");
+        entity.setBidId(bidId);
+        entity.setSenderId(senderId);
+        entity.setTravelerId(travelerId);
+        when(disputeRepo.findById(id)).thenReturn(Optional.of(entity));
+        when(bidRepo.findById(bidId)).thenReturn(Optional.of(bidIn("xof")));
+        when(userRepo.findAllById(any())).thenReturn(java.util.List.of());
+
+        AdminDisputeDetailResponse body = controller().getDispute(id).getBody();
+
+        assertThat(body.senderId()).isEqualTo(senderId);
+        assertThat(body.travelerId()).isEqualTo(travelerId);
+        assertThat(body.bidCurrency()).isEqualTo("XOF");
+    }
+
+    @Test
+    void payGuaranteeFund_withoutBeneficiaryOrCurrency_isRefused() {
+        UUID id = UUID.randomUUID();
+        DisputeEntity entity = new DisputeEntity();
+        entity.setStatus("OPEN");
+        when(disputeRepo.findById(id)).thenReturn(Optional.of(entity));
+
+        YadonyBusinessException noBeneficiary = assertThrows(YadonyBusinessException.class,
+                () -> controller().payGuaranteeFund(id, new AdminGuaranteeFundRequest(5000, null, "x", "EUR")));
+        assertThat(noBeneficiary.getErrorCode()).isEqualTo("guarantee-beneficiary-required");
+
+        YadonyBusinessException noCurrency = assertThrows(YadonyBusinessException.class,
+                () -> controller().payGuaranteeFund(id, new AdminGuaranteeFundRequest(5000, UUID.randomUUID(), "x")));
+        assertThat(noCurrency.getErrorCode()).isEqualTo("guarantee-currency-required");
+
+        assertThat(entity.getStatus()).isEqualTo("OPEN");
+        verify(disputeRepo, never()).save(any());
     }
 
     @Test

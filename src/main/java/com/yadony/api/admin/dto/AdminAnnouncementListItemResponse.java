@@ -11,5 +11,7 @@ public record AdminAnnouncementListItemResponse(
     String corridor,
     LocalDate departureDate,
     BigDecimal availableKg,
-    BigDecimal pricePerKg
+    BigDecimal pricePerKg,
+    /** Devise de pricePerKg (code ISO en majuscules). */
+    String currency
 ) {}

@@ -47,6 +47,10 @@ public class DisputeEntity extends BaseEntity {
     @Column(name = "guarantee_amount_cents")
     private Long guaranteeAmountCents;
 
+    /** Devise de {@code guaranteeAmountCents}, celle du bid du litige (code ISO en majuscules). */
+    @Column(name = "guarantee_currency", length = 3)
+    private String guaranteeCurrency;
+
     public UUID getBidId() { return bidId; }
     public void setBidId(UUID bidId) { this.bidId = bidId; }
 
@@ -79,4 +83,7 @@ public class DisputeEntity extends BaseEntity {
 
     public Long getGuaranteeAmountCents() { return guaranteeAmountCents; }
     public void setGuaranteeAmountCents(Long guaranteeAmountCents) { this.guaranteeAmountCents = guaranteeAmountCents; }
+
+    public String getGuaranteeCurrency() { return guaranteeCurrency; }
+    public void setGuaranteeCurrency(String guaranteeCurrency) { this.guaranteeCurrency = guaranteeCurrency; }
 }

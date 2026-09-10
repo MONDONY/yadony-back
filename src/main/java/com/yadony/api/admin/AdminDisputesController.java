@@ -5,6 +5,8 @@ import com.yadony.api.admin.dto.AdminDisputeDetailResponse;
 import com.yadony.api.admin.dto.AdminDisputeListItemResponse;
 import com.yadony.api.admin.dto.AdminGuaranteeFundRequest;
 import com.yadony.api.admin.dto.AdminResolveDisputeRequest;
+import com.yadony.api.matching.BidRepository;
+import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.cancellation.CancellationEntity;
 import com.yadony.api.cancellation.CancellationRepository;
@@ -49,17 +51,20 @@ public class AdminDisputesController {
     private final AuditService auditService;
     private final UserRepository userRepo;
     private final ApplicationEventPublisher eventPublisher;
+    private final BidRepository bidRepo;
 
     public AdminDisputesController(DisputeRepository disputeRepo,
                                    CancellationRepository cancellationRepo,
                                    AuditService auditService,
                                    UserRepository userRepo,
-                                   ApplicationEventPublisher eventPublisher) {
+                                   ApplicationEventPublisher eventPublisher,
+                                   BidRepository bidRepo) {
         this.disputeRepo = disputeRepo;
         this.cancellationRepo = cancellationRepo;
         this.auditService = auditService;
         this.userRepo = userRepo;
         this.eventPublisher = eventPublisher;
+        this.bidRepo = bidRepo;
     }
 
     // -------------------------------------------------------------------------
@@ -143,18 +148,33 @@ public class AdminDisputesController {
 
         DisputeEntity entity = findDisputeOrThrow(id);
         requireNotResolved(entity);
+        // Un versement sans bénéficiaire était enregistré tel quel : personne à payer, et le
+        // montant restait invisible de l'export comptable. Le back-office envoyait un champ vide.
+        if (request.beneficiaryUserId() == null) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "guarantee-beneficiary-required", "Guarantee Beneficiary Required",
+                    "Indique à qui verser le fonds de garantie");
+        }
+        if (request.amountCents() <= 0) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "guarantee-amount-invalid", "Guarantee Amount Invalid",
+                    "Le montant du fonds de garantie doit être positif");
+        }
+        String currency = resolveGuaranteeCurrency(entity, request.currency());
         entity.setStatus("RESOLVED");
         entity.setResolutionType("GUARANTEE_PAID");
         entity.setResolutionNote(request.reason());
         entity.setResolvedAt(OffsetDateTime.now(ZoneOffset.UTC));
         entity.setBeneficiaryUserId(request.beneficiaryUserId());
         entity.setGuaranteeAmountCents((long) request.amountCents());
+        entity.setGuaranteeCurrency(currency);
         disputeRepo.save(entity);
         resolveLinkedCancellation(entity);
 
         auditService.log("DISPUTE", entity.getId(), "GUARANTEE_FUND", null,
                 Map.of("amountCents", request.amountCents(),
-                       "beneficiaryUserId", Objects.toString(request.beneficiaryUserId() != null ? request.beneficiaryUserId().toString() : null, ""),
+                       "currency", currency,
+                       "beneficiaryUserId", request.beneficiaryUserId().toString(),
                        "reason", Objects.toString(request.reason(), "")));
         eventPublisher.publishEvent(new DisputeResolvedEvent(
                 id, entity.getBidId(), entity.getSenderId(), entity.getTravelerId(),
@@ -186,6 +206,39 @@ public class AdminDisputesController {
                 cancellationRepo.save(c);
             }
         });
+    }
+
+    /**
+     * La devise du versement est celle du bid du litige : un fonds de garantie saisi « en
+     * euros » sur un colis en francs CFA versait 655 fois trop peu, ou l'inverse. Une devise
+     * explicite doit lui correspondre ; sans bid, elle est obligatoire.
+     */
+    private String resolveGuaranteeCurrency(DisputeEntity entity, String requested) {
+        String bidCurrency = entity.getBidId() != null
+                ? bidRepo.findById(entity.getBidId()).map(b -> b.getCurrency()).orElse(null)
+                : null;
+        String normalizedRequested = requested != null && !requested.isBlank()
+                ? requested.trim().toUpperCase(java.util.Locale.ROOT) : null;
+        if (normalizedRequested != null && SupportedCurrency.fromCode(normalizedRequested) == null) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "currency-unsupported", "Currency Unsupported",
+                    "Cette devise n'est pas prise en charge par yadony.");
+        }
+        if (bidCurrency != null) {
+            String normalizedBid = bidCurrency.toUpperCase(java.util.Locale.ROOT);
+            if (normalizedRequested != null && !normalizedRequested.equals(normalizedBid)) {
+                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "guarantee-currency-mismatch", "Guarantee Currency Mismatch",
+                        "Le fonds de garantie se verse dans la devise du colis (" + normalizedBid + ")");
+            }
+            return normalizedBid;
+        }
+        if (normalizedRequested == null) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "guarantee-currency-required", "Guarantee Currency Required",
+                    "Indique la devise du fonds de garantie");
+        }
+        return normalizedRequested;
     }
 
     private void requireNotResolved(DisputeEntity entity) {
@@ -255,7 +308,21 @@ public class AdminDisputesController {
                 d.getResolutionType(),
                 d.getResolvedAt(),
                 d.getResolutionNote(),
-                d.getBeneficiaryUserId());
+                d.getBeneficiaryUserId(),
+                d.getGuaranteeAmountCents(),
+                d.getGuaranteeCurrency(),
+                d.getSenderId(),
+                d.getTravelerId(),
+                bidCurrencyOf(d));
+    }
+
+    private String bidCurrencyOf(DisputeEntity d) {
+        if (d.getBidId() == null) {
+            return null;
+        }
+        return bidRepo.findById(d.getBidId())
+                .map(b -> b.getCurrency() != null ? b.getCurrency().toUpperCase(java.util.Locale.ROOT) : null)
+                .orElse(null);
     }
 
     private AdminCancellationResponse toCancellationResponse(CancellationEntity e) {

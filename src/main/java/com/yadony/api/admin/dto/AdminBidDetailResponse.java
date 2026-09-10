@@ -19,5 +19,7 @@ public record AdminBidDetailResponse(
     String recipientName,
     String trackingNumber,
     BigDecimal commissionRate,
-    String refusalReason
+    String refusalReason,
+    /** Devise de netEur, celle de l'annonce (code ISO en majuscules). */
+    String currency
 ) {}
