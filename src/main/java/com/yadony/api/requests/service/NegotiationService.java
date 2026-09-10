@@ -1081,9 +1081,7 @@ public class NegotiationService {
         if (request.getRecipientName() == null || request.getRecipientPhone() == null) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "request/details-incomplete");
         }
-        BigDecimal rate = thread.getCommissionRate() != null
-            ? thread.getCommissionRate()
-            : commissionRateResolver.resolve(thread.getTravelerId(), request.getSenderId());
+        BigDecimal rate = resolveDepositCommissionRate(thread, request.getSenderId());
         // Même garde que initiatePayment (carte) et settleCommission (cash), avant tout
         // engagement d'argent : le trajet dédié du voyageur peut avoir été retiré par la
         // modération entre l'accord de prix et ce dépôt.
@@ -1105,6 +1103,31 @@ public class NegotiationService {
         eventPublisher.publishEvent(new NegotiationDepositPendingEvent(threadId, request.getId(), request.getSenderId(),
             thread.getTravelerId(), pending.gross(), thread.getCurrency(), pending.expiresAt()));
         return new PreparedDeposit(threadId, pending.paymentId(), pending.gross(), thread.getCurrency(), pending.expiresAt());
+    }
+
+    /**
+     * Taux figé sur le fil au dépôt, même contrat que la carte ({@code PaymentService.createNegotiationEscrow}) :
+     * le taux déjà persisté prime ; sinon le promo copié sur le fil à {@link #start} est résolu, et s'il
+     * est invalide on replie sur le taux de base ET on l'efface du fil, sinon {@code sealAcceptedThread}
+     * l'émettrait dans {@code PackageRequestAcceptedEvent} et {@code ThreadAcceptedBidListener} le
+     * rachèterait au taux non remisé.
+     */
+    private BigDecimal resolveDepositCommissionRate(NegotiationThreadEntity thread, UUID senderId) {
+        if (thread.getCommissionRate() != null) {
+            return thread.getCommissionRate();
+        }
+        String code = thread.getPromoCode() != null ? thread.getPromoCode().strip() : null;
+        if (code == null || code.isBlank()) {
+            return commissionRateResolver.resolve(thread.getTravelerId(), senderId);
+        }
+        try {
+            return commissionRateResolver.resolve(thread.getTravelerId(), senderId, code);
+        } catch (YadonyBusinessException e) {
+            log.warn("Promo {} invalide pour le dépôt mobile money de la négociation {} ({}) : repli sur le taux sans promo",
+                code, thread.getId(), e.getErrorCode());
+            thread.setPromoCode(null);
+            return commissionRateResolver.resolve(thread.getTravelerId(), senderId);
+        }
     }
 
     /**

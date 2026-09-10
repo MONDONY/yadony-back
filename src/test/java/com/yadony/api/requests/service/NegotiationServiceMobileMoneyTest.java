@@ -152,6 +152,55 @@ class NegotiationServiceMobileMoneyTest {
         assertThat(ev.getValue()).isInstanceOf(NegotiationDepositPendingEvent.class);
     }
 
+    /**
+     * Revue finale, I1 : le promo copié sur le fil à start() (taux non figé) doit être résolu au
+     * dépôt, comme sur la carte, sinon le scellement le rachète au taux non remisé.
+     */
+    @Test
+    void prepare_withValidPromoOnThread_freezesDiscountedRate_andKeepsPromo() {
+        thread.setCommissionRate(null);
+        thread.setPromoCode("WELCOME05");
+        when(commissionRateResolver.resolve(travelerId, senderId, "WELCOME05")).thenReturn(new BigDecimal("0.05"));
+        when(mobileMoneyPort.createPendingDeposit(thread.getId(), senderId, travelerId, new BigDecimal("30000"), new BigDecimal("0.05"), "XOF"))
+                .thenReturn(new NegotiationMobileMoneyPort.PendingDeposit(UUID.randomUUID(), new BigDecimal("31500"), new BigDecimal("1500"), LocalDateTime.now(ZoneOffset.UTC).plusMinutes(30)));
+
+        service.prepareMobileMoneyDeposit(senderId, thread.getId());
+
+        assertThat(thread.getCommissionRate()).isEqualByComparingTo("0.05");
+        assertThat(thread.getPromoCode()).isEqualTo("WELCOME05");
+        verify(commissionRateResolver, never()).resolve(travelerId, senderId);
+    }
+
+    @Test
+    void prepare_withInvalidPromoOnThread_fallsBackToBaseRate_andClearsPromo() {
+        thread.setCommissionRate(null);
+        thread.setPromoCode("EXPIRED");
+        when(commissionRateResolver.resolve(travelerId, senderId, "EXPIRED"))
+                .thenThrow(new com.yadony.api.common.YadonyBusinessException(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY,
+                        "promo-expired", "Promo Expired", "Ce code est expiré."));
+        when(commissionRateResolver.resolve(travelerId, senderId)).thenReturn(new BigDecimal("0.12"));
+        when(mobileMoneyPort.createPendingDeposit(thread.getId(), senderId, travelerId, new BigDecimal("30000"), new BigDecimal("0.12"), "XOF"))
+                .thenReturn(new NegotiationMobileMoneyPort.PendingDeposit(UUID.randomUUID(), new BigDecimal("33600"), new BigDecimal("3600"), LocalDateTime.now(ZoneOffset.UTC).plusMinutes(30)));
+
+        service.prepareMobileMoneyDeposit(senderId, thread.getId());
+
+        assertThat(thread.getCommissionRate()).isEqualByComparingTo("0.12");
+        assertThat(thread.getPromoCode()).isNull();
+    }
+
+    @Test
+    void prepare_withoutPromo_andNoFrozenRate_usesBaseRate() {
+        thread.setCommissionRate(null);
+        when(commissionRateResolver.resolve(travelerId, senderId)).thenReturn(new BigDecimal("0.12"));
+        when(mobileMoneyPort.createPendingDeposit(thread.getId(), senderId, travelerId, new BigDecimal("30000"), new BigDecimal("0.12"), "XOF"))
+                .thenReturn(new NegotiationMobileMoneyPort.PendingDeposit(UUID.randomUUID(), new BigDecimal("33600"), new BigDecimal("3600"), LocalDateTime.now(ZoneOffset.UTC).plusMinutes(30)));
+
+        service.prepareMobileMoneyDeposit(senderId, thread.getId());
+
+        assertThat(thread.getCommissionRate()).isEqualByComparingTo("0.12");
+        verify(commissionRateResolver, never()).resolve(any(), any(), any());
+    }
+
     @Test
     void prepare_alreadyAwaitingDeposit_isIdempotent() {
         thread.setStatus(NegotiationThreadStatus.AWAITING_DEPOSIT);
