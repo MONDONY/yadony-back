@@ -2783,6 +2783,77 @@ class NegotiationServiceTest {
         }
 
         @Test
+        @DisplayName("colis XOF mobile-money-only, voyageur sans compte de versement XOF → "
+            + "422 discriminant mobile-money-capability-required")
+        void submitTrip_xofMobileMoneyOnlyRequest_travelerWithoutXofPayout_throws422MobileMoneyCapability() {
+            UUID threadId = UUID.randomUUID();
+            UUID travelerId = UUID.randomUUID();
+            UUID annId = UUID.randomUUID();
+
+            NegotiationThreadEntity thread = new NegotiationThreadEntity();
+            setEntityId(thread, threadId);
+            thread.setTravelerId(travelerId);
+            thread.setStatus(NegotiationThreadStatus.AWAITING_TRIP);
+            thread.setCurrentPriceEur(new BigDecimal("100.00"));
+
+            PackageRequestEntity request = new PackageRequestEntity();
+            request.setCurrency("XOF");
+            request.setAcceptedPaymentMethods(java.util.EnumSet.of(PaymentMethod.MOBILE_MONEY));
+
+            UserEntity traveler = new UserEntity();
+            setEntityId(traveler, travelerId);
+            // Aucun compte de versement mobile money actif : hasActiveMobileMoney() = false.
+
+            when(threadRepo.findById(threadId)).thenReturn(java.util.Optional.of(thread));
+            when(requestRepo.findById(any())).thenReturn(java.util.Optional.of(request));
+            when(userRepository.findById(travelerId)).thenReturn(java.util.Optional.of(traveler));
+
+            com.yadony.api.requests.dto.NegotiationSubmitTripRequest req =
+                new com.yadony.api.requests.dto.NegotiationSubmitTripRequest(annId, PaymentMethod.MOBILE_MONEY, false);
+
+            ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> service.submitTrip(travelerId, threadId, req));
+            assertEquals(HttpStatus.UNPROCESSABLE_ENTITY, ex.getStatusCode());
+            assertEquals("payment-method/mobile-money-capability-required", ex.getReason());
+        }
+
+        @Test
+        @DisplayName("colis EUR STRIPE+MOBILE_MONEY, voyageur sans Connect (mobile money hors zone CFA "
+            + "de toute façon) → 422 discriminant none-available (plusieurs rails voulus)")
+        void submitTrip_eurStripeAndMobileMoneyRequest_travelerNoStripe_throws422NoneAvailable() {
+            UUID threadId = UUID.randomUUID();
+            UUID travelerId = UUID.randomUUID();
+            UUID annId = UUID.randomUUID();
+
+            NegotiationThreadEntity thread = new NegotiationThreadEntity();
+            setEntityId(thread, threadId);
+            thread.setTravelerId(travelerId);
+            thread.setStatus(NegotiationThreadStatus.AWAITING_TRIP);
+            thread.setCurrentPriceEur(new BigDecimal("100.00"));
+
+            PackageRequestEntity request = new PackageRequestEntity();
+            request.setCurrency("EUR");
+            request.setAcceptedPaymentMethods(
+                java.util.EnumSet.of(PaymentMethod.STRIPE, PaymentMethod.MOBILE_MONEY));
+
+            UserEntity traveler = new UserEntity();
+            setEntityId(traveler, travelerId);
+            traveler.setStripeAccountStatus(StripeAccountStatus.NOT_CREATED); // pas onboardé
+
+            when(threadRepo.findById(threadId)).thenReturn(java.util.Optional.of(thread));
+            when(requestRepo.findById(any())).thenReturn(java.util.Optional.of(request));
+            when(userRepository.findById(travelerId)).thenReturn(java.util.Optional.of(traveler));
+
+            com.yadony.api.requests.dto.NegotiationSubmitTripRequest req =
+                new com.yadony.api.requests.dto.NegotiationSubmitTripRequest(annId, PaymentMethod.STRIPE, false);
+
+            ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> service.submitTrip(travelerId, threadId, req));
+            assertEquals(HttpStatus.UNPROCESSABLE_ENTITY, ex.getStatusCode());
+            assertEquals("payment-method/none-available", ex.getReason());
+        }
+
+        @Test
         @DisplayName("colis cash-only, voyageur sans fonds ni consentement carte → liaison OK quand même "
             + "(le solde n'est vérifié qu'au paiement, pas au trip-linking)")
         void submitTrip_cashOnlyRequest_noFundsNoConsent_linksAnyway() {

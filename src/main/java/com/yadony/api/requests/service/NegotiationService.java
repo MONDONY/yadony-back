@@ -2340,6 +2340,13 @@ public class NegotiationService {
 
     /**
      * 422 discriminant quand aucun mode n'est fournissable, selon ce que le colis exigeait.
+     *
+     * <p>Un seul rail voulu → code dédié à ce rail (carte, espèce ou mobile money). Plusieurs
+     * rails voulus mais tous indisponibles → {@code none-available} générique (comportement
+     * historique, avant l'ajout du mobile money). Le cas « seul le mobile money était voulu »
+     * doit avoir son propre code : sans lui, un voyageur sans compte de versement dans la
+     * devise de la demande retombait dans la branche par défaut {@code cash-funds-required},
+     * un message faux puisqu'aucune espèce n'était même acceptée.
      */
     private void assertNonEmptyOrThrow(
             java.util.Set<PaymentMethod> set, java.util.Set<PaymentMethod> accepted) {
@@ -2348,9 +2355,12 @@ public class NegotiationService {
         }
         boolean wantsCard = accepted.contains(PaymentMethod.STRIPE);
         boolean wantsCash = accepted.contains(PaymentMethod.CASH);
-        String reason = (wantsCard && wantsCash) ? "payment-method/none-available"
-                      : wantsCard                ? "payment-method/card-capability-required"
-                      :                            "payment-method/cash-funds-required";
+        boolean wantsMobileMoney = accepted.contains(PaymentMethod.MOBILE_MONEY);
+        int wantedRailsCount = (wantsCard ? 1 : 0) + (wantsCash ? 1 : 0) + (wantsMobileMoney ? 1 : 0);
+        String reason = wantedRailsCount >= 2  ? "payment-method/none-available"
+                      : wantsCard               ? "payment-method/card-capability-required"
+                      : wantsMobileMoney        ? "payment-method/mobile-money-capability-required"
+                      :                           "payment-method/cash-funds-required";
         throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, reason);
     }
 }
