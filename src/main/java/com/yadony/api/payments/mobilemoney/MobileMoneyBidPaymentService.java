@@ -312,8 +312,11 @@ public class MobileMoneyBidPaymentService {
         // comme pour le nouveau (choisi) : le catalogue payeur ne filtre que l'affichage.
         UserEntity traveler = travelerOf(bid);
         if (!MobileMoneyNetworks.acceptsBrand(traveler, resolved.provider())) {
-            throw payerUnsupported("Ce voyageur n'accepte pas " + resolved.providerLabel() + ". Réseaux acceptés : "
-                    + String.join(", ", MobileMoneyNetworks.acceptedLabels(traveler)) + ".");
+            List<String> acceptedLabels = MobileMoneyNetworks.acceptedLabels(traveler);
+            throw payerUnsupported(acceptedLabels.isEmpty()
+                    ? "Ce voyageur n'accepte aucun réseau mobile money pour le moment."
+                    : "Ce voyageur n'accepte pas " + resolved.providerLabel() + ". Réseaux acceptés : "
+                            + String.join(", ", acceptedLabels) + ".");
         }
         PawapayProviderConfig.Limits deposit = resolved.config().deposit();
         if (deposit.minAmount() != null && payment.getAmount().compareTo(deposit.minAmount()) < 0

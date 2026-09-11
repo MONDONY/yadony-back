@@ -1,12 +1,15 @@
 package com.yadony.api.payments.pawapay;
 
 import java.util.Locale;
+import java.util.regex.Pattern;
 
 /** Libellés lisibles des codes opérateur pawaPay ({@code ORANGE_SEN} → « Orange Money »). */
 public final class PawapayProviders {
 
     /** Autorisation par redirection (Wave SN/CI) : l'URL arrive par callback, pas par PIN. */
     public static final String REDIRECT_AUTH = "REDIRECT_AUTH";
+
+    private static final Pattern WELL_FORMED_CODE = Pattern.compile("^[A-Z0-9_]{2,40}$");
 
     private PawapayProviders() {}
 
@@ -37,5 +40,15 @@ public final class PawapayProviders {
         String p = provider.trim().toUpperCase(Locale.ROOT);
         int i = p.indexOf('_');
         return i < 0 ? p : p.substring(0, i);
+    }
+
+    /**
+     * Forme valide d'un code opérateur venant du CLIENT (majuscules, chiffres, underscore, 2 à
+     * 40 caractères) : à vérifier AVANT tout écho de ce code dans un {@code detail} ou une ligne
+     * de log, jamais après coup. Ne normalise rien (pas de {@code trim}/{@code toUpperCase}) :
+     * l'appelant applique déjà sa propre normalisation avant ce contrôle. {@code null} → {@code false}.
+     */
+    public static boolean isWellFormed(String code) {
+        return code != null && WELL_FORMED_CODE.matcher(code).matches();
     }
 }

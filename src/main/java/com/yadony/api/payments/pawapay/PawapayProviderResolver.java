@@ -124,8 +124,14 @@ public class PawapayProviderResolver {
         if (chosenProvider == null || chosenProvider.isBlank()) {
             return resolve(rawMsisdn, kind, expectedCurrency, context);
         }
-        Catalogue catalogue = catalogue(rawMsisdn, kind, expectedCurrency, context);
         String wanted = chosenProvider.trim().toUpperCase(Locale.ROOT);
+        // Revue finale, point 3 (Minor 2) : un code mal formé (saisie client) ne doit jamais être
+        // échoué avant validation. `provider` nul ici : UnsupportedNumberException#providerLabel
+        // retombe sur PawapayProviders.label(null) = « Mobile money », donc aucun écho.
+        if (!PawapayProviders.isWellFormed(wanted)) {
+            throw new UnsupportedNumberException(Reason.PROVIDER_NOT_AVAILABLE, null, null);
+        }
+        Catalogue catalogue = catalogue(rawMsisdn, kind, expectedCurrency, context);
         PawapayProviderConfig conf = catalogue.option(wanted)
                 .orElseThrow(() -> new UnsupportedNumberException(Reason.PROVIDER_NOT_AVAILABLE, wanted, null));
         return new Resolved(conf.provider(), catalogue.countryAlpha2(), catalogue.msisdn(), conf);

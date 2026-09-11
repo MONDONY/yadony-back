@@ -252,6 +252,14 @@ public class MobileMoneyAccountService {
 
     /** Vérifie chaque code contre le catalogue et rend les acceptés dans l'ordre du catalogue. */
     private static List<String> selectAccepted(UUID userId, PawapayProviderResolver.Catalogue catalogue, List<String> wanted) {
+        // Revue finale, point 3 (Minor 2) : un code mal formé (retour à la ligne, ponctuation...)
+        // ne doit jamais être échoué tel quel dans un detail ou un log. Validé AVANT toute
+        // recherche dans le catalogue, avec un message qui ne le répète jamais.
+        for (String code : wanted) {
+            if (!PawapayProviders.isWellFormed(code)) {
+                throw unsupported(userId, "Code de réseau invalide.");
+            }
+        }
         List<String> available = catalogue.options().stream().map(PawapayProviderConfig::provider).toList();
         for (String code : wanted) {
             if (!available.contains(code)) {

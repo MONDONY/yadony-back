@@ -18,6 +18,7 @@ import com.yadony.api.payments.pawapay.dto.PawapayPayoutRequest;
 import com.yadony.api.payments.pawapay.dto.PawapayProviderConfig;
 import com.yadony.api.payments.pawapay.dto.PawapayRefundRequest;
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -211,6 +212,11 @@ class PawapayClientTest {
         PawapayProviderConfig wave = conf.get("WAVE_SEN");
         assertThat(wave.supportsPayout()).isFalse();
         assertThat(wave.isRedirectDeposit()).isTrue();
+
+        // Revue finale, point 1 (Important) : l'ordre pawaPay (document JSON, prédit en tête côté
+        // catalogue) doit être observable et stable, jamais celui, randomisé par JVM, de Map.copyOf.
+        assertThat(new ArrayList<>(conf.keySet())).containsExactly("ORANGE_SEN", "WAVE_SEN");
+        assertThatThrownBy(() -> conf.put("X", null)).isInstanceOf(UnsupportedOperationException.class);
 
         // second appel : servi par le cache, aucune requête supplémentaire attendue
         assertThat(client.activeConfiguration()).isSameAs(conf);

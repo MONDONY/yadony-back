@@ -137,6 +137,25 @@ class MobileMoneyAccountServiceTest {
         assertThat(user.getMobileMoneyStatus()).isEqualTo(MobileMoneyPayoutStatus.NOT_CONFIGURED);
     }
 
+    /**
+     * Revue finale, point 3 (Minor 2) : un code mal formé (retour à la ligne) ne doit jamais
+     * être échoué dans le {@code detail} du 422, même partiellement.
+     */
+    @Test
+    void activate_withAMalformedProviderCode_is422_withoutEchoingIt() {
+        when(client.predictProvider("221771234567"))
+                .thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "221771234567")));
+        when(client.activeConfiguration()).thenReturn(configuration(ORANGE, WAVE));
+        when(currencyResolver.resolve(userId)).thenReturn("XOF");
+        assertThatThrownBy(() -> service.activate(userId, "+221 77 123 45 67", List.of("ORANGE_SEN", "bad\ncode")))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> {
+                    assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-account-unsupported");
+                    assertThat(((YadonyBusinessException) e).getMessage()).doesNotContain("bad");
+                });
+        verify(userRepository, never()).save(any());
+    }
+
     /** Ancien contrat (app sans liste) : le prédit seul, qui devient aussi la liste d'un élément. */
     @Test
     void activate_withoutProviders_keepsThePredictedOnly_asAListOfOne() {

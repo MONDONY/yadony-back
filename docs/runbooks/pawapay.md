@@ -21,6 +21,7 @@
   voyageur, sinon `mobile_money_provider`. Audit `ESCROW_RELEASED_MOBILE_MONEY` porte `provider`.
 - Diagnostic : un voyageur activé avant V255 n'accepte qu'une marque ; il élargit depuis l'app
   (écran « Versement mobile money », « Modifier »). Audit `MM_ACCOUNT_PROVIDERS_UPDATED`.
+- Rail négociation (POST /negotiations/{id}/mobile-money/initiate) : hors périmètre de ce lot, il ignore `provider` et n'applique pas le couplage ; le versement passe par le repli (`mobile_money_provider`) quand la marque du dépôt n'est pas dans la liste du voyageur. À répercuter dans le lot négociation.
 
 ## Variables d'environnement
 

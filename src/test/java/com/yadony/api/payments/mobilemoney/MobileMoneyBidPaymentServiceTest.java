@@ -1069,6 +1069,25 @@ class MobileMoneyBidPaymentServiceTest {
                 .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-payer-unsupported");
     }
 
+    /**
+     * Revue finale, ledger T6 : contrairement à {@code acceptBid} (interrupteur vérifié AVANT
+     * tout accès repository), {@code providersForPayer} le vérifie APRÈS
+     * {@code assertPayableBySender} (propriété, paiement en attente, fenêtre ouverte) — cette
+     * branche précise n'était pas encore couverte.
+     */
+    @Test
+    void providersForPayer_railDisabled_is422_afterTheGates() {
+        service = new MobileMoneyBidPaymentService(bidRepository, announcementRepository, userRepository, paymentRepository,
+                operations, submission, new PawapayProviderResolver(client), pricing, firebaseContact, audit, events,
+                promoService, voucherService, transactionManager, disabledProps());
+        awaitingPayment();
+
+        assertThatThrownBy(() -> service.providersForPayer(bid.getId(), sender.getId(), null))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-disabled");
+        verify(client, never()).predictProvider(any());
+    }
+
     // ── initiateDeposit : opérateur choisi et couplage ──────────────────────
 
     /** Point de départ commun : bid en attente de paiement, dépôt jamais tenté, pawaPay accepte. */
@@ -1146,5 +1165,26 @@ class MobileMoneyBidPaymentServiceTest {
         when(submission.submitDeposit(eq(payment.getId()), eq("221771234567"), eq("ORANGE_SEN"), eq("SN"), any(), eq("XOF"),
                 eq("bid-" + bid.getId()), isNull(), isNull())).thenReturn(acceptedDeposit(payment, "ORANGE_SEN"));
         assertThat(service.initiateDeposit(bid.getId(), sender.getId(), null, "ORANGE_SEN").deposit().provider()).isEqualTo("ORANGE_SEN");
+    }
+
+    /**
+     * Revue finale, point 4 (Minor 3) : un voyageur sans AUCUN réseau accepté (repli hérité
+     * vide, jamais élargi depuis l'app) ne doit jamais afficher « Réseaux acceptés : » suivi de
+     * rien : message dédié, distinct de celui qui nomme les réseaux acceptés.
+     */
+    @Test
+    void initiateDeposit_travelerWithoutAnyAcceptedNetwork_is422_withDedicatedMessage() {
+        initiable();
+        traveler.setMobileMoneyProviders(null);
+        traveler.setMobileMoneyProvider(null);
+        senegalPayerPredicts("ORANGE_SEN");
+        assertThatThrownBy(() -> service.initiateDeposit(bid.getId(), sender.getId(), null))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> {
+                    assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-payer-unsupported");
+                    assertThat(((YadonyBusinessException) e).getMessage())
+                            .isEqualTo("Ce voyageur n'accepte aucun réseau mobile money pour le moment.");
+                });
+        verify(submission, never()).submitDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 }

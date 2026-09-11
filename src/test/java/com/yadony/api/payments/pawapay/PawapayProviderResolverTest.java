@@ -36,7 +36,7 @@ class PawapayProviderResolverTest {
     private static final PawapayProviderConfig MTN_CIV = new PawapayProviderConfig("MTN_CIV", "CIV", "XOF", OPEN, OPEN);
     private static final PawapayProviderConfig MTN_CMR = new PawapayProviderConfig("MTN_MOMO_CMR", "CMR", "XAF", OPEN, OPEN);
 
-    /** Configuration active dans l'ordre donné (LinkedHashMap, comme PawapayClient). */
+    /** Configuration active dans l'ordre d'insertion préservé, comme PawapayClient (LinkedHashMap non modifiable). */
     private void configured(PawapayProviderConfig... confs) {
         Map<String, PawapayProviderConfig> m = new LinkedHashMap<>();
         for (PawapayProviderConfig c : confs) {
@@ -269,5 +269,20 @@ class PawapayProviderResolverTest {
         configured(ORANGE, WAVE);
         assertThat(resolver.resolve("221771234567", PawapayOperationKind.DEPOSIT, "XOF", "  ", "ctx").provider()).isEqualTo("ORANGE_SEN");
         assertThat(resolver.resolve("221771234567", PawapayOperationKind.DEPOSIT, "XOF", null, "ctx").provider()).isEqualTo("ORANGE_SEN");
+    }
+
+    /**
+     * Revue finale, point 3 (Minor 2) : un opérateur choisi mal formé (retour à la ligne) est
+     * rejeté AVANT tout appel pawaPay, jamais reflété dans le libellé (provider nul dans
+     * l'exception, {@code PawapayProviders.label(null)} = « Mobile money »).
+     */
+    @Test
+    void resolve_withMalformedChosenProvider_isProviderNotAvailable_withoutEcho() {
+        assertThatThrownBy(() -> resolver.resolve("221771234567", PawapayOperationKind.DEPOSIT, "XOF", "MTN\nCIV", "ctx"))
+                .isInstanceOf(UnsupportedNumberException.class)
+                .satisfies(e -> {
+                    assertThat(((UnsupportedNumberException) e).reason()).isEqualTo(Reason.PROVIDER_NOT_AVAILABLE);
+                    assertThat(((UnsupportedNumberException) e).providerLabel()).isEqualTo("Mobile money");
+                });
     }
 }
