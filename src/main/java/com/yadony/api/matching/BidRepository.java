@@ -206,6 +206,31 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
 
     long countByAnnouncementIdAndStatusIn(UUID announcementId, List<BidStatus> statuses);
 
+    /**
+     * Net voyageur engagé sur une annonce : somme, pour les bids dont le statut est dans
+     * {@code statuses}, de l'accord négocié quand il existe, sinon du barème (poids × prix
+     * au kilo de l'annonce) plus les articles de grille du bid. Exprimé dans la devise de
+     * l'annonce, zéro sans bid. Sert au KPI « revenus réservés » des cartes trajet.
+     */
+    @Query(nativeQuery = true, value = """
+        SELECT COALESCE(SUM(
+            COALESCE(b.negotiated_net_eur,
+                     COALESCE(b.weight_kg, 0) * COALESCE(a.price_per_kg, 0) + COALESCE(g.grid_net, 0))
+        ), 0)
+        FROM bids b
+        JOIN announcements a ON a.id = b.announcement_id
+        LEFT JOIN (
+            SELECT bid_id, SUM(unit_price_net_snapshot * quantity) AS grid_net
+            FROM bid_grid_items
+            GROUP BY bid_id
+        ) g ON g.bid_id = b.id
+        WHERE b.announcement_id = :announcementId
+          AND b.status IN (:statuses)
+          AND b.deleted_at IS NULL
+        """)
+    java.math.BigDecimal sumReservedNetByAnnouncementId(@Param("announcementId") UUID announcementId,
+                                             @Param("statuses") List<String> statuses);
+
     boolean existsByAnnouncementIdAndStatus(UUID announcementId, BidStatus status);
 
     boolean existsByAnnouncementIdAndStatusIn(UUID announcementId, List<BidStatus> statuses);
