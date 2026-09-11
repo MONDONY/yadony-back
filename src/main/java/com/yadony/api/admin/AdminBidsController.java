@@ -29,13 +29,16 @@ public class AdminBidsController {
     private final AnnouncementRepository announcementRepo;
     private final TrackingEventRepository trackingRepo;
     private final UserRepository userRepo;
+    private final com.yadony.api.matching.BidGridItemRepository bidGridItemRepo;
 
     public AdminBidsController(BidRepository bidRepo, AnnouncementRepository announcementRepo,
-            TrackingEventRepository trackingRepo, UserRepository userRepo) {
+            TrackingEventRepository trackingRepo, UserRepository userRepo,
+            com.yadony.api.matching.BidGridItemRepository bidGridItemRepo) {
         this.bidRepo = bidRepo;
         this.announcementRepo = announcementRepo;
         this.trackingRepo = trackingRepo;
         this.userRepo = userRepo;
+        this.bidGridItemRepo = bidGridItemRepo;
     }
 
     @GetMapping("/admin/bids")
@@ -74,8 +77,11 @@ public class AdminBidsController {
         });
         Map<UUID, String> userNames = loadUserNames(userIds);
 
+        Map<UUID, java.math.BigDecimal> gridNetByBid = gridNetByBid(
+                bidsPage.stream().map(BidEntity::getId).filter(java.util.Objects::nonNull).toList());
         Page<AdminBidListItemResponse> result = bidsPage.map(b ->
-                toBidListItem(b, annMap.get(b.getAnnouncementId()), userNames));
+                toBidListItem(b, annMap.get(b.getAnnouncementId()), userNames,
+                        b.getId() != null ? gridNetByBid.get(b.getId()) : null));
         return ResponseEntity.ok(result);
     }
 
@@ -139,8 +145,35 @@ public class AdminBidsController {
 
     // --- mapping helpers ---
 
+    /**
+     * Net voyageur d'une demande : l'accord négocié quand il existe, sinon le barème
+     * (poids × prix au kilo, plus les articles de la grille), dans la devise du bid.
+     * Avant, une demande directe (jamais négociée) sortait sans net et le back-office
+     * affichait un tiret.
+     */
+    static java.math.BigDecimal netOf(BidEntity b, AnnouncementEntity ann, java.math.BigDecimal gridNet) {
+        if (b.getNegotiatedNetEur() != null) return b.getNegotiatedNetEur();
+        java.math.BigDecimal kgNet = (b.getWeightKg() != null && ann != null && ann.getPricePerKg() != null)
+                ? b.getWeightKg().multiply(ann.getPricePerKg())
+                : java.math.BigDecimal.ZERO;
+        java.math.BigDecimal total = kgNet.add(gridNet != null ? gridNet : java.math.BigDecimal.ZERO);
+        return total.signum() > 0 ? total.setScale(2, java.math.RoundingMode.HALF_UP) : null;
+    }
+
+    /** Somme des articles de grille par bid, en une requête pour toute la page. */
+    private Map<UUID, java.math.BigDecimal> gridNetByBid(java.util.Collection<UUID> bidIds) {
+        if (bidIds.isEmpty()) return Map.of();
+        Map<UUID, java.math.BigDecimal> totals = new java.util.HashMap<>();
+        for (com.yadony.api.matching.BidGridItemEntity item : bidGridItemRepo.findByBidIdIn(bidIds)) {
+            java.math.BigDecimal line = item.getUnitPriceNetSnapshot()
+                    .multiply(java.math.BigDecimal.valueOf(item.getQuantity()));
+            totals.merge(item.getBidId(), line, java.math.BigDecimal::add);
+        }
+        return totals;
+    }
+
     private AdminBidListItemResponse toBidListItem(BidEntity b, AnnouncementEntity ann,
-            Map<UUID, String> userNames) {
+            Map<UUID, String> userNames, java.math.BigDecimal gridNet) {
         String senderName = b.getSenderId() != null ? userNames.get(b.getSenderId()) : null;
         String travelerName = ann != null && ann.getTravelerId() != null
                 ? userNames.get(ann.getTravelerId()) : null;
@@ -152,13 +185,15 @@ public class AdminBidsController {
         return new AdminBidListItemResponse(
                 b.getId(), b.getStatus().name(), b.getAnnouncementId(),
                 senderName, travelerName, corridor,
-                b.getWeightKg(), b.getNegotiatedNetEur(),
+                b.getWeightKg(), netOf(b, ann, gridNet),
                 paymentMethod, b.getCreatedAt(), commissionStatus, currency);
     }
 
     private AdminBidDetailResponse toBidDetail(BidEntity b, AnnouncementEntity ann,
             Map<UUID, String> userNames) {
-        AdminBidListItemResponse item = toBidListItem(b, ann, userNames);
+        java.math.BigDecimal gridNet = b.getId() != null
+                ? gridNetByBid(List.of(b.getId())).get(b.getId()) : null;
+        AdminBidListItemResponse item = toBidListItem(b, ann, userNames, gridNet);
         return new AdminBidDetailResponse(
                 item.id(), item.status(), item.announcementId(),
                 item.senderName(), item.travelerName(), item.corridor(),

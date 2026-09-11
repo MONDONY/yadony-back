@@ -53,5 +53,7 @@ public record AnnouncementResponse(
          *  a un compte Stripe Connect actif ET que la devise l'autorise, espèces toujours.
          *  Calculé côté serveur (voir AnnouncementPaymentRails) pour que le front n'ait pas à
          *  rejouer la règle. */
-        Set<PaymentMethod> availablePaymentMethods
+        Set<PaymentMethod> availablePaymentMethods,
+        /** Net voyageur des colis confirmés, dans la devise de l'annonce (KPI « revenus réservés »). */
+        BigDecimal reservedNetAmount
 ) {}

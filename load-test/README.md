@@ -102,8 +102,16 @@ Exercises the main read-only endpoints:
 | `GET /favorites/ids` | Auth required |
 | `GET /package-requests` | `ROLE_TRAVELER` required |
 | `GET /auth/me` | Any authenticated user |
+| `GET /cities/search?q=Par&limit=10` | `ROLE_SENDER` or `ROLE_TRAVELER`. Param is `q` (not `query`), `limit` clamped to [1, 15]. Served by the `city-search` Caffeine cache (30 min TTL) after the first hit |
+| `GET /cities/corridors/popular?limit=10` | `ROLE_SENDER` or `ROLE_TRAVELER`. `limit` clamped to [1, 20]. Served by the `popular-corridors` cache (1 min TTL) |
+| `GET /notifications/unread-count` | Any authenticated, non-guest user |
 
 Profiles: **smoke** (1 VU / 30 s) + **load** (ramp 0→50 VUs).
+
+The two `/cities` endpoints are cached: with a fixed query (`Par`) every VU hits the same
+cache entry, so their latency measures the cache path, not Postgres. Check the hit ratio
+(`cache_gets_total{cache="city-search"}` / `cache="popular-corridors"`) during the run to
+confirm the cache is actually doing the work.
 
 ### `favorites.js`
 
@@ -156,3 +164,40 @@ k6 exits with a non-zero code if any threshold is breached.
 **NEVER point `BASE_URL` at `https://api.yadony.app`.**
 
 The runner (`run.sh`) refuses to execute if `BASE_URL` contains `api.yadony.app` or is empty. This guard protects real users and production data. Load tests must only target **staging** or a local dev environment.
+
+---
+
+## Nginx rate limits (per client IP)
+
+From `nginx/nginx.conf`, identical on staging and production:
+
+| Zone | Paths | Rate | Burst |
+|------|-------|------|-------|
+| `api_general` | everything under `/api/v1/`, including `/auth/me`, `/auth/me/**` and `/auth/me/fcm-token` | 120 req/min | 60 (`nodelay`) |
+| `api_sensitive` | `/api/v1/auth/**` (except the `/auth/me*` paths above) and `/api/v1/kyc/**`, except the Didit webhook | 30 req/min | 15 (`nodelay`) |
+
+Excess requests get a `429`. These limits protect individual clients; they say nothing
+about aggregate capacity. Every scenario here is far above 120 req/min from a single IP:
+the `load` profile alone is 50 VUs looping over 7 endpoints with a 1 s pause, roughly
+300 req/s. Through the public hostname, k6 would be measuring the rate limiter, not the
+backend, within seconds. Follow `STAGING.md` (bypass the edge, or run from several IPs).
+
+The token comes from `K6_ID_TOKEN` or from a Firebase login (`lib/auth.js`), never from
+the API, so the setup phase does not consume the `api_sensitive` budget.
+
+## Production gates
+
+Do not raise real traffic (store rollout, campaign) until these signals have been green
+for at least 15 minutes under the target load on staging:
+
+- API availability: `up{job="yadony-api"} == 1`.
+- 5xx rate below 1 % over 5 minutes.
+- p95 latency below 800 ms and p99 below 1.5 s (the k6 thresholds above).
+- Hikari active connections below 80 % of `maximum-pool-size` (10 in production).
+- JVM heap below 80 %, no sustained increase in GC pause time.
+- Cache hit ratio: `cache_gets_total{result="hit"}` versus `result="miss"` for
+  `city-search`, `popular-corridors`, `bids-me`, `traveler-bids-me` and `negotiations-me`.
+  Counters only move for caches built with `recordStats()` (see `CacheConfig`).
+- Every request carries an `X-Request-Id` response header (`RequestCorrelationFilter`);
+  when a 5xx shows up in the report, that id links the k6 log line, the API log line and
+  the Sentry event.

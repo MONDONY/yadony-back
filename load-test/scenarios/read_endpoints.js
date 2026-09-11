@@ -15,15 +15,23 @@ export function setup() { return { token: getToken() }; }
 export default function (data) {
   const h = { headers: { Authorization: `Bearer ${data.token}` } };
   // Paths corrected to match real controller @RequestMapping:
-  //   /announcements      (@GetMapping on root, params: departureCity/arrivalCity)
-  //   /favorites/ids      (@GetMapping("/ids") — confirmed)
-  //   /package-requests   (@GetMapping on root — no /search suffix)
-  //   /auth/me            (@RequestMapping("/auth") + @GetMapping("/me"))
+  //   /announcements               (@GetMapping on root, params: departureCity/arrivalCity)
+  //   /favorites/ids               (@GetMapping("/ids") — confirmed)
+  //   /package-requests            (@GetMapping on root — no /search suffix)
+  //   /auth/me                     (@RequestMapping("/auth") + @GetMapping("/me"))
+  //   /cities/search               (CityController: param is `q`, NOT `query`; limit clamped to [1,15];
+  //                                 served by the `city-search` Caffeine cache after the first hit)
+  //   /cities/corridors/popular    (CityController: limit clamped to [1,20]; `popular-corridors` cache, 1 min TTL)
+  //   /notifications/unread-count  (NotificationController: any authenticated, non-guest user)
+  // The two /cities endpoints require ROLE_SENDER or ROLE_TRAVELER (see README, test account role).
   const paths = [
     '/announcements?departureCity=Paris&arrivalCity=Dakar',
     '/favorites/ids',
     '/package-requests',
     '/auth/me',
+    '/cities/search?q=Par&limit=10',
+    '/cities/corridors/popular?limit=10',
+    '/notifications/unread-count',
   ];
   for (const p of paths) {
     const r = http.get(`${BASE}${p}`, h);

@@ -838,7 +838,7 @@ Before deploying:
 - [ ] All user-owned resources check ownership before modification
 - [ ] All Stripe webhooks validate signature
 - [ ] All KYC files use presigned URLs (never direct public URLs)
-- [ ] Rate limiting configured in Nginx (30 req/min general, 5 req/min auth/kyc)
+- [ ] Rate limiting configured in Nginx (120 req/min general burst 60, 30 req/min auth/kyc burst 15 — voir `nginx/nginx.conf`, jamais les valeurs d'un vieux document)
 - [ ] Max declared value enforced (500€ limit)
 - [ ] Offline timestamps validated (reject future timestamps)
 - [ ] CORS configured properly for production frontend domain

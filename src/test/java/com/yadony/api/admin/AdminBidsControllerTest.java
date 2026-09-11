@@ -27,9 +27,10 @@ class AdminBidsControllerTest {
     @Mock AnnouncementRepository announcementRepo;
     @Mock TrackingEventRepository trackingRepo;
     @Mock UserRepository userRepo;
+    @Mock com.yadony.api.matching.BidGridItemRepository bidGridItemRepo;
 
     private AdminBidsController controller() {
-        return new AdminBidsController(bidRepo, announcementRepo, trackingRepo, userRepo);
+        return new AdminBidsController(bidRepo, announcementRepo, trackingRepo, userRepo, bidGridItemRepo);
     }
 
     @Test
@@ -73,6 +74,51 @@ class AdminBidsControllerTest {
 
         assertThat(resp.getBody().getContent().get(0).currency()).isEqualTo("XOF");
         assertThat(resp.getBody().getContent().get(0).netEur()).isEqualByComparingTo("6000.00");
+    }
+
+    /**
+     * Une demande directe n'a pas d'accord négocié : son net vient du barème de
+     * l'annonce (poids × prix au kilo) et des articles de grille, dans la devise du
+     * bid. Le back-office affichait un tiret.
+     */
+    @Test
+    void list_computesTheNetOfADirectRequestFromTheAnnouncementAndGrid() {
+        UUID annId = UUID.randomUUID();
+        UUID bidId = UUID.randomUUID();
+        BidEntity bid = new BidEntity();
+        org.springframework.test.util.ReflectionTestUtils.setField(bid, "id", bidId);
+        bid.setAnnouncementId(annId);
+        bid.setCurrency("XOF");
+        bid.setWeightKg(new java.math.BigDecimal("3"));
+        AnnouncementEntity ann = new AnnouncementEntity();
+        org.springframework.test.util.ReflectionTestUtils.setField(ann, "id", annId);
+        ann.setPricePerKg(new java.math.BigDecimal("5000"));
+        com.yadony.api.matching.BidGridItemEntity item = new com.yadony.api.matching.BidGridItemEntity();
+        item.setBidId(bidId);
+        item.setUnitPriceNetSnapshot(new java.math.BigDecimal("2500"));
+        item.setQuantity(2);
+        when(bidRepo.findAdminFiltered(isNull(), isNull(), isNull(), isNull(), isNull(), any()))
+                .thenReturn(new PageImpl<>(List.of(bid)));
+        when(announcementRepo.findAllById(any())).thenReturn(List.of(ann));
+        when(bidGridItemRepo.findByBidIdIn(any())).thenReturn(List.of(item));
+
+        ResponseEntity<Page<AdminBidListItemResponse>> resp = controller().listBids(null, null, null, null, null, 0, 20);
+
+        // 3 kg × 5 000 + 2 × 2 500 = 20 000 F CFA
+        assertThat(resp.getBody().getContent().get(0).netEur()).isEqualByComparingTo("20000");
+    }
+
+    @Test
+    void list_leavesTheNetEmptyWhenNothingIsPriced() {
+        BidEntity bid = new BidEntity();
+        bid.setCurrency("EUR");
+        when(bidRepo.findAdminFiltered(isNull(), isNull(), isNull(), isNull(), isNull(), any()))
+                .thenReturn(new PageImpl<>(List.of(bid)));
+        when(announcementRepo.findAllById(any())).thenReturn(List.of());
+
+        ResponseEntity<Page<AdminBidListItemResponse>> resp = controller().listBids(null, null, null, null, null, 0, 20);
+
+        assertThat(resp.getBody().getContent().get(0).netEur()).isNull();
     }
 
     @Test
