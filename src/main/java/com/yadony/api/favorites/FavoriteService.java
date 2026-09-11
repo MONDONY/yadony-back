@@ -1,7 +1,6 @@
 package com.yadony.api.favorites;
 
 import com.yadony.api.auth.GuestUserProvisioner;
-import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.BlockVisibility;
 import com.yadony.api.common.YadonyBusinessException;
@@ -173,10 +172,9 @@ public class FavoriteService {
                         .toList();
         if (active.isEmpty()) return List.of();
         Set<UUID> favIdSet = new HashSet<>(ids); // all are favorites
-        boolean viewerHasConnect = userRepository.findById(callerId)
-                .map(UserEntity::hasActiveStripeConnect)
-                .orElse(false);
-        return packageRequestSearchMapper.toSearchResponseList(active, favIdSet, viewerHasConnect);
+        com.yadony.api.requests.service.ViewerPaymentCapabilities viewer =
+                com.yadony.api.requests.service.ViewerPaymentCapabilities.of(userRepository.findById(callerId).orElse(null));
+        return packageRequestSearchMapper.toSearchResponseList(active, favIdSet, viewer);
     }
 
     // --- private helpers ---

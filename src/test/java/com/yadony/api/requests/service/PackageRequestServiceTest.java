@@ -730,6 +730,47 @@ class PackageRequestServiceTest {
             assertThat(resp.id()).isEqualTo(entity.getId());
         }
 
+        @Test
+        @DisplayName("visiteur versable en XOF : une demande XOF acceptant MOBILE_MONEY l'expose")
+        void getById_viewerWithXofAccount_seesMobileMoney() {
+            UUID viewer = UUID.randomUUID();
+            PackageRequestEntity entity = buildEntity(SENDER_ID, PackageRequestStatus.OPEN);
+            entity.setCurrency("XOF");
+            entity.setAcceptedPaymentMethods(EnumSet.of(PaymentMethod.MOBILE_MONEY, PaymentMethod.CASH));
+            when(repository.findById(entity.getId())).thenReturn(Optional.of(entity));
+            when(threadRepository.existsByPackageRequestIdAndTravelerId(entity.getId(), viewer))
+                .thenReturn(false);
+            UserEntity viewerUser = new UserEntity();
+            viewerUser.setMobileMoneyStatus(com.yadony.api.auth.MobileMoneyPayoutStatus.ACTIVE);
+            viewerUser.setMobileMoneyCurrency("XOF");
+            when(userRepository.findById(viewer)).thenReturn(Optional.of(viewerUser));
+
+            var resp = service.getById(viewer, entity.getId());
+
+            assertThat(resp.availablePaymentMethods())
+                .containsExactlyInAnyOrder(PaymentMethod.MOBILE_MONEY, PaymentMethod.CASH);
+        }
+
+        @Test
+        @DisplayName("visiteur versable en XAF : la même demande XOF ne propose que l'espèce")
+        void getById_viewerWithXafAccount_hidesMobileMoney() {
+            UUID viewer = UUID.randomUUID();
+            PackageRequestEntity entity = buildEntity(SENDER_ID, PackageRequestStatus.OPEN);
+            entity.setCurrency("XOF");
+            entity.setAcceptedPaymentMethods(EnumSet.of(PaymentMethod.MOBILE_MONEY, PaymentMethod.CASH));
+            when(repository.findById(entity.getId())).thenReturn(Optional.of(entity));
+            when(threadRepository.existsByPackageRequestIdAndTravelerId(entity.getId(), viewer))
+                .thenReturn(false);
+            UserEntity viewerUser = new UserEntity();
+            viewerUser.setMobileMoneyStatus(com.yadony.api.auth.MobileMoneyPayoutStatus.ACTIVE);
+            viewerUser.setMobileMoneyCurrency("XAF");
+            when(userRepository.findById(viewer)).thenReturn(Optional.of(viewerUser));
+
+            var resp = service.getById(viewer, entity.getId());
+
+            assertThat(resp.availablePaymentMethods()).containsExactly(PaymentMethod.CASH);
+        }
+
         @Test @DisplayName("non-participant, demande NEGOTIATING → OK (consultable publiquement)")
         void getById_nonParticipant_negotiatingRequest_returnsResponse() {
             UUID OTHER = UUID.randomUUID();

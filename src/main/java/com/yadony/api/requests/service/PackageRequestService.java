@@ -589,7 +589,7 @@ public class PackageRequestService {
         PackageRequestResponse response = toResponse(entity,
             viewerThread.map(com.yadony.api.requests.entity.NegotiationThreadEntity::getId).orElse(null),
             viewerThread.map(t -> t.getStatus().name()).orElse(null),
-            resolveViewerHasConnect(callerUid),
+            resolveViewerCapabilities(callerUid),
             isOwner);
         // Même repère de lecture que le fil : budget converti « environ » dans la
         // devise du lecteur quand elle diffère de celle de la demande.
@@ -790,12 +790,12 @@ public class PackageRequestService {
                                                       Pageable pageable,
                                                       UUID callerId) {
         Set<UUID> favIds = loadFavIds(callerId);
-        boolean viewerHasConnect = resolveViewerHasConnect(callerId);
+        ViewerPaymentCapabilities viewer = resolveViewerCapabilities(callerId);
         Page<PackageRequestEntity> page = repository.findAll(visibleTo(spec, callerId), pageable);
         BatchMaps batch = buildBatchMaps(page.getContent());
         String viewerCurrency = activeCurrencyResolver.resolveDisplay(callerId);
         return page.map(e -> withViewerConversion(packageRequestSearchMapper.toSearchResponse(
-                e, favIds.contains(e.getId()), viewerHasConnect, batch.userMap, batch.cityMap, batch.photoMap),
+                e, favIds.contains(e.getId()), viewer, batch.userMap, batch.cityMap, batch.photoMap),
                 viewerCurrency));
     }
 
@@ -861,12 +861,12 @@ public class PackageRequestService {
         List<PackageRequestEntity> pageEntities = sorted.subList((int) fromLong, (int) toLong);
 
         Set<UUID> favIds = loadFavIds(callerId);
-        boolean viewerHasConnect = resolveViewerHasConnect(callerId);
+        ViewerPaymentCapabilities viewer = resolveViewerCapabilities(callerId);
         BatchMaps batch = buildBatchMaps(pageEntities);
         String viewerCurrency = activeCurrencyResolver.resolveDisplay(callerId);
         List<PackageRequestSearchResponse> content = pageEntities.stream()
                 .map(e -> packageRequestSearchMapper.toSearchResponse(
-                        e, favIds.contains(e.getId()), viewerHasConnect, batch.userMap, batch.cityMap, batch.photoMap))
+                        e, favIds.contains(e.getId()), viewer, batch.userMap, batch.cityMap, batch.photoMap))
                 .map(r -> r.withMatch(matches.get(r.id())))
                 .map(r -> withViewerConversion(r, viewerCurrency))
                 .toList();
@@ -916,13 +916,13 @@ public class PackageRequestService {
                                                             double radiusKm,
                                                             UUID callerId) {
         Set<UUID> favIds = loadFavIds(callerId);
-        boolean viewerHasConnect = resolveViewerHasConnect(callerId);
+        ViewerPaymentCapabilities viewer = resolveViewerCapabilities(callerId);
         Page<PackageRequestEntity> rawPage = repository.findAll(visibleTo(spec, callerId), pageable);
         BatchMaps batch = buildBatchMaps(rawPage.getContent());
         String viewerCurrency = activeCurrencyResolver.resolveDisplay(callerId);
         Page<PackageRequestSearchResponse> mapped = rawPage.map(e -> withViewerConversion(
                 packageRequestSearchMapper.toSearchResponse(
-                        e, favIds.contains(e.getId()), viewerHasConnect, batch.userMap, batch.cityMap, batch.photoMap),
+                        e, favIds.contains(e.getId()), viewer, batch.userMap, batch.cityMap, batch.photoMap),
                 viewerCurrency));
         double latD = lat.doubleValue();
         double lngD = lng.doubleValue();
@@ -1000,18 +1000,17 @@ public class PackageRequestService {
     }
 
     /**
-     * Statut Stripe Connect du voyageur qui consulte une demande, pour
+     * Capacités de paiement du voyageur qui consulte une demande, pour
      * {@code availablePaymentMethods}. Même contrat que {@link #loadFavIds} : renvoie une
-     * valeur neutre ({@code false}) quand {@code viewerId} est null (appelant anonyme) ou
-     * que l'utilisateur n'existe pas — jamais d'exception ici, ce n'est qu'un affichage.
+     * valeur neutre ({@link ViewerPaymentCapabilities#NONE}) quand {@code viewerId} est null
+     * (appelant anonyme) ou que l'utilisateur n'existe pas — jamais d'exception ici, ce n'est
+     * qu'un affichage.
      */
-    private boolean resolveViewerHasConnect(UUID viewerId) {
+    private ViewerPaymentCapabilities resolveViewerCapabilities(UUID viewerId) {
         if (viewerId == null) {
-            return false;
+            return ViewerPaymentCapabilities.NONE;
         }
-        return userRepository.findById(viewerId)
-                .map(UserEntity::hasActiveStripeConnect)
-                .orElse(false);
+        return ViewerPaymentCapabilities.of(userRepository.findById(viewerId).orElse(null));
     }
 
     private static double haversineKm(double lat1, double lon1, double lat2, double lon2) {
@@ -1029,20 +1028,20 @@ public class PackageRequestService {
 
     /** Liste « mes demandes » : le lecteur est toujours l'expéditeur propriétaire. */
     PackageRequestResponse toResponse(PackageRequestEntity e) {
-        return toResponse(e, null, null, false, true);
+        return toResponse(e, null, null, ViewerPaymentCapabilities.NONE, true);
     }
 
     /**
      * @param viewerId l'utilisateur actuellement authentifié qui consulte cette demande
      *                 (propriétaire ou voyageur) — détermine {@code availablePaymentMethods}
-     *                 via son statut Stripe Connect, comme {@link #loadFavIds} le fait pour
+     *                 via ses capacités de paiement, comme {@link #loadFavIds} le fait pour
      *                 {@code isFavorite} côté recherche.
      */
     PackageRequestResponse toResponse(PackageRequestEntity e, UUID viewerId) {
         // Tous les appelants de cette surcharge (create, update, publish, unpublish,
         // completeDetails) viennent de rejouer un contrôle de propriété : le lecteur est
         // l'expéditeur propriétaire.
-        return toResponse(e, null, null, resolveViewerHasConnect(viewerId), true);
+        return toResponse(e, null, null, resolveViewerCapabilities(viewerId), true);
     }
 
     /**
@@ -1056,17 +1055,18 @@ public class PackageRequestService {
      *                n'avait aucune intention de partager.
      */
     PackageRequestResponse toResponse(PackageRequestEntity e, java.util.UUID viewerThreadId,
-                                      String viewerThreadStatus, boolean viewerHasConnect,
+                                      String viewerThreadStatus, ViewerPaymentCapabilities viewer,
                                       boolean isOwner) {
         BigDecimal grossPriceEur = e.getTargetPriceEur() != null
             ? PriceBreakdown.fromNet(e.getTargetPriceEur(), commissionProperties.rate()).gross()
             : null;
         List<PackageRequestPhotoResponse> photos = photoService.activePhotos(e.getId());
         String photoUrl = photos.isEmpty() ? e.getPhotoUrl() : photos.get(0).url();
-        // Mobile money pas encore cable sur les demandes de colis (hors perimetre de cette
-        // tache) : comportement inchange, comme avant l'ajout du rail pawaPay.
+        // Capacités réelles du visiteur : carte si Connect actif, mobile money si compte de
+        // versement actif dans la devise de la demande.
         Set<PaymentMethod> availablePaymentMethods = com.yadony.api.payments.currency.AnnouncementPaymentRails
-                .offerable(e.getAcceptedPaymentMethods(), e.getCurrency(), viewerHasConnect, false);
+                .offerable(e.getAcceptedPaymentMethods(), e.getCurrency(), viewer.hasConnect(),
+                        viewer.canReceiveMobileMoney(e.getCurrency()));
         return new PackageRequestResponse(
             e.getId(), e.getSenderId(),
             e.getDepartureCity(), e.getArrivalCity(),
@@ -1097,11 +1097,11 @@ public class PackageRequestService {
      * the mapper directly without injecting this service.
      *
      * <p>Sans appelant connu à ce site (aucune méthode publique de ce service n'y délègue
-     * actuellement), le statut Connect du voyageur est inconnu : {@code viewerHasConnect=false},
+     * actuellement), les capacités du voyageur sont inconnues : {@link ViewerPaymentCapabilities#NONE},
      * comme {@link #toResponse(PackageRequestEntity)} pour le même cas.
      */
     public PackageRequestSearchResponse toSearchResponse(PackageRequestEntity e, boolean isFavorite) {
-        return packageRequestSearchMapper.toSearchResponse(e, isFavorite, false);
+        return packageRequestSearchMapper.toSearchResponse(e, isFavorite, ViewerPaymentCapabilities.NONE);
     }
 
     /**

@@ -89,16 +89,16 @@ public class PackageRequestSearchMapper {
      *
      * @param entity            the package-request entity (must not be null)
      * @param isFavorite        whether the viewing user has favorited this request
-     * @param viewerHasConnect  whether the viewing user (if a traveler) has an active Stripe
-     *                          Connect account — drives {@code availablePaymentMethods}, same
-     *                          role as {@code isFavorite} but constant across the whole batch
-     *                          (it describes the viewer, not the entity)
+     * @param viewer            the viewing user's payment capabilities (Stripe Connect, mobile
+     *                          money) — drives {@code availablePaymentMethods}, same role as
+     *                          {@code isFavorite} but constant across the whole batch (it
+     *                          describes the viewer, not the entity)
      * @param userMap    pre-loaded map of senderId → UserEntity (absent = treated as null)
      * @param cityMap    pre-loaded map of lowercase city name → CityEntity (absent = no coords)
      * @param photoMap   pre-loaded map of packageRequestId → photo list (absent = empty list)
      */
     public PackageRequestSearchResponse toSearchResponse(PackageRequestEntity entity, boolean isFavorite,
-                                                         boolean viewerHasConnect,
+                                                         ViewerPaymentCapabilities viewer,
                                                          Map<UUID, UserEntity> userMap,
                                                          Map<String, CityEntity> cityMap,
                                                          Map<UUID, List<PackageRequestPhotoResponse>> photoMap) {
@@ -116,11 +116,11 @@ public class PackageRequestSearchMapper {
         var arrCity = cityMap.get(entity.getArrivalCity() != null ? entity.getArrivalCity().toLowerCase() : "");
         List<PackageRequestPhotoResponse> photos = photoMap.getOrDefault(entity.getId(), List.of());
         String photoUrl = photos.isEmpty() ? entity.getPhotoUrl() : photos.get(0).url();
-        // Mobile money pas encore cable sur les demandes de colis (hors perimetre de cette
-        // tache) : comportement inchange, comme avant l'ajout du rail pawaPay.
+        // Capacités réelles du visiteur : carte si Connect actif, mobile money si compte de
+        // versement actif dans la devise de la demande.
         Set<com.yadony.api.payments.cash.PaymentMethod> availablePaymentMethods =
                 AnnouncementPaymentRails.offerable(entity.getAcceptedPaymentMethods(), entity.getCurrency(),
-                        viewerHasConnect, false);
+                        viewer.hasConnect(), viewer.canReceiveMobileMoney(entity.getCurrency()));
         return new PackageRequestSearchResponse(
                 entity.getId(), entity.getDepartureCity(), entity.getArrivalCity(),
                 depCity != null ? depCity.getLatitude() : null,
@@ -149,14 +149,14 @@ public class PackageRequestSearchMapper {
     /**
      * Maps an entity to the search DTO.
      *
-     * @param entity           the package-request entity (must not be null)
-     * @param isFavorite       whether the viewing user has favorited this request
-     * @param viewerHasConnect whether the viewing user (if a traveler) has an active Stripe
-     *                         Connect account — drives {@code availablePaymentMethods}
+     * @param entity     the package-request entity (must not be null)
+     * @param isFavorite whether the viewing user has favorited this request
+     * @param viewer     the viewing user's payment capabilities (Stripe Connect, mobile money)
+     *                   — drives {@code availablePaymentMethods}
      * @return the populated search response record
      */
     public PackageRequestSearchResponse toSearchResponse(PackageRequestEntity entity, boolean isFavorite,
-                                                          boolean viewerHasConnect) {
+                                                          ViewerPaymentCapabilities viewer) {
         UserEntity sender = userRepository.findById(entity.getSenderId()).orElse(null);
         String displayName = buildSenderDisplayName(sender);
         double averageRating = sender != null && sender.getAverageRating() != null
@@ -171,11 +171,11 @@ public class PackageRequestSearchMapper {
         var arrCity = cityRepository.findFirstByNameIgnoreCase(entity.getArrivalCity()).orElse(null);
         List<PackageRequestPhotoResponse> photos = photoService.activePhotos(entity.getId());
         String photoUrl = photos.isEmpty() ? entity.getPhotoUrl() : photos.get(0).url();
-        // Mobile money pas encore cable sur les demandes de colis (hors perimetre de cette
-        // tache) : comportement inchange, comme avant l'ajout du rail pawaPay.
+        // Capacités réelles du visiteur : carte si Connect actif, mobile money si compte de
+        // versement actif dans la devise de la demande.
         Set<com.yadony.api.payments.cash.PaymentMethod> availablePaymentMethods =
                 AnnouncementPaymentRails.offerable(entity.getAcceptedPaymentMethods(), entity.getCurrency(),
-                        viewerHasConnect, false);
+                        viewer.hasConnect(), viewer.canReceiveMobileMoney(entity.getCurrency()));
         return new PackageRequestSearchResponse(
                 entity.getId(), entity.getDepartureCity(), entity.getArrivalCity(),
                 depCity != null ? depCity.getLatitude() : null,
@@ -204,16 +204,16 @@ public class PackageRequestSearchMapper {
     /**
      * Batch convenience: maps a list of entities to DTOs using a single query per resource type
      * (users, cities, photos). All entities get {@code isFavorite=true} (used by FavoriteService).
-     * For mixed isFavorite values, use {@link #toSearchResponse(PackageRequestEntity, boolean, boolean, Map, Map, Map)}.
+     * For mixed isFavorite values, use {@link #toSearchResponse(PackageRequestEntity, boolean, ViewerPaymentCapabilities, Map, Map, Map)}.
      *
-     * @param entities         the package-request entities to map
-     * @param favIdSet         set of request IDs that the viewer has favorited
-     * @param viewerHasConnect whether the viewer (if a traveler) has an active Stripe Connect
-     *                         account — same value for every entity in the batch
+     * @param entities the package-request entities to map
+     * @param favIdSet set of request IDs that the viewer has favorited
+     * @param viewer   the viewer's payment capabilities (Stripe Connect, mobile money) — same
+     *                 value for every entity in the batch
      */
     public List<PackageRequestSearchResponse> toSearchResponseList(List<PackageRequestEntity> entities,
                                                                     Set<UUID> favIdSet,
-                                                                    boolean viewerHasConnect) {
+                                                                    ViewerPaymentCapabilities viewer) {
         if (entities.isEmpty()) return List.of();
 
         List<UUID> senderIds = entities.stream().map(PackageRequestEntity::getSenderId).distinct().toList();
@@ -232,7 +232,7 @@ public class PackageRequestSearchMapper {
 
         List<PackageRequestSearchResponse> result = new ArrayList<>(entities.size());
         for (PackageRequestEntity e : entities) {
-            result.add(toSearchResponse(e, favIdSet.contains(e.getId()), viewerHasConnect, userMap, cityMap, photoMap));
+            result.add(toSearchResponse(e, favIdSet.contains(e.getId()), viewer, userMap, cityMap, photoMap));
         }
         return result;
     }
