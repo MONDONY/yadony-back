@@ -2530,6 +2530,34 @@ class NegotiationServiceTest {
         }
 
         @Test
+        @DisplayName("sans paymentMethod (charge utile du portail PRO) → liaison OK, SET calculé, moyen laissé au checkout")
+        void submitTrip_withoutPaymentMethod_linksTrip() {
+            UUID annId = UUID.randomUUID();
+
+            com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
+            ann.setTravelerId(TRAVELER_ID);
+            ann.setDepartureCity("Paris");
+            ann.setArrivalCity("Dakar");
+            ann.setDepartureDate(request.getDesiredDate());
+            ann.setAvailableKg(new BigDecimal("5"));
+
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(announcementRepo.findById(annId)).thenReturn(Optional.of(ann));
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(List.of());
+
+            var req = new com.yadony.api.requests.dto.NegotiationSubmitTripRequest(annId);
+            var resp = service.submitTrip(TRAVELER_ID, THREAD_ID, req);
+
+            assertThat(req.paymentMethod()).isNull();
+            assertThat(resp.status()).isEqualTo(NegotiationThreadStatus.AWAITING_PAYMENT);
+            assertThat(thread.getAvailablePaymentMethods()).isEqualTo(java.util.EnumSet.of(PaymentMethod.STRIPE));
+            assertThat(thread.getPaymentMethod()).isNull();
+        }
+
+        @Test
         @DisplayName("voyageur CASH avec wallet vide et sans consentement carte → liaison OK quand même "
             + "(le solde n'est vérifié qu'au paiement, pas au trip-linking)")
         void submitTrip_allowsCashEvenWhenWalletShort() {

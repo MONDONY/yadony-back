@@ -529,6 +529,42 @@ class NegotiationControllerIT {
             .andExpect(jsonPath("$.status").value("AWAITING_PAYMENT"));
     }
 
+    /**
+     * Charge utile du portail PRO : seul l'identifiant du trajet. Le moyen de
+     * paiement n'est plus décidé ici (l'expéditeur choisit au checkout), le DTO
+     * ne doit donc plus le rendre obligatoire : l'exiger renvoyait un 422 pour
+     * un champ que le service ignore.
+     */
+    @Test
+    void post_submitTrip_withoutPaymentMethod_returns200() throws Exception {
+        UUID threadId = UUID.randomUUID();
+        UUID announcementId = UUID.randomUUID();
+        when(service.submitTrip(eq(TRAVELER_UUID), eq(threadId), any()))
+            .thenReturn(fakeThread(threadId, NegotiationThreadStatus.AWAITING_PAYMENT, null));
+
+        mockMvc.perform(post("/negotiations/{id}/submit-trip", threadId)
+                .with(authentication(authAs("uid-traveler", "TRAVELER")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"travelerAnnouncementId\":\"" + announcementId + "\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.status").value("AWAITING_PAYMENT"));
+
+        var captor = org.mockito.ArgumentCaptor.forClass(NegotiationSubmitTripRequest.class);
+        verify(service).submitTrip(eq(TRAVELER_UUID), eq(threadId), captor.capture());
+        org.assertj.core.api.Assertions.assertThat(captor.getValue().travelerAnnouncementId()).isEqualTo(announcementId);
+        org.assertj.core.api.Assertions.assertThat(captor.getValue().paymentMethod()).isNull();
+        org.assertj.core.api.Assertions.assertThat(captor.getValue().useCardForCommission()).isFalse();
+    }
+
+    @Test
+    void post_submitTrip_withoutAnnouncementId_returns422() throws Exception {
+        mockMvc.perform(post("/negotiations/{id}/submit-trip", UUID.randomUUID())
+                .with(authentication(authAs("uid-traveler", "TRAVELER")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"paymentMethod\":\"STRIPE\"}"))
+            .andExpect(status().isUnprocessableEntity());
+    }
+
     @Test
     void patch_changeTrip_returns200() throws Exception {
         UUID threadId = UUID.randomUUID();
