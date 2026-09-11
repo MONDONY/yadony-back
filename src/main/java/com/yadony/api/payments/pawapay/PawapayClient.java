@@ -17,6 +17,7 @@ import com.yadony.api.payments.pawapay.dto.PawapayWalletBalance;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -172,7 +173,12 @@ public class PawapayClient {
                 }
             }
         }
-        return Map.copyOf(out);
+        // Collections.unmodifiableMap, jamais Map.copyOf : copyOf ne garantit pas l'ordre
+        // d'itération (randomisé par JVM en production), ce qui casserait silencieusement
+        // l'ordre pawaPay dont dépendent PawapayProviderResolver#catalogue (prédit en tête) et
+        // le repli « premier coché » de MobileMoneyAccountService — seuls les tests, qui stubbent
+        // tous un LinkedHashMap, ne pouvaient pas voir le problème.
+        return Collections.unmodifiableMap(out);
     }
 
     private static PawapayProviderConfig.Limits limits(JsonNode n) {

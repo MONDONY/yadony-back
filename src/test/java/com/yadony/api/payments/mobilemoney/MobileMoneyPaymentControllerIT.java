@@ -11,7 +11,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
+import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPayerProvidersResponse;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPaymentStatusResponse;
+import com.yadony.api.payments.mobilemoney.dto.MobileMoneyProvidersResponse;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -76,8 +78,8 @@ class MobileMoneyPaymentControllerIT {
 
     @Test
     void initiate_senderOnly_withOptionalPhone() throws Exception {
-        when(service.initiateDeposit(BID_ID, SENDER_ID, "+221771234567")).thenReturn(response("AWAITING_PAYMENT", "PENDING"));
-        when(service.initiateDeposit(eq(BID_ID), eq(SENDER_ID), isNull())).thenReturn(response("AWAITING_PAYMENT", "PENDING"));
+        when(service.initiateDeposit(BID_ID, SENDER_ID, "+221771234567", null)).thenReturn(response("AWAITING_PAYMENT", "PENDING"));
+        when(service.initiateDeposit(eq(BID_ID), eq(SENDER_ID), isNull(), isNull())).thenReturn(response("AWAITING_PAYMENT", "PENDING"));
         mockMvc.perform(post("/bids/{bidId}/mobile-money/initiate", BID_ID).with(authentication(auth("s-uid", "ROLE_SENDER")))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"phoneNumber\":\"+221771234567\"}"))
                 .andExpect(status().isCreated()).andExpect(jsonPath("$.deposit.status").value("ACCEPTED"))
@@ -89,6 +91,15 @@ class MobileMoneyPaymentControllerIT {
     }
 
     @Test
+    void initiate_withProviderBody_passesItToService() throws Exception {
+        when(service.initiateDeposit(BID_ID, SENDER_ID, "+221 77 000 00 00", "WAVE_SEN")).thenReturn(response("AWAITING_PAYMENT", "PENDING"));
+        mockMvc.perform(post("/bids/{bidId}/mobile-money/initiate", BID_ID).with(authentication(auth("s-uid", "ROLE_SENDER")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"phoneNumber\":\"+221 77 000 00 00\",\"provider\":\"WAVE_SEN\"}"))
+                .andExpect(status().isCreated()).andExpect(jsonPath("$.paymentStatus").value("PENDING"));
+    }
+
+    @Test
     void status_forBothParties_andAnonymousRejected() throws Exception {
         when(service.status(BID_ID, SENDER_ID)).thenReturn(response("ACCEPTED", "ESCROW"));
         when(service.status(BID_ID, TRAVELER_ID)).thenReturn(response("ACCEPTED", "ESCROW"));
@@ -97,5 +108,22 @@ class MobileMoneyPaymentControllerIT {
         mockMvc.perform(get("/bids/{bidId}/mobile-money/status", BID_ID).with(authentication(auth("t-uid", "ROLE_TRAVELER"))))
                 .andExpect(status().isOk());
         mockMvc.perform(get("/bids/{bidId}/mobile-money/status", BID_ID)).andExpect(status().is4xxClientError());
+    }
+
+    @Test
+    void providers_senderOnly_withOptionalPhone() throws Exception {
+        MobileMoneyPayerProvidersResponse catalogue = new MobileMoneyPayerProvidersResponse("SN", "XOF", "+221 •••• 67", "ORANGE_SEN",
+                List.of(new MobileMoneyProvidersResponse.ProviderOption("ORANGE_SEN", "Orange Money", true)),
+                List.of("Orange Money", "Wave"), "Aminata");
+        when(service.providersForPayer(BID_ID, SENDER_ID, null)).thenReturn(catalogue);
+        when(service.providersForPayer(BID_ID, SENDER_ID, "+221 77 000 00 00")).thenReturn(catalogue);
+        mockMvc.perform(post("/bids/{bidId}/mobile-money/providers", BID_ID).with(authentication(auth("s-uid", "ROLE_SENDER"))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.travelerFirstName").value("Aminata"))
+                .andExpect(jsonPath("$.providers[0].code").value("ORANGE_SEN"));
+        mockMvc.perform(post("/bids/{bidId}/mobile-money/providers", BID_ID).with(authentication(auth("s-uid", "ROLE_SENDER")))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"phoneNumber\":\"+221 77 000 00 00\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.travelerAccepts[1]").value("Wave"));
+        mockMvc.perform(post("/bids/{bidId}/mobile-money/providers", BID_ID).with(authentication(auth("t-uid", "ROLE_TRAVELER"))))
+                .andExpect(status().isForbidden());
     }
 }

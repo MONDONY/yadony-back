@@ -23,6 +23,8 @@ import com.yadony.api.payments.pawapay.PawapayOperationService;
 import com.yadony.api.payments.pawapay.PawapayOperationStatus;
 import com.yadony.api.payments.pawapay.PawapaySubmissionService;
 import java.math.BigDecimal;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -82,6 +84,13 @@ class MobileMoneyPayoutInitiatorTest {
         PawapayOperationEntity o = new PawapayOperationEntity(UUID.randomUUID(), PawapayOperationKind.PAYOUT, payment.getId(), null,
                 new BigDecimal("15000"), "XOF", "ORANGE_SEN", "SN", "221771234567");
         o.setStatus(status);
+        return o;
+    }
+
+    private PawapayOperationEntity deposit(String provider) {
+        PawapayOperationEntity o = new PawapayOperationEntity(UUID.randomUUID(), PawapayOperationKind.DEPOSIT, payment.getId(), null,
+                new BigDecimal("16800"), "XOF", provider, "SN", "221770000000");
+        o.setStatus(PawapayOperationStatus.COMPLETED);
         return o;
     }
 
@@ -187,5 +196,51 @@ class MobileMoneyPayoutInitiatorTest {
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("INSUFFICIENT_BALANCE");
         verify(adminAlert).raise(eq("PAWAPAY_PAYOUT_REJECTED"), any(), any());
         verify(audit, never()).log(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void release_paysOutOnTheDepositsBrand_whenTheTravelerAcceptsIt() {
+        traveler.setMobileMoneyProviderList(List.of("ORANGE_SEN", "WAVE_SEN"));
+        when(operations.findLive(payment.getId(), PawapayOperationKind.PAYOUT)).thenReturn(Optional.empty());
+        when(operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.of(deposit("WAVE_CIV")));
+        PawapayOperationEntity accepted = payout(PawapayOperationStatus.ACCEPTED);
+        when(submission.submitPayout(payment.getId(), "221771234567", "WAVE_SEN", "SN", new BigDecimal("15000"), "XOF", "bid-" + bidId))
+                .thenReturn(accepted);
+        assertThat(initiator.release(payment, bidId, traveler.getId(), new BigDecimal("15000"), "delivery")).isSameAs(accepted);
+        ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
+        verify(audit).log(eq("PAYMENT"), eq(payment.getId()), eq("ESCROW_RELEASED_MOBILE_MONEY"), eq(bidId), payload.capture());
+        assertThat(payload.getValue()).containsEntry("provider", "WAVE_SEN");
+    }
+
+    @Test
+    void release_fallsBackToTheDefaultProvider_whenTheDepositsBrandIsNotAccepted() {
+        traveler.setMobileMoneyProviderList(List.of("ORANGE_SEN", "WAVE_SEN"));
+        when(operations.findLive(payment.getId(), PawapayOperationKind.PAYOUT)).thenReturn(Optional.empty());
+        when(operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.of(deposit("MTN_CIV")));
+        when(submission.submitPayout(payment.getId(), "221771234567", "ORANGE_SEN", "SN", new BigDecimal("15000"), "XOF", "bid-" + bidId))
+                .thenReturn(payout(PawapayOperationStatus.ACCEPTED));
+        initiator.release(payment, bidId, traveler.getId(), new BigDecimal("15000"), "delivery");
+        verify(submission).submitPayout(any(), any(), eq("ORANGE_SEN"), any(), any(), any(), any());
+    }
+
+    @Test
+    void release_withoutAnyDeposit_usesTheDefaultProvider() {
+        traveler.setMobileMoneyProviderList(List.of("ORANGE_SEN", "WAVE_SEN"));
+        when(operations.findLive(payment.getId(), PawapayOperationKind.PAYOUT)).thenReturn(Optional.empty());
+        when(operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.empty());
+        when(submission.submitPayout(any(), any(), eq("ORANGE_SEN"), any(), any(), any(), any())).thenReturn(payout(PawapayOperationStatus.ACCEPTED));
+        initiator.release(payment, bidId, traveler.getId(), new BigDecimal("15000"), "delivery");
+        verify(submission).submitPayout(any(), any(), eq("ORANGE_SEN"), any(), any(), any(), any());
+    }
+
+    /** Compte activé avant V255 : pas de liste, l'unique opérateur reçoit quoi qu'ait payé l'expéditeur. */
+    @Test
+    void release_legacyTraveler_paysOutOnItsSingleProvider() {
+        traveler.setMobileMoneyProviders(null);
+        when(operations.findLive(payment.getId(), PawapayOperationKind.PAYOUT)).thenReturn(Optional.empty());
+        when(operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.of(deposit("WAVE_SEN")));
+        when(submission.submitPayout(any(), any(), eq("ORANGE_SEN"), any(), any(), any(), any())).thenReturn(payout(PawapayOperationStatus.ACCEPTED));
+        initiator.release(payment, bidId, traveler.getId(), new BigDecimal("15000"), "delivery");
+        verify(submission).submitPayout(any(), any(), eq("ORANGE_SEN"), any(), any(), any(), any());
     }
 }

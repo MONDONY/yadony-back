@@ -328,3 +328,10 @@ Décisions produit actées dans la spec (§1), chacune avec son point d'impléme
 - `payments/mobilemoney/MobileMoneyAccountService.java` : signature `activate(UUID userId, String providedPhone)` — numéro fourni prioritaire (`Msisdn.normalize`, 422 `mobile-money-invalid-phone` si invalide, sans jamais consulter Firebase), sinon téléphone Firebase, sinon 422 `mobile-money-phone-required`. La résolution pawaPay, le stockage et le masquage sont inchangés. Le payload d'audit `MM_ACCOUNT_ACTIVATED` gagne une clé `source` (`firebase` ou `provided`), jamais le numéro en clair.
 
 **Tests** : `MobileMoneyAccountServiceTest` — numéro fourni utilisé et normalisé (résolution pawaPay appelée avec le numéro fourni, audit `source=provided`, Firebase jamais interrogé) ; numéro fourni prioritaire sur un numéro Firebase existant (`verify(firebaseContact, never()).getContact(any())` prouve que Firebase n'est même pas consulté, pas seulement ignoré) ; numéro fourni vide ou blanc → repli sur Firebase ; numéro fourni invalide → 422 `mobile-money-invalid-phone` sans écriture et sans consultation Firebase ; ni l'un ni l'autre → 422 `mobile-money-phone-required` avec le détail. `MobileMoneyAccountControllerIT` : corps avec numéro transmis brut au service ; POST sans corps toujours accepté. Suite complète du package `com.yadony.api.payments.mobilemoney` (12 classes) : **138 tests, 0 échec, 0 erreur, BUILD SUCCESS** (2026-09-09).
+
+## Suite 2026-09-11 : réseaux multiples
+
+Voir `docs-claude/docs/superpowers/specs/2026-09-11-mobile-money-multi-reseaux-design.md`. Catalogue des
+opérateurs d'un numéro (`PawapayProviderResolver.catalogue`), liste des réseaux acceptés
+(`users.mobile_money_providers`, V255, `MobileMoneyNetworks`), couplage payeur/voyageur par marque à
+l'initiation, versement sur la marque du dépôt.

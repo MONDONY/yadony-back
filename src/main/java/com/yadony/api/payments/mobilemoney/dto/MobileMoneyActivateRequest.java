@@ -1,4 +1,10 @@
 package com.yadony.api.payments.mobilemoney.dto;
 
-/** Corps optionnel de POST /payments/mobile-money/account : numéro de versement, utilisé seulement si le compte Firebase n'en a pas (E.164 ou chiffres). */
-public record MobileMoneyActivateRequest(String phoneNumber) {}
+import java.util.List;
+
+/**
+ * Corps optionnel de POST /payments/mobile-money/account : numéro de versement (E.164 ou chiffres,
+ * prioritaire sur le numéro Firebase) et réseaux acceptés (codes pawaPay du catalogue du numéro).
+ * Sans {@code providers}, l'opérateur prédit est seul accepté (ancien contrat).
+ */
+public record MobileMoneyActivateRequest(String phoneNumber, List<String> providers) {}

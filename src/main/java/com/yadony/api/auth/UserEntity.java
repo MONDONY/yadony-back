@@ -17,7 +17,9 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
 @Entity
@@ -179,6 +181,10 @@ public class UserEntity extends BaseEntity {
 
     @Column(name = "mobile_money_verified_at")
     private Instant mobileMoneyVerifiedAt;
+
+    /** Réseaux acceptés sur le numéro de versement, codes pawaPay séparés par des virgules (V255). */
+    @Column(name = "mobile_money_providers", length = 255)
+    private String mobileMoneyProviders;
 
     @Column(name = "stripe_account_created_at")
     private Instant stripeAccountCreatedAt;
@@ -438,6 +444,22 @@ public class UserEntity extends BaseEntity {
     public void setMobileMoneyCurrency(String mobileMoneyCurrency) { this.mobileMoneyCurrency = mobileMoneyCurrency; }
     public Instant getMobileMoneyVerifiedAt() { return mobileMoneyVerifiedAt; }
     public void setMobileMoneyVerifiedAt(Instant mobileMoneyVerifiedAt) { this.mobileMoneyVerifiedAt = mobileMoneyVerifiedAt; }
+
+    public String getMobileMoneyProviders() { return mobileMoneyProviders; }
+    public void setMobileMoneyProviders(String mobileMoneyProviders) { this.mobileMoneyProviders = mobileMoneyProviders; }
+
+    /** Réseaux acceptés dans l'ordre enregistré ; liste vide quand la colonne est nulle ou blanche. */
+    public List<String> getMobileMoneyProviderList() {
+        if (mobileMoneyProviders == null || mobileMoneyProviders.isBlank()) {
+            return List.of();
+        }
+        return Arrays.stream(mobileMoneyProviders.split(",")).map(String::trim).filter(s -> !s.isEmpty()).toList();
+    }
+
+    /** Remplace la liste ; {@code null} ou vide efface la colonne. */
+    public void setMobileMoneyProviderList(List<String> providers) {
+        this.mobileMoneyProviders = providers == null || providers.isEmpty() ? null : String.join(",", providers);
+    }
 
     public Instant getStripeAccountCreatedAt() { return stripeAccountCreatedAt; }
     public void setStripeAccountCreatedAt(Instant stripeAccountCreatedAt) { this.stripeAccountCreatedAt = stripeAccountCreatedAt; }

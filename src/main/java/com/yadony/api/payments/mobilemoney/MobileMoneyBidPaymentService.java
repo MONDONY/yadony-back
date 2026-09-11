@@ -25,7 +25,9 @@ import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.payments.events.MobileMoneyDepositFailedEvent;
 import com.yadony.api.payments.events.MobileMoneyPaymentConfirmedEvent;
 import com.yadony.api.payments.events.MobileMoneyPaymentExpiredEvent;
+import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPayerProvidersResponse;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPaymentStatusResponse;
+import com.yadony.api.payments.mobilemoney.dto.MobileMoneyProvidersResponse;
 import com.yadony.api.payments.pawapay.PawapayErrors;
 import com.yadony.api.payments.pawapay.PawapayOperationEntity;
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
@@ -43,8 +45,10 @@ import com.yadony.api.voucher.CommissionVoucherService;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -261,25 +265,19 @@ public class MobileMoneyBidPaymentService {
 
     // ── Initiation du deposit ───────────────────────────────────────────────
 
+    /** Ancien contrat (client sans choix d'opérateur) : équivaut à {@code initiateDeposit(bidId, senderId, phoneOverride, null)}. */
     @Transactional
     public MobileMoneyPaymentStatusResponse initiateDeposit(UUID bidId, UUID senderId, String phoneOverride) {
+        return initiateDeposit(bidId, senderId, phoneOverride, null);
+    }
+
+    @Transactional
+    public MobileMoneyPaymentStatusResponse initiateDeposit(UUID bidId, UUID senderId, String phoneOverride, String provider) {
         PaymentEntity payment = paymentRepository.findByBidIdForUpdate(bidId)
                 .filter(p -> p.getRail() == PaymentRail.PAWAPAY)
                 .orElseThrow(() -> notFound("mobile-money-payment-not-found", "Aucun paiement mobile money pour ce colis"));
         BidEntity bid = bidRepository.findById(bidId).orElseThrow(() -> notFound("bid-not-found", "Demande introuvable"));
-        if (!bid.getSenderId().equals(senderId)) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden", "Vous n'êtes pas l'expéditeur de ce colis");
-        }
-        if (payment.getStatus() != PaymentStatus.PENDING) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "mobile-money-payment-not-pending",
-                    "Payment Not Pending", "Ce paiement n'est plus en attente (" + payment.getStatus() + ")");
-        }
-        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
-        if (bid.getStatus() != BidStatus.AWAITING_PAYMENT || bid.getAwaitingPaymentExpiresAt() == null
-                || bid.getAwaitingPaymentExpiresAt().isBefore(now)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-payment-expired",
-                    "Payment Expired", "Le délai de paiement est dépassé.");
-        }
+        assertPayableBySender(bid, payment, senderId);
         // Un deposit vivant ou abouti existe : on le renvoie, on n'en crée pas un second.
         Optional<PawapayOperationEntity> live = operations.findLive(payment.getId(), PawapayOperationKind.DEPOSIT);
         if (live.isPresent()) {
@@ -304,15 +302,21 @@ public class MobileMoneyBidPaymentService {
         // inexploitable devient le 422 du payeur, avec ses libellés.
         PawapayProviderResolver.Resolved resolved;
         try {
-            resolved = providers.resolve(msisdn, PawapayOperationKind.DEPOSIT, payment.getCurrency(),
+            resolved = providers.resolve(msisdn, PawapayOperationKind.DEPOSIT, payment.getCurrency(), provider,
                     "l'initiation du deposit pour le bid " + bidId);
         } catch (PawapayProviderResolver.UnsupportedNumberException e) {
-            throw payerUnsupported(switch (e.reason()) {
-                case NO_PROVIDER -> "Aucun opérateur mobile money reconnu pour ce numéro.";
-                case OPERATION_CLOSED -> e.providerLabel() + " ne permet pas le paiement pour le moment.";
-                case CURRENCY_MISMATCH -> "Ce numéro paie en " + e.providerCurrency() + ", ce colis est en " + payment.getCurrency() + ".";
-                case COUNTRY_UNKNOWN -> "Pays non reconnu pour ce numéro.";
-            });
+            throw payerUnsupported(payerReason(e, payment.getCurrency()));
+        }
+        // Couplage (décision produit) : l'expéditeur ne paie qu'avec une marque acceptée par le
+        // voyageur, qui sera versé sur ce même réseau. Vérifié ici pour l'ancien client (prédit)
+        // comme pour le nouveau (choisi) : le catalogue payeur ne filtre que l'affichage.
+        UserEntity traveler = travelerOf(bid);
+        if (!MobileMoneyNetworks.acceptsBrand(traveler, resolved.provider())) {
+            List<String> acceptedLabels = MobileMoneyNetworks.acceptedLabels(traveler);
+            throw payerUnsupported(acceptedLabels.isEmpty()
+                    ? "Ce voyageur n'accepte aucun réseau mobile money pour le moment."
+                    : "Ce voyageur n'accepte pas " + resolved.providerLabel() + ". Réseaux acceptés : "
+                            + String.join(", ", acceptedLabels) + ".");
         }
         PawapayProviderConfig.Limits deposit = resolved.config().deposit();
         if (deposit.minAmount() != null && payment.getAmount().compareTo(deposit.minAmount()) < 0
@@ -377,6 +381,81 @@ public class MobileMoneyBidPaymentService {
         } catch (IllegalArgumentException e) {
             throw payerUnsupported("Le numéro enregistré n'est pas exploitable. Indiquez un autre numéro.");
         }
+    }
+
+    /** Gardes communes à l'initiation et au catalogue payeur : propriété, paiement en attente, fenêtre ouverte. */
+    private static void assertPayableBySender(BidEntity bid, PaymentEntity payment, UUID senderId) {
+        if (!bid.getSenderId().equals(senderId)) {
+            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden", "Vous n'êtes pas l'expéditeur de ce colis");
+        }
+        if (payment.getStatus() != PaymentStatus.PENDING) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "mobile-money-payment-not-pending",
+                    "Payment Not Pending", "Ce paiement n'est plus en attente (" + payment.getStatus() + ")");
+        }
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        if (bid.getStatus() != BidStatus.AWAITING_PAYMENT || bid.getAwaitingPaymentExpiresAt() == null
+                || bid.getAwaitingPaymentExpiresAt().isBefore(now)) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-payment-expired",
+                    "Payment Expired", "Le délai de paiement est dépassé.");
+        }
+    }
+
+    /** Voyageur d'un bid : le propriétaire de son annonce (comme dans {@link #acceptBid}). */
+    private UserEntity travelerOf(BidEntity bid) {
+        AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
+                .orElseThrow(() -> notFound("announcement-not-found", "Annonce introuvable"));
+        return userRepository.findById(announcement.getTravelerId())
+                .orElseThrow(() -> notFound("user-not-found", "Voyageur introuvable"));
+    }
+
+    /** Libellé du 422 payeur pour un numéro reconnu mais inexploitable. */
+    private static String payerReason(PawapayProviderResolver.UnsupportedNumberException e, String currency) {
+        return switch (e.reason()) {
+            case NO_PROVIDER -> "Aucun opérateur mobile money reconnu pour ce numéro.";
+            case OPERATION_CLOSED -> e.providerLabel() + " ne permet pas le paiement pour le moment.";
+            case CURRENCY_MISMATCH -> "Ce numéro paie en " + e.providerCurrency() + ", ce colis est en " + currency + ".";
+            case COUNTRY_UNKNOWN -> "Pays non reconnu pour ce numéro.";
+            case PROVIDER_NOT_AVAILABLE -> "Réseau " + e.providerLabel() + " indisponible pour ce numéro.";
+        };
+    }
+
+    // ── Catalogue du payeur ─────────────────────────────────────────────────
+
+    /**
+     * Réseaux avec lesquels l'expéditeur peut payer : catalogue DEPOSIT de son numéro (fourni, sinon
+     * celui du bid, sinon Firebase), dans la devise du colis, restreint aux marques acceptées par
+     * le voyageur. Lecture seule : le numéro examiné n'est pas écrit sur le bid, seule l'initiation
+     * le fait. Liste vide = aucun réseau commun (200, l'app l'explique).
+     */
+    @Transactional(readOnly = true)
+    public MobileMoneyPayerProvidersResponse providersForPayer(UUID bidId, UUID senderId, String phoneOverride) {
+        PaymentEntity payment = paymentRepository.findByBidId(bidId)
+                .filter(p -> p.getRail() == PaymentRail.PAWAPAY)
+                .orElseThrow(() -> notFound("mobile-money-payment-not-found", "Aucun paiement mobile money pour ce colis"));
+        BidEntity bid = bidRepository.findById(bidId).orElseThrow(() -> notFound("bid-not-found", "Demande introuvable"));
+        assertPayableBySender(bid, payment, senderId);
+        if (!props.enabled()) {
+            throw PawapayErrors.disabled();
+        }
+        UserEntity traveler = travelerOf(bid);
+        String msisdn = resolvePayerMsisdn(bid, phoneOverride);
+        PawapayProviderResolver.Catalogue catalogue;
+        try {
+            catalogue = providers.catalogue(msisdn, PawapayOperationKind.DEPOSIT, payment.getCurrency(),
+                    "le catalogue payeur du bid " + bidId);
+        } catch (PawapayProviderResolver.UnsupportedNumberException e) {
+            throw payerUnsupported(payerReason(e, payment.getCurrency()));
+        }
+        Set<String> accepted = MobileMoneyNetworks.acceptedBrands(traveler);
+        List<MobileMoneyProvidersResponse.ProviderOption> options = catalogue.options().stream()
+                .filter(o -> accepted.contains(PawapayProviders.brand(o.provider())))
+                .map(o -> new MobileMoneyProvidersResponse.ProviderOption(o.provider(), PawapayProviders.label(o.provider()),
+                        o.provider().equalsIgnoreCase(catalogue.detected())))
+                .toList();
+        String detected = options.stream().filter(MobileMoneyProvidersResponse.ProviderOption::detected)
+                .map(MobileMoneyProvidersResponse.ProviderOption::code).findFirst().orElse(null);
+        return new MobileMoneyPayerProvidersResponse(catalogue.countryAlpha2(), catalogue.currency(), Msisdn.mask(catalogue.msisdn()),
+                detected, options, MobileMoneyNetworks.acceptedLabels(traveler), traveler.getFirstName());
     }
 
     // ── Séquestre ───────────────────────────────────────────────────────────

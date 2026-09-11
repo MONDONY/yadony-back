@@ -4,6 +4,25 @@
 
 **État à la date de rédaction (2026-09-05) :** rail implémenté et testé, `feature/pawapay-mobile-money` pas encore fusionnée, `yadony.pawapay.enabled` fermé partout. Rien de ce document ne s'applique tant que le rail n'est pas activé en environnement réel.
 
+## Réseaux multiples par numéro (2026-09)
+
+- `POST /payments/mobile-money/providers` `{phoneNumber?}` : catalogue PAYOUT du numéro (tous les opérateurs
+  du pays prédit, ouverts au versement, dans la devise active), `detected` = opérateur prédit.
+- `POST /payments/mobile-money/account` `{phoneNumber?, providers?}` : sans `providers`, le prédit seul ;
+  avec, chaque code doit être dans le catalogue. `users.mobile_money_providers` (CSV) porte la liste,
+  `mobile_money_provider` le réseau de repli (détecté s'il est coché, sinon le premier coché).
+- `PUT /payments/mobile-money/account/providers` `{providers}` : change les réseaux sans ressaisir le numéro.
+- `POST /bids/{id}/mobile-money/providers` `{phoneNumber?}` : catalogue DEPOSIT du payeur restreint aux
+  **marques** acceptées par le voyageur (préfixe du code : `ORANGE_SEN` et `ORANGE_CIV` = `ORANGE`).
+  Liste vide = aucun réseau commun (200).
+- `POST /bids/{id}/mobile-money/initiate` `{phoneNumber?, provider?}` : 422 `mobile-money-payer-unsupported`
+  si la marque (choisie ou prédite) n'est pas acceptée par le voyageur.
+- Versement : marque du dépôt (`pawapay_operations.provider`) → code de même marque dans la liste du
+  voyageur, sinon `mobile_money_provider`. Audit `ESCROW_RELEASED_MOBILE_MONEY` porte `provider`.
+- Diagnostic : un voyageur activé avant V255 n'accepte qu'une marque ; il élargit depuis l'app
+  (écran « Versement mobile money », « Modifier »). Audit `MM_ACCOUNT_PROVIDERS_UPDATED`.
+- Rail négociation (POST /negotiations/{id}/mobile-money/initiate) : hors périmètre de ce lot, il ignore `provider` et n'applique pas le couplage ; le versement passe par le repli (`mobile_money_provider`) quand la marque du dépôt n'est pas dans la liste du voyageur. À répercuter dans le lot négociation.
+
 ## Variables d'environnement
 
 Toutes sous le préfixe `yadony.pawapay.*`, sans valeur par défaut sensible codée en dur (secrets par variable d'environnement uniquement) :
