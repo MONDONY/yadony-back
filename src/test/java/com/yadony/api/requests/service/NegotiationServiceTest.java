@@ -2173,6 +2173,42 @@ class NegotiationServiceTest {
         }
 
         @Test
+        @DisplayName("demande XOF, voyageur versable en XAF seulement → le trajet dédié ne déclare pas MOBILE_MONEY "
+            + "(canReceiveMobileMoney exige la devise de la demande, pas juste un compte actif)")
+        void createDedicatedTrip_travelerPayoutCurrencyMismatch_doesNotExposeMobileMoney() {
+            request.setCurrency("XOF");
+            request.setAcceptedPaymentMethods(
+                java.util.EnumSet.of(PaymentMethod.CASH, PaymentMethod.MOBILE_MONEY));
+            traveler.setMobileMoneyStatus(com.yadony.api.auth.MobileMoneyPayoutStatus.ACTIVE);
+            traveler.setMobileMoneyCurrency("XAF"); // devise différente de la demande (XOF)
+
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(commissionProperties.rate()).thenReturn(new BigDecimal("0.12"));
+            when(announcementRepo.save(any())).thenAnswer(inv -> {
+                com.yadony.api.matching.AnnouncementEntity a = inv.getArgument(0);
+                try {
+                    var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+                    idField.setAccessible(true);
+                    idField.set(a, UUID.randomUUID());
+                } catch (Exception e) { throw new RuntimeException(e); }
+                return a;
+            });
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(java.util.List.of());
+
+            service.createDedicatedTrip(TRAVELER_ID, THREAD_ID,
+                buildRequest(request.getDesiredDate()));
+
+            ArgumentCaptor<com.yadony.api.matching.AnnouncementEntity> annCaptor =
+                ArgumentCaptor.forClass(com.yadony.api.matching.AnnouncementEntity.class);
+            verify(announcementRepo).save(annCaptor.capture());
+            assertThat(annCaptor.getValue().getAcceptedPaymentMethods())
+                .doesNotContain(PaymentMethod.MOBILE_MONEY)
+                .contains(PaymentMethod.CASH);
+        }
+
+        @Test
         @DisplayName("types acceptés/refusés legacy normalisés vers le vocabulaire canonique, texte libre préservé")
         void createDedicatedTrip_normalisesLegacyContentTypes() {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));

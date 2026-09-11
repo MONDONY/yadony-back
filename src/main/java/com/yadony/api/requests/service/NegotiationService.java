@@ -854,7 +854,8 @@ public class NegotiationService {
         // peut réellement fournir sur cette demande, l'espèce en repli.
         java.util.Set<PaymentMethod> offerable = com.yadony.api.payments.currency.AnnouncementPaymentRails
                 .offerable(request.getAcceptedPaymentMethods(), request.getCurrency(),
-                        traveler.hasActiveStripeConnect(), traveler.hasActiveMobileMoney());
+                        traveler.hasActiveStripeConnect(),
+                        traveler.canReceiveMobileMoney(request.getCurrency()));
         ann.setAcceptedPaymentMethods(offerable.isEmpty()
                 ? java.util.EnumSet.of(PaymentMethod.CASH) : java.util.EnumSet.copyOf(offerable));
         ann.setTransportMode(request.getTransportMode());
