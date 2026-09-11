@@ -6,6 +6,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -104,5 +105,13 @@ class MobileMoneyAccountControllerIT {
     @Test
     void anonymous_isRejected() throws Exception {
         mockMvc.perform(get("/payments/mobile-money/account")).andExpect(status().is4xxClientError());
+    }
+
+    @Test
+    void putProviders_passesTheListToService() throws Exception {
+        when(service.updateProviders(USER_ID, List.of("ORANGE_SEN", "WAVE_SEN"))).thenReturn(active());
+        mockMvc.perform(put("/payments/mobile-money/account/providers").with(authentication(traveler()))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"providers\":[\"ORANGE_SEN\",\"WAVE_SEN\"]}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.providers[1].code").value("WAVE_SEN"));
     }
 }

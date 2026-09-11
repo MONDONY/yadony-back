@@ -18,6 +18,7 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyAccountResponse;
+import com.yadony.api.payments.mobilemoney.dto.MobileMoneyProvidersResponse;
 import com.yadony.api.payments.pawapay.PawapayClient;
 import com.yadony.api.payments.pawapay.PawapayProperties;
 import com.yadony.api.payments.pawapay.PawapayProviderResolver;
@@ -499,5 +500,128 @@ class MobileMoneyAccountServiceTest {
 
         assertThat(ex.getStatus()).isEqualTo(HttpStatus.NOT_FOUND);
         assertThat(ex.getErrorCode()).isEqualTo("user-not-found");
+    }
+
+    // ── catalogue du voyageur ───────────────────────────────────────────────
+
+    @Test
+    void providers_withAProvidedNumber_listsThePayoutCatalogue_detectedFlagged() {
+        when(client.predictProvider("221771234567"))
+                .thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "WAVE_SEN", "221771234567")));
+        when(client.activeConfiguration()).thenReturn(configuration(ORANGE, WAVE, FREE));
+        when(currencyResolver.resolve(userId)).thenReturn("XOF");
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        MobileMoneyProvidersResponse r = service.providers(userId, "+221 77 123 45 67");
+        assertThat(r.country()).isEqualTo("SN");
+        assertThat(r.currency()).isEqualTo("XOF");
+        assertThat(r.msisdnMasked()).isEqualTo("+221 •••• 67");
+        assertThat(r.detected()).isEqualTo("WAVE_SEN");
+        assertThat(r.providers()).extracting(MobileMoneyProvidersResponse.ProviderOption::code)
+                .containsExactly("WAVE_SEN", "ORANGE_SEN", "FREE_SEN");
+        assertThat(r.providers().get(0).detected()).isTrue();
+        assertThat(r.providers().get(1).detected()).isFalse();
+        assertThat(r.providers().get(1).label()).isEqualTo("Orange Money");
+        verify(firebaseContact, never()).getContact(any());
+    }
+
+    @Test
+    void providers_withoutNumber_usesTheStoredPayoutNumber() {
+        user.setMobileMoneyMsisdn("221771234567");
+        when(client.predictProvider("221771234567"))
+                .thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "221771234567")));
+        when(client.activeConfiguration()).thenReturn(configuration(ORANGE, WAVE));
+        when(currencyResolver.resolve(userId)).thenReturn("XOF");
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        assertThat(service.providers(userId, null).detected()).isEqualTo("ORANGE_SEN");
+        verify(firebaseContact, never()).getContact(any());
+    }
+
+    @Test
+    void providers_withoutAnyNumber_is422PhoneRequired() {
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(firebaseContact.getContact("uid-1")).thenReturn(FirebaseContactService.Contact.EMPTY);
+        assertThatThrownBy(() -> service.providers(userId, null)).isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-phone-required");
+    }
+
+    @Test
+    void providers_unknownNumber_is422Unsupported() {
+        when(client.predictProvider("33612345678")).thenReturn(Optional.empty());
+        when(currencyResolver.resolve(userId)).thenReturn("XOF");
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        assertThatThrownBy(() -> service.providers(userId, "+33 6 12 34 56 78")).isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-account-unsupported");
+    }
+
+    @Test
+    void providers_whenDisabledGlobally_is422() {
+        MobileMoneyAccountService off = new MobileMoneyAccountService(userRepository, firebaseContact,
+                new PawapayProviderResolver(client), currencyResolver, audit, props(false));
+        assertThatThrownBy(() -> off.providers(userId, "+221 77 123 45 67")).isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-disabled");
+    }
+
+    // ── mise à jour des réseaux ─────────────────────────────────────────────
+
+    private void activeSenegalAccount() {
+        user.setMobileMoneyStatus(MobileMoneyPayoutStatus.ACTIVE);
+        user.setMobileMoneyMsisdn("221771234567");
+        user.setMobileMoneyMsisdnMasked("+221 •••• 67");
+        user.setMobileMoneyProvider("ORANGE_SEN");
+        user.setMobileMoneyProviderList(List.of("ORANGE_SEN"));
+        user.setMobileMoneyCountry("SN");
+        user.setMobileMoneyCurrency("XOF");
+    }
+
+    @Test
+    void updateProviders_replacesTheList_keepsTheDetectedAsFallback_andAudits() {
+        activeSenegalAccount();
+        senegalNumberPredicts("ORANGE_SEN");
+        MobileMoneyAccountResponse r = service.updateProviders(userId, List.of("wave_sen", "ORANGE_SEN"));
+        assertThat(user.getMobileMoneyProviderList()).containsExactly("ORANGE_SEN", "WAVE_SEN");
+        assertThat(user.getMobileMoneyProvider()).isEqualTo("ORANGE_SEN");
+        assertThat(user.getMobileMoneyStatus()).isEqualTo(MobileMoneyPayoutStatus.ACTIVE);
+        assertThat(r.providers()).extracting(MobileMoneyAccountResponse.ProviderView::code).containsExactly("ORANGE_SEN", "WAVE_SEN");
+        ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
+        verify(audit).log(eq("USER"), eq(userId), eq("MM_ACCOUNT_PROVIDERS_UPDATED"), eq(userId), payload.capture());
+        assertThat(payload.getValue()).containsEntry("providers", "ORANGE_SEN,WAVE_SEN");
+    }
+
+    @Test
+    void updateProviders_droppingTheDetected_movesTheFallbackToTheFirstAccepted() {
+        activeSenegalAccount();
+        senegalNumberPredicts("ORANGE_SEN");
+        service.updateProviders(userId, List.of("FREE_SEN", "WAVE_SEN"));
+        assertThat(user.getMobileMoneyProvider()).isEqualTo("WAVE_SEN");
+    }
+
+    @Test
+    void updateProviders_onANonActiveAccount_is422() {
+        user.setMobileMoneyStatus(MobileMoneyPayoutStatus.DISABLED);
+        user.setMobileMoneyMsisdn("221771234567");
+        assertThatThrownBy(() -> service.updateProviders(userId, List.of("WAVE_SEN"))).isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-account-unsupported");
+        verify(client, never()).predictProvider(any());
+    }
+
+    @Test
+    void updateProviders_withAnEmptyList_is422_beforeAnyPawapayCall() {
+        activeSenegalAccount();
+        assertThatThrownBy(() -> service.updateProviders(userId, List.of(" "))).isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-account-unsupported");
+        verify(client, never()).predictProvider(any());
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void updateProviders_withAProviderOutsideTheCatalogue_is422() {
+        activeSenegalAccount();
+        when(client.predictProvider("221771234567"))
+                .thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "221771234567")));
+        when(client.activeConfiguration()).thenReturn(configuration(ORANGE, WAVE));
+        when(currencyResolver.resolve(userId)).thenReturn("XOF");
+        assertThatThrownBy(() -> service.updateProviders(userId, List.of("MTN_CIV"))).isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-account-unsupported");
+        assertThat(user.getMobileMoneyProviderList()).containsExactly("ORANGE_SEN");
     }
 }

@@ -4,6 +4,7 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyAccountResponse;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyActivateRequest;
+import com.yadony.api.payments.mobilemoney.dto.MobileMoneyProvidersUpdateRequest;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -11,6 +12,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -54,6 +56,13 @@ public class MobileMoneyAccountController {
     @DeleteMapping
     public MobileMoneyAccountResponse disable(@AuthenticationPrincipal String firebaseUid) {
         return service.disable(callerId(firebaseUid));
+    }
+
+    /** Remplace les réseaux acceptés du compte actif, sans ressaisir le numéro. */
+    @PutMapping("/providers")
+    public MobileMoneyAccountResponse updateProviders(@AuthenticationPrincipal String firebaseUid,
+                                                      @RequestBody MobileMoneyProvidersUpdateRequest body) {
+        return service.updateProviders(callerId(firebaseUid), body == null ? null : body.providers());
     }
 
     // Le principal est l'UID Firebase (String), posé par FirebaseTokenFilter.

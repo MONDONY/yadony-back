@@ -9,6 +9,7 @@ import com.yadony.api.common.Msisdn;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyAccountResponse;
+import com.yadony.api.payments.mobilemoney.dto.MobileMoneyProvidersResponse;
 import com.yadony.api.payments.pawapay.PawapayErrors;
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
 import com.yadony.api.payments.pawapay.PawapayProperties;
@@ -137,6 +138,58 @@ public class MobileMoneyAccountService {
         userRepository.save(user);
         audit.log("USER", userId, "MM_ACCOUNT_DISABLED", userId, Map.of());
         return toResponse(user);
+    }
+
+    /**
+     * Réseaux utilisables pour le versement sur un numéro : fourni, sinon déjà enregistré, sinon
+     * Firebase (422 {@code mobile-money-phone-required} sans aucun). Lecture seule, rien n'est écrit.
+     */
+    @Transactional(readOnly = true)
+    public MobileMoneyProvidersResponse providers(UUID userId, String providedPhone) {
+        if (!props.enabled()) {
+            throw PawapayErrors.disabled();
+        }
+        UserEntity user = userRepository.findById(userId).orElseThrow(() -> notFound(userId));
+        PhoneSource phone = resolvePhone(user, providedPhone, true);
+        String active = currencyResolver.resolve(userId);
+        return toProvidersResponse(catalogueOrUnsupported(userId, phone.phone(), active));
+    }
+
+    /**
+     * Remplace les réseaux acceptés sans ressaisir le numéro. Compte {@code ACTIVE} obligatoire,
+     * liste non vide, chaque code dans le catalogue du numéro enregistré. Le statut ne change pas.
+     */
+    @Transactional
+    public MobileMoneyAccountResponse updateProviders(UUID userId, List<String> providers) {
+        if (!props.enabled()) {
+            throw PawapayErrors.disabled();
+        }
+        UserEntity user = userRepository.findByIdForUpdate(userId).orElseThrow(() -> notFound(userId));
+        if (user.getMobileMoneyStatus() != MobileMoneyPayoutStatus.ACTIVE
+                || user.getMobileMoneyMsisdn() == null || user.getMobileMoneyMsisdn().isBlank()) {
+            throw unsupported(userId, "Activez d'abord le versement mobile money.");
+        }
+        List<String> wanted = cleanCodes(providers);
+        if (wanted.isEmpty()) {
+            throw unsupported(userId, "Choisissez au moins un réseau.");
+        }
+        String active = currencyResolver.resolve(userId);
+        PawapayProviderResolver.Catalogue catalogue = catalogueOrUnsupported(userId, user.getMobileMoneyMsisdn(), active);
+        List<String> accepted = selectAccepted(userId, catalogue, wanted);
+        user.setMobileMoneyProviderList(accepted);
+        user.setMobileMoneyProvider(fallbackProvider(catalogue, accepted));
+        userRepository.save(user);
+        audit.log("USER", userId, "MM_ACCOUNT_PROVIDERS_UPDATED", userId,
+                Map.of("providers", user.getMobileMoneyProviders(), "provider", user.getMobileMoneyProvider()));
+        return toResponse(user);
+    }
+
+    static MobileMoneyProvidersResponse toProvidersResponse(PawapayProviderResolver.Catalogue c) {
+        List<MobileMoneyProvidersResponse.ProviderOption> options = c.options().stream()
+                .map(o -> new MobileMoneyProvidersResponse.ProviderOption(o.provider(), PawapayProviders.label(o.provider()),
+                        o.provider().equalsIgnoreCase(c.detected())))
+                .toList();
+        return new MobileMoneyProvidersResponse(c.countryAlpha2(), c.currency(), Msisdn.mask(c.msisdn()), c.detected(), options);
     }
 
     /** Numéro retenu et sa provenance ({@code provided}, {@code stored}, {@code firebase}) pour l'audit. */
