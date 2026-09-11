@@ -43,11 +43,12 @@ public class MobileMoneyAccountController {
         return service.get(callerId(firebaseUid));
     }
 
-    /** Corps facultatif mais recommandé : numéro de versement, prioritaire sur le numéro Firebase s'il est fourni. */
+    /** Corps facultatif : numéro de versement (prioritaire sur Firebase) et réseaux acceptés (voir {@link MobileMoneyAccountService#activate}). */
     @PostMapping
     public MobileMoneyAccountResponse activate(@AuthenticationPrincipal String firebaseUid,
                                                 @RequestBody(required = false) MobileMoneyActivateRequest body) {
-        return service.activate(callerId(firebaseUid), body == null ? null : body.phoneNumber());
+        return service.activate(callerId(firebaseUid), body == null ? null : body.phoneNumber(),
+                body == null ? null : body.providers());
     }
 
     @DeleteMapping

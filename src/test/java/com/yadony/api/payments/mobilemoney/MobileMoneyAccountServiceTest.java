@@ -24,6 +24,8 @@ import com.yadony.api.payments.pawapay.PawapayProviderResolver;
 import com.yadony.api.payments.pawapay.dto.PawapayProviderConfig;
 import com.yadony.api.payments.pawapay.dto.PawapayProviderPrediction;
 import java.math.BigDecimal;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -53,6 +55,26 @@ class MobileMoneyAccountServiceTest {
     private static final PawapayProviderConfig.Limits OK =
             new PawapayProviderConfig.Limits(new BigDecimal("100"), new BigDecimal("1000000"), "PROVIDER_AUTH", "OPERATIONAL");
 
+    private static final PawapayProviderConfig ORANGE = new PawapayProviderConfig("ORANGE_SEN", "SEN", "XOF", OK, OK);
+    private static final PawapayProviderConfig WAVE = new PawapayProviderConfig("WAVE_SEN", "SEN", "XOF", OK, OK);
+    private static final PawapayProviderConfig FREE = new PawapayProviderConfig("FREE_SEN", "SEN", "XOF", OK, OK);
+
+    private static Map<String, PawapayProviderConfig> configuration(PawapayProviderConfig... confs) {
+        Map<String, PawapayProviderConfig> m = new LinkedHashMap<>();
+        for (PawapayProviderConfig c : confs) {
+            m.put(c.provider(), c);
+        }
+        return m;
+    }
+
+    private void senegalNumberPredicts(String provider) {
+        when(client.predictProvider("221771234567"))
+                .thenReturn(Optional.of(new PawapayProviderPrediction("SEN", provider, "221771234567")));
+        when(client.activeConfiguration()).thenReturn(configuration(ORANGE, WAVE, FREE));
+        when(currencyResolver.resolve(userId)).thenReturn("XOF");
+        when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+    }
+
     @BeforeEach
     void setUp() {
         user = new UserEntity();
@@ -70,6 +92,68 @@ class MobileMoneyAccountServiceTest {
         return new PawapayProperties(enabled, "https://x", "t", false, 30, "https://r", "yadony://bids/%s/mobile-money/awaiting",
                 "yadony://negotiations/%s/mobile-money/awaiting",
                 new PawapayProperties.BalanceMin(BigDecimal.ZERO, BigDecimal.ZERO));
+    }
+
+    // ── activation avec réseaux ─────────────────────────────────────────────
+
+    @Test
+    void activate_withProviders_storesTheCatalogueOrder_andTheDetectedAsFallback() {
+        senegalNumberPredicts("ORANGE_SEN");
+        MobileMoneyAccountResponse r = service.activate(userId, "+221 77 123 45 67",
+                List.of("free_sen", "WAVE_SEN", " ORANGE_SEN ", "WAVE_SEN"));
+        assertThat(user.getMobileMoneyProviderList()).containsExactly("ORANGE_SEN", "WAVE_SEN", "FREE_SEN");
+        assertThat(user.getMobileMoneyProvider()).isEqualTo("ORANGE_SEN");
+        assertThat(user.getMobileMoneyStatus()).isEqualTo(MobileMoneyPayoutStatus.ACTIVE);
+        assertThat(r.providers()).extracting(MobileMoneyAccountResponse.ProviderView::label)
+                .containsExactly("Orange Money", "Wave", "Free Money");
+        ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
+        verify(audit).log(eq("USER"), eq(userId), eq("MM_ACCOUNT_ACTIVATED"), eq(userId), payload.capture());
+        assertThat(payload.getValue()).containsEntry("providers", "ORANGE_SEN,WAVE_SEN,FREE_SEN")
+                .containsEntry("provider", "ORANGE_SEN").containsEntry("source", "provided");
+    }
+
+    @Test
+    void activate_withProvidersWithoutTheDetectedOne_fallsBackToTheFirstAccepted() {
+        senegalNumberPredicts("ORANGE_SEN");
+        service.activate(userId, "+221 77 123 45 67", List.of("WAVE_SEN", "FREE_SEN"));
+        assertThat(user.getMobileMoneyProviderList()).containsExactly("WAVE_SEN", "FREE_SEN");
+        assertThat(user.getMobileMoneyProvider()).isEqualTo("WAVE_SEN");
+    }
+
+    @Test
+    void activate_withAProviderOutsideTheCatalogue_is422_andWritesNothing() {
+        when(client.predictProvider("221771234567"))
+                .thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "221771234567")));
+        when(client.activeConfiguration()).thenReturn(configuration(ORANGE, WAVE));
+        when(currencyResolver.resolve(userId)).thenReturn("XOF");
+        assertThatThrownBy(() -> service.activate(userId, "+221 77 123 45 67", List.of("ORANGE_SEN", "MTN_CIV")))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> {
+                    assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-account-unsupported");
+                    assertThat(((YadonyBusinessException) e).getMessage()).contains("MTN MoMo");
+                });
+        verify(userRepository, never()).save(any());
+        assertThat(user.getMobileMoneyStatus()).isEqualTo(MobileMoneyPayoutStatus.NOT_CONFIGURED);
+    }
+
+    /** Ancien contrat (app sans liste) : le prédit seul, qui devient aussi la liste d'un élément. */
+    @Test
+    void activate_withoutProviders_keepsThePredictedOnly_asAListOfOne() {
+        senegalNumberPredicts("ORANGE_SEN");
+        MobileMoneyAccountResponse r = service.activate(userId, "+221 77 123 45 67", null);
+        assertThat(user.getMobileMoneyProviderList()).containsExactly("ORANGE_SEN");
+        assertThat(user.getMobileMoneyProvider()).isEqualTo("ORANGE_SEN");
+        assertThat(r.providers()).extracting(MobileMoneyAccountResponse.ProviderView::code).containsExactly("ORANGE_SEN");
+    }
+
+    /** Compte activé avant V255 : liste vide en base, la réponse expose quand même son unique réseau. */
+    @Test
+    void get_legacyAccountWithoutList_exposesItsSingleProvider() {
+        user.setMobileMoneyStatus(MobileMoneyPayoutStatus.ACTIVE);
+        user.setMobileMoneyProvider("ORANGE_SEN");
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        MobileMoneyAccountResponse r = service.get(userId);
+        assertThat(r.providers()).extracting(MobileMoneyAccountResponse.ProviderView::label).containsExactly("Orange Money");
     }
 
     @Test

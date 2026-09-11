@@ -1,6 +1,7 @@
 package com.yadony.api.payments.mobilemoney.dto;
 
 import java.time.Instant;
+import java.util.List;
 
 /**
  * État du compte de versement mobile money du voyageur, tel qu'exposé à l'app.
@@ -11,4 +12,8 @@ import java.time.Instant;
  * fuiter par une réponse d'API, un log ou une trace d'erreur.
  */
 public record MobileMoneyAccountResponse(String status, String msisdnMasked, String provider, String providerLabel,
-                                         String country, String currency, Instant verifiedAt) {}
+                                         String country, String currency, Instant verifiedAt,
+                                         List<ProviderView> providers) {
+    /** Un réseau accepté : code pawaPay et libellé lisible. */
+    public record ProviderView(String code, String label) {}
+}
