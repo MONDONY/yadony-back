@@ -1471,6 +1471,51 @@ class PackageRequestServiceTest {
                     com.yadony.api.payments.cash.PaymentMethod.CASH);
         }
 
+        @Test
+        @DisplayName("visiteur au compte de versement XOF actif → mobile money proposé sur la demande XOF, "
+            + "pas sur la demande XAF (décision demande par demande, page mixte)")
+        void search_viewerWithXofAccount_seesMobileMoneyOnlyOnXofRequests() {
+            UUID viewerId = UUID.randomUUID();
+            UserEntity viewer = new UserEntity();
+            setId(viewer, viewerId);
+            viewer.setMobileMoneyStatus(com.yadony.api.auth.MobileMoneyPayoutStatus.ACTIVE);
+            viewer.setMobileMoneyCurrency("XOF");
+            when(userRepository.findById(viewerId)).thenReturn(Optional.of(viewer));
+
+            PackageRequestEntity xofRequest = buildEntity(SENDER_ID, PackageRequestStatus.OPEN);
+            xofRequest.setCurrency("XOF");
+            xofRequest.setAcceptedPaymentMethods(java.util.EnumSet.of(
+                com.yadony.api.payments.cash.PaymentMethod.MOBILE_MONEY,
+                com.yadony.api.payments.cash.PaymentMethod.CASH));
+
+            PackageRequestEntity xafRequest = buildEntity(SENDER_ID, PackageRequestStatus.OPEN);
+            xafRequest.setCurrency("XAF");
+            xafRequest.setAcceptedPaymentMethods(java.util.EnumSet.of(
+                com.yadony.api.payments.cash.PaymentMethod.MOBILE_MONEY,
+                com.yadony.api.payments.cash.PaymentMethod.CASH));
+
+            when(userRepository.findAllById(any())).thenReturn(List.of(sender));
+            when(repository.findAll(any(org.springframework.data.jpa.domain.Specification.class),
+                                    any(org.springframework.data.domain.Pageable.class)))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(xofRequest, xafRequest)));
+            when(favoriteRepository.findTargetIds(any(), any())).thenReturn(List.of());
+
+            var result = service.search(
+                org.springframework.data.jpa.domain.Specification.where(null),
+                org.springframework.data.domain.PageRequest.of(0, 20),
+                viewerId
+            );
+
+            var xofResponse = result.getContent().stream()
+                .filter(r -> r.id().equals(xofRequest.getId())).findFirst().orElseThrow();
+            var xafResponse = result.getContent().stream()
+                .filter(r -> r.id().equals(xafRequest.getId())).findFirst().orElseThrow();
+            assertThat(xofResponse.availablePaymentMethods())
+                .contains(com.yadony.api.payments.cash.PaymentMethod.MOBILE_MONEY);
+            assertThat(xafResponse.availablePaymentMethods())
+                .doesNotContain(com.yadony.api.payments.cash.PaymentMethod.MOBILE_MONEY);
+        }
+
         /**
          * Tâche 10 : le fil « demandes » n'est plus cloisonné par devise, comme celui des
          * annonces. Un lecteur résolu en EUR reçoit désormais une demande publiée en XOF,

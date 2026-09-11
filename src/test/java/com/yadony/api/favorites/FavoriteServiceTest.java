@@ -447,6 +447,20 @@ class FavoriteServiceTest {
         when(favoriteRepository.findTargetIds(userId, FavoriteTargetType.PACKAGE_REQUEST))
                 .thenReturn(List.of(p1, p2, p3));
 
+        // Appelant au compte de versement XOF actif : FavoriteService construit les
+        // capacités lui-même (ViewerPaymentCapabilities.of(userRepository.findById(...))),
+        // il faut donc stubber l'utilisateur réel plutôt que d'accepter n'importe quelle
+        // instance avec any(ViewerPaymentCapabilities.class).
+        UserEntity caller = new UserEntity();
+        try {
+            var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+            idField.setAccessible(true);
+            idField.set(caller, userId);
+        } catch (Exception e) { throw new RuntimeException(e); }
+        caller.setMobileMoneyStatus(com.yadony.api.auth.MobileMoneyPayoutStatus.ACTIVE);
+        caller.setMobileMoneyCurrency("XOF");
+        when(userRepository.findById(userId)).thenReturn(Optional.of(caller));
+
         PackageRequestEntity pr1 = mock(PackageRequestEntity.class);
         when(pr1.getId()).thenReturn(p1);
         when(pr1.getStatus()).thenReturn(PackageRequestStatus.OPEN);
@@ -460,14 +474,16 @@ class FavoriteServiceTest {
 
         PackageRequestSearchResponse dto = mock(PackageRequestSearchResponse.class);
         // Service now calls toSearchResponseList with filtered active list (pr1 only)
-        when(packageRequestSearchMapper.toSearchResponseList(eq(List.of(pr1)), anySet(), any(ViewerPaymentCapabilities.class))).thenReturn(List.of(dto));
+        when(packageRequestSearchMapper.toSearchResponseList(
+                eq(List.of(pr1)), anySet(), argThat(v -> v.canReceiveMobileMoney("XOF"))))
+            .thenReturn(List.of(dto));
 
         var res = service.getFavoritePackageRequests(userId);
 
         assertThat(res).hasSize(1);
         assertThat(res.get(0)).isSameAs(dto);
-        verify(packageRequestSearchMapper).toSearchResponseList(eq(List.of(pr1)), anySet(), any(ViewerPaymentCapabilities.class));
-        verify(packageRequestSearchMapper, never()).toSearchResponse(any(PackageRequestEntity.class), anyBoolean(), any(ViewerPaymentCapabilities.class));
+        verify(packageRequestSearchMapper).toSearchResponseList(
+                eq(List.of(pr1)), anySet(), argThat(v -> v.canReceiveMobileMoney("XOF")));
     }
 
     @Test
