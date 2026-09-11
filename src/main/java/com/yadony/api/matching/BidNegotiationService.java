@@ -151,13 +151,13 @@ public class BidNegotiationService {
         PaymentMethod paymentMethod =
                 bidService.resolvePaymentMethodFor(announcement, request.paymentMethod());
 
-        // Hors périmètre : le fil de négociation ne sait pas encore porter ce rail —
+        // Hors périmètre : le fil de négociation d'un bid ne sait pas encore porter ce rail —
         // accept() ne fait transiter un accord que vers CASH (PENDING) ou carte
         // (AWAITING_PAYMENT + checkout Stripe existant) ; un bid MOBILE_MONEY passerait en
         // AWAITING_PAYMENT sans jamais réserver de capacité ni créer de PaymentEntity, un
-        // bid qu'ensuite plus aucun rail ne peut payer. Même raisonnement déjà en place
-        // pour les demandes de colis (NegotiationService.travelerCanOffer, qui rend
-        // structurellement false pour ce rail). Un lot dédié ouvrira la négociation au
+        // bid qu'ensuite plus aucun rail ne peut payer. À l'inverse, les demandes de colis
+        // l'ouvrent depuis le lot 2 (NegotiationService.travelerCanOffer, quand le voyageur
+        // est versable dans la devise du fil). Un lot dédié ouvrira la négociation de bid au
         // mobile money si besoin.
         if (paymentMethod == PaymentMethod.MOBILE_MONEY) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,

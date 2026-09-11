@@ -854,7 +854,8 @@ public class NegotiationService {
         // peut réellement fournir sur cette demande, l'espèce en repli.
         java.util.Set<PaymentMethod> offerable = com.yadony.api.payments.currency.AnnouncementPaymentRails
                 .offerable(request.getAcceptedPaymentMethods(), request.getCurrency(),
-                        traveler.hasActiveStripeConnect(), traveler.hasActiveMobileMoney());
+                        traveler.hasActiveStripeConnect(),
+                        traveler.canReceiveMobileMoney(request.getCurrency()));
         ann.setAcceptedPaymentMethods(offerable.isEmpty()
                 ? java.util.EnumSet.of(PaymentMethod.CASH) : java.util.EnumSet.copyOf(offerable));
         ann.setTransportMode(request.getTransportMode());
@@ -2218,6 +2219,16 @@ public class NegotiationService {
             ? t.getLastActivityAt().plusMinutes(negotiationProperties.commissionWindowMinutes())
             : null;
 
+        // Échéance du dépôt mobile money en cours. revertMobileMoneyDeposit remet la colonne
+        // à null dès qu'elle repasse par AWAITING_PAYMENT (échec, annulation dépôt, expiration),
+        // donc pas de valeur périmée à filtrer sur ce chemin. Les cas résiduels où la colonne
+        // reste renseignée hors AWAITING_DEPOSIT sont CANCELLED (négociation terminée pendant
+        // le dépôt en cours) et AUTO_REJECTED (accord concurrent accepté, celui-ci perd) : le
+        // filtre reste nécessaire pour eux, sous peine d'afficher un compte à rebours périmé.
+        LocalDateTime depositExpiresAt = t.getStatus() == NegotiationThreadStatus.AWAITING_DEPOSIT
+            ? t.getDepositExpiresAt()
+            : null;
+
         return new NegotiationThreadResponse(
             t.getId(), t.getPackageRequestId(), t.getTravelerId(),
             t.getTravelerAnnouncementId(), t.getTravelerTravelDate(), t.getTravelerAvailableKg(),
@@ -2243,7 +2254,8 @@ public class NegotiationService {
             t.getCommissionRate(),
             t.getCurrency(),
             t.getCommissionStatus(),
-            commissionDeadline
+            commissionDeadline,
+            depositExpiresAt
         );
     }
 
@@ -2273,20 +2285,21 @@ public class NegotiationService {
     }
 
     /**
-     * Returns {@code true} if the traveler is technically capable of offering
-     * the given payment method.
+     * Vrai si le voyageur peut techniquement fournir ce moyen de paiement sur une demande
+     * libellée dans {@code currency}.
      * <ul>
-     *   <li>STRIPE requires a fully onboarded Stripe Connect account.</li>
-     *   <li>MOBILE_MONEY is never offerable here (see below).</li>
-     *   <li>CASH / WAVE / ORANGE_MONEY are always available.</li>
+     *   <li>STRIPE : compte Stripe Connect onboardé.</li>
+     *   <li>MOBILE_MONEY : compte de versement actif DANS LA DEVISE de la demande
+     *       ({@link UserEntity#canReceiveMobileMoney}) : c'est la condition que
+     *       {@code prepareMobileMoneyDeposit} ré-exige avant que l'argent bouge, l'annoncer
+     *       plus large mènerait l'expéditeur à un 422 au moment de payer.</li>
+     *   <li>CASH / WAVE / ORANGE_MONEY : toujours.</li>
      * </ul>
      */
-    private boolean travelerCanOffer(UserEntity t, PaymentMethod m) {
+    private boolean travelerCanOffer(UserEntity t, PaymentMethod m, String currency) {
         return switch (m) {
             case STRIPE -> t.getStripeAccountStatus() == StripeAccountStatus.ONBOARDING_COMPLETE;
-            // Hors périmètre de ce lot : la négociation (paiement sur le fil, checkout Stripe)
-            // ne porte pas encore le rail mobile money. Un lot dédié l'ouvrira.
-            case MOBILE_MONEY -> false;
+            case MOBILE_MONEY -> t.canReceiveMobileMoney(currency);
             case CASH, WAVE, ORANGE_MONEY -> true;
         };
     }
@@ -2301,17 +2314,25 @@ public class NegotiationService {
      * règlement de la commission, pas une capacité : il peut être rechargé à tout moment et
      * n'a de sens qu'au moment où le voyageur règle lui-même la commission
      * ({@code settleCommission}, wallet puis carte), une fois l'accord conclu.
+     *
+     * MOBILE_MONEY : exige un compte de versement actif dans la devise de la demande ; le
+     * filtre devise final le retire de toute façon hors zone CFA.
      */
     private java.util.Set<PaymentMethod> computeAvailableMethods(
             PackageRequestEntity request, UserEntity traveler) {
         java.util.Set<PaymentMethod> set = java.util.EnumSet.noneOf(PaymentMethod.class);
         java.util.Set<PaymentMethod> accepted = request.getAcceptedPaymentMethods();
 
-        if (accepted.contains(PaymentMethod.STRIPE) && travelerCanOffer(traveler, PaymentMethod.STRIPE)) {
+        if (accepted.contains(PaymentMethod.STRIPE)
+                && travelerCanOffer(traveler, PaymentMethod.STRIPE, request.getCurrency())) {
             set.add(PaymentMethod.STRIPE);
         }
         if (accepted.contains(PaymentMethod.CASH)) {
             set.add(PaymentMethod.CASH);
+        }
+        if (accepted.contains(PaymentMethod.MOBILE_MONEY)
+                && travelerCanOffer(traveler, PaymentMethod.MOBILE_MONEY, request.getCurrency())) {
+            set.add(PaymentMethod.MOBILE_MONEY);
         }
         // La devise borne les rails : une demande en francs CFA (données antérieures au filtrage
         // à l'écriture, ou devise changée) ne propose jamais la carte, que createNegotiationEscrow
@@ -2323,6 +2344,13 @@ public class NegotiationService {
 
     /**
      * 422 discriminant quand aucun mode n'est fournissable, selon ce que le colis exigeait.
+     *
+     * <p>Un seul rail voulu → code dédié à ce rail (carte, espèce ou mobile money). Plusieurs
+     * rails voulus mais tous indisponibles → {@code none-available} générique (comportement
+     * historique, avant l'ajout du mobile money). Le cas « seul le mobile money était voulu »
+     * doit avoir son propre code : sans lui, un voyageur sans compte de versement dans la
+     * devise de la demande retombait dans la branche par défaut {@code cash-funds-required},
+     * un message faux puisqu'aucune espèce n'était même acceptée.
      */
     private void assertNonEmptyOrThrow(
             java.util.Set<PaymentMethod> set, java.util.Set<PaymentMethod> accepted) {
@@ -2331,9 +2359,12 @@ public class NegotiationService {
         }
         boolean wantsCard = accepted.contains(PaymentMethod.STRIPE);
         boolean wantsCash = accepted.contains(PaymentMethod.CASH);
-        String reason = (wantsCard && wantsCash) ? "payment-method/none-available"
-                      : wantsCard                ? "payment-method/card-capability-required"
-                      :                            "payment-method/cash-funds-required";
+        boolean wantsMobileMoney = accepted.contains(PaymentMethod.MOBILE_MONEY);
+        int wantedRailsCount = (wantsCard ? 1 : 0) + (wantsCash ? 1 : 0) + (wantsMobileMoney ? 1 : 0);
+        String reason = wantedRailsCount >= 2  ? "payment-method/none-available"
+                      : wantsCard               ? "payment-method/card-capability-required"
+                      : wantsMobileMoney        ? "payment-method/mobile-money-capability-required"
+                      :                           "payment-method/cash-funds-required";
         throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, reason);
     }
 }

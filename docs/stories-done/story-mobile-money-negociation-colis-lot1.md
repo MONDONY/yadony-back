@@ -12,9 +12,16 @@ Ouverture du rail mobile money pawaPay sur le fil de négociation d'une demande 
 dépôt à l'accord (comme la carte), keyé `negotiation_thread_id` plutôt que `bid_id` — sur un
 colis le fil est scellé avant que le bid soit matérialisé, à l'inverse d'un trajet. Ce lot 1
 pose tout le rail (statut, service jumeau, endpoints, listeners, scheduler, événements, audit)
-sans l'exposer : `NegotiationService.travelerCanOffer` continue de fermer `MOBILE_MONEY`
-(`case MOBILE_MONEY -> false`), donc aucun fil ne propose ce moyen de paiement tant que le
-lot 2 (exposition + app) n'est pas fusionné. Déploiement sans effet visible côté utilisateurs.
+sans l'exposer : `NegotiationService.travelerCanOffer` fermait `MOBILE_MONEY`
+(`case MOBILE_MONEY -> false`), donc aucun fil ne proposait ce moyen de paiement tant que le
+lot 2 (exposition + app) n'était pas fusionné. Déploiement sans effet visible côté utilisateurs.
+
+**Mise à jour (lot 2 back) :** `travelerCanOffer` a été ouvert par le lot 2
+(`case MOBILE_MONEY -> t.canReceiveMobileMoney(currency)`), qui expose désormais réellement le
+rail posé ici. Voir `docs/stories-done/story-mobile-money-negociation-colis-lot2-back.md`. Les
+sections ci-dessous décrivent l'état du lot 1 tel que livré (rail fermé) ; elles restent
+correctes comme registre historique mais ne décrivent plus le comportement actuel de
+`travelerCanOffer`.
 
 ## Fichiers créés
 

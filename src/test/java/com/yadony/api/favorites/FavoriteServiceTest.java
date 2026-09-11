@@ -17,6 +17,7 @@ import com.yadony.api.requests.entity.PackageRequestEntity;
 import com.yadony.api.requests.entity.PackageRequestStatus;
 import com.yadony.api.requests.repository.PackageRequestRepository;
 import com.yadony.api.requests.service.PackageRequestSearchMapper;
+import com.yadony.api.requests.service.ViewerPaymentCapabilities;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.*;
@@ -393,13 +394,13 @@ class FavoriteServiceTest {
         when(blockVisibility.hiddenUserIdsFor(userId)).thenReturn(Set.of(blockedSender));
 
         PackageRequestSearchResponse dto = mock(PackageRequestSearchResponse.class);
-        when(packageRequestSearchMapper.toSearchResponseList(eq(List.of(pr1)), anySet(), anyBoolean()))
+        when(packageRequestSearchMapper.toSearchResponseList(eq(List.of(pr1)), anySet(), any(ViewerPaymentCapabilities.class)))
                 .thenReturn(List.of(dto));
 
         var res = service.getFavoritePackageRequests(userId);
 
         assertThat(res).hasSize(1);
-        verify(packageRequestSearchMapper).toSearchResponseList(eq(List.of(pr1)), anySet(), anyBoolean());
+        verify(packageRequestSearchMapper).toSearchResponseList(eq(List.of(pr1)), anySet(), any(ViewerPaymentCapabilities.class));
         verify(favoriteRepository, never()).delete(any());
     }
 
@@ -417,7 +418,7 @@ class FavoriteServiceTest {
         when(blockVisibility.hiddenUserIdsFor(userId)).thenReturn(Set.of());
 
         PackageRequestSearchResponse dto = mock(PackageRequestSearchResponse.class);
-        when(packageRequestSearchMapper.toSearchResponseList(eq(List.of(pr1)), anySet(), anyBoolean()))
+        when(packageRequestSearchMapper.toSearchResponseList(eq(List.of(pr1)), anySet(), any(ViewerPaymentCapabilities.class)))
                 .thenReturn(List.of(dto));
 
         var res = service.getFavoritePackageRequests(userId);
@@ -446,6 +447,20 @@ class FavoriteServiceTest {
         when(favoriteRepository.findTargetIds(userId, FavoriteTargetType.PACKAGE_REQUEST))
                 .thenReturn(List.of(p1, p2, p3));
 
+        // Appelant au compte de versement XOF actif : FavoriteService construit les
+        // capacités lui-même (ViewerPaymentCapabilities.of(userRepository.findById(...))),
+        // il faut donc stubber l'utilisateur réel plutôt que d'accepter n'importe quelle
+        // instance avec any(ViewerPaymentCapabilities.class).
+        UserEntity caller = new UserEntity();
+        try {
+            var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+            idField.setAccessible(true);
+            idField.set(caller, userId);
+        } catch (Exception e) { throw new RuntimeException(e); }
+        caller.setMobileMoneyStatus(com.yadony.api.auth.MobileMoneyPayoutStatus.ACTIVE);
+        caller.setMobileMoneyCurrency("XOF");
+        when(userRepository.findById(userId)).thenReturn(Optional.of(caller));
+
         PackageRequestEntity pr1 = mock(PackageRequestEntity.class);
         when(pr1.getId()).thenReturn(p1);
         when(pr1.getStatus()).thenReturn(PackageRequestStatus.OPEN);
@@ -459,14 +474,16 @@ class FavoriteServiceTest {
 
         PackageRequestSearchResponse dto = mock(PackageRequestSearchResponse.class);
         // Service now calls toSearchResponseList with filtered active list (pr1 only)
-        when(packageRequestSearchMapper.toSearchResponseList(eq(List.of(pr1)), anySet(), anyBoolean())).thenReturn(List.of(dto));
+        when(packageRequestSearchMapper.toSearchResponseList(
+                eq(List.of(pr1)), anySet(), argThat(v -> v.canReceiveMobileMoney("XOF"))))
+            .thenReturn(List.of(dto));
 
         var res = service.getFavoritePackageRequests(userId);
 
         assertThat(res).hasSize(1);
         assertThat(res.get(0)).isSameAs(dto);
-        verify(packageRequestSearchMapper).toSearchResponseList(eq(List.of(pr1)), anySet(), anyBoolean());
-        verify(packageRequestSearchMapper, never()).toSearchResponse(any(PackageRequestEntity.class), anyBoolean(), anyBoolean());
+        verify(packageRequestSearchMapper).toSearchResponseList(
+                eq(List.of(pr1)), anySet(), argThat(v -> v.canReceiveMobileMoney("XOF")));
     }
 
     @Test
@@ -491,12 +508,12 @@ class FavoriteServiceTest {
 
         when(packageRequestRepository.findAllById(anyCollection())).thenReturn(List.of(pr1, pr2, pr3));
         PackageRequestSearchResponse dto = mock(PackageRequestSearchResponse.class);
-        when(packageRequestSearchMapper.toSearchResponseList(eq(List.of(pr1)), anySet(), anyBoolean())).thenReturn(List.of(dto));
+        when(packageRequestSearchMapper.toSearchResponseList(eq(List.of(pr1)), anySet(), any(ViewerPaymentCapabilities.class))).thenReturn(List.of(dto));
 
         var res = service.getFavoritePackageRequests(userId);
 
         assertThat(res).hasSize(1);
-        verify(packageRequestSearchMapper).toSearchResponseList(eq(List.of(pr1)), anySet(), anyBoolean());
+        verify(packageRequestSearchMapper).toSearchResponseList(eq(List.of(pr1)), anySet(), any(ViewerPaymentCapabilities.class));
     }
 
     @Test
@@ -510,12 +527,12 @@ class FavoriteServiceTest {
         when(pr1.getStatus()).thenReturn(PackageRequestStatus.NEGOTIATING);
         when(packageRequestRepository.findAllById(anyCollection())).thenReturn(List.of(pr1));
         PackageRequestSearchResponse dto = mock(PackageRequestSearchResponse.class);
-        when(packageRequestSearchMapper.toSearchResponseList(anyList(), anySet(), anyBoolean())).thenReturn(List.of(dto));
+        when(packageRequestSearchMapper.toSearchResponseList(anyList(), anySet(), any(ViewerPaymentCapabilities.class))).thenReturn(List.of(dto));
 
         service.getFavoritePackageRequests(userId);
 
         // Verify batch method called with favIdSet containing p1 (all are favorites)
-        verify(packageRequestSearchMapper).toSearchResponseList(anyList(), argThat(s -> s.contains(p1)), anyBoolean());
+        verify(packageRequestSearchMapper).toSearchResponseList(anyList(), argThat(s -> s.contains(p1)), any(ViewerPaymentCapabilities.class));
     }
 
     // --- Matérialisation paresseuse d'un invité (Task 4) ---

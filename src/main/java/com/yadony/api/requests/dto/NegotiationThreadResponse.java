@@ -65,9 +65,16 @@ public record NegotiationThreadResponse(
     // Échéance du règlement de la commission (lastActivityAt + fenêtre configurée),
     // calculée exactement comme CommissionWindowExpiryRunner détermine l'expiration.
     // Non nul uniquement quand status == AWAITING_COMMISSION.
-    LocalDateTime commissionDeadline
+    LocalDateTime commissionDeadline,
+    // Échéance du dépôt mobile money en cours (lot 1 : deposit_expires_at). Non nul
+    // uniquement quand status == AWAITING_DEPOSIT : un retour à « à payer » (AWAITING_PAYMENT)
+    // remet la colonne à null via revertMobileMoneyDeposit, donc rien à filtrer sur ce chemin.
+    // Les cas résiduels où la colonne reste renseignée hors AWAITING_DEPOSIT sont CANCELLED
+    // (négociation terminée pendant le dépôt) et AUTO_REJECTED (accord concurrent) : elle ne
+    // doit alors plus être affichée, d'où le filtre appliqué à la construction de la réponse.
+    LocalDateTime depositExpiresAt
 ) {
-    /** Constructeur de compatibilité (sans commissionStatus/commissionDeadline) — contrat Task 7 round 1. */
+    /** Constructeur de compatibilité (sans commissionStatus/commissionDeadline/depositExpiresAt) — contrat Task 7 round 1. */
     public NegotiationThreadResponse(
             UUID id, UUID packageRequestId, UUID travelerId,
             UUID travelerAnnouncementId, LocalDate travelerTravelDate, BigDecimal travelerAvailableKg,
@@ -100,7 +107,7 @@ public record NegotiationThreadResponse(
             paymentIntentClientSecret, travelerName, travelerRating, travelerTripsCount, travelerPhotoUrl,
             departureCity, arrivalCity, weightKg, senderName, senderPhotoUrl, isMyTurn, canAccept, canCounter,
             roundsRemaining, linkedTrip, grossPriceEur, paymentMethod, materializedBidId, cashCommissionAvailable,
-            availablePaymentMethods, canNudge, hasUnread, promoCode, commissionRate, currency, null, null);
+            availablePaymentMethods, canNudge, hasUnread, promoCode, commissionRate, currency, null, null, null);
     }
 
     /** Constructeur de compatibilité (sans promoCode) — évite de retoucher tous les tests. */

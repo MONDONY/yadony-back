@@ -7,17 +7,8 @@ import org.springframework.data.repository.query.Param;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 public interface CityRepository extends JpaRepository<CityEntity, Long> {
-
-    @Query(value = """
-        SELECT * FROM cities
-        WHERE LOWER(name) = LOWER(:name)
-        ORDER BY population DESC
-        LIMIT 1
-        """, nativeQuery = true)
-    Optional<CityEntity> findFirstByNameIgnoreCase(@Param("name") String name);
 
     @Query(value = """
         SELECT * FROM cities
@@ -40,9 +31,8 @@ public interface CityRepository extends JpaRepository<CityEntity, Long> {
     }
 
     /**
-     * Batch variant of {@link #findFirstByNameIgnoreCase}: fetches the highest-population city
-     * for each name in {@code names} in a single query using DISTINCT ON.
-     * Names with no match are absent from the result.
+     * Fetches the highest-population city for each name in {@code names} in a single query
+     * using DISTINCT ON. Names with no match are absent from the result.
      */
     @Query(value = """
         SELECT DISTINCT ON (LOWER(name)) *

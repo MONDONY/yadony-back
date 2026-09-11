@@ -730,6 +730,47 @@ class PackageRequestServiceTest {
             assertThat(resp.id()).isEqualTo(entity.getId());
         }
 
+        @Test
+        @DisplayName("visiteur versable en XOF : une demande XOF acceptant MOBILE_MONEY l'expose")
+        void getById_viewerWithXofAccount_seesMobileMoney() {
+            UUID viewer = UUID.randomUUID();
+            PackageRequestEntity entity = buildEntity(SENDER_ID, PackageRequestStatus.OPEN);
+            entity.setCurrency("XOF");
+            entity.setAcceptedPaymentMethods(EnumSet.of(PaymentMethod.MOBILE_MONEY, PaymentMethod.CASH));
+            when(repository.findById(entity.getId())).thenReturn(Optional.of(entity));
+            when(threadRepository.existsByPackageRequestIdAndTravelerId(entity.getId(), viewer))
+                .thenReturn(false);
+            UserEntity viewerUser = new UserEntity();
+            viewerUser.setMobileMoneyStatus(com.yadony.api.auth.MobileMoneyPayoutStatus.ACTIVE);
+            viewerUser.setMobileMoneyCurrency("XOF");
+            when(userRepository.findById(viewer)).thenReturn(Optional.of(viewerUser));
+
+            var resp = service.getById(viewer, entity.getId());
+
+            assertThat(resp.availablePaymentMethods())
+                .containsExactlyInAnyOrder(PaymentMethod.MOBILE_MONEY, PaymentMethod.CASH);
+        }
+
+        @Test
+        @DisplayName("visiteur versable en XAF : la même demande XOF ne propose que l'espèce")
+        void getById_viewerWithXafAccount_hidesMobileMoney() {
+            UUID viewer = UUID.randomUUID();
+            PackageRequestEntity entity = buildEntity(SENDER_ID, PackageRequestStatus.OPEN);
+            entity.setCurrency("XOF");
+            entity.setAcceptedPaymentMethods(EnumSet.of(PaymentMethod.MOBILE_MONEY, PaymentMethod.CASH));
+            when(repository.findById(entity.getId())).thenReturn(Optional.of(entity));
+            when(threadRepository.existsByPackageRequestIdAndTravelerId(entity.getId(), viewer))
+                .thenReturn(false);
+            UserEntity viewerUser = new UserEntity();
+            viewerUser.setMobileMoneyStatus(com.yadony.api.auth.MobileMoneyPayoutStatus.ACTIVE);
+            viewerUser.setMobileMoneyCurrency("XAF");
+            when(userRepository.findById(viewer)).thenReturn(Optional.of(viewerUser));
+
+            var resp = service.getById(viewer, entity.getId());
+
+            assertThat(resp.availablePaymentMethods()).containsExactly(PaymentMethod.CASH);
+        }
+
         @Test @DisplayName("non-participant, demande NEGOTIATING → OK (consultable publiquement)")
         void getById_nonParticipant_negotiatingRequest_returnsResponse() {
             UUID OTHER = UUID.randomUUID();
@@ -1430,6 +1471,51 @@ class PackageRequestServiceTest {
                     com.yadony.api.payments.cash.PaymentMethod.CASH);
         }
 
+        @Test
+        @DisplayName("visiteur au compte de versement XOF actif → mobile money proposé sur la demande XOF, "
+            + "pas sur la demande XAF (décision demande par demande, page mixte)")
+        void search_viewerWithXofAccount_seesMobileMoneyOnlyOnXofRequests() {
+            UUID viewerId = UUID.randomUUID();
+            UserEntity viewer = new UserEntity();
+            setId(viewer, viewerId);
+            viewer.setMobileMoneyStatus(com.yadony.api.auth.MobileMoneyPayoutStatus.ACTIVE);
+            viewer.setMobileMoneyCurrency("XOF");
+            when(userRepository.findById(viewerId)).thenReturn(Optional.of(viewer));
+
+            PackageRequestEntity xofRequest = buildEntity(SENDER_ID, PackageRequestStatus.OPEN);
+            xofRequest.setCurrency("XOF");
+            xofRequest.setAcceptedPaymentMethods(java.util.EnumSet.of(
+                com.yadony.api.payments.cash.PaymentMethod.MOBILE_MONEY,
+                com.yadony.api.payments.cash.PaymentMethod.CASH));
+
+            PackageRequestEntity xafRequest = buildEntity(SENDER_ID, PackageRequestStatus.OPEN);
+            xafRequest.setCurrency("XAF");
+            xafRequest.setAcceptedPaymentMethods(java.util.EnumSet.of(
+                com.yadony.api.payments.cash.PaymentMethod.MOBILE_MONEY,
+                com.yadony.api.payments.cash.PaymentMethod.CASH));
+
+            when(userRepository.findAllById(any())).thenReturn(List.of(sender));
+            when(repository.findAll(any(org.springframework.data.jpa.domain.Specification.class),
+                                    any(org.springframework.data.domain.Pageable.class)))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(xofRequest, xafRequest)));
+            when(favoriteRepository.findTargetIds(any(), any())).thenReturn(List.of());
+
+            var result = service.search(
+                org.springframework.data.jpa.domain.Specification.where(null),
+                org.springframework.data.domain.PageRequest.of(0, 20),
+                viewerId
+            );
+
+            var xofResponse = result.getContent().stream()
+                .filter(r -> r.id().equals(xofRequest.getId())).findFirst().orElseThrow();
+            var xafResponse = result.getContent().stream()
+                .filter(r -> r.id().equals(xafRequest.getId())).findFirst().orElseThrow();
+            assertThat(xofResponse.availablePaymentMethods())
+                .contains(com.yadony.api.payments.cash.PaymentMethod.MOBILE_MONEY);
+            assertThat(xafResponse.availablePaymentMethods())
+                .doesNotContain(com.yadony.api.payments.cash.PaymentMethod.MOBILE_MONEY);
+        }
+
         /**
          * Tâche 10 : le fil « demandes » n'est plus cloisonné par devise, comme celui des
          * annonces. Un lecteur résolu en EUR reçoit désormais une demande publiée en XOF,
@@ -1542,7 +1628,6 @@ class PackageRequestServiceTest {
                 org.springframework.data.domain.PageRequest.of(0, 20), null);
 
             verify(cityRepository, times(1)).findByNamesIgnoreCaseBatch(anyCollection());
-            verify(cityRepository, never()).findFirstByNameIgnoreCase(anyString());
         }
 
         @Test @DisplayName("N résultats → photoService.activePhotosBatch appelé 1 fois, activePhotos jamais")

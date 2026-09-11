@@ -1,7 +1,6 @@
 package com.yadony.api.favorites;
 
 import com.yadony.api.auth.GuestUserProvisioner;
-import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.BlockVisibility;
 import com.yadony.api.common.YadonyBusinessException;
@@ -16,6 +15,7 @@ import com.yadony.api.requests.dto.PackageRequestSearchResponse;
 import com.yadony.api.requests.entity.PackageRequestStatus;
 import com.yadony.api.requests.repository.PackageRequestRepository;
 import com.yadony.api.requests.service.PackageRequestSearchMapper;
+import com.yadony.api.requests.service.ViewerPaymentCapabilities;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -173,10 +173,9 @@ public class FavoriteService {
                         .toList();
         if (active.isEmpty()) return List.of();
         Set<UUID> favIdSet = new HashSet<>(ids); // all are favorites
-        boolean viewerHasConnect = userRepository.findById(callerId)
-                .map(UserEntity::hasActiveStripeConnect)
-                .orElse(false);
-        return packageRequestSearchMapper.toSearchResponseList(active, favIdSet, viewerHasConnect);
+        ViewerPaymentCapabilities viewer =
+                ViewerPaymentCapabilities.of(userRepository.findById(callerId).orElse(null));
+        return packageRequestSearchMapper.toSearchResponseList(active, favIdSet, viewer);
     }
 
     // --- private helpers ---
