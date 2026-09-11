@@ -33,8 +33,8 @@ et estimer s'il tient une forte concurrence (vers 10 000 users).
 
 ## 2. Bypass du rate-limit nginx (obligatoire pour un test de capacité)
 
-nginx staging limite **30 req/min/IP** (`api_general`, burst 10) et **5 req/min/IP**
-(`api_sensitive` = `/auth`, `/kyc`). Un test depuis une seule IP via
+nginx staging limite **120 req/min/IP** (`api_general`, burst 60) et **30 req/min/IP**
+(`api_sensitive` = `/auth`, `/kyc`, burst 15), cf. `nginx/nginx.conf`. Un test depuis une seule IP via
 `https://api-staging.yadony.com` est donc **429** en quelques secondes — on
 mesurerait le rate-limiter, pas le backend.
 
@@ -55,7 +55,7 @@ Dans `nginx/nginx.staging.conf`, commenter les `limit_req zone=...` (lignes ~62 
 ~73), recharger nginx (`docker exec yadony_nginx nginx -s reload`), tester, puis
 **remettre** les limites. C'est le test le plus représentatif (édge inclus).
 
-**C. Charge distribuée multi-IP** (k6 cloud) — chaque IP a son quota 30 r/m. Pour
+**C. Charge distribuée multi-IP** (k6 cloud) — chaque IP a son quota 120 r/m. Pour
 simuler 10k vrais users (= 10k IP), le rate-limit per-IP n'est PAS un blocage ; il
 ne gêne que les tests mono-source.
 
