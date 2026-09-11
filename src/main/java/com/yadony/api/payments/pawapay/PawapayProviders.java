@@ -23,4 +23,19 @@ public final class PawapayProviders {
         if (p.startsWith("AIRTEL")) return "Airtel Money";
         return provider;
     }
+
+    /**
+     * Marque d'un code opérateur : le préfixe avant le premier {@code _} ({@code ORANGE_SEN} et
+     * {@code ORANGE_CIV} → {@code ORANGE}). C'est par marque, jamais par code pays, que le rail
+     * compare les réseaux du payeur à ceux acceptés par le voyageur : un payeur sénégalais Orange
+     * peut payer un voyageur ivoirien Orange. {@code null} si le code est nul ou blanc.
+     */
+    public static String brand(String provider) {
+        if (provider == null || provider.isBlank()) {
+            return null;
+        }
+        String p = provider.trim().toUpperCase(Locale.ROOT);
+        int i = p.indexOf('_');
+        return i < 0 ? p : p.substring(0, i);
+    }
 }

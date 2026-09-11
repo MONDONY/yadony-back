@@ -17,4 +17,15 @@ class PawapayProvidersTest {
         assertThat(PawapayProviders.label("SOMETHING_NEW")).isEqualTo("SOMETHING_NEW");
         assertThat(PawapayProviders.label(null)).isEqualTo("Mobile money");
     }
+
+    @Test
+    void brand_isThePrefixBeforeTheFirstUnderscore() {
+        assertThat(PawapayProviders.brand("ORANGE_SEN")).isEqualTo("ORANGE");
+        assertThat(PawapayProviders.brand("orange_civ")).isEqualTo("ORANGE");
+        assertThat(PawapayProviders.brand("MTN_MOMO_CMR")).isEqualTo("MTN");
+        assertThat(PawapayProviders.brand("WAVE")).isEqualTo("WAVE");
+        assertThat(PawapayProviders.brand(" wave_sen ")).isEqualTo("WAVE");
+        assertThat(PawapayProviders.brand(null)).isNull();
+        assertThat(PawapayProviders.brand("   ")).isNull();
+    }
 }
