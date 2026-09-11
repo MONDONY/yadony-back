@@ -99,9 +99,12 @@ Détail exhaustif : `git diff --stat b75ba2c4..HEAD` (11 fichiers, +393/-78).
 3. **Réponse du fil (`depositExpiresAt`)** — `NegotiationService.toResponse` calcule
    `t.getStatus() == AWAITING_DEPOSIT ? t.getDepositExpiresAt() : null` et le passe en dernier
    argument du constructeur canonique de `NegotiationThreadResponse`. Un fil qui est repassé à
-   `AWAITING_PAYMENT` (dépôt échoué, expiré ou renoncé — la colonne `deposit_expires_at` n'est pas
-   remise à `null` en base par tous les chemins, cf. lot 1) n'expose donc jamais une échéance
-   périmée au client.
+   `AWAITING_PAYMENT` (dépôt échoué, expiré ou renoncé) a déjà sa colonne `deposit_expires_at`
+   remise à `null` par `revertMobileMoneyDeposit` (lot 1) : le filtre par statut n'a donc rien à
+   corriger sur ce chemin. Les cas résiduels où la colonne reste renseignée hors
+   `AWAITING_DEPOSIT` sont `CANCELLED` (négociation terminée pendant le dépôt en cours) et
+   `AUTO_REJECTED` (accord concurrent accepté) : le filtre reste nécessaire pour eux, sous peine
+   d'exposer une échéance périmée au client.
 4. **Le rail lui-même (initiation du dépôt, confirmation, scellement, expiration, remboursement)
    est entièrement celui posé par le lot 1** — ce lot n'y touche pas, il ne fait que le rendre
    atteignable depuis un fil réel (avant ce lot, `travelerCanOffer` renvoyait toujours `false`
@@ -146,11 +149,12 @@ résultat fixe (`false`) au lieu de l'appeler.
   mobile money (zone CFA). Les deux gardes sont nécessaires et non redondantes : la première
   protège contre un voyageur non versable dans cette devise précise, la seconde contre une
   demande dans une devise hors zone CFA même si le voyageur a un compte quelque part.
-- **`depositExpiresAt` filtré par statut, pas juste lu depuis la colonne** : la colonne
-  `negotiation_threads.deposit_expires_at` peut rester renseignée en base après un retour à
-  `AWAITING_PAYMENT` (le lot 1 ne la remet pas systématiquement à `null` sur tous les chemins de
-  sortie de `AWAITING_DEPOSIT`) ; le mapping conditionnel dans `toResponse` est donc la seule
-  garantie que le client ne voit jamais une échéance obsolète.
+- **`depositExpiresAt` filtré par statut, pas juste lu depuis la colonne** : un retour à
+  `AWAITING_PAYMENT` remet déjà la colonne `negotiation_threads.deposit_expires_at` à `null` via
+  `revertMobileMoneyDeposit` (lot 1). Les cas résiduels où elle reste renseignée hors
+  `AWAITING_DEPOSIT` sont `CANCELLED` (négociation terminée pendant le dépôt) et `AUTO_REJECTED`
+  (accord concurrent) ; le mapping conditionnel dans `toResponse` est la garantie que le client ne
+  voit jamais une échéance obsolète dans ces deux cas.
 
 ### Events Spring publiés / écoutés
 
@@ -177,10 +181,21 @@ lot 1.
    comportement est intact et volontairement hors périmètre : ce lot n'ouvre que le fil de
    négociation d'une **demande**, pas les bids d'un **trajet**.
 5. **`PackageRequestSearchMapper.toSearchResponse(entity, isFavorite, viewer)` (overload public à
-   3 arguments) et `toSearchResponseList(...)` restent à 0 % de couverture par les tests de ce
-   dépôt** (`FavoriteServiceTest` mocke `PackageRequestSearchMapper` en totalité) — gap
-   pré-existant au changement de signature de ce lot, pas une régression introduite ici (voir
-   section Tests).
+   3 arguments) et `PackageRequestService.toSearchResponse(entity, isFavorite)`, son unique
+   appelant, ont été supprimés en revue finale (aucun appelant réel, tous les chemins de
+   production passent par la surcharge batch-aware) : ne reste plus que
+   `toSearchResponse(entity, isFavorite, viewer, userMap, cityMap, photoMap)` et
+   `toSearchResponseList`.
+6. **Côté annonces, `AnnouncementService.toResponse` et `AnnouncementSearchMapper` appellent
+   encore `traveler.hasActiveMobileMoney()` sans devise** (pas `canReceiveMobileMoney(currency)`)
+   — même défaut que celui corrigé dans ce lot pour `buildDedicatedTripAnnouncement`, mais côté
+   annonces plutôt que côté demandes. Hors périmètre de ce lot (qui ne touche que le fil de
+   négociation d'une demande) ; correctif de suite à planifier.
+7. **Nouveau code d'erreur `payment-method/mobile-money-capability-required`** (422, levé par
+   `NegotiationService.assertNonEmptyOrThrow` quand seul `MOBILE_MONEY` était accepté par la
+   demande et que le voyageur n'a pas de compte de versement actif dans sa devise) — à cataloguer
+   côté app parmi les codes `payment-method/*` déjà gérés (`card-capability-required`,
+   `cash-funds-required`, `none-available`).
 
 ## Critères d'acceptation couverts
 
@@ -249,13 +264,13 @@ lot 1.
    les rendaient inatteignables en usage réel (`travelerCanOffer` et le `false` codé en dur dans
    `PackageRequestService`) et ajoute un champ de lecture (`depositExpiresAt`) à une réponse
    existante. Aucune route créée, modifiée ou supprimée.
-3. **`depositExpiresAt` masqué hors `AWAITING_DEPOSIT`** parce que la colonne
-   `negotiation_threads.deposit_expires_at` n'est pas systématiquement remise à `null` par tous
-   les chemins de sortie de `AWAITING_DEPOSIT` posés par le lot 1 (expiration, renoncement,
-   échec) : elle peut donc rester renseignée en base après un retour à `AWAITING_PAYMENT`. Filtrer
-   par statut dans le mapping DTO (`toResponse`) est la seule garantie que le client ne reçoive
-   jamais une échéance périmée, plutôt que de dépendre d'une remise à `null` systématique côté
-   écriture (plus fragile, plus de chemins à maintenir corrects).
+3. **`depositExpiresAt` masqué hors `AWAITING_DEPOSIT`**, bien qu'un retour à `AWAITING_PAYMENT`
+   (expiration, renoncement, échec) remette déjà la colonne `negotiation_threads.deposit_expires_at`
+   à `null` via `revertMobileMoneyDeposit` (lot 1) : les cas résiduels sont `CANCELLED` (négociation
+   terminée pendant le dépôt en cours) et `AUTO_REJECTED` (accord concurrent accepté, celui-ci
+   perd), pour lesquels la colonne n'est jamais réinitialisée. Filtrer par statut dans le mapping
+   DTO (`toResponse`) plutôt que d'ajouter une remise à `null` sur ces deux transitions supplémentaires
+   évite d'étendre encore les chemins d'écriture à maintenir corrects pour un gain identique.
 4. **`ViewerPaymentCapabilities` garde la devise du compte, pas un booléen** : une page de
    résultats mélange des demandes de devises différentes (recherche multi-corridors, favoris). Un
    simple `hasMobileMoney: boolean` calculé une fois par requête HTTP aurait forcé soit un

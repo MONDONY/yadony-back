@@ -2219,9 +2219,12 @@ public class NegotiationService {
             ? t.getLastActivityAt().plusMinutes(negotiationProperties.commissionWindowMinutes())
             : null;
 
-        // Échéance du dépôt mobile money en cours. La colonne peut rester renseignée
-        // après un retour à « à payer » (AWAITING_PAYMENT) : elle ne doit alors plus être
-        // exposée, sous peine d'afficher un compte à rebours périmé côté app.
+        // Échéance du dépôt mobile money en cours. revertMobileMoneyDeposit remet la colonne
+        // à null dès qu'elle repasse par AWAITING_PAYMENT (échec, annulation dépôt, expiration),
+        // donc pas de valeur périmée à filtrer sur ce chemin. Les cas résiduels où la colonne
+        // reste renseignée hors AWAITING_DEPOSIT sont CANCELLED (négociation terminée pendant
+        // le dépôt en cours) et AUTO_REJECTED (accord concurrent accepté, celui-ci perd) : le
+        // filtre reste nécessaire pour eux, sous peine d'afficher un compte à rebours périmé.
         LocalDateTime depositExpiresAt = t.getStatus() == NegotiationThreadStatus.AWAITING_DEPOSIT
             ? t.getDepositExpiresAt()
             : null;

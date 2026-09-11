@@ -67,11 +67,14 @@ public record NegotiationThreadResponse(
     // Non nul uniquement quand status == AWAITING_COMMISSION.
     LocalDateTime commissionDeadline,
     // Échéance du dépôt mobile money en cours (lot 1 : deposit_expires_at). Non nul
-    // uniquement quand status == AWAITING_DEPOSIT : après un retour à « à payer » la
-    // colonne peut rester renseignée, elle ne doit plus être affichée.
+    // uniquement quand status == AWAITING_DEPOSIT : un retour à « à payer » (AWAITING_PAYMENT)
+    // remet la colonne à null via revertMobileMoneyDeposit, donc rien à filtrer sur ce chemin.
+    // Les cas résiduels où la colonne reste renseignée hors AWAITING_DEPOSIT sont CANCELLED
+    // (négociation terminée pendant le dépôt) et AUTO_REJECTED (accord concurrent) : elle ne
+    // doit alors plus être affichée, d'où le filtre appliqué à la construction de la réponse.
     LocalDateTime depositExpiresAt
 ) {
-    /** Constructeur de compatibilité (sans commissionStatus/commissionDeadline) — contrat Task 7 round 1. */
+    /** Constructeur de compatibilité (sans commissionStatus/commissionDeadline/depositExpiresAt) — contrat Task 7 round 1. */
     public NegotiationThreadResponse(
             UUID id, UUID packageRequestId, UUID travelerId,
             UUID travelerAnnouncementId, LocalDate travelerTravelDate, BigDecimal travelerAvailableKg,
