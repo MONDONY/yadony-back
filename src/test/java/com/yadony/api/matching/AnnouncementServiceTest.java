@@ -329,7 +329,10 @@ class AnnouncementServiceTest {
             when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
             when(bidRepository.countByAnnouncementIdAndStatusIn(any(), any())).thenReturn(0L);
 
+            when(bidRepository.sumReservedNetByAnnouncementId(any(), any())).thenReturn(new java.math.BigDecimal("79.00"));
+
             AnnouncementResponse result = announcementService.createAnnouncement(FIREBASE_UID, buildRequest());
+            assertThat(result.reservedNetAmount()).isEqualByComparingTo("79.00");
 
             assertThat(result.departureCity()).isEqualTo("Paris");
             assertThat(result.arrivalCity()).isEqualTo("Dakar");

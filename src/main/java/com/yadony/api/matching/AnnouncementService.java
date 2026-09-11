@@ -1680,10 +1680,13 @@ public class AnnouncementService {
                         entity.getAcceptedPaymentMethods(), entity.getCurrency(),
                         travelerHasConnect, travelerHasMobileMoney);
         long pendingBidCount = bidRepository.countVisibleByAnnouncementId(entity.getId());
-        long confirmedParcelCount = bidRepository.countByAnnouncementIdAndStatusIn(
-                entity.getId(),
-                List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.COMPLETED)
-        );
+        List<BidStatus> confirmedStatuses =
+                List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.COMPLETED);
+        long confirmedParcelCount = bidRepository.countByAnnouncementIdAndStatusIn(entity.getId(), confirmedStatuses);
+        // Même périmètre que confirmedParcelCount : le net des colis confirmés, dans la
+        // devise de l'annonce. Le portail l'affichait à zéro faute de valeur serveur.
+        BigDecimal reservedNetAmount = bidRepository.sumReservedNetByAnnouncementId(
+                entity.getId(), confirmedStatuses.stream().map(Enum::name).toList());
         boolean cashAccepted = entity.getAcceptedPaymentMethods()
                 .contains(com.yadony.api.payments.cash.PaymentMethod.CASH);
         List<com.yadony.api.matching.dto.AnnouncementPriceGridItemResponse> gridItems =
@@ -1728,7 +1731,8 @@ public class AnnouncementService {
                 entity.getHandoverDeadline(),
                 entity.getCurrency(),
                 entity.isNegotiable(),
-                availablePaymentMethods
+                availablePaymentMethods,
+                reservedNetAmount != null ? reservedNetAmount : BigDecimal.ZERO
         );
     }
 
