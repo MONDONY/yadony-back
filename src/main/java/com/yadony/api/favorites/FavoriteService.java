@@ -15,6 +15,7 @@ import com.yadony.api.requests.dto.PackageRequestSearchResponse;
 import com.yadony.api.requests.entity.PackageRequestStatus;
 import com.yadony.api.requests.repository.PackageRequestRepository;
 import com.yadony.api.requests.service.PackageRequestSearchMapper;
+import com.yadony.api.requests.service.ViewerPaymentCapabilities;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -172,8 +173,8 @@ public class FavoriteService {
                         .toList();
         if (active.isEmpty()) return List.of();
         Set<UUID> favIdSet = new HashSet<>(ids); // all are favorites
-        com.yadony.api.requests.service.ViewerPaymentCapabilities viewer =
-                com.yadony.api.requests.service.ViewerPaymentCapabilities.of(userRepository.findById(callerId).orElse(null));
+        ViewerPaymentCapabilities viewer =
+                ViewerPaymentCapabilities.of(userRepository.findById(callerId).orElse(null));
         return packageRequestSearchMapper.toSearchResponseList(active, favIdSet, viewer);
     }
 
