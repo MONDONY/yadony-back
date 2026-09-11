@@ -298,6 +298,7 @@ yadony:
     # Page de rebond Wave (HTTPS, jamais le deep link : refusé par les PSP).
     return-base-url: ${PAWAPAY_RETURN_BASE_URL:https://api.yadony.com}
     deep-link-awaiting: ${PAWAPAY_DEEP_LINK_AWAITING:yadony://bids/%s/mobile-money/awaiting}
+    deep-link-awaiting-thread: ${PAWAPAY_DEEP_LINK_AWAITING_THREAD:yadony://negotiations/%s/mobile-money/awaiting}
     poll-cron: ${PAWAPAY_POLL_CRON:0 */2 * * * *}
     balance-cron: ${PAWAPAY_BALANCE_CRON:0 15 * * * *}
     deadline-cron: ${PAWAPAY_DEADLINE_CRON:0 * * * * *}

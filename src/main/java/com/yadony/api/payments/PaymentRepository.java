@@ -81,6 +81,27 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
     Optional<PaymentEntity> findByBidIdForUpdate(@Param("bidId") UUID bidId);
 
     /**
+     * Jumeau de {@link #findByBidIdForUpdate} pour le paiement d'un fil de négociation
+     * (rail mobile money) : même verrou {@code PESSIMISTIC_WRITE} (FOR NO KEY UPDATE), même
+     * compatibilité avec le KEY SHARE de l'INSERT d'une opération pawaPay en REQUIRES_NEW.
+     */
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT p FROM PaymentEntity p WHERE p.negotiationThreadId = :threadId")
+    Optional<PaymentEntity> findByNegotiationThreadIdForUpdate(@Param("threadId") UUID threadId);
+
+    /**
+     * Vrai si le paiement est keyé sur un fil de négociation (bid_id NULL, CHECK exclusif V62).
+     * Requête scalaire, jamais d'entité en cache : l'aiguillage précède un claim bulk
+     * ({@link #markEscrowIfPending}, {@code @Modifying} sans {@code clearAutomatically}), et un
+     * {@code findById} ici laisserait dans le contexte de persistance un {@code PaymentEntity}
+     * dont le {@code findById} suivant, après le claim, rendrait le snapshot périmé (statut
+     * CANCELLED commité entre les deux invisible, remboursement avalé). Vide si le paiement
+     * n'existe pas.
+     */
+    @Query("select (p.negotiationThreadId is not null) from PaymentEntity p where p.id = :id")
+    Optional<Boolean> isThreadScoped(@Param("id") UUID id);
+
+    /**
      * Séquestre mobile money : PENDING → ESCROW, une seule fois. 0 = déjà en ESCROW (rejeu) ou
      * déjà CANCELLED (deadline passée pendant la saisie du PIN — l'appelant rembourse alors).
      * Le deposit qui a financé le séquestre se retrouve par {@code pawapay_operations.payment_id},

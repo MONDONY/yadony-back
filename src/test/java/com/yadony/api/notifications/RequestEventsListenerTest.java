@@ -216,6 +216,23 @@ class RequestEventsListenerTest {
     }
 
     @Test
+    void depositPending_notifiesSenderToPay_andTravelerThatPaymentIsInProgress() {
+        UUID threadId = UUID.randomUUID(), requestId = UUID.randomUUID(), senderId = UUID.randomUUID(), travelerId = UUID.randomUUID();
+        listener.onNegotiationDepositPending(new NegotiationDepositPendingEvent(threadId, requestId, senderId, travelerId,
+                new BigDecimal("33000"), "XOF", java.time.LocalDateTime.now().plusMinutes(30)));
+
+        verify(dispatcher).notifyUser(eq(senderId), eq("Payez votre envoi"), contains("33"), argThat(m -> "negotiation_deposit_pending".equals(m.get("type"))));
+        verify(dispatcher).notifyUser(eq(travelerId), any(), any(), argThat(m -> "negotiation_deposit_pending".equals(m.get("type"))));
+    }
+
+    @Test
+    void depositReverted_notifiesSender() {
+        UUID senderId = UUID.randomUUID();
+        listener.onNegotiationDepositReverted(new NegotiationDepositRevertedEvent(UUID.randomUUID(), UUID.randomUUID(), senderId, UUID.randomUUID(), "deposit-failed"));
+        verify(dispatcher).notifyUser(eq(senderId), eq("Paiement non reçu"), any(), argThat(m -> "negotiation_deposit_reverted".equals(m.get("type"))));
+    }
+
+    @Test
     void onPackageRequestCreated_logsButDoesNotDispatch() {
         var event = new PackageRequestCreatedEvent(
             UUID.randomUUID(), UUID.randomUUID(),

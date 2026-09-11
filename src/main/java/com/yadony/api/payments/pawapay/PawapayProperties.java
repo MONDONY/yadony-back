@@ -14,6 +14,8 @@ public record PawapayProperties(
         String returnBaseUrl,
         /** Modèle {@code String.format} avec le bidId, ex. {@code yadony://bids/%s/mobile-money/awaiting}. */
         String deepLinkAwaiting,
+        /** Modèle {@code String.format} avec le threadId, ex. {@code yadony://negotiations/%s/mobile-money/awaiting}. */
+        String deepLinkAwaitingThread,
         BalanceMin balanceMin) {
 
     public record BalanceMin(BigDecimal xof, BigDecimal xaf) {}

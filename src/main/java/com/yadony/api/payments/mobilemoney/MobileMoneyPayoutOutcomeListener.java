@@ -3,7 +3,9 @@ package com.yadony.api.payments.mobilemoney;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.matching.AnnouncementRepository;
+import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
+import com.yadony.api.payments.PaymentEntity;
 import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.events.PaymentReleasedEvent;
 import com.yadony.api.payments.pawapay.PawapayOperationEntity;
@@ -13,6 +15,7 @@ import com.yadony.api.payments.pawapay.PawapayText;
 import com.yadony.api.payments.pawapay.events.PawapayOperationCompletedEvent;
 import com.yadony.api.payments.pawapay.events.PawapayOperationFailedEvent;
 import java.util.Map;
+import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
@@ -92,10 +95,10 @@ public class MobileMoneyPayoutOutcomeListener {
                     op.getId(), event.paymentId());
             return;
         }
-        var bid = bidRepository.findById(payment.get().getBidId());
+        var bid = findBid(payment.get());
         if (bid.isEmpty()) {
-            log.warn("Payout {} COMPLETED : bid {} introuvable (paiement {}), notification abandonnée",
-                    op.getId(), payment.get().getBidId(), event.paymentId());
+            log.warn("Payout {} COMPLETED : bid introuvable (paiement {}, bidId={}, threadId={}), notification abandonnée",
+                    op.getId(), event.paymentId(), payment.get().getBidId(), payment.get().getNegotiationThreadId());
             return;
         }
         var announcement = announcementRepository.findById(bid.get().getAnnouncementId());
@@ -108,6 +111,17 @@ public class MobileMoneyPayoutOutcomeListener {
                 Map.of("operationId", op.getId().toString(), "net", op.getAmount().toPlainString()));
         events.publishEvent(new PaymentReleasedEvent(bid.get().getId(), announcement.get().getTravelerId(),
                 bid.get().getSenderId(), op.getAmount(), op.getCurrency(), true));
+    }
+
+    /**
+     * Un paiement porte soit un {@code bidId} (négociation absente ou terminée avant paiement),
+     * soit un {@code negotiationThreadId} (paiement keyé sur le fil, bid retrouvé via {@link
+     * BidRepository#findByLinkedNegotiationThreadId}) — jamais les deux à vide.
+     */
+    private Optional<BidEntity> findBid(PaymentEntity payment) {
+        return payment.getBidId() != null
+                ? bidRepository.findById(payment.getBidId())
+                : bidRepository.findByLinkedNegotiationThreadId(payment.getNegotiationThreadId());
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)

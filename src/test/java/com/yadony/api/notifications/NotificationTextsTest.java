@@ -81,6 +81,11 @@ class NotificationTextsTest {
         m.put("negotiationTripChanged", NotificationTexts.negotiationTripChanged());
         m.put("commissionPending", NotificationTexts.commissionPending(MONTANT, "XOF"));
         m.put("commissionDeclined", NotificationTexts.commissionDeclined());
+        m.put("depositPendingSender", NotificationTexts.depositPendingSender(MONTANT, "XOF"));
+        m.put("depositPendingTraveler", NotificationTexts.depositPendingTraveler());
+        m.put("depositReverted deposit-failed", NotificationTexts.depositReverted("deposit-failed"));
+        m.put("depositReverted deposit-expired", NotificationTexts.depositReverted("deposit-expired"));
+        m.put("depositReverted sender-cancelled", NotificationTexts.depositReverted("sender-cancelled"));
         m.put("commissionExpiredForTraveler", NotificationTexts.commissionExpiredForTraveler());
         m.put("commissionExpiredForSender", NotificationTexts.commissionExpiredForSender());
         m.put("requestAcceptedForTraveler", NotificationTexts.requestAcceptedForTraveler(MONTANT));

@@ -206,6 +206,40 @@ class MobileMoneyPayoutOutcomeListenerTest {
     }
 
     /**
+     * Tâche 8 : un paiement keyé sur un fil de négociation (pas de bidId, {@code
+     * negotiationThreadId} renseigné) doit retrouver son bid par {@code
+     * findByLinkedNegotiationThreadId} plutôt que {@code findById(null)}.
+     */
+    @Test
+    void payoutCompleted_threadKeyedPayment_findsBidByLinkedThread_andPublishesReleased() {
+        UUID threadId = UUID.randomUUID();
+        UUID paymentId = UUID.randomUUID();
+        PawapayOperationEntity op = new PawapayOperationEntity(UUID.randomUUID(), PawapayOperationKind.PAYOUT, paymentId, null,
+                new BigDecimal("30000"), "XOF", "ORANGE_SEN", "SN", "221771234567");
+        PaymentEntity payment = new PaymentEntity();
+        ReflectionTestUtils.setField(payment, "id", paymentId);
+        payment.setNegotiationThreadId(threadId);
+        BidEntity bid = new BidEntity();
+        ReflectionTestUtils.setField(bid, "id", UUID.randomUUID());
+        bid.setSenderId(UUID.randomUUID());
+        bid.setAnnouncementId(UUID.randomUUID());
+        AnnouncementEntity ann = new AnnouncementEntity();
+        ann.setTravelerId(UUID.randomUUID());
+        when(operations.get(op.getId())).thenReturn(op);
+        when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(payment));
+        when(bidRepository.findByLinkedNegotiationThreadId(threadId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(bid.getAnnouncementId())).thenReturn(Optional.of(ann));
+
+        listener.onCompleted(new PawapayOperationCompletedEvent(op.getId(), PawapayOperationKind.PAYOUT, paymentId));
+
+        verify(bidRepository, never()).findById(any());
+        verify(events).publishEvent(ArgumentMatchers.<PaymentReleasedEvent>argThat(r ->
+                r.getAmount().compareTo(new BigDecimal("30000")) == 0
+                && "XOF".equals(r.getCurrency()) && r.isMobileMoney()
+                && r.getTravelerId().equals(ann.getTravelerId()) && r.getSenderId().equals(bid.getSenderId())));
+    }
+
+    /**
      * Pendant de {@code depositEvents_areIgnoredHere} pour {@code onFailed} : la garde ligne 116
      * a sa propre paire de branches (kind, paymentId) distincte de celle de {@code onCompleted},
      * JaCoCo les compte séparément. Sans ce test, un événement FAILED de kind DEPOSIT/REFUND

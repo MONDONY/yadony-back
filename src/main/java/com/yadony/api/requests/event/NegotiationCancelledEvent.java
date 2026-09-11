@@ -38,9 +38,10 @@ public record NegotiationCancelledEvent(
     String byName,
     NegotiationThreadStatus previousStatus
 ) {
-    /** An in-flight Stripe card hold may exist and must be cancelled. */
+    /** Un hold carte ou un dépôt mobile money peut être en vol et doit être libéré. */
     public boolean releaseEscrow() {
-        return previousStatus == NegotiationThreadStatus.AWAITING_PAYMENT;
+        return previousStatus == NegotiationThreadStatus.AWAITING_PAYMENT
+            || previousStatus == NegotiationThreadStatus.AWAITING_DEPOSIT;
     }
 
     /** A commission may already have been charged and must be refunded. */

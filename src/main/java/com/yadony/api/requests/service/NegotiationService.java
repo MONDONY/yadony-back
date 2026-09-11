@@ -19,6 +19,7 @@ import com.yadony.api.payments.currency.CurrencyBounds;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.requests.CashGatePort;
 import com.yadony.api.requests.NegotiationEscrowPort;
+import com.yadony.api.requests.NegotiationMobileMoneyPort;
 import com.yadony.api.requests.NegotiationProperties;
 import com.yadony.api.requests.RequestsConfig;
 import com.yadony.api.requests.dto.*;
@@ -64,6 +65,7 @@ public class NegotiationService {
     private final PackageRequestPhotoService photoService;
     private final CommissionRateResolver commissionRateResolver;
     private final com.yadony.api.payments.currency.ExchangeRateService exchangeRateService;
+    private final NegotiationMobileMoneyPort mobileMoneyPort;
 
     public NegotiationService(PackageRequestRepository requestRepo,
                                NegotiationThreadRepository threadRepo,
@@ -80,7 +82,8 @@ public class NegotiationService {
                                StorageService storageService,
                                PackageRequestPhotoService photoService,
                                CommissionRateResolver commissionRateResolver,
-                               com.yadony.api.payments.currency.ExchangeRateService exchangeRateService) {
+                               com.yadony.api.payments.currency.ExchangeRateService exchangeRateService,
+                               NegotiationMobileMoneyPort mobileMoneyPort) {
         this.requestRepo = requestRepo;
         this.threadRepo = threadRepo;
         this.messageRepo = messageRepo;
@@ -97,6 +100,7 @@ public class NegotiationService {
         this.photoService = photoService;
         this.commissionRateResolver = commissionRateResolver;
         this.exchangeRateService = exchangeRateService;
+        this.mobileMoneyPort = mobileMoneyPort;
     }
 
     /**
@@ -1029,6 +1033,255 @@ public class NegotiationService {
             return current;
         }
         throw original;
+    }
+
+    // ── Mobile money : dépôt à l'accord ──────────────────────────────────
+
+    public record PreparedDeposit(UUID threadId, UUID paymentId, BigDecimal gross, String currency, LocalDateTime expiresAt) {}
+
+    /**
+     * Issue du balayage d'expiration d'un fil AWAITING_DEPOSIT échu : ramené à payer, laissé tel
+     * quel (dépôt en vol, pas encore échu, fil absent), ou maillon asynchrone perdu réparé
+     * (scellement rejoué, ou confirmation du séquestre rejouée par le port).
+     */
+    public enum DepositExpiryOutcome { REVERTED, IGNORED, REPAIRED }
+
+    /**
+     * L'expéditeur lance le paiement mobile money : le fil passe en AWAITING_DEPOSIT avec une
+     * échéance, le paiement PENDING est créé par le port dans CETTE transaction. Aucun appel
+     * pawaPay ici : le contrôleur enchaîne, après commit, avec l'initiation du dépôt.
+     * Idempotent : un fil déjà AWAITING_DEPOSIT (nouvel essai après échec réseau) est rendu tel quel.
+     */
+    @Transactional
+    public PreparedDeposit prepareMobileMoneyDeposit(UUID callerId, UUID threadId) {
+        UUID lockedRequestId = threadRepo.findPackageRequestIdById(threadId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "thread/not-found"));
+        PackageRequestEntity request = requestRepo.findByIdForUpdate(lockedRequestId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found"));
+        NegotiationThreadEntity thread = threadRepo.findById(threadId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "thread/not-found"));
+        if (!callerId.equals(request.getSenderId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "negotiation/not-thread-participant");
+        }
+        boolean alreadyPending = thread.getStatus() == NegotiationThreadStatus.AWAITING_DEPOSIT
+            && thread.getDepositExpiresAt() != null
+            && thread.getDepositExpiresAt().isAfter(LocalDateTime.now(ZoneOffset.UTC));
+        if (!alreadyPending && thread.getStatus() != NegotiationThreadStatus.AWAITING_PAYMENT) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "thread/not-awaiting-payment");
+        }
+        java.util.Set<PaymentMethod> available = thread.getAvailablePaymentMethods();
+        if (available == null || !available.contains(PaymentMethod.MOBILE_MONEY)) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "payment-method/not-in-available-set");
+        }
+        if (!request.getAcceptedPaymentMethods().contains(PaymentMethod.MOBILE_MONEY)) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "payment-method/not-accepted");
+        }
+        // Dernier portail avant que l'argent bouge : le compte de versement doit être actif
+        // DANS LA DEVISE DU FIL, sinon le dépôt réussirait et le versement échouerait à la livraison.
+        UserEntity traveler = userRepository.findById(thread.getTravelerId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "user/not-found"));
+        if (!traveler.canReceiveMobileMoney(thread.getCurrency())) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "negotiation/traveler-cannot-receive-mobile-money");
+        }
+        if (request.getRecipientName() == null || request.getRecipientPhone() == null) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "request/details-incomplete");
+        }
+        BigDecimal rate = resolveDepositCommissionRate(thread, request.getSenderId());
+        // Même garde que initiatePayment (carte) et settleCommission (cash), avant tout
+        // engagement d'argent : le trajet dédié du voyageur peut avoir été retiré par la
+        // modération entre l'accord de prix et ce dépôt.
+        assertTravelerAnnouncementActive(thread.getTravelerAnnouncementId());
+        NegotiationMobileMoneyPort.PendingDeposit pending = mobileMoneyPort.createPendingDeposit(
+            threadId, request.getSenderId(), thread.getTravelerId(), thread.getCurrentPriceEur(), rate, thread.getCurrency());
+        if (alreadyPending) {
+            return new PreparedDeposit(threadId, pending.paymentId(), pending.gross(), thread.getCurrency(), thread.getDepositExpiresAt());
+        }
+        thread.setPaymentMethod(PaymentMethod.MOBILE_MONEY);
+        thread.setCommissionRate(rate);
+        thread.setStatus(NegotiationThreadStatus.AWAITING_DEPOSIT);
+        thread.setDepositExpiresAt(pending.expiresAt());
+        thread.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC));
+        threadRepo.save(thread);
+        auditService.log("NEGOTIATION_THREAD", threadId, "AWAITING_DEPOSIT", callerId,
+            Map.of("paymentId", pending.paymentId().toString(), "gross", pending.gross().toPlainString(),
+                "currency", thread.getCurrency(), "expiresAt", pending.expiresAt().toString()));
+        eventPublisher.publishEvent(new NegotiationDepositPendingEvent(threadId, request.getId(), request.getSenderId(),
+            thread.getTravelerId(), pending.gross(), thread.getCurrency(), pending.expiresAt()));
+        return new PreparedDeposit(threadId, pending.paymentId(), pending.gross(), thread.getCurrency(), pending.expiresAt());
+    }
+
+    /**
+     * Taux figé sur le fil au dépôt, même contrat que la carte ({@code PaymentService.createNegotiationEscrow}) :
+     * le taux déjà persisté prime ; sinon le promo copié sur le fil à {@link #start} est résolu, et s'il
+     * est invalide on replie sur le taux de base ET on l'efface du fil, sinon {@code sealAcceptedThread}
+     * l'émettrait dans {@code PackageRequestAcceptedEvent} et {@code ThreadAcceptedBidListener} le
+     * rachèterait au taux non remisé.
+     */
+    private BigDecimal resolveDepositCommissionRate(NegotiationThreadEntity thread, UUID senderId) {
+        if (thread.getCommissionRate() != null) {
+            return thread.getCommissionRate();
+        }
+        String code = thread.getPromoCode() != null ? thread.getPromoCode().strip() : null;
+        if (code == null || code.isBlank()) {
+            return commissionRateResolver.resolve(thread.getTravelerId(), senderId);
+        }
+        try {
+            return commissionRateResolver.resolve(thread.getTravelerId(), senderId, code);
+        } catch (YadonyBusinessException e) {
+            log.warn("Promo {} invalide pour le dépôt mobile money de la négociation {} ({}) : repli sur le taux sans promo",
+                code, thread.getId(), e.getErrorCode());
+            thread.setPromoCode(null);
+            return commissionRateResolver.resolve(thread.getTravelerId(), senderId);
+        }
+    }
+
+    /**
+     * Dépôt confirmé (séquestre posé côté payments). Scelle le fil comme la carte, avec
+     * {@code paymentIntentId = null}. Si le fil n'est plus scellable (auto-rejeté par un accord
+     * concurrent, annulé), le séquestre est orphelin : remboursement par le port.
+     */
+    @Transactional
+    public void finalizeAfterMobileMoneyDeposit(UUID threadId) {
+        UUID lockedRequestId = threadRepo.findPackageRequestIdById(threadId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "thread/not-found"));
+        PackageRequestEntity request = requestRepo.findByIdForUpdate(lockedRequestId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found"));
+        NegotiationThreadEntity thread = threadRepo.findById(threadId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "thread/not-found"));
+        if (thread.getStatus() == NegotiationThreadStatus.ACCEPTED) {
+            return; // rejeu (rappel + poller)
+        }
+        if (thread.getStatus() != NegotiationThreadStatus.AWAITING_DEPOSIT) {
+            boolean refunded = mobileMoneyPort.refundEscrowedDeposit(threadId);
+            auditService.log("NEGOTIATION_THREAD", threadId, "DEPOSIT_ORPHANED", null,
+                Map.of("status", thread.getStatus().name(), "refunded", String.valueOf(refunded)));
+            return;
+        }
+        thread.setDepositExpiresAt(null);
+        sealAcceptedThread(thread, request, request.getSenderId(), null);
+    }
+
+    /** AWAITING_DEPOSIT → AWAITING_PAYMENT : l'accord tient, l'expéditeur pourra relancer. No-op ailleurs. */
+    @Transactional
+    public void revertMobileMoneyDeposit(UUID threadId, String reason) {
+        NegotiationThreadEntity thread = threadRepo.findById(threadId).orElse(null);
+        if (thread == null || thread.getStatus() != NegotiationThreadStatus.AWAITING_DEPOSIT) {
+            return;
+        }
+        thread.setStatus(NegotiationThreadStatus.AWAITING_PAYMENT);
+        thread.setDepositExpiresAt(null);
+        thread.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC));
+        threadRepo.save(thread);
+        auditService.log("NEGOTIATION_THREAD", threadId, "DEPOSIT_REVERTED", null, Map.of("reason", reason));
+        UUID senderId = requestRepo.findById(thread.getPackageRequestId()).map(PackageRequestEntity::getSenderId).orElse(null);
+        eventPublisher.publishEvent(new NegotiationDepositRevertedEvent(threadId, thread.getPackageRequestId(),
+            senderId, thread.getTravelerId(), reason));
+    }
+
+    /**
+     * Dépôt FAILED côté pawaPay. Passe par le port avant de ramener le fil à payer (revue finale,
+     * I3) : entre l'échec de l'opération A et ce rejeu asynchrone, l'expéditeur a pu relancer et
+     * soumettre une opération B ; un retour aveugle à AWAITING_PAYMENT ferait ensuite rembourser
+     * ce dépôt B valide par {@link #finalizeAfterMobileMoneyDeposit}. Si un dépôt est en vol, un
+     * dépôt encaissé pas encore confirmé ou un séquestre pas encore scellé, le fil ne bouge pas.
+     * Sinon le paiement PENDING passe CANCELLED (recyclé en PENDING au prochain essai) et le fil
+     * revient à AWAITING_PAYMENT.
+     */
+    @Transactional
+    public void failMobileMoneyDeposit(UUID threadId) {
+        NegotiationThreadEntity thread = threadRepo.findById(threadId).orElse(null);
+        if (thread == null || thread.getStatus() != NegotiationThreadStatus.AWAITING_DEPOSIT) {
+            return;
+        }
+        switch (mobileMoneyPort.releasePendingDeposit(threadId)) {
+            case DEPOSIT_OPEN, DEPOSIT_COMPLETED_NOT_APPLIED, ESCROW_NOT_SEALED ->
+                log.info("Fil {} : dépôt échoué mais un autre dépôt est en vol ou encaissé, fil conservé en AWAITING_DEPOSIT", threadId);
+            case CANCELLED, NOTHING_PENDING -> revertMobileMoneyDeposit(threadId, "deposit-failed");
+        }
+    }
+
+    /** L'expéditeur renonce au dépôt en cours (avant son issue). */
+    @Transactional
+    public void cancelMobileMoneyDeposit(UUID callerId, UUID threadId) {
+        NegotiationThreadEntity thread = threadRepo.findById(threadId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "thread/not-found"));
+        PackageRequestEntity request = requestRepo.findById(thread.getPackageRequestId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found"));
+        if (!callerId.equals(request.getSenderId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "negotiation/not-thread-participant");
+        }
+        if (thread.getStatus() != NegotiationThreadStatus.AWAITING_DEPOSIT) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "negotiation/not-awaiting-deposit");
+        }
+        switch (mobileMoneyPort.releasePendingDeposit(threadId)) {
+            case DEPOSIT_OPEN, DEPOSIT_COMPLETED_NOT_APPLIED, ESCROW_NOT_SEALED ->
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "negotiation/deposit-in-flight");
+            case CANCELLED, NOTHING_PENDING -> revertMobileMoneyDeposit(threadId, "sender-cancelled");
+        }
+    }
+
+    /**
+     * Balayage d'expiration : idempotent, chaque fil dans sa propre transaction. Verrouille la
+     * demande avant de lire le fil, comme {@link #prepareMobileMoneyDeposit} et
+     * {@link #finalizeAfterMobileMoneyDeposit} : lecture fraîche sous le même verrou que celui que
+     * prend le scellement, ordre des verrous aligné (demande puis fil). Répare aussi les deux
+     * maillons asynchrones à un seul coup (revue finale, I2) : séquestre posé mais scellement
+     * jamais passé (rejoué ici), dépôt COMPLETED mais confirmation jamais appliquée (rejouée par
+     * le port, dont l'événement scellera le fil dès son commit). Une réparation qui lève remonte
+     * à l'appelant, qui alerte.
+     */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    public DepositExpiryOutcome expireMobileMoneyDeposit(UUID threadId) {
+        // Même ordre de verrous que prepareMobileMoneyDeposit et finalizeAfterMobileMoneyDeposit :
+        // verrouiller la demande avant de lire le fil. Sur ESCROW_NOT_SEALED ci-dessous, le
+        // scellement légitime peut avoir commité entre l'échéance constatée et cet appel (dépôt
+        // encaissé juste après l'échéance) ; sans ce verrou, finalizeAfterMobileMoneyDeposit
+        // relirait une instance de fil déjà en cache dans CETTE transaction (version périmée) au
+        // lieu d'une lecture fraîche, et le rescellement échouerait sur l'optimistic locking
+        // (@Version), remontant une fausse alerte admin sur un fil pourtant sain.
+        UUID lockedRequestId = threadRepo.findPackageRequestIdById(threadId).orElse(null);
+        if (lockedRequestId == null) {
+            return DepositExpiryOutcome.IGNORED;
+        }
+        if (requestRepo.findByIdForUpdate(lockedRequestId).isEmpty()) {
+            return DepositExpiryOutcome.IGNORED;
+        }
+        NegotiationThreadEntity thread = threadRepo.findById(threadId).orElse(null);
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        if (thread == null || thread.getStatus() != NegotiationThreadStatus.AWAITING_DEPOSIT
+            || thread.getDepositExpiresAt() == null || thread.getDepositExpiresAt().isAfter(now)) {
+            return DepositExpiryOutcome.IGNORED;
+        }
+        return switch (mobileMoneyPort.releasePendingDeposit(threadId)) {
+            case DEPOSIT_OPEN -> DepositExpiryOutcome.IGNORED;
+            case ESCROW_NOT_SEALED -> {
+                log.warn("Fil {} : séquestre posé mais scellement jamais passé, rejoué par le balayage", threadId);
+                finalizeAfterMobileMoneyDeposit(threadId);
+                yield DepositExpiryOutcome.REPAIRED;
+            }
+            case DEPOSIT_COMPLETED_NOT_APPLIED -> {
+                log.warn("Fil {} : dépôt COMPLETED mais confirmation jamais appliquée, rejouée par le balayage", threadId);
+                mobileMoneyPort.repairDepositCompletedNotApplied(threadId);
+                yield DepositExpiryOutcome.REPAIRED;
+            }
+            case CANCELLED, NOTHING_PENDING -> {
+                revertMobileMoneyDeposit(threadId, "deposit-expired");
+                yield DepositExpiryOutcome.REVERTED;
+            }
+        };
+    }
+
+    /** Fil lu par un participant (expéditeur ou voyageur), 403 sinon. Sert au statut du dépôt. */
+    @Transactional(readOnly = true)
+    public NegotiationThreadEntity requireParticipantThread(UUID callerId, UUID threadId) {
+        NegotiationThreadEntity thread = threadRepo.findById(threadId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "thread/not-found"));
+        PackageRequestEntity request = requestRepo.findById(thread.getPackageRequestId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found"));
+        if (!callerId.equals(request.getSenderId()) && !callerId.equals(thread.getTravelerId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "negotiation/not-thread-participant");
+        }
+        return thread;
     }
 
     private NegotiationThreadResponse finalizeInternal(UUID callerId, UUID threadId,

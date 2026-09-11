@@ -3,11 +3,14 @@ package com.yadony.api.payments;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.stripe.AdminAlertService;
+import com.yadony.api.payments.mobilemoney.MobileMoneyNegotiationPaymentService;
+import com.yadony.api.requests.NegotiationMobileMoneyPort;
 import com.stripe.exception.StripeException;
 import com.stripe.model.PaymentIntent;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.Optional;
 import java.util.UUID;
@@ -136,5 +139,67 @@ class PaymentServiceCancelNegotiationEscrowTest {
             assertThat(p.getStatus()).isEqualTo(PaymentStatus.CANCELLED);
             verify(paymentRepository).save(p);
         }
+    }
+
+    @Test
+    @DisplayName("rail PAWAPAY, PENDING → libéré via le service mobile money, jamais Stripe")
+    void cancel_pawapayPending_releasesViaMobileMoneyService_neverCallsStripe() {
+        MobileMoneyNegotiationPaymentService mobileMoneyService = mock(MobileMoneyNegotiationPaymentService.class);
+        ReflectionTestUtils.setField(service, "mobileMoneyNegotiationPaymentService", mobileMoneyService);
+        PaymentEntity p = payment(PaymentStatus.PENDING, null);
+        p.setRail(PaymentRail.PAWAPAY);
+        when(paymentRepository.findByNegotiationThreadId(THREAD)).thenReturn(Optional.of(p));
+        when(mobileMoneyService.releasePendingDeposit(THREAD))
+                .thenReturn(NegotiationMobileMoneyPort.ReleaseOutcome.CANCELLED);
+
+        try (MockedStatic<PaymentIntent> mocked = mockStatic(PaymentIntent.class)) {
+            assertThat(service.cancelNegotiationEscrow(THREAD, REASON)).isTrue();
+            mocked.verifyNoInteractions();
+        }
+        verify(mobileMoneyService).releasePendingDeposit(THREAD);
+        verify(paymentRepository, never()).save(any());
+    }
+
+    /**
+     * T7 différé puis revue finale I2 : tant que de l'argent est en vol sur le rail mobile
+     * money (PIN en cours, dépôt encaissé pas encore confirmé, séquestre posé pas encore
+     * scellé), la bascule de mode de paiement est refusée : jamais deux séquestres.
+     */
+    @org.junit.jupiter.params.ParameterizedTest(name = "rail PAWAPAY, PENDING + {0} → false, on ne bascule pas")
+    @org.junit.jupiter.params.provider.EnumSource(value = NegotiationMobileMoneyPort.ReleaseOutcome.class,
+            names = {"DEPOSIT_OPEN", "DEPOSIT_COMPLETED_NOT_APPLIED", "ESCROW_NOT_SEALED"})
+    void cancel_pawapayPending_moneyInFlight_returnsFalse(NegotiationMobileMoneyPort.ReleaseOutcome outcome) {
+        MobileMoneyNegotiationPaymentService mobileMoneyService = mock(MobileMoneyNegotiationPaymentService.class);
+        ReflectionTestUtils.setField(service, "mobileMoneyNegotiationPaymentService", mobileMoneyService);
+        PaymentEntity p = payment(PaymentStatus.PENDING, null);
+        p.setRail(PaymentRail.PAWAPAY);
+        when(paymentRepository.findByNegotiationThreadId(THREAD)).thenReturn(Optional.of(p));
+        when(mobileMoneyService.releasePendingDeposit(THREAD)).thenReturn(outcome);
+
+        try (MockedStatic<PaymentIntent> mocked = mockStatic(PaymentIntent.class)) {
+            assertThat(service.cancelNegotiationEscrow(THREAD, REASON)).isFalse();
+            mocked.verifyNoInteractions();
+        }
+        verify(mobileMoneyService, never()).refundEscrowedDeposit(any());
+        verify(paymentRepository, never()).save(any());
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    @DisplayName("rail PAWAPAY, ESCROW → remboursé via le service mobile money")
+    void cancel_pawapayEscrowed_refunds() {
+        MobileMoneyNegotiationPaymentService mobileMoneyService = mock(MobileMoneyNegotiationPaymentService.class);
+        ReflectionTestUtils.setField(service, "mobileMoneyNegotiationPaymentService", mobileMoneyService);
+        PaymentEntity p = payment(PaymentStatus.ESCROW, null);
+        p.setRail(PaymentRail.PAWAPAY);
+        when(paymentRepository.findByNegotiationThreadId(THREAD)).thenReturn(Optional.of(p));
+        when(mobileMoneyService.refundEscrowedDeposit(THREAD)).thenReturn(true);
+
+        try (MockedStatic<PaymentIntent> mocked = mockStatic(PaymentIntent.class)) {
+            assertThat(service.cancelNegotiationEscrow(THREAD, REASON)).isTrue();
+            mocked.verifyNoInteractions();
+        }
+        verify(mobileMoneyService).refundEscrowedDeposit(THREAD);
+        verify(paymentRepository, never()).save(any());
     }
 }
