@@ -10,6 +10,7 @@ import com.yadony.api.payments.pawapay.PawapayOperationEntity;
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
 import com.yadony.api.payments.pawapay.PawapayOperationService;
 import com.yadony.api.payments.pawapay.PawapayOperationStatus;
+import com.yadony.api.payments.pawapay.PawapayProviders;
 import com.yadony.api.payments.pawapay.PawapaySubmissionService;
 import java.math.BigDecimal;
 import java.util.Map;
@@ -126,8 +127,14 @@ public class MobileMoneyPayoutInitiator {
             return op;
         }
 
+        // Même réseau que le paiement (décision produit) : la marque du dépôt désigne le code accepté
+        // du voyageur ; sinon (marque absente de son pays, compte hérité, dépôt introuvable) son
+        // réseau de repli.
+        String depositBrand = operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT)
+                .map(PawapayOperationEntity::getProvider).map(PawapayProviders::brand).orElse(null);
+        String provider = MobileMoneyNetworks.providerForBrand(traveler, depositBrand).orElse(traveler.getMobileMoneyProvider());
         PawapayOperationEntity op = submission.submitPayout(payment.getId(), traveler.getMobileMoneyMsisdn(),
-                traveler.getMobileMoneyProvider(), traveler.getMobileMoneyCountry(), net, payment.getCurrency(), "bid-" + bidId);
+                provider, traveler.getMobileMoneyCountry(), net, payment.getCurrency(), "bid-" + bidId);
         if (op.getStatus() == PawapayOperationStatus.SUBMIT_REJECTED) {
             adminAlert.raise("PAWAPAY_PAYOUT_REJECTED",
                     "pawaPay a refusé le payout du paiement " + payment.getId() + " : " + op.getFailureCode(),
@@ -138,7 +145,8 @@ public class MobileMoneyPayoutInitiator {
         independentAuditTransaction.executeWithoutResult(status -> audit.log("PAYMENT", payment.getId(),
                 "ESCROW_RELEASED_MOBILE_MONEY", bidId,
                 Map.of("bidId", String.valueOf(bidId), "operationId", op.getId().toString(), "net", net.toPlainString(),
-                        "currency", payment.getCurrency(), "msisdnMasked", op.getMsisdnMasked(), "source", source)));
+                        "currency", payment.getCurrency(), "msisdnMasked", op.getMsisdnMasked(), "source", source,
+                        "provider", String.valueOf(provider))));
         log.info("Payout mobile money {} soumis pour le paiement {} ({})", op.getId(), payment.getId(), source);
         return op;
     }
