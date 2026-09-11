@@ -147,64 +147,8 @@ public class PackageRequestSearchMapper {
     }
 
     /**
-     * Maps an entity to the search DTO.
-     *
-     * @param entity     the package-request entity (must not be null)
-     * @param isFavorite whether the viewing user has favorited this request
-     * @param viewer     the viewing user's payment capabilities (Stripe Connect, mobile money)
-     *                   — drives {@code availablePaymentMethods}
-     * @return the populated search response record
-     */
-    public PackageRequestSearchResponse toSearchResponse(PackageRequestEntity entity, boolean isFavorite,
-                                                          ViewerPaymentCapabilities viewer) {
-        UserEntity sender = userRepository.findById(entity.getSenderId()).orElse(null);
-        String displayName = buildSenderDisplayName(sender);
-        double averageRating = sender != null && sender.getAverageRating() != null
-                ? sender.getAverageRating().doubleValue() : 0.0;
-        int totalRatings = sender != null ? sender.getRatingCount() : 0;
-        boolean kycVerified = sender != null && sender.getKycStatus() == KycStatus.VERIFIED;
-        var senderProfile = new PackageRequestSearchResponse.SenderPublicProfile(
-                entity.getSenderId(), displayName, averageRating, totalRatings, kycVerified,
-                storageService.avatarUrl(sender != null ? sender.getAvatarUrl() : null)
-        );
-        var depCity = cityRepository.findFirstByNameIgnoreCase(entity.getDepartureCity()).orElse(null);
-        var arrCity = cityRepository.findFirstByNameIgnoreCase(entity.getArrivalCity()).orElse(null);
-        List<PackageRequestPhotoResponse> photos = photoService.activePhotos(entity.getId());
-        String photoUrl = photos.isEmpty() ? entity.getPhotoUrl() : photos.get(0).url();
-        // Capacités réelles du visiteur : carte si Connect actif, mobile money si compte de
-        // versement actif dans la devise de la demande.
-        Set<com.yadony.api.payments.cash.PaymentMethod> availablePaymentMethods =
-                AnnouncementPaymentRails.offerable(entity.getAcceptedPaymentMethods(), entity.getCurrency(),
-                        viewer.hasConnect(), viewer.canReceiveMobileMoney(entity.getCurrency()));
-        return new PackageRequestSearchResponse(
-                entity.getId(), entity.getDepartureCity(), entity.getArrivalCity(),
-                depCity != null ? depCity.getLatitude() : null,
-                depCity != null ? depCity.getLongitude() : null,
-                arrCity != null ? arrCity.getLatitude() : null,
-                arrCity != null ? arrCity.getLongitude() : null,
-                entity.getDesiredDate(),
-                entity.getDateToleranceDays() != null ? entity.getDateToleranceDays().intValue() : 0,
-                entity.getWeightKg(), entity.getParcelSize(), entity.getTransportMode(),
-                entity.getContentCategory(),
-                entity.getTargetPriceEur(), entity.isNegotiable(), photoUrl,
-                entity.getPickupNeighborhood(), entity.getDeliveryNeighborhood(),
-                senderProfile,
-                entity.getAcceptedPaymentMethods(),
-                photos,
-                isFavorite,
-                computeUrgent(entity.getDesiredDate()),
-                null, null, null, entity.getCurrency(),
-                availablePaymentMethods,
-                grossPriceEur(entity.getTargetPriceEur()),
-                // Converti joint par le service (withViewerConversion), qui connaît le lecteur.
-                null, null
-        );
-    }
-
-    /**
      * Batch convenience: maps a list of entities to DTOs using a single query per resource type
      * (users, cities, photos). All entities get {@code isFavorite=true} (used by FavoriteService).
-     * For mixed isFavorite values, use {@link #toSearchResponse(PackageRequestEntity, boolean, ViewerPaymentCapabilities, Map, Map, Map)}.
      *
      * @param entities the package-request entities to map
      * @param favIdSet set of request IDs that the viewer has favorited

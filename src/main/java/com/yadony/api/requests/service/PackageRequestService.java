@@ -1091,20 +1091,6 @@ public class PackageRequestService {
     }
 
     /**
-     * Reusable mapper: converts a {@link PackageRequestEntity} to a {@link PackageRequestSearchResponse}.
-     * The {@code isFavorite} flag is supplied by the caller so this method remains pure and testable.
-     * Delegates to {@link PackageRequestSearchMapper} so that external packages can also call
-     * the mapper directly without injecting this service.
-     *
-     * <p>Sans appelant connu à ce site (aucune méthode publique de ce service n'y délègue
-     * actuellement), les capacités du voyageur sont inconnues : {@link ViewerPaymentCapabilities#NONE},
-     * comme {@link #toResponse(PackageRequestEntity)} pour le même cas.
-     */
-    public PackageRequestSearchResponse toSearchResponse(PackageRequestEntity e, boolean isFavorite) {
-        return packageRequestSearchMapper.toSearchResponse(e, isFavorite, ViewerPaymentCapabilities.NONE);
-    }
-
-    /**
      * Le champ legacy {@code photoUrl} n'accepte qu'une clé S3 interne, jamais une
      * URL absolue : sans ce garde-fou un expéditeur pouvait injecter du contenu
      * externe (pixel de tracking, image de phishing sous la marque Yadony) affiché à
