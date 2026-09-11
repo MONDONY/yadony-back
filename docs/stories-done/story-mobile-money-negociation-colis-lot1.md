@@ -364,8 +364,9 @@ Rulings actés pendant l'implémentation (registre `progress.md` de la tâche SD
    gagne `repairDepositCompletedNotApplied` (rejeu idempotent de `confirmEscrow` sur le dernier
    dépôt `COMPLETED`, modèle `MobileMoneyBidPaymentService`). `expireMobileMoneyDeposit` rejoue
    le scellement (`ESCROW_NOT_SEALED`) ou la confirmation (`DEPOSIT_COMPLETED_NOT_APPLIED`,
-   l'événement republié scellera au tour suivant) et rend `REPAIRED` ; le runner n'alerte plus
-   que si une réparation lève (`NEGO_DEPOSIT_DONE_<threadId>`, dédupliquée, en filet).
+   l'écouteur `AFTER_COMMIT` scelle dès le commit de la réparation, sans attendre un tick) et
+   rend `REPAIRED` ; le runner n'alerte plus que si une réparation lève
+   (`NEGO_DEPOSIT_DONE_<threadId>`, dédupliquée, en filet).
    `cancelMobileMoneyDeposit` répond 409 `negotiation/deposit-in-flight` et
    `PaymentService.cancelNegotiationEscrow` rend `false` sur `ESCROW_NOT_SEALED`.
 9. **L'échec d'un dépôt passe par le port (I3)** : `revertMobileMoneyDeposit("deposit-failed")`
@@ -396,6 +397,14 @@ Rulings actés pendant l'implémentation (registre `progress.md` de la tâche SD
 13. **`deposit_expires_at` en `TIMESTAMP`** (sans fuseau), cohérent avec
     `bids.awaiting_payment_expires_at` et le `LocalDateTime` UTC du code, alors que la spec
     disait `TIMESTAMPTZ`. Toute l'horloge du rail est en UTC (`LocalDateTime.now(ZoneOffset.UTC)`).
+14. **`expireMobileMoneyDeposit` verrouille la demande avant de lire le fil** (re-relecture
+    finale) : sans ce verrou, la lecture du fil rendait une instance déjà en cache dans la même
+    transaction si un scellement légitime (`finalizeAfterMobileMoneyDeposit`, rejoué ici sur
+    `ESCROW_NOT_SEALED`) commitait entre l'échéance constatée et cet appel, et le rescellement
+    échouait sur l'optimistic locking (`@Version`), remontant une fausse alerte admin sur un fil
+    sain. Même ordre de verrous que `prepareMobileMoneyDeposit` et
+    `finalizeAfterMobileMoneyDeposit` (demande puis fil) : lecture fraîche garantie, ordre des
+    verrous aligné.
 
 ## Vérifications de non-exposition (rail à blanc)
 

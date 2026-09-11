@@ -20,6 +20,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
@@ -44,6 +45,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.inOrder;
 
 @ExtendWith(MockitoExtension.class)
 class NegotiationServiceMobileMoneyTest {
@@ -549,6 +551,37 @@ class NegotiationServiceMobileMoneyTest {
     void expire_threadMissing_isIgnored() {
         assertThat(service.expireMobileMoneyDeposit(UUID.randomUUID())).isEqualTo(NegotiationService.DepositExpiryOutcome.IGNORED);
         verifyNoInteractions(mobileMoneyPort);
+    }
+
+    /** Re-relecture finale : un fil sans demande associée (aiguillage impossible) est ignoré, sans verrou pris. */
+    @Test
+    void expire_threadWithoutRequestId_isIgnored() {
+        when(threadRepo.findPackageRequestIdById(thread.getId())).thenReturn(Optional.empty());
+
+        assertThat(service.expireMobileMoneyDeposit(thread.getId())).isEqualTo(NegotiationService.DepositExpiryOutcome.IGNORED);
+
+        verify(requestRepo, never()).findByIdForUpdate(any());
+        verifyNoInteractions(mobileMoneyPort);
+    }
+
+    /**
+     * Re-relecture finale : la demande est verrouillée AVANT la lecture du fil, comme
+     * prepareMobileMoneyDeposit et finalizeAfterMobileMoneyDeposit, afin que la lecture du fil
+     * soit fraîche sous le même verrou que celui que prend le scellement.
+     */
+    @Test
+    void expire_locksTheRequestBeforeReadingTheThread() {
+        thread.setStatus(NegotiationThreadStatus.AWAITING_DEPOSIT);
+        thread.setDepositExpiresAt(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1));
+        when(mobileMoneyPort.releasePendingDeposit(thread.getId())).thenReturn(NegotiationMobileMoneyPort.ReleaseOutcome.NOTHING_PENDING);
+
+        assertThat(service.expireMobileMoneyDeposit(thread.getId())).isEqualTo(NegotiationService.DepositExpiryOutcome.REVERTED);
+
+        InOrder inOrder = inOrder(requestRepo, threadRepo);
+        inOrder.verify(requestRepo).findByIdForUpdate(request.getId());
+        // revertMobileMoneyDeposit relit le fil une seconde fois (no-op idempotent) : au moins un
+        // findById après le verrou suffit à prouver l'ordre.
+        inOrder.verify(threadRepo, atLeastOnce()).findById(thread.getId());
     }
 
     @Test

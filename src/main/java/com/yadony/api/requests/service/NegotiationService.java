@@ -1221,14 +1221,31 @@ public class NegotiationService {
     }
 
     /**
-     * Balayage d'expiration : idempotent, chaque fil dans sa propre transaction. Répare aussi
-     * les deux maillons asynchrones à un seul coup (revue finale, I2) : séquestre posé mais
-     * scellement jamais passé (rejoué ici), dépôt COMPLETED mais confirmation jamais appliquée
-     * (rejouée par le port, dont l'événement scellera le fil au tour suivant). Une réparation
-     * qui lève remonte à l'appelant, qui alerte.
+     * Balayage d'expiration : idempotent, chaque fil dans sa propre transaction. Verrouille la
+     * demande avant de lire le fil, comme {@link #prepareMobileMoneyDeposit} et
+     * {@link #finalizeAfterMobileMoneyDeposit} : lecture fraîche sous le même verrou que celui que
+     * prend le scellement, ordre des verrous aligné (demande puis fil). Répare aussi les deux
+     * maillons asynchrones à un seul coup (revue finale, I2) : séquestre posé mais scellement
+     * jamais passé (rejoué ici), dépôt COMPLETED mais confirmation jamais appliquée (rejouée par
+     * le port, dont l'événement scellera le fil dès son commit). Une réparation qui lève remonte
+     * à l'appelant, qui alerte.
      */
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
     public DepositExpiryOutcome expireMobileMoneyDeposit(UUID threadId) {
+        // Même ordre de verrous que prepareMobileMoneyDeposit et finalizeAfterMobileMoneyDeposit :
+        // verrouiller la demande avant de lire le fil. Sur ESCROW_NOT_SEALED ci-dessous, le
+        // scellement légitime peut avoir commité entre l'échéance constatée et cet appel (dépôt
+        // encaissé juste après l'échéance) ; sans ce verrou, finalizeAfterMobileMoneyDeposit
+        // relirait une instance de fil déjà en cache dans CETTE transaction (version périmée) au
+        // lieu d'une lecture fraîche, et le rescellement échouerait sur l'optimistic locking
+        // (@Version), remontant une fausse alerte admin sur un fil pourtant sain.
+        UUID lockedRequestId = threadRepo.findPackageRequestIdById(threadId).orElse(null);
+        if (lockedRequestId == null) {
+            return DepositExpiryOutcome.IGNORED;
+        }
+        if (requestRepo.findByIdForUpdate(lockedRequestId).isEmpty()) {
+            return DepositExpiryOutcome.IGNORED;
+        }
         NegotiationThreadEntity thread = threadRepo.findById(threadId).orElse(null);
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         if (thread == null || thread.getStatus() != NegotiationThreadStatus.AWAITING_DEPOSIT

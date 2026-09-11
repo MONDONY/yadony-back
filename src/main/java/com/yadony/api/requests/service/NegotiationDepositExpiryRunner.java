@@ -16,15 +16,12 @@ import org.springframework.stereotype.Component;
 /**
  * Chaque minute ({@code yadony.pawapay.deadline-cron}, même cadence que le rail bid) : les fils
  * AWAITING_DEPOSIT dont l'échéance est passée reviennent à « à payer ». Idempotent par
- * {@link NegotiationService#expireMobileMoneyDeposit} (REQUIRES_NEW par fil, claim atomique côté
- * paiement), lot borné, plus anciens d'abord, un échec n'arrête jamais les suivants. Un fil scellé
- * par un règlement concurrent entre la lecture du lot et le commit de
- * {@code expireMobileMoneyDeposit} lève une {@code ObjectOptimisticLockingFailureException} au
- * sortir du proxy REQUIRES_NEW : couverte par le même {@code catch} large que le reste du lot,
- * journalisée, le tick suivant repasse. Un maillon asynchrone perdu (dépôt COMPLETED jamais
- * confirmé, séquestre posé jamais scellé) n'est jamais expiré : il est réparé par
- * {@code expireMobileMoneyDeposit} ; si la réparation lève, l'alerte dédupliquée
- * {@value #DEPOSIT_COMPLETED_ALERT_PREFIX}{@code <threadId>} reste le filet.
+ * {@link NegotiationService#expireMobileMoneyDeposit} (REQUIRES_NEW par fil, verrou de la demande
+ * pris avant la lecture du fil comme tout autre chemin de scellement, claim atomique côté
+ * paiement), lot borné, plus anciens d'abord, un échec n'arrête jamais les suivants. Un maillon
+ * asynchrone perdu (dépôt COMPLETED jamais confirmé, séquestre posé jamais scellé) n'est jamais
+ * expiré : il est réparé par {@code expireMobileMoneyDeposit} ; si la réparation lève, l'alerte
+ * dédupliquée {@value #DEPOSIT_COMPLETED_ALERT_PREFIX}{@code <threadId>} reste le filet.
  */
 @Component
 public class NegotiationDepositExpiryRunner {
