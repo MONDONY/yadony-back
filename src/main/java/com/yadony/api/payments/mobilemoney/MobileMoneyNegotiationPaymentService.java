@@ -191,6 +191,7 @@ public class MobileMoneyNegotiationPaymentService {
                 case OPERATION_CLOSED -> e.providerLabel() + " ne permet pas le paiement pour le moment.";
                 case CURRENCY_MISMATCH -> "Ce numéro paie en " + e.providerCurrency() + ", ce colis est en " + payment.getCurrency() + ".";
                 case COUNTRY_UNKNOWN -> "Pays non reconnu pour ce numéro.";
+                case PROVIDER_NOT_AVAILABLE -> "Réseau " + e.providerLabel() + " indisponible pour ce numéro.";
             });
         }
         var limits = resolved.config().deposit();

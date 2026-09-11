@@ -127,6 +127,7 @@ public class MobileMoneyAccountService {
                 case OPERATION_CLOSED -> e.providerLabel() + " ne permet pas encore le versement.";
                 case CURRENCY_MISMATCH -> "Votre portefeuille est en " + active + ", ce numéro reçoit du " + e.providerCurrency() + ".";
                 case COUNTRY_UNKNOWN -> "Pays non reconnu pour ce numéro.";
+                case PROVIDER_NOT_AVAILABLE -> "Réseau " + e.providerLabel() + " indisponible pour ce numéro.";
             });
         }
         user.setMobileMoneyStatus(MobileMoneyPayoutStatus.ACTIVE);

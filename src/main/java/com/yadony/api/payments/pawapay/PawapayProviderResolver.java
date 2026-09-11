@@ -3,6 +3,10 @@ package com.yadony.api.payments.pawapay;
 import com.yadony.api.common.Msisdn;
 import com.yadony.api.payments.pawapay.dto.PawapayProviderConfig;
 import com.yadony.api.payments.pawapay.dto.PawapayProviderPrediction;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import org.springframework.stereotype.Component;
@@ -35,7 +39,9 @@ public class PawapayProviderResolver {
         /** L'opérateur travaille dans une autre devise que celle attendue. */
         CURRENCY_MISMATCH,
         /** Alpha-3 renvoyé par pawaPay absent de la table ISO du JDK — {@code pawapay_operations.country} est NOT NULL. */
-        COUNTRY_UNKNOWN
+        COUNTRY_UNKNOWN,
+        /** Opérateur demandé explicitement mais absent du catalogue de ce numéro (inconnu, fermé, autre pays ou autre devise). */
+        PROVIDER_NOT_AVAILABLE
     }
 
     /** Numéro reconnu mais inexploitable pour cette opération. */
@@ -60,6 +66,22 @@ public class PawapayProviderResolver {
         public String providerLabel() { return PawapayProviders.label(provider); }
     }
 
+    /**
+     * Tous les opérateurs utilisables par un numéro pour une opération et une devise : ceux du pays
+     * prédit, ouverts à l'opération, dans la devise attendue, l'opérateur prédit en tête. {@code detected}
+     * est nul quand l'opérateur prédit n'est pas dans {@code options} (fermé pour l'opération, autre
+     * devise) alors que d'autres réseaux du pays restent possibles.
+     */
+    public record Catalogue(String countryAlpha2, String currency, String msisdn, String detected,
+                            List<PawapayProviderConfig> options) {
+        public Optional<PawapayProviderConfig> option(String provider) {
+            if (provider == null) {
+                return Optional.empty();
+            }
+            return options.stream().filter(o -> o.provider().equalsIgnoreCase(provider.trim())).findFirst();
+        }
+    }
+
     private final PawapayClient client;
 
     public PawapayProviderResolver(PawapayClient client) {
@@ -75,42 +97,107 @@ public class PawapayProviderResolver {
      *                         (ex. « l'activation mobile money de <userId> ») — jamais un numéro
      */
     public Resolved resolve(String rawMsisdn, PawapayOperationKind kind, String expectedCurrency, String context) {
+        PawapayProviderPrediction prediction = predict(rawMsisdn, context);
+        Map<String, PawapayProviderConfig> configuration = configuration(context);
+        PawapayProviderConfig conf = configuration.get(prediction.provider());
+        if (!isOperational(conf, kind)) {
+            throw new UnsupportedNumberException(Reason.OPERATION_CLOSED, prediction.provider(), null);
+        }
+        if (!conf.currency().equalsIgnoreCase(expectedCurrency)) {
+            throw new UnsupportedNumberException(Reason.CURRENCY_MISMATCH, prediction.provider(), conf.currency());
+        }
+        String msisdn = normalizedMsisdn(prediction, rawMsisdn, context);
+        String country = PawapayCountries.toAlpha2(prediction.countryAlpha3());
+        if (country == null) {
+            throw new UnsupportedNumberException(Reason.COUNTRY_UNKNOWN, prediction.provider(), null);
+        }
+        return new Resolved(prediction.provider(), country, msisdn, conf);
+    }
+
+    /**
+     * Comme {@link #resolve(String, PawapayOperationKind, String, String)}, mais avec un opérateur
+     * choisi par l'utilisateur : il doit figurer dans le {@link #catalogue} du numéro, sinon
+     * {@link Reason#PROVIDER_NOT_AVAILABLE}. Sans choix (nul ou blanc), l'opérateur prédit s'applique.
+     */
+    public Resolved resolve(String rawMsisdn, PawapayOperationKind kind, String expectedCurrency,
+                            String chosenProvider, String context) {
+        if (chosenProvider == null || chosenProvider.isBlank()) {
+            return resolve(rawMsisdn, kind, expectedCurrency, context);
+        }
+        Catalogue catalogue = catalogue(rawMsisdn, kind, expectedCurrency, context);
+        String wanted = chosenProvider.trim().toUpperCase(Locale.ROOT);
+        PawapayProviderConfig conf = catalogue.option(wanted)
+                .orElseThrow(() -> new UnsupportedNumberException(Reason.PROVIDER_NOT_AVAILABLE, wanted, null));
+        return new Resolved(conf.provider(), catalogue.countryAlpha2(), catalogue.msisdn(), conf);
+    }
+
+    /**
+     * Catalogue des opérateurs d'un numéro. Liste vide : l'exception porte la raison du prédit
+     * (fermé, ou autre devise), comme {@code resolve} l'aurait fait.
+     */
+    public Catalogue catalogue(String rawMsisdn, PawapayOperationKind kind, String expectedCurrency, String context) {
+        PawapayProviderPrediction prediction = predict(rawMsisdn, context);
+        Map<String, PawapayProviderConfig> configuration = configuration(context);
+        List<PawapayProviderConfig> options = new ArrayList<>();
+        for (PawapayProviderConfig conf : configuration.values()) {
+            boolean sameCountry = conf.countryAlpha3() != null
+                    && conf.countryAlpha3().equalsIgnoreCase(prediction.countryAlpha3());
+            boolean sameCurrency = conf.currency() != null && conf.currency().equalsIgnoreCase(expectedCurrency);
+            if (sameCountry && sameCurrency && isOperational(conf, kind)) {
+                options.add(conf);
+            }
+        }
+        // Le prédit en tête : c'est lui que l'app pré-coche.
+        options.sort(Comparator.comparing((PawapayProviderConfig c) -> !c.provider().equalsIgnoreCase(prediction.provider())));
+        if (options.isEmpty()) {
+            PawapayProviderConfig predicted = configuration.get(prediction.provider());
+            if (!isOperational(predicted, kind)) {
+                throw new UnsupportedNumberException(Reason.OPERATION_CLOSED, prediction.provider(), null);
+            }
+            throw new UnsupportedNumberException(Reason.CURRENCY_MISMATCH, prediction.provider(), predicted.currency());
+        }
+        String detected = options.stream().map(PawapayProviderConfig::provider)
+                .filter(p -> p.equalsIgnoreCase(prediction.provider())).findFirst().orElse(null);
+        String msisdn = normalizedMsisdn(prediction, rawMsisdn, context);
+        String country = PawapayCountries.toAlpha2(prediction.countryAlpha3());
+        if (country == null) {
+            throw new UnsupportedNumberException(Reason.COUNTRY_UNKNOWN, prediction.provider(), null);
+        }
+        return new Catalogue(country, expectedCurrency.toUpperCase(Locale.ROOT), msisdn, detected, List.copyOf(options));
+    }
+
+    // ── helpers ─────────────────────────────────────────────────────────────
+
+    private PawapayProviderPrediction predict(String rawMsisdn, String context) {
         Optional<PawapayProviderPrediction> predicted;
         try {
             predicted = client.predictProvider(rawMsisdn);
         } catch (RestClientException e) {
             throw PawapayErrors.providerUnavailable("predict-provider", context, e);
         }
-        PawapayProviderPrediction prediction = predicted
-                .orElseThrow(() -> new UnsupportedNumberException(Reason.NO_PROVIDER, null, null));
-        Map<String, PawapayProviderConfig> configuration;
+        return predicted.orElseThrow(() -> new UnsupportedNumberException(Reason.NO_PROVIDER, null, null));
+    }
+
+    private Map<String, PawapayProviderConfig> configuration(String context) {
         try {
-            configuration = client.activeConfiguration();
+            return client.activeConfiguration();
         } catch (RestClientException e) {
             throw PawapayErrors.providerUnavailable("active-configuration", context, e);
         }
-        PawapayProviderConfig conf = configuration.get(prediction.provider());
-        boolean operational = conf != null
-                && (kind == PawapayOperationKind.PAYOUT ? conf.supportsPayout() : conf.supportsDeposit());
-        if (!operational) {
-            throw new UnsupportedNumberException(Reason.OPERATION_CLOSED, prediction.provider(), null);
-        }
-        if (!conf.currency().equalsIgnoreCase(expectedCurrency)) {
-            throw new UnsupportedNumberException(Reason.CURRENCY_MISMATCH, prediction.provider(), conf.currency());
-        }
-        // Le numéro prédit vient de pawaPay, pas d'une saisie : hors bornes de Msisdn.normalize,
-        // c'est pawaPay qui répond une donnée inexploitable — même famille que les deux appels
-        // ci-dessus, 502 et non 422.
-        String msisdn;
+    }
+
+    private static boolean isOperational(PawapayProviderConfig conf, PawapayOperationKind kind) {
+        return conf != null && (kind == PawapayOperationKind.PAYOUT ? conf.supportsPayout() : conf.supportsDeposit());
+    }
+
+    // Le numéro prédit vient de pawaPay, pas d'une saisie : hors bornes de Msisdn.normalize,
+    // c'est pawaPay qui répond une donnée inexploitable, même famille que les appels réseau,
+    // 502 et non 422.
+    private static String normalizedMsisdn(PawapayProviderPrediction prediction, String rawMsisdn, String context) {
         try {
-            msisdn = Msisdn.normalize(prediction.phoneNumber() != null ? prediction.phoneNumber() : rawMsisdn);
+            return Msisdn.normalize(prediction.phoneNumber() != null ? prediction.phoneNumber() : rawMsisdn);
         } catch (IllegalArgumentException e) {
             throw PawapayErrors.providerUnavailable("msisdn-normalize", context, e);
         }
-        String country = PawapayCountries.toAlpha2(prediction.countryAlpha3());
-        if (country == null) {
-            throw new UnsupportedNumberException(Reason.COUNTRY_UNKNOWN, prediction.provider(), null);
-        }
-        return new Resolved(prediction.provider(), country, msisdn, conf);
     }
 }
