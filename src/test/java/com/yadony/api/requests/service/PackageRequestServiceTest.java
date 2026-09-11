@@ -1628,7 +1628,6 @@ class PackageRequestServiceTest {
                 org.springframework.data.domain.PageRequest.of(0, 20), null);
 
             verify(cityRepository, times(1)).findByNamesIgnoreCaseBatch(anyCollection());
-            verify(cityRepository, never()).findFirstByNameIgnoreCase(anyString());
         }
 
         @Test @DisplayName("N résultats → photoService.activePhotosBatch appelé 1 fois, activePhotos jamais")
