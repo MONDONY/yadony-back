@@ -3,7 +3,9 @@ package com.yadony.api.payments.mobilemoney;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyInitiateRequest;
+import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPayerProvidersResponse;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPaymentStatusResponse;
+import com.yadony.api.payments.mobilemoney.dto.MobileMoneyProvidersRequest;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -43,6 +45,14 @@ public class MobileMoneyPaymentController {
                                                                      @RequestBody(required = false) MobileMoneyInitiateRequest body) {
         String phone = body == null ? null : body.phoneNumber();
         return ResponseEntity.status(HttpStatus.CREATED).body(service.initiateDeposit(bidId, callerId(firebaseUid), phone));
+    }
+
+    /** Réseaux avec lesquels l'expéditeur peut payer ce colis. Corps optionnel : autre numéro payeur. */
+    @PostMapping("/{bidId}/mobile-money/providers")
+    @PreAuthorize("hasRole('SENDER')")
+    public MobileMoneyPayerProvidersResponse providers(@AuthenticationPrincipal String firebaseUid, @PathVariable UUID bidId,
+                                                       @RequestBody(required = false) MobileMoneyProvidersRequest body) {
+        return service.providersForPayer(bidId, callerId(firebaseUid), body == null ? null : body.phoneNumber());
     }
 
     @GetMapping("/{bidId}/mobile-money/status")

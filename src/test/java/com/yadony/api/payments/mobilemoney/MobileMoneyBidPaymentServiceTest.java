@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -31,7 +32,9 @@ import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.PaymentStatus;
 import com.yadony.api.payments.PriceBreakdown;
 import com.yadony.api.payments.cash.PaymentMethod;
+import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPayerProvidersResponse;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPaymentStatusResponse;
+import com.yadony.api.payments.mobilemoney.dto.MobileMoneyProvidersResponse;
 import com.yadony.api.payments.pawapay.PawapayClient;
 import com.yadony.api.payments.pawapay.PawapayOperationEntity;
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
@@ -48,6 +51,8 @@ import com.yadony.api.voucher.CommissionVoucherService;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -142,6 +147,46 @@ class MobileMoneyBidPaymentServiceTest {
     private void stubLocks() {
         when(bidRepository.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
         when(announcementRepository.findByIdForUpdate(announcement.getId())).thenReturn(Optional.of(announcement));
+    }
+
+    private static final PawapayProviderConfig ORANGE_SEN = new PawapayProviderConfig("ORANGE_SEN", "SEN", "XOF", OK, OK);
+    private static final PawapayProviderConfig WAVE_SEN = new PawapayProviderConfig("WAVE_SEN", "SEN", "XOF",
+            new PawapayProviderConfig.Limits(new BigDecimal("100"), new BigDecimal("1500000"), "REDIRECT_AUTH", "OPERATIONAL"), OK);
+    private static final PawapayProviderConfig FREE_SEN = new PawapayProviderConfig("FREE_SEN", "SEN", "XOF", OK, OK);
+
+    private static Map<String, PawapayProviderConfig> configuration(PawapayProviderConfig... confs) {
+        Map<String, PawapayProviderConfig> m = new LinkedHashMap<>();
+        for (PawapayProviderConfig c : confs) {
+            m.put(c.provider(), c);
+        }
+        return m;
+    }
+
+    /** Bid accepté par le voyageur, paiement pawaPay en attente, fenêtre de paiement ouverte. */
+    private PaymentEntity awaitingPayment() {
+        bid.setStatus(BidStatus.AWAITING_PAYMENT);
+        bid.setAwaitingPaymentExpiresAt(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20));
+        PaymentEntity payment = new PaymentEntity();
+        ReflectionTestUtils.setField(payment, "id", UUID.randomUUID());
+        payment.setRail(PaymentRail.PAWAPAY);
+        payment.setStatus(PaymentStatus.PENDING);
+        payment.setAmount(new BigDecimal("16800"));
+        payment.setCurrency("XOF");
+        when(paymentRepository.findByBidId(bid.getId())).thenReturn(Optional.of(payment));
+        when(bidRepository.findById(bid.getId())).thenReturn(Optional.of(bid));
+        // lenient : seuls les scénarios qui atteignent travelerOf (au-delà des gardes
+        // assertPayableBySender de providersForPayer) consomment ces deux lectures — même
+        // convention que MobileMoneyAccountServiceTest/MobileMoneyPayoutInitiatorTest pour un
+        // helper de setup partagé entre des tests qui sortent tôt et d'autres qui vont plus loin.
+        lenient().when(announcementRepository.findById(announcement.getId())).thenReturn(Optional.of(announcement));
+        lenient().when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+        return payment;
+    }
+
+    private void senegalPayerPredicts(String provider) {
+        when(client.predictProvider("221771234567"))
+                .thenReturn(Optional.of(new PawapayProviderPrediction("SEN", provider, "221771234567")));
+        when(client.activeConfiguration()).thenReturn(configuration(ORANGE_SEN, WAVE_SEN, FREE_SEN));
     }
 
     // ── acceptBid ───────────────────────────────────────────────────────────
@@ -911,5 +956,97 @@ class MobileMoneyBidPaymentServiceTest {
                 .isInstanceOf(YadonyBusinessException.class)
                 .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-phone-required");
         verifyNoInteractions(client);
+    }
+
+    // ── providersForPayer ───────────────────────────────────────────────────
+
+    @Test
+    void providersForPayer_keepsOnlyTheBrandsAcceptedByTheTraveler_andNamesThem() {
+        awaitingPayment();
+        traveler.setFirstName("Aminata");
+        traveler.setMobileMoneyProvider("ORANGE_CIV");
+        traveler.setMobileMoneyProviderList(List.of("ORANGE_CIV", "WAVE_CIV"));
+        senegalPayerPredicts("ORANGE_SEN");
+        MobileMoneyPayerProvidersResponse r = service.providersForPayer(bid.getId(), sender.getId(), null);
+        assertThat(r.providers()).extracting(MobileMoneyProvidersResponse.ProviderOption::code).containsExactly("ORANGE_SEN", "WAVE_SEN");
+        assertThat(r.providers().get(0).detected()).isTrue();
+        assertThat(r.detected()).isEqualTo("ORANGE_SEN");
+        assertThat(r.travelerAccepts()).containsExactly("Orange Money", "Wave");
+        assertThat(r.travelerFirstName()).isEqualTo("Aminata");
+        assertThat(r.country()).isEqualTo("SN");
+        assertThat(r.msisdnMasked()).isEqualTo("+221 •••• 67");
+        verify(bidRepository, never()).save(any());
+    }
+
+    @Test
+    void providersForPayer_emptyIntersection_is200WithNoOption() {
+        awaitingPayment();
+        traveler.setMobileMoneyProvider("MTN_CIV");
+        traveler.setMobileMoneyProviderList(List.of("MTN_CIV"));
+        senegalPayerPredicts("ORANGE_SEN");
+        MobileMoneyPayerProvidersResponse r = service.providersForPayer(bid.getId(), sender.getId(), null);
+        assertThat(r.providers()).isEmpty();
+        assertThat(r.detected()).isNull();
+        assertThat(r.travelerAccepts()).containsExactly("MTN MoMo");
+    }
+
+    @Test
+    void providersForPayer_legacyTraveler_usesTheBrandOfItsSingleProvider() {
+        awaitingPayment();
+        traveler.setMobileMoneyProvider("WAVE_CIV");
+        traveler.setMobileMoneyProviders(null);
+        senegalPayerPredicts("ORANGE_SEN");
+        MobileMoneyPayerProvidersResponse r = service.providersForPayer(bid.getId(), sender.getId(), null);
+        assertThat(r.providers()).extracting(MobileMoneyProvidersResponse.ProviderOption::code).containsExactly("WAVE_SEN");
+        assertThat(r.detected()).isNull();
+    }
+
+    @Test
+    void providersForPayer_withOverrideNumber_examinesThatNumber_withoutWritingTheBid() {
+        awaitingPayment();
+        traveler.setMobileMoneyProviderList(List.of("ORANGE_CIV"));
+        when(client.predictProvider("221770000000"))
+                .thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "221770000000")));
+        when(client.activeConfiguration()).thenReturn(configuration(ORANGE_SEN, WAVE_SEN));
+        MobileMoneyPayerProvidersResponse r = service.providersForPayer(bid.getId(), sender.getId(), "+221 77 000 00 00");
+        assertThat(r.msisdnMasked()).isEqualTo("+221 •••• 00");
+        assertThat(bid.getMobileMoneyPhone()).isEqualTo("221771234567");
+        verify(bidRepository, never()).save(any());
+    }
+
+    @Test
+    void providersForPayer_notSender_is403() {
+        awaitingPayment();
+        assertThatThrownBy(() -> service.providersForPayer(bid.getId(), UUID.randomUUID(), null))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("forbidden");
+    }
+
+    @Test
+    void providersForPayer_paymentNotPending_is409() {
+        PaymentEntity payment = awaitingPayment();
+        payment.setStatus(PaymentStatus.ESCROW);
+        assertThatThrownBy(() -> service.providersForPayer(bid.getId(), sender.getId(), null))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-payment-not-pending");
+    }
+
+    @Test
+    void providersForPayer_deadlinePassed_is422() {
+        awaitingPayment();
+        bid.setAwaitingPaymentExpiresAt(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1));
+        assertThatThrownBy(() -> service.providersForPayer(bid.getId(), sender.getId(), null))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-payment-expired");
+    }
+
+    @Test
+    void providersForPayer_unknownPayerNumber_is422PayerUnsupported() {
+        awaitingPayment();
+        traveler.setMobileMoneyProviderList(List.of("ORANGE_CIV"));
+        when(client.predictProvider("221771234567")).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.providersForPayer(bid.getId(), sender.getId(), null))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-payer-unsupported");
     }
 }
