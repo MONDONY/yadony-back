@@ -1560,6 +1560,43 @@ class NegotiationServiceTest {
 
             assertThat(resp.cashCommissionAvailable()).isTrue();
         }
+
+        @Test
+        @DisplayName("fil AWAITING_DEPOSIT : la réponse porte l'échéance du dépôt")
+        void getById_awaitingDeposit_exposesDepositExpiresAt() {
+            UUID THREAD_ID = UUID.randomUUID();
+            var thread = threadFor(THREAD_ID);
+            java.time.LocalDateTime expires = java.time.LocalDateTime.of(2026, 9, 11, 10, 30);
+            thread.setStatus(NegotiationThreadStatus.AWAITING_DEPOSIT);
+            thread.setDepositExpiresAt(expires);
+
+            when(threadRepo.findById(THREAD_ID)).thenReturn(java.util.Optional.of(thread));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(java.util.Optional.of(traveler));
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(java.util.List.of());
+
+            var resp = service.getById(SENDER_ID, THREAD_ID);
+
+            assertThat(resp.depositExpiresAt()).isEqualTo(expires);
+        }
+
+        @Test
+        @DisplayName("fil hors AWAITING_DEPOSIT : depositExpiresAt reste nul même si la colonne est renseignée")
+        void getById_otherStatus_hidesStaleDepositExpiresAt() {
+            UUID THREAD_ID = UUID.randomUUID();
+            var thread = threadFor(THREAD_ID);
+            thread.setStatus(NegotiationThreadStatus.AWAITING_PAYMENT);
+            thread.setDepositExpiresAt(java.time.LocalDateTime.of(2026, 9, 11, 10, 30));
+
+            when(threadRepo.findById(THREAD_ID)).thenReturn(java.util.Optional.of(thread));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(java.util.Optional.of(traveler));
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(java.util.List.of());
+
+            var resp = service.getById(SENDER_ID, THREAD_ID);
+
+            assertThat(resp.depositExpiresAt()).isNull();
+        }
     }
 
     @Nested

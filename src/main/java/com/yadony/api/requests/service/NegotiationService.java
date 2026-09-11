@@ -2218,6 +2218,13 @@ public class NegotiationService {
             ? t.getLastActivityAt().plusMinutes(negotiationProperties.commissionWindowMinutes())
             : null;
 
+        // Échéance du dépôt mobile money en cours. La colonne peut rester renseignée
+        // après un retour à « à payer » (AWAITING_PAYMENT) : elle ne doit alors plus être
+        // exposée, sous peine d'afficher un compte à rebours périmé côté app.
+        LocalDateTime depositExpiresAt = t.getStatus() == NegotiationThreadStatus.AWAITING_DEPOSIT
+            ? t.getDepositExpiresAt()
+            : null;
+
         return new NegotiationThreadResponse(
             t.getId(), t.getPackageRequestId(), t.getTravelerId(),
             t.getTravelerAnnouncementId(), t.getTravelerTravelDate(), t.getTravelerAvailableKg(),
@@ -2243,7 +2250,8 @@ public class NegotiationService {
             t.getCommissionRate(),
             t.getCurrency(),
             t.getCommissionStatus(),
-            commissionDeadline
+            commissionDeadline,
+            depositExpiresAt
         );
     }
 

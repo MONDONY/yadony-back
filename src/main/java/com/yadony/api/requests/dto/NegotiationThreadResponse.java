@@ -65,7 +65,11 @@ public record NegotiationThreadResponse(
     // Échéance du règlement de la commission (lastActivityAt + fenêtre configurée),
     // calculée exactement comme CommissionWindowExpiryRunner détermine l'expiration.
     // Non nul uniquement quand status == AWAITING_COMMISSION.
-    LocalDateTime commissionDeadline
+    LocalDateTime commissionDeadline,
+    // Échéance du dépôt mobile money en cours (lot 1 : deposit_expires_at). Non nul
+    // uniquement quand status == AWAITING_DEPOSIT : après un retour à « à payer » la
+    // colonne peut rester renseignée, elle ne doit plus être affichée.
+    LocalDateTime depositExpiresAt
 ) {
     /** Constructeur de compatibilité (sans commissionStatus/commissionDeadline) — contrat Task 7 round 1. */
     public NegotiationThreadResponse(
@@ -100,7 +104,7 @@ public record NegotiationThreadResponse(
             paymentIntentClientSecret, travelerName, travelerRating, travelerTripsCount, travelerPhotoUrl,
             departureCity, arrivalCity, weightKg, senderName, senderPhotoUrl, isMyTurn, canAccept, canCounter,
             roundsRemaining, linkedTrip, grossPriceEur, paymentMethod, materializedBidId, cashCommissionAvailable,
-            availablePaymentMethods, canNudge, hasUnread, promoCode, commissionRate, currency, null, null);
+            availablePaymentMethods, canNudge, hasUnread, promoCode, commissionRate, currency, null, null, null);
     }
 
     /** Constructeur de compatibilité (sans promoCode) — évite de retoucher tous les tests. */
