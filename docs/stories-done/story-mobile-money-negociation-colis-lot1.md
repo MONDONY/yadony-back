@@ -18,7 +18,7 @@ lot 2 (exposition + app) n'est pas fusionné. Déploiement sans effet visible c�
 
 ## Fichiers créés
 
-- `src/main/resources/db/migration/V253__negotiation_threads_mobile_money.sql` — étend la
+- `src/main/resources/db/migration/V254__negotiation_threads_mobile_money.sql` — étend la
   contrainte CHECK `chk_neg_thread_status` avec `AWAITING_DEPOSIT`, ajoute
   `negotiation_threads.deposit_expires_at`.
 - `src/main/java/com/yadony/api/payments/mobilemoney/MobileMoneyNegotiationPaymentService.java`
@@ -215,7 +215,7 @@ existant, `negotiationThreadId` non nul → chemin fil ci-dessus). Communication
    (`mobile_money_phone`/`mobile_money_country_code` chiffrés sur `negotiation_threads`,
    comme sur `bids`), le numéro payeur n'est jamais persisté sur le fil. Il est résolu à chaque
    `initiateDeposit` (corps de la requête ou, à défaut, numéro Firebase de l'expéditeur) et ne
-   vit que le temps de l'appel pawaPay. V253 ne contient donc que `deposit_expires_at` et
+   vit que le temps de l'appel pawaPay. V254 ne contient donc que `deposit_expires_at` et
    l'extension de la contrainte CHECK.
 5. **Textes de notification** : `NotificationCaps.BODY_MAX = 72` a forcé à raccourcir les corps
    de `depositPendingSender/Traveler` et `depositReverted` par rapport aux libellés du plan
@@ -230,7 +230,7 @@ existant, `negotiationThreadId` non nul → chemin fil ci-dessus). Communication
 
 ## Critères d'acceptation couverts (spec lot 1)
 
-- [x] Nouveau statut `AWAITING_DEPOSIT` et échéance de dépôt (migration V253).
+- [x] Nouveau statut `AWAITING_DEPOSIT` et échéance de dépôt (migration V254).
 - [x] Données `payments` keyées fil (`negotiation_thread_id`, `bid_id` NULL, rail `PAWAPAY`).
 - [x] Service jumeau `MobileMoneyNegotiationPaymentService` (création, initiation, statut,
       libération, remboursement, confirmation, échec).
@@ -322,7 +322,7 @@ Rulings actés pendant l'implémentation (registre `progress.md` de la tâche SD
 3. **Pas de colonnes téléphone sur le fil** (`mobile_money_phone`/`mobile_money_country_code`
    prévues par la spec initiale, comme sur `bids`) : non ajoutées. Le numéro payeur est résolu à
    la volée à chaque `initiateDeposit` (corps de requête, sinon numéro Firebase) et ne persiste
-   nulle part sur `negotiation_threads`. V253 se limite donc à `deposit_expires_at` et
+   nulle part sur `negotiation_threads`. V254 se limite donc à `deposit_expires_at` et
    l'extension de la contrainte CHECK. Coût si à revoir : ajouter les deux colonnes et le
    chiffrement associé serait une migration V(n+1) isolée, sans impact sur le reste du rail.
 4. **Textes de push raccourcis à 72 caractères** (`NotificationCaps.BODY_MAX`) : les corps de
@@ -337,7 +337,7 @@ Rulings actés pendant l'implémentation (registre `progress.md` de la tâche SD
    `PawapayOperationCompletedEvent(operationId, kind, paymentId)`,
    `com.yadony.api.admin.AdminAlertEscalator`, `UserEntity.setMobileMoneyStatus(MobileMoneyPayoutStatus.ACTIVE)`
    — le plan prévoyait de les vérifier avant usage, écart sans conséquence.
-6. **Test de migration V253 par lecture de la contrainte, pas par INSERT** : `pg_get_constraintdef`
+6. **Test de migration V254 par lecture de la contrainte, pas par INSERT** : `pg_get_constraintdef`
    vérifie que `AWAITING_DEPOSIT` est bien dans `chk_neg_thread_status` plutôt qu'un INSERT réel
    dans `negotiation_threads`, dont les FK vers `package_requests`/`users` auraient rendu
    l'INSERT nu impossible sans données satellites. Coût : un test un peu moins comportemental,

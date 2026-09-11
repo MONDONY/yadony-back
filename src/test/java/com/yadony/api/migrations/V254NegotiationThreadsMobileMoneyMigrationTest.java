@@ -12,14 +12,14 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 /**
- * V253 : AWAITING_DEPOSIT accepté par la contrainte de statut, colonne deposit_expires_at.
- * Migre un PostgreSQL embarqué jusqu'à V252 (statut refusé), puis V253 (statut accepté). Le
+ * V254 : AWAITING_DEPOSIT accepté par la contrainte de statut, colonne deposit_expires_at.
+ * Migre un PostgreSQL embarqué jusqu'à V252 (statut refusé), puis V254 (statut accepté). Le
  * profil "test" tourne sur H2 avec Flyway désactivé, incapable de vérifier une contrainte
  * CHECK PostgreSQL (même leçon que V250PaymentsDropPawapayRefsMigrationTest) : on lit donc
  * directement la définition de la contrainte via pg_get_constraintdef plutôt que d'insérer
  * une ligne dans negotiation_threads (FK vers package_requests et users).
  */
-class V253NegotiationThreadsMobileMoneyMigrationTest {
+class V254NegotiationThreadsMobileMoneyMigrationTest {
 
     private static EmbeddedPostgres postgres;
     private static DataSource dataSource;
@@ -53,18 +53,18 @@ class V253NegotiationThreadsMobileMoneyMigrationTest {
     }
 
     @Test
-    void v253_allowsAwaitingDeposit_andAddsDepositExpiresAt() throws Exception {
+    void v254_allowsAwaitingDeposit_andAddsDepositExpiresAt() throws Exception {
         Flyway upTo252 = flywayUpTo("252");
         upTo252.clean();
         upTo252.migrate();
         assertThat(statusConstraintDefinition())
-                .as("avant V253 la contrainte ne connaît pas AWAITING_DEPOSIT")
+                .as("avant V254 la contrainte ne connaît pas AWAITING_DEPOSIT")
                 .doesNotContain("AWAITING_DEPOSIT");
 
-        flywayUpTo("253").migrate();
+        flywayUpTo("254").migrate();
 
         assertThat(statusConstraintDefinition())
-                .as("après V253 la contrainte accepte AWAITING_DEPOSIT")
+                .as("après V254 la contrainte accepte AWAITING_DEPOSIT")
                 .contains("AWAITING_DEPOSIT");
 
         try (Connection c = dataSource.getConnection(); Statement s = c.createStatement()) {
