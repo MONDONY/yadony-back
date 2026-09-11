@@ -78,8 +78,8 @@ class MobileMoneyPaymentControllerIT {
 
     @Test
     void initiate_senderOnly_withOptionalPhone() throws Exception {
-        when(service.initiateDeposit(BID_ID, SENDER_ID, "+221771234567")).thenReturn(response("AWAITING_PAYMENT", "PENDING"));
-        when(service.initiateDeposit(eq(BID_ID), eq(SENDER_ID), isNull())).thenReturn(response("AWAITING_PAYMENT", "PENDING"));
+        when(service.initiateDeposit(BID_ID, SENDER_ID, "+221771234567", null)).thenReturn(response("AWAITING_PAYMENT", "PENDING"));
+        when(service.initiateDeposit(eq(BID_ID), eq(SENDER_ID), isNull(), isNull())).thenReturn(response("AWAITING_PAYMENT", "PENDING"));
         mockMvc.perform(post("/bids/{bidId}/mobile-money/initiate", BID_ID).with(authentication(auth("s-uid", "ROLE_SENDER")))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"phoneNumber\":\"+221771234567\"}"))
                 .andExpect(status().isCreated()).andExpect(jsonPath("$.deposit.status").value("ACCEPTED"))
@@ -88,6 +88,15 @@ class MobileMoneyPaymentControllerIT {
                 .andExpect(status().isCreated());
         mockMvc.perform(post("/bids/{bidId}/mobile-money/initiate", BID_ID).with(authentication(auth("t-uid", "ROLE_TRAVELER"))))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void initiate_withProviderBody_passesItToService() throws Exception {
+        when(service.initiateDeposit(BID_ID, SENDER_ID, "+221 77 000 00 00", "WAVE_SEN")).thenReturn(response("AWAITING_PAYMENT", "PENDING"));
+        mockMvc.perform(post("/bids/{bidId}/mobile-money/initiate", BID_ID).with(authentication(auth("s-uid", "ROLE_SENDER")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"phoneNumber\":\"+221 77 000 00 00\",\"provider\":\"WAVE_SEN\"}"))
+                .andExpect(status().isCreated()).andExpect(jsonPath("$.paymentStatus").value("PENDING"));
     }
 
     @Test

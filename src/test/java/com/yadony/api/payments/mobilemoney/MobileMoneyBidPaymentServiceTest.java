@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -142,6 +144,17 @@ class MobileMoneyBidPaymentServiceTest {
         bid.setStatus(BidStatus.PENDING);
         bid.setWeightKg(new BigDecimal("5"));
         bid.setMobileMoneyPhone("221771234567");
+        // Couplage (Task 7) : l'initiation vérifie que la marque du payeur est acceptée par le
+        // voyageur. Les bids des tests paient depuis un numéro sénégalais prédit Orange ou Wave : les deux marques
+        // sont acceptées par défaut. lenient : les tests d'acceptation et d'erreur précoce ne lisent
+        // jamais ces stubs. Placé en fin de setUp() (pas juste après traveler.setMobileMoneyCurrency,
+        // comme le suggère le brief) : announcement n'est instancié que plus bas dans cette méthode,
+        // announcementRepository.findById(announcement.getId()) lèverait une NullPointerException si
+        // posé plus tôt.
+        traveler.setMobileMoneyProvider("ORANGE_SEN");
+        traveler.setMobileMoneyProviderList(List.of("ORANGE_SEN", "WAVE_SEN"));
+        lenient().when(announcementRepository.findById(announcement.getId())).thenReturn(Optional.of(announcement));
+        lenient().when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
     }
 
     private void stubLocks() {
@@ -172,7 +185,10 @@ class MobileMoneyBidPaymentServiceTest {
         payment.setStatus(PaymentStatus.PENDING);
         payment.setAmount(new BigDecimal("16800"));
         payment.setCurrency("XOF");
-        when(paymentRepository.findByBidId(bid.getId())).thenReturn(Optional.of(payment));
+        // lenient (Task 7) : initiable() appelle désormais aussi ce helper pour les tests
+        // initiateDeposit_*, qui lisent paymentRepository.findByBidIdForUpdate (stub séparé,
+        // posé par initiable()) et jamais findByBidId — réservé à providersForPayer.
+        lenient().when(paymentRepository.findByBidId(bid.getId())).thenReturn(Optional.of(payment));
         when(bidRepository.findById(bid.getId())).thenReturn(Optional.of(bid));
         // lenient : seuls les scénarios qui atteignent travelerOf (au-delà des gardes
         // assertPayableBySender de providersForPayer) consomment ces deux lectures — même
@@ -371,6 +387,9 @@ class MobileMoneyBidPaymentServiceTest {
 
     @Test
     void initiateDeposit_afterFailedDeposit_submitsANewOne_withOverrideNumber() {
+        // Déviation locale (Task 7) : ce test prédit MTN_MOMO_CIV, une marque hors du défaut
+        // ORANGE/WAVE posé dans setUp() — le voyageur doit l'accepter explicitement ici.
+        traveler.setMobileMoneyProviderList(List.of("MTN_MOMO_CIV"));
         bid.setStatus(BidStatus.AWAITING_PAYMENT);
         bid.setAwaitingPaymentExpiresAt(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20));
         PaymentEntity payment = pendingPayment();
@@ -1048,5 +1067,84 @@ class MobileMoneyBidPaymentServiceTest {
         assertThatThrownBy(() -> service.providersForPayer(bid.getId(), sender.getId(), null))
                 .isInstanceOf(YadonyBusinessException.class)
                 .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-payer-unsupported");
+    }
+
+    // ── initiateDeposit : opérateur choisi et couplage ──────────────────────
+
+    /** Point de départ commun : bid en attente de paiement, dépôt jamais tenté, pawaPay accepte. */
+    private PaymentEntity initiable() {
+        PaymentEntity payment = awaitingPayment();
+        when(paymentRepository.findByBidIdForUpdate(bid.getId())).thenReturn(Optional.of(payment));
+        when(operations.findLive(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.empty());
+        return payment;
+    }
+
+    private PawapayOperationEntity acceptedDeposit(PaymentEntity payment, String provider) {
+        PawapayOperationEntity op = new PawapayOperationEntity(UUID.randomUUID(), PawapayOperationKind.DEPOSIT, payment.getId(), null,
+                payment.getAmount(), "XOF", provider, "SN", "221771234567");
+        op.setStatus(PawapayOperationStatus.ACCEPTED);
+        return op;
+    }
+
+    @Test
+    void initiateDeposit_withChosenProvider_submitsWithIt_evenIfAnotherOneIsPredicted() {
+        PaymentEntity payment = initiable();
+        senegalPayerPredicts("ORANGE_SEN");
+        when(submission.submitDeposit(eq(payment.getId()), eq("221771234567"), eq("WAVE_SEN"), eq("SN"), any(), eq("XOF"),
+                eq("bid-" + bid.getId()), any(), any())).thenReturn(acceptedDeposit(payment, "WAVE_SEN"));
+        MobileMoneyPaymentStatusResponse r = service.initiateDeposit(bid.getId(), sender.getId(), null, "wave_sen");
+        assertThat(r.deposit().provider()).isEqualTo("WAVE_SEN");
+        // Wave est à redirection : les URL de retour sont construites sur le bid.
+        verify(submission).submitDeposit(eq(payment.getId()), eq("221771234567"), eq("WAVE_SEN"), eq("SN"), any(), eq("XOF"),
+                eq("bid-" + bid.getId()), contains("/api/v1/pawapay/return/" + bid.getId()), contains("outcome=failed"));
+    }
+
+    @Test
+    void initiateDeposit_chosenProviderNotAcceptedByTheTraveler_is422_namingTheAcceptedNetworks() {
+        initiable();
+        traveler.setMobileMoneyProviderList(List.of("ORANGE_SEN"));
+        senegalPayerPredicts("ORANGE_SEN");
+        assertThatThrownBy(() -> service.initiateDeposit(bid.getId(), sender.getId(), null, "WAVE_SEN"))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> {
+                    assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-payer-unsupported");
+                    assertThat(((YadonyBusinessException) e).getMessage()).contains("Wave").contains("Orange Money");
+                });
+        verify(submission, never()).submitDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    /** Ancien client (sans opérateur) : le prédit s'applique, mais le couplage le refuse s'il n'est pas accepté. */
+    @Test
+    void initiateDeposit_withoutProvider_predictedBrandNotAccepted_is422() {
+        initiable();
+        traveler.setMobileMoneyProviderList(List.of("WAVE_SEN"));
+        senegalPayerPredicts("ORANGE_SEN");
+        assertThatThrownBy(() -> service.initiateDeposit(bid.getId(), sender.getId(), null))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-payer-unsupported");
+        verify(submission, never()).submitDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void initiateDeposit_chosenProviderOutsideTheCatalogue_is422() {
+        initiable();
+        senegalPayerPredicts("ORANGE_SEN");
+        assertThatThrownBy(() -> service.initiateDeposit(bid.getId(), sender.getId(), null, "MTN_CIV"))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> {
+                    assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-payer-unsupported");
+                    assertThat(((YadonyBusinessException) e).getMessage()).contains("MTN MoMo");
+                });
+    }
+
+    /** La marque suffit : un payeur Orange Sénégal paie un voyageur qui accepte Orange Côte d'Ivoire. */
+    @Test
+    void initiateDeposit_couplingComparesBrands_notCountryCodes() {
+        PaymentEntity payment = initiable();
+        traveler.setMobileMoneyProviderList(List.of("ORANGE_CIV"));
+        senegalPayerPredicts("ORANGE_SEN");
+        when(submission.submitDeposit(eq(payment.getId()), eq("221771234567"), eq("ORANGE_SEN"), eq("SN"), any(), eq("XOF"),
+                eq("bid-" + bid.getId()), isNull(), isNull())).thenReturn(acceptedDeposit(payment, "ORANGE_SEN"));
+        assertThat(service.initiateDeposit(bid.getId(), sender.getId(), null, "ORANGE_SEN").deposit().provider()).isEqualTo("ORANGE_SEN");
     }
 }

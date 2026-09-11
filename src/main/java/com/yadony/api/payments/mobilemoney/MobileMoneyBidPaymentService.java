@@ -265,8 +265,14 @@ public class MobileMoneyBidPaymentService {
 
     // ── Initiation du deposit ───────────────────────────────────────────────
 
+    /** Ancien contrat (client sans choix d'opérateur) : équivaut à {@code initiateDeposit(bidId, senderId, phoneOverride, null)}. */
     @Transactional
     public MobileMoneyPaymentStatusResponse initiateDeposit(UUID bidId, UUID senderId, String phoneOverride) {
+        return initiateDeposit(bidId, senderId, phoneOverride, null);
+    }
+
+    @Transactional
+    public MobileMoneyPaymentStatusResponse initiateDeposit(UUID bidId, UUID senderId, String phoneOverride, String provider) {
         PaymentEntity payment = paymentRepository.findByBidIdForUpdate(bidId)
                 .filter(p -> p.getRail() == PaymentRail.PAWAPAY)
                 .orElseThrow(() -> notFound("mobile-money-payment-not-found", "Aucun paiement mobile money pour ce colis"));
@@ -296,10 +302,18 @@ public class MobileMoneyBidPaymentService {
         // inexploitable devient le 422 du payeur, avec ses libellés.
         PawapayProviderResolver.Resolved resolved;
         try {
-            resolved = providers.resolve(msisdn, PawapayOperationKind.DEPOSIT, payment.getCurrency(),
+            resolved = providers.resolve(msisdn, PawapayOperationKind.DEPOSIT, payment.getCurrency(), provider,
                     "l'initiation du deposit pour le bid " + bidId);
         } catch (PawapayProviderResolver.UnsupportedNumberException e) {
             throw payerUnsupported(payerReason(e, payment.getCurrency()));
+        }
+        // Couplage (décision produit) : l'expéditeur ne paie qu'avec une marque acceptée par le
+        // voyageur, qui sera versé sur ce même réseau. Vérifié ici pour l'ancien client (prédit)
+        // comme pour le nouveau (choisi) : le catalogue payeur ne filtre que l'affichage.
+        UserEntity traveler = travelerOf(bid);
+        if (!MobileMoneyNetworks.acceptsBrand(traveler, resolved.provider())) {
+            throw payerUnsupported("Ce voyageur n'accepte pas " + resolved.providerLabel() + ". Réseaux acceptés : "
+                    + String.join(", ", MobileMoneyNetworks.acceptedLabels(traveler)) + ".");
         }
         PawapayProviderConfig.Limits deposit = resolved.config().deposit();
         if (deposit.minAmount() != null && payment.getAmount().compareTo(deposit.minAmount()) < 0

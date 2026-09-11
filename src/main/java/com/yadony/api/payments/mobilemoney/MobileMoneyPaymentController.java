@@ -37,14 +37,15 @@ public class MobileMoneyPaymentController {
         return service.acceptBid(bidId, callerId(firebaseUid));
     }
 
-    /** L'expéditeur déclenche le push PIN (ou la redirection Wave). Corps optionnel : autre numéro payeur. */
+    /** L'expéditeur déclenche le push PIN (ou la redirection Wave). Corps optionnel : autre numéro payeur et opérateur choisi. */
     @PostMapping("/{bidId}/mobile-money/initiate")
     @PreAuthorize("hasRole('SENDER')")
     public ResponseEntity<MobileMoneyPaymentStatusResponse> initiate(@AuthenticationPrincipal String firebaseUid,
                                                                      @PathVariable UUID bidId,
                                                                      @RequestBody(required = false) MobileMoneyInitiateRequest body) {
         String phone = body == null ? null : body.phoneNumber();
-        return ResponseEntity.status(HttpStatus.CREATED).body(service.initiateDeposit(bidId, callerId(firebaseUid), phone));
+        String provider = body == null ? null : body.provider();
+        return ResponseEntity.status(HttpStatus.CREATED).body(service.initiateDeposit(bidId, callerId(firebaseUid), phone, provider));
     }
 
     /** Réseaux avec lesquels l'expéditeur peut payer ce colis. Corps optionnel : autre numéro payeur. */
