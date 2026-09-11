@@ -2273,20 +2273,21 @@ public class NegotiationService {
     }
 
     /**
-     * Returns {@code true} if the traveler is technically capable of offering
-     * the given payment method.
+     * Vrai si le voyageur peut techniquement fournir ce moyen de paiement sur une demande
+     * libellée dans {@code currency}.
      * <ul>
-     *   <li>STRIPE requires a fully onboarded Stripe Connect account.</li>
-     *   <li>MOBILE_MONEY is never offerable here (see below).</li>
-     *   <li>CASH / WAVE / ORANGE_MONEY are always available.</li>
+     *   <li>STRIPE : compte Stripe Connect onboardé.</li>
+     *   <li>MOBILE_MONEY : compte de versement actif DANS LA DEVISE de la demande
+     *       ({@link UserEntity#canReceiveMobileMoney}) : c'est la condition que
+     *       {@code prepareMobileMoneyDeposit} ré-exige avant que l'argent bouge, l'annoncer
+     *       plus large mènerait l'expéditeur à un 422 au moment de payer.</li>
+     *   <li>CASH / WAVE / ORANGE_MONEY : toujours.</li>
      * </ul>
      */
-    private boolean travelerCanOffer(UserEntity t, PaymentMethod m) {
+    private boolean travelerCanOffer(UserEntity t, PaymentMethod m, String currency) {
         return switch (m) {
             case STRIPE -> t.getStripeAccountStatus() == StripeAccountStatus.ONBOARDING_COMPLETE;
-            // Hors périmètre de ce lot : la négociation (paiement sur le fil, checkout Stripe)
-            // ne porte pas encore le rail mobile money. Un lot dédié l'ouvrira.
-            case MOBILE_MONEY -> false;
+            case MOBILE_MONEY -> t.canReceiveMobileMoney(currency);
             case CASH, WAVE, ORANGE_MONEY -> true;
         };
     }
@@ -2301,17 +2302,25 @@ public class NegotiationService {
      * règlement de la commission, pas une capacité : il peut être rechargé à tout moment et
      * n'a de sens qu'au moment où le voyageur règle lui-même la commission
      * ({@code settleCommission}, wallet puis carte), une fois l'accord conclu.
+     *
+     * MOBILE_MONEY : exige un compte de versement actif dans la devise de la demande ; le
+     * filtre devise final le retire de toute façon hors zone CFA.
      */
     private java.util.Set<PaymentMethod> computeAvailableMethods(
             PackageRequestEntity request, UserEntity traveler) {
         java.util.Set<PaymentMethod> set = java.util.EnumSet.noneOf(PaymentMethod.class);
         java.util.Set<PaymentMethod> accepted = request.getAcceptedPaymentMethods();
 
-        if (accepted.contains(PaymentMethod.STRIPE) && travelerCanOffer(traveler, PaymentMethod.STRIPE)) {
+        if (accepted.contains(PaymentMethod.STRIPE)
+                && travelerCanOffer(traveler, PaymentMethod.STRIPE, request.getCurrency())) {
             set.add(PaymentMethod.STRIPE);
         }
         if (accepted.contains(PaymentMethod.CASH)) {
             set.add(PaymentMethod.CASH);
+        }
+        if (accepted.contains(PaymentMethod.MOBILE_MONEY)
+                && travelerCanOffer(traveler, PaymentMethod.MOBILE_MONEY, request.getCurrency())) {
+            set.add(PaymentMethod.MOBILE_MONEY);
         }
         // La devise borne les rails : une demande en francs CFA (données antérieures au filtrage
         // à l'écriture, ou devise changée) ne propose jamais la carte, que createNegotiationEscrow

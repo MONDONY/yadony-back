@@ -156,9 +156,9 @@ public class BidNegotiationService {
         // (AWAITING_PAYMENT + checkout Stripe existant) ; un bid MOBILE_MONEY passerait en
         // AWAITING_PAYMENT sans jamais réserver de capacité ni créer de PaymentEntity, un
         // bid qu'ensuite plus aucun rail ne peut payer. Même raisonnement déjà en place
-        // pour les demandes de colis (NegotiationService.travelerCanOffer, qui rend
-        // structurellement false pour ce rail). Un lot dédié ouvrira la négociation au
-        // mobile money si besoin.
+        // pour les demandes de colis (NegotiationService.travelerCanOffer l'ouvre depuis le
+        // lot 2 quand le voyageur est versable dans la devise du fil). Un lot dédié ouvrira
+        // la négociation au mobile money si besoin.
         if (paymentMethod == PaymentMethod.MOBILE_MONEY) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "mobile-money-negotiation-unsupported", "Mobile Money Negotiation Unsupported",

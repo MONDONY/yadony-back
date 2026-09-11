@@ -2896,6 +2896,157 @@ class NegotiationServiceTest {
                 res.availablePaymentMethods());
             verifyNoInteractions(cashGatePort);
         }
+
+        @Test
+        @DisplayName("demande XOF acceptant MOBILE_MONEY + voyageur versable en XOF → MOBILE_MONEY fournissable")
+        void submitTrip_xofRequest_travelerWithXofAccount_offersMobileMoney() {
+            UUID threadId = UUID.randomUUID();
+            UUID travelerId = UUID.randomUUID();
+            UUID annId = UUID.randomUUID();
+
+            NegotiationThreadEntity thread = new NegotiationThreadEntity();
+            setEntityId(thread, threadId);
+            thread.setTravelerId(travelerId);
+            thread.setStatus(NegotiationThreadStatus.AWAITING_TRIP);
+            thread.setCurrentPriceEur(new BigDecimal("100.00"));
+            thread.setRoundsCount((short) 1);
+
+            PackageRequestEntity request = new PackageRequestEntity();
+            request.setSenderId(SENDER_ID);
+            request.setCurrency("XOF");
+            request.setAcceptedPaymentMethods(java.util.EnumSet.of(PaymentMethod.MOBILE_MONEY, PaymentMethod.CASH));
+            request.setDepartureCity("Paris");
+            request.setArrivalCity("Dakar");
+            request.setDesiredDate(LocalDate.now().plusDays(10));
+            request.setDateToleranceDays((short) 2);
+            request.setWeightKg(new BigDecimal("5"));
+
+            UserEntity traveler = new UserEntity();
+            setEntityId(traveler, travelerId);
+            traveler.setMobileMoneyStatus(com.yadony.api.auth.MobileMoneyPayoutStatus.ACTIVE);
+            traveler.setMobileMoneyCurrency("XOF");
+
+            com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
+            ann.setTravelerId(travelerId);
+            ann.setDepartureCity("Paris");
+            ann.setArrivalCity("Dakar");
+            ann.setDepartureDate(request.getDesiredDate());
+            ann.setAvailableKg(new BigDecimal("5"));
+            ann.setCurrency("XOF");
+
+            when(threadRepo.findById(threadId)).thenReturn(java.util.Optional.of(thread));
+            when(requestRepo.findById(any())).thenReturn(java.util.Optional.of(request));
+            when(userRepository.findById(travelerId)).thenReturn(java.util.Optional.of(traveler));
+            when(userRepository.findById(SENDER_ID)).thenReturn(java.util.Optional.of(traveler));
+            when(announcementRepo.findById(annId)).thenReturn(java.util.Optional.of(ann));
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(threadId)).thenReturn(List.of());
+
+            NegotiationThreadResponse res = service.submitTrip(travelerId, threadId,
+                new com.yadony.api.requests.dto.NegotiationSubmitTripRequest(annId, null, false));
+
+            assertEquals(java.util.EnumSet.of(PaymentMethod.MOBILE_MONEY, PaymentMethod.CASH),
+                res.availablePaymentMethods());
+        }
+
+        @Test
+        @DisplayName("compte de versement dans une autre devise que la demande → MOBILE_MONEY absent")
+        void submitTrip_xofRequest_travelerWithXafAccount_hidesMobileMoney() {
+            UUID threadId = UUID.randomUUID();
+            UUID travelerId = UUID.randomUUID();
+            UUID annId = UUID.randomUUID();
+
+            NegotiationThreadEntity thread = new NegotiationThreadEntity();
+            setEntityId(thread, threadId);
+            thread.setTravelerId(travelerId);
+            thread.setStatus(NegotiationThreadStatus.AWAITING_TRIP);
+            thread.setCurrentPriceEur(new BigDecimal("100.00"));
+            thread.setRoundsCount((short) 1);
+
+            PackageRequestEntity request = new PackageRequestEntity();
+            request.setSenderId(SENDER_ID);
+            request.setCurrency("XOF");
+            request.setAcceptedPaymentMethods(java.util.EnumSet.of(PaymentMethod.MOBILE_MONEY, PaymentMethod.CASH));
+            request.setDepartureCity("Paris");
+            request.setArrivalCity("Dakar");
+            request.setDesiredDate(LocalDate.now().plusDays(10));
+            request.setDateToleranceDays((short) 2);
+            request.setWeightKg(new BigDecimal("5"));
+
+            UserEntity traveler = new UserEntity();
+            setEntityId(traveler, travelerId);
+            traveler.setMobileMoneyStatus(com.yadony.api.auth.MobileMoneyPayoutStatus.ACTIVE);
+            traveler.setMobileMoneyCurrency("XAF");
+
+            com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
+            ann.setTravelerId(travelerId);
+            ann.setDepartureCity("Paris");
+            ann.setArrivalCity("Dakar");
+            ann.setDepartureDate(request.getDesiredDate());
+            ann.setAvailableKg(new BigDecimal("5"));
+            ann.setCurrency("XOF");
+
+            when(threadRepo.findById(threadId)).thenReturn(java.util.Optional.of(thread));
+            when(requestRepo.findById(any())).thenReturn(java.util.Optional.of(request));
+            when(userRepository.findById(travelerId)).thenReturn(java.util.Optional.of(traveler));
+            when(userRepository.findById(SENDER_ID)).thenReturn(java.util.Optional.of(traveler));
+            when(announcementRepo.findById(annId)).thenReturn(java.util.Optional.of(ann));
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(threadId)).thenReturn(List.of());
+
+            NegotiationThreadResponse res = service.submitTrip(travelerId, threadId,
+                new com.yadony.api.requests.dto.NegotiationSubmitTripRequest(annId, null, false));
+
+            assertEquals(java.util.EnumSet.of(PaymentMethod.CASH), res.availablePaymentMethods());
+        }
+
+        @Test
+        @DisplayName("demande EUR acceptant MOBILE_MONEY → retiré par le filtre devise même avec un compte actif")
+        void submitTrip_eurRequest_neverOffersMobileMoney() {
+            UUID threadId = UUID.randomUUID();
+            UUID travelerId = UUID.randomUUID();
+            UUID annId = UUID.randomUUID();
+
+            NegotiationThreadEntity thread = new NegotiationThreadEntity();
+            setEntityId(thread, threadId);
+            thread.setTravelerId(travelerId);
+            thread.setStatus(NegotiationThreadStatus.AWAITING_TRIP);
+            thread.setCurrentPriceEur(new BigDecimal("100.00"));
+            thread.setRoundsCount((short) 1);
+
+            PackageRequestEntity request = new PackageRequestEntity();
+            request.setSenderId(SENDER_ID);
+            request.setCurrency("EUR");
+            request.setAcceptedPaymentMethods(java.util.EnumSet.of(PaymentMethod.MOBILE_MONEY, PaymentMethod.CASH));
+            request.setDepartureCity("Paris");
+            request.setArrivalCity("Dakar");
+            request.setDesiredDate(LocalDate.now().plusDays(10));
+            request.setDateToleranceDays((short) 2);
+            request.setWeightKg(new BigDecimal("5"));
+
+            UserEntity traveler = new UserEntity();
+            setEntityId(traveler, travelerId);
+            traveler.setMobileMoneyStatus(com.yadony.api.auth.MobileMoneyPayoutStatus.ACTIVE);
+            traveler.setMobileMoneyCurrency("EUR");
+
+            com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
+            ann.setTravelerId(travelerId);
+            ann.setDepartureCity("Paris");
+            ann.setArrivalCity("Dakar");
+            ann.setDepartureDate(request.getDesiredDate());
+            ann.setAvailableKg(new BigDecimal("5"));
+            ann.setCurrency("EUR");
+
+            when(threadRepo.findById(threadId)).thenReturn(java.util.Optional.of(thread));
+            when(requestRepo.findById(any())).thenReturn(java.util.Optional.of(request));
+            when(userRepository.findById(travelerId)).thenReturn(java.util.Optional.of(traveler));
+            when(userRepository.findById(SENDER_ID)).thenReturn(java.util.Optional.of(traveler));
+            when(announcementRepo.findById(annId)).thenReturn(java.util.Optional.of(ann));
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(threadId)).thenReturn(List.of());
+
+            NegotiationThreadResponse res = service.submitTrip(travelerId, threadId,
+                new com.yadony.api.requests.dto.NegotiationSubmitTripRequest(annId, null, false));
+
+            assertEquals(java.util.EnumSet.of(PaymentMethod.CASH), res.availablePaymentMethods());
+        }
     }
 
     @Nested
