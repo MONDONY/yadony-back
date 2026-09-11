@@ -23,6 +23,14 @@ class MobileMoneyNetworksTest {
     }
 
     @Test
+    void acceptedCodes_ignoresABlankSingleProvider() {
+        UserEntity t = travelerWith(null, "   ");
+        assertThat(MobileMoneyNetworks.acceptedCodes(t)).isEmpty();
+        assertThat(MobileMoneyNetworks.acceptedLabels(t)).isEmpty();
+        assertThat(MobileMoneyNetworks.acceptsBrand(t, "ORANGE_SEN")).isFalse();
+    }
+
+    @Test
     void acceptedBrands_areDeduplicatedAndOrdered() {
         assertThat(MobileMoneyNetworks.acceptedBrands(travelerWith("ORANGE_CIV,WAVE_CIV,ORANGE_SEN", null)))
                 .containsExactly("ORANGE", "WAVE");

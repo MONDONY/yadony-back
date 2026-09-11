@@ -19,11 +19,12 @@ public final class MobileMoneyNetworks {
 
     private MobileMoneyNetworks() {}
 
-    /** Codes acceptés, dans l'ordre enregistré (repli sur l'opérateur unique). */
+    /** Codes acceptés, dans l'ordre enregistré (repli sur l'opérateur unique, s'il est renseigné). */
     public static List<String> acceptedCodes(UserEntity traveler) {
         List<String> codes = traveler.getMobileMoneyProviderList();
-        if (codes.isEmpty() && traveler.getMobileMoneyProvider() != null) {
-            return List.of(traveler.getMobileMoneyProvider());
+        String single = traveler.getMobileMoneyProvider();
+        if (codes.isEmpty() && single != null && !single.isBlank()) {
+            return List.of(single);
         }
         return codes;
     }
