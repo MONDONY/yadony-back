@@ -28,7 +28,9 @@ import java.time.LocalDateTime;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -207,6 +209,57 @@ class TripsSummaryRepositoryIT {
 
         assertThat(lines).hasSize(1);
         assertThat(lines.get(0).amount()).isEqualByComparingTo("0");
+    }
+
+    /**
+     * Sur le même jeu de données, la somme des lignes de revenu (carte + espèces) par
+     * devise doit égaler le total que le résumé (`computeSummary`) additionne pour
+     * cette devise — {@link TripsSummaryServiceTest} ne peut pas le démontrer avec des
+     * mocks puisqu'il stube les deux couples de requêtes indépendamment ; seule une
+     * vraie base partagée expose une éventuelle divergence de colonne, de filtre ou de
+     * fenêtre entre les requêtes de lignes et les requêtes de somme.
+     */
+    @Test
+    void revenue_lines_reconcile_with_the_currency_totals_on_the_same_data() {
+        UUID travelerId = persistTraveler().getId();
+        AnnouncementEntity ann = persistAnnouncement(travelerId, AnnouncementStatus.COMPLETED);
+        BidEntity card = persistBid(ann.getId(), BidStatus.COMPLETED, new BigDecimal("4.00"));
+        BidEntity mobile = persistBid(ann.getId(), BidStatus.COMPLETED, new BigDecimal("3.00"));
+        BidEntity cardEscrowed = persistBid(ann.getId(), BidStatus.COMPLETED, new BigDecimal("1.00"));
+        persistCashBid(ann.getId(), BidStatus.COMPLETED, new BigDecimal("2.00"), "EUR", "220.00");
+        persistPayment(card.getId(), null, PaymentRail.STRIPE, "EUR", "500.00", "20.00", PaymentStatus.RELEASED);
+        persistPayment(mobile.getId(), null, PaymentRail.PAWAPAY, "XOF", "130000", "10000", PaymentStatus.RELEASED);
+        // Séquestre non libéré : jamais un revenu, ni dans les lignes ni dans les totaux
+        // du résumé. Bid dédié — payments.bid_id est UNIQUE, un deuxième paiement sur
+        // `card` violerait la contrainte (H2 23505).
+        persistPayment(cardEscrowed.getId(), null, PaymentRail.STRIPE, "EUR", "99.00", "1.00", PaymentStatus.ESCROW);
+
+        LocalDateTime from = LocalDateTime.now().minusDays(1);
+        LocalDateTime to = LocalDateTime.now().plusDays(1);
+
+        Map<String, BigDecimal> lineTotals = new TreeMap<>();
+        for (PaymentLineRow row : paymentRepository.findReleasedLinesForTraveler(
+                travelerId, PaymentStatus.RELEASED, from, to)) {
+            lineTotals.merge(row.currency(), row.amount(), BigDecimal::add);
+        }
+        for (CashLineRow row : bidRepository.findCashLinesForTraveler(
+                travelerId, BidStatus.COMPLETED, PaymentMethod.CASH, from, to)) {
+            lineTotals.merge(row.currency(), row.amount(), BigDecimal::add);
+        }
+
+        Map<String, BigDecimal> summaryTotals = TravelerRevenue.cardPlusCashByCurrency(
+                paymentRepository.sumCapturedRevenueForTravelerByCurrency(
+                        travelerId, PaymentStatus.RELEASED, from, to),
+                bidRepository.sumCashNetRevenueForTravelerByCurrency(
+                        travelerId, BidStatus.COMPLETED, PaymentMethod.CASH, from, to));
+
+        assertThat(lineTotals.keySet()).containsExactlyInAnyOrder("EUR", "XOF");
+        assertThat(summaryTotals.keySet()).containsExactlyInAnyOrder("EUR", "XOF");
+        for (Map.Entry<String, BigDecimal> entry : lineTotals.entrySet()) {
+            assertThat(entry.getValue()).isEqualByComparingTo(summaryTotals.get(entry.getKey()));
+        }
+        assertThat(lineTotals.get("EUR")).isEqualByComparingTo("700.00");
+        assertThat(lineTotals.get("XOF")).isEqualByComparingTo("120000");
     }
 
     @Test

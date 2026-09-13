@@ -275,7 +275,7 @@ class TripsSummaryServiceTest {
     }
 
     @Test
-    void computeRevenueDetails_reconciles_with_the_summary_totals_per_currency() {
+    void computeRevenueDetails_aggregates_and_rounds_like_the_summary() {
         UUID tripId = UUID.randomUUID();
         List<com.yadony.api.matching.dto.PaymentLineRow> payments = List.of(
                 new com.yadony.api.matching.dto.PaymentLineRow(tripId, "Paris", "Dakar",
@@ -293,7 +293,15 @@ class TripsSummaryServiceTest {
         com.yadony.api.matching.dto.RevenueDetailsDto dto =
                 service.computeRevenueDetails(traveler, StatsPeriod.DEFAULT);
 
-        // Ce que le résumé additionne par devise avant conversion.
+        // Ce test vérifie une coïncidence de calcul, pas une réconciliation de bout en
+        // bout : les lignes stubées ci-dessus reprennent les mêmes montants que ceux
+        // recalculés ici, donc il démontre seulement que le regroupement/arrondi par
+        // devise de RevenueDetailsDto.of coïncide avec celui de
+        // TravelerRevenue.cardPlusCashByCurrency (utilisé par computeSummary). La
+        // réconciliation réelle avec les requêtes de somme
+        // (sumCapturedRevenueForTravelerByCurrency / sumCashNetRevenueForTravelerByCurrency)
+        // est couverte séparément, sur des données partagées en base, par
+        // TripsSummaryRepositoryIT#revenue_lines_reconcile_with_the_currency_totals_on_the_same_data.
         java.util.Map<String, BigDecimal> expected = TravelerRevenue.cardPlusCashByCurrency(
                 List.of(new CurrencyAmountRow("EUR", new BigDecimal("480.00")),
                         new CurrencyAmountRow("XOF", new BigDecimal("120000"))),
