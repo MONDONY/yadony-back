@@ -1,6 +1,11 @@
 package com.yadony.api.matching;
 
 import com.yadony.api.auth.UserEntity;
+import com.yadony.api.matching.dto.CashLineRow;
+import com.yadony.api.matching.dto.PaymentLineRow;
+import com.yadony.api.matching.dto.RevenueDetailsDto;
+import com.yadony.api.matching.dto.RevenueDetailsDto.RevenueLine;
+import com.yadony.api.matching.dto.RevenueItemDto;
 import com.yadony.api.matching.dto.TripsSummaryDto;
 import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.PaymentStatus;
@@ -8,6 +13,7 @@ import com.yadony.api.payments.cash.PaymentMethod;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -116,6 +122,33 @@ public class TripsSummaryService {
                 period.apiValue(),
                 activeCurrency,
                 revenueConverted);
+    }
+
+    /**
+     * Feuille « Revenus » : une ligne par livraison, dans la devise du paiement,
+     * regroupée par devise. Mêmes sources et mêmes fenêtres que le total du
+     * résumé, donc la somme des lignes d'une devise égale le montant que le
+     * résumé convertit pour cette devise.
+     */
+    @Cacheable(
+            cacheNames = REVENUES_CACHE_NAME,
+            key = "T(com.yadony.api.matching.StatsPeriod).cacheKey(#traveler.id, #period)")
+    @Transactional(readOnly = true)
+    public RevenueDetailsDto computeRevenueDetails(UserEntity traveler, StatsPeriod period) {
+        UUID userId = traveler.getId();
+        LocalDateTime from = period.start();
+        LocalDateTime to = LocalDateTime.now();
+
+        List<RevenueLine> lines = new ArrayList<>();
+        for (PaymentLineRow row : paymentRepository.findReleasedLinesForTraveler(
+                userId, PaymentStatus.RELEASED, from, to)) {
+            lines.add(new RevenueLine(row.currency(), RevenueItemDto.fromPayment(row)));
+        }
+        for (CashLineRow row : bidRepository.findCashLinesForTraveler(
+                userId, BidStatus.COMPLETED, PaymentMethod.CASH, from, to)) {
+            lines.add(new RevenueLine(row.currency(), RevenueItemDto.fromCash(row)));
+        }
+        return RevenueDetailsDto.of(period.apiValue(), lines);
     }
 
     /**

@@ -244,4 +244,73 @@ class TripsSummaryServiceTest {
 
         service.evictSummary(UUID.randomUUID());
     }
+
+    @Test
+    void computeRevenueDetails_merges_payment_and_cash_lines_by_currency() {
+        UUID tripId = UUID.randomUUID();
+        when(paymentRepository.findReleasedLinesForTraveler(
+                eq(traveler.getId()), eq(PaymentStatus.RELEASED), any(), any()))
+                .thenReturn(List.of(new com.yadony.api.matching.dto.PaymentLineRow(
+                        tripId, "Paris", "Dakar", LocalDate.now().minusDays(1), LocalDateTime.now(),
+                        new BigDecimal("4.00"), com.yadony.api.payments.PaymentRail.STRIPE, "EUR",
+                        new BigDecimal("480.00"))));
+        when(bidRepository.findCashLinesForTraveler(
+                eq(traveler.getId()), eq(BidStatus.COMPLETED),
+                eq(com.yadony.api.payments.cash.PaymentMethod.CASH), any(), any()))
+                .thenReturn(List.of(new com.yadony.api.matching.dto.CashLineRow(
+                        tripId, "Paris", "Dakar", LocalDate.now().minusDays(1),
+                        new BigDecimal("2.00"), "XOF", new BigDecimal("75000"))));
+
+        com.yadony.api.matching.dto.RevenueDetailsDto dto =
+                service.computeRevenueDetails(traveler, StatsPeriod.DEFAULT);
+
+        assertThat(dto.period()).isEqualTo("30d");
+        assertThat(dto.deliveries()).isEqualTo(2);
+        assertThat(dto.groups()).extracting(com.yadony.api.matching.dto.RevenueGroupDto::currency)
+                .containsExactly("EUR", "XOF");
+        assertThat(dto.groups().get(0).items().get(0).rail())
+                .isEqualTo(com.yadony.api.matching.dto.RevenueRail.CARD);
+        assertThat(dto.groups().get(1).items().get(0).rail())
+                .isEqualTo(com.yadony.api.matching.dto.RevenueRail.CASH);
+    }
+
+    @Test
+    void computeRevenueDetails_reconciles_with_the_summary_totals_per_currency() {
+        UUID tripId = UUID.randomUUID();
+        List<com.yadony.api.matching.dto.PaymentLineRow> payments = List.of(
+                new com.yadony.api.matching.dto.PaymentLineRow(tripId, "Paris", "Dakar",
+                        LocalDate.now(), LocalDateTime.now(), new BigDecimal("4.00"),
+                        com.yadony.api.payments.PaymentRail.STRIPE, "EUR", new BigDecimal("480.00")),
+                new com.yadony.api.matching.dto.PaymentLineRow(tripId, "Paris", "Dakar",
+                        LocalDate.now(), LocalDateTime.now(), new BigDecimal("3.00"),
+                        com.yadony.api.payments.PaymentRail.PAWAPAY, "XOF", new BigDecimal("120000")));
+        List<com.yadony.api.matching.dto.CashLineRow> cash = List.of(
+                new com.yadony.api.matching.dto.CashLineRow(tripId, "Paris", "Dakar",
+                        LocalDate.now(), new BigDecimal("2.00"), "EUR", new BigDecimal("220.00")));
+        when(paymentRepository.findReleasedLinesForTraveler(any(), any(), any(), any())).thenReturn(payments);
+        when(bidRepository.findCashLinesForTraveler(any(), any(), any(), any(), any())).thenReturn(cash);
+
+        com.yadony.api.matching.dto.RevenueDetailsDto dto =
+                service.computeRevenueDetails(traveler, StatsPeriod.DEFAULT);
+
+        // Ce que le résumé additionne par devise avant conversion.
+        java.util.Map<String, BigDecimal> expected = TravelerRevenue.cardPlusCashByCurrency(
+                List.of(new CurrencyAmountRow("EUR", new BigDecimal("480.00")),
+                        new CurrencyAmountRow("XOF", new BigDecimal("120000"))),
+                List.of(new CurrencyAmountRow("EUR", new BigDecimal("220.00"))));
+        for (com.yadony.api.matching.dto.RevenueGroupDto group : dto.groups()) {
+            assertThat(group.total()).isEqualByComparingTo(expected.get(group.currency()));
+        }
+    }
+
+    @Test
+    void computeRevenueDetails_uses_the_period_window() {
+        ArgumentCaptor<LocalDateTime> from = ArgumentCaptor.forClass(LocalDateTime.class);
+        when(paymentRepository.findReleasedLinesForTraveler(any(), any(), from.capture(), any()))
+                .thenReturn(List.of());
+
+        service.computeRevenueDetails(traveler, StatsPeriod.LAST_7_DAYS);
+
+        assertThat(from.getValue().toLocalDate()).isEqualTo(LocalDate.now().minusDays(7));
+    }
 }
