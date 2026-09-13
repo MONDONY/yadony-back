@@ -187,6 +187,29 @@ class TripsSummaryRepositoryIT {
     }
 
     @Test
+    void findCashLinesForTraveler_defaults_amount_to_zero_when_negotiated_net_eur_is_null() {
+        UUID travelerId = persistTraveler().getId();
+        AnnouncementEntity ann = persistAnnouncement(travelerId, AnnouncementStatus.COMPLETED);
+        BidEntity bid = new BidEntity();
+        bid.setAnnouncementId(ann.getId());
+        bid.setSenderId(UUID.randomUUID());
+        bid.setWeightKg(new BigDecimal("2.00"));
+        bid.setStatus(BidStatus.COMPLETED);
+        bid.setPaymentMethod(PaymentMethod.CASH);
+        bid.setCurrency("EUR");
+        // negotiatedNetEur volontairement non renseigné : bid CASH direct (BidService,
+        // annonce acceptant les espèces), jamais passé par une négociation qui l'aurait figé.
+        bidRepository.save(bid);
+
+        List<CashLineRow> lines = bidRepository.findCashLinesForTraveler(
+                travelerId, BidStatus.COMPLETED, PaymentMethod.CASH,
+                LocalDateTime.now().minusDays(1), LocalDateTime.now().plusDays(1));
+
+        assertThat(lines).hasSize(1);
+        assertThat(lines.get(0).amount()).isEqualByComparingTo("0");
+    }
+
+    @Test
     void findDeliveredKgByTrip_groups_completed_bids_per_trip_most_recent_first() {
         UUID travelerId = persistTraveler().getId();
         AnnouncementEntity older = persistAnnouncement(travelerId, AnnouncementStatus.COMPLETED);
@@ -211,6 +234,22 @@ class TripsSummaryRepositoryIT {
         assertThat(rows.get(1).tripId()).isEqualTo(older.getId());
         assertThat(rows.get(1).parcels()).isEqualTo(1);
         assertThat(rows.get(1).kg()).isEqualByComparingTo("3.00");
+    }
+
+    @Test
+    void findDeliveredKgByTrip_defaults_kg_to_zero_when_weight_is_null() {
+        UUID travelerId = persistTraveler().getId();
+        AnnouncementEntity ann = persistAnnouncement(travelerId, AnnouncementStatus.COMPLETED);
+        // weightKg nul : bid en mode grille (BidPricingMode.GRID), pas de poids saisi.
+        persistBid(ann.getId(), BidStatus.COMPLETED, null);
+
+        List<KgSoldTripRow> rows = bidRepository.findDeliveredKgByTrip(
+                travelerId, BidStatus.COMPLETED,
+                LocalDateTime.now().minusDays(1), LocalDateTime.now().plusDays(1));
+
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0).parcels()).isEqualTo(1);
+        assertThat(rows.get(0).kg()).isEqualByComparingTo("0");
     }
 
     // -------------------------------------------------------------------------

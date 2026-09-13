@@ -140,7 +140,7 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
     @Query("""
         SELECT new com.yadony.api.matching.dto.CashLineRow(
             a.id, a.departureCity, a.arrivalCity, a.departureDate,
-            b.weightKg, UPPER(b.currency), b.negotiatedNetEur)
+            b.weightKg, UPPER(b.currency), COALESCE(b.negotiatedNetEur, 0))
         FROM BidEntity b
         JOIN AnnouncementEntity a ON b.announcementId = a.id
         WHERE a.travelerId = :travelerId AND b.status = :status
@@ -162,7 +162,7 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
     @Query("""
         SELECT new com.yadony.api.matching.dto.KgSoldTripRow(
             a.id, a.departureCity, a.arrivalCity, a.departureDate,
-            COUNT(b), SUM(b.weightKg))
+            COUNT(b), COALESCE(SUM(b.weightKg), 0))
         FROM BidEntity b
         JOIN AnnouncementEntity a ON b.announcementId = a.id
         WHERE a.travelerId = :travelerId AND b.status = :status
