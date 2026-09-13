@@ -9,6 +9,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
@@ -79,14 +80,18 @@ public class TripsSummaryService {
         // n'a pas de sens. Sans le terme cash, un trajet réglé en espèces restait à
         // 0 alors que « Kg vendus » le comptait déjà.
         String activeCurrency = activeCurrencyResolver.resolveDisplay(userId);
-        BigDecimal revenue = TravelerRevenue.cardPlusCashByCurrency(
-                        paymentRepository.sumCapturedRevenueForTravelerByCurrency(
-                                userId, PaymentStatus.RELEASED, from, to),
-                        bidRepository.sumCashNetRevenueForTravelerByCurrency(
-                                userId, BidStatus.COMPLETED, PaymentMethod.CASH, from, to))
-                .entrySet().stream()
+        Map<String, BigDecimal> byCurrency = TravelerRevenue.cardPlusCashByCurrency(
+                paymentRepository.sumCapturedRevenueForTravelerByCurrency(
+                        userId, PaymentStatus.RELEASED, from, to),
+                bidRepository.sumCashNetRevenueForTravelerByCurrency(
+                        userId, BidStatus.COMPLETED, PaymentMethod.CASH, from, to));
+        BigDecimal revenue = byCurrency.entrySet().stream()
                 .map(e -> exchangeRateService.convert(e.getValue(), e.getKey(), activeCurrency))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
+        // « Converti » dès qu'une devise d'origine diffère de celle d'affichage :
+        // c'est ce qui autorise le client à préfixer le total d'un « ≈ ».
+        boolean revenueConverted = byCurrency.keySet().stream()
+                .anyMatch(code -> !code.equalsIgnoreCase(activeCurrency));
 
         long tripsPublished = announcementRepository
                 .countByTravelerIdAndCreatedAtBetweenAndStatusNot(
@@ -104,7 +109,9 @@ public class TripsSummaryService {
                         RoundingMode.HALF_UP),
                 tripsPublished,
                 parcelsSent,
-                period.apiValue());
+                period.apiValue(),
+                activeCurrency,
+                revenueConverted);
     }
 
     /**

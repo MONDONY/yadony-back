@@ -51,7 +51,7 @@ class TripsSummaryControllerTest {
         when(userRepository.findByFirebaseUid("firebase-uid-1")).thenReturn(Optional.of(user));
         when(service.computeSummary(user, StatsPeriod.LAST_30_DAYS)).thenReturn(
                 TripsSummaryDto.of(3, new BigDecimal("19.0"), new BigDecimal("152.46"),
-                        2, 5, "30d"));
+                        2, 5, "30d", "EUR", false));
 
         ResponseEntity<TripsSummaryDto> response = controller.getMyTripsSummary("30d");
 
@@ -70,7 +70,7 @@ class TripsSummaryControllerTest {
         when(userRepository.findByFirebaseUid("firebase-uid-1")).thenReturn(Optional.of(user));
         when(service.computeSummary(user, StatsPeriod.LAST_12_MONTHS)).thenReturn(
                 TripsSummaryDto.of(3, new BigDecimal("40.0"), new BigDecimal("900.00"),
-                        12, 30, "12m"));
+                        12, 30, "12m", "EUR", false));
 
         ResponseEntity<TripsSummaryDto> response = controller.getMyTripsSummary("12m");
 

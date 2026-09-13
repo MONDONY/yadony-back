@@ -178,6 +178,46 @@ class TripsSummaryServiceTest {
     }
 
     @Test
+    void computeSummary_exposes_the_display_currency_and_no_conversion_when_single_currency() {
+        when(paymentRepository.sumCapturedRevenueForTravelerByCurrency(
+                eq(traveler.getId()), eq(PaymentStatus.RELEASED), any(), any()))
+                .thenReturn(eur("100.00"));
+
+        TripsSummaryDto dto = service.computeSummary(traveler, StatsPeriod.DEFAULT);
+
+        assertThat(dto.revenueCurrency()).isEqualTo("EUR");
+        assertThat(dto.revenueConverted()).isFalse();
+    }
+
+    @Test
+    void computeSummary_flags_conversion_when_a_source_currency_differs_from_display() {
+        when(paymentRepository.sumCapturedRevenueForTravelerByCurrency(
+                eq(traveler.getId()), eq(PaymentStatus.RELEASED), any(), any()))
+                .thenReturn(eur("100.00"));
+        when(bidRepository.sumCashNetRevenueForTravelerByCurrency(
+                eq(traveler.getId()), eq(BidStatus.COMPLETED),
+                eq(com.yadony.api.payments.cash.PaymentMethod.CASH), any(), any()))
+                .thenReturn(List.of(new CurrencyAmountRow("XOF", new BigDecimal("65595.70"))));
+        when(exchangeRateService.convert(eq(new BigDecimal("65595.70")), eq("XOF"), eq("EUR")))
+                .thenReturn(new BigDecimal("100.00"));
+
+        TripsSummaryDto dto = service.computeSummary(traveler, StatsPeriod.DEFAULT);
+
+        assertThat(dto.revenueConverted()).isTrue();
+    }
+
+    @Test
+    void computeSummary_does_not_flag_conversion_without_any_revenue() {
+        when(paymentRepository.sumCapturedRevenueForTravelerByCurrency(any(), any(), any(), any()))
+                .thenReturn(List.of());
+
+        TripsSummaryDto dto = service.computeSummary(traveler, StatsPeriod.DEFAULT);
+
+        assertThat(dto.revenueConverted()).isFalse();
+        assertThat(dto.revenueCurrency()).isEqualTo("EUR");
+    }
+
+    @Test
     void evictSummary_clears_every_period_of_the_traveler() {
         UUID travelerId = UUID.randomUUID();
         when(cacheManager.getCache(TripsSummaryService.CACHE_NAME)).thenReturn(cache);
