@@ -178,16 +178,63 @@ class TripsSummaryServiceTest {
     }
 
     @Test
-    void evictSummary_clears_every_period_of_the_traveler() {
+    void computeSummary_exposes_the_display_currency_and_no_conversion_when_single_currency() {
+        when(paymentRepository.sumCapturedRevenueForTravelerByCurrency(
+                eq(traveler.getId()), eq(PaymentStatus.RELEASED), any(), any()))
+                .thenReturn(eur("100.00"));
+
+        TripsSummaryDto dto = service.computeSummary(traveler, StatsPeriod.DEFAULT);
+
+        assertThat(dto.revenueCurrency()).isEqualTo("EUR");
+        assertThat(dto.revenueConverted()).isFalse();
+    }
+
+    @Test
+    void computeSummary_flags_conversion_when_a_source_currency_differs_from_display() {
+        when(paymentRepository.sumCapturedRevenueForTravelerByCurrency(
+                eq(traveler.getId()), eq(PaymentStatus.RELEASED), any(), any()))
+                .thenReturn(eur("100.00"));
+        when(bidRepository.sumCashNetRevenueForTravelerByCurrency(
+                eq(traveler.getId()), eq(BidStatus.COMPLETED),
+                eq(com.yadony.api.payments.cash.PaymentMethod.CASH), any(), any()))
+                .thenReturn(List.of(new CurrencyAmountRow("XOF", new BigDecimal("65595.70"))));
+        when(exchangeRateService.convert(eq(new BigDecimal("65595.70")), eq("XOF"), eq("EUR")))
+                .thenReturn(new BigDecimal("100.00"));
+
+        TripsSummaryDto dto = service.computeSummary(traveler, StatsPeriod.DEFAULT);
+
+        assertThat(dto.revenueConverted()).isTrue();
+    }
+
+    @Test
+    void computeSummary_does_not_flag_conversion_without_any_revenue() {
+        when(paymentRepository.sumCapturedRevenueForTravelerByCurrency(any(), any(), any(), any()))
+                .thenReturn(List.of());
+
+        TripsSummaryDto dto = service.computeSummary(traveler, StatsPeriod.DEFAULT);
+
+        assertThat(dto.revenueConverted()).isFalse();
+        assertThat(dto.revenueCurrency()).isEqualTo("EUR");
+    }
+
+    @Test
+    void evictSummary_clears_every_period_of_the_traveler_in_the_three_caches() {
         UUID travelerId = UUID.randomUUID();
+        Cache revenuesCache = org.mockito.Mockito.mock(Cache.class);
+        Cache kgCache = org.mockito.Mockito.mock(Cache.class);
         when(cacheManager.getCache(TripsSummaryService.CACHE_NAME)).thenReturn(cache);
+        when(cacheManager.getCache(TripsSummaryService.REVENUES_CACHE_NAME)).thenReturn(revenuesCache);
+        when(cacheManager.getCache(TripsSummaryService.KG_CACHE_NAME)).thenReturn(kgCache);
 
         service.evictSummary(travelerId);
 
         // Une période oubliée resterait cachée jusqu'au TTL : l'éviction
-        // parcourt l'enum plutôt qu'une liste de clés écrite à la main.
+        // parcourt l'enum plutôt qu'une liste de clés écrite à la main, et
+        // les feuilles de détail partagent la vie du résumé.
         for (StatsPeriod period : StatsPeriod.values()) {
             verify(cache).evict(StatsPeriod.cacheKey(travelerId, period));
+            verify(revenuesCache).evict(StatsPeriod.cacheKey(travelerId, period));
+            verify(kgCache).evict(StatsPeriod.cacheKey(travelerId, period));
         }
     }
 
@@ -196,5 +243,115 @@ class TripsSummaryServiceTest {
         when(cacheManager.getCache(TripsSummaryService.CACHE_NAME)).thenReturn(null);
 
         service.evictSummary(UUID.randomUUID());
+    }
+
+    @Test
+    void computeRevenueDetails_merges_payment_and_cash_lines_by_currency() {
+        UUID tripId = UUID.randomUUID();
+        when(paymentRepository.findReleasedLinesForTraveler(
+                eq(traveler.getId()), eq(PaymentStatus.RELEASED), any(), any()))
+                .thenReturn(List.of(new com.yadony.api.matching.dto.PaymentLineRow(
+                        tripId, "Paris", "Dakar", LocalDate.now().minusDays(1), LocalDateTime.now(),
+                        new BigDecimal("4.00"), com.yadony.api.payments.PaymentRail.STRIPE, "EUR",
+                        new BigDecimal("480.00"))));
+        when(bidRepository.findCashLinesForTraveler(
+                eq(traveler.getId()), eq(BidStatus.COMPLETED),
+                eq(com.yadony.api.payments.cash.PaymentMethod.CASH), any(), any()))
+                .thenReturn(List.of(new com.yadony.api.matching.dto.CashLineRow(
+                        tripId, "Paris", "Dakar", LocalDate.now().minusDays(1),
+                        new BigDecimal("2.00"), "XOF", new BigDecimal("75000"))));
+
+        com.yadony.api.matching.dto.RevenueDetailsDto dto =
+                service.computeRevenueDetails(traveler, StatsPeriod.DEFAULT);
+
+        assertThat(dto.period()).isEqualTo("30d");
+        assertThat(dto.deliveries()).isEqualTo(2);
+        assertThat(dto.groups()).extracting(com.yadony.api.matching.dto.RevenueGroupDto::currency)
+                .containsExactly("EUR", "XOF");
+        assertThat(dto.groups().get(0).items().get(0).rail())
+                .isEqualTo(com.yadony.api.matching.dto.RevenueRail.CARD);
+        assertThat(dto.groups().get(1).items().get(0).rail())
+                .isEqualTo(com.yadony.api.matching.dto.RevenueRail.CASH);
+    }
+
+    @Test
+    void computeRevenueDetails_aggregates_and_rounds_like_the_summary() {
+        UUID tripId = UUID.randomUUID();
+        List<com.yadony.api.matching.dto.PaymentLineRow> payments = List.of(
+                new com.yadony.api.matching.dto.PaymentLineRow(tripId, "Paris", "Dakar",
+                        LocalDate.now(), LocalDateTime.now(), new BigDecimal("4.00"),
+                        com.yadony.api.payments.PaymentRail.STRIPE, "EUR", new BigDecimal("480.00")),
+                new com.yadony.api.matching.dto.PaymentLineRow(tripId, "Paris", "Dakar",
+                        LocalDate.now(), LocalDateTime.now(), new BigDecimal("3.00"),
+                        com.yadony.api.payments.PaymentRail.PAWAPAY, "XOF", new BigDecimal("120000")));
+        List<com.yadony.api.matching.dto.CashLineRow> cash = List.of(
+                new com.yadony.api.matching.dto.CashLineRow(tripId, "Paris", "Dakar",
+                        LocalDate.now(), new BigDecimal("2.00"), "EUR", new BigDecimal("220.00")));
+        when(paymentRepository.findReleasedLinesForTraveler(any(), any(), any(), any())).thenReturn(payments);
+        when(bidRepository.findCashLinesForTraveler(any(), any(), any(), any(), any())).thenReturn(cash);
+
+        com.yadony.api.matching.dto.RevenueDetailsDto dto =
+                service.computeRevenueDetails(traveler, StatsPeriod.DEFAULT);
+
+        // Ce test vérifie une coïncidence de calcul, pas une réconciliation de bout en
+        // bout : les lignes stubées ci-dessus reprennent les mêmes montants que ceux
+        // recalculés ici, donc il démontre seulement que le regroupement/arrondi par
+        // devise de RevenueDetailsDto.of coïncide avec celui de
+        // TravelerRevenue.cardPlusCashByCurrency (utilisé par computeSummary). La
+        // réconciliation réelle avec les requêtes de somme
+        // (sumCapturedRevenueForTravelerByCurrency / sumCashNetRevenueForTravelerByCurrency)
+        // est couverte séparément, sur des données partagées en base, par
+        // TripsSummaryRepositoryIT#revenue_lines_reconcile_with_the_currency_totals_on_the_same_data.
+        java.util.Map<String, BigDecimal> expected = TravelerRevenue.cardPlusCashByCurrency(
+                List.of(new CurrencyAmountRow("EUR", new BigDecimal("480.00")),
+                        new CurrencyAmountRow("XOF", new BigDecimal("120000"))),
+                List.of(new CurrencyAmountRow("EUR", new BigDecimal("220.00"))));
+        for (com.yadony.api.matching.dto.RevenueGroupDto group : dto.groups()) {
+            assertThat(group.total()).isEqualByComparingTo(expected.get(group.currency()));
+        }
+    }
+
+    @Test
+    void computeRevenueDetails_uses_the_period_window() {
+        ArgumentCaptor<LocalDateTime> from = ArgumentCaptor.forClass(LocalDateTime.class);
+        when(paymentRepository.findReleasedLinesForTraveler(any(), any(), from.capture(), any()))
+                .thenReturn(List.of());
+
+        service.computeRevenueDetails(traveler, StatsPeriod.LAST_7_DAYS);
+
+        assertThat(from.getValue().toLocalDate()).isEqualTo(LocalDate.now().minusDays(7));
+    }
+
+    @Test
+    void computeKgSold_totals_kg_and_parcels_across_trips() {
+        when(bidRepository.findDeliveredKgByTrip(
+                eq(traveler.getId()), eq(BidStatus.COMPLETED), any(), any()))
+                .thenReturn(List.of(
+                        new com.yadony.api.matching.dto.KgSoldTripRow(UUID.randomUUID(), "Paris", "Dakar",
+                                LocalDate.now().minusDays(1), 2, new BigDecimal("6.00")),
+                        new com.yadony.api.matching.dto.KgSoldTripRow(UUID.randomUUID(), "Lyon", "Abidjan",
+                                LocalDate.now().minusDays(8), 1, new BigDecimal("3.00"))));
+
+        com.yadony.api.matching.dto.KgSoldDetailsDto dto = service.computeKgSold(traveler, StatsPeriod.DEFAULT);
+
+        assertThat(dto.period()).isEqualTo("30d");
+        assertThat(dto.totalKg()).isEqualByComparingTo("9.00");
+        assertThat(dto.parcels()).isEqualTo(3);
+        assertThat(dto.trips()).extracting(com.yadony.api.matching.dto.KgSoldTripDto::departureCity)
+                .containsExactly("Paris", "Lyon");
+        assertThat(dto.trips().get(0).kg()).isEqualByComparingTo("6.00");
+        assertThat(dto.trips().get(0).parcels()).isEqualTo(2);
+    }
+
+    @Test
+    void computeKgSold_is_zero_without_deliveries() {
+        when(bidRepository.findDeliveredKgByTrip(any(), any(), any(), any())).thenReturn(List.of());
+
+        com.yadony.api.matching.dto.KgSoldDetailsDto dto = service.computeKgSold(traveler, StatsPeriod.LAST_12_MONTHS);
+
+        assertThat(dto.period()).isEqualTo("12m");
+        assertThat(dto.totalKg()).isEqualByComparingTo("0");
+        assertThat(dto.parcels()).isZero();
+        assertThat(dto.trips()).isEmpty();
     }
 }

@@ -132,6 +132,50 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
             @Param("from") java.time.LocalDateTime from,
             @Param("to") java.time.LocalDateTime to);
 
+    /**
+     * Une ligne par deal réglé en ESPÈCES et livré, dans la devise du bid. Même
+     * filtre que {@link #sumCashNetRevenueForTravelerByCurrency} : la somme des
+     * lignes par devise se réconcilie exactement avec ce total.
+     */
+    @Query("""
+        SELECT new com.yadony.api.matching.dto.CashLineRow(
+            a.id, a.departureCity, a.arrivalCity, a.departureDate,
+            b.weightKg, UPPER(b.currency), COALESCE(b.negotiatedNetEur, 0))
+        FROM BidEntity b
+        JOIN AnnouncementEntity a ON b.announcementId = a.id
+        WHERE a.travelerId = :travelerId AND b.status = :status
+          AND b.paymentMethod = :method
+          AND b.createdAt BETWEEN :from AND :to AND b.deletedAt IS NULL
+        ORDER BY a.departureDate DESC
+    """)
+    List<com.yadony.api.matching.dto.CashLineRow> findCashLinesForTraveler(
+            @Param("travelerId") UUID travelerId,
+            @Param("status") BidStatus status,
+            @Param("method") PaymentMethod method,
+            @Param("from") java.time.LocalDateTime from,
+            @Param("to") java.time.LocalDateTime to);
+
+    /**
+     * Kg livrés groupés par trajet, du plus récent au plus ancien. Même filtre
+     * que {@link #sumDeliveredKgForTraveler} : la somme des lignes égale ce total.
+     */
+    @Query("""
+        SELECT new com.yadony.api.matching.dto.KgSoldTripRow(
+            a.id, a.departureCity, a.arrivalCity, a.departureDate,
+            COUNT(b), COALESCE(SUM(b.weightKg), 0))
+        FROM BidEntity b
+        JOIN AnnouncementEntity a ON b.announcementId = a.id
+        WHERE a.travelerId = :travelerId AND b.status = :status
+          AND b.createdAt BETWEEN :from AND :to AND b.deletedAt IS NULL
+        GROUP BY a.id, a.departureCity, a.arrivalCity, a.departureDate
+        ORDER BY a.departureDate DESC
+    """)
+    List<com.yadony.api.matching.dto.KgSoldTripRow> findDeliveredKgByTrip(
+            @Param("travelerId") UUID travelerId,
+            @Param("status") BidStatus status,
+            @Param("from") java.time.LocalDateTime from,
+            @Param("to") java.time.LocalDateTime to);
+
     /** Total tous temps du revenu net cash, par devise — voir {@link #sumCashNetRevenueForTravelerByCurrency}. */
     @Query("""
         SELECT new com.yadony.api.payments.dto.CurrencyAmountRow(

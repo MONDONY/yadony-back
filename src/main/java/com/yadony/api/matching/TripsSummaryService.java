@@ -1,6 +1,12 @@
 package com.yadony.api.matching;
 
 import com.yadony.api.auth.UserEntity;
+import com.yadony.api.matching.dto.CashLineRow;
+import com.yadony.api.matching.dto.KgSoldDetailsDto;
+import com.yadony.api.matching.dto.PaymentLineRow;
+import com.yadony.api.matching.dto.RevenueDetailsDto;
+import com.yadony.api.matching.dto.RevenueDetailsDto.RevenueLine;
+import com.yadony.api.matching.dto.RevenueItemDto;
 import com.yadony.api.matching.dto.TripsSummaryDto;
 import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.PaymentStatus;
@@ -8,7 +14,9 @@ import com.yadony.api.payments.cash.PaymentMethod;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
@@ -20,6 +28,10 @@ import org.springframework.transaction.annotation.Transactional;
 public class TripsSummaryService {
 
     public static final String CACHE_NAME = "trips-summary";
+    public static final String REVENUES_CACHE_NAME = "trips-summary-revenues";
+    public static final String KG_CACHE_NAME = "trips-summary-kg";
+    private static final List<String> ALL_CACHE_NAMES =
+            List.of(CACHE_NAME, REVENUES_CACHE_NAME, KG_CACHE_NAME);
 
     private static final List<AnnouncementStatus> ACTIVE_STATUSES = List.of(
             AnnouncementStatus.ACTIVE,
@@ -79,14 +91,18 @@ public class TripsSummaryService {
         // n'a pas de sens. Sans le terme cash, un trajet réglé en espèces restait à
         // 0 alors que « Kg vendus » le comptait déjà.
         String activeCurrency = activeCurrencyResolver.resolveDisplay(userId);
-        BigDecimal revenue = TravelerRevenue.cardPlusCashByCurrency(
-                        paymentRepository.sumCapturedRevenueForTravelerByCurrency(
-                                userId, PaymentStatus.RELEASED, from, to),
-                        bidRepository.sumCashNetRevenueForTravelerByCurrency(
-                                userId, BidStatus.COMPLETED, PaymentMethod.CASH, from, to))
-                .entrySet().stream()
+        Map<String, BigDecimal> byCurrency = TravelerRevenue.cardPlusCashByCurrency(
+                paymentRepository.sumCapturedRevenueForTravelerByCurrency(
+                        userId, PaymentStatus.RELEASED, from, to),
+                bidRepository.sumCashNetRevenueForTravelerByCurrency(
+                        userId, BidStatus.COMPLETED, PaymentMethod.CASH, from, to));
+        BigDecimal revenue = byCurrency.entrySet().stream()
                 .map(e -> exchangeRateService.convert(e.getValue(), e.getKey(), activeCurrency))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
+        // « Converti » dès qu'une devise d'origine diffère de celle d'affichage :
+        // c'est ce qui autorise le client à préfixer le total d'un « ≈ ».
+        boolean revenueConverted = byCurrency.keySet().stream()
+                .anyMatch(code -> !code.equalsIgnoreCase(activeCurrency));
 
         long tripsPublished = announcementRepository
                 .countByTravelerIdAndCreatedAtBetweenAndStatusNot(
@@ -104,26 +120,72 @@ public class TripsSummaryService {
                         RoundingMode.HALF_UP),
                 tripsPublished,
                 parcelsSent,
-                period.apiValue());
+                period.apiValue(),
+                activeCurrency,
+                revenueConverted);
     }
 
     /**
-     * Invalide le résumé caché d'un voyageur, toutes périodes confondues. À
-     * appeler dès que ses kg livrés ou son escrow libéré changent (livraison
-     * confirmée, paiement libéré) pour que les statistiques se rafraîchissent
-     * sans attendre le TTL Caffeine (5 min).
+     * Feuille « Revenus » : une ligne par livraison, dans la devise du paiement,
+     * regroupée par devise. Mêmes sources et mêmes fenêtres que le total du
+     * résumé, donc la somme des lignes d'une devise égale le montant que le
+     * résumé convertit pour cette devise.
+     */
+    @Cacheable(
+            cacheNames = REVENUES_CACHE_NAME,
+            key = "T(com.yadony.api.matching.StatsPeriod).cacheKey(#traveler.id, #period)")
+    @Transactional(readOnly = true)
+    public RevenueDetailsDto computeRevenueDetails(UserEntity traveler, StatsPeriod period) {
+        UUID userId = traveler.getId();
+        LocalDateTime from = period.start();
+        LocalDateTime to = LocalDateTime.now();
+
+        List<RevenueLine> lines = new ArrayList<>();
+        for (PaymentLineRow row : paymentRepository.findReleasedLinesForTraveler(
+                userId, PaymentStatus.RELEASED, from, to)) {
+            lines.add(new RevenueLine(row.currency(), RevenueItemDto.fromPayment(row)));
+        }
+        for (CashLineRow row : bidRepository.findCashLinesForTraveler(
+                userId, BidStatus.COMPLETED, PaymentMethod.CASH, from, to)) {
+            lines.add(new RevenueLine(row.currency(), RevenueItemDto.fromCash(row)));
+        }
+        return RevenueDetailsDto.of(period.apiValue(), lines);
+    }
+
+    /**
+     * Feuille « Kg vendus » : le poids livré trajet par trajet. Même filtre que
+     * {@code kgSold} du résumé, donc le total de la feuille égale la tuile.
+     */
+    @Cacheable(
+            cacheNames = KG_CACHE_NAME,
+            key = "T(com.yadony.api.matching.StatsPeriod).cacheKey(#traveler.id, #period)")
+    @Transactional(readOnly = true)
+    public KgSoldDetailsDto computeKgSold(UserEntity traveler, StatsPeriod period) {
+        return KgSoldDetailsDto.of(
+                period.apiValue(),
+                bidRepository.findDeliveredKgByTrip(
+                        traveler.getId(), BidStatus.COMPLETED, period.start(), LocalDateTime.now()));
+    }
+
+    /**
+     * Invalide le résumé et ses deux feuilles de détail pour un voyageur, toutes
+     * périodes confondues. À appeler dès que ses kg livrés ou son escrow libéré
+     * changent (livraison confirmée, paiement libéré) pour que les statistiques
+     * se rafraîchissent sans attendre le TTL Caffeine (5 min).
      *
      * <p>Éviction programmatique plutôt que {@code @CacheEvict} : les clés
      * dépendent de {@link StatsPeriod#values()}, qu'une annotation ne peut pas
      * parcourir — une période ajoutée resterait cachée indéfiniment.
      */
     public void evictSummary(UUID travelerId) {
-        Cache cache = cacheManager.getCache(CACHE_NAME);
-        if (cache == null) {
-            return;
-        }
-        for (StatsPeriod period : StatsPeriod.values()) {
-            cache.evict(StatsPeriod.cacheKey(travelerId, period));
+        for (String cacheName : ALL_CACHE_NAMES) {
+            Cache cache = cacheManager.getCache(cacheName);
+            if (cache == null) {
+                continue;
+            }
+            for (StatsPeriod period : StatsPeriod.values()) {
+                cache.evict(StatsPeriod.cacheKey(travelerId, period));
+            }
         }
     }
 }

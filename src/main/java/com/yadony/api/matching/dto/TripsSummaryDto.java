@@ -11,6 +11,11 @@ import java.math.BigDecimal;
  * alias de sérialisation, pas des champs : ils ne peuvent pas diverger des
  * valeurs réelles, et se suppriment en deux lignes quand ces clients sont
  * éteints.
+ *
+ * <p>{@code revenue} est exprimé dans {@code revenueCurrency}, la devise
+ * d'affichage du voyageur. {@code revenueConverted} dit si au moins une devise
+ * d'origine en diffère : le client préfixe alors la valeur d'un « ≈ », le
+ * détail par devise vivant sur {@code /trips-summary/revenues}.
  */
 public record TripsSummaryDto(
         long activeTrips,
@@ -18,7 +23,9 @@ public record TripsSummaryDto(
         BigDecimal revenue,
         long tripsPublished,
         long parcelsSent,
-        String period
+        String period,
+        String revenueCurrency,
+        boolean revenueConverted
 ) {
     public static TripsSummaryDto of(
             long activeTrips,
@@ -26,9 +33,12 @@ public record TripsSummaryDto(
             BigDecimal revenue,
             long tripsPublished,
             long parcelsSent,
-            String period) {
+            String period,
+            String revenueCurrency,
+            boolean revenueConverted) {
         return new TripsSummaryDto(
-                activeTrips, kgSold, revenue, tripsPublished, parcelsSent, period);
+                activeTrips, kgSold, revenue, tripsPublished, parcelsSent, period,
+                revenueCurrency, revenueConverted);
     }
 
     @JsonGetter("kgSoldThisMonth")
