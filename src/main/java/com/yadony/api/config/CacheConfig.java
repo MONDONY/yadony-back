@@ -98,6 +98,8 @@ public class CacheConfig {
                 "announcements-search",
                 "estimation-corridor",
                 "trips-summary",
+                "trips-summary-revenues",
+                "trips-summary-kg",
                 "exchange-rates"
         ));
 

@@ -218,16 +218,23 @@ class TripsSummaryServiceTest {
     }
 
     @Test
-    void evictSummary_clears_every_period_of_the_traveler() {
+    void evictSummary_clears_every_period_of_the_traveler_in_the_three_caches() {
         UUID travelerId = UUID.randomUUID();
+        Cache revenuesCache = org.mockito.Mockito.mock(Cache.class);
+        Cache kgCache = org.mockito.Mockito.mock(Cache.class);
         when(cacheManager.getCache(TripsSummaryService.CACHE_NAME)).thenReturn(cache);
+        when(cacheManager.getCache(TripsSummaryService.REVENUES_CACHE_NAME)).thenReturn(revenuesCache);
+        when(cacheManager.getCache(TripsSummaryService.KG_CACHE_NAME)).thenReturn(kgCache);
 
         service.evictSummary(travelerId);
 
         // Une période oubliée resterait cachée jusqu'au TTL : l'éviction
-        // parcourt l'enum plutôt qu'une liste de clés écrite à la main.
+        // parcourt l'enum plutôt qu'une liste de clés écrite à la main, et
+        // les feuilles de détail partagent la vie du résumé.
         for (StatsPeriod period : StatsPeriod.values()) {
             verify(cache).evict(StatsPeriod.cacheKey(travelerId, period));
+            verify(revenuesCache).evict(StatsPeriod.cacheKey(travelerId, period));
+            verify(kgCache).evict(StatsPeriod.cacheKey(travelerId, period));
         }
     }
 

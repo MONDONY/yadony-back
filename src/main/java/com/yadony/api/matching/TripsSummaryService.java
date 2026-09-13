@@ -21,6 +21,10 @@ import org.springframework.transaction.annotation.Transactional;
 public class TripsSummaryService {
 
     public static final String CACHE_NAME = "trips-summary";
+    public static final String REVENUES_CACHE_NAME = "trips-summary-revenues";
+    public static final String KG_CACHE_NAME = "trips-summary-kg";
+    private static final List<String> ALL_CACHE_NAMES =
+            List.of(CACHE_NAME, REVENUES_CACHE_NAME, KG_CACHE_NAME);
 
     private static final List<AnnouncementStatus> ACTIVE_STATUSES = List.of(
             AnnouncementStatus.ACTIVE,
@@ -115,22 +119,24 @@ public class TripsSummaryService {
     }
 
     /**
-     * Invalide le résumé caché d'un voyageur, toutes périodes confondues. À
-     * appeler dès que ses kg livrés ou son escrow libéré changent (livraison
-     * confirmée, paiement libéré) pour que les statistiques se rafraîchissent
-     * sans attendre le TTL Caffeine (5 min).
+     * Invalide le résumé et ses deux feuilles de détail pour un voyageur, toutes
+     * périodes confondues. À appeler dès que ses kg livrés ou son escrow libéré
+     * changent (livraison confirmée, paiement libéré) pour que les statistiques
+     * se rafraîchissent sans attendre le TTL Caffeine (5 min).
      *
      * <p>Éviction programmatique plutôt que {@code @CacheEvict} : les clés
      * dépendent de {@link StatsPeriod#values()}, qu'une annotation ne peut pas
      * parcourir — une période ajoutée resterait cachée indéfiniment.
      */
     public void evictSummary(UUID travelerId) {
-        Cache cache = cacheManager.getCache(CACHE_NAME);
-        if (cache == null) {
-            return;
-        }
-        for (StatsPeriod period : StatsPeriod.values()) {
-            cache.evict(StatsPeriod.cacheKey(travelerId, period));
+        for (String cacheName : ALL_CACHE_NAMES) {
+            Cache cache = cacheManager.getCache(cacheName);
+            if (cache == null) {
+                continue;
+            }
+            for (StatsPeriod period : StatsPeriod.values()) {
+                cache.evict(StatsPeriod.cacheKey(travelerId, period));
+            }
         }
     }
 }
