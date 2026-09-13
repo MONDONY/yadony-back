@@ -2,6 +2,7 @@ package com.yadony.api.matching;
 
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.matching.dto.CashLineRow;
+import com.yadony.api.matching.dto.KgSoldDetailsDto;
 import com.yadony.api.matching.dto.PaymentLineRow;
 import com.yadony.api.matching.dto.RevenueDetailsDto;
 import com.yadony.api.matching.dto.RevenueDetailsDto.RevenueLine;
@@ -149,6 +150,21 @@ public class TripsSummaryService {
             lines.add(new RevenueLine(row.currency(), RevenueItemDto.fromCash(row)));
         }
         return RevenueDetailsDto.of(period.apiValue(), lines);
+    }
+
+    /**
+     * Feuille « Kg vendus » : le poids livré trajet par trajet. Même filtre que
+     * {@code kgSold} du résumé, donc le total de la feuille égale la tuile.
+     */
+    @Cacheable(
+            cacheNames = KG_CACHE_NAME,
+            key = "T(com.yadony.api.matching.StatsPeriod).cacheKey(#traveler.id, #period)")
+    @Transactional(readOnly = true)
+    public KgSoldDetailsDto computeKgSold(UserEntity traveler, StatsPeriod period) {
+        return KgSoldDetailsDto.of(
+                period.apiValue(),
+                bidRepository.findDeliveredKgByTrip(
+                        traveler.getId(), BidStatus.COMPLETED, period.start(), LocalDateTime.now()));
     }
 
     /**

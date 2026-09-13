@@ -321,4 +321,37 @@ class TripsSummaryServiceTest {
 
         assertThat(from.getValue().toLocalDate()).isEqualTo(LocalDate.now().minusDays(7));
     }
+
+    @Test
+    void computeKgSold_totals_kg_and_parcels_across_trips() {
+        when(bidRepository.findDeliveredKgByTrip(
+                eq(traveler.getId()), eq(BidStatus.COMPLETED), any(), any()))
+                .thenReturn(List.of(
+                        new com.yadony.api.matching.dto.KgSoldTripRow(UUID.randomUUID(), "Paris", "Dakar",
+                                LocalDate.now().minusDays(1), 2, new BigDecimal("6.00")),
+                        new com.yadony.api.matching.dto.KgSoldTripRow(UUID.randomUUID(), "Lyon", "Abidjan",
+                                LocalDate.now().minusDays(8), 1, new BigDecimal("3.00"))));
+
+        com.yadony.api.matching.dto.KgSoldDetailsDto dto = service.computeKgSold(traveler, StatsPeriod.DEFAULT);
+
+        assertThat(dto.period()).isEqualTo("30d");
+        assertThat(dto.totalKg()).isEqualByComparingTo("9.00");
+        assertThat(dto.parcels()).isEqualTo(3);
+        assertThat(dto.trips()).extracting(com.yadony.api.matching.dto.KgSoldTripDto::departureCity)
+                .containsExactly("Paris", "Lyon");
+        assertThat(dto.trips().get(0).kg()).isEqualByComparingTo("6.00");
+        assertThat(dto.trips().get(0).parcels()).isEqualTo(2);
+    }
+
+    @Test
+    void computeKgSold_is_zero_without_deliveries() {
+        when(bidRepository.findDeliveredKgByTrip(any(), any(), any(), any())).thenReturn(List.of());
+
+        com.yadony.api.matching.dto.KgSoldDetailsDto dto = service.computeKgSold(traveler, StatsPeriod.LAST_12_MONTHS);
+
+        assertThat(dto.period()).isEqualTo("12m");
+        assertThat(dto.totalKg()).isEqualByComparingTo("0");
+        assertThat(dto.parcels()).isZero();
+        assertThat(dto.trips()).isEmpty();
+    }
 }
