@@ -4,6 +4,8 @@ import com.yadony.api.auth.Role;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.matching.dto.KgSoldDetailsDto;
+import com.yadony.api.matching.dto.RevenueDetailsDto;
 import com.yadony.api.matching.dto.TripsSummaryDto;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -39,6 +41,31 @@ public class TripsSummaryController {
     @GetMapping("/me/trips-summary")
     public ResponseEntity<TripsSummaryDto> getMyTripsSummary(
             @RequestParam(required = false) String period) {
+        UserEntity user = requireTraveler();
+        return ResponseEntity.ok(
+                tripsSummaryService.computeSummary(user, StatsPeriod.fromApiValue(period)));
+    }
+
+    /** Feuille « Revenus » : chaque livraison dans la devise de son paiement, par devise. */
+    @GetMapping("/me/trips-summary/revenues")
+    public ResponseEntity<RevenueDetailsDto> getMyRevenueDetails(
+            @RequestParam(required = false) String period) {
+        UserEntity user = requireTraveler();
+        return ResponseEntity.ok(
+                tripsSummaryService.computeRevenueDetails(user, StatsPeriod.fromApiValue(period)));
+    }
+
+    /** Feuille « Kg vendus » : le poids livré trajet par trajet. */
+    @GetMapping("/me/trips-summary/kg-sold")
+    public ResponseEntity<KgSoldDetailsDto> getMyKgSold(
+            @RequestParam(required = false) String period) {
+        UserEntity user = requireTraveler();
+        return ResponseEntity.ok(
+                tripsSummaryService.computeKgSold(user, StatsPeriod.fromApiValue(period)));
+    }
+
+    /** Session Firebase valide, compte connu, rôle voyageur : la même garde pour les trois routes. */
+    private UserEntity requireTraveler() {
         String firebaseUid = requireFirebaseUid();
 
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
@@ -52,9 +79,7 @@ public class TripsSummaryController {
                     "Traveler role required",
                     "Réservé aux voyageurs.");
         }
-
-        return ResponseEntity.ok(
-                tripsSummaryService.computeSummary(user, StatsPeriod.fromApiValue(period)));
+        return user;
     }
 
     private String requireFirebaseUid() {

@@ -8,6 +8,8 @@ import com.yadony.api.auth.Role;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.matching.dto.KgSoldDetailsDto;
+import com.yadony.api.matching.dto.RevenueDetailsDto;
 import com.yadony.api.matching.dto.TripsSummaryDto;
 import java.math.BigDecimal;
 import java.util.List;
@@ -102,6 +104,57 @@ class TripsSummaryControllerTest {
         SecurityContextHolder.clearContext();
 
         assertThatThrownBy(() -> controller.getMyTripsSummary("30d"))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(ex -> assertThat(((YadonyBusinessException) ex).getStatus().value()).isEqualTo(401));
+    }
+
+    @Test
+    void returns_revenue_details_for_traveler() {
+        UserEntity user = travelerUser();
+        when(userRepository.findByFirebaseUid("firebase-uid-1")).thenReturn(Optional.of(user));
+        RevenueDetailsDto details = RevenueDetailsDto.of("7d", List.of());
+        when(service.computeRevenueDetails(user, StatsPeriod.LAST_7_DAYS)).thenReturn(details);
+
+        ResponseEntity<RevenueDetailsDto> response = controller.getMyRevenueDetails("7d");
+
+        assertThat(response.getStatusCode().value()).isEqualTo(200);
+        assertThat(response.getBody()).isSameAs(details);
+    }
+
+    @Test
+    void returns_kg_sold_for_traveler_with_default_period_when_unknown() {
+        UserEntity user = travelerUser();
+        when(userRepository.findByFirebaseUid("firebase-uid-1")).thenReturn(Optional.of(user));
+        KgSoldDetailsDto details = KgSoldDetailsDto.of("30d", List.of());
+        when(service.computeKgSold(user, StatsPeriod.LAST_30_DAYS)).thenReturn(details);
+
+        ResponseEntity<KgSoldDetailsDto> response = controller.getMyKgSold("bidon");
+
+        assertThat(response.getStatusCode().value()).isEqualTo(200);
+        assertThat(response.getBody()).isSameAs(details);
+    }
+
+    @Test
+    void details_endpoints_reject_sender_only_user_with_403() {
+        UserEntity user = senderUser();
+        when(userRepository.findByFirebaseUid("firebase-uid-1")).thenReturn(Optional.of(user));
+
+        assertThatThrownBy(() -> controller.getMyRevenueDetails("30d"))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(ex -> assertThat(((YadonyBusinessException) ex).getStatus().value()).isEqualTo(403));
+        assertThatThrownBy(() -> controller.getMyKgSold("30d"))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(ex -> assertThat(((YadonyBusinessException) ex).getStatus().value()).isEqualTo(403));
+    }
+
+    @Test
+    void details_endpoints_require_authentication() {
+        SecurityContextHolder.clearContext();
+
+        assertThatThrownBy(() -> controller.getMyRevenueDetails("30d"))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(ex -> assertThat(((YadonyBusinessException) ex).getStatus().value()).isEqualTo(401));
+        assertThatThrownBy(() -> controller.getMyKgSold("30d"))
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(ex -> assertThat(((YadonyBusinessException) ex).getStatus().value()).isEqualTo(401));
     }
