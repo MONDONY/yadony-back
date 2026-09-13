@@ -228,6 +228,42 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
             @Param("from") LocalDateTime from,
             @Param("to") LocalDateTime to);
 
+    /**
+     * Une ligne par paiement libéré du voyageur, dans la devise du paiement.
+     * Même attribution que {@link #sumCapturedRevenueForTravelerByCurrency}
+     * (annonce du bid OU fil dont il est le voyageur, LEFT JOIN des deux) : la
+     * somme des lignes par devise se réconcilie exactement avec ce total.
+     * Trajet = annonce du bid, sinon annonce liée au fil ; sans trajet, les
+     * villes et le poids viennent de la demande de colis du fil.
+     */
+    @Query("""
+        SELECT new com.yadony.api.matching.dto.PaymentLineRow(
+            COALESCE(a.id, ta.id),
+            COALESCE(a.departureCity, ta.departureCity, pr.departureCity),
+            COALESCE(a.arrivalCity, ta.arrivalCity, pr.arrivalCity),
+            COALESCE(a.departureDate, ta.departureDate),
+            p.createdAt,
+            COALESCE(b.weightKg, pr.weightKg),
+            p.rail,
+            UPPER(p.currency),
+            p.amount - p.commissionAmount)
+        FROM PaymentEntity p
+        LEFT JOIN com.yadony.api.matching.BidEntity b ON p.bidId = b.id
+        LEFT JOIN com.yadony.api.matching.AnnouncementEntity a ON b.announcementId = a.id
+        LEFT JOIN com.yadony.api.requests.entity.NegotiationThreadEntity t ON p.negotiationThreadId = t.id
+        LEFT JOIN com.yadony.api.matching.AnnouncementEntity ta ON t.travelerAnnouncementId = ta.id
+        LEFT JOIN com.yadony.api.requests.entity.PackageRequestEntity pr ON t.packageRequestId = pr.id
+        WHERE (a.travelerId = :travelerId OR t.travelerId = :travelerId)
+          AND p.status = :status
+          AND p.createdAt BETWEEN :from AND :to
+        ORDER BY p.createdAt DESC
+    """)
+    List<com.yadony.api.matching.dto.PaymentLineRow> findReleasedLinesForTraveler(
+            @Param("travelerId") UUID travelerId,
+            @Param("status") PaymentStatus status,
+            @Param("from") LocalDateTime from,
+            @Param("to") LocalDateTime to);
+
     /** Total tous temps, groupé par devise — voir {@link #sumCapturedRevenueForTravelerByCurrency}. */
     @Query("""
         SELECT new com.yadony.api.payments.dto.CurrencyAmountRow(
