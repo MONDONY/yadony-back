@@ -197,6 +197,12 @@ public class TripRecurrenceService {
         // depuis le lot mobile money mais jamais appliqué jusqu'ici.
         int leadDays = rec.getHandoverLeadDays() == null ? 0 : rec.getHandoverLeadDays();
         LocalDateTime handoverDeadline = departureDt.minusDays(leadDays);
+        // Une limite déjà expirée à la publication (départ proche, délai de remise long)
+        // ouvrirait le signalement de no-show dès l'acceptation du bid : repli sur l'heure
+        // du départ, comportement historique d'avant l'introduction du délai de remise.
+        if (handoverDeadline.isBefore(LocalDateTime.now())) {
+            handoverDeadline = departureDt;
+        }
         return new AnnouncementRequest(
                 rec.getDepartureCity(),
                 rec.getArrivalCity(),

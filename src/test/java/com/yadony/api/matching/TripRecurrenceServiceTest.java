@@ -114,7 +114,13 @@ class TripRecurrenceServiceTest {
     @Test
     void generate_usesTheRecurrenceOwnConditions() {
         mockUser(true);
-        TripRecurrenceEntity rec = entity("1111111", 0, null);
+        // Départ dans 3 jours (pas aujourd'hui) : avec un délai de remise de 2 jours la
+        // limite reste dans le futur, donc non affectée par le repli du fix B (départ
+        // trop proche) et l'assertion peut vérifier que le délai est bien appliqué.
+        LocalDate departureInThreeDays = LocalDate.now().plusDays(3);
+        StringBuilder weekdays = new StringBuilder("0000000");
+        weekdays.setCharAt(departureInThreeDays.getDayOfWeek().getValue() - 1, '1');
+        TripRecurrenceEntity rec = entity(weekdays.toString(), 3, null);
         rec.setCurrency("EUR");
         rec.setNegotiable(true);
         rec.setDescription("Fragile bienvenu");
@@ -160,6 +166,26 @@ class TripRecurrenceServiceTest {
 
         ArgumentCaptor<AnnouncementRequest> cap = ArgumentCaptor.forClass(AnnouncementRequest.class);
         verify(announcementService).createRecurringAnnouncement(eq("firebase-uid"), cap.capture(), eq(rec.getId()));
+        assertThat(cap.getValue().handoverDeadline())
+                .isEqualTo(cap.getValue().departureDate().atTime(LocalTime.of(14, 0)));
+    }
+
+    // B : un délai de remise long combiné à un départ proche produisait une limite déjà
+    // expirée à la publication, ouvrant le signalement de no-show dès l'acceptation.
+    @Test
+    void generate_handoverLeadBeyondHorizon_fallsBackToDeparture() {
+        mockUser(true);
+        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        StringBuilder weekdays = new StringBuilder("0000000");
+        weekdays.setCharAt(tomorrow.getDayOfWeek().getValue() - 1, '1');
+        TripRecurrenceEntity rec = entity(weekdays.toString(), 1, null);
+        rec.setHandoverLeadDays(3);
+
+        service.generateForRecurrence(rec);
+
+        ArgumentCaptor<AnnouncementRequest> cap = ArgumentCaptor.forClass(AnnouncementRequest.class);
+        verify(announcementService).createRecurringAnnouncement(eq("firebase-uid"), cap.capture(), eq(rec.getId()));
+        assertThat(cap.getValue().departureDate()).isEqualTo(tomorrow);
         assertThat(cap.getValue().handoverDeadline())
                 .isEqualTo(cap.getValue().departureDate().atTime(LocalTime.of(14, 0)));
     }
