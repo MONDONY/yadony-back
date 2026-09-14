@@ -20,6 +20,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.Arrays;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Locale;
@@ -177,24 +178,25 @@ public class TripRecurrenceService {
     }
 
     private AnnouncementRequest buildRequest(TripRecurrenceEntity rec, LocalDate date, UserEntity user) {
-        // STRIPE était imposé à chaque occurrence : en zone CFA, ou pour un voyageur sans compte
-        // Connect, chaque génération échouait en silence (assertStripeCapability) et la récurrence
-        // ne publiait jamais rien. La carte n'est demandée que si la devise et le compte le
-        // permettent ; l'espèce reste le repli qui garde le trajet vendable.
+        // Carte et mobile money sont proposés dès que la devise et les comptes du voyageur
+        // le permettent (comme la carte l'était déjà) ; l'espèce suit le choix explicite de
+        // la récurrence. Jamais vide : sans rail restant, l'espèce garde le trajet vendable.
+        EnumSet<PaymentMethod> wanted = EnumSet.of(PaymentMethod.STRIPE, PaymentMethod.MOBILE_MONEY);
+        if (rec.isCashAccepted()) {
+            wanted.add(PaymentMethod.CASH);
+        }
         Set<PaymentMethod> paymentMethods = com.yadony.api.payments.currency.AnnouncementPaymentRails
-                .restrictToCurrency(
-                        rec.isCashAccepted()
-                                ? java.util.EnumSet.of(PaymentMethod.STRIPE, PaymentMethod.CASH)
-                                : java.util.EnumSet.of(PaymentMethod.STRIPE),
-                        rec.getCurrency());
-        if (!user.hasActiveStripeConnect()) {
-            paymentMethods = java.util.EnumSet.of(PaymentMethod.CASH);
+                .offerable(wanted, rec.getCurrency(), user.hasActiveStripeConnect(), user.hasActiveMobileMoney());
+        if (paymentMethods.isEmpty()) {
+            paymentMethods = EnumSet.of(PaymentMethod.CASH);
         }
         LocalTime depTime = rec.getDepartureTime();
         LocalDateTime departureDt = depTime != null
                 ? date.atTime(depTime) : date.atTime(12, 0);
-        // Date limite de dépôt d'un trajet récurrent : l'heure du départ.
-        LocalDateTime handoverDeadline = departureDt;
+        // Remise au plus tard N jours avant le départ (0 = à l'heure du départ), champ stocké
+        // depuis le lot mobile money mais jamais appliqué jusqu'ici.
+        int leadDays = rec.getHandoverLeadDays() == null ? 0 : rec.getHandoverLeadDays();
+        LocalDateTime handoverDeadline = departureDt.minusDays(leadDays);
         return new AnnouncementRequest(
                 rec.getDepartureCity(),
                 rec.getArrivalCity(),
@@ -206,18 +208,18 @@ public class TripRecurrenceService {
                 BigDecimal.valueOf(rec.getAvailableKg()),
                 BigDecimal.valueOf(rec.getPricePerKg()),
                 TransportMode.valueOf(rec.getTransportMode()),
-                null,
+                rec.getDescription(),
                 splitCategories(rec.getAcceptedCategories()),
-                List.of(),
+                splitCategories(rec.getRefusedCategories()),
                 paymentMethods,
                 CapacityUnit.valueOf(rec.getCapacityUnit()),
-                PricingMode.KG,
+                rec.getPricingMode() == null ? PricingMode.KG : rec.getPricingMode(),
                 null,
                 null,
                 handoverDeadline,
                 Boolean.FALSE,
-                Boolean.FALSE,
-                null
+                rec.isNegotiable(),
+                rec.getCurrency()
         );
     }
 
