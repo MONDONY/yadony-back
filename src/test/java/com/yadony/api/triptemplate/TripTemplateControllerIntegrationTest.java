@@ -198,4 +198,83 @@ class TripTemplateControllerIntegrationTest {
         mockMvc.perform(get("/trip-templates"))
                 .andExpect(status().isUnauthorized());
     }
+
+    @Test
+    void create_fullForm_roundTripsEveryField() throws Exception {
+        String body = objectMapper.writeValueAsString(new java.util.LinkedHashMap<String, Object>() {{
+            put("label", "Abidjan-Paris complet");
+            put("departureCity", "Abidjan");
+            put("arrivalCity", "Paris");
+            put("transportMode", "PLANE");
+            put("capacityUnit", "SUITCASE_23KG");
+            put("availableKg", 23);
+            put("pricePerKg", 2000.0);
+            put("acceptedCategories", List.of("Vêtements & tissus"));
+            put("arrivalTime", "06:30");
+            put("currency", "XOF");
+            put("pricingMode", "KG");
+            put("acceptedPaymentMethods", List.of("CASH", "MOBILE_MONEY"));
+            put("negotiable", true);
+            put("refusedTypes", List.of("Téléphone & électronique"));
+            put("description", "Pas de liquide");
+            put("pickupAddress", java.util.Map.of("label", "Cocody", "lat", 5.35, "lng", -3.99));
+            put("deliveryAddress", java.util.Map.of("label", "Gare de Lyon", "lat", 48.84, "lng", 2.37));
+            put("departureTime", "22:00");
+            put("handoverLeadDays", 2);
+            put("departureCountryCode", "CI");
+            put("arrivalCountryCode", "FR");
+        }});
+
+        mockMvc.perform(post("/trip-templates")
+                .with(authentication(asTraveler(TRAVELER_UID)))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.currency").value("XOF"))
+                .andExpect(jsonPath("$.pricingMode").value("KG"))
+                .andExpect(jsonPath("$.acceptedPaymentMethods.length()").value(2))
+                .andExpect(jsonPath("$.cashAccepted").value(true))
+                .andExpect(jsonPath("$.negotiable").value(true))
+                .andExpect(jsonPath("$.refusedTypes[0]").value("Téléphone & électronique"))
+                .andExpect(jsonPath("$.description").value("Pas de liquide"))
+                .andExpect(jsonPath("$.pickupAddress.label").value("Cocody"))
+                .andExpect(jsonPath("$.deliveryAddress.lat").value(48.84))
+                .andExpect(jsonPath("$.departureTime").value("22:00"))
+                .andExpect(jsonPath("$.arrivalTime").value("06:30"))
+                .andExpect(jsonPath("$.handoverLeadDays").value(2))
+                .andExpect(jsonPath("$.departureCountryCode").value("CI"))
+                .andExpect(jsonPath("$.arrivalCountryCode").value("FR"));
+
+        mockMvc.perform(get("/trip-templates")
+                .with(authentication(asTraveler(TRAVELER_UID))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].pickupAddress.lng").value(-3.99))
+                .andExpect(jsonPath("$[0].acceptedPaymentMethods").isArray());
+    }
+
+    @Test
+    void create_legacyBody_isAcceptedWithDefaults() throws Exception {
+        String legacy = objectMapper.writeValueAsString(new java.util.LinkedHashMap<String, Object>() {{
+            put("label", "Ancien client");
+            put("departureCity", "Paris");
+            put("arrivalCity", "Dakar");
+            put("transportMode", "PLANE");
+            put("capacityUnit", "SUITCASE_23KG");
+            put("availableKg", 23);
+            put("pricePerKg", 8.0);
+            put("cashAccepted", true);
+        }});
+
+        mockMvc.perform(post("/trip-templates")
+                .with(authentication(asTraveler(TRAVELER_UID)))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(legacy))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.cashAccepted").value(true))
+                .andExpect(jsonPath("$.acceptedPaymentMethods.length()").value(2))
+                .andExpect(jsonPath("$.pricingMode").value("KG"))
+                .andExpect(jsonPath("$.negotiable").value(false))
+                .andExpect(jsonPath("$.currency").doesNotExist())
+                .andExpect(jsonPath("$.pickupAddress").doesNotExist());
+    }
 }
