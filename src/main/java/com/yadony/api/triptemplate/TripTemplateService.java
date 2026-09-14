@@ -127,11 +127,11 @@ public class TripTemplateService {
         entity.setNegotiable(Boolean.TRUE.equals(r.negotiable()));
         entity.setDescription(r.description() == null || r.description().isBlank() ? null : r.description().trim());
         entity.setPickupAddressLabel(r.pickupAddress() == null ? null : r.pickupAddress().label());
-        entity.setPickupLat(r.pickupAddress() == null ? null : r.pickupAddress().lat());
-        entity.setPickupLng(r.pickupAddress() == null ? null : r.pickupAddress().lng());
+        entity.setPickupLat(toBigDecimal(r.pickupAddress() == null ? null : r.pickupAddress().lat()));
+        entity.setPickupLng(toBigDecimal(r.pickupAddress() == null ? null : r.pickupAddress().lng()));
         entity.setDeliveryAddressLabel(r.deliveryAddress() == null ? null : r.deliveryAddress().label());
-        entity.setDeliveryLat(r.deliveryAddress() == null ? null : r.deliveryAddress().lat());
-        entity.setDeliveryLng(r.deliveryAddress() == null ? null : r.deliveryAddress().lng());
+        entity.setDeliveryLat(toBigDecimal(r.deliveryAddress() == null ? null : r.deliveryAddress().lat()));
+        entity.setDeliveryLng(toBigDecimal(r.deliveryAddress() == null ? null : r.deliveryAddress().lng()));
         entity.setDepartureTime(r.departureTime());
         entity.setHandoverLeadDays(r.handoverLeadDays());
         entity.setDepartureCountryCode(upperOrNull(r.departureCountryCode()));
@@ -240,8 +240,17 @@ public class TripTemplateService {
         return methods;
     }
 
-    private static AddressDto addressOrNull(String label, Double lat, Double lng) {
-        return label == null ? null : new AddressDto(label, lat, lng);
+    private static AddressDto addressOrNull(String label, BigDecimal lat, BigDecimal lng) {
+        return label == null ? null : new AddressDto(label, toDouble(lat), toDouble(lng));
+    }
+
+    /** Colonnes pickup/delivery lat/lng en NUMERIC(9,6) (V257) : conversion vers le contrat REST en Double. */
+    private static Double toDouble(BigDecimal value) {
+        return value == null ? null : value.doubleValue();
+    }
+
+    private static BigDecimal toBigDecimal(Double value) {
+        return value == null ? null : BigDecimal.valueOf(value);
     }
 
     private String joinCategories(List<String> categories) {

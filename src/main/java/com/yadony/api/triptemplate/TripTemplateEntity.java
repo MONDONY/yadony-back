@@ -5,6 +5,7 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Table;
 import org.hibernate.annotations.Where;
+import java.math.BigDecimal;
 import java.time.LocalTime;
 import java.util.UUID;
 
@@ -85,20 +86,20 @@ public class TripTemplateEntity extends BaseEntity {
     @Column(name = "pickup_address_label", length = 500)
     private String pickupAddressLabel;
 
-    @Column(name = "pickup_lat")
-    private Double pickupLat;
+    @Column(name = "pickup_lat", precision = 9, scale = 6)
+    private BigDecimal pickupLat;
 
-    @Column(name = "pickup_lng")
-    private Double pickupLng;
+    @Column(name = "pickup_lng", precision = 9, scale = 6)
+    private BigDecimal pickupLng;
 
     @Column(name = "delivery_address_label", length = 500)
     private String deliveryAddressLabel;
 
-    @Column(name = "delivery_lat")
-    private Double deliveryLat;
+    @Column(name = "delivery_lat", precision = 9, scale = 6)
+    private BigDecimal deliveryLat;
 
-    @Column(name = "delivery_lng")
-    private Double deliveryLng;
+    @Column(name = "delivery_lng", precision = 9, scale = 6)
+    private BigDecimal deliveryLng;
 
     @Column(name = "departure_time")
     private LocalTime departureTime;
@@ -159,16 +160,16 @@ public class TripTemplateEntity extends BaseEntity {
     public void setDescription(String description) { this.description = description; }
     public String getPickupAddressLabel() { return pickupAddressLabel; }
     public void setPickupAddressLabel(String pickupAddressLabel) { this.pickupAddressLabel = pickupAddressLabel; }
-    public Double getPickupLat() { return pickupLat; }
-    public void setPickupLat(Double pickupLat) { this.pickupLat = pickupLat; }
-    public Double getPickupLng() { return pickupLng; }
-    public void setPickupLng(Double pickupLng) { this.pickupLng = pickupLng; }
+    public BigDecimal getPickupLat() { return pickupLat; }
+    public void setPickupLat(BigDecimal pickupLat) { this.pickupLat = pickupLat; }
+    public BigDecimal getPickupLng() { return pickupLng; }
+    public void setPickupLng(BigDecimal pickupLng) { this.pickupLng = pickupLng; }
     public String getDeliveryAddressLabel() { return deliveryAddressLabel; }
     public void setDeliveryAddressLabel(String deliveryAddressLabel) { this.deliveryAddressLabel = deliveryAddressLabel; }
-    public Double getDeliveryLat() { return deliveryLat; }
-    public void setDeliveryLat(Double deliveryLat) { this.deliveryLat = deliveryLat; }
-    public Double getDeliveryLng() { return deliveryLng; }
-    public void setDeliveryLng(Double deliveryLng) { this.deliveryLng = deliveryLng; }
+    public BigDecimal getDeliveryLat() { return deliveryLat; }
+    public void setDeliveryLat(BigDecimal deliveryLat) { this.deliveryLat = deliveryLat; }
+    public BigDecimal getDeliveryLng() { return deliveryLng; }
+    public void setDeliveryLng(BigDecimal deliveryLng) { this.deliveryLng = deliveryLng; }
     public LocalTime getDepartureTime() { return departureTime; }
     public void setDepartureTime(LocalTime departureTime) { this.departureTime = departureTime; }
     public Integer getHandoverLeadDays() { return handoverLeadDays; }
