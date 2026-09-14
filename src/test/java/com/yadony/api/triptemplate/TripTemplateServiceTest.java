@@ -125,6 +125,28 @@ class TripTemplateServiceTest {
         assertThat(result.get(0).acceptedCategories()).containsExactly("Vêtements", "Cosmétiques");
     }
 
+    // F : un jeton de moyen de paiement devenu inconnu en base (valeur legacy retirée)
+    // ne doit pas faire planter findAll avec un 500, mais être ignoré.
+    @Test
+    void findAll_unknownPaymentMethodTokenIsIgnored() {
+        TripTemplateEntity e = new TripTemplateEntity();
+        e.setUserId(userId);
+        e.setLabel("T2");
+        e.setDepartureCity("Lyon");
+        e.setArrivalCity("Abidjan");
+        e.setTransportMode("PLANE");
+        e.setCapacityUnit("SUITCASE_23KG");
+        e.setAvailableKg(23);
+        e.setPricePerKg(8.0);
+        e.setAcceptedPaymentMethods("CASH,BITCOIN");
+        when(repository.findByUserIdOrderByUpdatedAtDesc(userId)).thenReturn(List.of(e));
+
+        var result = service.findAll(userId);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).acceptedPaymentMethods()).containsExactly(PaymentMethod.CASH);
+    }
+
     @Test
     void update_existing_updatesFields() {
         UUID id = UUID.randomUUID();
@@ -225,6 +247,23 @@ class TripTemplateServiceTest {
         assertThat(dto.currency()).isNull();
     }
 
+    // A : le chemin « client ancien » (acceptedPaymentMethods absent) échappait au filtre
+    // de devise. Un modèle en XOF avec cashAccepted=false dérivait STRIPE, un rail que la
+    // devise CFA n'autorise pas : filtré en silence par restrictToCurrency, repli CASH.
+    @Test
+    void create_legacyClientInCfaCurrency_dropsCardKeepsCash() {
+        var request = new CreateTripTemplateRequest(
+                "Legacy XOF", null, "Paris", null, null, "Dakar", null, null,
+                "PLANE", "SUITCASE_23KG", 23, 8.0, null, false, null,
+                "XOF", null, null, null, null, null,
+                null, null, null, null, null, null);
+
+        var dto = service.create(userId, request);
+
+        assertThat(dto.acceptedPaymentMethods()).containsExactly(PaymentMethod.CASH);
+        assertThat(dto.cashAccepted()).isTrue();
+    }
+
     // Symétrique du test précédent : cashAccepted=false doit produire STRIPE seul,
     // pas seulement l'absence de CASH (la branche opposée du ternaire de resolvePaymentMethods).
     @Test
@@ -291,6 +330,20 @@ class TripTemplateServiceTest {
 
         assertThat(dto.pricingMode()).isEqualTo("MIXED");
         assertThat(dto.pricePerKg()).isNull();
+    }
+
+    // D : en mode MIXED un pricePerKg à 0.0 (distinct de l'absence de prix) était stocké
+    // et ressortait tel quel, alors qu'il doit se comporter comme une absence de prix.
+    @Test
+    void create_mixedModeWithZeroPrice_storesNull() {
+        var dto = service.create(userId, fullXofRequest(Set.of(PaymentMethod.CASH), 0.0, "MIXED", null));
+
+        assertThat(dto.pricingMode()).isEqualTo("MIXED");
+        assertThat(dto.pricePerKg()).isNull();
+
+        ArgumentCaptor<TripTemplateEntity> captor = ArgumentCaptor.forClass(TripTemplateEntity.class);
+        verify(repository).save(captor.capture());
+        assertThat(captor.getValue().getPricePerKg()).isNull();
     }
 
     @Test

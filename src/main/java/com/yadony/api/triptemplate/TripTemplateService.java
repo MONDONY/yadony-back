@@ -101,6 +101,11 @@ public class TripTemplateService {
         assertPricePerKg(r.pricePerKg(), pricingMode, currency);
         assertAddressCompleteOrAbsent(r.pickupAddress());
         assertAddressCompleteOrAbsent(r.deliveryAddress());
+        // En mode MIXED (grille seule) le prix est facultatif : un 0.0 envoyé par le
+        // formulaire ne doit pas être mémorisé tel quel, sinon il ressort comme un vrai
+        // prix au kilo à zéro au lieu d'une absence de prix.
+        Double pricePerKg = "MIXED".equals(pricingMode) && r.pricePerKg() != null && r.pricePerKg() <= 0
+                ? null : r.pricePerKg();
 
         entity.setLabel(r.label());
         entity.setEmoji(r.emoji());
@@ -113,7 +118,7 @@ public class TripTemplateService {
         entity.setTransportMode(r.transportMode());
         entity.setCapacityUnit(r.capacityUnit());
         entity.setAvailableKg(r.availableKg());
-        entity.setPricePerKg(r.pricePerKg());
+        entity.setPricePerKg(pricePerKg);
         // Normalisé à l'écriture (C2) — un modèle réutilisé pour publier un trajet
         // doit produire des catégories déjà canoniques.
         entity.setAcceptedCategories(joinCategories(ContentCategoryNormalizer.normalizeList(r.acceptedCategories())));
@@ -158,13 +163,23 @@ public class TripTemplateService {
      * acceptés (les valeurs legacy WAVE / ORANGE_MONEY ne sont plus proposées), et
      * chaque moyen doit être permis par la devise (la carte hors zone CFA, le mobile
      * money dedans), sinon le modèle produirait un trajet que le serveur refuserait.
+     *
+     * <p>Divergence voulue entre les deux chemins : un moyen explicitement demandé
+     * mais interdit par la devise est refusé (422) alors que le chemin dérivé de
+     * cashAccepted est filtré en silence (repli CASH via
+     * {@link com.yadony.api.payments.currency.AnnouncementPaymentRails#restrictToCurrency}).
+     * Un modèle est un mémo réutilisé : mieux vaut échouer franchement quand l'utilisateur
+     * a fait un choix explicite. Le chemin client ancien, lui, ne peut pas corriger un
+     * champ qu'il n'envoie pas, donc on filtre plutôt que de le bloquer.
      */
     private Set<PaymentMethod> resolvePaymentMethods(Set<PaymentMethod> requested, boolean cashAccepted,
                                                      SupportedCurrency currency) {
         if (requested == null) {
-            return cashAccepted
+            Set<PaymentMethod> derived = cashAccepted
                     ? EnumSet.of(PaymentMethod.STRIPE, PaymentMethod.CASH)
                     : EnumSet.of(PaymentMethod.STRIPE);
+            return com.yadony.api.payments.currency.AnnouncementPaymentRails
+                    .restrictToCurrency(derived, currency.code());
         }
         EnumSet<PaymentMethod> methods = requested.isEmpty()
                 ? EnumSet.of(PaymentMethod.STRIPE) : EnumSet.copyOf(requested);
@@ -226,6 +241,12 @@ public class TripTemplateService {
         return methods.stream().map(Enum::name).collect(Collectors.joining(","));
     }
 
+    /**
+     * Un jeton devenu inconnu en base (valeur legacy retirée de {@link PaymentMethod},
+     * migration incomplète, etc.) est ignoré plutôt que de faire planter tout
+     * {@code findAll} avec un 500 : {@link PaymentMethod#valueOf} lève sur une valeur
+     * qu'il ne connaît plus.
+     */
     private static Set<PaymentMethod> splitMethods(String joined) {
         if (joined == null || joined.isBlank()) {
             return EnumSet.of(PaymentMethod.STRIPE);
@@ -233,11 +254,16 @@ public class TripTemplateService {
         EnumSet<PaymentMethod> methods = EnumSet.noneOf(PaymentMethod.class);
         for (String token : joined.split(",")) {
             String name = token.trim();
-            if (!name.isEmpty()) {
+            if (name.isEmpty()) {
+                continue;
+            }
+            try {
                 methods.add(PaymentMethod.valueOf(name));
+            } catch (IllegalArgumentException e) {
+                log.warn("TripTemplate : jeton de moyen de paiement inconnu ignoré : {}", name);
             }
         }
-        return methods;
+        return methods.isEmpty() ? EnumSet.of(PaymentMethod.STRIPE) : methods;
     }
 
     private static AddressDto addressOrNull(String label, BigDecimal lat, BigDecimal lng) {

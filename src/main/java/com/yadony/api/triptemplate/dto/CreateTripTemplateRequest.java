@@ -11,7 +11,7 @@ import java.util.List;
 import java.util.Set;
 
 // Le plafond réel du prix dépend de la devise du modèle et est appliqué par
-// TripTemplateService.assertPricePerKgWithinBounds : une annotation ne peut pas
+// TripTemplateService.assertPricePerKg : une annotation ne peut pas
 // en dépendre. Seul un garde-fou anti-abus subsiste ici. Le prix est optionnel
 // (mode MIXED, grille seule) : le service exige un prix > 0 en mode KG.
 public record CreateTripTemplateRequest(
@@ -42,6 +42,6 @@ public record CreateTripTemplateRequest(
     @Valid AddressDto deliveryAddress,
     @JsonFormat(pattern = "HH:mm") LocalTime departureTime,
     @Min(0) @Max(7) Integer handoverLeadDays,
-    @Size(max = 2) String departureCountryCode,
-    @Size(max = 2) String arrivalCountryCode
+    @Pattern(regexp = "[A-Za-z]{2}") String departureCountryCode,
+    @Pattern(regexp = "[A-Za-z]{2}") String arrivalCountryCode
 ) implements TripTemplatePayload {}
