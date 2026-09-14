@@ -225,6 +225,36 @@ class TripTemplateServiceTest {
         assertThat(dto.currency()).isNull();
     }
 
+    // Symétrique du test précédent : cashAccepted=false doit produire STRIPE seul,
+    // pas seulement l'absence de CASH (la branche opposée du ternaire de resolvePaymentMethods).
+    @Test
+    void create_legacyClientWithoutCash_derivesStripeOnly() {
+        var withoutCash = new CreateTripTemplateRequest(
+                "Legacy sans cash", null, "Paris", null, null, "Dakar", null, null,
+                "PLANE", "SUITCASE_23KG", 23, 8.0, null, false, null,
+                null, null, null, null, null, null, null, null, null, null, null, null);
+
+        var dto = service.create(userId, withoutCash);
+
+        assertThat(dto.acceptedPaymentMethods()).containsExactly(PaymentMethod.STRIPE);
+        assertThat(dto.cashAccepted()).isFalse();
+    }
+
+    // Un ensemble explicitement vide (pas null) doit retomber sur STRIPE : c'est le
+    // chemin qui, sans la garde isEmpty(), ferait planter EnumSet.copyOf(Set.of()).
+    @Test
+    void create_emptyPaymentMethods_fallsBackToStripe() {
+        var request = new CreateTripTemplateRequest(
+                "Ensemble vide", null, "Paris", null, null, "Dakar", null, null,
+                "PLANE", "SUITCASE_23KG", 23, 8.0, null, false, null,
+                null, null, Set.of(), null, null, null,
+                null, null, null, null, null, null);
+
+        var dto = service.create(userId, request);
+
+        assertThat(dto.acceptedPaymentMethods()).containsExactly(PaymentMethod.STRIPE);
+    }
+
     @Test
     void create_unsupportedCurrency_throws422() {
         var request = new CreateTripTemplateRequest(
