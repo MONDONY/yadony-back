@@ -1,13 +1,19 @@
 package com.yadony.api.triptemplate.dto;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
+import com.yadony.api.matching.dto.AddressDto;
+import com.yadony.api.payments.cash.PaymentMethod;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
+
 import java.time.LocalTime;
 import java.util.List;
+import java.util.Set;
 
-// Le plafond réel dépend de la devise du voyageur et est appliqué par
+// Le plafond réel du prix dépend de la devise du modèle et est appliqué par
 // TripTemplateService.assertPricePerKgWithinBounds : une annotation ne peut pas
-// en dépendre. Seul un garde-fou anti-abus subsiste ici.
+// en dépendre. Seul un garde-fou anti-abus subsiste ici. Le prix est optionnel
+// (mode MIXED, grille seule) : le service exige un prix > 0 en mode KG.
 public record UpdateTripTemplateRequest(
     @NotBlank @Size(max = 60)  String label,
     @Size(max = 8)             String emoji,
@@ -20,8 +26,22 @@ public record UpdateTripTemplateRequest(
     @NotBlank @Size(max = 20)  String transportMode,
     @NotBlank @Size(max = 20)  String capacityUnit,
     @NotNull @Min(1) @Max(40)  Integer availableKg,
-    @NotNull @Positive @DecimalMax("1000000.0") Double pricePerKg,
+    @DecimalMin("0.0") @DecimalMax("1000000.0") Double pricePerKg,
     List<String> acceptedCategories,
+    // Miroir historique de acceptedPaymentMethods (contient CASH). Un client ancien
+    // n'envoie que ce champ : le service en dérive alors les moyens de paiement.
     boolean cashAccepted,
-    @JsonFormat(pattern = "HH:mm") LocalTime arrivalTime
-) {}
+    @JsonFormat(pattern = "HH:mm") LocalTime arrivalTime,
+    @Size(min = 3, max = 3) String currency,
+    @Pattern(regexp = "KG|MIXED") String pricingMode,
+    Set<PaymentMethod> acceptedPaymentMethods,
+    Boolean negotiable,
+    List<String> refusedTypes,
+    @Size(max = 500) String description,
+    @Valid AddressDto pickupAddress,
+    @Valid AddressDto deliveryAddress,
+    @JsonFormat(pattern = "HH:mm") LocalTime departureTime,
+    @Min(0) @Max(7) Integer handoverLeadDays,
+    @Size(max = 2) String departureCountryCode,
+    @Size(max = 2) String arrivalCountryCode
+) implements TripTemplatePayload {}

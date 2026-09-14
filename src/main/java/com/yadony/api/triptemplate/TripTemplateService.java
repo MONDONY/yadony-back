@@ -153,6 +153,10 @@ public class TripTemplateService {
                 e.getArrivalCity(), e.getArrivalLat(), e.getArrivalLng(),
                 e.getTransportMode(), e.getCapacityUnit(), e.getAvailableKg(), e.getPricePerKg(),
                 splitCategories(e.getAcceptedCategories()), e.isCashAccepted(), e.getArrivalTime(),
+                // TODO Tâche 4 : construction réelle des 12 nouveaux champs (currency, pricingMode,
+                // acceptedPaymentMethods, negotiable, refusedTypes, description, pickupAddress,
+                // deliveryAddress, departureTime, handoverLeadDays, departureCountryCode, arrivalCountryCode).
+                null, null, null, false, null, null, null, null, null, null, null, null,
                 e.getCreatedAt(), e.getUpdatedAt());
     }
 }

@@ -41,7 +41,8 @@ class TripTemplateServiceTest {
                 "Mon Paris->Dakar", "🇸🇳",
                 "Paris", 48.85, 2.35,
                 "Dakar", 14.71, -17.46,
-                "PLANE", "SUITCASE_23KG", 23, 8.0, categories, false, null);
+                "PLANE", "SUITCASE_23KG", 23, 8.0, categories, false, null,
+                null, null, null, null, null, null, null, null, null, null, null, null);
     }
 
     @Test
@@ -116,7 +117,8 @@ class TripTemplateServiceTest {
 
         var req = new UpdateTripTemplateRequest(
                 "new label", null, "Marseille", null, null, "Dakar", null, null,
-                "BOAT", "KG_FREE", 30, 9.0, List.of("Documents"), true, java.time.LocalTime.of(18, 30));
+                "BOAT", "KG_FREE", 30, 9.0, List.of("Documents"), true, java.time.LocalTime.of(18, 30),
+                null, null, null, null, null, null, null, null, null, null, null, null);
         var dto = service.update(userId, id, req);
 
         assertThat(dto.label()).isEqualTo("new label");
@@ -132,7 +134,8 @@ class TripTemplateServiceTest {
         when(repository.findByUserIdAndId(userId, id)).thenReturn(Optional.empty());
         assertThatThrownBy(() -> service.update(userId, id,
                 new UpdateTripTemplateRequest("x", null, "A", null, null, "B", null, null,
-                        "PLANE", "SUITCASE_23KG", 23, 8.0, null, false, null)))
+                        "PLANE", "SUITCASE_23KG", 23, 8.0, null, false, null,
+                        null, null, null, null, null, null, null, null, null, null, null, null)))
                 .isInstanceOf(YadonyNotFoundException.class);
         verify(repository, never()).save(any());
     }
@@ -165,7 +168,8 @@ class TripTemplateServiceTest {
     void create_rejectsPricePerKgAboveTheCurrencyCeiling() {
         var request = new CreateTripTemplateRequest(
                 "Trop cher", "🇸🇳", "Paris", 48.85, 2.35, "Dakar", 14.71, -17.46,
-                "PLANE", "SUITCASE_23KG", 23, 900.0, List.of(), false, null);
+                "PLANE", "SUITCASE_23KG", 23, 900.0, List.of(), false, null,
+                null, null, null, null, null, null, null, null, null, null, null, null);
 
         assertThatThrownBy(() -> service.create(userId, request))
                 .hasMessageContaining("trip-template/price-out-of-bounds");
@@ -179,7 +183,8 @@ class TripTemplateServiceTest {
         when(activeCurrencyResolver.resolve(userId)).thenReturn("XOF");
         var request = new CreateTripTemplateRequest(
                 "Paris Dakar", "🇸🇳", "Paris", 48.85, 2.35, "Dakar", 14.71, -17.46,
-                "PLANE", "SUITCASE_23KG", 23, 5000.0, List.of(), false, null);
+                "PLANE", "SUITCASE_23KG", 23, 5000.0, List.of(), false, null,
+                null, null, null, null, null, null, null, null, null, null, null, null);
 
         var dto = service.create(userId, request);
 
