@@ -118,6 +118,24 @@ logging:
     org.springframework.security: WARN
     org.flywaydb: INFO
 
+# Sentry : commun à tous les profils. `dsn`, `environment` et `enabled` restent
+# dans application-{staging,prod}.yml (désactivé en dev et en test).
+sentry:
+  # Produit « Logs » de Sentry (onglet Logs, requêtable), distinct des événements
+  # d'erreur. Exige sentry-java >= 8.11. Sans ce bloc, l'appender Logback du
+  # starter n'envoyait que les ERROR (événements) et gardait INFO+ en breadcrumbs.
+  logs:
+    enabled: true
+  logging:
+    # Seuls WARN et ERROR partent en Sentry Logs : le DEBUG du profil staging
+    # (com.yadony.api: DEBUG) mangerait le quota sans valeur de diagnostic.
+    minimum-level: warn
+    # Un ERROR reste un événement (issue) ; WARN n'en crée pas.
+    minimum-event-level: error
+    # Les INFO restent joints aux événements comme fil d'Ariane, sans être envoyés
+    # tels quels.
+    minimum-breadcrumb-level: info
+
 # Yadony business config
 # Toutes les valeurs métier sont surchargeables par variable d'environnement
 # (${VAR:défaut}) — provisioning prod sans rebuild.
