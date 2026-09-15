@@ -397,8 +397,15 @@ public class WalletSelfRefundService {
             if (paymentIntentId == null || paymentIntentId.isBlank()) {
                 return;
             }
+            String refundId = root.path("id").asText(null);
             refundRequestItemRepository.findByPaymentIntentId(paymentIntentId).ifPresent(item -> {
                 if (item.getStatus() != WalletRefundItemStatus.PROCESSING) {
+                    return;
+                }
+                // Un PaymentIntent peut porter plusieurs refunds (remboursement partiel côté
+                // support, litige…). Sans ce filtre, l'échec d'un refund qui n'est pas le nôtre
+                // faisait échouer notre item et ouvrait un ticket manuel pour rien.
+                if (refundId == null || !refundId.equals(item.getStripeRefundId())) {
                     return;
                 }
                 item.setStatus(WalletRefundItemStatus.FAILED);

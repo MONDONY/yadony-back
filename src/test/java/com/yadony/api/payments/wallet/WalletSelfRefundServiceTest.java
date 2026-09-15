@@ -599,11 +599,26 @@ class WalletSelfRefundServiceTest {
         when(refundRequestItemRepository.findByRefundRequestId(request.getId())).thenReturn(List.of(ok, ko));
         when(refundRequestRepository.findById(request.getId())).thenReturn(Optional.of(request));
 
-        service.handleRefundUpdated(failedRefundEvent("pi_2"));
+        service.handleRefundUpdated(failedRefundEvent("pi_2", "re_2"));
 
         assertThat(request.getStatus()).isEqualTo(WalletRefundRequestStatus.FAILED);
         verify(walletService).debitConfirmedRefund(USER_ID, "EUR", new BigDecimal("20.00"), WalletTransactionType.SELF_REFUND_OUT);
         verify(walletRefundRequestService).openChildForFailedItems(request, new BigDecimal("15.00"));
+    }
+
+    @Test
+    void handleRefundUpdated_autreRefundDuMemePaymentIntent_ignore() {
+        // Symétrique de handleChargeRefunded_autreRefundDuMemeCharge_ignore : un refund en
+        // échec sur le même PI, mais qui n'est pas le nôtre, ne doit pas faire échouer l'item.
+        WalletRefundRequestEntity request = processingRequest("35.00");
+        WalletRefundRequestItemEntity item = processingItem(request, "pi_1", "35.00", "re_1");
+        when(refundRequestItemRepository.findByPaymentIntentId("pi_1")).thenReturn(Optional.of(item));
+
+        service.handleRefundUpdated(failedRefundEvent("pi_1", "re_autre"));
+
+        assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.PROCESSING);
+        verifyNoInteractions(walletRefundRequestService);
+        verify(refundRequestItemRepository, never()).save(any());
     }
 
     private WalletRefundRequestEntity processingRequest(String amount) {
@@ -630,9 +645,12 @@ class WalletSelfRefundServiceTest {
         return i;
     }
 
-    private Event failedRefundEvent(String pi) {
+    /** {@code charge.refund.updated} en échec : l'objet de l'event EST le refund, son {@code id}
+     *  est donc l'identifiant du refund concerné, pas celui de l'event. */
+    private Event failedRefundEvent(String pi, String refundId) {
         String json = "{\"id\":\"evt_x\",\"object\":\"event\",\"type\":\"charge.refund.updated\","
-                + "\"data\":{\"object\":{\"status\":\"failed\",\"payment_intent\":\"" + pi + "\"}}}";
+                + "\"data\":{\"object\":{\"id\":\"" + refundId + "\",\"status\":\"failed\","
+                + "\"payment_intent\":\"" + pi + "\"}}}";
         return ApiResource.GSON.fromJson(json, Event.class);
     }
 
