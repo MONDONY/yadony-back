@@ -2,6 +2,7 @@ package com.yadony.api.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.sentry.logback.SentryAppender;
 import io.sentry.spring.boot.jakarta.SentryProperties;
 import org.junit.jupiter.api.Test;
 import org.slf4j.event.Level;
@@ -36,5 +37,17 @@ class SentryLogsPropertiesTest {
     void errorsStayEventsAndInfoStaysBreadcrumbs() {
         assertThat(sentryProperties.getLogging().getMinimumEventLevel()).isEqualTo(Level.ERROR);
         assertThat(sentryProperties.getLogging().getMinimumBreadcrumbLevel()).isEqualTo(Level.INFO);
+    }
+
+    /**
+     * Le starter Sentry ne tire PAS `sentry-logback` (vérifié sur 7.22.4 et 8.16.0).
+     * Sans cette dépendance explicite, `SentryLogbackAppenderAutoConfiguration` est
+     * inerte (`@ConditionalOnClass(SentryAppender.class)`) : aucun log ne quitte
+     * l'application et les propriétés `sentry.logging.*` ci-dessus ne pilotent rien.
+     * C'est exactement l'état constaté en staging le 2026-09-14, onglet Logs vide.
+     */
+    @Test
+    void logbackAppenderIsOnTheClasspath() {
+        assertThat(SentryAppender.class.getName()).isEqualTo("io.sentry.logback.SentryAppender");
     }
 }
