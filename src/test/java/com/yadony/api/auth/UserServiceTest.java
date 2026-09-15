@@ -299,6 +299,26 @@ class UserServiceTest {
         }
 
         @Test
+        @DisplayName("invariant cassé au recalcul dans request() → retombe sur le ticket manuel")
+        void settleWalletsForDeletion_fallsBackToManualWhenRequestRecomputesBrokenAllocation() {
+            // request() rejoue le ledger en auto-invocation : son noRollbackFor ne couvre pas
+            // WalletAllocationInvariantException, qui remonte donc jusqu'à settleWalletsForDeletion.
+            WalletAccountEntity wallet = new WalletAccountEntity();
+            wallet.setCurrency("EUR");
+            wallet.setBalance(new java.math.BigDecimal("30.00"));
+            when(walletAccountRepository.findAllByUserId(USER_ID)).thenReturn(java.util.List.of(wallet));
+            when(walletSelfRefundService.allocation(USER_ID, "EUR"))
+                    .thenReturn(refundableAllocation("30.00", "0"));
+            when(walletSelfRefundService.request(USER_ID, "EUR", java.util.List.of()))
+                    .thenThrow(new com.yadony.api.payments.wallet.WalletAllocationInvariantException(
+                            new java.math.BigDecimal("29.00"), new java.math.BigDecimal("30.00")));
+
+            userService.settleWalletsForDeletion(USER_ID);
+
+            verify(walletRefundRequestService).request(USER_ID, "EUR");
+        }
+
+        @Test
         @DisplayName("régression : un solde non-EUR ouvre aussi le règlement automatique")
         void deleteAccount_positiveNonEurBalance_opensTicketAndSucceeds() {
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));

@@ -22,6 +22,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -94,7 +95,19 @@ public class UserService {
      * si le rejeu du ledger est incohérent. La part non-cash reste dans le wallet gelé et
      * n'est perdue qu'à la finalisation (cf. UserFinalizedPaymentsListener). Ne bloque
      * jamais la suppression (Apple 5.1.1(v)).
+     *
+     * <p>{@code REQUIRES_NEW} : les {@code Refund.create} partent d'ici, dans la transaction
+     * de {@code AuthService#deleteImmediately} / {@code AdminGdprService#executeDeletion} et
+     * AVANT {@code accountFinalizationService.finalize}. Un échec de la finalisation (R2,
+     * Firebase) annulerait les lignes {@code wallet_refund_requests} et restaurerait le solde
+     * alors que le remboursement Stripe, lui, est irréversible. Une transaction indépendante
+     * commite les demandes avant que la finalisation ne puisse échouer.
+     *
+     * <p>{@code requestDeletion} l'appelle en auto-invocation : le proxy est contourné et la
+     * propagation sans effet. Sans conséquence, rien de risqué ne suit dans {@code requestDeletion}
+     * (mise à jour du statut de l'utilisateur et publication d'event, dans la même transaction).
      */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public List<com.yadony.api.payments.wallet.WalletRefundRequestEntity> settleWalletsForDeletion(UUID userId) {
         List<com.yadony.api.payments.wallet.WalletRefundRequestEntity> opened = new ArrayList<>();
         for (com.yadony.api.payments.wallet.WalletAccountEntity wallet : walletAccountRepository.findAllByUserId(userId)) {
@@ -116,6 +129,13 @@ public class UserService {
             }
             try {
                 opened.add(walletSelfRefundService.request(userId, currency, List.of()));
+            } catch (WalletAllocationInvariantException e) {
+                // request() recalcule l'allocation en auto-invocation : le noRollbackFor porté
+                // par request() ne couvre pas cette exception-là, qui remonte donc jusqu'ici.
+                // Le ledger a bougé entre les deux rejeus : repli sur le ticket manuel.
+                log.warn("Rejeu du ledger incoherent a la demande, bascule sur le ticket manuel : "
+                        + "user {} devise {} : {}", userId, currency, e.getMessage());
+                opened.add(walletRefundRequestService.request(userId, currency));
             } catch (YadonyBusinessException e) {
                 // Seul code atteignable ici : wallet-not-refund-eligible, quand chaque reliquat
                 // s'arrondit à zéro à l'unité mineure Stripe (ex. 0.50 XOF) une fois le solde
