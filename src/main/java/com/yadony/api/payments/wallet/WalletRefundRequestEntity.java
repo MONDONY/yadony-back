@@ -53,6 +53,10 @@ public class WalletRefundRequestEntity extends BaseEntity {
     @Column(name = "resolved_by")
     private UUID resolvedBy;
 
+    /** Ticket MANUAL ouvert automatiquement pour les items FAILED d'une demande AUTOMATIC_STRIPE. */
+    @Column(name = "parent_request_id")
+    private UUID parentRequestId;
+
     public UUID getUserId() { return userId; }
     public void setUserId(UUID userId) { this.userId = userId; }
 
@@ -76,4 +80,7 @@ public class WalletRefundRequestEntity extends BaseEntity {
 
     public UUID getResolvedBy() { return resolvedBy; }
     public void setResolvedBy(UUID resolvedBy) { this.resolvedBy = resolvedBy; }
+
+    public UUID getParentRequestId() { return parentRequestId; }
+    public void setParentRequestId(UUID parentRequestId) { this.parentRequestId = parentRequestId; }
 }

@@ -18,4 +18,11 @@ public enum WalletTransactionType {
      * self-service, distinct du zérotage manuel admin pour l'audit.
      */
     SELF_REFUND_OUT
+    ,
+    /**
+     * Part non-cash du solde (parrainage, remboursements internes) débitée à la
+     * finalisation d'une suppression de compte : sans PaymentIntent derrière, rien
+     * n'est remboursable. Cf. UserFinalizedPaymentsListener.
+     */
+    FORFEITED_ON_DELETION
 }

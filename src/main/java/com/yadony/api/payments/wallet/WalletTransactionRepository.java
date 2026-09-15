@@ -23,4 +23,6 @@ public interface WalletTransactionRepository extends JpaRepository<WalletTransac
 
     List<WalletTransactionEntity> findByUserIdAndCurrencyAndTypeAndCreatedAtGreaterThanEqual(
             UUID userId, String currency, WalletTransactionType type, Instant since);
+
+    List<WalletTransactionEntity> findByUserIdAndCurrencyOrderByCreatedAtAsc(UUID userId, String currency);
 }
