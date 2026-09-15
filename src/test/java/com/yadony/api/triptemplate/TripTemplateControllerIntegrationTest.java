@@ -277,4 +277,27 @@ class TripTemplateControllerIntegrationTest {
                 .andExpect(jsonPath("$.currency").doesNotExist())
                 .andExpect(jsonPath("$.pickupAddress").doesNotExist());
     }
+
+    @Test
+    void create_twoSuitcases_acceptsCapacityAboveFortyKg() throws Exception {
+        // Le formulaire de l'app laisse cumuler les valises (2 x 32 kg = 64 kg) : le
+        // modèle ne doit pas plafonner ce que l'annonce accepte déjà sans borne.
+        String twoSuitcases = objectMapper.writeValueAsString(new java.util.LinkedHashMap<String, Object>() {{
+            put("label", "Deux valises");
+            put("departureCity", "Paris");
+            put("arrivalCity", "Dakar");
+            put("transportMode", "PLANE");
+            put("capacityUnit", "SUITCASE_32KG");
+            put("availableKg", 64);
+            put("pricePerKg", 8.0);
+        }});
+
+        mockMvc.perform(post("/trip-templates")
+                .with(authentication(asTraveler(TRAVELER_UID)))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(twoSuitcases))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.capacityUnit").value("SUITCASE_32KG"))
+                .andExpect(jsonPath("$.availableKg").value(64));
+    }
 }

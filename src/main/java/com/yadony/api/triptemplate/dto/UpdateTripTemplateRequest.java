@@ -25,7 +25,8 @@ public record UpdateTripTemplateRequest(
     Double arrivalLng,
     @NotBlank @Size(max = 20)  String transportMode,
     @NotBlank @Size(max = 20)  String capacityUnit,
-    @NotNull @Min(1) @Max(40)  Integer availableKg,
+    // Pas de plafond : deux valises de 32 kg font 64 kg, et l'annonce n'en a aucun.
+    @NotNull @Min(1) Integer availableKg,
     @DecimalMin("0.0") @DecimalMax("1000000.0") Double pricePerKg,
     List<String> acceptedCategories,
     // Miroir historique de acceptedPaymentMethods (contient CASH). Un client ancien
