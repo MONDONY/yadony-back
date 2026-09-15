@@ -183,7 +183,6 @@ class UserServiceDeleteAccountTest {
 
             assertThat(opened).containsExactly(auto);
             verify(walletRefundRequestService, never()).request(any(), any());
-            verify(walletRefundRequestService, never()).request(any());
         }
 
         @Test

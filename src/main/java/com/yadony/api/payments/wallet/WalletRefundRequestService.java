@@ -47,31 +47,6 @@ public class WalletRefundRequestService {
         this.adminAlertService = adminAlertService;
     }
 
-    /**
-     * Ouvre un ticket par devise en solde positif. Idempotent : une devise déjà
-     * PENDING/PROCESSING n'est pas dupliquée (l'utilisateur peut retaper l'action sans
-     * conséquence, ex. après avoir fermé l'app).
-     *
-     * @throws YadonyBusinessException 422 {@code wallet-balance-empty} si aucun
-     *         solde n'est positif (rien à rembourser — l'appelant ne devrait de
-     *         toute façon jamais atteindre cet écran dans ce cas).
-     */
-    @Transactional
-    public List<WalletRefundRequestEntity> request(UUID userId) {
-        List<WalletAccountEntity> positiveBalances = walletService.getAllBalances(userId).stream()
-                .filter(w -> w.getBalance().compareTo(BigDecimal.ZERO) > 0)
-                .toList();
-
-        if (positiveBalances.isEmpty()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-balance-empty",
-                    "Unprocessable", "Aucun solde à rembourser");
-        }
-
-        return positiveBalances.stream()
-                .map(wallet -> requestForCurrency(userId, wallet))
-                .toList();
-    }
-
     /** Ticket manuel pour une seule devise (repli quand le rail automatique ne s'applique pas). */
     @Transactional
     public WalletRefundRequestEntity request(UUID userId, String currency) {
