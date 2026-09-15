@@ -32,6 +32,13 @@ import java.util.UUID;
  * </ol>
  * Une recharge portant un item PENDING, PROCESSING ou FAILED est retirée du remboursable
  * et comptée en {@code inFlight}. Pur : aucune dépendance Spring, aucune I/O.
+ *
+ * <p>Limite connue (règle 4) : un {@code ADMIN_REFUND_OUT} issu de la résolution d'un ticket
+ * enfant n'a pas d'items REFUNDED et retombe donc en LIFO. Si l'utilisateur a rechargé entre
+ * l'échec Stripe et la résolution admin, la recharge fraîche peut être déclarée consommée à
+ * la place de la recharge en échec, qui reste bloquée par son item FAILED. Une traçabilité
+ * par items sur le ticket enfant est prévue en suite : elle exige un second item par
+ * PaymentIntent, donc la levée de l'index {@code uq_wallet_refund_request_items_pi}.
  */
 public final class WalletRefundAllocator {
 

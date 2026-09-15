@@ -264,6 +264,27 @@ class WalletRefundAllocatorTest {
     }
 
     @Test
+    void demandePartiellementEchouee_debitEgalAuxRefundedSeuls_pasDInvariant() {
+        // Fige le couplage entre les deux moitiés de la règle 4 : le SELF_REFUND_OUT vaut la
+        // somme des items REFUNDED (resolveIfComplete), et le groupe apparié ne contient que
+        // ces items-là. Si l'un des deux bougeait sans l'autre, l'appariement raterait et le
+        // repli LIFO consommerait la recharge en échec — invariant cassé, remboursement bloqué.
+        WalletTransactionEntity a = topup("40.00");
+        WalletTransactionEntity b = topup("10.00");
+        UUID requestId = UUID.randomUUID();
+        item(a, "40.00", WalletRefundItemStatus.FAILED, requestId);
+        item(b, "10.00", WalletRefundItemStatus.REFUNDED, requestId);
+        tx(WalletTransactionType.SELF_REFUND_OUT, "-10.00", null);
+
+        WalletRefundAllocation r = allocate("40.00");
+
+        assertThat(r.inFlight()).isEqualByComparingTo("40.00");
+        assertThat(r.refundableTotal()).isEqualByComparingTo("0");
+        assertThat(r.nonRefundable()).isEqualByComparingTo("0");
+        assertThat(r.refundable()).isEmpty();
+    }
+
+    @Test
     void deuxDemandesRegleesDansLeDesordre_appariementParFile() {
         WalletTransactionEntity a = topup("50.00");
         WalletTransactionEntity b = topup("30.00");

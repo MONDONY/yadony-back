@@ -1,0 +1,202 @@
+package com.yadony.api.payments.wallet;
+
+import com.stripe.model.Charge;
+import com.stripe.model.Refund;
+import com.stripe.model.RefundCollection;
+import com.yadony.api.auth.KycStatus;
+import com.yadony.api.auth.Role;
+import com.yadony.api.auth.StripeAccountStatus;
+import com.yadony.api.auth.UserEntity;
+import com.yadony.api.auth.UserRepository;
+import com.yadony.api.auth.UserStatus;
+import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * Parcours de remboursement wallet contre une vraie base PostgreSQL et sans aucun mock de
+ * {@link WalletService}. Le décor de {@code WalletControllerIT} (H2, profil « test ») ne
+ * convient pas ici : {@code debitConfirmedRefund} verrouille via
+ * {@code findByUserIdAndCurrencyForUpdate}, qu'Hibernate traduit en {@code FOR NO KEY UPDATE}
+ * — syntaxe qu'H2 refuse, même en {@code MODE=PostgreSQL}. On reprend donc le décor
+ * {@code EmbeddedPostgres} + profil « e2e » de {@link WalletServiceIT}, qui applique en plus
+ * les vraies migrations Flyway (contraintes CHECK et index uniques partiels compris).
+ *
+ * <p>Pas de {@code @Transactional} sur la classe : {@code WalletService#getOrCreate} est en
+ * {@code Propagation.NOT_SUPPORTED} et lit donc sur une connexion hors transaction, qui ne
+ * verrait pas les écritures non committées d'une transaction de test.
+ */
+@SpringBootTest
+@ActiveProfiles("e2e")
+class WalletRefundIT {
+
+    private static EmbeddedPostgres postgres;
+
+    @BeforeAll
+    static void startPostgres() throws Exception {
+        postgres = EmbeddedPostgres.builder().start();
+    }
+
+    @AfterAll
+    static void stopPostgres() throws Exception {
+        if (postgres != null) {
+            postgres.close();
+        }
+    }
+
+    @DynamicPropertySource
+    static void configurePostgres(DynamicPropertyRegistry registry) {
+        registry.add("spring.datasource.url", () -> postgres.getJdbcUrl("postgres", "postgres"));
+        registry.add("spring.datasource.username", () -> "postgres");
+        registry.add("spring.datasource.password", () -> "postgres");
+        registry.add("spring.datasource.driver-class-name", () -> "org.postgresql.Driver");
+        registry.add("spring.jpa.database-platform", () -> "org.hibernate.dialect.PostgreSQLDialect");
+        registry.add("spring.jpa.hibernate.ddl-auto", () -> "validate");
+        registry.add("spring.flyway.enabled", () -> true);
+    }
+
+    @Autowired WalletRefundRequestService walletRefundRequestService;
+    @Autowired WalletSelfRefundService walletSelfRefundService;
+    @Autowired WalletService walletService;
+    @Autowired WalletAccountRepository walletAccountRepository;
+    @Autowired WalletTransactionRepository walletTransactionRepository;
+    @Autowired WalletRefundRequestRepository walletRefundRequestRepository;
+    @Autowired WalletRefundRequestItemRepository walletRefundRequestItemRepository;
+    @Autowired UserRepository userRepository;
+
+    private UUID persistUser() {
+        UserEntity user = new UserEntity();
+        user.setFirebaseUid("wallet-refund-it-" + UUID.randomUUID());
+        user.setStatus(UserStatus.ACTIVE);
+        user.setKycStatus(KycStatus.PENDING);
+        user.setRoles(Set.of(Role.SENDER));
+        user.setStripeAccountStatus(StripeAccountStatus.NOT_CREATED);
+        return userRepository.saveAndFlush(user).getId();
+    }
+
+    /** Utilisateur déjà finalisé : ce que fait {@code AccountFinalizationService#finalize} en base. */
+    private UUID persistFinalizedUser() {
+        UUID userId = persistUser();
+        UserEntity user = userRepository.findById(userId).orElseThrow();
+        user.setStatus(UserStatus.BANNED);
+        user.setDeletedAt(LocalDateTime.now(ZoneOffset.UTC));
+        userRepository.saveAndFlush(user);
+        return userId;
+    }
+
+    private BigDecimal balanceOf(UUID userId) {
+        return walletAccountRepository.findByUserIdAndCurrency(userId, "EUR").orElseThrow().getBalance();
+    }
+
+    private WalletRefundRequestEntity saveRequest(UUID userId, String amount, WalletRefundChannel channel,
+                                                  WalletRefundRequestStatus status, UUID parentRequestId) {
+        WalletRefundRequestEntity request = new WalletRefundRequestEntity();
+        request.setUserId(userId);
+        request.setCurrency("EUR");
+        request.setAmount(new BigDecimal(amount));
+        request.setChannel(channel);
+        request.setStatus(status);
+        request.setRequestedAt(LocalDateTime.now(ZoneOffset.UTC));
+        request.setParentRequestId(parentRequestId);
+        return walletRefundRequestRepository.saveAndFlush(request);
+    }
+
+    @Test
+    void resolve_ticketManuelPending_debiteMalgreLeGelQueLeTicketProvoqueLuiMeme() {
+        // Régression : resolve() passait par walletService.debit, donc par assertNotFrozen,
+        // que le ticket PENDING en cours de résolution déclenche lui-même. Tout ticket MANUAL
+        // était par construction irrésoluble (422 wallet-refund-pending systématique).
+        UUID userId = persistUser();
+        walletService.credit(userId, "EUR", new BigDecimal("45.00"),
+                WalletTransactionType.TOP_UP, "pi_manual_it", "k-manual-" + UUID.randomUUID());
+        WalletRefundRequestEntity ticket = saveRequest(userId, "45.00",
+                WalletRefundChannel.MANUAL_ADMIN, WalletRefundRequestStatus.PENDING, null);
+
+        WalletRefundRequestEntity resolved =
+                walletRefundRequestService.resolve(ticket.getId(), UUID.randomUUID());
+
+        assertThat(resolved.getStatus()).isEqualTo(WalletRefundRequestStatus.RESOLVED);
+        assertThat(balanceOf(userId)).isEqualByComparingTo("0.00");
+        assertThat(walletTransactionRepository.findByUserIdAndCurrencyOrderByCreatedAtAsc(userId, "EUR"))
+                .anyMatch(t -> t.getType() == WalletTransactionType.ADMIN_REFUND_OUT
+                        && t.getAmount().compareTo(new BigDecimal("-45.00")) == 0);
+    }
+
+    @Test
+    void resolve_ticketEnfant_neDebiteQueSaPartCashEtLaisseLeNonCash() {
+        UUID userId = persistUser();
+        // 30 de recharge carte (dont 12 en échec Stripe, repris par le ticket enfant)
+        // et 10 de parrainage : seuls les 12 du ticket doivent partir.
+        walletService.credit(userId, "EUR", new BigDecimal("30.00"),
+                WalletTransactionType.TOP_UP, "pi_child_it", "k-child-" + UUID.randomUUID());
+        walletService.credit(userId, "EUR", new BigDecimal("10.00"),
+                WalletTransactionType.REFERRAL_REWARD, null, "k-child2-" + UUID.randomUUID());
+        WalletRefundRequestEntity parent = saveRequest(userId, "30.00",
+                WalletRefundChannel.AUTOMATIC_STRIPE, WalletRefundRequestStatus.FAILED, null);
+        WalletRefundRequestEntity child = saveRequest(userId, "12.00",
+                WalletRefundChannel.MANUAL_ADMIN, WalletRefundRequestStatus.PENDING, parent.getId());
+
+        walletRefundRequestService.resolve(child.getId(), UUID.randomUUID());
+
+        assertThat(balanceOf(userId)).isEqualByComparingTo("28.00");
+    }
+
+    @Test
+    void handleChargeRefunded_apresFinalisationDuCompte_debiteLeWalletEtResoutLaDemande() {
+        // Le webhook Stripe arrive typiquement après la finalisation du compte : plus aucun
+        // utilisateur visible, mais le wallet et la demande doivent encore se régler.
+        UUID userId = persistFinalizedUser();
+        walletService.credit(userId, "EUR", new BigDecimal("35.00"),
+                WalletTransactionType.TOP_UP, "pi_x", "k-finalized-" + UUID.randomUUID());
+        WalletTransactionEntity topup = walletTransactionRepository
+                .findByUserIdAndCurrencyOrderByCreatedAtAsc(userId, "EUR").get(0);
+
+        WalletRefundRequestEntity request = saveRequest(userId, "35.00",
+                WalletRefundChannel.AUTOMATIC_STRIPE, WalletRefundRequestStatus.PROCESSING, null);
+        WalletRefundRequestItemEntity item = new WalletRefundRequestItemEntity();
+        item.setRefundRequestId(request.getId());
+        item.setWalletTransactionId(topup.getId());
+        item.setPaymentIntentId("pi_x");
+        item.setStripeRefundId("re_x");
+        item.setAmount(new BigDecimal("35.00"));
+        item.setStatus(WalletRefundItemStatus.PROCESSING);
+        walletRefundRequestItemRepository.saveAndFlush(item);
+
+        Charge charge = new Charge();
+        charge.setPaymentIntent("pi_x");
+        charge.setAmount(3500L);
+        charge.setAmountRefunded(3500L);
+        Refund refund = new Refund();
+        refund.setId("re_x");
+        refund.setStatus("succeeded");
+        RefundCollection refunds = new RefundCollection();
+        refunds.setData(List.of(refund));
+        charge.setRefunds(refunds);
+
+        walletSelfRefundService.handleChargeRefunded(charge);
+
+        assertThat(balanceOf(userId)).isEqualByComparingTo("0.00");
+        assertThat(walletTransactionRepository.findByUserIdAndCurrencyOrderByCreatedAtAsc(userId, "EUR"))
+                .anyMatch(t -> t.getType() == WalletTransactionType.SELF_REFUND_OUT
+                        && t.getAmount().compareTo(new BigDecimal("-35.00")) == 0);
+        assertThat(walletRefundRequestRepository.findById(request.getId()).orElseThrow().getStatus())
+                .isEqualTo(WalletRefundRequestStatus.REFUNDED);
+        assertThat(walletRefundRequestItemRepository.findById(item.getId()).orElseThrow().getStatus())
+                .isEqualTo(WalletRefundItemStatus.REFUNDED);
+    }
+}
