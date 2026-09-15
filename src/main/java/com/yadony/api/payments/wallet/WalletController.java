@@ -73,8 +73,9 @@ public class WalletController {
             .stream()
             .map(w -> {
                 WalletRefundAllocation a = safeAllocation(userId, w.getCurrency());
-                boolean eligible = a.refundableTotal().signum() > 0
-                        && walletSelfRefundService.isEligible(userId, w.getCurrency());
+                // Surcharge qui reçoit l'allocation déjà calculée : isEligible(userId, devise)
+                // rejouerait tout le ledger une seconde fois, pour chaque devise du portefeuille.
+                boolean eligible = walletSelfRefundService.isEligible(userId, w.getCurrency(), a);
                 // equalsIgnoreCase : les portefeuilles antérieurs à V202 peuvent
                 // encore porter une casse mixte, et un simple equals aurait
                 // affiché « aucun portefeuille actif » à leur propriétaire.

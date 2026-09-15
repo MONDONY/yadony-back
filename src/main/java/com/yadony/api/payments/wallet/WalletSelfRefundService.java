@@ -8,6 +8,7 @@ import com.stripe.model.Event;
 import com.stripe.model.Refund;
 import com.stripe.net.RequestOptions;
 import com.stripe.param.RefundCreateParams;
+import com.yadony.api.admin.AdminAlertEscalator;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.stripe.AdminAlertService;
@@ -44,6 +45,7 @@ public class WalletSelfRefundService {
     private final WalletService walletService;
     private final AuditService auditService;
     private final AdminAlertService adminAlertService;
+    private final AdminAlertEscalator adminAlertEscalator;
     private final ObjectMapper objectMapper;
     private final WalletRefundRequestService walletRefundRequestService;
 
@@ -54,6 +56,7 @@ public class WalletSelfRefundService {
                                    WalletService walletService,
                                    AuditService auditService,
                                    AdminAlertService adminAlertService,
+                                   AdminAlertEscalator adminAlertEscalator,
                                    ObjectMapper objectMapper,
                                    WalletRefundRequestService walletRefundRequestService) {
         this.walletAccountRepository = walletAccountRepository;
@@ -63,6 +66,7 @@ public class WalletSelfRefundService {
         this.walletService = walletService;
         this.auditService = auditService;
         this.adminAlertService = adminAlertService;
+        this.adminAlertEscalator = adminAlertEscalator;
         this.objectMapper = objectMapper;
         this.walletRefundRequestService = walletRefundRequestService;
     }
@@ -89,10 +93,28 @@ public class WalletSelfRefundService {
      */
     @Transactional(readOnly = true, noRollbackFor = WalletAllocationInvariantException.class)
     public WalletRefundAllocation allocation(UUID userId, String currency) {
+        return load(userId, currency).allocation();
+    }
+
+    /** Allocation et ledger qui l'a produite, pour n'en faire qu'une lecture par devise. */
+    private record LoadedAllocation(WalletRefundAllocation allocation, List<WalletTransactionEntity> ledger) {}
+
+    /**
+     * Rejeu effectif du ledger. Renvoie aussi les transactions lues : {@link #listEligibleTopups}
+     * a besoin des entités TOP_UP et les relisait une seconde fois.
+     *
+     * <p>{@code raiseOnce} et non {@code raise} : un invariant cassé est un état durable du
+     * ledger d'un utilisateur, relu à chaque {@code GET /wallet/balance}. Une alerte simple
+     * est un INCIDENT synchrone (log.error + Sentry + Telegram) et partait donc à chaque
+     * affichage de l'écran portefeuille. {@link AdminAlertEscalator} déduplique par type non
+     * résolu, d'où l'identifiant de l'utilisateur dans le type (13 + 36 = 49 caractères, sous
+     * la limite de {@code admin_alerts.type}).
+     */
+    private LoadedAllocation load(UUID userId, String currency) {
         String code = normalize(currency);
         WalletAccountEntity wallet = walletAccountRepository.findByUserIdAndCurrency(userId, code).orElse(null);
         if (wallet == null) {
-            return WalletRefundAllocation.empty();
+            return new LoadedAllocation(WalletRefundAllocation.empty(), List.of());
         }
         List<WalletTransactionEntity> ledger =
                 walletTransactionRepository.findByUserIdAndCurrencyOrderByCreatedAtAsc(userId, code);
@@ -102,10 +124,10 @@ public class WalletSelfRefundService {
                 .toList();
         List<WalletRefundRequestItemEntity> items = refundRequestItemRepository.findByWalletTransactionIdIn(topupIds);
         try {
-            return WalletRefundAllocator.allocate(ledger, items, wallet.getBalance());
+            return new LoadedAllocation(WalletRefundAllocator.allocate(ledger, items, wallet.getBalance()), ledger);
         } catch (WalletAllocationInvariantException e) {
             log.warn("Allocation wallet incoherente pour user {} {} : {}", userId, code, e.getMessage());
-            adminAlertService.raise("wallet-refund-allocation-invariant",
+            adminAlertEscalator.raiseOnce("wallet-alloc-" + userId,
                     "Le rejeu du ledger wallet ne retombe pas sur le solde",
                     Map.of("userId", String.valueOf(userId), "currency", code, "error", e.getMessage()));
             throw e;
@@ -115,15 +137,24 @@ public class WalletSelfRefundService {
     @Transactional(readOnly = true)
     public boolean isEligible(UUID userId, String currency) {
         String code = normalize(currency);
-        if (refundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(
-                userId, code, List.of(WalletRefundRequestStatus.PENDING, WalletRefundRequestStatus.PROCESSING))) {
-            return false;
-        }
         try {
-            return allocation(userId, code).refundableTotal().signum() > 0;
+            return isEligible(userId, code, allocation(userId, code));
         } catch (WalletAllocationInvariantException e) {
             return false;
         }
+    }
+
+    /**
+     * Variante pour un appelant qui tient déjà l'allocation de cette devise (cf.
+     * {@code WalletController#getBalance}) : évite un second rejeu complet du ledger.
+     */
+    @Transactional(readOnly = true)
+    public boolean isEligible(UUID userId, String currency, WalletRefundAllocation allocation) {
+        if (refundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(userId, normalize(currency),
+                List.of(WalletRefundRequestStatus.PENDING, WalletRefundRequestStatus.PROCESSING))) {
+            return false;
+        }
+        return allocation.refundableTotal().signum() > 0;
     }
 
     /**
@@ -145,20 +176,20 @@ public class WalletSelfRefundService {
         if (hasActiveRequest) {
             return List.of();
         }
-        WalletRefundAllocation allocation;
+        LoadedAllocation loaded;
         try {
-            allocation = allocation(userId, code);
+            loaded = load(userId, code);
         } catch (WalletAllocationInvariantException e) {
             return List.of();
         }
-        if (allocation.refundable().isEmpty()) {
+        if (loaded.allocation().refundable().isEmpty()) {
             return List.of();
         }
-        Map<UUID, BigDecimal> remainingByTx = allocation.refundable().stream()
+        Map<UUID, BigDecimal> remainingByTx = loaded.allocation().refundable().stream()
                 .collect(Collectors.toMap(WalletRefundAllocation.RefundableTopup::walletTransactionId,
                         WalletRefundAllocation.RefundableTopup::remaining));
-        Map<UUID, WalletTransactionEntity> ledgerById = walletTransactionRepository
-                .findByUserIdAndCurrencyOrderByCreatedAtAsc(userId, code).stream()
+        // Le ledger rapporté par load() : le relire ici ferait un second rejeu complet.
+        Map<UUID, WalletTransactionEntity> ledgerById = loaded.ledger().stream()
                 .collect(Collectors.toMap(WalletTransactionEntity::getId, t -> t));
         return remainingByTx.entrySet().stream()
                 .map(e -> new EligibleTopup(ledgerById.get(e.getKey()), e.getValue()))

@@ -11,6 +11,7 @@ import com.stripe.net.RequestOptions;
 import com.stripe.param.RefundCreateParams;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.admin.AdminAlertEscalator;
 import com.yadony.api.common.stripe.AdminAlertService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -47,6 +48,7 @@ class WalletSelfRefundServiceTest {
     @Mock WalletService walletService;
     @Mock AuditService auditService;
     @Mock AdminAlertService adminAlertService;
+    @Mock AdminAlertEscalator adminAlertEscalator;
     @Mock WalletRefundRequestService walletRefundRequestService;
 
     WalletSelfRefundService service;
@@ -57,7 +59,8 @@ class WalletSelfRefundServiceTest {
     void setUp() {
         service = new WalletSelfRefundService(walletAccountRepository, walletTransactionRepository,
                 refundRequestRepository, refundRequestItemRepository, walletService,
-                auditService, adminAlertService, new ObjectMapper(), walletRefundRequestService);
+                auditService, adminAlertService, adminAlertEscalator, new ObjectMapper(),
+                walletRefundRequestService);
     }
 
     private WalletAccountEntity wallet(String currency, String balance) {
@@ -157,7 +160,9 @@ class WalletSelfRefundServiceTest {
 
         assertThatThrownBy(() -> service.allocation(USER_ID, "EUR"))
                 .isInstanceOf(WalletAllocationInvariantException.class);
-        verify(adminAlertService).raise(eq("wallet-refund-allocation-invariant"), any(), any());
+        // raiseOnce : le type porte l'identifiant utilisateur, la dédup evite un INCIDENT
+        // synchrone (log.error + Sentry + Telegram) a chaque GET /wallet/balance.
+        verify(adminAlertEscalator).raiseOnce(eq("wallet-alloc-" + USER_ID), any(), any());
     }
 
     @Test
@@ -189,6 +194,39 @@ class WalletSelfRefundServiceTest {
         when(refundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any())).thenReturn(false);
 
         assertThat(service.isEligible(USER_ID, "EUR")).isFalse();
+    }
+
+    @Test
+    void isEligible_avecAllocationFournie_neRejouePasLeLedger() {
+        when(refundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any())).thenReturn(false);
+        WalletRefundAllocation deja = new WalletRefundAllocation(List.of(),
+                new BigDecimal("35.00"), BigDecimal.ZERO, BigDecimal.ZERO);
+
+        assertThat(service.isEligible(USER_ID, "EUR", deja)).isTrue();
+        verifyNoInteractions(walletAccountRepository, walletTransactionRepository);
+    }
+
+    @Test
+    void isEligible_avecAllocationFournie_fauxQuandUneDemandeEstActive() {
+        when(refundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any())).thenReturn(true);
+        WalletRefundAllocation deja = new WalletRefundAllocation(List.of(),
+                new BigDecimal("35.00"), BigDecimal.ZERO, BigDecimal.ZERO);
+
+        assertThat(service.isEligible(USER_ID, "EUR", deja)).isFalse();
+    }
+
+    @Test
+    void listEligibleTopups_neLitLeLedgerQuUneFois() {
+        WalletTransactionEntity topup = ledgerTx(WalletTransactionType.TOP_UP, "40.00", "pi_1");
+        stubLedger("35.00", topup, ledgerTx(WalletTransactionType.BID_PAYMENT, "-5.00", null));
+        when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(USER_ID, "EUR",
+                List.of(WalletRefundRequestStatus.PROCESSING))).thenReturn(Optional.empty());
+        when(refundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any())).thenReturn(false);
+
+        service.listEligibleTopups(USER_ID, "EUR");
+
+        verify(walletTransactionRepository, times(1))
+                .findByUserIdAndCurrencyOrderByCreatedAtAsc(USER_ID, "EUR");
     }
 
     @Test
