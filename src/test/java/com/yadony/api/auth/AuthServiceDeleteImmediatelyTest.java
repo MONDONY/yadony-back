@@ -80,10 +80,10 @@ class AuthServiceDeleteImmediatelyTest {
 
         authService.deleteImmediately(FIREBASE_UID, new DeleteImmediatelyRequest(true));
 
-        // La règle elle-même vit dans UserService#openWalletRefundTicketIfNeeded (point unique,
+        // La règle elle-même vit dans UserService#settleWalletsForDeletion (point unique,
         // partagé avec requestDeletion) et y est testée sur le vrai repository ; ici on vérifie
         // uniquement que deleteImmediately l'applique puis poursuit la finalisation.
-        verify(userService).openWalletRefundTicketIfNeeded(USER_ID);
+        verify(userService).settleWalletsForDeletion(USER_ID);
         verify(accountFinalizationService).finalize(eq(user), eq(FinalizationReason.HARD_IMMEDIATE));
     }
 
@@ -95,7 +95,7 @@ class AuthServiceDeleteImmediatelyTest {
 
         authService.deleteImmediately(FIREBASE_UID, new DeleteImmediatelyRequest(true));
 
-        verify(userService).openWalletRefundTicketIfNeeded(USER_ID);
+        verify(userService).settleWalletsForDeletion(USER_ID);
         verify(accountFinalizationService).finalize(eq(user), eq(FinalizationReason.HARD_IMMEDIATE));
     }
 

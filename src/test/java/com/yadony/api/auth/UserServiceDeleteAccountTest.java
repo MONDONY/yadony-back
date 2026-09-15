@@ -1,11 +1,16 @@
 package com.yadony.api.auth;
 
+import com.yadony.api.auth.dto.DeletionEligibilityResponse;
+import com.yadony.api.auth.dto.WalletSettlementDto;
 import com.yadony.api.auth.events.AccountDeletionRequestedEvent;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.wallet.WalletAccountEntity;
 import com.yadony.api.payments.wallet.WalletAccountRepository;
+import com.yadony.api.payments.wallet.WalletAllocationInvariantException;
+import com.yadony.api.payments.wallet.WalletRefundAllocation;
+import com.yadony.api.payments.wallet.WalletRefundRequestEntity;
 import com.yadony.api.payments.wallet.WalletRefundRequestService;
 import com.yadony.api.payments.wallet.WalletSelfRefundService;
 import org.junit.jupiter.api.DisplayName;
@@ -20,7 +25,9 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 
 import java.lang.reflect.Field;
+import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -117,14 +124,17 @@ class UserServiceDeleteAccountTest {
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
             when(paymentRepository.hasActiveEscrowForUser(USER_ID)).thenReturn(false);
             WalletAccountEntity wallet = new WalletAccountEntity();
+            wallet.setCurrency("EUR");
             wallet.setBalance(java.math.BigDecimal.TEN);
             when(walletAccountRepository.findAllByUserId(USER_ID)).thenReturn(java.util.List.of(wallet));
+            when(walletSelfRefundService.allocation(USER_ID, "EUR"))
+                    .thenReturn(allocation("10.00", "0"));
             when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
             userService.requestDeletion(FIREBASE_UID);
 
             assertThat(user.getStatus()).isEqualTo(UserStatus.PENDING_DELETION);
-            verify(walletRefundRequestService).request(USER_ID);
+            verify(walletSelfRefundService).request(USER_ID, "EUR", List.of());
             verify(userRepository).save(any());
         }
 
@@ -139,6 +149,135 @@ class UserServiceDeleteAccountTest {
             verify(eventPublisher, never()).publishEvent(any());
             verify(userRepository, never()).save(any());
         }
+    }
+
+    private WalletAccountEntity walletOf(String currency, String balance) {
+        WalletAccountEntity w = new WalletAccountEntity();
+        w.setUserId(USER_ID);
+        w.setCurrency(currency);
+        w.setBalance(new BigDecimal(balance));
+        return w;
+    }
+
+    private static WalletRefundAllocation allocation(String refundable, String nonRefundable) {
+        BigDecimal r = new BigDecimal(refundable);
+        List<WalletRefundAllocation.RefundableTopup> list = r.signum() > 0
+                ? List.of(new WalletRefundAllocation.RefundableTopup(UUID.randomUUID(), "pi_1", r))
+                : List.of();
+        return new WalletRefundAllocation(list, r, new BigDecimal(nonRefundable), BigDecimal.ZERO);
+    }
+
+    @Nested
+    @DisplayName("settleWalletsForDeletion")
+    class Settle {
+
+        @Test
+        @DisplayName("solde entamé → demande automatique sur tout le remboursable, non-cash conservé")
+        void refundableAndNonCash_automaticRequestOnly() {
+            when(walletAccountRepository.findAllByUserId(USER_ID)).thenReturn(List.of(walletOf("EUR", "40.00")));
+            when(walletSelfRefundService.allocation(USER_ID, "EUR")).thenReturn(allocation("35.00", "5.00"));
+            WalletRefundRequestEntity auto = new WalletRefundRequestEntity();
+            when(walletSelfRefundService.request(USER_ID, "EUR", List.of())).thenReturn(auto);
+
+            List<WalletRefundRequestEntity> opened = userService.settleWalletsForDeletion(USER_ID);
+
+            assertThat(opened).containsExactly(auto);
+            verify(walletRefundRequestService, never()).request(any(), any());
+            verify(walletRefundRequestService, never()).request(any());
+        }
+
+        @Test
+        @DisplayName("solde uniquement non-cash → aucune demande, aucun ticket")
+        void nonCashOnly_nothingOpened() {
+            when(walletAccountRepository.findAllByUserId(USER_ID)).thenReturn(List.of(walletOf("EUR", "5.00")));
+            when(walletSelfRefundService.allocation(USER_ID, "EUR")).thenReturn(allocation("0", "5.00"));
+
+            assertThat(userService.settleWalletsForDeletion(USER_ID)).isEmpty();
+            verify(walletSelfRefundService, never()).request(any(), any(), any());
+            verify(walletRefundRequestService, never()).request(any(), any());
+        }
+
+        @Test
+        @DisplayName("invariant cassé → ticket manuel sur la devise")
+        void invariantBroken_manualTicket() {
+            when(walletAccountRepository.findAllByUserId(USER_ID)).thenReturn(List.of(walletOf("EUR", "40.00")));
+            when(walletSelfRefundService.allocation(USER_ID, "EUR"))
+                    .thenThrow(new WalletAllocationInvariantException(new BigDecimal("39.00"), new BigDecimal("40.00")));
+            WalletRefundRequestEntity manual = new WalletRefundRequestEntity();
+            when(walletRefundRequestService.request(USER_ID, "EUR")).thenReturn(manual);
+
+            assertThat(userService.settleWalletsForDeletion(USER_ID)).containsExactly(manual);
+        }
+
+        @Test
+        @DisplayName("demande déjà en cours (422 wallet-refund-pending) → ignorée, la suppression continue")
+        void pendingRequest_ignored() {
+            when(walletAccountRepository.findAllByUserId(USER_ID)).thenReturn(List.of(walletOf("EUR", "40.00")));
+            when(walletSelfRefundService.allocation(USER_ID, "EUR")).thenReturn(allocation("40.00", "0"));
+            when(walletSelfRefundService.request(USER_ID, "EUR", List.of()))
+                    .thenThrow(new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-pending",
+                            "Unprocessable", "Solde gelé"));
+
+            assertThat(userService.settleWalletsForDeletion(USER_ID)).isEmpty();
+        }
+
+        @Test
+        @DisplayName("solde nul → rien")
+        void zeroBalance_nothing() {
+            when(walletAccountRepository.findAllByUserId(USER_ID)).thenReturn(List.of(walletOf("EUR", "0.00")));
+
+            assertThat(userService.settleWalletsForDeletion(USER_ID)).isEmpty();
+            verifyNoInteractions(walletSelfRefundService);
+        }
+    }
+
+    @Nested
+    @DisplayName("walletSettlement")
+    class Settlement {
+
+        @Test
+        void stripeRail_montantsParDevise() {
+            when(walletAccountRepository.findAllByUserId(USER_ID)).thenReturn(List.of(walletOf("EUR", "40.00")));
+            when(walletSelfRefundService.allocation(USER_ID, "EUR")).thenReturn(allocation("35.00", "5.00"));
+
+            List<WalletSettlementDto> s = userService.walletSettlement(USER_ID);
+
+            assertThat(s).hasSize(1);
+            assertThat(s.get(0).currency()).isEqualTo("EUR");
+            assertThat(s.get(0).refundableAmount()).isEqualByComparingTo("35.00");
+            assertThat(s.get(0).forfeitedAmount()).isEqualByComparingTo("5.00");
+            assertThat(s.get(0).rail()).isEqualTo("STRIPE");
+        }
+
+        @Test
+        void invariantCasse_railManualSurToutLeSolde() {
+            when(walletAccountRepository.findAllByUserId(USER_ID)).thenReturn(List.of(walletOf("EUR", "40.00")));
+            when(walletSelfRefundService.allocation(USER_ID, "EUR"))
+                    .thenThrow(new WalletAllocationInvariantException(BigDecimal.ONE, BigDecimal.TEN));
+
+            List<WalletSettlementDto> s = userService.walletSettlement(USER_ID);
+
+            assertThat(s.get(0).rail()).isEqualTo("MANUAL");
+            assertThat(s.get(0).refundableAmount()).isEqualByComparingTo("40.00");
+            assertThat(s.get(0).forfeitedAmount()).isEqualByComparingTo("0");
+        }
+    }
+
+    @Test
+    @DisplayName("checkDeletionEligibility expose walletSettlement et hasWalletBalance")
+    void checkDeletionEligibility_exposeSettlement() {
+        UserEntity user = makeUser(UserStatus.ACTIVE);
+        when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+        when(paymentRepository.hasActiveEscrowForUser(USER_ID)).thenReturn(false);
+        when(walletAccountRepository.findAllByUserId(USER_ID)).thenReturn(List.of(walletOf("EUR", "40.00")));
+        when(walletSelfRefundService.allocation(USER_ID, "EUR")).thenReturn(allocation("35.00", "5.00"));
+
+        DeletionEligibilityResponse r = userService.checkDeletionEligibility(FIREBASE_UID);
+
+        assertThat(r.canDelete()).isTrue();
+        assertThat(r.hasWalletBalance()).isTrue();
+        assertThat(r.walletSettlement()).hasSize(1);
+        assertThat(r.walletSettlement().get(0).refundableAmount()).isEqualByComparingTo("35.00");
     }
 
     @Nested

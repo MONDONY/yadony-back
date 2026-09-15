@@ -17,6 +17,12 @@ public class WalletAllocationInvariantException extends RuntimeException {
         this.unallocated = unallocated;
     }
 
+    /** Confort pour les appelants qui n'ont pas le détail du non-attribué (ex. tests) :
+     *  l'écart entier computed/balance est imputé au non-attribué. */
+    public WalletAllocationInvariantException(BigDecimal computed, BigDecimal balance) {
+        this(computed, balance, balance.subtract(computed));
+    }
+
     public BigDecimal getComputed() { return computed; }
     public BigDecimal getBalance() { return balance; }
     public BigDecimal getUnallocated() { return unallocated; }

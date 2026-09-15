@@ -14,7 +14,7 @@ import java.util.UUID;
 
 /**
  * Demande de remboursement d'un solde wallet rechargé par carte, ouverte automatiquement à
- * la suppression de compte (cf. {@code UserService#openWalletRefundTicketIfNeeded}, jamais
+ * la suppression de compte (cf. {@code UserService#settleWalletsForDeletion}, jamais
  * bloquant) ou explicitement en dehors de toute suppression — aucun flow de remboursement
  * automatique n'existe (cf. {@link WalletRefundRequestService}), un admin rembourse
  * manuellement via Stripe puis résout le ticket.

@@ -15,7 +15,6 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.FirebaseSignInProvider;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
-import com.yadony.api.payments.wallet.WalletRefundRequestService;
 import com.google.firebase.auth.FirebaseToken;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -52,7 +51,6 @@ public class AuthService {
     private final AdminAuthService adminAuthService;
     private final FirebaseContactService firebaseContact;
     private final UsernameGenerator usernameGenerator;
-    private final WalletRefundRequestService walletRefundRequestService;
 
     public AuthService(UserRepository userRepository,
                        AuditService auditService,
@@ -63,8 +61,7 @@ public class AuthService {
                        StorageService storageService,
                        AdminAuthService adminAuthService,
                        FirebaseContactService firebaseContact,
-                       UsernameGenerator usernameGenerator,
-                       WalletRefundRequestService walletRefundRequestService) {
+                       UsernameGenerator usernameGenerator) {
         this.userRepository = userRepository;
         this.auditService = auditService;
         this.userService = userService;
@@ -75,7 +72,6 @@ public class AuthService {
         this.adminAuthService = adminAuthService;
         this.firebaseContact = firebaseContact;
         this.usernameGenerator = usernameGenerator;
-        this.walletRefundRequestService = walletRefundRequestService;
     }
 
     @Transactional
@@ -431,19 +427,20 @@ public class AuthService {
         return userService.checkDeletionEligibility(firebaseUid);
     }
 
-    /** Demande explicite et autonome de remboursement du solde wallet (ex. l'utilisateur garde
-     *  son compte mais veut récupérer son argent) : ouvre un ticket manuel pour chaque devise
-     *  en solde positif. La suppression de compte ouvre déjà ce même ticket automatiquement
-     *  (cf. {@link UserService#openWalletRefundTicketIfNeeded}) — cet endpoint n'est donc plus
-     *  un prérequis pour supprimer son compte, juste un raccourci pour qui veut être remboursé
-     *  sans attendre. */
+    /** Demande autonome de remboursement du solde wallet (sans supprimer le compte) : même
+     *  règlement qu'à la suppression, remboursement Stripe automatique et partiel, ticket
+     *  manuel seulement si le rejeu du ledger est incohérent. */
     public List<WalletRefundRequestResponse> requestWalletRefund(String firebaseUid) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
-        return walletRefundRequestService.request(user.getId()).stream()
-                .map(WalletRefundRequestResponse::from)
-                .collect(Collectors.toList());
+        List<com.yadony.api.payments.wallet.WalletRefundRequestEntity> opened =
+                userService.settleWalletsForDeletion(user.getId());
+        if (opened.isEmpty()) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-balance-empty",
+                    "Unprocessable", "Aucun montant remboursable");
+        }
+        return opened.stream().map(WalletRefundRequestResponse::from).collect(Collectors.toList());
     }
 
     /**
@@ -471,7 +468,7 @@ public class AuthService {
         // automatique mais ne bloque jamais la suppression (Apple 5.1.1(v)). Règle portée par
         // UserService pour rester identique entre suppression immédiate (ici) et suppression
         // J+30 (requestDeletion).
-        userService.openWalletRefundTicketIfNeeded(user.getId());
+        userService.settleWalletsForDeletion(user.getId());
 
         auditService.log("USER", user.getId(), "ACCOUNT_DELETE_IMMEDIATELY_REQUESTED",
                 user.getId(), Map.of("initiatedBy", "user"));

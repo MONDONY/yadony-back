@@ -19,7 +19,7 @@ import java.util.UUID;
 
 /**
  * Ouvre le ticket de remboursement wallet — automatiquement à chaque suppression de compte
- * en solde positif (cf. {@code UserService#openWalletRefundTicketIfNeeded}, jamais bloquant :
+ * en solde positif (cf. {@code UserService#settleWalletsForDeletion}, jamais bloquant :
  * Apple 5.1.1(v)), ou explicitement via {@code POST /auth/me/wallet-refund-request} pour qui
  * veut être remboursé sans supprimer son compte. Aucun flow de remboursement automatique
  * n'existe côté Stripe pour le wallet : un admin rembourse manuellement hors-app puis résout

@@ -16,6 +16,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -72,8 +73,18 @@ public class WalletSelfRefundService {
     /**
      * Rejeu du ledger de {@code currency} (cf. {@link WalletRefundAllocator}). Un invariant
      * cassé est signalé à l'admin et propagé : on ne rembourse jamais sur un calcul faux.
+     *
+     * <p>{@code REQUIRES_NEW} : appelée depuis {@code UserService#walletSettlement} /
+     * {@code #settleWalletsForDeletion}, elle-même imbriquée dans une transaction
+     * {@code @Transactional} plus large (ex. {@code checkDeletionEligibility}). Sans
+     * transaction dédiée, une {@link WalletAllocationInvariantException} — pourtant
+     * attrapée par l'appelant — marque la transaction englobante {@code rollback-only}
+     * (règle Spring pour tout appel participant qui lève), et son commit se solde par un
+     * {@code UnexpectedRollbackException} (500) même si l'appelant continue normalement.
+     * Une transaction dédiée, purement en lecture, absorbe l'exception sans polluer la
+     * transaction appelante.
      */
-    @Transactional(readOnly = true)
+    @Transactional(readOnly = true, propagation = Propagation.REQUIRES_NEW)
     public WalletRefundAllocation allocation(UUID userId, String currency) {
         String code = normalize(currency);
         WalletAccountEntity wallet = walletAccountRepository.findByUserIdAndCurrency(userId, code).orElse(null);
