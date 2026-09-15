@@ -276,7 +276,7 @@ class WalletSelfRefundServiceTest {
                 .thenReturn(Optional.of(stale));
         when(refundRequestItemRepository.findByRefundRequestId(requestId)).thenReturn(List.of(item));
         when(refundRequestRepository.findById(requestId)).thenReturn(Optional.of(stale));
-        when(refundRequestRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(refundRequestRepository.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
         when(refundRequestItemRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         // Après réconciliation, la demande n'est plus PROCESSING : plus aucun blocage.
         when(refundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(
@@ -463,7 +463,7 @@ class WalletSelfRefundServiceTest {
         when(refundRequestRepository.findAllByUserIdOrderByRequestedAtDesc(USER_ID)).thenReturn(List.of(request));
         when(refundRequestItemRepository.findByRefundRequestId(requestId)).thenReturn(List.of(item));
         when(refundRequestRepository.findById(requestId)).thenReturn(Optional.of(request));
-        when(refundRequestRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(refundRequestRepository.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
         when(refundRequestItemRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
@@ -530,7 +530,7 @@ class WalletSelfRefundServiceTest {
         request.setCurrency("EUR");
         request.setStatus(WalletRefundRequestStatus.PROCESSING);
         when(refundRequestRepository.findById(requestId)).thenReturn(Optional.of(request));
-        when(refundRequestRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(refundRequestRepository.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
         when(refundRequestItemRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         Charge charge = new Charge();

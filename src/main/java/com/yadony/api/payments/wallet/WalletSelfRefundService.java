@@ -478,7 +478,12 @@ public class WalletSelfRefundService {
         boolean anyFailed = items.stream().anyMatch(i -> i.getStatus() == WalletRefundItemStatus.FAILED);
         request.setStatus(anyFailed ? WalletRefundRequestStatus.FAILED : WalletRefundRequestStatus.REFUNDED);
         request.setResolvedAt(LocalDateTime.now(ZoneOffset.UTC));
-        refundRequestRepository.save(request);
+        // saveAndFlush : openChildForFailedItems insère juste après un PENDING sur le même
+        // (user_id, currency), que l'index unique partiel uq_wallet_refund_requests_pending
+        // (V229, statuts PENDING et PROCESSING) refuserait tant que cette demande-ci est encore
+        // PROCESSING en base. Sans flush explicite, la sortie de FAILED ne tient qu'à un
+        // auto-flush accidentel déclenché par la première requête d'openChildForFailedItems.
+        refundRequestRepository.saveAndFlush(request);
 
         if (anyFailed) {
             BigDecimal failedTotal = items.stream()
