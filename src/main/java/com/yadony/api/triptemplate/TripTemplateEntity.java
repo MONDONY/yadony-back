@@ -5,6 +5,7 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Table;
 import org.hibernate.annotations.Where;
+import java.math.BigDecimal;
 import java.time.LocalTime;
 import java.util.UUID;
 
@@ -49,7 +50,7 @@ public class TripTemplateEntity extends BaseEntity {
     @Column(name = "available_kg", nullable = false)
     private Integer availableKg = 23;
 
-    @Column(name = "price_per_kg", nullable = false)
+    @Column(name = "price_per_kg")
     private Double pricePerKg;
 
     @Column(name = "accepted_categories", columnDefinition = "TEXT")
@@ -60,6 +61,58 @@ public class TripTemplateEntity extends BaseEntity {
 
     @Column(name = "arrival_time")
     private LocalTime arrivalTime;
+
+    /** Devise du modèle (ISO 4217). Nul pour un modèle antérieur à V257 : devise active à l'application. */
+    @Column(name = "currency", length = 3)
+    private String currency;
+
+    /** "KG" ou "MIXED" (grille de profil + kilo optionnel). Chaîne comme transportMode et capacityUnit. */
+    @Column(name = "pricing_mode", nullable = false, length = 10)
+    private String pricingMode = "KG";
+
+    /** Codes PaymentMethod joints par virgule, comme accepted_categories. cash_accepted en est le miroir. */
+    @Column(name = "accepted_payment_methods", nullable = false, columnDefinition = "TEXT")
+    private String acceptedPaymentMethods = "STRIPE";
+
+    @Column(name = "negotiable", nullable = false)
+    private boolean negotiable = false;
+
+    @Column(name = "refused_types", columnDefinition = "TEXT")
+    private String refusedTypes;
+
+    @Column(name = "description", length = 500)
+    private String description;
+
+    @Column(name = "pickup_address_label", length = 500)
+    private String pickupAddressLabel;
+
+    @Column(name = "pickup_lat", precision = 9, scale = 6)
+    private BigDecimal pickupLat;
+
+    @Column(name = "pickup_lng", precision = 9, scale = 6)
+    private BigDecimal pickupLng;
+
+    @Column(name = "delivery_address_label", length = 500)
+    private String deliveryAddressLabel;
+
+    @Column(name = "delivery_lat", precision = 9, scale = 6)
+    private BigDecimal deliveryLat;
+
+    @Column(name = "delivery_lng", precision = 9, scale = 6)
+    private BigDecimal deliveryLng;
+
+    @Column(name = "departure_time")
+    private LocalTime departureTime;
+
+    /** Remise au plus tard N jours avant le départ (0 = le jour du départ). Nul : pas de délai mémorisé. */
+    @Column(name = "handover_lead_days")
+    private Integer handoverLeadDays;
+
+    @Column(name = "departure_country_code", length = 2)
+    private String departureCountryCode;
+
+    @Column(name = "arrival_country_code", length = 2)
+    private String arrivalCountryCode;
 
     public UUID getUserId() { return userId; }
     public void setUserId(UUID userId) { this.userId = userId; }
@@ -93,4 +146,36 @@ public class TripTemplateEntity extends BaseEntity {
     public void setCashAccepted(boolean cashAccepted) { this.cashAccepted = cashAccepted; }
     public LocalTime getArrivalTime() { return arrivalTime; }
     public void setArrivalTime(LocalTime arrivalTime) { this.arrivalTime = arrivalTime; }
+    public String getCurrency() { return currency; }
+    public void setCurrency(String currency) { this.currency = currency; }
+    public String getPricingMode() { return pricingMode; }
+    public void setPricingMode(String pricingMode) { this.pricingMode = pricingMode; }
+    public String getAcceptedPaymentMethods() { return acceptedPaymentMethods; }
+    public void setAcceptedPaymentMethods(String acceptedPaymentMethods) { this.acceptedPaymentMethods = acceptedPaymentMethods; }
+    public boolean isNegotiable() { return negotiable; }
+    public void setNegotiable(boolean negotiable) { this.negotiable = negotiable; }
+    public String getRefusedTypes() { return refusedTypes; }
+    public void setRefusedTypes(String refusedTypes) { this.refusedTypes = refusedTypes; }
+    public String getDescription() { return description; }
+    public void setDescription(String description) { this.description = description; }
+    public String getPickupAddressLabel() { return pickupAddressLabel; }
+    public void setPickupAddressLabel(String pickupAddressLabel) { this.pickupAddressLabel = pickupAddressLabel; }
+    public BigDecimal getPickupLat() { return pickupLat; }
+    public void setPickupLat(BigDecimal pickupLat) { this.pickupLat = pickupLat; }
+    public BigDecimal getPickupLng() { return pickupLng; }
+    public void setPickupLng(BigDecimal pickupLng) { this.pickupLng = pickupLng; }
+    public String getDeliveryAddressLabel() { return deliveryAddressLabel; }
+    public void setDeliveryAddressLabel(String deliveryAddressLabel) { this.deliveryAddressLabel = deliveryAddressLabel; }
+    public BigDecimal getDeliveryLat() { return deliveryLat; }
+    public void setDeliveryLat(BigDecimal deliveryLat) { this.deliveryLat = deliveryLat; }
+    public BigDecimal getDeliveryLng() { return deliveryLng; }
+    public void setDeliveryLng(BigDecimal deliveryLng) { this.deliveryLng = deliveryLng; }
+    public LocalTime getDepartureTime() { return departureTime; }
+    public void setDepartureTime(LocalTime departureTime) { this.departureTime = departureTime; }
+    public Integer getHandoverLeadDays() { return handoverLeadDays; }
+    public void setHandoverLeadDays(Integer handoverLeadDays) { this.handoverLeadDays = handoverLeadDays; }
+    public String getDepartureCountryCode() { return departureCountryCode; }
+    public void setDepartureCountryCode(String departureCountryCode) { this.departureCountryCode = departureCountryCode; }
+    public String getArrivalCountryCode() { return arrivalCountryCode; }
+    public void setArrivalCountryCode(String arrivalCountryCode) { this.arrivalCountryCode = arrivalCountryCode; }
 }

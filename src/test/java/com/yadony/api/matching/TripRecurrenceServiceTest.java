@@ -69,9 +69,14 @@ class TripRecurrenceServiceTest {
     }
 
     private void mockUser(boolean stripeConnectActive) {
+        mockUser(stripeConnectActive, false);
+    }
+
+    private void mockUser(boolean stripeConnectActive, boolean mobileMoneyActive) {
         UserEntity user = mock(UserEntity.class);
         when(user.getFirebaseUid()).thenReturn("firebase-uid");
         lenient().when(user.hasActiveStripeConnect()).thenReturn(stripeConnectActive);
+        lenient().when(user.hasActiveMobileMoney()).thenReturn(mobileMoneyActive);
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
     }
 
@@ -101,6 +106,88 @@ class TripRecurrenceServiceTest {
         ArgumentCaptor<AnnouncementRequest> cap = ArgumentCaptor.forClass(AnnouncementRequest.class);
         verify(announcementService).createRecurringAnnouncement(eq("firebase-uid"), cap.capture(), eq(rec.getId()));
         assertThat(cap.getValue().acceptedPaymentMethods()).containsExactly(PaymentMethod.CASH);
+    }
+
+    // La récurrence stockait négociable, devise, note, refusés, mode et délai de remise
+    // depuis le lot mobile money, mais buildRequest publiait des constantes : chaque
+    // trajet généré sortait Stripe seul, non négociable, sans note, en devise nulle.
+    @Test
+    void generate_usesTheRecurrenceOwnConditions() {
+        mockUser(true);
+        // Départ dans 3 jours (pas aujourd'hui) : avec un délai de remise de 2 jours la
+        // limite reste dans le futur, donc non affectée par le repli du fix B (départ
+        // trop proche) et l'assertion peut vérifier que le délai est bien appliqué.
+        LocalDate departureInThreeDays = LocalDate.now().plusDays(3);
+        StringBuilder weekdays = new StringBuilder("0000000");
+        weekdays.setCharAt(departureInThreeDays.getDayOfWeek().getValue() - 1, '1');
+        TripRecurrenceEntity rec = entity(weekdays.toString(), 3, null);
+        rec.setCurrency("EUR");
+        rec.setNegotiable(true);
+        rec.setDescription("Fragile bienvenu");
+        rec.setRefusedCategories("Téléphone & électronique");
+        rec.setPricingMode(PricingMode.MIXED);
+        rec.setHandoverLeadDays(2);
+
+        service.generateForRecurrence(rec);
+
+        ArgumentCaptor<AnnouncementRequest> cap = ArgumentCaptor.forClass(AnnouncementRequest.class);
+        verify(announcementService).createRecurringAnnouncement(eq("firebase-uid"), cap.capture(), eq(rec.getId()));
+        AnnouncementRequest req = cap.getValue();
+        assertThat(req.currency()).isEqualTo("EUR");
+        assertThat(req.negotiable()).isTrue();
+        assertThat(req.description()).isEqualTo("Fragile bienvenu");
+        assertThat(req.refusedTypes()).containsExactly("Téléphone & électronique");
+        assertThat(req.pricingMode()).isEqualTo(PricingMode.MIXED);
+        assertThat(req.handoverDeadline()).isEqualTo(req.departureDate().atTime(LocalTime.of(14, 0)).minusDays(2));
+    }
+
+    @Test
+    void generate_cfaRecurrenceWithMobileMoneyAccount_offersMobileMoney() {
+        mockUser(false, true);
+        TripRecurrenceEntity rec = entity("1111111", 0, null);
+        rec.setCurrency("XOF");
+        rec.setCashAccepted(true);
+
+        service.generateForRecurrence(rec);
+
+        ArgumentCaptor<AnnouncementRequest> cap = ArgumentCaptor.forClass(AnnouncementRequest.class);
+        verify(announcementService).createRecurringAnnouncement(eq("firebase-uid"), cap.capture(), eq(rec.getId()));
+        assertThat(cap.getValue().acceptedPaymentMethods())
+                .containsExactlyInAnyOrder(PaymentMethod.CASH, PaymentMethod.MOBILE_MONEY);
+    }
+
+    @Test
+    void generate_noHandoverLead_keepsDepartureAsDeadline() {
+        mockUser(true);
+        TripRecurrenceEntity rec = entity("1111111", 0, null);
+        rec.setHandoverLeadDays(0);
+
+        service.generateForRecurrence(rec);
+
+        ArgumentCaptor<AnnouncementRequest> cap = ArgumentCaptor.forClass(AnnouncementRequest.class);
+        verify(announcementService).createRecurringAnnouncement(eq("firebase-uid"), cap.capture(), eq(rec.getId()));
+        assertThat(cap.getValue().handoverDeadline())
+                .isEqualTo(cap.getValue().departureDate().atTime(LocalTime.of(14, 0)));
+    }
+
+    // B : un délai de remise long combiné à un départ proche produisait une limite déjà
+    // expirée à la publication, ouvrant le signalement de no-show dès l'acceptation.
+    @Test
+    void generate_handoverLeadBeyondHorizon_fallsBackToDeparture() {
+        mockUser(true);
+        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        StringBuilder weekdays = new StringBuilder("0000000");
+        weekdays.setCharAt(tomorrow.getDayOfWeek().getValue() - 1, '1');
+        TripRecurrenceEntity rec = entity(weekdays.toString(), 1, null);
+        rec.setHandoverLeadDays(3);
+
+        service.generateForRecurrence(rec);
+
+        ArgumentCaptor<AnnouncementRequest> cap = ArgumentCaptor.forClass(AnnouncementRequest.class);
+        verify(announcementService).createRecurringAnnouncement(eq("firebase-uid"), cap.capture(), eq(rec.getId()));
+        assertThat(cap.getValue().departureDate()).isEqualTo(tomorrow);
+        assertThat(cap.getValue().handoverDeadline())
+                .isEqualTo(cap.getValue().departureDate().atTime(LocalTime.of(14, 0)));
     }
 
     @Test
