@@ -185,6 +185,16 @@
 			<artifactId>sentry-spring-boot-starter-jakarta</artifactId>
 			<version>${sentry.version}</version>
 		</dependency>
+		<!-- Appender Logback : le starter ne le tire PAS (ni en 7.x ni en 8.x). Sans
+		     lui, SentryLogbackAppenderAutoConfiguration reste inerte (@ConditionalOnClass
+		     SentryAppender) : aucun log ne part vers Sentry et seuls les appels explicites
+		     Sentry.captureException/captureMessage créent des évènements. C'est ce qui
+		     rendait l'onglet Logs vide et les WARN invisibles. -->
+		<dependency>
+			<groupId>io.sentry</groupId>
+			<artifactId>sentry-logback</artifactId>
+			<version>${sentry.version}</version>
+		</dependency>
 
 		<!-- Micrometer — export des métriques au format Prometheus -->
 		<dependency>
