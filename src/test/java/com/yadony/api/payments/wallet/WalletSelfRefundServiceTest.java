@@ -54,19 +54,23 @@ class WalletSelfRefundServiceTest {
                 auditService, adminAlertService, new ObjectMapper());
     }
 
-    private WalletAccountEntity wallet(String balance) {
+    private WalletAccountEntity wallet(String currency, String balance) {
         WalletAccountEntity w = new WalletAccountEntity();
         w.setUserId(USER_ID);
-        w.setCurrency("EUR");
+        w.setCurrency(currency);
         w.setBalance(new BigDecimal(balance));
         return w;
     }
 
-    private WalletTransactionEntity ledgerTx(WalletTransactionType type, String signedAmount, String paymentRef) {
+    private WalletAccountEntity wallet(String balance) {
+        return wallet("EUR", balance);
+    }
+
+    private WalletTransactionEntity ledgerTx(String currency, WalletTransactionType type, String signedAmount, String paymentRef) {
         WalletTransactionEntity t = new WalletTransactionEntity();
         setField(t, "id", UUID.randomUUID());
         t.setUserId(USER_ID);
-        t.setCurrency("EUR");
+        t.setCurrency(currency);
         t.setType(type);
         t.setAmount(new BigDecimal(signedAmount));
         t.setBalanceAfter(BigDecimal.ZERO);
@@ -75,11 +79,19 @@ class WalletSelfRefundServiceTest {
         return t;
     }
 
-    private void stubLedger(String balance, WalletTransactionEntity... txs) {
-        when(walletAccountRepository.findByUserIdAndCurrency(USER_ID, "EUR")).thenReturn(Optional.of(wallet(balance)));
-        when(walletTransactionRepository.findByUserIdAndCurrencyOrderByCreatedAtAsc(USER_ID, "EUR"))
+    private WalletTransactionEntity ledgerTx(WalletTransactionType type, String signedAmount, String paymentRef) {
+        return ledgerTx("EUR", type, signedAmount, paymentRef);
+    }
+
+    private void stubLedger(String currency, String balance, WalletTransactionEntity... txs) {
+        when(walletAccountRepository.findByUserIdAndCurrency(USER_ID, currency)).thenReturn(Optional.of(wallet(currency, balance)));
+        when(walletTransactionRepository.findByUserIdAndCurrencyOrderByCreatedAtAsc(USER_ID, currency))
                 .thenReturn(List.of(txs));
         when(refundRequestItemRepository.findByWalletTransactionIdIn(any())).thenReturn(List.of());
+    }
+
+    private void stubLedger(String balance, WalletTransactionEntity... txs) {
+        stubLedger("EUR", balance, txs);
     }
 
     /** Reprend le helper par réflexion de {@code WalletRefundAllocatorTest} (Tâche 2). */
@@ -268,6 +280,37 @@ class WalletSelfRefundServiceTest {
             assertThat(saved.getChannel()).isEqualTo(WalletRefundChannel.AUTOMATIC_STRIPE);
             assertThat(params.getValue().getPaymentIntent()).isEqualTo("pi_1");
             assertThat(params.getValue().getAmount()).isEqualTo(3500L);
+        }
+    }
+
+    @Test
+    void request_deviseSansDecimales_montantAligneUniteMineureStripeAvantEnvoi() {
+        // Régression : le ledger interne garde toujours 2 décimales (NUMERIC(10,2)), même pour
+        // XOF (0 décimale). Sans mise à l'échelle avant la création de l'item, un reliquat comme
+        // 9999.50 XOF faisait lever ArithmeticException dans Refund.create (longValueExact()),
+        // non rattrapée par catch (StripeException), annulant toute la transaction.
+        WalletTransactionEntity topup = ledgerTx("XOF", WalletTransactionType.TOP_UP, "13200", "pi_xof");
+        stubLedger("XOF", "9999.50", topup, ledgerTx("XOF", WalletTransactionType.BID_PAYMENT, "-3200.50", null));
+        when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("XOF"), any()))
+                .thenReturn(Optional.empty());
+        when(refundRequestRepository.save(any())).thenAnswer(inv -> {
+            WalletRefundRequestEntity r = inv.getArgument(0);
+            if (r.getId() == null) assignId(r);
+            return r;
+        });
+        when(refundRequestItemRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(refundRequestItemRepository.findByRefundRequestId(any())).thenAnswer(inv -> List.of(lastSavedItem()));
+
+        try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            Refund refund = new Refund();
+            refund.setId("re_xof");
+            ArgumentCaptor<RefundCreateParams> params = ArgumentCaptor.forClass(RefundCreateParams.class);
+            refundStatic.when(() -> Refund.create(params.capture(), any(RequestOptions.class))).thenReturn(refund);
+
+            WalletRefundRequestEntity saved = service.request(USER_ID, "XOF", List.of());
+
+            assertThat(saved.getAmount()).isEqualByComparingTo("9999");
+            assertThat(params.getValue().getAmount()).isEqualTo(9999L);
         }
     }
 

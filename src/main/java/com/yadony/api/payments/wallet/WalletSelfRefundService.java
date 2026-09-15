@@ -19,6 +19,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -200,8 +201,25 @@ public class WalletSelfRefundService {
                     "Aucun montant remboursable sur ce solde");
         }
 
-        BigDecimal amount = targets.stream()
-                .map(WalletRefundAllocation.RefundableTopup::remaining)
+        // Le ledger interne garde toujours 2 décimales (NUMERIC(10,2)), même pour une devise
+        // sans centimes (XOF/XAF) : on aligne chaque montant sur l'unité mineure Stripe de la
+        // devise AVANT de créer l'item, jamais dans issueStripeRefund seul, pour qu'une cible
+        // dont le reliquat s'arrondit à zéro (ex. 0.50 XOF) ne devienne jamais un item à
+        // rembourser. RoundingMode.DOWN : on ne rembourse jamais plus que le restant.
+        int scale = SupportedCurrency.fromCodeOrDefault(code).minorUnit();
+        record ScaledTarget(WalletRefundAllocation.RefundableTopup target, BigDecimal amount) {}
+        List<ScaledTarget> scaledTargets = targets.stream()
+                .map(t -> new ScaledTarget(t, t.remaining().setScale(scale, RoundingMode.DOWN)))
+                .filter(st -> st.amount().signum() != 0)
+                .toList();
+        if (scaledTargets.isEmpty()) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "wallet-not-refund-eligible", "Unprocessable",
+                    "Aucun montant remboursable sur ce solde");
+        }
+
+        BigDecimal amount = scaledTargets.stream()
+                .map(ScaledTarget::amount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         WalletRefundRequestEntity request = new WalletRefundRequestEntity();
@@ -214,16 +232,17 @@ public class WalletSelfRefundService {
         WalletRefundRequestEntity saved = refundRequestRepository.save(request);
 
         List<Map<String, String>> auditItems = new ArrayList<>();
-        for (WalletRefundAllocation.RefundableTopup target : targets) {
+        for (ScaledTarget scaledTarget : scaledTargets) {
+            WalletRefundAllocation.RefundableTopup target = scaledTarget.target();
             WalletRefundRequestItemEntity item = new WalletRefundRequestItemEntity();
             item.setRefundRequestId(saved.getId());
             item.setWalletTransactionId(target.walletTransactionId());
             item.setPaymentIntentId(target.paymentIntentId());
-            item.setAmount(target.remaining());
+            item.setAmount(scaledTarget.amount());
             item.setStatus(WalletRefundItemStatus.PENDING);
             refundRequestItemRepository.save(item);
             auditItems.add(Map.of("paymentIntentId", target.paymentIntentId(),
-                    "amount", target.remaining().toPlainString()));
+                    "amount", scaledTarget.amount().toPlainString()));
         }
 
         saved.setStatus(WalletRefundRequestStatus.PROCESSING);
@@ -243,10 +262,29 @@ public class WalletSelfRefundService {
     }
 
     private void issueStripeRefund(WalletRefundRequestItemEntity item, String currency) {
+        long minorUnits;
         try {
-            long minorUnits = item.getAmount()
+            // Défensif : l'item est déjà aligné sur l'unité mineure par request() (setScale
+            // DOWN avant persistance), donc longValueExact() ne devrait jamais lever ici.
+            // On garde ce garde-fou pour ne jamais faire tomber la transaction si un item
+            // legacy ou une future voie d'écriture laissait passer un montant mal aligné.
+            minorUnits = item.getAmount()
                     .movePointRight(SupportedCurrency.fromCodeOrDefault(currency).minorUnit())
                     .longValueExact();
+        } catch (ArithmeticException e) {
+            log.error("Montant non alignable en unite mineure Stripe pour item {} (PI {})",
+                    item.getId(), item.getPaymentIntentId(), e);
+            item.setStatus(WalletRefundItemStatus.FAILED);
+            item.setFailureReason("amount-scale");
+            refundRequestItemRepository.save(item);
+            adminAlertService.raise("wallet-self-refund-failed",
+                    "Montant wallet non alignable en unite mineure Stripe",
+                    Map.of("itemId", String.valueOf(item.getId()),
+                            "paymentIntentId", String.valueOf(item.getPaymentIntentId()),
+                            "amount", item.getAmount().toPlainString()));
+            return;
+        }
+        try {
             Refund refund = Refund.create(
                     RefundCreateParams.builder()
                             .setPaymentIntent(item.getPaymentIntentId())
