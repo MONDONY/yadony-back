@@ -272,8 +272,8 @@ class UserServiceTest {
 
             userService.openWalletRefundTicketIfNeeded(USER_ID);
 
-            verify(walletSelfRefundService).listEligibleTopups(USER_ID, "EUR");
-            verify(walletSelfRefundService).request(eq(USER_ID), eq("EUR"), any());
+            // Liste vide = tout le remboursable de la devise (cf. WalletSelfRefundService.request).
+            verify(walletSelfRefundService).request(USER_ID, "EUR", java.util.List.of());
             verifyNoInteractions(walletRefundRequestService);
         }
 

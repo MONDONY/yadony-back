@@ -1,6 +1,7 @@
 package com.yadony.api.payments.wallet;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.stripe.exception.InvalidRequestException;
 import com.stripe.model.Charge;
 import com.stripe.model.Refund;
 import com.stripe.net.RequestOptions;
@@ -11,6 +12,7 @@ import com.yadony.api.common.stripe.AdminAlertService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -52,138 +54,138 @@ class WalletSelfRefundServiceTest {
                 auditService, adminAlertService, new ObjectMapper());
     }
 
+    private WalletAccountEntity wallet(String balance) {
+        WalletAccountEntity w = new WalletAccountEntity();
+        w.setUserId(USER_ID);
+        w.setCurrency("EUR");
+        w.setBalance(new BigDecimal(balance));
+        return w;
+    }
+
+    private WalletTransactionEntity ledgerTx(WalletTransactionType type, String signedAmount, String paymentRef) {
+        WalletTransactionEntity t = new WalletTransactionEntity();
+        setField(t, "id", UUID.randomUUID());
+        t.setUserId(USER_ID);
+        t.setCurrency("EUR");
+        t.setType(type);
+        t.setAmount(new BigDecimal(signedAmount));
+        t.setBalanceAfter(BigDecimal.ZERO);
+        t.setPaymentRef(paymentRef);
+        setField(t, "createdAt", Instant.now());
+        return t;
+    }
+
+    private void stubLedger(String balance, WalletTransactionEntity... txs) {
+        when(walletAccountRepository.findByUserIdAndCurrency(USER_ID, "EUR")).thenReturn(Optional.of(wallet(balance)));
+        when(walletTransactionRepository.findByUserIdAndCurrencyOrderByCreatedAtAsc(USER_ID, "EUR"))
+                .thenReturn(List.of(txs));
+        when(refundRequestItemRepository.findByWalletTransactionIdIn(any())).thenReturn(List.of());
+    }
+
+    /** Reprend le helper par réflexion de {@code WalletRefundAllocatorTest} (Tâche 2). */
+    private static void setField(Object target, String name, Object value) {
+        try {
+            Class<?> c = target.getClass();
+            while (c != null) {
+                try {
+                    Field f = c.getDeclaredField(name);
+                    f.setAccessible(true);
+                    f.set(target, value);
+                    return;
+                } catch (NoSuchFieldException e) {
+                    c = c.getSuperclass();
+                }
+            }
+            throw new IllegalStateException("champ absent : " + name);
+        } catch (IllegalAccessException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /** Reprend le helper de {@code WalletRefundRequestServiceTest} : un {@code WalletRefundRequestEntity}
+     *  construit à la main n'a jamais d'id (assigné par Hibernate au flush réel). */
+    private static void assignId(WalletRefundRequestEntity entity) {
+        try {
+            var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+            idField.setAccessible(true);
+            idField.set(entity, UUID.randomUUID());
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /** Dernier item passé à {@code refundRequestItemRepository.save}, capturé sur le mock. */
+    private WalletRefundRequestItemEntity lastSavedItem() {
+        ArgumentCaptor<WalletRefundRequestItemEntity> captor = ArgumentCaptor.forClass(WalletRefundRequestItemEntity.class);
+        verify(refundRequestItemRepository, atLeastOnce()).save(captor.capture());
+        List<WalletRefundRequestItemEntity> all = captor.getAllValues();
+        return all.get(all.size() - 1);
+    }
+
     @Test
-    void isEligible_trueWhenWalletRefundEligible() {
-        when(walletAccountRepository.findByUserIdAndCurrency(USER_ID, "EUR"))
-                .thenReturn(Optional.of(eligibleWallet()));
+    void allocation_rechargeEntamee_resteRemboursable() {
+        WalletTransactionEntity topup = ledgerTx(WalletTransactionType.TOP_UP, "40.00", "pi_1");
+        stubLedger("35.00", topup, ledgerTx(WalletTransactionType.BID_PAYMENT, "-5.00", null));
+
+        WalletRefundAllocation a = service.allocation(USER_ID, "EUR");
+
+        assertThat(a.refundableTotal()).isEqualByComparingTo("35.00");
+        assertThat(a.refundable().get(0).paymentIntentId()).isEqualTo("pi_1");
+    }
+
+    @Test
+    void allocation_invariantCasse_alerteEtRejette() {
+        stubLedger("99.00", ledgerTx(WalletTransactionType.TOP_UP, "40.00", "pi_1"));
+
+        assertThatThrownBy(() -> service.allocation(USER_ID, "EUR"))
+                .isInstanceOf(WalletAllocationInvariantException.class);
+        verify(adminAlertService).raise(eq("wallet-refund-allocation-invariant"), any(), any());
+    }
+
+    @Test
+    void allocation_walletAbsent_vide() {
+        when(walletAccountRepository.findByUserIdAndCurrency(USER_ID, "EUR")).thenReturn(Optional.empty());
+
+        assertThat(service.allocation(USER_ID, "EUR").refundableTotal()).isEqualByComparingTo("0");
+    }
+
+    @Test
+    void isEligible_vraiQuandDuRemboursableExiste() {
+        stubLedger("35.00", ledgerTx(WalletTransactionType.TOP_UP, "40.00", "pi_1"),
+                ledgerTx(WalletTransactionType.BID_PAYMENT, "-5.00", null));
+        when(refundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any())).thenReturn(false);
 
         assertThat(service.isEligible(USER_ID, "EUR")).isTrue();
     }
 
     @Test
-    void request_throwsWhenSelectionEmpty() {
-        assertThatThrownBy(() -> service.request(USER_ID, "EUR", List.of()))
-                .isInstanceOf(YadonyBusinessException.class)
-                .hasFieldOrPropertyWithValue("errorCode", "wallet-not-refund-eligible");
-        verifyNoInteractions(walletAccountRepository, refundRequestRepository);
+    void isEligible_fauxQuandInvariantCasse() {
+        stubLedger("99.00", ledgerTx(WalletTransactionType.TOP_UP, "40.00", "pi_1"));
+
+        assertThat(service.isEligible(USER_ID, "EUR")).isFalse();
     }
 
     @Test
-    void request_throwsWhenNotEligible() {
-        WalletAccountEntity tainted = eligibleWallet();
-        tainted.setRefundEligibleAmount(new BigDecimal("10.00"));
-        when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(
-                USER_ID, "EUR", List.of(WalletRefundRequestStatus.PENDING, WalletRefundRequestStatus.PROCESSING)))
-                .thenReturn(Optional.empty());
-        when(walletAccountRepository.findByUserIdAndCurrency(USER_ID, "EUR")).thenReturn(Optional.of(tainted));
+    void isEligible_fauxQuandSoldeUniquementNonCash() {
+        stubLedger("5.00", ledgerTx(WalletTransactionType.REFERRAL_REWARD, "5.00", null));
+        when(refundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any())).thenReturn(false);
 
-        assertThatThrownBy(() -> service.request(USER_ID, "EUR", List.of(UUID.randomUUID())))
-                .isInstanceOf(YadonyBusinessException.class)
-                .hasFieldOrPropertyWithValue("errorCode", "wallet-not-refund-eligible");
+        assertThat(service.isEligible(USER_ID, "EUR")).isFalse();
     }
 
     @Test
-    void request_throwsWhenSelectedTopupNoLongerEligible() {
-        WalletAccountEntity wallet = eligibleWallet();
-        when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(
-                USER_ID, "EUR", List.of(WalletRefundRequestStatus.PENDING, WalletRefundRequestStatus.PROCESSING)))
-                .thenReturn(Optional.empty());
-        when(walletAccountRepository.findByUserIdAndCurrency(USER_ID, "EUR")).thenReturn(Optional.of(wallet));
-        WalletTransactionEntity topup1 = topup("pi_111", "30.00");
-        when(walletTransactionRepository.findByUserIdAndCurrencyAndTypeAndCreatedAtGreaterThanEqual(
-                USER_ID, "EUR", WalletTransactionType.TOP_UP, wallet.getRefundEligibleSince()))
-                .thenReturn(List.of(topup1));
+    void listEligibleTopups_renvoieLeRestantParRecharge() {
+        WalletTransactionEntity topup = ledgerTx(WalletTransactionType.TOP_UP, "40.00", "pi_1");
+        stubLedger("35.00", topup, ledgerTx(WalletTransactionType.BID_PAYMENT, "-5.00", null));
+        when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(USER_ID, "EUR",
+                List.of(WalletRefundRequestStatus.PROCESSING))).thenReturn(Optional.empty());
+        when(refundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any())).thenReturn(false);
 
-        assertThatThrownBy(() -> service.request(USER_ID, "EUR", List.of(UUID.randomUUID())))
-                .isInstanceOf(YadonyBusinessException.class)
-                .hasFieldOrPropertyWithValue("errorCode", "wallet-not-refund-eligible");
-    }
+        List<WalletSelfRefundService.EligibleTopup> list = service.listEligibleTopups(USER_ID, "EUR");
 
-    @Test
-    void request_createsItemOnlyForSelectedTopUps_thenCallsStripePerItem() {
-        WalletAccountEntity wallet = eligibleWallet();
-        when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(
-                USER_ID, "EUR", List.of(WalletRefundRequestStatus.PENDING, WalletRefundRequestStatus.PROCESSING)))
-                .thenReturn(Optional.empty());
-        when(walletAccountRepository.findByUserIdAndCurrency(USER_ID, "EUR")).thenReturn(Optional.of(wallet));
-        WalletTransactionEntity topup1 = topup("pi_111", "30.00");
-        WalletTransactionEntity topup2 = topup("pi_222", "20.00");
-        when(walletTransactionRepository.findByUserIdAndCurrencyAndTypeAndCreatedAtGreaterThanEqual(
-                USER_ID, "EUR", WalletTransactionType.TOP_UP, wallet.getRefundEligibleSince()))
-                .thenReturn(List.of(topup1, topup2));
-
-        List<WalletRefundRequestItemEntity> savedItems = new ArrayList<>();
-        when(refundRequestRepository.save(any())).thenAnswer(inv -> {
-            WalletRefundRequestEntity request = inv.getArgument(0);
-            if (request.getId() == null) setId(request, UUID.randomUUID());
-            return request;
-        });
-        when(refundRequestItemRepository.save(any())).thenAnswer(inv -> {
-            WalletRefundRequestItemEntity item = inv.getArgument(0);
-            if (!savedItems.contains(item)) {
-                savedItems.add(item);
-            }
-            return item;
-        });
-        when(refundRequestItemRepository.findByRefundRequestId(any())).thenAnswer(inv -> savedItems);
-
-        try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
-            Refund refund = mock(Refund.class);
-            when(refund.getId()).thenReturn("re_abc");
-            refundStatic.when(() -> Refund.create(any(RefundCreateParams.class), any(RequestOptions.class)))
-                    .thenReturn(refund);
-
-            // Sélection partielle : seule topup1 (30.00) est demandée, topup2 (20.00)
-            // reste disponible pour une éventuelle demande ultérieure.
-            WalletRefundRequestEntity result = service.request(USER_ID, "EUR", List.of(topup1.getId()));
-
-            assertThat(result.getChannel()).isEqualTo(WalletRefundChannel.AUTOMATIC_STRIPE);
-            assertThat(result.getStatus()).isEqualTo(WalletRefundRequestStatus.PROCESSING);
-            assertThat(result.getAmount()).isEqualByComparingTo("30.00");
-            assertThat(savedItems).hasSize(1);
-            assertThat(savedItems.get(0).getWalletTransactionId()).isEqualTo(topup1.getId());
-            assertThat(savedItems).extracting(WalletRefundRequestItemEntity::getStatus)
-                    .containsOnly(WalletRefundItemStatus.PROCESSING);
-        }
-    }
-
-    @Test
-    void request_reusesExistingRequest_whenSameSelectionResubmitted() {
-        WalletRefundRequestEntity existing = new WalletRefundRequestEntity();
-        existing.setUserId(USER_ID);
-        existing.setCurrency("EUR");
-        existing.setStatus(WalletRefundRequestStatus.PROCESSING);
-        UUID topupId = UUID.randomUUID();
-        WalletRefundRequestItemEntity existingItem = new WalletRefundRequestItemEntity();
-        existingItem.setWalletTransactionId(topupId);
-        when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(
-                USER_ID, "EUR", List.of(WalletRefundRequestStatus.PENDING, WalletRefundRequestStatus.PROCESSING)))
-                .thenReturn(Optional.of(existing));
-        when(refundRequestItemRepository.findByRefundRequestId(existing.getId())).thenReturn(List.of(existingItem));
-
-        WalletRefundRequestEntity result = service.request(USER_ID, "EUR", List.of(topupId));
-
-        assertThat(result).isSameAs(existing);
-        verifyNoInteractions(walletAccountRepository, walletTransactionRepository);
-    }
-
-    @Test
-    void request_throwsWalletRefundPending_whenActiveRequestCoversDifferentTopups() {
-        WalletRefundRequestEntity existing = new WalletRefundRequestEntity();
-        existing.setUserId(USER_ID);
-        existing.setCurrency("EUR");
-        existing.setStatus(WalletRefundRequestStatus.PROCESSING);
-        WalletRefundRequestItemEntity existingItem = new WalletRefundRequestItemEntity();
-        existingItem.setWalletTransactionId(UUID.randomUUID());
-        when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(
-                USER_ID, "EUR", List.of(WalletRefundRequestStatus.PENDING, WalletRefundRequestStatus.PROCESSING)))
-                .thenReturn(Optional.of(existing));
-        when(refundRequestItemRepository.findByRefundRequestId(existing.getId())).thenReturn(List.of(existingItem));
-
-        assertThatThrownBy(() -> service.request(USER_ID, "EUR", List.of(UUID.randomUUID())))
-                .isInstanceOf(YadonyBusinessException.class)
-                .hasFieldOrPropertyWithValue("errorCode", "wallet-refund-pending");
-        verifyNoInteractions(walletAccountRepository, walletTransactionRepository);
+        assertThat(list).hasSize(1);
+        assertThat(list.get(0).topup().getId()).isEqualTo(topup.getId());
+        assertThat(list.get(0).remaining()).isEqualByComparingTo("35.00");
     }
 
     @Test
@@ -194,66 +196,6 @@ class WalletSelfRefundServiceTest {
 
         assertThat(service.listEligibleTopups(USER_ID, "EUR")).isEmpty();
         verifyNoInteractions(walletAccountRepository, walletTransactionRepository);
-    }
-
-    @Test
-    void listEligibleTopups_emptyWhenWalletNotEligible() {
-        WalletAccountEntity tainted = eligibleWallet();
-        tainted.setRefundEligibleAmount(new BigDecimal("10.00"));
-        when(refundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(
-                USER_ID, "EUR", List.of(WalletRefundRequestStatus.PENDING, WalletRefundRequestStatus.PROCESSING)))
-                .thenReturn(false);
-        when(walletAccountRepository.findByUserIdAndCurrency(USER_ID, "EUR")).thenReturn(Optional.of(tainted));
-
-        assertThat(service.listEligibleTopups(USER_ID, "EUR")).isEmpty();
-    }
-
-    @Test
-    void listEligibleTopups_returnsTopupsSinceRefundEligibleSince() {
-        WalletAccountEntity wallet = eligibleWallet();
-        when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(
-                USER_ID, "EUR", List.of(WalletRefundRequestStatus.PROCESSING)))
-                .thenReturn(Optional.empty());
-        when(refundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(
-                USER_ID, "EUR", List.of(WalletRefundRequestStatus.PENDING, WalletRefundRequestStatus.PROCESSING)))
-                .thenReturn(false);
-        when(walletAccountRepository.findByUserIdAndCurrency(USER_ID, "EUR")).thenReturn(Optional.of(wallet));
-        WalletTransactionEntity topup1 = topup("pi_111", "30.00");
-        WalletTransactionEntity topup2 = topup("pi_222", "20.00");
-        when(walletTransactionRepository.findByUserIdAndCurrencyAndTypeAndCreatedAtGreaterThanEqual(
-                USER_ID, "EUR", WalletTransactionType.TOP_UP, wallet.getRefundEligibleSince()))
-                .thenReturn(List.of(topup1, topup2));
-        when(refundRequestItemRepository.findByWalletTransactionIdIn(List.of(topup1.getId(), topup2.getId())))
-                .thenReturn(List.of());
-
-        assertThat(service.listEligibleTopups(USER_ID, "EUR")).containsExactly(topup1, topup2);
-    }
-
-    @Test
-    void listEligibleTopups_excludesTopupsAlreadyFullyRefunded() {
-        // Une recharge déjà remboursée (item REFUNDED d'une demande antérieure, désormais
-        // terminale) ne doit jamais réapparaître : la reproposer déclencherait un second
-        // Refund.create sur un charge déjà remboursé côté Stripe.
-        WalletAccountEntity wallet = eligibleWallet();
-        when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(
-                USER_ID, "EUR", List.of(WalletRefundRequestStatus.PROCESSING)))
-                .thenReturn(Optional.empty());
-        when(refundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(
-                USER_ID, "EUR", List.of(WalletRefundRequestStatus.PENDING, WalletRefundRequestStatus.PROCESSING)))
-                .thenReturn(false);
-        when(walletAccountRepository.findByUserIdAndCurrency(USER_ID, "EUR")).thenReturn(Optional.of(wallet));
-        WalletTransactionEntity topup1 = topup("pi_111", "30.00");
-        WalletTransactionEntity topup2 = topup("pi_222", "20.00");
-        when(walletTransactionRepository.findByUserIdAndCurrencyAndTypeAndCreatedAtGreaterThanEqual(
-                USER_ID, "EUR", WalletTransactionType.TOP_UP, wallet.getRefundEligibleSince()))
-                .thenReturn(List.of(topup1, topup2));
-        WalletRefundRequestItemEntity refundedItem = new WalletRefundRequestItemEntity();
-        refundedItem.setWalletTransactionId(topup1.getId());
-        refundedItem.setStatus(WalletRefundItemStatus.REFUNDED);
-        when(refundRequestItemRepository.findByWalletTransactionIdIn(List.of(topup1.getId(), topup2.getId())))
-                .thenReturn(List.of(refundedItem));
-
-        assertThat(service.listEligibleTopups(USER_ID, "EUR")).containsExactly(topup2);
     }
 
     @Test
@@ -284,11 +226,7 @@ class WalletSelfRefundServiceTest {
         when(refundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(
                 USER_ID, "EUR", List.of(WalletRefundRequestStatus.PENDING, WalletRefundRequestStatus.PROCESSING)))
                 .thenReturn(false);
-        WalletAccountEntity wallet = eligibleWallet();
-        when(walletAccountRepository.findByUserIdAndCurrency(USER_ID, "EUR")).thenReturn(Optional.of(wallet));
-        when(walletTransactionRepository.findByUserIdAndCurrencyAndTypeAndCreatedAtGreaterThanEqual(
-                USER_ID, "EUR", WalletTransactionType.TOP_UP, wallet.getRefundEligibleSince()))
-                .thenReturn(List.of());
+        stubLedger("40.00", ledgerTx(WalletTransactionType.TOP_UP, "40.00", "pi_1"));
 
         try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
             Refund refund = mock(Refund.class);
@@ -302,6 +240,123 @@ class WalletSelfRefundServiceTest {
         assertThat(stale.getStatus()).isEqualTo(WalletRefundRequestStatus.REFUNDED);
         verify(walletService).debitConfirmedRefund(USER_ID, "EUR", new BigDecimal("10.00"),
                 WalletTransactionType.SELF_REFUND_OUT);
+    }
+
+    @Test
+    void request_sansSelection_rembourseToutLeRemboursableEnPartiel() {
+        WalletTransactionEntity topup = ledgerTx(WalletTransactionType.TOP_UP, "40.00", "pi_1");
+        stubLedger("35.00", topup, ledgerTx(WalletTransactionType.BID_PAYMENT, "-5.00", null));
+        when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any()))
+                .thenReturn(Optional.empty());
+        when(refundRequestRepository.save(any())).thenAnswer(inv -> {
+            WalletRefundRequestEntity r = inv.getArgument(0);
+            if (r.getId() == null) assignId(r);
+            return r;
+        });
+        when(refundRequestItemRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(refundRequestItemRepository.findByRefundRequestId(any())).thenAnswer(inv -> List.of(lastSavedItem()));
+
+        try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            Refund refund = new Refund();
+            refund.setId("re_1");
+            ArgumentCaptor<RefundCreateParams> params = ArgumentCaptor.forClass(RefundCreateParams.class);
+            refundStatic.when(() -> Refund.create(params.capture(), any(RequestOptions.class))).thenReturn(refund);
+
+            WalletRefundRequestEntity saved = service.request(USER_ID, "EUR", List.of());
+
+            assertThat(saved.getAmount()).isEqualByComparingTo("35.00");
+            assertThat(saved.getChannel()).isEqualTo(WalletRefundChannel.AUTOMATIC_STRIPE);
+            assertThat(params.getValue().getPaymentIntent()).isEqualTo("pi_1");
+            assertThat(params.getValue().getAmount()).isEqualTo(3500L);
+        }
+    }
+
+    @Test
+    void request_selectionAncienClient_rembourseLeRestantDesRechargesListees() {
+        WalletTransactionEntity a = ledgerTx(WalletTransactionType.TOP_UP, "20.00", "pi_a");
+        WalletTransactionEntity b = ledgerTx(WalletTransactionType.TOP_UP, "30.00", "pi_b");
+        stubLedger("45.00", a, b, ledgerTx(WalletTransactionType.BID_PAYMENT, "-5.00", null));
+        when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any()))
+                .thenReturn(Optional.empty());
+        when(refundRequestRepository.save(any())).thenAnswer(inv -> {
+            WalletRefundRequestEntity r = inv.getArgument(0);
+            if (r.getId() == null) assignId(r);
+            return r;
+        });
+        when(refundRequestItemRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(refundRequestItemRepository.findByRefundRequestId(any())).thenReturn(List.of());
+
+        try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            WalletRefundRequestEntity saved = service.request(USER_ID, "EUR", List.of(b.getId()));
+
+            assertThat(saved.getAmount()).isEqualByComparingTo("25.00");
+        }
+    }
+
+    @Test
+    void request_selectionSansRestant_422() {
+        WalletTransactionEntity a = ledgerTx(WalletTransactionType.TOP_UP, "20.00", "pi_a");
+        stubLedger("0.00", a, ledgerTx(WalletTransactionType.BID_PAYMENT, "-20.00", null));
+        when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any()))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.request(USER_ID, "EUR", List.of(a.getId())))
+                .isInstanceOf(YadonyBusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "wallet-not-refund-eligible");
+    }
+
+    @Test
+    void request_demandeDejaEnCours_renvoieLExistante() {
+        WalletRefundRequestEntity existing = new WalletRefundRequestEntity();
+        assignId(existing);
+        when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any()))
+                .thenReturn(Optional.of(existing));
+
+        assertThat(service.request(USER_ID, "EUR", List.of())).isSameAs(existing);
+        verifyNoInteractions(walletTransactionRepository);
+    }
+
+    @Test
+    void request_sansRienDeRemboursable_422() {
+        stubLedger("5.00", ledgerTx(WalletTransactionType.REFERRAL_REWARD, "5.00", null));
+        when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any()))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.request(USER_ID, "EUR", List.of()))
+                .isInstanceOf(YadonyBusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "wallet-not-refund-eligible");
+    }
+
+    @Test
+    void issueStripeRefund_echec_itemFailedAvecCodeStripe() {
+        WalletTransactionEntity topup = ledgerTx(WalletTransactionType.TOP_UP, "40.00", "pi_1");
+        stubLedger("40.00", topup);
+        when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any()))
+                .thenReturn(Optional.empty());
+        when(refundRequestRepository.save(any())).thenAnswer(inv -> {
+            WalletRefundRequestEntity r = inv.getArgument(0);
+            if (r.getId() == null) assignId(r);
+            return r;
+        });
+        List<WalletRefundRequestItemEntity> savedItems = new ArrayList<>();
+        when(refundRequestItemRepository.save(any())).thenAnswer(inv -> {
+            WalletRefundRequestItemEntity i = inv.getArgument(0);
+            if (!savedItems.contains(i)) savedItems.add(i);
+            return i;
+        });
+        when(refundRequestItemRepository.findByRefundRequestId(any())).thenAnswer(inv -> savedItems);
+
+        try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            refundStatic.when(() -> Refund.create(any(RefundCreateParams.class), any(RequestOptions.class)))
+                    .thenThrow(new InvalidRequestException("already refunded", "amount", "req_1",
+                            "charge_already_refunded", 400, null));
+
+            service.request(USER_ID, "EUR", List.of());
+        }
+
+        assertThat(savedItems.get(0).getStatus()).isEqualTo(WalletRefundItemStatus.FAILED);
+        assertThat(savedItems.get(0).getFailureReason()).isEqualTo("charge_already_refunded");
+        verify(adminAlertService).raise(eq("wallet-self-refund-failed"), any(), any());
     }
 
     @Test
@@ -412,26 +467,6 @@ class WalletSelfRefundServiceTest {
         service.handleChargeRefunded(charge);
 
         verifyNoInteractions(walletService);
-    }
-
-    private WalletAccountEntity eligibleWallet() {
-        WalletAccountEntity wallet = new WalletAccountEntity();
-        wallet.setUserId(USER_ID);
-        wallet.setCurrency("EUR");
-        wallet.setBalance(new BigDecimal("50.00"));
-        wallet.setRefundEligibleAmount(new BigDecimal("50.00"));
-        wallet.setRefundEligibleSince(Instant.now().minusSeconds(60));
-        return wallet;
-    }
-
-    private WalletTransactionEntity topup(String paymentRef, String amount) {
-        WalletTransactionEntity topup = new WalletTransactionEntity();
-        setId(topup, UUID.randomUUID());
-        topup.setUserId(USER_ID);
-        topup.setCurrency("EUR");
-        topup.setPaymentRef(paymentRef);
-        topup.setAmount(new BigDecimal(amount));
-        return topup;
     }
 
     private static void setId(Object entity, UUID id) {
