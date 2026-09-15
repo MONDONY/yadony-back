@@ -71,16 +71,32 @@ public class WalletController {
             .collect(Collectors.toList());
         List<WalletCurrencyBalanceDto> balances = walletService.getAllBalances(userId)
             .stream()
-            .map(w -> new WalletCurrencyBalanceDto(
+            .map(w -> {
+                WalletRefundAllocation a = safeAllocation(userId, w.getCurrency());
+                boolean eligible = a.refundableTotal().signum() > 0
+                        && walletSelfRefundService.isEligible(userId, w.getCurrency());
                 // equalsIgnoreCase : les portefeuilles antérieurs à V202 peuvent
                 // encore porter une casse mixte, et un simple equals aurait
                 // affiché « aucun portefeuille actif » à leur propriétaire.
-                w.getCurrency(), w.getBalance(), w.getCurrency().equalsIgnoreCase(activeCurrency),
-                w.getBalance().signum() > 0))
+                return new WalletCurrencyBalanceDto(
+                        w.getCurrency(), w.getBalance(), w.getCurrency().equalsIgnoreCase(activeCurrency),
+                        eligible, a.refundableTotal(), a.nonRefundable());
+            })
             .collect(Collectors.toList());
+        boolean activeEligible = balances.stream()
+                .filter(WalletCurrencyBalanceDto::active)
+                .anyMatch(WalletCurrencyBalanceDto::refundEligible);
         return ResponseEntity.ok(
-            new WalletBalanceResponse(wallet.getBalance(), activeCurrency, txs, balances,
-                    wallet.getBalance().signum() > 0));
+            new WalletBalanceResponse(wallet.getBalance(), activeCurrency, txs, balances, activeEligible));
+    }
+
+    /** Un ledger incohérent ne doit pas casser l'écran portefeuille : on affiche 0 remboursable. */
+    private WalletRefundAllocation safeAllocation(UUID userId, String currency) {
+        try {
+            return walletSelfRefundService.allocation(userId, currency);
+        } catch (WalletAllocationInvariantException e) {
+            return WalletRefundAllocation.empty();
+        }
     }
 
     @PostMapping("/topup")

@@ -81,7 +81,8 @@ class AuthControllerDeletionEligibilityIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.canDelete").value(true))
                 .andExpect(jsonPath("$.blockedReasonCode").doesNotExist())
-                .andExpect(jsonPath("$.hasWalletBalance").value(false));
+                .andExpect(jsonPath("$.hasWalletBalance").value(false))
+                .andExpect(jsonPath("$.walletSettlement").isArray());
     }
 
     @Test

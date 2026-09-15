@@ -74,6 +74,28 @@ class WalletControllerIT {
             uid, null, List.of(new SimpleGrantedAuthority("ROLE_" + role)));
     }
 
+    /**
+     * {@code WalletService.debit} verrouille via {@code findByUserIdAndCurrencyForUpdate}
+     * ({@code FOR NO KEY UPDATE}), une clause Postgres que H2 (profil "test", MODE=PostgreSQL)
+     * ne supporte pas. On reproduit ici les deux écritures (solde + transaction) sans le
+     * verrou pessimiste, sans risque dans un test mono-thread.
+     */
+    private void debitDirect(UUID userId, String currency, BigDecimal amount, WalletTransactionType type, UUID bidId) {
+        WalletAccountEntity wallet = walletAccountRepository.findByUserIdAndCurrency(userId, currency).orElseThrow();
+        BigDecimal newBalance = wallet.getBalance().subtract(amount);
+        wallet.setBalance(newBalance);
+        walletAccountRepository.save(wallet);
+
+        WalletTransactionEntity tx = new WalletTransactionEntity();
+        tx.setUserId(userId);
+        tx.setCurrency(currency);
+        tx.setType(type);
+        tx.setAmount(amount.negate());
+        tx.setBalanceAfter(newBalance);
+        tx.setBidId(bidId);
+        walletTransactionRepository.save(tx);
+    }
+
     @Test
     void getBalance_returnsZeroForNewUser() throws Exception {
         mockMvc.perform(get("/wallet/balance")
@@ -233,6 +255,55 @@ class WalletControllerIT {
             // La liste mêle les portefeuilles d'un même utilisateur : chaque ligne porte sa devise.
             .andExpect(jsonPath("$.transactions[?(@.paymentRef == 'pi_refund_processing')].currency")
                 .value("EUR"));
+    }
+
+    @Test
+    void balance_exposeRemboursableEtNonRemboursableParDevise() throws Exception {
+        walletService.credit(USER_UUID, "EUR", new BigDecimal("40.00"),
+            WalletTransactionType.TOP_UP, "pi_it_1", "k-it-1");
+        walletService.credit(USER_UUID, "EUR", new BigDecimal("5.00"),
+            WalletTransactionType.REFERRAL_REWARD, null, "k-it-2");
+        debitDirect(USER_UUID, "EUR", new BigDecimal("10.00"),
+            WalletTransactionType.BID_PAYMENT, UUID.randomUUID());
+
+        mockMvc.perform(get("/wallet/balance")
+                .with(authentication(authAs(FIREBASE_UID, "SENDER"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.refundEligible").value(true))
+            .andExpect(jsonPath("$.balances[?(@.currency=='EUR')].refundableAmount").value(35.00))
+            .andExpect(jsonPath("$.balances[?(@.currency=='EUR')].nonRefundableAmount").value(0.0))
+            .andExpect(jsonPath("$.balances[?(@.currency=='EUR')].refundEligible").value(true));
+    }
+
+    @Test
+    void refundEligibleTopups_renvoieLeRestantEtLeMontantDOrigine() throws Exception {
+        walletService.credit(USER_UUID, "EUR", new BigDecimal("40.00"),
+            WalletTransactionType.TOP_UP, "pi_it_2", "k-it-3");
+        debitDirect(USER_UUID, "EUR", new BigDecimal("5.00"),
+            WalletTransactionType.BID_PAYMENT, UUID.randomUUID());
+
+        mockMvc.perform(get("/wallet/EUR/refund-eligible-topups")
+                .with(authentication(authAs(FIREBASE_UID, "SENDER"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$[0].amount").value(35.00))
+            .andExpect(jsonPath("$[0].originalAmount").value(40.00))
+            .andExpect(jsonPath("$[0].paymentRef").value("pi_it_2"));
+    }
+
+    @Test
+    void refundRequest_sansCorps_accepte() throws Exception {
+        walletService.credit(USER_UUID, "EUR", new BigDecimal("40.00"),
+            WalletTransactionType.TOP_UP, "pi_it_3", "k-it-4");
+
+        // Refund.create part vers Stripe : sans clé valide, l'appel réel échoue
+        // (AuthenticationException, sous-type de StripeException) et l'item passe FAILED,
+        // mais la demande elle-même est bien créée et renvoyée en 200.
+        mockMvc.perform(post("/wallet/EUR/refund-request")
+                .with(authentication(authAs(FIREBASE_UID, "SENDER"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.currency").value("EUR"))
+            .andExpect(jsonPath("$.amount").value(40.00))
+            .andExpect(jsonPath("$.channel").value("AUTOMATIC_STRIPE"));
     }
 
     @Test
