@@ -3,6 +3,8 @@ package com.yadony.api.payments.wallet;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.stripe.AdminAlertService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
@@ -27,6 +29,8 @@ import java.util.UUID;
  */
 @Service
 public class WalletRefundRequestService {
+
+    private static final Logger log = LoggerFactory.getLogger(WalletRefundRequestService.class);
 
     private final WalletService walletService;
     private final WalletRefundRequestRepository refundRequestRepository;
@@ -150,10 +154,25 @@ public class WalletRefundRequestService {
     }
 
     /**
-     * Débite le solde RÉEL au moment du clic (pas le montant snapshoté à la
-     * demande, qui a pu légèrement bouger) puis marque le ticket résolu. À
-     * appeler par l'admin une fois le remboursement Stripe fait manuellement
-     * hors-app — cette méthode ne parle jamais à Stripe elle-même.
+     * Débite le wallet puis marque le ticket résolu. À appeler par l'admin une fois le
+     * remboursement fait manuellement hors-app — cette méthode ne parle jamais à Stripe
+     * elle-même.
+     *
+     * <p>Montant débité selon la nature du ticket :
+     * <ul>
+     *   <li>ticket racine (sans parent) : le solde RÉEL au moment du clic, pas le montant
+     *       snapshoté à la demande, qui a pu bouger entre-temps ;</li>
+     *   <li>ticket enfant (ouvert par {@link #openChildForFailedItems} après un échec Stripe
+     *       partiel) : {@code min(montant du ticket, solde courant)}. L'enfant ne couvre que
+     *       la part cash en échec — le reste du solde peut être du non-cash (parrainage), qui
+     *       n'a pas à partir dans un remboursement admin.</li>
+     * </ul>
+     *
+     * <p>{@code debitConfirmedRefund} et non {@code debit} : ce dernier passe par
+     * {@code assertNotFrozen}, or le ticket en cours de résolution est lui-même PENDING et
+     * gèle donc la devise — tout ticket MANUAL était par construction irrésoluble (422
+     * {@code wallet-refund-pending} systématique). {@code debitConfirmedRefund} ignore le gel
+     * et audite {@code WALLET_ADMIN_REFUND_OUT}.
      *
      * @throws YadonyBusinessException 422 {@code already-resolved} si le ticket a
      *         déjà été traité (double clic, deux onglets admin).
@@ -170,9 +189,18 @@ public class WalletRefundRequestService {
         }
 
         BigDecimal currentBalance = walletService.getBalance(request.getUserId(), request.getCurrency());
-        if (currentBalance.compareTo(BigDecimal.ZERO) > 0) {
-            walletService.debit(request.getUserId(), request.getCurrency(), currentBalance,
-                    WalletTransactionType.ADMIN_REFUND_OUT, null);
+        BigDecimal refundedAmount = currentBalance;
+        if (request.getParentRequestId() != null) {
+            refundedAmount = request.getAmount().min(currentBalance);
+            if (currentBalance.compareTo(request.getAmount()) > 0) {
+                log.info("Ticket enfant {} : solde {} superieur au montant du ticket {}, "
+                                + "seul ce dernier est debite (le reste n'est pas du cash en echec)",
+                        requestId, currentBalance.toPlainString(), request.getAmount().toPlainString());
+            }
+        }
+        if (refundedAmount.signum() > 0) {
+            walletService.debitConfirmedRefund(request.getUserId(), request.getCurrency(), refundedAmount,
+                    WalletTransactionType.ADMIN_REFUND_OUT);
         }
 
         request.setStatus(WalletRefundRequestStatus.RESOLVED);
@@ -182,7 +210,7 @@ public class WalletRefundRequestService {
 
         auditService.log("wallet_refund_request", saved.getId(), "RESOLVED", adminId,
                 Map.of("userId", request.getUserId(), "currency", request.getCurrency(),
-                        "refundedAmount", currentBalance.toString()));
+                        "refundedAmount", refundedAmount.toString()));
 
         return saved;
     }

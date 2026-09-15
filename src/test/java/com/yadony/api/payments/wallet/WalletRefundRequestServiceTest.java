@@ -255,7 +255,7 @@ class WalletRefundRequestServiceTest {
                     .isInstanceOf(YadonyBusinessException.class)
                     .hasFieldOrPropertyWithValue("errorCode", "already-resolved");
 
-            verify(walletService, never()).debit(any(), any(), any(), any(), any());
+            verify(walletService, never()).debitConfirmedRefund(any(), any(), any(), any());
         }
 
         @Test
@@ -275,8 +275,10 @@ class WalletRefundRequestServiceTest {
 
             WalletRefundRequestEntity result = service.resolve(requestId, ADMIN_ID);
 
-            verify(walletService).debit(USER_ID, "CAD", new BigDecimal("40.00"),
-                    WalletTransactionType.ADMIN_REFUND_OUT, null);
+            // debitConfirmedRefund et non debit : ce dernier passe par assertNotFrozen, que le
+            // ticket PENDING en cours de résolution déclenche lui-même (422 wallet-refund-pending).
+            verify(walletService).debitConfirmedRefund(USER_ID, "CAD", new BigDecimal("40.00"),
+                    WalletTransactionType.ADMIN_REFUND_OUT);
             assertThat(result.getStatus()).isEqualTo(WalletRefundRequestStatus.RESOLVED);
             assertThat(result.getResolvedBy()).isEqualTo(ADMIN_ID);
             assertThat(result.getResolvedAt()).isNotNull();
@@ -299,8 +301,53 @@ class WalletRefundRequestServiceTest {
 
             WalletRefundRequestEntity result = service.resolve(requestId, ADMIN_ID);
 
-            verify(walletService, never()).debit(any(), any(), any(), any(), any());
+            verify(walletService, never()).debitConfirmedRefund(any(), any(), any(), any());
             assertThat(result.getStatus()).isEqualTo(WalletRefundRequestStatus.RESOLVED);
+        }
+
+        @Test
+        @DisplayName("ticket enfant → débite le montant du ticket, pas tout le solde "
+            + "(le reste peut être du non-cash)")
+        void resolves_child_debitsTicketAmountNotWholeBalance() {
+            UUID requestId = UUID.randomUUID();
+            WalletRefundRequestEntity child = pendingRequest();
+            child.setAmount(new BigDecimal("15.00"));
+            child.setParentRequestId(UUID.randomUUID());
+            when(refundRequestRepository.findById(requestId)).thenReturn(Optional.of(child));
+            // 15 de cash en échec + 10 de parrainage : seuls les 15 du ticket partent.
+            when(walletService.getBalance(USER_ID, "CAD")).thenReturn(new BigDecimal("25.00"));
+            when(refundRequestRepository.save(any())).thenAnswer(inv -> {
+                WalletRefundRequestEntity e = inv.getArgument(0);
+                assignId(e);
+                return e;
+            });
+
+            WalletRefundRequestEntity result = service.resolve(requestId, ADMIN_ID);
+
+            verify(walletService).debitConfirmedRefund(USER_ID, "CAD", new BigDecimal("15.00"),
+                    WalletTransactionType.ADMIN_REFUND_OUT);
+            assertThat(result.getStatus()).isEqualTo(WalletRefundRequestStatus.RESOLVED);
+        }
+
+        @Test
+        @DisplayName("ticket enfant dont le solde est retombé sous le montant → débite le solde")
+        void resolves_child_debitsBalanceWhenLowerThanTicket() {
+            UUID requestId = UUID.randomUUID();
+            WalletRefundRequestEntity child = pendingRequest();
+            child.setAmount(new BigDecimal("15.00"));
+            child.setParentRequestId(UUID.randomUUID());
+            when(refundRequestRepository.findById(requestId)).thenReturn(Optional.of(child));
+            when(walletService.getBalance(USER_ID, "CAD")).thenReturn(new BigDecimal("9.00"));
+            when(refundRequestRepository.save(any())).thenAnswer(inv -> {
+                WalletRefundRequestEntity e = inv.getArgument(0);
+                assignId(e);
+                return e;
+            });
+
+            service.resolve(requestId, ADMIN_ID);
+
+            verify(walletService).debitConfirmedRefund(USER_ID, "CAD", new BigDecimal("9.00"),
+                    WalletTransactionType.ADMIN_REFUND_OUT);
         }
     }
 }
