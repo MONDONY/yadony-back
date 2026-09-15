@@ -16,7 +16,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -74,17 +73,21 @@ public class WalletSelfRefundService {
      * Rejeu du ledger de {@code currency} (cf. {@link WalletRefundAllocator}). Un invariant
      * cassé est signalé à l'admin et propagé : on ne rembourse jamais sur un calcul faux.
      *
-     * <p>{@code REQUIRES_NEW} : appelée depuis {@code UserService#walletSettlement} /
+     * <p>{@code noRollbackFor} : appelée depuis {@code UserService#walletSettlement} /
      * {@code #settleWalletsForDeletion}, elle-même imbriquée dans une transaction
-     * {@code @Transactional} plus large (ex. {@code checkDeletionEligibility}). Sans
-     * transaction dédiée, une {@link WalletAllocationInvariantException} — pourtant
-     * attrapée par l'appelant — marque la transaction englobante {@code rollback-only}
-     * (règle Spring pour tout appel participant qui lève), et son commit se solde par un
-     * {@code UnexpectedRollbackException} (500) même si l'appelant continue normalement.
-     * Une transaction dédiée, purement en lecture, absorbe l'exception sans polluer la
-     * transaction appelante.
+     * {@code @Transactional} plus large (ex. {@code checkDeletionEligibility}). Sans cette
+     * annotation, une {@link WalletAllocationInvariantException} — pourtant attrapée par
+     * l'appelant — marquerait la transaction englobante {@code rollback-only} (règle Spring
+     * par défaut pour tout appel participant qui lève une exception non contrôlée), et son
+     * commit se solderait par un {@code UnexpectedRollbackException} (500) même si l'appelant
+     * continue normalement. {@code Propagation.REQUIRES_NEW} a été envisagé puis écarté :
+     * une connexion Hikari supplémentaire par appel viderait le pool sous charge (10 en
+     * prod, {@code application-prod.yml}) et une transaction séparée ne verrait pas les
+     * écritures non committées de l'appelante. {@code noRollbackFor} reste dans la même
+     * transaction, la même connexion, et ne fait que dire à Spring de ne pas la marquer
+     * rollback-only pour cette exception précise.
      */
-    @Transactional(readOnly = true, propagation = Propagation.REQUIRES_NEW)
+    @Transactional(readOnly = true, noRollbackFor = WalletAllocationInvariantException.class)
     public WalletRefundAllocation allocation(UUID userId, String currency) {
         String code = normalize(currency);
         WalletAccountEntity wallet = walletAccountRepository.findByUserIdAndCurrency(userId, code).orElse(null);
@@ -188,8 +191,17 @@ public class WalletSelfRefundService {
      * Demande de remboursement automatique. Liste vide : tout le remboursable de la devise.
      * Liste non vide (ancien client qui sélectionnait ses recharges) : le restant des
      * recharges listées uniquement. Chaque item porte le montant partiel réellement demandé.
+     *
+     * <p>{@code noRollbackFor} : les deux {@code throw YadonyBusinessException} ci-dessous
+     * (cible vide, ou reliquat qui s'arrondit à zéro à l'unité mineure — ex. 0.50 XOF)
+     * précèdent toute écriture en base. Appelée depuis {@code UserService#settleWalletsForDeletion},
+     * elle-même imbriquée dans la transaction de {@code requestDeletion}/{@code deleteImmediately}/
+     * {@code AdminGdprService#executeDeletion}, cette exception — attrapée par l'appelant pour
+     * poursuivre la suppression — marquerait sinon la transaction englobante rollback-only et
+     * ferait échouer son commit en {@code UnexpectedRollbackException} (même défaut que sur
+     * {@link #allocation}, cf. sa javadoc).
      */
-    @Transactional
+    @Transactional(noRollbackFor = YadonyBusinessException.class)
     public WalletRefundRequestEntity request(UUID userId, String currency, List<UUID> selectedTransactionIds) {
         String code = normalize(currency);
         Set<UUID> selected = selectedTransactionIds == null ? Set.of() : new HashSet<>(selectedTransactionIds);

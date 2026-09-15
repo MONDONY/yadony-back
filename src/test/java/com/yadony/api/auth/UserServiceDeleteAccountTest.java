@@ -210,13 +210,17 @@ class UserServiceDeleteAccountTest {
         }
 
         @Test
-        @DisplayName("demande déjà en cours (422 wallet-refund-pending) → ignorée, la suppression continue")
-        void pendingRequest_ignored() {
+        @DisplayName("reliquat arrondi à zéro à l'unité mineure (422 wallet-not-refund-eligible) → ignoré, la suppression continue")
+        void nothingRefundableAfterScaling_ignored() {
+            // Scénario réel (pas un doublon de demande, cf. commentaire de settleWalletsForDeletion) :
+            // refundableTotal > 0 en 2 décimales côté allocation, mais chaque reliquat s'arrondit à
+            // zéro une fois aligné sur l'unité mineure Stripe de la devise (ex. 0.50 XOF) — request()
+            // lève alors wallet-not-refund-eligible, le seul code atteignable à ce point.
             when(walletAccountRepository.findAllByUserId(USER_ID)).thenReturn(List.of(walletOf("EUR", "40.00")));
             when(walletSelfRefundService.allocation(USER_ID, "EUR")).thenReturn(allocation("40.00", "0"));
             when(walletSelfRefundService.request(USER_ID, "EUR", List.of()))
-                    .thenThrow(new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-pending",
-                            "Unprocessable", "Solde gelé"));
+                    .thenThrow(new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-not-refund-eligible",
+                            "Unprocessable", "Aucun montant remboursable sur ce solde"));
 
             assertThat(userService.settleWalletsForDeletion(USER_ID)).isEmpty();
         }

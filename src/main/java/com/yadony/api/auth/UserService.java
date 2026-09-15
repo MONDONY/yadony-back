@@ -106,6 +106,8 @@ public class UserService {
             try {
                 allocation = walletSelfRefundService.allocation(userId, currency);
             } catch (WalletAllocationInvariantException e) {
+                log.warn("Rejeu du ledger incoherent, bascule sur le ticket manuel : user {} devise {} : {}",
+                        userId, currency, e.getMessage());
                 opened.add(walletRefundRequestService.request(userId, currency));
                 continue;
             }
@@ -115,7 +117,12 @@ public class UserService {
             try {
                 opened.add(walletSelfRefundService.request(userId, currency, List.of()));
             } catch (YadonyBusinessException e) {
-                // Demande déjà en cours sur cette devise : elle couvre le remboursable, rien à ajouter.
+                // Seul code atteignable ici : wallet-not-refund-eligible, quand chaque reliquat
+                // s'arrondit à zéro à l'unité mineure Stripe (ex. 0.50 XOF) une fois le solde
+                // par ailleurs remboursable au sens du ledger (refundableTotal > 0 en 2 décimales).
+                // Rien à ajouter : il n'y a réellement rien à rembourser sur cette devise. Depuis
+                // la tâche 4, request() renvoie la demande existante en cas de re-tap (jamais de
+                // 422 "en cours" ici) — ce catch ne couvre donc plus un scénario de doublon.
                 log.info("Reglement wallet {} {} ignore : {}", userId, currency, e.getErrorCode());
             }
         }
@@ -134,6 +141,8 @@ public class UserService {
                 result.add(new WalletSettlementDto(wallet.getCurrency(), a.refundableTotal(),
                         a.nonRefundable(), a.inFlight(), WalletSettlementDto.RAIL_STRIPE));
             } catch (WalletAllocationInvariantException e) {
+                log.warn("Rejeu du ledger incoherent, rail MANUAL affiche : user {} devise {} : {}",
+                        userId, wallet.getCurrency(), e.getMessage());
                 result.add(new WalletSettlementDto(wallet.getCurrency(), wallet.getBalance(),
                         BigDecimal.ZERO, BigDecimal.ZERO, WalletSettlementDto.RAIL_MANUAL));
             }
