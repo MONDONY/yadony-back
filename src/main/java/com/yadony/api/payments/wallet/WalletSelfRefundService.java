@@ -45,6 +45,7 @@ public class WalletSelfRefundService {
     private final AuditService auditService;
     private final AdminAlertService adminAlertService;
     private final ObjectMapper objectMapper;
+    private final WalletRefundRequestService walletRefundRequestService;
 
     public WalletSelfRefundService(WalletAccountRepository walletAccountRepository,
                                    WalletTransactionRepository walletTransactionRepository,
@@ -53,7 +54,8 @@ public class WalletSelfRefundService {
                                    WalletService walletService,
                                    AuditService auditService,
                                    AdminAlertService adminAlertService,
-                                   ObjectMapper objectMapper) {
+                                   ObjectMapper objectMapper,
+                                   WalletRefundRequestService walletRefundRequestService) {
         this.walletAccountRepository = walletAccountRepository;
         this.walletTransactionRepository = walletTransactionRepository;
         this.refundRequestRepository = refundRequestRepository;
@@ -62,6 +64,7 @@ public class WalletSelfRefundService {
         this.auditService = auditService;
         this.adminAlertService = adminAlertService;
         this.objectMapper = objectMapper;
+        this.walletRefundRequestService = walletRefundRequestService;
     }
 
     public record EligibleTopup(WalletTransactionEntity topup, BigDecimal remaining) {}
@@ -322,18 +325,42 @@ public class WalletSelfRefundService {
             return;
         }
         refundRequestItemRepository.findByPaymentIntentId(paymentIntentId).ifPresent(item -> {
-            if (item.getStatus() != WalletRefundItemStatus.PROCESSING) {
+            if (item.getStatus() != WalletRefundItemStatus.PROCESSING || item.getStripeRefundId() == null) {
                 return;
             }
-            Long amountRefundedCents = charge.getAmountRefunded();
-            Long amountCents = charge.getAmount();
-            if (amountRefundedCents == null || amountCents == null || amountRefundedCents < amountCents) {
-                return;
+            String status = refundStatusFromCharge(charge, item.getStripeRefundId());
+            if (status == null) {
+                try {
+                    status = Refund.retrieve(item.getStripeRefundId()).getStatus();
+                } catch (StripeException e) {
+                    log.warn("charge.refunded : Refund.retrieve impossible pour {} : {}",
+                            item.getStripeRefundId(), e.getMessage());
+                    return;
+                }
             }
-            item.setStatus(WalletRefundItemStatus.REFUNDED);
-            refundRequestItemRepository.save(item);
-            resolveIfComplete(item.getRefundRequestId());
+            if ("succeeded".equals(status)) {
+                item.setStatus(WalletRefundItemStatus.REFUNDED);
+                refundRequestItemRepository.save(item);
+                resolveIfComplete(item.getRefundRequestId());
+            } else if ("failed".equals(status) || "canceled".equals(status)) {
+                item.setStatus(WalletRefundItemStatus.FAILED);
+                item.setFailureReason("refund-" + status);
+                refundRequestItemRepository.save(item);
+                resolveIfComplete(item.getRefundRequestId());
+            }
         });
+    }
+
+    /** Statut du refund {@code refundId} dans la liste embarquée du charge, ou null s'il n'y figure pas. */
+    private static String refundStatusFromCharge(Charge charge, String refundId) {
+        if (charge.getRefunds() == null || charge.getRefunds().getData() == null) {
+            return null;
+        }
+        return charge.getRefunds().getData().stream()
+                .filter(r -> refundId.equals(r.getId()))
+                .map(Refund::getStatus)
+                .findFirst()
+                .orElse(null);
     }
 
     @Transactional
@@ -352,6 +379,7 @@ public class WalletSelfRefundService {
                     return;
                 }
                 item.setStatus(WalletRefundItemStatus.FAILED);
+                item.setFailureReason("refund-failed");
                 refundRequestItemRepository.save(item);
                 adminAlertService.raise("wallet-self-refund-failed",
                         "Remboursement Stripe échoué pour un remboursement wallet self-service",
@@ -390,6 +418,14 @@ public class WalletSelfRefundService {
         request.setStatus(anyFailed ? WalletRefundRequestStatus.FAILED : WalletRefundRequestStatus.REFUNDED);
         request.setResolvedAt(LocalDateTime.now(ZoneOffset.UTC));
         refundRequestRepository.save(request);
+
+        if (anyFailed) {
+            BigDecimal failedTotal = items.stream()
+                    .filter(i -> i.getStatus() == WalletRefundItemStatus.FAILED)
+                    .map(WalletRefundRequestItemEntity::getAmount)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+            walletRefundRequestService.openChildForFailedItems(request, failedTotal);
+        }
 
         auditService.log("wallet_refund_request", request.getId(),
                 anyFailed ? "AUTOMATIC_PARTIALLY_FAILED" : "AUTOMATIC_REFUNDED", request.getUserId(),

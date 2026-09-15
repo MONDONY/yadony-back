@@ -13,6 +13,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
@@ -65,6 +66,53 @@ public class WalletRefundRequestService {
         return positiveBalances.stream()
                 .map(wallet -> requestForCurrency(userId, wallet))
                 .toList();
+    }
+
+    /** Ticket manuel pour une seule devise (repli quand le rail automatique ne s'applique pas). */
+    @Transactional
+    public WalletRefundRequestEntity request(UUID userId, String currency) {
+        String code = currency.trim().toUpperCase(Locale.ROOT);
+        WalletAccountEntity wallet = walletService.getAllBalances(userId).stream()
+                .filter(w -> code.equalsIgnoreCase(w.getCurrency()))
+                .filter(w -> w.getBalance().compareTo(BigDecimal.ZERO) > 0)
+                .findFirst()
+                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "wallet-balance-empty", "Unprocessable", "Aucun solde à rembourser"));
+        return requestForCurrency(userId, wallet);
+    }
+
+    /**
+     * Après une demande automatique dont au moins un item a échoué côté Stripe : ticket manuel
+     * pour la somme des items FAILED, rattaché au parent. Idempotent : un seul enfant par parent.
+     * Renvoie null si l'enfant existe déjà.
+     */
+    @Transactional
+    public WalletRefundRequestEntity openChildForFailedItems(WalletRefundRequestEntity parent, BigDecimal failedAmount) {
+        if (failedAmount == null || failedAmount.signum() <= 0) {
+            return null;
+        }
+        if (refundRequestRepository.existsByParentRequestId(parent.getId())) {
+            return null;
+        }
+        WalletRefundRequestEntity child = new WalletRefundRequestEntity();
+        child.setUserId(parent.getUserId());
+        child.setCurrency(parent.getCurrency());
+        child.setAmount(failedAmount);
+        child.setChannel(WalletRefundChannel.MANUAL_ADMIN);
+        child.setStatus(WalletRefundRequestStatus.PENDING);
+        child.setRequestedAt(LocalDateTime.now(ZoneOffset.UTC));
+        child.setParentRequestId(parent.getId());
+        WalletRefundRequestEntity saved = refundRequestRepository.save(child);
+
+        auditService.log("wallet_refund_request", saved.getId(), "MANUAL_CHILD_OPENED", parent.getUserId(),
+                Map.of("currency", parent.getCurrency(), "amount", failedAmount.toPlainString(),
+                        "parentRequestId", String.valueOf(parent.getId())));
+        adminAlertService.raise("wallet-refund-requested",
+                "Remboursement Stripe automatique echoue, ticket manuel ouvert",
+                Map.of("requestId", String.valueOf(saved.getId()), "parentRequestId", String.valueOf(parent.getId()),
+                        "userId", String.valueOf(parent.getUserId()), "currency", parent.getCurrency(),
+                        "amount", failedAmount.toPlainString()));
+        return saved;
     }
 
     private WalletRefundRequestEntity requestForCurrency(UUID userId, WalletAccountEntity wallet) {

@@ -66,6 +66,72 @@ class WalletRefundRequestServiceTest {
         }
     }
 
+    @Test
+    void requestForCurrency_ouvreUnTicketPourLaDeviseSeule() {
+        when(walletService.getAllBalances(USER_ID)).thenReturn(List.of(walletOf("EUR", "35.00"), walletOf("XOF", "1000")));
+        when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any()))
+                .thenReturn(Optional.empty());
+        when(refundRequestRepository.save(any())).thenAnswer(inv -> {
+            WalletRefundRequestEntity r = inv.getArgument(0);
+            assignId(r);
+            return r;
+        });
+
+        WalletRefundRequestEntity ticket = service.request(USER_ID, "EUR");
+
+        assertThat(ticket.getCurrency()).isEqualTo("EUR");
+        assertThat(ticket.getAmount()).isEqualByComparingTo("35.00");
+        assertThat(ticket.getChannel()).isEqualTo(WalletRefundChannel.MANUAL_ADMIN);
+        verify(refundRequestRepository, times(1)).save(any());
+    }
+
+    @Test
+    void requestForCurrency_soldeNul_422() {
+        when(walletService.getAllBalances(USER_ID)).thenReturn(List.of(walletOf("EUR", "0.00")));
+
+        assertThatThrownBy(() -> service.request(USER_ID, "EUR"))
+                .isInstanceOf(YadonyBusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "wallet-balance-empty");
+    }
+
+    @Test
+    void openChildForFailedItems_creeUnTicketManuelLieAuParent() {
+        WalletRefundRequestEntity parent = new WalletRefundRequestEntity();
+        assignId(parent);
+        parent.setUserId(USER_ID);
+        parent.setCurrency("EUR");
+        parent.setAmount(new BigDecimal("35.00"));
+        when(refundRequestRepository.existsByParentRequestId(parent.getId())).thenReturn(false);
+        when(refundRequestRepository.save(any())).thenAnswer(inv -> {
+            WalletRefundRequestEntity r = inv.getArgument(0);
+            assignId(r);
+            return r;
+        });
+
+        WalletRefundRequestEntity child = service.openChildForFailedItems(parent, new BigDecimal("15.00"));
+
+        assertThat(child.getParentRequestId()).isEqualTo(parent.getId());
+        assertThat(child.getAmount()).isEqualByComparingTo("15.00");
+        assertThat(child.getChannel()).isEqualTo(WalletRefundChannel.MANUAL_ADMIN);
+        assertThat(child.getStatus()).isEqualTo(WalletRefundRequestStatus.PENDING);
+        verify(auditService).log(eq("wallet_refund_request"), eq(child.getId()), eq("MANUAL_CHILD_OPENED"), eq(USER_ID), any());
+        verify(adminAlertService).raise(eq("wallet-refund-requested"), any(), any());
+    }
+
+    @Test
+    void openChildForFailedItems_idempotent() {
+        WalletRefundRequestEntity parent = new WalletRefundRequestEntity();
+        assignId(parent);
+        parent.setUserId(USER_ID);
+        parent.setCurrency("EUR");
+        when(refundRequestRepository.existsByParentRequestId(parent.getId())).thenReturn(true);
+
+        WalletRefundRequestEntity child = service.openChildForFailedItems(parent, new BigDecimal("15.00"));
+
+        assertThat(child).isNull();
+        verify(refundRequestRepository, never()).save(any());
+    }
+
     @Nested
     @DisplayName("request()")
     class RequestTests {
