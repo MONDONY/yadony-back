@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -23,6 +24,8 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -99,6 +102,35 @@ class UserFinalizedPaymentsListenerTest {
         listener.onUserFinalized(new UserFinalizedEvent(USER_ID, FinalizationReason.SOFT_GRACE_EXPIRED));
 
         verify(walletService, never()).debitConfirmedRefund(any(), any(), any(), any());
+        verify(stripeCustomerService).cleanupForUser(any());
+    }
+
+    @Test
+    void debitEchoue_nettoyageStripeQuandMeme() {
+        when(walletAccountRepository.findAllByUserId(USER_ID)).thenReturn(List.of(wallet("EUR", "5.00")));
+        when(walletSelfRefundService.allocation(USER_ID, "EUR")).thenReturn(allocation("0", "5.00", "0"));
+        doThrow(new DataIntegrityViolationException("boom"))
+                .when(walletService).debitConfirmedRefund(USER_ID, "EUR", new BigDecimal("5.00"),
+                        WalletTransactionType.FORFEITED_ON_DELETION);
+
+        listener.onUserFinalized(new UserFinalizedEvent(USER_ID, FinalizationReason.SOFT_GRACE_EXPIRED));
+
+        verify(stripeCustomerService).cleanupForUser(any());
+    }
+
+    @Test
+    void debitEchoueSurUneDevise_autreDeviseQuandMemeTentee() {
+        when(walletAccountRepository.findAllByUserId(USER_ID))
+                .thenReturn(List.of(wallet("EUR", "5.00"), wallet("XOF", "1000")));
+        when(walletSelfRefundService.allocation(USER_ID, "EUR")).thenReturn(allocation("0", "5.00", "0"));
+        when(walletSelfRefundService.allocation(USER_ID, "XOF")).thenReturn(allocation("0", "1000", "0"));
+        doThrow(new DataIntegrityViolationException("boom"))
+                .when(walletService).debitConfirmedRefund(USER_ID, "EUR", new BigDecimal("5.00"),
+                        WalletTransactionType.FORFEITED_ON_DELETION);
+
+        listener.onUserFinalized(new UserFinalizedEvent(USER_ID, FinalizationReason.SOFT_GRACE_EXPIRED));
+
+        verify(walletService).debitConfirmedRefund(eq(USER_ID), eq("XOF"), any(), any());
         verify(stripeCustomerService).cleanupForUser(any());
     }
 }

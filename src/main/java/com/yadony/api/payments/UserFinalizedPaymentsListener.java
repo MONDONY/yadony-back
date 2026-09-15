@@ -26,6 +26,11 @@ import java.util.UUID;
  * part non-cash du wallet ({@code FORFEITED_ON_DELETION}). Le cash encore en cours de
  * remboursement (ou repris par un ticket manuel) n'est jamais touché. Idempotent : un
  * second passage ne trouve plus de non-cash.
+ *
+ * <p>Un échec de débit sur une devise marque la transaction {@code REQUIRES_NEW} de
+ * {@link #onUserFinalized} rollback-only : les forfeits déjà faits pour d'autres devises
+ * dans le même passage sont annulés au commit et rejoués (idempotents) au prochain
+ * passage. L'appel Stripe qui suit, lui, est externe à la base et s'exécute bien.
  */
 @Component
 public class UserFinalizedPaymentsListener {
@@ -75,6 +80,9 @@ public class UserFinalizedPaymentsListener {
             } catch (WalletAllocationInvariantException e) {
                 log.warn("Finalisation user {} : allocation {} incoherente, non-cash non debite ({})",
                         userId, wallet.getCurrency(), e.getMessage());
+            } catch (RuntimeException e) {
+                log.error("Finalisation user {} : forfeit {} impossible, le nettoyage Stripe continue",
+                        userId, wallet.getCurrency(), e);
             }
         }
     }
