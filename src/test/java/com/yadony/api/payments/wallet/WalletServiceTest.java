@@ -284,42 +284,27 @@ class WalletServiceTest {
     }
 
     @Test
-    void credit_topUp_incrementsRefundEligibleAmount() {
+    void credit_topUp_neToucheJamaisAuxColonnesEligibilite() {
         UUID userId = UUID.randomUUID();
         WalletAccountEntity eur = wallet(userId, "EUR", BigDecimal.ZERO);
+        eur.setRefundEligibleAmount(new BigDecimal("7.00"));
         when(walletAccountRepository.findByUserIdAndCurrency(userId, "EUR")).thenReturn(Optional.of(eur));
         when(walletAccountRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(walletTransactionRepository.findByIdempotencyKey(anyString())).thenReturn(Optional.empty());
         when(walletTransactionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        walletService.credit(userId, "EUR", new BigDecimal("20.00"),
+        walletService.credit(userId, "EUR", new BigDecimal("40.00"),
                 WalletTransactionType.TOP_UP, "pi_123", "idem-1");
 
-        assertThat(eur.getRefundEligibleAmount()).isEqualByComparingTo("20.00");
-        assertThat(eur.isRefundEligible()).isTrue();
+        assertThat(eur.getBalance()).isEqualByComparingTo("40.00");
+        assertThat(eur.getRefundEligibleAmount()).isEqualByComparingTo("7.00");
     }
 
     @Test
-    void credit_nonTopUp_taintsRefundEligibility() {
+    void debit_neToucheJamaisAuxColonnesEligibilite() {
         UUID userId = UUID.randomUUID();
-        WalletAccountEntity eur = wallet(userId, "EUR", BigDecimal.ZERO);
-        eur.setRefundEligibleAmount(new BigDecimal("20.00"));
-        when(walletAccountRepository.findByUserIdAndCurrency(userId, "EUR")).thenReturn(Optional.of(eur));
-        when(walletAccountRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(walletTransactionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-
-        walletService.credit(userId, "EUR", new BigDecimal("5.00"),
-                WalletTransactionType.REFUND, null, null);
-
-        assertThat(eur.getRefundEligibleAmount()).isEqualByComparingTo(BigDecimal.ZERO);
-        assertThat(eur.getRefundEligibleSince()).isNotNull();
-    }
-
-    @Test
-    void debit_taintsRefundEligibilityAndBlocksWhenNoPendingRequest() {
-        UUID userId = UUID.randomUUID();
-        WalletAccountEntity eur = wallet(userId, "EUR", new BigDecimal("20.00"));
-        eur.setRefundEligibleAmount(new BigDecimal("20.00"));
+        WalletAccountEntity eur = wallet(userId, "EUR", new BigDecimal("40.00"));
+        eur.setRefundEligibleAmount(new BigDecimal("7.00"));
         when(walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, "EUR")).thenReturn(Optional.of(eur));
         when(walletAccountRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(walletTransactionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -329,7 +314,8 @@ class WalletServiceTest {
         walletService.debit(userId, "EUR", new BigDecimal("5.00"),
                 WalletTransactionType.BID_PAYMENT, UUID.randomUUID());
 
-        assertThat(eur.getRefundEligibleAmount()).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(eur.getBalance()).isEqualByComparingTo("35.00");
+        assertThat(eur.getRefundEligibleAmount()).isEqualByComparingTo("7.00");
     }
 
     @Test
@@ -347,7 +333,7 @@ class WalletServiceTest {
     }
 
     @Test
-    void debitConfirmedRefund_decrementsRefundEligibleAmountInsteadOfZeroingIt() {
+    void debitConfirmedRefund_neToucheJamaisAuxColonnesEligibilite() {
         UUID userId = UUID.randomUUID();
         WalletAccountEntity eur = wallet(userId, "EUR", new BigDecimal("50.00"));
         eur.setRefundEligibleAmount(new BigDecimal("50.00"));
@@ -359,8 +345,7 @@ class WalletServiceTest {
                 WalletTransactionType.SELF_REFUND_OUT);
 
         assertThat(eur.getBalance()).isEqualByComparingTo("30.00");
-        assertThat(eur.getRefundEligibleAmount()).isEqualByComparingTo("30.00");
-        assertThat(eur.isRefundEligible()).isTrue();
+        assertThat(eur.getRefundEligibleAmount()).isEqualByComparingTo("50.00");
     }
 
     private WalletAccountEntity wallet(UUID userId, String currency, BigDecimal balance) {

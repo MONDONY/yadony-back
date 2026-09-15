@@ -44,9 +44,4 @@ public class WalletAccountEntity extends BaseEntity {
 
     public Instant getRefundEligibleSince() { return refundEligibleSince; }
     public void setRefundEligibleSince(Instant refundEligibleSince) { this.refundEligibleSince = refundEligibleSince; }
-
-    public boolean isRefundEligible() {
-        return balance.compareTo(BigDecimal.ZERO) > 0
-                && refundEligibleAmount.compareTo(balance) == 0;
-    }
 }

@@ -13,7 +13,6 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -74,19 +73,6 @@ public class WalletService {
         }
     }
 
-    private void applyEligibilityOnCredit(WalletAccountEntity wallet, WalletTransactionType type, BigDecimal amount) {
-        if (type == WalletTransactionType.TOP_UP) {
-            wallet.setRefundEligibleAmount(wallet.getRefundEligibleAmount().add(amount));
-        } else {
-            taintEligibility(wallet);
-        }
-    }
-
-    private void taintEligibility(WalletAccountEntity wallet) {
-        wallet.setRefundEligibleAmount(BigDecimal.ZERO);
-        wallet.setRefundEligibleSince(Instant.now());
-    }
-
     // NOT_SUPPORTED : deux requêtes concurrentes peuvent toutes deux rater le
     // find puis insérer — la contrainte UNIQUE(user_id, currency) fait échouer
     // la seconde. Dans la transaction englobante du service, la violation ne
@@ -108,7 +94,6 @@ public class WalletService {
             WalletAccountEntity wallet = new WalletAccountEntity();
             wallet.setUserId(userId);
             wallet.setCurrency(code);
-            wallet.setRefundEligibleSince(Instant.now());
             return walletAccountRepository.save(wallet);
         } catch (DataIntegrityViolationException e) {
             // Perdant de la course : l'autre requête vient d'insérer ce wallet.
@@ -146,7 +131,6 @@ public class WalletService {
         WalletAccountEntity wallet = getOrCreate(userId, code);
         BigDecimal newBalance = wallet.getBalance().add(amount);
         wallet.setBalance(newBalance);
-        applyEligibilityOnCredit(wallet, type, amount);
         walletAccountRepository.save(wallet);
 
         WalletTransactionEntity tx = new WalletTransactionEntity();
@@ -177,7 +161,6 @@ public class WalletService {
 
         BigDecimal newBalance = wallet.getBalance().subtract(amount);
         wallet.setBalance(newBalance);
-        taintEligibility(wallet);
         walletAccountRepository.save(wallet);
 
         WalletTransactionEntity tx = new WalletTransactionEntity();
@@ -217,7 +200,6 @@ public class WalletService {
 
         BigDecimal newBalance = wallet.getBalance().subtract(amount);
         wallet.setBalance(newBalance);
-        taintEligibility(wallet);
         walletAccountRepository.save(wallet);
 
         WalletTransactionEntity tx = new WalletTransactionEntity();
@@ -261,7 +243,6 @@ public class WalletService {
 
         BigDecimal newBalance = wallet.getBalance().subtract(amount);
         wallet.setBalance(newBalance);
-        taintEligibility(wallet);
         walletAccountRepository.save(wallet);
 
         WalletTransactionEntity tx = new WalletTransactionEntity();
@@ -311,7 +292,6 @@ public class WalletService {
 
         BigDecimal newBalance = wallet.getBalance().subtract(amount);
         wallet.setBalance(newBalance);
-        taintEligibility(wallet);
         walletAccountRepository.save(wallet);
 
         WalletTransactionEntity tx = new WalletTransactionEntity();
@@ -342,7 +322,6 @@ public class WalletService {
 
         BigDecimal newBalance = wallet.getBalance().subtract(amount);
         wallet.setBalance(newBalance);
-        wallet.setRefundEligibleAmount(wallet.getRefundEligibleAmount().subtract(amount).max(BigDecimal.ZERO));
         walletAccountRepository.save(wallet);
 
         WalletTransactionEntity tx = new WalletTransactionEntity();

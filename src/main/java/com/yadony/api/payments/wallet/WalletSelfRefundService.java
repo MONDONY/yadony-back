@@ -65,7 +65,7 @@ public class WalletSelfRefundService {
     @Transactional(readOnly = true)
     public boolean isEligible(UUID userId, String currency) {
         return walletAccountRepository.findByUserIdAndCurrency(userId, normalize(currency))
-                .map(WalletAccountEntity::isRefundEligible)
+                .map(w -> w.getBalance().signum() > 0)
                 .orElse(false);
     }
 
@@ -93,7 +93,7 @@ public class WalletSelfRefundService {
             return List.of();
         }
         return walletAccountRepository.findByUserIdAndCurrency(userId, code)
-                .filter(WalletAccountEntity::isRefundEligible)
+                .filter(w -> w.getBalance().signum() > 0)
                 .map(wallet -> computeEligibleTopups(userId, code, wallet))
                 .orElseGet(List::of);
     }
@@ -176,7 +176,7 @@ public class WalletSelfRefundService {
         }
 
         WalletAccountEntity wallet = walletAccountRepository.findByUserIdAndCurrency(userId, code)
-                .filter(WalletAccountEntity::isRefundEligible)
+                .filter(w -> w.getBalance().signum() > 0)
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
                         "wallet-not-refund-eligible", "Unprocessable",
                         "Ce solde n'est pas éligible au remboursement automatique"));

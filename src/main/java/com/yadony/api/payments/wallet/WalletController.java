@@ -76,11 +76,11 @@ public class WalletController {
                 // encore porter une casse mixte, et un simple equals aurait
                 // affiché « aucun portefeuille actif » à leur propriétaire.
                 w.getCurrency(), w.getBalance(), w.getCurrency().equalsIgnoreCase(activeCurrency),
-                w.isRefundEligible()))
+                w.getBalance().signum() > 0))
             .collect(Collectors.toList());
         return ResponseEntity.ok(
             new WalletBalanceResponse(wallet.getBalance(), activeCurrency, txs, balances,
-                    wallet.isRefundEligible()));
+                    wallet.getBalance().signum() > 0));
     }
 
     @PostMapping("/topup")
