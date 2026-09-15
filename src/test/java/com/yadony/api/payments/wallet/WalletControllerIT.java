@@ -3,8 +3,13 @@ package com.yadony.api.payments.wallet;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.stripe.exception.InvalidRequestException;
+import com.stripe.model.Refund;
+import com.stripe.net.RequestOptions;
+import com.stripe.param.RefundCreateParams;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.MockedStatic;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -22,7 +27,10 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -295,15 +303,28 @@ class WalletControllerIT {
         walletService.credit(USER_UUID, "EUR", new BigDecimal("40.00"),
             WalletTransactionType.TOP_UP, "pi_it_3", "k-it-4");
 
-        // Refund.create part vers Stripe : sans clé valide, l'appel réel échoue
-        // (AuthenticationException, sous-type de StripeException) et l'item passe FAILED,
+        // Refund.create part vers Stripe : mockStatic évite tout appel réseau réel
+        // (une clé Stripe factice en test convient tant que STRIPE_SECRET_KEY n'est pas
+        // injectée par un workflow de déploiement — un vrai appel réseau serait alors
+        // possible, avec ses timeouts de 30 s connect / 80 s read). L'item passe FAILED,
         // mais la demande elle-même est bien créée et renvoyée en 200.
-        mockMvc.perform(post("/wallet/EUR/refund-request")
-                .with(authentication(authAs(FIREBASE_UID, "SENDER"))))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.currency").value("EUR"))
-            .andExpect(jsonPath("$.amount").value(40.00))
-            .andExpect(jsonPath("$.channel").value("AUTOMATIC_STRIPE"));
+        try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            refundStatic.when(() -> Refund.create(any(RefundCreateParams.class), any(RequestOptions.class)))
+                    .thenThrow(new InvalidRequestException("resource_missing", "payment_intent", "req_it",
+                            "resource_missing", 400, null));
+
+            mockMvc.perform(post("/wallet/EUR/refund-request")
+                    .with(authentication(authAs(FIREBASE_UID, "SENDER"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.currency").value("EUR"))
+                .andExpect(jsonPath("$.amount").value(40.00))
+                .andExpect(jsonPath("$.channel").value("AUTOMATIC_STRIPE"));
+        }
+
+        WalletRefundRequestItemEntity item = walletRefundRequestItemRepository
+            .findByPaymentIntentId("pi_it_3").orElseThrow();
+        assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.FAILED);
+        assertThat(item.getFailureReason()).isEqualTo("resource_missing");
     }
 
     @Test
