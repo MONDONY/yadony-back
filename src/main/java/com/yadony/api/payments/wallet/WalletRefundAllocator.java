@@ -1,6 +1,7 @@
 package com.yadony.api.payments.wallet;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -8,9 +9,11 @@ import java.util.Deque;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
@@ -57,13 +60,30 @@ public final class WalletRefundAllocator {
     private static final class RefundedRequest {
         final BigDecimal total;
         final List<WalletRefundRequestItemEntity> items;
+        final Instant earliestCreatedAt;
 
-        RefundedRequest(BigDecimal total, List<WalletRefundRequestItemEntity> items) {
+        RefundedRequest(BigDecimal total, List<WalletRefundRequestItemEntity> items, Instant earliestCreatedAt) {
             this.total = total;
             this.items = items;
+            this.earliestCreatedAt = earliestCreatedAt;
         }
     }
 
+    /**
+     * Préconditions à la charge de l'appelant (non vérifiées ici, l'allocateur est pur) :
+     * <ul>
+     *   <li>{@code ledgerAsc} contient les transactions d'un seul wallet et d'une seule devise,
+     *       triées par ordre chronologique croissant (le rejeu applique les mouvements dans cet
+     *       ordre, la date de chaque transaction n'est pas relue) ;</li>
+     *   <li>{@code items} contient les items de demande de remboursement (tout statut confondu)
+     *       de ce même wallet et de cette même devise ;</li>
+     *   <li>l'appariement d'un {@code SELF_REFUND_OUT}/{@code ADMIN_REFUND_OUT} à une demande se
+     *       fait par égalité de montant avec la plus ancienne demande non encore appliquée dont la
+     *       somme des items {@code REFUNDED} correspond, l'ancienneté étant le {@code createdAt}
+     *       minimal des items du groupe (les items sans {@code createdAt} sont classés en
+     *       dernier).</li>
+     * </ul>
+     */
     public static WalletRefundAllocation allocate(List<WalletTransactionEntity> ledgerAsc,
                                                   List<WalletRefundRequestItemEntity> items,
                                                   BigDecimal balance) {
@@ -98,10 +118,20 @@ public final class WalletRefundAllocator {
                 continue;
             }
             if (REFUND_OUT.contains(tx.getType())) {
-                RefundedRequest head = refundedQueue.peek();
-                if (head != null && head.total.compareTo(debit) == 0) {
-                    refundedQueue.poll();
-                    for (WalletRefundRequestItemEntity item : head.items) {
+                // La plus ancienne demande non encore appliquée dont le total égale le débit
+                // courant est retenue : ne tester que la tête de file laisserait une demande
+                // non appariée bloquer indéfiniment les suivantes.
+                RefundedRequest matched = null;
+                for (Iterator<RefundedRequest> it = refundedQueue.iterator(); it.hasNext();) {
+                    RefundedRequest candidate = it.next();
+                    if (candidate.total.compareTo(debit) == 0) {
+                        matched = candidate;
+                        it.remove();
+                        break;
+                    }
+                }
+                if (matched != null) {
+                    for (WalletRefundRequestItemEntity item : matched.items) {
                         Bucket b = bucketByTx.get(item.getWalletTransactionId());
                         if (b == null) {
                             unallocated = unallocated.add(item.getAmount());
@@ -152,7 +182,7 @@ public final class WalletRefundAllocator {
 
         BigDecimal computed = refundableTotal.add(nonCash).add(inFlight);
         if (unallocated.signum() != 0 || computed.compareTo(balance) != 0) {
-            throw new WalletAllocationInvariantException(computed.subtract(unallocated), balance);
+            throw new WalletAllocationInvariantException(computed, balance, unallocated);
         }
         return new WalletRefundAllocation(List.copyOf(refundable), refundableTotal, nonCash, inFlight);
     }
@@ -168,9 +198,13 @@ public final class WalletRefundAllocator {
         for (List<WalletRefundRequestItemEntity> group : byRequest.values()) {
             BigDecimal total = group.stream().map(WalletRefundRequestItemEntity::getAmount)
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
-            ordered.add(new RefundedRequest(total, group));
+            Instant earliest = group.stream().map(WalletRefundRequestItemEntity::getCreatedAt)
+                    .filter(Objects::nonNull)
+                    .min(Comparator.naturalOrder())
+                    .orElse(null);
+            ordered.add(new RefundedRequest(total, group, earliest));
         }
-        ordered.sort(Comparator.comparing(r -> r.items.get(0).getCreatedAt(),
+        ordered.sort(Comparator.comparing((RefundedRequest r) -> r.earliestCreatedAt,
                 Comparator.nullsLast(Comparator.naturalOrder())));
         return new ArrayDeque<>(ordered);
     }

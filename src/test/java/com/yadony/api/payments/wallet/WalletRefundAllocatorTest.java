@@ -241,4 +241,44 @@ class WalletRefundAllocatorTest {
         assertThat(r.nonRefundable()).isEqualByComparingTo("0");
         assertThat(r.inFlight()).isEqualByComparingTo("0");
     }
+
+    @Test
+    void debitNonCouvert_leveAvecMontantNonAttribue() {
+        topup("10.00");
+        tx(WalletTransactionType.BID_PAYMENT, "-30.00", null);
+
+        assertThatThrownBy(() -> allocate("-20.00"))
+                .isInstanceOf(WalletAllocationInvariantException.class)
+                .hasMessageContaining("20.00");
+    }
+
+    @Test
+    void itemRefundedSeauDejaVide_leveInvariant() {
+        WalletTransactionEntity a = topup("20.00");
+        tx(WalletTransactionType.BID_PAYMENT, "-20.00", null);
+        item(a, "20.00", WalletRefundItemStatus.REFUNDED, UUID.randomUUID());
+        tx(WalletTransactionType.SELF_REFUND_OUT, "-20.00", null);
+
+        assertThatThrownBy(() -> allocate("-20.00"))
+                .isInstanceOf(WalletAllocationInvariantException.class);
+    }
+
+    @Test
+    void deuxDemandesRegleesDansLeDesordre_appariementParFile() {
+        WalletTransactionEntity a = topup("50.00");
+        WalletTransactionEntity b = topup("30.00");
+        UUID requestSurB = UUID.randomUUID();
+        UUID requestSurA = UUID.randomUUID();
+        item(b, "30.00", WalletRefundItemStatus.REFUNDED, requestSurB);
+        item(a, "50.00", WalletRefundItemStatus.REFUNDED, requestSurA);
+        tx(WalletTransactionType.SELF_REFUND_OUT, "-50.00", null);
+        tx(WalletTransactionType.SELF_REFUND_OUT, "-30.00", null);
+
+        WalletRefundAllocation r = allocate("0");
+
+        assertThat(r.refundable()).isEmpty();
+        assertThat(r.refundableTotal()).isEqualByComparingTo("0");
+        assertThat(r.nonRefundable()).isEqualByComparingTo("0");
+        assertThat(r.inFlight()).isEqualByComparingTo("0");
+    }
 }
