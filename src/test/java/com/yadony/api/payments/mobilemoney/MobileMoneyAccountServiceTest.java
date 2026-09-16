@@ -16,7 +16,6 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
-import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyAccountResponse;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyProvidersResponse;
 import com.yadony.api.payments.pawapay.PawapayClient;
@@ -46,7 +45,6 @@ class MobileMoneyAccountServiceTest {
     @Mock UserRepository userRepository;
     @Mock FirebaseContactService firebaseContact;
     @Mock PawapayClient client;
-    @Mock ActiveCurrencyResolver currencyResolver;
     @Mock AuditService audit;
 
     private final UUID userId = UUID.randomUUID();
@@ -72,7 +70,6 @@ class MobileMoneyAccountServiceTest {
         when(client.predictProvider("221771234567"))
                 .thenReturn(Optional.of(new PawapayProviderPrediction("SEN", provider, "221771234567")));
         when(client.activeConfiguration()).thenReturn(configuration(ORANGE, WAVE, FREE));
-        when(currencyResolver.resolve(userId)).thenReturn("XOF");
         when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
     }
 
@@ -82,7 +79,7 @@ class MobileMoneyAccountServiceTest {
         ReflectionTestUtils.setField(user, "id", userId);
         user.setFirebaseUid("uid-1");
         service = new MobileMoneyAccountService(userRepository, firebaseContact, new PawapayProviderResolver(client),
-                currencyResolver, audit, props(true));
+                audit, props(true));
         // lenient : get_notConfigured_isAStateNotAnError (findById, pas findByIdForUpdate) et
         // activate_whenDisabledGlobally_is422 (rejeté avant tout accès repository) ne consomment
         // jamais ce stub — cf. les ~60 autres classes de test du projet qui suivent le même motif.
@@ -126,7 +123,6 @@ class MobileMoneyAccountServiceTest {
         when(client.predictProvider("221771234567"))
                 .thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "221771234567")));
         when(client.activeConfiguration()).thenReturn(configuration(ORANGE, WAVE));
-        when(currencyResolver.resolve(userId)).thenReturn("XOF");
         assertThatThrownBy(() -> service.activate(userId, "+221 77 123 45 67", List.of("ORANGE_SEN", "MTN_CIV")))
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(e -> {
@@ -146,7 +142,6 @@ class MobileMoneyAccountServiceTest {
         when(client.predictProvider("221771234567"))
                 .thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "221771234567")));
         when(client.activeConfiguration()).thenReturn(configuration(ORANGE, WAVE));
-        when(currencyResolver.resolve(userId)).thenReturn("XOF");
         assertThatThrownBy(() -> service.activate(userId, "+221 77 123 45 67", List.of("ORANGE_SEN", "bad\ncode")))
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(e -> {
@@ -181,7 +176,6 @@ class MobileMoneyAccountServiceTest {
         when(firebaseContact.getContact("uid-1")).thenReturn(new FirebaseContactService.Contact("+221771234567", null));
         when(client.predictProvider("+221771234567")).thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "221771234567")));
         when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", new PawapayProviderConfig("ORANGE_SEN", "SEN", "XOF", OK, OK)));
-        when(currencyResolver.resolve(userId)).thenReturn("XOF");
         when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         MobileMoneyAccountResponse r = service.activate(userId, null);
@@ -209,7 +203,6 @@ class MobileMoneyAccountServiceTest {
         when(firebaseContact.getContact("uid-1")).thenReturn(new FirebaseContactService.Contact("+221771234567", null));
         when(client.predictProvider("+221771234567")).thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", null)));
         when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", new PawapayProviderConfig("ORANGE_SEN", "SEN", "XOF", OK, OK)));
-        when(currencyResolver.resolve(userId)).thenReturn("XOF");
         when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         service.activate(userId, null);
@@ -248,7 +241,6 @@ class MobileMoneyAccountServiceTest {
         when(client.predictProvider("221773456789"))
                 .thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "221773456789")));
         when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", new PawapayProviderConfig("ORANGE_SEN", "SEN", "XOF", OK, OK)));
-        when(currencyResolver.resolve(userId)).thenReturn("XOF");
         when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         MobileMoneyAccountResponse r = service.activate(userId, "+221 77 345 67 89");
@@ -274,7 +266,6 @@ class MobileMoneyAccountServiceTest {
         when(client.predictProvider("221770000001"))
                 .thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "221770000001")));
         when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", new PawapayProviderConfig("ORANGE_SEN", "SEN", "XOF", OK, OK)));
-        when(currencyResolver.resolve(userId)).thenReturn("XOF");
         when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         MobileMoneyAccountResponse r = service.activate(userId, "+221 77 000 00 01");
@@ -298,7 +289,6 @@ class MobileMoneyAccountServiceTest {
         when(client.predictProvider("+221771234567"))
                 .thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "221771234567")));
         when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", new PawapayProviderConfig("ORANGE_SEN", "SEN", "XOF", OK, OK)));
-        when(currencyResolver.resolve(userId)).thenReturn("XOF");
         when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         MobileMoneyAccountResponse r = service.activate(userId, "   ");
@@ -378,14 +368,25 @@ class MobileMoneyAccountServiceTest {
                 .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-account-unsupported");
     }
 
+    /**
+     * Bug corrigé : l'activation d'un compte de versement ne compare plus la devise du numéro à
+     * la devise active du portefeuille (le versement se fait dans la devise de l'opérateur,
+     * indépendamment de celle du portefeuille). Aucune devise n'est fournie nulle part ici (plus
+     * de {@code ActiveCurrencyResolver}) et l'activation réussit quand même, en retenant la
+     * devise de l'opérateur prédit.
+     */
     @Test
-    void activate_currencyMismatch_is422() {
+    void activate_ignoresWalletCurrency_usesOperatorCurrency() {
         when(firebaseContact.getContact("uid-1")).thenReturn(new FirebaseContactService.Contact("+221771234567", null));
         when(client.predictProvider("+221771234567")).thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "221771234567")));
         when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", new PawapayProviderConfig("ORANGE_SEN", "SEN", "XOF", OK, OK)));
-        when(currencyResolver.resolve(userId)).thenReturn("EUR");
-        assertThatThrownBy(() -> service.activate(userId, null)).isInstanceOf(YadonyBusinessException.class)
-                .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-account-unsupported");
+        when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        MobileMoneyAccountResponse r = service.activate(userId, null);
+
+        assertThat(user.getMobileMoneyStatus()).isEqualTo(MobileMoneyPayoutStatus.ACTIVE);
+        assertThat(user.getMobileMoneyCurrency()).isEqualTo("XOF");
+        assertThat(r.status()).isEqualTo("ACTIVE");
     }
 
     @Test
@@ -425,7 +426,6 @@ class MobileMoneyAccountServiceTest {
         when(firebaseContact.getContact("uid-1")).thenReturn(new FirebaseContactService.Contact("+221771234567", null));
         when(client.predictProvider("+221771234567")).thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "123")));
         when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", new PawapayProviderConfig("ORANGE_SEN", "SEN", "XOF", OK, OK)));
-        when(currencyResolver.resolve(userId)).thenReturn("XOF");
 
         YadonyBusinessException ex = catchThrowableOfType(() -> service.activate(userId, null), YadonyBusinessException.class);
 
@@ -447,7 +447,6 @@ class MobileMoneyAccountServiceTest {
         when(firebaseContact.getContact("uid-1")).thenReturn(new FirebaseContactService.Contact("+221771234567", null));
         when(client.predictProvider("+221771234567")).thenReturn(Optional.of(new PawapayProviderPrediction("ZZZ", "ORANGE_SEN", "221771234567")));
         when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", new PawapayProviderConfig("ORANGE_SEN", "ZZZ", "XOF", OK, OK)));
-        when(currencyResolver.resolve(userId)).thenReturn("XOF");
 
         assertThatThrownBy(() -> service.activate(userId, null)).isInstanceOf(YadonyBusinessException.class)
                 .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-account-unsupported");
@@ -457,7 +456,7 @@ class MobileMoneyAccountServiceTest {
     @Test
     void activate_whenDisabledGlobally_is422() {
         MobileMoneyAccountService off = new MobileMoneyAccountService(userRepository, firebaseContact,
-                new PawapayProviderResolver(client), currencyResolver, audit, props(false));
+                new PawapayProviderResolver(client), audit, props(false));
         assertThatThrownBy(() -> off.activate(userId, null)).isInstanceOf(YadonyBusinessException.class)
                 .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-disabled");
     }
@@ -528,7 +527,6 @@ class MobileMoneyAccountServiceTest {
         when(client.predictProvider("221771234567"))
                 .thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "WAVE_SEN", "221771234567")));
         when(client.activeConfiguration()).thenReturn(configuration(ORANGE, WAVE, FREE));
-        when(currencyResolver.resolve(userId)).thenReturn("XOF");
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
         MobileMoneyProvidersResponse r = service.providers(userId, "+221 77 123 45 67");
         assertThat(r.country()).isEqualTo("SN");
@@ -549,7 +547,6 @@ class MobileMoneyAccountServiceTest {
         when(client.predictProvider("221771234567"))
                 .thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "221771234567")));
         when(client.activeConfiguration()).thenReturn(configuration(ORANGE, WAVE));
-        when(currencyResolver.resolve(userId)).thenReturn("XOF");
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
         assertThat(service.providers(userId, null).detected()).isEqualTo("ORANGE_SEN");
         verify(firebaseContact, never()).getContact(any());
@@ -566,16 +563,32 @@ class MobileMoneyAccountServiceTest {
     @Test
     void providers_unknownNumber_is422Unsupported() {
         when(client.predictProvider("33612345678")).thenReturn(Optional.empty());
-        when(currencyResolver.resolve(userId)).thenReturn("XOF");
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
         assertThatThrownBy(() -> service.providers(userId, "+33 6 12 34 56 78")).isInstanceOf(YadonyBusinessException.class)
                 .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-account-unsupported");
     }
 
+    /**
+     * Pendant de {@code activate_ignoresWalletCurrency_usesOperatorCurrency} pour le catalogue :
+     * aucune devise active n'est fournie nulle part (plus d'{@code ActiveCurrencyResolver}), le
+     * catalogue retient quand même la devise de l'opérateur prédit (XOF pour un numéro sénégalais).
+     */
+    @Test
+    void providers_ignoresWalletCurrency_usesOperatorCurrency() {
+        when(client.predictProvider("221771234567"))
+                .thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "221771234567")));
+        when(client.activeConfiguration()).thenReturn(configuration(ORANGE, WAVE, FREE));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+
+        MobileMoneyProvidersResponse r = service.providers(userId, "+221 77 123 45 67");
+
+        assertThat(r.currency()).isEqualTo("XOF");
+    }
+
     @Test
     void providers_whenDisabledGlobally_is422() {
         MobileMoneyAccountService off = new MobileMoneyAccountService(userRepository, firebaseContact,
-                new PawapayProviderResolver(client), currencyResolver, audit, props(false));
+                new PawapayProviderResolver(client), audit, props(false));
         assertThatThrownBy(() -> off.providers(userId, "+221 77 123 45 67")).isInstanceOf(YadonyBusinessException.class)
                 .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-disabled");
     }
@@ -638,7 +651,6 @@ class MobileMoneyAccountServiceTest {
         when(client.predictProvider("221771234567"))
                 .thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "221771234567")));
         when(client.activeConfiguration()).thenReturn(configuration(ORANGE, WAVE));
-        when(currencyResolver.resolve(userId)).thenReturn("XOF");
         assertThatThrownBy(() -> service.updateProviders(userId, List.of("MTN_CIV"))).isInstanceOf(YadonyBusinessException.class)
                 .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-account-unsupported");
         assertThat(user.getMobileMoneyProviderList()).containsExactly("ORANGE_SEN");

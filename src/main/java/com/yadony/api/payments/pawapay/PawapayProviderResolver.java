@@ -92,18 +92,20 @@ public class PawapayProviderResolver {
      * @param rawMsisdn        numéro déjà normalisé ou tel que reçu (Firebase, saisie) : pawaPay
      *                         rend sa propre forme, qui prime
      * @param kind             {@code DEPOSIT} (le numéro paie) ou {@code PAYOUT} (le numéro reçoit)
-     * @param expectedCurrency devise que l'opération exige (colis, ou portefeuille du voyageur)
+     * @param expectedCurrency devise que l'opération exige (dépôt : devise du colis) ; {@code null} :
+     *                         devise de l'opérateur du numéro (activation d'un compte de versement)
      * @param context          libellé métier pour le journal en cas d'indisponibilité pawaPay
      *                         (ex. « l'activation mobile money de <userId> ») — jamais un numéro
      */
     public Resolved resolve(String rawMsisdn, PawapayOperationKind kind, String expectedCurrency, String context) {
         PawapayProviderPrediction prediction = predict(rawMsisdn, context);
         Map<String, PawapayProviderConfig> configuration = configuration(context);
+        String expected = expectedCurrency != null ? expectedCurrency : currencyOfPredicted(configuration, prediction);
         PawapayProviderConfig conf = configuration.get(prediction.provider());
         if (!isOperational(conf, kind)) {
             throw new UnsupportedNumberException(Reason.OPERATION_CLOSED, prediction.provider(), null);
         }
-        if (!conf.currency().equalsIgnoreCase(expectedCurrency)) {
+        if (!conf.currency().equalsIgnoreCase(expected)) {
             throw new UnsupportedNumberException(Reason.CURRENCY_MISMATCH, prediction.provider(), conf.currency());
         }
         String msisdn = normalizedMsisdn(prediction, rawMsisdn, context);
@@ -144,11 +146,12 @@ public class PawapayProviderResolver {
     public Catalogue catalogue(String rawMsisdn, PawapayOperationKind kind, String expectedCurrency, String context) {
         PawapayProviderPrediction prediction = predict(rawMsisdn, context);
         Map<String, PawapayProviderConfig> configuration = configuration(context);
+        String expected = expectedCurrency != null ? expectedCurrency : currencyOfPredicted(configuration, prediction);
         List<PawapayProviderConfig> options = new ArrayList<>();
         for (PawapayProviderConfig conf : configuration.values()) {
             boolean sameCountry = conf.countryAlpha3() != null
                     && conf.countryAlpha3().equalsIgnoreCase(prediction.countryAlpha3());
-            boolean sameCurrency = conf.currency() != null && conf.currency().equalsIgnoreCase(expectedCurrency);
+            boolean sameCurrency = conf.currency() != null && conf.currency().equalsIgnoreCase(expected);
             if (sameCountry && sameCurrency && isOperational(conf, kind)) {
                 options.add(conf);
             }
@@ -169,10 +172,23 @@ public class PawapayProviderResolver {
         if (country == null) {
             throw new UnsupportedNumberException(Reason.COUNTRY_UNKNOWN, prediction.provider(), null);
         }
-        return new Catalogue(country, expectedCurrency.toUpperCase(Locale.ROOT), msisdn, detected, List.copyOf(options));
+        return new Catalogue(country, expected.toUpperCase(Locale.ROOT), msisdn, detected, List.copyOf(options));
     }
 
     // ── helpers ─────────────────────────────────────────────────────────────
+
+    /**
+     * Devise de l'opérateur prédit, quand l'appelant n'en impose aucune (activation d'un compte
+     * de versement : la devise du versement n'a rien à voir avec celle du portefeuille).
+     */
+    private static String currencyOfPredicted(Map<String, PawapayProviderConfig> configuration,
+                                              PawapayProviderPrediction prediction) {
+        PawapayProviderConfig conf = configuration.get(prediction.provider());
+        if (conf == null || conf.currency() == null) {
+            throw new UnsupportedNumberException(Reason.NO_PROVIDER, prediction.provider(), null);
+        }
+        return conf.currency();
+    }
 
     private PawapayProviderPrediction predict(String rawMsisdn, String context) {
         Optional<PawapayProviderPrediction> predicted;
