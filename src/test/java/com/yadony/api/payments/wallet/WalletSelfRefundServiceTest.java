@@ -175,30 +175,6 @@ class WalletSelfRefundServiceTest {
     }
 
     @Test
-    void isEligible_vraiQuandDuRemboursableExiste() {
-        stubLedger("35.00", ledgerTx(WalletTransactionType.TOP_UP, "40.00", "pi_1"),
-                ledgerTx(WalletTransactionType.BID_PAYMENT, "-5.00", null));
-        when(refundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any())).thenReturn(false);
-
-        assertThat(service.isEligible(USER_ID, "EUR")).isTrue();
-    }
-
-    @Test
-    void isEligible_fauxQuandInvariantCasse() {
-        stubLedger("99.00", ledgerTx(WalletTransactionType.TOP_UP, "40.00", "pi_1"));
-
-        assertThat(service.isEligible(USER_ID, "EUR")).isFalse();
-    }
-
-    @Test
-    void isEligible_fauxQuandSoldeUniquementNonCash() {
-        stubLedger("5.00", ledgerTx(WalletTransactionType.REFERRAL_REWARD, "5.00", null));
-        when(refundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any())).thenReturn(false);
-
-        assertThat(service.isEligible(USER_ID, "EUR")).isFalse();
-    }
-
-    @Test
     void isEligible_avecAllocationFournie_neRejouePasLeLedger() {
         when(refundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any())).thenReturn(false);
         WalletRefundAllocation deja = new WalletRefundAllocation(List.of(),

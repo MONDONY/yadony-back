@@ -134,19 +134,12 @@ public class WalletSelfRefundService {
         }
     }
 
-    @Transactional(readOnly = true)
-    public boolean isEligible(UUID userId, String currency) {
-        String code = normalize(currency);
-        try {
-            return isEligible(userId, code, allocation(userId, code));
-        } catch (WalletAllocationInvariantException e) {
-            return false;
-        }
-    }
-
     /**
-     * Variante pour un appelant qui tient déjà l'allocation de cette devise (cf.
-     * {@code WalletController#getBalance}) : évite un second rejeu complet du ledger.
+     * Le bouton « Rembourser » est-il actif pour cette devise ? L'appelant fournit
+     * l'allocation qu'il tient déjà (cf. {@code WalletController#getBalance}) : elle vient
+     * du même rejeu de ledger que le reste de la réponse, et la surcharge sans allocation
+     * qui existait ici en rejouait un second pour rien (plus aucun appelant depuis que
+     * {@code getBalance} passe la sienne).
      */
     @Transactional(readOnly = true)
     public boolean isEligible(UUID userId, String currency, WalletRefundAllocation allocation) {
