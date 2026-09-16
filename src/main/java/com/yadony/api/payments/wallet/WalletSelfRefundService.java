@@ -15,8 +15,10 @@ import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -48,6 +50,7 @@ public class WalletSelfRefundService {
     private final AdminAlertEscalator adminAlertEscalator;
     private final ObjectMapper objectMapper;
     private final WalletRefundRequestService walletRefundRequestService;
+    private final ApplicationEventPublisher eventPublisher;
 
     public WalletSelfRefundService(WalletAccountRepository walletAccountRepository,
                                    WalletTransactionRepository walletTransactionRepository,
@@ -58,7 +61,8 @@ public class WalletSelfRefundService {
                                    AdminAlertService adminAlertService,
                                    AdminAlertEscalator adminAlertEscalator,
                                    ObjectMapper objectMapper,
-                                   WalletRefundRequestService walletRefundRequestService) {
+                                   WalletRefundRequestService walletRefundRequestService,
+                                   ApplicationEventPublisher eventPublisher) {
         this.walletAccountRepository = walletAccountRepository;
         this.walletTransactionRepository = walletTransactionRepository;
         this.refundRequestRepository = refundRequestRepository;
@@ -69,6 +73,7 @@ public class WalletSelfRefundService {
         this.adminAlertEscalator = adminAlertEscalator;
         this.objectMapper = objectMapper;
         this.walletRefundRequestService = walletRefundRequestService;
+        this.eventPublisher = eventPublisher;
     }
 
     public record EligibleTopup(WalletTransactionEntity topup, BigDecimal remaining) {}
@@ -312,11 +317,41 @@ public class WalletSelfRefundService {
                         "nonRefundable", allocation.nonRefundable().toPlainString(),
                         "items", List.copyOf(auditItems)));
 
-        for (WalletRefundRequestItemEntity item : refundRequestItemRepository.findByRefundRequestId(saved.getId())) {
-            issueStripeRefund(item, code);
-        }
+        // Aucun Refund.create ici : l'émission part au commit de cette transaction
+        // (WalletRefundIssueListener). Émis dans la transaction, un remboursement Stripe
+        // survivait à un rollback qui effaçait la demande et ses items.
+        eventPublisher.publishEvent(new WalletRefundItemsCreatedEvent(saved.getId()));
 
         return saved;
+    }
+
+    /**
+     * Émet vers Stripe les items PENDING sans {@code stripeRefundId} d'une demande automatique
+     * PROCESSING, puis clôt la demande si tous ses items sont terminaux (tout en échec : le
+     * ticket enfant s'ouvre tout de suite). Appelée au commit de la demande
+     * ({@link WalletRefundIssueListener}) et par la reprise planifiée
+     * ({@link WalletRefundIssueRecoveryScheduler}).
+     *
+     * <p>{@code REQUIRES_NEW} : depuis un écouteur {@code AFTER_COMMIT}, la transaction
+     * d'origine est terminée et n'accepte plus d'écriture. La demande puis ses items sont
+     * verrouillés : l'écouteur et la reprise ne les émettent jamais en même temps, et la
+     * seconde lit l'état laissé par la première. Le rejeu reste sûr même sans verrou grâce à
+     * la clé d'idempotence {@code wallet-self-refund-<itemId>}.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void issuePendingItems(UUID refundRequestId) {
+        WalletRefundRequestEntity request = refundRequestRepository.findByIdForUpdate(refundRequestId).orElse(null);
+        if (request == null
+                || request.getChannel() != WalletRefundChannel.AUTOMATIC_STRIPE
+                || request.getStatus() != WalletRefundRequestStatus.PROCESSING) {
+            return;
+        }
+        List<WalletRefundRequestItemEntity> items =
+                refundRequestItemRepository.findUnissuedForUpdate(refundRequestId, WalletRefundItemStatus.PENDING);
+        for (WalletRefundRequestItemEntity item : items) {
+            issueStripeRefund(item, request.getCurrency());
+        }
+        resolveIfComplete(refundRequestId);
     }
 
     private void issueStripeRefund(WalletRefundRequestItemEntity item, String currency) {

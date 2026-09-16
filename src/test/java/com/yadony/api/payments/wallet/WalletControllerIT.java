@@ -303,11 +303,12 @@ class WalletControllerIT {
         walletService.credit(USER_UUID, "EUR", new BigDecimal("40.00"),
             WalletTransactionType.TOP_UP, "pi_it_3", "k-it-4");
 
-        // Refund.create part vers Stripe : mockStatic évite tout appel réseau réel
-        // (une clé Stripe factice en test convient tant que STRIPE_SECRET_KEY n'est pas
-        // injectée par un workflow de déploiement — un vrai appel réseau serait alors
-        // possible, avec ses timeouts de 30 s connect / 80 s read). L'item passe FAILED,
-        // mais la demande elle-même est bien créée et renvoyée en 200.
+        // Refund.create part au commit de la demande (WalletRefundIssueListener) : mockStatic
+        // évite tout appel réseau réel (une clé Stripe factice en test convient tant que
+        // STRIPE_SECRET_KEY n'est pas injectée par un workflow de déploiement). L'émission
+        // verrouille la demande en FOR NO KEY UPDATE, qu'H2 refuse : l'écouteur journalise
+        // l'erreur sans la propager, et l'émission elle-même est couverte sur PostgreSQL
+        // réel par WalletRefundIT. Ici, seul le contrat HTTP compte.
         try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
             refundStatic.when(() -> Refund.create(any(RefundCreateParams.class), any(RequestOptions.class)))
                     .thenThrow(new InvalidRequestException("resource_missing", "payment_intent", "req_it",
@@ -318,13 +319,12 @@ class WalletControllerIT {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.currency").value("EUR"))
                 .andExpect(jsonPath("$.amount").value(40.00))
-                .andExpect(jsonPath("$.channel").value("AUTOMATIC_STRIPE"));
+                .andExpect(jsonPath("$.channel").value("AUTOMATIC_STRIPE"))
+                .andExpect(jsonPath("$.status").value("PROCESSING"));
         }
 
-        WalletRefundRequestItemEntity item = walletRefundRequestItemRepository
-            .findByPaymentIntentId("pi_it_3").orElseThrow();
-        assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.FAILED);
-        assertThat(item.getFailureReason()).isEqualTo("resource_missing");
+        assertThat(walletRefundRequestItemRepository.findAll())
+            .anyMatch(item -> "pi_it_3".equals(item.getPaymentIntentId()));
     }
 
     @Test

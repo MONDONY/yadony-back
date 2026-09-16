@@ -3,23 +3,30 @@ package com.yadony.api.payments.wallet;
 import com.stripe.model.Charge;
 import com.stripe.model.Refund;
 import com.stripe.model.RefundCollection;
+import com.stripe.net.RequestOptions;
+import com.stripe.param.RefundCreateParams;
 import com.yadony.api.auth.KycStatus;
 import com.yadony.api.auth.Role;
 import com.yadony.api.auth.StripeAccountStatus;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
+import com.yadony.api.auth.UserService;
 import com.yadony.api.auth.UserStatus;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.mockito.MockedStatic;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -27,6 +34,8 @@ import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mockStatic;
 
 /**
  * Parcours de remboursement wallet contre une vraie base PostgreSQL et sans aucun mock de
@@ -78,6 +87,25 @@ class WalletRefundIT {
     @Autowired WalletRefundRequestRepository walletRefundRequestRepository;
     @Autowired WalletRefundRequestItemRepository walletRefundRequestItemRepository;
     @Autowired UserRepository userRepository;
+    @Autowired UserService userService;
+    @Autowired WalletRefundIssueRecoveryScheduler recoveryScheduler;
+    @Autowired PlatformTransactionManager transactionManager;
+
+    /** Refund renvoyé par le Refund.create simulé, d'identifiant {@code id}. */
+    private static Refund stripeRefund(String id) {
+        Refund refund = new Refund();
+        refund.setId(id);
+        refund.setStatus("pending");
+        return refund;
+    }
+
+    private UUID topUp(UUID userId, String amount, String paymentIntentId) {
+        walletService.credit(userId, "EUR", new BigDecimal(amount),
+                WalletTransactionType.TOP_UP, paymentIntentId, "k-" + paymentIntentId + "-" + UUID.randomUUID());
+        return walletTransactionRepository.findByUserIdAndCurrencyOrderByCreatedAtAsc(userId, "EUR").stream()
+                .filter(t -> paymentIntentId.equals(t.getPaymentRef()))
+                .findFirst().orElseThrow().getId();
+    }
 
     private UUID persistUser() {
         UserEntity user = new UserEntity();
@@ -114,6 +142,108 @@ class WalletRefundIT {
         request.setRequestedAt(LocalDateTime.now(ZoneOffset.UTC));
         request.setParentRequestId(parentRequestId);
         return walletRefundRequestRepository.saveAndFlush(request);
+    }
+
+    @Test
+    void request_emetLeRemboursementStripeApresLeCommitDeLaDemande() {
+        UUID userId = persistUser();
+        String pi = "pi_after_commit_" + UUID.randomUUID();
+        topUp(userId, "25.00", pi);
+
+        WalletRefundRequestEntity request;
+        try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            refundStatic.when(() -> Refund.create(any(RefundCreateParams.class), any(RequestOptions.class)))
+                    .thenReturn(stripeRefund("re_after_commit"));
+
+            request = walletSelfRefundService.request(userId, "EUR", List.of());
+
+            refundStatic.verify(() -> Refund.create(any(RefundCreateParams.class), any(RequestOptions.class)));
+        }
+
+        // Le contrat de la réponse ne change pas : la demande renvoyée est PROCESSING.
+        assertThat(request.getStatus()).isEqualTo(WalletRefundRequestStatus.PROCESSING);
+        List<WalletRefundRequestItemEntity> items = walletRefundRequestItemRepository.findByRefundRequestId(request.getId());
+        assertThat(items).singleElement().satisfies(item -> {
+            assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.PROCESSING);
+            assertThat(item.getStripeRefundId()).isEqualTo("re_after_commit");
+        });
+    }
+
+    @Test
+    void request_dansUneTransactionEnglobanteAnnulee_nAppelleJamaisStripe() {
+        UUID userId = persistUser();
+        String pi = "pi_rollback_" + UUID.randomUUID();
+        topUp(userId, "25.00", pi);
+
+        try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+                walletSelfRefundService.request(userId, "EUR", List.of());
+                status.setRollbackOnly();
+            });
+
+            refundStatic.verifyNoInteractions();
+        }
+        assertThat(walletRefundRequestRepository.findAllByUserIdOrderByRequestedAtDesc(userId)).isEmpty();
+        assertThat(balanceOf(userId)).isEqualByComparingTo("25.00");
+    }
+
+    @Test
+    void reprise_emetUnItemPendingResteNonEmis() {
+        UUID userId = persistUser();
+        String pi = "pi_recovery_" + UUID.randomUUID();
+        UUID topupId = topUp(userId, "18.00", pi);
+        WalletRefundRequestEntity request = saveRequest(userId, "18.00",
+                WalletRefundChannel.AUTOMATIC_STRIPE, WalletRefundRequestStatus.PROCESSING, null);
+        WalletRefundRequestItemEntity item = new WalletRefundRequestItemEntity();
+        item.setRefundRequestId(request.getId());
+        item.setWalletTransactionId(topupId);
+        item.setPaymentIntentId(pi);
+        item.setAmount(new BigDecimal("18.00"));
+        item.setStatus(WalletRefundItemStatus.PENDING);
+        walletRefundRequestItemRepository.saveAndFlush(item);
+
+        try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            refundStatic.when(() -> Refund.create(any(RefundCreateParams.class), any(RequestOptions.class)))
+                    .thenReturn(stripeRefund("re_recovery"));
+
+            // Date limite dans le futur : l'item vient d'être créé, on simule son ancienneté.
+            recoveryScheduler.recoverItemsCreatedBefore(Instant.now().plusSeconds(60));
+        }
+
+        WalletRefundRequestItemEntity reloaded = walletRefundRequestItemRepository.findById(item.getId()).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(WalletRefundItemStatus.PROCESSING);
+        assertThat(reloaded.getStripeRefundId()).isEqualTo("re_recovery");
+    }
+
+    @Test
+    void suppressionDeCompte_emetAuCommitDuReglementAvantLaFinDeLaTransactionEnglobante() {
+        UUID userId = persistUser();
+        String pi = "pi_deletion_" + UUID.randomUUID();
+        topUp(userId, "30.00", pi);
+
+        try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            refundStatic.when(() -> Refund.create(any(RefundCreateParams.class), any(RequestOptions.class)))
+                    .thenReturn(stripeRefund("re_deletion"));
+
+            new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+                List<WalletRefundRequestEntity> opened = userService.settleWalletsForDeletion(userId);
+
+                // Toujours dans la transaction de suppression (finalisation pas encore faite) :
+                // le règlement, en REQUIRES_NEW, a committé et son écouteur a déjà émis.
+                refundStatic.verify(() -> Refund.create(any(RefundCreateParams.class), any(RequestOptions.class)));
+                assertThat(opened).hasSize(1);
+                assertThat(walletRefundRequestItemRepository.findByRefundRequestId(opened.get(0).getId()))
+                        .singleElement()
+                        .satisfies(item -> assertThat(item.getStripeRefundId()).isEqualTo("re_deletion"));
+                // La finalisation échoue : la transaction englobante est annulée.
+                status.setRollbackOnly();
+            });
+        }
+
+        // Le remboursement Stripe est parti : sa trace en base survit à l'annulation.
+        assertThat(walletRefundRequestRepository.findAllByUserIdOrderByRequestedAtDesc(userId))
+                .singleElement()
+                .satisfies(r -> assertThat(r.getStatus()).isEqualTo(WalletRefundRequestStatus.PROCESSING));
     }
 
     @Test
