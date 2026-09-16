@@ -12,7 +12,9 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.lang.reflect.Field;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -34,6 +36,7 @@ class WalletRefundRequestServiceTest {
     @Mock WalletRefundRequestRepository refundRequestRepository;
     @Mock AuditService auditService;
     @Mock AdminAlertService adminAlertService;
+    @Mock WalletRefundRequestItemRepository refundRequestItemRepository;
 
     private WalletRefundRequestService service;
 
@@ -43,7 +46,8 @@ class WalletRefundRequestServiceTest {
     @BeforeEach
     void setUp() {
         service = new WalletRefundRequestService(
-                walletService, refundRequestRepository, auditService, adminAlertService);
+                walletService, refundRequestRepository, auditService, adminAlertService,
+                refundRequestItemRepository);
     }
 
     private static WalletAccountEntity walletOf(String currency, String balance) {
@@ -144,8 +148,42 @@ class WalletRefundRequestServiceTest {
         verify(adminAlertService, never()).raise(any(), any(), any());
     }
 
+    private static void setField(Object target, String name, Object value) {
+        try {
+            Class<?> c = target.getClass();
+            while (c != null) {
+                try {
+                    Field f = c.getDeclaredField(name);
+                    f.setAccessible(true);
+                    f.set(target, value);
+                    return;
+                } catch (NoSuchFieldException e) {
+                    c = c.getSuperclass();
+                }
+            }
+            throw new IllegalStateException("champ absent : " + name);
+        } catch (IllegalAccessException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static WalletRefundRequestItemEntity itemOf(UUID requestId, String pi, String amount,
+                                                        WalletRefundItemStatus status, Instant createdAt) {
+        WalletRefundRequestItemEntity i = new WalletRefundRequestItemEntity();
+        setField(i, "id", UUID.randomUUID());
+        i.setRefundRequestId(requestId);
+        i.setWalletTransactionId(UUID.randomUUID());
+        i.setPaymentIntentId(pi);
+        i.setStripeRefundId(status == WalletRefundItemStatus.PENDING ? null : "re_" + pi);
+        i.setAmount(new BigDecimal(amount));
+        i.setStatus(status);
+        setField(i, "createdAt", createdAt);
+        return i;
+    }
+
     @Test
-    void openChildForFailedItems_creeUnTicketManuelLieAuParent() {
+    @SuppressWarnings("unchecked")
+    void openChildForFailedItems_creeUnTicketManuelLieAuParentAvecUnItemParEchec() {
         WalletRefundRequestEntity parent = new WalletRefundRequestEntity();
         assignId(parent);
         parent.setUserId(USER_ID);
@@ -157,13 +195,31 @@ class WalletRefundRequestServiceTest {
             assignId(r);
             return r;
         });
+        WalletRefundRequestItemEntity failedA = itemOf(parent.getId(), "pi_a", "10.00",
+                WalletRefundItemStatus.FAILED, Instant.now());
+        WalletRefundRequestItemEntity failedB = itemOf(parent.getId(), "pi_b", "5.00",
+                WalletRefundItemStatus.FAILED, Instant.now());
 
-        WalletRefundRequestEntity child = service.openChildForFailedItems(parent, new BigDecimal("15.00"));
+        WalletRefundRequestEntity child = service.openChildForFailedItems(parent, List.of(failedA, failedB));
 
         assertThat(child.getParentRequestId()).isEqualTo(parent.getId());
         assertThat(child.getAmount()).isEqualByComparingTo("15.00");
         assertThat(child.getChannel()).isEqualTo(WalletRefundChannel.MANUAL_ADMIN);
         assertThat(child.getStatus()).isEqualTo(WalletRefundRequestStatus.PENDING);
+        ArgumentCaptor<List<WalletRefundRequestItemEntity>> saved = ArgumentCaptor.forClass(List.class);
+        verify(refundRequestItemRepository).saveAll(saved.capture());
+        assertThat(saved.getValue()).hasSize(2).allSatisfy(i -> {
+            assertThat(i.getRefundRequestId()).isEqualTo(child.getId());
+            assertThat(i.getStatus()).isEqualTo(WalletRefundItemStatus.PENDING);
+            assertThat(i.getStripeRefundId()).isNull();
+        });
+        assertThat(saved.getValue()).extracting(WalletRefundRequestItemEntity::getWalletTransactionId)
+                .containsExactly(failedA.getWalletTransactionId(), failedB.getWalletTransactionId());
+        assertThat(saved.getValue()).extracting(WalletRefundRequestItemEntity::getPaymentIntentId)
+                .containsExactly("pi_a", "pi_b");
+        assertThat(saved.getValue()).extracting(WalletRefundRequestItemEntity::getAmount)
+                .usingElementComparator(BigDecimal::compareTo)
+                .containsExactly(new BigDecimal("10.00"), new BigDecimal("5.00"));
         verify(auditService).log(eq("wallet_refund_request"), eq(child.getId()), eq("MANUAL_CHILD_OPENED"), eq(USER_ID), any());
         verify(adminAlertService).raise(eq("wallet-refund-requested"), any(), any());
     }
@@ -176,10 +232,22 @@ class WalletRefundRequestServiceTest {
         parent.setCurrency("EUR");
         when(refundRequestRepository.existsByParentRequestId(parent.getId())).thenReturn(true);
 
-        WalletRefundRequestEntity child = service.openChildForFailedItems(parent, new BigDecimal("15.00"));
+        WalletRefundRequestEntity child = service.openChildForFailedItems(parent,
+                List.of(itemOf(parent.getId(), "pi_a", "15.00", WalletRefundItemStatus.FAILED, Instant.now())));
 
         assertThat(child).isNull();
         verify(refundRequestRepository, never()).save(any());
+        verify(refundRequestItemRepository, never()).saveAll(any());
+    }
+
+    @Test
+    void openChildForFailedItems_sansItemEnEchec_neCreeRien() {
+        WalletRefundRequestEntity parent = new WalletRefundRequestEntity();
+        assignId(parent);
+
+        assertThat(service.openChildForFailedItems(parent, List.of())).isNull();
+        assertThat(service.openChildForFailedItems(parent, null)).isNull();
+        verify(refundRequestRepository, never()).existsByParentRequestId(any());
     }
 
     @Nested
@@ -311,6 +379,80 @@ class WalletRefundRequestServiceTest {
 
             verify(walletService).debitConfirmedRefund(USER_ID, "CAD", new BigDecimal("9.00"),
                     WalletTransactionType.ADMIN_REFUND_OUT);
+        }
+
+        @Test
+        @DisplayName("ticket enfant avec items → tous passent REFUNDED")
+        void resolves_child_marqueSesItemsRefunded() {
+            UUID requestId = UUID.randomUUID();
+            WalletRefundRequestEntity child = pendingRequest();
+            assignId(child);
+            child.setAmount(new BigDecimal("15.00"));
+            child.setParentRequestId(UUID.randomUUID());
+            Instant t0 = Instant.parse("2026-09-01T10:00:00Z");
+            WalletRefundRequestItemEntity a = itemOf(child.getId(), "pi_a", "10.00", WalletRefundItemStatus.PENDING, t0);
+            WalletRefundRequestItemEntity b = itemOf(child.getId(), "pi_b", "5.00", WalletRefundItemStatus.PENDING, t0.plusSeconds(1));
+            when(refundRequestRepository.findById(requestId)).thenReturn(Optional.of(child));
+            when(walletService.getBalance(USER_ID, "CAD")).thenReturn(new BigDecimal("25.00"));
+            when(refundRequestRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(refundRequestItemRepository.findByRefundRequestId(child.getId())).thenReturn(List.of(b, a));
+
+            service.resolve(requestId, ADMIN_ID);
+
+            assertThat(a.getStatus()).isEqualTo(WalletRefundItemStatus.REFUNDED);
+            assertThat(b.getStatus()).isEqualTo(WalletRefundItemStatus.REFUNDED);
+            assertThat(a.getAmount()).isEqualByComparingTo("10.00");
+            assertThat(b.getAmount()).isEqualByComparingTo("5.00");
+            verify(refundRequestItemRepository, times(2)).save(any());
+        }
+
+        @Test
+        @DisplayName("ticket enfant, débit court → répartition dans l'ordre de création et balance-short")
+        void resolves_child_debitCourt_repartitParOrdreDeCreation() {
+            UUID requestId = UUID.randomUUID();
+            WalletRefundRequestEntity child = pendingRequest();
+            assignId(child);
+            child.setAmount(new BigDecimal("30.00"));
+            child.setParentRequestId(UUID.randomUUID());
+            Instant t0 = Instant.parse("2026-09-01T10:00:00Z");
+            WalletRefundRequestItemEntity first = itemOf(child.getId(), "pi_1", "10.00", WalletRefundItemStatus.PENDING, t0);
+            WalletRefundRequestItemEntity second = itemOf(child.getId(), "pi_2", "10.00", WalletRefundItemStatus.PENDING, t0.plusSeconds(1));
+            WalletRefundRequestItemEntity third = itemOf(child.getId(), "pi_3", "10.00", WalletRefundItemStatus.PENDING, t0.plusSeconds(2));
+            when(refundRequestRepository.findById(requestId)).thenReturn(Optional.of(child));
+            when(walletService.getBalance(USER_ID, "CAD")).thenReturn(new BigDecimal("14.00"));
+            when(refundRequestRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(refundRequestItemRepository.findByRefundRequestId(child.getId()))
+                    .thenReturn(List.of(third, first, second));
+
+            service.resolve(requestId, ADMIN_ID);
+
+            verify(walletService).debitConfirmedRefund(USER_ID, "CAD", new BigDecimal("14.00"),
+                    WalletTransactionType.ADMIN_REFUND_OUT);
+            assertThat(first.getStatus()).isEqualTo(WalletRefundItemStatus.REFUNDED);
+            assertThat(first.getAmount()).isEqualByComparingTo("10.00");
+            assertThat(second.getStatus()).isEqualTo(WalletRefundItemStatus.REFUNDED);
+            assertThat(second.getAmount()).isEqualByComparingTo("4.00");
+            assertThat(third.getStatus()).isEqualTo(WalletRefundItemStatus.FAILED);
+            assertThat(third.getFailureReason()).isEqualTo("balance-short");
+            assertThat(third.getAmount()).isEqualByComparingTo("10.00");
+        }
+
+        @Test
+        @DisplayName("ticket racine → aucun item touché")
+        void resolves_racine_neLitPasLesItems() {
+            UUID requestId = UUID.randomUUID();
+            WalletRefundRequestEntity root = pendingRequest();
+            when(refundRequestRepository.findById(requestId)).thenReturn(Optional.of(root));
+            when(walletService.getBalance(USER_ID, "CAD")).thenReturn(new BigDecimal("45.00"));
+            when(refundRequestRepository.save(any())).thenAnswer(inv -> {
+                WalletRefundRequestEntity e = inv.getArgument(0);
+                assignId(e);
+                return e;
+            });
+
+            service.resolve(requestId, ADMIN_ID);
+
+            verify(refundRequestItemRepository, never()).findByRefundRequestId(any());
         }
     }
 }

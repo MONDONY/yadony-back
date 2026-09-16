@@ -1,5 +1,6 @@
 package com.yadony.api.payments.wallet;
 
+import com.stripe.exception.InvalidRequestException;
 import com.stripe.model.Charge;
 import com.stripe.model.Refund;
 import com.stripe.model.RefundCollection;
@@ -19,6 +20,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -34,6 +36,7 @@ import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mockStatic;
 
@@ -328,5 +331,123 @@ class WalletRefundIT {
                 .isEqualTo(WalletRefundRequestStatus.REFUNDED);
         assertThat(walletRefundRequestItemRepository.findById(item.getId()).orElseThrow().getStatus())
                 .isEqualTo(WalletRefundItemStatus.REFUNDED);
+    }
+
+    private WalletRefundRequestItemEntity saveItem(UUID requestId, UUID topupId, String pi, String amount,
+                                                   WalletRefundItemStatus status, String stripeRefundId) {
+        WalletRefundRequestItemEntity item = new WalletRefundRequestItemEntity();
+        item.setRefundRequestId(requestId);
+        item.setWalletTransactionId(topupId);
+        item.setPaymentIntentId(pi);
+        item.setAmount(new BigDecimal(amount));
+        item.setStatus(status);
+        item.setStripeRefundId(stripeRefundId);
+        return walletRefundRequestItemRepository.saveAndFlush(item);
+    }
+
+    @Test
+    void echecStripe_rechargeFraiche_resolutionDuTicketEnfant_consommeLaBonneRecharge() {
+        UUID userId = persistUser();
+        String piA = "pi_child_a_" + UUID.randomUUID();
+        String piB = "pi_child_b_" + UUID.randomUUID();
+        UUID topupA = topUp(userId, "30.00", piA);
+
+        WalletRefundRequestEntity parent;
+        try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            refundStatic.when(() -> Refund.create(any(RefundCreateParams.class), any(RequestOptions.class)))
+                    .thenThrow(new InvalidRequestException("resource_missing", "payment_intent", "req_it",
+                            "resource_missing", 400, null));
+
+            parent = walletSelfRefundService.request(userId, "EUR", List.of());
+        }
+
+        // Tout a échoué à l'émission : la demande est close et le ticket enfant porte l'item.
+        assertThat(walletRefundRequestRepository.findById(parent.getId()).orElseThrow().getStatus())
+                .isEqualTo(WalletRefundRequestStatus.FAILED);
+        assertThat(walletRefundRequestItemRepository.findByRefundRequestId(parent.getId()))
+                .singleElement()
+                .satisfies(i -> {
+                    assertThat(i.getStatus()).isEqualTo(WalletRefundItemStatus.FAILED);
+                    assertThat(i.getFailureReason()).isEqualTo("resource_missing");
+                });
+        WalletRefundRequestEntity child = walletRefundRequestRepository.findAllByUserIdOrderByRequestedAtDesc(userId)
+                .stream().filter(r -> parent.getId().equals(r.getParentRequestId())).findFirst().orElseThrow();
+        assertThat(child.getStatus()).isEqualTo(WalletRefundRequestStatus.PENDING);
+        assertThat(walletRefundRequestItemRepository.findByRefundRequestId(child.getId()))
+                .singleElement()
+                .satisfies(i -> {
+                    assertThat(i.getStatus()).isEqualTo(WalletRefundItemStatus.PENDING);
+                    assertThat(i.getWalletTransactionId()).isEqualTo(topupA);
+                    assertThat(i.getPaymentIntentId()).isEqualTo(piA);
+                    assertThat(i.getAmount()).isEqualByComparingTo("30.00");
+                });
+
+        UUID topupB = topUp(userId, "20.00", piB);
+        WalletRefundAllocation beforeResolution = walletSelfRefundService.allocation(userId, "EUR");
+        assertThat(beforeResolution.inFlight()).isEqualByComparingTo("30.00");
+        assertThat(beforeResolution.refundableTotal()).isEqualByComparingTo("20.00");
+
+        walletRefundRequestService.resolve(child.getId(), UUID.randomUUID());
+
+        assertThat(balanceOf(userId)).isEqualByComparingTo("20.00");
+        assertThat(walletRefundRequestItemRepository.findByRefundRequestId(child.getId()))
+                .singleElement()
+                .satisfies(i -> assertThat(i.getStatus()).isEqualTo(WalletRefundItemStatus.REFUNDED));
+        WalletRefundAllocation after = walletSelfRefundService.allocation(userId, "EUR");
+        assertThat(after.refundable()).singleElement().satisfies(t -> {
+            assertThat(t.walletTransactionId()).isEqualTo(topupB);
+            assertThat(t.remaining()).isEqualByComparingTo("20.00");
+        });
+        assertThat(after.inFlight()).isEqualByComparingTo("0");
+        assertThat(walletSelfRefundService.refundStatusByTransactionId(List.of(topupA, topupB)))
+                .containsExactlyInAnyOrderEntriesOf(java.util.Map.of(topupA, "REFUNDED"));
+    }
+
+    @Test
+    void indexPartiel_plusieursItemsParPaymentIntentMaisUnSeulActif() {
+        UUID userId = persistUser();
+        String pi = "pi_index_" + UUID.randomUUID();
+        UUID topupId = topUp(userId, "30.00", pi);
+        WalletRefundRequestEntity request = saveRequest(userId, "30.00",
+                WalletRefundChannel.AUTOMATIC_STRIPE, WalletRefundRequestStatus.FAILED, null);
+
+        saveItem(request.getId(), topupId, pi, "30.00", WalletRefundItemStatus.FAILED, "re_old");
+        saveItem(request.getId(), topupId, pi, "10.00", WalletRefundItemStatus.REFUNDED, "re_old2");
+        saveItem(request.getId(), topupId, pi, "30.00", WalletRefundItemStatus.PENDING, null);
+
+        assertThatThrownBy(() -> saveItem(request.getId(), topupId, pi, "30.00",
+                WalletRefundItemStatus.PROCESSING, "re_second"))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void handleChargeRefunded_retrouveLItemProcessingParmiLesAnciensItemsDuPaymentIntent() {
+        UUID userId = persistUser();
+        String pi = "pi_webhook_" + UUID.randomUUID();
+        UUID topupId = topUp(userId, "30.00", pi);
+        WalletRefundRequestEntity old = saveRequest(userId, "30.00",
+                WalletRefundChannel.AUTOMATIC_STRIPE, WalletRefundRequestStatus.FAILED, null);
+        saveItem(old.getId(), topupId, pi, "30.00", WalletRefundItemStatus.FAILED, "re_failed");
+        WalletRefundRequestEntity current = saveRequest(userId, "30.00",
+                WalletRefundChannel.AUTOMATIC_STRIPE, WalletRefundRequestStatus.PROCESSING, null);
+        WalletRefundRequestItemEntity processing =
+                saveItem(current.getId(), topupId, pi, "30.00", WalletRefundItemStatus.PROCESSING, "re_current");
+
+        Charge charge = new Charge();
+        charge.setPaymentIntent(pi);
+        Refund refund = new Refund();
+        refund.setId("re_current");
+        refund.setStatus("succeeded");
+        RefundCollection refunds = new RefundCollection();
+        refunds.setData(List.of(refund));
+        charge.setRefunds(refunds);
+
+        walletSelfRefundService.handleChargeRefunded(charge);
+
+        assertThat(walletRefundRequestItemRepository.findById(processing.getId()).orElseThrow().getStatus())
+                .isEqualTo(WalletRefundItemStatus.REFUNDED);
+        assertThat(walletRefundRequestRepository.findById(current.getId()).orElseThrow().getStatus())
+                .isEqualTo(WalletRefundRequestStatus.REFUNDED);
+        assertThat(balanceOf(userId)).isEqualByComparingTo("0.00");
     }
 }

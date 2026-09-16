@@ -27,6 +27,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -198,22 +199,28 @@ public class WalletSelfRefundService {
     /**
      * Statut de remboursement des recharges {@code transactionIds}, pour affichage
      * dans l'historique du wallet (icône sablier + délai tant que PROCESSING).
-     * N'inclut pas les items FAILED : une recharge dont le remboursement a échoué
-     * redevient une recharge normale, toujours éligible à une nouvelle demande.
+     * Seul l'item le plus récent de chaque recharge compte (cf.
+     * {@link WalletRefundAllocator#latestItemStatuses}) : un item FAILED suivi de l'item
+     * PENDING de son ticket enfant affiche PROCESSING, suivi de l'item REFUNDED de l'enfant
+     * résolu affiche REFUNDED. Une recharge dont le dernier item est FAILED n'affiche rien.
      */
     @Transactional(readOnly = true)
     public Map<UUID, String> refundStatusByTransactionId(List<UUID> transactionIds) {
         if (transactionIds.isEmpty()) {
             return Map.of();
         }
-        return refundRequestItemRepository.findByWalletTransactionIdIn(transactionIds).stream()
-                .filter(item -> item.getStatus() == WalletRefundItemStatus.PENDING
-                        || item.getStatus() == WalletRefundItemStatus.PROCESSING
-                        || item.getStatus() == WalletRefundItemStatus.REFUNDED)
-                .collect(Collectors.toMap(
-                        WalletRefundRequestItemEntity::getWalletTransactionId,
-                        item -> item.getStatus() == WalletRefundItemStatus.REFUNDED ? "REFUNDED" : "PROCESSING",
-                        (a, b) -> "PROCESSING".equals(a) || "PROCESSING".equals(b) ? "PROCESSING" : "REFUNDED"));
+        Map<UUID, String> result = new HashMap<>();
+        WalletRefundAllocator.latestItemStatuses(
+                refundRequestItemRepository.findByWalletTransactionIdIn(transactionIds))
+                .forEach((txId, statuses) -> {
+                    if (statuses.contains(WalletRefundItemStatus.PENDING)
+                            || statuses.contains(WalletRefundItemStatus.PROCESSING)) {
+                        result.put(txId, "PROCESSING");
+                    } else if (statuses.contains(WalletRefundItemStatus.REFUNDED)) {
+                        result.put(txId, "REFUNDED");
+                    }
+                });
+        return result;
     }
 
     /**
@@ -414,7 +421,8 @@ public class WalletSelfRefundService {
         if (paymentIntentId == null || paymentIntentId.isBlank()) {
             return;
         }
-        refundRequestItemRepository.findByPaymentIntentId(paymentIntentId).ifPresent(item -> {
+        refundRequestItemRepository.findByPaymentIntentIdAndStatus(paymentIntentId, WalletRefundItemStatus.PROCESSING)
+                .ifPresent(item -> {
             if (item.getStatus() != WalletRefundItemStatus.PROCESSING || item.getStripeRefundId() == null) {
                 return;
             }
@@ -465,7 +473,8 @@ public class WalletSelfRefundService {
                 return;
             }
             String refundId = root.path("id").asText(null);
-            refundRequestItemRepository.findByPaymentIntentId(paymentIntentId).ifPresent(item -> {
+            refundRequestItemRepository.findByPaymentIntentIdAndStatus(paymentIntentId, WalletRefundItemStatus.PROCESSING)
+                .ifPresent(item -> {
                 if (item.getStatus() != WalletRefundItemStatus.PROCESSING) {
                     return;
                 }
@@ -522,11 +531,10 @@ public class WalletSelfRefundService {
         refundRequestRepository.saveAndFlush(request);
 
         if (anyFailed) {
-            BigDecimal failedTotal = items.stream()
+            List<WalletRefundRequestItemEntity> failedItems = items.stream()
                     .filter(i -> i.getStatus() == WalletRefundItemStatus.FAILED)
-                    .map(WalletRefundRequestItemEntity::getAmount)
-                    .reduce(BigDecimal.ZERO, BigDecimal::add);
-            walletRefundRequestService.openChildForFailedItems(request, failedTotal);
+                    .toList();
+            walletRefundRequestService.openChildForFailedItems(request, failedItems);
         }
 
         auditService.log("wallet_refund_request", request.getId(),

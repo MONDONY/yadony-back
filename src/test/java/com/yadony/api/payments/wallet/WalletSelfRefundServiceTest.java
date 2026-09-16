@@ -543,7 +543,7 @@ class WalletSelfRefundServiceTest {
         // Tout a échoué : la demande se clôt tout de suite, sans débit, et ouvre l'enfant.
         assertThat(request.getStatus()).isEqualTo(WalletRefundRequestStatus.FAILED);
         verify(walletService, never()).debitConfirmedRefund(any(), any(), any(), any());
-        verify(walletRefundRequestService).openChildForFailedItems(request, new BigDecimal("40.00"));
+        verify(walletRefundRequestService).openChildForFailedItems(request, List.of(item));
     }
 
     @Test
@@ -609,6 +609,52 @@ class WalletSelfRefundServiceTest {
     }
 
     @Test
+    void refundStatusByTransactionId_seulLItemLePlusRecentCompte() {
+        UUID childPendingTxId = UUID.randomUUID();
+        UUID childRefundedTxId = UUID.randomUUID();
+        Instant t0 = Instant.parse("2026-09-01T10:00:00Z");
+        Instant t1 = t0.plusSeconds(60);
+
+        List<WalletRefundRequestItemEntity> all = List.of(
+                datedItem(childPendingTxId, WalletRefundItemStatus.FAILED, t0),
+                datedItem(childPendingTxId, WalletRefundItemStatus.PENDING, t1),
+                datedItem(childRefundedTxId, WalletRefundItemStatus.FAILED, t0),
+                datedItem(childRefundedTxId, WalletRefundItemStatus.REFUNDED, t1));
+        List<UUID> ids = List.of(childPendingTxId, childRefundedTxId);
+        when(refundRequestItemRepository.findByWalletTransactionIdIn(ids)).thenReturn(all);
+
+        assertThat(service.refundStatusByTransactionId(ids)).containsExactlyInAnyOrderEntriesOf(Map.of(
+                childPendingTxId, "PROCESSING",
+                childRefundedTxId, "REFUNDED"));
+    }
+
+    private static WalletRefundRequestItemEntity datedItem(UUID txId, WalletRefundItemStatus status, Instant createdAt) {
+        WalletRefundRequestItemEntity i = new WalletRefundRequestItemEntity();
+        i.setWalletTransactionId(txId);
+        i.setStatus(status);
+        setField(i, "createdAt", createdAt);
+        return i;
+    }
+
+    @Test
+    void handleRefundUpdated_neChercheQueLItemProcessingDuPaymentIntent() {
+        // Depuis V259, un PaymentIntent porte aussi des items FAILED ou REFUNDED d'anciennes
+        // demandes : le webhook ne doit lire que l'unique item PROCESSING.
+        WalletRefundRequestEntity request = processingRequest("35.00");
+        WalletRefundRequestItemEntity item = processingItem(request, "pi_1", "35.00", "re_1");
+        when(refundRequestItemRepository.findByPaymentIntentIdAndStatus("pi_1", WalletRefundItemStatus.PROCESSING))
+                .thenReturn(Optional.of(item));
+        when(refundRequestItemRepository.findByRefundRequestId(request.getId())).thenReturn(List.of(item));
+        when(refundRequestRepository.findById(request.getId())).thenReturn(Optional.of(request));
+
+        service.handleRefundUpdated(failedRefundEvent("pi_1", "re_1"));
+
+        assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.FAILED);
+        assertThat(request.getStatus()).isEqualTo(WalletRefundRequestStatus.FAILED);
+        verify(walletRefundRequestService).openChildForFailedItems(request, List.of(item));
+    }
+
+    @Test
     void refundStatusByTransactionId_emptyInputReturnsEmptyMap() {
         assertThat(service.refundStatusByTransactionId(List.of())).isEmpty();
         verifyNoInteractions(refundRequestItemRepository);
@@ -623,7 +669,7 @@ class WalletSelfRefundServiceTest {
         item.setAmount(new BigDecimal("30.00"));
         item.setStripeRefundId("re_111");
         item.setStatus(WalletRefundItemStatus.PROCESSING);
-        when(refundRequestItemRepository.findByPaymentIntentId("pi_111")).thenReturn(Optional.of(item));
+        when(refundRequestItemRepository.findByPaymentIntentIdAndStatus("pi_111", WalletRefundItemStatus.PROCESSING)).thenReturn(Optional.of(item));
         when(refundRequestItemRepository.findByRefundRequestId(requestId)).thenReturn(List.of(item));
         WalletRefundRequestEntity request = new WalletRefundRequestEntity();
         request.setUserId(USER_ID);
@@ -656,7 +702,7 @@ class WalletSelfRefundServiceTest {
     void handleChargeRefunded_partiel_itemRefundedQuandLeRefundEstSucceeded() {
         WalletRefundRequestEntity request = processingRequest("35.00");
         WalletRefundRequestItemEntity item = processingItem(request, "pi_1", "35.00", "re_1");
-        when(refundRequestItemRepository.findByPaymentIntentId("pi_1")).thenReturn(Optional.of(item));
+        when(refundRequestItemRepository.findByPaymentIntentIdAndStatus("pi_1", WalletRefundItemStatus.PROCESSING)).thenReturn(Optional.of(item));
         when(refundRequestItemRepository.findByRefundRequestId(request.getId())).thenReturn(List.of(item));
         when(refundRequestRepository.findById(request.getId())).thenReturn(Optional.of(request));
 
@@ -682,7 +728,7 @@ class WalletSelfRefundServiceTest {
     void handleChargeRefunded_sansListeDeRefunds_retrieveParId() {
         WalletRefundRequestEntity request = processingRequest("35.00");
         WalletRefundRequestItemEntity item = processingItem(request, "pi_1", "35.00", "re_1");
-        when(refundRequestItemRepository.findByPaymentIntentId("pi_1")).thenReturn(Optional.of(item));
+        when(refundRequestItemRepository.findByPaymentIntentIdAndStatus("pi_1", WalletRefundItemStatus.PROCESSING)).thenReturn(Optional.of(item));
         when(refundRequestItemRepository.findByRefundRequestId(request.getId())).thenReturn(List.of(item));
         when(refundRequestRepository.findById(request.getId())).thenReturn(Optional.of(request));
         Charge charge = new Charge();
@@ -704,7 +750,7 @@ class WalletSelfRefundServiceTest {
     void handleChargeRefunded_autreRefundDuMemeCharge_ignore() {
         WalletRefundRequestEntity request = processingRequest("35.00");
         WalletRefundRequestItemEntity item = processingItem(request, "pi_1", "35.00", "re_1");
-        when(refundRequestItemRepository.findByPaymentIntentId("pi_1")).thenReturn(Optional.of(item));
+        when(refundRequestItemRepository.findByPaymentIntentIdAndStatus("pi_1", WalletRefundItemStatus.PROCESSING)).thenReturn(Optional.of(item));
         Charge charge = new Charge();
         charge.setPaymentIntent("pi_1");
         Refund other = new Refund();
@@ -733,7 +779,7 @@ class WalletSelfRefundServiceTest {
         ok.setStatus(WalletRefundItemStatus.REFUNDED);
         WalletRefundRequestItemEntity ko = processingItem(request, "pi_2", "15.00", "re_2");
         ko.setStatus(WalletRefundItemStatus.PROCESSING);
-        when(refundRequestItemRepository.findByPaymentIntentId("pi_2")).thenReturn(Optional.of(ko));
+        when(refundRequestItemRepository.findByPaymentIntentIdAndStatus("pi_2", WalletRefundItemStatus.PROCESSING)).thenReturn(Optional.of(ko));
         when(refundRequestItemRepository.findByRefundRequestId(request.getId())).thenReturn(List.of(ok, ko));
         when(refundRequestRepository.findById(request.getId())).thenReturn(Optional.of(request));
 
@@ -741,7 +787,7 @@ class WalletSelfRefundServiceTest {
 
         assertThat(request.getStatus()).isEqualTo(WalletRefundRequestStatus.FAILED);
         verify(walletService).debitConfirmedRefund(USER_ID, "EUR", new BigDecimal("20.00"), WalletTransactionType.SELF_REFUND_OUT);
-        verify(walletRefundRequestService).openChildForFailedItems(request, new BigDecimal("15.00"));
+        verify(walletRefundRequestService).openChildForFailedItems(request, List.of(ko));
     }
 
     @Test
@@ -750,7 +796,7 @@ class WalletSelfRefundServiceTest {
         // échec sur le même PI, mais qui n'est pas le nôtre, ne doit pas faire échouer l'item.
         WalletRefundRequestEntity request = processingRequest("35.00");
         WalletRefundRequestItemEntity item = processingItem(request, "pi_1", "35.00", "re_1");
-        when(refundRequestItemRepository.findByPaymentIntentId("pi_1")).thenReturn(Optional.of(item));
+        when(refundRequestItemRepository.findByPaymentIntentIdAndStatus("pi_1", WalletRefundItemStatus.PROCESSING)).thenReturn(Optional.of(item));
 
         service.handleRefundUpdated(failedRefundEvent("pi_1", "re_autre"));
 
@@ -794,7 +840,7 @@ class WalletSelfRefundServiceTest {
 
     @Test
     void handleChargeRefunded_noOpWhenPaymentIntentUnknown() {
-        when(refundRequestItemRepository.findByPaymentIntentId("pi_unknown")).thenReturn(Optional.empty());
+        when(refundRequestItemRepository.findByPaymentIntentIdAndStatus("pi_unknown", WalletRefundItemStatus.PROCESSING)).thenReturn(Optional.empty());
         Charge charge = mock(Charge.class);
         when(charge.getPaymentIntent()).thenReturn("pi_unknown");
 
