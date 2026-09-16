@@ -1,5 +1,7 @@
 package com.yadony.api.auth.dto;
 
+import java.util.List;
+
 /**
  * Story 9.8 — Éligibilité à la suppression de compte (lecture seule, sans effet de bord).
  *
@@ -8,10 +10,12 @@ package com.yadony.api.auth.dto;
  * résolu par un humain. {@code blockedReasonCode} vaut donc {@code null} sauf pour
  * {@code "active-transactions"} (escrow en cours, temporaire). {@code hasWalletBalance}
  * reste purement informatif : le front peut prévenir l'utilisateur qu'un ticket de
- * remboursement sera ouvert automatiquement (cf. {@code UserService#openWalletRefundTicketIfNeeded}).
+ * remboursement sera ouvert automatiquement (cf. {@code UserService#settleWalletsForDeletion}).
+ * {@code walletSettlement} détaille par devise ce qui sera remboursé et perdu.
  */
 public record DeletionEligibilityResponse(
         boolean canDelete,
         String blockedReasonCode,
-        boolean hasWalletBalance
+        boolean hasWalletBalance,
+        List<WalletSettlementDto> walletSettlement
 ) {}

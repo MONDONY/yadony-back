@@ -2,6 +2,7 @@ package com.yadony.api.auth;
 
 import com.yadony.api.auth.dto.DeletionEligibilityResponse;
 import com.yadony.api.auth.dto.UpgradeToProRequest;
+import com.yadony.api.auth.dto.WalletSettlementDto;
 import com.yadony.api.auth.events.AccountDeletionRequestedEvent;
 import com.yadony.api.auth.events.UserSuspendedEvent;
 import com.yadony.api.billing.ProSubscriptionEntity;
@@ -12,6 +13,8 @@ import com.yadony.api.messaging.FirestoreService;
 import com.yadony.api.notifications.NotificationDispatcher;
 import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.wallet.WalletAccountRepository;
+import com.yadony.api.payments.wallet.WalletAllocationInvariantException;
+import com.yadony.api.payments.wallet.WalletRefundAllocation;
 import com.yadony.api.payments.wallet.WalletRefundRequestService;
 import com.yadony.api.payments.wallet.WalletSelfRefundService;
 import org.slf4j.Logger;
@@ -19,15 +22,15 @@ import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.Map;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -78,7 +81,7 @@ public class UserService {
 
     /** Un solde wallet réel (rechargé par carte, cf. WalletTopupOrchestrator) non dépensé
      *  deviendrait orphelin une fois le compte Firebase supprimé. Purement informatif : ne
-     *  bloque plus aucune suppression (cf. {@link #openWalletRefundTicketIfNeeded}). */
+     *  bloque plus aucune suppression (cf. {@link #settleWalletsForDeletion}). */
     public boolean hasWalletBalance(UUID userId) {
         // Un utilisateur a un portefeuille par devise : n'interroger que l'EUR
         // laisserait un solde XOF/USD devenir orphelin à la suppression.
@@ -86,39 +89,85 @@ public class UserService {
                 .anyMatch(w -> w.getBalance().compareTo(BigDecimal.ZERO) > 0);
     }
 
-    /** Apple 5.1.1(v) impose que la suppression de compte reste toujours possible en
-     *  self-service. Essaie d'abord le remboursement Stripe automatique sur chaque
-     *  devise positive, puis retombe sur le ticket manuel admin pour les soldes
-     *  entamés ou mélangés. La suppression se poursuit dans tous les cas. */
-    public void openWalletRefundTicketIfNeeded(UUID userId) {
-        List<com.yadony.api.payments.wallet.WalletAccountEntity> positiveBalances =
-                walletAccountRepository.findAllByUserId(userId).stream()
-                        .filter(w -> w.getBalance().compareTo(BigDecimal.ZERO) > 0)
-                        .toList();
-        if (positiveBalances.isEmpty()) {
-            return;
-        }
-
-        Set<String> handledAutomatically = new HashSet<>();
-        for (com.yadony.api.payments.wallet.WalletAccountEntity wallet : positiveBalances) {
-            if (walletSelfRefundService.isEligible(userId, wallet.getCurrency())) {
-                // Suppression de compte : on rembourse la totalité du solde éligible,
-                // pas une sélection utilisateur — jamais de sheet ici.
-                List<UUID> eligibleTopupIds = walletSelfRefundService
-                        .listEligibleTopups(userId, wallet.getCurrency())
-                        .stream()
-                        .map(com.yadony.api.payments.wallet.WalletTransactionEntity::getId)
-                        .toList();
-                walletSelfRefundService.request(userId, wallet.getCurrency(), eligibleTopupIds);
-                handledAutomatically.add(wallet.getCurrency());
+    /**
+     * Règle chaque wallet à solde positif au moment de la demande de suppression (J0) :
+     * demande automatique Stripe sur tout le remboursable (partiel inclus), ticket manuel
+     * si le rejeu du ledger est incohérent. La part non-cash reste dans le wallet gelé et
+     * n'est perdue qu'à la finalisation (cf. UserFinalizedPaymentsListener). Ne bloque
+     * jamais la suppression (Apple 5.1.1(v)).
+     *
+     * <p>{@code REQUIRES_NEW} : les {@code Refund.create} partent d'ici, dans la transaction
+     * de {@code AuthService#deleteImmediately} / {@code AdminGdprService#executeDeletion} et
+     * AVANT {@code accountFinalizationService.finalize}. Un échec de la finalisation (R2,
+     * Firebase) annulerait les lignes {@code wallet_refund_requests} et restaurerait le solde
+     * alors que le remboursement Stripe, lui, est irréversible. Une transaction indépendante
+     * commite les demandes avant que la finalisation ne puisse échouer.
+     *
+     * <p>{@code requestDeletion} l'appelle en auto-invocation : le proxy est contourné et la
+     * propagation sans effet. Sans conséquence, rien de risqué ne suit dans {@code requestDeletion}
+     * (mise à jour du statut de l'utilisateur et publication d'event, dans la même transaction).
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public List<com.yadony.api.payments.wallet.WalletRefundRequestEntity> settleWalletsForDeletion(UUID userId) {
+        List<com.yadony.api.payments.wallet.WalletRefundRequestEntity> opened = new ArrayList<>();
+        for (com.yadony.api.payments.wallet.WalletAccountEntity wallet : walletAccountRepository.findAllByUserId(userId)) {
+            if (wallet.getBalance().compareTo(BigDecimal.ZERO) <= 0) {
+                continue;
+            }
+            String currency = wallet.getCurrency();
+            WalletRefundAllocation allocation;
+            try {
+                allocation = walletSelfRefundService.allocation(userId, currency);
+            } catch (WalletAllocationInvariantException e) {
+                log.warn("Rejeu du ledger incoherent, bascule sur le ticket manuel : user {} devise {} : {}",
+                        userId, currency, e.getMessage());
+                opened.add(walletRefundRequestService.request(userId, currency));
+                continue;
+            }
+            if (allocation.refundableTotal().signum() <= 0) {
+                continue;
+            }
+            try {
+                opened.add(walletSelfRefundService.request(userId, currency, List.of()));
+            } catch (WalletAllocationInvariantException e) {
+                // request() recalcule l'allocation en auto-invocation : le noRollbackFor porté
+                // par request() ne couvre pas cette exception-là, qui remonte donc jusqu'ici.
+                // Le ledger a bougé entre les deux rejeus : repli sur le ticket manuel.
+                log.warn("Rejeu du ledger incoherent a la demande, bascule sur le ticket manuel : "
+                        + "user {} devise {} : {}", userId, currency, e.getMessage());
+                opened.add(walletRefundRequestService.request(userId, currency));
+            } catch (YadonyBusinessException e) {
+                // Seul code atteignable ici : wallet-not-refund-eligible, quand chaque reliquat
+                // s'arrondit à zéro à l'unité mineure Stripe (ex. 0.50 XOF) une fois le solde
+                // par ailleurs remboursable au sens du ledger (refundableTotal > 0 en 2 décimales).
+                // Rien à ajouter : il n'y a réellement rien à rembourser sur cette devise. Depuis
+                // la tâche 4, request() renvoie la demande existante en cas de re-tap (jamais de
+                // 422 "en cours" ici) — ce catch ne couvre donc plus un scénario de doublon.
+                log.info("Reglement wallet {} {} ignore : {}", userId, currency, e.getErrorCode());
             }
         }
+        return opened;
+    }
 
-        boolean anyIneligible = positiveBalances.stream()
-                .anyMatch(w -> !handledAutomatically.contains(w.getCurrency()));
-        if (anyIneligible) {
-            walletRefundRequestService.request(userId);
+    /** Lecture seule : ce que la suppression ferait de chaque solde positif. */
+    public List<WalletSettlementDto> walletSettlement(UUID userId) {
+        List<WalletSettlementDto> result = new ArrayList<>();
+        for (com.yadony.api.payments.wallet.WalletAccountEntity wallet : walletAccountRepository.findAllByUserId(userId)) {
+            if (wallet.getBalance().compareTo(BigDecimal.ZERO) <= 0) {
+                continue;
+            }
+            try {
+                WalletRefundAllocation a = walletSelfRefundService.allocation(userId, wallet.getCurrency());
+                result.add(new WalletSettlementDto(wallet.getCurrency(), a.refundableTotal(),
+                        a.nonRefundable(), a.inFlight(), WalletSettlementDto.RAIL_STRIPE));
+            } catch (WalletAllocationInvariantException e) {
+                log.warn("Rejeu du ledger incoherent, rail MANUAL affiche : user {} devise {} : {}",
+                        userId, wallet.getCurrency(), e.getMessage());
+                result.add(new WalletSettlementDto(wallet.getCurrency(), wallet.getBalance(),
+                        BigDecimal.ZERO, BigDecimal.ZERO, WalletSettlementDto.RAIL_MANUAL));
+            }
         }
+        return result;
     }
 
     /** Point unique d'accès à {@link PaymentRepository#hasActiveEscrowForUser} pour la règle de
@@ -131,7 +180,7 @@ public class UserService {
      *  l'éligibilité à la suppression de compte, pour permettre au front d'expliquer un
      *  blocage réel *avant* que l'utilisateur ne tente l'action. Seul l'escrow actif bloque
      *  encore {@code canDelete} (temporaire, se résout de lui-même) — un solde wallet ne
-     *  bloque plus rien (cf. {@link #openWalletRefundTicketIfNeeded}), il est juste signalé
+     *  bloque plus rien (cf. {@link #settleWalletsForDeletion}), il est juste signalé
      *  via {@code hasWalletBalance} pour informer l'utilisateur. */
     @Transactional(readOnly = true)
     public DeletionEligibilityResponse checkDeletionEligibility(String firebaseUid) {
@@ -140,9 +189,9 @@ public class UserService {
                         HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
 
         if (hasActiveEscrow(user.getId())) {
-            return new DeletionEligibilityResponse(false, "active-transactions", false);
+            return new DeletionEligibilityResponse(false, "active-transactions", false, List.of());
         }
-        return new DeletionEligibilityResponse(true, null, hasWalletBalance(user.getId()));
+        return new DeletionEligibilityResponse(true, null, hasWalletBalance(user.getId()), walletSettlement(user.getId()));
     }
 
     // Story 9.5 — Suspension automatique après trop de refus de colis
@@ -185,7 +234,7 @@ public class UserService {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "active-transactions",
                     "Unprocessable", "Impossible — vous avez des transactions en cours");
         }
-        openWalletRefundTicketIfNeeded(user.getId());
+        settleWalletsForDeletion(user.getId());
 
         user.setStatus(UserStatus.PENDING_DELETION);
         user.setDeletionRequestedAt(Instant.now());

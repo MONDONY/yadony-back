@@ -81,18 +81,28 @@ class AuthControllerDeletionEligibilityIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.canDelete").value(true))
                 .andExpect(jsonPath("$.blockedReasonCode").doesNotExist())
-                .andExpect(jsonPath("$.hasWalletBalance").value(false));
+                .andExpect(jsonPath("$.hasWalletBalance").value(false))
+                .andExpect(jsonPath("$.walletSettlement").isArray());
     }
 
     @Test
     @DisplayName("200 OK, canDelete=true malgré un solde wallet positif (Apple 5.1.1(v)), hasWalletBalance=true")
     void positiveWalletBalance_doesNotBlockButIsSignaled() throws Exception {
+        // Le solde de ce fixture est posé directement sur l'entité (setUp), sans transaction
+        // de ledger associée : le rejeu du ledger (WalletRefundAllocator) ne retombe donc pas
+        // sur le solde (0 alloué vs 12.50) et walletSettlement() (UserService) retombe sur le
+        // rail MANUAL avec la totalité du solde en refundableAmount — ce n'est pas le chemin
+        // STRIPE nominal (qui exigerait une vraie recharge TOP_UP créditée via
+        // WalletService.credit pour que le ledger soit cohérent).
         mockMvc.perform(get("/auth/me/deletion-eligibility")
                         .with(authentication(authenticatedAs(FIREBASE_UID_WALLET_BALANCE))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.canDelete").value(true))
                 .andExpect(jsonPath("$.blockedReasonCode").doesNotExist())
-                .andExpect(jsonPath("$.hasWalletBalance").value(true));
+                .andExpect(jsonPath("$.hasWalletBalance").value(true))
+                .andExpect(jsonPath("$.walletSettlement[0].currency").value("EUR"))
+                .andExpect(jsonPath("$.walletSettlement[0].refundableAmount").value(12.5))
+                .andExpect(jsonPath("$.walletSettlement[0].rail").value("MANUAL"));
     }
 
     @Test

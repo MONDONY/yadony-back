@@ -156,11 +156,11 @@ public class AuthController {
         return ResponseEntity.ok(authService.checkDeletionEligibility(firebaseUid));
     }
 
-    /** Demande autonome de remboursement du solde wallet, sans supprimer le compte — ouvre un
-     *  ticket manuel (cf. {@code WalletRefundRequestService}) résolu par un admin après
-     *  remboursement Stripe hors-app. La suppression de compte ouvre déjà ce même ticket
-     *  automatiquement en cas de solde positif ; cet endpoint reste utile pour qui veut être
-     *  remboursé sans supprimer son compte. */
+    /** Demande autonome de remboursement du solde wallet, sans supprimer le compte —
+     *  remboursement Stripe automatique, ticket manuel en repli (cf.
+     *  {@code UserService#settleWalletsForDeletion}). La suppression de compte ouvre déjà ce
+     *  même règlement automatiquement en cas de solde positif ; cet endpoint reste utile pour
+     *  qui veut être remboursé sans supprimer son compte. */
     @PostMapping("/me/wallet-refund-request")
     public ResponseEntity<java.util.List<WalletRefundRequestResponse>> requestWalletRefund() {
         String firebaseUid = requireFirebaseUid();

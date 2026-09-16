@@ -83,7 +83,7 @@ public class AdminGdprService {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "active-transactions",
                     "Unprocessable", "Impossible — cet utilisateur a des transactions en cours");
         }
-        userService.openWalletRefundTicketIfNeeded(user.getId());
+        userService.settleWalletsForDeletion(user.getId());
 
         // Écrit AVANT finalize() : celui-ci journalise USER_GDPR_DELETION avec l'utilisateur
         // comme acteur. Sans cette entrée, l'administrateur à l'origine du geste ne serait

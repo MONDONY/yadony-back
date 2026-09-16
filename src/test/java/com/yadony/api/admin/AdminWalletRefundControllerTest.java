@@ -109,7 +109,7 @@ class AdminWalletRefundControllerTest {
                         .with(authentication(adminAuth(AdminRole.SUPPORT))))
                 .andExpect(status().isForbidden());
 
-        verify(walletService, never()).debit(any(), any(), any(), any(), any());
+        verify(walletService, never()).debitConfirmedRefund(any(), any(), any(), any());
     }
 
     // ── GET ──────────────────────────────────────────────────────────────────
@@ -146,8 +146,10 @@ class AdminWalletRefundControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("RESOLVED"));
 
-        verify(walletService).debit(eq(USER_ID), eq("CAD"), eq(new BigDecimal("45.00")),
-                eq(com.yadony.api.payments.wallet.WalletTransactionType.ADMIN_REFUND_OUT), eq(null));
+        // debitConfirmedRefund et non debit : ce dernier passe par assertNotFrozen, que le
+        // ticket PENDING en cours de résolution déclenche lui-même.
+        verify(walletService).debitConfirmedRefund(eq(USER_ID), eq("CAD"), eq(new BigDecimal("45.00")),
+                eq(com.yadony.api.payments.wallet.WalletTransactionType.ADMIN_REFUND_OUT));
         verify(auditService).log(eq("wallet_refund_request"), any(), eq("RESOLVED"), eq(ADMIN_ID), any());
     }
 
@@ -175,6 +177,6 @@ class AdminWalletRefundControllerTest {
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.code").value("already-resolved"));
 
-        verify(walletService, never()).debit(any(), any(), any(), any(), any());
+        verify(walletService, never()).debitConfirmedRefund(any(), any(), any(), any());
     }
 }

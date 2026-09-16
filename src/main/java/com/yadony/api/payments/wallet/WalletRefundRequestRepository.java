@@ -25,4 +25,6 @@ public interface WalletRefundRequestRepository extends JpaRepository<WalletRefun
 
     Page<WalletRefundRequestEntity> findAllByStatusOrderByRequestedAtAsc(
             WalletRefundRequestStatus status, Pageable pageable);
+
+    boolean existsByParentRequestId(UUID parentRequestId);
 }

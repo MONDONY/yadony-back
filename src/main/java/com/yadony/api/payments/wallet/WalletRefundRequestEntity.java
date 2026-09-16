@@ -14,7 +14,7 @@ import java.util.UUID;
 
 /**
  * Demande de remboursement d'un solde wallet rechargé par carte, ouverte automatiquement à
- * la suppression de compte (cf. {@code UserService#openWalletRefundTicketIfNeeded}, jamais
+ * la suppression de compte (cf. {@code UserService#settleWalletsForDeletion}, jamais
  * bloquant) ou explicitement en dehors de toute suppression — aucun flow de remboursement
  * automatique n'existe (cf. {@link WalletRefundRequestService}), un admin rembourse
  * manuellement via Stripe puis résout le ticket.
@@ -53,6 +53,10 @@ public class WalletRefundRequestEntity extends BaseEntity {
     @Column(name = "resolved_by")
     private UUID resolvedBy;
 
+    /** Ticket MANUAL ouvert automatiquement pour les items FAILED d'une demande AUTOMATIC_STRIPE. */
+    @Column(name = "parent_request_id")
+    private UUID parentRequestId;
+
     public UUID getUserId() { return userId; }
     public void setUserId(UUID userId) { this.userId = userId; }
 
@@ -76,4 +80,7 @@ public class WalletRefundRequestEntity extends BaseEntity {
 
     public UUID getResolvedBy() { return resolvedBy; }
     public void setResolvedBy(UUID resolvedBy) { this.resolvedBy = resolvedBy; }
+
+    public UUID getParentRequestId() { return parentRequestId; }
+    public void setParentRequestId(UUID parentRequestId) { this.parentRequestId = parentRequestId; }
 }

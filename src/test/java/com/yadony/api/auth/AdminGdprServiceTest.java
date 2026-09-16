@@ -136,7 +136,7 @@ class AdminGdprServiceTest {
 
         service.executeDeletion(user.getId(), ADMIN_ID, "motif", false);
 
-        verify(userService).openWalletRefundTicketIfNeeded(user.getId());
+        verify(userService).settleWalletsForDeletion(user.getId());
         verify(accountFinalizationService).finalize(user, FinalizationReason.ADMIN_INITIATED);
     }
 

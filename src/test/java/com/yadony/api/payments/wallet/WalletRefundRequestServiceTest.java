@@ -66,91 +66,91 @@ class WalletRefundRequestServiceTest {
         }
     }
 
-    @Nested
-    @DisplayName("request()")
-    class RequestTests {
+    @Test
+    void requestForCurrency_ouvreUnTicketPourLaDeviseSeule() {
+        when(walletService.getAllBalances(USER_ID)).thenReturn(List.of(walletOf("EUR", "35.00"), walletOf("XOF", "1000")));
+        when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any()))
+                .thenReturn(Optional.empty());
+        when(refundRequestRepository.save(any())).thenAnswer(inv -> {
+            WalletRefundRequestEntity r = inv.getArgument(0);
+            assignId(r);
+            return r;
+        });
 
-        @Test
-        @DisplayName("aucun solde positif → 422 wallet-balance-empty, rien n'est créé")
-        void noPositiveBalance_throws422() {
-            when(walletService.getAllBalances(USER_ID)).thenReturn(
-                    List.of(walletOf("EUR", "0.00")));
+        WalletRefundRequestEntity ticket = service.request(USER_ID, "EUR");
 
-            assertThatThrownBy(() -> service.request(USER_ID))
-                    .isInstanceOf(YadonyBusinessException.class)
-                    .hasFieldOrPropertyWithValue("errorCode", "wallet-balance-empty");
+        assertThat(ticket.getCurrency()).isEqualTo("EUR");
+        assertThat(ticket.getAmount()).isEqualByComparingTo("35.00");
+        assertThat(ticket.getChannel()).isEqualTo(WalletRefundChannel.MANUAL_ADMIN);
+        verify(refundRequestRepository, times(1)).save(any());
+    }
 
-            verify(refundRequestRepository, never()).save(any());
-            verify(adminAlertService, never()).raise(any(), any(), any());
-        }
+    @Test
+    void requestForCurrency_soldeNul_422() {
+        when(walletService.getAllBalances(USER_ID)).thenReturn(List.of(walletOf("EUR", "0.00")));
 
-        @Test
-        @DisplayName("un solde positif → crée le ticket, audit loggé, admin alerté")
-        void onePositiveBalance_createsTicketAndAlertsAdmin() {
-            when(walletService.getAllBalances(USER_ID)).thenReturn(
-                    List.of(walletOf("CAD", "45.00")));
-            when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(
-                    USER_ID, "CAD", List.of(WalletRefundRequestStatus.PENDING, WalletRefundRequestStatus.PROCESSING)))
-                    .thenReturn(Optional.empty());
-            when(refundRequestRepository.save(any())).thenAnswer(inv -> {
-                WalletRefundRequestEntity e = inv.getArgument(0);
-                assignId(e);
-                return e;
-            });
+        assertThatThrownBy(() -> service.request(USER_ID, "EUR"))
+                .isInstanceOf(YadonyBusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "wallet-balance-empty");
+    }
 
-            List<WalletRefundRequestEntity> result = service.request(USER_ID);
+    @Test
+    @DisplayName("ticket PENDING/PROCESSING déjà ouvert pour cette devise → réutilisé, pas de doublon ni re-alerte")
+    void existingPendingTicket_isReusedNotDuplicated() {
+        WalletRefundRequestEntity existing = new WalletRefundRequestEntity();
+        assignId(existing);
+        existing.setUserId(USER_ID);
+        existing.setCurrency("EUR");
+        existing.setAmount(new BigDecimal("30.00"));
+        existing.setStatus(WalletRefundRequestStatus.PENDING);
 
-            assertThat(result).hasSize(1);
-            assertThat(result.get(0).getCurrency()).isEqualTo("CAD");
-            assertThat(result.get(0).getAmount()).isEqualByComparingTo("45.00");
-            assertThat(result.get(0).getStatus()).isEqualTo(WalletRefundRequestStatus.PENDING);
+        when(walletService.getAllBalances(USER_ID)).thenReturn(List.of(walletOf("EUR", "30.00")));
+        when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any()))
+                .thenReturn(Optional.of(existing));
 
-            verify(auditService).log(eq("wallet_refund_request"), any(), eq("REQUESTED"), eq(USER_ID), any());
-            ArgumentCaptor<Map<String, Object>> contextCaptor = ArgumentCaptor.forClass(Map.class);
-            verify(adminAlertService).raise(eq("wallet-refund-requested"), any(), contextCaptor.capture());
-            assertThat(contextCaptor.getValue()).containsEntry("currency", "CAD");
-        }
+        WalletRefundRequestEntity result = service.request(USER_ID, "EUR");
 
-        @Test
-        @DisplayName("plusieurs devises en solde positif → un ticket par devise")
-        void multiplePositiveBalances_createsOneTicketPerCurrency() {
-            when(walletService.getAllBalances(USER_ID)).thenReturn(
-                    List.of(walletOf("EUR", "10.00"), walletOf("CAD", "20.00")));
-            when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(any(), any(), any()))
-                    .thenReturn(Optional.empty());
-            when(refundRequestRepository.save(any())).thenAnswer(inv -> {
-                WalletRefundRequestEntity e = inv.getArgument(0);
-                assignId(e);
-                return e;
-            });
+        assertThat(result).isSameAs(existing);
+        verify(refundRequestRepository, never()).save(any());
+        verify(adminAlertService, never()).raise(any(), any(), any());
+    }
 
-            List<WalletRefundRequestEntity> result = service.request(USER_ID);
+    @Test
+    void openChildForFailedItems_creeUnTicketManuelLieAuParent() {
+        WalletRefundRequestEntity parent = new WalletRefundRequestEntity();
+        assignId(parent);
+        parent.setUserId(USER_ID);
+        parent.setCurrency("EUR");
+        parent.setAmount(new BigDecimal("35.00"));
+        when(refundRequestRepository.existsByParentRequestId(parent.getId())).thenReturn(false);
+        when(refundRequestRepository.save(any())).thenAnswer(inv -> {
+            WalletRefundRequestEntity r = inv.getArgument(0);
+            assignId(r);
+            return r;
+        });
 
-            assertThat(result).hasSize(2);
-            verify(adminAlertService, times(2)).raise(any(), any(), any());
-        }
+        WalletRefundRequestEntity child = service.openChildForFailedItems(parent, new BigDecimal("15.00"));
 
-        @Test
-        @DisplayName("ticket PENDING déjà ouvert pour cette devise → réutilisé, pas de doublon ni re-alerte")
-        void existingPendingTicket_isReusedNotDuplicated() {
-            WalletRefundRequestEntity existing = new WalletRefundRequestEntity();
-            existing.setUserId(USER_ID);
-            existing.setCurrency("EUR");
-            existing.setAmount(new BigDecimal("30.00"));
-            existing.setStatus(WalletRefundRequestStatus.PENDING);
+        assertThat(child.getParentRequestId()).isEqualTo(parent.getId());
+        assertThat(child.getAmount()).isEqualByComparingTo("15.00");
+        assertThat(child.getChannel()).isEqualTo(WalletRefundChannel.MANUAL_ADMIN);
+        assertThat(child.getStatus()).isEqualTo(WalletRefundRequestStatus.PENDING);
+        verify(auditService).log(eq("wallet_refund_request"), eq(child.getId()), eq("MANUAL_CHILD_OPENED"), eq(USER_ID), any());
+        verify(adminAlertService).raise(eq("wallet-refund-requested"), any(), any());
+    }
 
-            when(walletService.getAllBalances(USER_ID)).thenReturn(
-                    List.of(walletOf("EUR", "30.00")));
-            when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(
-                    USER_ID, "EUR", List.of(WalletRefundRequestStatus.PENDING, WalletRefundRequestStatus.PROCESSING)))
-                    .thenReturn(Optional.of(existing));
+    @Test
+    void openChildForFailedItems_idempotent() {
+        WalletRefundRequestEntity parent = new WalletRefundRequestEntity();
+        assignId(parent);
+        parent.setUserId(USER_ID);
+        parent.setCurrency("EUR");
+        when(refundRequestRepository.existsByParentRequestId(parent.getId())).thenReturn(true);
 
-            List<WalletRefundRequestEntity> result = service.request(USER_ID);
+        WalletRefundRequestEntity child = service.openChildForFailedItems(parent, new BigDecimal("15.00"));
 
-            assertThat(result).containsExactly(existing);
-            verify(refundRequestRepository, never()).save(any());
-            verify(adminAlertService, never()).raise(any(), any(), any());
-        }
+        assertThat(child).isNull();
+        verify(refundRequestRepository, never()).save(any());
     }
 
     @Nested
@@ -189,7 +189,7 @@ class WalletRefundRequestServiceTest {
                     .isInstanceOf(YadonyBusinessException.class)
                     .hasFieldOrPropertyWithValue("errorCode", "already-resolved");
 
-            verify(walletService, never()).debit(any(), any(), any(), any(), any());
+            verify(walletService, never()).debitConfirmedRefund(any(), any(), any(), any());
         }
 
         @Test
@@ -209,8 +209,10 @@ class WalletRefundRequestServiceTest {
 
             WalletRefundRequestEntity result = service.resolve(requestId, ADMIN_ID);
 
-            verify(walletService).debit(USER_ID, "CAD", new BigDecimal("40.00"),
-                    WalletTransactionType.ADMIN_REFUND_OUT, null);
+            // debitConfirmedRefund et non debit : ce dernier passe par assertNotFrozen, que le
+            // ticket PENDING en cours de résolution déclenche lui-même (422 wallet-refund-pending).
+            verify(walletService).debitConfirmedRefund(USER_ID, "CAD", new BigDecimal("40.00"),
+                    WalletTransactionType.ADMIN_REFUND_OUT);
             assertThat(result.getStatus()).isEqualTo(WalletRefundRequestStatus.RESOLVED);
             assertThat(result.getResolvedBy()).isEqualTo(ADMIN_ID);
             assertThat(result.getResolvedAt()).isNotNull();
@@ -233,8 +235,53 @@ class WalletRefundRequestServiceTest {
 
             WalletRefundRequestEntity result = service.resolve(requestId, ADMIN_ID);
 
-            verify(walletService, never()).debit(any(), any(), any(), any(), any());
+            verify(walletService, never()).debitConfirmedRefund(any(), any(), any(), any());
             assertThat(result.getStatus()).isEqualTo(WalletRefundRequestStatus.RESOLVED);
+        }
+
+        @Test
+        @DisplayName("ticket enfant → débite le montant du ticket, pas tout le solde "
+            + "(le reste peut être du non-cash)")
+        void resolves_child_debitsTicketAmountNotWholeBalance() {
+            UUID requestId = UUID.randomUUID();
+            WalletRefundRequestEntity child = pendingRequest();
+            child.setAmount(new BigDecimal("15.00"));
+            child.setParentRequestId(UUID.randomUUID());
+            when(refundRequestRepository.findById(requestId)).thenReturn(Optional.of(child));
+            // 15 de cash en échec + 10 de parrainage : seuls les 15 du ticket partent.
+            when(walletService.getBalance(USER_ID, "CAD")).thenReturn(new BigDecimal("25.00"));
+            when(refundRequestRepository.save(any())).thenAnswer(inv -> {
+                WalletRefundRequestEntity e = inv.getArgument(0);
+                assignId(e);
+                return e;
+            });
+
+            WalletRefundRequestEntity result = service.resolve(requestId, ADMIN_ID);
+
+            verify(walletService).debitConfirmedRefund(USER_ID, "CAD", new BigDecimal("15.00"),
+                    WalletTransactionType.ADMIN_REFUND_OUT);
+            assertThat(result.getStatus()).isEqualTo(WalletRefundRequestStatus.RESOLVED);
+        }
+
+        @Test
+        @DisplayName("ticket enfant dont le solde est retombé sous le montant → débite le solde")
+        void resolves_child_debitsBalanceWhenLowerThanTicket() {
+            UUID requestId = UUID.randomUUID();
+            WalletRefundRequestEntity child = pendingRequest();
+            child.setAmount(new BigDecimal("15.00"));
+            child.setParentRequestId(UUID.randomUUID());
+            when(refundRequestRepository.findById(requestId)).thenReturn(Optional.of(child));
+            when(walletService.getBalance(USER_ID, "CAD")).thenReturn(new BigDecimal("9.00"));
+            when(refundRequestRepository.save(any())).thenAnswer(inv -> {
+                WalletRefundRequestEntity e = inv.getArgument(0);
+                assignId(e);
+                return e;
+            });
+
+            service.resolve(requestId, ADMIN_ID);
+
+            verify(walletService).debitConfirmedRefund(USER_ID, "CAD", new BigDecimal("9.00"),
+                    WalletTransactionType.ADMIN_REFUND_OUT);
         }
     }
 }

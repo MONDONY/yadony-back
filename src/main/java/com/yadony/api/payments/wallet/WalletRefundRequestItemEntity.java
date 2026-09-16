@@ -42,6 +42,10 @@ public class WalletRefundRequestItemEntity {
     @Enumerated(EnumType.STRING)
     private WalletRefundItemStatus status = WalletRefundItemStatus.PENDING;
 
+    /** Code d'erreur Stripe quand Refund.create a échoué (ex. charge_already_refunded). */
+    @Column(name = "failure_reason", length = 60)
+    private String failureReason;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -61,5 +65,7 @@ public class WalletRefundRequestItemEntity {
     public void setAmount(BigDecimal amount) { this.amount = amount; }
     public WalletRefundItemStatus getStatus() { return status; }
     public void setStatus(WalletRefundItemStatus status) { this.status = status; }
+    public String getFailureReason() { return failureReason; }
+    public void setFailureReason(String failureReason) { this.failureReason = failureReason; }
     public Instant getCreatedAt() { return createdAt; }
 }
