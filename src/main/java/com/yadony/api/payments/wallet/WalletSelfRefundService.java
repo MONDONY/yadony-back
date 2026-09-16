@@ -134,19 +134,12 @@ public class WalletSelfRefundService {
         }
     }
 
-    @Transactional(readOnly = true)
-    public boolean isEligible(UUID userId, String currency) {
-        String code = normalize(currency);
-        try {
-            return isEligible(userId, code, allocation(userId, code));
-        } catch (WalletAllocationInvariantException e) {
-            return false;
-        }
-    }
-
     /**
-     * Variante pour un appelant qui tient déjà l'allocation de cette devise (cf.
-     * {@code WalletController#getBalance}) : évite un second rejeu complet du ledger.
+     * Le bouton « Rembourser » est-il actif pour cette devise ? L'appelant fournit
+     * l'allocation qu'il tient déjà (cf. {@code WalletController#getBalance}) : elle vient
+     * du même rejeu de ledger que le reste de la réponse, et la surcharge sans allocation
+     * qui existait ici en rejouait un second pour rien (plus aucun appelant depuis que
+     * {@code getBalance} passe la sienne).
      */
     @Transactional(readOnly = true)
     public boolean isEligible(UUID userId, String currency, WalletRefundAllocation allocation) {
@@ -303,17 +296,21 @@ public class WalletSelfRefundService {
             item.setStatus(WalletRefundItemStatus.PENDING);
             refundRequestItemRepository.save(item);
             auditItems.add(Map.of("paymentIntentId", target.paymentIntentId(),
-                    "amount", scaledTarget.amount().toPlainString()));
+                    "amount", scaledTarget.amount().toPlainString(),
+                    "status", item.getStatus().name()));
         }
 
         saved.setStatus(WalletRefundRequestStatus.PROCESSING);
         refundRequestRepository.save(saved);
 
+        // items en liste de maps et non en toString() : le payload part en JSONB, une chaine
+        // "[{paymentIntentId=pi_1, amount=35.00}]" n'est ni requetable (jsonb_array_elements)
+        // ni relisible sans parsing maison.
         auditService.log("wallet_refund_request", saved.getId(), "AUTOMATIC_REQUESTED", userId,
-                Map.of("currency", code, "amount", saved.getAmount().toString(),
+                Map.<String, Object>of("currency", code, "amount", saved.getAmount().toString(),
                         "refundableTotal", allocation.refundableTotal().toPlainString(),
                         "nonRefundable", allocation.nonRefundable().toPlainString(),
-                        "items", auditItems.toString()));
+                        "items", List.copyOf(auditItems)));
 
         for (WalletRefundRequestItemEntity item : refundRequestItemRepository.findByRefundRequestId(saved.getId())) {
             issueStripeRefund(item, code);

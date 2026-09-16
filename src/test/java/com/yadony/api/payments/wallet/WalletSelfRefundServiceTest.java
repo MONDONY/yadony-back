@@ -175,30 +175,6 @@ class WalletSelfRefundServiceTest {
     }
 
     @Test
-    void isEligible_vraiQuandDuRemboursableExiste() {
-        stubLedger("35.00", ledgerTx(WalletTransactionType.TOP_UP, "40.00", "pi_1"),
-                ledgerTx(WalletTransactionType.BID_PAYMENT, "-5.00", null));
-        when(refundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any())).thenReturn(false);
-
-        assertThat(service.isEligible(USER_ID, "EUR")).isTrue();
-    }
-
-    @Test
-    void isEligible_fauxQuandInvariantCasse() {
-        stubLedger("99.00", ledgerTx(WalletTransactionType.TOP_UP, "40.00", "pi_1"));
-
-        assertThat(service.isEligible(USER_ID, "EUR")).isFalse();
-    }
-
-    @Test
-    void isEligible_fauxQuandSoldeUniquementNonCash() {
-        stubLedger("5.00", ledgerTx(WalletTransactionType.REFERRAL_REWARD, "5.00", null));
-        when(refundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any())).thenReturn(false);
-
-        assertThat(service.isEligible(USER_ID, "EUR")).isFalse();
-    }
-
-    @Test
     void isEligible_avecAllocationFournie_neRejouePasLeLedger() {
         when(refundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any())).thenReturn(false);
         WalletRefundAllocation deja = new WalletRefundAllocation(List.of(),
@@ -327,6 +303,45 @@ class WalletSelfRefundServiceTest {
             assertThat(params.getValue().getPaymentIntent()).isEqualTo("pi_1");
             assertThat(params.getValue().getAmount()).isEqualTo(3500L);
         }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void request_auditItems_structureSerialisableEtPasUnToString() {
+        // Régression : "items" partait en auditItems.toString(), soit
+        // "[{paymentIntentId=pi_a, amount=20.00}]" dans un payload JSONB — ni requêtable
+        // par jsonb_array_elements, ni relisible sans parsing maison.
+        WalletTransactionEntity a = ledgerTx(WalletTransactionType.TOP_UP, "20.00", "pi_a");
+        WalletTransactionEntity b = ledgerTx(WalletTransactionType.TOP_UP, "30.00", "pi_b");
+        stubLedger("45.00", a, b, ledgerTx(WalletTransactionType.BID_PAYMENT, "-5.00", null));
+        when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any()))
+                .thenReturn(Optional.empty());
+        when(refundRequestRepository.save(any())).thenAnswer(inv -> {
+            WalletRefundRequestEntity r = inv.getArgument(0);
+            if (r.getId() == null) assignId(r);
+            return r;
+        });
+        when(refundRequestItemRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(refundRequestItemRepository.findByRefundRequestId(any())).thenReturn(List.of());
+
+        try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            service.request(USER_ID, "EUR", List.of());
+        }
+
+        ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
+        verify(auditService).log(eq("wallet_refund_request"), any(), eq("AUTOMATIC_REQUESTED"),
+                eq(USER_ID), payload.capture());
+        Object items = payload.getValue().get("items");
+        assertThat(items).isInstanceOf(List.class);
+        List<Map<String, String>> list = (List<Map<String, String>>) items;
+        assertThat(list).hasSize(2);
+        assertThat(list).allSatisfy(item -> assertThat(item)
+                .containsOnlyKeys("paymentIntentId", "amount", "status"));
+        assertThat(list).extracting(item -> item.get("paymentIntentId"))
+                .containsExactlyInAnyOrder("pi_a", "pi_b");
+        assertThat(list).extracting(item -> item.get("status")).containsOnly("PENDING");
+        assertThat(payload.getValue().get("refundableTotal")).isEqualTo("45.00");
+        assertThat(payload.getValue().get("nonRefundable")).isEqualTo("0");
     }
 
     @Test

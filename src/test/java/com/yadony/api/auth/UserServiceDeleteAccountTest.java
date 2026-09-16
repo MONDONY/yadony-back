@@ -253,6 +253,29 @@ class UserServiceDeleteAccountTest {
         }
 
         @Test
+        void stripeRail_inFlightRemonteDeLAllocateur() {
+            when(walletAccountRepository.findAllByUserId(USER_ID)).thenReturn(List.of(walletOf("EUR", "40.00")));
+            when(walletSelfRefundService.allocation(USER_ID, "EUR")).thenReturn(
+                    new WalletRefundAllocation(List.of(), new BigDecimal("20.00"),
+                            new BigDecimal("5.00"), new BigDecimal("15.00")));
+
+            List<WalletSettlementDto> s = userService.walletSettlement(USER_ID);
+
+            assertThat(s.get(0).refundableAmount()).isEqualByComparingTo("20.00");
+            assertThat(s.get(0).forfeitedAmount()).isEqualByComparingTo("5.00");
+            assertThat(s.get(0).inFlightAmount()).isEqualByComparingTo("15.00");
+            assertThat(s.get(0).rail()).isEqualTo("STRIPE");
+        }
+
+        /**
+         * Rail MANUAL : aucun montant de l'allocateur n'existe (le rejeu a échoué). Le repli
+         * ouvre un ticket admin sur TOUT le solde, que la résolution admin rembourse en entier
+         * et que la finalisation ne perd pas — {@code refundableAmount = solde},
+         * {@code forfeitedAmount = 0} et {@code inFlightAmount = 0} décrivent donc bien ce qui
+         * repart vers l'utilisateur par ce rail. Comportement figé ici : ne pas le remplacer
+         * par un {@code refundableTotal} d'allocateur, qui n'est pas calculable dans ce cas.
+         */
+        @Test
         void invariantCasse_railManualSurToutLeSolde() {
             when(walletAccountRepository.findAllByUserId(USER_ID)).thenReturn(List.of(walletOf("EUR", "40.00")));
             when(walletSelfRefundService.allocation(USER_ID, "EUR"))
@@ -263,6 +286,7 @@ class UserServiceDeleteAccountTest {
             assertThat(s.get(0).rail()).isEqualTo("MANUAL");
             assertThat(s.get(0).refundableAmount()).isEqualByComparingTo("40.00");
             assertThat(s.get(0).forfeitedAmount()).isEqualByComparingTo("0");
+            assertThat(s.get(0).inFlightAmount()).isEqualByComparingTo("0");
         }
     }
 

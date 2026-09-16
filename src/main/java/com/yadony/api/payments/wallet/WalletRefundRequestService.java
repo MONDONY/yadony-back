@@ -94,12 +94,28 @@ public class WalletRefundRequestService {
         return saved;
     }
 
+    /**
+     * Idempotence par (utilisateur, devise, statut, canal) : seul un ticket MANUAL encore
+     * ouvert vaut « rien à refaire ». Une demande AUTOMATIC_STRIPE en vol n'est pas un ticket
+     * admin — la renvoyer telle quelle laissait croire à l'appelant qu'un humain allait
+     * reprendre le solde, alors que le rail automatique le traite déjà et qu'un échec d'item
+     * ouvrira son propre ticket enfant ({@link #openChildForFailedItems}). On ne peut pas non
+     * plus ouvrir un second ticket par-dessus : l'index unique partiel
+     * {@code uq_wallet_refund_requests_pending} (V229) n'autorise qu'une demande
+     * PENDING/PROCESSING par (user_id, currency). La demande en cours est donc renvoyée sans
+     * rien créer, et tracée pour qu'un règlement manuel resté sans ticket soit visible.
+     */
     private WalletRefundRequestEntity requestForCurrency(UUID userId, WalletAccountEntity wallet) {
         WalletRefundRequestEntity existing = refundRequestRepository
                 .findByUserIdAndCurrencyAndStatusIn(userId, wallet.getCurrency(),
                         List.of(WalletRefundRequestStatus.PENDING, WalletRefundRequestStatus.PROCESSING))
                 .orElse(null);
         if (existing != null) {
+            if (existing.getChannel() != WalletRefundChannel.MANUAL_ADMIN) {
+                log.warn("Ticket manuel non ouvert pour user {} devise {} : la demande "
+                                + "automatique {} est encore en cours sur cette devise",
+                        userId, wallet.getCurrency(), existing.getId());
+            }
             return existing;
         }
 
@@ -107,6 +123,7 @@ public class WalletRefundRequestService {
         request.setUserId(userId);
         request.setCurrency(wallet.getCurrency());
         request.setAmount(wallet.getBalance());
+        request.setChannel(WalletRefundChannel.MANUAL_ADMIN);
         request.setStatus(WalletRefundRequestStatus.PENDING);
         request.setRequestedAt(LocalDateTime.now(ZoneOffset.UTC));
         WalletRefundRequestEntity saved = refundRequestRepository.save(request);

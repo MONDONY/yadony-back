@@ -149,7 +149,23 @@ public class UserService {
         return opened;
     }
 
-    /** Lecture seule : ce que la suppression ferait de chaque solde positif. */
+    /**
+     * Lecture seule : ce que la suppression ferait de chaque solde positif.
+     *
+     * <p>Rail STRIPE : les trois montants sont ceux de l'allocateur ({@code refundableTotal},
+     * {@code nonRefundable}, {@code inFlight}), au centime près ce que
+     * {@link #settleWalletsForDeletion} demandera à Stripe.
+     *
+     * <p>Rail MANUAL : le rejeu du ledger a échoué, aucun des trois montants de l'allocateur
+     * n'existe. Le repli ouvre un ticket admin sur TOUT le solde
+     * ({@code WalletRefundRequestService#request}), que la résolution admin rembourse en
+     * entier ({@code resolve} débite le solde courant), et la finalisation ne perd rien tant
+     * que l'invariant reste cassé ({@code UserFinalizedPaymentsListener#forfeitNonCash}
+     * ignore la devise). {@code refundableAmount = solde} et {@code forfeitedAmount = 0}
+     * décrivent donc exactement ce qui repart vers l'utilisateur par ce rail, au sens de
+     * {@link WalletSettlementDto} — ce n'est volontairement pas le {@code refundableTotal}
+     * de l'allocateur, qui n'est pas calculable ici.
+     */
     public List<WalletSettlementDto> walletSettlement(UUID userId) {
         List<WalletSettlementDto> result = new ArrayList<>();
         for (com.yadony.api.payments.wallet.WalletAccountEntity wallet : walletAccountRepository.findAllByUserId(userId)) {

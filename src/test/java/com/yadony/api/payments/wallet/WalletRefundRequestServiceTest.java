@@ -111,7 +111,36 @@ class WalletRefundRequestServiceTest {
         WalletRefundRequestEntity result = service.request(USER_ID, "EUR");
 
         assertThat(result).isSameAs(existing);
+        assertThat(existing.getChannel()).isEqualTo(WalletRefundChannel.MANUAL_ADMIN);
         verify(refundRequestRepository, never()).save(any());
+        verify(adminAlertService, never()).raise(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("demande AUTOMATIC_STRIPE en vol → renvoyée sans second ticket (index unique partiel)")
+    void existingAutomaticRequest_neCreeJamaisUnSecondTicket() {
+        // Idempotence par (user, devise, statut, canal) : la demande en cours n'est pas un
+        // ticket admin. uq_wallet_refund_requests_pending (V229) interdit d'en ouvrir un
+        // second sur la même devise : on renvoie la demande sans rien créer ni ré-alerter,
+        // le rail automatique ouvrira lui-même son ticket enfant en cas d'échec d'item.
+        WalletRefundRequestEntity enVol = new WalletRefundRequestEntity();
+        assignId(enVol);
+        enVol.setUserId(USER_ID);
+        enVol.setCurrency("EUR");
+        enVol.setAmount(new BigDecimal("35.00"));
+        enVol.setChannel(WalletRefundChannel.AUTOMATIC_STRIPE);
+        enVol.setStatus(WalletRefundRequestStatus.PROCESSING);
+
+        when(walletService.getAllBalances(USER_ID)).thenReturn(List.of(walletOf("EUR", "40.00")));
+        when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any()))
+                .thenReturn(Optional.of(enVol));
+
+        WalletRefundRequestEntity result = service.request(USER_ID, "EUR");
+
+        assertThat(result).isSameAs(enVol);
+        assertThat(result.getChannel()).isEqualTo(WalletRefundChannel.AUTOMATIC_STRIPE);
+        verify(refundRequestRepository, never()).save(any());
+        verify(auditService, never()).log(any(), any(), any(), any(), any());
         verify(adminAlertService, never()).raise(any(), any(), any());
     }
 
