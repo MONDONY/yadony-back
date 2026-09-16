@@ -314,11 +314,27 @@ public class WalletService {
                 "appliedRate", String.valueOf(appliedRate)));
     }
 
+    /**
+     * Débit d'un remboursement déjà confirmé (Stripe ou admin) : ignore volontairement
+     * {@code assertNotFrozen}, puisque c'est la demande en cours qui gèle la devise.
+     *
+     * <p>Le solde est tout de même vérifié : entre la demande et la confirmation du webhook,
+     * il a pu baisser (résolution d'un ticket concurrent, débit admin). Sans cette garde le
+     * wallet passait en négatif silencieusement, et le rejeu du ledger
+     * ({@link WalletRefundAllocator}) ne retombait plus jamais sur le solde. Le remboursement
+     * Stripe étant irréversible, l'écart doit remonter plutôt que s'écrire.
+     *
+     * @throws InsufficientWalletBalanceException 422 si le solde ne couvre pas {@code amount}
+     */
     @Transactional
     public void debitConfirmedRefund(UUID userId, String currency, BigDecimal amount, WalletTransactionType type) {
         String code = normalize(currency);
         WalletAccountEntity wallet = walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, code)
                 .orElseGet(() -> getOrCreate(userId, code));
+
+        if (wallet.getBalance().compareTo(amount) < 0) {
+            throw new InsufficientWalletBalanceException(wallet.getBalance(), amount);
+        }
 
         BigDecimal newBalance = wallet.getBalance().subtract(amount);
         wallet.setBalance(newBalance);

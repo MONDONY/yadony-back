@@ -348,6 +348,38 @@ class WalletServiceTest {
         assertThat(eur.getRefundEligibleAmount()).isEqualByComparingTo("50.00");
     }
 
+    @Test
+    void debitConfirmedRefund_soldeInsuffisant_leveEtNEcritRien() {
+        // Fenêtre étroite entre la demande et la confirmation du webhook : le solde a pu
+        // baisser (ticket concurrent résolu, débit admin). Sans garde, le wallet passait en
+        // négatif et le rejeu du ledger ne retombait plus jamais dessus.
+        UUID userId = UUID.randomUUID();
+        WalletAccountEntity eur = wallet(userId, "EUR", new BigDecimal("10.00"));
+        when(walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, "EUR")).thenReturn(Optional.of(eur));
+
+        Throwable thrown = catchThrowable(() -> walletService.debitConfirmedRefund(
+                userId, "EUR", new BigDecimal("35.00"), WalletTransactionType.SELF_REFUND_OUT));
+
+        assertThat(thrown).isInstanceOf(InsufficientWalletBalanceException.class);
+        assertThat(eur.getBalance()).isEqualByComparingTo("10.00");
+        verify(walletAccountRepository, never()).save(any());
+        verify(walletTransactionRepository, never()).save(any());
+    }
+
+    @Test
+    void debitConfirmedRefund_soldeExactementEgal_passe() {
+        UUID userId = UUID.randomUUID();
+        WalletAccountEntity eur = wallet(userId, "EUR", new BigDecimal("35.00"));
+        when(walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, "EUR")).thenReturn(Optional.of(eur));
+        when(walletAccountRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(walletTransactionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        walletService.debitConfirmedRefund(userId, "EUR", new BigDecimal("35.00"),
+                WalletTransactionType.SELF_REFUND_OUT);
+
+        assertThat(eur.getBalance()).isEqualByComparingTo("0.00");
+    }
+
     private WalletAccountEntity wallet(UUID userId, String currency, BigDecimal balance) {
         WalletAccountEntity wallet = new WalletAccountEntity();
         wallet.setUserId(userId);
