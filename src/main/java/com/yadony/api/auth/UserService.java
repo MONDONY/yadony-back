@@ -96,12 +96,13 @@ public class UserService {
      * n'est perdue qu'à la finalisation (cf. UserFinalizedPaymentsListener). Ne bloque
      * jamais la suppression (Apple 5.1.1(v)).
      *
-     * <p>{@code REQUIRES_NEW} : les {@code Refund.create} partent d'ici, dans la transaction
-     * de {@code AuthService#deleteImmediately} / {@code AdminGdprService#executeDeletion} et
-     * AVANT {@code accountFinalizationService.finalize}. Un échec de la finalisation (R2,
-     * Firebase) annulerait les lignes {@code wallet_refund_requests} et restaurerait le solde
-     * alors que le remboursement Stripe, lui, est irréversible. Une transaction indépendante
-     * commite les demandes avant que la finalisation ne puisse échouer.
+     * <p>{@code REQUIRES_NEW} : les {@code Refund.create} partent au commit de CETTE
+     * transaction ({@code WalletRefundIssueListener}), donc AVANT
+     * {@code accountFinalizationService.finalize} appelée par {@code AuthService#deleteImmediately} /
+     * {@code AdminGdprService#executeDeletion}. Un échec de la finalisation (R2, Firebase)
+     * n'annule ni les lignes {@code wallet_refund_requests} ni le remboursement Stripe, déjà
+     * irréversible : une transaction indépendante commite les demandes avant que la
+     * finalisation ne puisse échouer.
      *
      * <p>{@code requestDeletion} l'appelle en auto-invocation : le proxy est contourné et la
      * propagation sans effet. Sans conséquence, rien de risqué ne suit dans {@code requestDeletion}

@@ -20,6 +20,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.lang.reflect.Field;
@@ -52,6 +54,7 @@ class WalletSelfRefundServiceTest {
     @Mock AdminAlertService adminAlertService;
     @Mock AdminAlertEscalator adminAlertEscalator;
     @Mock WalletRefundRequestService walletRefundRequestService;
+    @Mock ApplicationEventPublisher eventPublisher;
 
     WalletSelfRefundService service;
 
@@ -62,7 +65,7 @@ class WalletSelfRefundServiceTest {
         service = new WalletSelfRefundService(walletAccountRepository, walletTransactionRepository,
                 refundRequestRepository, refundRequestItemRepository, walletService,
                 auditService, adminAlertService, adminAlertEscalator, new ObjectMapper(),
-                walletRefundRequestService);
+                walletRefundRequestService, eventPublisher);
     }
 
     private WalletAccountEntity wallet(String currency, String balance) {
@@ -277,7 +280,7 @@ class WalletSelfRefundServiceTest {
     }
 
     @Test
-    void request_sansSelection_rembourseToutLeRemboursableEnPartiel() {
+    void request_sansSelection_creeLesItemsPendingEtPublieLEvenementSansAppelerStripe() {
         WalletTransactionEntity topup = ledgerTx(WalletTransactionType.TOP_UP, "40.00", "pi_1");
         stubLedger("35.00", topup, ledgerTx(WalletTransactionType.BID_PAYMENT, "-5.00", null));
         when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any()))
@@ -288,21 +291,22 @@ class WalletSelfRefundServiceTest {
             return r;
         });
         when(refundRequestItemRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(refundRequestItemRepository.findByRefundRequestId(any())).thenAnswer(inv -> List.of(lastSavedItem()));
 
         try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
-            Refund refund = new Refund();
-            refund.setId("re_1");
-            ArgumentCaptor<RefundCreateParams> params = ArgumentCaptor.forClass(RefundCreateParams.class);
-            refundStatic.when(() -> Refund.create(params.capture(), any(RequestOptions.class))).thenReturn(refund);
-
             WalletRefundRequestEntity saved = service.request(USER_ID, "EUR", List.of());
 
             assertThat(saved.getAmount()).isEqualByComparingTo("35.00");
             assertThat(saved.getChannel()).isEqualTo(WalletRefundChannel.AUTOMATIC_STRIPE);
-            assertThat(params.getValue().getPaymentIntent()).isEqualTo("pi_1");
-            assertThat(params.getValue().getAmount()).isEqualTo(3500L);
+            assertThat(saved.getStatus()).isEqualTo(WalletRefundRequestStatus.PROCESSING);
+            // Le remboursement Stripe ne part plus dans la transaction de la demande.
+            refundStatic.verifyNoInteractions();
+            verify(eventPublisher).publishEvent(new WalletRefundItemsCreatedEvent(saved.getId()));
         }
+        WalletRefundRequestItemEntity item = lastSavedItem();
+        assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.PENDING);
+        assertThat(item.getStripeRefundId()).isNull();
+        assertThat(item.getPaymentIntentId()).isEqualTo("pi_1");
+        assertThat(item.getAmount()).isEqualByComparingTo("35.00");
     }
 
     @Test
@@ -322,11 +326,8 @@ class WalletSelfRefundServiceTest {
             return r;
         });
         when(refundRequestItemRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(refundRequestItemRepository.findByRefundRequestId(any())).thenReturn(List.of());
 
-        try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
-            service.request(USER_ID, "EUR", List.of());
-        }
+        service.request(USER_ID, "EUR", List.of());
 
         ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
         verify(auditService).log(eq("wallet_refund_request"), any(), eq("AUTOMATIC_REQUESTED"),
@@ -345,11 +346,10 @@ class WalletSelfRefundServiceTest {
     }
 
     @Test
-    void request_deviseSansDecimales_montantAligneUniteMineureStripeAvantEnvoi() {
+    void request_deviseSansDecimales_montantAligneUniteMineureAvantCreationDeLItem() {
         // Régression : le ledger interne garde toujours 2 décimales (NUMERIC(10,2)), même pour
         // XOF (0 décimale). Sans mise à l'échelle avant la création de l'item, un reliquat comme
-        // 9999.50 XOF faisait lever ArithmeticException dans Refund.create (longValueExact()),
-        // non rattrapée par catch (StripeException), annulant toute la transaction.
+        // 9999.50 XOF faisait lever ArithmeticException dans Refund.create (longValueExact()).
         WalletTransactionEntity topup = ledgerTx("XOF", WalletTransactionType.TOP_UP, "13200", "pi_xof");
         stubLedger("XOF", "9999.50", topup, ledgerTx("XOF", WalletTransactionType.BID_PAYMENT, "-3200.50", null));
         when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("XOF"), any()))
@@ -360,19 +360,111 @@ class WalletSelfRefundServiceTest {
             return r;
         });
         when(refundRequestItemRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(refundRequestItemRepository.findByRefundRequestId(any())).thenAnswer(inv -> List.of(lastSavedItem()));
+
+        WalletRefundRequestEntity saved = service.request(USER_ID, "XOF", List.of());
+
+        assertThat(saved.getAmount()).isEqualByComparingTo("9999");
+        assertThat(lastSavedItem().getAmount()).isEqualByComparingTo("9999");
+    }
+
+    /** Demande automatique PROCESSING en devise {@code currency}, servie verrouillée et par id. */
+    private WalletRefundRequestEntity stubIssuable(String currency, String amount) {
+        WalletRefundRequestEntity request = processingRequest(amount);
+        request.setCurrency(currency);
+        when(refundRequestRepository.findByIdForUpdate(request.getId())).thenReturn(Optional.of(request));
+        return request;
+    }
+
+    private WalletRefundRequestItemEntity pendingItem(WalletRefundRequestEntity r, String pi, String amount) {
+        WalletRefundRequestItemEntity i = processingItem(r, pi, amount, null);
+        i.setStatus(WalletRefundItemStatus.PENDING);
+        return i;
+    }
+
+    @Test
+    void issuePendingItems_emetLesItemsPendingEnUniteMineureAvecCleDIdempotence() {
+        WalletRefundRequestEntity request = stubIssuable("XOF", "9999");
+        WalletRefundRequestItemEntity item = pendingItem(request, "pi_xof", "9999");
+        when(refundRequestItemRepository.findUnissuedForUpdate(request.getId(), WalletRefundItemStatus.PENDING))
+                .thenReturn(List.of(item));
+        when(refundRequestItemRepository.findByRefundRequestId(request.getId())).thenReturn(List.of(item));
 
         try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
             Refund refund = new Refund();
             refund.setId("re_xof");
             ArgumentCaptor<RefundCreateParams> params = ArgumentCaptor.forClass(RefundCreateParams.class);
-            refundStatic.when(() -> Refund.create(params.capture(), any(RequestOptions.class))).thenReturn(refund);
+            ArgumentCaptor<RequestOptions> options = ArgumentCaptor.forClass(RequestOptions.class);
+            refundStatic.when(() -> Refund.create(params.capture(), options.capture())).thenReturn(refund);
 
-            WalletRefundRequestEntity saved = service.request(USER_ID, "XOF", List.of());
+            service.issuePendingItems(request.getId());
 
-            assertThat(saved.getAmount()).isEqualByComparingTo("9999");
+            assertThat(params.getValue().getPaymentIntent()).isEqualTo("pi_xof");
             assertThat(params.getValue().getAmount()).isEqualTo(9999L);
+            assertThat(options.getValue().getIdempotencyKey()).isEqualTo("wallet-self-refund-" + item.getId());
         }
+        assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.PROCESSING);
+        assertThat(item.getStripeRefundId()).isEqualTo("re_xof");
+        // Item encore PROCESSING : la demande reste ouverte, rien n'est débité.
+        assertThat(request.getStatus()).isEqualTo(WalletRefundRequestStatus.PROCESSING);
+        verifyNoInteractions(walletService, walletRefundRequestService);
+    }
+
+    @Test
+    void issuePendingItems_ignoreLesItemsDejaEmis() {
+        // La requête verrouillée ne remonte que les items sans stripeRefundId : un item déjà
+        // émis (PROCESSING) ne repart pas vers Stripe, la demande reste ouverte.
+        WalletRefundRequestEntity request = stubIssuable("EUR", "35.00");
+        WalletRefundRequestItemEntity emitted = processingItem(request, "pi_1", "35.00", "re_1");
+        when(refundRequestItemRepository.findUnissuedForUpdate(request.getId(), WalletRefundItemStatus.PENDING))
+                .thenReturn(List.of());
+        when(refundRequestItemRepository.findByRefundRequestId(request.getId())).thenReturn(List.of(emitted));
+
+        try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            service.issuePendingItems(request.getId());
+
+            refundStatic.verifyNoInteractions();
+        }
+        assertThat(emitted.getStripeRefundId()).isEqualTo("re_1");
+        assertThat(request.getStatus()).isEqualTo(WalletRefundRequestStatus.PROCESSING);
+    }
+
+    @Test
+    void issuePendingItems_demandeNonProcessing_neFaitRien() {
+        WalletRefundRequestEntity request = stubIssuable("EUR", "35.00");
+        request.setStatus(WalletRefundRequestStatus.FAILED);
+
+        service.issuePendingItems(request.getId());
+
+        verify(refundRequestItemRepository, never()).findUnissuedForUpdate(any(), any());
+    }
+
+    @Test
+    void issuePendingItems_demandeManuelle_neFaitRien() {
+        WalletRefundRequestEntity request = stubIssuable("EUR", "35.00");
+        request.setChannel(WalletRefundChannel.MANUAL_ADMIN);
+
+        service.issuePendingItems(request.getId());
+
+        verify(refundRequestItemRepository, never()).findUnissuedForUpdate(any(), any());
+    }
+
+    @Test
+    void issuePendingItems_demandeIntrouvable_neFaitRien() {
+        UUID unknown = UUID.randomUUID();
+        when(refundRequestRepository.findByIdForUpdate(unknown)).thenReturn(Optional.empty());
+
+        service.issuePendingItems(unknown);
+
+        verifyNoInteractions(refundRequestItemRepository);
+    }
+
+    @Test
+    void issuePendingItems_estEnRequiresNew() throws NoSuchMethodException {
+        Transactional transactional = WalletSelfRefundService.class
+                .getMethod("issuePendingItems", UUID.class).getAnnotation(Transactional.class);
+
+        assertThat(transactional).isNotNull();
+        assertThat(transactional.propagation()).isEqualTo(Propagation.REQUIRES_NEW);
     }
 
     @Test
@@ -388,13 +480,10 @@ class WalletSelfRefundServiceTest {
             return r;
         });
         when(refundRequestItemRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(refundRequestItemRepository.findByRefundRequestId(any())).thenReturn(List.of());
 
-        try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
-            WalletRefundRequestEntity saved = service.request(USER_ID, "EUR", List.of(b.getId()));
+        WalletRefundRequestEntity saved = service.request(USER_ID, "EUR", List.of(b.getId()));
 
-            assertThat(saved.getAmount()).isEqualByComparingTo("25.00");
-        }
+        assertThat(saved.getAmount()).isEqualByComparingTo("25.00");
     }
 
     @Test
@@ -432,35 +521,29 @@ class WalletSelfRefundServiceTest {
     }
 
     @Test
-    void issueStripeRefund_echec_itemFailedAvecCodeStripe() {
-        WalletTransactionEntity topup = ledgerTx(WalletTransactionType.TOP_UP, "40.00", "pi_1");
-        stubLedger("40.00", topup);
-        when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any()))
-                .thenReturn(Optional.empty());
-        when(refundRequestRepository.save(any())).thenAnswer(inv -> {
-            WalletRefundRequestEntity r = inv.getArgument(0);
-            if (r.getId() == null) assignId(r);
-            return r;
-        });
-        List<WalletRefundRequestItemEntity> savedItems = new ArrayList<>();
-        when(refundRequestItemRepository.save(any())).thenAnswer(inv -> {
-            WalletRefundRequestItemEntity i = inv.getArgument(0);
-            if (!savedItems.contains(i)) savedItems.add(i);
-            return i;
-        });
-        when(refundRequestItemRepository.findByRefundRequestId(any())).thenAnswer(inv -> savedItems);
+    void issuePendingItems_toutEnEchec_itemFailedAvecCodeStripeEtDemandeCloseAvecTicketEnfant() {
+        WalletRefundRequestEntity request = stubIssuable("EUR", "40.00");
+        WalletRefundRequestItemEntity item = pendingItem(request, "pi_1", "40.00");
+        when(refundRequestItemRepository.findUnissuedForUpdate(request.getId(), WalletRefundItemStatus.PENDING))
+                .thenReturn(List.of(item));
+        when(refundRequestItemRepository.findByRefundRequestId(request.getId())).thenReturn(List.of(item));
+        when(refundRequestRepository.findById(request.getId())).thenReturn(Optional.of(request));
 
         try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
             refundStatic.when(() -> Refund.create(any(RefundCreateParams.class), any(RequestOptions.class)))
                     .thenThrow(new InvalidRequestException("already refunded", "amount", "req_1",
                             "charge_already_refunded", 400, null));
 
-            service.request(USER_ID, "EUR", List.of());
+            service.issuePendingItems(request.getId());
         }
 
-        assertThat(savedItems.get(0).getStatus()).isEqualTo(WalletRefundItemStatus.FAILED);
-        assertThat(savedItems.get(0).getFailureReason()).isEqualTo("charge_already_refunded");
+        assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.FAILED);
+        assertThat(item.getFailureReason()).isEqualTo("charge_already_refunded");
         verify(adminAlertService).raise(eq("wallet-self-refund-failed"), any(), any());
+        // Tout a échoué : la demande se clôt tout de suite, sans débit, et ouvre l'enfant.
+        assertThat(request.getStatus()).isEqualTo(WalletRefundRequestStatus.FAILED);
+        verify(walletService, never()).debitConfirmedRefund(any(), any(), any(), any());
+        verify(walletRefundRequestService).openChildForFailedItems(request, List.of(item));
     }
 
     @Test
@@ -526,6 +609,52 @@ class WalletSelfRefundServiceTest {
     }
 
     @Test
+    void refundStatusByTransactionId_seulLItemLePlusRecentCompte() {
+        UUID childPendingTxId = UUID.randomUUID();
+        UUID childRefundedTxId = UUID.randomUUID();
+        Instant t0 = Instant.parse("2026-09-01T10:00:00Z");
+        Instant t1 = t0.plusSeconds(60);
+
+        List<WalletRefundRequestItemEntity> all = List.of(
+                datedItem(childPendingTxId, WalletRefundItemStatus.FAILED, t0),
+                datedItem(childPendingTxId, WalletRefundItemStatus.PENDING, t1),
+                datedItem(childRefundedTxId, WalletRefundItemStatus.FAILED, t0),
+                datedItem(childRefundedTxId, WalletRefundItemStatus.REFUNDED, t1));
+        List<UUID> ids = List.of(childPendingTxId, childRefundedTxId);
+        when(refundRequestItemRepository.findByWalletTransactionIdIn(ids)).thenReturn(all);
+
+        assertThat(service.refundStatusByTransactionId(ids)).containsExactlyInAnyOrderEntriesOf(Map.of(
+                childPendingTxId, "PROCESSING",
+                childRefundedTxId, "REFUNDED"));
+    }
+
+    private static WalletRefundRequestItemEntity datedItem(UUID txId, WalletRefundItemStatus status, Instant createdAt) {
+        WalletRefundRequestItemEntity i = new WalletRefundRequestItemEntity();
+        i.setWalletTransactionId(txId);
+        i.setStatus(status);
+        setField(i, "createdAt", createdAt);
+        return i;
+    }
+
+    @Test
+    void handleRefundUpdated_neChercheQueLItemProcessingDuPaymentIntent() {
+        // Depuis V259, un PaymentIntent porte aussi des items FAILED ou REFUNDED d'anciennes
+        // demandes : le webhook ne doit lire que l'unique item PROCESSING.
+        WalletRefundRequestEntity request = processingRequest("35.00");
+        WalletRefundRequestItemEntity item = processingItem(request, "pi_1", "35.00", "re_1");
+        when(refundRequestItemRepository.findByPaymentIntentIdAndStatus("pi_1", WalletRefundItemStatus.PROCESSING))
+                .thenReturn(Optional.of(item));
+        when(refundRequestItemRepository.findByRefundRequestId(request.getId())).thenReturn(List.of(item));
+        when(refundRequestRepository.findById(request.getId())).thenReturn(Optional.of(request));
+
+        service.handleRefundUpdated(failedRefundEvent("pi_1", "re_1"));
+
+        assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.FAILED);
+        assertThat(request.getStatus()).isEqualTo(WalletRefundRequestStatus.FAILED);
+        verify(walletRefundRequestService).openChildForFailedItems(request, List.of(item));
+    }
+
+    @Test
     void refundStatusByTransactionId_emptyInputReturnsEmptyMap() {
         assertThat(service.refundStatusByTransactionId(List.of())).isEmpty();
         verifyNoInteractions(refundRequestItemRepository);
@@ -540,7 +669,7 @@ class WalletSelfRefundServiceTest {
         item.setAmount(new BigDecimal("30.00"));
         item.setStripeRefundId("re_111");
         item.setStatus(WalletRefundItemStatus.PROCESSING);
-        when(refundRequestItemRepository.findByPaymentIntentId("pi_111")).thenReturn(Optional.of(item));
+        when(refundRequestItemRepository.findByPaymentIntentIdAndStatus("pi_111", WalletRefundItemStatus.PROCESSING)).thenReturn(Optional.of(item));
         when(refundRequestItemRepository.findByRefundRequestId(requestId)).thenReturn(List.of(item));
         WalletRefundRequestEntity request = new WalletRefundRequestEntity();
         request.setUserId(USER_ID);
@@ -573,7 +702,7 @@ class WalletSelfRefundServiceTest {
     void handleChargeRefunded_partiel_itemRefundedQuandLeRefundEstSucceeded() {
         WalletRefundRequestEntity request = processingRequest("35.00");
         WalletRefundRequestItemEntity item = processingItem(request, "pi_1", "35.00", "re_1");
-        when(refundRequestItemRepository.findByPaymentIntentId("pi_1")).thenReturn(Optional.of(item));
+        when(refundRequestItemRepository.findByPaymentIntentIdAndStatus("pi_1", WalletRefundItemStatus.PROCESSING)).thenReturn(Optional.of(item));
         when(refundRequestItemRepository.findByRefundRequestId(request.getId())).thenReturn(List.of(item));
         when(refundRequestRepository.findById(request.getId())).thenReturn(Optional.of(request));
 
@@ -599,7 +728,7 @@ class WalletSelfRefundServiceTest {
     void handleChargeRefunded_sansListeDeRefunds_retrieveParId() {
         WalletRefundRequestEntity request = processingRequest("35.00");
         WalletRefundRequestItemEntity item = processingItem(request, "pi_1", "35.00", "re_1");
-        when(refundRequestItemRepository.findByPaymentIntentId("pi_1")).thenReturn(Optional.of(item));
+        when(refundRequestItemRepository.findByPaymentIntentIdAndStatus("pi_1", WalletRefundItemStatus.PROCESSING)).thenReturn(Optional.of(item));
         when(refundRequestItemRepository.findByRefundRequestId(request.getId())).thenReturn(List.of(item));
         when(refundRequestRepository.findById(request.getId())).thenReturn(Optional.of(request));
         Charge charge = new Charge();
@@ -621,7 +750,7 @@ class WalletSelfRefundServiceTest {
     void handleChargeRefunded_autreRefundDuMemeCharge_ignore() {
         WalletRefundRequestEntity request = processingRequest("35.00");
         WalletRefundRequestItemEntity item = processingItem(request, "pi_1", "35.00", "re_1");
-        when(refundRequestItemRepository.findByPaymentIntentId("pi_1")).thenReturn(Optional.of(item));
+        when(refundRequestItemRepository.findByPaymentIntentIdAndStatus("pi_1", WalletRefundItemStatus.PROCESSING)).thenReturn(Optional.of(item));
         Charge charge = new Charge();
         charge.setPaymentIntent("pi_1");
         Refund other = new Refund();
@@ -650,7 +779,7 @@ class WalletSelfRefundServiceTest {
         ok.setStatus(WalletRefundItemStatus.REFUNDED);
         WalletRefundRequestItemEntity ko = processingItem(request, "pi_2", "15.00", "re_2");
         ko.setStatus(WalletRefundItemStatus.PROCESSING);
-        when(refundRequestItemRepository.findByPaymentIntentId("pi_2")).thenReturn(Optional.of(ko));
+        when(refundRequestItemRepository.findByPaymentIntentIdAndStatus("pi_2", WalletRefundItemStatus.PROCESSING)).thenReturn(Optional.of(ko));
         when(refundRequestItemRepository.findByRefundRequestId(request.getId())).thenReturn(List.of(ok, ko));
         when(refundRequestRepository.findById(request.getId())).thenReturn(Optional.of(request));
 
@@ -658,7 +787,7 @@ class WalletSelfRefundServiceTest {
 
         assertThat(request.getStatus()).isEqualTo(WalletRefundRequestStatus.FAILED);
         verify(walletService).debitConfirmedRefund(USER_ID, "EUR", new BigDecimal("20.00"), WalletTransactionType.SELF_REFUND_OUT);
-        verify(walletRefundRequestService).openChildForFailedItems(request, new BigDecimal("15.00"));
+        verify(walletRefundRequestService).openChildForFailedItems(request, List.of(ko));
     }
 
     @Test
@@ -667,7 +796,7 @@ class WalletSelfRefundServiceTest {
         // échec sur le même PI, mais qui n'est pas le nôtre, ne doit pas faire échouer l'item.
         WalletRefundRequestEntity request = processingRequest("35.00");
         WalletRefundRequestItemEntity item = processingItem(request, "pi_1", "35.00", "re_1");
-        when(refundRequestItemRepository.findByPaymentIntentId("pi_1")).thenReturn(Optional.of(item));
+        when(refundRequestItemRepository.findByPaymentIntentIdAndStatus("pi_1", WalletRefundItemStatus.PROCESSING)).thenReturn(Optional.of(item));
 
         service.handleRefundUpdated(failedRefundEvent("pi_1", "re_autre"));
 
@@ -711,7 +840,7 @@ class WalletSelfRefundServiceTest {
 
     @Test
     void handleChargeRefunded_noOpWhenPaymentIntentUnknown() {
-        when(refundRequestItemRepository.findByPaymentIntentId("pi_unknown")).thenReturn(Optional.empty());
+        when(refundRequestItemRepository.findByPaymentIntentIdAndStatus("pi_unknown", WalletRefundItemStatus.PROCESSING)).thenReturn(Optional.empty());
         Charge charge = mock(Charge.class);
         when(charge.getPaymentIntent()).thenReturn("pi_unknown");
 

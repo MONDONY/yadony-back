@@ -302,4 +302,73 @@ class WalletRefundAllocatorTest {
         assertThat(r.nonRefundable()).isEqualByComparingTo("0");
         assertThat(r.inFlight()).isEqualByComparingTo("0");
     }
+
+    @Test
+    void ticketEnfantResolu_consommeLaRechargeEnEchecEtPasLaRechargeFraiche() {
+        // Recharge A 30 en échec Stripe, recharge B 20 faite entre-temps, puis résolution admin
+        // du ticket enfant sur A. Avant V259, ADMIN_REFUND_OUT retombait en LIFO et consommait B.
+        WalletTransactionEntity a = topup("30.00");
+        item(a, "30.00", WalletRefundItemStatus.FAILED, UUID.randomUUID());
+        clock = clock.plusSeconds(60);
+        WalletTransactionEntity b = topup("20.00");
+        clock = clock.plusSeconds(60);
+        item(a, "30.00", WalletRefundItemStatus.REFUNDED, UUID.randomUUID());
+        tx(WalletTransactionType.ADMIN_REFUND_OUT, "-30.00", null);
+
+        WalletRefundAllocation r = allocate("20.00");
+
+        assertThat(r.refundable()).singleElement().satisfies(t -> {
+            assertThat(t.walletTransactionId()).isEqualTo(b.getId());
+            assertThat(t.remaining()).isEqualByComparingTo("20.00");
+        });
+        assertThat(r.refundableTotal()).isEqualByComparingTo("20.00");
+        assertThat(r.inFlight()).isEqualByComparingTo("0");
+        assertThat(r.nonRefundable()).isEqualByComparingTo("0");
+    }
+
+    @Test
+    void itemFailedSuiviDeLItemPendingDuTicketEnfant_resteEnInFlight() {
+        WalletTransactionEntity a = topup("30.00");
+        item(a, "30.00", WalletRefundItemStatus.FAILED, UUID.randomUUID());
+        clock = clock.plusSeconds(60);
+        topup("20.00");
+        clock = clock.plusSeconds(60);
+        item(a, "30.00", WalletRefundItemStatus.PENDING, UUID.randomUUID());
+
+        WalletRefundAllocation r = allocate("50.00");
+
+        assertThat(r.inFlight()).isEqualByComparingTo("30.00");
+        assertThat(r.refundableTotal()).isEqualByComparingTo("20.00");
+    }
+
+    @Test
+    void seulLItemLePlusRecentCompte_unRefundedPuisUnFailedBloque() {
+        WalletTransactionEntity a = topup("40.00");
+        item(a, "10.00", WalletRefundItemStatus.REFUNDED, UUID.randomUUID());
+        tx(WalletTransactionType.SELF_REFUND_OUT, "-10.00", null);
+        clock = clock.plusSeconds(60);
+        item(a, "30.00", WalletRefundItemStatus.FAILED, UUID.randomUUID());
+
+        WalletRefundAllocation r = allocate("30.00");
+
+        assertThat(r.refundable()).isEmpty();
+        assertThat(r.inFlight()).isEqualByComparingTo("30.00");
+    }
+
+    @Test
+    void latestItemStatuses_dateNullClasseeLaPlusAncienneEtEgalitesGardees() {
+        WalletTransactionEntity a = topup("40.00");
+        WalletTransactionEntity b = topup("40.00");
+        WalletRefundRequestItemEntity legacy = item(a, "40.00", WalletRefundItemStatus.PENDING, UUID.randomUUID());
+        setField(legacy, "createdAt", null);
+        item(a, "40.00", WalletRefundItemStatus.REFUNDED, UUID.randomUUID());
+        item(b, "40.00", WalletRefundItemStatus.REFUNDED, UUID.randomUUID());
+        item(b, "40.00", WalletRefundItemStatus.FAILED, UUID.randomUUID());
+
+        var latest = WalletRefundAllocator.latestItemStatuses(items);
+
+        assertThat(latest.get(a.getId())).containsExactly(WalletRefundItemStatus.REFUNDED);
+        assertThat(latest.get(b.getId()))
+                .containsExactlyInAnyOrder(WalletRefundItemStatus.REFUNDED, WalletRefundItemStatus.FAILED);
+    }
 }

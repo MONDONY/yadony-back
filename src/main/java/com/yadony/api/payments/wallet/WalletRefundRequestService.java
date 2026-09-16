@@ -14,6 +14,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -36,15 +38,18 @@ public class WalletRefundRequestService {
     private final WalletRefundRequestRepository refundRequestRepository;
     private final AuditService auditService;
     private final AdminAlertService adminAlertService;
+    private final WalletRefundRequestItemRepository refundRequestItemRepository;
 
     public WalletRefundRequestService(WalletService walletService,
                                        WalletRefundRequestRepository refundRequestRepository,
                                        AuditService auditService,
-                                       AdminAlertService adminAlertService) {
+                                       AdminAlertService adminAlertService,
+                                       WalletRefundRequestItemRepository refundRequestItemRepository) {
         this.walletService = walletService;
         this.refundRequestRepository = refundRequestRepository;
         this.auditService = auditService;
         this.adminAlertService = adminAlertService;
+        this.refundRequestItemRepository = refundRequestItemRepository;
     }
 
     /** Ticket manuel pour une seule devise (repli quand le rail automatique ne s'applique pas). */
@@ -64,10 +69,22 @@ public class WalletRefundRequestService {
      * Après une demande automatique dont au moins un item a échoué côté Stripe : ticket manuel
      * pour la somme des items FAILED, rattaché au parent. Idempotent : un seul enfant par parent.
      * Renvoie null si l'enfant existe déjà.
+     *
+     * <p>Chaque item en échec est repris par un item PENDING de l'enfant (même recharge, même
+     * PaymentIntent, même montant, sans {@code stripeRefundId}) : la résolution admin les passe
+     * REFUNDED, et l'allocateur rapproche alors l'{@code ADMIN_REFUND_OUT} de la bonne recharge
+     * au lieu de retomber en LIFO (cf. {@link WalletRefundAllocator}).
      */
     @Transactional
-    public WalletRefundRequestEntity openChildForFailedItems(WalletRefundRequestEntity parent, BigDecimal failedAmount) {
-        if (failedAmount == null || failedAmount.signum() <= 0) {
+    public WalletRefundRequestEntity openChildForFailedItems(WalletRefundRequestEntity parent,
+                                                             List<WalletRefundRequestItemEntity> failedItems) {
+        if (failedItems == null || failedItems.isEmpty()) {
+            return null;
+        }
+        BigDecimal failedAmount = failedItems.stream()
+                .map(WalletRefundRequestItemEntity::getAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        if (failedAmount.signum() <= 0) {
             return null;
         }
         if (refundRequestRepository.existsByParentRequestId(parent.getId())) {
@@ -83,9 +100,22 @@ public class WalletRefundRequestService {
         child.setParentRequestId(parent.getId());
         WalletRefundRequestEntity saved = refundRequestRepository.save(child);
 
+        List<WalletRefundRequestItemEntity> childItems = new ArrayList<>();
+        for (WalletRefundRequestItemEntity failed : failedItems) {
+            WalletRefundRequestItemEntity item = new WalletRefundRequestItemEntity();
+            item.setRefundRequestId(saved.getId());
+            item.setWalletTransactionId(failed.getWalletTransactionId());
+            item.setPaymentIntentId(failed.getPaymentIntentId());
+            item.setAmount(failed.getAmount());
+            item.setStatus(WalletRefundItemStatus.PENDING);
+            childItems.add(item);
+        }
+        refundRequestItemRepository.saveAll(childItems);
+
         auditService.log("wallet_refund_request", saved.getId(), "MANUAL_CHILD_OPENED", parent.getUserId(),
                 Map.of("currency", parent.getCurrency(), "amount", failedAmount.toPlainString(),
-                        "parentRequestId", String.valueOf(parent.getId())));
+                        "parentRequestId", String.valueOf(parent.getId()),
+                        "itemCount", String.valueOf(childItems.size())));
         adminAlertService.raise("wallet-refund-requested",
                 "Remboursement Stripe automatique echoue, ticket manuel ouvert",
                 Map.of("requestId", String.valueOf(saved.getId()), "parentRequestId", String.valueOf(parent.getId()),
@@ -194,6 +224,9 @@ public class WalletRefundRequestService {
             walletService.debitConfirmedRefund(request.getUserId(), request.getCurrency(), refundedAmount,
                     WalletTransactionType.ADMIN_REFUND_OUT);
         }
+        if (request.getParentRequestId() != null) {
+            settleChildItems(request, refundedAmount);
+        }
 
         request.setStatus(WalletRefundRequestStatus.RESOLVED);
         request.setResolvedAt(LocalDateTime.now(ZoneOffset.UTC));
@@ -205,5 +238,41 @@ public class WalletRefundRequestService {
                         "refundedAmount", refundedAmount.toString()));
 
         return saved;
+    }
+
+    /**
+     * Répartit le débit d'un ticket enfant sur ses items, dans l'ordre de création : couvert
+     * en entier → REFUNDED ; couvert en partie → montant réduit au couvert puis REFUNDED ; non
+     * couvert → FAILED {@code balance-short}. La somme des items REFUNDED égale ainsi toujours
+     * l'{@code ADMIN_REFUND_OUT}, condition de leur appariement par l'allocateur. Le débit n'est
+     * inférieur au ticket que si le solde a baissé entre-temps, quasi impossible puisque le
+     * ticket gèle la devise. Un ancien ticket enfant sans items n'a rien à répartir.
+     */
+    private void settleChildItems(WalletRefundRequestEntity child, BigDecimal debited) {
+        List<WalletRefundRequestItemEntity> items = refundRequestItemRepository.findByRefundRequestId(child.getId())
+                .stream()
+                .filter(i -> i.getStatus() == WalletRefundItemStatus.PENDING)
+                .sorted(Comparator.comparing(WalletRefundRequestItemEntity::getCreatedAt,
+                        Comparator.nullsFirst(Comparator.naturalOrder())))
+                .toList();
+        BigDecimal left = debited.max(BigDecimal.ZERO);
+        for (WalletRefundRequestItemEntity item : items) {
+            if (left.compareTo(item.getAmount()) >= 0) {
+                left = left.subtract(item.getAmount());
+                item.setStatus(WalletRefundItemStatus.REFUNDED);
+            } else if (left.signum() > 0) {
+                log.warn("Ticket enfant {} : item {} couvert en partie ({} sur {}), solde insuffisant",
+                        child.getId(), item.getId(), left.toPlainString(), item.getAmount().toPlainString());
+                item.setAmount(left);
+                item.setStatus(WalletRefundItemStatus.REFUNDED);
+                left = BigDecimal.ZERO;
+            } else {
+                log.warn("Ticket enfant {} : item {} ({}) non couvert, solde insuffisant",
+                        child.getId(), item.getId(), item.getAmount().toPlainString());
+                item.setStatus(WalletRefundItemStatus.FAILED);
+                item.setFailureReason("balance-short");
+            }
+            refundRequestItemRepository.save(item);
+        }
     }
 }

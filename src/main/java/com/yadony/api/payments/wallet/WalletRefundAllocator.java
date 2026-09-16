@@ -30,15 +30,18 @@ import java.util.UUID;
  *       ses recharges ; sans correspondance, repli LIFO ;</li>
  *   <li>FORFEITED_ON_DELETION consomme le non-cash.</li>
  * </ol>
- * Une recharge portant un item PENDING, PROCESSING ou FAILED est retirée du remboursable
- * et comptée en {@code inFlight}. Pur : aucune dépendance Spring, aucune I/O.
+ * Une recharge dont l'item le PLUS RÉCENT (cf. {@link #latestItemStatuses}) est PENDING,
+ * PROCESSING ou FAILED est retirée du remboursable et comptée en {@code inFlight}. Pur :
+ * aucune dépendance Spring, aucune I/O.
  *
- * <p>Limite connue (règle 4) : un {@code ADMIN_REFUND_OUT} issu de la résolution d'un ticket
- * enfant n'a pas d'items REFUNDED et retombe donc en LIFO. Si l'utilisateur a rechargé entre
- * l'échec Stripe et la résolution admin, la recharge fraîche peut être déclarée consommée à
- * la place de la recharge en échec, qui reste bloquée par son item FAILED. Une traçabilité
- * par items sur le ticket enfant est prévue en suite : elle exige un second item par
- * PaymentIntent, donc la levée de l'index {@code uq_wallet_refund_request_items_pi}.
+ * <p>Ticket enfant (règle 4) : quand un item Stripe échoue, le ticket MANUAL enfant reprend
+ * chaque item FAILED sous la forme d'un item PENDING sur le même PaymentIntent (possible
+ * depuis l'index unique partiel {@code uq_wallet_refund_request_items_pi_active}, V259). La
+ * recharge reste bloquée tant que cet item est PENDING ; à la résolution admin il passe
+ * REFUNDED, l'{@code ADMIN_REFUND_OUT} s'apparie à ses items par le montant et consomme le
+ * seau de la recharge en échec, jamais celui d'une recharge faite entre-temps. Un ancien
+ * ticket enfant sans items garde le repli LIFO, et sa recharge reste bloquée par son item
+ * FAILED.
  */
 public final class WalletRefundAllocator {
 
@@ -166,11 +169,11 @@ public final class WalletRefundAllocator {
         }
 
         Set<UUID> blocked = new HashSet<>();
-        for (WalletRefundRequestItemEntity item : items) {
-            if (BLOCKING.contains(item.getStatus())) {
-                blocked.add(item.getWalletTransactionId());
+        latestItemStatuses(items).forEach((txId, statuses) -> {
+            if (statuses.stream().anyMatch(BLOCKING::contains)) {
+                blocked.add(txId);
             }
-        }
+        });
 
         List<WalletRefundAllocation.RefundableTopup> refundable = new ArrayList<>();
         BigDecimal refundableTotal = BigDecimal.ZERO;
@@ -192,6 +195,29 @@ public final class WalletRefundAllocator {
             throw new WalletAllocationInvariantException(computed, balance, unallocated);
         }
         return new WalletRefundAllocation(List.copyOf(refundable), refundableTotal, nonCash, inFlight);
+    }
+
+    /**
+     * Statuts de l'item le plus récent de chaque recharge ({@code createdAt} maximal, un
+     * {@code createdAt} null étant classé le plus ancien). Les items à égalité de date sont
+     * tous gardés : l'appelant tranche en faveur du statut le plus prudent (un item bloquant
+     * parmi eux bloque la recharge), jamais au hasard de l'ordre de lecture.
+     */
+    static Map<UUID, Set<WalletRefundItemStatus>> latestItemStatuses(List<WalletRefundRequestItemEntity> items) {
+        Comparator<Instant> byDate = Comparator.nullsFirst(Comparator.naturalOrder());
+        Map<UUID, Instant> latestDate = new HashMap<>();
+        Map<UUID, Set<WalletRefundItemStatus>> latest = new HashMap<>();
+        for (WalletRefundRequestItemEntity item : items) {
+            UUID txId = item.getWalletTransactionId();
+            Instant createdAt = item.getCreatedAt();
+            if (!latest.containsKey(txId) || byDate.compare(createdAt, latestDate.get(txId)) > 0) {
+                latestDate.put(txId, createdAt);
+                latest.put(txId, EnumSet.of(item.getStatus()));
+            } else if (byDate.compare(createdAt, latestDate.get(txId)) == 0) {
+                latest.get(txId).add(item.getStatus());
+            }
+        }
+        return latest;
     }
 
     private static Deque<RefundedRequest> refundedRequests(List<WalletRefundRequestItemEntity> items) {

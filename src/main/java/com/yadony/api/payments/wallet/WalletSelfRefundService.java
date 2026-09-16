@@ -15,8 +15,10 @@ import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -25,6 +27,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -48,6 +51,7 @@ public class WalletSelfRefundService {
     private final AdminAlertEscalator adminAlertEscalator;
     private final ObjectMapper objectMapper;
     private final WalletRefundRequestService walletRefundRequestService;
+    private final ApplicationEventPublisher eventPublisher;
 
     public WalletSelfRefundService(WalletAccountRepository walletAccountRepository,
                                    WalletTransactionRepository walletTransactionRepository,
@@ -58,7 +62,8 @@ public class WalletSelfRefundService {
                                    AdminAlertService adminAlertService,
                                    AdminAlertEscalator adminAlertEscalator,
                                    ObjectMapper objectMapper,
-                                   WalletRefundRequestService walletRefundRequestService) {
+                                   WalletRefundRequestService walletRefundRequestService,
+                                   ApplicationEventPublisher eventPublisher) {
         this.walletAccountRepository = walletAccountRepository;
         this.walletTransactionRepository = walletTransactionRepository;
         this.refundRequestRepository = refundRequestRepository;
@@ -69,6 +74,7 @@ public class WalletSelfRefundService {
         this.adminAlertEscalator = adminAlertEscalator;
         this.objectMapper = objectMapper;
         this.walletRefundRequestService = walletRefundRequestService;
+        this.eventPublisher = eventPublisher;
     }
 
     public record EligibleTopup(WalletTransactionEntity topup, BigDecimal remaining) {}
@@ -193,22 +199,28 @@ public class WalletSelfRefundService {
     /**
      * Statut de remboursement des recharges {@code transactionIds}, pour affichage
      * dans l'historique du wallet (icône sablier + délai tant que PROCESSING).
-     * N'inclut pas les items FAILED : une recharge dont le remboursement a échoué
-     * redevient une recharge normale, toujours éligible à une nouvelle demande.
+     * Seul l'item le plus récent de chaque recharge compte (cf.
+     * {@link WalletRefundAllocator#latestItemStatuses}) : un item FAILED suivi de l'item
+     * PENDING de son ticket enfant affiche PROCESSING, suivi de l'item REFUNDED de l'enfant
+     * résolu affiche REFUNDED. Une recharge dont le dernier item est FAILED n'affiche rien.
      */
     @Transactional(readOnly = true)
     public Map<UUID, String> refundStatusByTransactionId(List<UUID> transactionIds) {
         if (transactionIds.isEmpty()) {
             return Map.of();
         }
-        return refundRequestItemRepository.findByWalletTransactionIdIn(transactionIds).stream()
-                .filter(item -> item.getStatus() == WalletRefundItemStatus.PENDING
-                        || item.getStatus() == WalletRefundItemStatus.PROCESSING
-                        || item.getStatus() == WalletRefundItemStatus.REFUNDED)
-                .collect(Collectors.toMap(
-                        WalletRefundRequestItemEntity::getWalletTransactionId,
-                        item -> item.getStatus() == WalletRefundItemStatus.REFUNDED ? "REFUNDED" : "PROCESSING",
-                        (a, b) -> "PROCESSING".equals(a) || "PROCESSING".equals(b) ? "PROCESSING" : "REFUNDED"));
+        Map<UUID, String> result = new HashMap<>();
+        WalletRefundAllocator.latestItemStatuses(
+                refundRequestItemRepository.findByWalletTransactionIdIn(transactionIds))
+                .forEach((txId, statuses) -> {
+                    if (statuses.contains(WalletRefundItemStatus.PENDING)
+                            || statuses.contains(WalletRefundItemStatus.PROCESSING)) {
+                        result.put(txId, "PROCESSING");
+                    } else if (statuses.contains(WalletRefundItemStatus.REFUNDED)) {
+                        result.put(txId, "REFUNDED");
+                    }
+                });
+        return result;
     }
 
     /**
@@ -312,11 +324,41 @@ public class WalletSelfRefundService {
                         "nonRefundable", allocation.nonRefundable().toPlainString(),
                         "items", List.copyOf(auditItems)));
 
-        for (WalletRefundRequestItemEntity item : refundRequestItemRepository.findByRefundRequestId(saved.getId())) {
-            issueStripeRefund(item, code);
-        }
+        // Aucun Refund.create ici : l'émission part au commit de cette transaction
+        // (WalletRefundIssueListener). Émis dans la transaction, un remboursement Stripe
+        // survivait à un rollback qui effaçait la demande et ses items.
+        eventPublisher.publishEvent(new WalletRefundItemsCreatedEvent(saved.getId()));
 
         return saved;
+    }
+
+    /**
+     * Émet vers Stripe les items PENDING sans {@code stripeRefundId} d'une demande automatique
+     * PROCESSING, puis clôt la demande si tous ses items sont terminaux (tout en échec : le
+     * ticket enfant s'ouvre tout de suite). Appelée au commit de la demande
+     * ({@link WalletRefundIssueListener}) et par la reprise planifiée
+     * ({@link WalletRefundIssueRecoveryScheduler}).
+     *
+     * <p>{@code REQUIRES_NEW} : depuis un écouteur {@code AFTER_COMMIT}, la transaction
+     * d'origine est terminée et n'accepte plus d'écriture. La demande puis ses items sont
+     * verrouillés : l'écouteur et la reprise ne les émettent jamais en même temps, et la
+     * seconde lit l'état laissé par la première. Le rejeu reste sûr même sans verrou grâce à
+     * la clé d'idempotence {@code wallet-self-refund-<itemId>}.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void issuePendingItems(UUID refundRequestId) {
+        WalletRefundRequestEntity request = refundRequestRepository.findByIdForUpdate(refundRequestId).orElse(null);
+        if (request == null
+                || request.getChannel() != WalletRefundChannel.AUTOMATIC_STRIPE
+                || request.getStatus() != WalletRefundRequestStatus.PROCESSING) {
+            return;
+        }
+        List<WalletRefundRequestItemEntity> items =
+                refundRequestItemRepository.findUnissuedForUpdate(refundRequestId, WalletRefundItemStatus.PENDING);
+        for (WalletRefundRequestItemEntity item : items) {
+            issueStripeRefund(item, request.getCurrency());
+        }
+        resolveIfComplete(refundRequestId);
     }
 
     private void issueStripeRefund(WalletRefundRequestItemEntity item, String currency) {
@@ -379,7 +421,8 @@ public class WalletSelfRefundService {
         if (paymentIntentId == null || paymentIntentId.isBlank()) {
             return;
         }
-        refundRequestItemRepository.findByPaymentIntentId(paymentIntentId).ifPresent(item -> {
+        refundRequestItemRepository.findByPaymentIntentIdAndStatus(paymentIntentId, WalletRefundItemStatus.PROCESSING)
+                .ifPresent(item -> {
             if (item.getStatus() != WalletRefundItemStatus.PROCESSING || item.getStripeRefundId() == null) {
                 return;
             }
@@ -430,7 +473,8 @@ public class WalletSelfRefundService {
                 return;
             }
             String refundId = root.path("id").asText(null);
-            refundRequestItemRepository.findByPaymentIntentId(paymentIntentId).ifPresent(item -> {
+            refundRequestItemRepository.findByPaymentIntentIdAndStatus(paymentIntentId, WalletRefundItemStatus.PROCESSING)
+                .ifPresent(item -> {
                 if (item.getStatus() != WalletRefundItemStatus.PROCESSING) {
                     return;
                 }
@@ -487,11 +531,10 @@ public class WalletSelfRefundService {
         refundRequestRepository.saveAndFlush(request);
 
         if (anyFailed) {
-            BigDecimal failedTotal = items.stream()
+            List<WalletRefundRequestItemEntity> failedItems = items.stream()
                     .filter(i -> i.getStatus() == WalletRefundItemStatus.FAILED)
-                    .map(WalletRefundRequestItemEntity::getAmount)
-                    .reduce(BigDecimal.ZERO, BigDecimal::add);
-            walletRefundRequestService.openChildForFailedItems(request, failedTotal);
+                    .toList();
+            walletRefundRequestService.openChildForFailedItems(request, failedItems);
         }
 
         auditService.log("wallet_refund_request", request.getId(),
