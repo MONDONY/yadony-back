@@ -7,7 +7,6 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.Msisdn;
 import com.yadony.api.common.YadonyBusinessException;
-import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyAccountResponse;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyProvidersResponse;
 import com.yadony.api.payments.pawapay.PawapayErrors;
@@ -32,7 +31,10 @@ import org.springframework.transaction.annotation.Transactional;
  * Compte de versement mobile money : numéro fourni par l'appelant TOUJOURS prioritaire s'il
  * est renseigné (il peut légitimement différer du numéro du compte Firebase — numéro d'un
  * proche, opérateur distinct…), sinon numéro du compte Firebase (déjà vérifié par OTP).
- * Opérateur prédit par pawaPay, devise contrôlée contre la devise active. Risque accepté :
+ * Opérateur prédit par pawaPay ; devise du compte = devise de l'opérateur du numéro,
+ * indépendante de la devise du portefeuille. La compatibilité avec un colis (peut différer
+ * de la devise du compte de versement) est vérifiée au versement, pas ici (voir
+ * {@code MobileMoneyBidPaymentService}, {@code canReceiveMobileMoney}). Risque accepté :
  * un numéro fourni n'est pas vérifié par OTP, une session compromise pourrait donc rediriger
  * les versements futurs — voir la javadoc de {@link #activate} pour les garde-fous en place.
  */
@@ -44,17 +46,14 @@ public class MobileMoneyAccountService {
     private final UserRepository userRepository;
     private final FirebaseContactService firebaseContact;
     private final PawapayProviderResolver providers;
-    private final ActiveCurrencyResolver currencyResolver;
     private final AuditService audit;
     private final PawapayProperties props;
 
     public MobileMoneyAccountService(UserRepository userRepository, FirebaseContactService firebaseContact,
-                                     PawapayProviderResolver providers, ActiveCurrencyResolver currencyResolver,
-                                     AuditService audit, PawapayProperties props) {
+                                     PawapayProviderResolver providers, AuditService audit, PawapayProperties props) {
         this.userRepository = userRepository;
         this.firebaseContact = firebaseContact;
         this.providers = providers;
-        this.currencyResolver = currencyResolver;
         this.audit = audit;
         this.props = props;
     }
@@ -78,10 +77,12 @@ public class MobileMoneyAccountService {
      * 422 {@code mobile-money-phone-required}.
      *
      * <p>Réseaux : {@code providers} vide ou nul, l'opérateur prédit est seul accepté (ancien
-     * contrat). Sinon chaque code doit figurer dans le catalogue du numéro pour la devise active
-     * (422 {@code mobile-money-account-unsupported} nommant le réseau), la liste est enregistrée
-     * dans l'ordre du catalogue, et {@code mobile_money_provider} vaut le détecté s'il est coché,
-     * sinon le premier coché.
+     * contrat). Sinon chaque code doit figurer dans le catalogue du numéro pour SA devise
+     * (celle de l'opérateur prédit ; devise du compte = devise de l'opérateur du numéro,
+     * indépendante de la devise du portefeuille — la compatibilité avec un colis est vérifiée
+     * au versement, {@code canReceiveMobileMoney}) (422 {@code mobile-money-account-unsupported}
+     * nommant le réseau), la liste est enregistrée dans l'ordre du catalogue, et
+     * {@code mobile_money_provider} vaut le détecté s'il est coché, sinon le premier coché.
      *
      * <p><b>Risque accepté</b> : un numéro fourni n'est PAS vérifié par OTP, une session compromise
      * pourrait rediriger les versements futurs. Garde-fous : provenance tracée dans l'audit
@@ -100,20 +101,19 @@ public class MobileMoneyAccountService {
         if ("provided".equals(phone.source())) {
             log.info("Activation mobile money pour {} avec un numéro saisi (peut différer du numéro Firebase)", userId);
         }
-        String active = currencyResolver.resolve(userId);
         List<String> wanted = cleanCodes(providers);
         if (wanted.isEmpty()) {
             PawapayProviderResolver.Resolved resolved;
             try {
-                resolved = this.providers.resolve(phone.phone(), PawapayOperationKind.PAYOUT, active,
+                resolved = this.providers.resolve(phone.phone(), PawapayOperationKind.PAYOUT, null,
                         "l'activation mobile money de " + userId);
             } catch (PawapayProviderResolver.UnsupportedNumberException e) {
-                throw unsupported(userId, reasonDetail(e, active));
+                throw unsupported(userId, reasonDetail(e));
             }
             apply(user, resolved.msisdn(), resolved.countryAlpha2(), resolved.config().currency(),
                     resolved.provider(), List.of(resolved.provider()));
         } else {
-            PawapayProviderResolver.Catalogue catalogue = catalogueOrUnsupported(userId, phone.phone(), active);
+            PawapayProviderResolver.Catalogue catalogue = catalogueOrUnsupported(userId, phone.phone());
             List<String> accepted = selectAccepted(userId, catalogue, wanted);
             apply(user, catalogue.msisdn(), catalogue.countryAlpha2(), catalogue.currency(),
                     fallbackProvider(catalogue, accepted), accepted);
@@ -151,8 +151,7 @@ public class MobileMoneyAccountService {
         }
         UserEntity user = userRepository.findById(userId).orElseThrow(() -> notFound(userId));
         PhoneSource phone = resolvePhone(user, providedPhone, true);
-        String active = currencyResolver.resolve(userId);
-        return toProvidersResponse(catalogueOrUnsupported(userId, phone.phone(), active));
+        return toProvidersResponse(catalogueOrUnsupported(userId, phone.phone()));
     }
 
     /**
@@ -173,8 +172,7 @@ public class MobileMoneyAccountService {
         if (wanted.isEmpty()) {
             throw unsupported(userId, "Choisissez au moins un réseau.");
         }
-        String active = currencyResolver.resolve(userId);
-        PawapayProviderResolver.Catalogue catalogue = catalogueOrUnsupported(userId, user.getMobileMoneyMsisdn(), active);
+        PawapayProviderResolver.Catalogue catalogue = catalogueOrUnsupported(userId, user.getMobileMoneyMsisdn());
         List<String> accepted = selectAccepted(userId, catalogue, wanted);
         user.setMobileMoneyProviderList(accepted);
         user.setMobileMoneyProvider(fallbackProvider(catalogue, accepted));
@@ -222,22 +220,24 @@ public class MobileMoneyAccountService {
     }
 
     /** Libellé métier d'un numéro reconnu mais inexploitable pour le versement. */
-    private static String reasonDetail(PawapayProviderResolver.UnsupportedNumberException e, String activeCurrency) {
+    private static String reasonDetail(PawapayProviderResolver.UnsupportedNumberException e) {
         return switch (e.reason()) {
             case NO_PROVIDER -> "Aucun opérateur mobile money reconnu pour votre numéro.";
             case OPERATION_CLOSED -> e.providerLabel() + " ne permet pas encore le versement.";
-            case CURRENCY_MISMATCH -> "Votre portefeuille est en " + activeCurrency + ", ce numéro reçoit du " + e.providerCurrency() + ".";
+            // Ne devrait plus se produire à l'activation (aucune devise n'est plus imposée au
+            // résolveur) : gardé pour un appel futur qui en passerait une explicitement.
+            case CURRENCY_MISMATCH -> "Ce numéro reçoit du " + e.providerCurrency() + ", devise non prise en charge pour le versement.";
             case COUNTRY_UNKNOWN -> "Pays non reconnu pour ce numéro.";
             case PROVIDER_NOT_AVAILABLE -> "Réseau " + e.providerLabel() + " indisponible pour ce numéro.";
         };
     }
 
-    private PawapayProviderResolver.Catalogue catalogueOrUnsupported(UUID userId, String phone, String activeCurrency) {
+    private PawapayProviderResolver.Catalogue catalogueOrUnsupported(UUID userId, String phone) {
         try {
-            return providers.catalogue(phone, PawapayOperationKind.PAYOUT, activeCurrency,
+            return providers.catalogue(phone, PawapayOperationKind.PAYOUT, null,
                     "le catalogue mobile money de " + userId);
         } catch (PawapayProviderResolver.UnsupportedNumberException e) {
-            throw unsupported(userId, reasonDetail(e, activeCurrency));
+            throw unsupported(userId, reasonDetail(e));
         }
     }
 

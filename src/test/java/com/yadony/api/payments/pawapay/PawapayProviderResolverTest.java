@@ -237,6 +237,71 @@ class PawapayProviderResolverTest {
                 .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-provider-unavailable");
     }
 
+    // ── devise nulle (activation d'un compte de versement) ─────────────────
+
+    /**
+     * Bug corrigé : {@code expectedCurrency == null} signifie « la devise de l'opérateur du
+     * numéro », pas « aucune devise attendue ». Un numéro ivoirien en XOF doit résoudre même
+     * quand l'appelant (activation d'un compte de versement) n'a pas de devise à faire valoir
+     * (le portefeuille de l'utilisateur peut être en CAD, sans rapport avec la devise du
+     * versement mobile money).
+     */
+    @Test
+    void resolve_withNullExpectedCurrency_usesTheOperatorsCurrency() {
+        predicts("ORANGE_SEN", "221771234567");
+        when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN",
+                new PawapayProviderConfig("ORANGE_SEN", "SEN", "XOF", OPEN, OPEN)));
+
+        PawapayProviderResolver.Resolved r = resolver.resolve("221771234567", PawapayOperationKind.PAYOUT, null, "ctx");
+
+        assertThat(r.provider()).isEqualTo("ORANGE_SEN");
+        assertThat(r.config().currency()).isEqualTo("XOF");
+    }
+
+    @Test
+    void catalogue_withNullExpectedCurrency_usesTheOperatorsCurrency_optionsSameCountryAndCurrency() {
+        predicts("WAVE_SEN", "221771234567");
+        configured(ORANGE, FREE_PAYOUT_CLOSED, WAVE, MTN_CIV, MTN_CMR);
+
+        PawapayProviderResolver.Catalogue c = resolver.catalogue("221771234567", PawapayOperationKind.PAYOUT, null, "ctx");
+
+        assertThat(c.currency()).isEqualTo("XOF");
+        assertThat(c.options()).extracting(PawapayProviderConfig::provider).containsExactly("WAVE_SEN", "ORANGE_SEN");
+        assertThat(c.detected()).isEqualTo("WAVE_SEN");
+    }
+
+    @Test
+    void resolve_withNullExpectedCurrency_predictedProviderMissingFromConfiguration_isNoProvider() {
+        predicts("ORANGE_SEN", null);
+        when(client.activeConfiguration()).thenReturn(Map.of());
+
+        assertThatThrownBy(() -> resolver.resolve("221771234567", PawapayOperationKind.PAYOUT, null, "ctx"))
+                .isInstanceOf(UnsupportedNumberException.class)
+                .extracting(e -> ((UnsupportedNumberException) e).reason()).isEqualTo(Reason.NO_PROVIDER);
+    }
+
+    @Test
+    void catalogue_withNullExpectedCurrency_predictedProviderMissingFromConfiguration_isNoProvider() {
+        predicts("ORANGE_SEN", null);
+        when(client.activeConfiguration()).thenReturn(Map.of());
+
+        assertThatThrownBy(() -> resolver.catalogue("221771234567", PawapayOperationKind.PAYOUT, null, "ctx"))
+                .isInstanceOf(UnsupportedNumberException.class)
+                .extracting(e -> ((UnsupportedNumberException) e).reason()).isEqualTo(Reason.NO_PROVIDER);
+    }
+
+    /** Non-régression : un DEPOSIT avec une devise explicite différente reste refusé. */
+    @Test
+    void resolve_withExplicitCurrency_stillRejectsAMismatch() {
+        predicts("MTN_MOMO_CMR", null);
+        when(client.activeConfiguration()).thenReturn(Map.of("MTN_MOMO_CMR",
+                new PawapayProviderConfig("MTN_MOMO_CMR", "CMR", "XAF", OPEN, OPEN)));
+
+        assertThatThrownBy(() -> resolver.resolve("221771234567", PawapayOperationKind.DEPOSIT, "XOF", "ctx"))
+                .isInstanceOf(UnsupportedNumberException.class)
+                .extracting(e -> ((UnsupportedNumberException) e).reason()).isEqualTo(Reason.CURRENCY_MISMATCH);
+    }
+
     // ── choix explicite ─────────────────────────────────────────────────────
 
     @Test
