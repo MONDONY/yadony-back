@@ -330,6 +330,45 @@ class WalletSelfRefundServiceTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void request_auditItems_structureSerialisableEtPasUnToString() {
+        // Régression : "items" partait en auditItems.toString(), soit
+        // "[{paymentIntentId=pi_a, amount=20.00}]" dans un payload JSONB — ni requêtable
+        // par jsonb_array_elements, ni relisible sans parsing maison.
+        WalletTransactionEntity a = ledgerTx(WalletTransactionType.TOP_UP, "20.00", "pi_a");
+        WalletTransactionEntity b = ledgerTx(WalletTransactionType.TOP_UP, "30.00", "pi_b");
+        stubLedger("45.00", a, b, ledgerTx(WalletTransactionType.BID_PAYMENT, "-5.00", null));
+        when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any()))
+                .thenReturn(Optional.empty());
+        when(refundRequestRepository.save(any())).thenAnswer(inv -> {
+            WalletRefundRequestEntity r = inv.getArgument(0);
+            if (r.getId() == null) assignId(r);
+            return r;
+        });
+        when(refundRequestItemRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(refundRequestItemRepository.findByRefundRequestId(any())).thenReturn(List.of());
+
+        try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            service.request(USER_ID, "EUR", List.of());
+        }
+
+        ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
+        verify(auditService).log(eq("wallet_refund_request"), any(), eq("AUTOMATIC_REQUESTED"),
+                eq(USER_ID), payload.capture());
+        Object items = payload.getValue().get("items");
+        assertThat(items).isInstanceOf(List.class);
+        List<Map<String, String>> list = (List<Map<String, String>>) items;
+        assertThat(list).hasSize(2);
+        assertThat(list).allSatisfy(item -> assertThat(item)
+                .containsOnlyKeys("paymentIntentId", "amount", "status"));
+        assertThat(list).extracting(item -> item.get("paymentIntentId"))
+                .containsExactlyInAnyOrder("pi_a", "pi_b");
+        assertThat(list).extracting(item -> item.get("status")).containsOnly("PENDING");
+        assertThat(payload.getValue().get("refundableTotal")).isEqualTo("45.00");
+        assertThat(payload.getValue().get("nonRefundable")).isEqualTo("0");
+    }
+
+    @Test
     void request_deviseSansDecimales_montantAligneUniteMineureStripeAvantEnvoi() {
         // Régression : le ledger interne garde toujours 2 décimales (NUMERIC(10,2)), même pour
         // XOF (0 décimale). Sans mise à l'échelle avant la création de l'item, un reliquat comme

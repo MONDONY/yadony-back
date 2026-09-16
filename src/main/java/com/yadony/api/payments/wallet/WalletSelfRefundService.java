@@ -303,17 +303,21 @@ public class WalletSelfRefundService {
             item.setStatus(WalletRefundItemStatus.PENDING);
             refundRequestItemRepository.save(item);
             auditItems.add(Map.of("paymentIntentId", target.paymentIntentId(),
-                    "amount", scaledTarget.amount().toPlainString()));
+                    "amount", scaledTarget.amount().toPlainString(),
+                    "status", item.getStatus().name()));
         }
 
         saved.setStatus(WalletRefundRequestStatus.PROCESSING);
         refundRequestRepository.save(saved);
 
+        // items en liste de maps et non en toString() : le payload part en JSONB, une chaine
+        // "[{paymentIntentId=pi_1, amount=35.00}]" n'est ni requetable (jsonb_array_elements)
+        // ni relisible sans parsing maison.
         auditService.log("wallet_refund_request", saved.getId(), "AUTOMATIC_REQUESTED", userId,
-                Map.of("currency", code, "amount", saved.getAmount().toString(),
+                Map.<String, Object>of("currency", code, "amount", saved.getAmount().toString(),
                         "refundableTotal", allocation.refundableTotal().toPlainString(),
                         "nonRefundable", allocation.nonRefundable().toPlainString(),
-                        "items", auditItems.toString()));
+                        "items", List.copyOf(auditItems)));
 
         for (WalletRefundRequestItemEntity item : refundRequestItemRepository.findByRefundRequestId(saved.getId())) {
             issueStripeRefund(item, code);
