@@ -230,9 +230,13 @@ public class WalletSelfRefundService {
      * {@code AdminGdprService#executeDeletion}, cette exception — attrapée par l'appelant pour
      * poursuivre la suppression — marquerait sinon la transaction englobante rollback-only et
      * ferait échouer son commit en {@code UnexpectedRollbackException} (même défaut que sur
-     * {@link #allocation}, cf. sa javadoc).
+     * {@link #allocation}, cf. sa javadoc). {@code WalletAllocationInvariantException} y figure
+     * pour la même raison : l'appel interne à {@link #allocation} ci-dessous peut la relever
+     * (rejeu du ledger recalculé ici, pas réutilisé depuis un appelant), et l'appelant
+     * ({@code UserService#settleWalletsForDeletion}) l'attrape déjà pour basculer sur un ticket
+     * manuel — elle ne doit donc pas non plus empoisonner sa transaction.
      */
-    @Transactional(noRollbackFor = YadonyBusinessException.class)
+    @Transactional(noRollbackFor = {YadonyBusinessException.class, WalletAllocationInvariantException.class})
     public WalletRefundRequestEntity request(UUID userId, String currency, List<UUID> selectedTransactionIds) {
         String code = normalize(currency);
         Set<UUID> selected = selectedTransactionIds == null ? Set.of() : new HashSet<>(selectedTransactionIds);
@@ -481,7 +485,7 @@ public class WalletSelfRefundService {
         // saveAndFlush : openChildForFailedItems insère juste après un PENDING sur le même
         // (user_id, currency), que l'index unique partiel uq_wallet_refund_requests_pending
         // (V229, statuts PENDING et PROCESSING) refuserait tant que cette demande-ci est encore
-        // PROCESSING en base. Sans flush explicite, la sortie de FAILED ne tient qu'à un
+        // PROCESSING en base. Sans flush explicite, la sortie de PROCESSING ne tient qu'à un
         // auto-flush accidentel déclenché par la première requête d'openChildForFailedItems.
         refundRequestRepository.saveAndFlush(request);
 

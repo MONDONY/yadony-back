@@ -20,8 +20,10 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -701,6 +703,42 @@ class WalletSelfRefundServiceTest {
         service.handleChargeRefunded(charge);
 
         verifyNoInteractions(walletService);
+    }
+
+    /**
+     * Test de contrat d'annotation : {@code request()} recalcule l'allocation en
+     * auto-invocation et peut lever {@code WalletAllocationInvariantException} (RuntimeException).
+     * Sans elle dans {@code noRollbackFor()}, la transaction participante de
+     * {@code UserService#settleWalletsForDeletion} est marquée rollback-only et son commit
+     * échoue en {@code UnexpectedRollbackException} même si l'appelant a déjà attrapé
+     * l'exception pour basculer sur un ticket manuel. Fige la correction : la régression
+     * (retrait de la classe de {@code noRollbackFor()}) doit faire échouer ce test, pas
+     * un scénario d'intégration.
+     */
+    @Test
+    void request_noRollbackFor_couvreYadonyBusinessExceptionEtWalletAllocationInvariantException() throws NoSuchMethodException {
+        Method request = WalletSelfRefundService.class.getMethod(
+                "request", UUID.class, String.class, List.class);
+        Transactional transactional = request.getAnnotation(Transactional.class);
+
+        assertThat(transactional).isNotNull();
+        assertThat(transactional.noRollbackFor())
+                .contains(YadonyBusinessException.class, WalletAllocationInvariantException.class);
+    }
+
+    /**
+     * Même contrat pour {@code allocation()} : l'invariant y est levé directement par le
+     * rejeu du ledger (cf. sa javadoc) et ne doit pas non plus marquer rollback-only la
+     * transaction participante de l'appelant (ex. {@code isEligible}, {@code UserService}).
+     */
+    @Test
+    void allocation_noRollbackFor_couvreWalletAllocationInvariantException() throws NoSuchMethodException {
+        Method allocation = WalletSelfRefundService.class.getMethod(
+                "allocation", UUID.class, String.class);
+        Transactional transactional = allocation.getAnnotation(Transactional.class);
+
+        assertThat(transactional).isNotNull();
+        assertThat(transactional.noRollbackFor()).contains(WalletAllocationInvariantException.class);
     }
 
     private static void setId(Object entity, UUID id) {

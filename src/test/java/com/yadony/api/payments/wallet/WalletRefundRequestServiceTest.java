@@ -95,6 +95,27 @@ class WalletRefundRequestServiceTest {
     }
 
     @Test
+    @DisplayName("ticket PENDING/PROCESSING déjà ouvert pour cette devise → réutilisé, pas de doublon ni re-alerte")
+    void existingPendingTicket_isReusedNotDuplicated() {
+        WalletRefundRequestEntity existing = new WalletRefundRequestEntity();
+        assignId(existing);
+        existing.setUserId(USER_ID);
+        existing.setCurrency("EUR");
+        existing.setAmount(new BigDecimal("30.00"));
+        existing.setStatus(WalletRefundRequestStatus.PENDING);
+
+        when(walletService.getAllBalances(USER_ID)).thenReturn(List.of(walletOf("EUR", "30.00")));
+        when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any()))
+                .thenReturn(Optional.of(existing));
+
+        WalletRefundRequestEntity result = service.request(USER_ID, "EUR");
+
+        assertThat(result).isSameAs(existing);
+        verify(refundRequestRepository, never()).save(any());
+        verify(adminAlertService, never()).raise(any(), any(), any());
+    }
+
+    @Test
     void openChildForFailedItems_creeUnTicketManuelLieAuParent() {
         WalletRefundRequestEntity parent = new WalletRefundRequestEntity();
         assignId(parent);
