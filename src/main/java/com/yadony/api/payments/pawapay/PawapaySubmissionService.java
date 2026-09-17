@@ -43,6 +43,20 @@ public class PawapaySubmissionService {
                 provider, amount, currency, DEPOSIT_MESSAGE, clientReference, successfulUrl, failedUrl)));
     }
 
+    /**
+     * Dépôt de recharge du wallet : pas de paiement de colis (paymentId et
+     * relatedOperationId absents), purpose {@code WALLET_TOPUP} porté sur
+     * l'opération à la place de {@code paymentId}.
+     */
+    public PawapayOperationEntity submitWalletDeposit(UUID userId, String msisdn, String provider, String country,
+                                                       BigDecimal amount, String currency, String clientReference,
+                                                       String successfulUrl, String failedUrl) {
+        PawapayOperationEntity op = operations.create(PawapayOperationKind.DEPOSIT, PawapayOperationPurpose.WALLET_TOPUP,
+                userId, null, null, amount, currency, provider, country, msisdn);
+        return submit(op, () -> client.initiateDeposit(new PawapayDepositRequest(op.getId(), op.getMsisdn(),
+                provider, amount, currency, DEPOSIT_MESSAGE, clientReference, successfulUrl, failedUrl)));
+    }
+
     public PawapayOperationEntity submitPayout(UUID paymentId, String msisdn, String provider, String country,
                                                BigDecimal amount, String currency, String clientReference) {
         PawapayOperationEntity op = operations.create(PawapayOperationKind.PAYOUT, paymentId, null,
