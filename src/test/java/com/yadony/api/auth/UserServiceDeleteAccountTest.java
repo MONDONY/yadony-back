@@ -10,6 +10,7 @@ import com.yadony.api.payments.wallet.WalletAccountEntity;
 import com.yadony.api.payments.wallet.WalletAccountRepository;
 import com.yadony.api.payments.wallet.WalletAllocationInvariantException;
 import com.yadony.api.payments.wallet.WalletRefundAllocation;
+import com.yadony.api.payments.wallet.WalletRefundRail;
 import com.yadony.api.payments.wallet.WalletRefundRequestEntity;
 import com.yadony.api.payments.wallet.WalletRefundRequestService;
 import com.yadony.api.payments.wallet.WalletSelfRefundService;
@@ -162,9 +163,11 @@ class UserServiceDeleteAccountTest {
     private static WalletRefundAllocation allocation(String refundable, String nonRefundable) {
         BigDecimal r = new BigDecimal(refundable);
         List<WalletRefundAllocation.RefundableTopup> list = r.signum() > 0
-                ? List.of(new WalletRefundAllocation.RefundableTopup(UUID.randomUUID(), "pi_1", r))
+                ? List.of(new WalletRefundAllocation.RefundableTopup(UUID.randomUUID(), "pi_1", r, r,
+                        BigDecimal.ZERO, WalletRefundRail.of("pi_1"), null))
                 : List.of();
-        return new WalletRefundAllocation(list, r, new BigDecimal(nonRefundable), BigDecimal.ZERO);
+        return new WalletRefundAllocation(list, r, new BigDecimal(nonRefundable), BigDecimal.ZERO,
+                BigDecimal.ZERO, r);
     }
 
     @Nested
@@ -257,7 +260,8 @@ class UserServiceDeleteAccountTest {
             when(walletAccountRepository.findAllByUserId(USER_ID)).thenReturn(List.of(walletOf("EUR", "40.00")));
             when(walletSelfRefundService.allocation(USER_ID, "EUR")).thenReturn(
                     new WalletRefundAllocation(List.of(), new BigDecimal("20.00"),
-                            new BigDecimal("5.00"), new BigDecimal("15.00")));
+                            new BigDecimal("5.00"), new BigDecimal("15.00"),
+                            BigDecimal.ZERO, new BigDecimal("20.00")));
 
             List<WalletSettlementDto> s = userService.walletSettlement(USER_ID);
 

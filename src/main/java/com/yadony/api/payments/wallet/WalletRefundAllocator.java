@@ -57,11 +57,13 @@ public final class WalletRefundAllocator {
     private static final class Bucket {
         final UUID transactionId;
         final String paymentIntentId;
+        final BigDecimal original;
         BigDecimal remaining;
 
         Bucket(UUID transactionId, String paymentIntentId, BigDecimal remaining) {
             this.transactionId = transactionId;
             this.paymentIntentId = paymentIntentId;
+            this.original = remaining;
             this.remaining = remaining;
         }
     }
@@ -186,7 +188,8 @@ public final class WalletRefundAllocator {
                 inFlight = inFlight.add(b.remaining);
                 continue;
             }
-            refundable.add(new WalletRefundAllocation.RefundableTopup(b.transactionId, b.paymentIntentId, b.remaining));
+            refundable.add(new WalletRefundAllocation.RefundableTopup(b.transactionId, b.paymentIntentId,
+                    b.original, b.remaining, BigDecimal.ZERO, WalletRefundRail.of(b.paymentIntentId), null));
             refundableTotal = refundableTotal.add(b.remaining);
         }
 
@@ -194,7 +197,8 @@ public final class WalletRefundAllocator {
         if (unallocated.signum() != 0 || computed.compareTo(balance) != 0) {
             throw new WalletAllocationInvariantException(computed, balance, unallocated);
         }
-        return new WalletRefundAllocation(List.copyOf(refundable), refundableTotal, nonCash, inFlight);
+        return new WalletRefundAllocation(List.copyOf(refundable), refundableTotal, nonCash, inFlight,
+                BigDecimal.ZERO, refundableTotal);
     }
 
     /**

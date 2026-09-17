@@ -58,8 +58,9 @@ class UserFinalizedPaymentsListenerTest {
     }
 
     private static WalletRefundAllocation allocation(String refundable, String nonRefundable, String inFlight) {
-        return new WalletRefundAllocation(List.of(), new BigDecimal(refundable),
-                new BigDecimal(nonRefundable), new BigDecimal(inFlight));
+        BigDecimal r = new BigDecimal(refundable);
+        return new WalletRefundAllocation(List.of(), r,
+                new BigDecimal(nonRefundable), new BigDecimal(inFlight), BigDecimal.ZERO, r);
     }
 
     @Test

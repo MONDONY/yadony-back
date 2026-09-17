@@ -46,6 +46,18 @@ public class WalletRefundRequestItemEntity {
     @Column(name = "failure_reason", length = 60)
     private String failureReason;
 
+    /** Frais de remboursement prélevés sur cet item (ex. frais pawaPay). Zéro sur Stripe. */
+    @Column(name = "fee_amount", nullable = false, precision = 10, scale = 2)
+    private BigDecimal feeAmount = BigDecimal.ZERO;
+
+    /** Identifiant de l'opération pawaPay de remboursement (refund), quand le rail est PAWAPAY. */
+    @Column(name = "pawapay_refund_id")
+    private UUID pawapayRefundId;
+
+    /** Identifiant de l'opération pawaPay de versement (payout), quand le rail est PAWAPAY. */
+    @Column(name = "pawapay_payout_id")
+    private UUID pawapayPayoutId;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -67,5 +79,11 @@ public class WalletRefundRequestItemEntity {
     public void setStatus(WalletRefundItemStatus status) { this.status = status; }
     public String getFailureReason() { return failureReason; }
     public void setFailureReason(String failureReason) { this.failureReason = failureReason; }
+    public BigDecimal getFeeAmount() { return feeAmount; }
+    public void setFeeAmount(BigDecimal feeAmount) { this.feeAmount = feeAmount; }
+    public UUID getPawapayRefundId() { return pawapayRefundId; }
+    public void setPawapayRefundId(UUID pawapayRefundId) { this.pawapayRefundId = pawapayRefundId; }
+    public UUID getPawapayPayoutId() { return pawapayPayoutId; }
+    public void setPawapayPayoutId(UUID pawapayPayoutId) { this.pawapayPayoutId = pawapayPayoutId; }
     public Instant getCreatedAt() { return createdAt; }
 }

@@ -181,7 +181,7 @@ class WalletSelfRefundServiceTest {
     void isEligible_avecAllocationFournie_neRejouePasLeLedger() {
         when(refundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any())).thenReturn(false);
         WalletRefundAllocation deja = new WalletRefundAllocation(List.of(),
-                new BigDecimal("35.00"), BigDecimal.ZERO, BigDecimal.ZERO);
+                new BigDecimal("35.00"), BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal("35.00"));
 
         assertThat(service.isEligible(USER_ID, "EUR", deja)).isTrue();
         verifyNoInteractions(walletAccountRepository, walletTransactionRepository);
@@ -191,7 +191,7 @@ class WalletSelfRefundServiceTest {
     void isEligible_avecAllocationFournie_fauxQuandUneDemandeEstActive() {
         when(refundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any())).thenReturn(true);
         WalletRefundAllocation deja = new WalletRefundAllocation(List.of(),
-                new BigDecimal("35.00"), BigDecimal.ZERO, BigDecimal.ZERO);
+                new BigDecimal("35.00"), BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal("35.00"));
 
         assertThat(service.isEligible(USER_ID, "EUR", deja)).isFalse();
     }

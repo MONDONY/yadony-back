@@ -364,10 +364,12 @@ class UserServiceTest {
         java.math.BigDecimal r = new java.math.BigDecimal(refundable);
         java.util.List<com.yadony.api.payments.wallet.WalletRefundAllocation.RefundableTopup> list = r.signum() > 0
                 ? java.util.List.of(new com.yadony.api.payments.wallet.WalletRefundAllocation.RefundableTopup(
-                        UUID.randomUUID(), "pi_1", r))
+                        UUID.randomUUID(), "pi_1", r, r, java.math.BigDecimal.ZERO,
+                        com.yadony.api.payments.wallet.WalletRefundRail.of("pi_1"), null))
                 : java.util.List.of();
         return new com.yadony.api.payments.wallet.WalletRefundAllocation(
-                list, r, new java.math.BigDecimal(nonRefundable), java.math.BigDecimal.ZERO);
+                list, r, new java.math.BigDecimal(nonRefundable), java.math.BigDecimal.ZERO,
+                java.math.BigDecimal.ZERO, r);
     }
 
     @Nested
