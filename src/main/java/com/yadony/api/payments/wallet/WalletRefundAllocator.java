@@ -1,5 +1,7 @@
 package com.yadony.api.payments.wallet;
 
+import com.yadony.api.payments.wallet.fees.WalletRefundFeeCalculator;
+
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayDeque;
@@ -54,6 +56,20 @@ public final class WalletRefundAllocator {
 
     private WalletRefundAllocator() {}
 
+    /** Frais nuls sur les deux rails : repli de la surcharge à 3 arguments (tests existants). */
+    private static final WalletRefundFeeCalculator.FeeSources ZERO_FEE_SOURCES =
+            new WalletRefundFeeCalculator.FeeSources() {
+                @Override
+                public BigDecimal stripeFee(String paymentIntentId, BigDecimal amount, String currency) {
+                    return BigDecimal.ZERO;
+                }
+
+                @Override
+                public BigDecimal pawapayFee(String provider, BigDecimal amount, String currency) {
+                    return BigDecimal.ZERO;
+                }
+            };
+
     private static final class Bucket {
         final UUID transactionId;
         final String paymentIntentId;
@@ -99,6 +115,21 @@ public final class WalletRefundAllocator {
     public static WalletRefundAllocation allocate(List<WalletTransactionEntity> ledgerAsc,
                                                   List<WalletRefundRequestItemEntity> items,
                                                   BigDecimal balance) {
+        return allocate(ledgerAsc, items, balance, Map.of(), ZERO_FEE_SOURCES, "EUR");
+    }
+
+    /**
+     * @param providerByPaymentRef opérateur pawaPay par {@code paymentRef} (clé {@code "pawapay:" + operationId}),
+     *                             pour retrouver le barème de frais d'une recharge sur ce rail.
+     * @param sources source des frais réels par rail (cf. {@link WalletRefundFeeCalculator.FeeSources}).
+     * @param currency devise du wallet, utilisée pour arrondir les frais à son unité mineure.
+     */
+    public static WalletRefundAllocation allocate(List<WalletTransactionEntity> ledgerAsc,
+                                                  List<WalletRefundRequestItemEntity> items,
+                                                  BigDecimal balance,
+                                                  Map<String, String> providerByPaymentRef,
+                                                  WalletRefundFeeCalculator.FeeSources sources,
+                                                  String currency) {
         List<Bucket> buckets = new ArrayList<>();
         Map<UUID, Bucket> bucketByTx = new HashMap<>();
         BigDecimal nonCash = BigDecimal.ZERO;
@@ -179,6 +210,7 @@ public final class WalletRefundAllocator {
 
         List<WalletRefundAllocation.RefundableTopup> refundable = new ArrayList<>();
         BigDecimal refundableTotal = BigDecimal.ZERO;
+        BigDecimal fees = BigDecimal.ZERO;
         BigDecimal inFlight = BigDecimal.ZERO;
         for (Bucket b : buckets) {
             if (b.remaining.signum() <= 0) {
@@ -188,9 +220,17 @@ public final class WalletRefundAllocator {
                 inFlight = inFlight.add(b.remaining);
                 continue;
             }
+            WalletRefundRail rail = WalletRefundRail.of(b.paymentIntentId);
+            String provider = providerByPaymentRef.get(b.paymentIntentId);
+            // fee = ZERO d'abord : feeFor() ne lit que original/remaining/rail/provider/paymentIntentId,
+            // jamais le champ fee lui-même (pas de dépendance circulaire).
+            WalletRefundAllocation.RefundableTopup withoutFee = new WalletRefundAllocation.RefundableTopup(
+                    b.transactionId, b.paymentIntentId, b.original, b.remaining, BigDecimal.ZERO, rail, provider);
+            BigDecimal fee = WalletRefundFeeCalculator.feeFor(withoutFee, currency, sources);
             refundable.add(new WalletRefundAllocation.RefundableTopup(b.transactionId, b.paymentIntentId,
-                    b.original, b.remaining, BigDecimal.ZERO, WalletRefundRail.of(b.paymentIntentId), null));
+                    b.original, b.remaining, fee, rail, provider));
             refundableTotal = refundableTotal.add(b.remaining);
+            fees = fees.add(fee);
         }
 
         BigDecimal computed = refundableTotal.add(nonCash).add(inFlight);
@@ -198,7 +238,7 @@ public final class WalletRefundAllocator {
             throw new WalletAllocationInvariantException(computed, balance, unallocated);
         }
         return new WalletRefundAllocation(List.copyOf(refundable), refundableTotal, nonCash, inFlight,
-                BigDecimal.ZERO, refundableTotal);
+                fees, refundableTotal.subtract(fees));
     }
 
     /**

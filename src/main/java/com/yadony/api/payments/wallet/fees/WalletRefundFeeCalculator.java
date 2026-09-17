@@ -13,9 +13,9 @@ import java.math.RoundingMode;
  * qu'un frais mal renseigné ne fasse jamais passer le net en négatif.
  *
  * <p>Pur : aucune dépendance Spring, aucun appel réseau. {@link FeeSources} isole les
- * deux rails (Stripe, pawaPay) pour que ce calcul reste testable sans mock statique ;
- * les implémentations réelles ({@link StripeFeeSource}, {@link PawapayFeeTable}) et
- * leur branchement dans l'allocateur arrivent en tâche 3.
+ * deux rails (Stripe, pawaPay) pour que ce calcul reste testable sans mock statique ; les
+ * implémentations réelles ({@link StripeFeeSource}, {@link PawapayFeeTable}) sont branchées
+ * par {@code WalletSelfRefundService#load} sur {@code WalletRefundAllocator#allocate}.
  */
 public final class WalletRefundFeeCalculator {
 

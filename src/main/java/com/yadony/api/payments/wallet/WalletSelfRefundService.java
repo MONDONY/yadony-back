@@ -13,6 +13,13 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.payments.currency.SupportedCurrency;
+import com.yadony.api.payments.pawapay.PawapayOperationEntity;
+import com.yadony.api.payments.pawapay.PawapayOperationKind;
+import com.yadony.api.payments.pawapay.PawapayOperationPurpose;
+import com.yadony.api.payments.pawapay.PawapayOperationRepository;
+import com.yadony.api.payments.wallet.fees.PawapayFeeTable;
+import com.yadony.api.payments.wallet.fees.StripeFeeSource;
+import com.yadony.api.payments.wallet.fees.WalletRefundFeeCalculator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
@@ -32,6 +39,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -52,6 +60,10 @@ public class WalletSelfRefundService {
     private final ObjectMapper objectMapper;
     private final WalletRefundRequestService walletRefundRequestService;
     private final ApplicationEventPublisher eventPublisher;
+    private final PawapayOperationRepository pawapayOperationRepository;
+    private final StripeFeeSource stripeFeeSource;
+    private final PawapayFeeTable pawapayFeeTable;
+    private final WalletRefundRailIssuer walletRefundRailIssuer;
 
     public WalletSelfRefundService(WalletAccountRepository walletAccountRepository,
                                    WalletTransactionRepository walletTransactionRepository,
@@ -63,7 +75,11 @@ public class WalletSelfRefundService {
                                    AdminAlertEscalator adminAlertEscalator,
                                    ObjectMapper objectMapper,
                                    WalletRefundRequestService walletRefundRequestService,
-                                   ApplicationEventPublisher eventPublisher) {
+                                   ApplicationEventPublisher eventPublisher,
+                                   PawapayOperationRepository pawapayOperationRepository,
+                                   StripeFeeSource stripeFeeSource,
+                                   PawapayFeeTable pawapayFeeTable,
+                                   WalletRefundRailIssuer walletRefundRailIssuer) {
         this.walletAccountRepository = walletAccountRepository;
         this.walletTransactionRepository = walletTransactionRepository;
         this.refundRequestRepository = refundRequestRepository;
@@ -75,6 +91,10 @@ public class WalletSelfRefundService {
         this.objectMapper = objectMapper;
         this.walletRefundRequestService = walletRefundRequestService;
         this.eventPublisher = eventPublisher;
+        this.pawapayOperationRepository = pawapayOperationRepository;
+        this.stripeFeeSource = stripeFeeSource;
+        this.pawapayFeeTable = pawapayFeeTable;
+        this.walletRefundRailIssuer = walletRefundRailIssuer;
     }
 
     public record EligibleTopup(WalletTransactionEntity topup, BigDecimal remaining) {}
@@ -129,8 +149,29 @@ public class WalletSelfRefundService {
                 .map(WalletTransactionEntity::getId)
                 .toList();
         List<WalletRefundRequestItemEntity> items = refundRequestItemRepository.findByWalletTransactionIdIn(topupIds);
+        // Opérateur pawaPay de chaque recharge mobile money : le paymentRef d'un TOP_UP pawaPay
+        // vaut "pawapay:<id opération>" (cf. WalletMobileMoneyTopupService), retrouvé ici sans
+        // relire tout le ledger opération par opération.
+        Map<String, String> providerByPaymentRef = pawapayOperationRepository
+                .findByUserIdAndPurposeAndKind(userId, PawapayOperationPurpose.WALLET_TOPUP,
+                        PawapayOperationKind.DEPOSIT)
+                .stream()
+                .collect(Collectors.toMap(op -> "pawapay:" + op.getId(), PawapayOperationEntity::getProvider));
+        WalletRefundFeeCalculator.FeeSources sources = new WalletRefundFeeCalculator.FeeSources() {
+            @Override
+            public BigDecimal stripeFee(String paymentIntentId, BigDecimal amount, String feeCurrency) {
+                return Optional.ofNullable(stripeFeeSource.fee(paymentIntentId, feeCurrency))
+                        .orElseGet(() -> stripeFeeSource.fallback(amount, feeCurrency));
+            }
+
+            @Override
+            public BigDecimal pawapayFee(String provider, BigDecimal amount, String feeCurrency) {
+                return pawapayFeeTable.fee(provider, amount, feeCurrency);
+            }
+        };
         try {
-            return new LoadedAllocation(WalletRefundAllocator.allocate(ledger, items, wallet.getBalance()), ledger);
+            return new LoadedAllocation(WalletRefundAllocator.allocate(ledger, items, wallet.getBalance(),
+                    providerByPaymentRef, sources, code), ledger);
         } catch (WalletAllocationInvariantException e) {
             log.warn("Allocation wallet incoherente pour user {} {} : {}", userId, code, e.getMessage());
             adminAlertEscalator.raiseOnce("wallet-alloc-" + userId,
@@ -258,14 +299,46 @@ public class WalletSelfRefundService {
         }
 
         WalletRefundAllocation allocation = allocation(userId, code);
-        List<WalletRefundAllocation.RefundableTopup> targets = allocation.refundable().stream()
+        List<WalletRefundAllocation.RefundableTopup> selectedTargets = allocation.refundable().stream()
                 .filter(t -> selected.isEmpty() || selected.contains(t.walletTransactionId()))
                 .toList();
+        if (selectedTargets.isEmpty()) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "wallet-not-refund-eligible", "Unprocessable",
+                    "Aucun montant remboursable sur ce solde");
+        }
+
+        // Une cible dont le frais absorbe tout le restant (remaining - fee <= 0) n'a rien à
+        // verser : exclue plutôt que de créer un item PENDING à net nul. L'allocateur la garde
+        // volontairement dans refundable/refundableTotal (invariant du solde), c'est ici
+        // qu'elle sort des cibles réellement demandées.
+        int skippedForFees = 0;
+        List<WalletRefundAllocation.RefundableTopup> targets = new ArrayList<>();
+        for (WalletRefundAllocation.RefundableTopup t : selectedTargets) {
+            if (t.remaining().subtract(t.fee()).signum() > 0) {
+                targets.add(t);
+            } else {
+                skippedForFees++;
+            }
+        }
         if (targets.isEmpty()) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "wallet-not-refund-eligible", "Unprocessable",
                     "Aucun montant remboursable sur ce solde");
         }
+
+        // Une demande ne part jamais à moitié Stripe, à moitié pawaPay : chaque canal a son
+        // propre émetteur (issueStripeRefund vs WalletRefundRailIssuer). Ne devrait pas se
+        // produire (une recharge n'a qu'un rail), garde-fou défensif.
+        Set<WalletRefundRail> rails = targets.stream()
+                .map(WalletRefundAllocation.RefundableTopup::rail)
+                .collect(Collectors.toSet());
+        if (rails.size() > 1) {
+            throw new IllegalStateException("wallet-refund-mixed-rails");
+        }
+        WalletRefundChannel channel = rails.contains(WalletRefundRail.PAWAPAY)
+                ? WalletRefundChannel.AUTOMATIC_PAWAPAY
+                : WalletRefundChannel.AUTOMATIC_STRIPE;
 
         // Le ledger interne garde toujours 2 décimales (NUMERIC(10,2)), même pour une devise
         // sans centimes (XOF/XAF) : on aligne chaque montant sur l'unité mineure Stripe de la
@@ -292,12 +365,13 @@ public class WalletSelfRefundService {
         request.setUserId(userId);
         request.setCurrency(code);
         request.setAmount(amount);
-        request.setChannel(WalletRefundChannel.AUTOMATIC_STRIPE);
+        request.setChannel(channel);
         request.setStatus(WalletRefundRequestStatus.PENDING);
         request.setRequestedAt(LocalDateTime.now(ZoneOffset.UTC));
         WalletRefundRequestEntity saved = refundRequestRepository.save(request);
 
         List<Map<String, String>> auditItems = new ArrayList<>();
+        BigDecimal totalFees = BigDecimal.ZERO;
         for (ScaledTarget scaledTarget : scaledTargets) {
             WalletRefundAllocation.RefundableTopup target = scaledTarget.target();
             WalletRefundRequestItemEntity item = new WalletRefundRequestItemEntity();
@@ -305,8 +379,10 @@ public class WalletSelfRefundService {
             item.setWalletTransactionId(target.walletTransactionId());
             item.setPaymentIntentId(target.paymentIntentId());
             item.setAmount(scaledTarget.amount());
+            item.setFeeAmount(target.fee());
             item.setStatus(WalletRefundItemStatus.PENDING);
             refundRequestItemRepository.save(item);
+            totalFees = totalFees.add(target.fee());
             auditItems.add(Map.of("paymentIntentId", target.paymentIntentId(),
                     "amount", scaledTarget.amount().toPlainString(),
                     "status", item.getStatus().name()));
@@ -315,6 +391,7 @@ public class WalletSelfRefundService {
         saved.setStatus(WalletRefundRequestStatus.PROCESSING);
         refundRequestRepository.save(saved);
 
+        BigDecimal net = amount.subtract(totalFees);
         // items en liste de maps et non en toString() : le payload part en JSONB, une chaine
         // "[{paymentIntentId=pi_1, amount=35.00}]" n'est ni requetable (jsonb_array_elements)
         // ni relisible sans parsing maison.
@@ -322,6 +399,9 @@ public class WalletSelfRefundService {
                 Map.<String, Object>of("currency", code, "amount", saved.getAmount().toString(),
                         "refundableTotal", allocation.refundableTotal().toPlainString(),
                         "nonRefundable", allocation.nonRefundable().toPlainString(),
+                        "fees", totalFees.toPlainString(),
+                        "net", net.toPlainString(),
+                        "skippedForFees", skippedForFees,
                         "items", List.copyOf(auditItems)));
 
         // Aucun Refund.create ici : l'émission part au commit de cette transaction
@@ -333,11 +413,13 @@ public class WalletSelfRefundService {
     }
 
     /**
-     * Émet vers Stripe les items PENDING sans {@code stripeRefundId} d'une demande automatique
-     * PROCESSING, puis clôt la demande si tous ses items sont terminaux (tout en échec : le
-     * ticket enfant s'ouvre tout de suite). Appelée au commit de la demande
+     * Émet les items PENDING sans {@code stripeRefundId} d'une demande automatique PROCESSING
+     * (Stripe directement, pawaPay via {@link WalletRefundRailIssuer} pour
+     * {@code AUTOMATIC_PAWAPAY} — implémentation provisoire tant que la tâche 4 n'a pas
+     * branché l'émission réelle), puis clôt la demande si tous ses items sont terminaux (tout
+     * en échec : le ticket enfant s'ouvre tout de suite). Appelée au commit de la demande
      * ({@link WalletRefundIssueListener}) et par la reprise planifiée
-     * ({@link WalletRefundIssueRecoveryScheduler}).
+     * ({@link WalletRefundIssueRecoveryScheduler}, canal Stripe seulement pour l'instant).
      *
      * <p>{@code REQUIRES_NEW} : depuis un écouteur {@code AFTER_COMMIT}, la transaction
      * d'origine est terminée et n'accepte plus d'écriture. La demande puis ses items sont
@@ -348,15 +430,20 @@ public class WalletSelfRefundService {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void issuePendingItems(UUID refundRequestId) {
         WalletRefundRequestEntity request = refundRequestRepository.findByIdForUpdate(refundRequestId).orElse(null);
-        if (request == null
-                || request.getChannel() != WalletRefundChannel.AUTOMATIC_STRIPE
-                || request.getStatus() != WalletRefundRequestStatus.PROCESSING) {
+        boolean automaticChannel = request != null
+                && (request.getChannel() == WalletRefundChannel.AUTOMATIC_STRIPE
+                    || request.getChannel() == WalletRefundChannel.AUTOMATIC_PAWAPAY);
+        if (request == null || !automaticChannel || request.getStatus() != WalletRefundRequestStatus.PROCESSING) {
             return;
         }
         List<WalletRefundRequestItemEntity> items =
                 refundRequestItemRepository.findUnissuedForUpdate(refundRequestId, WalletRefundItemStatus.PENDING);
-        for (WalletRefundRequestItemEntity item : items) {
-            issueStripeRefund(item, request.getCurrency());
+        if (request.getChannel() == WalletRefundChannel.AUTOMATIC_PAWAPAY) {
+            walletRefundRailIssuer.issue(request, items);
+        } else {
+            for (WalletRefundRequestItemEntity item : items) {
+                issueStripeRefund(item, request.getCurrency());
+            }
         }
         resolveIfComplete(refundRequestId);
     }
@@ -368,7 +455,9 @@ public class WalletSelfRefundService {
             // DOWN avant persistance), donc longValueExact() ne devrait jamais lever ici.
             // On garde ce garde-fou pour ne jamais faire tomber la transaction si un item
             // legacy ou une future voie d'écriture laissait passer un montant mal aligné.
-            minorUnits = item.getAmount()
+            // Montant net émis : le brut (item.amount) moins le frais retenu (item.feeAmount,
+            // ZERO pour un item legacy créé avant cette tâche).
+            minorUnits = item.getAmount().subtract(item.getFeeAmount())
                     .movePointRight(SupportedCurrency.fromCodeOrDefault(currency).minorUnit())
                     .longValueExact();
         } catch (ArithmeticException e) {

@@ -13,6 +13,12 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.admin.AdminAlertEscalator;
 import com.yadony.api.common.stripe.AdminAlertService;
+import com.yadony.api.payments.pawapay.PawapayOperationEntity;
+import com.yadony.api.payments.pawapay.PawapayOperationKind;
+import com.yadony.api.payments.pawapay.PawapayOperationPurpose;
+import com.yadony.api.payments.pawapay.PawapayOperationRepository;
+import com.yadony.api.payments.wallet.fees.PawapayFeeTable;
+import com.yadony.api.payments.wallet.fees.StripeFeeSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -55,6 +61,10 @@ class WalletSelfRefundServiceTest {
     @Mock AdminAlertEscalator adminAlertEscalator;
     @Mock WalletRefundRequestService walletRefundRequestService;
     @Mock ApplicationEventPublisher eventPublisher;
+    @Mock PawapayOperationRepository pawapayOperationRepository;
+    @Mock StripeFeeSource stripeFeeSource;
+    @Mock PawapayFeeTable pawapayFeeTable;
+    @Mock WalletRefundRailIssuer walletRefundRailIssuer;
 
     WalletSelfRefundService service;
 
@@ -65,7 +75,15 @@ class WalletSelfRefundServiceTest {
         service = new WalletSelfRefundService(walletAccountRepository, walletTransactionRepository,
                 refundRequestRepository, refundRequestItemRepository, walletService,
                 auditService, adminAlertService, adminAlertEscalator, new ObjectMapper(),
-                walletRefundRequestService, eventPublisher);
+                walletRefundRequestService, eventPublisher, pawapayOperationRepository,
+                stripeFeeSource, pawapayFeeTable, walletRefundRailIssuer);
+        // Repli neutre : la plupart des scénarios ne testent pas le calcul de frais lui-même
+        // (déjà couvert par WalletRefundAllocatorTest), seulement le branchement canal/montant
+        // net. lenient() : tous les tests n'atteignent pas forcément une recharge intacte (la
+        // seule situation où feeFor() interroge réellement ces sources, cf. FeeCalculator).
+        lenient().when(stripeFeeSource.fee(any(), any())).thenReturn(BigDecimal.ZERO);
+        lenient().when(stripeFeeSource.fallback(any(), any())).thenReturn(BigDecimal.ZERO);
+        lenient().when(pawapayFeeTable.fee(any(), any(), any())).thenReturn(BigDecimal.ZERO);
     }
 
     private WalletAccountEntity wallet(String currency, String balance) {
@@ -518,6 +536,129 @@ class WalletSelfRefundServiceTest {
         assertThatThrownBy(() -> service.request(USER_ID, "EUR", List.of()))
                 .isInstanceOf(YadonyBusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode", "wallet-not-refund-eligible");
+    }
+
+    @Test
+    void request_pawapayTargets_setsPawapayChannelAndFeeOnItem() {
+        UUID opId = UUID.randomUUID();
+        WalletTransactionEntity topup = ledgerTx("XOF", WalletTransactionType.TOP_UP, "10000", "pawapay:" + opId);
+        stubLedger("XOF", "10000", topup);
+        PawapayOperationEntity op = mock(PawapayOperationEntity.class);
+        when(op.getId()).thenReturn(opId);
+        when(op.getProvider()).thenReturn("ORANGE_CIV");
+        when(pawapayOperationRepository.findByUserIdAndPurposeAndKind(
+                USER_ID, PawapayOperationPurpose.WALLET_TOPUP, PawapayOperationKind.DEPOSIT))
+                .thenReturn(List.of(op));
+        when(pawapayFeeTable.fee(eq("ORANGE_CIV"), any(), eq("XOF"))).thenReturn(new BigDecimal("200"));
+        when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("XOF"), any()))
+                .thenReturn(Optional.empty());
+        when(refundRequestRepository.save(any())).thenAnswer(inv -> {
+            WalletRefundRequestEntity r = inv.getArgument(0);
+            if (r.getId() == null) assignId(r);
+            return r;
+        });
+        when(refundRequestItemRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        WalletRefundRequestEntity saved = service.request(USER_ID, "XOF", List.of());
+
+        assertThat(saved.getChannel()).isEqualTo(WalletRefundChannel.AUTOMATIC_PAWAPAY);
+        WalletRefundRequestItemEntity item = lastSavedItem();
+        assertThat(item.getAmount()).isEqualByComparingTo("10000");
+        assertThat(item.getFeeAmount()).isEqualByComparingTo("200");
+
+        // issuePendingItems delegue a WalletRefundRailIssuer, jamais a Stripe, pour ce canal.
+        when(refundRequestRepository.findByIdForUpdate(saved.getId())).thenReturn(Optional.of(saved));
+        when(refundRequestItemRepository.findUnissuedForUpdate(saved.getId(), WalletRefundItemStatus.PENDING))
+                .thenReturn(List.of(item));
+        when(refundRequestItemRepository.findByRefundRequestId(saved.getId())).thenReturn(List.of(item));
+
+        try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            service.issuePendingItems(saved.getId());
+
+            refundStatic.verifyNoInteractions();
+        }
+        verify(walletRefundRailIssuer).issue(saved, List.of(item));
+    }
+
+    @Test
+    void request_stripeTargets_emitsNetAmount() {
+        WalletTransactionEntity topup = ledgerTx(WalletTransactionType.TOP_UP, "40.00", "pi_1");
+        stubLedger("40.00", topup);
+        when(stripeFeeSource.fee("pi_1", "EUR")).thenReturn(new BigDecimal("1.51"));
+        when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any()))
+                .thenReturn(Optional.empty());
+        when(refundRequestRepository.save(any())).thenAnswer(inv -> {
+            WalletRefundRequestEntity r = inv.getArgument(0);
+            if (r.getId() == null) assignId(r);
+            return r;
+        });
+        when(refundRequestItemRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        WalletRefundRequestEntity saved = service.request(USER_ID, "EUR", List.of());
+
+        assertThat(saved.getChannel()).isEqualTo(WalletRefundChannel.AUTOMATIC_STRIPE);
+        WalletRefundRequestItemEntity item = lastSavedItem();
+        assertThat(item.getAmount()).isEqualByComparingTo("40.00");
+        assertThat(item.getFeeAmount()).isEqualByComparingTo("1.51");
+
+        when(refundRequestRepository.findByIdForUpdate(saved.getId())).thenReturn(Optional.of(saved));
+        when(refundRequestItemRepository.findUnissuedForUpdate(saved.getId(), WalletRefundItemStatus.PENDING))
+                .thenReturn(List.of(item));
+        when(refundRequestItemRepository.findByRefundRequestId(saved.getId())).thenReturn(List.of(item));
+
+        try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            Refund refund = new Refund();
+            refund.setId("re_1");
+            ArgumentCaptor<RefundCreateParams> params = ArgumentCaptor.forClass(RefundCreateParams.class);
+            refundStatic.when(() -> Refund.create(params.capture(), any(RequestOptions.class))).thenReturn(refund);
+
+            service.issuePendingItems(saved.getId());
+
+            assertThat(params.getValue().getAmount()).isEqualTo(3849L);
+        }
+        verifyNoInteractions(walletRefundRailIssuer);
+    }
+
+    @Test
+    void request_targetWithNetZero_isSkipped() {
+        WalletTransactionEntity topup = ledgerTx(WalletTransactionType.TOP_UP, "5.00", "pi_1");
+        stubLedger("5.00", topup);
+        when(stripeFeeSource.fee("pi_1", "EUR")).thenReturn(new BigDecimal("5.00"));
+        when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any()))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.request(USER_ID, "EUR", List.of()))
+                .isInstanceOf(YadonyBusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "wallet-not-refund-eligible");
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void request_uneCibleExclueParLesFrais_auditSkippedForFeesEtNetCorrects() {
+        WalletTransactionEntity a = ledgerTx(WalletTransactionType.TOP_UP, "5.00", "pi_a");
+        WalletTransactionEntity b = ledgerTx(WalletTransactionType.TOP_UP, "40.00", "pi_b");
+        stubLedger("45.00", a, b);
+        when(stripeFeeSource.fee("pi_a", "EUR")).thenReturn(new BigDecimal("5.00"));
+        when(stripeFeeSource.fee("pi_b", "EUR")).thenReturn(new BigDecimal("1.51"));
+        when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any()))
+                .thenReturn(Optional.empty());
+        when(refundRequestRepository.save(any())).thenAnswer(inv -> {
+            WalletRefundRequestEntity r = inv.getArgument(0);
+            if (r.getId() == null) assignId(r);
+            return r;
+        });
+        when(refundRequestItemRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        WalletRefundRequestEntity saved = service.request(USER_ID, "EUR", List.of());
+
+        assertThat(saved.getAmount()).isEqualByComparingTo("40.00");
+        ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
+        verify(auditService).log(eq("wallet_refund_request"), any(), eq("AUTOMATIC_REQUESTED"),
+                eq(USER_ID), payload.capture());
+        assertThat(payload.getValue().get("skippedForFees")).isEqualTo(1);
+        assertThat(payload.getValue().get("fees")).isEqualTo("1.51");
+        assertThat(payload.getValue().get("net")).isEqualTo("38.49");
     }
 
     @Test

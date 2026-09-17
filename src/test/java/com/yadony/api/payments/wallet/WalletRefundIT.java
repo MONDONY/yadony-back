@@ -19,9 +19,11 @@ import com.yadony.api.payments.pawapay.PawapayOperationKind;
 import com.yadony.api.payments.pawapay.PawapayOperationPurpose;
 import com.yadony.api.payments.pawapay.PawapayOperationService;
 import com.yadony.api.payments.pawapay.PawapayOperationStatus;
+import com.yadony.api.payments.wallet.fees.StripeFeeSource;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,6 +32,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -45,6 +48,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.when;
 
 /**
  * Parcours de remboursement wallet contre une vraie base PostgreSQL et sans aucun mock de
@@ -100,6 +104,16 @@ class WalletRefundIT {
     @Autowired WalletRefundIssueRecoveryScheduler recoveryScheduler;
     @Autowired PlatformTransactionManager transactionManager;
     @Autowired PawapayOperationService pawapayOperations;
+
+    // Frais Stripe réels lus via PaymentIntent.retrieve (appel réseau) : neutralisés ici pour
+    // ne jamais dépendre de Stripe en IT (cf. tâche 3, lot 2). Les assertions de ce fichier
+    // datent d'avant les frais de remboursement et portent sur les montants bruts.
+    @MockitoBean StripeFeeSource stripeFeeSource;
+
+    @BeforeEach
+    void stubStripeFees() {
+        when(stripeFeeSource.fee(any(), any())).thenReturn(BigDecimal.ZERO);
+    }
 
     /** Refund renvoyé par le Refund.create simulé, d'identifiant {@code id}. */
     private static Refund stripeRefund(String id) {

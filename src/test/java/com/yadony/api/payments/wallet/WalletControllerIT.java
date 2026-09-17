@@ -51,6 +51,9 @@ class WalletControllerIT {
     @Autowired WalletRefundRequestRepository walletRefundRequestRepository;
     @Autowired WalletAccountRepository walletAccountRepository;
     @MockBean UserRepository userRepository;
+    // Frais Stripe réels lus via PaymentIntent.retrieve (appel réseau) : neutralisés ici pour
+    // ne jamais dépendre de Stripe en IT (cf. tâche 3, lot 2 « recharge wallet mobile money »).
+    @MockBean com.yadony.api.payments.wallet.fees.StripeFeeSource stripeFeeSource;
 
     private static final UUID USER_UUID = UUID.randomUUID();
     private static final String FIREBASE_UID = "uid-test-wallet";
@@ -75,6 +78,7 @@ class WalletControllerIT {
         // (pour lire son pays et calculer le verrou) — WalletController.getBalance
         // en dépend indirectement, donc findById doit être doublé lui aussi.
         when(userRepository.findById(USER_UUID)).thenReturn(Optional.of(testUser));
+        when(stripeFeeSource.fee(any(), any())).thenReturn(BigDecimal.ZERO);
     }
 
     private static UsernamePasswordAuthenticationToken authAs(String uid, String role) {

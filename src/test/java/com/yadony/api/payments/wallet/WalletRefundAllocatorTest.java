@@ -1,5 +1,6 @@
 package com.yadony.api.payments.wallet;
 
+import com.yadony.api.payments.wallet.fees.WalletRefundFeeCalculator;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Field;
@@ -7,6 +8,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -35,6 +37,25 @@ class WalletRefundAllocatorTest {
 
     private WalletTransactionEntity topup(String amount) {
         return tx(WalletTransactionType.TOP_UP, amount, "pi_" + UUID.randomUUID());
+    }
+
+    private WalletTransactionEntity pawapayTopup(String amount) {
+        return tx(WalletTransactionType.TOP_UP, amount, "pawapay:" + UUID.randomUUID());
+    }
+
+    /** Frais fixes par rail, pour figer la valeur attendue sans dépendre d'un calcul réel. */
+    private static WalletRefundFeeCalculator.FeeSources fixedFees(String stripeFee, String pawapayFee) {
+        return new WalletRefundFeeCalculator.FeeSources() {
+            @Override
+            public BigDecimal stripeFee(String paymentIntentId, BigDecimal amount, String currency) {
+                return new BigDecimal(stripeFee);
+            }
+
+            @Override
+            public BigDecimal pawapayFee(String provider, BigDecimal amount, String currency) {
+                return new BigDecimal(pawapayFee);
+            }
+        };
     }
 
     private WalletRefundRequestItemEntity item(WalletTransactionEntity topup, String amount,
@@ -370,5 +391,60 @@ class WalletRefundAllocatorTest {
         assertThat(latest.get(a.getId())).containsExactly(WalletRefundItemStatus.REFUNDED);
         assertThat(latest.get(b.getId()))
                 .containsExactlyInAnyOrder(WalletRefundItemStatus.REFUNDED, WalletRefundItemStatus.FAILED);
+    }
+
+    @Test
+    void untouchedTopup_carriesFeeAndNet() {
+        topup("40.00");
+
+        WalletRefundAllocation r = WalletRefundAllocator.allocate(ledger, items, new BigDecimal("40.00"),
+                Map.of(), fixedFees("1.51", "0"), "EUR");
+
+        assertThat(r.refundable().get(0).fee()).isEqualByComparingTo("1.51");
+        assertThat(r.fees()).isEqualByComparingTo("1.51");
+        assertThat(r.net()).isEqualByComparingTo("38.49");
+        assertThat(r.refundableTotal()).isEqualByComparingTo("40.00");
+    }
+
+    @Test
+    void spentTopup_noFee() {
+        topup("40.00");
+        tx(WalletTransactionType.BID_PAYMENT, "-5.00", null);
+
+        WalletRefundAllocation r = WalletRefundAllocator.allocate(ledger, items, new BigDecimal("35.00"),
+                Map.of(), fixedFees("1.51", "0"), "EUR");
+
+        assertThat(r.refundable().get(0).fee()).isEqualByComparingTo("0");
+        assertThat(r.fees()).isEqualByComparingTo("0");
+        assertThat(r.net()).isEqualByComparingTo("35.00");
+    }
+
+    @Test
+    void pawapayTopup_railAndProvider() {
+        WalletTransactionEntity a = pawapayTopup("10000");
+
+        WalletRefundAllocation r = WalletRefundAllocator.allocate(ledger, items, new BigDecimal("10000"),
+                Map.of(a.getPaymentRef(), "ORANGE_CIV"), fixedFees("0", "200"), "XOF");
+
+        assertThat(r.refundable()).hasSize(1);
+        assertThat(r.refundable().get(0).rail()).isEqualTo(WalletRefundRail.PAWAPAY);
+        assertThat(r.refundable().get(0).provider()).isEqualTo("ORANGE_CIV");
+        assertThat(r.refundable().get(0).fee()).isEqualByComparingTo("200");
+    }
+
+    @Test
+    void feeAboveRemaining_topupExcludedFromRefundable_butStillCountedInTotalInvariant() {
+        // Décision : refundableTotal reste 0.20 (invariant du solde), la recharge figure dans
+        // refundable avec fee plafonné à 0.20 (net nul) ; c'est request() qui l'exclut des
+        // cibles (remaining - fee <= 0), pas l'allocateur.
+        topup("0.20");
+
+        WalletRefundAllocation r = WalletRefundAllocator.allocate(ledger, items, new BigDecimal("0.20"),
+                Map.of(), fixedFees("1.51", "0"), "EUR");
+
+        assertThat(r.refundableTotal()).isEqualByComparingTo("0.20");
+        assertThat(r.refundable()).hasSize(1);
+        assertThat(r.refundable().get(0).fee()).isEqualByComparingTo("0.20");
+        assertThat(r.net()).isEqualByComparingTo("0");
     }
 }

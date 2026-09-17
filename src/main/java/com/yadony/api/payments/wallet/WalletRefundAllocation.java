@@ -11,8 +11,9 @@ import java.util.UUID;
  * Invariant : refundableTotal + nonRefundable + inFlight = solde du wallet.
  *
  * <p>{@code fees} et {@code net} portent les frais de remboursement (ex. frais pawaPay) et le
- * montant net après déduction. À ce stade (lot 2, tâche 1) ils valent respectivement
- * {@code ZERO} et {@code refundableTotal} : le calcul réel arrive en tâche 3.
+ * montant net après déduction, calculés par {@link WalletRefundAllocator} via
+ * {@code WalletRefundFeeCalculator.feeFor}. {@code fees} est la somme des {@code fee} des
+ * recharges de {@code refundable} ; {@code net = refundableTotal - fees}.
  */
 public record WalletRefundAllocation(List<RefundableTopup> refundable,
                                      BigDecimal refundableTotal,
@@ -24,9 +25,11 @@ public record WalletRefundAllocation(List<RefundableTopup> refundable,
     /**
      * Une recharge encore (partiellement) remboursable. {@code original} est le montant du
      * {@code TOP_UP} d'origine (avant toute dépense), {@code remaining} ce qu'il en reste.
-     * {@code fee} et {@code provider} valent {@code ZERO}/{@code null} à ce stade (lot 2,
-     * tâche 1) : la vraie valeur arrive en tâche 3, une fois {@code rail} exploité pour
-     * retrouver l'opération pawaPay d'origine.
+     * {@code fee} est le frais retenu sur cette recharge si elle est remboursée (cf.
+     * {@code WalletRefundFeeCalculator}), toujours plafonné à {@code remaining} : une cible
+     * dont {@code remaining - fee <= 0} n'a rien à verser (l'appelant, ex.
+     * {@code WalletSelfRefundService#request}, l'exclut de ses cibles). {@code provider} est
+     * l'opérateur pawaPay de la recharge quand {@code rail == PAWAPAY}, {@code null} sinon.
      */
     public record RefundableTopup(UUID walletTransactionId, String paymentIntentId, BigDecimal original,
                                   BigDecimal remaining, BigDecimal fee, WalletRefundRail rail, String provider) {}

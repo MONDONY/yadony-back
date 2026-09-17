@@ -30,6 +30,16 @@ public interface PawapayOperationRepository extends JpaRepository<PawapayOperati
     Optional<PawapayOperationEntity> findByIdAndUserId(UUID id, UUID userId);
 
     /**
+     * Opérations pawaPay d'un utilisateur pour une finalité et un type donnés (ex. dépôts de
+     * recharge wallet), quel que soit leur statut : {@code WalletSelfRefundService#load} en
+     * tire l'opérateur de chaque recharge pour calculer son frais de remboursement (cf.
+     * {@code WalletRefundFeeCalculator}), y compris pour une recharge encore CREATED ou déjà
+     * FAILED dont le {@code paymentRef} pawaPay figure malgré tout sur le ledger.
+     */
+    List<PawapayOperationEntity> findByUserIdAndPurposeAndKind(UUID userId, PawapayOperationPurpose purpose,
+            PawapayOperationKind kind);
+
+    /**
      * Opérations encore ouvertes à réconcilier, bornées par {@code pageable} : sans borne, un
      * incident prolongé chez pawaPay pourrait accumuler des centaines d'opérations {@code OPEN}
      * et faire durer un seul passage du poller des heures durant, sur l'unique pool de
