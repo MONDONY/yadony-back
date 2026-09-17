@@ -69,7 +69,7 @@ public interface PackageRequestRepository
     /**
      * Incrémente le compteur de vues sans charger l'entité : un compteur ne doit ni
      * déclencher le versioning ni repousser {@code updated_at}, qui date la dernière
-     * modification par l'expéditeur. COALESCE couvre les lignes antérieures à V260.
+     * modification par l'expéditeur. COALESCE couvre les lignes antérieures à V261.
      */
     @Modifying
     @Transactional

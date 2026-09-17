@@ -21,8 +21,7 @@ CREATE TABLE package_request_invitations (
     created_at         TIMESTAMP NOT NULL,
     updated_at         TIMESTAMP NOT NULL,
     deleted_at         TIMESTAMP NULL,
+    -- L'index de la contrainte unique commence déjà par package_request_id : il
+    -- couvre les lookups sur cette seule colonne, pas besoin d'un index dédié.
     CONSTRAINT uq_package_request_invitation UNIQUE (package_request_id, announcement_id)
 );
-
-CREATE INDEX idx_package_request_invitations_request
-    ON package_request_invitations (package_request_id);
