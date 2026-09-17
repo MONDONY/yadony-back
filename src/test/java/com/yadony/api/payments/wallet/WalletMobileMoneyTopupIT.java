@@ -7,12 +7,18 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.auth.UserStatus;
 import com.yadony.api.payments.pawapay.PawapayClient;
+import com.yadony.api.payments.pawapay.PawapayOperationEntity;
+import com.yadony.api.payments.pawapay.PawapayOperationKind;
+import com.yadony.api.payments.pawapay.PawapayOperationPurpose;
+import com.yadony.api.payments.pawapay.PawapayOperationRepository;
 import com.yadony.api.payments.pawapay.PawapayOperationService;
 import com.yadony.api.payments.pawapay.PawapayOperationStatus;
 import com.yadony.api.payments.pawapay.dto.PawapayDepositRequest;
 import com.yadony.api.payments.pawapay.dto.PawapayInitiationResult;
+import com.yadony.api.payments.pawapay.dto.PawapayPayoutRequest;
 import com.yadony.api.payments.pawapay.dto.PawapayProviderConfig;
 import com.yadony.api.payments.pawapay.dto.PawapayProviderPrediction;
+import com.yadony.api.payments.pawapay.dto.PawapayRefundRequest;
 import com.yadony.api.payments.wallet.dto.WalletTopupRequest;
 import com.yadony.api.payments.wallet.dto.WalletTopupResponse;
 import com.yadony.api.payments.wallet.dto.WalletTopupStatusResponse;
@@ -111,6 +117,10 @@ class WalletMobileMoneyTopupIT {
     @Autowired UserRepository userRepository;
     @Autowired PawapayOperationService pawapayOperations;
     @Autowired PlatformTransactionManager transactionManager;
+
+    @Autowired PawapayOperationRepository operationRepository;
+    @Autowired WalletRefundRequestItemRepository refundItemRepository;
+    @Autowired WalletRefundRequestRepository refundRequestRepository;
 
     @MockitoBean PawapayClient pawapayClient;
 
@@ -227,5 +237,62 @@ class WalletMobileMoneyTopupIT {
         // même titre qu'une recharge par carte (lot 2), donc porter un paymentRef non vide.
         assertThat(walletSelfRefundService.allocation(userId, CURRENCY).refundableTotal())
                 .isEqualByComparingTo("10000");
+    }
+
+    /**
+     * Remboursement de la recharge par le rail pawaPay, bout à bout, contre la vraie base : le
+     * remboursement partiel du dépôt est rejeté à l'initiation, l'item retombe sur un versement
+     * vers le numéro d'origine, et seul le COMPLETED de ce versement débite le wallet (du brut).
+     * Prouve la frontière transactionnelle : chaque opération est liée à l'item et committée
+     * AVANT son appel réseau, et les écouteurs AFTER_COMMIT s'enchaînent (émission, rejet, repli).
+     */
+    @Test
+    void remboursementMobileMoney_refundRejete_repliParVersement_debiteLeBrutAuCompleted() {
+        UUID userId = persistUser();
+        UUID topupId = topupService.initiate(userId, topupRequest("10000")).getTopupId();
+        new TransactionTemplate(transactionManager).executeWithoutResult(tx ->
+                pawapayOperations.apply(topupId, PawapayOperationStatus.COMPLETED, null, null, "OP-CIV-2", null,
+                        "{\"status\":\"COMPLETED\"}", PawapayOperationService.Source.CALLBACK));
+        assertThat(walletService.getBalance(userId, CURRENCY)).isEqualByComparingTo("10000");
+
+        PawapayProviderConfig.Limits open = new PawapayProviderConfig.Limits(new BigDecimal("100"),
+                new BigDecimal("1000000"), null, "OPERATIONAL");
+        when(pawapayClient.activeConfiguration()).thenReturn(Map.of(PROVIDER,
+                new PawapayProviderConfig(PROVIDER, "CIV", CURRENCY, orangeCiv().deposit(), open, open)));
+        when(pawapayClient.initiateRefund(any(PawapayRefundRequest.class))).thenReturn(new PawapayInitiationResult(
+                PawapayInitiationResult.Outcome.REJECTED, "REFUND_NOT_ALLOWED", "refus"));
+        when(pawapayClient.initiatePayout(any(PawapayPayoutRequest.class)))
+                .thenReturn(PawapayInitiationResult.accepted());
+
+        WalletRefundRequestEntity request = walletSelfRefundService.request(userId, CURRENCY, List.of());
+
+        WalletRefundRequestItemEntity item = refundItemRepository.findByRefundRequestId(request.getId()).get(0);
+        BigDecimal net = item.getAmount().subtract(item.getFeeAmount());
+        assertThat(item.getFeeAmount()).isPositive();
+        assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.PROCESSING);
+        assertThat(item.getPawapayRefundId()).isNotNull();
+        assertThat(item.getPawapayPayoutId()).isNotNull();
+
+        PawapayOperationEntity refund = operationRepository.findById(item.getPawapayRefundId()).orElseThrow();
+        assertThat(refund.getStatus()).isEqualTo(PawapayOperationStatus.SUBMIT_REJECTED);
+        assertThat(refund.getPurpose()).isEqualTo(PawapayOperationPurpose.WALLET_REFUND);
+        assertThat(refund.getAmount()).isEqualByComparingTo(net);
+        PawapayOperationEntity payout = operationRepository.findById(item.getPawapayPayoutId()).orElseThrow();
+        assertThat(payout.getStatus()).isEqualTo(PawapayOperationStatus.ACCEPTED);
+        assertThat(payout.getKind()).isEqualTo(PawapayOperationKind.PAYOUT);
+        assertThat(payout.getAmount()).isEqualByComparingTo(net);
+        assertThat(payout.getMsisdn()).isEqualTo(MSISDN);
+        // Rien n'est débité tant que le versement n'est pas confirmé.
+        assertThat(walletService.getBalance(userId, CURRENCY)).isEqualByComparingTo("10000");
+
+        new TransactionTemplate(transactionManager).executeWithoutResult(tx ->
+                pawapayOperations.apply(payout.getId(), PawapayOperationStatus.COMPLETED, null, null, "OP-CIV-3",
+                        null, "{\"status\":\"COMPLETED\"}", PawapayOperationService.Source.CALLBACK));
+
+        assertThat(refundItemRepository.findById(item.getId()).orElseThrow().getStatus())
+                .isEqualTo(WalletRefundItemStatus.REFUNDED);
+        assertThat(refundRequestRepository.findById(request.getId()).orElseThrow().getStatus())
+                .isEqualTo(WalletRefundRequestStatus.REFUNDED);
+        assertThat(walletService.getBalance(userId, CURRENCY)).isEqualByComparingTo("0");
     }
 }

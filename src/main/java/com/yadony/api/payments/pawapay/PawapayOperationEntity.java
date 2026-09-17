@@ -169,6 +169,7 @@ public class PawapayOperationEntity {
     public String getMsisdn() { return msisdn; }
     public String getMsisdnMasked() { return msisdnMasked; }
     public UUID getPaymentId() { return paymentId; }
+    public UUID getRelatedOperationId() { return relatedOperationId; }
     public PawapayOperationPurpose getPurpose() { return purpose; }
     public UUID getUserId() { return userId; }
     public String getAuthorizationUrl() { return authorizationUrl; }

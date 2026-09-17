@@ -406,13 +406,14 @@ public class WalletSelfRefundService {
     }
 
     /**
-     * Émet les items PENDING sans {@code stripeRefundId} d'une demande automatique PROCESSING
+     * Émet les items PENDING sans identifiant d'émission d'une demande automatique PROCESSING
      * (Stripe directement, pawaPay via {@link WalletRefundRailIssuer} pour
-     * {@code AUTOMATIC_PAWAPAY} — implémentation provisoire tant que la tâche 4 n'a pas
-     * branché l'émission réelle), puis clôt la demande si tous ses items sont terminaux (tout
+     * {@code AUTOMATIC_PAWAPAY}), puis clôt la demande si tous ses items sont terminaux (tout
      * en échec : le ticket enfant s'ouvre tout de suite). Appelée au commit de la demande
      * ({@link WalletRefundIssueListener}) et par la reprise planifiée
-     * ({@link WalletRefundIssueRecoveryScheduler}, canal Stripe seulement pour l'instant).
+     * ({@link WalletRefundIssueRecoveryScheduler}, les deux canaux automatiques). Côté pawaPay,
+     * cette transaction ne fait que réserver l'opération et la lier à l'item : l'appel réseau part
+     * après son commit ({@link WalletPawapayRefundIssuer}).
      *
      * <p>{@code REQUIRES_NEW} : depuis un écouteur {@code AFTER_COMMIT}, la transaction
      * d'origine est terminée et n'accepte plus d'écriture. La demande puis ses items sont
@@ -579,7 +580,7 @@ public class WalletSelfRefundService {
         }
     }
 
-    private void resolveIfComplete(UUID refundRequestId) {
+    public void resolveIfComplete(UUID refundRequestId) {
         List<WalletRefundRequestItemEntity> items = refundRequestItemRepository.findByRefundRequestId(refundRequestId);
         boolean allTerminal = items.stream().allMatch(i ->
                 i.getStatus() == WalletRefundItemStatus.REFUNDED || i.getStatus() == WalletRefundItemStatus.FAILED);

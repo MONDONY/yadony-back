@@ -128,7 +128,10 @@ public class PawapayClient {
         return Optional.empty();
     }
 
-    /** Configuration active aplatie par code opérateur. Cache 10 min. */
+    /**
+     * Configuration active aplatie par code opérateur : deposit, payout et refund
+     * ({@code operationTypes.REFUND}, absent = remboursement de dépôt non proposé). Cache 10 min.
+     */
     public Map<String, PawapayProviderConfig> activeConfiguration() {
         return confCache.get(CONF_KEY, k -> fetchActiveConfiguration());
     }
@@ -169,7 +172,8 @@ public class PawapayClient {
                 for (JsonNode currency : provider.path("currencies")) {
                     JsonNode ops = currency.path("operationTypes");
                     out.put(code, new PawapayProviderConfig(code, alpha3, currency.path("currency").asText(null),
-                            limits(ops.get("DEPOSIT")), limits(ops.get("PAYOUT"))));
+                            limits(ops.get("DEPOSIT")), limits(ops.get("PAYOUT")),
+                            limits(ops.get("REFUND"))));
                 }
             }
         }

@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.yadony.api.common.YadonyBusinessException;
@@ -127,5 +128,97 @@ class PawapaySubmissionServiceTest {
                 .isInstanceOf(YadonyBusinessException.class)
                 .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-provider-unavailable");
         verify(operations, never()).markSubmitted(any(), any());
+    }
+
+    private PawapayOperationEntity walletOperation(PawapayOperationKind kind, UUID relatedOperationId) {
+        return new PawapayOperationEntity(UUID.randomUUID(), kind, PawapayOperationPurpose.WALLET_REFUND,
+                UUID.randomUUID(), null, relatedOperationId, new BigDecimal("9800"), "XOF", "ORANGE_CIV", "CI",
+                "+2250734567890");
+    }
+
+    @Test
+    void createWalletRefund_reservesRefundOfTheDepositWithoutCallingPawapay() {
+        UUID userId = UUID.randomUUID();
+        PawapayOperationEntity deposit = new PawapayOperationEntity(UUID.randomUUID(), PawapayOperationKind.DEPOSIT,
+                PawapayOperationPurpose.WALLET_TOPUP, userId, null, null, new BigDecimal("10000"), "XOF",
+                "ORANGE_CIV", "CI", "+2250734567890");
+        PawapayOperationEntity refund = walletOperation(PawapayOperationKind.REFUND, deposit.getId());
+        when(operations.create(PawapayOperationKind.REFUND, PawapayOperationPurpose.WALLET_REFUND, userId, null,
+                deposit.getId(), new BigDecimal("9800"), "XOF", "ORANGE_CIV", "CI", deposit.getMsisdn()))
+                .thenReturn(refund);
+
+        assertThat(service.createWalletRefund(userId, deposit, new BigDecimal("9800"))).isSameAs(refund);
+
+        verifyNoInteractions(client);
+        verify(operations, never()).markSubmitted(any(), any());
+    }
+
+    @Test
+    void createWalletPayout_reservesPayoutWithoutCallingPawapay() {
+        UUID userId = UUID.randomUUID();
+        PawapayOperationEntity payout = walletOperation(PawapayOperationKind.PAYOUT, null);
+        when(operations.create(PawapayOperationKind.PAYOUT, PawapayOperationPurpose.WALLET_REFUND, userId, null,
+                null, new BigDecimal("9800"), "XOF", "ORANGE_CIV", "CI", "2250734567890")).thenReturn(payout);
+
+        assertThat(service.createWalletPayout(userId, "2250734567890", "ORANGE_CIV", "CI", new BigDecimal("9800"),
+                "XOF")).isSameAs(payout);
+
+        verifyNoInteractions(client);
+    }
+
+    @Test
+    void initiate_refund_sendsReservedIdAndDeposit_andReturnsTheResponse() {
+        UUID depositId = UUID.randomUUID();
+        PawapayOperationEntity refund = walletOperation(PawapayOperationKind.REFUND, depositId);
+        PawapayInitiationResult rejected = new PawapayInitiationResult(PawapayInitiationResult.Outcome.REJECTED,
+                "REFUND_NOT_ALLOWED", "non");
+        when(client.initiateRefund(any())).thenReturn(rejected);
+
+        assertThat(service.initiate(refund, "wallet-refund-1")).isSameAs(rejected);
+
+        ArgumentCaptor<PawapayRefundRequest> req = ArgumentCaptor.forClass(PawapayRefundRequest.class);
+        verify(client).initiateRefund(req.capture());
+        assertThat(req.getValue().refundId()).isEqualTo(refund.getId());
+        assertThat(req.getValue().depositId()).isEqualTo(depositId);
+        assertThat(req.getValue().amount()).isEqualByComparingTo("9800");
+        assertThat(req.getValue().currency()).isEqualTo("XOF");
+        verify(operations).markSubmitted(refund.getId(), rejected);
+        verify(operations, never()).get(any());
+    }
+
+    @Test
+    void initiate_payout_sendsRecipientAndClientReference() {
+        PawapayOperationEntity payout = walletOperation(PawapayOperationKind.PAYOUT, null);
+        when(client.initiatePayout(any())).thenReturn(PawapayInitiationResult.accepted());
+
+        service.initiate(payout, "wallet-refund-1");
+
+        ArgumentCaptor<PawapayPayoutRequest> req = ArgumentCaptor.forClass(PawapayPayoutRequest.class);
+        verify(client).initiatePayout(req.capture());
+        assertThat(req.getValue().payoutId()).isEqualTo(payout.getId());
+        assertThat(req.getValue().phoneNumber()).isEqualTo(payout.getMsisdn());
+        assertThat(req.getValue().provider()).isEqualTo("ORANGE_CIV");
+        assertThat(req.getValue().clientReferenceId()).isEqualTo("wallet-refund-1");
+        verify(operations).markSubmitted(eq(payout.getId()), any());
+    }
+
+    @Test
+    void initiate_networkFailure_leavesOperationCreated_andThrows502() {
+        PawapayOperationEntity refund = walletOperation(PawapayOperationKind.REFUND, UUID.randomUUID());
+        when(client.initiateRefund(any())).thenThrow(new ResourceAccessException("timeout"));
+
+        assertThatThrownBy(() -> service.initiate(refund, "wallet-refund-1"))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode())
+                .isEqualTo("mobile-money-provider-unavailable");
+        verify(operations, never()).markSubmitted(any(), any());
+    }
+
+    @Test
+    void initiate_deposit_isRefused() {
+        PawapayOperationEntity deposit = walletOperation(PawapayOperationKind.DEPOSIT, null);
+
+        assertThatThrownBy(() -> service.initiate(deposit, null)).isInstanceOf(IllegalArgumentException.class);
+        verifyNoInteractions(client);
     }
 }
