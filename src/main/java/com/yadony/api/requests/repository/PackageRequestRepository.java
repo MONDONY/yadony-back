@@ -7,8 +7,10 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 import jakarta.persistence.LockModeType;
 import java.time.LocalDate;
 import java.util.List;
@@ -63,4 +65,15 @@ public interface PackageRequestRepository
     List<PackageRequestEntity> findOpenOrNegotiatingByCorridor(
             @Param("departureCity") String departureCity,
             @Param("arrivalCity") String arrivalCity);
+
+    /**
+     * Incrémente le compteur de vues sans charger l'entité : un compteur ne doit ni
+     * déclencher le versioning ni repousser {@code updated_at}, qui date la dernière
+     * modification par l'expéditeur. COALESCE couvre les lignes antérieures à V260.
+     */
+    @Modifying
+    @Transactional
+    @Query("UPDATE PackageRequestEntity p SET p.viewCount = COALESCE(p.viewCount, 0) + 1 "
+           + "WHERE p.id = :id")
+    int incrementViewCount(@Param("id") UUID id);
 }

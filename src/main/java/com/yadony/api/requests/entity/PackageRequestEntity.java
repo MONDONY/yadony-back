@@ -127,6 +127,14 @@ public class PackageRequestEntity extends BaseEntity {
     @Column(name = "disclaimer_signed_ip", length = 45)
     private String disclaimerSignedIp;
 
+    /**
+     * Consultations du détail par un voyageur connecté (propriétaire exclu). Nullable
+     * à dessein (piège H2, voir V260) ; l'écriture passe uniquement par
+     * {@link com.yadony.api.requests.repository.PackageRequestRepository#incrementViewCount}.
+     */
+    @Column(name = "view_count")
+    private Long viewCount = 0L;
+
     // === NO-ARG CONSTRUCTOR (required by JPA) ===
 
     public PackageRequestEntity() { /* JPA */ }
@@ -191,6 +199,8 @@ public class PackageRequestEntity extends BaseEntity {
     public LocalDateTime getDisclaimerSignedAt() { return disclaimerSignedAt; }
 
     public String getDisclaimerSignedIp() { return disclaimerSignedIp; }
+
+    public long getViewCount() { return viewCount == null ? 0L : viewCount; }
 
     // === SETTERS ===
 
