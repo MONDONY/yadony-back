@@ -314,6 +314,28 @@ public class RequestEventsListener {
     }
 
     /**
+     * Un expéditeur invite ce voyageur sur sa demande. Après commit : une invitation
+     * annulée par rollback ne doit rien envoyer. Sollicitation directe d'un tiers, donc
+     * muette en cas de blocage mutuel.
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
+    public void onPackageRequestInvitationSent(PackageRequestInvitationSentEvent e) {
+        var text = NotificationTexts.senderInvite(e.senderName(), e.departureCity(), e.arrivalCity());
+        dispatcher.notifyUnlessBlocked(
+            e.travelerId(),
+            e.senderId(),
+            text.title(),
+            text.body(),
+            Map.of(
+                "type", "SENDER_INVITE",
+                "requestId", e.packageRequestId().toString(),
+                "announcementId", e.announcementId().toString()
+            )
+        );
+    }
+
+    /**
      * The waiting party nudged the other one to remind them to respond.
      */
     @EventListener

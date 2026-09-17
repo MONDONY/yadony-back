@@ -66,6 +66,8 @@ class NotificationDeeplinkTest {
                 .contains("yadony://package-requests/" + requestId + "/public");
         assertThat(NotificationDeeplink.of("PACKAGE_MATCH", Map.of("requestId", requestId)))
                 .contains("yadony://package-requests/" + requestId + "/public");
+        assertThat(NotificationDeeplink.of("SENDER_INVITE", Map.of("requestId", requestId)))
+                .contains("yadony://package-requests/" + requestId + "/public");
         assertThat(NotificationDeeplink.of("TRAVELER_NEW_ANNOUNCEMENT", Map.of("announcementId", annId)))
                 .contains("yadony://traveler/" + annId);
         assertThat(NotificationDeeplink.of("CORRIDOR_ALERT", Map.of("announcementId", annId)))

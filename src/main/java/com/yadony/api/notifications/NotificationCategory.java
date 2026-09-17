@@ -37,7 +37,7 @@ public enum NotificationCategory {
 
     private static final Set<String> TRAJETS_TYPES = Set.of(
             "TRIP_IN_PROGRESS", "CORRIDOR_ALERT", "TRAVELER_NEW_ANNOUNCEMENT",
-            "PACKAGE_MATCH", "TRAVELER_INVITE", "ANNOUNCEMENT_REMOVED",
+            "PACKAGE_MATCH", "TRAVELER_INVITE", "SENDER_INVITE", "ANNOUNCEMENT_REMOVED",
             "automation_capacity_free", "automation_loyal_sender",
             "negotiation", "negotiation_started", "negotiation_counter",
             "negotiation_expired", "negotiation_awaiting_trip", "negotiation_trip_changed",
