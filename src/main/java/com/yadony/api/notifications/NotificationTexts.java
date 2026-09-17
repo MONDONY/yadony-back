@@ -375,8 +375,8 @@ public final class NotificationTexts {
 
     /** Un expéditeur invite un voyageur à répondre à sa demande (sens inverse de travelerInvite). */
     public static NotificationText senderInvite(String senderName, String departureCity, String arrivalCity) {
-        return new NotificationText("Un colis pour ton trajet",
-                shortDisplayName(senderName) + " propose " + departureCity + " vers " + arrivalCity + ".");
+        return new NotificationText("Un colis pour votre trajet",
+                "Colis " + departureCity + " vers " + arrivalCity + " de " + shortDisplayName(senderName) + ".");
     }
 
     public static NotificationText negotiationReminder(String fromName) {

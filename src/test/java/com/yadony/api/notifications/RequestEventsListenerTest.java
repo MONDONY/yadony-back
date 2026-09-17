@@ -198,7 +198,7 @@ class RequestEventsListenerTest {
 
         listener.onPackageRequestInvitationSent(event);
 
-        verify(dispatcher).notifyUnlessBlocked(eq(travelerId), eq(senderId), eq("Un colis pour ton trajet"),
+        verify(dispatcher).notifyUnlessBlocked(eq(travelerId), eq(senderId), eq("Un colis pour votre trajet"),
                 contains("Divo vers Annemasse"),
                 eq(Map.of("type", "SENDER_INVITE",
                         "requestId", requestId.toString(),
