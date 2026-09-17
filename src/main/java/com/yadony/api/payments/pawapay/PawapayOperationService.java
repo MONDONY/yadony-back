@@ -49,11 +49,24 @@ public class PawapayOperationService {
     public PawapayOperationEntity create(PawapayOperationKind kind, UUID paymentId, UUID relatedOperationId,
                                          BigDecimal amount, String currency, String provider, String country,
                                          String msisdn) {
+        return create(kind, PawapayOperationPurpose.BID_PAYMENT, null, paymentId, relatedOperationId,
+                amount, currency, provider, country, msisdn);
+    }
+
+    /**
+     * Variante complète : porte le {@code purpose} et l'{@code userId} d'une opération de wallet
+     * (recharge ou remboursement), sans paiement de colis. L'ancienne signature délègue ici avec
+     * {@code BID_PAYMENT} et {@code userId = null}.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public PawapayOperationEntity create(PawapayOperationKind kind, PawapayOperationPurpose purpose, UUID userId,
+                                         UUID paymentId, UUID relatedOperationId, BigDecimal amount, String currency,
+                                         String provider, String country, String msisdn) {
         if (paymentId != null && repository.existsByPaymentIdAndKindAndStatusIn(paymentId, kind,
                 PawapayOperationStatus.LIVE_OR_DONE)) {
             throw inProgress(kind);
         }
-        PawapayOperationEntity op = new PawapayOperationEntity(UUID.randomUUID(), kind, paymentId,
+        PawapayOperationEntity op = new PawapayOperationEntity(UUID.randomUUID(), kind, purpose, userId, paymentId,
                 relatedOperationId, amount, currency, provider, country, msisdn);
         try {
             return repository.saveAndFlush(op);
@@ -65,11 +78,20 @@ public class PawapayOperationService {
             // committer) et la déguiserait en faux 409, cause perdue.
             Throwable mostSpecific = e.getMostSpecificCause();
             String causeMessage = mostSpecific != null ? mostSpecific.getMessage() : e.getMessage();
-            if (causeMessage != null
-                    && causeMessage.toLowerCase(Locale.ROOT).contains("uq_pawapay_ops_live_per_payment")) {
+            String lowerCause = causeMessage != null ? causeMessage.toLowerCase(Locale.ROOT) : "";
+            if (lowerCause.contains("uq_pawapay_ops_live_per_payment")) {
                 log.warn("pawaPay {} : index unique heurté (course avec un create concurrent) pour paymentId={} : {}",
                         kind, paymentId, causeMessage);
                 throw inProgress(kind);
+            }
+            // Même filet, pour la recharge du portefeuille : la garde applicative lit avant
+            // d'écrire, deux requêtes concurrentes la franchissent toutes les deux. Le message
+            // rendu est celui de la garde, l'utilisateur ne doit pas voir deux textes selon
+            // qui des deux a gagné la course.
+            if (lowerCause.contains("uq_pawapay_ops_live_wallet_topup")) {
+                log.warn("pawaPay {} : recharge déjà en attente (course avec un create concurrent) pour userId={} : {}",
+                        kind, userId, causeMessage);
+                throw PawapayErrors.walletTopupAlreadyPending();
             }
             log.error("pawaPay {} : violation d'intégrité sans rapport avec l'index unique, propagée telle quelle "
                     + "(paymentId={}) : {}", kind, paymentId, causeMessage, e);
@@ -151,7 +173,8 @@ public class PawapayOperationService {
             return false;
         }
         if (newStatus == PawapayOperationStatus.COMPLETED) {
-            events.publishEvent(new PawapayOperationCompletedEvent(id, op.getKind(), op.getPaymentId()));
+            events.publishEvent(new PawapayOperationCompletedEvent(id, op.getKind(), op.getPurpose(),
+                    op.getPaymentId(), op.getUserId()));
         } else if (newStatus.isFinal()) {
             // Relecture obligatoire : le COALESCE d'applyTransition peut avoir
             // conservé un failureCode/failureMessage antérieur différent des
@@ -161,8 +184,8 @@ public class PawapayOperationService {
             // passé à cette méthode.
             PawapayOperationEntity reloaded = repository.findById(id).orElseThrow(() ->
                     new IllegalStateException("pawaPay : opération disparue juste après sa transition " + id));
-            events.publishEvent(new PawapayOperationFailedEvent(id, op.getKind(), op.getPaymentId(),
-                    reloaded.getFailureCode(), reloaded.getFailureMessage()));
+            events.publishEvent(new PawapayOperationFailedEvent(id, op.getKind(), op.getPurpose(), op.getPaymentId(),
+                    op.getUserId(), reloaded.getFailureCode(), reloaded.getFailureMessage()));
         }
         return true;
     }

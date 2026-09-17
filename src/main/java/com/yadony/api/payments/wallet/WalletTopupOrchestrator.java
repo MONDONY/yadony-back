@@ -22,13 +22,16 @@ public class WalletTopupOrchestrator {
     private final CurrencyCatalog currencyCatalog;
     private final ActiveCurrencyResolver activeCurrencyResolver;
     private final WalletTopupProperties properties;
+    private final WalletMobileMoneyTopupService mobileMoneyTopupService;
 
     public WalletTopupOrchestrator(CurrencyCatalog currencyCatalog,
                                    ActiveCurrencyResolver activeCurrencyResolver,
-                                   WalletTopupProperties properties) {
+                                   WalletTopupProperties properties,
+                                   WalletMobileMoneyTopupService mobileMoneyTopupService) {
         this.currencyCatalog = currencyCatalog;
         this.activeCurrencyResolver = activeCurrencyResolver;
         this.properties = properties;
+        this.mobileMoneyTopupService = mobileMoneyTopupService;
     }
 
     /**
@@ -88,6 +91,12 @@ public class WalletTopupOrchestrator {
     public WalletTopupResponse initiate(UUID userId, WalletTopupRequest request) {
         return switch (request.getPaymentMethod()) {
             case "STRIPE" -> initiateStripe(userId, request);
+            // Rail pawaPay : la devise créditée est celle de l'OPÉRATEUR du numéro, pas celle
+            // résolue pour Stripe — c'est le service qui tranche, l'aiguillage ne fait que
+            // déléguer sans toucher au montant ni à la devise.
+            case "MOBILE_MONEY" -> mobileMoneyTopupService.initiate(userId, request);
+            // Anciens codes de rail, envoyés par les apps déjà déployées : ils désignaient un
+            // rail maison retiré, et ne doivent surtout pas retomber sur pawaPay en silence.
             case "WAVE", "ORANGE_MONEY" -> throw new YadonyBusinessException(
                     HttpStatus.UNPROCESSABLE_ENTITY,
                     "mobile-money-topup-retired", "Mobile Money Topup Retired",
@@ -123,7 +132,7 @@ public class WalletTopupOrchestrator {
 
         try {
             PaymentIntent paymentIntent = PaymentIntent.create(params);
-            return new WalletTopupResponse(paymentIntent.getClientSecret(), null);
+            return WalletTopupResponse.stripe(paymentIntent.getClientSecret());
         } catch (StripeException exception) {
             throw new YadonyBusinessException(
                     HttpStatus.BAD_GATEWAY,

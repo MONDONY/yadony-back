@@ -71,7 +71,7 @@ class MobileMoneyNegotiationPaymentServiceTest {
     void setUp() {
         props = new PawapayProperties(true, "https://api.sandbox.pawapay.io", "token", true, 30,
                 "https://api-staging.yadony.com", "yadony://bids/%s/mobile-money/awaiting",
-                "yadony://negotiations/%s/mobile-money/awaiting", new PawapayProperties.BalanceMin(null, null));
+                "yadony://negotiations/%s/mobile-money/awaiting", "yadony://payments/wallet", new PawapayProperties.BalanceMin(null, null));
         service = new MobileMoneyNegotiationPaymentService(paymentRepository, userRepository, operations, submission,
                 providers, firebaseContact, audit, events, transactionManager, props);
     }
@@ -93,7 +93,7 @@ class MobileMoneyNegotiationPaymentServiceTest {
     private static PawapayProperties disabledProps() {
         return new PawapayProperties(false, "https://api.sandbox.pawapay.io", "token", true, 30,
                 "https://api-staging.yadony.com", "yadony://bids/%s/mobile-money/awaiting",
-                "yadony://negotiations/%s/mobile-money/awaiting", new PawapayProperties.BalanceMin(null, null));
+                "yadony://negotiations/%s/mobile-money/awaiting", "yadony://payments/wallet", new PawapayProperties.BalanceMin(null, null));
     }
 
     private static void setId(Object entity, UUID id) {

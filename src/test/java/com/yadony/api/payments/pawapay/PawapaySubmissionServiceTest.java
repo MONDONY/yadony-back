@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -85,6 +86,27 @@ class PawapaySubmissionServiceTest {
         verify(client).initiateRefund(req.capture());
         assertThat(req.getValue().depositId()).isEqualTo(deposit.getId());
         assertThat(req.getValue().refundId()).isEqualTo(refund.getId());
+    }
+
+    @Test
+    void submitWalletDeposit_createsWalletTopupOperationWithoutPayment() {
+        UUID userId = UUID.randomUUID();
+        PawapayOperationEntity op = new PawapayOperationEntity(UUID.randomUUID(), PawapayOperationKind.DEPOSIT,
+                PawapayOperationPurpose.WALLET_TOPUP, userId, null, null, new BigDecimal("10000"), "XOF",
+                "ORANGE_CIV", "CI", "+2250734567890");
+        when(operations.create(eq(PawapayOperationKind.DEPOSIT), eq(PawapayOperationPurpose.WALLET_TOPUP), eq(userId),
+                isNull(), isNull(), any(), eq("XOF"), eq("ORANGE_CIV"), eq("CI"), eq("+2250734567890"))).thenReturn(op);
+        when(client.initiateDeposit(any())).thenReturn(PawapayInitiationResult.accepted());
+        when(operations.get(op.getId())).thenReturn(op);
+
+        PawapayOperationEntity result = service.submitWalletDeposit(userId, "+2250734567890", "ORANGE_CIV", "CI",
+                new BigDecimal("10000"), "XOF", "wallet-topup", "https://x/ok", "https://x/ko");
+
+        assertThat(result.getId()).isEqualTo(op.getId());
+        ArgumentCaptor<PawapayDepositRequest> captor = ArgumentCaptor.forClass(PawapayDepositRequest.class);
+        verify(client).initiateDeposit(captor.capture());
+        assertThat(captor.getValue().depositId()).isEqualTo(op.getId());
+        verify(operations).markSubmitted(eq(op.getId()), any());
     }
 
     @Test

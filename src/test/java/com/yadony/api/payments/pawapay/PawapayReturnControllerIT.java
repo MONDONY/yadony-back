@@ -113,6 +113,36 @@ class PawapayReturnControllerIT {
                 .andExpect(header().string("Location", "yadony://negotiations/" + threadId + "/mobile-money/awaiting"));
     }
 
+    /**
+     * Recharge du portefeuille : la page de rebond n'est keyée sur RIEN (l'id de l'opération
+     * n'existe pas quand l'URL est construite), elle renvoie toujours sur l'écran du
+     * portefeuille — c'est lui qui relit le statut. Le motif littéral {@code /wallet-topup}
+     * doit primer sur {@code /{bidId}}, sinon Wave reviendrait sur « yadony:// » tout court.
+     */
+    @Test
+    void back_walletTopup_redirectsToTheWalletDeepLink() throws Exception {
+        UUID userId = UUID.randomUUID();
+        mockMvc.perform(get("/pawapay/return/wallet-topup").param("userId", userId.toString()).param("outcome", "success"))
+                .andExpect(status().isFound())
+                .andExpect(header().string("Location", "yadony://payments/wallet"));
+        mockMvc.perform(get("/pawapay/return/wallet-topup").param("userId", userId.toString()).param("outcome", "failed"))
+                .andExpect(status().isFound())
+                .andExpect(header().string("Location", "yadony://payments/wallet"));
+    }
+
+    /**
+     * Le {@code userId} du paramètre vient de l'URL que pawaPay nous renvoie : rien de ce
+     * qu'il contient ne doit se retrouver dans {@code Location} (en-tête forgé). La route ne
+     * le lit jamais — ce test l'épingle.
+     */
+    @Test
+    @DisplayName("paramètre userId forgé → destination constante, rien n'en fuit dans Location")
+    void back_walletTopup_neverReflectsItsQueryParameters() throws Exception {
+        mockMvc.perform(get("/pawapay/return/wallet-topup").param("userId", "not-a-uuid-X-Injected:1"))
+                .andExpect(status().isFound())
+                .andExpect(header().string("Location", "yadony://payments/wallet"));
+    }
+
     @Test
     void back_thread_withGarbageId_redirectsToAppRoot() throws Exception {
         mockMvc.perform(get("/pawapay/return/thread/{threadId}", "not-a-uuid"))

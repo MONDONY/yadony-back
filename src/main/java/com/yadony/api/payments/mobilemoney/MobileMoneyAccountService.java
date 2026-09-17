@@ -151,7 +151,7 @@ public class MobileMoneyAccountService {
         }
         UserEntity user = userRepository.findById(userId).orElseThrow(() -> notFound(userId));
         PhoneSource phone = resolvePhone(user, providedPhone, true);
-        return toProvidersResponse(catalogueOrUnsupported(userId, phone.phone()));
+        return MobileMoneyProvidersResponse.from(catalogueOrUnsupported(userId, phone.phone()));
     }
 
     /**
@@ -180,14 +180,6 @@ public class MobileMoneyAccountService {
         audit.log("USER", userId, "MM_ACCOUNT_PROVIDERS_UPDATED", userId,
                 Map.of("providers", user.getMobileMoneyProviders(), "provider", user.getMobileMoneyProvider()));
         return toResponse(user);
-    }
-
-    static MobileMoneyProvidersResponse toProvidersResponse(PawapayProviderResolver.Catalogue c) {
-        List<MobileMoneyProvidersResponse.ProviderOption> options = c.options().stream()
-                .map(o -> new MobileMoneyProvidersResponse.ProviderOption(o.provider(), PawapayProviders.label(o.provider()),
-                        o.provider().equalsIgnoreCase(c.detected())))
-                .toList();
-        return new MobileMoneyProvidersResponse(c.countryAlpha2(), c.currency(), Msisdn.mask(c.msisdn()), c.detected(), options);
     }
 
     /** Numéro retenu et sa provenance ({@code provided}, {@code stored}, {@code firebase}) pour l'audit. */

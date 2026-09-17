@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
+import com.yadony.api.payments.pawapay.PawapayOperationPurpose;
 import com.yadony.api.payments.pawapay.events.PawapayOperationCompletedEvent;
 import com.yadony.api.payments.pawapay.events.PawapayOperationFailedEvent;
 import java.util.Optional;
@@ -30,11 +31,11 @@ class MobileMoneyDepositOutcomeListenerTest {
     @InjectMocks MobileMoneyDepositOutcomeListener listener;
 
     private PawapayOperationCompletedEvent depositCompleted(UUID paymentId) {
-        return new PawapayOperationCompletedEvent(UUID.randomUUID(), PawapayOperationKind.DEPOSIT, paymentId);
+        return new PawapayOperationCompletedEvent(UUID.randomUUID(), PawapayOperationKind.DEPOSIT, PawapayOperationPurpose.BID_PAYMENT, paymentId, null);
     }
 
     private PawapayOperationFailedEvent depositFailed(UUID paymentId, String failureCode) {
-        return new PawapayOperationFailedEvent(UUID.randomUUID(), PawapayOperationKind.DEPOSIT, paymentId, failureCode, "no");
+        return new PawapayOperationFailedEvent(UUID.randomUUID(), PawapayOperationKind.DEPOSIT, PawapayOperationPurpose.BID_PAYMENT, paymentId, null, failureCode, "no");
     }
 
     // ── Aiguillage bid / fil ───────────────────────────────────────────────
@@ -110,9 +111,9 @@ class MobileMoneyDepositOutcomeListenerTest {
 
     @Test
     void otherKinds_orNoPayment_areIgnored() {
-        listener.onCompleted(new PawapayOperationCompletedEvent(UUID.randomUUID(), PawapayOperationKind.PAYOUT, UUID.randomUUID()));
-        listener.onCompleted(new PawapayOperationCompletedEvent(UUID.randomUUID(), PawapayOperationKind.DEPOSIT, null));
-        listener.onFailed(new PawapayOperationFailedEvent(UUID.randomUUID(), PawapayOperationKind.REFUND, UUID.randomUUID(), "X", "y"));
+        listener.onCompleted(new PawapayOperationCompletedEvent(UUID.randomUUID(), PawapayOperationKind.PAYOUT, PawapayOperationPurpose.BID_PAYMENT, UUID.randomUUID(), null));
+        listener.onCompleted(new PawapayOperationCompletedEvent(UUID.randomUUID(), PawapayOperationKind.DEPOSIT, PawapayOperationPurpose.BID_PAYMENT, null, null));
+        listener.onFailed(new PawapayOperationFailedEvent(UUID.randomUUID(), PawapayOperationKind.REFUND, PawapayOperationPurpose.BID_PAYMENT, UUID.randomUUID(), null, "X", "y"));
         verify(bidService, never()).confirmEscrow(any(), any());
         verify(negotiationService, never()).confirmEscrow(any(), any());
         verify(bidService, never()).notifyDepositFailed(any(), any(), any());

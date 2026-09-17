@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
+import com.yadony.api.payments.pawapay.PawapayOperationPurpose;
 import com.yadony.api.payments.pawapay.events.PawapayOperationCompletedEvent;
 import com.yadony.api.payments.pawapay.events.PawapayOperationFailedEvent;
 import java.util.Map;
@@ -30,7 +31,7 @@ class MobileMoneyRefundOutcomeListenerTest {
     @Test
     void completed_audits() {
         UUID paymentId = UUID.randomUUID();
-        listener.onCompleted(new PawapayOperationCompletedEvent(UUID.randomUUID(), PawapayOperationKind.REFUND, paymentId));
+        listener.onCompleted(new PawapayOperationCompletedEvent(UUID.randomUUID(), PawapayOperationKind.REFUND, PawapayOperationPurpose.BID_PAYMENT, paymentId, null));
         verify(audit).log(eq("PAYMENT"), eq(paymentId), eq("MM_REFUND_COMPLETED"), any(), any());
         verify(adminAlert, never()).raise(any(), any(), any());
     }
@@ -38,21 +39,21 @@ class MobileMoneyRefundOutcomeListenerTest {
     @Test
     void failed_alerts() {
         UUID paymentId = UUID.randomUUID();
-        listener.onFailed(new PawapayOperationFailedEvent(UUID.randomUUID(), PawapayOperationKind.REFUND, paymentId, "X", "y"));
+        listener.onFailed(new PawapayOperationFailedEvent(UUID.randomUUID(), PawapayOperationKind.REFUND, PawapayOperationPurpose.BID_PAYMENT, paymentId, null, "X", "y"));
         verify(adminAlert).raise(eq("PAWAPAY_REFUND_FAILED"), any(), any());
         verify(audit).log(eq("PAYMENT"), eq(paymentId), eq("MM_REFUND_FAILED"), any(), any());
     }
 
     @Test
     void completed_otherKind_ignored() {
-        listener.onCompleted(new PawapayOperationCompletedEvent(UUID.randomUUID(), PawapayOperationKind.DEPOSIT, UUID.randomUUID()));
+        listener.onCompleted(new PawapayOperationCompletedEvent(UUID.randomUUID(), PawapayOperationKind.DEPOSIT, PawapayOperationPurpose.BID_PAYMENT, UUID.randomUUID(), null));
         verify(audit, never()).log(any(), any(), any(), any(), any());
     }
 
     /** Ronde 1, point 11 : la garde de kind sur onFailed n'était pas testée (seul onCompleted l'était). */
     @Test
     void failed_otherKind_ignored() {
-        listener.onFailed(new PawapayOperationFailedEvent(UUID.randomUUID(), PawapayOperationKind.PAYOUT, UUID.randomUUID(), "X", "y"));
+        listener.onFailed(new PawapayOperationFailedEvent(UUID.randomUUID(), PawapayOperationKind.PAYOUT, PawapayOperationPurpose.BID_PAYMENT, UUID.randomUUID(), null, "X", "y"));
         verify(audit, never()).log(any(), any(), any(), any(), any());
         verify(adminAlert, never()).raise(any(), any(), any());
     }
@@ -60,13 +61,13 @@ class MobileMoneyRefundOutcomeListenerTest {
     /** Ronde 1, point 11 : la garde de paymentId nul n'était testée pour aucune des deux méthodes. */
     @Test
     void completed_nullPaymentId_ignored() {
-        listener.onCompleted(new PawapayOperationCompletedEvent(UUID.randomUUID(), PawapayOperationKind.REFUND, null));
+        listener.onCompleted(new PawapayOperationCompletedEvent(UUID.randomUUID(), PawapayOperationKind.REFUND, PawapayOperationPurpose.BID_PAYMENT, null, null));
         verify(audit, never()).log(any(), any(), any(), any(), any());
     }
 
     @Test
     void failed_nullPaymentId_ignored() {
-        listener.onFailed(new PawapayOperationFailedEvent(UUID.randomUUID(), PawapayOperationKind.REFUND, null, "X", "y"));
+        listener.onFailed(new PawapayOperationFailedEvent(UUID.randomUUID(), PawapayOperationKind.REFUND, PawapayOperationPurpose.BID_PAYMENT, null, null, "X", "y"));
         verify(audit, never()).log(any(), any(), any(), any(), any());
         verify(adminAlert, never()).raise(any(), any(), any());
     }
@@ -83,7 +84,7 @@ class MobileMoneyRefundOutcomeListenerTest {
         UUID paymentId = UUID.randomUUID();
         String longMessage = "x".repeat(200);
         String longCode = "y".repeat(200);
-        listener.onFailed(new PawapayOperationFailedEvent(UUID.randomUUID(), PawapayOperationKind.REFUND, paymentId, longCode, longMessage));
+        listener.onFailed(new PawapayOperationFailedEvent(UUID.randomUUID(), PawapayOperationKind.REFUND, PawapayOperationPurpose.BID_PAYMENT, paymentId, null, longCode, longMessage));
 
         ArgumentCaptor<Map<String, Object>> auditPayload = ArgumentCaptor.forClass(Map.class);
         verify(audit).log(eq("PAYMENT"), eq(paymentId), eq("MM_REFUND_FAILED"), any(), auditPayload.capture());

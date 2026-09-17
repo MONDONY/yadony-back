@@ -16,6 +16,8 @@ public record PawapayProperties(
         String deepLinkAwaiting,
         /** Modèle {@code String.format} avec le threadId, ex. {@code yadony://negotiations/%s/mobile-money/awaiting}. */
         String deepLinkAwaitingThread,
+        /** Écran de recharge du portefeuille, sans paramètre, ex. {@code yadony://payments/wallet}. */
+        String deepLinkWallet,
         BalanceMin balanceMin) {
 
     public record BalanceMin(BigDecimal xof, BigDecimal xaf) {}

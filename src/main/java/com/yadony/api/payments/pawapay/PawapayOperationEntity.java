@@ -77,6 +77,15 @@ public class PawapayOperationEntity {
     @Column(name = "payment_id")
     private UUID paymentId;
 
+    /** À quoi sert l'opération : paiement de colis, recharge ou remboursement de wallet. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "purpose", nullable = false, length = 20, updatable = false)
+    private PawapayOperationPurpose purpose = PawapayOperationPurpose.BID_PAYMENT;
+
+    /** Utilisateur concerné pour une opération de wallet (topup / refund) ; null pour un paiement de colis. */
+    @Column(name = "user_id", updatable = false)
+    private UUID userId;
+
     /** Pour un REFUND : le DEPOSIT d'origine. */
     @Column(name = "related_operation_id")
     private UUID relatedOperationId;
@@ -129,6 +138,14 @@ public class PawapayOperationEntity {
         this.msisdnMasked = Msisdn.mask(msisdn);
     }
 
+    public PawapayOperationEntity(UUID id, PawapayOperationKind kind, PawapayOperationPurpose purpose, UUID userId,
+                                  UUID paymentId, UUID relatedOperationId, BigDecimal amount, String currency,
+                                  String provider, String country, String msisdn) {
+        this(id, kind, paymentId, relatedOperationId, amount, currency, provider, country, msisdn);
+        this.purpose = purpose;
+        this.userId = userId;
+    }
+
     @PrePersist
     void onCreate() {
         createdAt = LocalDateTime.now(ZoneOffset.UTC);
@@ -152,6 +169,8 @@ public class PawapayOperationEntity {
     public String getMsisdn() { return msisdn; }
     public String getMsisdnMasked() { return msisdnMasked; }
     public UUID getPaymentId() { return paymentId; }
+    public PawapayOperationPurpose getPurpose() { return purpose; }
+    public UUID getUserId() { return userId; }
     public String getAuthorizationUrl() { return authorizationUrl; }
     public String getProviderTransactionId() { return providerTransactionId; }
     public String getFailureCode() { return failureCode; }

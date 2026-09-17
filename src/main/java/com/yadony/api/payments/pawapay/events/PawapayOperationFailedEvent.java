@@ -1,6 +1,7 @@
 package com.yadony.api.payments.pawapay.events;
 
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
+import com.yadony.api.payments.pawapay.PawapayOperationPurpose;
 import java.util.UUID;
 
 /**
@@ -15,5 +16,5 @@ import java.util.UUID;
  * ({@code @TransactionalEventListener(AFTER_COMMIT)} + {@code @Transactional(REQUIRES_NEW)}),
  * pas de cet événement lui-même.
  */
-public record PawapayOperationFailedEvent(UUID operationId, PawapayOperationKind kind, UUID paymentId,
-                                          String failureCode, String failureMessage) {}
+public record PawapayOperationFailedEvent(UUID operationId, PawapayOperationKind kind, PawapayOperationPurpose purpose,
+                                          UUID paymentId, UUID userId, String failureCode, String failureMessage) {}

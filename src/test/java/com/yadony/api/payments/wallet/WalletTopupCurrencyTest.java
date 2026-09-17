@@ -23,6 +23,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -142,10 +143,57 @@ class WalletTopupCurrencyTest {
     }
 
     private static WalletTopupOrchestrator orchestrator(UUID userId, String resolvedCurrency) {
+        return orchestrator(userId, resolvedCurrency, mock(WalletMobileMoneyTopupService.class));
+    }
+
+    private static WalletTopupOrchestrator orchestrator(UUID userId, String resolvedCurrency,
+                                                        WalletMobileMoneyTopupService mobileMoneyTopupService) {
         ActiveCurrencyResolver resolver = mock(ActiveCurrencyResolver.class);
         when(resolver.resolve(userId)).thenReturn(resolvedCurrency);
         return new WalletTopupOrchestrator(new CurrencyCatalog(), resolver, new WalletTopupProperties(
-                "https://pro.example/parametres?topup=success", "https://pro.example/parametres?topup=canceled"));
+                "https://pro.example/parametres?topup=success", "https://pro.example/parametres?topup=canceled"),
+                mobileMoneyTopupService);
+    }
+
+    /**
+     * L'aiguillage MOBILE_MONEY délègue tel quel : ni devise ni montant résolus ici. La devise
+     * d'une recharge mobile money est celle de l'OPÉRATEUR du numéro, que seul le service
+     * connaît — la recalculer ici (comme pour Stripe) créditerait la mauvaise.
+     */
+    @Test
+    void initiate_mobileMoney_delegatesToTheMobileMoneyService() {
+        UUID userId = UUID.randomUUID();
+        WalletTopupRequest request = new WalletTopupRequest();
+        request.setPaymentMethod("MOBILE_MONEY");
+        request.setAmount(new BigDecimal("10000"));
+        request.setPhoneNumber("2250734567890");
+        WalletMobileMoneyTopupService mobileMoney = mock(WalletMobileMoneyTopupService.class);
+        WalletTopupResponse expected = WalletTopupResponse.stripe(null);
+        when(mobileMoney.initiate(userId, request)).thenReturn(expected);
+
+        // Devise résolue volontairement différente de celle qu'un opérateur ivoirien
+        // imposerait : si l'aiguillage la touchait, le test le verrait.
+        assertThat(orchestrator(userId, "EUR", mobileMoney).initiate(userId, request)).isSameAs(expected);
+    }
+
+    /**
+     * WAVE et ORANGE_MONEY sont les codes de l'ancien rail maison, encore envoyés par des apps
+     * déployées : ils doivent rester un refus explicite, jamais retomber en silence sur pawaPay
+     * (le numéro payeur n'y est pas demandé, la recharge partirait sans payeur).
+     */
+    @ParameterizedTest
+    @CsvSource({"WAVE", "ORANGE_MONEY"})
+    void initiate_ancienRailMaison_resteRetire(String retiredMethod) {
+        UUID userId = UUID.randomUUID();
+        WalletTopupRequest request = new WalletTopupRequest();
+        request.setPaymentMethod(retiredMethod);
+        request.setAmount(BigDecimal.TEN);
+        WalletMobileMoneyTopupService mobileMoney = mock(WalletMobileMoneyTopupService.class);
+
+        assertThatThrownBy(() -> orchestrator(userId, "EUR", mobileMoney).initiate(userId, request))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        error -> assertThat(error.getErrorCode()).isEqualTo("mobile-money-topup-retired"));
+        verifyNoInteractions(mobileMoney);
     }
 
     /**

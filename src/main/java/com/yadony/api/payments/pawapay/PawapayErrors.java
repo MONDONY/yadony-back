@@ -23,6 +23,17 @@ public final class PawapayErrors {
     }
 
     /**
+     * 422 : une recharge du portefeuille est déjà en attente de validation sur le téléphone
+     * de l'utilisateur. Deux émetteurs, un seul libellé : la garde applicative de
+     * {@code WalletMobileMoneyTopupService} (chemin normal) et l'index unique partiel
+     * {@code uq_pawapay_ops_live_wallet_topup} (course entre deux requêtes).
+     */
+    public static YadonyBusinessException walletTopupAlreadyPending() {
+        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "topup-already-pending",
+                "Topup Already Pending", "Une recharge est déjà en attente de validation sur votre téléphone.");
+    }
+
+    /**
      * 502 : pawaPay ne répond pas (panne réseau, 5xx) ou répond une donnée inexploitable —
      * dans les deux cas ce n'est pas la faute de l'utilisateur, donc jamais un 422 métier.
      */

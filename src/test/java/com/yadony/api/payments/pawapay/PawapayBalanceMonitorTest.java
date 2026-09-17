@@ -38,7 +38,7 @@ class PawapayBalanceMonitorTest {
     private PawapayBalanceMonitor monitor(boolean enabled, BigDecimal minXof, BigDecimal minXaf) {
         return new PawapayBalanceMonitor(client, alerts, new PawapayProperties(enabled, "https://x", "t",
                 false, 30, "https://r", "yadony://bids/%s/mobile-money/awaiting",
-                "yadony://negotiations/%s/mobile-money/awaiting",
+                "yadony://negotiations/%s/mobile-money/awaiting", "yadony://payments/wallet",
                 new PawapayProperties.BalanceMin(minXof, minXaf)));
     }
 
@@ -69,7 +69,7 @@ class PawapayBalanceMonitorTest {
     void nullBalanceMin_disablesTheCheckWithoutThrowing() {
         PawapayBalanceMonitor m = new PawapayBalanceMonitor(client, alerts, new PawapayProperties(true,
                 "https://x", "t", false, 30, "https://r", "yadony://bids/%s/mobile-money/awaiting",
-                "yadony://negotiations/%s/mobile-money/awaiting", null));
+                "yadony://negotiations/%s/mobile-money/awaiting", "yadony://payments/wallet", null));
         m.check();
         verify(client, never()).walletBalances();
         verifyNoInteractions(alerts);

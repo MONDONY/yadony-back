@@ -4,6 +4,7 @@ import com.yadony.api.matching.AnnouncementService;
 import com.yadony.api.payments.mobilemoney.MobileMoneyDepositOutcomeListener;
 import com.yadony.api.payments.mobilemoney.MobileMoneyPayoutOutcomeListener;
 import com.yadony.api.payments.mobilemoney.MobileMoneyRefundOutcomeListener;
+import com.yadony.api.payments.wallet.WalletTopupOutcomeListener;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -65,7 +66,11 @@ class PaymentListenerTransactionalContractTest {
                 // Tâche 17 : jumeaux refund — même contrat, même raison (transition appliquée
                 // à l'intérieur de la transaction de PawapayOperationService#apply).
                 Arguments.of(MobileMoneyRefundOutcomeListener.class, "onCompleted"),
-                Arguments.of(MobileMoneyRefundOutcomeListener.class, "onFailed")
+                Arguments.of(MobileMoneyRefundOutcomeListener.class, "onFailed"),
+                // Lot 1 recharge wallet, tâche 4 : crédit du portefeuille sur les mêmes
+                // événements génériques (purpose WALLET_TOPUP) — même contrat.
+                Arguments.of(WalletTopupOutcomeListener.class, "onCompleted"),
+                Arguments.of(WalletTopupOutcomeListener.class, "onFailed")
         );
     }
 

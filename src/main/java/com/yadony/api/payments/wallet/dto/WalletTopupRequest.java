@@ -11,7 +11,9 @@ public class WalletTopupRequest {
     private BigDecimal amount;
 
     @NotNull
-    private String paymentMethod; // STRIPE | WAVE | ORANGE_MONEY
+    // STRIPE (carte) | MOBILE_MONEY (pawaPay). WAVE et ORANGE_MONEY sont les codes de
+    // l'ancien rail maison, encore envoyés par les apps déployées : refusés en 422.
+    private String paymentMethod;
 
     /**
      * IGNORÉ depuis le correctif « devise de recharge » : la devise créditée est
@@ -26,10 +28,29 @@ public class WalletTopupRequest {
     @Deprecated
     private String currencyCode;
 
+    /**
+     * Numéro mobile money qui paie la recharge, obligatoire pour
+     * {@code paymentMethod = MOBILE_MONEY}, ignoré pour les autres rails. E.164 ou chiffres :
+     * le serveur le normalise ({@code Msisdn.normalize}, le {@code +} et les séparateurs sont
+     * retirés, un préfixe {@code 00} aussi) et refuse en 422 {@code mobile-money-invalid-phone}
+     * ce qui n'est pas un numéro exploitable.
+     */
+    private String phoneNumber;
+
+    /**
+     * Code pawaPay du réseau choisi ({@code ORANGE_CIV}, {@code WAVE_SEN}…), facultatif :
+     * sans lui, l'opérateur prédit par pawaPay pour ce numéro s'applique.
+     */
+    private String provider;
+
     public BigDecimal getAmount() { return amount; }
     public void setAmount(BigDecimal amount) { this.amount = amount; }
     public String getPaymentMethod() { return paymentMethod; }
     public void setPaymentMethod(String paymentMethod) { this.paymentMethod = paymentMethod; }
     public String getCurrencyCode() { return currencyCode; }
     public void setCurrencyCode(String currencyCode) { this.currencyCode = currencyCode; }
+    public String getPhoneNumber() { return phoneNumber; }
+    public void setPhoneNumber(String phoneNumber) { this.phoneNumber = phoneNumber; }
+    public String getProvider() { return provider; }
+    public void setProvider(String provider) { this.provider = provider; }
 }

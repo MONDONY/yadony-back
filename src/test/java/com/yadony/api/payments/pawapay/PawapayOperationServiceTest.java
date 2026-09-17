@@ -63,6 +63,26 @@ class PawapayOperationServiceTest {
                 .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-operation-in-progress");
     }
 
+    /**
+     * Filet du doublon de recharge : la garde applicative de
+     * {@code WalletMobileMoneyTopupService} lit avant d'écrire, deux requêtes concurrentes la
+     * franchissent toutes les deux. L'index unique partiel
+     * {@code uq_pawapay_ops_live_wallet_topup} (V260) tranche, et doit ressortir avec le
+     * message de la garde — pas un 500, pas un texte différent selon qui gagne la course.
+     */
+    @Test
+    void create_translatesTheWalletTopupUniqueIndexInto422() {
+        UUID userId = UUID.randomUUID();
+        when(repository.saveAndFlush(any())).thenThrow(new DataIntegrityViolationException(
+                "ERROR: duplicate key value violates unique constraint \"uq_pawapay_ops_live_wallet_topup\""));
+
+        assertThatThrownBy(() -> service.create(PawapayOperationKind.DEPOSIT, PawapayOperationPurpose.WALLET_TOPUP,
+                userId, null, null, new BigDecimal("10000"), "XOF", "ORANGE_CIV", "CI", "2250734567890"))
+                .isInstanceOf(YadonyBusinessException.class)
+                .hasMessage("Une recharge est déjà en attente de validation sur votre téléphone.")
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("topup-already-pending");
+    }
+
     @Test
     void create_rethrowsOtherIntegrityViolations_notTranslatedTo409() {
         // Revue ronde 1, point 2 : un catch trop large traduirait AUSSI une FK/NOT NULL/CHECK
@@ -90,6 +110,33 @@ class PawapayOperationServiceTest {
         assertThat(created.getId()).isNotNull();
         assertThat(created.getStatus()).isEqualTo(PawapayOperationStatus.CREATED);
         assertThat(created.getMsisdn()).isEqualTo("221771234567");
+    }
+
+    @Test
+    void createWalletTopup_carriesPurposeAndUser() {
+        UUID userId = UUID.randomUUID();
+        when(repository.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        PawapayOperationEntity op = service.create(PawapayOperationKind.DEPOSIT, PawapayOperationPurpose.WALLET_TOPUP,
+                userId, null, null, new BigDecimal("10000"), "XOF", "ORANGE_CIV", "CI", "+2250734567890");
+
+        assertThat(op.getPurpose()).isEqualTo(PawapayOperationPurpose.WALLET_TOPUP);
+        assertThat(op.getUserId()).isEqualTo(userId);
+        assertThat(op.getPaymentId()).isNull();
+        verify(repository, never()).existsByPaymentIdAndKindAndStatusIn(any(), any(), any());
+    }
+
+    @Test
+    void legacyCreate_defaultsToBidPayment() {
+        UUID paymentId = UUID.randomUUID();
+        when(repository.existsByPaymentIdAndKindAndStatusIn(eq(paymentId), any(), any())).thenReturn(false);
+        when(repository.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        PawapayOperationEntity op = service.create(PawapayOperationKind.DEPOSIT, paymentId, null,
+                new BigDecimal("6600"), "XOF", "ORANGE_CIV", "CI", "+2250734567890");
+
+        assertThat(op.getPurpose()).isEqualTo(PawapayOperationPurpose.BID_PAYMENT);
+        assertThat(op.getUserId()).isNull();
     }
 
     // Revue ronde 1, point 1 (CRITIQUE) : markSubmitted ne fait plus de read-modify-write
