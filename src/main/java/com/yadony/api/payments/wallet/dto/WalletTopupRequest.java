@@ -26,10 +26,26 @@ public class WalletTopupRequest {
     @Deprecated
     private String currencyCode;
 
+    /**
+     * Numéro mobile money qui paie la recharge (E.164), obligatoire pour
+     * {@code paymentMethod = MOBILE_MONEY}, ignoré pour les autres rails.
+     */
+    private String phoneNumber;
+
+    /**
+     * Code pawaPay du réseau choisi ({@code ORANGE_CIV}, {@code WAVE_SEN}…), facultatif :
+     * sans lui, l'opérateur prédit par pawaPay pour ce numéro s'applique.
+     */
+    private String provider;
+
     public BigDecimal getAmount() { return amount; }
     public void setAmount(BigDecimal amount) { this.amount = amount; }
     public String getPaymentMethod() { return paymentMethod; }
     public void setPaymentMethod(String paymentMethod) { this.paymentMethod = paymentMethod; }
     public String getCurrencyCode() { return currencyCode; }
     public void setCurrencyCode(String currencyCode) { this.currencyCode = currencyCode; }
+    public String getPhoneNumber() { return phoneNumber; }
+    public void setPhoneNumber(String phoneNumber) { this.phoneNumber = phoneNumber; }
+    public String getProvider() { return provider; }
+    public void setProvider(String provider) { this.provider = provider; }
 }
