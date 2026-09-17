@@ -662,6 +662,60 @@ class WalletSelfRefundServiceTest {
     }
 
     @Test
+    void request_xofFeeEgalAuMontantArrondi_estExclueApresArrondi() {
+        // Régression (tour 1) : le filtre net<=0 comparait remaining (non arrondi) au fee, pas
+        // le montant DEJA arrondi à l'unité mineure. En XOF (échelle 0), remaining=200.40 avec
+        // fee=200 passait ce test non arrondi (0.40 > 0) mais, une fois amount arrondi DOWN à
+        // 200 (item.amount = t.remaining().setScale(0, DOWN)), amount == fee : le net
+        // réellement émis (issueStripeRefund : amount - feeAmount) était nul. Le filtre doit
+        // désormais s'appliquer sur le montant arrondi.
+        UUID opId = UUID.randomUUID();
+        WalletTransactionEntity topup = ledgerTx("XOF", WalletTransactionType.TOP_UP, "200.40", "pawapay:" + opId);
+        stubLedger("XOF", "200.40", topup);
+        PawapayOperationEntity op = mock(PawapayOperationEntity.class);
+        when(op.getId()).thenReturn(opId);
+        when(op.getProvider()).thenReturn("ORANGE_CIV");
+        when(pawapayOperationRepository.findByUserIdAndPurposeAndKind(
+                USER_ID, PawapayOperationPurpose.WALLET_TOPUP, PawapayOperationKind.DEPOSIT))
+                .thenReturn(List.of(op));
+        when(pawapayFeeTable.fee(eq("ORANGE_CIV"), any(), eq("XOF"))).thenReturn(new BigDecimal("200"));
+        when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("XOF"), any()))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.request(USER_ID, "XOF", List.of()))
+                .isInstanceOf(YadonyBusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "wallet-not-refund-eligible");
+
+        verify(refundRequestRepository, never()).save(any());
+        verify(refundRequestItemRepository, never()).save(any());
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    void request_railsMixtes_leveIllegalStateExceptionSansRienSauvegarder() {
+        UUID opId = UUID.randomUUID();
+        WalletTransactionEntity stripeTopup = ledgerTx(WalletTransactionType.TOP_UP, "40.00", "pi_1");
+        WalletTransactionEntity pawapayTopup = ledgerTx(WalletTransactionType.TOP_UP, "40.00", "pawapay:" + opId);
+        stubLedger("80.00", stripeTopup, pawapayTopup);
+        PawapayOperationEntity op = mock(PawapayOperationEntity.class);
+        when(op.getId()).thenReturn(opId);
+        when(op.getProvider()).thenReturn("ORANGE_CIV");
+        when(pawapayOperationRepository.findByUserIdAndPurposeAndKind(
+                USER_ID, PawapayOperationPurpose.WALLET_TOPUP, PawapayOperationKind.DEPOSIT))
+                .thenReturn(List.of(op));
+        when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any()))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.request(USER_ID, "EUR", List.of()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("wallet-refund-mixed-rails");
+
+        verify(refundRequestRepository, never()).save(any());
+        verify(refundRequestItemRepository, never()).save(any());
+        verifyNoInteractions(auditService, eventPublisher);
+    }
+
+    @Test
     void issuePendingItems_toutEnEchec_itemFailedAvecCodeStripeEtDemandeCloseAvecTicketEnfant() {
         WalletRefundRequestEntity request = stubIssuable("EUR", "40.00");
         WalletRefundRequestItemEntity item = pendingItem(request, "pi_1", "40.00");

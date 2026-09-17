@@ -308,20 +308,29 @@ public class WalletSelfRefundService {
                     "Aucun montant remboursable sur ce solde");
         }
 
-        // Une cible dont le frais absorbe tout le restant (remaining - fee <= 0) n'a rien à
-        // verser : exclue plutôt que de créer un item PENDING à net nul. L'allocateur la garde
-        // volontairement dans refundable/refundableTotal (invariant du solde), c'est ici
-        // qu'elle sort des cibles réellement demandées.
+        // Le ledger interne garde toujours 2 décimales (NUMERIC(10,2)), même pour une devise
+        // sans centimes (XOF/XAF) : on aligne chaque montant sur l'unité mineure Stripe de la
+        // devise AVANT de juger si la cible a un net à verser, jamais sur le `remaining` non
+        // arrondi. En XOF (échelle 0), un `remaining` de 200.40 avec un fee de 200 passerait
+        // le test non arrondi (0.40 > 0) mais, une fois arrondi DOWN à 200, donne
+        // amount == fee : un item PENDING dont le net réellement émis (issueStripeRefund,
+        // amount - feeAmount) est nul. `fee` est déjà à cette même échelle
+        // (WalletRefundFeeCalculator.feeFor arrondit sur la devise), la comparaison est donc
+        // cohérente. Ce filtre absorbe l'ancien filtre "amount == 0" (un montant nul est
+        // nécessairement <= fee, fee étant toujours positif ou nul).
+        int scale = SupportedCurrency.fromCodeOrDefault(code).minorUnit();
+        record ScaledTarget(WalletRefundAllocation.RefundableTopup target, BigDecimal amount) {}
         int skippedForFees = 0;
-        List<WalletRefundAllocation.RefundableTopup> targets = new ArrayList<>();
+        List<ScaledTarget> scaledTargets = new ArrayList<>();
         for (WalletRefundAllocation.RefundableTopup t : selectedTargets) {
-            if (t.remaining().subtract(t.fee()).signum() > 0) {
-                targets.add(t);
+            BigDecimal scaledAmount = t.remaining().setScale(scale, RoundingMode.DOWN);
+            if (scaledAmount.subtract(t.fee()).signum() > 0) {
+                scaledTargets.add(new ScaledTarget(t, scaledAmount));
             } else {
                 skippedForFees++;
             }
         }
-        if (targets.isEmpty()) {
+        if (scaledTargets.isEmpty()) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "wallet-not-refund-eligible", "Unprocessable",
                     "Aucun montant remboursable sur ce solde");
@@ -329,9 +338,10 @@ public class WalletSelfRefundService {
 
         // Une demande ne part jamais à moitié Stripe, à moitié pawaPay : chaque canal a son
         // propre émetteur (issueStripeRefund vs WalletRefundRailIssuer). Ne devrait pas se
-        // produire (une recharge n'a qu'un rail), garde-fou défensif.
-        Set<WalletRefundRail> rails = targets.stream()
-                .map(WalletRefundAllocation.RefundableTopup::rail)
+        // produire (une recharge n'a qu'un rail), garde-fou défensif. Levée avant toute
+        // écriture (aucune demande ni item sauvegardé).
+        Set<WalletRefundRail> rails = scaledTargets.stream()
+                .map(st -> st.target().rail())
                 .collect(Collectors.toSet());
         if (rails.size() > 1) {
             throw new IllegalStateException("wallet-refund-mixed-rails");
@@ -339,23 +349,6 @@ public class WalletSelfRefundService {
         WalletRefundChannel channel = rails.contains(WalletRefundRail.PAWAPAY)
                 ? WalletRefundChannel.AUTOMATIC_PAWAPAY
                 : WalletRefundChannel.AUTOMATIC_STRIPE;
-
-        // Le ledger interne garde toujours 2 décimales (NUMERIC(10,2)), même pour une devise
-        // sans centimes (XOF/XAF) : on aligne chaque montant sur l'unité mineure Stripe de la
-        // devise AVANT de créer l'item, jamais dans issueStripeRefund seul, pour qu'une cible
-        // dont le reliquat s'arrondit à zéro (ex. 0.50 XOF) ne devienne jamais un item à
-        // rembourser. RoundingMode.DOWN : on ne rembourse jamais plus que le restant.
-        int scale = SupportedCurrency.fromCodeOrDefault(code).minorUnit();
-        record ScaledTarget(WalletRefundAllocation.RefundableTopup target, BigDecimal amount) {}
-        List<ScaledTarget> scaledTargets = targets.stream()
-                .map(t -> new ScaledTarget(t, t.remaining().setScale(scale, RoundingMode.DOWN)))
-                .filter(st -> st.amount().signum() != 0)
-                .toList();
-        if (scaledTargets.isEmpty()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "wallet-not-refund-eligible", "Unprocessable",
-                    "Aucun montant remboursable sur ce solde");
-        }
 
         BigDecimal amount = scaledTargets.stream()
                 .map(ScaledTarget::amount)
