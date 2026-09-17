@@ -23,7 +23,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.LocalDate;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -82,11 +84,7 @@ public class PackageRequestInsightService {
 
     @Transactional(readOnly = true)
     public PackageRequestInsightsResponse getInsights(UUID callerId, UUID requestId) {
-        PackageRequestEntity request = requestRepository.findById(requestId)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found"));
-        if (!request.getSenderId().equals(callerId)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "request/forbidden");
-        }
+        PackageRequestEntity request = requireOwnedRequest(requestRepository.findById(requestId), callerId);
         var invited = invitationRepository.findByPackageRequestIdOrderByCreatedAtAsc(requestId).stream()
             .map(PackageRequestInvitationEntity::getAnnouncementId)
             .toList();
@@ -99,11 +97,7 @@ public class PackageRequestInsightService {
      */
     @Transactional
     public InvitationResult invite(UUID callerId, UUID requestId, UUID announcementId) {
-        PackageRequestEntity request = requestRepository.findByIdForUpdate(requestId)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found"));
-        if (!request.getSenderId().equals(callerId)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "request/forbidden");
-        }
+        PackageRequestEntity request = requireOwnedRequest(requestRepository.findByIdForUpdate(requestId), callerId);
         if (request.getStatus() != PackageRequestStatus.OPEN && request.getStatus() != PackageRequestStatus.NEGOTIATING) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "request/not-invitable");
         }
@@ -120,6 +114,9 @@ public class PackageRequestInsightService {
         }
         if (trip.getStatus() != AnnouncementStatus.ACTIVE) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "invitation/trip-not-active");
+        }
+        if (!isOnCorridor(trip, request)) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "invitation/off-corridor");
         }
         if (invitationRepository.countByPackageRequestId(requestId) >= MAX_INVITATIONS_PER_REQUEST) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "invitation/limit-reached");
@@ -143,5 +140,44 @@ public class PackageRequestInsightService {
 
     private static PackageRequestInvitationResponse toResponse(PackageRequestInvitationEntity e) {
         return new PackageRequestInvitationResponse(e.getAnnouncementId(), e.getCreatedAt());
+    }
+
+    /**
+     * Charge la demande et vérifie que l'appelant en est l'expéditeur. Un non-propriétaire
+     * reçoit un 404, jamais un 403 : aligné sur {@code PackageRequestService.getById}, qui
+     * masque déjà l'existence d'une demande à qui n'a pas à la voir.
+     */
+    private static PackageRequestEntity requireOwnedRequest(Optional<PackageRequestEntity> found, UUID callerId) {
+        PackageRequestEntity request = found
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found"));
+        if (!request.getSenderId().equals(callerId)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found");
+        }
+        return request;
+    }
+
+    /**
+     * Le trajet du voyageur invité doit correspondre au corridor et à la fenêtre de dates
+     * de la demande : même ville de départ et d'arrivée (insensible à la casse et aux
+     * espaces superflus), départ dans {@code [desiredDate - tolerance, desiredDate + tolerance]}.
+     */
+    private static boolean isOnCorridor(AnnouncementEntity trip, PackageRequestEntity request) {
+        return sameCity(trip.getDepartureCity(), request.getDepartureCity())
+            && sameCity(trip.getArrivalCity(), request.getArrivalCity())
+            && isWithinDateTolerance(trip.getDepartureDate(), request.getDesiredDate(), request.getDateToleranceDays());
+    }
+
+    private static boolean sameCity(String a, String b) {
+        return a != null && b != null && a.trim().equalsIgnoreCase(b.trim());
+    }
+
+    private static boolean isWithinDateTolerance(LocalDate tripDate, LocalDate desiredDate, Short toleranceDays) {
+        if (tripDate == null || desiredDate == null) {
+            return false;
+        }
+        int tolerance = toleranceDays == null ? 0 : toleranceDays;
+        LocalDate earliest = desiredDate.minusDays(tolerance);
+        LocalDate latest = desiredDate.plusDays(tolerance);
+        return !tripDate.isBefore(earliest) && !tripDate.isAfter(latest);
     }
 }

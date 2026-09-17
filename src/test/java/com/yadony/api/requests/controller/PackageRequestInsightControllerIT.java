@@ -68,13 +68,13 @@ class PackageRequestInsightControllerIT {
     }
 
     @Test
-    void getInsights_forbiddenForNonOwner() throws Exception {
+    void getInsights_notFoundForNonOwner() throws Exception {
         UUID id = UUID.randomUUID();
         when(service.getInsights(SENDER_UUID, id))
-            .thenThrow(new ResponseStatusException(HttpStatus.FORBIDDEN, "request/forbidden"));
+            .thenThrow(new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found"));
 
         mockMvc.perform(get("/package-requests/" + id + "/insights").with(authentication(authAs("uid-sender", "SENDER"))))
-            .andExpect(status().isForbidden());
+            .andExpect(status().isNotFound());
     }
 
     @Test

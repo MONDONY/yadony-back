@@ -23,6 +23,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -49,6 +50,7 @@ class PackageRequestInsightServiceTest {
     private final UUID travelerId = UUID.randomUUID();
     private final UUID requestId = UUID.randomUUID();
     private final UUID announcementId = UUID.randomUUID();
+    private final LocalDate desiredDate = LocalDate.now().plusDays(30);
 
     @BeforeEach
     void setUp() {
@@ -63,15 +65,26 @@ class PackageRequestInsightServiceTest {
         when(e.getStatus()).thenReturn(status);
         when(e.getDepartureCity()).thenReturn("Divo");
         when(e.getArrivalCity()).thenReturn("Annemasse");
+        when(e.getDesiredDate()).thenReturn(desiredDate);
+        when(e.getDateToleranceDays()).thenReturn((short) 2);
         when(e.getViewCount()).thenReturn(14L);
         return e;
     }
 
+    /** Trajet sur le corridor et dans la fenêtre de dates de {@link #request}. */
     private AnnouncementEntity trip(UUID owner, AnnouncementStatus status) {
+        return trip(owner, status, "Divo", "Annemasse", desiredDate);
+    }
+
+    private AnnouncementEntity trip(UUID owner, AnnouncementStatus status,
+                                     String departureCity, String arrivalCity, LocalDate departureDate) {
         AnnouncementEntity a = mock(AnnouncementEntity.class, withSettings().strictness(org.mockito.quality.Strictness.LENIENT));
         when(a.getId()).thenReturn(announcementId);
         when(a.getTravelerId()).thenReturn(owner);
         when(a.getStatus()).thenReturn(status);
+        when(a.getDepartureCity()).thenReturn(departureCity);
+        when(a.getArrivalCity()).thenReturn(arrivalCity);
+        when(a.getDepartureDate()).thenReturn(departureDate);
         return a;
     }
 
@@ -128,14 +141,14 @@ class PackageRequestInsightServiceTest {
     }
 
     @Test
-    void getInsights_notOwner_forbidden() {
+    void getInsights_notOwner_notFound() {
         PackageRequestEntity req = request(PackageRequestStatus.OPEN);
         when(requestRepository.findById(requestId)).thenReturn(Optional.of(req));
 
         assertThatThrownBy(() -> service.getInsights(travelerId, requestId))
                 .isInstanceOfSatisfying(ResponseStatusException.class, e -> {
-                    assertThat(e.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
-                    assertThat(e.getReason()).isEqualTo("request/forbidden");
+                    assertThat(e.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+                    assertThat(e.getReason()).isEqualTo("request/not-found");
                 });
     }
 
@@ -193,13 +206,15 @@ class PackageRequestInsightServiceTest {
     }
 
     @Test
-    void invite_notOwner_forbidden() {
+    void invite_notOwner_notFound() {
         PackageRequestEntity req = request(PackageRequestStatus.OPEN);
         when(requestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.of(req));
 
         assertThatThrownBy(() -> service.invite(travelerId, requestId, announcementId))
-                .isInstanceOfSatisfying(ResponseStatusException.class,
-                        e -> assertThat(e.getReason()).isEqualTo("request/forbidden"));
+                .isInstanceOfSatisfying(ResponseStatusException.class, e -> {
+                    assertThat(e.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+                    assertThat(e.getReason()).isEqualTo("request/not-found");
+                });
     }
 
     @Test
@@ -255,6 +270,95 @@ class PackageRequestInsightServiceTest {
         assertThatThrownBy(() -> service.invite(senderId, requestId, announcementId))
                 .isInstanceOfSatisfying(ResponseStatusException.class,
                         e -> assertThat(e.getReason()).isEqualTo("invitation/trip-not-active"));
+    }
+
+    @Test
+    void invite_differentDepartureCity_offCorridor() {
+        PackageRequestEntity req = request(PackageRequestStatus.OPEN);
+        when(requestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.of(req));
+        when(invitationRepository.findByPackageRequestIdAndAnnouncementId(requestId, announcementId))
+                .thenReturn(Optional.empty());
+        AnnouncementEntity offCorridorTrip = trip(travelerId, AnnouncementStatus.ACTIVE, "Bouaké", "Annemasse", desiredDate);
+        when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(offCorridorTrip));
+
+        assertThatThrownBy(() -> service.invite(senderId, requestId, announcementId))
+                .isInstanceOfSatisfying(ResponseStatusException.class, e -> {
+                    assertThat(e.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(e.getReason()).isEqualTo("invitation/off-corridor");
+                });
+        verify(invitationRepository, never()).save(any());
+    }
+
+    @Test
+    void invite_differentArrivalCity_offCorridor() {
+        PackageRequestEntity req = request(PackageRequestStatus.OPEN);
+        when(requestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.of(req));
+        when(invitationRepository.findByPackageRequestIdAndAnnouncementId(requestId, announcementId))
+                .thenReturn(Optional.empty());
+        AnnouncementEntity offCorridorTrip = trip(travelerId, AnnouncementStatus.ACTIVE, "Divo", "Genève", desiredDate);
+        when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(offCorridorTrip));
+
+        assertThatThrownBy(() -> service.invite(senderId, requestId, announcementId))
+                .isInstanceOfSatisfying(ResponseStatusException.class, e -> {
+                    assertThat(e.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(e.getReason()).isEqualTo("invitation/off-corridor");
+                });
+        verify(invitationRepository, never()).save(any());
+    }
+
+    @Test
+    void invite_cityCaseAndSpacingDifferences_accepted() {
+        PackageRequestEntity req = request(PackageRequestStatus.OPEN);
+        when(requestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.of(req));
+        when(invitationRepository.findByPackageRequestIdAndAnnouncementId(requestId, announcementId))
+                .thenReturn(Optional.empty());
+        AnnouncementEntity sameCorridorTrip = trip(travelerId, AnnouncementStatus.ACTIVE, "  DIVO ", " annemasse  ", desiredDate);
+        when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(sameCorridorTrip));
+        when(invitationRepository.countByPackageRequestId(requestId)).thenReturn(0L);
+        when(invitationRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        UserEntity sender = mock(UserEntity.class);
+        when(sender.publicDisplayName()).thenReturn("Awa Koné");
+        when(userRepository.findById(senderId)).thenReturn(Optional.of(sender));
+
+        var result = service.invite(senderId, requestId, announcementId);
+
+        assertThat(result.created()).isTrue();
+    }
+
+    @Test
+    void invite_tripDateOneDayOutsideWindow_offCorridor() {
+        PackageRequestEntity req = request(PackageRequestStatus.OPEN);
+        when(requestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.of(req));
+        when(invitationRepository.findByPackageRequestIdAndAnnouncementId(requestId, announcementId))
+                .thenReturn(Optional.empty());
+        AnnouncementEntity lateTrip = trip(travelerId, AnnouncementStatus.ACTIVE, "Divo", "Annemasse", desiredDate.plusDays(3));
+        when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(lateTrip));
+
+        assertThatThrownBy(() -> service.invite(senderId, requestId, announcementId))
+                .isInstanceOfSatisfying(ResponseStatusException.class, e -> {
+                    assertThat(e.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(e.getReason()).isEqualTo("invitation/off-corridor");
+                });
+        verify(invitationRepository, never()).save(any());
+    }
+
+    @Test
+    void invite_tripDateAtWindowEdge_accepted() {
+        PackageRequestEntity req = request(PackageRequestStatus.OPEN);
+        when(requestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.of(req));
+        when(invitationRepository.findByPackageRequestIdAndAnnouncementId(requestId, announcementId))
+                .thenReturn(Optional.empty());
+        AnnouncementEntity edgeTrip = trip(travelerId, AnnouncementStatus.ACTIVE, "Divo", "Annemasse", desiredDate.plusDays(2));
+        when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(edgeTrip));
+        when(invitationRepository.countByPackageRequestId(requestId)).thenReturn(0L);
+        when(invitationRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        UserEntity sender = mock(UserEntity.class);
+        when(sender.publicDisplayName()).thenReturn("Awa Koné");
+        when(userRepository.findById(senderId)).thenReturn(Optional.of(sender));
+
+        var result = service.invite(senderId, requestId, announcementId);
+
+        assertThat(result.created()).isTrue();
     }
 
     @Test
