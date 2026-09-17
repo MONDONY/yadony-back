@@ -129,10 +129,13 @@ public class PackageRequestEntity extends BaseEntity {
 
     /**
      * Consultations du détail par un voyageur connecté (propriétaire exclu). Nullable
-     * à dessein (piège H2, voir V260) ; l'écriture passe uniquement par
+     * à dessein (piège H2, voir V261) ; l'écriture passe uniquement par
      * {@link com.yadony.api.requests.repository.PackageRequestRepository#incrementViewCount}.
+     * {@code updatable = false} : un save de l'entité (ex. modification d'un autre champ
+     * sur une instance chargée avant l'incrément) ne doit jamais réécrire une valeur
+     * périmée par-dessus le compteur incrémenté en base par l'UPDATE JPQL ci-dessus.
      */
-    @Column(name = "view_count")
+    @Column(name = "view_count", updatable = false)
     private Long viewCount = 0L;
 
     // === NO-ARG CONSTRUCTOR (required by JPA) ===

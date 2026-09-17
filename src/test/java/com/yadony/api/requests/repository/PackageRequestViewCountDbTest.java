@@ -59,6 +59,30 @@ class PackageRequestViewCountDbTest {
     }
 
     @Test
+    void savingEntityAfterIncrement_doesNotOverwriteViewCount() {
+        PackageRequestEntity saved = persistOpenRequest();
+        em.clear();
+
+        // Entité chargée AVANT l'incrément : sa vue en mémoire du compteur (0) est
+        // périmée dès que l'UPDATE JPQL ci-dessous s'exécute directement en base.
+        PackageRequestEntity stale = repository.findById(saved.getId()).orElseThrow();
+        assertThat(stale.getViewCount()).isZero();
+
+        assertThat(repository.incrementViewCount(saved.getId())).isEqualTo(1);
+
+        // Modifier un champ sans rapport puis sauvegarder l'entité périmée : sans
+        // updatable = false sur view_count, Hibernate réécrirait 0 par-dessus le 1
+        // déjà en base.
+        stale.setDescription("mise à jour sans rapport avec les vues");
+        repository.saveAndFlush(stale);
+        em.clear();
+
+        PackageRequestEntity reloaded = repository.findById(saved.getId()).orElseThrow();
+        assertThat(reloaded.getViewCount()).isEqualTo(1);
+        assertThat(reloaded.getDescription()).isEqualTo("mise à jour sans rapport avec les vues");
+    }
+
+    @Test
     void incrementViewCount_nullColumn_isTreatedAsZero() {
         PackageRequestEntity saved = persistOpenRequest();
         em.getEntityManager()
