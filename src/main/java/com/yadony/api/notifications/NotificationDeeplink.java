@@ -65,7 +65,8 @@ public final class NotificationDeeplink {
 
             case "request_accepted" -> threadId.map(id -> "negotiations/" + id);
             case "request_expired" -> packageRequestId.map(id -> "package-requests/" + id);
-            case "TRAVELER_INVITE", "PACKAGE_MATCH" -> requestId.map(id -> "package-requests/" + id + "/public");
+            case "TRAVELER_INVITE", "PACKAGE_MATCH", "SENDER_INVITE" ->
+                    requestId.map(id -> "package-requests/" + id + "/public");
             case "TRAVELER_NEW_ANNOUNCEMENT", "CORRIDOR_ALERT", "automation_loyal_sender" ->
                     announcementId.map(id -> "traveler/" + id);
             case "TRIP_IN_PROGRESS", "automation_capacity_free" ->

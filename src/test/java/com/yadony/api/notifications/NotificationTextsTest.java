@@ -96,6 +96,7 @@ class NotificationTextsTest {
         m.put("negotiationExpired", NotificationTexts.negotiationExpired());
         m.put("packageMatch", NotificationTexts.packageMatch(DEPART, ARRIVEE));
         m.put("travelerInvite", NotificationTexts.travelerInvite(NOM, DEPART, ARRIVEE));
+        m.put("senderInvite", NotificationTexts.senderInvite(NOM, DEPART, ARRIVEE));
         m.put("travelerNewAnnouncement", NotificationTexts.travelerNewAnnouncement(NOM, DEPART, ARRIVEE));
         m.put("corridorAlertTrip", NotificationTexts.corridorAlertTrip(DEPART, ARRIVEE));
         m.put("corridorAlertDigest trajets 99", NotificationTexts.corridorAlertDigest(true, 99, DEPART, ARRIVEE));
@@ -159,6 +160,15 @@ class NotificationTextsTest {
         assertThat(t.body()).startsWith("Mohammed A. propose ").contains(DEPART).contains(ARRIVEE);
         assertThat(NotificationTexts.newBid("Karim Traoré", new BigDecimal("12.0"), "Paris → Dakar").body())
                 .isEqualTo("Karim T., 12 kg, Paris vers Dakar.");
+    }
+
+    @Test
+    void senderInvite_namesSenderAndCorridor() {
+        var text = NotificationTexts.senderInvite("Awa Koné", "Divo", "Annemasse");
+        assertThat(text.title()).isEqualTo("Un expéditeur vous invite");
+        assertThat(text.body()).startsWith("Awa K. : colis Divo vers Annemasse");
+        assertThat(text.body()).doesNotContain("—");
+        assertThat(text.body()).doesNotContain("→");
     }
 
     @Test

@@ -56,7 +56,9 @@ public class NotificationPrefsService {
             // isPackageMatchEnabled ; cette entrée aligne isAllowed sur le même
             // interrupteur pour que tout futur émetteur du type soit filtré sans
             // avoir à répliquer le garde-fou du listener.
-            Map.entry("PACKAGE_MATCH",                "pushTripPackageMatch")
+            Map.entry("PACKAGE_MATCH",                "pushTripPackageMatch"),
+            // Un expéditeur propose son colis au voyageur : même famille que les colis compatibles.
+            Map.entry("SENDER_INVITE",                "pushTripPackageMatch")
     );
 
     private final NotificationPrefsJpaRepository repository;

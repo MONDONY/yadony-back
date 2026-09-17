@@ -8,6 +8,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -184,6 +185,24 @@ class RequestEventsListenerTest {
         listener.onPackageRequestExpired(event);
 
         verify(dispatcher).notifyUser(eq(senderId), contains("expiré"), anyString(), anyMap());
+    }
+
+    @Test
+    void onPackageRequestInvitationSent_pushesTravelerUnlessBlocked() {
+        UUID requestId = UUID.randomUUID();
+        UUID announcementId = UUID.randomUUID();
+        UUID senderId = UUID.randomUUID();
+        UUID travelerId = UUID.randomUUID();
+        var event = new PackageRequestInvitationSentEvent(UUID.randomUUID(), requestId, announcementId,
+                senderId, travelerId, "Awa Koné", "Divo", "Annemasse");
+
+        listener.onPackageRequestInvitationSent(event);
+
+        verify(dispatcher).notifyUnlessBlocked(eq(travelerId), eq(senderId), eq("Un expéditeur vous invite"),
+                contains("Divo vers Annemasse"),
+                eq(Map.of("type", "SENDER_INVITE",
+                        "requestId", requestId.toString(),
+                        "announcementId", announcementId.toString())));
     }
 
     @Test

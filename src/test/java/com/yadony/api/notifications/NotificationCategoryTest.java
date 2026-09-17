@@ -35,6 +35,7 @@ class NotificationCategoryTest {
         assertThat(NotificationCategory.fromType("negotiation_started")).isEqualTo(NotificationCategory.TRAJETS);
         assertThat(NotificationCategory.fromType("request_accepted")).isEqualTo(NotificationCategory.TRAJETS);
         assertThat(NotificationCategory.fromType("ANNOUNCEMENT_REMOVED")).isEqualTo(NotificationCategory.TRAJETS);
+        assertThat(NotificationCategory.fromType("SENDER_INVITE")).isEqualTo(NotificationCategory.TRAJETS);
     }
 
     @Test

@@ -35,19 +35,22 @@ public class PackageRequestController {
     private final com.yadony.api.requests.service.PackageRequestReportService reportService;
     private final UserRepository userRepository;
     private final PlatformSettingsService settings;
+    private final com.yadony.api.requests.service.PackageRequestInsightService insightService;
 
     public PackageRequestController(PackageRequestService service,
                                     PriceEstimationService estimationService,
                                     com.yadony.api.requests.service.NegotiationService negotiationService,
                                     com.yadony.api.requests.service.PackageRequestReportService reportService,
                                     UserRepository userRepository,
-                                    PlatformSettingsService settings) {
+                                    PlatformSettingsService settings,
+                                    com.yadony.api.requests.service.PackageRequestInsightService insightService) {
         this.service = service;
         this.estimationService = estimationService;
         this.negotiationService = negotiationService;
         this.reportService = reportService;
         this.userRepository = userRepository;
         this.settings = settings;
+        this.insightService = insightService;
     }
 
     @PostMapping
@@ -81,7 +84,12 @@ public class PackageRequestController {
 
     @GetMapping("/{id}")
     public PackageRequestResponse getById(@PathVariable UUID id) {
-        return service.getById(viewerUserIdOrNull(), id);
+        UUID viewer = viewerUserIdOrNull();
+        PackageRequestResponse response = service.getById(viewer, id);
+        // Après la lecture et hors de sa transaction readOnly : le compteur est un effet
+        // de bord qui ne doit jamais faire échouer l'affichage.
+        insightService.recordView(viewer, response);
+        return response;
     }
 
     /** Sender edits a request while no agreement is reached (OPEN/NEGOTIATING). */

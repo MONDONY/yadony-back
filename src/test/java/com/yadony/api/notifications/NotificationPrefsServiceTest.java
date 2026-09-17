@@ -205,6 +205,15 @@ class NotificationPrefsServiceTest {
     }
 
     @Test
+    void isAllowed_senderInvite_followsPackageMatchPref() {
+        NotificationPrefsEntity e = buildEntity(true, true, true, true, false);
+        e.setPushTripPackageMatch(false);
+        when(repository.findById(USER_ID)).thenReturn(Optional.of(e));
+
+        assertThat(service.isAllowed(USER_ID, "SENDER_INVITE")).isFalse();
+    }
+
+    @Test
     void getPackageMatchAlert_noRow_returnsTrueByDefault() {
         when(repository.findById(USER_ID)).thenReturn(Optional.empty());
         assertThat(service.getPackageMatchAlert(FIREBASE_UID)).isTrue();

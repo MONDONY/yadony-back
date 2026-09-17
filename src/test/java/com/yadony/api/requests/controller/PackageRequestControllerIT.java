@@ -49,6 +49,7 @@ class PackageRequestControllerIT {
     @MockBean private UserRepository userRepository;
     @MockBean private com.yadony.api.requests.service.NegotiationService negotiationService;
     @MockBean private com.yadony.api.requests.service.PackageRequestReportService reportService;
+    @MockBean private com.yadony.api.requests.service.PackageRequestInsightService insightService;
 
     private static final UUID SENDER_UUID = UUID.randomUUID();
     private static final UUID TRAVELER_UUID = UUID.randomUUID();
@@ -271,6 +272,19 @@ class PackageRequestControllerIT {
                 .with(authentication(authAs("uid-sender", "SENDER"))))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.id").value(id.toString()));
+    }
+
+    @Test
+    void get_byId_recordsViewForCaller() throws Exception {
+        UUID id = UUID.randomUUID();
+        PackageRequestResponse response = fakeResponse(id);
+        when(service.getById(TRAVELER_UUID, id)).thenReturn(response);
+
+        mockMvc.perform(get("/package-requests/" + id)
+                .with(authentication(authAs("uid-traveler", "TRAVELER"))))
+            .andExpect(status().isOk());
+
+        verify(insightService).recordView(TRAVELER_UUID, response);
     }
 
     @Test

@@ -373,6 +373,12 @@ public final class NotificationTexts {
                 "Aucun voyageur n'a accepté à temps. Vous pouvez en créer une autre.");
     }
 
+    /** Un expéditeur invite un voyageur à répondre à sa demande (sens inverse de travelerInvite). */
+    public static NotificationText senderInvite(String senderName, String departureCity, String arrivalCity) {
+        return new NotificationText("Un expéditeur vous invite",
+                shortDisplayName(senderName) + " : colis " + departureCity + " vers " + arrivalCity + ".");
+    }
+
     public static NotificationText negotiationReminder(String fromName) {
         return new NotificationText("Relance",
                 shortDisplayName(fromName) + " attend de vos nouvelles sur votre négociation.");
