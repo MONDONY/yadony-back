@@ -117,11 +117,17 @@ public class WalletController {
      * Réseaux mobile money utilisables pour payer une recharge depuis ce numéro. POST et non
      * GET pour la même raison que {@code /payments/mobile-money/providers} : le numéro voyage
      * dans le corps, jamais dans une URL (journaux nginx, historique du client).
+     *
+     * <p>Corps facultatif, comme sur le jumeau du versement : un corps absent n'est pas une
+     * requête malformée (400) mais un numéro manquant, et le service le refuse en 422
+     * {@code topup-phone-required} — le même code que pour un numéro vide, donc un seul
+     * message à afficher côté app. Pas de {@code @Valid} ici : le record ne porte aucune
+     * contrainte, l'annotation ne ferait que laisser croire à une garde qui n'existe pas.
      */
     @PostMapping("/topup/providers")
     public ResponseEntity<MobileMoneyProvidersResponse> topupProviders(
-            @Valid @RequestBody MobileMoneyProvidersRequest request) {
-        return ResponseEntity.ok(mobileMoneyTopupService.providers(request.phoneNumber()));
+            @RequestBody(required = false) MobileMoneyProvidersRequest body) {
+        return ResponseEntity.ok(mobileMoneyTopupService.providers(body == null ? null : body.phoneNumber()));
     }
 
     /**

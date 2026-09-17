@@ -199,13 +199,25 @@ class WalletMobileMoneyTopupIT {
         assertThat(confirmed.status()).isEqualTo(WalletTopupStatusResponse.CONFIRMED);
         assertThat(confirmed.walletBalance()).isEqualByComparingTo("10000");
 
-        // Rejeu du même callback (pawaPay rejoue), toujours en transaction committée : la
-        // transition ne bouge plus, aucun événement n'est republié, et la clé d'idempotence
-        // de credit() est le dernier filet. Double crédit = argent créé de rien.
+        // PREMIER FILET — rejeu du même callback (pawaPay rejoue) : la transition ne bouge plus
+        // (apply rend false), donc AUCUN événement n'est republié et l'écouteur ne tourne même
+        // pas. Rien n'est crédité parce que rien n'est rejoué.
         new TransactionTemplate(transactionManager).executeWithoutResult(tx ->
                 assertThat(pawapayOperations.apply(topupId, PawapayOperationStatus.COMPLETED, null, null,
                         "OP-CIV-1", null, "{\"status\":\"COMPLETED\"}",
                         PawapayOperationService.Source.CALLBACK)).isFalse());
+
+        assertThat(walletTransactionRepository.findByUserIdAndCurrencyOrderByCreatedAtAsc(userId, CURRENCY))
+                .hasSize(1);
+        assertThat(walletService.getBalance(userId, CURRENCY)).isEqualByComparingTo("10000");
+
+        // SECOND FILET — le crédit lui-même, rejoué à l'identique comme le ferait un événement
+        // republié un jour (rattrapage manuel, réémission). C'est la clé d'idempotence
+        // "pawapay-topup-<id>" qui doit l'arrêter, et elle seule : ce que le rejeu du callback
+        // ci-dessus n'exerce jamais, puisqu'il n'atteint pas l'écouteur. Double crédit =
+        // argent créé de rien.
+        walletService.credit(userId, CURRENCY, new BigDecimal("10000"), WalletTransactionType.TOP_UP,
+                "pawapay:" + topupId, "pawapay-topup-" + topupId);
 
         assertThat(walletTransactionRepository.findByUserIdAndCurrencyOrderByCreatedAtAsc(userId, CURRENCY))
                 .hasSize(1);
