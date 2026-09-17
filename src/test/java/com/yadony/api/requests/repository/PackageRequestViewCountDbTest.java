@@ -11,7 +11,6 @@ import org.springframework.test.context.ActiveProfiles;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -48,7 +47,10 @@ class PackageRequestViewCountDbTest {
     @Test
     void incrementViewCount_addsOneEachCall_withoutTouchingUpdatedAt() {
         PackageRequestEntity saved = persistOpenRequest();
-        var updatedAtBefore = saved.getUpdatedAt();
+        // Relire la date depuis la base : la colonne arrondit la nanoseconde à la
+        // microseconde, donc la valeur en mémoire ne lui est jamais exactement égale.
+        em.clear();
+        var updatedAtBefore = repository.findById(saved.getId()).orElseThrow().getUpdatedAt();
 
         assertThat(repository.incrementViewCount(saved.getId())).isEqualTo(1);
         repository.incrementViewCount(saved.getId());
@@ -56,10 +58,7 @@ class PackageRequestViewCountDbTest {
 
         PackageRequestEntity reloaded = repository.findById(saved.getId()).orElseThrow();
         assertThat(reloaded.getViewCount()).isEqualTo(2);
-        // La colonne stocke la microseconde, l'entité en mémoire garde la nanoseconde :
-        // tronquer les deux côtés, sinon l'égalité échoue sur une simple perte de précision.
-        assertThat(reloaded.getUpdatedAt().truncatedTo(ChronoUnit.MICROS))
-                .isEqualTo(updatedAtBefore.truncatedTo(ChronoUnit.MICROS));
+        assertThat(reloaded.getUpdatedAt()).isEqualTo(updatedAtBefore);
     }
 
     @Test
