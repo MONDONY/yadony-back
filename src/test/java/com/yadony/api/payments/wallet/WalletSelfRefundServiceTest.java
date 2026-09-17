@@ -1125,7 +1125,8 @@ class WalletSelfRefundServiceTest {
         assertThat(request.getStatus()).isEqualTo(WalletRefundRequestStatus.REFUNDED);
         verify(walletService, never()).debitConfirmedRefund(any(), any(), any(), any());
         verifyNoInteractions(walletRefundRequestService, walletRefundRailIssuer);
-        verify(refundRequestItemRepository, never()).findByRefundRequestId(any());
+        // Seule la lecture hors verrou des statuts Stripe a eu lieu ; rien n'est écrit ensuite.
+        verify(refundRequestItemRepository, never()).save(any());
     }
 
     @Test
@@ -1249,6 +1250,88 @@ class WalletSelfRefundServiceTest {
         assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.FAILED);
     }
 
+    @Test
+    void reconcile_statutsStripeLusAvantLePriseDeVerrouDeLaDemande() {
+        // Le verrou FOR UPDATE de la demande ne doit jamais couvrir la latence de Stripe :
+        // un GET /wallet/refund-requests bloquerait alors le webhook charge.refunded.
+        WalletRefundRequestEntity request = processingRequest("35.00");
+        WalletRefundRequestItemEntity item = processingItem(request, "pi_1", "35.00", "re_1");
+        List<String> ordre = new ArrayList<>();
+        when(refundRequestRepository.findAllByUserIdOrderByRequestedAtDesc(USER_ID)).thenReturn(List.of(request));
+        when(refundRequestRepository.findByIdForUpdate(request.getId())).thenAnswer(inv -> {
+            ordre.add("verrou");
+            return Optional.of(request);
+        });
+        when(refundRequestItemRepository.findByRefundRequestId(request.getId())).thenReturn(List.of(item));
+
+        try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            Refund succeeded = new Refund();
+            succeeded.setStatus("succeeded");
+            refundStatic.when(() -> Refund.retrieve("re_1")).thenAnswer(inv -> {
+                ordre.add("stripe");
+                return succeeded;
+            });
+
+            service.listForUser(USER_ID);
+        }
+
+        assertThat(ordre).containsExactly("stripe", "verrou");
+        assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.REFUNDED);
+        assertThat(request.getStatus()).isEqualTo(WalletRefundRequestStatus.REFUNDED);
+    }
+
+    @Test
+    void reconcile_itemTermineEntreLaLectureStripeEtLeVerrou_nEstPasRetraite() {
+        // Stripe dit « failed » mais le webhook a déjà conclu l'item REFUNDED entre-temps :
+        // la relecture sous verrou prime, aucun item réécrit, aucune alerte.
+        WalletRefundRequestEntity request = processingRequest("35.00");
+        WalletRefundRequestItemEntity item = processingItem(request, "pi_1", "35.00", "re_1");
+        when(refundRequestRepository.findAllByUserIdOrderByRequestedAtDesc(USER_ID)).thenReturn(List.of(request));
+        when(refundRequestRepository.findByIdForUpdate(request.getId())).thenReturn(Optional.of(request));
+        when(refundRequestItemRepository.findByRefundRequestId(request.getId())).thenReturn(List.of(item));
+        doNothing().when(entityManager).refresh(request);
+        doAnswer(inv -> {
+            item.setStatus(WalletRefundItemStatus.REFUNDED);
+            return null;
+        }).when(entityManager).refresh(item);
+
+        try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            Refund failed = new Refund();
+            failed.setStatus("failed");
+            refundStatic.when(() -> Refund.retrieve("re_1")).thenReturn(failed);
+
+            service.listForUser(USER_ID);
+        }
+
+        assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.REFUNDED);
+        verify(refundRequestItemRepository, never()).save(any());
+        verifyNoInteractions(adminAlertService);
+        // La demande se clôt sur l'état réel de l'item (REFUNDED), sans ticket enfant.
+        assertThat(request.getStatus()).isEqualTo(WalletRefundRequestStatus.REFUNDED);
+        verifyNoInteractions(walletRefundRequestService);
+    }
+
+    @Test
+    void reconcile_refundIntrouvableChezStripe_laisseLItemProcessing() {
+        WalletRefundRequestEntity request = processingRequest("35.00");
+        WalletRefundRequestItemEntity item = processingItem(request, "pi_1", "35.00", "re_1");
+        when(refundRequestRepository.findAllByUserIdOrderByRequestedAtDesc(USER_ID)).thenReturn(List.of(request));
+        when(refundRequestRepository.findByIdForUpdate(request.getId())).thenReturn(Optional.of(request));
+        when(refundRequestItemRepository.findByRefundRequestId(request.getId())).thenReturn(List.of(item));
+
+        try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            refundStatic.when(() -> Refund.retrieve("re_1"))
+                    .thenThrow(new InvalidRequestException("resource_missing", "refund", "req_1",
+                            "resource_missing", 404, null));
+
+            service.listForUser(USER_ID);
+        }
+
+        assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.PROCESSING);
+        assertThat(request.getStatus()).isEqualTo(WalletRefundRequestStatus.PROCESSING);
+        verify(refundRequestItemRepository, never()).save(any());
+    }
+
     // ── Tâche 5 : contrat (frais, net, destination masquée) ───────────────────────
 
     @Test
@@ -1282,7 +1365,7 @@ class WalletSelfRefundServiceTest {
         WalletRefundRequestItemEntity sItem = processingItem(stripe, "pi_1", "35.00", "re_1");
         when(refundRequestItemRepository.findByRefundRequestIdIn(List.of(pawapay.getId(), stripe.getId())))
                 .thenReturn(List.of(pItem, sItem));
-        when(pawapayOperationRepository.findById(deposit.getId())).thenReturn(Optional.of(deposit));
+        when(pawapayOperationRepository.findAllById(List.of(deposit.getId()))).thenReturn(List.of(deposit));
 
         List<WalletSelfRefundService.RefundRequestDetails> details = service.details(List.of(pawapay, stripe));
 

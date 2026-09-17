@@ -42,6 +42,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -705,11 +706,16 @@ public class WalletSelfRefundService {
      * remboursements » et de la sheet de sélection, pour que l'état affiché ne reste jamais
      * durablement désynchronisé du prestataire.
      *
-     * <p>La demande est verrouillée et relue AVANT de lire ou d'écrire ses items (même ordre
-     * que les écouteurs et les webhooks) ; déjà résolue, on s'arrête.
+     * <p><b>Aucun appel réseau sous verrou.</b> Les statuts Stripe des items encore PROCESSING
+     * sont lus AVANT de verrouiller la demande (lecture pure, aucune écriture) : le verrou
+     * {@code FOR UPDATE} de la demande ne doit jamais être tenu pendant la latence de Stripe,
+     * sinon un simple {@code GET /wallet/refund-requests} bloquerait le webhook
+     * {@code charge.refunded} de la même demande. La demande est ensuite verrouillée et relue,
+     * puis chaque item est relu (le statut lu chez Stripe peut avoir été appliqué entre-temps
+     * par le webhook) avant d'appliquer la moindre transition.
      * <ul>
-     *   <li>{@code AUTOMATIC_STRIPE} : interroge Stripe pour les items PROCESSING porteurs d'un
-     *       {@code stripeRefundId} (cf. le fallback de {@code PaymentStripeWebhookHandler.resolveCharge}).</li>
+     *   <li>{@code AUTOMATIC_STRIPE} : statuts interrogés chez Stripe hors verrou (cf. le
+     *       fallback de {@code PaymentStripeWebhookHandler.resolveCharge}).</li>
      *   <li>{@code AUTOMATIC_PAWAPAY} : aucun appel réseau. Le statut LOCAL de l'opération liée,
      *       tenu à jour par le poller pawaPay, est appliqué s'il est final
      *       ({@link WalletRefundRailIssuer#reconcile}) : rattrape une issue COMPLETED jamais
@@ -717,12 +723,18 @@ public class WalletSelfRefundService {
      * </ul>
      */
     private void reconcile(WalletRefundRequestEntity stale) {
+        Map<String, String> stripeStatuses = stale.getChannel() == WalletRefundChannel.AUTOMATIC_STRIPE
+                ? stripeStatusesOutsideLock(stale.getId())
+                : Map.of();
         WalletRefundRequestEntity request = lockFresh(stale.getId()).orElse(null);
         if (request == null || request.getStatus() != WalletRefundRequestStatus.PROCESSING) {
             return;
         }
         List<WalletRefundRequestItemEntity> items = refundRequestItemRepository.findByRefundRequestId(request.getId());
         for (WalletRefundRequestItemEntity item : items) {
+            // Relecture réelle : l'item lu avant le verrou (statuts Stripe) vient du cache de
+            // premier niveau et peut avoir été terminé entre-temps par le webhook.
+            entityManager.refresh(item);
             if (item.getStatus() != WalletRefundItemStatus.PROCESSING) {
                 continue;
             }
@@ -730,37 +742,54 @@ public class WalletSelfRefundService {
                 walletRefundRailIssuer.reconcile(request, item);
             } else if (request.getChannel() == WalletRefundChannel.AUTOMATIC_STRIPE
                     && item.getStripeRefundId() != null) {
-                reconcileStripeItem(item);
+                applyStripeStatus(item, stripeStatuses.get(item.getStripeRefundId()));
             }
         }
         resolveLocked(request);
     }
 
-    private void reconcileStripeItem(WalletRefundRequestItemEntity item) {
-        try {
-            Refund refund = Refund.retrieve(item.getStripeRefundId());
-            if ("succeeded".equals(refund.getStatus())) {
-                item.setStatus(WalletRefundItemStatus.REFUNDED);
-                refundRequestItemRepository.save(item);
-            } else if ("failed".equals(refund.getStatus()) || "canceled".equals(refund.getStatus())) {
-                item.setStatus(WalletRefundItemStatus.FAILED);
-                refundRequestItemRepository.save(item);
-                adminAlertService.raise("wallet-self-refund-failed",
-                        "Remboursement Stripe échoué pour un remboursement wallet self-service "
-                                + "(détecté à la réconciliation)",
-                        Map.of("itemId", String.valueOf(item.getId()),
-                                "stripeRefundId", item.getStripeRefundId()));
+    /**
+     * Statut Stripe de chaque {@code stripeRefundId} des items PROCESSING de la demande, lu hors
+     * de tout verrou et sans rien écrire. Un refund injoignable est simplement absent de la map
+     * (l'item reste PROCESSING, la prochaine lecture réessaiera).
+     */
+    private Map<String, String> stripeStatusesOutsideLock(UUID refundRequestId) {
+        Map<String, String> statuses = new HashMap<>();
+        for (WalletRefundRequestItemEntity item : refundRequestItemRepository.findByRefundRequestId(refundRequestId)) {
+            if (item.getStatus() != WalletRefundItemStatus.PROCESSING || item.getStripeRefundId() == null) {
+                continue;
             }
-        } catch (StripeException e) {
-            log.warn("Réconciliation Stripe impossible pour item {} (refund {}): {}",
-                    item.getId(), item.getStripeRefundId(), e.getMessage());
+            try {
+                statuses.put(item.getStripeRefundId(), Refund.retrieve(item.getStripeRefundId()).getStatus());
+            } catch (StripeException e) {
+                log.warn("Réconciliation Stripe impossible pour item {} (refund {}): {}",
+                        item.getId(), item.getStripeRefundId(), e.getMessage());
+            }
+        }
+        return statuses;
+    }
+
+    /** Transition d'un item PROCESSING d'après le statut Stripe lu hors verrou ; verrou de la demande tenu. */
+    private void applyStripeStatus(WalletRefundRequestItemEntity item, String status) {
+        if ("succeeded".equals(status)) {
+            item.setStatus(WalletRefundItemStatus.REFUNDED);
+            refundRequestItemRepository.save(item);
+        } else if ("failed".equals(status) || "canceled".equals(status)) {
+            item.setStatus(WalletRefundItemStatus.FAILED);
+            refundRequestItemRepository.save(item);
+            adminAlertService.raise("wallet-self-refund-failed",
+                    "Remboursement Stripe échoué pour un remboursement wallet self-service "
+                            + "(détecté à la réconciliation)",
+                    Map.of("itemId", String.valueOf(item.getId()),
+                            "stripeRefundId", item.getStripeRefundId()));
         }
     }
 
     /**
-     * Items et destination masquée de chaque demande, pour le contrat API. Lecture par
-     * {@link PawapayOperationRepository#findById}, jamais {@code PawapayOperationService#get}
-     * (qui lève et marquerait rollback-only une transaction participante).
+     * Items et destination masquée de chaque demande, pour le contrat API. Les dépôts pawaPay
+     * de toutes les demandes sont lus en UNE requête ({@code findAllById}), jamais un
+     * {@code findById} par demande, et jamais via {@code PawapayOperationService#get} (qui lève
+     * et marquerait rollback-only une transaction participante).
      */
     @Transactional(readOnly = true)
     public List<RefundRequestDetails> details(List<WalletRefundRequestEntity> requests) {
@@ -771,11 +800,28 @@ public class WalletSelfRefundService {
                 .findByRefundRequestIdIn(requests.stream().map(WalletRefundRequestEntity::getId).toList())
                 .stream()
                 .collect(Collectors.groupingBy(WalletRefundRequestItemEntity::getRefundRequestId));
+        List<UUID> depositIds = itemsByRequest.values().stream()
+                .flatMap(List::stream)
+                .map(WalletRefundRequestItemEntity::getPaymentIntentId)
+                .flatMap(ref -> depositId(ref).stream())
+                .distinct()
+                .toList();
+        Map<UUID, String> maskedByDeposit = depositIds.isEmpty() ? Map.of()
+                : pawapayOperationRepository.findAllById(depositIds).stream()
+                        .filter(op -> op.getMsisdnMasked() != null)
+                        .collect(Collectors.toMap(PawapayOperationEntity::getId,
+                                PawapayOperationEntity::getMsisdnMasked));
         return requests.stream()
                 .map(r -> {
                     List<WalletRefundRequestItemEntity> items = itemsByRequest.getOrDefault(r.getId(), List.of());
-                    return new RefundRequestDetails(r, items,
-                            maskedDepositMsisdn(items.stream().map(WalletRefundRequestItemEntity::getPaymentIntentId)));
+                    String masked = items.stream()
+                            .map(WalletRefundRequestItemEntity::getPaymentIntentId)
+                            .flatMap(ref -> depositId(ref).stream())
+                            .map(maskedByDeposit::get)
+                            .filter(Objects::nonNull)
+                            .findFirst()
+                            .orElse(null);
+                    return new RefundRequestDetails(r, items, masked);
                 })
                 .toList();
     }
@@ -786,25 +832,26 @@ public class WalletSelfRefundService {
      */
     @Transactional(readOnly = true)
     public String destinationMasked(WalletRefundAllocation allocation) {
-        return maskedDepositMsisdn(allocation.refundable().stream()
+        return allocation.refundable().stream()
                 .filter(t -> t.rail() == WalletRefundRail.PAWAPAY)
-                .map(WalletRefundAllocation.RefundableTopup::paymentIntentId));
-    }
-
-    /** {@code msisdnMasked} du dépôt de la première référence pawaPay lisible ; jamais le numéro en clair. */
-    private String maskedDepositMsisdn(java.util.stream.Stream<String> paymentRefs) {
-        return paymentRefs
-                .filter(ref -> WalletRefundRail.of(ref) == WalletRefundRail.PAWAPAY)
+                .map(WalletRefundAllocation.RefundableTopup::paymentIntentId)
+                .flatMap(ref -> depositId(ref).stream())
                 .findFirst()
-                .flatMap(ref -> {
-                    try {
-                        return pawapayOperationRepository.findById(WalletRefundRail.depositId(ref));
-                    } catch (IllegalArgumentException e) {
-                        return Optional.empty();
-                    }
-                })
+                .flatMap(pawapayOperationRepository::findById)
                 .map(PawapayOperationEntity::getMsisdnMasked)
                 .orElse(null);
+    }
+
+    /** Dépôt pawaPay encodé dans un {@code paymentRef} ; vide hors pawaPay ou référence illisible. */
+    private static Optional<UUID> depositId(String paymentRef) {
+        if (WalletRefundRail.of(paymentRef) != WalletRefundRail.PAWAPAY) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(WalletRefundRail.depositId(paymentRef));
+        } catch (IllegalArgumentException e) {
+            return Optional.empty();
+        }
     }
 
     /**

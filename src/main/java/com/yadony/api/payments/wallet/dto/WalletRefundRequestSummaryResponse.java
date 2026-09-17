@@ -1,6 +1,7 @@
 package com.yadony.api.payments.wallet.dto;
 
 import com.yadony.api.payments.wallet.WalletRefundChannel;
+import com.yadony.api.payments.wallet.WalletRefundItemStatus;
 import com.yadony.api.payments.wallet.WalletRefundRequestEntity;
 import com.yadony.api.payments.wallet.WalletRefundRequestItemEntity;
 
@@ -36,16 +37,23 @@ public record WalletRefundRequestSummaryResponse(
     /**
      * Sans item (ancien ticket manuel), frais nuls et net égal au montant de la demande ; sinon
      * sommes sur les items : {@code fee = Σ feeAmount}, {@code net = Σ (amount - feeAmount)}.
+     *
+     * <p>Les items FAILED sont exclus des deux sommes : leur montant ne part pas vers
+     * l'utilisateur (une demande partiellement échouée afficherait un net trop élevé). On ne
+     * filtre pas sur REFUNDED seul, sinon une demande encore en cours afficherait un net nul.
      */
     public static WalletRefundRequestSummaryResponse from(WalletRefundRequestEntity entity,
                                                           List<WalletRefundRequestItemEntity> items,
                                                           String destinationMasked) {
         BigDecimal fee = BigDecimal.ZERO;
         BigDecimal net = entity.getAmount();
-        if (items != null && !items.isEmpty()) {
-            fee = items.stream().map(i -> i.getFeeAmount() == null ? BigDecimal.ZERO : i.getFeeAmount())
+        List<WalletRefundRequestItemEntity> counted = items == null ? List.of() : items.stream()
+                .filter(i -> i.getStatus() != WalletRefundItemStatus.FAILED)
+                .toList();
+        if (!counted.isEmpty()) {
+            fee = counted.stream().map(i -> i.getFeeAmount() == null ? BigDecimal.ZERO : i.getFeeAmount())
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
-            net = items.stream().map(WalletRefundRequestItemEntity::getAmount)
+            net = counted.stream().map(WalletRefundRequestItemEntity::getAmount)
                     .reduce(BigDecimal.ZERO, BigDecimal::add)
                     .subtract(fee);
         }

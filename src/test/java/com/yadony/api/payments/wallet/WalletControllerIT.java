@@ -35,6 +35,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -390,7 +391,11 @@ class WalletControllerIT {
                 .andExpect(jsonPath("$.rail").value("STRIPE"))
                 .andExpect(jsonPath("$.feeAmount").value(0.0))
                 .andExpect(jsonPath("$.netAmount").value(40.00))
-                .andExpect(jsonPath("$.destinationMasked").doesNotExist());
+                // Rail Stripe : aucune destination mobile money. Le champ est absent du corps,
+                // pas présent à null : la sérialisation est en NON_NULL (application.yml).
+                .andExpect(jsonPath("$.destinationMasked").doesNotExist())
+                .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString(
+                        "destinationMasked"))));
         }
 
         assertThat(walletRefundRequestItemRepository.findAll())
