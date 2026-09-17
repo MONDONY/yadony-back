@@ -165,8 +165,8 @@ class NotificationTextsTest {
     @Test
     void senderInvite_namesSenderAndCorridor() {
         var text = NotificationTexts.senderInvite("Awa Koné", "Divo", "Annemasse");
-        assertThat(text.title()).isEqualTo("Un colis pour votre trajet");
-        assertThat(text.body()).startsWith("Colis Divo vers Annemasse de ").contains("Awa K.");
+        assertThat(text.title()).isEqualTo("Un expéditeur vous invite");
+        assertThat(text.body()).startsWith("Awa K. : colis Divo vers Annemasse");
         assertThat(text.body()).doesNotContain("—");
         assertThat(text.body()).doesNotContain("→");
     }
