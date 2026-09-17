@@ -220,6 +220,11 @@ yadony:
       # Retour du portail PRO après une recharge par carte (Stripe Checkout).
       checkout-success-url: ${YADONY_WALLET_TOPUP_SUCCESS_URL:https://yadony.com/pro/parametres?topup=success}
       checkout-cancel-url: ${YADONY_WALLET_TOPUP_CANCEL_URL:https://yadony.com/pro/parametres?topup=canceled}
+    refund-fee:
+      # Repli quand le frais Stripe réel (balance_transaction.fee) est illisible.
+      stripe-fallback:
+        percent: ${WALLET_REFUND_FEE_STRIPE_FALLBACK_PERCENT:3.15}
+        fixed: ${WALLET_REFUND_FEE_STRIPE_FALLBACK_FIXED:0.25}
   dispute-sla-hours: ${YADONY_DISPUTE_SLA_HOURS:72}
   reimbursement:
     max-amount-eur: ${YADONY_REIMBURSEMENT_MAX_AMOUNT_EUR:50}
@@ -325,6 +330,12 @@ yadony:
     balance-min:
       xof: ${PAWAPAY_BALANCE_MIN_XOF:0}
       xaf: ${PAWAPAY_BALANCE_MIN_XAF:0}
+    fees:
+      default:
+        deposit-percent: ${PAWAPAY_FEE_DEFAULT_DEPOSIT_PERCENT:1.0}
+        refund-percent: ${PAWAPAY_FEE_DEFAULT_REFUND_PERCENT:1.0}
+      # Surcharges par opérateur, ex. ORANGE_CIV: { deposit-percent: 1.5, refund-percent: 1.0 }
+      providers: {}
   email:
     resend-api-key: ${RESEND_API_KEY:}
     from-address: ${YADONY_EMAIL_FROM_ADDRESS:noreply@yadony.com}
