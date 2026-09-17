@@ -1,6 +1,7 @@
 package com.yadony.api.payments.wallet;
 
 import com.yadony.api.common.AuditService;
+import com.yadony.api.common.Msisdn;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyProvidersResponse;
@@ -72,17 +73,13 @@ public class WalletMobileMoneyTopupService {
      * le portefeuille n'est crédité qu'au retour de pawaPay.
      */
     public WalletTopupResponse initiate(UUID userId, WalletTopupRequest request) {
-        String phoneNumber = request.getPhoneNumber();
-        if (phoneNumber == null || phoneNumber.isBlank()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "topup-phone-required",
-                    "Phone Required", "Indiquez le numéro mobile money qui paie la recharge.");
-        }
         // Interrupteur d'urgence : il n'y a rien d'idempotent à relire ici (le statut a son
         // propre point d'entrée), donc aucune raison de le vérifier plus tard — couper le
         // rail doit empêcher toute nouvelle demande de débit.
         if (!props.enabled()) {
             throw PawapayErrors.disabled();
         }
+        String phoneNumber = normalizedPhone(request.getPhoneNumber());
         PawapayProviderResolver.Resolved resolved;
         try {
             resolved = resolver.resolve(phoneNumber, PawapayOperationKind.DEPOSIT, null, request.getProvider(),
@@ -98,8 +95,7 @@ public class WalletMobileMoneyTopupService {
         // jamais bloquer la suivante.
         if (operations.existsByUserIdAndKindAndCurrencyAndPurposeAndStatusIn(userId, PawapayOperationKind.DEPOSIT,
                 currency, PawapayOperationPurpose.WALLET_TOPUP, PawapayOperationStatus.OPEN)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "topup-already-pending",
-                    "Topup Already Pending", "Une recharge est déjà en attente de validation sur votre téléphone.");
+            throw PawapayErrors.walletTopupAlreadyPending();
         }
         String successfulUrl = null;
         String failedUrl = null;
@@ -147,15 +143,12 @@ public class WalletMobileMoneyTopupService {
      * opérateur. Lecture seule, rien n'est écrit : l'app l'appelle dès la saisie du numéro.
      */
     public MobileMoneyProvidersResponse providers(String phoneNumber) {
-        if (phoneNumber == null || phoneNumber.isBlank()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "topup-phone-required",
-                    "Phone Required", "Indiquez le numéro mobile money qui paie la recharge.");
-        }
         if (!props.enabled()) {
             throw PawapayErrors.disabled();
         }
+        String msisdn = normalizedPhone(phoneNumber);
         try {
-            return MobileMoneyProvidersResponse.from(resolver.catalogue(phoneNumber, PawapayOperationKind.DEPOSIT,
+            return MobileMoneyProvidersResponse.from(resolver.catalogue(msisdn, PawapayOperationKind.DEPOSIT,
                     null, "le catalogue de " + CONTEXT));
         } catch (PawapayProviderResolver.UnsupportedNumberException e) {
             throw unsupported(null, reasonDetail(e));
@@ -163,6 +156,28 @@ public class WalletMobileMoneyTopupService {
     }
 
     // ── helpers ─────────────────────────────────────────────────────────────
+
+    /**
+     * Numéro mis à la forme attendue par pawaPay AVANT tout appel réseau : chiffres seuls,
+     * indicatif inclus, sans {@code +} ({@link Msisdn#normalize}), comme sur tous les autres
+     * points d'entrée du rail. Sans cette normalisation, une saisie hors bornes partirait
+     * chez pawaPay et reviendrait en 502 « opérateur indisponible » alors que c'est
+     * l'utilisateur qui peut la corriger — d'où le 422 ici, avec le code déjà utilisé par
+     * l'activation du versement.
+     */
+    private static String normalizedPhone(String raw) {
+        if (raw == null || raw.isBlank()) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "topup-phone-required",
+                    "Phone Required", "Indiquez le numéro mobile money qui paie la recharge.");
+        }
+        try {
+            return Msisdn.normalize(raw);
+        } catch (IllegalArgumentException e) {
+            // Le numéro n'est jamais reflété dans le détail ni dans un journal.
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-invalid-phone",
+                    "Mobile Money Invalid Phone", "Numéro de téléphone invalide pour la recharge.");
+        }
+    }
 
     /**
      * Montant accepté par l'opérateur : entre ses bornes, et sans centimes là où la devise

@@ -13,6 +13,12 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.auth.UserService;
 import com.yadony.api.auth.UserStatus;
+import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.payments.pawapay.PawapayOperationEntity;
+import com.yadony.api.payments.pawapay.PawapayOperationKind;
+import com.yadony.api.payments.pawapay.PawapayOperationPurpose;
+import com.yadony.api.payments.pawapay.PawapayOperationService;
+import com.yadony.api.payments.pawapay.PawapayOperationStatus;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -93,6 +99,7 @@ class WalletRefundIT {
     @Autowired UserService userService;
     @Autowired WalletRefundIssueRecoveryScheduler recoveryScheduler;
     @Autowired PlatformTransactionManager transactionManager;
+    @Autowired PawapayOperationService pawapayOperations;
 
     /** Refund renvoyé par le Refund.create simulé, d'identifiant {@code id}. */
     private static Refund stripeRefund(String id) {
@@ -449,5 +456,39 @@ class WalletRefundIT {
         assertThat(walletRefundRequestRepository.findById(current.getId()).orElseThrow().getStatus())
                 .isEqualTo(WalletRefundRequestStatus.REFUNDED);
         assertThat(balanceOf(userId)).isEqualByComparingTo("0.00");
+    }
+
+    /** Recharge mobile money non terminale, telle que l'initiation la crée. */
+    private PawapayOperationEntity liveTopup(UUID userId, String currency) {
+        return pawapayOperations.create(PawapayOperationKind.DEPOSIT, PawapayOperationPurpose.WALLET_TOPUP,
+                userId, null, null, new BigDecimal("10000"), currency, "ORANGE_CIV", "CI", "2250734567890");
+    }
+
+    /**
+     * Filet de la garde « une seule recharge en attente » : la vérification applicative lit
+     * avant d'écrire, deux requêtes concurrentes la franchissent toutes les deux. Seul l'index
+     * unique partiel {@code uq_pawapay_ops_live_wallet_topup} (V260) tranche — d'où ce test sur
+     * la VRAIE base, avec les vraies migrations : sur H2 il ne prouverait rien.
+     */
+    @Test
+    void create_uneSeuleRechargeVivanteParUtilisateurEtDevise() {
+        UUID userId = persistUser();
+        PawapayOperationEntity first = liveTopup(userId, "XOF");
+
+        assertThatThrownBy(() -> liveTopup(userId, "XOF"))
+                .isInstanceOf(YadonyBusinessException.class)
+                .hasMessage("Une recharge est déjà en attente de validation sur votre téléphone.")
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("topup-already-pending");
+
+        // La devise fait partie de la clé : une recharge XAF reste possible pendant qu'une
+        // XOF est en attente, les deux portefeuilles étant distincts.
+        assertThat(liveTopup(userId, "XAF").getId()).isNotEqualTo(first.getId());
+
+        // Une recharge TERMINÉE ne doit jamais bloquer la suivante, sinon on ne recharge
+        // qu'une fois dans sa vie.
+        assertThat(pawapayOperations.apply(first.getId(), PawapayOperationStatus.COMPLETED, null, null, null, null,
+                "{}", PawapayOperationService.Source.SYSTEM)).isTrue();
+
+        assertThat(liveTopup(userId, "XOF").getId()).isNotEqualTo(first.getId());
     }
 }

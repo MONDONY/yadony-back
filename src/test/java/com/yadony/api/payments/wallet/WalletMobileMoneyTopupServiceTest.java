@@ -55,7 +55,10 @@ class WalletMobileMoneyTopupServiceTest {
     private final UUID userId = UUID.randomUUID();
     private WalletMobileMoneyTopupService service;
 
-    private static final String PHONE = "+2250734567890";
+    /** Tel que le client l'envoie : E.164 avec le {@code +} et des espaces. */
+    private static final String PHONE = "+225 07 34 56 78 90";
+    /** Tel que pawaPay l'attend, et tel que le résolveur doit le recevoir. */
+    private static final String MSISDN = "2250734567890";
     /** Espace insécable : c'est le séparateur de milliers des montants affichés. */
     private static final String NBSP = " ";
 
@@ -83,7 +86,7 @@ class WalletMobileMoneyTopupServiceTest {
                                                              BigDecimal min, BigDecimal max) {
         PawapayProviderConfig config = new PawapayProviderConfig(provider, "CIV", "XOF",
                 new PawapayProviderConfig.Limits(min, max, authType, "OPERATIONAL"), null);
-        return new PawapayProviderResolver.Resolved(provider, "CI", PHONE, config);
+        return new PawapayProviderResolver.Resolved(provider, "CI", MSISDN, config);
     }
 
     private static WalletTopupRequest request(String amount, String phone, String provider) {
@@ -98,11 +101,11 @@ class WalletMobileMoneyTopupServiceTest {
     private static PawapayOperationEntity deposit(UUID userId, String amount) {
         return new PawapayOperationEntity(UUID.randomUUID(), PawapayOperationKind.DEPOSIT,
                 PawapayOperationPurpose.WALLET_TOPUP, userId, null, null, new BigDecimal(amount), "XOF",
-                "ORANGE_CIV", "CI", PHONE);
+                "ORANGE_CIV", "CI", MSISDN);
     }
 
     private void resolves(PawapayProviderResolver.Resolved value) {
-        when(resolver.resolve(eq(PHONE), eq(PawapayOperationKind.DEPOSIT), isNull(), any(), anyString()))
+        when(resolver.resolve(eq(MSISDN), eq(PawapayOperationKind.DEPOSIT), isNull(), any(), anyString()))
                 .thenReturn(value);
     }
 
@@ -116,7 +119,7 @@ class WalletMobileMoneyTopupServiceTest {
                 eq(PawapayOperationKind.DEPOSIT), eq("XOF"), eq(PawapayOperationPurpose.WALLET_TOPUP),
                 eq(PawapayOperationStatus.OPEN))).thenReturn(false);
         PawapayOperationEntity op = deposit(userId, "10000");
-        when(submission.submitWalletDeposit(eq(userId), eq(PHONE), eq("ORANGE_CIV"), eq("CI"),
+        when(submission.submitWalletDeposit(eq(userId), eq(MSISDN), eq("ORANGE_CIV"), eq("CI"),
                 eq(new BigDecimal("10000")), eq("XOF"), eq("wallet-topup-" + userId), isNull(), isNull()))
                 .thenReturn(op);
 
@@ -137,7 +140,7 @@ class WalletMobileMoneyTopupServiceTest {
      */
     @Test
     void initiate_withChosenProvider_passesItToTheResolver() {
-        when(resolver.resolve(eq(PHONE), eq(PawapayOperationKind.DEPOSIT), isNull(), eq("WAVE_CIV"), anyString()))
+        when(resolver.resolve(eq(MSISDN), eq(PawapayOperationKind.DEPOSIT), isNull(), eq("WAVE_CIV"), anyString()))
                 .thenReturn(resolved("WAVE_CIV", PawapayProviders.REDIRECT_AUTH,
                         new BigDecimal("500"), new BigDecimal("1000000")));
         when(submission.submitWalletDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any()))
@@ -145,7 +148,7 @@ class WalletMobileMoneyTopupServiceTest {
 
         service.initiate(userId, request("10000", PHONE, "WAVE_CIV"));
 
-        verify(submission).submitWalletDeposit(eq(userId), eq(PHONE), eq("WAVE_CIV"), eq("CI"),
+        verify(submission).submitWalletDeposit(eq(userId), eq(MSISDN), eq("WAVE_CIV"), eq("CI"),
                 any(), eq("XOF"), anyString(), anyString(), anyString());
     }
 
@@ -156,7 +159,7 @@ class WalletMobileMoneyTopupServiceTest {
      */
     @Test
     void initiate_redirectProvider_buildsWalletReturnUrls() {
-        when(resolver.resolve(eq(PHONE), eq(PawapayOperationKind.DEPOSIT), isNull(), any(), anyString()))
+        when(resolver.resolve(eq(MSISDN), eq(PawapayOperationKind.DEPOSIT), isNull(), any(), anyString()))
                 .thenReturn(resolved("WAVE_CIV", PawapayProviders.REDIRECT_AUTH,
                         new BigDecimal("500"), new BigDecimal("1000000")));
         when(submission.submitWalletDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any()))
@@ -180,6 +183,37 @@ class WalletMobileMoneyTopupServiceTest {
         assertThat(t).isInstanceOf(YadonyBusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode", "topup-phone-required")
                 .hasFieldOrPropertyWithValue("status", HttpStatus.UNPROCESSABLE_ENTITY);
+        verifyNoInteractions(resolver, submission, operations);
+    }
+
+    /**
+     * Le numéro part chez pawaPay : il doit être mis à SA forme (chiffres seuls, sans
+     * {@code +} ni espaces) avant l'appel, comme sur tous les autres points d'entrée du rail.
+     */
+    @Test
+    void initiate_normalizesThePhoneBeforeReachingPawapay() {
+        resolves(orangeCi(new BigDecimal("500"), new BigDecimal("1000000")));
+        when(submission.submitWalletDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(deposit(userId, "10000"));
+
+        service.initiate(userId, request("10000", PHONE, null));
+
+        verify(resolver).resolve(eq(MSISDN), eq(PawapayOperationKind.DEPOSIT), isNull(), isNull(), anyString());
+    }
+
+    /**
+     * Une saisie hors bornes est une erreur que l'utilisateur peut corriger : 422, et surtout
+     * aucun appel à pawaPay — sans cette garde, chaque frappe partirait chez l'opérateur et
+     * reviendrait en 502 « service indisponible ».
+     */
+    @Test
+    void initiate_withInvalidPhone_422_withoutCallingPawapay() {
+        Throwable t = catchThrowable(() -> service.initiate(userId, request("10000", "12", null)));
+
+        assertThat(t).isInstanceOf(YadonyBusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "mobile-money-invalid-phone")
+                .hasFieldOrPropertyWithValue("status", HttpStatus.UNPROCESSABLE_ENTITY);
+        assertThat(t.getMessage()).doesNotContain("12");
         verifyNoInteractions(resolver, submission, operations);
     }
 
@@ -269,7 +303,7 @@ class WalletMobileMoneyTopupServiceTest {
 
     @Test
     void initiate_unsupportedNumber_422WithBusinessReason() {
-        when(resolver.resolve(eq(PHONE), any(), isNull(), any(), anyString()))
+        when(resolver.resolve(eq(MSISDN), any(), isNull(), any(), anyString()))
                 .thenThrow(unsupportedNumber(PawapayProviderResolver.Reason.NO_PROVIDER));
 
         Throwable t = catchThrowable(() -> service.initiate(userId, request("10000", PHONE, null)));
@@ -299,7 +333,7 @@ class WalletMobileMoneyTopupServiceTest {
     void status_operationOfAnotherPurpose_404() {
         PawapayOperationEntity op = new PawapayOperationEntity(UUID.randomUUID(), PawapayOperationKind.DEPOSIT,
                 PawapayOperationPurpose.WALLET_REFUND, userId, null, null, new BigDecimal("10000"), "XOF",
-                "ORANGE_CIV", "CI", PHONE);
+                "ORANGE_CIV", "CI", MSISDN);
         when(operations.findByIdAndUserId(op.getId(), userId)).thenReturn(Optional.of(op));
 
         assertThat(catchThrowable(() -> service.status(userId, op.getId())))
@@ -375,8 +409,8 @@ class WalletMobileMoneyTopupServiceTest {
         PawapayProviderConfig wave = new PawapayProviderConfig("WAVE_CIV", "CIV", "XOF",
                 new PawapayProviderConfig.Limits(new BigDecimal("500"), new BigDecimal("1000000"),
                         PawapayProviders.REDIRECT_AUTH, "OPERATIONAL"), null);
-        when(resolver.catalogue(eq(PHONE), eq(PawapayOperationKind.DEPOSIT), isNull(), anyString()))
-                .thenReturn(new PawapayProviderResolver.Catalogue("CI", "XOF", PHONE, "ORANGE_CIV",
+        when(resolver.catalogue(eq(MSISDN), eq(PawapayOperationKind.DEPOSIT), isNull(), anyString()))
+                .thenReturn(new PawapayProviderResolver.Catalogue("CI", "XOF", MSISDN, "ORANGE_CIV",
                         List.of(orange, wave)));
 
         MobileMoneyProvidersResponse response = service.providers(PHONE);
@@ -401,6 +435,13 @@ class WalletMobileMoneyTopupServiceTest {
     }
 
     @Test
+    void providers_withInvalidPhone_422_withoutCallingPawapay() {
+        assertThat(catchThrowable(() -> service.providers("12")))
+                .hasFieldOrPropertyWithValue("errorCode", "mobile-money-invalid-phone");
+        verifyNoInteractions(resolver);
+    }
+
+    @Test
     void providers_whenRailDisabled_422() {
         assertThat(catchThrowable(() -> service(false).providers(PHONE)))
                 .hasFieldOrPropertyWithValue("errorCode", "mobile-money-disabled");
@@ -409,7 +450,7 @@ class WalletMobileMoneyTopupServiceTest {
 
     @Test
     void providers_unsupportedNumber_422() {
-        when(resolver.catalogue(eq(PHONE), any(), isNull(), anyString()))
+        when(resolver.catalogue(eq(MSISDN), any(), isNull(), anyString()))
                 .thenThrow(unsupportedNumber(PawapayProviderResolver.Reason.OPERATION_CLOSED));
 
         Throwable t = catchThrowable(() -> service.providers(PHONE));
@@ -451,6 +492,6 @@ class WalletMobileMoneyTopupServiceTest {
                 payload.capture());
         assertThat(payload.getValue()).containsEntry("currency", "XOF").containsEntry("amount", "10000")
                 .containsEntry("provider", "ORANGE_CIV").containsEntry("status", "CREATED");
-        assertThat(payload.getValue().values()).doesNotContain(PHONE);
+        assertThat(payload.getValue().values()).doesNotContain(PHONE, MSISDN);
     }
 }

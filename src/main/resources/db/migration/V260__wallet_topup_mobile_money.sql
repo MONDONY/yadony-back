@@ -18,6 +18,16 @@ ALTER TABLE pawapay_operations
 CREATE INDEX idx_pawapay_ops_user_kind_status ON pawapay_operations (user_id, kind, status)
     WHERE user_id IS NOT NULL;
 
+-- Verrou base contre la double recharge : au plus UNE recharge non terminale par
+-- utilisateur et par devise. La garde applicative de WalletMobileMoneyTopupService lit
+-- l'état avant d'écrire, donc deux requêtes concurrentes peuvent la franchir toutes les
+-- deux (TOCTOU) ; cet index est le filet, traduit en 422 topup-already-pending par
+-- PawapayOperationService.create. Les statuts terminaux (COMPLETED, FAILED,
+-- SUBMIT_REJECTED) n'y comptent pas : une recharge finie ne doit jamais bloquer la
+-- suivante. Liste alignée sur PawapayOperationStatus.OPEN.
+CREATE UNIQUE INDEX uq_pawapay_ops_live_wallet_topup ON pawapay_operations (user_id, purpose, currency)
+    WHERE purpose = 'WALLET_TOPUP' AND status IN ('CREATED', 'ACCEPTED', 'PROCESSING', 'ENQUEUED', 'IN_RECONCILIATION');
+
 ALTER TABLE wallet_refund_request_items
     ADD COLUMN fee_amount NUMERIC(10,2) NOT NULL DEFAULT 0,
     ADD COLUMN pawapay_refund_id UUID NULL,

@@ -27,8 +27,11 @@ public class WalletTopupRequest {
     private String currencyCode;
 
     /**
-     * Numéro mobile money qui paie la recharge (E.164), obligatoire pour
-     * {@code paymentMethod = MOBILE_MONEY}, ignoré pour les autres rails.
+     * Numéro mobile money qui paie la recharge, obligatoire pour
+     * {@code paymentMethod = MOBILE_MONEY}, ignoré pour les autres rails. E.164 ou chiffres :
+     * le serveur le normalise ({@code Msisdn.normalize}, le {@code +} et les séparateurs sont
+     * retirés, un préfixe {@code 00} aussi) et refuse en 422 {@code mobile-money-invalid-phone}
+     * ce qui n'est pas un numéro exploitable.
      */
     private String phoneNumber;
 
