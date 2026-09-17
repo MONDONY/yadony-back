@@ -34,13 +34,8 @@ public class WalletTopupResponse {
         this.authorizationUrl = authorizationUrl;
     }
 
-    /** Ancien contrat à deux arguments, conservé pour les appelants déjà écrits. */
-    public WalletTopupResponse(String clientSecret, String redirectUrl) {
-        this(clientSecret, redirectUrl, null, null, null, null, null, null);
-    }
-
     public static WalletTopupResponse stripe(String clientSecret) {
-        return new WalletTopupResponse(clientSecret, null);
+        return new WalletTopupResponse(clientSecret, null, null, null, null, null, null, null);
     }
 
     public static WalletTopupResponse mobileMoney(PawapayOperationEntity op) {

@@ -3,6 +3,8 @@ package com.yadony.api.payments.wallet;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.payments.mobilemoney.dto.MobileMoneyProvidersRequest;
+import com.yadony.api.payments.mobilemoney.dto.MobileMoneyProvidersResponse;
 import com.yadony.api.payments.wallet.dto.WalletBalanceResponse;
 import com.yadony.api.payments.wallet.dto.WalletCurrencyBalanceDto;
 import com.yadony.api.payments.wallet.dto.WalletEligibleTopupResponse;
@@ -12,6 +14,7 @@ import com.yadony.api.payments.wallet.dto.WalletTopupCheckoutRequest;
 import com.yadony.api.payments.wallet.dto.WalletTopupCheckoutResponse;
 import com.yadony.api.payments.wallet.dto.WalletTopupRequest;
 import com.yadony.api.payments.wallet.dto.WalletTopupResponse;
+import com.yadony.api.payments.wallet.dto.WalletTopupStatusResponse;
 import com.yadony.api.payments.wallet.dto.WalletTransactionDto;
 import com.yadony.api.settings.UserBusinessPrefsService;
 import jakarta.validation.Valid;
@@ -41,17 +44,20 @@ public class WalletController {
     private final WalletService walletService;
     private final WalletSelfRefundService walletSelfRefundService;
     private final WalletTopupOrchestrator topupOrchestrator;
+    private final WalletMobileMoneyTopupService mobileMoneyTopupService;
     private final UserRepository userRepository;
     private final UserBusinessPrefsService businessPrefsService;
 
     public WalletController(WalletService walletService,
                             WalletSelfRefundService walletSelfRefundService,
                             WalletTopupOrchestrator topupOrchestrator,
+                            WalletMobileMoneyTopupService mobileMoneyTopupService,
                             UserRepository userRepository,
                             UserBusinessPrefsService businessPrefsService) {
         this.walletService = walletService;
         this.walletSelfRefundService = walletSelfRefundService;
         this.topupOrchestrator = topupOrchestrator;
+        this.mobileMoneyTopupService = mobileMoneyTopupService;
         this.userRepository = userRepository;
         this.businessPrefsService = businessPrefsService;
     }
@@ -105,6 +111,28 @@ public class WalletController {
             @Valid @RequestBody WalletTopupRequest request) {
         UUID userId = currentUserId();
         return ResponseEntity.ok(topupOrchestrator.initiate(userId, request));
+    }
+
+    /**
+     * Réseaux mobile money utilisables pour payer une recharge depuis ce numéro. POST et non
+     * GET pour la même raison que {@code /payments/mobile-money/providers} : le numéro voyage
+     * dans le corps, jamais dans une URL (journaux nginx, historique du client).
+     */
+    @PostMapping("/topup/providers")
+    public ResponseEntity<MobileMoneyProvidersResponse> topupProviders(
+            @Valid @RequestBody MobileMoneyProvidersRequest request) {
+        return ResponseEntity.ok(mobileMoneyTopupService.providers(request.phoneNumber()));
+    }
+
+    /**
+     * Statut d'une recharge mobile money, relu en boucle par l'app pendant l'attente du PIN.
+     * L'identifiant de l'appelant est passé au service, qui filtre par propriétaire : une
+     * recharge d'un autre utilisateur est introuvable (404), jamais « interdite ».
+     */
+    @GetMapping("/topup/{topupId}/status")
+    public ResponseEntity<WalletTopupStatusResponse> topupStatus(@PathVariable UUID topupId) {
+        UUID userId = currentUserId();
+        return ResponseEntity.ok(mobileMoneyTopupService.status(userId, topupId));
     }
 
     /** Recharge par carte depuis le portail PRO : session Stripe Checkout hébergée. */

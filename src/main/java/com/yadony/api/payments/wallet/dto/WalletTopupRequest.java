@@ -11,7 +11,9 @@ public class WalletTopupRequest {
     private BigDecimal amount;
 
     @NotNull
-    private String paymentMethod; // STRIPE | WAVE | ORANGE_MONEY
+    // STRIPE (carte) | MOBILE_MONEY (pawaPay). WAVE et ORANGE_MONEY sont les codes de
+    // l'ancien rail maison, encore envoyés par les apps déployées : refusés en 422.
+    private String paymentMethod;
 
     /**
      * IGNORÉ depuis le correctif « devise de recharge » : la devise créditée est

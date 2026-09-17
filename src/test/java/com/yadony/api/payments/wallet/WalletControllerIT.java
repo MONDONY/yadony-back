@@ -327,6 +327,40 @@ class WalletControllerIT {
             .anyMatch(item -> "pi_it_3".equals(item.getPaymentIntentId()));
     }
 
+    /**
+     * Sans numéro payeur, la recharge mobile money est refusée AVANT tout appel réseau à
+     * pawaPay : c'est une saisie manquante, pas une panne d'opérateur. Aucun mock pawaPay
+     * n'est donc nécessaire ici — s'il en fallait un, c'est que la garde serait tombée trop
+     * tard (un dépôt serait parti sans payeur).
+     */
+    @Test
+    void topup_mobileMoneySansNumero_returns422PhoneRequired() throws Exception {
+        mockMvc.perform(post("/wallet/topup")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(
+                    Map.of("amount", 10000, "paymentMethod", "MOBILE_MONEY")))
+                .with(authentication(authAs(FIREBASE_UID, "SENDER"))))
+            .andExpect(status().isUnprocessableEntity())
+            .andExpect(jsonPath("$.code").value("topup-phone-required"));
+    }
+
+    /** Recharge inconnue : 404 « introuvable », jamais un 403 qui confirmerait l'identifiant. */
+    @Test
+    void topupStatus_rechargeInconnue_returns404() throws Exception {
+        mockMvc.perform(get("/wallet/topup/" + UUID.randomUUID() + "/status")
+                .with(authentication(authAs(FIREBASE_UID, "SENDER"))))
+            .andExpect(status().isNotFound())
+            .andExpect(jsonPath("$.code").value("topup-not-found"));
+    }
+
+    /** Un identifiant qui n'est pas un UUID est une requête malformée (400), jamais un 500. */
+    @Test
+    void topupStatus_identifiantNonUuid_returns400() throws Exception {
+        mockMvc.perform(get("/wallet/topup/pas-un-uuid/status")
+                .with(authentication(authAs(FIREBASE_UID, "SENDER"))))
+            .andExpect(status().isBadRequest());
+    }
+
     @Test
     void getBalance_unauthenticated_returns401() throws Exception {
         mockMvc.perform(get("/wallet/balance"))
