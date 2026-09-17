@@ -1,10 +1,13 @@
 package com.yadony.api.payments.wallet;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -24,10 +27,15 @@ import com.yadony.api.payments.pawapay.events.PawapayOperationCompletedEvent;
 import com.yadony.api.payments.pawapay.events.PawapayOperationFailedEvent;
 import java.lang.reflect.Method;
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.annotation.Propagation;
@@ -49,10 +57,13 @@ class WalletRefundOutcomeListenerTest {
     final WalletSelfRefundService selfRefund = mock(WalletSelfRefundService.class);
     final WalletPawapayRefundIssuer issuer = new WalletPawapayRefundIssuer(operationRepository, submission,
             mock(PawapayClient.class), itemRepository, auditService, adminAlertService, eventPublisher);
-    final WalletRefundOutcomeListener listener = new WalletRefundOutcomeListener(issuer, selfRefund);
+    final WalletRefundRequestRepository requestRepository = mock(WalletRefundRequestRepository.class);
+    final WalletRefundOutcomeListener listener = new WalletRefundOutcomeListener(issuer, selfRefund,
+            requestRepository, itemRepository, adminAlertService);
 
     PawapayOperationEntity deposit;
     WalletRefundRequestItemEntity item;
+    WalletRefundRequestEntity request;
 
     @BeforeEach
     void setUp() {
@@ -64,11 +75,24 @@ class WalletRefundOutcomeListenerTest {
         item.setAmount(new BigDecimal("10000.00"));
         item.setFeeAmount(new BigDecimal("200.00"));
         item.setStatus(WalletRefundItemStatus.PROCESSING);
+        request = new WalletRefundRequestEntity();
+        ReflectionTestUtils.setField(request, "id", item.getRefundRequestId());
+        request.setUserId(USER_ID);
+        request.setStatus(WalletRefundRequestStatus.PROCESSING);
+    }
+
+    /** L'item est retrouvé par son opération, sa demande verrouillée. */
+    void linkRequest(UUID operationId) {
+        when(itemRepository.findRefundRequestIdByPawapayOperationId(operationId))
+                .thenReturn(Optional.of(item.getRefundRequestId()));
+        when(requestRepository.findByIdForUpdate(item.getRefundRequestId())).thenReturn(Optional.of(request));
     }
 
     static PawapayOperationEntity operation(PawapayOperationKind kind, PawapayOperationPurpose purpose) {
-        return new PawapayOperationEntity(UUID.randomUUID(), kind, purpose, USER_ID, null, null,
+        PawapayOperationEntity op = new PawapayOperationEntity(UUID.randomUUID(), kind, purpose, USER_ID, null, null,
                 new BigDecimal("9800"), "XOF", "ORANGE_CIV", "CI", "+2250734567890");
+        ReflectionTestUtils.setField(op, "createdAt", LocalDateTime.now(ZoneOffset.UTC));
+        return op;
     }
 
     static PawapayOperationCompletedEvent completed(UUID opId, PawapayOperationKind kind, PawapayOperationPurpose purpose) {
@@ -84,6 +108,7 @@ class WalletRefundOutcomeListenerTest {
         UUID refundId = UUID.randomUUID();
         item.setPawapayRefundId(refundId);
         when(itemRepository.findByPawapayRefundId(refundId)).thenReturn(Optional.of(item));
+        linkRequest(refundId);
 
         listener.onCompleted(completed(refundId, PawapayOperationKind.REFUND, PawapayOperationPurpose.WALLET_REFUND));
 
@@ -97,6 +122,7 @@ class WalletRefundOutcomeListenerTest {
         UUID refundId = UUID.randomUUID();
         item.setPawapayRefundId(refundId);
         when(itemRepository.findByPawapayRefundId(refundId)).thenReturn(Optional.of(item));
+        linkRequest(refundId);
         when(operationRepository.findById(deposit.getId())).thenReturn(Optional.of(deposit));
         PawapayOperationEntity payout = operation(PawapayOperationKind.PAYOUT, PawapayOperationPurpose.WALLET_REFUND);
         when(submission.createWalletPayout(eq(USER_ID), eq(deposit.getMsisdn()), eq("ORANGE_CIV"), eq("CI"), any(),
@@ -118,6 +144,7 @@ class WalletRefundOutcomeListenerTest {
         item.setPawapayRefundId(refundId);
         item.setPawapayPayoutId(UUID.randomUUID());
         when(itemRepository.findByPawapayRefundId(refundId)).thenReturn(Optional.of(item));
+        linkRequest(refundId);
 
         listener.onFailed(failed(refundId, PawapayOperationKind.REFUND, "REFUND_FAILED"));
 
@@ -130,6 +157,7 @@ class WalletRefundOutcomeListenerTest {
         UUID payoutId = UUID.randomUUID();
         item.setPawapayPayoutId(payoutId);
         when(itemRepository.findByPawapayPayoutId(payoutId)).thenReturn(Optional.of(item));
+        linkRequest(payoutId);
 
         listener.onCompleted(completed(payoutId, PawapayOperationKind.PAYOUT, PawapayOperationPurpose.WALLET_REFUND));
 
@@ -143,6 +171,7 @@ class WalletRefundOutcomeListenerTest {
         item.setPawapayPayoutId(payoutId);
         item.setStatus(WalletRefundItemStatus.REFUNDED);
         when(itemRepository.findByPawapayPayoutId(payoutId)).thenReturn(Optional.of(item));
+        linkRequest(payoutId);
 
         listener.onCompleted(completed(payoutId, PawapayOperationKind.PAYOUT, PawapayOperationPurpose.WALLET_REFUND));
 
@@ -155,6 +184,7 @@ class WalletRefundOutcomeListenerTest {
         UUID payoutId = UUID.randomUUID();
         item.setPawapayPayoutId(payoutId);
         when(itemRepository.findByPawapayPayoutId(payoutId)).thenReturn(Optional.of(item));
+        linkRequest(payoutId);
 
         listener.onFailed(failed(payoutId, PawapayOperationKind.PAYOUT, "RECIPIENT_NOT_FOUND"));
 
@@ -170,6 +200,7 @@ class WalletRefundOutcomeListenerTest {
         item.setPawapayPayoutId(payoutId);
         item.setStatus(WalletRefundItemStatus.FAILED);
         when(itemRepository.findByPawapayPayoutId(payoutId)).thenReturn(Optional.of(item));
+        linkRequest(payoutId);
 
         listener.onFailed(failed(payoutId, PawapayOperationKind.PAYOUT, "RECIPIENT_NOT_FOUND"));
 
@@ -192,7 +223,7 @@ class WalletRefundOutcomeListenerTest {
     @Test
     void outcomeForUnlinkedOperation_isIgnored() {
         UUID refundId = UUID.randomUUID();
-        when(itemRepository.findByPawapayRefundId(refundId)).thenReturn(Optional.empty());
+        when(itemRepository.findRefundRequestIdByPawapayOperationId(refundId)).thenReturn(Optional.empty());
 
         listener.onCompleted(completed(refundId, PawapayOperationKind.REFUND, PawapayOperationPurpose.WALLET_REFUND));
 
@@ -219,6 +250,7 @@ class WalletRefundOutcomeListenerTest {
         when(submission.initiate(any(), any())).thenReturn(new PawapayInitiationResult(
                 PawapayInitiationResult.Outcome.REJECTED, "INVALID_AMOUNT", "m"));
         when(itemRepository.findByPawapayPayoutId(payout.getId())).thenReturn(Optional.of(item));
+        linkRequest(payout.getId());
 
         listener.onInitiationRequested(new WalletPawapayRefundInitiationEvent(item.getId(), payout.getId()));
 
@@ -235,5 +267,112 @@ class WalletRefundOutcomeListenerTest {
             assertThat(m.getAnnotation(TransactionalEventListener.class).phase()).isEqualTo(TransactionPhase.AFTER_COMMIT);
             assertThat(m.getAnnotation(Transactional.class).propagation()).isEqualTo(Propagation.REQUIRES_NEW);
         }
+    }
+
+    @Test
+    void settle_locksRequestBeforeItem() {
+        UUID payoutId = UUID.randomUUID();
+        item.setPawapayPayoutId(payoutId);
+        when(itemRepository.findByPawapayPayoutId(payoutId)).thenReturn(Optional.of(item));
+        linkRequest(payoutId);
+
+        listener.onCompleted(completed(payoutId, PawapayOperationKind.PAYOUT, PawapayOperationPurpose.WALLET_REFUND));
+
+        InOrder order = inOrder(itemRepository, requestRepository, selfRefund);
+        order.verify(itemRepository).findRefundRequestIdByPawapayOperationId(payoutId);
+        order.verify(requestRepository).findByIdForUpdate(item.getRefundRequestId());
+        order.verify(itemRepository).findByPawapayPayoutId(payoutId);
+        order.verify(selfRefund).resolveIfComplete(item.getRefundRequestId());
+    }
+
+    @Test
+    void settle_requestMissing_doesNothing() {
+        UUID payoutId = UUID.randomUUID();
+        when(itemRepository.findRefundRequestIdByPawapayOperationId(payoutId))
+                .thenReturn(Optional.of(item.getRefundRequestId()));
+        when(requestRepository.findByIdForUpdate(item.getRefundRequestId())).thenReturn(Optional.empty());
+
+        listener.onCompleted(completed(payoutId, PawapayOperationKind.PAYOUT, PawapayOperationPurpose.WALLET_REFUND));
+
+        verify(itemRepository, never()).findByPawapayPayoutId(any());
+        verifyNoInteractions(selfRefund);
+    }
+
+    @Test
+    void settle_itemGoneAfterLock_doesNothing() {
+        UUID payoutId = UUID.randomUUID();
+        linkRequest(payoutId);
+        when(itemRepository.findByPawapayPayoutId(payoutId)).thenReturn(Optional.empty());
+
+        listener.onCompleted(completed(payoutId, PawapayOperationKind.PAYOUT, PawapayOperationPurpose.WALLET_REFUND));
+
+        verifyNoInteractions(selfRefund);
+    }
+
+    @Test
+    void completed_exceptionInSettle_alertsThenRethrows() {
+        UUID payoutId = UUID.randomUUID();
+        item.setPawapayPayoutId(payoutId);
+        when(itemRepository.findByPawapayPayoutId(payoutId)).thenReturn(Optional.of(item));
+        linkRequest(payoutId);
+        doThrow(new IllegalStateException("debit impossible")).when(selfRefund).resolveIfComplete(any());
+
+        assertThatThrownBy(() -> listener.onCompleted(
+                completed(payoutId, PawapayOperationKind.PAYOUT, PawapayOperationPurpose.WALLET_REFUND)))
+                .hasMessage("debit impossible");
+
+        ArgumentCaptor<Map<String, Object>> context = ArgumentCaptor.forClass(Map.class);
+        verify(adminAlertService).raise(eq("WALLET_REFUND_OUTCOME_FAILED"), anyString(), context.capture());
+        assertThat(context.getValue()).containsEntry("operationId", payoutId.toString());
+    }
+
+    @Test
+    void failed_exceptionInFallback_alertsThenRethrows() {
+        UUID refundId = UUID.randomUUID();
+        item.setPawapayRefundId(refundId);
+        when(itemRepository.findByPawapayRefundId(refundId)).thenReturn(Optional.of(item));
+        linkRequest(refundId);
+        when(operationRepository.findById(deposit.getId())).thenThrow(new IllegalStateException("base"));
+
+        assertThatThrownBy(() -> listener.onFailed(failed(refundId, PawapayOperationKind.REFUND, "X")))
+                .isInstanceOf(IllegalStateException.class);
+
+        verify(adminAlertService).raise(eq("WALLET_REFUND_OUTCOME_FAILED"), anyString(), anyMap());
+    }
+
+    @Test
+    void initiation_exception_alertsWithItemThenRethrows() {
+        UUID opId = UUID.randomUUID();
+        when(operationRepository.findById(opId)).thenThrow(new IllegalStateException("base"));
+
+        assertThatThrownBy(() -> listener.onInitiationRequested(new WalletPawapayRefundInitiationEvent(item.getId(), opId)))
+                .isInstanceOf(IllegalStateException.class);
+
+        ArgumentCaptor<Map<String, Object>> context = ArgumentCaptor.forClass(Map.class);
+        verify(adminAlertService).raise(eq("WALLET_REFUND_OUTCOME_FAILED"), anyString(), context.capture());
+        assertThat(context.getValue()).containsEntry("itemId", item.getId().toString())
+                .containsEntry("operationId", opId.toString());
+    }
+
+    @Test
+    void initiationRequested_refundRejected_locksRequestThenFallsBackToPayout() {
+        PawapayOperationEntity refund = operation(PawapayOperationKind.REFUND, PawapayOperationPurpose.WALLET_REFUND);
+        item.setPawapayRefundId(refund.getId());
+        when(operationRepository.findById(refund.getId())).thenReturn(Optional.of(refund));
+        when(operationRepository.findById(deposit.getId())).thenReturn(Optional.of(deposit));
+        when(submission.initiate(any(), any())).thenReturn(new PawapayInitiationResult(
+                PawapayInitiationResult.Outcome.REJECTED, "REFUND_NOT_ALLOWED", "m"));
+        when(itemRepository.findByPawapayRefundId(refund.getId())).thenReturn(Optional.of(item));
+        linkRequest(refund.getId());
+        PawapayOperationEntity payout = operation(PawapayOperationKind.PAYOUT, PawapayOperationPurpose.WALLET_REFUND);
+        when(submission.createWalletPayout(eq(USER_ID), any(), any(), any(), any(), any())).thenReturn(payout);
+
+        listener.onInitiationRequested(new WalletPawapayRefundInitiationEvent(item.getId(), refund.getId()));
+
+        InOrder order = inOrder(requestRepository, itemRepository);
+        order.verify(requestRepository).findByIdForUpdate(item.getRefundRequestId());
+        order.verify(itemRepository).findByPawapayRefundId(refund.getId());
+        assertThat(item.getPawapayPayoutId()).isEqualTo(payout.getId());
+        verify(selfRefund).resolveIfComplete(item.getRefundRequestId());
     }
 }

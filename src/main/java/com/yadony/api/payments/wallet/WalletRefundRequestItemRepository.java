@@ -42,6 +42,15 @@ public interface WalletRefundRequestItemRepository extends JpaRepository<WalletR
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     Optional<WalletRefundRequestItemEntity> findByPawapayRefundId(UUID pawapayRefundId);
 
+    /**
+     * Demande de l'item lié à une opération pawaPay (REFUND ou PAYOUT), lue SANS verrou ni
+     * chargement d'entité : sert à verrouiller la demande avant l'item (ordre demande puis item,
+     * comme {@code issuePendingItems}), l'item étant ensuite relu verrouillé.
+     */
+    @Query("SELECT i.refundRequestId FROM WalletRefundRequestItemEntity i "
+            + "WHERE i.pawapayRefundId = :operationId OR i.pawapayPayoutId = :operationId")
+    Optional<UUID> findRefundRequestIdByPawapayOperationId(@Param("operationId") UUID operationId);
+
     /** Item d'un remboursement pawaPay par l'opération PAYOUT qui le porte, verrouillé (voir ci-dessus). */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     Optional<WalletRefundRequestItemEntity> findByPawapayPayoutId(UUID pawapayPayoutId);

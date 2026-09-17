@@ -24,6 +24,8 @@ import com.yadony.api.payments.pawapay.PawapaySubmissionService;
 import com.yadony.api.payments.pawapay.dto.PawapayInitiationResult;
 import com.yadony.api.payments.pawapay.dto.PawapayProviderConfig;
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -75,8 +77,10 @@ class WalletPawapayRefundIssuerTest {
 
     static PawapayOperationEntity operation(PawapayOperationKind kind, PawapayOperationPurpose purpose,
                                             BigDecimal amount) {
-        return new PawapayOperationEntity(UUID.randomUUID(), kind, purpose, USER_ID, null, null, amount, "XOF",
-                PROVIDER, "CI", "+2250734567890");
+        PawapayOperationEntity op = new PawapayOperationEntity(UUID.randomUUID(), kind, purpose, USER_ID, null, null,
+                amount, "XOF", PROVIDER, "CI", "+2250734567890");
+        ReflectionTestUtils.setField(op, "createdAt", LocalDateTime.now(ZoneOffset.UTC).minusSeconds(5));
+        return op;
     }
 
     WalletRefundRequestItemEntity item() {
@@ -270,7 +274,7 @@ class WalletPawapayRefundIssuerTest {
         when(operationRepository.findById(refund.getId())).thenReturn(Optional.of(refund));
         when(submission.initiate(refund, "wallet-refund-" + item.getId())).thenThrow(PawapayErrors.providerUnavailable());
 
-        Optional<WalletRefundRequestItemEntity> settled = issuer.initiate(item.getId(), refund.getId());
+        Optional<WalletPawapayRefundIssuer.Rejection> settled = issuer.initiate(item.getId(), refund.getId());
 
         assertThat(settled).isEmpty();
         assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.PROCESSING);
@@ -315,45 +319,92 @@ class WalletPawapayRefundIssuerTest {
     }
 
     @Test
-    void initiate_refundRejected_fallsBackToPayout() {
-        WalletRefundRequestItemEntity item = item();
+    void initiate_refundRejected_returnsRejectionWithoutTouchingItem() {
         PawapayOperationEntity refund = operation(PawapayOperationKind.REFUND, PawapayOperationPurpose.WALLET_REFUND,
                 new BigDecimal("9800"));
-        item.setPawapayRefundId(refund.getId());
-        item.setStatus(WalletRefundItemStatus.PROCESSING);
         when(operationRepository.findById(refund.getId())).thenReturn(Optional.of(refund));
         when(submission.initiate(any(), any())).thenReturn(new PawapayInitiationResult(
                 PawapayInitiationResult.Outcome.REJECTED, "REFUND_NOT_ALLOWED", "non"));
-        when(itemRepository.findByPawapayRefundId(refund.getId())).thenReturn(Optional.of(item));
+
+        assertThat(issuer.initiate(UUID.randomUUID(), refund.getId())).contains(
+                new WalletPawapayRefundIssuer.Rejection(PawapayOperationKind.REFUND, refund.getId(), "REFUND_NOT_ALLOWED"));
+
+        verifyNoInteractions(itemRepository, adminAlertService, auditService);
+    }
+
+    @Test
+    void initiate_payoutRejected_returnsRejection() {
+        PawapayOperationEntity payout = operation(PawapayOperationKind.PAYOUT, PawapayOperationPurpose.WALLET_REFUND,
+                new BigDecimal("9800"));
+        when(operationRepository.findById(payout.getId())).thenReturn(Optional.of(payout));
+        when(submission.initiate(any(), any())).thenReturn(new PawapayInitiationResult(
+                PawapayInitiationResult.Outcome.REJECTED, "INVALID_RECIPIENT", "non"));
+
+        assertThat(issuer.initiate(UUID.randomUUID(), payout.getId())).contains(
+                new WalletPawapayRefundIssuer.Rejection(PawapayOperationKind.PAYOUT, payout.getId(), "INVALID_RECIPIENT"));
+    }
+
+    @Test
+    void initiate_operationOlderThanSendAge_isLeftCreatedForPoller() {
+        // Tour 1, point 1 : envoyée trop tard, l'opération pourrait être acceptée APRÈS que le
+        // poller l'a classée rejetée et lancé le versement de repli (double mouvement).
+        WalletRefundRequestItemEntity item = item();
+        PawapayOperationEntity refund = operation(PawapayOperationKind.REFUND, PawapayOperationPurpose.WALLET_REFUND,
+                new BigDecimal("9800"));
+        ReflectionTestUtils.setField(refund, "createdAt", LocalDateTime.now(ZoneOffset.UTC).minusSeconds(61));
+        item.setPawapayRefundId(refund.getId());
+        item.setStatus(WalletRefundItemStatus.PROCESSING);
+        when(operationRepository.findById(refund.getId())).thenReturn(Optional.of(refund));
+
+        assertThat(issuer.initiate(item.getId(), refund.getId())).isEmpty();
+
+        verifyNoInteractions(submission, client, itemRepository);
+        assertThat(refund.getStatus()).isEqualTo(PawapayOperationStatus.CREATED);
+        assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.PROCESSING);
+        assertThat(item.getPawapayRefundId()).isEqualTo(refund.getId());
+    }
+
+    @Test
+    void initiate_operationWithoutCreationDate_isNotSent() {
+        PawapayOperationEntity refund = operation(PawapayOperationKind.REFUND, PawapayOperationPurpose.WALLET_REFUND,
+                new BigDecimal("9800"));
+        ReflectionTestUtils.setField(refund, "createdAt", null);
+        when(operationRepository.findById(refund.getId())).thenReturn(Optional.of(refund));
+
+        assertThat(issuer.initiate(UUID.randomUUID(), refund.getId())).isEmpty();
+
+        verifyNoInteractions(submission);
+    }
+
+    @Test
+    void applyPawapayOutcome_refundFailed_fallsBackToPayoutForTheRequestUser() {
+        WalletRefundRequestItemEntity item = item();
+        item.setPawapayRefundId(UUID.randomUUID());
+        item.setStatus(WalletRefundItemStatus.PROCESSING);
+        UUID requestUser = UUID.randomUUID();
+        request.setUserId(requestUser);
         stubDeposit();
         PawapayOperationEntity payout = operation(PawapayOperationKind.PAYOUT, PawapayOperationPurpose.WALLET_REFUND,
                 new BigDecimal("9800"));
-        when(submission.createWalletPayout(eq(USER_ID), eq(deposit.getMsisdn()), eq(PROVIDER), eq("CI"), any(),
+        when(submission.createWalletPayout(eq(requestUser), eq(deposit.getMsisdn()), eq(PROVIDER), eq("CI"), any(),
                 eq("XOF"))).thenReturn(payout);
 
-        Optional<WalletRefundRequestItemEntity> settled = issuer.initiate(item.getId(), refund.getId());
+        issuer.applyPawapayOutcome(request, item, PawapayOperationKind.REFUND, false, "REFUND_NOT_ALLOWED");
 
-        assertThat(settled).contains(item);
         assertThat(item.getPawapayPayoutId()).isEqualTo(payout.getId());
         assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.PROCESSING);
         verify(auditService).log(eq("wallet_refund_request"), eq(request.getId()), eq("REFUND_FALLBACK_PAYOUT"),
-                eq(USER_ID), anyMap());
+                eq(requestUser), anyMap());
         verify(eventPublisher).publishEvent(new WalletPawapayRefundInitiationEvent(item.getId(), payout.getId()));
     }
 
     @Test
-    void initiate_payoutRejected_marksFailedAndAlerts() {
+    void applyPawapayOutcome_payoutFailed_marksFailedAndAlerts() {
         WalletRefundRequestItemEntity item = item();
-        PawapayOperationEntity payout = operation(PawapayOperationKind.PAYOUT, PawapayOperationPurpose.WALLET_REFUND,
-                new BigDecimal("9800"));
-        item.setPawapayPayoutId(payout.getId());
+        item.setPawapayPayoutId(UUID.randomUUID());
         item.setStatus(WalletRefundItemStatus.PROCESSING);
-        when(operationRepository.findById(payout.getId())).thenReturn(Optional.of(payout));
-        when(submission.initiate(any(), any())).thenReturn(new PawapayInitiationResult(
-                PawapayInitiationResult.Outcome.REJECTED, "INVALID_RECIPIENT", "non"));
-        when(itemRepository.findByPawapayPayoutId(payout.getId())).thenReturn(Optional.of(item));
 
-        assertThat(issuer.initiate(item.getId(), payout.getId())).contains(item);
+        issuer.applyPawapayOutcome(request, item, PawapayOperationKind.PAYOUT, false, "INVALID_RECIPIENT");
 
         assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.FAILED);
         assertThat(item.getFailureReason()).isEqualTo("INVALID_RECIPIENT");
@@ -367,7 +418,7 @@ class WalletPawapayRefundIssuerTest {
         WalletRefundRequestItemEntity item = item();
         item.setStatus(WalletRefundItemStatus.REFUNDED);
 
-        issuer.applyPawapayOutcome(item, PawapayOperationKind.PAYOUT, false, "X");
+        issuer.applyPawapayOutcome(request, item, PawapayOperationKind.PAYOUT, false, "X");
 
         assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.REFUNDED);
         verifyNoInteractions(itemRepository, adminAlertService, submission);
@@ -380,7 +431,7 @@ class WalletPawapayRefundIssuerTest {
         item.setPawapayPayoutId(UUID.randomUUID());
         item.setStatus(WalletRefundItemStatus.PROCESSING);
 
-        issuer.applyPawapayOutcome(item, PawapayOperationKind.REFUND, false, "X");
+        issuer.applyPawapayOutcome(request, item, PawapayOperationKind.REFUND, false, "X");
 
         assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.PROCESSING);
         verifyNoInteractions(submission, itemRepository, auditService, eventPublisher);
@@ -395,7 +446,7 @@ class WalletPawapayRefundIssuerTest {
         when(submission.createWalletPayout(any(), any(), any(), any(), any(), any()))
                 .thenThrow(new IllegalStateException("base"));
 
-        issuer.applyPawapayOutcome(item, PawapayOperationKind.REFUND, false, "X");
+        issuer.applyPawapayOutcome(request, item, PawapayOperationKind.REFUND, false, "X");
 
         assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.FAILED);
         assertThat(item.getFailureReason()).isEqualTo("pawapay-fallback-not-created");
@@ -411,7 +462,7 @@ class WalletPawapayRefundIssuerTest {
         item.setStatus(WalletRefundItemStatus.PROCESSING);
         when(operationRepository.findById(deposit.getId())).thenReturn(Optional.empty());
 
-        issuer.applyPawapayOutcome(item, PawapayOperationKind.REFUND, false, "X");
+        issuer.applyPawapayOutcome(request, item, PawapayOperationKind.REFUND, false, "X");
 
         assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.FAILED);
         assertThat(item.getFailureReason()).isEqualTo("pawapay-deposit-missing");
@@ -423,7 +474,7 @@ class WalletPawapayRefundIssuerTest {
         item.setPawapayPayoutId(UUID.randomUUID());
         item.setStatus(WalletRefundItemStatus.PROCESSING);
 
-        issuer.applyPawapayOutcome(item, PawapayOperationKind.PAYOUT, false, null);
+        issuer.applyPawapayOutcome(request, item, PawapayOperationKind.PAYOUT, false, null);
 
         assertThat(item.getFailureReason()).isEqualTo("pawapay-payout-failed");
     }
@@ -434,7 +485,7 @@ class WalletPawapayRefundIssuerTest {
         item.setPawapayPayoutId(UUID.randomUUID());
         item.setStatus(WalletRefundItemStatus.PROCESSING);
 
-        issuer.applyPawapayOutcome(item, PawapayOperationKind.PAYOUT, false, "X".repeat(64));
+        issuer.applyPawapayOutcome(request, item, PawapayOperationKind.PAYOUT, false, "X".repeat(64));
 
         assertThat(item.getFailureReason()).hasSize(60);
     }
