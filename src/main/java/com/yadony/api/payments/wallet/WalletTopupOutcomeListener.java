@@ -1,6 +1,7 @@
 package com.yadony.api.payments.wallet;
 
 import com.yadony.api.common.AuditService;
+import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.notifications.NotificationDispatcher;
 import com.yadony.api.payments.pawapay.PawapayOperationEntity;
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
@@ -37,6 +38,24 @@ import org.springframework.transaction.event.TransactionalEventListener;
  * {@code "pawapay-topup-" + depositId} : un rejeu du callback pawaPay (ou de l'événement) ne
  * crédite jamais deux fois. {@code credit} appelle {@code getOrCreate} : le solde dans la
  * devise du dépôt est créé au besoin, il n'a pas à préexister.
+ *
+ * <p><b>Garde-fou {@code onCompleted}</b> — {@code PawapayOperationCompletedEvent} n'est publié
+ * qu'une seule fois par opération, et le poller de réconciliation ne rebalaie que les opérations
+ * encore OUVERTES : cette opération est déjà {@code COMPLETED}, rien ne rejouera jamais ce
+ * crédit. Si {@code credit}, l'audit ou la notification lèvent après un commit pawaPay réussi,
+ * l'argent est encaissé côté pawaPay mais jamais crédité au portefeuille, sans que personne ne le
+ * sache — le corps est donc entouré d'un {@code try/catch RuntimeException} qui alerte un
+ * administrateur ({@link AdminAlertService}) PUIS repropage à l'identique (même motif que
+ * {@code MobileMoneyDepositOutcomeListener#onCompleted}) : la transaction doit toujours être
+ * annulée (jamais avaler l'erreur, ce qui commiterait un état partiel), mais un humain est
+ * désormais prévenu dans la minute pour créditer manuellement.
+ *
+ * <p><b>Garde-fou {@code onFailed}</b> — aucun argent n'a bougé (le dépôt a échoué chez pawaPay
+ * avant tout crédit) : une erreur ici ne peut perdre qu'une ligne d'audit, jamais de l'argent. Le
+ * corps est donc entouré d'un {@code try/catch RuntimeException} qui journalise en {@code ERROR}
+ * puis AVALE l'exception (pas de {@code adminAlertService.raise}, pas de repropagation) — à la
+ * différence de {@code onCompleted}, il n'y a rien à réconcilier manuellement, et repropager
+ * risquerait d'empêcher d'autres écouteurs {@code AFTER_COMMIT} du même événement de s'exécuter.
  */
 @Component
 public class WalletTopupOutcomeListener {
@@ -47,13 +66,16 @@ public class WalletTopupOutcomeListener {
     private final WalletService walletService;
     private final AuditService auditService;
     private final NotificationDispatcher notifications;
+    private final AdminAlertService adminAlertService;
 
     public WalletTopupOutcomeListener(PawapayOperationService operations, WalletService walletService,
-                                      AuditService auditService, NotificationDispatcher notifications) {
+                                      AuditService auditService, NotificationDispatcher notifications,
+                                      AdminAlertService adminAlertService) {
         this.operations = operations;
         this.walletService = walletService;
         this.auditService = auditService;
         this.notifications = notifications;
+        this.adminAlertService = adminAlertService;
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -63,15 +85,27 @@ public class WalletTopupOutcomeListener {
             return;
         }
         PawapayOperationEntity op = operations.get(event.operationId());
-        walletService.credit(op.getUserId(), op.getCurrency(), op.getAmount(), WalletTransactionType.TOP_UP,
-                "pawapay:" + op.getId(), "pawapay-topup-" + op.getId());
-        auditService.log("wallet_topup", op.getId(), "MOBILE_MONEY_CONFIRMED", op.getUserId(),
-                Map.of("currency", op.getCurrency(), "amount", op.getAmount().toPlainString(), "provider",
-                        op.getProvider()));
-        notifications.notifyUser(op.getUserId(), "Recharge confirmée",
-                "Recharge de " + WalletAmountText.format(op.getAmount(), op.getCurrency()) + " confirmée par "
-                        + PawapayProviders.label(op.getProvider()) + ".",
-                Map.of("type", "wallet_topup_confirmed", "topupId", op.getId().toString()));
+        try {
+            walletService.credit(op.getUserId(), op.getCurrency(), op.getAmount(), WalletTransactionType.TOP_UP,
+                    "pawapay:" + op.getId(), "pawapay-topup-" + op.getId());
+            auditService.log("wallet_topup", op.getId(), "MOBILE_MONEY_CONFIRMED", op.getUserId(),
+                    Map.of("currency", op.getCurrency(), "amount", op.getAmount().toPlainString(), "provider",
+                            op.getProvider()));
+            notifications.notifyUser(op.getUserId(), "Recharge confirmée",
+                    "Recharge de " + WalletAmountText.format(op.getAmount(), op.getCurrency()) + " confirmée par "
+                            + PawapayProviders.label(op.getProvider()) + ".",
+                    Map.of("type", "wallet_topup_confirmed", "topupId", op.getId().toString()));
+        } catch (RuntimeException e) {
+            adminAlertService.raise("WALLET_TOPUP_CREDIT_FAILED",
+                    "Recharge mobile money " + op.getId() + " confirmée par pawaPay mais crédit du wallet en échec "
+                            + "pour l'utilisateur " + op.getUserId() + " : " + e.getMessage()
+                            + ". L'argent est encaissé chez pawaPay ; créditer manuellement le portefeuille après "
+                            + "vérification.",
+                    Map.of("operationId", op.getId().toString(), "userId", op.getUserId().toString(),
+                            "currency", op.getCurrency(), "amount", op.getAmount().toPlainString(),
+                            "error", String.valueOf(e.getMessage())));
+            throw e;
+        }
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -80,9 +114,16 @@ public class WalletTopupOutcomeListener {
         if (event.kind() != PawapayOperationKind.DEPOSIT || event.purpose() != PawapayOperationPurpose.WALLET_TOPUP) {
             return;
         }
-        log.info("Recharge mobile money {} échouée pour user {} : {}", event.operationId(), event.userId(),
-                event.failureCode());
-        auditService.log("wallet_topup", event.operationId(), "MOBILE_MONEY_FAILED", event.userId(),
-                Map.of("failureCode", String.valueOf(event.failureCode())));
+        try {
+            log.info("Recharge mobile money {} échouée pour user {} : {}", event.operationId(), event.userId(),
+                    event.failureCode());
+            auditService.log("wallet_topup", event.operationId(), "MOBILE_MONEY_FAILED", event.userId(),
+                    Map.of("failureCode", String.valueOf(event.failureCode())));
+        } catch (RuntimeException e) {
+            // Aucun argent n'a bougé pour un dépôt en échec : seule une ligne d'audit peut être
+            // perdue. Journalisée puis avalée, jamais repropagée (voir le Javadoc de classe).
+            log.error("Audit de l'échec de recharge {} impossible pour user {} : {}", event.operationId(),
+                    event.userId(), e.getMessage(), e);
+        }
     }
 }
