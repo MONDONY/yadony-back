@@ -42,13 +42,16 @@ import org.springframework.transaction.event.TransactionalEventListener;
  * <p><b>Garde-fou {@code onCompleted}</b> — {@code PawapayOperationCompletedEvent} n'est publié
  * qu'une seule fois par opération, et le poller de réconciliation ne rebalaie que les opérations
  * encore OUVERTES : cette opération est déjà {@code COMPLETED}, rien ne rejouera jamais ce
- * crédit. Si {@code credit}, l'audit ou la notification lèvent après un commit pawaPay réussi,
- * l'argent est encaissé côté pawaPay mais jamais crédité au portefeuille, sans que personne ne le
- * sache — le corps est donc entouré d'un {@code try/catch RuntimeException} qui alerte un
- * administrateur ({@link AdminAlertService}) PUIS repropage à l'identique (même motif que
+ * crédit. Si la relecture de l'opération, {@code credit}, l'audit ou la notification lèvent après
+ * un commit pawaPay réussi, l'argent est encaissé côté pawaPay mais jamais crédité au
+ * portefeuille, sans que personne ne le sache — le corps entier (relecture comprise) est donc
+ * entouré d'un {@code try/catch RuntimeException} qui alerte un administrateur
+ * ({@link AdminAlertService}) PUIS repropage à l'identique (même motif que
  * {@code MobileMoneyDepositOutcomeListener#onCompleted}) : la transaction doit toujours être
  * annulée (jamais avaler l'erreur, ce qui commiterait un état partiel), mais un humain est
- * désormais prévenu dans la minute pour créditer manuellement.
+ * désormais prévenu dans la minute pour créditer manuellement. L'alerte cite les identifiants de
+ * l'événement ({@code event.operationId()} / {@code event.userId()}), jamais ceux de l'entité
+ * relue : si la relecture elle-même a échoué, {@code op} n'existe pas.
  *
  * <p><b>Garde-fou {@code onFailed}</b> — aucun argent n'a bougé (le dépôt a échoué chez pawaPay
  * avant tout crédit) : une erreur ici ne peut perdre qu'une ligne d'audit, jamais de l'argent. Le
@@ -84,8 +87,8 @@ public class WalletTopupOutcomeListener {
         if (event.kind() != PawapayOperationKind.DEPOSIT || event.purpose() != PawapayOperationPurpose.WALLET_TOPUP) {
             return;
         }
-        PawapayOperationEntity op = operations.get(event.operationId());
         try {
+            PawapayOperationEntity op = operations.get(event.operationId());
             walletService.credit(op.getUserId(), op.getCurrency(), op.getAmount(), WalletTransactionType.TOP_UP,
                     "pawapay:" + op.getId(), "pawapay-topup-" + op.getId());
             auditService.log("wallet_topup", op.getId(), "MOBILE_MONEY_CONFIRMED", op.getUserId(),
@@ -96,14 +99,15 @@ public class WalletTopupOutcomeListener {
                             + PawapayProviders.label(op.getProvider()) + ".",
                     Map.of("type", "wallet_topup_confirmed", "topupId", op.getId().toString()));
         } catch (RuntimeException e) {
+            // event.operationId() / event.userId(), jamais op : si la relecture ci-dessus a
+            // elle-même levé, op n'existe pas.
             adminAlertService.raise("WALLET_TOPUP_CREDIT_FAILED",
-                    "Recharge mobile money " + op.getId() + " confirmée par pawaPay mais crédit du wallet en échec "
-                            + "pour l'utilisateur " + op.getUserId() + " : " + e.getMessage()
+                    "Recharge mobile money " + event.operationId() + " confirmée par pawaPay mais crédit du wallet "
+                            + "en échec pour l'utilisateur " + event.userId() + " : " + e.getMessage()
                             + ". L'argent est encaissé chez pawaPay ; créditer manuellement le portefeuille après "
                             + "vérification.",
-                    Map.of("operationId", op.getId().toString(), "userId", op.getUserId().toString(),
-                            "currency", op.getCurrency(), "amount", op.getAmount().toPlainString(),
-                            "error", String.valueOf(e.getMessage())));
+                    Map.of("operationId", event.operationId().toString(), "userId",
+                            String.valueOf(event.userId()), "error", String.valueOf(e.getMessage())));
             throw e;
         }
     }

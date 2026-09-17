@@ -100,6 +100,33 @@ class WalletTopupOutcomeListenerTest {
         verifyNoInteractions(notifications);
     }
 
+    /**
+     * M1 (revue de branche) : la relecture de l'opération (`operations.get`) doit être À
+     * L'INTÉRIEUR du `try`, sinon elle lève avant que l'alerte admin ne soit posée alors que
+     * l'argent est déjà encaissé chez pawaPay. L'alerte doit alors citer les identifiants de
+     * l'événement (`event.operationId()` / `event.userId()`), jamais ceux de `op` qui n'existe
+     * pas dans ce cas.
+     */
+    @Test
+    void completed_whenOperationReadThrows_raisesAdminAlertAndRethrows() {
+        UUID userId = UUID.randomUUID();
+        UUID operationId = UUID.randomUUID();
+        RuntimeException boom = new RuntimeException("opération introuvable");
+        when(operations.get(operationId)).thenThrow(boom);
+
+        assertThatThrownBy(() -> listener.onCompleted(new PawapayOperationCompletedEvent(operationId,
+                PawapayOperationKind.DEPOSIT, PawapayOperationPurpose.WALLET_TOPUP, null, userId)))
+                .isSameAs(boom);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> context = ArgumentCaptor.forClass(Map.class);
+        verify(adminAlertService).raise(eq("WALLET_TOPUP_CREDIT_FAILED"), any(), context.capture());
+        assertThat(context.getValue())
+                .containsEntry("operationId", operationId.toString())
+                .containsEntry("userId", userId.toString());
+        verifyNoInteractions(walletService, auditService, notifications);
+    }
+
     @Test
     void completedBidDeposit_isIgnored() {
         listener.onCompleted(new PawapayOperationCompletedEvent(UUID.randomUUID(), PawapayOperationKind.DEPOSIT,

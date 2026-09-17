@@ -103,10 +103,13 @@ public class WalletMobileMoneyTopupService {
             // L'id de l'opération n'existe qu'APRÈS la soumission, qui a justement besoin de
             // ces URLs : la page de rebond ne peut donc pas être keyée dessus, contrairement
             // à un paiement de colis (bidId connu d'avance). Elle ne décide de rien de toute
-            // façon — elle renvoie sur l'écran du portefeuille, qui relit le statut.
-            String base = props.returnBaseUrl() + "/api/v1/pawapay/return/wallet-topup?userId=" + userId;
-            successfulUrl = base + "&outcome=success";
-            failedUrl = base + "&outcome=failed";
+            // façon — elle renvoie sur l'écran du portefeuille, qui relit le statut ; aucun
+            // identifiant utilisateur n'a donc à transiter par cette URL (dashboard pawaPay,
+            // historique du navigateur), `PawapayReturnController.backWalletTopup` ne lit
+            // d'ailleurs aucun paramètre de la requête.
+            String base = props.returnBaseUrl() + "/api/v1/pawapay/return/wallet-topup?outcome=";
+            successfulUrl = base + "success";
+            failedUrl = base + "failed";
         }
         PawapayOperationEntity op = submission.submitWalletDeposit(userId, resolved.msisdn(), resolved.provider(),
                 resolved.countryAlpha2(), amount, currency, "wallet-topup-" + userId, successfulUrl, failedUrl);

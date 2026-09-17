@@ -154,8 +154,9 @@ class WalletMobileMoneyTopupServiceTest {
 
     /**
      * Wave autorise par redirection : pawaPay a besoin des deux URLs de retour. Elles pointent
-     * sur la page de rebond du portefeuille, keyée sur l'utilisateur (l'id de l'opération
-     * n'existe pas encore au moment de la soumission).
+     * sur la page de rebond du portefeuille, qui ne décide de rien et ignore tout paramètre de
+     * la requête ({@code PawapayReturnController.backWalletTopup}) : aucun identifiant
+     * utilisateur n'y transite donc.
      */
     @Test
     void initiate_redirectProvider_buildsWalletReturnUrls() {
@@ -172,9 +173,9 @@ class WalletMobileMoneyTopupServiceTest {
         verify(submission).submitWalletDeposit(any(), any(), any(), any(), any(), any(), any(),
                 successful.capture(), failed.capture());
         assertThat(successful.getValue())
-                .isEqualTo("https://api.test/api/v1/pawapay/return/wallet-topup?userId=" + userId + "&outcome=success");
+                .isEqualTo("https://api.test/api/v1/pawapay/return/wallet-topup?outcome=success");
         assertThat(failed.getValue())
-                .isEqualTo("https://api.test/api/v1/pawapay/return/wallet-topup?userId=" + userId + "&outcome=failed");
+                .isEqualTo("https://api.test/api/v1/pawapay/return/wallet-topup?outcome=failed");
     }
 
     @Test
