@@ -92,6 +92,33 @@ class PawapayOperationServiceTest {
         assertThat(created.getMsisdn()).isEqualTo("221771234567");
     }
 
+    @Test
+    void createWalletTopup_carriesPurposeAndUser() {
+        UUID userId = UUID.randomUUID();
+        when(repository.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        PawapayOperationEntity op = service.create(PawapayOperationKind.DEPOSIT, PawapayOperationPurpose.WALLET_TOPUP,
+                userId, null, null, new BigDecimal("10000"), "XOF", "ORANGE_CIV", "CI", "+2250734567890");
+
+        assertThat(op.getPurpose()).isEqualTo(PawapayOperationPurpose.WALLET_TOPUP);
+        assertThat(op.getUserId()).isEqualTo(userId);
+        assertThat(op.getPaymentId()).isNull();
+        verify(repository, never()).existsByPaymentIdAndKindAndStatusIn(any(), any(), any());
+    }
+
+    @Test
+    void legacyCreate_defaultsToBidPayment() {
+        UUID paymentId = UUID.randomUUID();
+        when(repository.existsByPaymentIdAndKindAndStatusIn(eq(paymentId), any(), any())).thenReturn(false);
+        when(repository.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        PawapayOperationEntity op = service.create(PawapayOperationKind.DEPOSIT, paymentId, null,
+                new BigDecimal("6600"), "XOF", "ORANGE_CIV", "CI", "+2250734567890");
+
+        assertThat(op.getPurpose()).isEqualTo(PawapayOperationPurpose.BID_PAYMENT);
+        assertThat(op.getUserId()).isNull();
+    }
+
     // Revue ronde 1, point 1 (CRITIQUE) : markSubmitted ne fait plus de read-modify-write
     // d'entite (sans protection reelle face a un applyTransition concurrent, bulk JPQL qui
     // n'incremente jamais @Version) mais un UPDATE garde par WHERE status = CREATED. Les

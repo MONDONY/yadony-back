@@ -1,6 +1,7 @@
 package com.yadony.api.payments.pawapay.events;
 
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
+import com.yadony.api.payments.pawapay.PawapayOperationPurpose;
 import java.util.UUID;
 
 /**
@@ -17,4 +18,5 @@ import java.util.UUID;
  * {@code @EventListener} seul sur un traitement d'argent (voir les règles du
  * projet sur les listeners de paiement).
  */
-public record PawapayOperationCompletedEvent(UUID operationId, PawapayOperationKind kind, UUID paymentId) {}
+public record PawapayOperationCompletedEvent(UUID operationId, PawapayOperationKind kind,
+                                              PawapayOperationPurpose purpose, UUID paymentId, UUID userId) {}

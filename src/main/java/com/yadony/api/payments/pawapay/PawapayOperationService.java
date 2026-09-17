@@ -49,11 +49,24 @@ public class PawapayOperationService {
     public PawapayOperationEntity create(PawapayOperationKind kind, UUID paymentId, UUID relatedOperationId,
                                          BigDecimal amount, String currency, String provider, String country,
                                          String msisdn) {
+        return create(kind, PawapayOperationPurpose.BID_PAYMENT, null, paymentId, relatedOperationId,
+                amount, currency, provider, country, msisdn);
+    }
+
+    /**
+     * Variante complète : porte le {@code purpose} et l'{@code userId} d'une opération de wallet
+     * (recharge ou remboursement), sans paiement de colis. L'ancienne signature délègue ici avec
+     * {@code BID_PAYMENT} et {@code userId = null}.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public PawapayOperationEntity create(PawapayOperationKind kind, PawapayOperationPurpose purpose, UUID userId,
+                                         UUID paymentId, UUID relatedOperationId, BigDecimal amount, String currency,
+                                         String provider, String country, String msisdn) {
         if (paymentId != null && repository.existsByPaymentIdAndKindAndStatusIn(paymentId, kind,
                 PawapayOperationStatus.LIVE_OR_DONE)) {
             throw inProgress(kind);
         }
-        PawapayOperationEntity op = new PawapayOperationEntity(UUID.randomUUID(), kind, paymentId,
+        PawapayOperationEntity op = new PawapayOperationEntity(UUID.randomUUID(), kind, purpose, userId, paymentId,
                 relatedOperationId, amount, currency, provider, country, msisdn);
         try {
             return repository.saveAndFlush(op);
@@ -151,7 +164,8 @@ public class PawapayOperationService {
             return false;
         }
         if (newStatus == PawapayOperationStatus.COMPLETED) {
-            events.publishEvent(new PawapayOperationCompletedEvent(id, op.getKind(), op.getPaymentId()));
+            events.publishEvent(new PawapayOperationCompletedEvent(id, op.getKind(), op.getPurpose(),
+                    op.getPaymentId(), op.getUserId()));
         } else if (newStatus.isFinal()) {
             // Relecture obligatoire : le COALESCE d'applyTransition peut avoir
             // conservé un failureCode/failureMessage antérieur différent des
@@ -161,8 +175,8 @@ public class PawapayOperationService {
             // passé à cette méthode.
             PawapayOperationEntity reloaded = repository.findById(id).orElseThrow(() ->
                     new IllegalStateException("pawaPay : opération disparue juste après sa transition " + id));
-            events.publishEvent(new PawapayOperationFailedEvent(id, op.getKind(), op.getPaymentId(),
-                    reloaded.getFailureCode(), reloaded.getFailureMessage()));
+            events.publishEvent(new PawapayOperationFailedEvent(id, op.getKind(), op.getPurpose(), op.getPaymentId(),
+                    op.getUserId(), reloaded.getFailureCode(), reloaded.getFailureMessage()));
         }
         return true;
     }

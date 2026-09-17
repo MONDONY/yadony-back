@@ -24,6 +24,11 @@ public interface PawapayOperationRepository extends JpaRepository<PawapayOperati
     boolean existsByPaymentIdAndKindAndStatusIn(
             UUID paymentId, PawapayOperationKind kind, Collection<PawapayOperationStatus> statuses);
 
+    boolean existsByUserIdAndKindAndCurrencyAndPurposeAndStatusIn(UUID userId, PawapayOperationKind kind,
+            String currency, PawapayOperationPurpose purpose, Collection<PawapayOperationStatus> statuses);
+
+    Optional<PawapayOperationEntity> findByIdAndUserId(UUID id, UUID userId);
+
     /**
      * Opérations encore ouvertes à réconcilier, bornées par {@code pageable} : sans borne, un
      * incident prolongé chez pawaPay pourrait accumuler des centaines d'opérations {@code OPEN}

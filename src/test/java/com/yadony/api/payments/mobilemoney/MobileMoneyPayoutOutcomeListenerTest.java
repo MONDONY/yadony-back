@@ -18,6 +18,7 @@ import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.events.PaymentReleasedEvent;
 import com.yadony.api.payments.pawapay.PawapayOperationEntity;
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
+import com.yadony.api.payments.pawapay.PawapayOperationPurpose;
 import com.yadony.api.payments.pawapay.PawapayOperationService;
 import com.yadony.api.payments.pawapay.events.PawapayOperationCompletedEvent;
 import com.yadony.api.payments.pawapay.events.PawapayOperationFailedEvent;
@@ -64,7 +65,7 @@ class MobileMoneyPayoutOutcomeListenerTest {
         when(bidRepository.findById(bid.getId())).thenReturn(Optional.of(bid));
         when(announcementRepository.findById(bid.getAnnouncementId())).thenReturn(Optional.of(a));
 
-        listener.onCompleted(new PawapayOperationCompletedEvent(op.getId(), PawapayOperationKind.PAYOUT, paymentId));
+        listener.onCompleted(new PawapayOperationCompletedEvent(op.getId(), PawapayOperationKind.PAYOUT, PawapayOperationPurpose.BID_PAYMENT, paymentId, null));
 
         // Écart déclaré (test-only, mécanique) : ArgumentMatchers.publishEvent(Object) et
         // publishEvent(ApplicationEvent) (surcharge par défaut de l'interface Spring)
@@ -82,7 +83,7 @@ class MobileMoneyPayoutOutcomeListenerTest {
     @Test
     void failedPayout_raisesAlert_andAudits() {
         UUID paymentId = UUID.randomUUID();
-        listener.onFailed(new PawapayOperationFailedEvent(UUID.randomUUID(), PawapayOperationKind.PAYOUT, paymentId, "RECIPIENT_NOT_FOUND", "no wallet"));
+        listener.onFailed(new PawapayOperationFailedEvent(UUID.randomUUID(), PawapayOperationKind.PAYOUT, PawapayOperationPurpose.BID_PAYMENT, paymentId, null, "RECIPIENT_NOT_FOUND", "no wallet"));
         verify(adminAlert).raise(eq("PAWAPAY_PAYOUT_FAILED"), any(), any());
         verify(audit).log(eq("PAYMENT"), eq(paymentId), eq("MM_PAYOUT_FAILED"), any(), any());
     }
@@ -97,7 +98,7 @@ class MobileMoneyPayoutOutcomeListenerTest {
         UUID paymentId = UUID.randomUUID();
         String longMessage = "x".repeat(200);
         String longCode = "y".repeat(200);
-        listener.onFailed(new PawapayOperationFailedEvent(UUID.randomUUID(), PawapayOperationKind.PAYOUT, paymentId, longCode, longMessage));
+        listener.onFailed(new PawapayOperationFailedEvent(UUID.randomUUID(), PawapayOperationKind.PAYOUT, PawapayOperationPurpose.BID_PAYMENT, paymentId, null, longCode, longMessage));
 
         org.mockito.ArgumentCaptor<java.util.Map<String, Object>> auditPayload =
                 org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
@@ -113,7 +114,7 @@ class MobileMoneyPayoutOutcomeListenerTest {
 
     @Test
     void depositEvents_areIgnoredHere() {
-        listener.onCompleted(new PawapayOperationCompletedEvent(UUID.randomUUID(), PawapayOperationKind.DEPOSIT, UUID.randomUUID()));
+        listener.onCompleted(new PawapayOperationCompletedEvent(UUID.randomUUID(), PawapayOperationKind.DEPOSIT, PawapayOperationPurpose.BID_PAYMENT, UUID.randomUUID(), null));
         verify(events, never()).publishEvent(any());
     }
 
@@ -127,7 +128,7 @@ class MobileMoneyPayoutOutcomeListenerTest {
      */
     @Test
     void completedPayout_withNullPaymentId_isIgnored() {
-        listener.onCompleted(new PawapayOperationCompletedEvent(UUID.randomUUID(), PawapayOperationKind.PAYOUT, null));
+        listener.onCompleted(new PawapayOperationCompletedEvent(UUID.randomUUID(), PawapayOperationKind.PAYOUT, PawapayOperationPurpose.BID_PAYMENT, null, null));
 
         verify(operations, never()).get(any());
         verify(paymentRepository, never()).findById(any());
@@ -152,7 +153,7 @@ class MobileMoneyPayoutOutcomeListenerTest {
         when(operations.get(operationId)).thenReturn(op);
         when(paymentRepository.findById(paymentId)).thenReturn(Optional.empty());
 
-        listener.onCompleted(new PawapayOperationCompletedEvent(operationId, PawapayOperationKind.PAYOUT, paymentId));
+        listener.onCompleted(new PawapayOperationCompletedEvent(operationId, PawapayOperationKind.PAYOUT, PawapayOperationPurpose.BID_PAYMENT, paymentId, null));
 
         verify(bidRepository, never()).findById(any());
         verify(events, never()).publishEvent(any());
@@ -173,7 +174,7 @@ class MobileMoneyPayoutOutcomeListenerTest {
         when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(payment));
         when(bidRepository.findById(bidId)).thenReturn(Optional.empty());
 
-        listener.onCompleted(new PawapayOperationCompletedEvent(operationId, PawapayOperationKind.PAYOUT, paymentId));
+        listener.onCompleted(new PawapayOperationCompletedEvent(operationId, PawapayOperationKind.PAYOUT, PawapayOperationPurpose.BID_PAYMENT, paymentId, null));
 
         verify(announcementRepository, never()).findById(any());
         verify(events, never()).publishEvent(any());
@@ -199,7 +200,7 @@ class MobileMoneyPayoutOutcomeListenerTest {
         when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
         when(announcementRepository.findById(announcementId)).thenReturn(Optional.empty());
 
-        listener.onCompleted(new PawapayOperationCompletedEvent(operationId, PawapayOperationKind.PAYOUT, paymentId));
+        listener.onCompleted(new PawapayOperationCompletedEvent(operationId, PawapayOperationKind.PAYOUT, PawapayOperationPurpose.BID_PAYMENT, paymentId, null));
 
         verify(events, never()).publishEvent(any());
         verify(audit, never()).log(any(), any(), any(), any(), any());
@@ -230,7 +231,7 @@ class MobileMoneyPayoutOutcomeListenerTest {
         when(bidRepository.findByLinkedNegotiationThreadId(threadId)).thenReturn(Optional.of(bid));
         when(announcementRepository.findById(bid.getAnnouncementId())).thenReturn(Optional.of(ann));
 
-        listener.onCompleted(new PawapayOperationCompletedEvent(op.getId(), PawapayOperationKind.PAYOUT, paymentId));
+        listener.onCompleted(new PawapayOperationCompletedEvent(op.getId(), PawapayOperationKind.PAYOUT, PawapayOperationPurpose.BID_PAYMENT, paymentId, null));
 
         verify(bidRepository, never()).findById(any());
         verify(events).publishEvent(ArgumentMatchers.<PaymentReleasedEvent>argThat(r ->
@@ -247,8 +248,7 @@ class MobileMoneyPayoutOutcomeListenerTest {
      */
     @Test
     void failedPayout_withDepositKind_isIgnored() {
-        listener.onFailed(new PawapayOperationFailedEvent(UUID.randomUUID(), PawapayOperationKind.DEPOSIT, UUID.randomUUID(),
-                "CODE", "message"));
+        listener.onFailed(new PawapayOperationFailedEvent(UUID.randomUUID(), PawapayOperationKind.DEPOSIT, PawapayOperationPurpose.BID_PAYMENT, UUID.randomUUID(), null, "CODE", "message"));
 
         verify(audit, never()).log(any(), any(), any(), any(), any());
         verify(adminAlert, never()).raise(any(), any(), any());
@@ -256,8 +256,7 @@ class MobileMoneyPayoutOutcomeListenerTest {
 
     @Test
     void failedPayout_withNullPaymentId_isIgnored() {
-        listener.onFailed(new PawapayOperationFailedEvent(UUID.randomUUID(), PawapayOperationKind.PAYOUT, null,
-                "CODE", "message"));
+        listener.onFailed(new PawapayOperationFailedEvent(UUID.randomUUID(), PawapayOperationKind.PAYOUT, PawapayOperationPurpose.BID_PAYMENT, null, null, "CODE", "message"));
 
         verify(audit, never()).log(any(), any(), any(), any(), any());
         verify(adminAlert, never()).raise(any(), any(), any());
@@ -273,7 +272,7 @@ class MobileMoneyPayoutOutcomeListenerTest {
     @Test
     void failedPayout_withNullFailureCodeAndMessage_stringifiesToLiteralNull() {
         UUID paymentId = UUID.randomUUID();
-        listener.onFailed(new PawapayOperationFailedEvent(UUID.randomUUID(), PawapayOperationKind.PAYOUT, paymentId, null, null));
+        listener.onFailed(new PawapayOperationFailedEvent(UUID.randomUUID(), PawapayOperationKind.PAYOUT, PawapayOperationPurpose.BID_PAYMENT, paymentId, null, null, null));
 
         org.mockito.ArgumentCaptor<java.util.Map<String, Object>> auditPayload =
                 org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
