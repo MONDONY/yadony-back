@@ -16,6 +16,9 @@ public interface WalletRefundRequestItemRepository extends JpaRepository<WalletR
 
     List<WalletRefundRequestItemEntity> findByRefundRequestId(UUID refundRequestId);
 
+    /** Items de plusieurs demandes en une requête (contrat API : frais, net, destination). */
+    List<WalletRefundRequestItemEntity> findByRefundRequestIdIn(Collection<UUID> refundRequestIds);
+
     /**
      * Un PaymentIntent peut porter plusieurs items dans le temps (item FAILED puis item du
      * ticket enfant, remboursements partiels successifs), mais un seul item actif à la fois

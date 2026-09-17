@@ -114,6 +114,41 @@ public class WalletPawapayRefundIssuer implements WalletRefundRailIssuer {
         }
     }
 
+    /**
+     * Rattrapage d'une issue pawaPay jamais appliquée à l'item (écouteur en échec, rejet
+     * synchrone puis application ratée). Aucun appel à pawaPay : le statut LOCAL de l'opération
+     * liée fait foi, le poller le synchronisant déjà. L'opération lue est le versement quand
+     * l'item en porte un (repli déjà lancé), sinon le remboursement. Opération encore ouverte ou
+     * introuvable : rien. Finale : même transition que l'écouteur ({@link #applyPawapayOutcome}),
+     * donc COMPLETED passe l'item REFUNDED, un remboursement FAILED ou SUBMIT_REJECTED sans
+     * versement lance le repli, un versement mort passe l'item FAILED avec alerte.
+     */
+    @Override
+    public void reconcile(WalletRefundRequestEntity request, WalletRefundRequestItemEntity item) {
+        if (item.getStatus() != WalletRefundItemStatus.PROCESSING) {
+            return;
+        }
+        PawapayOperationKind kind;
+        UUID operationId;
+        if (item.getPawapayPayoutId() != null) {
+            kind = PawapayOperationKind.PAYOUT;
+            operationId = item.getPawapayPayoutId();
+        } else if (item.getPawapayRefundId() != null) {
+            kind = PawapayOperationKind.REFUND;
+            operationId = item.getPawapayRefundId();
+        } else {
+            return;
+        }
+        PawapayOperationEntity op = operationRepository.findById(operationId).orElse(null);
+        if (op == null || op.getStatus() == null || !op.getStatus().isFinal()) {
+            return;
+        }
+        boolean completed = op.getStatus() == PawapayOperationStatus.COMPLETED;
+        log.info("Remboursement wallet pawaPay : reconciliation de l'item {} sur l'etat local {} de {} {}",
+                item.getId(), op.getStatus(), kind, operationId);
+        applyPawapayOutcome(request, item, kind, completed, completed ? null : op.getFailureCode());
+    }
+
     /** Rejet synchrone explicite d'une initiation : à traiter comme une issue finale en échec. */
     record Rejection(PawapayOperationKind kind, UUID operationId, String failureCode) {}
 

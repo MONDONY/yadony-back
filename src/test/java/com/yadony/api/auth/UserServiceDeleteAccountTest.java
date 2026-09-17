@@ -271,6 +271,61 @@ class UserServiceDeleteAccountTest {
             assertThat(s.get(0).rail()).isEqualTo("STRIPE");
         }
 
+        @Test
+        void pawapayRail_toutesLesCiblesMobileMoney_railPawapayFraisNetEtDestinationMasquee() {
+            when(walletAccountRepository.findAllByUserId(USER_ID)).thenReturn(List.of(walletOf("XOF", "10000.00")));
+            UUID depositId = UUID.randomUUID();
+            WalletRefundAllocation a = new WalletRefundAllocation(
+                    List.of(new WalletRefundAllocation.RefundableTopup(UUID.randomUUID(), "pawapay:" + depositId,
+                            new BigDecimal("10000"), new BigDecimal("10000"), new BigDecimal("200"),
+                            WalletRefundRail.PAWAPAY, "ORANGE_CIV")),
+                    new BigDecimal("10000"), BigDecimal.ZERO, BigDecimal.ZERO,
+                    new BigDecimal("200"), new BigDecimal("9800"));
+            when(walletSelfRefundService.allocation(USER_ID, "XOF")).thenReturn(a);
+            when(walletSelfRefundService.destinationMasked(a)).thenReturn("+225 •••• 90");
+
+            WalletSettlementDto s = userService.walletSettlement(USER_ID).get(0);
+
+            assertThat(s.rail()).isEqualTo(WalletSettlementDto.RAIL_PAWAPAY).isEqualTo("PAWAPAY");
+            assertThat(s.refundableAmount()).isEqualByComparingTo("10000");
+            assertThat(s.feeAmount()).isEqualByComparingTo("200");
+            assertThat(s.netAmount()).isEqualByComparingTo("9800");
+            assertThat(s.destinationMasked()).isEqualTo("+225 •••• 90");
+        }
+
+        @Test
+        void stripeRail_rechargeCarteJamaisUtilisee_fraisEtNetSansDestination() {
+            when(walletAccountRepository.findAllByUserId(USER_ID)).thenReturn(List.of(walletOf("EUR", "40.00")));
+            WalletRefundAllocation a = new WalletRefundAllocation(
+                    List.of(new WalletRefundAllocation.RefundableTopup(UUID.randomUUID(), "pi_1",
+                            new BigDecimal("40.00"), new BigDecimal("40.00"), new BigDecimal("0.85"),
+                            WalletRefundRail.STRIPE, null)),
+                    new BigDecimal("40.00"), BigDecimal.ZERO, BigDecimal.ZERO,
+                    new BigDecimal("0.85"), new BigDecimal("39.15"));
+            when(walletSelfRefundService.allocation(USER_ID, "EUR")).thenReturn(a);
+
+            WalletSettlementDto s = userService.walletSettlement(USER_ID).get(0);
+
+            assertThat(s.rail()).isEqualTo("STRIPE");
+            assertThat(s.feeAmount()).isEqualByComparingTo("0.85");
+            assertThat(s.netAmount()).isEqualByComparingTo("39.15");
+            assertThat(s.destinationMasked()).isNull();
+        }
+
+        @Test
+        void railsMixtes_railStripe() {
+            when(walletAccountRepository.findAllByUserId(USER_ID)).thenReturn(List.of(walletOf("XOF", "20000.00")));
+            WalletRefundAllocation a = new WalletRefundAllocation(
+                    List.of(new WalletRefundAllocation.RefundableTopup(UUID.randomUUID(), "pi_1",
+                                    BigDecimal.TEN, BigDecimal.TEN, BigDecimal.ZERO, WalletRefundRail.STRIPE, null),
+                            new WalletRefundAllocation.RefundableTopup(UUID.randomUUID(), "pawapay:" + UUID.randomUUID(),
+                                    BigDecimal.TEN, BigDecimal.TEN, BigDecimal.ZERO, WalletRefundRail.PAWAPAY, "MTN")),
+                    new BigDecimal("20"), BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal("20"));
+            when(walletSelfRefundService.allocation(USER_ID, "XOF")).thenReturn(a);
+
+            assertThat(userService.walletSettlement(USER_ID).get(0).rail()).isEqualTo("STRIPE");
+        }
+
         /**
          * Rail MANUAL : aucun montant de l'allocateur n'existe (le rejeu a échoué). Le repli
          * ouvre un ticket admin sur TOUT le solde, que la résolution admin rembourse en entier
@@ -291,6 +346,9 @@ class UserServiceDeleteAccountTest {
             assertThat(s.get(0).refundableAmount()).isEqualByComparingTo("40.00");
             assertThat(s.get(0).forfeitedAmount()).isEqualByComparingTo("0");
             assertThat(s.get(0).inFlightAmount()).isEqualByComparingTo("0");
+            assertThat(s.get(0).feeAmount()).isEqualByComparingTo("0");
+            assertThat(s.get(0).netAmount()).isEqualByComparingTo("40.00");
+            assertThat(s.get(0).destinationMasked()).isNull();
         }
     }
 

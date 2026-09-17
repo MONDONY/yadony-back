@@ -19,10 +19,12 @@ import com.yadony.api.payments.pawapay.PawapayOperationPurpose;
 import com.yadony.api.payments.pawapay.PawapayOperationRepository;
 import com.yadony.api.payments.wallet.fees.PawapayFeeTable;
 import com.yadony.api.payments.wallet.fees.StripeFeeSource;
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -65,6 +67,7 @@ class WalletSelfRefundServiceTest {
     @Mock StripeFeeSource stripeFeeSource;
     @Mock PawapayFeeTable pawapayFeeTable;
     @Mock WalletRefundRailIssuer walletRefundRailIssuer;
+    @Mock EntityManager entityManager;
 
     WalletSelfRefundService service;
 
@@ -76,7 +79,7 @@ class WalletSelfRefundServiceTest {
                 refundRequestRepository, refundRequestItemRepository, walletService,
                 auditService, adminAlertService, adminAlertEscalator, new ObjectMapper(),
                 walletRefundRequestService, eventPublisher, pawapayOperationRepository,
-                stripeFeeSource, pawapayFeeTable, walletRefundRailIssuer);
+                stripeFeeSource, pawapayFeeTable, walletRefundRailIssuer, entityManager);
         // Repli neutre : la plupart des scénarios ne testent pas le calcul de frais lui-même
         // (déjà couvert par WalletRefundAllocatorTest), seulement le branchement canal/montant
         // net. lenient() : tous les tests n'atteignent pas forcément une recharge intacte (la
@@ -263,6 +266,7 @@ class WalletSelfRefundServiceTest {
         stale.setUserId(USER_ID);
         stale.setCurrency("EUR");
         stale.setStatus(WalletRefundRequestStatus.PROCESSING);
+        stale.setChannel(WalletRefundChannel.AUTOMATIC_STRIPE);
         setId(stale, requestId);
         WalletRefundRequestItemEntity item = new WalletRefundRequestItemEntity();
         item.setRefundRequestId(requestId);
@@ -274,7 +278,7 @@ class WalletSelfRefundServiceTest {
                 USER_ID, "EUR", List.of(WalletRefundRequestStatus.PROCESSING)))
                 .thenReturn(Optional.of(stale));
         when(refundRequestItemRepository.findByRefundRequestId(requestId)).thenReturn(List.of(item));
-        when(refundRequestRepository.findById(requestId)).thenReturn(Optional.of(stale));
+        when(refundRequestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.of(stale));
         when(refundRequestRepository.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
         when(refundRequestItemRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         // Après réconciliation, la demande n'est plus PROCESSING : plus aucun blocage.
@@ -722,7 +726,7 @@ class WalletSelfRefundServiceTest {
         when(refundRequestItemRepository.findUnissuedForUpdate(request.getId(), WalletRefundItemStatus.PENDING))
                 .thenReturn(List.of(item));
         when(refundRequestItemRepository.findByRefundRequestId(request.getId())).thenReturn(List.of(item));
-        when(refundRequestRepository.findById(request.getId())).thenReturn(Optional.of(request));
+        when(refundRequestRepository.findByIdForUpdate(request.getId())).thenReturn(Optional.of(request));
 
         try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
             refundStatic.when(() -> Refund.create(any(RefundCreateParams.class), any(RequestOptions.class)))
@@ -748,6 +752,7 @@ class WalletSelfRefundServiceTest {
         request.setUserId(USER_ID);
         request.setCurrency("EUR");
         request.setStatus(WalletRefundRequestStatus.PROCESSING);
+        request.setChannel(WalletRefundChannel.AUTOMATIC_STRIPE);
         setId(request, requestId);
         WalletRefundRequestItemEntity item = new WalletRefundRequestItemEntity();
         item.setRefundRequestId(requestId);
@@ -757,7 +762,7 @@ class WalletSelfRefundServiceTest {
 
         when(refundRequestRepository.findAllByUserIdOrderByRequestedAtDesc(USER_ID)).thenReturn(List.of(request));
         when(refundRequestItemRepository.findByRefundRequestId(requestId)).thenReturn(List.of(item));
-        when(refundRequestRepository.findById(requestId)).thenReturn(Optional.of(request));
+        when(refundRequestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.of(request));
         when(refundRequestRepository.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
         when(refundRequestItemRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
@@ -840,7 +845,7 @@ class WalletSelfRefundServiceTest {
         when(refundRequestItemRepository.findByPaymentIntentIdAndStatus("pi_1", WalletRefundItemStatus.PROCESSING))
                 .thenReturn(Optional.of(item));
         when(refundRequestItemRepository.findByRefundRequestId(request.getId())).thenReturn(List.of(item));
-        when(refundRequestRepository.findById(request.getId())).thenReturn(Optional.of(request));
+        when(refundRequestRepository.findByIdForUpdate(request.getId())).thenReturn(Optional.of(request));
 
         service.handleRefundUpdated(failedRefundEvent("pi_1", "re_1"));
 
@@ -870,7 +875,8 @@ class WalletSelfRefundServiceTest {
         request.setUserId(USER_ID);
         request.setCurrency("EUR");
         request.setStatus(WalletRefundRequestStatus.PROCESSING);
-        when(refundRequestRepository.findById(requestId)).thenReturn(Optional.of(request));
+        setId(request, requestId);
+        when(refundRequestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.of(request));
         when(refundRequestRepository.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
         when(refundRequestItemRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
@@ -899,7 +905,7 @@ class WalletSelfRefundServiceTest {
         WalletRefundRequestItemEntity item = processingItem(request, "pi_1", "35.00", "re_1");
         when(refundRequestItemRepository.findByPaymentIntentIdAndStatus("pi_1", WalletRefundItemStatus.PROCESSING)).thenReturn(Optional.of(item));
         when(refundRequestItemRepository.findByRefundRequestId(request.getId())).thenReturn(List.of(item));
-        when(refundRequestRepository.findById(request.getId())).thenReturn(Optional.of(request));
+        when(refundRequestRepository.findByIdForUpdate(request.getId())).thenReturn(Optional.of(request));
 
         Charge charge = new Charge();
         charge.setPaymentIntent("pi_1");
@@ -925,7 +931,7 @@ class WalletSelfRefundServiceTest {
         WalletRefundRequestItemEntity item = processingItem(request, "pi_1", "35.00", "re_1");
         when(refundRequestItemRepository.findByPaymentIntentIdAndStatus("pi_1", WalletRefundItemStatus.PROCESSING)).thenReturn(Optional.of(item));
         when(refundRequestItemRepository.findByRefundRequestId(request.getId())).thenReturn(List.of(item));
-        when(refundRequestRepository.findById(request.getId())).thenReturn(Optional.of(request));
+        when(refundRequestRepository.findByIdForUpdate(request.getId())).thenReturn(Optional.of(request));
         Charge charge = new Charge();
         charge.setPaymentIntent("pi_1");
 
@@ -976,7 +982,7 @@ class WalletSelfRefundServiceTest {
         ko.setStatus(WalletRefundItemStatus.PROCESSING);
         when(refundRequestItemRepository.findByPaymentIntentIdAndStatus("pi_2", WalletRefundItemStatus.PROCESSING)).thenReturn(Optional.of(ko));
         when(refundRequestItemRepository.findByRefundRequestId(request.getId())).thenReturn(List.of(ok, ko));
-        when(refundRequestRepository.findById(request.getId())).thenReturn(Optional.of(request));
+        when(refundRequestRepository.findByIdForUpdate(request.getId())).thenReturn(Optional.of(request));
 
         service.handleRefundUpdated(failedRefundEvent("pi_2", "re_2"));
 
@@ -1078,6 +1084,334 @@ class WalletSelfRefundServiceTest {
 
         assertThat(transactional).isNotNull();
         assertThat(transactional.noRollbackFor()).contains(WalletAllocationInvariantException.class);
+    }
+
+    // ── Tâche 5 : atomicité de la résolution et réconciliation par rail ─────────────
+
+    @Test
+    void resolveIfComplete_demandeDejaResolueAuRafraichissement_aucunDebitNiTicket() {
+        // Cache de premier niveau : l'entité verrouillée dit encore PROCESSING, la base dit
+        // REFUNDED (un écouteur l'a résolue et a committé). Le rafraîchissement fait foi.
+        WalletRefundRequestEntity request = processingRequest("35.00");
+        when(refundRequestRepository.findByIdForUpdate(request.getId())).thenReturn(Optional.of(request));
+        doAnswer(inv -> {
+            request.setStatus(WalletRefundRequestStatus.REFUNDED);
+            return null;
+        }).when(entityManager).refresh(request);
+
+        service.resolveIfComplete(request.getId());
+
+        verify(walletService, never()).debitConfirmedRefund(any(), any(), any(), any());
+        verifyNoInteractions(walletRefundRequestService, auditService);
+        verify(refundRequestRepository, never()).saveAndFlush(any());
+        verify(refundRequestItemRepository, never()).findByRefundRequestId(any());
+    }
+
+    @Test
+    void listForUser_demandeResolueParUnEcouteurEntreTemps_aucunSecondDebit() {
+        WalletRefundRequestEntity request = processingRequest("35.00");
+        when(refundRequestRepository.findAllByUserIdOrderByRequestedAtDesc(USER_ID)).thenReturn(List.of(request));
+        when(refundRequestRepository.findByIdForUpdate(request.getId())).thenReturn(Optional.of(request));
+        doAnswer(inv -> {
+            request.setStatus(WalletRefundRequestStatus.REFUNDED);
+            return null;
+        }).when(entityManager).refresh(request);
+
+        try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            assertThat(service.listForUser(USER_ID)).containsExactly(request);
+            refundStatic.verifyNoInteractions();
+        }
+
+        assertThat(request.getStatus()).isEqualTo(WalletRefundRequestStatus.REFUNDED);
+        verify(walletService, never()).debitConfirmedRefund(any(), any(), any(), any());
+        verifyNoInteractions(walletRefundRequestService, walletRefundRailIssuer);
+        verify(refundRequestItemRepository, never()).findByRefundRequestId(any());
+    }
+
+    @Test
+    void reconcile_verrouilleEtRelitLaDemandeAvantDeLireSesItems() {
+        WalletRefundRequestEntity request = processingRequest("35.00");
+        WalletRefundRequestItemEntity item = processingItem(request, "pi_1", "35.00", "re_1");
+        when(refundRequestRepository.findAllByUserIdOrderByRequestedAtDesc(USER_ID)).thenReturn(List.of(request));
+        when(refundRequestRepository.findByIdForUpdate(request.getId())).thenReturn(Optional.of(request));
+        when(refundRequestItemRepository.findByRefundRequestId(request.getId())).thenReturn(List.of(item));
+
+        try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            Refund pending = new Refund();
+            pending.setId("re_1");
+            pending.setStatus("pending");
+            refundStatic.when(() -> Refund.retrieve("re_1")).thenReturn(pending);
+
+            service.listForUser(USER_ID);
+        }
+
+        InOrder order = inOrder(refundRequestRepository, entityManager, refundRequestItemRepository);
+        order.verify(refundRequestRepository).findByIdForUpdate(request.getId());
+        order.verify(entityManager).refresh(request);
+        order.verify(refundRequestItemRepository, atLeastOnce()).findByRefundRequestId(request.getId());
+        assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.PROCESSING);
+        verify(walletService, never()).debitConfirmedRefund(any(), any(), any(), any());
+    }
+
+    @Test
+    void reconcile_demandePawapay_delegueAuRailSansAppelerStripe() {
+        WalletRefundRequestEntity request = processingRequest("10000");
+        request.setCurrency("XOF");
+        request.setChannel(WalletRefundChannel.AUTOMATIC_PAWAPAY);
+        WalletRefundRequestItemEntity item = processingItem(request, "pawapay:" + UUID.randomUUID(), "10000", null);
+        item.setPawapayRefundId(UUID.randomUUID());
+        when(refundRequestRepository.findAllByUserIdOrderByRequestedAtDesc(USER_ID)).thenReturn(List.of(request));
+        when(refundRequestRepository.findByIdForUpdate(request.getId())).thenReturn(Optional.of(request));
+        when(refundRequestItemRepository.findByRefundRequestId(request.getId())).thenReturn(List.of(item));
+        // Le rail applique l'issue COMPLETED lue localement.
+        doAnswer(inv -> {
+            item.setStatus(WalletRefundItemStatus.REFUNDED);
+            return null;
+        }).when(walletRefundRailIssuer).reconcile(request, item);
+
+        try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            service.listForUser(USER_ID);
+            refundStatic.verifyNoInteractions();
+        }
+
+        verify(walletRefundRailIssuer).reconcile(request, item);
+        assertThat(request.getStatus()).isEqualTo(WalletRefundRequestStatus.REFUNDED);
+        verify(walletService).debitConfirmedRefund(USER_ID, "XOF", new BigDecimal("10000"),
+                WalletTransactionType.SELF_REFUND_OUT);
+    }
+
+    @Test
+    void reconcile_demandeStripe_neDelegueJamaisAuRailPawapay() {
+        WalletRefundRequestEntity request = processingRequest("35.00");
+        WalletRefundRequestItemEntity item = processingItem(request, "pi_1", "35.00", "re_1");
+        when(refundRequestRepository.findAllByUserIdOrderByRequestedAtDesc(USER_ID)).thenReturn(List.of(request));
+        when(refundRequestRepository.findByIdForUpdate(request.getId())).thenReturn(Optional.of(request));
+        when(refundRequestItemRepository.findByRefundRequestId(request.getId())).thenReturn(List.of(item));
+
+        try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            Refund succeeded = new Refund();
+            succeeded.setStatus("succeeded");
+            refundStatic.when(() -> Refund.retrieve("re_1")).thenReturn(succeeded);
+            service.listForUser(USER_ID);
+        }
+
+        verifyNoInteractions(walletRefundRailIssuer);
+        assertThat(request.getStatus()).isEqualTo(WalletRefundRequestStatus.REFUNDED);
+    }
+
+    @Test
+    void handleChargeRefunded_itemTermineEntreTempsParLaReconciliation_neReecritRien() {
+        WalletRefundRequestEntity request = processingRequest("35.00");
+        WalletRefundRequestItemEntity item = processingItem(request, "pi_1", "35.00", "re_1");
+        when(refundRequestItemRepository.findByPaymentIntentIdAndStatus("pi_1", WalletRefundItemStatus.PROCESSING))
+                .thenReturn(Optional.of(item));
+        when(refundRequestRepository.findByIdForUpdate(request.getId())).thenReturn(Optional.of(request));
+        doAnswer(inv -> {
+            request.setStatus(WalletRefundRequestStatus.REFUNDED);
+            return null;
+        }).when(entityManager).refresh(request);
+        doAnswer(inv -> {
+            item.setStatus(WalletRefundItemStatus.REFUNDED);
+            return null;
+        }).when(entityManager).refresh(item);
+        Charge charge = new Charge();
+        charge.setPaymentIntent("pi_1");
+        Refund refund = new Refund();
+        refund.setId("re_1");
+        refund.setStatus("succeeded");
+        RefundCollection refunds = new RefundCollection();
+        refunds.setData(List.of(refund));
+        charge.setRefunds(refunds);
+
+        service.handleChargeRefunded(charge);
+
+        InOrder order = inOrder(refundRequestRepository, entityManager);
+        order.verify(refundRequestRepository).findByIdForUpdate(request.getId());
+        order.verify(entityManager).refresh(item);
+        verify(refundRequestItemRepository, never()).save(any());
+        verify(walletService, never()).debitConfirmedRefund(any(), any(), any(), any());
+    }
+
+    @Test
+    void handleRefundUpdated_verrouilleLaDemandeAvantDEcrireLItem() {
+        WalletRefundRequestEntity request = processingRequest("35.00");
+        WalletRefundRequestItemEntity item = processingItem(request, "pi_1", "35.00", "re_1");
+        when(refundRequestItemRepository.findByPaymentIntentIdAndStatus("pi_1", WalletRefundItemStatus.PROCESSING))
+                .thenReturn(Optional.of(item));
+        when(refundRequestRepository.findByIdForUpdate(request.getId())).thenReturn(Optional.of(request));
+        when(refundRequestItemRepository.findByRefundRequestId(request.getId())).thenReturn(List.of(item));
+
+        service.handleRefundUpdated(failedRefundEvent("pi_1", "re_1"));
+
+        InOrder order = inOrder(refundRequestRepository, refundRequestItemRepository);
+        order.verify(refundRequestRepository).findByIdForUpdate(request.getId());
+        order.verify(refundRequestItemRepository).save(item);
+        assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.FAILED);
+    }
+
+    // ── Tâche 5 : contrat (frais, net, destination masquée) ───────────────────────
+
+    @Test
+    void listEligibleTopups_exposeLeFraisDeChaqueRecharge() {
+        WalletTransactionEntity topup = ledgerTx(WalletTransactionType.TOP_UP, "40.00", "pi_1");
+        stubLedger("40.00", topup);
+        when(stripeFeeSource.fee("pi_1", "EUR")).thenReturn(new BigDecimal("0.85"));
+        when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(USER_ID, "EUR",
+                List.of(WalletRefundRequestStatus.PROCESSING))).thenReturn(Optional.empty());
+        when(refundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any())).thenReturn(false);
+
+        List<WalletSelfRefundService.EligibleTopup> list = service.listEligibleTopups(USER_ID, "EUR");
+
+        assertThat(list).hasSize(1);
+        assertThat(list.get(0).fee()).isEqualByComparingTo("0.85");
+    }
+
+    private PawapayOperationEntity depositOp(String msisdn) {
+        return new PawapayOperationEntity(UUID.randomUUID(), PawapayOperationKind.DEPOSIT,
+                PawapayOperationPurpose.WALLET_TOPUP, USER_ID, null, null, new BigDecimal("10000"), "XOF",
+                "ORANGE_CIV", "CI", msisdn);
+    }
+
+    @Test
+    void details_destinationMasqueeDuPremierItemPawapay_jamaisLeNumeroEnClair() {
+        PawapayOperationEntity deposit = depositOp("2250734567890");
+        WalletRefundRequestEntity pawapay = processingRequest("10000");
+        pawapay.setChannel(WalletRefundChannel.AUTOMATIC_PAWAPAY);
+        WalletRefundRequestItemEntity pItem = processingItem(pawapay, "pawapay:" + deposit.getId(), "10000", null);
+        WalletRefundRequestEntity stripe = processingRequest("35.00");
+        WalletRefundRequestItemEntity sItem = processingItem(stripe, "pi_1", "35.00", "re_1");
+        when(refundRequestItemRepository.findByRefundRequestIdIn(List.of(pawapay.getId(), stripe.getId())))
+                .thenReturn(List.of(pItem, sItem));
+        when(pawapayOperationRepository.findById(deposit.getId())).thenReturn(Optional.of(deposit));
+
+        List<WalletSelfRefundService.RefundRequestDetails> details = service.details(List.of(pawapay, stripe));
+
+        assertThat(details.get(0).items()).containsExactly(pItem);
+        assertThat(details.get(0).destinationMasked()).isEqualTo(deposit.getMsisdnMasked()).isNotNull()
+                .doesNotContain("0734567890");
+        assertThat(details.get(1).items()).containsExactly(sItem);
+        assertThat(details.get(1).destinationMasked()).isNull();
+    }
+
+    @Test
+    void details_listeVide_aucuneRequete() {
+        assertThat(service.details(List.of())).isEmpty();
+        verifyNoInteractions(refundRequestItemRepository);
+    }
+
+    @Test
+    void destinationMasked_premiereCiblePawapay_ouNullSansCiblePawapay() {
+        PawapayOperationEntity deposit = depositOp("2250734567890");
+        when(pawapayOperationRepository.findById(deposit.getId())).thenReturn(Optional.of(deposit));
+        WalletRefundAllocation.RefundableTopup stripeTarget = new WalletRefundAllocation.RefundableTopup(
+                UUID.randomUUID(), "pi_1", BigDecimal.TEN, BigDecimal.TEN, BigDecimal.ZERO, WalletRefundRail.STRIPE, null);
+        WalletRefundAllocation.RefundableTopup pawapayTarget = new WalletRefundAllocation.RefundableTopup(
+                UUID.randomUUID(), "pawapay:" + deposit.getId(), BigDecimal.TEN, BigDecimal.TEN, BigDecimal.ONE,
+                WalletRefundRail.PAWAPAY, "ORANGE_CIV");
+
+        assertThat(service.destinationMasked(new WalletRefundAllocation(List.of(stripeTarget, pawapayTarget),
+                new BigDecimal("20"), BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ONE, new BigDecimal("19"))))
+                .isEqualTo(deposit.getMsisdnMasked());
+        assertThat(service.destinationMasked(new WalletRefundAllocation(List.of(stripeTarget),
+                BigDecimal.TEN, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.TEN))).isNull();
+    }
+
+    private WalletRefundRequestEntity refundedRequest(String currency, LocalDateTime resolvedAt) {
+        WalletRefundRequestEntity r = processingRequest("0");
+        r.setCurrency(currency);
+        r.setStatus(WalletRefundRequestStatus.REFUNDED);
+        r.setResolvedAt(resolvedAt);
+        return r;
+    }
+
+    private WalletRefundRequestItemEntity refundedItem(WalletRefundRequestEntity r, String amount, String fee) {
+        WalletRefundRequestItemEntity i = processingItem(r, "pawapay:" + UUID.randomUUID(), amount, null);
+        i.setStatus(WalletRefundItemStatus.REFUNDED);
+        i.setFeeAmount(new BigDecimal(fee));
+        return i;
+    }
+
+    @Test
+    void refundFeesByTransactionId_appariementUnivoque_fraisEtNet() {
+        LocalDateTime resolvedAt = LocalDateTime.of(2026, 9, 17, 10, 0);
+        WalletRefundRequestEntity r = refundedRequest("XOF", resolvedAt);
+        WalletRefundRequestItemEntity item = refundedItem(r, "10000", "200");
+        WalletTransactionEntity out = ledgerTx("XOF", WalletTransactionType.SELF_REFUND_OUT, "-10000", null);
+        setField(out, "createdAt", resolvedAt.toInstant(ZoneOffset.UTC));
+        WalletTransactionEntity topup = ledgerTx("XOF", WalletTransactionType.TOP_UP, "10000", "pawapay:x");
+        when(refundRequestRepository.findAllByUserIdAndStatus(USER_ID, WalletRefundRequestStatus.REFUNDED))
+                .thenReturn(List.of(r));
+        when(refundRequestItemRepository.findByRefundRequestIdIn(List.of(r.getId()))).thenReturn(List.of(item));
+
+        Map<UUID, WalletSelfRefundService.RefundFeeBreakdown> fees =
+                service.refundFeesByTransactionId(USER_ID, List.of(out, topup));
+
+        assertThat(fees).containsOnlyKeys(out.getId());
+        assertThat(fees.get(out.getId()).feeAmount()).isEqualByComparingTo("200");
+        assertThat(fees.get(out.getId()).netAmount()).isEqualByComparingTo("9800");
+    }
+
+    @Test
+    void refundFeesByTransactionId_deuxDemandesExAequo_nonApparie() {
+        LocalDateTime resolvedAt = LocalDateTime.of(2026, 9, 17, 10, 0);
+        WalletRefundRequestEntity before = refundedRequest("XOF", resolvedAt.minusMinutes(5));
+        WalletRefundRequestEntity after = refundedRequest("XOF", resolvedAt.plusMinutes(5));
+        WalletTransactionEntity out = ledgerTx("XOF", WalletTransactionType.SELF_REFUND_OUT, "-10000", null);
+        setField(out, "createdAt", resolvedAt.toInstant(ZoneOffset.UTC));
+        when(refundRequestRepository.findAllByUserIdAndStatus(USER_ID, WalletRefundRequestStatus.REFUNDED))
+                .thenReturn(List.of(before, after));
+        when(refundRequestItemRepository.findByRefundRequestIdIn(List.of(before.getId(), after.getId())))
+                .thenReturn(List.of(refundedItem(before, "10000", "200"), refundedItem(after, "10000", "200")));
+
+        assertThat(service.refundFeesByTransactionId(USER_ID, List.of(out))).isEmpty();
+    }
+
+    @Test
+    void refundFeesByTransactionId_deuxDebitsPourUneSeuleDemande_nonApparie() {
+        LocalDateTime resolvedAt = LocalDateTime.of(2026, 9, 17, 10, 0);
+        WalletRefundRequestEntity r = refundedRequest("XOF", resolvedAt);
+        WalletTransactionEntity out1 = ledgerTx("XOF", WalletTransactionType.SELF_REFUND_OUT, "-10000", null);
+        setField(out1, "createdAt", resolvedAt.toInstant(ZoneOffset.UTC));
+        WalletTransactionEntity out2 = ledgerTx("XOF", WalletTransactionType.SELF_REFUND_OUT, "-10000", null);
+        setField(out2, "createdAt", resolvedAt.plusMinutes(1).toInstant(ZoneOffset.UTC));
+        when(refundRequestRepository.findAllByUserIdAndStatus(USER_ID, WalletRefundRequestStatus.REFUNDED))
+                .thenReturn(List.of(r));
+        when(refundRequestItemRepository.findByRefundRequestIdIn(List.of(r.getId())))
+                .thenReturn(List.of(refundedItem(r, "10000", "200")));
+
+        assertThat(service.refundFeesByTransactionId(USER_ID, List.of(out1, out2))).isEmpty();
+    }
+
+    @Test
+    void refundFeesByTransactionId_montantOuDeviseDifferents_nonApparie() {
+        LocalDateTime resolvedAt = LocalDateTime.of(2026, 9, 17, 10, 0);
+        WalletRefundRequestEntity r = refundedRequest("XOF", resolvedAt);
+        WalletTransactionEntity otherAmount = ledgerTx("XOF", WalletTransactionType.SELF_REFUND_OUT, "-5000", null);
+        WalletTransactionEntity otherCurrency = ledgerTx("EUR", WalletTransactionType.SELF_REFUND_OUT, "-10000", null);
+        when(refundRequestRepository.findAllByUserIdAndStatus(USER_ID, WalletRefundRequestStatus.REFUNDED))
+                .thenReturn(List.of(r));
+        when(refundRequestItemRepository.findByRefundRequestIdIn(List.of(r.getId())))
+                .thenReturn(List.of(refundedItem(r, "10000", "200")));
+
+        assertThat(service.refundFeesByTransactionId(USER_ID, List.of(otherAmount, otherCurrency))).isEmpty();
+    }
+
+    @Test
+    void refundFeesByTransactionId_sansSelfRefundOut_aucuneRequete() {
+        WalletTransactionEntity topup = ledgerTx(WalletTransactionType.TOP_UP, "40.00", "pi_1");
+
+        assertThat(service.refundFeesByTransactionId(USER_ID, List.of(topup))).isEmpty();
+        verifyNoInteractions(refundRequestRepository, refundRequestItemRepository);
+    }
+
+    @Test
+    void refundFeesByTransactionId_aucuneDemandeRemboursee_vide() {
+        WalletTransactionEntity out = ledgerTx(WalletTransactionType.SELF_REFUND_OUT, "-40.00", null);
+        when(refundRequestRepository.findAllByUserIdAndStatus(USER_ID, WalletRefundRequestStatus.REFUNDED))
+                .thenReturn(List.of());
+
+        assertThat(service.refundFeesByTransactionId(USER_ID, List.of(out))).isEmpty();
+        verifyNoInteractions(refundRequestItemRepository);
     }
 
     private static void setId(Object entity, UUID id) {

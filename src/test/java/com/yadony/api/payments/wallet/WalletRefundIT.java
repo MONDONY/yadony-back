@@ -472,6 +472,52 @@ class WalletRefundIT {
         assertThat(balanceOf(userId)).isEqualByComparingTo("0.00");
     }
 
+    /**
+     * Double débit fermé (tâche 5) : dans une même unité de travail, la demande est d'abord
+     * chargée PROCESSING (cache de premier niveau), puis un écouteur la résout et committe dans
+     * sa propre transaction, puis {@code listForUser} la relit. Sans le rafraîchissement après
+     * verrou, {@code findByIdForUpdate} rendait l'entité du cache encore PROCESSING et
+     * {@code resolveIfComplete} débitait une seconde fois.
+     */
+    @Test
+    void listForUser_demandeResolueParUnEcouteurDansLaMemeUniteDeTravail_unSeulDebit() {
+        UUID userId = persistUser();
+        String pi = "pi_double_" + UUID.randomUUID();
+        UUID topupId = topUp(userId, "30.00", pi);
+        WalletRefundRequestEntity request = saveRequest(userId, "30.00",
+                WalletRefundChannel.AUTOMATIC_STRIPE, WalletRefundRequestStatus.PROCESSING, null);
+        WalletRefundRequestItemEntity item =
+                saveItem(request.getId(), topupId, pi, "30.00", WalletRefundItemStatus.PROCESSING, "re_double");
+
+        TransactionTemplate listener = new TransactionTemplate(transactionManager);
+        listener.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            // Charge la demande PROCESSING dans le contexte de persistance de cette transaction.
+            assertThat(walletRefundRequestRepository.findAllByUserIdOrderByRequestedAtDesc(userId))
+                    .extracting(WalletRefundRequestEntity::getStatus)
+                    .containsExactly(WalletRefundRequestStatus.PROCESSING);
+
+            listener.executeWithoutResult(inner -> {
+                WalletRefundRequestItemEntity fresh =
+                        walletRefundRequestItemRepository.findById(item.getId()).orElseThrow();
+                fresh.setStatus(WalletRefundItemStatus.REFUNDED);
+                walletRefundRequestItemRepository.saveAndFlush(fresh);
+                walletSelfRefundService.resolveIfComplete(request.getId());
+            });
+
+            List<WalletRefundRequestEntity> listed = walletSelfRefundService.listForUser(userId);
+            assertThat(listed).extracting(WalletRefundRequestEntity::getStatus)
+                    .containsExactly(WalletRefundRequestStatus.REFUNDED);
+        });
+
+        assertThat(balanceOf(userId)).isEqualByComparingTo("0.00");
+        assertThat(walletTransactionRepository.findByUserIdAndCurrencyOrderByCreatedAtAsc(userId, "EUR"))
+                .filteredOn(t -> t.getType() == WalletTransactionType.SELF_REFUND_OUT)
+                .hasSize(1);
+        assertThat(walletRefundRequestRepository.existsByParentRequestId(request.getId())).isFalse();
+    }
+
     /** Recharge mobile money non terminale, telle que l'initiation la crée. */
     private PawapayOperationEntity liveTopup(UUID userId, String currency) {
         return pawapayOperations.create(PawapayOperationKind.DEPOSIT, PawapayOperationPurpose.WALLET_TOPUP,

@@ -11,4 +11,11 @@ import java.util.List;
 public interface WalletRefundRailIssuer {
 
     void issue(WalletRefundRequestEntity request, List<WalletRefundRequestItemEntity> items);
+
+    /**
+     * Réconciliation d'un item PROCESSING de ce rail à partir de l'état local de son opération
+     * ({@code WalletSelfRefundService#reconcile}), sans appel réseau. L'appelant tient le verrou
+     * de la demande {@code request}, fraîchement relue, et la résout ensuite.
+     */
+    void reconcile(WalletRefundRequestEntity request, WalletRefundRequestItemEntity item);
 }

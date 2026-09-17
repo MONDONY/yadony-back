@@ -50,6 +50,7 @@ class WalletControllerIT {
     @Autowired WalletRefundRequestItemRepository walletRefundRequestItemRepository;
     @Autowired WalletRefundRequestRepository walletRefundRequestRepository;
     @Autowired WalletAccountRepository walletAccountRepository;
+    @Autowired com.yadony.api.payments.pawapay.PawapayOperationService pawapayOperationService;
     @MockBean UserRepository userRepository;
     // Frais Stripe réels lus via PaymentIntent.retrieve (appel réseau) : neutralisés ici pour
     // ne jamais dépendre de Stripe en IT (cf. tâche 3, lot 2 « recharge wallet mobile money »).
@@ -284,7 +285,26 @@ class WalletControllerIT {
             .andExpect(jsonPath("$.refundEligible").value(true))
             .andExpect(jsonPath("$.balances[?(@.currency=='EUR')].refundableAmount").value(35.00))
             .andExpect(jsonPath("$.balances[?(@.currency=='EUR')].nonRefundableAmount").value(0.0))
-            .andExpect(jsonPath("$.balances[?(@.currency=='EUR')].refundEligible").value(true));
+            .andExpect(jsonPath("$.balances[?(@.currency=='EUR')].refundEligible").value(true))
+            // Contrat additif : frais (nuls ici, Stripe neutralisé) et net exposés par devise.
+            .andExpect(jsonPath("$.balances[?(@.currency=='EUR')].refundFeeAmount").value(0))
+            .andExpect(jsonPath("$.balances[?(@.currency=='EUR')].refundNetAmount").value(35.00));
+    }
+
+    @Test
+    void balance_netNulApresFrais_nonEligible() throws Exception {
+        walletService.credit(USER_UUID, "EUR", new BigDecimal("0.50"),
+            WalletTransactionType.TOP_UP, "pi_it_fee", "k-it-fee");
+        // Frais Stripe au moins égal au montant : rien ne repartirait vers l'utilisateur.
+        when(stripeFeeSource.fee(any(), any())).thenReturn(new BigDecimal("0.50"));
+
+        mockMvc.perform(get("/wallet/balance")
+                .with(authentication(authAs(FIREBASE_UID, "SENDER"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.refundEligible").value(false))
+            .andExpect(jsonPath("$.balances[?(@.currency=='EUR')].refundableAmount").value(0.50))
+            .andExpect(jsonPath("$.balances[?(@.currency=='EUR')].refundNetAmount").value(0.0))
+            .andExpect(jsonPath("$.balances[?(@.currency=='EUR')].refundEligible").value(false));
     }
 
     @Test
@@ -299,7 +319,49 @@ class WalletControllerIT {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$[0].amount").value(35.00))
             .andExpect(jsonPath("$[0].originalAmount").value(40.00))
-            .andExpect(jsonPath("$[0].paymentRef").value("pi_it_2"));
+            .andExpect(jsonPath("$[0].paymentRef").value("pi_it_2"))
+            .andExpect(jsonPath("$[0].feeAmount").value(0));
+    }
+
+    @Test
+    void listRefundRequests_exposeFraisNetRailEtDestinationMasquee() throws Exception {
+        com.yadony.api.payments.pawapay.PawapayOperationEntity deposit = pawapayOperationService.create(
+            com.yadony.api.payments.pawapay.PawapayOperationKind.DEPOSIT,
+            com.yadony.api.payments.pawapay.PawapayOperationPurpose.WALLET_TOPUP, USER_UUID, null, null,
+            new BigDecimal("10000"), "XOF", "ORANGE_CIV", "CI", "2250734567890");
+
+        WalletRefundRequestEntity request = new WalletRefundRequestEntity();
+        request.setUserId(USER_UUID);
+        request.setCurrency("XOF");
+        request.setStatus(WalletRefundRequestStatus.REFUNDED);
+        request.setAmount(new BigDecimal("10000.00"));
+        request.setChannel(WalletRefundChannel.AUTOMATIC_PAWAPAY);
+        request.setRequestedAt(LocalDateTime.now());
+        request.setResolvedAt(LocalDateTime.now());
+        WalletRefundRequestEntity saved = walletRefundRequestRepository.save(request);
+
+        WalletRefundRequestItemEntity item = new WalletRefundRequestItemEntity();
+        item.setRefundRequestId(saved.getId());
+        item.setWalletTransactionId(UUID.randomUUID());
+        item.setPaymentIntentId("pawapay:" + deposit.getId());
+        item.setAmount(new BigDecimal("10000.00"));
+        item.setFeeAmount(new BigDecimal("200.00"));
+        item.setStatus(WalletRefundItemStatus.REFUNDED);
+        walletRefundRequestItemRepository.save(item);
+
+        String body = mockMvc.perform(get("/wallet/refund-requests")
+                .with(authentication(authAs(FIREBASE_UID, "SENDER"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$[0].channel").value("AUTOMATIC_PAWAPAY"))
+            .andExpect(jsonPath("$[0].rail").value("PAWAPAY"))
+            .andExpect(jsonPath("$[0].amount").value(10000.00))
+            .andExpect(jsonPath("$[0].feeAmount").value(200.00))
+            .andExpect(jsonPath("$[0].netAmount").value(9800.00))
+            .andExpect(jsonPath("$[0].destinationMasked").value(deposit.getMsisdnMasked()))
+            .andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+
+        // Règle 14 : jamais le numéro complet dans la réponse.
+        assertThat(body).doesNotContain("0734567890");
     }
 
     @Test
@@ -324,7 +386,11 @@ class WalletControllerIT {
                 .andExpect(jsonPath("$.currency").value("EUR"))
                 .andExpect(jsonPath("$.amount").value(40.00))
                 .andExpect(jsonPath("$.channel").value("AUTOMATIC_STRIPE"))
-                .andExpect(jsonPath("$.status").value("PROCESSING"));
+                .andExpect(jsonPath("$.status").value("PROCESSING"))
+                .andExpect(jsonPath("$.rail").value("STRIPE"))
+                .andExpect(jsonPath("$.feeAmount").value(0.0))
+                .andExpect(jsonPath("$.netAmount").value(40.00))
+                .andExpect(jsonPath("$.destinationMasked").doesNotExist());
         }
 
         assertThat(walletRefundRequestItemRepository.findAll())

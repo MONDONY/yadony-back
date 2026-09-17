@@ -15,6 +15,7 @@ import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.wallet.WalletAccountRepository;
 import com.yadony.api.payments.wallet.WalletAllocationInvariantException;
 import com.yadony.api.payments.wallet.WalletRefundAllocation;
+import com.yadony.api.payments.wallet.WalletRefundRail;
 import com.yadony.api.payments.wallet.WalletRefundRequestService;
 import com.yadony.api.payments.wallet.WalletSelfRefundService;
 import org.slf4j.Logger;
@@ -153,7 +154,7 @@ public class UserService {
     /**
      * Lecture seule : ce que la suppression ferait de chaque solde positif.
      *
-     * <p>Rail STRIPE : les trois montants sont ceux de l'allocateur ({@code refundableTotal},
+     * <p>Rail STRIPE ou PAWAPAY (toutes les cibles pawaPay) : les trois montants sont ceux de l'allocateur ({@code refundableTotal},
      * {@code nonRefundable}, {@code inFlight}), au centime près ce que
      * {@link #settleWalletsForDeletion} demandera à Stripe.
      *
@@ -175,13 +176,19 @@ public class UserService {
             }
             try {
                 WalletRefundAllocation a = walletSelfRefundService.allocation(userId, wallet.getCurrency());
+                // PAWAPAY seulement si TOUTES les cibles le sont (une demande n'est jamais mixte).
+                boolean allPawapay = !a.refundable().isEmpty() && a.refundable().stream()
+                        .allMatch(t -> t.rail() == WalletRefundRail.PAWAPAY);
                 result.add(new WalletSettlementDto(wallet.getCurrency(), a.refundableTotal(),
-                        a.nonRefundable(), a.inFlight(), WalletSettlementDto.RAIL_STRIPE));
+                        a.nonRefundable(), a.inFlight(),
+                        allPawapay ? WalletSettlementDto.RAIL_PAWAPAY : WalletSettlementDto.RAIL_STRIPE,
+                        a.fees(), a.net(), walletSelfRefundService.destinationMasked(a)));
             } catch (WalletAllocationInvariantException e) {
                 log.warn("Rejeu du ledger incoherent, rail MANUAL affiche : user {} devise {} : {}",
                         userId, wallet.getCurrency(), e.getMessage());
                 result.add(new WalletSettlementDto(wallet.getCurrency(), wallet.getBalance(),
-                        BigDecimal.ZERO, BigDecimal.ZERO, WalletSettlementDto.RAIL_MANUAL));
+                        BigDecimal.ZERO, BigDecimal.ZERO, WalletSettlementDto.RAIL_MANUAL,
+                        BigDecimal.ZERO, wallet.getBalance(), null));
             }
         }
         return result;
