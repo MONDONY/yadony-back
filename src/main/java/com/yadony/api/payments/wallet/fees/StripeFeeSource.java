@@ -27,6 +27,12 @@ import java.time.Duration;
  * transaction dans une devise différente de celle du remboursement demandé (un
  * paiement d'origine réglé dans une autre devise que le wallet remboursé). L'appelant
  * doit alors utiliser {@link #fallback(BigDecimal, String)}.
+ *
+ * <p>Contrat : {@code fee()} ne lève jamais. Toute erreur, y compris une
+ * {@link RuntimeException} imprévue levée par le SDK Stripe lors de la navigation
+ * ({@code retrieve}, {@code getLatestChargeObject}, {@code getBalanceTransactionObject}),
+ * aboutit au même repli que {@link StripeException} plutôt que de remonter et de faire
+ * échouer l'allocation de remboursement en cours.
  */
 @Component
 public class StripeFeeSource {
@@ -49,7 +55,8 @@ public class StripeFeeSource {
     }
 
     public BigDecimal fee(String paymentIntentId, String currency) {
-        BigDecimal cached = cache.getIfPresent(paymentIntentId);
+        String cacheKey = paymentIntentId + "|" + currency;
+        BigDecimal cached = cache.getIfPresent(cacheKey);
         if (cached != null) {
             return cached;
         }
@@ -63,12 +70,19 @@ public class StripeFeeSource {
             if (balanceTransaction != null && balanceTransaction.getFee() != null
                     && currency.equalsIgnoreCase(balanceTransaction.getCurrency())) {
                 BigDecimal fee = BigDecimal.valueOf(balanceTransaction.getFee(), scale);
-                cache.put(paymentIntentId, fee);
+                cache.put(cacheKey, fee);
                 return fee;
             }
         } catch (StripeException e) {
             log.warn("Frais Stripe illisibles pour {} ({}), repli sur le taux configuré",
                     paymentIntentId, e.getCode());
+        } catch (RuntimeException e) {
+            // Le SDK Stripe (retrieve, getLatestChargeObject, getBalanceTransactionObject) peut
+            // lever une RuntimeException imprévue (désérialisation, réponse malformée...) sans
+            // passer par StripeException. Contrat de cette méthode : ne jamais propager, toujours
+            // replier. Pas de stack ni de contenu potentiellement sensible dans le log.
+            log.warn("Frais Stripe illisibles pour {} ({}), repli sur le taux configuré",
+                    paymentIntentId, e.getClass().getSimpleName());
         }
         return null;
     }

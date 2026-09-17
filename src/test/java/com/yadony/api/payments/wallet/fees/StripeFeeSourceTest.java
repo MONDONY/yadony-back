@@ -77,6 +77,41 @@ class StripeFeeSourceTest {
     }
 
     @Test
+    void unexpectedRuntimeException_fallsBackWithoutCaching() {
+        // Le SDK Stripe peut lever une RuntimeException imprévue (pas forcément une
+        // StripeException) lors de retrieve/getLatestChargeObject/getBalanceTransactionObject.
+        // Contrat de fee() : ne jamais propager, toujours replier.
+        try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class)) {
+            piStatic.when(() -> PaymentIntent.retrieve(eq("pi_1"), any(PaymentIntentRetrieveParams.class), any()))
+                    .thenThrow(new IllegalStateException("réponse Stripe malformée"));
+
+            assertThat(source.fee("pi_1", "EUR")).isNull();
+
+            // Rien n'a été mis en cache : un second appel retente Stripe.
+            assertThat(source.fee("pi_1", "EUR")).isNull();
+            piStatic.verify(() -> PaymentIntent.retrieve(eq("pi_1"), any(PaymentIntentRetrieveParams.class), any()),
+                    times(2));
+        }
+    }
+
+    @Test
+    void cacheKeyIncludesCurrency_differentCurrencyMissesCache() throws StripeException {
+        PaymentIntent pi = stubPaymentIntent(151L, "eur");
+        try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class)) {
+            piStatic.when(() -> PaymentIntent.retrieve(eq("pi_1"), any(PaymentIntentRetrieveParams.class), any()))
+                    .thenReturn(pi);
+
+            assertThat(source.fee("pi_1", "EUR")).isEqualByComparingTo("1.51");
+            // Même PaymentIntent, devise de remboursement différente : ne doit jamais
+            // renvoyer le frais mis en cache pour EUR (mismatch détecté, repli).
+            assertThat(source.fee("pi_1", "USD")).isNull();
+
+            piStatic.verify(() -> PaymentIntent.retrieve(eq("pi_1"), any(PaymentIntentRetrieveParams.class), any()),
+                    times(2));
+        }
+    }
+
+    @Test
     void balanceTransactionCurrencyMismatch_fallsBackWithoutCaching() throws StripeException {
         // Le paiement d'origine était en USD (ex. carte étrangère) alors que le wallet
         // rembourse en EUR : lire ce frais serait faux, on force le repli.
