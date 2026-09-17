@@ -317,6 +317,8 @@ yadony:
     return-base-url: ${PAWAPAY_RETURN_BASE_URL:https://api.yadony.com}
     deep-link-awaiting: ${PAWAPAY_DEEP_LINK_AWAITING:yadony://bids/%s/mobile-money/awaiting}
     deep-link-awaiting-thread: ${PAWAPAY_DEEP_LINK_AWAITING_THREAD:yadony://negotiations/%s/mobile-money/awaiting}
+    # Recharge du portefeuille : écran unique, aucun identifiant à interpoler.
+    deep-link-wallet: ${PAWAPAY_DEEP_LINK_WALLET:yadony://payments/wallet}
     poll-cron: ${PAWAPAY_POLL_CRON:0 */2 * * * *}
     balance-cron: ${PAWAPAY_BALANCE_CRON:0 15 * * * *}
     deadline-cron: ${PAWAPAY_DEADLINE_CRON:0 * * * * *}

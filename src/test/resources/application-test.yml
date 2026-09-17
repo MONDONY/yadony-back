@@ -117,6 +117,7 @@ yadony:
     return-base-url: https://api.test.yadony.app
     deep-link-awaiting: "yadony://bids/%s/mobile-money/awaiting"
     deep-link-awaiting-thread: "yadony://negotiations/%s/mobile-money/awaiting"
+    deep-link-wallet: "yadony://payments/wallet"
     poll-cron: "-"
     balance-cron: "-"
     deadline-cron: "-"

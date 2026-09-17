@@ -105,7 +105,7 @@ class MobileMoneyBidPaymentServiceTest {
     private static PawapayProperties enabledProps() {
         return new PawapayProperties(true, "https://x", "t", false, 30, "https://api.test",
                 "yadony://bids/%s/mobile-money/awaiting",
-                "yadony://negotiations/%s/mobile-money/awaiting",
+                "yadony://negotiations/%s/mobile-money/awaiting", "yadony://payments/wallet",
                 new PawapayProperties.BalanceMin(BigDecimal.ZERO, BigDecimal.ZERO));
     }
 
@@ -551,7 +551,7 @@ class MobileMoneyBidPaymentServiceTest {
     private static PawapayProperties disabledProps() {
         return new PawapayProperties(false, "https://x", "t", false, 30, "https://api.test",
                 "yadony://bids/%s/mobile-money/awaiting",
-                "yadony://negotiations/%s/mobile-money/awaiting",
+                "yadony://negotiations/%s/mobile-money/awaiting", "yadony://payments/wallet",
                 new PawapayProperties.BalanceMin(BigDecimal.ZERO, BigDecimal.ZERO));
     }
 
