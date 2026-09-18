@@ -18,7 +18,8 @@ public interface WalletTransactionRepository extends JpaRepository<WalletTransac
 
     boolean existsByUserId(UUID userId);
 
-    Optional<WalletTransactionEntity> findByUserIdAndBidIdAndType(UUID userId, UUID bidId, WalletTransactionType type);
+
+    List<WalletTransactionEntity> findAllByUserIdAndBidIdAndType(UUID userId, UUID bidId, WalletTransactionType type);
 
     List<WalletTransactionEntity> findByUserIdAndCurrencyOrderByCreatedAtAsc(UUID userId, String currency);
 }

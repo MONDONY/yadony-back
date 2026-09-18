@@ -169,8 +169,8 @@ class WalletServiceCurrencyConversionTest {
         entityManager.clear();
 
         WalletTransactionEntity reread = walletTransactionRepository
-                .findByUserIdAndBidIdAndType(userId, bidId, WalletTransactionType.COMMISSION_DEDUCTED)
-                .orElseThrow();
+                .findAllByUserIdAndBidIdAndType(userId, bidId, WalletTransactionType.COMMISSION_DEDUCTED)
+                .getFirst();
 
         assertThat(reread.getCurrency()).isEqualTo("XOF");
         assertThat(reread.getAmount()).isEqualByComparingTo(new BigDecimal("-7869.00"));
@@ -197,8 +197,8 @@ class WalletServiceCurrencyConversionTest {
         entityManager.clear();
 
         WalletTransactionEntity reread = walletTransactionRepository
-                .findByUserIdAndBidIdAndType(userId, bidId, WalletTransactionType.COMMISSION_DEDUCTED)
-                .orElseThrow();
+                .findAllByUserIdAndBidIdAndType(userId, bidId, WalletTransactionType.COMMISSION_DEDUCTED)
+                .getFirst();
 
         assertThat(reread.getSourceCurrency()).isNull();
         assertThat(reread.getSourceAmount()).isNull();
@@ -248,11 +248,11 @@ class WalletServiceCurrencyConversionTest {
         entityManager.clear();
 
         WalletTransactionEntity first = walletTransactionRepository
-                .findByUserIdAndBidIdAndType(userId, firstBidId, WalletTransactionType.COMMISSION_DEDUCTED)
-                .orElseThrow();
+                .findAllByUserIdAndBidIdAndType(userId, firstBidId, WalletTransactionType.COMMISSION_DEDUCTED)
+                .getFirst();
         WalletTransactionEntity second = walletTransactionRepository
-                .findByUserIdAndBidIdAndType(userId, secondBidId, WalletTransactionType.COMMISSION_DEDUCTED)
-                .orElseThrow();
+                .findAllByUserIdAndBidIdAndType(userId, secondBidId, WalletTransactionType.COMMISSION_DEDUCTED)
+                .getFirst();
 
         assertThat(first.getAppliedRate()).isEqualByComparingTo(new BigDecimal("655.750000"));
         assertThat(first.getSourceAmount()).isEqualByComparingTo(new BigDecimal("12.00"));

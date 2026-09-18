@@ -17,9 +17,9 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import com.yadony.api.payments.currency.CurrencyAmount;
 import com.yadony.api.payments.currency.CurrencyBounds;
-import com.yadony.api.payments.currency.ExchangeRateService;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.cash.dto.AcceptBidResponse;
+import com.yadony.api.payments.cash.dto.CommissionShortfallDto;
 import com.yadony.api.payments.cash.dto.AcceptanceStatusDto;
 import com.yadony.api.payments.cash.dto.CommissionMethodResponse;
 import com.yadony.api.payments.cash.dto.ConfirmAcceptanceResponse;
@@ -59,9 +59,10 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.time.temporal.ChronoUnit;
+import java.util.List;
 import java.util.Locale;
+import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -96,7 +97,7 @@ public class CashCommissionService {
     private final com.yadony.api.matching.BidGridItemRepository bidGridItemRepository;
     private final com.yadony.api.voucher.CommissionVoucherService voucherService;
     private final ActiveCurrencyResolver activeCurrencyResolver;
-    private final ExchangeRateService exchangeRateService;
+    private final WalletCommissionCollector commissionCollector;
     private Clock clock = Clock.systemUTC();
 
     public CashCommissionService(CommissionProperties props,
@@ -114,7 +115,7 @@ public class CashCommissionService {
                                  FirebaseContactService firebaseContact,
                                  com.yadony.api.voucher.CommissionVoucherService voucherService,
                                  ActiveCurrencyResolver activeCurrencyResolver,
-                                 ExchangeRateService exchangeRateService) {
+                                 WalletCommissionCollector commissionCollector) {
         this.props = props;
         this.userRepo = userRepo;
         this.bidRepo = bidRepo;
@@ -130,7 +131,7 @@ public class CashCommissionService {
         this.firebaseContact = firebaseContact;
         this.voucherService = voucherService;
         this.activeCurrencyResolver = activeCurrencyResolver;
-        this.exchangeRateService = exchangeRateService;
+        this.commissionCollector = commissionCollector;
     }
 
     /** Normalise un code devise (comparaison insensible à la casse, jamais null). */
@@ -415,15 +416,13 @@ public class CashCommissionService {
      * pour ce bid (WalletService.debit n'est pas idempotent en lui-même).
      * Pose commissionStatus=CHARGED et commissionChargedVia=WALLET.
      *
-     * <p>Le prélèvement se fait dans la devise PROPRE du voyageur ({@link
-     * ActiveCurrencyResolver}), pas dans celle de l'annonce/du bid : un voyageur sans
-     * compte Stripe Connect (donc sans repli carte) n'avait jusqu'ici aucun recours si
-     * son wallet ne correspondait pas à la devise de l'annonce, rendant celle-ci
-     * impayable en pratique. Quand les deux devises diffèrent, le montant est converti
-     * via {@link ExchangeRateService#convert} au taux courant de la table {@code
-     * exchange_rates}, et ce taux est snapshoté (avec la devise et le montant
-     * d'origine) sur la transaction wallet créée — un changement ultérieur du taux
-     * administré ne doit jamais rejaillir sur ce prélèvement déjà effectué.
+     * <p>Le prélèvement suit la règle de {@link WalletCommissionCollector} : le portefeuille
+     * de la DEVISE DU COLIS est vidé en premier (sans conversion), puis le reste est converti
+     * et prélevé sur la devise ACTIVE du voyageur ({@link ActiveCurrencyResolver}), le taux
+     * étant snapshoté (avec la devise et le montant d'origine) sur cette seconde transaction.
+     * Tout ou rien : si les deux portefeuilles ne couvrent pas la commission, aucun débit
+     * n'a lieu et une {@link InsufficientWalletBalanceException} (solde et montant requis
+     * exprimés dans la devise active) est levée.
      */
     @Transactional
     public void chargeCommissionFromWallet(BidEntity bid, UUID travelerId, BigDecimal commission) {
@@ -437,27 +436,23 @@ public class CashCommissionService {
 
         String bidCurrency = normalizeCurrency(bid.getCurrency());
         String travelerCurrency = normalizeCurrency(activeCurrencyResolver.resolve(travelerId));
-
-        if (bidCurrency.equals(travelerCurrency)) {
-            walletService.debit(travelerId, bidCurrency, effectiveCommission,
-                    WalletTransactionType.COMMISSION_DEDUCTED, bid.getId());
-        } else if (effectiveCommission.signum() == 0) {
-            // Commission nulle (ex. bid grille-only sans poids ni item) : rien à convertir,
-            // éviter la division par zéro plus bas en débitant zéro dans la devise du voyageur.
-            walletService.debit(travelerId, travelerCurrency, BigDecimal.ZERO,
-                    WalletTransactionType.COMMISSION_DEDUCTED, bid.getId());
-        } else {
-            BigDecimal convertedAmount = exchangeRateService.convert(effectiveCommission, bidCurrency, travelerCurrency);
-            BigDecimal appliedRate = convertedAmount.divide(effectiveCommission, 6, RoundingMode.HALF_UP);
-            walletService.debit(travelerId, travelerCurrency, convertedAmount,
-                    WalletTransactionType.COMMISSION_DEDUCTED, bid.getId(),
-                    bidCurrency, effectiveCommission, appliedRate);
+        CommissionSplit split = commissionCollector.plan(travelerId, bidCurrency, travelerCurrency, effectiveCommission);
+        if (!split.covered()) {
+            throw new InsufficientWalletBalanceException(split.activeBalance(), split.commissionInActive());
         }
+        commissionCollector.executeForBid(split, travelerId, bid.getId());
         bid.setCommissionStatus(CommissionStatus.CHARGED);
         bid.setCommissionChargedVia(CommissionChargedVia.WALLET);
         bidRepo.save(bid);
-        auditService.log("payment", bid.getId(), "COMMISSION_CHARGED_WALLET",
-                travelerId, Map.of("commission", effectiveCommission.toPlainString()));
+        Map<String, Object> audit = new LinkedHashMap<>();
+        audit.put("commission", effectiveCommission.toPlainString());
+        audit.put("bidCurrency", split.bidCurrency());
+        audit.put("fromBidWallet", split.fromBidWallet().toPlainString());
+        if (split.remainingBid().signum() > 0) {
+            audit.put("remainingActive", split.remainingActive().toPlainString());
+            audit.put("activeCurrency", split.activeCurrency());
+        }
+        auditService.log("payment", bid.getId(), "COMMISSION_CHARGED_WALLET", travelerId, audit);
     }
 
     /**
@@ -507,22 +502,18 @@ public class CashCommissionService {
         AnnouncementEntity announcement = announcementRepo.findById(bid.getAnnouncementId()).orElseThrow();
         BigDecimal commission = computeBidCommission(bid, announcement);
 
-        // 1) Wallet prioritaire — vérifié dans la devise PROPRE du voyageur (convertie
-        // depuis la devise du bid si besoin), jamais dans la devise du bid : sinon un
-        // voyageur dont le wallet est approvisionné dans sa propre devise mais pas dans
-        // celle de l'annonce basculerait à tort sur la carte (cf. chargeCommissionFromWallet).
+        // 1) Wallets prioritaires — portefeuille de la devise du bid d'abord, complément
+        // sur la devise active du voyageur (cf. WalletCommissionCollector). On ne tente le
+        // débit que si les deux couvrent tout : sinon repli carte, jamais de débit partiel.
         String bidCurrency = normalizeCurrency(bid.getCurrency());
         String travelerCurrency = normalizeCurrency(activeCurrencyResolver.resolve(travelerId));
-        BigDecimal commissionInTravelerCurrency = bidCurrency.equals(travelerCurrency)
-                ? commission
-                : exchangeRateService.convert(commission, bidCurrency, travelerCurrency);
-        BigDecimal balance = walletService.getBalance(travelerId, travelerCurrency);
-        if (balance.compareTo(commissionInTravelerCurrency) >= 0) {
+        CommissionSplit split = commissionCollector.plan(travelerId, bidCurrency, travelerCurrency, commission);
+        if (split.covered()) {
             try {
                 chargeCommissionFromWallet(bid, travelerId, commission);
                 return;
             } catch (InsufficientWalletBalanceException e) {
-                // Race TOCTOU : solde a chuté entre getBalance et debit → fallback carte
+                // Race TOCTOU : solde a chuté entre plan et debit → fallback carte
                 log.warn("Race TOCTOU wallet pour bid {} — fallback carte", bid.getId());
             }
         }
@@ -603,44 +594,36 @@ public class CashCommissionService {
         }
 
         if (source == CommissionSource.WALLET_FIRST) {
-            // Même correction que chargeCommissionFromWallet/chargeCommissionAuto : le
-            // wallet consulté et débité est celui de la devise PROPRE du voyageur, pas
-            // celle du fil de négociation. Quand les deux diffèrent, le montant est
-            // converti et la conversion snapshotée sur la transaction.
+            // Même règle que chargeCommissionFromWallet : portefeuille de la devise du fil
+            // d'abord, complément converti sur la devise active, tout ou rien. La réponse
+            // « solde insuffisant » reste exprimée dans la devise active, le détail de la
+            // répartition est exposé via breakdown quand les devises diffèrent.
             String threadCurrency = normalizeCurrency(thread.getCurrency());
             String travelerCurrency = normalizeCurrency(activeCurrencyResolver.resolve(travelerId));
-            boolean sameCurrency = threadCurrency.equals(travelerCurrency);
-            BigDecimal commissionInTravelerCurrency = sameCurrency
-                    ? commission
-                    : exchangeRateService.convert(commission, threadCurrency, travelerCurrency);
-            BigDecimal balance = walletService.getBalance(travelerId, travelerCurrency);
-            if (balance.compareTo(commissionInTravelerCurrency) >= 0) {
+            CommissionSplit split = commissionCollector.plan(travelerId, threadCurrency, travelerCurrency, commission);
+            if (split.covered()) {
                 try {
-                    if (sameCurrency) {
-                        walletService.debit(travelerId, travelerCurrency, commissionInTravelerCurrency,
-                                WalletTransactionType.COMMISSION_DEDUCTED,
-                                threadId.toString(), "nego_commission_wallet_" + threadId);
-                    } else {
-                        BigDecimal appliedRate = commissionInTravelerCurrency
-                                .divide(commission, 6, RoundingMode.HALF_UP);
-                        walletService.debit(travelerId, travelerCurrency, commissionInTravelerCurrency,
-                                WalletTransactionType.COMMISSION_DEDUCTED,
-                                threadId.toString(), "nego_commission_wallet_" + threadId,
-                                threadCurrency, commission, appliedRate);
-                    }
+                    commissionCollector.executeForNegotiation(split, travelerId,
+                            threadId.toString(), "nego_commission_wallet_" + threadId);
                     consumeSenderVoucher(senderId, threadId);
                     markNegotiationCommissionCharged(thread, NEGO_COMMISSION_VIA_WALLET, travelerId, commission);
                     return AcceptBidResponse.accepted();
                 } catch (InsufficientWalletBalanceException e) {
-                    // Race TOCTOU : le solde a chuté entre getBalance et debit. On ne
-                    // bascule pas sur la carte sans consentement — le voyageur relancera.
-                    balance = e.getAvailableBalance();
+                    // Rien ne doit survivre à ce chemin (bons déjà consommés) : la réponse est
+                    // rendue mais la transaction est annulée.
+                    markRollbackOnly();
+                    // Défense en profondeur : plan verrouille les portefeuilles, ce cas ne
+                    // devrait plus survenir. On ne bascule pas sur la carte sans consentement ;
+                    // la réponse repart d'une répartition fraîche (jamais d'un solde de
+                    // l'exception, qui peut être dans la devise du fil et non l'active).
+                    split = commissionCollector.plan(travelerId, threadCurrency, travelerCurrency, commission);
                 }
             }
             UserEntity traveler = userRepo.findById(travelerId).orElseThrow();
             return AcceptBidResponse.insufficientWallet(
-                    balance, commissionInTravelerCurrency, traveler.getCommissionPaymentMethodId() != null,
-                    travelerCurrency);
+                    split.activeBalance(), split.commissionInActive(),
+                    traveler.getCommissionPaymentMethodId() != null,
+                    travelerCurrency, CommissionShortfallDto.from(split));
         }
 
         // CommissionSource.CARD : le voyageur a explicitement choisi sa carte.
@@ -980,34 +963,36 @@ public class CashCommissionService {
         BigDecimal commission = computeBidCommission(bid, announcement);
 
         if (commissionSource == CommissionSource.WALLET_FIRST) {
-            // Vérifié dans la devise PROPRE du voyageur (convertie depuis celle du bid
-            // si besoin), jamais dans la devise du bid : même correction que
-            // chargeCommissionFromWallet/chargeCommissionAuto — sinon un voyageur dont
-            // le wallet est approvisionné dans sa propre devise mais pas dans celle de
-            // l'annonce se voit refuser l'acceptation à tort.
+            // Portefeuille de la devise du bid d'abord, complément converti sur la devise
+            // active (cf. WalletCommissionCollector), tout ou rien. Le débit réel (avec
+            // bons et audit) reste dans chargeCommissionFromWallet, qui replanifie.
             String bidCurrency = normalizeCurrency(bid.getCurrency());
             String travelerCurrency = normalizeCurrency(activeCurrencyResolver.resolve(travelerId));
-            BigDecimal commissionInTravelerCurrency = bidCurrency.equals(travelerCurrency)
-                    ? commission
-                    : exchangeRateService.convert(commission, bidCurrency, travelerCurrency);
-            BigDecimal balance = walletService.getBalance(travelerId, travelerCurrency);
-            if (balance.compareTo(commissionInTravelerCurrency) >= 0) {
+            CommissionSplit split = commissionCollector.plan(travelerId, bidCurrency, travelerCurrency, commission);
+            if (split.covered()) {
                 try {
                     chargeCommissionFromWallet(bid, travelerId, commission);
                     finalizeBidAcceptance(bid, announcement, travelerId);
                     return AcceptBidResponse.accepted();
                 } catch (InsufficientWalletBalanceException e) {
-                    // Race TOCTOU : solde a chuté entre getBalance et debit
-                    balance = e.getAvailableBalance();
+                    // Rien ne doit survivre à ce chemin (bons déjà consommés) : la réponse est
+                    // rendue mais la transaction est annulée.
+                    markRollbackOnly();
+                    // Défense en profondeur : plan verrouille les portefeuilles, ce cas ne
+                    // devrait plus survenir (sauf bon voyageur changeant le montant effectif).
+                    // La réponse repart d'une répartition fraîche, jamais du solde de
+                    // l'exception (qui peut être dans la devise du bid et non l'active).
+                    split = commissionCollector.plan(travelerId, bidCurrency, travelerCurrency, commission);
                 }
             }
-            // Solde insuffisant → informer le voyageur, dans SA devise (celle du
-            // wallet consulté ci-dessus) pour que balance/commission/currency
-            // désignent bien la même unité.
+            // Solde insuffisant → informer le voyageur dans sa devise ACTIVE (balance,
+            // commission et currency désignent la même unité), avec le détail de la
+            // répartition quand la devise du bid diffère.
             UserEntity traveler = userRepo.findById(travelerId).orElseThrow();
             boolean hasCard = traveler.getCommissionPaymentMethodId() != null;
             return AcceptBidResponse.insufficientWallet(
-                    balance, commissionInTravelerCurrency, hasCard, travelerCurrency);
+                    split.activeBalance(), split.commissionInActive(), hasCard, travelerCurrency,
+                    CommissionShortfallDto.from(split));
         }
 
         // commissionSource == CARD → comportement carte existant
@@ -1064,6 +1049,20 @@ public class CashCommissionService {
     }
 
     /**
+     * Annule la transaction courante tout en laissant l'appelant rendre sa réponse : après une
+     * course perdue entre la répartition et le débit, rien (bons consommés compris) ne doit
+     * survivre. Hors transaction (tests unitaires), il n'y a rien à annuler.
+     */
+    private static void markRollbackOnly() {
+        try {
+            org.springframework.transaction.interceptor.TransactionAspectSupport
+                    .currentTransactionStatus().setRollbackOnly();
+        } catch (org.springframework.transaction.NoTransactionException ignored) {
+            // pas de transaction Spring (test unitaire) : rien à annuler
+        }
+    }
+
+    /**
      * Rembourse la commission en créditant le wallet du voyageur.
      * Utilisé quand commissionChargedVia=WALLET et qu'un remboursement est dû.
      * Clé d'idempotence intentionnellement distincte selon le déclencheur :
@@ -1076,21 +1075,29 @@ public class CashCommissionService {
             log.warn("refundCommissionToWallet called on bid {} with status {}", bid.getId(), bid.getCommissionStatus());
             return;
         }
-        Optional<com.yadony.api.payments.wallet.WalletTransactionEntity> commissionTx =
-                walletTransactionRepository.findByUserIdAndBidIdAndType(
+        List<com.yadony.api.payments.wallet.WalletTransactionEntity> lines =
+                walletTransactionRepository.findAllByUserIdAndBidIdAndType(
                         travelerId, bid.getId(), WalletTransactionType.COMMISSION_DEDUCTED);
-        if (commissionTx.isEmpty()) {
+        if (lines.isEmpty()) {
             log.warn("refundCommissionToWallet: aucune tx COMMISSION_DEDUCTED pour bid {} traveler {}", bid.getId(), travelerId);
             return;
         }
-        BigDecimal refundAmount = commissionTx.get().getAmount().abs();
-        walletService.credit(travelerId, commissionTx.get().getCurrency(), refundAmount,
-                com.yadony.api.payments.wallet.WalletTransactionType.REFUND,
-                "refund-" + bid.getId(), idempotencyKey);
+        // Une ligne : clé historique inchangée (recrédits déjà émis avant la répartition
+        // multidevise). Plusieurs lignes (devise du colis + devise active) : une clé par devise.
+        Map<String, Object> audit = new LinkedHashMap<>();
+        for (com.yadony.api.payments.wallet.WalletTransactionEntity line : lines) {
+            BigDecimal refundAmount = line.getAmount().abs();
+            if (refundAmount.signum() == 0) continue;
+            String key = lines.size() == 1 ? idempotencyKey : idempotencyKey + "-" + line.getCurrency();
+            walletService.credit(travelerId, line.getCurrency(), refundAmount,
+                    com.yadony.api.payments.wallet.WalletTransactionType.REFUND,
+                    "refund-" + bid.getId(), key);
+            audit.put("amount-" + line.getCurrency(), refundAmount.toPlainString());
+        }
         bid.setCommissionStatus(CommissionStatus.REFUNDED);
         bidRepo.save(bid);
-        auditService.log("payment", bid.getId(), "COMMISSION_REFUNDED_TO_WALLET",
-                travelerId, Map.of("amount", refundAmount.toPlainString(), "idempotencyKey", idempotencyKey));
+        audit.put("idempotencyKey", idempotencyKey);
+        auditService.log("payment", bid.getId(), "COMMISSION_REFUNDED_TO_WALLET", travelerId, audit);
     }
 
     @Transactional
