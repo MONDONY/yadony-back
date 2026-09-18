@@ -32,6 +32,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -104,7 +105,7 @@ public class WalletController {
                 return new WalletCurrencyBalanceDto(
                         w.getCurrency(), w.getBalance(), w.getCurrency().equalsIgnoreCase(activeCurrency),
                         eligible, a.refundableTotal(), a.nonRefundable(), a.fees(), a.net(),
-                        estimate.inActiveByCurrency().get(w.getCurrency().toUpperCase(java.util.Locale.ROOT)));
+                        estimate.inActiveByCurrency().get(w.getCurrency().toUpperCase(Locale.ROOT)));
             })
             .collect(Collectors.toList());
         boolean activeEligible = balances.stream()
