@@ -123,11 +123,15 @@ class CashSenderVoucherConsumptionTest {
                 walletTransactionRepository, auditService, resolver, negotiationThreadRepository,
                 new StripeCashGatewayImpl(), bidGridItemRepository,
                 org.mockito.Mockito.mock(com.yadony.api.auth.FirebaseContactService.class),
-                voucherService, activeCurrencyResolver, exchangeRateService);
+                voucherService, activeCurrencyResolver,
+                new WalletCommissionCollector(walletService, exchangeRateService));
 
         lenient().when(bidGridItemRepository.findByBidId(any())).thenReturn(List.of());
         lenient().when(walletTransactionRepository.existsByUserIdAndBidIdAndType(any(), any(), any()))
                 .thenReturn(false);
+        // Le prélèvement planifie d'abord sur les portefeuilles (règle tout ou rien) :
+        // un solde couvrant pour que le débit ait lieu et consomme le bon.
+        lenient().when(walletService.getBalance(any(), any())).thenReturn(new BigDecimal("1000"));
         lenient().when(bidRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
     }
 

@@ -191,6 +191,42 @@ class CashCommissionControllerTest {
     }
 
     @Test
+    void acceptCashBid_insufficientWallet_sameCurrency_omitsBreakdown() throws Exception {
+        when(cashCommissionService.acceptCashBid(any(), any(), any()))
+                .thenReturn(AcceptBidResponse.insufficientWallet(
+                        new java.math.BigDecimal("3.00"), new java.math.BigDecimal("12.00"), true, "EUR"));
+
+        mockMvc.perform(post("/bids/{bidId}/accept-with-commission", BID_ID)
+                .with(authentication(asTraveler())))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.breakdown").doesNotExist());
+    }
+
+    @Test
+    void acceptCashBid_insufficientWallet_crossCurrency_exposesBreakdown() throws Exception {
+        var breakdown = new com.yadony.api.payments.cash.dto.CommissionShortfallDto(
+                "XOF", new java.math.BigDecimal("1050"), new java.math.BigDecimal("600"),
+                new java.math.BigDecimal("450"), new java.math.BigDecimal("0.69"), "EUR",
+                new java.math.BigDecimal("0.10"));
+        when(cashCommissionService.acceptCashBid(any(), any(), any()))
+                .thenReturn(AcceptBidResponse.insufficientWallet(
+                        new java.math.BigDecimal("0.10"), new java.math.BigDecimal("1.60"), false, "EUR", breakdown));
+
+        mockMvc.perform(post("/bids/{bidId}/accept-with-commission", BID_ID)
+                .with(authentication(asTraveler())))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.currency").value("EUR"))
+                .andExpect(jsonPath("$.requiredCommission").value(1.60))
+                .andExpect(jsonPath("$.breakdown.bidCurrency").value("XOF"))
+                .andExpect(jsonPath("$.breakdown.commission").value(1050))
+                .andExpect(jsonPath("$.breakdown.coveredByBidWallet").value(600))
+                .andExpect(jsonPath("$.breakdown.remainingBid").value(450))
+                .andExpect(jsonPath("$.breakdown.remainingInActive").value(0.69))
+                .andExpect(jsonPath("$.breakdown.activeCurrency").value("EUR"))
+                .andExpect(jsonPath("$.breakdown.activeBalance").value(0.10));
+    }
+
+    @Test
     void acceptCashBid_userNotFoundForFirebaseUid_returns401() throws Exception {
         // uid authentifié mais aucun UserEntity correspondant → resolveUserId lève 401.
         var auth = new UsernamePasswordAuthenticationToken(
