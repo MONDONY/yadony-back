@@ -2048,6 +2048,22 @@ class CashCommissionServiceTest {
         }
 
         @Test
+        void zeroAmountLine_isSkipped_butBidStillMarkedRefunded() {
+            // Commission nulle (bid grille-only) : le collecteur pose une ligne à 0.
+            // Rien à recréditer, mais le statut passe bien à REFUNDED.
+            String key = "wallet-refund-cancel-" + bid.getId();
+            when(walletTransactionRepository.findAllByUserIdAndBidIdAndType(
+                    travelerId, bid.getId(), com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED))
+                    .thenReturn(java.util.List.of(commissionTx(BigDecimal.ZERO)));
+
+            service.refundCommissionToWallet(bid, travelerId, key);
+
+            verify(walletService, never()).credit(any(), any(), any(), any(), any(), any());
+            assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.REFUNDED);
+            verify(bidRepo).save(bid);
+        }
+
+        @Test
         void creditsWalletInOriginalTransactionCurrency_notAlwaysEur() {
             // Le remboursement doit créditer le wallet dans la MÊME devise que le
             // débit d'origine (CAD ici), jamais forcer EUR.
