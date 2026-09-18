@@ -601,7 +601,6 @@ public class CashCommissionService {
             String threadCurrency = normalizeCurrency(thread.getCurrency());
             String travelerCurrency = normalizeCurrency(activeCurrencyResolver.resolve(travelerId));
             CommissionSplit split = commissionCollector.plan(travelerId, threadCurrency, travelerCurrency, commission);
-            BigDecimal balance = split.activeBalance();
             if (split.covered()) {
                 try {
                     commissionCollector.executeForNegotiation(split, travelerId,
@@ -610,14 +609,17 @@ public class CashCommissionService {
                     markNegotiationCommissionCharged(thread, NEGO_COMMISSION_VIA_WALLET, travelerId, commission);
                     return AcceptBidResponse.accepted();
                 } catch (InsufficientWalletBalanceException e) {
-                    // Race TOCTOU : le solde a chuté entre plan et debit. On ne bascule
-                    // pas sur la carte sans consentement — le voyageur relancera.
-                    balance = e.getAvailableBalance();
+                    // Défense en profondeur : plan verrouille les portefeuilles, ce cas ne
+                    // devrait plus survenir. On ne bascule pas sur la carte sans consentement ;
+                    // la réponse repart d'une répartition fraîche (jamais d'un solde de
+                    // l'exception, qui peut être dans la devise du fil et non l'active).
+                    split = commissionCollector.plan(travelerId, threadCurrency, travelerCurrency, commission);
                 }
             }
             UserEntity traveler = userRepo.findById(travelerId).orElseThrow();
             return AcceptBidResponse.insufficientWallet(
-                    balance, split.commissionInActive(), traveler.getCommissionPaymentMethodId() != null,
+                    split.activeBalance(), split.commissionInActive(),
+                    traveler.getCommissionPaymentMethodId() != null,
                     travelerCurrency, CommissionShortfallDto.from(split));
         }
 
@@ -964,15 +966,17 @@ public class CashCommissionService {
             String bidCurrency = normalizeCurrency(bid.getCurrency());
             String travelerCurrency = normalizeCurrency(activeCurrencyResolver.resolve(travelerId));
             CommissionSplit split = commissionCollector.plan(travelerId, bidCurrency, travelerCurrency, commission);
-            BigDecimal balance = split.activeBalance();
             if (split.covered()) {
                 try {
                     chargeCommissionFromWallet(bid, travelerId, commission);
                     finalizeBidAcceptance(bid, announcement, travelerId);
                     return AcceptBidResponse.accepted();
                 } catch (InsufficientWalletBalanceException e) {
-                    // Race TOCTOU : solde a chuté entre plan et debit
-                    balance = e.getAvailableBalance();
+                    // Défense en profondeur : plan verrouille les portefeuilles, ce cas ne
+                    // devrait plus survenir (sauf bon voyageur changeant le montant effectif).
+                    // La réponse repart d'une répartition fraîche, jamais du solde de
+                    // l'exception (qui peut être dans la devise du bid et non l'active).
+                    split = commissionCollector.plan(travelerId, bidCurrency, travelerCurrency, commission);
                 }
             }
             // Solde insuffisant → informer le voyageur dans sa devise ACTIVE (balance,
@@ -981,7 +985,7 @@ public class CashCommissionService {
             UserEntity traveler = userRepo.findById(travelerId).orElseThrow();
             boolean hasCard = traveler.getCommissionPaymentMethodId() != null;
             return AcceptBidResponse.insufficientWallet(
-                    balance, split.commissionInActive(), hasCard, travelerCurrency,
+                    split.activeBalance(), split.commissionInActive(), hasCard, travelerCurrency,
                     CommissionShortfallDto.from(split));
         }
 

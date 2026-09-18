@@ -475,4 +475,41 @@ class WalletServiceTest {
         assertThat(wallet.getBalance()).isEqualByComparingTo("20.00");
     }
 
+    @Test
+    void getBalanceForUpdate_readsThroughThePessimisticLock_andNormalizesCurrency() {
+        UUID userId = UUID.randomUUID();
+        WalletAccountEntity wallet = new WalletAccountEntity();
+        wallet.setUserId(userId);
+        wallet.setCurrency("XOF");
+        wallet.setBalance(new BigDecimal("600"));
+        when(walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, "XOF")).thenReturn(Optional.of(wallet));
+
+        assertThat(walletService.getBalanceForUpdate(userId, " xof ")).isEqualByComparingTo("600");
+        verify(walletAccountRepository, never()).findByUserIdAndCurrency(any(), any());
+        verify(walletAccountRepository, never()).save(any());
+    }
+
+    @Test
+    void getBalanceForUpdate_missingWallet_isZeroWithoutCreatingIt() {
+        // Pas de création dans une lecture sous verrou : rien à verrouiller, et une
+        // insertion ici réintroduirait dans la transaction appelante la course
+        // UNIQUE(user_id, currency) que getOrCreate (NOT_SUPPORTED) évite.
+        UUID userId = UUID.randomUUID();
+        when(walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, "EUR")).thenReturn(Optional.empty());
+
+        assertThat(walletService.getBalanceForUpdate(userId, "EUR")).isEqualByComparingTo("0");
+        verify(walletAccountRepository, never()).save(any());
+    }
+
+    @Test
+    void isFrozen_mirrorsTheRefundPendingRule() {
+        UUID userId = UUID.randomUUID();
+        when(walletRefundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(
+                eq(userId), eq("XOF"), eq(List.of(WalletRefundRequestStatus.PENDING, WalletRefundRequestStatus.PROCESSING))))
+                .thenReturn(true);
+
+        assertThat(walletService.isFrozen(userId, "xof")).isTrue();
+        assertThat(walletService.isFrozen(userId, "EUR")).isFalse();
+    }
+
 }

@@ -131,7 +131,7 @@ class CashSenderVoucherConsumptionTest {
                 .thenReturn(false);
         // Le prélèvement planifie d'abord sur les portefeuilles (règle tout ou rien) :
         // un solde couvrant pour que le débit ait lieu et consomme le bon.
-        lenient().when(walletService.getBalance(any(), any())).thenReturn(new BigDecimal("1000"));
+        lenient().when(walletService.getBalanceForUpdate(any(), any())).thenReturn(new BigDecimal("1000"));
         lenient().when(bidRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
     }
 

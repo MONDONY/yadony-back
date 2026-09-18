@@ -124,7 +124,7 @@ class CashCommissionServiceNegotiationTest {
 
         when(negotiationThreadRepository.findById(threadId)).thenReturn(Optional.of(thread));
         when(commissionRateResolver.resolve(eq(travelerId), eq(senderId), isNull(), isNull(), any())).thenReturn(new BigDecimal("0.05"));
-        when(walletService.getBalance(travelerId, "EUR")).thenReturn(new BigDecimal("20.00"));
+        when(walletService.getBalanceForUpdate(travelerId, "EUR")).thenReturn(new BigDecimal("20.00"));
 
         // when settleNegotiationCommission(..., WALLET_FIRST)
         AcceptBidResponse response = service.settleNegotiationCommission(
@@ -156,7 +156,7 @@ class CashCommissionServiceNegotiationTest {
 
         when(negotiationThreadRepository.findById(threadId)).thenReturn(Optional.of(thread));
         when(commissionRateResolver.resolve(eq(travelerId), eq(senderId), isNull(), isNull(), any())).thenReturn(new BigDecimal("0.05"));
-        when(walletService.getBalance(travelerId, "EUR")).thenReturn(new BigDecimal("1.00"));
+        when(walletService.getBalanceForUpdate(travelerId, "EUR")).thenReturn(new BigDecimal("1.00"));
         when(userRepo.findById(travelerId)).thenReturn(Optional.of(traveler));
 
         // when settleNegotiationCommission(..., WALLET_FIRST)
@@ -193,10 +193,10 @@ class CashCommissionServiceNegotiationTest {
                 .thenReturn(new BigDecimal("0.05"));
         when(activeCurrencyResolver.resolve(travelerId)).thenReturn("XOF");
         // Portefeuille EUR (devise du fil) vide : tout le montant est converti sur le XOF.
-        when(walletService.getBalance(travelerId, "EUR")).thenReturn(BigDecimal.ZERO);
+        when(walletService.getBalanceForUpdate(travelerId, "EUR")).thenReturn(BigDecimal.ZERO);
         when(exchangeRateService.convert(new BigDecimal("5.00"), "EUR", "XOF"))
                 .thenReturn(new BigDecimal("3279")); // taux 655.75, arrondi à l'unité (XOF sans centimes)
-        when(walletService.getBalance(travelerId, "XOF")).thenReturn(new BigDecimal("5000.00"));
+        when(walletService.getBalanceForUpdate(travelerId, "XOF")).thenReturn(new BigDecimal("5000.00"));
 
         AcceptBidResponse response = service.settleNegotiationCommission(
                 travelerId, senderId, threadId, new BigDecimal("100.00"), CommissionSource.WALLET_FIRST);
@@ -223,10 +223,10 @@ class CashCommissionServiceNegotiationTest {
         when(commissionRateResolver.resolve(eq(travelerId), eq(senderId), isNull(), isNull(), any()))
                 .thenReturn(new BigDecimal("0.05"));
         when(activeCurrencyResolver.resolve(travelerId)).thenReturn("XOF");
-        when(walletService.getBalance(travelerId, "EUR")).thenReturn(BigDecimal.ZERO);
+        when(walletService.getBalanceForUpdate(travelerId, "EUR")).thenReturn(BigDecimal.ZERO);
         when(exchangeRateService.convert(new BigDecimal("5.00"), "EUR", "XOF"))
                 .thenReturn(new BigDecimal("3279"));
-        when(walletService.getBalance(travelerId, "XOF")).thenReturn(new BigDecimal("100.00"));
+        when(walletService.getBalanceForUpdate(travelerId, "XOF")).thenReturn(new BigDecimal("100.00"));
         when(userRepo.findById(travelerId)).thenReturn(Optional.of(traveler));
 
         AcceptBidResponse response = service.settleNegotiationCommission(
@@ -255,8 +255,8 @@ class CashCommissionServiceNegotiationTest {
         when(commissionRateResolver.resolve(eq(travelerId), eq(senderId), isNull(), isNull(), any()))
                 .thenReturn(new BigDecimal("0.05"));
         when(activeCurrencyResolver.resolve(travelerId)).thenReturn("EUR");
-        when(walletService.getBalance(travelerId, "XOF")).thenReturn(new BigDecimal("600"));
-        when(walletService.getBalance(travelerId, "EUR")).thenReturn(new BigDecimal("1.33"));
+        when(walletService.getBalanceForUpdate(travelerId, "XOF")).thenReturn(new BigDecimal("600"));
+        when(walletService.getBalanceForUpdate(travelerId, "EUR")).thenReturn(new BigDecimal("1.33"));
         when(exchangeRateService.convert(new BigDecimal("1050.00"), "XOF", "EUR")).thenReturn(new BigDecimal("1.60"));
         when(exchangeRateService.convert(new BigDecimal("450.00"), "XOF", "EUR")).thenReturn(new BigDecimal("0.69"));
 
@@ -292,8 +292,8 @@ class CashCommissionServiceNegotiationTest {
         when(commissionRateResolver.resolve(eq(travelerId), eq(senderId), isNull(), isNull(), any()))
                 .thenReturn(new BigDecimal("0.05"));
         when(activeCurrencyResolver.resolve(travelerId)).thenReturn("EUR");
-        when(walletService.getBalance(travelerId, "XOF")).thenReturn(new BigDecimal("600"));
-        when(walletService.getBalance(travelerId, "EUR")).thenReturn(new BigDecimal("0.10"));
+        when(walletService.getBalanceForUpdate(travelerId, "XOF")).thenReturn(new BigDecimal("600"));
+        when(walletService.getBalanceForUpdate(travelerId, "EUR")).thenReturn(new BigDecimal("0.10"));
         when(exchangeRateService.convert(new BigDecimal("1050.00"), "XOF", "EUR")).thenReturn(new BigDecimal("1.60"));
         when(exchangeRateService.convert(new BigDecimal("450.00"), "XOF", "EUR")).thenReturn(new BigDecimal("0.69"));
         when(userRepo.findById(travelerId)).thenReturn(Optional.of(traveler));
@@ -332,7 +332,7 @@ class CashCommissionServiceNegotiationTest {
         when(negotiationThreadRepository.findById(threadId)).thenReturn(Optional.of(thread));
         when(commissionRateResolver.resolve(eq(travelerId), eq(senderId), isNull(), isNull(), any()))
                 .thenReturn(new BigDecimal("0.05"));
-        when(walletService.getBalance(travelerId, "EUR")).thenReturn(new BigDecimal("1.00"));
+        when(walletService.getBalanceForUpdate(travelerId, "EUR")).thenReturn(new BigDecimal("1.00"));
         when(userRepo.findById(travelerId)).thenReturn(Optional.of(traveler));
 
         AcceptBidResponse response = service.settleNegotiationCommission(

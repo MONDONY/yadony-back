@@ -67,10 +67,46 @@ public class WalletService {
     }
 
     private void assertNotFrozen(UUID userId, String code) {
-        if (walletRefundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(userId, code, FREEZING_STATUSES)) {
+        if (isFrozen(userId, code)) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-pending",
                     "Unprocessable", "Solde gelé - une demande de remboursement est en cours sur cette devise");
         }
+    }
+
+    /**
+     * Vrai quand une demande de remboursement (PENDING ou PROCESSING) gèle cette devise :
+     * exactement la règle qui fait échouer {@code debit} en 422 {@code wallet-refund-pending}.
+     * Exposée pour qu'un appelant qui RÉPARTIT un prélèvement entre plusieurs portefeuilles
+     * (cf. {@code WalletCommissionCollector}) puisse écarter d'avance un portefeuille gelé au
+     * lieu de faire échouer tout le règlement dessus.
+     */
+    @Transactional(readOnly = true)
+    public boolean isFrozen(UUID userId, String currency) {
+        return walletRefundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(
+                userId, normalize(currency), FREEZING_STATUSES);
+    }
+
+    /**
+     * Solde d'un portefeuille lu SOUS VERROU ({@code PESSIMISTIC_WRITE}, tenu jusqu'à la fin
+     * de la transaction appelante, d'où {@code MANDATORY}). Sert à décider une répartition
+     * « tout ou rien » entre plusieurs portefeuilles avant de les débiter : le solde ne peut
+     * plus bouger entre la lecture et les {@code debit} qui suivent dans la même transaction,
+     * ce qui ferme la fenêtre TOCTOU où un second débit échouait après qu'un premier avait
+     * été écrit (et conservé par {@code noRollbackFor}).
+     *
+     * <p>Un portefeuille absent est rendu comme vide (0) sans être créé : on ne verrouille
+     * que ce qui existe, et créer une ligne ici réintroduirait, à l'intérieur de la
+     * transaction appelante, la course sur {@code UNIQUE(user_id, currency)} que
+     * {@link #getOrCreate} évite en {@code NOT_SUPPORTED}. Un débit ultérieur crée le
+     * portefeuille s'il le faut (cas d'un débit à zéro). Appelants qui verrouillent plusieurs
+     * portefeuilles : toujours dans le même ordre (codes devise triés) pour ne pas
+     * s'interbloquer.
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public BigDecimal getBalanceForUpdate(UUID userId, String currency) {
+        return walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, normalize(currency))
+                .map(WalletAccountEntity::getBalance)
+                .orElse(BigDecimal.ZERO);
     }
 
     // NOT_SUPPORTED : deux requêtes concurrentes peuvent toutes deux rater le

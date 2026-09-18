@@ -35,13 +35,87 @@ class WalletCommissionCollectorTest {
     }
 
     private void balances(String xof, String eur) {
-        when(walletService.getBalance(traveler, "XOF")).thenReturn(new BigDecimal(xof));
-        when(walletService.getBalance(traveler, "EUR")).thenReturn(new BigDecimal(eur));
+        when(walletService.getBalanceForUpdate(traveler, "XOF")).thenReturn(new BigDecimal(xof));
+        when(walletService.getBalanceForUpdate(traveler, "EUR")).thenReturn(new BigDecimal(eur));
+    }
+
+    @Test
+    void plan_readsBalancesUnderLock_inAlphabeticalOrder_whateverTheDirection() {
+        // Le verrou est pris via getBalanceForUpdate (jamais getBalance), dans l'ordre
+        // alphabétique des devises : EUR avant XOF que le colis soit en XOF ou en EUR, sinon
+        // deux règlements croisés du même voyageur pourraient s'interbloquer.
+        balances("600", "1.33");
+        when(exchangeRateService.convert(any(), any(), any())).thenReturn(new BigDecimal("1.00"));
+
+        collector.plan(traveler, "XOF", "EUR", new BigDecimal("1050"));
+        collector.plan(traveler, "EUR", "XOF", new BigDecimal("12.00"));
+
+        org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(walletService);
+        inOrder.verify(walletService).getBalanceForUpdate(traveler, "EUR");
+        inOrder.verify(walletService).getBalanceForUpdate(traveler, "XOF");
+        inOrder.verify(walletService).getBalanceForUpdate(traveler, "EUR");
+        inOrder.verify(walletService).getBalanceForUpdate(traveler, "XOF");
+        verify(walletService, never()).getBalance(any(), any());
+    }
+
+    @Test
+    void frozenBidWallet_treatedAsEmpty_everythingOnActive_andNeverLocked() {
+        // Portefeuille XOF gelé par une demande de remboursement : debit le refuserait (422),
+        // il compte donc pour zéro et n'est pas verrouillé ; tout part sur l'actif.
+        when(walletService.isFrozen(traveler, "XOF")).thenReturn(true);
+        when(walletService.getBalanceForUpdate(traveler, "EUR")).thenReturn(new BigDecimal("5.00"));
+        when(exchangeRateService.convert(new BigDecimal("1050"), "XOF", "EUR")).thenReturn(new BigDecimal("1.60"));
+
+        CommissionSplit s = collector.plan(traveler, "XOF", "EUR", new BigDecimal("1050"));
+        collector.executeForBid(s, traveler, bid);
+
+        assertThat(s.covered()).isTrue();
+        assertThat(s.bidWalletBalance()).isEqualByComparingTo("0");
+        assertThat(s.fromBidWallet()).isEqualByComparingTo("0");
+        verify(walletService, never()).getBalanceForUpdate(traveler, "XOF");
+        verify(walletService, never()).debit(eq(traveler), eq("XOF"), any(), any(), eq(bid));
+        verify(walletService).debit(traveler, "EUR", new BigDecimal("1.60"),
+                WalletTransactionType.COMMISSION_DEDUCTED, bid, "XOF", new BigDecimal("1050"), s.appliedRate());
+    }
+
+    @Test
+    void frozenActiveWallet_sameCurrency_notCovered() {
+        when(walletService.isFrozen(traveler, "EUR")).thenReturn(true);
+
+        CommissionSplit s = collector.plan(traveler, "EUR", "EUR", new BigDecimal("12.00"));
+
+        assertThat(s.covered()).isFalse();
+        assertThat(s.activeBalance()).isEqualByComparingTo("0");
+        verify(walletService, never()).getBalanceForUpdate(any(), any());
+    }
+
+    @Test
+    void complementDebitThrowsInsufficient_propagatesUnchanged_noCatchInCollector() {
+        // Invariant tout ou rien : si le second débit (complément actif) lève, l'exception
+        // remonte telle quelle à l'appelant transactionnel (rollback du premier débit) ; le
+        // collecteur ne l'avale jamais.
+        balances("600", "1.33");
+        when(exchangeRateService.convert(new BigDecimal("1050"), "XOF", "EUR")).thenReturn(new BigDecimal("1.60"));
+        when(exchangeRateService.convert(new BigDecimal("450"), "XOF", "EUR")).thenReturn(new BigDecimal("0.69"));
+        CommissionSplit s = collector.plan(traveler, "XOF", "EUR", new BigDecimal("1050"));
+        com.yadony.api.payments.wallet.InsufficientWalletBalanceException boom =
+                new com.yadony.api.payments.wallet.InsufficientWalletBalanceException(
+                        new BigDecimal("0.10"), new BigDecimal("0.69"));
+        org.mockito.Mockito.doThrow(boom).when(walletService).debit(
+                eq(traveler), eq("EUR"), eq(new BigDecimal("0.69")), eq(WalletTransactionType.COMMISSION_DEDUCTED),
+                eq(bid), eq("XOF"), eq(new BigDecimal("450")), any());
+
+        org.mockito.Mockito.doThrow(boom).when(walletService).debit(
+                eq(traveler), eq("EUR"), eq(new BigDecimal("0.69")), eq(WalletTransactionType.COMMISSION_DEDUCTED),
+                eq("ref"), eq("k_active"), eq("XOF"), eq(new BigDecimal("450")), any());
+
+        assertThatThrownBy(() -> collector.executeForBid(s, traveler, bid)).isSameAs(boom);
+        assertThatThrownBy(() -> collector.executeForNegotiation(s, traveler, "ref", "k")).isSameAs(boom);
     }
 
     @Test
     void sameCurrencySufficient_singleLine() {
-        when(walletService.getBalance(traveler, "EUR")).thenReturn(new BigDecimal("50.00"));
+        when(walletService.getBalanceForUpdate(traveler, "EUR")).thenReturn(new BigDecimal("50.00"));
 
         CommissionSplit s = collector.plan(traveler, "EUR", "EUR", new BigDecimal("12.00"));
         collector.executeForBid(s, traveler, bid);
@@ -77,7 +151,7 @@ class WalletCommissionCollectorTest {
 
     @Test
     void commissionInActive_sameCurrency_isTheCommission() {
-        when(walletService.getBalance(traveler, "EUR")).thenReturn(new BigDecimal("50.00"));
+        when(walletService.getBalanceForUpdate(traveler, "EUR")).thenReturn(new BigDecimal("50.00"));
 
         CommissionSplit s = collector.plan(traveler, "EUR", "EUR", new BigDecimal("12.00"));
 
@@ -180,8 +254,8 @@ class WalletCommissionCollectorTest {
 
     @Test
     void currencyCodesAreNormalized() {
-        when(walletService.getBalance(traveler, "XOF")).thenReturn(new BigDecimal("10000"));
-        when(walletService.getBalance(traveler, "EUR")).thenReturn(new BigDecimal("0"));
+        when(walletService.getBalanceForUpdate(traveler, "XOF")).thenReturn(new BigDecimal("10000"));
+        when(walletService.getBalanceForUpdate(traveler, "EUR")).thenReturn(new BigDecimal("0"));
         when(exchangeRateService.convert(new BigDecimal("1050"), "XOF", "EUR")).thenReturn(new BigDecimal("1.60"));
 
         CommissionSplit s = collector.plan(traveler, " xof ", "eur", new BigDecimal("1050"));
