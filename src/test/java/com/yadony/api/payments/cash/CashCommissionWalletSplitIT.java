@@ -215,6 +215,52 @@ class CashCommissionWalletSplitIT {
         assertThat(balance(travelerId, "EUR")).isEqualByComparingTo(new BigDecimal("2.00").subtract(remainingEur));
     }
 
+    @Test
+    void cancelled_afterTwoLineSplit_recreditsBothWalletsAndRestoresBalances() {
+        // Suite du scénario ci-dessus (répartition sur les deux portefeuilles) : Task 3
+        // doit recréditer CHAQUE ligne COMMISSION_DEDUCTED dans sa devise à l'annulation,
+        // pas seulement la première trouvée (IncorrectResultSizeDataAccessException sinon).
+        openWallet(travelerId, "XOF", new BigDecimal("600"));
+        openWallet(travelerId, "EUR", new BigDecimal("2.00"));
+
+        AcceptBidResponse r = cashCommissionService.acceptCashBid(bidId, travelerId, CommissionSource.WALLET_FIRST);
+        entityManager.flush();
+        entityManager.clear();
+        assertThat(r.status()).isEqualTo(AcceptanceStatusDto.ACCEPTED);
+
+        BidEntity accepted = reread(BidEntity.class, bidId);
+        BigDecimal commission = commissionOf(accepted);
+        BigDecimal remainingXof = commission.subtract(new BigDecimal("600"));
+        BigDecimal remainingEur = exchangeRateService.convert(remainingXof, "XOF", "EUR");
+
+        // Sanity : la répartition en deux lignes a bien eu lieu avant l'annulation.
+        assertThat(commissionLines(travelerId, "XOF")).hasSize(1);
+        assertThat(commissionLines(travelerId, "EUR")).hasSize(1);
+
+        // BidCancelledCommissionRefundListener écoute BidRejectedEvent en AFTER_COMMIT ;
+        // cette classe de test est @Transactional (rollback en fin de test, jamais de
+        // commit réel), donc le listener ne se déclencherait pas ici. On appelle
+        // directement le service avec la clé exacte que le listener utilise.
+        cashCommissionService.refundCommissionToWallet(accepted, travelerId, "wallet-refund-cancel-" + bidId);
+
+        entityManager.flush();
+        entityManager.clear();
+
+        BidEntity afterRefund = reread(BidEntity.class, bidId);
+        assertThat(afterRefund.getCommissionStatus()).isEqualTo(CommissionStatus.REFUNDED);
+
+        List<WalletTransactionEntity> xofRefunds = refundLines(travelerId, "XOF");
+        assertThat(xofRefunds).hasSize(1);
+        assertThat(xofRefunds.get(0).getAmount()).isEqualByComparingTo("600");
+
+        List<WalletTransactionEntity> eurRefunds = refundLines(travelerId, "EUR");
+        assertThat(eurRefunds).hasSize(1);
+        assertThat(eurRefunds.get(0).getAmount()).isEqualByComparingTo(remainingEur);
+
+        assertThat(balance(travelerId, "XOF")).isEqualByComparingTo("600");
+        assertThat(balance(travelerId, "EUR")).isEqualByComparingTo("2.00");
+    }
+
     // --- helpers ---
 
     private void seedRate(String currency, String unitsPerEur) {
@@ -261,6 +307,12 @@ class CashCommissionWalletSplitIT {
     private List<WalletTransactionEntity> commissionLines(UUID userId, String currency) {
         return walletTransactionRepository.findByUserIdAndCurrencyOrderByCreatedAtAsc(userId, currency).stream()
                 .filter(tx -> tx.getType() == WalletTransactionType.COMMISSION_DEDUCTED)
+                .toList();
+    }
+
+    private List<WalletTransactionEntity> refundLines(UUID userId, String currency) {
+        return walletTransactionRepository.findByUserIdAndCurrencyOrderByCreatedAtAsc(userId, currency).stream()
+                .filter(tx -> tx.getType() == WalletTransactionType.REFUND)
                 .toList();
     }
 }

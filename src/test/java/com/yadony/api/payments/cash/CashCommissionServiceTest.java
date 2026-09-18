@@ -2032,9 +2032,9 @@ class CashCommissionServiceTest {
         @Test
         void creditsWalletSetsRefundedAndAuditsWithGivenKey() {
             String key = "wallet-refund-noshow-" + bid.getId();
-            when(walletTransactionRepository.findByUserIdAndBidIdAndType(
+            when(walletTransactionRepository.findAllByUserIdAndBidIdAndType(
                     travelerId, bid.getId(), com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED))
-                    .thenReturn(Optional.of(commissionTx(new BigDecimal("12.00"))));
+                    .thenReturn(java.util.List.of(commissionTx(new BigDecimal("12.00"))));
 
             service.refundCommissionToWallet(bid, travelerId, key);
 
@@ -2052,9 +2052,9 @@ class CashCommissionServiceTest {
             // Le remboursement doit créditer le wallet dans la MÊME devise que le
             // débit d'origine (CAD ici), jamais forcer EUR.
             String key = "wallet-refund-noshow-" + bid.getId();
-            when(walletTransactionRepository.findByUserIdAndBidIdAndType(
+            when(walletTransactionRepository.findAllByUserIdAndBidIdAndType(
                     travelerId, bid.getId(), com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED))
-                    .thenReturn(Optional.of(commissionTx(new BigDecimal("12.00"), "CAD")));
+                    .thenReturn(java.util.List.of(commissionTx(new BigDecimal("12.00"), "CAD")));
 
             service.refundCommissionToWallet(bid, travelerId, key);
 
@@ -2062,6 +2062,46 @@ class CashCommissionServiceTest {
                     eq(com.yadony.api.payments.wallet.WalletTransactionType.REFUND),
                     eq("refund-" + bid.getId()), eq(key));
             verify(walletService, never()).credit(eq(travelerId), eq("EUR"), any(), any(), any(), any());
+        }
+
+        @Test
+        void recreditsEveryLineInItsCurrency_whenCommissionWasSplitAcrossTwoWallets() {
+            // Task 2 : une commission espèces peut créer DEUX lignes COMMISSION_DEDUCTED
+            // (devise du colis + devise active). L'annulation doit recréditer chacune,
+            // dans sa devise, avec une clé d'idempotence par devise.
+            String key = "wallet-refund-cancel-" + bid.getId();
+            var xof = commissionTx(new BigDecimal("600"), "XOF");
+            var eur = commissionTx(new BigDecimal("0.69"), "EUR");
+            when(walletTransactionRepository.findAllByUserIdAndBidIdAndType(
+                    travelerId, bid.getId(), com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED))
+                    .thenReturn(java.util.List.of(xof, eur));
+
+            service.refundCommissionToWallet(bid, travelerId, key);
+
+            verify(walletService).credit(travelerId, "XOF", new BigDecimal("600"),
+                    com.yadony.api.payments.wallet.WalletTransactionType.REFUND,
+                    "refund-" + bid.getId(), key + "-XOF");
+            verify(walletService).credit(travelerId, "EUR", new BigDecimal("0.69"),
+                    com.yadony.api.payments.wallet.WalletTransactionType.REFUND,
+                    "refund-" + bid.getId(), key + "-EUR");
+            assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.REFUNDED);
+            verify(bidRepo).save(bid);
+        }
+
+        @Test
+        void singleLine_keepsLegacyIdempotencyKey_unsuffixed() {
+            // Une seule ligne : ne pas suffixer la clé, sinon les recrédits déjà émis
+            // avant la répartition multidevise seraient rejoués (clé différente).
+            String key = "k";
+            when(walletTransactionRepository.findAllByUserIdAndBidIdAndType(
+                    travelerId, bid.getId(), com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED))
+                    .thenReturn(java.util.List.of(commissionTx(new BigDecimal("12.00"), "EUR")));
+
+            service.refundCommissionToWallet(bid, travelerId, key);
+
+            verify(walletService).credit(travelerId, "EUR", new BigDecimal("12.00"),
+                    com.yadony.api.payments.wallet.WalletTransactionType.REFUND,
+                    "refund-" + bid.getId(), key);
         }
 
         @Test
@@ -2087,9 +2127,9 @@ class CashCommissionServiceTest {
         @Test
         void noOpWhenNoCommissionTransactionFound() {
             // Sécurité : sans tx COMMISSION_DEDUCTED pour ce couple (traveler, bid), pas de crédit.
-            when(walletTransactionRepository.findByUserIdAndBidIdAndType(
+            when(walletTransactionRepository.findAllByUserIdAndBidIdAndType(
                     travelerId, bid.getId(), com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED))
-                    .thenReturn(Optional.empty());
+                    .thenReturn(java.util.List.of());
 
             service.refundCommissionToWallet(bid, travelerId, "k");
 

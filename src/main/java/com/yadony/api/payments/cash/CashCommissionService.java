@@ -59,6 +59,7 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.time.temporal.ChronoUnit;
+import java.util.List;
 import java.util.Locale;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -1055,21 +1056,29 @@ public class CashCommissionService {
             log.warn("refundCommissionToWallet called on bid {} with status {}", bid.getId(), bid.getCommissionStatus());
             return;
         }
-        Optional<com.yadony.api.payments.wallet.WalletTransactionEntity> commissionTx =
-                walletTransactionRepository.findByUserIdAndBidIdAndType(
+        List<com.yadony.api.payments.wallet.WalletTransactionEntity> lines =
+                walletTransactionRepository.findAllByUserIdAndBidIdAndType(
                         travelerId, bid.getId(), WalletTransactionType.COMMISSION_DEDUCTED);
-        if (commissionTx.isEmpty()) {
+        if (lines.isEmpty()) {
             log.warn("refundCommissionToWallet: aucune tx COMMISSION_DEDUCTED pour bid {} traveler {}", bid.getId(), travelerId);
             return;
         }
-        BigDecimal refundAmount = commissionTx.get().getAmount().abs();
-        walletService.credit(travelerId, commissionTx.get().getCurrency(), refundAmount,
-                com.yadony.api.payments.wallet.WalletTransactionType.REFUND,
-                "refund-" + bid.getId(), idempotencyKey);
+        // Une ligne : clé historique inchangée (recrédits déjà émis avant la répartition
+        // multidevise). Plusieurs lignes (devise du colis + devise active) : une clé par devise.
+        Map<String, Object> audit = new LinkedHashMap<>();
+        for (com.yadony.api.payments.wallet.WalletTransactionEntity line : lines) {
+            BigDecimal refundAmount = line.getAmount().abs();
+            if (refundAmount.signum() == 0) continue;
+            String key = lines.size() == 1 ? idempotencyKey : idempotencyKey + "-" + line.getCurrency();
+            walletService.credit(travelerId, line.getCurrency(), refundAmount,
+                    com.yadony.api.payments.wallet.WalletTransactionType.REFUND,
+                    "refund-" + bid.getId(), key);
+            audit.put("amount-" + line.getCurrency(), refundAmount.toPlainString());
+        }
         bid.setCommissionStatus(CommissionStatus.REFUNDED);
         bidRepo.save(bid);
-        auditService.log("payment", bid.getId(), "COMMISSION_REFUNDED_TO_WALLET",
-                travelerId, Map.of("amount", refundAmount.toPlainString(), "idempotencyKey", idempotencyKey));
+        audit.put("idempotencyKey", idempotencyKey);
+        auditService.log("payment", bid.getId(), "COMMISSION_REFUNDED_TO_WALLET", travelerId, audit);
     }
 
     @Transactional
