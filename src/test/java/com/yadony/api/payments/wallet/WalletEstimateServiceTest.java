@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -78,6 +79,17 @@ class WalletEstimateServiceTest {
         assertThat(estimate.total()).isNull();
         assertThat(estimate.complete()).isFalse();
         assertThat(estimate.inActiveByCurrency()).isEmpty();
+    }
+
+    @Test
+    void rethrowsBusinessExceptionsOtherThanMissingRate() {
+        when(exchangeRateService.convert(any(), any(), any()))
+                .thenThrow(new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "currency-unsupported", "Currency Unsupported", "no", Map.of()));
+
+        assertThatThrownBy(() -> service.estimate(List.of(wallet("EUR", "1")), "EUR"))
+                .isInstanceOf(YadonyBusinessException.class)
+                .hasMessageContaining("no");
     }
 
     @Test
