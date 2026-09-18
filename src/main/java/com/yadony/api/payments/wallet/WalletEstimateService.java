@@ -45,15 +45,20 @@ public class WalletEstimateService {
         for (WalletAccountEntity wallet : wallets) {
             String currency = wallet.getCurrency().trim().toUpperCase(Locale.ROOT);
             try {
-                BigDecimal converted = exchangeRateService.convert(wallet.getBalance(), wallet.getCurrency(), active);
+                // convert() rescale déjà toute conversion inter-devises ; la devise active revient
+                // telle quelle (échelle 2 du ledger), on l'aligne pour que total = somme des lignes.
+                BigDecimal converted = exchangeRateService.convert(wallet.getBalance(), wallet.getCurrency(), active)
+                        .setScale(decimals, RoundingMode.HALF_UP);
                 inActive.put(currency, converted);
                 total = total.add(converted);
                 anyConverted = true;
             } catch (YadonyBusinessException e) {
-                if (!"exchange-rate-missing".equals(e.getErrorCode())) {
+                if (!ExchangeRateService.RATE_MISSING_CODE.equals(e.getErrorCode())) {
                     throw e;
                 }
-                log.warn("Taux de change absent pour {} : devise exclue du total estimé", currency);
+                // debug, pas warn : ce chemin est rejoué à chaque affichage du portefeuille tant que
+                // le taux manque, et les WARN partent vers Sentry.
+                log.debug("Taux de change absent pour {} : devise exclue du total estimé", currency);
                 complete = false;
             }
         }

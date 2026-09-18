@@ -22,6 +22,9 @@ import java.util.Map;
 @Service
 public class ExchangeRateService {
 
+    /** Code d'erreur levé par {@link #rateOf(String)} quand la devise n'a pas de taux. */
+    public static final String RATE_MISSING_CODE = "exchange-rate-missing";
+
     private final ExchangeRateRepository repository;
 
     public ExchangeRateService(ExchangeRateRepository repository) {
@@ -40,7 +43,7 @@ public class ExchangeRateService {
         return repository.findByCurrency(currency)
                 .map(ExchangeRateEntity::getUnitsPerEur)
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                        "exchange-rate-missing", "Exchange Rate Missing",
+                        RATE_MISSING_CODE, "Exchange Rate Missing",
                         "Aucun taux de change n'est configure pour la devise " + currency,
                         Map.of("currency", currency)));
     }

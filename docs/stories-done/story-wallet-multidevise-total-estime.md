@@ -56,6 +56,6 @@ Après :
 
 ## Notes de maintenance
 
-- Le taux vient de la table `exchange_rates` (cache Caffeine `exchange-rates`, évincé par l'administration des taux). XOF/XAF y sont fixes (655,957), les devises flottantes sont synchronisées par `ExchangeRateSyncService`.
+- Le taux vient de la table `exchange_rates`. XOF/XAF y sont fixes (655,957), les devises flottantes sont synchronisées par `ExchangeRateSyncService`. Attention : `ExchangeRateService.convert` appelle `rateOf` en interne, donc le cache Caffeine `exchange-rates` (proxy Spring) n'est PAS exercé sur ce chemin : chaque devise non active coûte une lecture par clé primaire sur une table de 7 lignes (préexistant, partagé avec le feed d'annonces ; à corriger un jour en sortant `rateOf` dans un bean dédié).
 - Aucune migration, aucun événement, aucun changement de frais ni de remboursement.
 - Suite : 5870 tests verts, couverture 91 %.

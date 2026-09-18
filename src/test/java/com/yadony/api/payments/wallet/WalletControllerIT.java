@@ -250,7 +250,6 @@ class WalletControllerIT {
 
     @Test
     void getBalance_estimatesTotalAcrossCurrenciesInActiveCurrency() throws Exception {
-        seedRate("EUR", "1");
         seedRate("XOF", "655.957");
         walletService.credit(USER_UUID, "EUR", new BigDecimal("1.33"),
             WalletTransactionType.TOP_UP, "pi_est_eur", "idem-est-eur");
@@ -269,7 +268,10 @@ class WalletControllerIT {
 
     @Test
     void getBalance_missingRateExcludesCurrencyAndFlagsPartialEstimate() throws Exception {
-        seedRate("EUR", "1");
+        // Profil test : Flyway est coupé, la table exchange_rates est vide par défaut ; on note
+        // l'état réel de GBP (absent, ou posé par un IT précédent) pour le remettre tel quel.
+        Optional<com.yadony.api.payments.currency.ExchangeRateEntity> previousGbp =
+                exchangeRateRepository.findById("GBP");
         exchangeRateRepository.deleteById("GBP");
         var cache = cacheManager.getCache("exchange-rates");
         if (cache != null) {
@@ -289,14 +291,13 @@ class WalletControllerIT {
                 .andExpect(jsonPath("$.balances[?(@.currency == 'GBP')].estimatedInActive").doesNotExist())
                 .andExpect(jsonPath("$.balances[?(@.currency == 'GBP')].balance").value(20.0));
         } finally {
-            // Ne pas polluer les autres IT de la même JVM qui s'appuient sur le taux GBP.
-            seedRate("GBP", "0.86");
+            // Remet GBP dans l'état trouvé au début du test (les IT s'enchaînent dans une même JVM).
+            previousGbp.ifPresent(e -> seedRate("GBP", e.getUnitsPerEur().toPlainString()));
         }
     }
 
     @Test
     void getBalance_singleActiveCurrencyEstimateEqualsBalance() throws Exception {
-        seedRate("EUR", "1");
         walletService.credit(USER_UUID, "EUR", new BigDecimal("40.00"),
             WalletTransactionType.TOP_UP, "pi_est_single", "idem-est-single");
 
