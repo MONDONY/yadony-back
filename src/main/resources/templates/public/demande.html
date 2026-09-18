@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="fr" xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <title th:text="${pageTitle}">Yadony</title>
+
+  <!--
+    Balises Open Graph : quand l'expéditeur colle ce lien dans son post Facebook
+    ou WhatsApp, c'est ce bloc qui fabrique l'aperçu. Les libellés sont assemblés
+    côté contrôleur, cf. PublicPackageRequestPageController.
+  -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Yadony">
+  <meta property="og:title" th:content="${ogTitle}" content="Yadony">
+  <meta property="og:description" th:content="${ogDescription}" content="Yadony">
+  <meta property="og:url" th:content="${shareUrl}" content="">
+  <meta name="twitter:card" content="summary">
+
+  <!--
+    Mêmes familles que l'application (lib/core/design/tokens/typography_tokens.dart),
+    même page trajet publique : Hanken Grotesk pour les titres, Plus Jakarta Sans pour
+    le corps.
+  -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <style>
+    /* Palette reprise de DonyColors, identique à la page trajet publique. */
+    :root {
+      --ink: #061833;
+      --muted: #797367;
+      --border: #E8E5DF;
+      --blue: #0B5FFF;
+      --blue-press: #083CAB;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 32px 20px 48px;
+      background: #fff;
+      color: var(--ink);
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .wrap { max-width: 420px; margin: 0 auto; }
+
+    .logo { height: 26px; width: auto; display: block; margin-bottom: 32px; }
+
+    .corridor {
+      font-family: 'Hanken Grotesk', sans-serif;
+      font-size: 28px; font-weight: 800; letter-spacing: -0.6px;
+      line-height: 1.2; margin: 0 0 24px;
+      text-wrap: balance;
+    }
+    .corridor .arrow { color: var(--muted); font-weight: 400; margin: 0 4px; }
+
+    .photo {
+      width: 100%; aspect-ratio: 4 / 3; object-fit: cover;
+      border-radius: 16px; margin: 0 0 20px; display: block;
+      border: 1px solid var(--border);
+    }
+
+    .rows { margin: 0 0 20px; }
+
+    .row {
+      display: flex; justify-content: space-between; align-items: baseline;
+      gap: 16px; padding: 11px 0; border-bottom: 1px solid var(--border);
+    }
+    .row:first-child { border-top: 1px solid var(--border); }
+
+    .row dt { color: var(--muted); font-size: 14px; margin: 0; white-space: nowrap; }
+    .row dd { margin: 0; font-weight: 600; font-size: 14px; text-align: right; }
+    .row dd.wrap-text { overflow-wrap: anywhere; }
+
+    .price {
+      display: flex; align-items: baseline; gap: 6px;
+      padding-top: 16px; margin-bottom: 28px;
+    }
+    .price .amount {
+      font-family: 'Hanken Grotesk', sans-serif;
+      font-size: 28px; font-weight: 800; letter-spacing: -0.5px;
+      font-variant-numeric: tabular-nums;
+    }
+    .price .unit { color: var(--muted); font-size: 14px; font-weight: 500; }
+
+    .btn {
+      display: block; width: 100%; padding: 15px;
+      border-radius: 14px; border: 1px solid transparent;
+      font-size: 15px; font-weight: 700; text-align: center;
+      text-decoration: none; margin-bottom: 10px;
+      transition-property: transform;
+      transition-duration: 120ms;
+    }
+    .btn:active { transform: scale(0.96); }
+    .btn-primary { background: var(--blue); color: #fff; }
+    .btn-primary:active { background: var(--blue-press); }
+    .btn-secondary { background: #fff; color: var(--ink); border-color: var(--border); }
+
+    .trust {
+      margin-top: 24px; text-align: center;
+      font-size: 12px; color: var(--muted); font-weight: 500;
+    }
+
+    .note { font-size: 12px; color: var(--muted); text-align: center; margin-top: 16px; }
+
+    .empty h1 {
+      font-family: 'Hanken Grotesk', sans-serif;
+      font-size: 22px; font-weight: 800; margin: 0 0 8px;
+    }
+    .empty p { color: var(--muted); margin: 0 0 28px; }
+  </style>
+</head>
+
+<body>
+<div class="wrap">
+
+  <img class="logo" src="/logo.png" alt="Yadony">
+
+  <!-- Demande retirée, acceptée, terminée, expirée, ou identifiant illisible -->
+  <div th:if="${unavailable}" class="empty">
+    <h1>Cette demande n'est plus disponible</h1>
+    <p>Elle a été retirée, ou n'a plus besoin de voyageur. D'autres colis attendent chaque semaine un trajet.</p>
+    <a class="btn btn-primary" th:if="${!#strings.isEmpty(storeUrl)}"
+       th:href="${storeUrl}">Voir d'autres demandes</a>
+  </div>
+
+  <!-- Demande ouverte à une proposition de trajet -->
+  <div th:unless="${unavailable}">
+    <h1 class="corridor">
+      <span th:text="${departureCity}">Paris</span><span class="arrow">→</span><span th:text="${arrivalCity}">Dakar</span>
+    </h1>
+
+    <img class="photo" th:if="${photoUrl != null}" th:src="${photoUrl}" alt="Photo du colis">
+
+    <dl class="rows">
+      <div class="row">
+        <dt>Date souhaitée</dt>
+        <dd th:text="${desiredDate}">jeudi 20 août 2026</dd>
+      </div>
+      <div class="row" th:if="${dateTolerance != null}">
+        <dt>Tolérance</dt>
+        <dd th:text="${dateTolerance}">± 3 jours</dd>
+      </div>
+      <div class="row" th:if="${weight != null}">
+        <dt>Poids</dt>
+        <dd th:text="${weight} + ' kg'">10 kg</dd>
+      </div>
+      <div class="row" th:if="${sizeLabel != null}">
+        <dt>Taille</dt>
+        <dd th:text="${sizeLabel}">Colis moyen</dd>
+      </div>
+      <div class="row" th:if="${!#strings.isEmpty(categories)}">
+        <dt>Contenu</dt>
+        <dd class="wrap-text" th:text="${categories}">Vêtements &amp; tissus</dd>
+      </div>
+      <div class="row" th:if="${pickupNeighborhood != null}">
+        <dt>Quartier de départ</dt>
+        <dd class="wrap-text" th:text="${pickupNeighborhood}">18e</dd>
+      </div>
+      <div class="row" th:if="${deliveryNeighborhood != null}">
+        <dt>Quartier d'arrivée</dt>
+        <dd class="wrap-text" th:text="${deliveryNeighborhood}">Plateau</dd>
+      </div>
+    </dl>
+
+    <!-- Pas de budget chiffré : mieux vaut ne rien annoncer qu'annoncer zéro. -->
+    <div class="price" th:if="${grossPrice != null}">
+      <span class="amount">
+        <span th:text="${grossPrice}">25</span><span th:text="${currency}">€</span>
+      </span>
+      <span class="unit">budget proposé</span>
+    </div>
+
+    <!--
+      Pas de redirection automatique, même raison que la page trajet : un essai
+      yadony:// sans l'application installée produit une erreur visible ou gèle
+      la page sur iOS. Destination résolue côté contrôleur, cf. applyPrimaryCta.
+    -->
+    <!-- th:utext, pas th:text : le libellé vient d'une chaîne Java fixe (jamais de
+         donnée utilisateur), et th:text échapperait l'apostrophe en &#39;. -->
+    <a class="btn btn-primary" th:href="${primaryCtaUrl}" th:utext="${primaryCtaLabel}">Proposer mon trajet</a>
+
+    <a class="btn btn-secondary" th:if="${showGenericStoreButton and !#strings.isEmpty(storeUrl)}"
+       th:href="${storeUrl}">Télécharger Yadony</a>
+
+    <p class="trust">Paiement sécurisé · Suivi du colis · Expéditeurs vérifiés</p>
+
+    <p class="note">
+      Votre paiement est conservé par Yadony et n'est versé au voyageur qu'après
+      la livraison confirmée.
+    </p>
+  </div>
+
+</div>
+</body>
+</html>
