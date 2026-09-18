@@ -35,6 +35,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -50,7 +51,11 @@ class WalletControllerIT {
     @Autowired WalletRefundRequestItemRepository walletRefundRequestItemRepository;
     @Autowired WalletRefundRequestRepository walletRefundRequestRepository;
     @Autowired WalletAccountRepository walletAccountRepository;
+    @Autowired com.yadony.api.payments.pawapay.PawapayOperationService pawapayOperationService;
     @MockBean UserRepository userRepository;
+    // Frais Stripe réels lus via PaymentIntent.retrieve (appel réseau) : neutralisés ici pour
+    // ne jamais dépendre de Stripe en IT (cf. tâche 3, lot 2 « recharge wallet mobile money »).
+    @MockBean com.yadony.api.payments.wallet.fees.StripeFeeSource stripeFeeSource;
 
     private static final UUID USER_UUID = UUID.randomUUID();
     private static final String FIREBASE_UID = "uid-test-wallet";
@@ -75,6 +80,7 @@ class WalletControllerIT {
         // (pour lire son pays et calculer le verrou) — WalletController.getBalance
         // en dépend indirectement, donc findById doit être doublé lui aussi.
         when(userRepository.findById(USER_UUID)).thenReturn(Optional.of(testUser));
+        when(stripeFeeSource.fee(any(), any())).thenReturn(BigDecimal.ZERO);
     }
 
     private static UsernamePasswordAuthenticationToken authAs(String uid, String role) {
@@ -280,7 +286,43 @@ class WalletControllerIT {
             .andExpect(jsonPath("$.refundEligible").value(true))
             .andExpect(jsonPath("$.balances[?(@.currency=='EUR')].refundableAmount").value(35.00))
             .andExpect(jsonPath("$.balances[?(@.currency=='EUR')].nonRefundableAmount").value(0.0))
-            .andExpect(jsonPath("$.balances[?(@.currency=='EUR')].refundEligible").value(true));
+            .andExpect(jsonPath("$.balances[?(@.currency=='EUR')].refundEligible").value(true))
+            // Contrat additif : frais (nuls ici, Stripe neutralisé) et net exposés par devise.
+            .andExpect(jsonPath("$.balances[?(@.currency=='EUR')].refundFeeAmount").value(0))
+            .andExpect(jsonPath("$.balances[?(@.currency=='EUR')].refundNetAmount").value(35.00));
+    }
+
+    @Test
+    void balance_netNulApresFrais_nonEligible() throws Exception {
+        walletService.credit(USER_UUID, "EUR", new BigDecimal("0.50"),
+            WalletTransactionType.TOP_UP, "pi_it_fee", "k-it-fee");
+        // Frais Stripe au moins égal au montant : rien ne repartirait vers l'utilisateur.
+        when(stripeFeeSource.fee(any(), any())).thenReturn(new BigDecimal("0.50"));
+
+        mockMvc.perform(get("/wallet/balance")
+                .with(authentication(authAs(FIREBASE_UID, "SENDER"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.refundEligible").value(false))
+            .andExpect(jsonPath("$.balances[?(@.currency=='EUR')].refundableAmount").value(0.50))
+            .andExpect(jsonPath("$.balances[?(@.currency=='EUR')].refundNetAmount").value(0.0))
+            .andExpect(jsonPath("$.balances[?(@.currency=='EUR')].refundEligible").value(false));
+    }
+
+    /**
+     * XOF n'a pas de centimes : le ledger garde 2 décimales, mais request() aligne chaque
+     * reliquat sur l'unité mineure (200.40 → 200) avant de retrancher le frais. Sur le net non
+     * arrondi de l'allocateur (0.40 > 0), le bouton s'affichait actif pour un 422 garanti.
+     */
+    @Test
+    void balance_xof_netPositifSeulementAvantArrondi_nonEligible() throws Exception {
+        walletService.credit(USER_UUID, "XOF", new BigDecimal("200.40"),
+            WalletTransactionType.TOP_UP, "pi_it_xof", "k-it-xof");
+        when(stripeFeeSource.fee(any(), any())).thenReturn(new BigDecimal("200"));
+
+        mockMvc.perform(get("/wallet/balance")
+                .with(authentication(authAs(FIREBASE_UID, "SENDER"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.balances[?(@.currency=='XOF')].refundEligible").value(false));
     }
 
     @Test
@@ -295,7 +337,49 @@ class WalletControllerIT {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$[0].amount").value(35.00))
             .andExpect(jsonPath("$[0].originalAmount").value(40.00))
-            .andExpect(jsonPath("$[0].paymentRef").value("pi_it_2"));
+            .andExpect(jsonPath("$[0].paymentRef").value("pi_it_2"))
+            .andExpect(jsonPath("$[0].feeAmount").value(0));
+    }
+
+    @Test
+    void listRefundRequests_exposeFraisNetRailEtDestinationMasquee() throws Exception {
+        com.yadony.api.payments.pawapay.PawapayOperationEntity deposit = pawapayOperationService.create(
+            com.yadony.api.payments.pawapay.PawapayOperationKind.DEPOSIT,
+            com.yadony.api.payments.pawapay.PawapayOperationPurpose.WALLET_TOPUP, USER_UUID, null, null,
+            new BigDecimal("10000"), "XOF", "ORANGE_CIV", "CI", "2250734567890");
+
+        WalletRefundRequestEntity request = new WalletRefundRequestEntity();
+        request.setUserId(USER_UUID);
+        request.setCurrency("XOF");
+        request.setStatus(WalletRefundRequestStatus.REFUNDED);
+        request.setAmount(new BigDecimal("10000.00"));
+        request.setChannel(WalletRefundChannel.AUTOMATIC_PAWAPAY);
+        request.setRequestedAt(LocalDateTime.now());
+        request.setResolvedAt(LocalDateTime.now());
+        WalletRefundRequestEntity saved = walletRefundRequestRepository.save(request);
+
+        WalletRefundRequestItemEntity item = new WalletRefundRequestItemEntity();
+        item.setRefundRequestId(saved.getId());
+        item.setWalletTransactionId(UUID.randomUUID());
+        item.setPaymentIntentId("pawapay:" + deposit.getId());
+        item.setAmount(new BigDecimal("10000.00"));
+        item.setFeeAmount(new BigDecimal("200.00"));
+        item.setStatus(WalletRefundItemStatus.REFUNDED);
+        walletRefundRequestItemRepository.save(item);
+
+        String body = mockMvc.perform(get("/wallet/refund-requests")
+                .with(authentication(authAs(FIREBASE_UID, "SENDER"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$[0].channel").value("AUTOMATIC_PAWAPAY"))
+            .andExpect(jsonPath("$[0].rail").value("PAWAPAY"))
+            .andExpect(jsonPath("$[0].amount").value(10000.00))
+            .andExpect(jsonPath("$[0].feeAmount").value(200.00))
+            .andExpect(jsonPath("$[0].netAmount").value(9800.00))
+            .andExpect(jsonPath("$[0].destinationMasked").value(deposit.getMsisdnMasked()))
+            .andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+
+        // Règle 14 : jamais le numéro complet dans la réponse.
+        assertThat(body).doesNotContain("0734567890");
     }
 
     @Test
@@ -320,7 +404,15 @@ class WalletControllerIT {
                 .andExpect(jsonPath("$.currency").value("EUR"))
                 .andExpect(jsonPath("$.amount").value(40.00))
                 .andExpect(jsonPath("$.channel").value("AUTOMATIC_STRIPE"))
-                .andExpect(jsonPath("$.status").value("PROCESSING"));
+                .andExpect(jsonPath("$.status").value("PROCESSING"))
+                .andExpect(jsonPath("$.rail").value("STRIPE"))
+                .andExpect(jsonPath("$.feeAmount").value(0.0))
+                .andExpect(jsonPath("$.netAmount").value(40.00))
+                // Rail Stripe : aucune destination mobile money. Le champ est absent du corps,
+                // pas présent à null : la sérialisation est en NON_NULL (application.yml).
+                .andExpect(jsonPath("$.destinationMasked").doesNotExist())
+                .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString(
+                        "destinationMasked"))));
         }
 
         assertThat(walletRefundRequestItemRepository.findAll())

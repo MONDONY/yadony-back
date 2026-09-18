@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.ActiveProfiles;
@@ -22,6 +23,8 @@ import java.util.Optional;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -45,6 +48,9 @@ class AuthControllerDeleteAccountIntegrationTest {
     @Autowired UserRepository userRepository;
     @Autowired WalletAccountRepository walletAccountRepository;
     @Autowired WalletTransactionRepository walletTransactionRepository;
+    // Frais Stripe réels lus via PaymentIntent.retrieve (appel réseau) : neutralisés ici pour
+    // ne jamais dépendre de Stripe en IT (cf. tâche 3, lot 2 « recharge wallet mobile money »).
+    @MockBean com.yadony.api.payments.wallet.fees.StripeFeeSource stripeFeeSource;
 
     private static final String FIREBASE_UID = "uid-delete-account-xof-residual";
 
@@ -55,6 +61,7 @@ class AuthControllerDeleteAccountIntegrationTest {
         walletTransactionRepository.deleteAll();
         walletAccountRepository.deleteAll();
         userRepository.deleteAll();
+        when(stripeFeeSource.fee(any(), any())).thenReturn(BigDecimal.ZERO);
 
         user = new UserEntity();
         user.setFirebaseUid(FIREBASE_UID);

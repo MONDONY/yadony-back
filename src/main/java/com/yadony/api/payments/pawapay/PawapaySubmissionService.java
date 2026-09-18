@@ -72,7 +72,50 @@ public class PawapaySubmissionService {
                 amount, deposit.getCurrency())));
     }
 
+    /**
+     * Remboursement de wallet, premier temps : réserve l'opération REFUND (purpose
+     * {@code WALLET_REFUND}, sans paiement de colis) liée au dépôt d'origine, SANS appel
+     * réseau. L'appelant pose l'identifiant sur son item et le commite, puis appelle
+     * {@link #initiate} : un rollback de l'appelant ne peut plus effacer la trace d'une
+     * opération déjà partie chez pawaPay (sinon la reprise en créerait une seconde).
+     */
+    public PawapayOperationEntity createWalletRefund(UUID userId, PawapayOperationEntity deposit, BigDecimal amount) {
+        return operations.create(PawapayOperationKind.REFUND, PawapayOperationPurpose.WALLET_REFUND, userId, null,
+                deposit.getId(), amount, deposit.getCurrency(), deposit.getProvider(), deposit.getCountry(),
+                deposit.getMsisdn());
+    }
+
+    /** Versement de repli d'un remboursement de wallet, premier temps : voir {@link #createWalletRefund}. */
+    public PawapayOperationEntity createWalletPayout(UUID userId, String msisdn, String provider, String country,
+                                                     BigDecimal amount, String currency) {
+        return operations.create(PawapayOperationKind.PAYOUT, PawapayOperationPurpose.WALLET_REFUND, userId, null,
+                null, amount, currency, provider, country, msisdn);
+    }
+
+    /**
+     * Second temps : envoie à pawaPay une opération REFUND ou PAYOUT réservée par
+     * {@link #createWalletRefund} / {@link #createWalletPayout}, puis marque la soumission.
+     * Renvoie la réponse synchrone de pawaPay et non l'entité relue : l'appelant peut tenir
+     * l'opération dans son contexte de persistance, où une relecture rendrait l'état d'avant
+     * {@code markSubmitted} (UPDATE en masse d'une autre transaction). Sans réponse, lève
+     * {@link PawapayErrors#providerUnavailable()} et laisse l'opération CREATED au poller.
+     */
+    public PawapayInitiationResult initiate(PawapayOperationEntity op, String clientReference) {
+        return switch (op.getKind()) {
+            case REFUND -> send(op, () -> client.initiateRefund(new PawapayRefundRequest(op.getId(),
+                    op.getRelatedOperationId(), op.getAmount(), op.getCurrency())));
+            case PAYOUT -> send(op, () -> client.initiatePayout(new PawapayPayoutRequest(op.getId(), op.getMsisdn(),
+                    op.getProvider(), op.getAmount(), op.getCurrency(), PAYOUT_MESSAGE, clientReference)));
+            case DEPOSIT -> throw new IllegalArgumentException("Un dépôt s'initie par submitDeposit : " + op.getId());
+        };
+    }
+
     private PawapayOperationEntity submit(PawapayOperationEntity op, Supplier<PawapayInitiationResult> call) {
+        send(op, call);
+        return operations.get(op.getId());
+    }
+
+    private PawapayInitiationResult send(PawapayOperationEntity op, Supplier<PawapayInitiationResult> call) {
         PawapayInitiationResult result;
         try {
             result = call.get();
@@ -82,6 +125,6 @@ public class PawapaySubmissionService {
             throw PawapayErrors.providerUnavailable();
         }
         operations.markSubmitted(op.getId(), result);
-        return operations.get(op.getId());
+        return result;
     }
 }

@@ -224,6 +224,39 @@ class WalletRefundRequestServiceTest {
         verify(adminAlertService).raise(eq("wallet-refund-requested"), any(), any());
     }
 
+    /**
+     * Le frais du parent suit l'item enfant : sans lui, l'admin réglerait le brut et le résumé
+     * de la demande annoncerait frais 0 / net = brut, alors que le rail automatique retenait
+     * déjà ce frais sur la même recharge.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void openChildForFailedItems_reporteLeFraisSurLItemEnfant() {
+        WalletRefundRequestEntity parent = new WalletRefundRequestEntity();
+        assignId(parent);
+        parent.setUserId(USER_ID);
+        parent.setCurrency("EUR");
+        when(refundRequestRepository.existsByParentRequestId(parent.getId())).thenReturn(false);
+        when(refundRequestRepository.save(any())).thenAnswer(inv -> {
+            WalletRefundRequestEntity r = inv.getArgument(0);
+            assignId(r);
+            return r;
+        });
+        WalletRefundRequestItemEntity failed = itemOf(parent.getId(), "pi_a", "40.00",
+                WalletRefundItemStatus.FAILED, Instant.now());
+        failed.setFeeAmount(new BigDecimal("1.51"));
+
+        service.openChildForFailedItems(parent, List.of(failed));
+
+        ArgumentCaptor<List<WalletRefundRequestItemEntity>> saved = ArgumentCaptor.forClass(List.class);
+        verify(refundRequestItemRepository).saveAll(saved.capture());
+        assertThat(saved.getValue()).singleElement()
+                .satisfies(i -> {
+                    assertThat(i.getAmount()).isEqualByComparingTo("40.00");
+                    assertThat(i.getFeeAmount()).isEqualByComparingTo("1.51");
+                });
+    }
+
     @Test
     void openChildForFailedItems_idempotent() {
         WalletRefundRequestEntity parent = new WalletRefundRequestEntity();

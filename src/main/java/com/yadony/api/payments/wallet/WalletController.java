@@ -71,9 +71,15 @@ public class WalletController {
         List<WalletTransactionEntity> transactions = walletService.getTransactions(userId, page);
         Map<UUID, String> refundStatusByTxId = walletSelfRefundService.refundStatusByTransactionId(
                 transactions.stream().map(WalletTransactionEntity::getId).toList());
+        Map<UUID, WalletSelfRefundService.RefundFeeBreakdown> feesByTxId =
+                walletSelfRefundService.refundFeesByTransactionId(userId, transactions);
         List<WalletTransactionDto> txs = transactions
             .stream()
-            .map(tx -> WalletTransactionDto.from(tx, refundStatusByTxId.get(tx.getId())))
+            .map(tx -> {
+                WalletSelfRefundService.RefundFeeBreakdown fees = feesByTxId.get(tx.getId());
+                return WalletTransactionDto.from(tx, refundStatusByTxId.get(tx.getId()),
+                        fees == null ? null : fees.feeAmount(), fees == null ? null : fees.netAmount());
+            })
             .collect(Collectors.toList());
         List<WalletCurrencyBalanceDto> balances = walletService.getAllBalances(userId)
             .stream()
@@ -81,13 +87,18 @@ public class WalletController {
                 WalletRefundAllocation a = safeAllocation(userId, w.getCurrency());
                 // isEligible reçoit l'allocation déjà calculée : la recalculer ici rejouerait
                 // tout le ledger une seconde fois, pour chaque devise du portefeuille.
-                boolean eligible = walletSelfRefundService.isEligible(userId, w.getCurrency(), a);
+                // Net nul (tout le remboursable part en frais) : rien ne repartirait, bouton inactif.
+                // Net jugé à l'échelle de l'unité mineure de la devise, comme le filtre de
+                // request() : sur a.net() (2 décimales de ledger), un reliquat XOF de 200.40
+                // avec 200 de frais activait le bouton pour un 422 garanti.
+                boolean eligible = walletSelfRefundService.isEligible(userId, w.getCurrency(), a)
+                        && WalletSelfRefundService.issuableNet(w.getCurrency(), a).signum() > 0;
                 // equalsIgnoreCase : les portefeuilles antérieurs à V202 peuvent
                 // encore porter une casse mixte, et un simple equals aurait
                 // affiché « aucun portefeuille actif » à leur propriétaire.
                 return new WalletCurrencyBalanceDto(
                         w.getCurrency(), w.getBalance(), w.getCurrency().equalsIgnoreCase(activeCurrency),
-                        eligible, a.refundableTotal(), a.nonRefundable());
+                        eligible, a.refundableTotal(), a.nonRefundable(), a.fees(), a.net());
             })
             .collect(Collectors.toList());
         boolean activeEligible = balances.stream()
@@ -163,17 +174,20 @@ public class WalletController {
             @RequestBody(required = false) WalletRefundSelectionRequest request) {
         UUID userId = currentUserId();
         List<UUID> transactionIds = request == null ? List.of() : request.transactionIds();
-        return ResponseEntity.ok(
-                WalletRefundRequestSummaryResponse.from(
-                        walletSelfRefundService.request(userId, currency, transactionIds)));
+        WalletRefundRequestEntity created = walletSelfRefundService.request(userId, currency, transactionIds);
+        return ResponseEntity.ok(summaries(List.of(created)).get(0));
     }
 
     @GetMapping("/refund-requests")
     public ResponseEntity<List<WalletRefundRequestSummaryResponse>> listRefundRequests() {
         UUID userId = currentUserId();
-        return ResponseEntity.ok(walletSelfRefundService.listForUser(userId).stream()
-                .map(WalletRefundRequestSummaryResponse::from)
-                .collect(Collectors.toList()));
+        return ResponseEntity.ok(summaries(walletSelfRefundService.listForUser(userId)));
+    }
+
+    private List<WalletRefundRequestSummaryResponse> summaries(List<WalletRefundRequestEntity> requests) {
+        return walletSelfRefundService.details(requests).stream()
+                .map(d -> WalletRefundRequestSummaryResponse.from(d.request(), d.items(), d.destinationMasked()))
+                .collect(Collectors.toList());
     }
 
     private UUID currentUserId() {

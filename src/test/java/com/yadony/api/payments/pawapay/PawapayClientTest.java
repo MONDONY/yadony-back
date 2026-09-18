@@ -194,7 +194,8 @@ class PawapayClientTest {
                         {"companyName":"yadony","countries":[{"country":"SEN","providers":[
                           {"provider":"ORANGE_SEN","currencies":[{"currency":"XOF","operationTypes":{
                              "DEPOSIT":{"minAmount":"100","maxAmount":"1500000","decimalsInAmount":"NONE","authType":"PROVIDER_AUTH","status":"OPERATIONAL"},
-                             "PAYOUT":{"minAmount":"100","maxAmount":"1000000","decimalsInAmount":"NONE","status":"OPERATIONAL"}}}]},
+                             "PAYOUT":{"minAmount":"100","maxAmount":"1000000","decimalsInAmount":"NONE","status":"OPERATIONAL"},
+                             "REFUND":{"minAmount":"100","maxAmount":"1500000","decimalsInAmount":"NONE","status":"OPERATIONAL"}}}]},
                           {"provider":"WAVE_SEN","currencies":[{"currency":"XOF","operationTypes":{
                              "DEPOSIT":{"minAmount":"100","maxAmount":"1500000","decimalsInAmount":"NONE","authType":"REDIRECT_AUTH","status":"OPERATIONAL"}}}]}
                         ]}]}
@@ -210,7 +211,10 @@ class PawapayClientTest {
         assertThat(orange.isRedirectDeposit()).isFalse();
         assertThat(orange.deposit().maxAmount()).isEqualByComparingTo("1500000");
         PawapayProviderConfig wave = conf.get("WAVE_SEN");
+        assertThat(orange.supportsRefund()).isTrue();
         assertThat(wave.supportsPayout()).isFalse();
+        // Aucun type REFUND déclaré : remboursement du dépôt non proposé, repli par versement.
+        assertThat(wave.supportsRefund()).isFalse();
         assertThat(wave.isRedirectDeposit()).isTrue();
 
         // Revue finale, point 1 (Important) : l'ordre pawaPay (document JSON, prédit en tête côté

@@ -15,6 +15,7 @@ import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.wallet.WalletAccountRepository;
 import com.yadony.api.payments.wallet.WalletAllocationInvariantException;
 import com.yadony.api.payments.wallet.WalletRefundAllocation;
+import com.yadony.api.payments.wallet.WalletRefundRail;
 import com.yadony.api.payments.wallet.WalletRefundRequestService;
 import com.yadony.api.payments.wallet.WalletSelfRefundService;
 import org.slf4j.Logger;
@@ -92,7 +93,10 @@ public class UserService {
     /**
      * Règle chaque wallet à solde positif au moment de la demande de suppression (J0) :
      * demande automatique Stripe sur tout le remboursable (partiel inclus), ticket manuel
-     * si le rejeu du ledger est incohérent. La part non-cash reste dans le wallet gelé et
+     * si le rejeu du ledger est incohérent. Une devise dont les cibles mélangent les rails carte
+     * et mobile money donne aussi un ticket manuel, ouvert par
+     * {@code WalletSelfRefundService#request} elle-même et simplement collecté ici.
+     * La part non-cash reste dans le wallet gelé et
      * n'est perdue qu'à la finalisation (cf. UserFinalizedPaymentsListener). Ne bloque
      * jamais la suppression (Apple 5.1.1(v)).
      *
@@ -153,12 +157,14 @@ public class UserService {
     /**
      * Lecture seule : ce que la suppression ferait de chaque solde positif.
      *
-     * <p>Rail STRIPE : les trois montants sont ceux de l'allocateur ({@code refundableTotal},
+     * <p>Rail STRIPE ou PAWAPAY (toutes les cibles pawaPay) : les trois montants sont ceux de l'allocateur ({@code refundableTotal},
      * {@code nonRefundable}, {@code inFlight}), au centime près ce que
      * {@link #settleWalletsForDeletion} demandera à Stripe.
      *
-     * <p>Rail MANUAL : le rejeu du ledger a échoué, aucun des trois montants de l'allocateur
-     * n'existe. Le repli ouvre un ticket admin sur TOUT le solde
+     * <p>Rail MANUAL : le rejeu du ledger a échoué (aucun des trois montants de l'allocateur
+     * n'existe), ou les cibles remboursables mélangent les rails carte et mobile money (aucun
+     * rail automatique ne sait traiter la devise, cf. {@code WalletSelfRefundService#request}).
+     * Dans les deux cas le repli ouvre un ticket admin sur TOUT le solde
      * ({@code WalletRefundRequestService#request}), que la résolution admin rembourse en
      * entier ({@code resolve} débite le solde courant), et la finalisation ne perd rien tant
      * que l'invariant reste cassé ({@code UserFinalizedPaymentsListener#forfeitNonCash}
@@ -175,13 +181,31 @@ public class UserService {
             }
             try {
                 WalletRefundAllocation a = walletSelfRefundService.allocation(userId, wallet.getCurrency());
+                // Cibles mélangeant carte et mobile money : aucun rail automatique ne sait
+                // traiter cette devise, WalletSelfRefundService#request bascule sur le ticket
+                // manuel, qui rembourse TOUT le solde. Même annonce que le repli d'invariant
+                // ci-dessous.
+                long distinctRails = a.refundable().stream().map(WalletRefundAllocation.RefundableTopup::rail)
+                        .distinct().count();
+                if (distinctRails > 1) {
+                    result.add(new WalletSettlementDto(wallet.getCurrency(), wallet.getBalance(),
+                            BigDecimal.ZERO, BigDecimal.ZERO, WalletSettlementDto.RAIL_MANUAL,
+                            BigDecimal.ZERO, wallet.getBalance(), null));
+                    continue;
+                }
+                // PAWAPAY seulement si TOUTES les cibles le sont (une demande n'est jamais mixte).
+                boolean allPawapay = !a.refundable().isEmpty() && a.refundable().stream()
+                        .allMatch(t -> t.rail() == WalletRefundRail.PAWAPAY);
                 result.add(new WalletSettlementDto(wallet.getCurrency(), a.refundableTotal(),
-                        a.nonRefundable(), a.inFlight(), WalletSettlementDto.RAIL_STRIPE));
+                        a.nonRefundable(), a.inFlight(),
+                        allPawapay ? WalletSettlementDto.RAIL_PAWAPAY : WalletSettlementDto.RAIL_STRIPE,
+                        a.fees(), a.net(), walletSelfRefundService.destinationMasked(a)));
             } catch (WalletAllocationInvariantException e) {
                 log.warn("Rejeu du ledger incoherent, rail MANUAL affiche : user {} devise {} : {}",
                         userId, wallet.getCurrency(), e.getMessage());
                 result.add(new WalletSettlementDto(wallet.getCurrency(), wallet.getBalance(),
-                        BigDecimal.ZERO, BigDecimal.ZERO, WalletSettlementDto.RAIL_MANUAL));
+                        BigDecimal.ZERO, BigDecimal.ZERO, WalletSettlementDto.RAIL_MANUAL,
+                        BigDecimal.ZERO, wallet.getBalance(), null));
             }
         }
         return result;

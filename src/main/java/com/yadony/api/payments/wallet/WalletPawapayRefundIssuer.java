@@ -1,0 +1,399 @@
+package com.yadony.api.payments.wallet;
+
+import com.yadony.api.common.AuditService;
+import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.stripe.AdminAlertService;
+import com.yadony.api.payments.pawapay.PawapayClient;
+import com.yadony.api.payments.pawapay.PawapayOperationEntity;
+import com.yadony.api.payments.pawapay.PawapayOperationKind;
+import com.yadony.api.payments.pawapay.PawapayOperationRepository;
+import com.yadony.api.payments.pawapay.PawapayOperationStatus;
+import com.yadony.api.payments.pawapay.PawapaySubmissionService;
+import com.yadony.api.payments.pawapay.dto.PawapayInitiationResult;
+import com.yadony.api.payments.pawapay.dto.PawapayProviderConfig;
+import java.math.BigDecimal;
+import java.time.Duration;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.stereotype.Component;
+
+/**
+ * Émetteur du rail pawaPay des remboursements de wallet ({@code AUTOMATIC_PAWAPAY}). Chaque item
+ * rembourse le NET ({@code amount - feeAmount}) dans la devise du dépôt d'origine : par un
+ * remboursement partiel du dépôt quand l'opérateur le propose ({@code operationTypes.REFUND} de
+ * la configuration active), sinon par un versement (payout) vers le numéro qui a payé. Un
+ * remboursement en échec retombe sur ce versement ({@link #fallbackToPayout}) ; un versement en
+ * échec passe l'item FAILED et alerte un administrateur (le ticket enfant s'ouvre à la résolution
+ * de la demande). Le wallet n'est débité, du brut, qu'à cette résolution
+ * ({@link WalletSelfRefundService#resolveIfComplete}).
+ *
+ * <p><b>Anti double remboursement.</b> L'émission se fait en deux temps. Dans la transaction
+ * appelante, l'opération est réservée ({@code PawapaySubmissionService#createWalletRefund} /
+ * {@code #createWalletPayout}, committée à part), son identifiant posé sur l'item passé
+ * PROCESSING, puis {@link WalletPawapayRefundInitiationEvent} est publié. L'appel réseau
+ * ({@link #initiate}) ne part qu'au commit de cette transaction. Un item PROCESSING lié n'est
+ * jamais repris par {@link WalletRefundIssueRecoveryScheduler} : une initiation sans réponse est
+ * tranchée par le poller pawaPay (FAILED, puis {@link WalletRefundOutcomeListener}).
+ *
+ * <p>Les lectures d'opération passent par {@link PawapayOperationRepository#findById}, jamais par
+ * {@code PawapayOperationService#get} : ce dernier lève dans une méthode {@code @Transactional}
+ * participante, ce qui marquerait rollback-only la transaction de {@code issuePendingItems} même
+ * si l'exception est rattrapée ici.
+ */
+@Component
+public class WalletPawapayRefundIssuer implements WalletRefundRailIssuer {
+
+    /** Même code que les échecs Stripe de {@link WalletSelfRefundService}. */
+    static final String ALERT_CODE = "wallet-self-refund-failed";
+
+    /**
+     * Âge maximal d'une opération CREATED au moment de l'envoyer. Au-delà de
+     * {@code PawapayReconciliationPoller.CREATED_TIMEOUT} (2 min), le poller classe une opération
+     * CREATED inconnue de pawaPay en SUBMIT_REJECTED et l'écouteur lance le repli par versement :
+     * un POST parti après ce seuil pourrait être accepté EN PLUS du versement (double mouvement).
+     * Les initiations après commit passent en série, chacune pouvant durer 10 s de connexion
+     * + 30 s de lecture ({@code PawapayConfig}) : envoyer au plus tard à 60 s garantit une
+     * réponse avant 100 s, sous les 120 s du poller, avec 20 s de marge. Plus vieille, l'opération
+     * reste CREATED : le poller la rejette et le repli part sans risque.
+     */
+    static final Duration MAX_SEND_AGE = Duration.ofSeconds(60);
+
+    private static final Logger log = LoggerFactory.getLogger(WalletPawapayRefundIssuer.class);
+
+    private final PawapayOperationRepository operationRepository;
+    private final PawapaySubmissionService submission;
+    private final PawapayClient client;
+    private final WalletRefundRequestItemRepository itemRepository;
+    private final AuditService auditService;
+    private final AdminAlertService adminAlertService;
+    private final ApplicationEventPublisher eventPublisher;
+
+    public WalletPawapayRefundIssuer(PawapayOperationRepository operationRepository,
+                                     PawapaySubmissionService submission, PawapayClient client,
+                                     WalletRefundRequestItemRepository itemRepository, AuditService auditService,
+                                     AdminAlertService adminAlertService, ApplicationEventPublisher eventPublisher) {
+        this.operationRepository = operationRepository;
+        this.submission = submission;
+        this.client = client;
+        this.itemRepository = itemRepository;
+        this.auditService = auditService;
+        this.adminAlertService = adminAlertService;
+        this.eventPublisher = eventPublisher;
+    }
+
+    /**
+     * Réserve et lie une opération par item non encore émis. Une erreur AVANT la réservation
+     * (dépôt introuvable, configuration pawaPay illisible, réservation refusée) laisse l'item
+     * PENDING sans identifiant : la reprise planifiée réessaiera.
+     */
+    @Override
+    public void issue(WalletRefundRequestEntity request, List<WalletRefundRequestItemEntity> items) {
+        for (WalletRefundRequestItemEntity item : items) {
+            if (item.getPawapayRefundId() != null || item.getPawapayPayoutId() != null) {
+                continue;
+            }
+            Optional<PawapayOperationEntity> deposit = findDeposit(item);
+            if (deposit.isEmpty()) {
+                continue;
+            }
+            Optional<Boolean> refundable = supportsRefund(deposit.get());
+            if (refundable.isEmpty()) {
+                log.warn("Remboursement wallet pawaPay : configuration active illisible pour l'item {}, "
+                        + "reprise planifiee", item.getId());
+                continue;
+            }
+            PawapayOperationKind kind = refundable.get() ? PawapayOperationKind.REFUND : PawapayOperationKind.PAYOUT;
+            emit(item, request.getUserId(), deposit.get(), kind);
+        }
+    }
+
+    /**
+     * Rattrapage d'une issue pawaPay jamais appliquée à l'item (écouteur en échec, rejet
+     * synchrone puis application ratée). Aucun appel à pawaPay : le statut LOCAL de l'opération
+     * liée fait foi, le poller le synchronisant déjà. L'opération lue est le versement quand
+     * l'item en porte un (repli déjà lancé), sinon le remboursement. Opération encore ouverte ou
+     * introuvable : rien. Finale : même transition que l'écouteur ({@link #applyPawapayOutcome}),
+     * donc COMPLETED passe l'item REFUNDED, un remboursement FAILED ou SUBMIT_REJECTED sans
+     * versement lance le repli, un versement mort passe l'item FAILED avec alerte.
+     */
+    @Override
+    public void reconcile(WalletRefundRequestEntity request, WalletRefundRequestItemEntity item) {
+        if (item.getStatus() != WalletRefundItemStatus.PROCESSING) {
+            return;
+        }
+        PawapayOperationKind kind;
+        UUID operationId;
+        if (item.getPawapayPayoutId() != null) {
+            kind = PawapayOperationKind.PAYOUT;
+            operationId = item.getPawapayPayoutId();
+        } else if (item.getPawapayRefundId() != null) {
+            kind = PawapayOperationKind.REFUND;
+            operationId = item.getPawapayRefundId();
+        } else {
+            return;
+        }
+        PawapayOperationEntity op = operationRepository.findById(operationId).orElse(null);
+        if (op == null || op.getStatus() == null || !op.getStatus().isFinal()) {
+            return;
+        }
+        boolean completed = op.getStatus() == PawapayOperationStatus.COMPLETED;
+        log.info("Remboursement wallet pawaPay : reconciliation de l'item {} sur l'etat local {} de {} {}",
+                item.getId(), op.getStatus(), kind, operationId);
+        applyPawapayOutcome(request, item, kind, completed, completed ? null : op.getFailureCode());
+    }
+
+    /** Rejet synchrone explicite d'une initiation : à traiter comme une issue finale en échec. */
+    record Rejection(PawapayOperationKind kind, UUID operationId, String failureCode) {}
+
+    /**
+     * Second temps de l'émission, après le commit du lien : envoie l'opération à pawaPay, relue
+     * juste avant le POST (toujours CREATED, et assez récente, voir {@link #MAX_SEND_AGE}). Sans
+     * réponse, l'item reste lié et PROCESSING (log WARN, rien n'est propagé) : le poller pawaPay
+     * tranchera. Un rejet synchrone explicite ({@code SUBMIT_REJECTED}, que
+     * {@code markSubmitted} ne publie pas en événement) est rendu à l'appelant, qui le traite
+     * comme un échec final (verrou de la demande puis {@link #applyPawapayOutcome}).
+     *
+     * @return le rejet à traiter ; vide sinon
+     */
+    Optional<Rejection> initiate(UUID itemId, UUID operationId) {
+        PawapayOperationEntity op = operationRepository.findById(operationId).orElse(null);
+        if (op == null) {
+            log.warn("Remboursement wallet pawaPay : operation {} de l'item {} introuvable", operationId, itemId);
+            return Optional.empty();
+        }
+        if (op.getStatus() != PawapayOperationStatus.CREATED) {
+            log.info("Remboursement wallet pawaPay : operation {} deja {}, initiation ignoree",
+                    operationId, op.getStatus());
+            return Optional.empty();
+        }
+        LocalDateTime sendDeadline = LocalDateTime.now(ZoneOffset.UTC).minus(MAX_SEND_AGE);
+        if (op.getCreatedAt() == null || op.getCreatedAt().isBefore(sendDeadline)) {
+            log.warn("Remboursement wallet pawaPay : {} {} de l'item {} creee a {}, trop ancienne pour etre "
+                    + "envoyee sans risque, laissee CREATED au poller", op.getKind(), operationId, itemId,
+                    op.getCreatedAt());
+            return Optional.empty();
+        }
+        PawapayInitiationResult result;
+        try {
+            result = submission.initiate(op, "wallet-refund-" + itemId);
+        } catch (YadonyBusinessException e) {
+            log.warn("Remboursement wallet pawaPay : {} {} de l'item {} sans reponse, item laisse PROCESSING "
+                    + "pour le poller", op.getKind(), operationId, itemId);
+            return Optional.empty();
+        }
+        if (result.outcome() != PawapayInitiationResult.Outcome.REJECTED) {
+            return Optional.empty();
+        }
+        log.warn("Remboursement wallet pawaPay : {} {} de l'item {} rejete a l'initiation ({})",
+                op.getKind(), operationId, itemId, result.failureCode());
+        return Optional.of(new Rejection(op.getKind(), operationId, result.failureCode()));
+    }
+
+    /** Item lié à l'opération {@code operationId}, verrouillé. */
+    Optional<WalletRefundRequestItemEntity> findItem(PawapayOperationKind kind, UUID operationId) {
+        return switch (kind) {
+            case REFUND -> itemRepository.findByPawapayRefundId(operationId);
+            case PAYOUT -> itemRepository.findByPawapayPayoutId(operationId);
+            case DEPOSIT -> Optional.empty();
+        };
+    }
+
+    /**
+     * Transition partagée d'une issue pawaPay finale vers l'item (écouteur, rejet synchrone,
+     * réconciliation). Idempotente : un item qui n'est plus PROCESSING n'avance plus, et l'échec
+     * d'un remboursement dont l'item porte déjà un versement ne relance rien. L'appelant tient le
+     * verrou de la demande {@code request} (pris AVANT celui de l'item) et la résout ensuite.
+     *
+     * <p>Un {@code completed} sur un item qui porte DÉJÀ l'opération de l'autre rail lève une
+     * alerte administrateur (les deux mouvements peuvent aboutir : l'utilisateur serait payé
+     * deux fois). L'objectif est de le rendre visible, pas de l'empêcher — les deux opérations
+     * sont déjà chez l'opérateur quand on l'apprend.
+     */
+    void applyPawapayOutcome(WalletRefundRequestEntity request, WalletRefundRequestItemEntity item,
+                             PawapayOperationKind kind, boolean completed, String failureCode) {
+        if (item.getStatus() != WalletRefundItemStatus.PROCESSING) {
+            // Rejeu banal (écouteur + réconciliation sur la même issue) : simple log. Mais un
+            // COMPLETED qui arrive alors que l'AUTRE rail a, lui aussi, abouti est un double
+            // mouvement d'argent déjà consommé : on l'a longtemps avalé en log.info.
+            if (completed && otherOperationCompleted(item, kind)) {
+                raiseDoubleMovementAlert(item, kind,
+                        "Double mouvement pawaPay possible : remboursement ET versement aboutis "
+                                + "sur le meme item de remboursement wallet");
+            } else {
+                log.info("Remboursement wallet pawaPay : item {} deja {}, issue {} ignoree",
+                        item.getId(), item.getStatus(), kind);
+            }
+            return;
+        }
+        if (completed) {
+            // L'item peut déjà porter l'autre identifiant (repli par versement lancé après un
+            // refund donné pour mort, puis COMPLETED tardif sur ce refund). Tant que l'autre
+            // opération n'est pas terminale EN ÉCHEC, les deux mouvements peuvent aboutir :
+            // l'item passe REFUNDED quand même (rien à annuler côté pawaPay), mais un
+            // administrateur doit le VOIR.
+            if (otherOperationStillAlive(item, kind)) {
+                raiseDoubleMovementAlert(item, kind,
+                        "Double mouvement pawaPay possible : issue aboutie sur un item portant "
+                                + "deja l'autre operation, non terminale en echec");
+            }
+            item.setStatus(WalletRefundItemStatus.REFUNDED);
+            itemRepository.save(item);
+            return;
+        }
+        if (kind == PawapayOperationKind.REFUND) {
+            if (item.getPawapayPayoutId() != null) {
+                log.info("Remboursement wallet pawaPay : item {} deja replie sur le versement {}",
+                        item.getId(), item.getPawapayPayoutId());
+                return;
+            }
+            Optional<PawapayOperationEntity> deposit = findDeposit(item);
+            if (deposit.isEmpty()) {
+                fail(item, "pawapay-deposit-missing", "Depot d'origine introuvable pour le repli par versement");
+                return;
+            }
+            fallbackToPayout(request, item, deposit.get(), failureCode);
+            return;
+        }
+        fail(item, failureCode != null ? failureCode : "pawapay-payout-failed",
+                "Versement pawaPay echoue pour un remboursement wallet self-service");
+    }
+
+    /**
+     * Remboursement pawaPay en échec : même émission que {@link #issue}, en versement vers le
+     * numéro du dépôt. Une réservation impossible ici n'a plus de reprise planifiée (l'item est
+     * déjà PROCESSING) : l'item passe FAILED et un administrateur est alerté.
+     */
+    void fallbackToPayout(WalletRefundRequestEntity request, WalletRefundRequestItemEntity item,
+                          PawapayOperationEntity deposit, String refundFailureCode) {
+        UUID refundOperationId = item.getPawapayRefundId();
+        Optional<UUID> payoutId = emit(item, request.getUserId(), deposit, PawapayOperationKind.PAYOUT);
+        if (payoutId.isEmpty()) {
+            fail(item, "pawapay-fallback-not-created", "Repli par versement pawaPay impossible a reserver");
+            return;
+        }
+        auditService.log("wallet_refund_request", item.getRefundRequestId(), "REFUND_FALLBACK_PAYOUT",
+                request.getUserId(), Map.of("itemId", String.valueOf(item.getId()),
+                        "refundOperationId", String.valueOf(refundOperationId),
+                        "payoutOperationId", payoutId.get().toString(),
+                        "refundFailureCode", String.valueOf(refundFailureCode)));
+    }
+
+    private Optional<UUID> emit(WalletRefundRequestItemEntity item, UUID userId, PawapayOperationEntity deposit,
+                                PawapayOperationKind kind) {
+        BigDecimal net = item.getAmount().subtract(item.getFeeAmount());
+        PawapayOperationEntity op;
+        try {
+            op = kind == PawapayOperationKind.REFUND
+                    ? submission.createWalletRefund(userId, deposit, net)
+                    : submission.createWalletPayout(userId, deposit.getMsisdn(), deposit.getProvider(),
+                            deposit.getCountry(), net, deposit.getCurrency());
+        } catch (RuntimeException e) {
+            log.warn("Remboursement wallet pawaPay : reservation {} impossible pour l'item {} : {}",
+                    kind, item.getId(), e.toString());
+            return Optional.empty();
+        }
+        if (kind == PawapayOperationKind.REFUND) {
+            item.setPawapayRefundId(op.getId());
+        } else {
+            item.setPawapayPayoutId(op.getId());
+        }
+        item.setStatus(WalletRefundItemStatus.PROCESSING);
+        itemRepository.save(item);
+        eventPublisher.publishEvent(new WalletPawapayRefundInitiationEvent(item.getId(), op.getId()));
+        return Optional.of(op.getId());
+    }
+
+    private Optional<PawapayOperationEntity> findDeposit(WalletRefundRequestItemEntity item) {
+        UUID depositId;
+        try {
+            depositId = WalletRefundRail.depositId(item.getPaymentIntentId());
+        } catch (IllegalArgumentException e) {
+            log.warn("Remboursement wallet pawaPay : reference de paiement illisible pour l'item {}", item.getId());
+            return Optional.empty();
+        }
+        Optional<PawapayOperationEntity> deposit = operationRepository.findById(depositId);
+        if (deposit.isEmpty()) {
+            log.warn("Remboursement wallet pawaPay : depot {} introuvable pour l'item {}", depositId, item.getId());
+        }
+        return deposit;
+    }
+
+    /** Vide si la configuration active pawaPay n'a pas pu être lue. Opérateur absent : pas de refund. */
+    private Optional<Boolean> supportsRefund(PawapayOperationEntity deposit) {
+        try {
+            PawapayProviderConfig config = client.activeConfiguration().get(deposit.getProvider());
+            return Optional.of(config != null && config.supportsRefund());
+        } catch (RuntimeException e) {
+            log.warn("Remboursement wallet pawaPay : configuration active indisponible ({})", e.toString());
+            return Optional.empty();
+        }
+    }
+
+    /** Identifiant de l'opération de l'AUTRE rail que {@code kind} sur cet item, {@code null} si absent. */
+    private static UUID otherOperationId(WalletRefundRequestItemEntity item, PawapayOperationKind kind) {
+        return kind == PawapayOperationKind.REFUND ? item.getPawapayPayoutId() : item.getPawapayRefundId();
+    }
+
+    /**
+     * Vrai si l'item porte l'autre opération et que celle-ci n'est PAS terminale en échec
+     * (encore ouverte, déjà COMPLETED, illisible) : les deux mouvements peuvent donc aboutir.
+     * Une opération FAILED/SUBMIT_REJECTED est morte, il n'y a pas de double mouvement.
+     */
+    private boolean otherOperationStillAlive(WalletRefundRequestItemEntity item, PawapayOperationKind kind) {
+        UUID otherId = otherOperationId(item, kind);
+        if (otherId == null) {
+            return false;
+        }
+        PawapayOperationEntity other = operationRepository.findById(otherId).orElse(null);
+        return other == null || other.getStatus() == null
+                || !PawapayOperationStatus.DEAD.contains(other.getStatus());
+    }
+
+    /** Vrai si l'item porte l'autre opération et que celle-ci est terminale EN SUCCÈS. */
+    private boolean otherOperationCompleted(WalletRefundRequestItemEntity item, PawapayOperationKind kind) {
+        UUID otherId = otherOperationId(item, kind);
+        if (otherId == null) {
+            return false;
+        }
+        return operationRepository.findById(otherId)
+                .map(o -> o.getStatus() == PawapayOperationStatus.COMPLETED)
+                .orElse(false);
+    }
+
+    /**
+     * Rend visible un double mouvement possible (l'utilisateur peut avoir été payé deux fois).
+     * On n'annule rien ici : les deux opérations sont déjà parties chez l'opérateur, seule une
+     * reprise humaine peut trancher.
+     */
+    private void raiseDoubleMovementAlert(WalletRefundRequestItemEntity item, PawapayOperationKind kind,
+                                          String detail) {
+        log.error("Remboursement wallet pawaPay : {} (item {}, refund {}, payout {}, issue {})",
+                detail, item.getId(), item.getPawapayRefundId(), item.getPawapayPayoutId(), kind);
+        adminAlertService.raise(ALERT_CODE, detail,
+                Map.of("itemId", String.valueOf(item.getId()),
+                        "refundRequestId", String.valueOf(item.getRefundRequestId()),
+                        "pawapayRefundId", String.valueOf(item.getPawapayRefundId()),
+                        "pawapayPayoutId", String.valueOf(item.getPawapayPayoutId()),
+                        "completedKind", String.valueOf(kind),
+                        "reason", "pawapay-double-movement"));
+    }
+
+    private void fail(WalletRefundRequestItemEntity item, String reason, String detail) {
+        item.setStatus(WalletRefundItemStatus.FAILED);
+        item.setFailureReason(reason.length() <= 60 ? reason : reason.substring(0, 60));
+        itemRepository.save(item);
+        adminAlertService.raise(ALERT_CODE, detail,
+                Map.of("itemId", String.valueOf(item.getId()),
+                        "refundRequestId", String.valueOf(item.getRefundRequestId()),
+                        "pawapayRefundId", String.valueOf(item.getPawapayRefundId()),
+                        "pawapayPayoutId", String.valueOf(item.getPawapayPayoutId()),
+                        "reason", reason));
+    }
+}
