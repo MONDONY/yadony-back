@@ -53,15 +53,6 @@ public class WalletSelfRefundService {
 
     private static final Logger log = LoggerFactory.getLogger(WalletSelfRefundService.class);
 
-    /**
-     * Code d'erreur métier d'une devise dont les cibles remboursables mélangent les rails
-     * (une recharge carte et une recharge mobile money dans la même devise, cas réel en XOF).
-     * Aucun rail automatique ne sait traiter une telle demande : le solde repart par un ticket
-     * manuel. Exposé pour que {@code UserService#settleWalletsForDeletion} distingue ce cas
-     * des autres 422 de {@link #request} et bascule sur ce ticket au lieu de l'ignorer.
-     */
-    public static final String MIXED_RAILS_ERROR_CODE = "wallet-refund-mixed-rails";
-
     private final WalletAccountRepository walletAccountRepository;
     private final WalletTransactionRepository walletTransactionRepository;
     private final WalletRefundRequestRepository refundRequestRepository;
@@ -313,9 +304,13 @@ public class WalletSelfRefundService {
      * Liste non vide (ancien client qui sélectionnait ses recharges) : le restant des
      * recharges listées uniquement. Chaque item porte le montant partiel réellement demandé.
      *
-     * <p>{@code noRollbackFor} : les trois {@code throw YadonyBusinessException} ci-dessous
-     * (cible vide, reliquat qui s'arrondit à zéro à l'unité mineure — ex. 0.50 XOF, ou rails
-     * mixtes {@value #MIXED_RAILS_ERROR_CODE}) précèdent toute écriture en base. Appelée depuis {@code UserService#settleWalletsForDeletion},
+     * <p>Cibles mélangeant les rails carte et mobile money : aucun rail automatique ne sait les
+     * traiter, la méthode ouvre alors le TICKET MANUEL de la devise et le renvoie
+     * ({@link #openManualForMixedRails}) — ni exception ni demande automatique.
+     *
+     * <p>{@code noRollbackFor} : les deux {@code throw YadonyBusinessException} ci-dessous
+     * (cible vide, ou reliquat qui s'arrondit à zéro à l'unité mineure — ex. 0.50 XOF)
+     * précèdent toute écriture en base. Appelée depuis {@code UserService#settleWalletsForDeletion},
      * elle-même imbriquée dans la transaction de {@code requestDeletion}/{@code deleteImmediately}/
      * {@code AdminGdprService#executeDeletion}, cette exception — attrapée par l'appelant pour
      * poursuivre la suppression — marquerait sinon la transaction englobante rollback-only et
@@ -383,21 +378,20 @@ public class WalletSelfRefundService {
         // Une demande ne part jamais à moitié Stripe, à moitié pawaPay : chaque canal a son
         // propre émetteur (issueStripeRefund vs WalletRefundRailIssuer). Cas ATTEIGNABLE : une
         // même devise (XOF) peut porter une recharge carte (WalletTopupOrchestrator, dans la
-        // devise active) et une recharge mobile money (WalletMobileMoneyTopupService). C'est
-        // donc une erreur MÉTIER (422 RFC 7807), pas un état impossible : le solde repart par
-        // un ticket manuel, ouvert par UserService#settleWalletsForDeletion côté suppression de
-        // compte, ou par un administrateur côté remboursement self-service. On n'ouvre pas une
-        // demande par rail : l'index unique uq_wallet_refund_requests_pending n'autorise qu'une
-        // demande vivante par (utilisateur, devise). Levée avant toute écriture (aucune demande
-        // ni item sauvegardé).
+        // devise active) et une recharge mobile money (WalletMobileMoneyTopupService).
+        //
+        // Ni exception technique ni refus : un 422 serait un cul-de-sac (le message annonce le
+        // support, mais personne n'est prévenu et l'argent reste bloqué). On bascule sur le
+        // TICKET MANUEL, exactement comme UserService#settleWalletsForDeletion, et on le renvoie :
+        // l'utilisateur voit une demande en cours prise en charge par le support. On n'ouvre pas
+        // une demande par rail — l'index unique uq_wallet_refund_requests_pending n'autorise
+        // qu'une demande vivante par (utilisateur, devise), et c'est ce ticket qui l'occupe.
+        // Décidé AVANT toute écriture : aucune demande automatique ni item n'est sauvegardé.
         Set<WalletRefundRail> rails = scaledTargets.stream()
                 .map(st -> st.target().rail())
                 .collect(Collectors.toSet());
         if (rails.size() > 1) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    MIXED_RAILS_ERROR_CODE, "Unprocessable",
-                    "Ce solde mélange des recharges par carte et par mobile money : "
-                            + "son remboursement est traité manuellement par le support");
+            return openManualForMixedRails(userId, code, rails, allocation);
         }
         WalletRefundChannel channel = rails.contains(WalletRefundRail.PAWAPAY)
                 ? WalletRefundChannel.AUTOMATIC_PAWAPAY
@@ -456,6 +450,33 @@ public class WalletSelfRefundService {
         eventPublisher.publishEvent(new WalletRefundItemsCreatedEvent(saved.getId()));
 
         return saved;
+    }
+
+    /**
+     * Repli des rails mixtes : ouvre (ou retrouve) le ticket manuel de la devise et le renvoie,
+     * exactement comme le fait {@code UserService#settleWalletsForDeletion} sur ses propres
+     * replis. {@link WalletRefundRequestService#request} est déjà injecté ici (aucun cycle : ce
+     * service ne dépend pas de celui-ci) et participe à la transaction courante ; il est
+     * idempotent (un ticket vivant est renvoyé tel quel) et lève sa propre alerte admin.
+     *
+     * <p>L'entrée d'audit dédiée dit au support POURQUOI ce ticket arrive : sans elle, il ne
+     * porte que le motif générique « solde wallet non nul » et rien ne rattache la demande aux
+     * rails mixtes.
+     */
+    private WalletRefundRequestEntity openManualForMixedRails(UUID userId, String code,
+                                                              Set<WalletRefundRail> rails,
+                                                              WalletRefundAllocation allocation) {
+        List<String> railNames = rails.stream().map(Enum::name).sorted().toList();
+        log.warn("Remboursement wallet : rails mixtes {} sur user {} devise {}, bascule sur le ticket manuel",
+                railNames, userId, code);
+        WalletRefundRequestEntity manual = walletRefundRequestService.request(userId, code);
+        auditService.log("wallet_refund_request", manual.getId(), "MANUAL_MIXED_RAILS_OPENED", userId,
+                Map.<String, Object>of("currency", code,
+                        "rails", railNames,
+                        "refundableTotal", allocation.refundableTotal().toPlainString(),
+                        "nonRefundable", allocation.nonRefundable().toPlainString(),
+                        "reason", "wallet-refund-mixed-rails"));
+        return manual;
     }
 
     /**

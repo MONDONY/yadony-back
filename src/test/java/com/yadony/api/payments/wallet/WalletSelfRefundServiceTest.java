@@ -29,7 +29,6 @@ import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
-import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -716,8 +715,14 @@ class WalletSelfRefundServiceTest {
         assertThat(WalletSelfRefundService.issuableNet("EUR", a)).isEqualByComparingTo("0.40");
     }
 
+    /**
+     * Rails mixtes : ni exception ni demande automatique. Un 422 serait un cul-de-sac (le
+     * message annonçait le support, mais aucun ticket n'était ouvert et personne n'était
+     * prévenu). On ouvre le ticket manuel de la devise, on le renvoie, et l'audit dit au
+     * support POURQUOI il le reçoit.
+     */
     @Test
-    void request_railsMixtes_leve422MetierSansRienSauvegarder() {
+    void request_railsMixtes_ouvreLeTicketManuelEtLeRenvoie() {
         UUID opId = UUID.randomUUID();
         WalletTransactionEntity stripeTopup = ledgerTx(WalletTransactionType.TOP_UP, "40.00", "pi_1");
         WalletTransactionEntity pawapayTopup = ledgerTx(WalletTransactionType.TOP_UP, "40.00", "pawapay:" + opId);
@@ -731,17 +736,21 @@ class WalletSelfRefundServiceTest {
         when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any()))
                 .thenReturn(Optional.empty());
 
-        // Erreur MÉTIER (422 RFC 7807) et non IllegalStateException : l'état est atteignable
-        // (recharge carte + recharge mobile money dans la même devise) et un 500 hors format
-        // faisait par ailleurs échouer la demande de suppression de compte.
-        assertThatThrownBy(() -> service.request(USER_ID, "EUR", List.of()))
-                .isInstanceOf(YadonyBusinessException.class)
-                .hasFieldOrPropertyWithValue("errorCode", "wallet-refund-mixed-rails")
-                .hasFieldOrPropertyWithValue("status", HttpStatus.UNPROCESSABLE_ENTITY);
+        WalletRefundRequestEntity manual = new WalletRefundRequestEntity();
+        setField(manual, "id", UUID.randomUUID());
+        manual.setChannel(WalletRefundChannel.MANUAL_ADMIN);
+        when(walletRefundRequestService.request(USER_ID, "EUR")).thenReturn(manual);
 
+        assertThat(service.request(USER_ID, "EUR", List.of())).isSameAs(manual);
+
+        // Aucune demande automatique, aucun item, aucune émission.
         verify(refundRequestRepository, never()).save(any());
         verify(refundRequestItemRepository, never()).save(any());
-        verifyNoInteractions(auditService, eventPublisher);
+        verifyNoInteractions(eventPublisher);
+        // L'audit rattache le ticket aux rails mixtes, sinon le support ne voit que le motif
+        // générique « solde wallet non nul » levé par WalletRefundRequestService.
+        verify(auditService).log(eq("wallet_refund_request"), eq(manual.getId()),
+                eq("MANUAL_MIXED_RAILS_OPENED"), eq(USER_ID), any());
     }
 
     @Test

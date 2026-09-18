@@ -238,20 +238,17 @@ class UserServiceDeleteAccountTest {
         }
 
         @Test
-        @DisplayName("rails mixtes (422 wallet-refund-mixed-rails) → ticket manuel, la suppression continue")
-        void mixedRails_manualTicket() {
-            // Une devise qui porte à la fois une recharge carte et une recharge mobile money
-            // (XOF) : aucun rail automatique ne sait la traiter. Ignorer ce 422 comme les autres
-            // perdrait le solde à la suppression du compte — repli sur le ticket manuel.
+        @DisplayName("rails mixtes → le ticket manuel ouvert par request() est simplement collecté")
+        void mixedRails_manualTicketFromRequest() {
+            // request() ne lève plus : elle bascule elle-même sur le ticket manuel et le renvoie.
+            // settleWalletsForDeletion n'a donc plus de cas particulier à rattraper ici.
             when(walletAccountRepository.findAllByUserId(USER_ID)).thenReturn(List.of(walletOf("XOF", "20000.00")));
             when(walletSelfRefundService.allocation(USER_ID, "XOF")).thenReturn(mixedRailsAllocation());
-            when(walletSelfRefundService.request(USER_ID, "XOF", List.of()))
-                    .thenThrow(new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                            WalletSelfRefundService.MIXED_RAILS_ERROR_CODE, "Unprocessable", "rails mixtes"));
             WalletRefundRequestEntity manual = new WalletRefundRequestEntity();
-            when(walletRefundRequestService.request(USER_ID, "XOF")).thenReturn(manual);
+            when(walletSelfRefundService.request(USER_ID, "XOF", List.of())).thenReturn(manual);
 
             assertThat(userService.settleWalletsForDeletion(USER_ID)).containsExactly(manual);
+            verify(walletRefundRequestService, never()).request(any(), any());
         }
 
         @Test
@@ -341,9 +338,8 @@ class UserServiceDeleteAccountTest {
 
         /**
          * Rails mixtes (carte + mobile money dans la même devise, cas réel en XOF) : aucun
-         * rail automatique ne sait traiter cette devise, {@code request} lève
-         * {@code wallet-refund-mixed-rails} et le règlement passera par le ticket manuel, qui
-         * rembourse TOUT le solde. On annonce donc MANUAL, frais 0 et net = solde, comme le
+         * rail automatique ne sait traiter cette devise, {@code request} bascule sur le ticket
+         * manuel, qui rembourse TOUT le solde. On annonce donc MANUAL, frais 0 et net = solde, comme le
          * repli d'invariant — et non plus STRIPE avec les montants de l'allocateur.
          */
         @Test
