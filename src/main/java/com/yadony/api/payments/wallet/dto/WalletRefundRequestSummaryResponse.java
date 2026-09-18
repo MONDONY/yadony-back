@@ -41,16 +41,19 @@ public record WalletRefundRequestSummaryResponse(
      * <p>Les items FAILED sont exclus des deux sommes : leur montant ne part pas vers
      * l'utilisateur (une demande partiellement échouée afficherait un net trop élevé). On ne
      * filtre pas sur REFUNDED seul, sinon une demande encore en cours afficherait un net nul.
+     * Une demande dont TOUS les items ont échoué donne bien frais 0 et net 0 (rien n'est parti,
+     * le wallet n'a pas été débité) — à ne pas confondre avec une demande sans aucun item
+     * (ancien ticket manuel), seul cas qui retombe sur le montant demandé.
      */
     public static WalletRefundRequestSummaryResponse from(WalletRefundRequestEntity entity,
                                                           List<WalletRefundRequestItemEntity> items,
                                                           String destinationMasked) {
         BigDecimal fee = BigDecimal.ZERO;
         BigDecimal net = entity.getAmount();
-        List<WalletRefundRequestItemEntity> counted = items == null ? List.of() : items.stream()
-                .filter(i -> i.getStatus() != WalletRefundItemStatus.FAILED)
-                .toList();
-        if (!counted.isEmpty()) {
+        if (items != null && !items.isEmpty()) {
+            List<WalletRefundRequestItemEntity> counted = items.stream()
+                    .filter(i -> i.getStatus() != WalletRefundItemStatus.FAILED)
+                    .toList();
             fee = counted.stream().map(i -> i.getFeeAmount() == null ? BigDecimal.ZERO : i.getFeeAmount())
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
             net = counted.stream().map(WalletRefundRequestItemEntity::getAmount)

@@ -1130,7 +1130,7 @@ class WalletSelfRefundServiceTest {
     }
 
     @Test
-    void reconcile_verrouilleEtRelitLaDemandeAvantDeLireSesItems() {
+    void reconcile_relitLaDemandeSousVerrouAvantDAppliquerLesTransitions() {
         WalletRefundRequestEntity request = processingRequest("35.00");
         WalletRefundRequestItemEntity item = processingItem(request, "pi_1", "35.00", "re_1");
         when(refundRequestRepository.findAllByUserIdOrderByRequestedAtDesc(USER_ID)).thenReturn(List.of(request));
@@ -1248,6 +1248,49 @@ class WalletSelfRefundServiceTest {
         order.verify(refundRequestRepository).findByIdForUpdate(request.getId());
         order.verify(refundRequestItemRepository).save(item);
         assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.FAILED);
+    }
+
+    @Test
+    void listForUser_plusieursDemandesProcessing_tousLesAppelsStripeAvantLePremierVerrou() {
+        // listForUser est @Transactional : un FOR UPDATE pris sur la première demande vivrait
+        // jusqu'au commit, donc pendant l'appel réseau de la seconde. Toutes les lectures Stripe
+        // partent avant le premier verrou.
+        WalletRefundRequestEntity eur = processingRequest("35.00");
+        WalletRefundRequestItemEntity eurItem = processingItem(eur, "pi_1", "35.00", "re_1");
+        WalletRefundRequestEntity usd = processingRequest("20.00");
+        usd.setCurrency("USD");
+        WalletRefundRequestItemEntity usdItem = processingItem(usd, "pi_2", "20.00", "re_2");
+        List<String> ordre = new ArrayList<>();
+        when(refundRequestRepository.findAllByUserIdOrderByRequestedAtDesc(USER_ID)).thenReturn(List.of(eur, usd));
+        when(refundRequestRepository.findByIdForUpdate(eur.getId())).thenAnswer(inv -> {
+            ordre.add("verrou-eur");
+            return Optional.of(eur);
+        });
+        when(refundRequestRepository.findByIdForUpdate(usd.getId())).thenAnswer(inv -> {
+            ordre.add("verrou-usd");
+            return Optional.of(usd);
+        });
+        when(refundRequestItemRepository.findByRefundRequestId(eur.getId())).thenReturn(List.of(eurItem));
+        when(refundRequestItemRepository.findByRefundRequestId(usd.getId())).thenReturn(List.of(usdItem));
+
+        try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            Refund pending = new Refund();
+            pending.setStatus("pending");
+            refundStatic.when(() -> Refund.retrieve("re_1")).thenAnswer(inv -> {
+                ordre.add("stripe-re_1");
+                return pending;
+            });
+            refundStatic.when(() -> Refund.retrieve("re_2")).thenAnswer(inv -> {
+                ordre.add("stripe-re_2");
+                return pending;
+            });
+
+            service.listForUser(USER_ID);
+        }
+
+        assertThat(ordre).containsExactly("stripe-re_1", "stripe-re_2", "verrou-eur", "verrou-usd");
+        assertThat(eurItem.getStatus()).isEqualTo(WalletRefundItemStatus.PROCESSING);
+        assertThat(usdItem.getStatus()).isEqualTo(WalletRefundItemStatus.PROCESSING);
     }
 
     @Test

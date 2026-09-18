@@ -67,15 +67,16 @@ class WalletRefundRequestSummaryResponseTest {
     }
 
     @Test
-    void tousLesItemsEchoues_fraisNulsEtNetEgalAuMontantDeLaDemande() {
-        // Aucun item comptable : on retombe sur le repli « demande sans item » (ticket manuel).
+    void tousLesItemsEchoues_fraisEtNetNuls() {
+        // Rien n'est parti vers l'utilisateur et le wallet n'a pas été débité : net 0, pas le
+        // montant demandé (ce repli-là est réservé aux demandes sans aucun item).
         WalletRefundRequestSummaryResponse dto = WalletRefundRequestSummaryResponse.from(
                 request("10000", WalletRefundChannel.AUTOMATIC_STRIPE, WalletRefundRequestStatus.FAILED),
                 List.of(item("10000", "200", WalletRefundItemStatus.FAILED)),
                 null);
 
         assertThat(dto.feeAmount()).isEqualByComparingTo("0");
-        assertThat(dto.netAmount()).isEqualByComparingTo("10000");
+        assertThat(dto.netAmount()).isEqualByComparingTo("0");
         assertThat(dto.rail()).isEqualTo("STRIPE");
     }
 

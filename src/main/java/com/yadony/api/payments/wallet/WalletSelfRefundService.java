@@ -692,12 +692,21 @@ public class WalletSelfRefundService {
                 Map.of("refundedAmount", refundedTotal.toString(), "currency", request.getCurrency()));
     }
 
+    /**
+     * Demandes de l'utilisateur, réconciliées au passage. Les statuts Stripe de TOUTES les
+     * demandes PROCESSING sont lus en une passe AVANT le premier verrou : cette méthode est
+     * {@code @Transactional}, un {@code FOR UPDATE} pris sur la première demande vivrait donc
+     * jusqu'au commit, y compris pendant l'appel réseau de la suivante (un utilisateur peut
+     * avoir une demande PROCESSING par devise).
+     */
     @Transactional
     public List<WalletRefundRequestEntity> listForUser(UUID userId) {
         List<WalletRefundRequestEntity> requests = refundRequestRepository.findAllByUserIdOrderByRequestedAtDesc(userId);
-        requests.stream()
+        List<WalletRefundRequestEntity> processing = requests.stream()
                 .filter(r -> r.getStatus() == WalletRefundRequestStatus.PROCESSING)
-                .forEach(this::reconcile);
+                .toList();
+        Map<String, String> stripeStatuses = stripeStatusesOutsideLock(processing);
+        processing.forEach(r -> reconcile(r, stripeStatuses));
         return requests;
     }
 
@@ -706,13 +715,14 @@ public class WalletSelfRefundService {
      * remboursements » et de la sheet de sélection, pour que l'état affiché ne reste jamais
      * durablement désynchronisé du prestataire.
      *
-     * <p><b>Aucun appel réseau sous verrou.</b> Les statuts Stripe des items encore PROCESSING
-     * sont lus AVANT de verrouiller la demande (lecture pure, aucune écriture) : le verrou
-     * {@code FOR UPDATE} de la demande ne doit jamais être tenu pendant la latence de Stripe,
-     * sinon un simple {@code GET /wallet/refund-requests} bloquerait le webhook
-     * {@code charge.refunded} de la même demande. La demande est ensuite verrouillée et relue,
-     * puis chaque item est relu (le statut lu chez Stripe peut avoir été appliqué entre-temps
-     * par le webhook) avant d'appliquer la moindre transition.
+     * <p><b>Aucun appel réseau sous verrou.</b> {@code stripeStatuses} est lu par l'appelant
+     * ({@link #stripeStatusesOutsideLock}) AVANT tout verrou, pour toutes les demandes qu'il
+     * s'apprête à réconcilier : aucun {@code FOR UPDATE} n'est donc jamais tenu pendant la
+     * latence de Stripe, ni pour cette demande ni pour une autre de la même transaction. Sans
+     * cela, un simple {@code GET /wallet/refund-requests} bloquerait le webhook
+     * {@code charge.refunded} de la première demande pendant l'appel réseau de la seconde. Cette
+     * méthode ne fait plus que verrouiller, relire (la demande puis chaque item, car le statut
+     * lu chez Stripe a pu être appliqué entre-temps par le webhook) et appliquer les transitions.
      * <ul>
      *   <li>{@code AUTOMATIC_STRIPE} : statuts interrogés chez Stripe hors verrou (cf. le
      *       fallback de {@code PaymentStripeWebhookHandler.resolveCharge}).</li>
@@ -722,10 +732,7 @@ public class WalletSelfRefundService {
      *       appliquée, ou un rejet synchrone dont l'application a échoué.</li>
      * </ul>
      */
-    private void reconcile(WalletRefundRequestEntity stale) {
-        Map<String, String> stripeStatuses = stale.getChannel() == WalletRefundChannel.AUTOMATIC_STRIPE
-                ? stripeStatusesOutsideLock(stale.getId())
-                : Map.of();
+    private void reconcile(WalletRefundRequestEntity stale, Map<String, String> stripeStatuses) {
         WalletRefundRequestEntity request = lockFresh(stale.getId()).orElse(null);
         if (request == null || request.getStatus() != WalletRefundRequestStatus.PROCESSING) {
             return;
@@ -748,22 +755,36 @@ public class WalletSelfRefundService {
         resolveLocked(request);
     }
 
+    /** Réconciliation d'une demande isolée : ses statuts Stripe sont lus d'abord, hors verrou. */
+    private void reconcile(WalletRefundRequestEntity stale) {
+        reconcile(stale, stripeStatusesOutsideLock(List.of(stale)));
+    }
+
     /**
-     * Statut Stripe de chaque {@code stripeRefundId} des items PROCESSING de la demande, lu hors
-     * de tout verrou et sans rien écrire. Un refund injoignable est simplement absent de la map
-     * (l'item reste PROCESSING, la prochaine lecture réessaiera).
+     * Statut Stripe de chaque {@code stripeRefundId} des items PROCESSING des demandes
+     * {@code requests} (canal {@code AUTOMATIC_STRIPE} uniquement), lu hors de tout verrou et
+     * sans rien écrire. Appelée une seule fois par transaction, avant le premier
+     * {@link #lockFresh} : un verrou déjà pris survivrait à l'appel réseau de la demande
+     * suivante. Un refund injoignable est simplement absent de la map (l'item reste PROCESSING,
+     * la prochaine lecture réessaiera).
      */
-    private Map<String, String> stripeStatusesOutsideLock(UUID refundRequestId) {
+    private Map<String, String> stripeStatusesOutsideLock(List<WalletRefundRequestEntity> requests) {
         Map<String, String> statuses = new HashMap<>();
-        for (WalletRefundRequestItemEntity item : refundRequestItemRepository.findByRefundRequestId(refundRequestId)) {
-            if (item.getStatus() != WalletRefundItemStatus.PROCESSING || item.getStripeRefundId() == null) {
+        for (WalletRefundRequestEntity request : requests) {
+            if (request.getChannel() != WalletRefundChannel.AUTOMATIC_STRIPE) {
                 continue;
             }
-            try {
-                statuses.put(item.getStripeRefundId(), Refund.retrieve(item.getStripeRefundId()).getStatus());
-            } catch (StripeException e) {
-                log.warn("Réconciliation Stripe impossible pour item {} (refund {}): {}",
-                        item.getId(), item.getStripeRefundId(), e.getMessage());
+            for (WalletRefundRequestItemEntity item
+                    : refundRequestItemRepository.findByRefundRequestId(request.getId())) {
+                if (item.getStatus() != WalletRefundItemStatus.PROCESSING || item.getStripeRefundId() == null) {
+                    continue;
+                }
+                try {
+                    statuses.put(item.getStripeRefundId(), Refund.retrieve(item.getStripeRefundId()).getStatus());
+                } catch (StripeException e) {
+                    log.warn("Réconciliation Stripe impossible pour item {} (refund {}): {}",
+                            item.getId(), item.getStripeRefundId(), e.getMessage());
+                }
             }
         }
         return statuses;
