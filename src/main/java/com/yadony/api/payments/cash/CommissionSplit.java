@@ -9,7 +9,10 @@ import java.math.BigDecimal;
  *
  * <p>{@code covered} est vrai quand les deux portefeuilles couvrent la totalité : c'est la seule
  * situation où un débit a lieu (règle « tout ou rien »). {@code appliedRate} est nul quand rien
- * n'est converti (même devise, ou reste nul).
+ * n'est converti (même devise, ou reste nul). {@code commissionInActive} est la commission
+ * totale exprimée dans la devise active (égale à {@code commission} si même devise, sinon
+ * convertie au taux courant), destinée à l'affichage ({@code requiredCommission}) : elle ne
+ * pilote aucun débit.
  */
 public record CommissionSplit(String bidCurrency,
                               BigDecimal commission,
@@ -20,17 +23,11 @@ public record CommissionSplit(String bidCurrency,
                               BigDecimal appliedRate,
                               BigDecimal bidWalletBalance,
                               BigDecimal activeBalance,
-                              boolean covered) {
+                              boolean covered,
+                              BigDecimal commissionInActive) {
 
     public boolean sameCurrency() {
         return bidCurrency.equals(activeCurrency);
     }
 
-    /** Commission totale exprimée dans la devise active (pour {@code requiredCommission}). */
-    public BigDecimal commissionInActive() {
-        if (sameCurrency() || appliedRate == null) {
-            return sameCurrency() ? commission : remainingActive;
-        }
-        return commission.multiply(appliedRate).setScale(remainingActive.scale(), java.math.RoundingMode.HALF_UP);
-    }
 }

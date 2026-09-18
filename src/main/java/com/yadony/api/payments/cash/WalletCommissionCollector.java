@@ -38,17 +38,23 @@ public class WalletCommissionCollector {
             BigDecimal taken = commission.min(balance).max(BigDecimal.ZERO);
             BigDecimal remaining = commission.subtract(taken);
             return new CommissionSplit(bid, commission, taken, remaining, active, remaining, null,
-                    balance, balance, balance.compareTo(commission) >= 0);
+                    balance, balance, balance.compareTo(commission) >= 0, commission);
         }
 
         BigDecimal bidBalance = walletService.getBalance(travelerId, bid);
         BigDecimal activeBalance = walletService.getBalance(travelerId, active);
         BigDecimal fromBid = commission.min(bidBalance).max(BigDecimal.ZERO);
         BigDecimal remainingBid = commission.subtract(fromBid);
+        // Commission totale dans la devise active : affichage seulement (requiredCommission),
+        // jamais un montant débité. Calculée même quand le portefeuille du colis couvre tout.
+        BigDecimal commissionInActive = commission.signum() == 0
+                ? BigDecimal.ZERO.setScale(activeDecimals)
+                : exchangeRateService.convert(commission, bid, active).setScale(activeDecimals, RoundingMode.HALF_UP);
 
         if (remainingBid.signum() == 0) {
             return new CommissionSplit(bid, commission, fromBid, remainingBid, active,
-                    BigDecimal.ZERO.setScale(activeDecimals), null, bidBalance, activeBalance, true);
+                    BigDecimal.ZERO.setScale(activeDecimals), null, bidBalance, activeBalance, true,
+                    commissionInActive);
         }
 
         BigDecimal remainingActive = exchangeRateService.convert(remainingBid, bid, active)
@@ -56,7 +62,7 @@ public class WalletCommissionCollector {
         BigDecimal appliedRate = remainingActive.divide(remainingBid, 6, RoundingMode.HALF_UP);
         boolean covered = activeBalance.compareTo(remainingActive) >= 0;
         return new CommissionSplit(bid, commission, fromBid, remainingBid, active, remainingActive, appliedRate,
-                bidBalance, activeBalance, covered);
+                bidBalance, activeBalance, covered, commissionInActive);
     }
 
     public void executeForBid(CommissionSplit s, UUID travelerId, UUID bidId) {
