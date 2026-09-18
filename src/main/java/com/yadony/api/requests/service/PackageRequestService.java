@@ -566,8 +566,7 @@ public class PackageRequestService {
         // PII (aucune info destinataire) et les threads/messages restent privés
         // (endpoint dédié). Dès que la demande est ACCEPTED/terminée, l'accès
         // est de nouveau restreint au propriétaire et aux participants d'un thread.
-        boolean isPubliclyListed = entity.getStatus() == PackageRequestStatus.OPEN
-            || entity.getStatus() == PackageRequestStatus.NEGOTIATING;
+        boolean isPubliclyListed = entity.isPubliclyListable();
 
         if (!isOwner && !isThreadParticipant && !isPubliclyListed) {
             // Un brouillon n'a jamais été rendu public : répondre « interdit »

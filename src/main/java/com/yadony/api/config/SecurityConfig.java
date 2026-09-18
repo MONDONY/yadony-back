@@ -192,6 +192,11 @@ public class SecurityConfig {
                     // Même donnée, même contrôleur, aucune capacité nouvelle : c'est un
                     // deuxième chemin vers la page déjà couverte par /public/** ci-dessus.
                     "/annonce/**",
+                    // Alias court de /public/demande/{id} (page publique d'une demande de
+                    // colis), même mécanisme et même contrôleur unique que /annonce/** :
+                    // voir PublicPackageRequestPageController. /public/demande/** est déjà
+                    // couvert par /public/** ci-dessus.
+                    "/demande/**",
                     // Admin bootstrap: initial configuration without auth
                     "/admin/bootstrap",
                     // Sentry webhook: no Firebase token (server-to-server call). Security is
