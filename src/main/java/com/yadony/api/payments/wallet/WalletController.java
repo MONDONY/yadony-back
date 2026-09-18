@@ -32,6 +32,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -47,19 +48,22 @@ public class WalletController {
     private final WalletMobileMoneyTopupService mobileMoneyTopupService;
     private final UserRepository userRepository;
     private final UserBusinessPrefsService businessPrefsService;
+    private final WalletEstimateService walletEstimateService;
 
     public WalletController(WalletService walletService,
                             WalletSelfRefundService walletSelfRefundService,
                             WalletTopupOrchestrator topupOrchestrator,
                             WalletMobileMoneyTopupService mobileMoneyTopupService,
                             UserRepository userRepository,
-                            UserBusinessPrefsService businessPrefsService) {
+                            UserBusinessPrefsService businessPrefsService,
+                            WalletEstimateService walletEstimateService) {
         this.walletService = walletService;
         this.walletSelfRefundService = walletSelfRefundService;
         this.topupOrchestrator = topupOrchestrator;
         this.mobileMoneyTopupService = mobileMoneyTopupService;
         this.userRepository = userRepository;
         this.businessPrefsService = businessPrefsService;
+        this.walletEstimateService = walletEstimateService;
     }
 
     @GetMapping("/balance")
@@ -81,7 +85,9 @@ public class WalletController {
                         fees == null ? null : fees.feeAmount(), fees == null ? null : fees.netAmount());
             })
             .collect(Collectors.toList());
-        List<WalletCurrencyBalanceDto> balances = walletService.getAllBalances(userId)
+        List<WalletAccountEntity> wallets = walletService.getAllBalances(userId);
+        WalletEstimate estimate = walletEstimateService.estimate(wallets, activeCurrency);
+        List<WalletCurrencyBalanceDto> balances = wallets
             .stream()
             .map(w -> {
                 WalletRefundAllocation a = safeAllocation(userId, w.getCurrency());
@@ -98,14 +104,16 @@ public class WalletController {
                 // affiché « aucun portefeuille actif » à leur propriétaire.
                 return new WalletCurrencyBalanceDto(
                         w.getCurrency(), w.getBalance(), w.getCurrency().equalsIgnoreCase(activeCurrency),
-                        eligible, a.refundableTotal(), a.nonRefundable(), a.fees(), a.net());
+                        eligible, a.refundableTotal(), a.nonRefundable(), a.fees(), a.net(),
+                        estimate.inActiveByCurrency().get(w.getCurrency().toUpperCase(Locale.ROOT)));
             })
             .collect(Collectors.toList());
         boolean activeEligible = balances.stream()
                 .filter(WalletCurrencyBalanceDto::active)
                 .anyMatch(WalletCurrencyBalanceDto::refundEligible);
         return ResponseEntity.ok(
-            new WalletBalanceResponse(wallet.getBalance(), activeCurrency, txs, balances, activeEligible));
+            new WalletBalanceResponse(wallet.getBalance(), activeCurrency, txs, balances, activeEligible,
+                    estimate.total(), estimate.complete()));
     }
 
     /** Un ledger incohérent ne doit pas casser l'écran portefeuille : on affiche 0 remboursable. */
