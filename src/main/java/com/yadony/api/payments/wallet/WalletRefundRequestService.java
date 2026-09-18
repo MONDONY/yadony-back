@@ -167,7 +167,8 @@ public class WalletRefundRequestService {
                 Map.of("currency", wallet.getCurrency(), "amount", wallet.getBalance().toString()));
 
         adminAlertService.raise("wallet-refund-requested",
-                "Utilisateur bloqué en suppression de compte par un solde wallet non nul",
+                "Solde wallet à rembourser à la main (suppression de compte, rejeu du ledger "
+                        + "incohérent ou rails mixtes sur la devise)",
                 Map.of("userId", userId, "currency", wallet.getCurrency(),
                         "amount", wallet.getBalance(), "requestId", saved.getId()));
 
