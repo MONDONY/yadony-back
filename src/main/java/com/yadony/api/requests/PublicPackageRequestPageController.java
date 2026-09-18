@@ -18,10 +18,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 
 import java.math.BigDecimal;
 import java.time.format.DateTimeFormatter;
-import java.util.EnumSet;
 import java.util.Locale;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -54,10 +52,6 @@ public class PublicPackageRequestPageController {
             DateTimeFormatter.ofPattern("EEEE d MMMM yyyy", Locale.FRENCH);
 
     private static final String VIEW = "public/demande";
-
-    /** Statuts d'une demande réellement ouverte à une proposition de trajet. */
-    private static final Set<PackageRequestStatus> PUBLICLY_LISTABLE_STATUSES =
-            EnumSet.of(PackageRequestStatus.OPEN, PackageRequestStatus.NEGOTIATING);
 
     private final PackageRequestRepository packageRequestRepository;
     private final PackageRequestPhotoService photoService;
@@ -259,9 +253,11 @@ public class PublicPackageRequestPageController {
      * un brouillon n'a jamais été soumis par son auteur, une demande acceptée ou terminée n'a
      * plus besoin de voyageur, une demande annulée ou expirée ne doit plus recevoir de trafic.
      * Le soft delete est déjà filtré en amont par {@code @SQLRestriction} sur l'entité.
+     * Déléguée à {@link PackageRequestEntity#isPubliclyListable()}, source unique partagée
+     * avec la recherche et le détail (voir sa javadoc).
      */
     private boolean isPubliclyVisible(PackageRequestEntity packageRequest) {
-        return PUBLICLY_LISTABLE_STATUSES.contains(packageRequest.getStatus());
+        return packageRequest.isPubliclyListable();
     }
 
     private String unavailable(Model model) {

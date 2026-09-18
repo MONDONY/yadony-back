@@ -175,6 +175,18 @@ public class PackageRequestEntity extends BaseEntity {
 
     public PackageRequestStatus getStatus() { return status; }
 
+    /**
+     * Une demande encore réellement ouverte à une proposition de trajet : listable en
+     * recherche, consultable par n'importe quel voyageur, publiable sur la page publique
+     * de partage. Même rôle que {@code AnnouncementEntity#isPubliclyListable()} côté
+     * trajet ; source unique pour ne pas laisser diverger les multiples copies locales de
+     * {@code OPEN}/{@code NEGOTIATING} qui existaient (recherche, détail, invitation,
+     * page publique de partage).
+     */
+    public boolean isPubliclyListable() {
+        return status == PackageRequestStatus.OPEN || status == PackageRequestStatus.NEGOTIATING;
+    }
+
     public String getCurrency() { return currency; }
 
     public boolean isNegotiable() { return negotiable; }

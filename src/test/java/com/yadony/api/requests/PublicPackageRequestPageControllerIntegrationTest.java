@@ -5,6 +5,7 @@ import com.yadony.api.requests.entity.PackageRequestEntity;
 import com.yadony.api.requests.entity.PackageRequestStatus;
 import com.yadony.api.requests.entity.ParcelSize;
 import com.yadony.api.requests.repository.PackageRequestRepository;
+import com.yadony.api.requests.service.PackageRequestPhotoService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -14,6 +15,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.UUID;
 
 import static org.hamcrest.Matchers.containsString;
@@ -38,6 +40,7 @@ class PublicPackageRequestPageControllerIntegrationTest {
 
     @Autowired MockMvc mockMvc;
     @Autowired PackageRequestRepository packageRequestRepository;
+    @Autowired PackageRequestPhotoService photoService;
 
     private PackageRequestEntity persistRequest(PackageRequestStatus status) {
         PackageRequestEntity e = new PackageRequestEntity();
@@ -207,6 +210,32 @@ class PublicPackageRequestPageControllerIntegrationTest {
                 .andExpect(content().string(containsString("Vêtements &amp; tissus")))
                 .andExpect(content().string(containsString("10 kg")))
                 .andExpect(content().string(containsString("Colis moyen")));
+    }
+
+    /**
+     * Une photo présente doit apparaître dans la page, via une URL présignée
+     * plausible ({@code PackageRequestPhotoService#firstPhotoUrl}).
+     */
+    @Test
+    void requestWithPhoto_showsPhotoImage() throws Exception {
+        PackageRequestEntity r = persistRequest(PackageRequestStatus.OPEN);
+        String key = "package_requests/" + r.getSenderId() + "/colis.jpg";
+        photoService.replacePhotos(r.getId(), r.getSenderId(), List.of(key));
+
+        mockMvc.perform(get("/public/demande/" + r.getId()).header("User-Agent", BROWSER_UA))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("<img class=\"photo\"")))
+                .andExpect(content().string(containsString("src=\"http")));
+    }
+
+    /** Sans photo, la balise ne doit jamais apparaître (pas de src vide). */
+    @Test
+    void requestWithoutPhoto_doesNotShowPhotoImage() throws Exception {
+        PackageRequestEntity r = persistRequest(PackageRequestStatus.OPEN);
+
+        mockMvc.perform(get("/public/demande/" + r.getId()).header("User-Agent", BROWSER_UA))
+                .andExpect(status().isOk())
+                .andExpect(content().string(not(containsString("<img class=\"photo\""))));
     }
 
     @Test
