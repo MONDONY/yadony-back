@@ -609,6 +609,9 @@ public class CashCommissionService {
                     markNegotiationCommissionCharged(thread, NEGO_COMMISSION_VIA_WALLET, travelerId, commission);
                     return AcceptBidResponse.accepted();
                 } catch (InsufficientWalletBalanceException e) {
+                    // Rien ne doit survivre à ce chemin (bons déjà consommés) : la réponse est
+                    // rendue mais la transaction est annulée.
+                    markRollbackOnly();
                     // Défense en profondeur : plan verrouille les portefeuilles, ce cas ne
                     // devrait plus survenir. On ne bascule pas sur la carte sans consentement ;
                     // la réponse repart d'une répartition fraîche (jamais d'un solde de
@@ -972,6 +975,9 @@ public class CashCommissionService {
                     finalizeBidAcceptance(bid, announcement, travelerId);
                     return AcceptBidResponse.accepted();
                 } catch (InsufficientWalletBalanceException e) {
+                    // Rien ne doit survivre à ce chemin (bons déjà consommés) : la réponse est
+                    // rendue mais la transaction est annulée.
+                    markRollbackOnly();
                     // Défense en profondeur : plan verrouille les portefeuilles, ce cas ne
                     // devrait plus survenir (sauf bon voyageur changeant le montant effectif).
                     // La réponse repart d'une répartition fraîche, jamais du solde de
@@ -1039,6 +1045,20 @@ public class CashCommissionService {
             return ConfirmAcceptanceResponse.fail("PaymentIntent status: " + pi.getStatus());
         } catch (StripeException e) {
             return ConfirmAcceptanceResponse.fail("Erreur Stripe : " + e.getMessage());
+        }
+    }
+
+    /**
+     * Annule la transaction courante tout en laissant l'appelant rendre sa réponse : après une
+     * course perdue entre la répartition et le débit, rien (bons consommés compris) ne doit
+     * survivre. Hors transaction (tests unitaires), il n'y a rien à annuler.
+     */
+    private static void markRollbackOnly() {
+        try {
+            org.springframework.transaction.interceptor.TransactionAspectSupport
+                    .currentTransactionStatus().setRollbackOnly();
+        } catch (org.springframework.transaction.NoTransactionException ignored) {
+            // pas de transaction Spring (test unitaire) : rien à annuler
         }
     }
 

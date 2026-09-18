@@ -105,7 +105,8 @@ public class WalletCommissionCollector {
             walletService.debit(travelerId, s.bidCurrency(), s.fromBidWallet(),
                     WalletTransactionType.COMMISSION_DEDUCTED, bidId);
         }
-        if (s.remainingBid().signum() > 0) {
+        // Reste converti nul (ex. 1 XOF → 0,00 EUR) : pas de ligne à zéro dans le grand livre.
+        if (s.remainingBid().signum() > 0 && s.remainingActive().signum() > 0) {
             walletService.debit(travelerId, s.activeCurrency(), s.remainingActive(),
                     WalletTransactionType.COMMISSION_DEDUCTED, bidId,
                     s.bidCurrency(), s.remainingBid(), s.appliedRate());
@@ -123,7 +124,7 @@ public class WalletCommissionCollector {
             walletService.debit(travelerId, s.bidCurrency(), s.fromBidWallet(),
                     WalletTransactionType.COMMISSION_DEDUCTED, paymentRef, idempotencyKeyPrefix);
         }
-        if (s.remainingBid().signum() > 0) {
+        if (s.remainingBid().signum() > 0 && s.remainingActive().signum() > 0) {
             walletService.debit(travelerId, s.activeCurrency(), s.remainingActive(),
                     WalletTransactionType.COMMISSION_DEDUCTED, paymentRef, idempotencyKeyPrefix + "_active",
                     s.bidCurrency(), s.remainingBid(), s.appliedRate());

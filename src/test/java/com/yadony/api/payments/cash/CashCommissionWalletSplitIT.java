@@ -166,7 +166,7 @@ class CashCommissionWalletSplitIT {
         assertThat(r.breakdown().activeBalance()).isEqualByComparingTo("0.05");
 
         // AUCUNE ligne COMMISSION_DEDUCTED : pas même sur le portefeuille XOF partiellement suffisant.
-        assertThat(walletTransactionRepository.findByUserIdAndBidIdAndType(
+        assertThat(walletTransactionRepository.findAllByUserIdAndBidIdAndType(
                 travelerId, bidId, WalletTransactionType.COMMISSION_DEDUCTED)).isEmpty();
         assertThat(commissionLines(travelerId, "XOF")).isEmpty();
         assertThat(commissionLines(travelerId, "EUR")).isEmpty();
