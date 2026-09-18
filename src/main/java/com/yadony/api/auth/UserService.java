@@ -93,7 +93,8 @@ public class UserService {
     /**
      * Règle chaque wallet à solde positif au moment de la demande de suppression (J0) :
      * demande automatique Stripe sur tout le remboursable (partiel inclus), ticket manuel
-     * si le rejeu du ledger est incohérent. La part non-cash reste dans le wallet gelé et
+     * si le rejeu du ledger est incohérent ou si les rails des cibles sont mixtes
+     * ({@code wallet-refund-mixed-rails}). La part non-cash reste dans le wallet gelé et
      * n'est perdue qu'à la finalisation (cf. UserFinalizedPaymentsListener). Ne bloque
      * jamais la suppression (Apple 5.1.1(v)).
      *
@@ -139,7 +140,17 @@ public class UserService {
                         + "user {} devise {} : {}", userId, currency, e.getMessage());
                 opened.add(walletRefundRequestService.request(userId, currency));
             } catch (YadonyBusinessException e) {
-                // Seul code atteignable ici : wallet-not-refund-eligible, quand chaque reliquat
+                if (WalletSelfRefundService.MIXED_RAILS_ERROR_CODE.equals(e.getErrorCode())) {
+                    // Rails mixtes dans une même devise (recharge carte + recharge mobile money,
+                    // possible en XOF) : aucun rail automatique ne sait traiter cette demande.
+                    // Ignorer ce 422 perdrait le solde à la suppression du compte — on bascule
+                    // sur le ticket manuel, exactement comme le repli d'invariant ci-dessus.
+                    log.warn("Rails mixtes sur la devise, bascule sur le ticket manuel : user {} devise {}",
+                            userId, currency);
+                    opened.add(walletRefundRequestService.request(userId, currency));
+                    continue;
+                }
+                // Autre code atteignable ici : wallet-not-refund-eligible, quand chaque reliquat
                 // s'arrondit à zéro à l'unité mineure Stripe (ex. 0.50 XOF) une fois le solde
                 // par ailleurs remboursable au sens du ledger (refundableTotal > 0 en 2 décimales).
                 // Rien à ajouter : il n'y a réellement rien à rembourser sur cette devise. Depuis
@@ -158,8 +169,10 @@ public class UserService {
      * {@code nonRefundable}, {@code inFlight}), au centime près ce que
      * {@link #settleWalletsForDeletion} demandera à Stripe.
      *
-     * <p>Rail MANUAL : le rejeu du ledger a échoué, aucun des trois montants de l'allocateur
-     * n'existe. Le repli ouvre un ticket admin sur TOUT le solde
+     * <p>Rail MANUAL : le rejeu du ledger a échoué (aucun des trois montants de l'allocateur
+     * n'existe), ou les cibles remboursables mélangent les rails carte et mobile money
+     * ({@code wallet-refund-mixed-rails} : aucun rail automatique ne sait traiter la devise).
+     * Dans les deux cas le repli ouvre un ticket admin sur TOUT le solde
      * ({@code WalletRefundRequestService#request}), que la résolution admin rembourse en
      * entier ({@code resolve} débite le solde courant), et la finalisation ne perd rien tant
      * que l'invariant reste cassé ({@code UserFinalizedPaymentsListener#forfeitNonCash}
@@ -176,6 +189,18 @@ public class UserService {
             }
             try {
                 WalletRefundAllocation a = walletSelfRefundService.allocation(userId, wallet.getCurrency());
+                // Cibles mélangeant carte et mobile money : aucun rail automatique ne sait
+                // traiter cette devise (422 wallet-refund-mixed-rails), le règlement passera
+                // par le ticket manuel ouvert par settleWalletsForDeletion, qui rembourse TOUT
+                // le solde. Même annonce que le repli d'invariant ci-dessous.
+                long distinctRails = a.refundable().stream().map(WalletRefundAllocation.RefundableTopup::rail)
+                        .distinct().count();
+                if (distinctRails > 1) {
+                    result.add(new WalletSettlementDto(wallet.getCurrency(), wallet.getBalance(),
+                            BigDecimal.ZERO, BigDecimal.ZERO, WalletSettlementDto.RAIL_MANUAL,
+                            BigDecimal.ZERO, wallet.getBalance(), null));
+                    continue;
+                }
                 // PAWAPAY seulement si TOUTES les cibles le sont (une demande n'est jamais mixte).
                 boolean allPawapay = !a.refundable().isEmpty() && a.refundable().stream()
                         .allMatch(t -> t.rail() == WalletRefundRail.PAWAPAY);

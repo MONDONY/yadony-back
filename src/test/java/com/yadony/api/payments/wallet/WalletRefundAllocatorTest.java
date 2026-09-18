@@ -91,8 +91,10 @@ class WalletRefundAllocatorTest {
         }
     }
 
+    /** Sources explicites : frais nuls sur les deux rails, la surcharge de confort n'existe plus. */
     private WalletRefundAllocation allocate(String balance) {
-        return WalletRefundAllocator.allocate(ledger, items, new BigDecimal(balance));
+        return WalletRefundAllocator.allocate(ledger, items, new BigDecimal(balance),
+                Map.of(), fixedFees("0", "0"), "EUR");
     }
 
     @Test

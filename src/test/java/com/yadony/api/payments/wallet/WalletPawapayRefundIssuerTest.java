@@ -424,6 +424,75 @@ class WalletPawapayRefundIssuerTest {
         verifyNoInteractions(itemRepository, adminAlertService, submission);
     }
 
+    /**
+     * Un item déjà replié sur un versement (donc porteur des deux identifiants) qui reçoit un
+     * COMPLETED sur son REFUND : les deux mouvements peuvent aboutir et l'utilisateur être payé
+     * deux fois. On ne l'empêche pas (les deux opérations sont parties), mais on l'ALERTE — la
+     * garde de repli n'est jamais atteinte sur ce chemin, l'issue aboutie passant avant elle.
+     */
+    @Test
+    void applyPawapayOutcome_refundCompletedAlorsQueLeVersementEstVivant_alerteDoubleMouvement() {
+        WalletRefundRequestItemEntity item = item();
+        item.setPawapayRefundId(UUID.randomUUID());
+        PawapayOperationEntity payout = linkedOperation(PawapayOperationKind.PAYOUT,
+                PawapayOperationStatus.ACCEPTED, null);
+        item.setPawapayPayoutId(payout.getId());
+        item.setStatus(WalletRefundItemStatus.PROCESSING);
+
+        issuer.applyPawapayOutcome(request, item, PawapayOperationKind.REFUND, true, null);
+
+        assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.REFUNDED);
+        verify(itemRepository).save(item);
+        verify(adminAlertService).raise(eq("wallet-self-refund-failed"), anyString(), anyMap());
+    }
+
+    /** Versement déjà mort : pas de double mouvement possible, donc pas d'alerte. */
+    @Test
+    void applyPawapayOutcome_refundCompletedAlorsQueLeVersementEstMort_nAlertePas() {
+        WalletRefundRequestItemEntity item = item();
+        item.setPawapayRefundId(UUID.randomUUID());
+        PawapayOperationEntity payout = linkedOperation(PawapayOperationKind.PAYOUT,
+                PawapayOperationStatus.FAILED, "INVALID_RECIPIENT");
+        item.setPawapayPayoutId(payout.getId());
+        item.setStatus(WalletRefundItemStatus.PROCESSING);
+
+        issuer.applyPawapayOutcome(request, item, PawapayOperationKind.REFUND, true, null);
+
+        assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.REFUNDED);
+        verifyNoInteractions(adminAlertService);
+    }
+
+    /**
+     * Le versement aboutit APRÈS que le remboursement a déjà passé l'item REFUNDED : son
+     * COMPLETED était avalé par un simple log.info. C'est la moitié visible du double mouvement.
+     */
+    @Test
+    void applyPawapayOutcome_completedSurItemDejaTerminal_autreRailAbouti_alerte() {
+        WalletRefundRequestItemEntity item = item();
+        PawapayOperationEntity refund = linkedOperation(PawapayOperationKind.REFUND,
+                PawapayOperationStatus.COMPLETED, null);
+        item.setPawapayRefundId(refund.getId());
+        item.setPawapayPayoutId(UUID.randomUUID());
+        item.setStatus(WalletRefundItemStatus.REFUNDED);
+
+        issuer.applyPawapayOutcome(request, item, PawapayOperationKind.PAYOUT, true, null);
+
+        verify(adminAlertService).raise(eq("wallet-self-refund-failed"), anyString(), anyMap());
+        verify(itemRepository, never()).save(any());
+    }
+
+    /** Rejeu banal (même issue vue deux fois, un seul rail) : log simple, aucune alerte. */
+    @Test
+    void applyPawapayOutcome_completedSurItemDejaTerminal_rejeuBanal_nAlertePas() {
+        WalletRefundRequestItemEntity item = item();
+        item.setPawapayRefundId(UUID.randomUUID());
+        item.setStatus(WalletRefundItemStatus.REFUNDED);
+
+        issuer.applyPawapayOutcome(request, item, PawapayOperationKind.REFUND, true, null);
+
+        verifyNoInteractions(adminAlertService, itemRepository);
+    }
+
     @Test
     void applyPawapayOutcome_refundFailedButPayoutAlreadyLinked_doesNotRelaunchPayout() {
         WalletRefundRequestItemEntity item = item();

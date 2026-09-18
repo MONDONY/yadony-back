@@ -5,6 +5,7 @@ import com.yadony.api.payments.wallet.WalletRefundAllocation.RefundableTopup;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.Objects;
 
 /**
  * Frais retenus sur une recharge remboursée : nuls tant qu'elle a été partiellement
@@ -22,10 +23,19 @@ public final class WalletRefundFeeCalculator {
     private WalletRefundFeeCalculator() {
     }
 
-    /** Source des frais réels par rail, injectée pour isoler le calcul pur des appels externes. */
+    /**
+     * Source des frais réels par rail, injectée pour isoler le calcul pur des appels externes.
+     *
+     * <p><b>Contrat :</b> les deux méthodes rendent TOUJOURS un montant, jamais {@code null} —
+     * un frais inconnu ou illisible se rend {@code BigDecimal.ZERO} (on ne retient alors rien),
+     * jamais {@code null}. {@link #feeFor} le vérifie explicitement plutôt que de laisser un
+     * {@code NullPointerException} opaque remonter d'un {@code setScale}.
+     */
     public interface FeeSources {
+        /** @return le frais Stripe de ce paiement, jamais {@code null} ({@code ZERO} si inconnu). */
         BigDecimal stripeFee(String paymentIntentId, BigDecimal amount, String currency);
 
+        /** @return le frais pawaPay de cet opérateur, jamais {@code null} ({@code ZERO} si inconnu). */
         BigDecimal pawapayFee(String provider, BigDecimal amount, String currency);
     }
 
@@ -42,6 +52,8 @@ public final class WalletRefundFeeCalculator {
             case STRIPE -> sources.stripeFee(topup.paymentIntentId(), topup.remaining(), currency);
             case PAWAPAY -> sources.pawapayFee(topup.provider(), topup.remaining(), currency);
         };
+        Objects.requireNonNull(raw, () -> "FeeSources." + topup.rail()
+                + " a rendu null : un frais inconnu se rend BigDecimal.ZERO, jamais null");
         return raw.setScale(scale, RoundingMode.HALF_UP).min(topup.remaining());
     }
 }

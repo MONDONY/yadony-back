@@ -88,8 +88,11 @@ public class WalletController {
                 // isEligible reçoit l'allocation déjà calculée : la recalculer ici rejouerait
                 // tout le ledger une seconde fois, pour chaque devise du portefeuille.
                 // Net nul (tout le remboursable part en frais) : rien ne repartirait, bouton inactif.
+                // Net jugé à l'échelle de l'unité mineure de la devise, comme le filtre de
+                // request() : sur a.net() (2 décimales de ledger), un reliquat XOF de 200.40
+                // avec 200 de frais activait le bouton pour un 422 garanti.
                 boolean eligible = walletSelfRefundService.isEligible(userId, w.getCurrency(), a)
-                        && a.net().signum() > 0;
+                        && WalletSelfRefundService.issuableNet(w.getCurrency(), a).signum() > 0;
                 // equalsIgnoreCase : les portefeuilles antérieurs à V202 peuvent
                 // encore porter une casse mixte, et un simple equals aurait
                 // affiché « aucun portefeuille actif » à leur propriétaire.

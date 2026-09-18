@@ -210,15 +210,39 @@ public class WalletPawapayRefundIssuer implements WalletRefundRailIssuer {
      * réconciliation). Idempotente : un item qui n'est plus PROCESSING n'avance plus, et l'échec
      * d'un remboursement dont l'item porte déjà un versement ne relance rien. L'appelant tient le
      * verrou de la demande {@code request} (pris AVANT celui de l'item) et la résout ensuite.
+     *
+     * <p>Un {@code completed} sur un item qui porte DÉJÀ l'opération de l'autre rail lève une
+     * alerte administrateur (les deux mouvements peuvent aboutir : l'utilisateur serait payé
+     * deux fois). L'objectif est de le rendre visible, pas de l'empêcher — les deux opérations
+     * sont déjà chez l'opérateur quand on l'apprend.
      */
     void applyPawapayOutcome(WalletRefundRequestEntity request, WalletRefundRequestItemEntity item,
                              PawapayOperationKind kind, boolean completed, String failureCode) {
         if (item.getStatus() != WalletRefundItemStatus.PROCESSING) {
-            log.info("Remboursement wallet pawaPay : item {} deja {}, issue {} ignoree",
-                    item.getId(), item.getStatus(), kind);
+            // Rejeu banal (écouteur + réconciliation sur la même issue) : simple log. Mais un
+            // COMPLETED qui arrive alors que l'AUTRE rail a, lui aussi, abouti est un double
+            // mouvement d'argent déjà consommé : on l'a longtemps avalé en log.info.
+            if (completed && otherOperationCompleted(item, kind)) {
+                raiseDoubleMovementAlert(item, kind,
+                        "Double mouvement pawaPay possible : remboursement ET versement aboutis "
+                                + "sur le meme item de remboursement wallet");
+            } else {
+                log.info("Remboursement wallet pawaPay : item {} deja {}, issue {} ignoree",
+                        item.getId(), item.getStatus(), kind);
+            }
             return;
         }
         if (completed) {
+            // L'item peut déjà porter l'autre identifiant (repli par versement lancé après un
+            // refund donné pour mort, puis COMPLETED tardif sur ce refund). Tant que l'autre
+            // opération n'est pas terminale EN ÉCHEC, les deux mouvements peuvent aboutir :
+            // l'item passe REFUNDED quand même (rien à annuler côté pawaPay), mais un
+            // administrateur doit le VOIR.
+            if (otherOperationStillAlive(item, kind)) {
+                raiseDoubleMovementAlert(item, kind,
+                        "Double mouvement pawaPay possible : issue aboutie sur un item portant "
+                                + "deja l'autre operation, non terminale en echec");
+            }
             item.setStatus(WalletRefundItemStatus.REFUNDED);
             itemRepository.save(item);
             return;
@@ -310,6 +334,55 @@ public class WalletPawapayRefundIssuer implements WalletRefundRailIssuer {
             log.warn("Remboursement wallet pawaPay : configuration active indisponible ({})", e.toString());
             return Optional.empty();
         }
+    }
+
+    /** Identifiant de l'opération de l'AUTRE rail que {@code kind} sur cet item, {@code null} si absent. */
+    private static UUID otherOperationId(WalletRefundRequestItemEntity item, PawapayOperationKind kind) {
+        return kind == PawapayOperationKind.REFUND ? item.getPawapayPayoutId() : item.getPawapayRefundId();
+    }
+
+    /**
+     * Vrai si l'item porte l'autre opération et que celle-ci n'est PAS terminale en échec
+     * (encore ouverte, déjà COMPLETED, illisible) : les deux mouvements peuvent donc aboutir.
+     * Une opération FAILED/SUBMIT_REJECTED est morte, il n'y a pas de double mouvement.
+     */
+    private boolean otherOperationStillAlive(WalletRefundRequestItemEntity item, PawapayOperationKind kind) {
+        UUID otherId = otherOperationId(item, kind);
+        if (otherId == null) {
+            return false;
+        }
+        PawapayOperationEntity other = operationRepository.findById(otherId).orElse(null);
+        return other == null || other.getStatus() == null
+                || !PawapayOperationStatus.DEAD.contains(other.getStatus());
+    }
+
+    /** Vrai si l'item porte l'autre opération et que celle-ci est terminale EN SUCCÈS. */
+    private boolean otherOperationCompleted(WalletRefundRequestItemEntity item, PawapayOperationKind kind) {
+        UUID otherId = otherOperationId(item, kind);
+        if (otherId == null) {
+            return false;
+        }
+        return operationRepository.findById(otherId)
+                .map(o -> o.getStatus() == PawapayOperationStatus.COMPLETED)
+                .orElse(false);
+    }
+
+    /**
+     * Rend visible un double mouvement possible (l'utilisateur peut avoir été payé deux fois).
+     * On n'annule rien ici : les deux opérations sont déjà parties chez l'opérateur, seule une
+     * reprise humaine peut trancher.
+     */
+    private void raiseDoubleMovementAlert(WalletRefundRequestItemEntity item, PawapayOperationKind kind,
+                                          String detail) {
+        log.error("Remboursement wallet pawaPay : {} (item {}, refund {}, payout {}, issue {})",
+                detail, item.getId(), item.getPawapayRefundId(), item.getPawapayPayoutId(), kind);
+        adminAlertService.raise(ALERT_CODE, detail,
+                Map.of("itemId", String.valueOf(item.getId()),
+                        "refundRequestId", String.valueOf(item.getRefundRequestId()),
+                        "pawapayRefundId", String.valueOf(item.getPawapayRefundId()),
+                        "pawapayPayoutId", String.valueOf(item.getPawapayPayoutId()),
+                        "completedKind", String.valueOf(kind),
+                        "reason", "pawapay-double-movement"));
     }
 
     private void fail(WalletRefundRequestItemEntity item, String reason, String detail) {

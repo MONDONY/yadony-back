@@ -29,6 +29,7 @@ import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -695,8 +696,28 @@ class WalletSelfRefundServiceTest {
         verifyNoInteractions(auditService);
     }
 
+    /**
+     * XOF n'a pas de centimes : un reliquat de 200.40 avec 200 de frais donne 0.40 sur le net
+     * non arrondi de l'allocateur, mais 0 une fois aligné sur l'unité mineure — request()
+     * l'écarte. L'éligibilité affichée doit suivre la même échelle, sans quoi le bouton est
+     * actif pour un 422 garanti.
+     */
     @Test
-    void request_railsMixtes_leveIllegalStateExceptionSansRienSauvegarder() {
+    void issuableNet_xof_reliquatSousLUniteMineure_estNul() {
+        WalletRefundAllocation a = new WalletRefundAllocation(
+                List.of(new WalletRefundAllocation.RefundableTopup(UUID.randomUUID(), "pi_1",
+                        new BigDecimal("200.40"), new BigDecimal("200.40"), new BigDecimal("200"),
+                        WalletRefundRail.STRIPE, null)),
+                new BigDecimal("200.40"), BigDecimal.ZERO, BigDecimal.ZERO,
+                new BigDecimal("200"), new BigDecimal("0.40"));
+
+        assertThat(a.net()).isEqualByComparingTo("0.40");
+        assertThat(WalletSelfRefundService.issuableNet("XOF", a)).isEqualByComparingTo("0");
+        assertThat(WalletSelfRefundService.issuableNet("EUR", a)).isEqualByComparingTo("0.40");
+    }
+
+    @Test
+    void request_railsMixtes_leve422MetierSansRienSauvegarder() {
         UUID opId = UUID.randomUUID();
         WalletTransactionEntity stripeTopup = ledgerTx(WalletTransactionType.TOP_UP, "40.00", "pi_1");
         WalletTransactionEntity pawapayTopup = ledgerTx(WalletTransactionType.TOP_UP, "40.00", "pawapay:" + opId);
@@ -710,9 +731,13 @@ class WalletSelfRefundServiceTest {
         when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any()))
                 .thenReturn(Optional.empty());
 
+        // Erreur MÉTIER (422 RFC 7807) et non IllegalStateException : l'état est atteignable
+        // (recharge carte + recharge mobile money dans la même devise) et un 500 hors format
+        // faisait par ailleurs échouer la demande de suppression de compte.
         assertThatThrownBy(() -> service.request(USER_ID, "EUR", List.of()))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("wallet-refund-mixed-rails");
+                .isInstanceOf(YadonyBusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "wallet-refund-mixed-rails")
+                .hasFieldOrPropertyWithValue("status", HttpStatus.UNPROCESSABLE_ENTITY);
 
         verify(refundRequestRepository, never()).save(any());
         verify(refundRequestItemRepository, never()).save(any());

@@ -308,6 +308,23 @@ class WalletControllerIT {
             .andExpect(jsonPath("$.balances[?(@.currency=='EUR')].refundEligible").value(false));
     }
 
+    /**
+     * XOF n'a pas de centimes : le ledger garde 2 décimales, mais request() aligne chaque
+     * reliquat sur l'unité mineure (200.40 → 200) avant de retrancher le frais. Sur le net non
+     * arrondi de l'allocateur (0.40 > 0), le bouton s'affichait actif pour un 422 garanti.
+     */
+    @Test
+    void balance_xof_netPositifSeulementAvantArrondi_nonEligible() throws Exception {
+        walletService.credit(USER_UUID, "XOF", new BigDecimal("200.40"),
+            WalletTransactionType.TOP_UP, "pi_it_xof", "k-it-xof");
+        when(stripeFeeSource.fee(any(), any())).thenReturn(new BigDecimal("200"));
+
+        mockMvc.perform(get("/wallet/balance")
+                .with(authentication(authAs(FIREBASE_UID, "SENDER"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.balances[?(@.currency=='XOF')].refundEligible").value(false));
+    }
+
     @Test
     void refundEligibleTopups_renvoieLeRestantEtLeMontantDOrigine() throws Exception {
         walletService.credit(USER_UUID, "EUR", new BigDecimal("40.00"),

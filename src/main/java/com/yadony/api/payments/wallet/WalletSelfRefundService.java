@@ -53,6 +53,15 @@ public class WalletSelfRefundService {
 
     private static final Logger log = LoggerFactory.getLogger(WalletSelfRefundService.class);
 
+    /**
+     * Code d'erreur métier d'une devise dont les cibles remboursables mélangent les rails
+     * (une recharge carte et une recharge mobile money dans la même devise, cas réel en XOF).
+     * Aucun rail automatique ne sait traiter une telle demande : le solde repart par un ticket
+     * manuel. Exposé pour que {@code UserService#settleWalletsForDeletion} distingue ce cas
+     * des autres 422 de {@link #request} et bascule sur ce ticket au lieu de l'ignorer.
+     */
+    public static final String MIXED_RAILS_ERROR_CODE = "wallet-refund-mixed-rails";
+
     private final WalletAccountRepository walletAccountRepository;
     private final WalletTransactionRepository walletTransactionRepository;
     private final WalletRefundRequestRepository refundRequestRepository;
@@ -102,6 +111,25 @@ public class WalletSelfRefundService {
         this.pawapayFeeTable = pawapayFeeTable;
         this.walletRefundRailIssuer = walletRefundRailIssuer;
         this.entityManager = entityManager;
+    }
+
+    /**
+     * Net que {@link #request} émettrait réellement sur cette allocation : chaque reliquat
+     * aligné sur l'unité mineure de la devise (arrondi DOWN, comme {@code request}) moins son
+     * frais, les cibles dont ce net est nul ou négatif étant écartées.
+     *
+     * <p>{@code WalletRefundAllocation#net()} ne fait pas cet arrondi (le ledger garde
+     * 2 décimales même en XOF) : un reliquat de 200.40 XOF avec 200 de frais y compte 0.40,
+     * alors que {@code request} l'écarte (200 - 200 = 0) et lève
+     * {@code wallet-not-refund-eligible}. Juger l'éligibilité sur {@code net()} affichait donc
+     * un bouton actif pour un 422 garanti : les deux décisions passent par cette méthode.
+     */
+    public static BigDecimal issuableNet(String currency, WalletRefundAllocation allocation) {
+        int scale = SupportedCurrency.fromCodeOrDefault(currency).minorUnit();
+        return allocation.refundable().stream()
+                .map(t -> t.remaining().setScale(scale, RoundingMode.DOWN).subtract(t.fee()))
+                .filter(n -> n.signum() > 0)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
     /** Recharge encore remboursable : {@code remaining} brut et {@code fee} retenu si elle est remboursée. */
@@ -285,9 +313,9 @@ public class WalletSelfRefundService {
      * Liste non vide (ancien client qui sélectionnait ses recharges) : le restant des
      * recharges listées uniquement. Chaque item porte le montant partiel réellement demandé.
      *
-     * <p>{@code noRollbackFor} : les deux {@code throw YadonyBusinessException} ci-dessous
-     * (cible vide, ou reliquat qui s'arrondit à zéro à l'unité mineure — ex. 0.50 XOF)
-     * précèdent toute écriture en base. Appelée depuis {@code UserService#settleWalletsForDeletion},
+     * <p>{@code noRollbackFor} : les trois {@code throw YadonyBusinessException} ci-dessous
+     * (cible vide, reliquat qui s'arrondit à zéro à l'unité mineure — ex. 0.50 XOF, ou rails
+     * mixtes {@value #MIXED_RAILS_ERROR_CODE}) précèdent toute écriture en base. Appelée depuis {@code UserService#settleWalletsForDeletion},
      * elle-même imbriquée dans la transaction de {@code requestDeletion}/{@code deleteImmediately}/
      * {@code AdminGdprService#executeDeletion}, cette exception — attrapée par l'appelant pour
      * poursuivre la suppression — marquerait sinon la transaction englobante rollback-only et
@@ -353,14 +381,23 @@ public class WalletSelfRefundService {
         }
 
         // Une demande ne part jamais à moitié Stripe, à moitié pawaPay : chaque canal a son
-        // propre émetteur (issueStripeRefund vs WalletRefundRailIssuer). Ne devrait pas se
-        // produire (une recharge n'a qu'un rail), garde-fou défensif. Levée avant toute
-        // écriture (aucune demande ni item sauvegardé).
+        // propre émetteur (issueStripeRefund vs WalletRefundRailIssuer). Cas ATTEIGNABLE : une
+        // même devise (XOF) peut porter une recharge carte (WalletTopupOrchestrator, dans la
+        // devise active) et une recharge mobile money (WalletMobileMoneyTopupService). C'est
+        // donc une erreur MÉTIER (422 RFC 7807), pas un état impossible : le solde repart par
+        // un ticket manuel, ouvert par UserService#settleWalletsForDeletion côté suppression de
+        // compte, ou par un administrateur côté remboursement self-service. On n'ouvre pas une
+        // demande par rail : l'index unique uq_wallet_refund_requests_pending n'autorise qu'une
+        // demande vivante par (utilisateur, devise). Levée avant toute écriture (aucune demande
+        // ni item sauvegardé).
         Set<WalletRefundRail> rails = scaledTargets.stream()
                 .map(st -> st.target().rail())
                 .collect(Collectors.toSet());
         if (rails.size() > 1) {
-            throw new IllegalStateException("wallet-refund-mixed-rails");
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    MIXED_RAILS_ERROR_CODE, "Unprocessable",
+                    "Ce solde mélange des recharges par carte et par mobile money : "
+                            + "son remboursement est traité manuellement par le support");
         }
         WalletRefundChannel channel = rails.contains(WalletRefundRail.PAWAPAY)
                 ? WalletRefundChannel.AUTOMATIC_PAWAPAY

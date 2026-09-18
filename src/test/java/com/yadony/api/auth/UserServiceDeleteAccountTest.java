@@ -170,6 +170,16 @@ class UserServiceDeleteAccountTest {
                 BigDecimal.ZERO, r);
     }
 
+    /** Une cible carte et une cible mobile money dans la même devise : demande impossible. */
+    private static WalletRefundAllocation mixedRailsAllocation() {
+        return new WalletRefundAllocation(
+                List.of(new WalletRefundAllocation.RefundableTopup(UUID.randomUUID(), "pi_1",
+                                BigDecimal.TEN, BigDecimal.TEN, BigDecimal.ZERO, WalletRefundRail.STRIPE, null),
+                        new WalletRefundAllocation.RefundableTopup(UUID.randomUUID(), "pawapay:" + UUID.randomUUID(),
+                                BigDecimal.TEN, BigDecimal.TEN, BigDecimal.ZERO, WalletRefundRail.PAWAPAY, "MTN")),
+                new BigDecimal("20"), BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal("20"));
+    }
+
     @Nested
     @DisplayName("settleWalletsForDeletion")
     class Settle {
@@ -225,6 +235,23 @@ class UserServiceDeleteAccountTest {
                             "Unprocessable", "Aucun montant remboursable sur ce solde"));
 
             assertThat(userService.settleWalletsForDeletion(USER_ID)).isEmpty();
+        }
+
+        @Test
+        @DisplayName("rails mixtes (422 wallet-refund-mixed-rails) → ticket manuel, la suppression continue")
+        void mixedRails_manualTicket() {
+            // Une devise qui porte à la fois une recharge carte et une recharge mobile money
+            // (XOF) : aucun rail automatique ne sait la traiter. Ignorer ce 422 comme les autres
+            // perdrait le solde à la suppression du compte — repli sur le ticket manuel.
+            when(walletAccountRepository.findAllByUserId(USER_ID)).thenReturn(List.of(walletOf("XOF", "20000.00")));
+            when(walletSelfRefundService.allocation(USER_ID, "XOF")).thenReturn(mixedRailsAllocation());
+            when(walletSelfRefundService.request(USER_ID, "XOF", List.of()))
+                    .thenThrow(new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                            WalletSelfRefundService.MIXED_RAILS_ERROR_CODE, "Unprocessable", "rails mixtes"));
+            WalletRefundRequestEntity manual = new WalletRefundRequestEntity();
+            when(walletRefundRequestService.request(USER_ID, "XOF")).thenReturn(manual);
+
+            assertThat(userService.settleWalletsForDeletion(USER_ID)).containsExactly(manual);
         }
 
         @Test
@@ -312,18 +339,25 @@ class UserServiceDeleteAccountTest {
             assertThat(s.destinationMasked()).isNull();
         }
 
+        /**
+         * Rails mixtes (carte + mobile money dans la même devise, cas réel en XOF) : aucun
+         * rail automatique ne sait traiter cette devise, {@code request} lève
+         * {@code wallet-refund-mixed-rails} et le règlement passera par le ticket manuel, qui
+         * rembourse TOUT le solde. On annonce donc MANUAL, frais 0 et net = solde, comme le
+         * repli d'invariant — et non plus STRIPE avec les montants de l'allocateur.
+         */
         @Test
-        void railsMixtes_railStripe() {
+        void railsMixtes_railManualSurToutLeSolde() {
             when(walletAccountRepository.findAllByUserId(USER_ID)).thenReturn(List.of(walletOf("XOF", "20000.00")));
-            WalletRefundAllocation a = new WalletRefundAllocation(
-                    List.of(new WalletRefundAllocation.RefundableTopup(UUID.randomUUID(), "pi_1",
-                                    BigDecimal.TEN, BigDecimal.TEN, BigDecimal.ZERO, WalletRefundRail.STRIPE, null),
-                            new WalletRefundAllocation.RefundableTopup(UUID.randomUUID(), "pawapay:" + UUID.randomUUID(),
-                                    BigDecimal.TEN, BigDecimal.TEN, BigDecimal.ZERO, WalletRefundRail.PAWAPAY, "MTN")),
-                    new BigDecimal("20"), BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal("20"));
-            when(walletSelfRefundService.allocation(USER_ID, "XOF")).thenReturn(a);
+            when(walletSelfRefundService.allocation(USER_ID, "XOF")).thenReturn(mixedRailsAllocation());
 
-            assertThat(userService.walletSettlement(USER_ID).get(0).rail()).isEqualTo("STRIPE");
+            WalletSettlementDto s = userService.walletSettlement(USER_ID).get(0);
+
+            assertThat(s.rail()).isEqualTo("MANUAL");
+            assertThat(s.feeAmount()).isEqualByComparingTo("0");
+            assertThat(s.netAmount()).isEqualByComparingTo("20000.00");
+            assertThat(s.refundableAmount()).isEqualByComparingTo("20000.00");
+            assertThat(s.destinationMasked()).isNull();
         }
 
         /**

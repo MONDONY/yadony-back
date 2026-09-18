@@ -71,7 +71,7 @@ public class WalletRefundRequestService {
      * Renvoie null si l'enfant existe déjà.
      *
      * <p>Chaque item en échec est repris par un item PENDING de l'enfant (même recharge, même
-     * PaymentIntent, même montant, sans {@code stripeRefundId}) : la résolution admin les passe
+     * PaymentIntent, même montant, MÊME FRAIS, sans {@code stripeRefundId}) : la résolution admin les passe
      * REFUNDED, et l'allocateur rapproche alors l'{@code ADMIN_REFUND_OUT} de la bonne recharge
      * au lieu de retomber en LIFO (cf. {@link WalletRefundAllocator}).
      */
@@ -107,6 +107,11 @@ public class WalletRefundRequestService {
             item.setWalletTransactionId(failed.getWalletTransactionId());
             item.setPaymentIntentId(failed.getPaymentIntentId());
             item.setAmount(failed.getAmount());
+            // Le frais suit le montant : sans lui, l'admin réglerait le brut et le résumé
+            // annoncerait frais 0 / net = brut, alors que le rail automatique retenait déjà
+            // ce frais sur cette même recharge. Le wallet est débité du BRUT dans les deux
+            // cas (cf. resolve), seul le net réellement rendu est amputé du frais.
+            item.setFeeAmount(failed.getFeeAmount() == null ? BigDecimal.ZERO : failed.getFeeAmount());
             item.setStatus(WalletRefundItemStatus.PENDING);
             childItems.add(item);
         }
@@ -264,6 +269,11 @@ public class WalletRefundRequestService {
                 log.warn("Ticket enfant {} : item {} couvert en partie ({} sur {}), solde insuffisant",
                         child.getId(), item.getId(), left.toPlainString(), item.getAmount().toPlainString());
                 item.setAmount(left);
+                // Le frais reporté du parent peut désormais dépasser le montant réduit :
+                // le plafonner évite un net négatif dans le résumé de la demande.
+                if (item.getFeeAmount() != null && item.getFeeAmount().compareTo(left) > 0) {
+                    item.setFeeAmount(left);
+                }
                 item.setStatus(WalletRefundItemStatus.REFUNDED);
                 left = BigDecimal.ZERO;
             } else {

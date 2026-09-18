@@ -56,20 +56,6 @@ public final class WalletRefundAllocator {
 
     private WalletRefundAllocator() {}
 
-    /** Frais nuls sur les deux rails : repli de la surcharge à 3 arguments (tests existants). */
-    private static final WalletRefundFeeCalculator.FeeSources ZERO_FEE_SOURCES =
-            new WalletRefundFeeCalculator.FeeSources() {
-                @Override
-                public BigDecimal stripeFee(String paymentIntentId, BigDecimal amount, String currency) {
-                    return BigDecimal.ZERO;
-                }
-
-                @Override
-                public BigDecimal pawapayFee(String provider, BigDecimal amount, String currency) {
-                    return BigDecimal.ZERO;
-                }
-            };
-
     private static final class Bucket {
         final UUID transactionId;
         final String paymentIntentId;
@@ -111,14 +97,7 @@ public final class WalletRefundAllocator {
      *       minimal des items du groupe (les items sans {@code createdAt} sont classés en
      *       dernier).</li>
      * </ul>
-     */
-    public static WalletRefundAllocation allocate(List<WalletTransactionEntity> ledgerAsc,
-                                                  List<WalletRefundRequestItemEntity> items,
-                                                  BigDecimal balance) {
-        return allocate(ledgerAsc, items, balance, Map.of(), ZERO_FEE_SOURCES, "EUR");
-    }
-
-    /**
+     *
      * @param providerByPaymentRef opérateur pawaPay par {@code paymentRef} (clé {@code "pawapay:" + operationId}),
      *                             pour retrouver le barème de frais d'une recharge sur ce rail.
      * @param sources source des frais réels par rail (cf. {@link WalletRefundFeeCalculator.FeeSources}).
