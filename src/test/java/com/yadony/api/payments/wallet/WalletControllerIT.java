@@ -56,9 +56,20 @@ class WalletControllerIT {
     // Frais Stripe réels lus via PaymentIntent.retrieve (appel réseau) : neutralisés ici pour
     // ne jamais dépendre de Stripe en IT (cf. tâche 3, lot 2 « recharge wallet mobile money »).
     @MockBean com.yadony.api.payments.wallet.fees.StripeFeeSource stripeFeeSource;
+    @Autowired com.yadony.api.payments.currency.ExchangeRateRepository exchangeRateRepository;
+    @Autowired org.springframework.cache.CacheManager cacheManager;
 
     private static final UUID USER_UUID = UUID.randomUUID();
     private static final String FIREBASE_UID = "uid-test-wallet";
+
+    private void seedRate(String currency, String unitsPerEur) {
+        exchangeRateRepository.save(new com.yadony.api.payments.currency.ExchangeRateEntity(
+                currency, new BigDecimal(unitsPerEur)));
+        var cache = cacheManager.getCache("exchange-rates");
+        if (cache != null) {
+            cache.evict(currency);
+        }
+    }
 
     @BeforeEach
     void setUp() {
@@ -235,6 +246,66 @@ class WalletControllerIT {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.balances[?(@.currency == 'CAD')].balance").value(15.0))
             .andExpect(jsonPath("$.balances[?(@.currency == 'CAD')].active").value(false));
+    }
+
+    @Test
+    void getBalance_estimatesTotalAcrossCurrenciesInActiveCurrency() throws Exception {
+        seedRate("EUR", "1");
+        seedRate("XOF", "655.957");
+        walletService.credit(USER_UUID, "EUR", new BigDecimal("1.33"),
+            WalletTransactionType.TOP_UP, "pi_est_eur", "idem-est-eur");
+        walletService.credit(USER_UUID, "XOF", new BigDecimal("10000"),
+            WalletTransactionType.TOP_UP, "pawapay:11111111-1111-1111-1111-111111111111", "idem-est-xof");
+
+        mockMvc.perform(get("/wallet/balance")
+                .with(authentication(authAs(FIREBASE_UID, "SENDER"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.currency").value("EUR"))
+            .andExpect(jsonPath("$.estimatedTotal").value(16.57))
+            .andExpect(jsonPath("$.estimateComplete").value(true))
+            .andExpect(jsonPath("$.balances[?(@.currency == 'EUR')].estimatedInActive").value(1.33))
+            .andExpect(jsonPath("$.balances[?(@.currency == 'XOF')].estimatedInActive").value(15.24));
+    }
+
+    @Test
+    void getBalance_missingRateExcludesCurrencyAndFlagsPartialEstimate() throws Exception {
+        seedRate("EUR", "1");
+        exchangeRateRepository.deleteById("GBP");
+        var cache = cacheManager.getCache("exchange-rates");
+        if (cache != null) {
+            cache.evict("GBP");
+        }
+        try {
+            walletService.credit(USER_UUID, "EUR", new BigDecimal("1.33"),
+                WalletTransactionType.TOP_UP, "pi_est_eur2", "idem-est-eur2");
+            walletService.credit(USER_UUID, "GBP", new BigDecimal("20.00"),
+                WalletTransactionType.TOP_UP, "pi_est_gbp", "idem-est-gbp");
+
+            mockMvc.perform(get("/wallet/balance")
+                    .with(authentication(authAs(FIREBASE_UID, "SENDER"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.estimatedTotal").value(1.33))
+                .andExpect(jsonPath("$.estimateComplete").value(false))
+                .andExpect(jsonPath("$.balances[?(@.currency == 'GBP')].estimatedInActive").doesNotExist())
+                .andExpect(jsonPath("$.balances[?(@.currency == 'GBP')].balance").value(20.0));
+        } finally {
+            // Ne pas polluer les autres IT de la même JVM qui s'appuient sur le taux GBP.
+            seedRate("GBP", "0.86");
+        }
+    }
+
+    @Test
+    void getBalance_singleActiveCurrencyEstimateEqualsBalance() throws Exception {
+        seedRate("EUR", "1");
+        walletService.credit(USER_UUID, "EUR", new BigDecimal("40.00"),
+            WalletTransactionType.TOP_UP, "pi_est_single", "idem-est-single");
+
+        mockMvc.perform(get("/wallet/balance")
+                .with(authentication(authAs(FIREBASE_UID, "SENDER"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.estimatedTotal").value(40.00))
+            .andExpect(jsonPath("$.estimateComplete").value(true))
+            .andExpect(jsonPath("$.balances[?(@.currency == 'EUR')].estimatedInActive").value(40.00));
     }
 
     @Test
