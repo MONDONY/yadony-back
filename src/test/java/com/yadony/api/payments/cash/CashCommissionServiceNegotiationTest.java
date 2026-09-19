@@ -179,7 +179,7 @@ class CashCommissionServiceNegotiationTest {
 
     // Finding 2 de la revue tâche 9 : WALLET_FIRST doit convertir devise du thread →
     // devise propre du voyageur pour la comparaison de solde ET le débit réel, comme
-    // chargeCommissionFromWallet/chargeCommissionAuto — sinon un voyageur avec un
+    // chargeCommissionFromWallet — sinon un voyageur avec un
     // wallet XOF suffisant se voit refuser à tort un thread en EUR.
     @Test
     void settleNegotiationCommission_threadEurWalletXof_convertsAndDebitsWithSourceSnapshot() {

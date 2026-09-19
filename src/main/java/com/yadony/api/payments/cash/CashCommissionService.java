@@ -492,62 +492,6 @@ public class CashCommissionService {
     }
 
     /**
-     * Prélève la commission automatiquement : wallet en priorité, carte en fallback.
-     * Utilisé par les flux asynchrones (mobile money) où il n'y a pas d'interaction utilisateur.
-     * Si ni wallet ni carte ne sont disponibles ou si la carte nécessite 3DS (impossible en async),
-     * pose commissionStatus=FAILED et logue un audit (créance à recouvrer).
-     */
-    @Transactional
-    public void chargeCommissionAuto(BidEntity bid, UUID travelerId) {
-        AnnouncementEntity announcement = announcementRepo.findById(bid.getAnnouncementId()).orElseThrow();
-        BigDecimal commission = computeBidCommission(bid, announcement);
-
-        // 1) Wallets prioritaires — portefeuille de la devise du bid d'abord, complément
-        // sur la devise active du voyageur (cf. WalletCommissionCollector). On ne tente le
-        // débit que si les deux couvrent tout : sinon repli carte, jamais de débit partiel.
-        String bidCurrency = normalizeCurrency(bid.getCurrency());
-        String travelerCurrency = normalizeCurrency(activeCurrencyResolver.resolve(travelerId));
-        CommissionSplit split = commissionCollector.plan(travelerId, bidCurrency, travelerCurrency, commission);
-        if (split.covered()) {
-            try {
-                chargeCommissionFromWallet(bid, travelerId, commission);
-                return;
-            } catch (InsufficientWalletBalanceException e) {
-                // Race TOCTOU : solde a chuté entre plan et debit → fallback carte
-                log.warn("Race TOCTOU wallet pour bid {} — fallback carte", bid.getId());
-            }
-        }
-
-        // 2) Fallback carte automatique
-        UserEntity traveler = userRepo.findById(travelerId).orElseThrow();
-        if (traveler.getCommissionPaymentMethodId() != null) {
-            try {
-                AcceptBidResponse r = chargeCommission(bid, travelerId);
-                if (r.status() == AcceptanceStatusDto.ACCEPTED) {
-                    bid.setCommissionChargedVia(CommissionChargedVia.CARD);
-                    bidRepo.save(bid);
-                    return;
-                }
-                // REQUIRES_3DS impossible en async → créance
-                log.warn("Commission carte bid {} : statut={} en async → créance commission",
-                        bid.getId(), r.status());
-            } catch (RuntimeException e) {
-                // Erreur Stripe transitoire (panne API, timeout, rate limit) — créance.
-                // On NE laisse PAS l'exception remonter pour ne pas rollback la tx REQUIRES_NEW
-                // du listener MM (qui a déjà commité le paiement principal).
-                log.error("Commission carte async échouée pour bid {} : {}", bid.getId(), e.getMessage());
-            }
-        }
-
-        // 3) Ni wallet ni carte disponible/valide → créance
-        bid.setCommissionStatus(CommissionStatus.FAILED);
-        bidRepo.save(bid);
-        auditService.log("payment", bid.getId(), "COMMISSION_AUTO_FAILED", travelerId,
-                Map.of("reason", "no-wallet-no-card"));
-        log.error("Commission auto impossible pour bid {} travelerId {} — ni wallet ni carte", bid.getId(), travelerId);
-    }
-
-    /**
      * Règle la commission Yadony (net × taux) d'un thread de négociation CASH, à la
      * demande du voyageur. Le montant se calcule TOUJOURS depuis le net négocié passé
      * en paramètre, jamais depuis le prix/kg de l'annonce liée ({@link #computeBidCommission}),
