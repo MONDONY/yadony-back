@@ -262,20 +262,7 @@ public class TrackingService {
                     "Invalid Timestamp", "Le timestamp du scan ne peut pas être dans le futur");
         }
 
-        // photoUrl from client must be an internal S3 key (e.g. tracking/{bidId}/...).
-        // Reject absolute URLs to prevent attackers from injecting external content
-        // that would be displayed on the public recipient page.
-        String photoKey = request.photoUrl();
-        if (photoKey != null && !photoKey.isBlank()) {
-            String expectedPrefix = "tracking/" + bid.getId() + "/";
-            if (photoKey.startsWith("http://") || photoKey.startsWith("https://")
-                    || photoKey.contains("..")
-                    || !photoKey.startsWith(expectedPrefix)) {
-                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                        "invalid-photo-url", "Invalid Photo URL",
-                        "L'URL de la photo doit être une clé S3 valide pour ce bid");
-            }
-        }
+        String photoKey = validatedPhotoKey(bid, request.photoUrl());
 
         TrackingEventEntity event = new TrackingEventEntity();
         event.setBidId(bid.getId());
@@ -397,6 +384,24 @@ public class TrackingService {
                 e.getScannedAt(), e.getGpsLat(), e.getGpsLon(), e.getGpsLabel(),
                 resolvedPhotoUrl != null ? resolvedPhotoUrl : e.getPhotoUrl(),
                 e.getOfflineTimestamp(), e.getCreatedAt());
+    }
+
+    /**
+     * La photo envoyée par le client doit être une clé S3 interne du bid
+     * (tracking/{bidId}/...). Les URL absolues sont refusées : elles seraient
+     * affichées telles quelles sur la page publique du destinataire.
+     */
+    private String validatedPhotoKey(BidEntity bid, String photoKey) {
+        if (photoKey == null || photoKey.isBlank()) return null;
+        String expectedPrefix = "tracking/" + bid.getId() + "/";
+        if (photoKey.startsWith("http://") || photoKey.startsWith("https://")
+                || photoKey.contains("..")
+                || !photoKey.startsWith(expectedPrefix)) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "invalid-photo-url", "Invalid Photo URL",
+                    "L'URL de la photo doit être une clé S3 valide pour ce bid");
+        }
+        return photoKey;
     }
 
     private String cleanGpsLabel(String label) {
@@ -603,6 +608,10 @@ public class TrackingService {
                             : "Trop de tentatives — contactez l'expéditeur pour obtenir le code");
         }
 
+        // Validée avant de consommer le code : une clé rejetée ne doit pas
+        // laisser le colis COMPLETED sans sa photo de preuve.
+        String photoKey = validatedPhotoKey(bid, request.photoUrl());
+
         bid.setConfirmationCode(null);
         bid.setConfirmationCodeExpiry(null);
         bid.setConfirmationCodeAttempts(0);
@@ -614,6 +623,7 @@ public class TrackingService {
         event.setBidId(bid.getId());
         event.setEventType(TrackingEventType.ARRIVEE);
         event.setScannedAt(LocalDateTime.now(ZoneOffset.UTC));
+        event.setPhotoUrl(photoKey);
         trackingEventRepository.save(event);
 
         eventPublisher.publishEvent(new DeliveryConfirmedEvent(bid.getId(), bid.getSenderId(), traveler.getId()));

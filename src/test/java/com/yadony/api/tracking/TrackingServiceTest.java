@@ -578,6 +578,54 @@ class TrackingServiceTest {
         assertThat(response).isNotNull();
     }
 
+    @Test
+    void confirmDelivery_withPhotoKey_storesPhotoOnArriveeEvent() {
+        BidEntity bid = buildBid(BidStatus.IN_TRANSIT, "qt");
+        bid.setConfirmationCode("123456");
+        bid.setConfirmationCodeAttempts(0);
+        AnnouncementEntity ann = buildAnnouncement();
+        UserEntity traveler = buildUser(travelerId, "uid-traveler");
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+        when(userRepository.findByFirebaseUid("uid-traveler")).thenReturn(Optional.of(traveler));
+        when(trackingEventRepository.save(any())).thenAnswer(inv -> {
+            TrackingEventEntity e = inv.getArgument(0);
+            setId(e, UUID.randomUUID());
+            return e;
+        });
+
+        String photoKey = "tracking/" + bidId + "/1700000000_ARRIVEE.jpg";
+        TrackingEventResponse resp = service.confirmDelivery(
+                bidId, new ConfirmDeliveryRequest("123456", photoKey), "uid-traveler");
+
+        assertThat(resp.eventType()).isEqualTo("ARRIVEE");
+        assertThat(resp.photoUrl()).isEqualTo(photoKey);
+        ArgumentCaptor<TrackingEventEntity> captor = ArgumentCaptor.forClass(TrackingEventEntity.class);
+        verify(trackingEventRepository).save(captor.capture());
+        assertThat(captor.getValue().getPhotoUrl()).isEqualTo(photoKey);
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.COMPLETED);
+    }
+
+    @Test
+    void confirmDelivery_withForeignPhotoKey_throwsUnprocessableAndKeepsCode() {
+        BidEntity bid = buildBid(BidStatus.IN_TRANSIT, "qt");
+        bid.setConfirmationCode("123456");
+        bid.setConfirmationCodeAttempts(0);
+        AnnouncementEntity ann = buildAnnouncement();
+        UserEntity traveler = buildUser(travelerId, "uid-traveler");
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+        when(userRepository.findByFirebaseUid("uid-traveler")).thenReturn(Optional.of(traveler));
+
+        ConfirmDeliveryRequest req = new ConfirmDeliveryRequest(
+                "123456", "tracking/" + UUID.randomUUID() + "/photo.jpg");
+
+        assertYadonyError(() -> service.confirmDelivery(bidId, req, "uid-traveler"), "invalid-photo-url");
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.IN_TRANSIT);
+        assertThat(bid.getConfirmationCode()).isEqualTo("123456");
+        verify(trackingEventRepository, never()).save(any());
+    }
+
     // ── getConfirmationCode ───────────────────────────────────────────────────
 
     @Test
