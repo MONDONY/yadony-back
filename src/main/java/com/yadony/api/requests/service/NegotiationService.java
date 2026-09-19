@@ -286,19 +286,19 @@ public class NegotiationService {
 
     @Transactional
     /**
-     * Vérifie qu'un prix proposé tient dans les bornes de sa devise.
+     * Vérifie qu'un prix proposé atteint le plus petit montant de sa devise.
      *
-     * <p>Les DTO ne portent qu'un garde-fou large : une annotation Bean Validation
-     * est une constante de compilation et ne peut pas connaître la devise du fil.
-     * Le plafond réel se calcule donc ici. Auparavant les DTO imposaient 500 quelle
-     * que soit la devise, ce qui plafonnait un voyageur en franc CFA à 0,76 €/kg et
-     * lui interdisait de fait toute proposition réaliste.
+     * <p>Les DTO ne portent qu'un garde-fou technique large : une annotation Bean
+     * Validation est une constante de compilation et ne peut pas connaître la devise
+     * du fil. Le plancher réel se calcule donc ici. Il n'y a plus de plafond métier :
+     * le 500 € mis à l'échelle par devise (327 978 XOF) a été retiré le 2026-09-19,
+     * il refusait encore des contre-offres réalistes en franc CFA. Seul le CHECK SQL
+     * de V256 (1 000 000) borne encore la colonne.
      */
     private void assertPriceWithinBounds(java.math.BigDecimal price, String currencyCode) {
         SupportedCurrency currency = SupportedCurrency.fromCodeOrDefault(currencyCode);
-        java.math.BigDecimal max = CurrencyBounds.maxNegotiationPrice(currency);
         java.math.BigDecimal min = CurrencyBounds.smallestUnit(currency);
-        if (price.compareTo(min) < 0 || price.compareTo(max) > 0) {
+        if (price.compareTo(min) < 0) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
                 "negotiation/price-out-of-bounds");
         }

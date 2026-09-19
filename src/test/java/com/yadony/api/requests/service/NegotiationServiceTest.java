@@ -782,6 +782,65 @@ class NegotiationServiceTest {
         }
 
         @Test
+        @DisplayName("35 000 F CFA sur un fil XOF → accepté, aucun plafond métier")
+        void counter_largeXofAmount_hasNoBusinessCeiling() {
+            // Recette TestFlight du 2026-09-19 : le plafond de 500 € mis à l'échelle
+            // par devise a été retiré, seul le garde-fou technique du DTO et du CHECK
+            // SQL (1 000 000) subsiste.
+            thread.setCurrency("XOF");
+            thread.setCurrentPriceEur(new BigDecimal("18708"));
+            when(config.maxNegotiationRounds()).thenReturn(5);
+            when(threadRepo.findById(THREAD_ID)).thenReturn(java.util.Optional.of(thread));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(java.util.Optional.of(traveler));
+            var lastMsg = NegotiationMessageEntity.create(THREAD_ID, TRAVELER_ID,
+                NegotiationMessageKind.PROPOSAL, new BigDecimal("18708"), null);
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID))
+                .thenReturn(java.util.List.of(lastMsg));
+
+            var req = new com.yadony.api.requests.dto.NegotiationCounterRequest(
+                new BigDecimal("35000"), null);
+            var response = service.counter(SENDER_ID, THREAD_ID, req);
+
+            assertThat(response.currentPriceEur()).isEqualByComparingTo("35000");
+        }
+
+        @Test
+        @DisplayName("800 € sur un fil EUR → accepté, aucun plafond métier")
+        void counter_aboveFormerEuroCeiling_isAccepted() {
+            when(config.maxNegotiationRounds()).thenReturn(5);
+            when(threadRepo.findById(THREAD_ID)).thenReturn(java.util.Optional.of(thread));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(java.util.Optional.of(traveler));
+            var lastMsg = NegotiationMessageEntity.create(THREAD_ID, TRAVELER_ID,
+                NegotiationMessageKind.PROPOSAL, new BigDecimal("30"), null);
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID))
+                .thenReturn(java.util.List.of(lastMsg));
+
+            var req = new com.yadony.api.requests.dto.NegotiationCounterRequest(
+                new BigDecimal("800"), null);
+            var response = service.counter(SENDER_ID, THREAD_ID, req);
+
+            assertThat(response.currentPriceEur()).isEqualByComparingTo("800");
+        }
+
+        @Test
+        @DisplayName("sous le plus petit montant de la devise → 422 price-out-of-bounds")
+        void counter_belowSmallestUnit_throws422() {
+            thread.setCurrency("XOF");
+            when(threadRepo.findById(THREAD_ID)).thenReturn(java.util.Optional.of(thread));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
+
+            var req = new com.yadony.api.requests.dto.NegotiationCounterRequest(
+                new BigDecimal("0.5"), null);
+
+            assertThatThrownBy(() -> service.counter(SENDER_ID, THREAD_ID, req))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(ex -> assertThat(((ResponseStatusException) ex).getReason())
+                    .isEqualTo("negotiation/price-out-of-bounds"));
+        }
+
+        @Test
         @DisplayName("même partie 2 fois d'affilée → 409 not-your-turn")
         void counter_sameSideTwice_throws409() {
             when(config.maxNegotiationRounds()).thenReturn(5);
