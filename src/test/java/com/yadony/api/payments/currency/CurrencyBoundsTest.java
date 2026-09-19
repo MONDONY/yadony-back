@@ -13,7 +13,6 @@ class CurrencyBoundsTest {
     @Test
     void euroKeepsTheHistoricalBounds() {
         assertThat(CurrencyBounds.maxPricePerKg(SupportedCurrency.EUR)).isEqualByComparingTo("500.00");
-        assertThat(CurrencyBounds.maxNegotiationPrice(SupportedCurrency.EUR)).isEqualByComparingTo("500.00");
         assertThat(CurrencyBounds.maxPackageBudget(SupportedCurrency.EUR)).isEqualByComparingTo("560.00");
         assertThat(CurrencyBounds.minTopup(SupportedCurrency.EUR)).isEqualByComparingTo("1.00");
     }

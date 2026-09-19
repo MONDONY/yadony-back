@@ -6,10 +6,10 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.UUID;
 
-// Le plafond réel dépend de la devise du fil et est appliqué par
-// NegotiationService.assertPriceWithinBounds : une annotation ne peut pas le
-// porter. Ici on ne garde qu'un garde-fou anti-abus, assez large pour laisser
-// passer les devises sans sous-unité (327 500 XOF au plafond).
+// Aucun plafond métier sur une offre (retiré le 2026-09-19, il bloquait les
+// contre-offres réalistes en franc CFA). Le plancher dépend de la devise du fil
+// et est appliqué par NegotiationService.assertPriceWithinBounds. Ici on ne
+// garde qu'un garde-fou technique anti-abus, aligné sur le CHECK SQL (V256).
 //
 // Trajet obligatoire dès l'offre (cf. spec 2026-08-16) : soit
 // travelerAnnouncementId pointe un trajet existant, soit createDedicatedTrip

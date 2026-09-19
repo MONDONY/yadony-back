@@ -21,9 +21,6 @@ public final class CurrencyBounds {
     /** Prix maximum au kilo, en euros, avant mise à l'échelle. */
     private static final BigDecimal MAX_PRICE_PER_KG_EUR = new BigDecimal("500");
 
-    /** Montant maximum d'une offre ou d'une contre-offre, en euros. */
-    private static final BigDecimal MAX_NEGOTIATION_PRICE_EUR = new BigDecimal("500");
-
     /** Budget maximum d'une demande de colis, en euros. */
     private static final BigDecimal MAX_PACKAGE_BUDGET_EUR = new BigDecimal("560");
 
@@ -47,10 +44,6 @@ public final class CurrencyBounds {
 
     public static BigDecimal maxPricePerKg(SupportedCurrency currency) {
         return scale(MAX_PRICE_PER_KG_EUR, currency, RoundingMode.DOWN);
-    }
-
-    public static BigDecimal maxNegotiationPrice(SupportedCurrency currency) {
-        return scale(MAX_NEGOTIATION_PRICE_EUR, currency, RoundingMode.DOWN);
     }
 
     public static BigDecimal maxPackageBudget(SupportedCurrency currency) {
