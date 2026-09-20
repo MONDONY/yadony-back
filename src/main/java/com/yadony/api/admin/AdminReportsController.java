@@ -17,6 +17,7 @@ import com.yadony.api.matching.AnnouncementService;
 import com.yadony.api.notifications.NotificationDispatcher;
 import com.yadony.api.signalements.ReportAction;
 import com.yadony.api.signalements.ReportEntity;
+import com.yadony.api.signalements.ReportReason;
 import com.yadony.api.signalements.ReportRepository;
 import com.yadony.api.signalements.ReportService;
 import com.yadony.api.signalements.ReportStatus;
@@ -33,7 +34,9 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -77,12 +80,19 @@ public class AdminReportsController {
     public ResponseEntity<Page<AdminReportResponse>> listReports(
             @RequestParam(required = false) ReportStatus status,
             @RequestParam(required = false) ReportTargetType targetType,
+            @RequestParam(required = false) String q,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
 
-        Page<ReportEntity> reports = reportRepo.findFiltered(
-                status, targetType,
-                PageRequest.of(page, size, Sort.by("createdAt").descending()));
+        PageRequest pageable = PageRequest.of(page, size, Sort.by("createdAt").descending());
+        String needle = normalizeQuery(q);
+        Page<ReportEntity> reports;
+        if (needle == null) {
+            reports = reportRepo.findFiltered(status, targetType, pageable);
+        } else {
+            List<ReportReason> reasons = reasonsMatching(needle);
+            reports = reportRepo.searchFiltered(status, targetType, needle, !reasons.isEmpty(), reasons, pageable);
+        }
 
         // Une même requête couvre signalants ET cibles de type USER : les deux se lisent
         // dans la même table, inutile de doubler l'aller-retour.
@@ -201,6 +211,98 @@ public class AdminReportsController {
         throw new YadonyBusinessException(HttpStatus.FORBIDDEN,
                 "admin-principal-required", "Admin Principal Required",
                 "Authentification administrateur requise");
+    }
+
+    /**
+     * Suppression douce d'un signalement ({@code deleted_at}) : il disparaît des listes
+     * (le {@code @Where} de l'entité) mais reste en base avec ses photos et son audit.
+     */
+    @PreAuthorize("hasAuthority('REPORT_DELETE')")
+    @DeleteMapping("/admin/reports/{id}")
+    @Transactional
+    public ResponseEntity<Void> deleteReport(@PathVariable UUID id, Authentication authentication) {
+        ReportEntity report = reportRepo.findById(id)
+                .orElseThrow(() -> new YadonyBusinessException(
+                        HttpStatus.NOT_FOUND, "report-not-found", "Not Found", "Signalement introuvable"));
+        softDelete(List.of(report), adminId(authentication), "single");
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Suppression douce groupée : soit une liste d'identifiants, soit {@code all = true}
+     * pour tous les signalements du filtre courant (statut, type, recherche), toutes pages
+     * comprises. Répond le nombre réellement supprimé (les identifiants inconnus ou déjà
+     * supprimés sont ignorés).
+     */
+    @PreAuthorize("hasAuthority('REPORT_DELETE')")
+    @PostMapping("/admin/reports/bulk-delete")
+    @Transactional
+    public ResponseEntity<Map<String, Integer>> bulkDeleteReports(
+            @RequestBody BulkDeleteReportsRequest request,
+            Authentication authentication) {
+        boolean all = Boolean.TRUE.equals(request.all());
+        List<UUID> ids;
+        if (all) {
+            String needle = normalizeQuery(request.q());
+            List<ReportReason> reasons = needle == null ? List.of() : reasonsMatching(needle);
+            ids = reportRepo.findFilteredIds(request.status(), request.targetType(), needle,
+                    !reasons.isEmpty(), reasons);
+        } else {
+            ids = request.ids() != null ? request.ids() : List.of();
+        }
+        if (ids.isEmpty()) {
+            return ResponseEntity.ok(Map.of("deleted", 0));
+        }
+        int deleted = softDelete(reportRepo.findAllById(ids), adminId(authentication),
+                all ? "all-filtered" : "selection");
+        return ResponseEntity.ok(Map.of("deleted", deleted));
+    }
+
+    /** Corps de {@link #bulkDeleteReports}. */
+    public record BulkDeleteReportsRequest(
+            List<UUID> ids,
+            Boolean all,
+            ReportStatus status,
+            ReportTargetType targetType,
+            String q
+    ) {}
+
+    private int softDelete(List<ReportEntity> reports, UUID adminId, String mode) {
+        int count = 0;
+        for (ReportEntity report : reports) {
+            if (report.getDeletedAt() != null) {
+                continue;
+            }
+            report.softDelete();
+            reportRepo.save(report);
+            auditService.log("REPORT", report.getId(), "REPORT_DELETED", adminId,
+                    Map.of(
+                            "reportId", String.valueOf(report.getId()),
+                            "mode", mode,
+                            "status", report.getStatus() != null ? report.getStatus().name() : "",
+                            "reason", report.getReason() != null ? report.getReason().name() : ""
+                    ));
+            count++;
+        }
+        return count;
+    }
+
+    /** {@code q} nettoyé pour un LIKE insensible à la casse, ou null si vide. */
+    static String normalizeQuery(String q) {
+        if (q == null) {
+            return null;
+        }
+        String trimmed = q.trim().toLowerCase(Locale.ROOT);
+        return trimmed.isEmpty() ? null : "%" + trimmed + "%";
+    }
+
+    /** Motifs dont le code ou le libellé contient le texte cherché (needle déjà entouré de %). */
+    static List<ReportReason> reasonsMatching(String needle) {
+        String bare = needle.substring(1, needle.length() - 1);
+        return Arrays.stream(ReportReason.values())
+                .filter(r -> r.name().toLowerCase(Locale.ROOT).contains(bare)
+                        || r.label().toLowerCase(Locale.ROOT).contains(bare))
+                .toList();
     }
 
     // -------------------------------------------------------------------------

@@ -49,6 +49,8 @@ public enum AdminPermission {
     // Reporting & ratings
     REPORT_VIEW,
     REPORT_RESOLVE,
+    /** Supprimer (soft delete) un ou plusieurs signalements : ADMIN et SUPER_ADMIN. */
+    REPORT_DELETE,
     RATING_MODERATE,
     /**
      * Lot C — suppression definitive d'un avis, detachee de RATING_MODERATE.
