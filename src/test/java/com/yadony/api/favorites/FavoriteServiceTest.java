@@ -181,12 +181,26 @@ class FavoriteServiceTest {
     }
 
     // --- getFavoriteIds tests ---
+    //
+    // Le badge de l'app est la taille de ces ensembles : ils doivent contenir
+    // exactement ce que /favorites/trips et /favorites/package-requests
+    // présentent, sinon la pastille affiche « 1 » au-dessus d'une liste vide.
 
     @Test
     void getFavoriteIds_returnsBothSets() {
         UUID reqId = UUID.randomUUID();
         when(favoriteRepository.findTargetIds(userId, FavoriteTargetType.TRIP)).thenReturn(List.of(tripId));
         when(favoriteRepository.findTargetIds(userId, FavoriteTargetType.PACKAGE_REQUEST)).thenReturn(List.of(reqId));
+
+        AnnouncementEntity trip = mock(AnnouncementEntity.class);
+        when(trip.getId()).thenReturn(tripId);
+        when(trip.getStatus()).thenReturn(AnnouncementStatus.ACTIVE);
+        when(announcementRepository.findAllById(anyCollection())).thenReturn(List.of(trip));
+
+        PackageRequestEntity request = mock(PackageRequestEntity.class);
+        when(request.getId()).thenReturn(reqId);
+        when(request.getStatus()).thenReturn(PackageRequestStatus.OPEN);
+        when(packageRequestRepository.findAllById(anyCollection())).thenReturn(List.of(request));
 
         FavoriteIdsResponse res = service.getFavoriteIds(userId);
 
@@ -203,6 +217,107 @@ class FavoriteServiceTest {
 
         assertThat(res.trips()).isEmpty();
         assertThat(res.packageRequests()).isEmpty();
+        // Sans favori, aucune cible à charger ni blocage à résoudre.
+        verify(announcementRepository, never()).findAllById(any());
+        verify(packageRequestRepository, never()).findAllById(any());
+        verify(blockVisibility, never()).hiddenUserIdsFor(any());
+    }
+
+    @Test
+    void getFavoriteIds_excludesTripsThatTheListWouldHide() {
+        UUID active = UUID.randomUUID();          // ACTIVE — compté
+        UUID cancelled = UUID.randomUUID();       // CANCELLED — masqué par la liste
+        UUID removed = UUID.randomUUID();         // REMOVED_BY_ADMIN — masqué, jamais purgé par le scheduler
+        UUID softDeleted = UUID.randomUUID();     // absent de findAllById (@Where deleted_at IS NULL)
+        when(favoriteRepository.findTargetIds(userId, FavoriteTargetType.TRIP))
+                .thenReturn(List.of(active, cancelled, removed, softDeleted));
+        when(favoriteRepository.findTargetIds(userId, FavoriteTargetType.PACKAGE_REQUEST))
+                .thenReturn(List.of());
+
+        AnnouncementEntity a1 = mock(AnnouncementEntity.class);
+        when(a1.getId()).thenReturn(active);
+        when(a1.getStatus()).thenReturn(AnnouncementStatus.ACTIVE);
+        AnnouncementEntity a2 = mock(AnnouncementEntity.class);
+        when(a2.getId()).thenReturn(cancelled);
+        when(a2.getStatus()).thenReturn(AnnouncementStatus.CANCELLED);
+        AnnouncementEntity a3 = mock(AnnouncementEntity.class);
+        when(a3.getId()).thenReturn(removed);
+        when(a3.getStatus()).thenReturn(AnnouncementStatus.REMOVED_BY_ADMIN);
+        when(announcementRepository.findAllById(anyCollection())).thenReturn(List.of(a1, a2, a3));
+
+        FavoriteIdsResponse res = service.getFavoriteIds(userId);
+
+        assertThat(res.trips()).containsExactly(active);
+        assertThat(res.packageRequests()).isEmpty();
+        verify(packageRequestRepository, never()).findAllById(any());
+        // Le favori reste en base : seule la présentation change.
+        verify(favoriteRepository, never()).delete(any());
+    }
+
+    @Test
+    void getFavoriteIds_excludesRequestsThatTheListWouldHide() {
+        UUID open = UUID.randomUUID();            // OPEN — compté
+        UUID expired = UUID.randomUUID();         // EXPIRED — masqué par la liste
+        UUID softDeleted = UUID.randomUUID();     // absent de findAllById
+        when(favoriteRepository.findTargetIds(userId, FavoriteTargetType.TRIP)).thenReturn(List.of());
+        when(favoriteRepository.findTargetIds(userId, FavoriteTargetType.PACKAGE_REQUEST))
+                .thenReturn(List.of(open, expired, softDeleted));
+
+        PackageRequestEntity pr1 = mock(PackageRequestEntity.class);
+        when(pr1.getId()).thenReturn(open);
+        when(pr1.getStatus()).thenReturn(PackageRequestStatus.OPEN);
+        PackageRequestEntity pr2 = mock(PackageRequestEntity.class);
+        when(pr2.getId()).thenReturn(expired);
+        when(pr2.getStatus()).thenReturn(PackageRequestStatus.EXPIRED);
+        when(packageRequestRepository.findAllById(anyCollection())).thenReturn(List.of(pr1, pr2));
+
+        FavoriteIdsResponse res = service.getFavoriteIds(userId);
+
+        assertThat(res.packageRequests()).containsExactly(open);
+        assertThat(res.trips()).isEmpty();
+        verify(announcementRepository, never()).findAllById(any());
+    }
+
+    @Test
+    void getFavoriteIds_excludesContentOfBlockedOwners() {
+        UUID blockedTraveler = UUID.randomUUID();
+        UUID blockedSender = UUID.randomUUID();
+        UUID visibleTrip = UUID.randomUUID();
+        UUID hiddenTrip = UUID.randomUUID();
+        UUID visibleRequest = UUID.randomUUID();
+        UUID hiddenRequest = UUID.randomUUID();
+        when(favoriteRepository.findTargetIds(userId, FavoriteTargetType.TRIP))
+                .thenReturn(List.of(visibleTrip, hiddenTrip));
+        when(favoriteRepository.findTargetIds(userId, FavoriteTargetType.PACKAGE_REQUEST))
+                .thenReturn(List.of(visibleRequest, hiddenRequest));
+        when(blockVisibility.hiddenUserIdsFor(userId)).thenReturn(Set.of(blockedTraveler, blockedSender));
+
+        AnnouncementEntity a1 = mock(AnnouncementEntity.class);
+        when(a1.getId()).thenReturn(visibleTrip);
+        when(a1.getStatus()).thenReturn(AnnouncementStatus.ACTIVE);
+        when(a1.getTravelerId()).thenReturn(UUID.randomUUID());
+        AnnouncementEntity a2 = mock(AnnouncementEntity.class);
+        when(a2.getId()).thenReturn(hiddenTrip);
+        when(a2.getStatus()).thenReturn(AnnouncementStatus.ACTIVE);
+        when(a2.getTravelerId()).thenReturn(blockedTraveler);
+        when(announcementRepository.findAllById(anyCollection())).thenReturn(List.of(a1, a2));
+
+        PackageRequestEntity pr1 = mock(PackageRequestEntity.class);
+        when(pr1.getId()).thenReturn(visibleRequest);
+        when(pr1.getStatus()).thenReturn(PackageRequestStatus.OPEN);
+        when(pr1.getSenderId()).thenReturn(UUID.randomUUID());
+        PackageRequestEntity pr2 = mock(PackageRequestEntity.class);
+        when(pr2.getId()).thenReturn(hiddenRequest);
+        when(pr2.getStatus()).thenReturn(PackageRequestStatus.OPEN);
+        when(pr2.getSenderId()).thenReturn(blockedSender);
+        when(packageRequestRepository.findAllById(anyCollection())).thenReturn(List.of(pr1, pr2));
+
+        FavoriteIdsResponse res = service.getFavoriteIds(userId);
+
+        assertThat(res.trips()).containsExactly(visibleTrip);
+        assertThat(res.packageRequests()).containsExactly(visibleRequest);
+        // Un seul calcul du masquage pour les deux types.
+        verify(blockVisibility, times(1)).hiddenUserIdsFor(userId);
     }
 
     // --- getFavoriteTrips tests ---

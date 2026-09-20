@@ -12,6 +12,7 @@ import com.yadony.api.matching.AnnouncementSearchMapper;
 import com.yadony.api.matching.AnnouncementStatus;
 import com.yadony.api.matching.dto.AnnouncementSearchResponse;
 import com.yadony.api.requests.dto.PackageRequestSearchResponse;
+import com.yadony.api.requests.entity.PackageRequestEntity;
 import com.yadony.api.requests.entity.PackageRequestStatus;
 import com.yadony.api.requests.repository.PackageRequestRepository;
 import com.yadony.api.requests.service.PackageRequestSearchMapper;
@@ -25,6 +26,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 @Transactional
@@ -100,6 +102,14 @@ public class FavoriteService {
     /**
      * Returns the sets of favorite target IDs for the caller, split by type.
      *
+     * <p>Ces ensembles alimentent le badge de l'app (leur taille) et l'état du cœur sur
+     * les cartes. Ils passent donc par le même filtre de présentation que
+     * {@link #getFavoriteTrips} et {@link #getFavoritePackageRequests} : un favori dont
+     * la cible est annulée, terminée, retirée par la modération, supprimée ou dont le
+     * propriétaire est bloqué n'est pas compté. Sans cela la pastille affichait « 1 »
+     * au-dessus d'une liste vide, le temps que le {@link FavoriteCleanupScheduler}
+     * passe (jamais pour {@code REMOVED_BY_ADMIN}, un soft-delete ou un blocage).
+     *
      * <p>Chemin de lecture : {@code callerId == null} signifie un invité sans ligne
      * {@code users} (jamais posé de favori), qui reçoit donc des ensembles vides plutôt
      * qu'une erreur ou un provisionnement. Voir {@link #removeFavorite} pour le contrat
@@ -110,9 +120,18 @@ public class FavoriteService {
         if (callerId == null) {
             return new FavoriteIdsResponse(Set.of(), Set.of());
         }
-        Set<UUID> trips = new HashSet<>(favoriteRepository.findTargetIds(callerId, FavoriteTargetType.TRIP));
-        Set<UUID> packageRequests = new HashSet<>(
-                favoriteRepository.findTargetIds(callerId, FavoriteTargetType.PACKAGE_REQUEST));
+        List<UUID> tripIds = favoriteRepository.findTargetIds(callerId, FavoriteTargetType.TRIP);
+        List<UUID> requestIds = favoriteRepository.findTargetIds(callerId, FavoriteTargetType.PACKAGE_REQUEST);
+        if (tripIds.isEmpty() && requestIds.isEmpty()) {
+            return new FavoriteIdsResponse(Set.of(), Set.of());
+        }
+        Set<UUID> hidden = blockVisibility.hiddenUserIdsFor(callerId);
+        Set<UUID> trips = presentableTrips(tripIds, hidden).stream()
+                .map(AnnouncementEntity::getId)
+                .collect(Collectors.toCollection(HashSet::new));
+        Set<UUID> packageRequests = presentablePackageRequests(requestIds, hidden).stream()
+                .map(PackageRequestEntity::getId)
+                .collect(Collectors.toCollection(HashSet::new));
         return new FavoriteIdsResponse(trips, packageRequests);
     }
 
@@ -132,16 +151,7 @@ public class FavoriteService {
         if (callerId == null) return List.of();
         List<UUID> ids = favoriteRepository.findTargetIds(callerId, FavoriteTargetType.TRIP);
         if (ids.isEmpty()) return List.of();
-        Set<UUID> hidden = blockVisibility.hiddenUserIdsFor(callerId);
-        List<AnnouncementEntity> active = announcementRepository.findAllById(ids).stream()
-                .filter(a -> a.getStatus() != AnnouncementStatus.CANCELLED
-                        && a.getStatus() != AnnouncementStatus.COMPLETED
-                        && a.getStatus() != AnnouncementStatus.DRAFT
-                        // Lot B (correction 3) : un trajet retiré par la modération ne doit pas
-                        // rester visible dans les favoris de l'utilisateur.
-                        && a.getStatus() != AnnouncementStatus.REMOVED_BY_ADMIN
-                        && !ownerHidden(hidden, a.getTravelerId()))
-                .toList();
+        List<AnnouncementEntity> active = presentableTrips(ids, blockVisibility.hiddenUserIdsFor(callerId));
         if (active.isEmpty()) return List.of();
         Set<UUID> favIdSet = new HashSet<>(ids); // all are favorites
         return announcementSearchMapper.toSearchResponseList(active, favIdSet);
@@ -162,15 +172,8 @@ public class FavoriteService {
         if (callerId == null) return List.of();
         List<UUID> ids = favoriteRepository.findTargetIds(callerId, FavoriteTargetType.PACKAGE_REQUEST);
         if (ids.isEmpty()) return List.of();
-        Set<UUID> hidden = blockVisibility.hiddenUserIdsFor(callerId);
-        List<com.yadony.api.requests.entity.PackageRequestEntity> active =
-                packageRequestRepository.findAllById(ids).stream()
-                        .filter(pr -> pr.getStatus() != PackageRequestStatus.CANCELLED
-                                && pr.getStatus() != PackageRequestStatus.COMPLETED
-                                && pr.getStatus() != PackageRequestStatus.EXPIRED
-                                && pr.getStatus() != PackageRequestStatus.DRAFT
-                                && !ownerHidden(hidden, pr.getSenderId()))
-                        .toList();
+        List<PackageRequestEntity> active =
+                presentablePackageRequests(ids, blockVisibility.hiddenUserIdsFor(callerId));
         if (active.isEmpty()) return List.of();
         Set<UUID> favIdSet = new HashSet<>(ids); // all are favorites
         ViewerPaymentCapabilities viewer =
@@ -179,6 +182,37 @@ public class FavoriteService {
     }
 
     // --- private helpers ---
+
+    /**
+     * Trajets favoris encore présentables parmi {@code ids} : le soft-delete est déjà
+     * exclu par {@code @Where} sur l'entité, on retire ici les statuts terminaux, le
+     * brouillon, le retrait par la modération et les voyageurs bloqués. Seule source du
+     * filtre, partagée par la liste et par {@link #getFavoriteIds}.
+     */
+    private List<AnnouncementEntity> presentableTrips(List<UUID> ids, Set<UUID> hidden) {
+        if (ids.isEmpty()) return List.of();
+        return announcementRepository.findAllById(ids).stream()
+                .filter(a -> a.getStatus() != AnnouncementStatus.CANCELLED
+                        && a.getStatus() != AnnouncementStatus.COMPLETED
+                        && a.getStatus() != AnnouncementStatus.DRAFT
+                        // Lot B (correction 3) : un trajet retiré par la modération ne doit pas
+                        // rester visible dans les favoris de l'utilisateur.
+                        && a.getStatus() != AnnouncementStatus.REMOVED_BY_ADMIN
+                        && !ownerHidden(hidden, a.getTravelerId()))
+                .toList();
+    }
+
+    /** Pendant de {@link #presentableTrips} pour les demandes d'envoi. */
+    private List<PackageRequestEntity> presentablePackageRequests(List<UUID> ids, Set<UUID> hidden) {
+        if (ids.isEmpty()) return List.of();
+        return packageRequestRepository.findAllById(ids).stream()
+                .filter(pr -> pr.getStatus() != PackageRequestStatus.CANCELLED
+                        && pr.getStatus() != PackageRequestStatus.COMPLETED
+                        && pr.getStatus() != PackageRequestStatus.EXPIRED
+                        && pr.getStatus() != PackageRequestStatus.DRAFT
+                        && !ownerHidden(hidden, pr.getSenderId()))
+                .toList();
+    }
 
     /**
      * Le propriétaire du contenu fait-il partie des comptes masqués pour l'appelant ?
