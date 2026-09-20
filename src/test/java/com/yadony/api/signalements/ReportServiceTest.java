@@ -30,6 +30,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -125,6 +126,82 @@ class ReportServiceTest {
         assertThat(report.getReporterId()).isEqualTo(reporterId);
         assertThat(report.getReason()).isEqualTo(ReportReason.PAYMENT_ISSUE);
         verify(auditService).log(eq("REPORT"), any(), eq("REPORT_CREATED"), eq(reporterId), any());
+    }
+
+    @Test
+    void createReport_screenBug_gardeLaRouteDeLEcran() throws Exception {
+        stubUser();
+        when(reportRepository.save(any())).thenAnswer(inv -> {
+            ReportEntity r = inv.getArgument(0);
+            setId(r, UUID.randomUUID());
+            return r;
+        });
+
+        ReportEntity report = service().createReport("uid-1", ReportTargetType.APP, null,
+                ReportReason.SCREEN_BUG, "Le badge passe sous le bouton", List.of(), "  /profile ");
+
+        assertThat(report.getReason()).isEqualTo(ReportReason.SCREEN_BUG);
+        assertThat(report.getScreenRoute()).isEqualTo("/profile");
+    }
+
+    @Test
+    void createReport_screenRoute_ignoreeHorsCibleApp_etVideeSiBlanche() throws Exception {
+        stubUser();
+        when(userRepository.existsById(any())).thenReturn(true);
+        when(reportRepository.save(any())).thenAnswer(inv -> {
+            ReportEntity r = inv.getArgument(0);
+            setId(r, UUID.randomUUID());
+            return r;
+        });
+
+        ReportEntity user = service().createReport("uid-1", ReportTargetType.USER, UUID.randomUUID(),
+                ReportReason.HARASSMENT, null, List.of(), "/profile");
+        assertThat(user.getScreenRoute()).isNull();
+
+        ReportEntity blank = service().createReport("uid-1", ReportTargetType.APP, null,
+                ReportReason.SCREEN_BUG, null, List.of(), "   ");
+        assertThat(blank.getScreenRoute()).isNull();
+    }
+
+    @Test
+    void normalizeScreenRoute_tronqueALaTailleDeLaColonne() {
+        String longRoute = "/" + "a".repeat(400);
+        assertThat(ReportService.normalizeScreenRoute(ReportTargetType.APP, longRoute))
+                .hasSize(ReportService.SCREEN_ROUTE_MAX_LENGTH);
+    }
+
+    @Test
+    void createReport_screenBug_nAppliqueQuALaCibleApp() {
+        stubUser();
+        assertThatThrownBy(() -> service().createReport("uid-1", ReportTargetType.USER, UUID.randomUUID(),
+                ReportReason.SCREEN_BUG, null, List.of(), "/profile"))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getStatus())
+                .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+    }
+
+    @Test
+    void createReport_cinqPhotosAcceptees_sixRefusees() throws Exception {
+        stubUser();
+        when(reportRepository.save(any())).thenAnswer(inv -> {
+            ReportEntity r = inv.getArgument(0);
+            setId(r, UUID.randomUUID());
+            return r;
+        });
+        String prefix = "reports/" + reporterId + "/";
+        List<String> five = java.util.stream.IntStream.range(0, 5).mapToObj(i -> prefix + i + ".jpg").toList();
+        List<String> six = java.util.stream.IntStream.range(0, 6).mapToObj(i -> prefix + i + ".jpg").toList();
+
+        ReportEntity ok = service().createReport("uid-1", ReportTargetType.APP, null,
+                ReportReason.SCREEN_BUG, "x", five, "/home");
+        assertThat(ok.getId()).isNotNull();
+        verify(photoRepository, times(5)).save(any());
+
+        assertThatThrownBy(() -> service().createReport("uid-1", ReportTargetType.APP, null,
+                ReportReason.SCREEN_BUG, "x", six, "/home"))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getStatus())
+                .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
     }
 
     @Test
@@ -246,10 +323,13 @@ class ReportServiceTest {
     void createReport_tooManyPhotos_throws422() {
         stubUser();
         String p = "reports/" + reporterId + "/";
-        List<String> five = List.of(p + "1", p + "2", p + "3", p + "4", p + "5");
+        // MAX_PHOTOS + 1 : le plafond suit la constante (5 depuis le scarabée : capture
+        // automatique + 4 captures de l'utilisateur).
+        List<String> tooMany = java.util.stream.IntStream.rangeClosed(1, ReportService.MAX_PHOTOS + 1)
+                .mapToObj(i -> p + i).toList();
 
         assertThatThrownBy(() -> service().createReport("uid-1", ReportTargetType.APP, null,
-                ReportReason.APP_BUG, null, five))
+                ReportReason.APP_BUG, null, tooMany))
                 .isInstanceOf(YadonyBusinessException.class)
                 .extracting(e -> ((YadonyBusinessException) e).getStatus())
                 .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);

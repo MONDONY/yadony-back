@@ -223,7 +223,8 @@ public class AdminReportsController {
                 r.getResolutionNote(),
                 r.getResolvedAt(),
                 r.getCreatedAt(),
-                photoUrls
+                photoUrls,
+                r.getScreenRoute()
         );
     }
 

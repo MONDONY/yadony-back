@@ -29,7 +29,9 @@ import java.util.stream.Collectors;
 @Service
 public class ReportService {
 
-    static final int MAX_PHOTOS = 4;
+    /** 5 = la capture automatique du scarabée + 4 captures choisies par l'utilisateur. */
+    static final int MAX_PHOTOS = 5;
+    static final int SCREEN_ROUTE_MAX_LENGTH = 200;
     static final String PHOTO_PREFIX = "reports/";
     private static final Duration PRESIGN_TTL = Duration.ofMinutes(15);
 
@@ -80,6 +82,22 @@ public class ReportService {
                                      ReportReason reason,
                                      String description,
                                      List<String> photoKeys) {
+        return createReport(firebaseUid, targetType, targetId, reason, description, photoKeys, null);
+    }
+
+    /**
+     * Variante avec la route de l'écran d'origine ({@code screenRoute}, rapport envoyé
+     * depuis le scarabée d'un écran). Ignorée hors cible APP : un signalement de
+     * contenu n'a pas d'écran à retrouver.
+     */
+    @Transactional
+    public ReportEntity createReport(String firebaseUid,
+                                     ReportTargetType targetType,
+                                     UUID targetId,
+                                     ReportReason reason,
+                                     String description,
+                                     List<String> photoKeys,
+                                     String screenRoute) {
         UserEntity reporter = requireUser(firebaseUid);
 
         if (targetType == null) {
@@ -123,6 +141,7 @@ public class ReportService {
         report.setReporterId(reporter.getId());
         report.setReason(reason);
         report.setDescription(description);
+        report.setScreenRoute(normalizeScreenRoute(targetType, screenRoute));
         report.setStatus(ReportStatus.OPEN);
         reportRepository.save(report);
 
@@ -142,6 +161,20 @@ public class ReportService {
                 ));
 
         return report;
+    }
+
+    /** Route conservée pour la seule cible APP, vidée si blanche, tronquée à la colonne. */
+    static String normalizeScreenRoute(ReportTargetType targetType, String screenRoute) {
+        if (targetType != ReportTargetType.APP || screenRoute == null) {
+            return null;
+        }
+        String trimmed = screenRoute.trim();
+        if (trimmed.isEmpty()) {
+            return null;
+        }
+        return trimmed.length() > SCREEN_ROUTE_MAX_LENGTH
+                ? trimmed.substring(0, SCREEN_ROUTE_MAX_LENGTH)
+                : trimmed;
     }
 
     /**
