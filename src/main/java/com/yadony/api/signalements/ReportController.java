@@ -47,7 +47,8 @@ public class ReportController {
                 request.targetId(),
                 request.reason(),
                 request.description(),
-                request.photoKeys());
+                request.photoKeys(),
+                request.screenRoute());
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(Map.of("id", report.getId().toString()));
     }
@@ -66,6 +67,8 @@ public class ReportController {
             UUID targetId,
             @NotNull ReportReason reason,
             @Size(max = 4000) String description,
-            @Size(max = 4) List<String> photoKeys
+            @Size(max = ReportService.MAX_PHOTOS) List<String> photoKeys,
+            /** Route de l'écran d'origine (scarabée), facultative, cible APP seulement. */
+            @Size(max = ReportService.SCREEN_ROUTE_MAX_LENGTH) String screenRoute
     ) {}
 }

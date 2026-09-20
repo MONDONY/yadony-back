@@ -18,6 +18,8 @@ public record AdminReportResponse(
         String resolutionNote,
         OffsetDateTime resolvedAt,
         LocalDateTime createdAt,
-        List<String> photoUrls
+        List<String> photoUrls,
+        /** Route de l'écran d'origine pour un rapport SCREEN_BUG, sinon null. */
+        String screenRoute
 ) {
 }

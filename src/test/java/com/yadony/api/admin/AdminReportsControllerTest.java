@@ -133,6 +133,28 @@ class AdminReportsControllerTest {
     }
 
     @Test
+    void listReports_exposeLaRouteDeLEcran_pourUnRapportScarabee() {
+        ReportEntity report = new ReportEntity();
+        report.setTargetType(ReportTargetType.APP);
+        report.setReporterId(UUID.randomUUID());
+        report.setReason(ReportReason.SCREEN_BUG);
+        report.setDescription("Le badge passe sous le bouton");
+        report.setScreenRoute("/profile");
+        report.setStatus(ReportStatus.OPEN);
+        Page<ReportEntity> page = new PageImpl<>(List.of(report));
+        when(reportRepo.findFiltered(isNull(), isNull(), any(Pageable.class))).thenReturn(page);
+        when(userRepo.findAllById(anyCollection())).thenReturn(List.of());
+
+        ResponseEntity<Page<AdminReportResponse>> resp =
+                controller().listReports(null, null, 0, 20);
+
+        AdminReportResponse first = resp.getBody().getContent().get(0);
+        assertThat(first.reason()).isEqualTo("SCREEN_BUG");
+        assertThat(first.screenRoute()).isEqualTo("/profile");
+        assertThat(first.targetLabel()).isNull();
+    }
+
+    @Test
     void listReports_enrichesTargetLabel_forUserTarget() {
         UUID reporterId = UUID.randomUUID();
         UUID targetId = UUID.randomUUID();

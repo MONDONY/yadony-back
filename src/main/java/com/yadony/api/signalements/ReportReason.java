@@ -27,6 +27,8 @@ public enum ReportReason {
     SPAM("Spam", ReportTargetType.MESSAGE, ReportTargetType.RATING),
     PAYMENT_ISSUE("Problème de paiement", ReportTargetType.APP, ReportTargetType.BID),
     APP_BUG("Bug de l'application", ReportTargetType.APP),
+    /** Rapport envoyé depuis le scarabée d'un écran (route jointe, captures). */
+    SCREEN_BUG("Bug signalé depuis un écran", ReportTargetType.APP),
     OTHER("Autre",
             ReportTargetType.USER, ReportTargetType.ANNOUNCEMENT, ReportTargetType.BID,
             ReportTargetType.MESSAGE, ReportTargetType.RATING, ReportTargetType.APP);

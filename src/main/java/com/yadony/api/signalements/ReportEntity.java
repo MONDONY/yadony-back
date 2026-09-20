@@ -29,6 +29,10 @@ public class ReportEntity extends BaseEntity {
     @Column(name = "description", columnDefinition = "TEXT")
     private String description;
 
+    /** Route de l'écran d'origine pour un rapport SCREEN_BUG (ex. /profile), sinon null. */
+    @Column(name = "screen_route", length = 200)
+    private String screenRoute;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 20)
     private ReportStatus status = ReportStatus.OPEN;
@@ -57,6 +61,9 @@ public class ReportEntity extends BaseEntity {
 
     public String getDescription() { return description; }
     public void setDescription(String description) { this.description = description; }
+
+    public String getScreenRoute() { return screenRoute; }
+    public void setScreenRoute(String screenRoute) { this.screenRoute = screenRoute; }
 
     public ReportStatus getStatus() { return status; }
     public void setStatus(ReportStatus status) { this.status = status; }
