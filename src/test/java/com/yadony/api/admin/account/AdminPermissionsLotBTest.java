@@ -45,7 +45,7 @@ class AdminPermissionsLotBTest {
     // avec la tache 2 du lot billing (feature/pro-saas-abonnement), qui ajoute
     // USER_PRO_GRANT. Passe a 33 avec la messagerie support, qui ajoute
     // SUPPORT_TICKET_VIEW et SUPPORT_TICKET_MANAGE.
-    void enumHasExactlyThirtyThreeValues() {
-        assertThat(AdminPermission.values()).hasSize(33);
+    void enumHasExactlyThirtyFourValues() {
+        assertThat(AdminPermission.values()).hasSize(34);
     }
 }
