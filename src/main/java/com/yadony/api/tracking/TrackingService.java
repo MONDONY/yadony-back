@@ -252,6 +252,16 @@ public class TrackingService {
                     "L'arrivée doit être confirmée avec le code de confirmation fourni par l'expéditeur");
         }
 
+        if (request.eventType() == TrackingEventType.DEPART
+                && trackingEventRepository.existsByBidIdAndEventType(bid.getId(), TrackingEventType.DEPART)) {
+            // HANDED_OVER et IN_TRANSIT restent scannables (TRANSIT), donc un second DEPART
+            // passait les gardes et heurtait l'index unique uq_tracking_one_depart_per_bid
+            // (V48) : 500 « Unexpected error » (Sentry YADONY-BACK-STAGING-8). Refus explicite,
+            // et le code de confirmation déjà généré reste intact.
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "depart-already-scanned",
+                    "Depart Already Scanned", "Le départ de ce colis a déjà été scanné");
+        }
+
         if (request.offlineTimestamp() != null
                 && request.offlineTimestamp().isAfter(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(5))) {
             // 5-minute tolerance accounts for typical client clock skew while still

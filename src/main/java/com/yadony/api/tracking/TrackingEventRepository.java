@@ -10,4 +10,6 @@ public interface TrackingEventRepository extends JpaRepository<TrackingEventEnti
     List<TrackingEventEntity> findByBidIdOrderByScannedAtAsc(UUID bidId);
 
     List<TrackingEventEntity> findByBidIdInOrderByScannedAtDesc(List<UUID> bidIds);
+
+    boolean existsByBidIdAndEventType(UUID bidId, TrackingEventType eventType);
 }

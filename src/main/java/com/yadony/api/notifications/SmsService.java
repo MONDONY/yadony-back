@@ -11,15 +11,26 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.List;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Service
 public class SmsService {
 
     private static final Logger log = LoggerFactory.getLogger(SmsService.class);
     private static final String AT_URL = "https://api.africastalking.com/version1/messaging";
+
+    // Codes Twilio qui désignent le numéro destinataire saisi (et non notre configuration) :
+    // 21211 « Invalid 'To' Phone Number », 21614 « 'To' number is not a valid mobile number ».
+    // Sentry YADONY-BACK-STAGING-2 : un +225 à neuf chiffres partait en log.error et
+    // l'utilisateur voyait « code envoyé ».
+    static final Set<Integer> TWILIO_INVALID_RECIPIENT_CODES = Set.of(21211, 21614);
+    private static final Pattern TWILIO_ERROR_CODE = Pattern.compile("\"code\"\\s*:\\s*(\\d+)");
 
     // La property n'est plus lue ici : PlatformSettingsService en est le seul lecteur, et
     // s'en sert comme valeur de repli quand la ligne de table manque. Deux lecteurs
@@ -145,8 +156,24 @@ public class SmsService {
             } else {
                 log.error("[SMS] Twilio returned HTTP {}", response.getStatusCode());
             }
+        } catch (HttpClientErrorException e) {
+            Integer code = twilioErrorCode(e.getResponseBodyAsString());
+            if (code != null && TWILIO_INVALID_RECIPIENT_CODES.contains(code)) {
+                log.warn("[SMS] Twilio rejected the recipient number (code {})", code);
+                throw new InvalidSmsRecipientException(code);
+            }
+            log.error("[SMS] Twilio error: {}", e.getMessage());
         } catch (Exception e) {
             log.error("[SMS] Twilio error: {}", e.getMessage());
         }
+    }
+
+    /** Code d'erreur Twilio dans le corps JSON d'un 4xx ({@code {"code":21211,...}}), sinon null. */
+    static Integer twilioErrorCode(String responseBody) {
+        if (responseBody == null) {
+            return null;
+        }
+        Matcher m = TWILIO_ERROR_CODE.matcher(responseBody);
+        return m.find() ? Integer.valueOf(m.group(1)) : null;
     }
 }

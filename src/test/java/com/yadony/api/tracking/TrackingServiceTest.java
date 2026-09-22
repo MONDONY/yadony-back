@@ -459,6 +459,31 @@ class TrackingServiceTest {
     }
 
     @Test
+    void processScan_departAlreadyScanned_throwsConflict_withoutInsert() {
+        // Sentry YADONY-BACK-STAGING-8 : un second scan DEPART sur un colis déjà remis passait
+        // toutes les gardes (HANDED_OVER reste scannable) puis heurtait l'index unique
+        // uq_tracking_one_depart_per_bid → 500. Le doublon doit être refusé avant l'insert.
+        BidEntity bid = buildBid(BidStatus.HANDED_OVER, "qt");
+        AnnouncementEntity ann = buildAnnouncement();
+        UserEntity traveler = buildUser(travelerId, "uid-traveler");
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+        when(userRepository.findByFirebaseUid("uid-traveler")).thenReturn(Optional.of(traveler));
+        when(trackingEventRepository.existsByBidIdAndEventType(bidId, TrackingEventType.DEPART))
+                .thenReturn(true);
+        QrScanRequest req = new QrScanRequest(bidId, TrackingEventType.DEPART, null, null, null, null, null);
+
+        Throwable thrown = catchThrowable(() -> service.processScan(req, "uid-traveler"));
+
+        assertThat(thrown).isInstanceOf(YadonyBusinessException.class);
+        assertThat(((YadonyBusinessException) thrown).getErrorCode()).isEqualTo("depart-already-scanned");
+        assertThat(((YadonyBusinessException) thrown).getStatus())
+                .isEqualTo(org.springframework.http.HttpStatus.CONFLICT);
+        verify(trackingEventRepository, never()).save(any());
+        verify(bidRepository, never()).save(any());
+    }
+
+    @Test
     void processScan_transitEvent_success_noCodeGeneration() {
         BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");
         AnnouncementEntity ann = buildAnnouncement();

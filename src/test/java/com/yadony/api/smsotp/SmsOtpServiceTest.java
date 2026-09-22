@@ -5,6 +5,7 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.notifications.InvalidSmsRecipientException;
 import com.yadony.api.notifications.SmsService;
 import com.google.firebase.auth.AuthErrorCode;
 import com.google.firebase.auth.FirebaseAuth;
@@ -74,6 +75,29 @@ class SmsOtpServiceTest {
             verify(smsOtpRepository).save(argThat(e ->
                     PHONE.equals(e.getPhoneNumber()) && "$2a$10$hashed".equals(e.getCodeHash())));
             verify(smsService).send(eq(PHONE), argThat(msg -> msg.matches(".*\\d{6}.*")));
+        }
+
+        @Test
+        @DisplayName("numéro refusé par le transporteur → 422 invalid-phone-number, pas de « code envoyé » fantôme")
+        void invalidRecipient_throws422() {
+            // Sentry YADONY-BACK-STAGING-2 : Twilio refusait le numéro (21211), SmsService
+            // l'avalait en log.error et l'utilisateur voyait « code envoyé » sans jamais rien
+            // recevoir. L'exception métier fait aussi rollback de la ligne OTP.
+            SmsOtpService service = newService();
+            when(smsOtpRepository.countByPhoneSince(eq(PHONE), any())).thenReturn(0L);
+            when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$hashed");
+            when(smsOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+            when(smsService.isEnabled()).thenReturn(true);
+            doThrow(new InvalidSmsRecipientException(21211)).when(smsService).send(eq(PHONE), anyString());
+
+            assertThatThrownBy(() -> service.sendOtp(PHONE))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> {
+                        assertThat(((YadonyBusinessException) e).getStatus())
+                                .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                        assertThat(((YadonyBusinessException) e).getErrorCode())
+                                .isEqualTo("invalid-phone-number");
+                    });
         }
 
         @Test

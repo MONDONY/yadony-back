@@ -5,6 +5,7 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.notifications.InvalidSmsRecipientException;
 import com.yadony.api.notifications.SmsService;
 import com.google.firebase.auth.AuthErrorCode;
 import com.google.firebase.auth.FirebaseAuth;
@@ -98,7 +99,17 @@ public class SmsOtpService {
         entity.setExpiresAt(expiresAt);
         smsOtpRepository.save(entity);
 
-        smsService.send(phoneNumber, String.format(properties.getOtpTemplate(), code));
+        try {
+            smsService.send(phoneNumber, String.format(properties.getOtpTemplate(), code));
+        } catch (InvalidSmsRecipientException e) {
+            // Le transporteur refuse le numéro lui-même : 422 au client plutôt qu'un
+            // « code envoyé » qui n'arrive jamais. L'exception fait rollback de la ligne OTP
+            // (elle ne doit pas compter dans la fenêtre anti-spam).
+            throw new YadonyBusinessException(
+                    HttpStatus.UNPROCESSABLE_ENTITY, "invalid-phone-number",
+                    "Invalid Phone Number",
+                    "Ce numéro n'est pas joignable par SMS, vérifie l'indicatif et le nombre de chiffres");
+        }
         // Le SMS réel est désactivé par défaut en dev (app.sms.enabled=false) et
         // SmsService caviarde volontairement le message dans ses logs — sans ce
         // relais, aucun moyen de connaître le code en local pour tester le flow.
