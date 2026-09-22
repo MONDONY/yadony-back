@@ -23,6 +23,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
@@ -326,6 +327,37 @@ class GlobalExceptionHandlerTest {
                         .as("aucune propriété requestId hors requête HTTP").isTrue();
                 verify(scope, never()).setTag(any(), any());
                 sentryMock.verify(() -> Sentry.captureException(ex));
+            }
+        }
+    }
+
+    @Nested
+    @DisplayName("handleClientAbort() — le client a raccroché avant la réponse")
+    class ClientAbortTests {
+
+        @Test
+        @DisplayName("AsyncRequestNotUsableException (Broken pipe) → ni 500 ni événement Sentry")
+        void brokenPipe_isNotReportedToSentry() {
+            // Sentry YADONY-BACK-STAGING-6 : Prometheus coupe le scrape avant la fin de
+            // l'écriture ; le handler générique en faisait un « Unexpected error » + issue.
+            var ex = new AsyncRequestNotUsableException("ServletOutputStream failed to write",
+                    new java.io.IOException("Broken pipe"));
+
+            try (MockedStatic<Sentry> sentryMock = mockStatic(Sentry.class)) {
+                handler.handleClientAbort(ex);
+                sentryMock.verifyNoInteractions();
+            }
+        }
+
+        @Test
+        @DisplayName("ClientAbortException Tomcat → ni 500 ni événement Sentry")
+        void clientAbort_isNotReportedToSentry() {
+            var ex = new org.apache.catalina.connector.ClientAbortException(
+                    new java.io.IOException("Broken pipe"));
+
+            try (MockedStatic<Sentry> sentryMock = mockStatic(Sentry.class)) {
+                handler.handleClientAbort(ex);
+                sentryMock.verifyNoInteractions();
             }
         }
     }

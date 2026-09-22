@@ -117,6 +117,12 @@ logging:
     com.yadony.api: INFO
     org.springframework.security: WARN
     org.flywaydb: INFO
+    # Hibernate logge en ERROR chaque SQLException AVANT de la lever, y compris celles
+    # que le code attrape volontairement (course getOrCreate du wallet, contrainte
+    # UNIQUE attendue). Chacune devenait une issue Sentry sans qu'aucune requête n'ait
+    # échoué (YADONY-BACK-STAGING-7). Les erreurs qui se propagent vraiment sont déjà
+    # loggées, avec la cause SQL complète, par GlobalExceptionHandler.
+    org.hibernate.engine.jdbc.spi.SqlExceptionHelper: "OFF"
 
 # Sentry : commun à tous les profils. `dsn`, `environment` et `enabled` restent
 # dans application-{staging,prod}.yml (désactivé en dev et en test).

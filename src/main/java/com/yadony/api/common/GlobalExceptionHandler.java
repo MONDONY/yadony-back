@@ -24,6 +24,7 @@ import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MultipartException;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
@@ -287,6 +288,19 @@ public class GlobalExceptionHandler {
         problem.setType(URI.create(BASE_TYPE + "bad-multipart"));
         problem.setTitle("Bad Request");
         return ResponseEntity.badRequest().body(problem);
+    }
+
+    /**
+     * Le client a fermé la connexion pendant l'écriture de la réponse (Prometheus qui coupe
+     * un scrape, mobile qui perd le réseau) : Tomcat lève {@code ClientAbortException}, Spring
+     * l'enveloppe en {@code AsyncRequestNotUsableException}. Il n'y a plus personne à qui
+     * répondre et rien à corriger côté serveur : ni 500, ni événement Sentry
+     * (YADONY-BACK-STAGING-6). Le handler ne rend rien : la réponse est inutilisable.
+     */
+    @ExceptionHandler({AsyncRequestNotUsableException.class,
+            org.apache.catalina.connector.ClientAbortException.class})
+    public void handleClientAbort(Exception ex) {
+        log.debug("Client disconnected before the response was written: {}", ex.getMessage());
     }
 
     @ExceptionHandler(Exception.class)
