@@ -19,41 +19,41 @@ import java.util.List;
  * casserait des centaines d'appels sans rapport avec la négociation.
  */
 public record BidNegotiationStartRequest(
-        @DecimalMin(value = "0.1", message = "Le poids minimum est 0.1 kg")
+        @DecimalMin(value = "0.1", message = "{validation.bid.weight.min}")
         BigDecimal weightKg,
 
-        @NotBlank(message = "La description du contenu est obligatoire")
+        @NotBlank(message = "{validation.bid.description.required}")
         String description,
 
-        @NotBlank(message = "La catégorie est obligatoire")
-        @Size(max = 500, message = "La catégorie ne peut pas dépasser 500 caractères")
+        @NotBlank(message = "{validation.bid.category.required}")
+        @Size(max = 500, message = "{validation.bid.category.max}")
         String contentCategory,
 
-        @NotBlank(message = "Le prénom et nom du destinataire sont obligatoires")
+        @NotBlank(message = "{validation.bid.recipient-name.required}")
         String recipientName,
 
-        @NotBlank(message = "Le numéro de téléphone du destinataire est obligatoire")
+        @NotBlank(message = "{validation.bid.recipient-phone.required}")
         String recipientPhone,
 
-        @NotNull(message = "Le disclaimer légal doit être accepté")
+        @NotNull(message = "{validation.bid.disclaimer.accepted}")
         Boolean disclaimerSigned,
 
         String paymentMethod,
 
-        @Pattern(regexp = "^\\+?[1-9]\\d{6,19}$", message = "Numéro de téléphone invalide (format E.164 attendu)")
+        @Pattern(regexp = "^\\+?[1-9]\\d{6,19}$", message = "{validation.phone.e164-expected}")
         String phoneNumber,
 
         String countryCode,
 
-        @Size(max = 4, message = "Maximum 4 photos")
+        @Size(max = 4, message = "{validation.bid.photos.max}")
         List<String> photoKeys,
 
-        @NotNull(message = "Le montant proposé est obligatoire")
-        @DecimalMin(value = "0.01", message = "Le montant minimum est 0,01")
-        @DecimalMax(value = "1000000", message = "Le montant maximum est 1 000 000")
+        @NotNull(message = "{validation.amount.proposed.required}")
+        @DecimalMin(value = "0.01", message = "{validation.amount.min-cent}")
+        @DecimalMax(value = "1000000", message = "{validation.amount.max-million}")
         BigDecimal proposedTotalEur,
 
-        @Size(max = 10, message = "Maximum 10 articles hors grille")
+        @Size(max = 10, message = "{validation.bid.custom-items.max}")
         @Valid List<BidCustomItemRequest> customItems,
 
         @Valid List<BidGridItemRequest> gridItems

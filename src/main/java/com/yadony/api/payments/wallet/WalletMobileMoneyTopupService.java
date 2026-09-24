@@ -3,6 +3,8 @@ package com.yadony.api.payments.wallet;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.Msisdn;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.i18n.Messages;
+import com.yadony.api.common.i18n.MessagesResolver;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyProvidersResponse;
 import com.yadony.api.payments.pawapay.PawapayErrors;
@@ -55,16 +57,19 @@ public class WalletMobileMoneyTopupService {
     private final WalletService walletService;
     private final AuditService auditService;
     private final PawapayProperties props;
+    private final MessagesResolver messagesResolver;
 
     public WalletMobileMoneyTopupService(PawapayProviderResolver resolver, PawapaySubmissionService submission,
                                          PawapayOperationRepository operations, WalletService walletService,
-                                         AuditService auditService, PawapayProperties props) {
+                                         AuditService auditService, PawapayProperties props,
+                                         MessagesResolver messagesResolver) {
         this.resolver = resolver;
         this.submission = submission;
         this.operations = operations;
         this.walletService = walletService;
         this.auditService = auditService;
         this.props = props;
+        this.messagesResolver = messagesResolver;
     }
 
     /**
@@ -79,16 +84,17 @@ public class WalletMobileMoneyTopupService {
         if (!props.enabled()) {
             throw PawapayErrors.disabled();
         }
+        Messages m = messagesResolver.forRequest();
         String phoneNumber = normalizedPhone(request.getPhoneNumber());
         PawapayProviderResolver.Resolved resolved;
         try {
             resolved = resolver.resolve(phoneNumber, PawapayOperationKind.DEPOSIT, null, request.getProvider(),
                     CONTEXT + " de " + userId);
         } catch (PawapayProviderResolver.UnsupportedNumberException e) {
-            throw unsupported(userId, reasonDetail(e));
+            throw unsupported(userId, reasonDetail(m, e));
         }
         String currency = resolved.config().currency();
-        BigDecimal amount = withinBounds(request.getAmount(), resolved.config().deposit(), currency);
+        BigDecimal amount = withinBounds(m, request.getAmount(), resolved.config().deposit(), currency);
         // Une seule recharge NON TERMINALE par utilisateur et devise : empiler les demandes
         // de code sur un même téléphone n'apporte rien et multiplie les débits accidentels.
         // OPEN et non LIVE_OR_DONE : une recharge déjà COMPLETED est finie, elle ne doit
@@ -149,12 +155,13 @@ public class WalletMobileMoneyTopupService {
         if (!props.enabled()) {
             throw PawapayErrors.disabled();
         }
+        Messages m = messagesResolver.forRequest();
         String msisdn = normalizedPhone(phoneNumber);
         try {
             return MobileMoneyProvidersResponse.from(resolver.catalogue(msisdn, PawapayOperationKind.DEPOSIT,
                     null, "le catalogue de " + CONTEXT));
         } catch (PawapayProviderResolver.UnsupportedNumberException e) {
-            throw unsupported(null, reasonDetail(e));
+            throw unsupported(null, reasonDetail(m, e));
         }
     }
 
@@ -188,7 +195,8 @@ public class WalletMobileMoneyTopupService {
      * décimales passe par {@code stripTrailingZeros} : « 10000.00 » envoyé par un client
      * JSON est un montant entier, « 1000.50 » non.
      */
-    private static BigDecimal withinBounds(BigDecimal amount, PawapayProviderConfig.Limits deposit, String currency) {
+    private static BigDecimal withinBounds(Messages m, BigDecimal amount, PawapayProviderConfig.Limits deposit,
+                                           String currency) {
         int minorUnit = SupportedCurrency.fromCodeOrDefault(currency).minorUnit();
         BigDecimal min = deposit == null ? null : deposit.minAmount();
         BigDecimal max = deposit == null ? null : deposit.maxAmount();
@@ -197,24 +205,24 @@ public class WalletMobileMoneyTopupService {
                 || min != null && amount.compareTo(min) < 0
                 || max != null && amount.compareTo(max) > 0) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "topup-amount-out-of-range",
-                    "Amount Out Of Range", boundsDetail(min, max, currency, minorUnit));
+                    "Amount Out Of Range", boundsDetail(m, min, max, currency, minorUnit));
         }
         return amount;
     }
 
-    private static String boundsDetail(BigDecimal min, BigDecimal max, String currency, int minorUnit) {
-        String cents = minorUnit == 0 ? ", sans centimes." : ".";
+    private static String boundsDetail(Messages m, BigDecimal min, BigDecimal max, String currency, int minorUnit) {
+        String cents = m.get(minorUnit == 0 ? "problem.topup.amount.end.no-cents" : "problem.topup.amount.end.plain");
         if (min != null && max != null) {
-            return "Entre " + WalletAmountText.format(min, currency) + " et " + WalletAmountText.format(max, currency)
-                    + " par recharge" + cents;
+            return m.get("problem.topup.amount.between", WalletAmountText.format(min, currency),
+                    WalletAmountText.format(max, currency), cents);
         }
         if (min != null) {
-            return "Au moins " + WalletAmountText.format(min, currency) + " par recharge" + cents;
+            return m.get("problem.topup.amount.at-least", WalletAmountText.format(min, currency), cents);
         }
         if (max != null) {
-            return "Au plus " + WalletAmountText.format(max, currency) + " par recharge" + cents;
+            return m.get("problem.topup.amount.at-most", WalletAmountText.format(max, currency), cents);
         }
-        return "Montant de recharge invalide" + cents;
+        return m.get("problem.topup.amount.invalid", cents);
     }
 
     /** Message d'échec borné ({@code failure_code} fait 64 caractères), jamais reflété brut. */
@@ -223,15 +231,15 @@ public class WalletMobileMoneyTopupService {
     }
 
     /** Libellé métier d'un numéro reconnu mais inexploitable pour une recharge. */
-    private static String reasonDetail(PawapayProviderResolver.UnsupportedNumberException e) {
+    private static String reasonDetail(Messages m, PawapayProviderResolver.UnsupportedNumberException e) {
         return switch (e.reason()) {
-            case NO_PROVIDER -> "Aucun opérateur mobile money reconnu pour ce numéro.";
-            case OPERATION_CLOSED -> e.providerLabel() + " ne permet pas le paiement pour le moment.";
+            case NO_PROVIDER -> m.get("problem.topup.no-provider");
+            case OPERATION_CLOSED -> m.get("problem.topup.operation-closed", e.providerLabel());
             // Aucune devise n'est imposée au résolveur ici : ce cas ne peut venir que d'un
             // appel futur qui en passerait une.
-            case CURRENCY_MISMATCH -> "Ce numéro paie en " + e.providerCurrency() + ", devise non prise en charge.";
-            case COUNTRY_UNKNOWN -> "Pays non reconnu pour ce numéro.";
-            case PROVIDER_NOT_AVAILABLE -> "Réseau " + e.providerLabel() + " indisponible pour ce numéro.";
+            case CURRENCY_MISMATCH -> m.get("problem.topup.currency-mismatch", e.providerCurrency());
+            case COUNTRY_UNKNOWN -> m.get("problem.mobile-money.country-unknown");
+            case PROVIDER_NOT_AVAILABLE -> m.get("problem.mobile-money.network-unavailable", e.providerLabel());
         };
     }
 

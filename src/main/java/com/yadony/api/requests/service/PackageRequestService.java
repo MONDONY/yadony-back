@@ -8,6 +8,7 @@ import com.yadony.api.common.BlockVisibility;
 import com.yadony.api.common.CommissionRateResolver;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.i18n.MessagesResolver;
 import com.yadony.api.config.ContentCategoryNormalizer;
 import com.yadony.api.config.PlatformSettingsService;
 import com.yadony.api.config.YadonyConfigProperties;
@@ -75,6 +76,7 @@ public class PackageRequestService {
     private final CommissionRateResolver commissionRateResolver;
     private final PlatformSettingsService platformSettings;
     private final BlockVisibility blockVisibility;
+    private final MessagesResolver messagesResolver;
 
     public PackageRequestService(PackageRequestRepository repository,
                                   UserRepository userRepository,
@@ -95,7 +97,8 @@ public class PackageRequestService {
                                   AnnouncementRepository announcementRepository,
                                   CommissionRateResolver commissionRateResolver,
                                   PlatformSettingsService platformSettings,
-                                  BlockVisibility blockVisibility) {
+                                  BlockVisibility blockVisibility,
+                                  MessagesResolver messagesResolver) {
         this.repository = repository;
         this.userRepository = userRepository;
         this.eventPublisher = eventPublisher;
@@ -116,6 +119,7 @@ public class PackageRequestService {
         this.commissionRateResolver = commissionRateResolver;
         this.platformSettings = platformSettings;
         this.blockVisibility = blockVisibility;
+        this.messagesResolver = messagesResolver;
     }
 
     /**
@@ -153,7 +157,7 @@ public class PackageRequestService {
             net = budgetEur.divide(BigDecimal.ONE.add(finalRate), 2, RoundingMode.HALF_UP);
             BigDecimal discountPoints = baseRate.subtract(finalRate).max(BigDecimal.ZERO);
             long pct = discountPoints.multiply(BigDecimal.valueOf(100)).longValue();
-            promoLabel = "Code " + code.toUpperCase() + " : " + pct + " % de réduction";
+            promoLabel = messagesResolver.forRequest().get("quote.promo-label", code.toUpperCase(), pct);
         }
 
         return new NegotiationQuoteResponse(net, baseRate, commissionEur, budgetEur, promoApplied, promoLabel);

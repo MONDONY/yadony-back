@@ -7,8 +7,6 @@ import org.springframework.stereotype.Component;
 @ConfigurationProperties(prefix = "yadony.sms")
 public class SmsOtpProperties {
 
-    private String otpTemplate = "Ton code Yadony est : %s. Valable 10 minutes.";
-
     /**
      * Nombre de codes envoyables à un même numéro par fenêtre glissante.
      *
@@ -33,8 +31,6 @@ public class SmsOtpProperties {
     /** Durée de validité d'un code, en minutes. */
     private int otpValidMinutes = 10;
 
-    public String getOtpTemplate() { return otpTemplate; }
-    public void setOtpTemplate(String otpTemplate) { this.otpTemplate = otpTemplate; }
     public int getMaxSendsPerWindow() { return maxSendsPerWindow; }
     public void setMaxSendsPerWindow(int maxSendsPerWindow) { this.maxSendsPerWindow = maxSendsPerWindow; }
     public int getRateWindowMinutes() { return rateWindowMinutes; }

@@ -18,7 +18,7 @@ public record UpdateProfileRequest(
     @Size(max = 100) String lastName,
     @Past LocalDate birthDate,
     @Size(max = 100) String city,
-    @Pattern(regexp = "^\\+[1-9]\\d{1,14}$", message = "Format E.164 requis (ex: +33612345678)")
+    @Pattern(regexp = "^\\+[1-9]\\d{1,14}$", message = "{validation.phone.e164-required}")
     String phoneNumber,
     @Size(max = 280) String bio,
     Set<String> languages

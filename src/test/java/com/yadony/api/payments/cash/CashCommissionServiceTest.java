@@ -12,6 +12,7 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.CommissionRateResolver;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.AnnouncementStatus;
@@ -37,6 +38,7 @@ import com.stripe.param.CustomerCreateParams;
 import com.stripe.param.PaymentIntentCreateParams;
 import com.stripe.param.RefundCreateParams;
 import com.stripe.param.SetupIntentCreateParams;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -108,8 +110,13 @@ class CashCommissionServiceTest {
                 walletService, walletTransactionRepository, auditService, commissionRateResolver,
                 negotiationThreadRepository, new StripeCashGatewayImpl(), bidGridItemRepository,
                 stubbedContacts(), voucherService, activeCurrencyResolver,
-                new WalletCommissionCollector(walletService, exchangeRateService));
+                new WalletCommissionCollector(walletService, exchangeRateService), TestMessages.resolver());
         service.setClock(Clock.fixed(Instant.parse("2026-06-01T00:00:00Z"), ZoneOffset.UTC));
+    }
+
+    @AfterEach
+    void clearRequest() {
+        TestMessages.clearRequest();
     }
 
     // --- helpers ---
@@ -645,6 +652,20 @@ class CashCommissionServiceTest {
                 assertThat(resp.status()).isEqualTo(AcceptanceStatusDto.FAILED);
                 assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.FAILED);
                 assertThat(bid.getCommissionRetryCount()).isEqualTo(before + 1);
+            }
+        }
+
+        @Test
+        void expiredCard_englishRequest_returnsEnglishMessage() throws StripeException {
+            TestMessages.requestWithAcceptLanguage("en");
+            try (MockedStatic<PaymentIntent> pi = mockStatic(PaymentIntent.class)) {
+                pi.when(() -> PaymentIntent.create(any(PaymentIntentCreateParams.class), any(RequestOptions.class)))
+                        .thenThrow(new CardException("expired", null, "expired_card", null, null, null, null, null));
+
+                AcceptBidResponse resp = service.chargeCommission(bid, travelerId);
+
+                assertThat(resp.status()).isEqualTo(AcceptanceStatusDto.FAILED);
+                assertThat(resp.error()).isEqualTo("Your service fee card has expired.");
             }
         }
     }
@@ -1307,7 +1328,26 @@ class CashCommissionServiceTest {
 
                 assertThat(resp.status()).isEqualTo(AcceptanceStatusDto.FAILED);
                 assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.FAILED);
+                assertThat(resp.error()).isEqualTo("Statut PaymentIntent inattendu : processing");
                 verify(bidRepo).save(bid);
+            }
+        }
+
+        @Test
+        void unexpectedPiStatus_englishRequest_returnsEnglishMessage() throws StripeException {
+            TestMessages.requestWithAcceptLanguage("en");
+            PaymentIntent mockPi = new PaymentIntent();
+            mockPi.setId("pi_proc_en");
+            mockPi.setStatus("processing");
+
+            try (MockedStatic<PaymentIntent> pi = mockStatic(PaymentIntent.class)) {
+                pi.when(() -> PaymentIntent.create(any(PaymentIntentCreateParams.class), any(RequestOptions.class)))
+                        .thenReturn(mockPi);
+
+                AcceptBidResponse resp = service.acceptCashBid(bid.getId(), travelerId, com.yadony.api.payments.cash.CommissionSource.CARD);
+
+                assertThat(resp.status()).isEqualTo(AcceptanceStatusDto.FAILED);
+                assertThat(resp.error()).isEqualTo("Unexpected payment status: processing");
             }
         }
 

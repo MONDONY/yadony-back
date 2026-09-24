@@ -123,7 +123,10 @@ class AuthMeIT {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").exists())
                 .andExpect(jsonPath("$.phoneNumber").value("+33612000001"))
-                .andExpect(jsonPath("$.admin").doesNotExist());
+                .andExpect(jsonPath("$.admin").doesNotExist())
+                // V264 : préférence par défaut, aucun compte de ce jeu de tests n'a
+                // appelé PATCH /users/me/preferences.
+                .andExpect(jsonPath("$.preferredLanguage").value("fr"));
     }
 
     @Test

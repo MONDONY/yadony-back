@@ -1,6 +1,7 @@
 package com.yadony.api.auth;
 
 import com.yadony.api.common.BaseEntity;
+import com.yadony.api.common.i18n.AppLanguage;
 import jakarta.persistence.CollectionTable;
 import jakarta.persistence.Column;
 import jakarta.persistence.ElementCollection;
@@ -106,6 +107,15 @@ public class UserEntity extends BaseEntity {
      */
     @Column(name = "hide_phone_number", nullable = false)
     private boolean hidePhoneNumber = false;
+
+    /**
+     * Langue dans laquelle le serveur rédige ce qu'il envoie hors de la requête de
+     * l'utilisateur (notifications, SMS de secours). Colonne brute en {@code String}
+     * (V264) ; {@link #getPreferredLanguage()} l'expose en {@link AppLanguage}, FR si
+     * la colonne porte une valeur inconnue.
+     */
+    @Column(name = "preferred_language", nullable = false, length = 2)
+    private String preferredLanguage = "fr";
 
     @Column(name = "fcm_token", length = 512)
     private String fcmToken;
@@ -365,6 +375,10 @@ public class UserEntity extends BaseEntity {
 
     public boolean isHidePhoneNumber() { return hidePhoneNumber; }
     public void setHidePhoneNumber(boolean hidePhoneNumber) { this.hidePhoneNumber = hidePhoneNumber; }
+
+    /** FR si la colonne est vide ou porte un code hors catalogue (fr/en). */
+    public AppLanguage getPreferredLanguage() { return AppLanguage.fromCode(preferredLanguage).orElse(AppLanguage.FR); }
+    public void setPreferredLanguage(AppLanguage language) { this.preferredLanguage = language.code(); }
 
     public String getFcmToken() { return fcmToken; }
     public void setFcmToken(String fcmToken) { this.fcmToken = fcmToken; }

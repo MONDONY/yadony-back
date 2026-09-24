@@ -5,6 +5,8 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.CommissionRateResolver;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.i18n.Messages;
+import com.yadony.api.common.i18n.MessagesResolver;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.AnnouncementStatus;
@@ -98,6 +100,7 @@ public class CashCommissionService {
     private final com.yadony.api.voucher.CommissionVoucherService voucherService;
     private final ActiveCurrencyResolver activeCurrencyResolver;
     private final WalletCommissionCollector commissionCollector;
+    private final MessagesResolver messagesResolver;
     private Clock clock = Clock.systemUTC();
 
     public CashCommissionService(CommissionProperties props,
@@ -115,7 +118,8 @@ public class CashCommissionService {
                                  FirebaseContactService firebaseContact,
                                  com.yadony.api.voucher.CommissionVoucherService voucherService,
                                  ActiveCurrencyResolver activeCurrencyResolver,
-                                 WalletCommissionCollector commissionCollector) {
+                                 WalletCommissionCollector commissionCollector,
+                                 MessagesResolver messagesResolver) {
         this.props = props;
         this.userRepo = userRepo;
         this.bidRepo = bidRepo;
@@ -132,6 +136,7 @@ public class CashCommissionService {
         this.voucherService = voucherService;
         this.activeCurrencyResolver = activeCurrencyResolver;
         this.commissionCollector = commissionCollector;
+        this.messagesResolver = messagesResolver;
     }
 
     /** Normalise un code devise (comparaison insensible à la casse, jamais null). */
@@ -390,7 +395,8 @@ public class CashCommissionService {
                 default -> {
                     bid.setCommissionStatus(CommissionStatus.FAILED);
                     bidRepo.save(bid);
-                    yield AcceptBidResponse.failed("Statut PaymentIntent inattendu : " + pi.getStatus());
+                    yield AcceptBidResponse.failed(messagesResolver.forRequest()
+                            .get("commission.payment-intent.unexpected-status", pi.getStatus()));
                 }
             };
         } catch (CardException e) {
@@ -398,11 +404,12 @@ public class CashCommissionService {
             bid.setCommissionRetryCount(bid.getCommissionRetryCount() + 1);
             bidRepo.save(bid);
             // e.getCode() can be null for some Stripe error subtypes — guard before switch
+            Messages m = messagesResolver.forRequest();
             String userMessage = switch (e.getCode() != null ? e.getCode() : "") {
-                case "expired_card" -> "Votre carte de commission est expirée.";
-                case "insufficient_funds" -> "Fonds insuffisants sur votre carte de commission.";
-                case "authentication_required" -> "Votre carte nécessite une authentification supplémentaire.";
-                default -> "Votre carte de commission a été refusée.";
+                case "expired_card" -> m.get("commission.card.expired");
+                case "insufficient_funds" -> m.get("commission.card.insufficient-funds");
+                case "authentication_required" -> m.get("commission.card.authentication-required");
+                default -> m.get("commission.card.declined");
             };
             return AcceptBidResponse.failed(userMessage);
         } catch (StripeException e) {

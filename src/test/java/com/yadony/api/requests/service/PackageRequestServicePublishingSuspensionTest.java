@@ -127,7 +127,7 @@ class PackageRequestServicePublishingSuspensionTest {
                 exchangeRateService, realMapper, matchingService,
                 yadonyConfig, announcementRepository, commissionRateResolver,
                 com.yadony.api.config.PlatformSettingsTestFactory.defaults(),
-                blockVisibility);
+                blockVisibility, null);
         lenient().when(activeCurrencyResolver.resolve(any())).thenReturn("EUR");
         lenient().when(activeCurrencyResolver.resolveDisplay(any())).thenReturn("EUR");
     }

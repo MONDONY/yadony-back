@@ -5,6 +5,8 @@ import com.yadony.api.auth.dto.PublicTravelerProfileResponse;
 import com.yadony.api.common.BlockVisibility;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
+import com.yadony.api.common.i18n.Messages;
+import com.yadony.api.common.i18n.MessagesResolver;
 import com.yadony.api.ratings.RatingService;
 import com.yadony.api.ratings.dto.UserRatingsSummaryResponse;
 import com.yadony.api.settings.UserBusinessPrefsEntity;
@@ -16,7 +18,6 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.TextStyle;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.UUID;
 
 @Service
@@ -27,17 +28,20 @@ public class ProfilePublicService {
     private final UserBusinessPrefsRepository userBusinessPrefsRepository;
     private final StorageService storageService;
     private final BlockVisibility blockVisibility;
+    private final MessagesResolver messagesResolver;
 
     public ProfilePublicService(UserRepository userRepository,
                                 RatingService ratingService,
                                 UserBusinessPrefsRepository userBusinessPrefsRepository,
                                 StorageService storageService,
-                                BlockVisibility blockVisibility) {
+                                BlockVisibility blockVisibility,
+                                MessagesResolver messagesResolver) {
         this.userRepository = userRepository;
         this.ratingService = ratingService;
         this.userBusinessPrefsRepository = userBusinessPrefsRepository;
         this.storageService = storageService;
         this.blockVisibility = blockVisibility;
+        this.messagesResolver = messagesResolver;
     }
 
     /**
@@ -122,13 +126,14 @@ public class ProfilePublicService {
     }
 
     private String buildMemberSince(UserEntity user) {
+        Messages m = messagesResolver.forRequest();
         if (user.getCreatedAt() == null) {
-            return "Membre depuis récemment";
+            return m.get("profile.member-since.recent");
         }
         String month = user.getCreatedAt()
                 .getMonth()
-                .getDisplayName(TextStyle.FULL, Locale.FRENCH);
+                .getDisplayName(TextStyle.FULL, m.locale());
         int year = user.getCreatedAt().getYear();
-        return "Membre depuis " + month + " " + year;
+        return m.get("profile.member-since", month + " " + year);
     }
 }

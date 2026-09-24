@@ -1,5 +1,6 @@
 package com.yadony.api.common;
 
+import com.yadony.api.common.i18n.TestMessages;
 import io.sentry.IScope;
 import io.sentry.ScopeCallback;
 import io.sentry.Sentry;
@@ -44,7 +45,7 @@ class GlobalExceptionHandlerTest {
 
     @BeforeEach
     void setUp() {
-        handler = new GlobalExceptionHandler();
+        handler = new GlobalExceptionHandler(TestMessages.resolver());
     }
 
     @Nested

@@ -8,6 +8,7 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.CommissionRateResolver;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.i18n.MessagesResolver;
 import com.yadony.api.payments.PriceBreakdown;
 import com.yadony.api.payments.cash.CommissionProperties;
 import com.yadony.api.payments.cash.CommissionSource;
@@ -66,6 +67,7 @@ public class NegotiationService {
     private final CommissionRateResolver commissionRateResolver;
     private final com.yadony.api.payments.currency.ExchangeRateService exchangeRateService;
     private final NegotiationMobileMoneyPort mobileMoneyPort;
+    private final MessagesResolver messagesResolver;
 
     public NegotiationService(PackageRequestRepository requestRepo,
                                NegotiationThreadRepository threadRepo,
@@ -83,7 +85,8 @@ public class NegotiationService {
                                PackageRequestPhotoService photoService,
                                CommissionRateResolver commissionRateResolver,
                                com.yadony.api.payments.currency.ExchangeRateService exchangeRateService,
-                               NegotiationMobileMoneyPort mobileMoneyPort) {
+                               NegotiationMobileMoneyPort mobileMoneyPort,
+                               MessagesResolver messagesResolver) {
         this.requestRepo = requestRepo;
         this.threadRepo = threadRepo;
         this.messageRepo = messageRepo;
@@ -101,6 +104,7 @@ public class NegotiationService {
         this.commissionRateResolver = commissionRateResolver;
         this.exchangeRateService = exchangeRateService;
         this.mobileMoneyPort = mobileMoneyPort;
+        this.messagesResolver = messagesResolver;
     }
 
     /**
@@ -1963,7 +1967,7 @@ public class NegotiationService {
 
             BigDecimal discountPoints = rate.subtract(finalRate).max(BigDecimal.ZERO);
             long pct = discountPoints.multiply(BigDecimal.valueOf(100)).longValue();
-            promoLabel = "Code " + code.toUpperCase() + " : " + pct + " % de réduction";
+            promoLabel = messagesResolver.forRequest().get("quote.promo-label", code.toUpperCase(), pct);
         } else {
             rate = commissionRateResolver.resolve(travelerId, callerId);
             commissionEur = net.multiply(rate).setScale(2, RoundingMode.HALF_UP);

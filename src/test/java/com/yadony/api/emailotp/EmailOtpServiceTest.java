@@ -3,12 +3,16 @@ package com.yadony.api.emailotp;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.i18n.AppLanguage;
+import com.yadony.api.common.i18n.Messages;
+import com.yadony.api.common.i18n.TestMessages;
 import com.google.firebase.auth.FirebaseAuth;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
@@ -41,7 +45,22 @@ class EmailOtpServiceTest {
     // que celles qu'appliquera la production.
     @org.mockito.Spy private EmailOtpProperties properties = new EmailOtpProperties();
 
-    @InjectMocks private EmailOtpService emailOtpService;
+    // Construit à la main (et non via @InjectMocks) : MessagesResolver.forRequest()
+    // doit lire le RequestContextHolder réel posé par TestMessages, pas un mock muet
+    // qui renverrait null au lieu de FR/EN.
+    private EmailOtpService emailOtpService;
+
+    @BeforeEach
+    void buildService() {
+        emailOtpService = new EmailOtpService(properties, emailOtpRepository, passwordEncoder,
+                resendEmailService, firebaseAuth, userRepository, firebaseContact, auditService,
+                TestMessages.resolver());
+    }
+
+    @AfterEach
+    void clearRequestLanguage() {
+        TestMessages.clearRequest();
+    }
 
     private static final String EMAIL = "test@example.com";
 
@@ -71,7 +90,7 @@ class EmailOtpServiceTest {
     class SendOtp {
 
         @Test
-        @DisplayName("succès — sauvegarde token et envoie email")
+        @DisplayName("succès — sauvegarde token et envoie email dans la langue de la requête (FR par défaut)")
         void success() {
             when(emailOtpRepository.countByEmailSince(eq(EMAIL), any())).thenReturn(0L);
             when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$hashed");
@@ -83,7 +102,21 @@ class EmailOtpServiceTest {
             verify(emailOtpRepository).save(argThat(e ->
                     EMAIL.equals(e.getEmail()) && "$2a$10$hashed".equals(e.getCodeHash())));
             verify(resendEmailService).sendOtp(eq(EMAIL), argThat(code ->
-                    code.matches("\\d{6}")));
+                    code.matches("\\d{6}")), any(Messages.class));
+        }
+
+        @Test
+        @DisplayName("succès — Accept-Language: en fait passer un Messages anglais à ResendEmailService")
+        void success_english() {
+            TestMessages.requestWithAcceptLanguage("en");
+            when(emailOtpRepository.countByEmailSince(eq(EMAIL), any())).thenReturn(0L);
+            when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$hashed");
+            when(emailOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+            emailOtpService.sendOtp(EMAIL);
+
+            verify(resendEmailService).sendOtp(eq(EMAIL), anyString(),
+                    argThat(m -> m.language() == AppLanguage.EN));
         }
 
         @Test
@@ -97,7 +130,7 @@ class EmailOtpServiceTest {
             when(emailOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
             assertThat(emailOtpService.sendOtp(EMAIL)).isNotNull();
-            verify(resendEmailService).sendOtp(eq(EMAIL), anyString());
+            verify(resendEmailService).sendOtp(eq(EMAIL), anyString(), any(Messages.class));
         }
 
         @Test
@@ -111,7 +144,7 @@ class EmailOtpServiceTest {
                     .isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
 
             verify(emailOtpRepository, never()).save(any());
-            verify(resendEmailService, never()).sendOtp(any(), any());
+            verify(resendEmailService, never()).sendOtp(any(), any(), any());
         }
     }
 
@@ -369,7 +402,7 @@ class EmailOtpServiceTest {
         void firebaseAuth_null_returnsNull() {
             EmailOtpService serviceWithoutFirebase = new EmailOtpService(
                     properties, emailOtpRepository, passwordEncoder, resendEmailService, null,
-                    userRepository, firebaseContact, auditService);
+                    userRepository, firebaseContact, auditService, null);
             EmailOtpEntity token = validToken();
             when(emailOtpRepository.findTopByEmailAndUsedAtIsNullOrderByCreatedAtDesc(EMAIL))
                     .thenReturn(Optional.of(token));

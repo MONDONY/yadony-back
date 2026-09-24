@@ -9,11 +9,11 @@ import java.math.BigDecimal;
 
 /** Contre-offre d'un participant sur un fil de négociation de trajet. */
 public record BidNegotiationCounterRequest(
-        @NotNull(message = "Le montant proposé est obligatoire")
-        @DecimalMin(value = "0.01", message = "Le montant minimum est 0,01")
-        @DecimalMax(value = "1000000", message = "Le montant maximum est 1 000 000")
+        @NotNull(message = "{validation.amount.proposed.required}")
+        @DecimalMin(value = "0.01", message = "{validation.amount.min-cent}")
+        @DecimalMax(value = "1000000", message = "{validation.amount.max-million}")
         BigDecimal proposedTotalEur,
 
-        @Size(max = 280, message = "Le message ne peut pas dépasser 280 caractères")
+        @Size(max = 280, message = "{validation.negotiation.message.max}")
         String body
 ) {}

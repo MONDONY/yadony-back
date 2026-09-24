@@ -4,16 +4,17 @@ import com.yadony.api.auth.dto.ProfilePublicResponse;
 import com.yadony.api.common.BlockVisibility;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.ratings.RatingService;
 import com.yadony.api.ratings.dto.RatingItemResponse;
 import com.yadony.api.ratings.dto.UserRatingsSummaryResponse;
 import com.yadony.api.settings.UserBusinessPrefsEntity;
 import com.yadony.api.settings.UserBusinessPrefsRepository;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
@@ -46,15 +47,22 @@ class ProfilePublicServiceTest {
     @Mock private StorageService storageService;
     @Mock private BlockVisibility blockVisibility;
 
-    @InjectMocks private ProfilePublicService profilePublicService;
+    private ProfilePublicService profilePublicService;
 
     private static final UUID USER_ID = UUID.randomUUID();
     private static final UUID VIEWER_ID = UUID.randomUUID();
 
     private UserEntity user;
 
+    @AfterEach
+    void clearRequest() {
+        TestMessages.clearRequest();
+    }
+
     @BeforeEach
     void setUp() throws Exception {
+        profilePublicService = new ProfilePublicService(userRepository, ratingService,
+                userBusinessPrefsRepository, storageService, blockVisibility, TestMessages.resolver());
         user = new UserEntity();
         setId(user, USER_ID);
         setField(user, "username", "user1785153600");
@@ -167,6 +175,31 @@ class ProfilePublicServiceTest {
         assertThat(response.ratingCount()).isEqualTo(10);
         assertThat(response.memberSince()).isEqualTo("Membre depuis mars 2025");
         assertThat(response.badges()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("memberSince — requête anglaise avec une date connue")
+    void getProfilePublic_englishRequest_knownDate_returnsEnglishMemberSince() {
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(3), eq(VIEWER_ID))).thenReturn(stubRatingSummary());
+        TestMessages.requestWithAcceptLanguage("en");
+
+        ProfilePublicResponse response = profilePublicService.getProfilePublic(USER_ID, VIEWER_ID);
+
+        assertThat(response.memberSince()).isEqualTo("Member since March 2025");
+    }
+
+    @Test
+    @DisplayName("memberSince — requête anglaise sans date de création")
+    void getProfilePublic_englishRequest_noDate_returnsRecentlyJoined() throws Exception {
+        setField(user, "createdAt", null);
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(3), eq(VIEWER_ID))).thenReturn(stubRatingSummary());
+        TestMessages.requestWithAcceptLanguage("en");
+
+        ProfilePublicResponse response = profilePublicService.getProfilePublic(USER_ID, VIEWER_ID);
+
+        assertThat(response.memberSince()).isEqualTo("Recently joined");
     }
 
     @Test

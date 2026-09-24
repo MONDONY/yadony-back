@@ -7,7 +7,7 @@ import java.math.BigDecimal;
 public class WalletTopupRequest {
 
     @NotNull
-    @DecimalMin(value = "1.00", message = "Le montant minimum est 1 €")
+    @DecimalMin(value = "1.00", message = "{validation.wallet.amount.min-eur}")
     private BigDecimal amount;
 
     @NotNull

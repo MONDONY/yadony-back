@@ -1,6 +1,7 @@
 package com.yadony.api.emailotp;
 
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.i18n.Messages;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -26,7 +27,6 @@ public class ResendEmailService {
     private final RestClient restClient;
     private final TemplateEngine templateEngine;
     private final String fromAddress;
-    private final String otpTemplate;
     private final boolean emailSendingConfigured;
     private final boolean devProfile;
     private final boolean prodProfile;
@@ -34,7 +34,6 @@ public class ResendEmailService {
     @Autowired
     public ResendEmailService(EmailOtpProperties props, Environment env, TemplateEngine templateEngine) {
         this.fromAddress = props.getFromAddress();
-        this.otpTemplate = props.getOtpTemplate();
         this.templateEngine = templateEngine;
         this.emailSendingConfigured = props.getResendApiKey() != null && !props.getResendApiKey().isBlank();
         var profiles = Arrays.asList(env.getActiveProfiles());
@@ -46,20 +45,18 @@ public class ResendEmailService {
                 .build();
     }
 
-    ResendEmailService(String fromAddress, String otpTemplate, RestClient restClient, TemplateEngine templateEngine) {
-        this(fromAddress, otpTemplate, restClient, templateEngine, true, false, false);
+    ResendEmailService(String fromAddress, RestClient restClient, TemplateEngine templateEngine) {
+        this(fromAddress, restClient, templateEngine, true, false, false);
     }
 
     ResendEmailService(
             String fromAddress,
-            String otpTemplate,
             RestClient restClient,
             TemplateEngine templateEngine,
             boolean emailSendingConfigured,
             boolean devProfile,
             boolean prodProfile) {
         this.fromAddress = fromAddress;
-        this.otpTemplate = otpTemplate;
         this.restClient = restClient;
         this.templateEngine = templateEngine;
         this.emailSendingConfigured = emailSendingConfigured;
@@ -67,7 +64,7 @@ public class ResendEmailService {
         this.prodProfile = prodProfile;
     }
 
-    public void sendOtp(String to, String code) {
+    public void sendOtp(String to, String code, Messages m) {
         // dev uniquement (liste blanche) : « pas prod » incluait staging, dont les logs
         // partent vers Loki et Sentry avec de vrais testeurs derrière les adresses.
         if (devProfile) {
@@ -84,13 +81,12 @@ public class ResendEmailService {
             return;
         }
 
-        String textBody = String.format(otpTemplate, code);
         Map<String, Object> payload = Map.of(
                 "from", fromAddress,
                 "to", List.of(to),
-                "subject", "Ton code Yadony",
-                "html", renderOtpHtml(code),
-                "text", textBody
+                "subject", m.get("email.otp.subject"),
+                "html", renderOtpHtml(code, m),
+                "text", m.get("email.otp.text", code)
         );
         try {
             restClient.post()
@@ -113,9 +109,10 @@ public class ResendEmailService {
         }
     }
 
-    private String renderOtpHtml(String code) {
-        Context context = new Context();
+    private String renderOtpHtml(String code, Messages m) {
+        Context context = new Context(m.locale());
         context.setVariable("otpCode", code);
+        context.setVariable("lang", m.language().code());
         return templateEngine.process("email-otp", context);
     }
 

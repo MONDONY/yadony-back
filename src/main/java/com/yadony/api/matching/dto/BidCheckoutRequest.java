@@ -22,7 +22,7 @@ public record BidCheckoutRequest(
         @Size(max = 500) String contentCategory,
         @Size(max = 200) String recipientName,
         @Size(max = 30) String recipientPhone,
-        @AssertTrue(message = "Le disclaimer doit être signé") Boolean disclaimerSigned,
+        @AssertTrue(message = "{validation.bid.disclaimer.signed}") Boolean disclaimerSigned,
         @Size(max = 4) List<String> photoKeys,
         @Valid List<BidGridItemRequest> gridItems,
         // null/true → carte réutilisable (setup_future_usage=off_session) ; false → non enregistrée.

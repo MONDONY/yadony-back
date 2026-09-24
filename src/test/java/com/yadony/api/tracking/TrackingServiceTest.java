@@ -5,6 +5,7 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
@@ -22,6 +23,7 @@ import com.yadony.api.tracking.dto.TrackingSearchResponse;
 import com.yadony.api.tracking.dto.TripScanHistoryEntryDto;
 import com.yadony.api.tracking.events.DeliveryConfirmedEvent;
 import org.assertj.core.api.ThrowableAssert;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -70,8 +72,14 @@ class TrackingServiceTest {
         service = new TrackingService(
                 bidRepository, paymentRepository, userRepository,
                 announcementRepository, trackingEventRepository,
-                auditService, eventPublisher, storageService, notificationDispatcher);
+                auditService, eventPublisher, storageService, notificationDispatcher,
+                TestMessages.resolver());
         ReflectionTestUtils.setField(service, "appBaseUrl", "https://yadony.app");
+    }
+
+    @AfterEach
+    void clearRequest() {
+        TestMessages.clearRequest();
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -1002,6 +1010,63 @@ class TrackingServiceTest {
         TrackingSearchResponse resp = service.searchByTrackingNumber("TRK000001", "uid-sender");
 
         assertThat(resp.currentStep()).isEqualTo("DEPARTED");
+    }
+
+    // ── searchByTrackingNumber : stepLabel i18n (tâche A6) ────────────────────
+
+    @Test
+    void searchByTrackingNumber_englishRequest_paymentEscrowed_returnsEnglishLabel() {
+        BidEntity bid = buildBid(BidStatus.PAYMENT_ESCROWED, "qt");
+        AnnouncementEntity ann = buildAnnouncement();
+        when(bidRepository.findByTrackingNumber("TRK000001")).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.empty());
+
+        stubSenderAsCurrentUser();
+        TestMessages.requestWithAcceptLanguage("en");
+
+        TrackingSearchResponse resp = service.searchByTrackingNumber("TRK000001", "uid-sender");
+
+        assertThat(resp.currentStep()).isEqualTo("PAYMENT_ESCROWED");
+        assertThat(resp.stepLabel()).isEqualTo("Payment on hold, awaiting traveler confirmation");
+    }
+
+    @Test
+    void searchByTrackingNumber_englishRequest_departScan_returnsEnglishLabel() {
+        BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");
+        AnnouncementEntity ann = buildAnnouncement();
+        PaymentEntity payment = new PaymentEntity();
+        payment.setStatus(PaymentStatus.ESCROW);
+        TrackingEventEntity departEvent = new TrackingEventEntity();
+        departEvent.setEventType(TrackingEventType.DEPART);
+        when(bidRepository.findByTrackingNumber("TRK000001")).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.of(payment));
+        when(trackingEventRepository.findByBidIdOrderByScannedAtAsc(bidId)).thenReturn(List.of(departEvent));
+
+        stubSenderAsCurrentUser();
+        TestMessages.requestWithAcceptLanguage("en");
+
+        TrackingSearchResponse resp = service.searchByTrackingNumber("TRK000001", "uid-sender");
+
+        assertThat(resp.currentStep()).isEqualTo("DEPARTED");
+        assertThat(resp.stepLabel()).isEqualTo("Parcel dropped off with the traveler, on its way");
+    }
+
+    @Test
+    void searchByTrackingNumber_frenchAssertions_stillUnchanged() {
+        // Les assertions françaises existantes (« Paiement gelé ») ne changent pas (D10).
+        BidEntity bid = buildBid(BidStatus.PAYMENT_ESCROWED, "qt");
+        AnnouncementEntity ann = buildAnnouncement();
+        when(bidRepository.findByTrackingNumber("TRK000001")).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.empty());
+
+        stubSenderAsCurrentUser();
+
+        TrackingSearchResponse resp = service.searchByTrackingNumber("TRK000001", "uid-sender");
+
+        assertThat(resp.stepLabel()).isEqualTo("Paiement gelé — confirmation voyageur en attente");
     }
 
     // ── processScan additional branches ──────────────────────────────────────

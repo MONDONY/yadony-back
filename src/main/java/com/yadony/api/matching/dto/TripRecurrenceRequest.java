@@ -34,7 +34,7 @@ public record TripRecurrenceRequest(
 
         boolean cashAccepted,
 
-        @NotBlank @Pattern(regexp = "[01]{7}", message = "weekdays doit être 7 caractères 0/1 (Lun..Dim)")
+        @NotBlank @Pattern(regexp = "[01]{7}", message = "{validation.recurrence.weekdays}")
         String weekdays,
 
         @Min(1) @Max(60) Integer horizonDays,
@@ -78,13 +78,13 @@ public record TripRecurrenceRequest(
     }
 
     @JsonIgnore
-    @AssertTrue(message = "La date de fin doit être postérieure ou égale à la date de début")
+    @AssertTrue(message = "{validation.recurrence.end-after-start}")
     public boolean isPeriodValid() {
         return startDate == null || endDate == null || !endDate.isBefore(startDate);
     }
 
     @JsonIgnore
-    @AssertTrue(message = "Choisissez un délai de publication de 7, 14, 21 ou 30 jours")
+    @AssertTrue(message = "{validation.recurrence.publish-lead}")
     public boolean isPublicationLeadDaysValid() {
         return publicationLeadDays == null
                 || publicationLeadDays == 7
@@ -94,7 +94,7 @@ public record TripRecurrenceRequest(
     }
 
     @JsonIgnore
-    @AssertTrue(message = "Sélectionnez au moins un jour de départ")
+    @AssertTrue(message = "{validation.recurrence.weekday-required}")
     public boolean isWeekdaySelected() {
         return weekdays != null && weekdays.contains("1");
     }

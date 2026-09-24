@@ -5,12 +5,15 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.i18n.MessagesResolver;
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.notifications.InvalidSmsRecipientException;
 import com.yadony.api.notifications.SmsService;
 import com.google.firebase.auth.AuthErrorCode;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseAuthException;
 import com.google.firebase.auth.UserRecord;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -47,13 +50,21 @@ class SmsOtpServiceTest {
     @Mock private FirebaseContactService firebaseContact;
     @Mock private AuditService auditService;
     @Mock private Environment environment;
+    // Instance réelle et non un mock : messagesResolver.forRequest().get("sms.otp", ...)
+    // doit lire le vrai RequestContextHolder posé par TestMessages, pas un mock muet.
+    private final MessagesResolver messagesResolver = TestMessages.resolver();
 
     private static final String PHONE = "+221701234567";
 
     private SmsOtpService newService() {
         when(environment.getActiveProfiles()).thenReturn(new String[] {"test"});
         return new SmsOtpService(smsOtpRepository, passwordEncoder, smsService, properties,
-                firebaseAuth, userRepository, firebaseContact, auditService, environment);
+                firebaseAuth, userRepository, firebaseContact, auditService, environment, messagesResolver);
+    }
+
+    @AfterEach
+    void clearRequestLanguage() {
+        TestMessages.clearRequest();
     }
 
     @Nested
@@ -61,7 +72,7 @@ class SmsOtpServiceTest {
     class SendOtp {
 
         @Test
-        @DisplayName("succès — sauvegarde token et envoie SMS")
+        @DisplayName("succès — sauvegarde token et envoie SMS, texte français exact, sans configuration")
         void success() {
             SmsOtpService service = newService();
             when(smsOtpRepository.countByPhoneSince(eq(PHONE), any())).thenReturn(0L);
@@ -74,7 +85,24 @@ class SmsOtpServiceTest {
             assertThat(result).isNotNull();
             verify(smsOtpRepository).save(argThat(e ->
                     PHONE.equals(e.getPhoneNumber()) && "$2a$10$hashed".equals(e.getCodeHash())));
-            verify(smsService).send(eq(PHONE), argThat(msg -> msg.matches(".*\\d{6}.*")));
+            verify(smsService).send(eq(PHONE), argThat(msg ->
+                    msg.matches("Ton code Yadony est : \\d{6}\\. Valable 10 minutes\\.")));
+        }
+
+        @Test
+        @DisplayName("succès — Accept-Language: en envoie le texte anglais")
+        void success_english() {
+            TestMessages.requestWithAcceptLanguage("en");
+            SmsOtpService service = newService();
+            when(smsOtpRepository.countByPhoneSince(eq(PHONE), any())).thenReturn(0L);
+            when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$hashed");
+            when(smsOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+            when(smsService.isEnabled()).thenReturn(true);
+
+            service.sendOtp(PHONE);
+
+            verify(smsService).send(eq(PHONE), argThat(msg ->
+                    msg.matches("Your Yadony code is: \\d{6}\\. Valid for 10 minutes\\.")));
         }
 
         @Test
@@ -138,7 +166,7 @@ class SmsOtpServiceTest {
             Environment stagingEnvironment = mock(Environment.class);
             when(stagingEnvironment.getActiveProfiles()).thenReturn(new String[] {"staging"});
             SmsOtpService service = new SmsOtpService(smsOtpRepository, passwordEncoder, smsService,
-                    properties, firebaseAuth, userRepository, firebaseContact, auditService, stagingEnvironment);
+                    properties, firebaseAuth, userRepository, firebaseContact, auditService, stagingEnvironment, messagesResolver);
             when(smsService.isEnabled()).thenReturn(false);
 
             assertThatThrownBy(() -> service.sendOtp(PHONE))
@@ -154,7 +182,8 @@ class SmsOtpServiceTest {
             Environment prodEnvironment = mock(Environment.class);
             when(prodEnvironment.getActiveProfiles()).thenReturn(new String[] {"prod"});
             SmsOtpService service = new SmsOtpService(smsOtpRepository, passwordEncoder, smsService,
-                    properties, firebaseAuth, userRepository, firebaseContact, auditService, prodEnvironment);
+                    properties, firebaseAuth, userRepository, firebaseContact, auditService, prodEnvironment,
+                    messagesResolver);
             when(smsService.isEnabled()).thenReturn(false);
 
             assertThatThrownBy(() -> service.sendOtp(PHONE))
@@ -379,7 +408,7 @@ class SmsOtpServiceTest {
             when(environment.getActiveProfiles()).thenReturn(new String[] {"test"});
             SmsOtpService serviceWithoutFirebase = new SmsOtpService(
                     smsOtpRepository, passwordEncoder, smsService, properties, null,
-                    userRepository, firebaseContact, auditService, environment);
+                    userRepository, firebaseContact, auditService, environment, null);
             givenValidOtp();
 
             String result = serviceWithoutFirebase.verifyOtp(PHONE, "123456");
@@ -510,6 +539,52 @@ class SmsOtpServiceTest {
                     .isInstanceOf(YadonyBusinessException.class)
                     .satisfies(e -> assertThat(((YadonyBusinessException) e).getStatus())
                             .isEqualTo(HttpStatus.NOT_FOUND));
+        }
+    }
+
+    @Nested
+    @DisplayName("longueur du SMS OTP")
+    class SmsLength {
+
+        /**
+         * Alphabet GSM 03.38 de base (simplifié aux caractères latins usuels) : tant que
+         * le texte n'en sort pas, un SMS reste encodé en 7 bits et tient dans 160
+         * caractères (contre 70 en UCS-2 dès qu'un seul caractère en sort, un accent par
+         * exemple). Les deux textes ne doivent pas changer de classe d'encodage par
+         * rapport à l'ancien texte français (déjà sans accent).
+         */
+        private static final String GSM7_BASIC =
+                "@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞ ÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?¡"
+                        + "ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñü à";
+
+        private boolean isGsm7(String text) {
+            return text.chars().allMatch(c -> GSM7_BASIC.indexOf(c) >= 0);
+        }
+
+        @Test
+        @DisplayName("français — texte inchangé, GSM-7, un seul segment (<=160)")
+        void french_staysGsm7SingleSegment() {
+            String text = TestMessages.fr().get("sms.otp", "123456");
+
+            assertThat(text).isEqualTo("Ton code Yadony est : 123456. Valable 10 minutes.");
+            assertThat(isGsm7(text)).as("le texte français doit rester encodable en GSM-7").isTrue();
+            assertThat(text.length()).as("longueur du SMS français").isLessThanOrEqualTo(160);
+        }
+
+        @Test
+        @DisplayName("anglais — GSM-7, un seul segment (<=160), même classe que le français")
+        void english_sameLengthClassAsFrench() {
+            String fr = TestMessages.fr().get("sms.otp", "123456");
+            String en = TestMessages.en().get("sms.otp", "123456");
+
+            assertThat(en).isEqualTo("Your Yadony code is: 123456. Valid for 10 minutes.");
+            assertThat(isGsm7(en)).as("le texte anglais doit rester encodable en GSM-7").isTrue();
+            assertThat(en.length()).as("longueur du SMS anglais").isLessThanOrEqualTo(160);
+            // Même classe d'encodage (GSM-7) et même classe de segmentation (1 segment
+            // <=160 caractères GSM-7) que le français : ni l'un ni l'autre ne bascule
+            // en UCS-2 (limite 70) ni en SMS multipart (limite 153/segment).
+            assertThat(isGsm7(fr)).isEqualTo(isGsm7(en));
+            assertThat(fr.length() <= 160).isEqualTo(en.length() <= 160);
         }
     }
 }

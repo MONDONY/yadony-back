@@ -5,6 +5,7 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.StorageService;
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.config.YadonyConfigProperties;
 import com.yadony.api.favorites.FavoriteRepository;
 import com.yadony.api.favorites.FavoriteTargetType;
@@ -126,6 +127,11 @@ class PackageRequestServiceTest {
         service = serviceWithProEnabled(realMapper, true);
     }
 
+    @AfterEach
+    void clearRequest() {
+        TestMessages.clearRequest();
+    }
+
     /**
      * Le feature flag PRO decide si les quotas des comptes standard s'appliquent : offre
      * ouverte par defaut ici (comportement historique), fermee pour les tests dedies.
@@ -138,7 +144,7 @@ class PackageRequestServiceTest {
                 exchangeRateService, mapper, matchingService,
                 yadonyConfig, announcementRepository, commissionRateResolver,
                 com.yadony.api.config.PlatformSettingsTestFactory.withProEnabled(proEnabled),
-                blockVisibility);
+                blockVisibility, TestMessages.resolver());
     }
 
     // ========== Task 12: create() tests ==========
@@ -287,6 +293,18 @@ class PackageRequestServiceTest {
             assertThat(quote.netEur()).isEqualByComparingTo("37.74"); // 40/1.06 > 40/1.12
             assertThat(quote.promoApplied()).isTrue();
             assertThat(quote.promoLabel()).contains("6 % de réduction");
+        }
+
+        @Test @DisplayName("promo valide, requête anglaise — libellé traduit")
+        void quote_validPromo_englishRequest_returnsEnglishLabel() {
+            when(commissionRateResolver.resolve(isNull(), eq(SENDER_ID))).thenReturn(new BigDecimal("0.12"));
+            when(commissionRateResolver.resolve(isNull(), eq(SENDER_ID), eq("welcome")))
+                .thenReturn(new BigDecimal("0.07"));
+            TestMessages.requestWithAcceptLanguage("en");
+
+            var quote = service.quote(SENDER_ID, new BigDecimal("40.00"), "welcome");
+
+            assertThat(quote.promoLabel()).isEqualTo("Code WELCOME: 5% off");
         }
 
         @Test @DisplayName("promo invalide — propage l'exception")

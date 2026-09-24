@@ -11,8 +11,8 @@ import jakarta.validation.constraints.Pattern;
  */
 public record SmsOtpAttachRequest(
         @NotBlank
-        @Pattern(regexp = "\\+[1-9]\\d{6,14}", message = "Le numéro doit être au format E.164 (ex: +33612345678)")
+        @Pattern(regexp = "\\+[1-9]\\d{6,14}", message = "{validation.phone.e164}")
         String phoneNumber,
 
-        @NotBlank @Pattern(regexp = "\\d{6}", message = "Code à 6 chiffres requis") String code
+        @NotBlank @Pattern(regexp = "\\d{6}", message = "{validation.code.six-digits-required}") String code
 ) {}

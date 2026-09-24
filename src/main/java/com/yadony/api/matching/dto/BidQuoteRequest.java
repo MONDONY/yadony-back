@@ -21,11 +21,11 @@ import java.util.UUID;
  * Le promo est ainsi reflété dans l'aperçu pour TOUS les modes, pas seulement KG.
  */
 public record BidQuoteRequest(
-        @NotNull(message = "L'annonce est obligatoire")
+        @NotNull(message = "{validation.bid.announcement.required}")
         UUID announcementId,
 
         /** Poids facturé au kilo. Null/absent en mode GRID pur. Si fourni, ≥ 0.1 kg. */
-        @DecimalMin(value = "0.1", message = "Poids minimum 0.1 kg")
+        @DecimalMin(value = "0.1", message = "{validation.bid.quote.weight.min}")
         BigDecimal weightKg,
 
         /** Code promo optionnel (insensible à la casse). */

@@ -6,6 +6,7 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.Msisdn;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.i18n.MessagesResolver;
 import com.yadony.api.notifications.InvalidSmsRecipientException;
 import com.yadony.api.notifications.SmsService;
 import com.google.firebase.auth.AuthErrorCode;
@@ -46,6 +47,7 @@ public class SmsOtpService {
     private final UserRepository userRepository;
     private final FirebaseContactService firebaseContact;
     private final AuditService auditService;
+    private final MessagesResolver messagesResolver;
     private final boolean devProfile;
 
     public SmsOtpService(SmsOtpRepository smsOtpRepository,
@@ -56,7 +58,8 @@ public class SmsOtpService {
                           UserRepository userRepository,
                           FirebaseContactService firebaseContact,
                           AuditService auditService,
-                          Environment environment) {
+                          Environment environment,
+                          MessagesResolver messagesResolver) {
         this.smsOtpRepository = smsOtpRepository;
         this.passwordEncoder  = passwordEncoder;
         this.smsService       = smsService;
@@ -65,6 +68,7 @@ public class SmsOtpService {
         this.userRepository   = userRepository;
         this.firebaseContact  = firebaseContact;
         this.auditService     = auditService;
+        this.messagesResolver = messagesResolver;
         List<String> activeProfiles = Arrays.asList(environment.getActiveProfiles());
         // Liste blanche, pas « tout sauf prod » : staging a de vrais testeurs et ses logs
         // partent vers Loki et Sentry. L'ancienne condition y relayait le code OTP en
@@ -104,7 +108,7 @@ public class SmsOtpService {
         smsOtpRepository.save(entity);
 
         try {
-            smsService.send(phoneNumber, String.format(properties.getOtpTemplate(), code));
+            smsService.send(phoneNumber, messagesResolver.forRequest().get("sms.otp", code));
         } catch (InvalidSmsRecipientException e) {
             // Le transporteur refuse le numéro lui-même : 422 au client plutôt qu'un
             // « code envoyé » qui n'arrive jamais. L'exception fait rollback de la ligne OTP

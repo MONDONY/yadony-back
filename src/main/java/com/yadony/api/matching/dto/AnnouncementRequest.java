@@ -16,41 +16,41 @@ import java.util.List;
 import java.util.Set;
 
 public record AnnouncementRequest(
-        @NotBlank(message = "La ville de départ est obligatoire")
+        @NotBlank(message = "{validation.trip.departure-city.required}")
         String departureCity,
 
-        @NotBlank(message = "La ville d'arrivée est obligatoire")
+        @NotBlank(message = "{validation.trip.arrival-city.required}")
         String arrivalCity,
 
-        @NotNull(message = "La date de départ est obligatoire")
-        @FutureOrPresent(message = "La date de départ ne peut pas être dans le passé")
+        @NotNull(message = "{validation.trip.departure-date.required}")
+        @FutureOrPresent(message = "{validation.trip.departure-date.past}")
         LocalDate departureDate,
 
-        @NotNull(message = "L'heure de départ est obligatoire")
+        @NotNull(message = "{validation.trip.departure-time.required}")
         @JsonFormat(pattern = "HH:mm")
         LocalTime departureTime,
 
         @JsonFormat(pattern = "HH:mm")
         LocalTime arrivalTime,
 
-        @Valid @NotNull(message = "L'adresse de remise est obligatoire")
+        @Valid @NotNull(message = "{validation.trip.pickup-address.required}")
         AddressDto pickupAddress,
 
-        @Valid @NotNull(message = "L'adresse de récupération est obligatoire")
+        @Valid @NotNull(message = "{validation.trip.delivery-address.required}")
         AddressDto deliveryAddress,
 
-        @NotNull(message = "La capacité disponible est obligatoire")
-        @DecimalMin(value = "1.0", message = "La capacité doit être d'au moins 1 kg")
+        @NotNull(message = "{validation.trip.available-kg.required}")
+        @DecimalMin(value = "1.0", message = "{validation.trip.available-kg.min}")
         BigDecimal availableKg,
 
         // Nullable en mode MIXED (grille seule) ; validé côté service si mode KG
-        @DecimalMin(value = "0.0", message = "Le prix ne peut pas être négatif")
+        @DecimalMin(value = "0.0", message = "{validation.trip.price.negative}")
         BigDecimal pricePerKg,
 
-        @NotNull(message = "Le mode de transport est obligatoire")
+        @NotNull(message = "{validation.trip.transport-mode.required}")
         com.yadony.api.matching.TransportMode transportMode,
 
-        @Size(max = 500, message = "La note ne peut pas dépasser 500 caractères")
+        @Size(max = 500, message = "{validation.trip.note.max}")
         String description,
 
         List<String> acceptedContentTypes,
@@ -63,10 +63,10 @@ public record AnnouncementRequest(
 
         com.yadony.api.matching.PricingMode pricingMode,
 
-        @Size(max = 2, message = "Le code pays de départ doit faire 2 caractères")
+        @Size(max = 2, message = "{validation.trip.departure-country.size}")
         String departureCountryCode,
 
-        @Size(max = 2, message = "Le code pays d'arrivée doit faire 2 caractères")
+        @Size(max = 2, message = "{validation.trip.arrival-country.size}")
         String arrivalCountryCode,
 
         // Date limite de dépôt — obligatoire (validée dans AnnouncementService).

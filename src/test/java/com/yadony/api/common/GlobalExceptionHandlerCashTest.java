@@ -2,6 +2,7 @@ package com.yadony.api.common;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.payments.cash.exception.CommissionChargeFailedException;
 import com.yadony.api.payments.cash.exception.CommissionMethodMissingException;
 import com.yadony.api.payments.cash.exception.InvalidPaymentMethodForAnnouncementException;
@@ -11,7 +12,7 @@ import org.springframework.http.ProblemDetail;
 
 class GlobalExceptionHandlerCashTest {
 
-    private final GlobalExceptionHandler handler = new GlobalExceptionHandler();
+    private final GlobalExceptionHandler handler = new GlobalExceptionHandler(TestMessages.resolver());
 
     @Test
     void commissionMethodMissingReturns422WithProblemDetail() {

@@ -6,16 +6,16 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 
 public record AddressDto(
-        @NotBlank(message = "Le libellé de l'adresse est obligatoire")
+        @NotBlank(message = "{validation.address.label.required}")
         String label,
 
-        @NotNull(message = "La latitude est obligatoire")
-        @DecimalMin(value = "-90.0", message = "Latitude invalide (min -90)")
-        @DecimalMax(value = "90.0",  message = "Latitude invalide (max 90)")
+        @NotNull(message = "{validation.address.lat.required}")
+        @DecimalMin(value = "-90.0", message = "{validation.address.lat.min}")
+        @DecimalMax(value = "90.0",  message = "{validation.address.lat.max}")
         Double lat,
 
-        @NotNull(message = "La longitude est obligatoire")
-        @DecimalMin(value = "-180.0", message = "Longitude invalide (min -180)")
-        @DecimalMax(value = "180.0",  message = "Longitude invalide (max 180)")
+        @NotNull(message = "{validation.address.lng.required}")
+        @DecimalMin(value = "-180.0", message = "{validation.address.lng.min}")
+        @DecimalMax(value = "180.0",  message = "{validation.address.lng.max}")
         Double lng
 ) {}

@@ -18,6 +18,14 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
 
     Optional<UserEntity> findByFirebaseUid(String firebaseUid);
 
+    /**
+     * Langue préférée brute (colonne {@code preferred_language}, V264), vide si
+     * l'utilisateur n'existe pas. Lu par {@code UserLanguageService} pour le port
+     * {@code UserLanguageLookup} du socle i18n, sans charger toute l'entité.
+     */
+    @Query("select u.preferredLanguage from UserEntity u where u.id = :id")
+    Optional<String> findPreferredLanguageById(@Param("id") UUID id);
+
     /** Comptes dont la colonne héritée {@code fcm_token} porte encore ce jeton (au plus un attendu). */
     List<UserEntity> findAllByFcmToken(String fcmToken);
     Optional<UserEntity> findByStripeAccountId(String stripeAccountId);
