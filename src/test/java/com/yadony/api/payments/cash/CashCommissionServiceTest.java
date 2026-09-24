@@ -1328,7 +1328,26 @@ class CashCommissionServiceTest {
 
                 assertThat(resp.status()).isEqualTo(AcceptanceStatusDto.FAILED);
                 assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.FAILED);
+                assertThat(resp.error()).isEqualTo("Statut PaymentIntent inattendu : processing");
                 verify(bidRepo).save(bid);
+            }
+        }
+
+        @Test
+        void unexpectedPiStatus_englishRequest_returnsEnglishMessage() throws StripeException {
+            TestMessages.requestWithAcceptLanguage("en");
+            PaymentIntent mockPi = new PaymentIntent();
+            mockPi.setId("pi_proc_en");
+            mockPi.setStatus("processing");
+
+            try (MockedStatic<PaymentIntent> pi = mockStatic(PaymentIntent.class)) {
+                pi.when(() -> PaymentIntent.create(any(PaymentIntentCreateParams.class), any(RequestOptions.class)))
+                        .thenReturn(mockPi);
+
+                AcceptBidResponse resp = service.acceptCashBid(bid.getId(), travelerId, com.yadony.api.payments.cash.CommissionSource.CARD);
+
+                assertThat(resp.status()).isEqualTo(AcceptanceStatusDto.FAILED);
+                assertThat(resp.error()).isEqualTo("Unexpected payment status: processing");
             }
         }
 

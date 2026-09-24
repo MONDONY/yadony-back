@@ -395,7 +395,8 @@ public class CashCommissionService {
                 default -> {
                     bid.setCommissionStatus(CommissionStatus.FAILED);
                     bidRepo.save(bid);
-                    yield AcceptBidResponse.failed("Statut PaymentIntent inattendu : " + pi.getStatus());
+                    yield AcceptBidResponse.failed(messagesResolver.forRequest()
+                            .get("commission.payment-intent.unexpected-status", pi.getStatus()));
                 }
             };
         } catch (CardException e) {
