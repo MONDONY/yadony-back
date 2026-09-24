@@ -56,10 +56,10 @@ class V89MigrationTest {
         // l'assertion vraie par construction, sans jamais exercer la logique du backfill.
         String insertUser =
                 "INSERT INTO users (id, firebase_uid, username, status, kyc_status, stripe_account_status, " +
-                "cancellation_count, is_pro_account, contact_kyc_only, hide_phone_number, country, " +
+                "cancellation_count, is_pro_account, contact_kyc_only, hide_phone_number, preferred_language, country, " +
                 "kilo_pro, total_trips, total_shipments, no_show_count, refused_count, rating_count, " +
                 "version, created_at, updated_at) " +
-                "VALUES (?, ?, ?, 'ACTIVE', ?, ?, 0, false, true, false, 'FR', false, 0, 0, 0, 0, 0, 0, NOW(), NOW())";
+                "VALUES (?, ?, ?, 'ACTIVE', ?, ?, 0, false, true, false, 'fr', 'FR', false, 0, 0, 0, 0, 0, 0, NOW(), NOW())";
 
         jdbc.update(insertUser, user1Id, "uid-v89-user1", "userv89one",   "VERIFIED",  "ONBOARDING_COMPLETE");
         jdbc.update(insertUser, user2Id, "uid-v89-user2", "userv89two",   "PENDING",   "NOT_CREATED");

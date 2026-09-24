@@ -10,8 +10,8 @@ import java.util.UUID;
 
 /**
  * Résout les {@link Messages} d'un utilisateur ou de la requête courante.
- * N'est pas encore un bean Spring : il le devient quand {@link UserLanguageLookup}
- * a une implémentation (tâche A2).
+ * Bean Spring déclaré dans {@code I18nConfig} (tâche A2), une fois
+ * {@link UserLanguageLookup} implémenté par {@code auth.UserLanguageService}.
  */
 public class MessagesResolver {
 
