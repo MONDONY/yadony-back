@@ -1,7 +1,9 @@
 package com.yadony.api.subscriptions;
 
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.matching.AnnouncementPublishedEvent;
 import com.yadony.api.notifications.NotificationDispatcher;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -21,6 +23,12 @@ class TravelerAvailabilityListenerTest {
     @Mock TravelerSubscriptionRepository repo;
     @Mock NotificationDispatcher dispatcher;
     @InjectMocks TravelerAvailabilityListener listener;
+
+    /** Dispatcher mocké : sans stub, {@code messagesFor} rend {@code null} → NPE. Français par défaut. */
+    @BeforeEach
+    void stubMessages() {
+        lenient().when(dispatcher.messagesFor(any())).thenReturn(TestMessages.fr());
+    }
 
     AnnouncementPublishedEvent event(UUID travelerId) {
         return new AnnouncementPublishedEvent(UUID.randomUUID(), travelerId, "Ibrahima D", "Paris", "Dakar");

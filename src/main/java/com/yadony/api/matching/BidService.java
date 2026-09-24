@@ -347,8 +347,10 @@ public class BidService {
         // l'événement reste CashBidCreatedEvent (texte du listener déjà générique, ne
         // mentionne pas les espèces) — pas de renommage pour ne pas élargir le risque.
         if (pm == PaymentMethod.CASH || pm == PaymentMethod.MOBILE_MONEY) {
+            // null (pas de repli en dur) : NotificationTexts.newBid rend le repli générique
+            // dans la langue du destinataire, jamais dans celle de l'expéditeur ni du serveur.
             String senderName = sender.getFirstName() != null && !sender.getFirstName().isBlank()
-                    ? sender.getFirstName() : "Un expéditeur";
+                    ? sender.getFirstName() : null;
             String corridor = announcement.getDepartureCity() + " → " + announcement.getArrivalCity();
             eventPublisher.publishEvent(new CashBidCreatedEvent(
                     saved.getId(), announcement.getId(), announcement.getTravelerId(), sender.getId(),

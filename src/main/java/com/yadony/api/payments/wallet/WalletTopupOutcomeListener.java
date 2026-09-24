@@ -1,6 +1,7 @@
 package com.yadony.api.payments.wallet;
 
 import com.yadony.api.common.AuditService;
+import com.yadony.api.common.i18n.Messages;
 import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.notifications.NotificationDispatcher;
 import com.yadony.api.payments.pawapay.PawapayOperationEntity;
@@ -94,9 +95,11 @@ public class WalletTopupOutcomeListener {
             auditService.log("wallet_topup", op.getId(), "MOBILE_MONEY_CONFIRMED", op.getUserId(),
                     Map.of("currency", op.getCurrency(), "amount", op.getAmount().toPlainString(), "provider",
                             op.getProvider()));
-            notifications.notifyUser(op.getUserId(), "Recharge confirmée",
-                    "Recharge de " + WalletAmountText.format(op.getAmount(), op.getCurrency()) + " confirmée par "
-                            + PawapayProviders.label(op.getProvider()) + ".",
+            Messages m = notifications.messagesFor(op.getUserId());
+            notifications.notifyUser(op.getUserId(), m.get("notification.wallet-topup-confirmed.title"),
+                    m.get("notification.wallet-topup-confirmed.body",
+                            WalletAmountText.format(op.getAmount(), op.getCurrency()),
+                            PawapayProviders.label(op.getProvider())),
                     Map.of("type", "wallet_topup_confirmed", "topupId", op.getId().toString()));
         } catch (RuntimeException e) {
             // event.operationId() / event.userId(), jamais op : si la relecture ci-dessus a

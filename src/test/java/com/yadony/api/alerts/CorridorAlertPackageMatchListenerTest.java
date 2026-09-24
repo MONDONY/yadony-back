@@ -1,5 +1,6 @@
 package com.yadony.api.alerts;
 
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.notifications.NotificationDispatcher;
 import com.yadony.api.requests.entity.PackageRequestEntity;
 import com.yadony.api.requests.event.PackageRequestCreatedEvent;
@@ -79,6 +80,7 @@ class CorridorAlertPackageMatchListenerTest {
         CorridorAlertEntity alert = alert(null);
         when(packageRequestRepository.findById(requestId)).thenReturn(Optional.of(p));
         when(alertService.findTravelerAlertsMatchingPackage(p)).thenReturn(List.of(alert));
+        when(notificationDispatcher.messagesFor(alert.getOwnerId())).thenReturn(TestMessages.fr());
         when(notificationDispatcher.notifyUnlessBlocked(
                 eq(alert.getOwnerId()), eq(senderId), any(), any(), anyMap())).thenReturn(true);
 
@@ -93,6 +95,24 @@ class CorridorAlertPackageMatchListenerTest {
         verify(alertRepository).save(alert);
     }
 
+    /** Propriétaire de l'alerte anglophone : titre et corps rendus en anglais. */
+    @Test
+    void onCreated_match_ownerPrefersEnglish_rendersInEnglish() {
+        PackageRequestEntity p = pkg();
+        CorridorAlertEntity alert = alert(null);
+        when(packageRequestRepository.findById(requestId)).thenReturn(Optional.of(p));
+        when(alertService.findTravelerAlertsMatchingPackage(p)).thenReturn(List.of(alert));
+        when(notificationDispatcher.messagesFor(alert.getOwnerId())).thenReturn(TestMessages.en());
+        when(notificationDispatcher.notifyUnlessBlocked(
+                eq(alert.getOwnerId()), eq(senderId), any(), any(), anyMap())).thenReturn(true);
+
+        listener.onPackageRequestCreated(event());
+
+        verify(notificationDispatcher).notifyUnlessBlocked(
+                eq(alert.getOwnerId()), eq(senderId), eq("New parcel on Paris → Bamako"),
+                eq("A parcel matches your alert"), anyMap());
+    }
+
     /** Masqués l'un pour l'autre : pas d'horodatage, le digest garde sa fenêtre. */
     @Test
     void onCreated_ownerBlockedWithSender_noStampNoSave() {
@@ -100,6 +120,7 @@ class CorridorAlertPackageMatchListenerTest {
         CorridorAlertEntity alert = alert(null);
         when(packageRequestRepository.findById(requestId)).thenReturn(Optional.of(p));
         when(alertService.findTravelerAlertsMatchingPackage(p)).thenReturn(List.of(alert));
+        when(notificationDispatcher.messagesFor(alert.getOwnerId())).thenReturn(TestMessages.fr());
         when(notificationDispatcher.notifyUnlessBlocked(
                 eq(alert.getOwnerId()), eq(senderId), any(), any(), anyMap())).thenReturn(false);
 

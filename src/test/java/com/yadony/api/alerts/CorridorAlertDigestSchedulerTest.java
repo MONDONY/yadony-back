@@ -1,6 +1,7 @@
 package com.yadony.api.alerts;
 
 import com.yadony.api.common.BlockVisibility;
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.notifications.NotificationDispatcher;
 import com.yadony.api.requests.entity.PackageRequestEntity;
@@ -38,6 +39,7 @@ class CorridorAlertDigestSchedulerTest {
     void setup() {
         scheduler = new CorridorAlertDigestScheduler(
                 alertRepository, alertService, notificationDispatcher, blockVisibility);
+        lenient().when(notificationDispatcher.messagesFor(any())).thenReturn(TestMessages.fr());
     }
 
     private static void setId(Object target, UUID id) {

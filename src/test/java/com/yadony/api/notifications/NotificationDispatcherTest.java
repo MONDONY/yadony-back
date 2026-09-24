@@ -2,6 +2,9 @@ package com.yadony.api.notifications;
 
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
+import com.yadony.api.common.i18n.AppLanguage;
+import com.yadony.api.common.i18n.MessagesResolver;
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.cancellation.events.BidLostRematchPreparedEvent;
 import com.yadony.api.cancellation.events.DeliveryNoShowReportedEvent;
 import com.yadony.api.cancellation.events.TripCancelledEvent;
@@ -71,7 +74,7 @@ class NotificationDispatcherTest {
     @BeforeEach
     void setUp() {
         dispatcher = new NotificationDispatcher(fcmService, smsService, userRepository, notificationService,
-                blockVisibility, pawapayProperties);
+                blockVisibility, pawapayProperties, TestMessages.resolver());
         // persist() must return an entity with a non-null ID (JPA doesn't run in unit tests)
         var stubEntity = new NotificationEntity(UUID.randomUUID(), "STUB", "stub", "stub", Map.of(), false);
         setEntityId(stubEntity, UUID.randomUUID());
@@ -105,6 +108,34 @@ class NotificationDispatcherTest {
         assertThat(created.phase()).isEqualTo(TransactionPhase.AFTER_COMMIT);
         assertThat(accepted).isNotNull();
         assertThat(accepted.phase()).isEqualTo(TransactionPhase.AFTER_COMMIT);
+    }
+
+    /**
+     * Tâche B2 : BidService/PaymentService envoient désormais {@code null} (jamais
+     * « Un expéditeur » en dur) quand l'expéditeur n'a pas de prénom — c'est
+     * {@code NotificationTexts.newBid} qui rend le repli générique, dans la langue du
+     * destinataire.
+     */
+    @Test
+    void onBidCreated_noFirstName_fallsBackToGenericSenderInFrench() {
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onBidCreated(new BidCreatedEvent(
+                bidId, annId, travelerId, senderId, null, BigDecimal.valueOf(3.5), "Paris → Dakar"));
+
+        verify(fcmService).sendToUser(eq(travelerId), any(), contains("Un expéditeur, "), any());
+    }
+
+    @Test
+    void onBidCreated_noFirstName_recipientInEnglish_fallsBackInEnglish() {
+        NotificationDispatcher englishDispatcher = new NotificationDispatcher(fcmService, smsService, userRepository,
+                notificationService, blockVisibility, pawapayProperties, TestMessages.resolver(AppLanguage.EN));
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        englishDispatcher.onBidCreated(new BidCreatedEvent(
+                bidId, annId, travelerId, senderId, null, BigDecimal.valueOf(3.5), "Paris → Dakar"));
+
+        verify(fcmService).sendToUser(eq(travelerId), any(), contains("A sender, "), any());
     }
 
     @Test
@@ -691,6 +722,26 @@ class NotificationDispatcherTest {
         verify(fcmService).sendToUser(eq(bid2Sender), eq("Votre voyageur est arrivé"), any(), any());
     }
 
+    /** Suivi de la relecture B1 : chaque expéditeur reçoit sa propre langue, pas celle de l'autre. */
+    @Test
+    void onTripArrived_eachSenderGetsOwnLanguage() {
+        UUID bid1Sender = UUID.randomUUID();
+        UUID bid2Sender = UUID.randomUUID();
+        MessagesResolver mixed = new MessagesResolver(TestMessages.source(), userId ->
+                bid2Sender.equals(userId) ? Optional.of(AppLanguage.EN) : Optional.of(AppLanguage.FR));
+        NotificationDispatcher mixedDispatcher = new NotificationDispatcher(fcmService, smsService, userRepository,
+                notificationService, blockVisibility, pawapayProperties, mixed);
+        TripArrivedEvent event = new TripArrivedEvent(annId, List.of(
+                new TripArrivedEvent.BidTarget(UUID.randomUUID(), bid1Sender),
+                new TripArrivedEvent.BidTarget(UUID.randomUUID(), bid2Sender)));
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        mixedDispatcher.onTripArrived(event);
+
+        verify(fcmService).sendToUser(eq(bid1Sender), eq("Votre voyageur est arrivé"), any(), any());
+        verify(fcmService).sendToUser(eq(bid2Sender), eq("Your traveler has arrived"), any(), any());
+    }
+
     // ── PaymentReleasedEvent ──────────────────────────────────────────────────
 
     @Test
@@ -947,6 +998,117 @@ class NotificationDispatcherTest {
         assertThat(title.getValue().length()).isLessThanOrEqualTo(NotificationCaps.TITLE_MAX);
         assertThat(body.getValue().length()).isLessThanOrEqualTo(NotificationCaps.BODY_MAX);
         assertThat(body.getValue()).endsWith("…").doesNotContain("...");
+    }
+
+    /** Tâche B2 : le push de message suit désormais la langue du destinataire. */
+    @Test
+    void sendMessageNotification_recipientInEnglish_titleUsesEnglishWord() {
+        NotificationDispatcher englishDispatcher = new NotificationDispatcher(fcmService, smsService, userRepository,
+                notificationService, blockVisibility, pawapayProperties, TestMessages.resolver(AppLanguage.EN));
+        UserEntity messageSender = new UserEntity();
+        setUserId(messageSender, senderId);
+        messageSender.setFirstName("Awa");
+        messageSender.setLastName("Koné");
+        UserEntity recipient = new UserEntity();
+        recipient.setFirebaseUid("uid-traveler");
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(messageSender));
+        when(userRepository.findById(travelerId)).thenReturn(Optional.of(recipient));
+        when(blockVisibility.isHidden(travelerId, senderId)).thenReturn(false);
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        englishDispatcher.sendMessageNotification(senderId, travelerId, "uid-sender", "Hello", "conv_1");
+
+        var title = ArgumentCaptor.forClass(String.class);
+        verify(fcmService).sendToUser(eq(travelerId), title.capture(), eq("Hello"), anyMap());
+        assertThat(title.getValue()).startsWith("Message from ");
+    }
+
+    /**
+     * Correction 1 (relecture B2) : NotificationDispatcher.java:601-602 — « Message from »
+     * (13) + un {@code shortDisplayName} à son maximum (16) fait 29 caractères, au-delà de
+     * {@code TITLE_MAX} (28). Pire cas : prénom de 13 lettres + nom de famille.
+     */
+    @Test
+    void sendMessageNotification_worstCaseName_englishTitleStaysWithinCap() {
+        NotificationDispatcher englishDispatcher = new NotificationDispatcher(fcmService, smsService, userRepository,
+                notificationService, blockVisibility, pawapayProperties, TestMessages.resolver(AppLanguage.EN));
+        UserEntity messageSender = new UserEntity();
+        setUserId(messageSender, senderId);
+        messageSender.setFirstName("Mohammedaliyu");
+        messageSender.setLastName("Diallo");
+        UserEntity recipient = new UserEntity();
+        recipient.setFirebaseUid("uid-traveler");
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(messageSender));
+        when(userRepository.findById(travelerId)).thenReturn(Optional.of(recipient));
+        when(blockVisibility.isHidden(travelerId, senderId)).thenReturn(false);
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        englishDispatcher.sendMessageNotification(senderId, travelerId, "uid-sender", "Hello", "conv_1");
+
+        var title = ArgumentCaptor.forClass(String.class);
+        verify(fcmService).sendToUser(eq(travelerId), title.capture(), eq("Hello"), anyMap());
+        assertThat(title.getValue()).isEqualTo("Message from Mohammedaliyu…");
+        assertThat(title.getValue().length()).isLessThanOrEqualTo(NotificationCaps.TITLE_MAX);
+    }
+
+    /** Même pire cas en français : « Message de » (11) + 16 = 27 tient déjà, pas de régression. */
+    @Test
+    void sendMessageNotification_worstCaseName_frenchTitleUnchanged() {
+        UserEntity messageSender = new UserEntity();
+        setUserId(messageSender, senderId);
+        messageSender.setFirstName("Mohammedaliyu");
+        messageSender.setLastName("Diallo");
+        UserEntity recipient = new UserEntity();
+        recipient.setFirebaseUid("uid-traveler");
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(messageSender));
+        when(userRepository.findById(travelerId)).thenReturn(Optional.of(recipient));
+        when(blockVisibility.isHidden(travelerId, senderId)).thenReturn(false);
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.sendMessageNotification(senderId, travelerId, "uid-sender", "Bonjour", "conv_1");
+
+        var title = ArgumentCaptor.forClass(String.class);
+        verify(fcmService).sendToUser(eq(travelerId), title.capture(), eq("Bonjour"), anyMap());
+        assertThat(title.getValue()).isEqualTo("Message de Mohammedaliyu D.");
+    }
+
+    // ── Langue du destinataire (tâche B1) ────────────────────────────────────
+
+    /**
+     * Risque principal de la tâche, sens 1 : un destinataire anglophone reçoit sa
+     * notification en anglais, même quand rien dans le test n'évoque une requête HTTP
+     * (cet événement part d'un écouteur, jamais de {@code forRequest()}).
+     */
+    @Test
+    void onBidRejected_recipientInEnglish_rendersInEnglish() {
+        NotificationDispatcher englishDispatcher = new NotificationDispatcher(fcmService, smsService, userRepository,
+                notificationService, blockVisibility, pawapayProperties, TestMessages.resolver(AppLanguage.EN));
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        englishDispatcher.onBidRejected(new BidRejectedEvent(bidId, senderId, "wrong content"));
+
+        verify(fcmService).sendToUser(eq(senderId), eq("Request declined"),
+                eq("The traveler declined your request."), any());
+    }
+
+    /**
+     * Risque principal de la tâche, sens 2 : un événement à deux destinataires rend à
+     * chacun SA propre langue, jamais celle de l'autre partie ni celle de l'acteur qui a
+     * déclenché l'événement. Résolveur de test qui rend EN pour le voyageur, FR pour
+     * l'expéditeur.
+     */
+    @Test
+    void onParcelReturned_eachPartyGetsOwnLanguage() {
+        MessagesResolver mixed = new MessagesResolver(TestMessages.source(), userId ->
+                travelerId.equals(userId) ? Optional.of(AppLanguage.EN) : Optional.of(AppLanguage.FR));
+        NotificationDispatcher mixedDispatcher = new NotificationDispatcher(fcmService, smsService, userRepository,
+                notificationService, blockVisibility, pawapayProperties, mixed);
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        mixedDispatcher.onParcelReturned(new ParcelReturnedEvent(bidId, travelerId, senderId));
+
+        verify(fcmService).sendToUser(eq(senderId), eq("Colis rendu"), any(), any());
+        verify(fcmService).sendToUser(eq(travelerId), eq("Return confirmed"), any(), any());
     }
 
     /** L'id de BaseEntity n'a pas de setter : il se pose par réflexion, comme setEntityId. */

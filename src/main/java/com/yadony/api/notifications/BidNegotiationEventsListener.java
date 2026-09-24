@@ -1,5 +1,6 @@
 package com.yadony.api.notifications;
 
+import com.yadony.api.common.i18n.Messages;
 import com.yadony.api.matching.BidNegotiationMessageKind;
 import com.yadony.api.matching.events.BidNegotiationExpiredEvent;
 import com.yadony.api.matching.events.BidNegotiationMessagePostedEvent;
@@ -31,7 +32,7 @@ public class BidNegotiationEventsListener {
         // Message posté par l'autre partie : supprimé si les deux comptes sont masqués
         // l'un pour l'autre. Une négociation liée à une transaction en cours passe quand
         // même, isHidden portant cette exception.
-        var text = textFor(e);
+        var text = textFor(dispatcher.messagesFor(e.recipientId()), e);
         dispatcher.notifyUnlessBlocked(
                 e.recipientId(),
                 e.authorId(),
@@ -54,36 +55,38 @@ public class BidNegotiationEventsListener {
                 "bidId", e.bidId().toString(),
                 "announcementId", e.announcementId().toString()
         );
-        var text = NotificationTexts.bidNegotiationExpired();
-        // Chacun est prévenu au sujet de l'autre : si les deux comptes sont masqués l'un
-        // pour l'autre, la discussion morte n'a plus à être annoncée. Aucun risque de
-        // couper une coordination, une négociation expirée ne liant plus personne.
-        dispatcher.notifyUnlessBlocked(e.senderId(), e.travelerId(), text.title(), text.body(), data);
-        dispatcher.notifyUnlessBlocked(e.travelerId(), e.senderId(), text.title(), text.body(), data);
+        // Chacun est prévenu au sujet de l'autre, avec SON propre texte dans SA langue : si
+        // les deux comptes sont masqués l'un pour l'autre, la discussion morte n'a plus à
+        // être annoncée. Aucun risque de couper une coordination, une négociation expirée
+        // ne liant plus personne.
+        var forSender = NotificationTexts.bidNegotiationExpired(dispatcher.messagesFor(e.senderId()));
+        dispatcher.notifyUnlessBlocked(e.senderId(), e.travelerId(), forSender.title(), forSender.body(), data);
+        var forTraveler = NotificationTexts.bidNegotiationExpired(dispatcher.messagesFor(e.travelerId()));
+        dispatcher.notifyUnlessBlocked(e.travelerId(), e.senderId(), forTraveler.title(), forTraveler.body(), data);
     }
 
-    private static NotificationText textFor(BidNegotiationMessagePostedEvent e) {
+    private static NotificationText textFor(Messages m, BidNegotiationMessagePostedEvent e) {
         // Sans montant, quel que soit le genre, la discussion est close.
         if (e.proposedGrossEur() == null) {
             return e.kind() == BidNegotiationMessageKind.REJECT
-                    ? NotificationTexts.bidNegotiationClosed()
-                    : new NotificationText(titleFor(e.kind()), NotificationTexts.bidNegotiationClosed().body());
+                    ? NotificationTexts.bidNegotiationClosed(m)
+                    : new NotificationText(titleFor(m, e.kind()), NotificationTexts.bidNegotiationClosed(m).body());
         }
         String gross = e.proposedGrossEur().toPlainString();
         return switch (e.kind()) {
-            case PROPOSAL -> NotificationTexts.bidNegotiationProposal(gross);
-            case COUNTER -> NotificationTexts.bidNegotiationCounter(gross, e.round());
-            case ACCEPT -> NotificationTexts.bidNegotiationAccepted(gross);
-            case REJECT -> NotificationTexts.bidNegotiationClosed();
+            case PROPOSAL -> NotificationTexts.bidNegotiationProposal(m, gross);
+            case COUNTER -> NotificationTexts.bidNegotiationCounter(m, gross, e.round());
+            case ACCEPT -> NotificationTexts.bidNegotiationAccepted(m, gross);
+            case REJECT -> NotificationTexts.bidNegotiationClosed(m);
         };
     }
 
-    private static String titleFor(BidNegotiationMessageKind kind) {
+    private static String titleFor(Messages m, BidNegotiationMessageKind kind) {
         return switch (kind) {
-            case PROPOSAL -> NotificationTexts.bidNegotiationProposal("0").title();
-            case COUNTER -> NotificationTexts.bidNegotiationCounter("0", 1).title();
-            case ACCEPT -> NotificationTexts.bidNegotiationAccepted("0").title();
-            case REJECT -> NotificationTexts.bidNegotiationClosed().title();
+            case PROPOSAL -> NotificationTexts.bidNegotiationProposal(m, "0").title();
+            case COUNTER -> NotificationTexts.bidNegotiationCounter(m, "0", 1).title();
+            case ACCEPT -> NotificationTexts.bidNegotiationAccepted(m, "0").title();
+            case REJECT -> NotificationTexts.bidNegotiationClosed(m).title();
         };
     }
 }

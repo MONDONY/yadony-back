@@ -1,6 +1,8 @@
 package com.yadony.api.notifications;
 
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.requests.event.*;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.*;
@@ -20,6 +22,17 @@ class RequestEventsListenerTest {
 
     @Mock private NotificationDispatcher dispatcher;
     @InjectMocks private RequestEventsListener listener;
+
+    /**
+     * Le dispatcher est mocké : sans stub, {@code messagesFor} rend {@code null} et
+     * {@code NotificationTexts} lève une NPE. Français par défaut, comme un utilisateur
+     * sans préférence enregistrée — les chaînes françaises vérifiées ci-dessous ne changent
+     * pas.
+     */
+    @BeforeEach
+    void stubMessages() {
+        lenient().when(dispatcher.messagesFor(any())).thenReturn(TestMessages.fr());
+    }
 
     @Test
     void onNegotiationStarted_notifiesSender() {
@@ -216,6 +229,7 @@ class RequestEventsListenerTest {
 
         // In-app seulement : une expiration est l'absence d'événement, il n'y a rien à faire.
         verify(dispatcher).notifyUser(eq(travelerId), anyString(), anyString(), anyMap(), eq(false));
+        verify(dispatcher).messagesFor(travelerId);
         verifyNoMoreInteractions(dispatcher);
     }
 

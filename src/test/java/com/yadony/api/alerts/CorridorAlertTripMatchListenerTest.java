@@ -1,9 +1,11 @@
 package com.yadony.api.alerts;
 
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.events.AnnouncementCreatedEvent;
 import com.yadony.api.notifications.NotificationDispatcher;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -35,6 +37,12 @@ class CorridorAlertTripMatchListenerTest {
 
     final UUID tripId = UUID.randomUUID();
     final UUID travelerId = UUID.randomUUID();
+
+    /** Dispatcher mocké : sans stub, {@code messagesFor} rend {@code null} → NPE. Français par défaut. */
+    @BeforeEach
+    void stubMessages() {
+        lenient().when(notificationDispatcher.messagesFor(any())).thenReturn(TestMessages.fr());
+    }
 
     private static void setId(Object target, UUID id) {
         try {

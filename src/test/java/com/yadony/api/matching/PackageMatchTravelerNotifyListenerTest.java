@@ -1,8 +1,10 @@
 package com.yadony.api.matching;
 
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.notifications.NotificationDispatcher;
 import com.yadony.api.notifications.NotificationPrefsService;
 import com.yadony.api.requests.event.PackageRequestCreatedEvent;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -18,6 +20,7 @@ import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -34,6 +37,12 @@ class PackageMatchTravelerNotifyListenerTest {
     final UUID requestId = UUID.randomUUID();
     final UUID senderId = UUID.randomUUID();
     final UUID travelerId = UUID.randomUUID();
+
+    /** Dispatcher mocké : sans stub, {@code messagesFor} rend {@code null} → NPE. Français par défaut. */
+    @BeforeEach
+    void stubMessages() {
+        lenient().when(notificationDispatcher.messagesFor(any())).thenReturn(TestMessages.fr());
+    }
 
     private PackageRequestCreatedEvent event() {
         return new PackageRequestCreatedEvent(

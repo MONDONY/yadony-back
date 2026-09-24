@@ -96,6 +96,7 @@ public class CorridorAlertDigestScheduler {
 
                 String corridor = MatchingTextUtil.corridorLabel(alert.getDepartureCity(), alert.getArrivalCity());
                 var text = com.yadony.api.notifications.NotificationTexts.corridorAlertDigest(
+                        notificationDispatcher.messagesFor(alert.getOwnerId()),
                         isTrips, (int) Math.min(count, Integer.MAX_VALUE),
                         alert.getDepartureCity(), alert.getArrivalCity());
                 String title = text.title();

@@ -9,6 +9,8 @@ import com.yadony.api.cancellation.events.ParcelReturnedEvent;
 import com.yadony.api.cancellation.events.ReturnDeadlineExpiredEvent;
 import com.yadony.api.cancellation.events.ReturnDeadlineWarningEvent;
 import com.yadony.api.common.BlockVisibility;
+import com.yadony.api.common.i18n.Messages;
+import com.yadony.api.common.i18n.MessagesResolver;
 import com.yadony.api.disputes.events.DisputeOpenedEvent;
 import com.yadony.api.disputes.events.DisputeResolvedEvent;
 import com.yadony.api.disputes.events.DisputeUpdatedEvent;
@@ -61,18 +63,31 @@ public class NotificationDispatcher {
     private final NotificationService notificationService;
     private final BlockVisibility blockVisibility;
     private final com.yadony.api.payments.pawapay.PawapayProperties pawapayProperties;
+    private final MessagesResolver messagesResolver;
 
     public NotificationDispatcher(FcmService fcmService, SmsService smsService,
                                   UserRepository userRepository,
                                   NotificationService notificationService,
                                   BlockVisibility blockVisibility,
-                                  com.yadony.api.payments.pawapay.PawapayProperties pawapayProperties) {
+                                  com.yadony.api.payments.pawapay.PawapayProperties pawapayProperties,
+                                  MessagesResolver messagesResolver) {
         this.fcmService = fcmService;
         this.smsService = smsService;
         this.userRepository = userRepository;
         this.notificationService = notificationService;
         this.blockVisibility = blockVisibility;
         this.pawapayProperties = pawapayProperties;
+        this.messagesResolver = messagesResolver;
+    }
+
+    /**
+     * Langue du destinataire d'une notification. Toujours {@link MessagesResolver#forUser},
+     * jamais {@code forRequest()} : l'émetteur d'un événement n'a souvent aucun rapport
+     * avec la requête HTTP courante (tâche planifiée, écouteur asynchrone), et même
+     * lorsqu'une requête existe, c'est celle de l'ACTEUR, pas celle du destinataire.
+     */
+    public Messages messagesFor(UUID userId) {
+        return messagesResolver.forUser(userId);
     }
 
     // ── Public API ───────────────────────────────────────────────────────────
@@ -156,7 +171,7 @@ public class NotificationDispatcher {
 
     private void notifyNewBid(UUID bidId, UUID announcementId, UUID travelerId, UUID senderId,
                               String senderFirstName, BigDecimal weightKg, String corridor) {
-        var text = NotificationTexts.newBid(senderFirstName, weightKg, corridor);
+        var text = NotificationTexts.newBid(messagesFor(travelerId), senderFirstName, weightKg, corridor);
         // Une nouvelle demande est déclenchée par l'expéditeur : rien ne part si le
         // voyageur et lui sont masqués l'un pour l'autre.
         notifyUnlessBlocked(travelerId, senderId, text.title(), text.body(),
@@ -166,7 +181,7 @@ public class NotificationDispatcher {
     }
 
     public void onHandoverAlert(HandoverAlertEvent event) {
-        var text = NotificationTexts.handoverReminder(event.handoverLocation());
+        var text = NotificationTexts.handoverReminder(messagesFor(event.senderId()), event.handoverLocation());
         notifyCritical(event.senderId(), text.title(), text.body(),
                 Map.of("type", "HANDOVER_REMINDER_H2",
                        "bidId", event.bidId().toString()));
@@ -175,14 +190,14 @@ public class NotificationDispatcher {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
     public void onUserKycVerified(UserKycVerifiedEvent event) {
-        var text = NotificationTexts.kycVerified();
+        var text = NotificationTexts.kycVerified(messagesFor(event.getUserId()));
         notifyUser(event.getUserId(), text.title(), text.body(), Map.of("type", "KYC_VERIFIED"));
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
     public void onUserKycActionRequired(UserKycActionRequiredEvent event) {
-        var text = NotificationTexts.kycActionRequired();
+        var text = NotificationTexts.kycActionRequired(messagesFor(event.userId()));
         notifyUser(event.userId(), text.title(), text.body(), Map.of("type", "KYC_ACTION_REQUIRED"));
     }
 
@@ -191,8 +206,8 @@ public class NotificationDispatcher {
     public void onParcelReturned(ParcelReturnedEvent event) {
         Map<String, String> data = Map.of(
                 "type", "PARCEL_RETURNED", "bidId", event.bidId().toString());
-        var forSender = NotificationTexts.parcelReturnedForSender();
-        var forTraveler = NotificationTexts.parcelReturnedForTraveler();
+        var forSender = NotificationTexts.parcelReturnedForSender(messagesFor(event.senderId()));
+        var forTraveler = NotificationTexts.parcelReturnedForTraveler(messagesFor(event.travelerId()));
         notifyUser(event.senderId(), forSender.title(), forSender.body(), data);
         notifyUser(event.travelerId(), forTraveler.title(), forTraveler.body(), data);
     }
@@ -202,8 +217,8 @@ public class NotificationDispatcher {
     public void onReturnDeadlineWarning(ReturnDeadlineWarningEvent event) {
         Map<String, String> data = Map.of(
                 "type", "RETURN_DEADLINE_WARNING", "bidId", event.bidId().toString());
-        var forSender = NotificationTexts.returnDeadlineWarningForSender();
-        var forTraveler = NotificationTexts.returnDeadlineWarningForTraveler();
+        var forSender = NotificationTexts.returnDeadlineWarningForSender(messagesFor(event.senderId()));
+        var forTraveler = NotificationTexts.returnDeadlineWarningForTraveler(messagesFor(event.travelerId()));
         notifyUser(event.senderId(), forSender.title(), forSender.body(), data);
         notifyUser(event.travelerId(), forTraveler.title(), forTraveler.body(), data);
     }
@@ -213,11 +228,12 @@ public class NotificationDispatcher {
     public void onReturnDeadlineExpired(ReturnDeadlineExpiredEvent event) {
         Map<String, String> data = Map.of(
                 "type", "RETURN_DEADLINE_EXPIRED", "bidId", event.bidId().toString());
-        var text = NotificationTexts.returnDeadlineExpired();
         if (event.senderId() != null) {
+            var text = NotificationTexts.returnDeadlineExpired(messagesFor(event.senderId()));
             notifyUser(event.senderId(), text.title(), text.body(), data);
         }
         if (event.travelerId() != null) {
+            var text = NotificationTexts.returnDeadlineExpired(messagesFor(event.travelerId()));
             notifyUser(event.travelerId(), text.title(), text.body(), data);
         }
     }
@@ -231,7 +247,8 @@ public class NotificationDispatcher {
             // configuration (jamais en dur : "sous 30 min" mentirait dès que
             // yadony.pawapay.deposit-deadline-minutes changerait, sans qu'aucun test ne
             // le remarque).
-            var pay = NotificationTexts.mobileMoneyPaymentPending(pawapayProperties.depositDeadlineMinutes());
+            var pay = NotificationTexts.mobileMoneyPaymentPending(messagesFor(event.getSenderId()),
+                    pawapayProperties.depositDeadlineMinutes());
             notifyUser(event.getSenderId(), pay.title(), pay.body(),
                     Map.of("type", "MM_PAYMENT_PENDING", "bidId", event.getBidId().toString()));
             return;
@@ -241,7 +258,7 @@ public class NotificationDispatcher {
         String name = userRepository.findById(event.getTravelerId())
                 .map(com.yadony.api.auth.UserEntity::publicDisplayName)
                 .orElse(null);
-        var text = NotificationTexts.bidAccepted(name);
+        var text = NotificationTexts.bidAccepted(messagesFor(event.getSenderId()), name);
         notifyUnlessBlocked(event.getSenderId(), event.getTravelerId(), text.title(), text.body(),
                 Map.of("type", "BID_ACCEPTED", "bidId", event.getBidId().toString()), true);
     }
@@ -272,8 +289,8 @@ public class NotificationDispatcher {
     @Async
     public void onMobileMoneyPaymentConfirmed(MobileMoneyPaymentConfirmedEvent event) {
         Map<String, String> data = Map.of("type", "MOBILE_MONEY_PAYMENT_CONFIRMED", "bidId", event.bidId().toString());
-        var forSender = NotificationTexts.mobileMoneyPaymentConfirmed();
-        var forTraveler = NotificationTexts.mobileMoneyPaymentReceived();
+        var forSender = NotificationTexts.mobileMoneyPaymentConfirmed(messagesFor(event.senderId()));
+        var forTraveler = NotificationTexts.mobileMoneyPaymentReceived(messagesFor(event.travelerId()));
         notifyUser(event.senderId(), forSender.title(), forSender.body(), data);
         notifyUser(event.travelerId(), forTraveler.title(), forTraveler.body(), data);
     }
@@ -287,7 +304,7 @@ public class NotificationDispatcher {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
     public void onMobileMoneyDepositFailed(MobileMoneyDepositFailedEvent event) {
-        var text = NotificationTexts.mobileMoneyPaymentFailed();
+        var text = NotificationTexts.mobileMoneyPaymentFailed(messagesFor(event.senderId()));
         notifyUser(event.senderId(), text.title(), text.body(),
                 Map.of("type", "MOBILE_MONEY_PAYMENT_FAILED", "bidId", event.bidId().toString()));
     }
@@ -305,10 +322,10 @@ public class NotificationDispatcher {
     @Async
     public void onMobileMoneyPaymentExpired(MobileMoneyPaymentExpiredEvent event) {
         Map<String, String> data = Map.of("type", "MM_PAYMENT_EXPIRED", "bidId", event.bidId().toString());
-        var forSender = NotificationTexts.mobileMoneyPaymentExpired();
+        var forSender = NotificationTexts.mobileMoneyPaymentExpired(messagesFor(event.senderId()));
         notifyUser(event.senderId(), forSender.title(), forSender.body(), data);
         if (event.travelerId() != null) {
-            var forTraveler = NotificationTexts.mobileMoneyPaymentExpiredForTraveler();
+            var forTraveler = NotificationTexts.mobileMoneyPaymentExpiredForTraveler(messagesFor(event.travelerId()));
             notifyUser(event.travelerId(), forTraveler.title(), forTraveler.body(), data);
         }
     }
@@ -322,12 +339,12 @@ public class NotificationDispatcher {
         // refusée » accusait à tort un voyageur qui n'avait rien fait, et ne mentionnait
         // jamais que l'expéditeur allait être remboursé.
         if (BidEntity.REJECTION_ANNOUNCEMENT_DELETED.equals(event.getReason())) {
-            var withdrawn = NotificationTexts.bidRejectedTripWithdrawn();
+            var withdrawn = NotificationTexts.bidRejectedTripWithdrawn(messagesFor(event.getSenderId()));
             notifyUser(event.getSenderId(), withdrawn.title(), withdrawn.body(),
                     Map.of("type", "BID_REJECTED", "bidId", event.getBidId().toString()));
             return;
         }
-        var rejected = NotificationTexts.bidRejected();
+        var rejected = NotificationTexts.bidRejected(messagesFor(event.getSenderId()));
         notifyUser(event.getSenderId(), rejected.title(), rejected.body(),
                 Map.of("type", "BID_REJECTED", "bidId", event.getBidId().toString()));
     }
@@ -355,13 +372,13 @@ public class NotificationDispatcher {
         // cancellationId non-null dès que suggestionCount > 0), mais si ça survient on retombe
         // sur le corps "remboursement en cours" sans deep link plutôt que de risquer un NPE.
         if (n > 0 && event.cancellationId() != null) {
-            var text = NotificationTexts.bidLostWithRematch(loss, n);
+            var text = NotificationTexts.bidLostWithRematch(messagesFor(event.senderId()), loss, n);
             notifyUser(event.senderId(), text.title(), text.body(),
                     Map.of("type", "BID_REJECTED",
                            "bidId", event.bidId().toString(),
                            "cancellationId", event.cancellationId().toString()));
         } else {
-            var text = NotificationTexts.bidLostRefund(loss);
+            var text = NotificationTexts.bidLostRefund(messagesFor(event.senderId()), loss);
             notifyUser(event.senderId(), text.title(), text.body(),
                     Map.of("type", "BID_REJECTED", "bidId", event.bidId().toString()));
         }
@@ -378,15 +395,15 @@ public class NotificationDispatcher {
         for (UUID senderId : event.getAffectedSenderIds()) {
             TripCancelledEvent.RematchBySenderInfo info = event.getRematchBySender().get(senderId);
             if (info == null) {
-                var text = NotificationTexts.tripCancelledRefund();
+                var text = NotificationTexts.tripCancelledRefund(messagesFor(senderId));
                 notifyUser(senderId, text.title(), text.body(), Map.of("type", "TRIP_CANCELLED"));
             } else if (info.suggestionCount() > 0) {
-                var text = NotificationTexts.tripCancelledWithRematch(info.suggestionCount());
+                var text = NotificationTexts.tripCancelledWithRematch(messagesFor(senderId), info.suggestionCount());
                 notifyUser(senderId, text.title(), text.body(),
                         Map.of("type", "TRIP_CANCELLED",
                                "cancellationId", info.cancellationId().toString()));
             } else {
-                var text = NotificationTexts.tripCancelledNoTraveler();
+                var text = NotificationTexts.tripCancelledNoTraveler(messagesFor(senderId));
                 notifyUser(senderId, text.title(), text.body(), Map.of("type", "TRIP_CANCELLED"));
             }
         }
@@ -396,10 +413,10 @@ public class NotificationDispatcher {
     public void onDeliveryNoShowReported(DeliveryNoShowReportedEvent event) {
         Map<String, String> data = Map.of("type", "DELIVERY_NOSHOW_REPORTED", "bidId", event.getBidId().toString());
         if (event.isReportedByTraveler()) {
-            var text = NotificationTexts.deliveryNoShowForSender();
+            var text = NotificationTexts.deliveryNoShowForSender(messagesFor(event.getSenderId()));
             notifyUser(event.getSenderId(), text.title(), text.body(), data);
         } else {
-            var text = NotificationTexts.deliveryNoShowForTraveler();
+            var text = NotificationTexts.deliveryNoShowForTraveler(messagesFor(event.getTravelerId()));
             notifyUser(event.getTravelerId(), text.title(), text.body(), data);
         }
     }
@@ -408,7 +425,7 @@ public class NotificationDispatcher {
 
     @EventListener @Async
     public void onDeliveryConfirmed(DeliveryConfirmedEvent event) {
-        var text = NotificationTexts.deliveryConfirmed();
+        var text = NotificationTexts.deliveryConfirmed(messagesFor(event.getSenderId()));
         notifyCritical(event.getSenderId(), text.title(), text.body(),
                 Map.of("type", "DELIVERY_CONFIRMED", "bidId", event.getBidId().toString()));
     }
@@ -418,8 +435,8 @@ public class NotificationDispatcher {
     public void onTripArrived(TripArrivedEvent event) {
         Map<String, String> data = Map.of("type", "TRIP_ARRIVED",
                 "announcementId", event.getAnnouncementId().toString());
-        var text = NotificationTexts.tripArrived();
         for (TripArrivedEvent.BidTarget target : event.getTargets()) {
+            var text = NotificationTexts.tripArrived(messagesFor(target.senderId()));
             notifyUser(target.senderId(), text.title(), text.body(), data);
         }
     }
@@ -445,20 +462,21 @@ public class NotificationDispatcher {
     public void onPaymentReleased(PaymentReleasedEvent event) {
         Map<String, String> data = Map.of("type", "PAYMENT_RELEASED", "bidId", event.getBidId().toString());
         if (event.isMobileMoney()) {
-            var text = NotificationTexts.mobileMoneyPayoutSent(
+            var text = NotificationTexts.mobileMoneyPayoutSent(messagesFor(event.getTravelerId()),
                     NotificationTexts.mobileMoneyAmount(event.getAmount(), event.getCurrency()));
             notifyUser(event.getTravelerId(), text.title(), text.body(), data);
             return;
         }
-        var text = NotificationTexts.paymentReleased(NotificationTexts.eur(event.getAmount()));
+        var text = NotificationTexts.paymentReleased(messagesFor(event.getTravelerId()),
+                NotificationTexts.eur(event.getAmount()));
         notifyCritical(event.getTravelerId(), text.title(), text.body(), data);
     }
 
     @EventListener @Async
     public void onDisputeOpened(DisputeOpenedEvent event) {
         Map<String, String> data = Map.of("type", "DISPUTE_OPENED", "bidId", event.getBidId().toString());
-        var forSender = NotificationTexts.disputeOpenedForSender();
-        var forTraveler = NotificationTexts.disputeOpenedForTraveler();
+        var forSender = NotificationTexts.disputeOpenedForSender(messagesFor(event.getSenderId()));
+        var forTraveler = NotificationTexts.disputeOpenedForTraveler(messagesFor(event.getTravelerId()));
         notifyCritical(event.getSenderId(), forSender.title(), forSender.body(), data);
         notifyCritical(event.getTravelerId(), forTraveler.title(), forTraveler.body(), data);
     }
@@ -468,8 +486,7 @@ public class NotificationDispatcher {
     public void onDisputeUpdated(DisputeUpdatedEvent event) {
         Map<String, String> data = disputeData(
                 "DISPUTE_UPDATED", event.disputeId(), event.bidId());
-        var text = NotificationTexts.disputeUpdated();
-        notifyDisputeParties(event.senderId(), event.travelerId(), text.title(), text.body(), data);
+        notifyDisputeParties(event.senderId(), event.travelerId(), NotificationTexts::disputeUpdated, data);
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -477,8 +494,7 @@ public class NotificationDispatcher {
     public void onDisputeResolved(DisputeResolvedEvent event) {
         Map<String, String> data = disputeData(
                 "DISPUTE_RESOLVED", event.disputeId(), event.bidId());
-        var text = NotificationTexts.disputeResolved();
-        notifyDisputeParties(event.senderId(), event.travelerId(), text.title(), text.body(), data);
+        notifyDisputeParties(event.senderId(), event.travelerId(), NotificationTexts::disputeResolved, data);
     }
 
     private Map<String, String> disputeData(String type, UUID disputeId, UUID bidId) {
@@ -489,16 +505,28 @@ public class NotificationDispatcher {
         return data;
     }
 
+    /**
+     * Notifie chaque partie présente avec SON propre texte, rendu dans SA propre langue :
+     * {@code textFor} est rappelée une fois par destinataire (jamais un texte calculé une
+     * fois et partagé), même si le contenu français/anglais est identique des deux côtés.
+     */
     private void notifyDisputeParties(UUID senderId, UUID travelerId,
-                                      String title, String body, Map<String, String> data) {
-        if (senderId != null) notifyUser(senderId, title, body, data);
-        if (travelerId != null) notifyUser(travelerId, title, body, data);
+                                      java.util.function.Function<Messages, NotificationText> textFor,
+                                      Map<String, String> data) {
+        if (senderId != null) {
+            var text = textFor.apply(messagesFor(senderId));
+            notifyUser(senderId, text.title(), text.body(), data);
+        }
+        if (travelerId != null) {
+            var text = textFor.apply(messagesFor(travelerId));
+            notifyUser(travelerId, text.title(), text.body(), data);
+        }
     }
 
     // Story 9.4 — Notification expéditeur : colis refusé
     @EventListener @Async
     public void onParcelRefused(ParcelRefusedEvent event) {
-        var text = NotificationTexts.parcelRefused(event.getReason());
+        var text = NotificationTexts.parcelRefused(messagesFor(event.getSenderId()), event.getReason());
         notifyUser(event.getSenderId(), text.title(), text.body(),
                 Map.of("type", "PARCEL_REFUSED", "bidId", event.getBidId().toString()));
     }
@@ -506,7 +534,7 @@ public class NotificationDispatcher {
     // Story 9.6 — Notification expéditeur : voyageur no-show
     @EventListener @Async
     public void onVoyageurNoShow(VoyageurNoShowEvent event) {
-        var text = NotificationTexts.travelerNoShow();
+        var text = NotificationTexts.travelerNoShow(messagesFor(event.getSenderId()));
         notifyUser(event.getSenderId(), text.title(), text.body(),
                 Map.of("type", "TRIP_CANCELLED", "bidId", event.getBidId().toString()));
     }
@@ -518,7 +546,7 @@ public class NotificationDispatcher {
     // codes garde son utilité dans la boîte de réception, mais ne justifie pas d'interrompre.
     @EventListener @Async
     public void onAnnouncementInProgress(AnnouncementInProgressEvent event) {
-        var text = NotificationTexts.tripInProgress();
+        var text = NotificationTexts.tripInProgress(messagesFor(event.getTravelerId()));
         notifyUser(event.getTravelerId(), text.title(), text.body(),
                 Map.of("type", "TRIP_IN_PROGRESS",
                        "announcementId", event.getAnnouncementId().toString()),
@@ -528,7 +556,7 @@ public class NotificationDispatcher {
     // Bid expiré au départ — notif expéditeur "Demande expirée"
     @EventListener @Async
     public void onBidExpiredOnDeparture(BidExpiredOnDepartureEvent event) {
-        var text = NotificationTexts.bidExpired();
+        var text = NotificationTexts.bidExpired(messagesFor(event.getSenderId()));
         notifyUser(event.getSenderId(), text.title(), text.body(),
                 Map.of("type", "BID_EXPIRED",
                        "bidId", event.getBidId().toString()));
@@ -537,7 +565,7 @@ public class NotificationDispatcher {
     // Story 9.5 — Notification utilisateur : compte suspendu
     @EventListener @Async
     public void onUserSuspended(UserSuspendedEvent event) {
-        var text = NotificationTexts.accountSuspended();
+        var text = NotificationTexts.accountSuspended(messagesFor(event.getUserId()));
         notifyUser(event.getUserId(), text.title(), text.body(), Map.of("type", "ACCOUNT_SUSPENDED"));
     }
 
@@ -576,7 +604,15 @@ public class NotificationDispatcher {
         // message (refonte du sheet, 2026-09). L'aperçu est coupé au mot, jamais
         // au milieu, à la longueur que deux lignes tiennent.
         String truncated = NotificationCaps.truncateAtWord(preview, NotificationCaps.BODY_MAX);
-        fcmService.sendToUser(recipientId, "Message de " + NotificationCaps.shortDisplayName(senderName), truncated,
+        Messages m = messagesFor(recipientId);
+        // « Message from » (13) + un nom au maximum de shortDisplayName (16) dépasse
+        // TITLE_MAX (28) : le français ("Message de ", 11) tient toujours, seul l'anglais
+        // a besoin de cette borne — mais on l'applique dans les deux langues par cohérence
+        // avec le reste du catalogue (jamais de titre au-delà du cap).
+        String title = NotificationCaps.truncateAtWord(
+                m.get("notification.new-message.title", NotificationCaps.shortDisplayName(senderName)),
+                NotificationCaps.TITLE_MAX);
+        fcmService.sendToUser(recipientId, title, truncated,
                 Map.of("type", "NEW_MESSAGE", "conversationId", conversationId));
 
         return userRepository.findById(recipientId)
@@ -585,7 +621,8 @@ public class NotificationDispatcher {
     }
 
     public void sendCardExpiringNotice(com.yadony.api.auth.UserEntity user) {
-        var text = NotificationTexts.cardExpiring(user.getCommissionCardBrand(), user.getCommissionCardLast4());
+        var text = NotificationTexts.cardExpiring(messagesFor(user.getId()),
+                user.getCommissionCardBrand(), user.getCommissionCardLast4());
         notifyUser(user.getId(), text.title(), text.body(), Map.of("type", "CARD_EXPIRING"));
     }
 }

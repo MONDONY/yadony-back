@@ -1,6 +1,7 @@
 package com.yadony.api.auth;
 
 import com.yadony.api.common.AuditService;
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.messaging.FirestoreService;
 import com.yadony.api.notifications.NotificationDispatcher;
 import org.junit.jupiter.api.BeforeEach;
@@ -57,6 +58,7 @@ class UserServiceMuteTest {
         // lenient : les tests "user introuvable" re-stubbent findById() sur Optional.empty()
         // et n'atteignent jamais save().
         lenient().when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(notificationDispatcher.messagesFor(any())).thenReturn(TestMessages.fr());
     }
 
     @Test

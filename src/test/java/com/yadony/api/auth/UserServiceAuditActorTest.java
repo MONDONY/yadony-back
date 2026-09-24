@@ -2,6 +2,7 @@ package com.yadony.api.auth;
 
 import com.yadony.api.billing.ProSubscriptionRepository;
 import com.yadony.api.common.AuditService;
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.messaging.FirestoreService;
 import com.yadony.api.notifications.NotificationDispatcher;
 import org.junit.jupiter.api.BeforeEach;
@@ -67,6 +68,7 @@ class UserServiceAuditActorTest {
         user.setFirebaseUid("uid-cible");
         lenient().when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
         lenient().when(userRepository.save(any(UserEntity.class))).thenAnswer(i -> i.getArgument(0));
+        lenient().when(notificationDispatcher.messagesFor(any())).thenReturn(TestMessages.fr());
     }
 
     @Test

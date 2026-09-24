@@ -1,5 +1,6 @@
 package com.yadony.api.notifications;
 
+import com.yadony.api.common.i18n.Messages;
 import com.yadony.api.support.SupportMessageAuthorType;
 import com.yadony.api.support.events.SupportMessageCreatedEvent;
 import org.springframework.scheduling.annotation.Async;
@@ -32,10 +33,11 @@ public class SupportMessageEventListener {
         if (event.getAuthorType() != SupportMessageAuthorType.ADMIN) {
             return;
         }
+        Messages m = notificationDispatcher.messagesFor(event.getOwnerUserId());
         notificationDispatcher.notifyUser(
                 event.getOwnerUserId(),
-                "Le support vous a repondu",
-                "Ouvrez votre demande pour lire la reponse.",
+                m.get("notification.support-reply.title"),
+                m.get("notification.support-reply.body"),
                 Map.of("type", "SUPPORT_MESSAGE",
                         "ticketId", event.getTicketId().toString()));
     }

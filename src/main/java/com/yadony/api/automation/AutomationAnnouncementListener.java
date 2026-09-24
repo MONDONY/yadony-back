@@ -64,9 +64,12 @@ public class AutomationAnnouncementListener {
                 event.travelerId(), event.departureCity(), event.arrivalCity());
         if (loyalSenderIds.isEmpty()) return;
 
-        var text = com.yadony.api.notifications.NotificationTexts.loyalSender(
-                event.travelerName(), event.departureCity(), event.arrivalCity());
         for (UUID senderId : loyalSenderIds) {
+            // Le texte se rend une fois par expéditeur fidèle : chacun peut avoir sa propre
+            // langue (pas seulement celle du voyageur qui déclenche l'événement).
+            var text = com.yadony.api.notifications.NotificationTexts.loyalSender(
+                    notificationDispatcher.messagesFor(senderId),
+                    event.travelerName(), event.departureCity(), event.arrivalCity());
             // Confidentialité — la règle est armée par le voyageur et parle de SON trajet :
             // un expéditeur masqué pour lui (ou pour qui il l'est) ne reçoit rien. Les
             // transactions passées qui font la « fidélité » sont terminées, elles ne

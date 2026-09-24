@@ -5,6 +5,7 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.kyc.dto.KycAdminStatusResponse;
 import com.yadony.api.notifications.NotificationDispatcher;
 import com.stripe.model.identity.VerificationSession;
@@ -50,6 +51,7 @@ class KycAdminServiceTest {
                         java.util.List.of(new com.yadony.api.kyc.provider.stripe.StripeIdentityProvider(
                                 "https://yadony.com/kyc/complete", "")),
                         settings));
+        lenient().when(notificationDispatcher.messagesFor(any())).thenReturn(TestMessages.fr());
     }
 
     private UserEntity buildUser(KycStatus status) {

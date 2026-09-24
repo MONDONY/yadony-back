@@ -1,8 +1,10 @@
 package com.yadony.api.notifications;
 
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.matching.BidNegotiationMessageKind;
 import com.yadony.api.matching.events.BidNegotiationExpiredEvent;
 import com.yadony.api.matching.events.BidNegotiationMessagePostedEvent;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -20,6 +22,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 
 @ExtendWith(MockitoExtension.class)
@@ -28,6 +31,12 @@ class BidNegotiationEventsListenerTest {
 
     @Mock private NotificationDispatcher dispatcher;
     @InjectMocks private BidNegotiationEventsListener listener;
+
+    /** Dispatcher mocké : sans stub, {@code messagesFor} rend {@code null} → NPE. Français par défaut. */
+    @BeforeEach
+    void stubMessages() {
+        lenient().when(dispatcher.messagesFor(any())).thenReturn(TestMessages.fr());
+    }
 
     private static final UUID BID_ID = UUID.randomUUID();
     private static final UUID ANNOUNCEMENT_ID = UUID.randomUUID();

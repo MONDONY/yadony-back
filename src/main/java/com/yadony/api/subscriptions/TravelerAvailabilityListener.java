@@ -32,10 +32,6 @@ public class TravelerAvailabilityListener {
             subscriptionRepository.findAllByTravelerId(event.travelerId());
         if (subs.isEmpty()) return;
 
-        var text = com.yadony.api.notifications.NotificationTexts.travelerNewAnnouncement(
-                event.travelerName(), event.departureCity(), event.arrivalCity());
-        String title = text.title();
-        String body = text.body();
         Map<String, String> data = Map.of(
             "type", "TRAVELER_NEW_ANNOUNCEMENT",
             "announcementId", event.announcementId().toString(),
@@ -43,13 +39,17 @@ public class TravelerAvailabilityListener {
         );
 
         for (TravelerSubscriptionEntity sub : subs) {
+            // Le texte se rend une fois par abonné : chacun peut avoir sa propre langue.
+            var text = com.yadony.api.notifications.NotificationTexts.travelerNewAnnouncement(
+                    notificationDispatcher.messagesFor(sub.getSenderId()),
+                    event.travelerName(), event.departureCity(), event.arrivalCity());
             // Confidentialité — l'abonnement porte sur le contenu du voyageur : ni push, ni
             // pastille « nouveau » si les deux comptes sont masqués l'un pour l'autre. Poser
             // hasNew malgré tout afficherait un badge pour un trajet que l'abonné ne peut
             // pas ouvrir. L'abonnement lui-même n'est pas supprimé : le blocage est
             // réversible, et le retirer serait détectable côté abonné.
             boolean notified = notificationDispatcher.notifyUnlessBlocked(
-                    sub.getSenderId(), event.travelerId(), title, body, data, sub.isPushEnabled());
+                    sub.getSenderId(), event.travelerId(), text.title(), text.body(), data, sub.isPushEnabled());
             if (!notified) {
                 continue;
             }

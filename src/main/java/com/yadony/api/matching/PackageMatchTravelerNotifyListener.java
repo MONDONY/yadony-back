@@ -64,7 +64,7 @@ public class PackageMatchTravelerNotifyListener {
                 // Confidentialité — le colis appartient à un tiers : rien ne part si
                 // l'expéditeur et le voyageur sont masqués l'un pour l'autre.
                 var text = com.yadony.api.notifications.NotificationTexts.packageMatch(
-                        event.departureCity(), event.arrivalCity());
+                        notificationDispatcher.messagesFor(travelerId), event.departureCity(), event.arrivalCity());
                 notificationDispatcher.notifyUnlessBlocked(
                         travelerId,
                         event.senderId(),

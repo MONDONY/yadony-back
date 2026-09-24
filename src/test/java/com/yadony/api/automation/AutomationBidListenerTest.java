@@ -1,5 +1,6 @@
 package com.yadony.api.automation;
 
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.matching.BidService;
 import com.yadony.api.matching.events.BidCreatedEvent;
 import com.yadony.api.notifications.NotificationDispatcher;
@@ -51,6 +52,7 @@ class AutomationBidListenerTest {
         senderId = UUID.randomUUID();
         when(executor.tryExecuteBidAction(any(), any(), any(), any(), any()))
                 .thenAnswer(inv -> { ((java.util.function.Supplier<?>) inv.getArgument(4)).get(); return true; });
+        lenient().when(notificationDispatcher.messagesFor(any())).thenReturn(TestMessages.fr());
     }
 
     private AutomationRuleEntity presetRule(String presetId, boolean enabled, Map<String, Object> action) {

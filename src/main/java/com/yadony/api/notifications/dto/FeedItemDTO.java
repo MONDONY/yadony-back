@@ -1,5 +1,6 @@
 package com.yadony.api.notifications.dto;
 
+import com.yadony.api.common.i18n.Messages;
 import com.yadony.api.notifications.NotificationAggregate;
 import com.yadony.api.notifications.NotificationEntity;
 import com.yadony.api.notifications.NotificationText;
@@ -39,9 +40,9 @@ public record FeedItemDTO(
     }
 
     /** {@code unreadNewestFirst} : les non-lues du groupe, la plus récente en tête. */
-    public static FeedItemDTO aggregate(String groupKey, List<NotificationEntity> unreadNewestFirst) {
+    public static FeedItemDTO aggregate(Messages m, String groupKey, List<NotificationEntity> unreadNewestFirst) {
         NotificationEntity latest = unreadNewestFirst.get(0);
-        NotificationText text = NotificationAggregate.text(groupKey, unreadNewestFirst.size(), latest);
+        NotificationText text = NotificationAggregate.text(m, groupKey, unreadNewestFirst.size(), latest);
         return new FeedItemDTO(
                 latest.getId(), latest.getType(), latest.getCategory().code(), text.title(), text.body(),
                 NotificationAggregate.deeplink(groupKey, latest).orElse(null), groupKey, latest.getData(),

@@ -179,7 +179,8 @@ public class AdminReportsController {
         switch (action) {
             case DISMISS -> { }
             case WARN -> {
-                var text = com.yadony.api.notifications.NotificationTexts.adminWarning(note);
+                var text = com.yadony.api.notifications.NotificationTexts.adminWarning(
+                        notificationDispatcher.messagesFor(report.getTargetId()), note);
                 notificationDispatcher.notifyUser(report.getTargetId(), text.title(), text.body(),
                         Map.of("type", "ADMIN_WARNING", "reportId", reportId.toString()));
             }

@@ -76,6 +76,30 @@ class NotificationFeedControllerTest {
                 .andExpect(jsonPath("$.last").value(true));
     }
 
+    /**
+     * Le contrôleur ne fait que servir ce que rend {@code NotificationFeedService} (mocké
+     * ici) : la traduction elle-même est prouvée au niveau du service
+     * ({@code NotificationFeedServiceTest}). Ce test couvre le passage de bout en bout d'une
+     * ligne agrégée anglaise sur une requête portant {@code Accept-Language: en}.
+     */
+    @Test
+    void feed_aggregateRow_inEnglish_withAcceptLanguageHeader() throws Exception {
+        UUID a = UUID.randomUUID();
+        UUID b = UUID.randomUUID();
+        UUID c = UUID.randomUUID();
+        var row = new FeedItemDTO(a, "BID_CREATED", "colis", "3 parcel requests", "Karim T., 12 kg, Paris to Dakar.",
+                "yadony://announcements/x/bids", "bid:announcement:x", Map.of("type", "BID_CREATED"), false,
+                LocalDateTime.of(2026, 9, 3, 10, 0), 3, List.of(a, b, c));
+        when(feedService.feed(FIREBASE_UID, 0, 30))
+                .thenReturn(new PageResponse<>(List.of(row), 0, 30, 1, 1, true));
+
+        mockMvc.perform(get("/notifications/feed")
+                        .header("Accept-Language", "en")
+                        .with(authentication(asUser())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].title").value("3 parcel requests"));
+    }
+
     @Test
     void announcements_andSummary_areServed() throws Exception {
         UUID id = UUID.randomUUID();

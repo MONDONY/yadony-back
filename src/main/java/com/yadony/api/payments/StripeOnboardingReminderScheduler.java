@@ -36,8 +36,6 @@ public class StripeOnboardingReminderScheduler {
     private static final Logger log = LoggerFactory.getLogger(StripeOnboardingReminderScheduler.class);
 
     private static final String NOTIFICATION_TYPE = "STRIPE_ONBOARDING_INCOMPLETE";
-    private static final String TITLE = com.yadony.api.notifications.NotificationTexts.stripeOnboardingIncomplete().title();
-    private static final String BODY = com.yadony.api.notifications.NotificationTexts.stripeOnboardingIncomplete().body();
 
     private final UserRepository userRepository;
     private final NotificationDispatcher notificationDispatcher;
@@ -93,7 +91,9 @@ public class StripeOnboardingReminderScheduler {
             userRepository.save(user);
 
             try {
-                notificationDispatcher.notifyUser(user.getId(), TITLE, BODY,
+                var text = com.yadony.api.notifications.NotificationTexts.stripeOnboardingIncomplete(
+                        notificationDispatcher.messagesFor(user.getId()));
+                notificationDispatcher.notifyUser(user.getId(), text.title(), text.body(),
                         Map.of("type", NOTIFICATION_TYPE));
                 auditService.log("USER", user.getId(), "STRIPE_ONBOARDING_REMINDER_SENT",
                         user.getId(), Map.of("attempt", isSecond ? 2 : 1));

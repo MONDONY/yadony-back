@@ -1,6 +1,7 @@
 package com.yadony.api.payments.wallet;
 
 import com.yadony.api.common.AuditService;
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.notifications.NotificationDispatcher;
 import com.yadony.api.payments.pawapay.PawapayOperationEntity;
@@ -62,6 +63,7 @@ class WalletTopupOutcomeListenerTest {
         UUID userId = UUID.randomUUID();
         PawapayOperationEntity op = topup(userId);
         when(operations.get(op.getId())).thenReturn(op);
+        when(notifications.messagesFor(userId)).thenReturn(TestMessages.fr());
 
         listener.onCompleted(new PawapayOperationCompletedEvent(op.getId(), PawapayOperationKind.DEPOSIT,
                 PawapayOperationPurpose.WALLET_TOPUP, null, userId));
@@ -75,6 +77,21 @@ class WalletTopupOutcomeListenerTest {
         String expectedAmount = WalletAmountText.format(new BigDecimal("10000"), "XOF");
         verify(notifications).notifyUser(eq(userId), eq("Recharge confirmée"),
                 eq("Recharge de " + expectedAmount + " confirmée par Orange Money."), any());
+    }
+
+    @Test
+    void completedWalletTopup_englishRecipient_rendersInEnglish() {
+        UUID userId = UUID.randomUUID();
+        PawapayOperationEntity op = topup(userId);
+        when(operations.get(op.getId())).thenReturn(op);
+        when(notifications.messagesFor(userId)).thenReturn(TestMessages.en());
+
+        listener.onCompleted(new PawapayOperationCompletedEvent(op.getId(), PawapayOperationKind.DEPOSIT,
+                PawapayOperationPurpose.WALLET_TOPUP, null, userId));
+
+        String expectedAmount = WalletAmountText.format(new BigDecimal("10000"), "XOF");
+        verify(notifications).notifyUser(eq(userId), eq("Top-up confirmed"),
+                eq("Top-up of " + expectedAmount + " confirmed by Orange Money."), any());
     }
 
     @Test

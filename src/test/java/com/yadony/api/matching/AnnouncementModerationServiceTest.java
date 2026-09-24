@@ -2,6 +2,7 @@ package com.yadony.api.matching;
 
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.matching.events.BidRejectedEvent;
 import com.yadony.api.notifications.NotificationDispatcher;
 import org.junit.jupiter.api.BeforeEach;
@@ -56,6 +57,7 @@ class AnnouncementModerationServiceTest {
         setId(announcement, ANN_ID);
         setField(announcement, "travelerId", OWNER_ID);
         setField(announcement, "status", AnnouncementStatus.ACTIVE);
+        lenient().when(notificationDispatcher.messagesFor(any())).thenReturn(TestMessages.fr());
     }
 
     @Test
