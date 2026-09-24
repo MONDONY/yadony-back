@@ -1,5 +1,6 @@
 package com.yadony.api.common;
 
+import com.yadony.api.common.i18n.TestMessages;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
@@ -10,7 +11,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class GlobalExceptionHandlerStructuredReasonTest {
 
-    private final GlobalExceptionHandler handler = new GlobalExceptionHandler();
+    private final GlobalExceptionHandler handler = new GlobalExceptionHandler(TestMessages.resolver());
 
     @Test
     void responseStatus_withStructuredReason_mapsToTypeAndTitle() {

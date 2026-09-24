@@ -13,6 +13,7 @@ import static org.mockito.Mockito.when;
 
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyProvidersResponse;
 import com.yadony.api.payments.pawapay.PawapayOperationEntity;
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
@@ -33,6 +34,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -67,9 +69,21 @@ class WalletMobileMoneyTopupServiceTest {
         service = service(true);
     }
 
+    @AfterEach
+    void clearRequest() {
+        TestMessages.clearRequest();
+    }
+
     private WalletMobileMoneyTopupService service(boolean railEnabled) {
         return new WalletMobileMoneyTopupService(resolver, submission, operations, walletService, auditService,
-                props(railEnabled));
+                props(railEnabled), TestMessages.resolver());
+    }
+
+    private static PawapayProviderResolver.Resolved resolvedWithLimits(String provider, String currency,
+                                                                       BigDecimal min, BigDecimal max) {
+        PawapayProviderConfig config = new PawapayProviderConfig(provider, "XX", currency,
+                new PawapayProviderConfig.Limits(min, max, "PIN", "OPERATIONAL"), null);
+        return new PawapayProviderResolver.Resolved(provider, "XX", MSISDN, config);
     }
 
     private static PawapayProperties props(boolean enabled) {
@@ -240,6 +254,62 @@ class WalletMobileMoneyTopupServiceTest {
     }
 
     @Test
+    @DisplayName("borne basse et haute (« between »), EN, XOF : « with no cents »")
+    void initiate_amountBelowMin_between_en_isTranslated() {
+        TestMessages.requestWithAcceptLanguage("en");
+        resolves(orangeCi(new BigDecimal("500"), new BigDecimal("1000000")));
+
+        Throwable t = catchThrowable(() -> service.initiate(userId, request("100", PHONE, null)));
+
+        assertThat(t).isInstanceOf(YadonyBusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "topup-amount-out-of-range");
+        String min = WalletAmountText.format(new BigDecimal("500"), "XOF");
+        String max = WalletAmountText.format(new BigDecimal("1000000"), "XOF");
+        assertThat(t.getMessage()).isEqualTo("Between " + min + " and " + max + " per top-up, with no cents.");
+    }
+
+    @Test
+    @DisplayName("borne basse seule (« at least »), EN, EUR : point final simple")
+    void initiate_amountBelowMin_atLeastOnly_en_isTranslated() {
+        TestMessages.requestWithAcceptLanguage("en");
+        resolves(resolvedWithLimits("SOME_EUR", "EUR", new BigDecimal("5"), null));
+
+        Throwable t = catchThrowable(() -> service.initiate(userId, request("1", PHONE, null)));
+
+        assertThat(t).isInstanceOf(YadonyBusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "topup-amount-out-of-range");
+        String min = WalletAmountText.format(new BigDecimal("5"), "EUR");
+        assertThat(t.getMessage()).isEqualTo("At least " + min + " per top-up.");
+    }
+
+    @Test
+    @DisplayName("borne haute seule (« at most »), EN, XOF : « with no cents »")
+    void initiate_amountAboveMax_atMostOnly_en_isTranslated() {
+        TestMessages.requestWithAcceptLanguage("en");
+        resolves(resolvedWithLimits("SOME_XOF", "XOF", null, new BigDecimal("500000")));
+
+        Throwable t = catchThrowable(() -> service.initiate(userId, request("600000", PHONE, null)));
+
+        assertThat(t).isInstanceOf(YadonyBusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "topup-amount-out-of-range");
+        String max = WalletAmountText.format(new BigDecimal("500000"), "XOF");
+        assertThat(t.getMessage()).isEqualTo("At most " + max + " per top-up, with no cents.");
+    }
+
+    @Test
+    @DisplayName("aucune borne (« invalid »), EN, EUR : point final simple")
+    void initiate_amountInvalid_noBounds_en_isTranslated() {
+        TestMessages.requestWithAcceptLanguage("en");
+        resolves(resolvedWithLimits("SOME_EUR", "EUR", null, null));
+
+        Throwable t = catchThrowable(() -> service.initiate(userId, request("0", PHONE, null)));
+
+        assertThat(t).isInstanceOf(YadonyBusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "topup-amount-out-of-range");
+        assertThat(t.getMessage()).isEqualTo("Invalid top-up amount.");
+    }
+
+    @Test
     void initiate_amountAboveMax_422() {
         resolves(orangeCi(new BigDecimal("500"), new BigDecimal("1000000")));
         Throwable t = catchThrowable(() -> service.initiate(userId, request("1000001", PHONE, null)));
@@ -313,6 +383,20 @@ class WalletMobileMoneyTopupServiceTest {
                 .hasFieldOrPropertyWithValue("errorCode", "topup-phone-unsupported");
         assertThat(t.getMessage()).isEqualTo("Aucun opérateur mobile money reconnu pour ce numéro.");
         verifyNoInteractions(submission);
+    }
+
+    @Test
+    @DisplayName("numéro non exploitable, EN : Accept-Language en → getMessage() en anglais")
+    void initiate_unsupportedNumber_en_isTranslated() {
+        TestMessages.requestWithAcceptLanguage("en");
+        when(resolver.resolve(eq(MSISDN), any(), isNull(), any(), anyString()))
+                .thenThrow(unsupportedNumber(PawapayProviderResolver.Reason.NO_PROVIDER));
+
+        Throwable t = catchThrowable(() -> service.initiate(userId, request("10000", PHONE, null)));
+
+        assertThat(t).isInstanceOf(YadonyBusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "topup-phone-unsupported");
+        assertThat(t.getMessage()).isEqualTo("No mobile money operator recognized for this number.");
     }
 
     // ── status ──────────────────────────────────────────────────────────────
@@ -458,6 +542,19 @@ class WalletMobileMoneyTopupServiceTest {
 
         assertThat(t).hasFieldOrPropertyWithValue("errorCode", "topup-phone-unsupported");
         assertThat(t.getMessage()).isEqualTo("Mobile money ne permet pas le paiement pour le moment.");
+    }
+
+    @Test
+    @DisplayName("catalogue indisponible, EN : Accept-Language en → getMessage() en anglais")
+    void providers_unsupportedNumber_en_isTranslated() {
+        TestMessages.requestWithAcceptLanguage("en");
+        when(resolver.catalogue(eq(MSISDN), any(), isNull(), anyString()))
+                .thenThrow(unsupportedNumber(PawapayProviderResolver.Reason.OPERATION_CLOSED));
+
+        Throwable t = catchThrowable(() -> service.providers(PHONE));
+
+        assertThat(t).hasFieldOrPropertyWithValue("errorCode", "topup-phone-unsupported");
+        assertThat(t.getMessage()).isEqualTo("Mobile money does not accept payments for now.");
     }
 
     /**

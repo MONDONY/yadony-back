@@ -16,6 +16,7 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyAccountResponse;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyProvidersResponse;
 import com.yadony.api.payments.pawapay.PawapayClient;
@@ -29,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -79,11 +81,16 @@ class MobileMoneyAccountServiceTest {
         ReflectionTestUtils.setField(user, "id", userId);
         user.setFirebaseUid("uid-1");
         service = new MobileMoneyAccountService(userRepository, firebaseContact, new PawapayProviderResolver(client),
-                audit, props(true));
+                audit, props(true), TestMessages.resolver());
         // lenient : get_notConfigured_isAStateNotAnError (findById, pas findByIdForUpdate) et
         // activate_whenDisabledGlobally_is422 (rejeté avant tout accès repository) ne consomment
         // jamais ce stub — cf. les ~60 autres classes de test du projet qui suivent le même motif.
         lenient().when(userRepository.findByIdForUpdate(userId)).thenReturn(Optional.of(user));
+    }
+
+    @AfterEach
+    void clearRequest() {
+        TestMessages.clearRequest();
     }
 
     private static PawapayProperties props(boolean enabled) {
@@ -133,6 +140,20 @@ class MobileMoneyAccountServiceTest {
         assertThat(user.getMobileMoneyStatus()).isEqualTo(MobileMoneyPayoutStatus.NOT_CONFIGURED);
     }
 
+    @Test
+    void activate_withAProviderOutsideTheCatalogue_en_isTranslated() {
+        TestMessages.requestWithAcceptLanguage("en");
+        when(client.predictProvider("221771234567"))
+                .thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "221771234567")));
+        when(client.activeConfiguration()).thenReturn(configuration(ORANGE, WAVE));
+        assertThatThrownBy(() -> service.activate(userId, "+221 77 123 45 67", List.of("ORANGE_SEN", "MTN_CIV")))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> {
+                    assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-account-unsupported");
+                    assertThat(((YadonyBusinessException) e).getMessage()).isEqualTo("The MTN MoMo network is not available for this number.");
+                });
+    }
+
     /**
      * Revue finale, point 3 (Minor 2) : un code mal formé (retour à la ligne) ne doit jamais
      * être échoué dans le {@code detail} du 422, même partiellement.
@@ -149,6 +170,19 @@ class MobileMoneyAccountServiceTest {
                     assertThat(((YadonyBusinessException) e).getMessage()).doesNotContain("bad");
                 });
         verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void activate_withAMalformedProviderCode_en_isTranslated() {
+        TestMessages.requestWithAcceptLanguage("en");
+        when(client.predictProvider("221771234567"))
+                .thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "221771234567")));
+        when(client.activeConfiguration()).thenReturn(configuration(ORANGE, WAVE));
+        YadonyBusinessException ex = catchThrowableOfType(
+                () -> service.activate(userId, "+221 77 123 45 67", List.of("ORANGE_SEN", "bad\ncode")),
+                YadonyBusinessException.class);
+        assertThat(ex.getErrorCode()).isEqualTo("mobile-money-account-unsupported");
+        assertThat(ex.getMessage()).isEqualTo("Invalid network code.");
     }
 
     /** Ancien contrat (app sans liste) : le prédit seul, qui devient aussi la liste d'un élément. */
@@ -342,12 +376,33 @@ class MobileMoneyAccountServiceTest {
     }
 
     @Test
+    void activate_unknownProvider_en_isTranslated() {
+        TestMessages.requestWithAcceptLanguage("en");
+        when(firebaseContact.getContact("uid-1")).thenReturn(new FirebaseContactService.Contact("+33612345678", null));
+        when(client.predictProvider("+33612345678")).thenReturn(Optional.empty());
+        YadonyBusinessException ex = catchThrowableOfType(() -> service.activate(userId, null), YadonyBusinessException.class);
+        assertThat(ex.getErrorCode()).isEqualTo("mobile-money-account-unsupported");
+        assertThat(ex.getMessage()).isEqualTo("No mobile money operator recognized for your number.");
+    }
+
+    @Test
     void activate_providerWithoutPayout_is422() {
         when(firebaseContact.getContact("uid-1")).thenReturn(new FirebaseContactService.Contact("+221771234567", null));
         when(client.predictProvider("+221771234567")).thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "WAVE_SEN", "221771234567")));
         when(client.activeConfiguration()).thenReturn(Map.of("WAVE_SEN", new PawapayProviderConfig("WAVE_SEN", "SEN", "XOF", OK, null)));
         assertThatThrownBy(() -> service.activate(userId, null)).isInstanceOf(YadonyBusinessException.class)
                 .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-account-unsupported");
+    }
+
+    @Test
+    void activate_providerWithoutPayout_en_isTranslated() {
+        TestMessages.requestWithAcceptLanguage("en");
+        when(firebaseContact.getContact("uid-1")).thenReturn(new FirebaseContactService.Contact("+221771234567", null));
+        when(client.predictProvider("+221771234567")).thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "WAVE_SEN", "221771234567")));
+        when(client.activeConfiguration()).thenReturn(Map.of("WAVE_SEN", new PawapayProviderConfig("WAVE_SEN", "SEN", "XOF", OK, null)));
+        YadonyBusinessException ex = catchThrowableOfType(() -> service.activate(userId, null), YadonyBusinessException.class);
+        assertThat(ex.getErrorCode()).isEqualTo("mobile-money-account-unsupported");
+        assertThat(ex.getMessage()).isEqualTo("Wave does not support payouts yet.");
     }
 
     /**
@@ -454,9 +509,22 @@ class MobileMoneyAccountServiceTest {
     }
 
     @Test
+    void activate_countryNotRecognized_en_isTranslated() {
+        TestMessages.requestWithAcceptLanguage("en");
+        when(firebaseContact.getContact("uid-1")).thenReturn(new FirebaseContactService.Contact("+221771234567", null));
+        when(client.predictProvider("+221771234567")).thenReturn(Optional.of(new PawapayProviderPrediction("ZZZ", "ORANGE_SEN", "221771234567")));
+        when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", new PawapayProviderConfig("ORANGE_SEN", "ZZZ", "XOF", OK, OK)));
+
+        YadonyBusinessException ex = catchThrowableOfType(() -> service.activate(userId, null), YadonyBusinessException.class);
+
+        assertThat(ex.getErrorCode()).isEqualTo("mobile-money-account-unsupported");
+        assertThat(ex.getMessage()).isEqualTo("Country not recognized for this number.");
+    }
+
+    @Test
     void activate_whenDisabledGlobally_is422() {
         MobileMoneyAccountService off = new MobileMoneyAccountService(userRepository, firebaseContact,
-                new PawapayProviderResolver(client), audit, props(false));
+                new PawapayProviderResolver(client), audit, props(false), TestMessages.resolver());
         assertThatThrownBy(() -> off.activate(userId, null)).isInstanceOf(YadonyBusinessException.class)
                 .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-disabled");
     }
@@ -588,7 +656,7 @@ class MobileMoneyAccountServiceTest {
     @Test
     void providers_whenDisabledGlobally_is422() {
         MobileMoneyAccountService off = new MobileMoneyAccountService(userRepository, firebaseContact,
-                new PawapayProviderResolver(client), audit, props(false));
+                new PawapayProviderResolver(client), audit, props(false), TestMessages.resolver());
         assertThatThrownBy(() -> off.providers(userId, "+221 77 123 45 67")).isInstanceOf(YadonyBusinessException.class)
                 .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-disabled");
     }
@@ -637,12 +705,33 @@ class MobileMoneyAccountServiceTest {
     }
 
     @Test
+    void updateProviders_onANonActiveAccount_en_isTranslated() {
+        TestMessages.requestWithAcceptLanguage("en");
+        user.setMobileMoneyStatus(MobileMoneyPayoutStatus.DISABLED);
+        user.setMobileMoneyMsisdn("221771234567");
+        YadonyBusinessException ex = catchThrowableOfType(
+                () -> service.updateProviders(userId, List.of("WAVE_SEN")), YadonyBusinessException.class);
+        assertThat(ex.getErrorCode()).isEqualTo("mobile-money-account-unsupported");
+        assertThat(ex.getMessage()).isEqualTo("Turn on mobile money payouts first.");
+    }
+
+    @Test
     void updateProviders_withAnEmptyList_is422_beforeAnyPawapayCall() {
         activeSenegalAccount();
         assertThatThrownBy(() -> service.updateProviders(userId, List.of(" "))).isInstanceOf(YadonyBusinessException.class)
                 .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-account-unsupported");
         verify(client, never()).predictProvider(any());
         verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void updateProviders_withAnEmptyList_en_isTranslated() {
+        TestMessages.requestWithAcceptLanguage("en");
+        activeSenegalAccount();
+        YadonyBusinessException ex = catchThrowableOfType(
+                () -> service.updateProviders(userId, List.of(" ")), YadonyBusinessException.class);
+        assertThat(ex.getErrorCode()).isEqualTo("mobile-money-account-unsupported");
+        assertThat(ex.getMessage()).isEqualTo("Choose at least one network.");
     }
 
     @Test

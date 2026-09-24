@@ -1,5 +1,6 @@
 package com.yadony.api.common;
 
+import com.yadony.api.common.i18n.MessagesResolver;
 import com.yadony.api.payments.cash.exception.CommissionChargeFailedException;
 import com.yadony.api.payments.cash.exception.CommissionMethodMissingException;
 import com.yadony.api.payments.cash.exception.InvalidPaymentMethodForAnnouncementException;
@@ -41,6 +42,12 @@ public class GlobalExceptionHandler {
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     private static final String BASE_TYPE = "https://yadony.app/errors/";
+
+    private final MessagesResolver messagesResolver;
+
+    public GlobalExceptionHandler(MessagesResolver messagesResolver) {
+        this.messagesResolver = messagesResolver;
+    }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ProblemDetail> handleValidation(MethodArgumentNotValidException ex) {
@@ -159,7 +166,7 @@ public class GlobalExceptionHandler {
     public ProblemDetail handleCommissionMethodMissing(CommissionMethodMissingException ex) {
         ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage());
         pd.setType(URI.create(BASE_TYPE + "commission-method-missing"));
-        pd.setTitle("Méthode de commission requise");
+        pd.setTitle(messagesResolver.forRequest().get("problem.commission-method-missing.title"));
         pd.setProperty("code", "commission-method-missing");
         return pd;
     }
@@ -168,7 +175,7 @@ public class GlobalExceptionHandler {
     public ProblemDetail handleInvalidPaymentMethod(InvalidPaymentMethodForAnnouncementException ex) {
         ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage());
         pd.setType(URI.create(BASE_TYPE + "invalid-payment-method-for-announcement"));
-        pd.setTitle("Mode de paiement non autorisé");
+        pd.setTitle(messagesResolver.forRequest().get("problem.invalid-payment-method-for-announcement.title"));
         pd.setProperty("code", "invalid-payment-method-for-announcement");
         return pd;
     }
@@ -180,7 +187,7 @@ public class GlobalExceptionHandler {
         // this one covers the classic bid flow's async commission retry failures.
         ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.PAYMENT_REQUIRED, ex.getMessage());
         pd.setType(URI.create(BASE_TYPE + "commission-charge-failed"));
-        pd.setTitle("Débit de la commission refusé");
+        pd.setTitle(messagesResolver.forRequest().get("problem.commission-charge-failed.title"));
         pd.setProperty("code", "commission-charge-failed");
         return pd;
     }
@@ -194,7 +201,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ProblemDetail> handleOptimisticLock(
             org.springframework.orm.ObjectOptimisticLockingFailureException ex) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(
-                HttpStatus.CONFLICT, "La ressource a été modifiée simultanément, réessayez");
+                HttpStatus.CONFLICT, messagesResolver.forRequest().get("problem.concurrent-update.detail"));
         problem.setType(URI.create(BASE_TYPE + "concurrent-update"));
         problem.setTitle("Concurrent Update");
         return ResponseEntity.status(HttpStatus.CONFLICT).body(problem);
@@ -226,7 +233,7 @@ public class GlobalExceptionHandler {
         // log ; le corps renvoyé au client reste générique pour ne rien divulguer.
         log.warn("Missing required input: {}", ex.getMessage());
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(
-                HttpStatus.BAD_REQUEST, "Paramètre ou en-tête de requête requis manquant");
+                HttpStatus.BAD_REQUEST, messagesResolver.forRequest().get("problem.missing-input.detail"));
         problem.setType(URI.create(BASE_TYPE + "bad-request"));
         problem.setTitle("Bad Request");
         return ResponseEntity.badRequest().body(problem);
@@ -284,7 +291,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ProblemDetail> handleMultipart(Exception ex) {
         log.warn("Multipart/upload invalide: {}", ex.getMessage());
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(
-                HttpStatus.BAD_REQUEST, "Requête multipart invalide ou fichier manquant");
+                HttpStatus.BAD_REQUEST, messagesResolver.forRequest().get("problem.bad-multipart.detail"));
         problem.setType(URI.create(BASE_TYPE + "bad-multipart"));
         problem.setTitle("Bad Request");
         return ResponseEntity.badRequest().body(problem);
