@@ -5,6 +5,7 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.i18n.MessagesResolver;
 import com.google.firebase.auth.AuthErrorCode;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseAuthException;
@@ -38,6 +39,7 @@ public class EmailOtpService {
     private final UserRepository userRepository;
     private final FirebaseContactService firebaseContact;
     private final AuditService auditService;
+    private final MessagesResolver messagesResolver;
 
     public EmailOtpService(EmailOtpProperties properties,
                            EmailOtpRepository emailOtpRepository,
@@ -46,7 +48,8 @@ public class EmailOtpService {
                            @Autowired(required = false) FirebaseAuth firebaseAuth,
                            UserRepository userRepository,
                            FirebaseContactService firebaseContact,
-                           AuditService auditService) {
+                           AuditService auditService,
+                           MessagesResolver messagesResolver) {
         this.properties         = properties;
         this.emailOtpRepository = emailOtpRepository;
         this.passwordEncoder    = passwordEncoder;
@@ -55,6 +58,7 @@ public class EmailOtpService {
         this.userRepository     = userRepository;
         this.firebaseContact    = firebaseContact;
         this.auditService       = auditService;
+        this.messagesResolver   = messagesResolver;
     }
 
     @Transactional(isolation = Isolation.SERIALIZABLE)
@@ -78,7 +82,7 @@ public class EmailOtpService {
         entity.setExpiresAt(expiresAt);
         emailOtpRepository.save(entity);
 
-        resendEmailService.sendOtp(email, code);
+        resendEmailService.sendOtp(email, code, messagesResolver.forRequest());
 
         return expiresAt.toInstant(ZoneOffset.UTC);
     }

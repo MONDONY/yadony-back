@@ -60,7 +60,6 @@ yadony:
   email:
     resend-api-key: ${RESEND_API_KEY:}
     from-address: ${YADONY_EMAIL_FROM_ADDRESS:noreply@yadony.com}
-    otp-template: "Ton code Yadony est : %s. Valable 10 minutes."
   kyc:
     enforce: false
     return-url: "https://yadony.com/kyc/complete"

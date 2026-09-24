@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="fr" xmlns:th="http://www.thymeleaf.org">
+<html lang="fr" th:lang="${lang}" xmlns:th="http://www.thymeleaf.org">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
-  <title>Verification de compte</title>
+  <title th:text="#{email.otp.html-title}">Verification de compte</title>
   <style>
     @media only screen and (max-width: 620px) {
       .email-wrapper {
@@ -42,7 +42,7 @@
   </style>
 </head>
 <body style="margin:0; padding:0; background:#f4f6f8; -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%;">
-  <div style="display:none; max-height:0; overflow:hidden; opacity:0; color:transparent;">
+  <div style="display:none; max-height:0; overflow:hidden; opacity:0; color:transparent;" th:text="#{email.otp.preheader}">
     Votre code de verification Yadony est valable 10 minutes.
   </div>
 
@@ -64,15 +64,15 @@
                 </tr>
               </table>
 
-              <h1 class="title" style="margin:0 0 28px; color:#071b3c; font-family:Arial, Helvetica, sans-serif; font-size:32px; line-height:40px; font-weight:700; text-align:center;">
+              <h1 class="title" style="margin:0 0 28px; color:#071b3c; font-family:Arial, Helvetica, sans-serif; font-size:32px; line-height:40px; font-weight:700; text-align:center;" th:text="#{email.otp.heading}">
                 Vérification de compte
               </h1>
 
               <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
                 <tr>
                   <td align="left" style="font-family:Arial, Helvetica, sans-serif; color:#14213d; font-size:18px; line-height:29px; font-weight:400;">
-                    <p style="margin:0 0 16px;">Bonjour,</p>
-                    <p style="margin:0 0 32px;">Merci d'avoir choisi Yadony. Pour vérifier votre compte, veuillez utiliser le code à 6 chiffres ci-dessous.</p>
+                    <p style="margin:0 0 16px;" th:text="#{email.otp.greeting}">Bonjour,</p>
+                    <p style="margin:0 0 32px;" th:text="#{email.otp.intro}">Merci d'avoir choisi Yadony. Pour vérifier votre compte, veuillez utiliser le code à 6 chiffres ci-dessous.</p>
                   </td>
                 </tr>
               </table>
@@ -89,7 +89,7 @@
 
               <p style="margin:0 0 36px; color:#1158c7; font-family:Arial, Helvetica, sans-serif; font-size:18px; line-height:27px; font-weight:500; text-align:center;">
                 <span style="display:inline-block; width:24px; height:24px; border:2px solid #1158c7; border-radius:50%; line-height:22px; text-align:center; vertical-align:-4px; margin-right:8px;">&#9711;</span>
-                Code valable 10 minutes
+                <span th:text="#{email.otp.validity}">Code valable 10 minutes</span>
               </p>
 
               <div style="height:1px; line-height:1px; background:#d7dee8; margin:0 0 28px;">&nbsp;</div>
@@ -122,10 +122,10 @@
                 </tr>
               </table>
 
-              <p style="margin:0 0 8px; color:#738198; font-family:Arial, Helvetica, sans-serif; font-size:16px; line-height:24px; text-align:center;">
+              <p style="margin:0 0 8px; color:#738198; font-family:Arial, Helvetica, sans-serif; font-size:16px; line-height:24px; text-align:center;" th:text="#{email.otp.copyright}">
                 © 2026 Yadony. Tous droits réservés.
               </p>
-              <p style="margin:0; color:#738198; font-family:Arial, Helvetica, sans-serif; font-size:16px; line-height:24px; text-align:center;">
+              <p style="margin:0; color:#738198; font-family:Arial, Helvetica, sans-serif; font-size:16px; line-height:24px; text-align:center;" th:text="#{email.otp.no-reply}">
                 Ne répondez pas à cet e-mail.
               </p>
             </td>

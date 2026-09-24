@@ -63,7 +63,6 @@ yadony:
   email:
     resend-api-key: "test-resend-key"
     from-address: "noreply@test.yadony.app"
-    otp-template: "Test code: %s"
   urgency:
     threshold-days: 3
   matching:
