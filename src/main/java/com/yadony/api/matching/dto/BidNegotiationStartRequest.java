@@ -45,7 +45,7 @@ public record BidNegotiationStartRequest(
 
         String countryCode,
 
-        @Size(max = 4, message = "Maximum 4 photos")
+        @Size(max = 4, message = "{validation.bid.photos.max}")
         List<String> photoKeys,
 
         @NotNull(message = "{validation.amount.proposed.required}")
@@ -53,7 +53,7 @@ public record BidNegotiationStartRequest(
         @DecimalMax(value = "1000000", message = "{validation.amount.max-million}")
         BigDecimal proposedTotalEur,
 
-        @Size(max = 10, message = "Maximum 10 articles hors grille")
+        @Size(max = 10, message = "{validation.bid.custom-items.max}")
         @Valid List<BidCustomItemRequest> customItems,
 
         @Valid List<BidGridItemRequest> gridItems

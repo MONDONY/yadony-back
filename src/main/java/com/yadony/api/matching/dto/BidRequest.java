@@ -44,7 +44,7 @@ public record BidRequest(
         /** Code promo optionnel (insensible à la casse) — validé et racheté au paiement. */
         String promoCode,
 
-        @Size(max = 4, message = "Maximum 4 photos") List<String> photoKeys,
+        @Size(max = 4, message = "{validation.bid.photos.max}") List<String> photoKeys,
 
         @Valid List<BidGridItemRequest> gridItems  // peut être null ou vide — doit rester en DERNIER
 ) {}

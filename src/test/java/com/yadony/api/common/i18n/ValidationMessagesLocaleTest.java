@@ -12,6 +12,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.List;
+import java.util.UUID;
 
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -41,6 +42,12 @@ class ValidationMessagesLocaleTest {
         return new UsernamePasswordAuthenticationToken(
                 "uid-validation-locale-test", null,
                 List.of(new SimpleGrantedAuthority("ROLE_TRAVELER")));
+    }
+
+    private static UsernamePasswordAuthenticationToken sender() {
+        return new UsernamePasswordAuthenticationToken(
+                "uid-validation-locale-test-sender", null,
+                List.of(new SimpleGrantedAuthority("ROLE_SENDER")));
     }
 
     @Test
@@ -83,6 +90,58 @@ class ValidationMessagesLocaleTest {
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.violations.phoneNumber")
                         .value("The number must use the E.164 format (e.g. +33612345678)"));
+    }
+
+    /**
+     * Correction 1 (tour de relecture) : un message d'offre (constat « Offres »),
+     * repris à l'identique en français, désormais traduit en anglais lui aussi.
+     * {@code BidRequest.photoKeys} et {@code BidNegotiationStartRequest.photoKeys}
+     * partagent la même clé {@code validation.bid.photos.max}.
+     */
+    @Test
+    void bidPhotosValidation_offre_suitAcceptLanguage() throws Exception {
+        String tropDePhotos = "{\"photoKeys\":[\"a\",\"b\",\"c\",\"d\",\"e\"]}";
+
+        mvc.perform(post("/announcements/" + UUID.randomUUID() + "/bids")
+                        .with(authentication(sender()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(tropDePhotos))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.violations.photoKeys").value("Maximum 4 photos"));
+
+        mvc.perform(post("/announcements/" + UUID.randomUUID() + "/bids")
+                        .with(authentication(sender()))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(tropDePhotos))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.violations.photoKeys").value("Maximum 4 photos"));
+    }
+
+    /**
+     * Correction 1 (tour de relecture) : messages de destinataire, en dur en
+     * anglais avant cette correction (constat « Destinataires ») — un
+     * francophone les voyait en anglais. Le français est désormais une
+     * traduction voulue (« Le numéro doit être au format international
+     * (E.164) »), l'anglais reprend le texte d'origine au caractère près.
+     */
+    @Test
+    void recipientPhoneValidation_destinataire_suitAcceptLanguage() throws Exception {
+        mvc.perform(post("/addressbook/recipients")
+                        .with(authentication(sender()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"phoneE164\":\"123\"}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.violations.phoneE164")
+                        .value("Le numéro doit être au format international (E.164)"));
+
+        mvc.perform(post("/addressbook/recipients")
+                        .with(authentication(sender()))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"phoneE164\":\"123\"}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.violations.phoneE164").value("Phone must be in E.164 format"));
     }
 
     /**
