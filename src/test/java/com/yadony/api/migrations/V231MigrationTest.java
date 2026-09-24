@@ -53,10 +53,10 @@ class V231MigrationTest {
         Timestamp deletedAtTimestamp = deletedAt == null ? null : Timestamp.valueOf(deletedAt);
         jdbc.update(
                 "INSERT INTO users (id, firebase_uid, username, status, kyc_status, stripe_account_status, " +
-                "cancellation_count, is_pro_account, contact_kyc_only, hide_phone_number, country, " +
+                "cancellation_count, is_pro_account, contact_kyc_only, hide_phone_number, preferred_language, country, " +
                 "kilo_pro, total_trips, total_shipments, no_show_count, refused_count, rating_count, " +
                 "version, deleted_at, created_at, updated_at) " +
-                "VALUES (?, ?, ?, 'ACTIVE', 'PENDING', 'NOT_CREATED', 0, ?, true, false, 'FR', " +
+                "VALUES (?, ?, ?, 'ACTIVE', 'PENDING', 'NOT_CREATED', 0, ?, true, false, 'fr', 'FR', " +
                 "false, 0, 0, 0, 0, 0, 0, ?, NOW(), NOW())",
                 id, "uid-" + id, username, pro, deletedAtTimestamp);
     }
