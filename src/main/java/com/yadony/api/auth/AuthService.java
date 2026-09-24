@@ -15,6 +15,7 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.FirebaseSignInProvider;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
+import com.yadony.api.common.i18n.MessagesResolver;
 import com.google.firebase.auth.FirebaseToken;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -51,6 +52,7 @@ public class AuthService {
     private final AdminAuthService adminAuthService;
     private final FirebaseContactService firebaseContact;
     private final UsernameGenerator usernameGenerator;
+    private final MessagesResolver messagesResolver;
 
     public AuthService(UserRepository userRepository,
                        AuditService auditService,
@@ -61,7 +63,8 @@ public class AuthService {
                        StorageService storageService,
                        AdminAuthService adminAuthService,
                        FirebaseContactService firebaseContact,
-                       UsernameGenerator usernameGenerator) {
+                       UsernameGenerator usernameGenerator,
+                       MessagesResolver messagesResolver) {
         this.userRepository = userRepository;
         this.auditService = auditService;
         this.userService = userService;
@@ -72,6 +75,7 @@ public class AuthService {
         this.adminAuthService = adminAuthService;
         this.firebaseContact = firebaseContact;
         this.usernameGenerator = usernameGenerator;
+        this.messagesResolver = messagesResolver;
     }
 
     @Transactional
@@ -532,6 +536,11 @@ public class AuthService {
         user.setStatus(UserStatus.ACTIVE);
         user.setKycStatus(KycStatus.NOT_STARTED);
         user.setRoles(roles);
+        // Premier signal de langue disponible pour ce compte : l'Accept-Language envoyé par
+        // l'app à l'inscription, avant même la première synchronisation des réglages. La
+        // réactivation d'un compte supprimé (branche au-dessus) ne passe pas par ici et ne
+        // touche donc jamais à la langue déjà enregistrée sur la ligne.
+        user.setPreferredLanguage(messagesResolver.requestLanguage());
 
         // Aucune coordonnée n'est écrite en base : téléphone et email restent dans
         // Firebase, qui garantit aussi leur unicité (un numéro / une adresse = un
@@ -744,7 +753,8 @@ public class AuthService {
                 user.getResidenceStreet(),
                 user.getResidenceLine2(),
                 user.getResidencePostalCode(),
-                user.getOnboardingSeenAt() == null ? null : user.getOnboardingSeenAt().toString()
+                user.getOnboardingSeenAt() == null ? null : user.getOnboardingSeenAt().toString(),
+                user.getPreferredLanguage().code()
         );
     }
 }

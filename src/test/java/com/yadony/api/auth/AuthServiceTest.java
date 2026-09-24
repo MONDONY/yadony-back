@@ -8,9 +8,12 @@ import com.yadony.api.auth.dto.UserResponse;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
+import com.yadony.api.common.i18n.AppLanguage;
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.payments.PaymentRepository;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseAuthException;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -18,7 +21,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -55,7 +57,10 @@ class AuthServiceTest {
     @Mock private FirebaseContactService firebaseContact;
     @Mock private UsernameGenerator usernameGenerator;
 
-    @InjectMocks private AuthService authService;
+    // Construit à la main (et non via @InjectMocks) : MessagesResolver.requestLanguage()
+    // doit lire le RequestContextHolder réel posé par TestMessages, pas un mock — un mock
+    // muet renverrait null au lieu de FR/EN et casserait createUser() dès le premier appel.
+    private AuthService authService;
 
     /**
      * Téléphone et email ne sont plus en base : toute lecture passe par Firebase.
@@ -69,6 +74,15 @@ class AuthServiceTest {
         lenient().when(firebaseContact.findUidByEmail(anyString())).thenReturn(Optional.empty());
         lenient().when(firebaseContact.findUidByPhone(anyString())).thenReturn(Optional.empty());
         lenient().when(usernameGenerator.generate()).thenReturn(GENERATED_USERNAME);
+        authService = new AuthService(userRepository, auditService, userService,
+                accountFinalizationService, eventPublisher, connectedDevicesService,
+                storageService, adminAuthService, firebaseContact, usernameGenerator,
+                TestMessages.resolver());
+    }
+
+    @AfterEach
+    void clearRequestLanguage() {
+        TestMessages.clearRequest();
     }
 
     private static final String GENERATED_USERNAME = "user1785153600";
@@ -329,6 +343,43 @@ class AuthServiceTest {
         }
 
         @Test
+        @DisplayName("inscription avec Accept-Language: en → compte enregistré en anglais")
+        void register_withAcceptLanguageEn_savesUserInEnglish() {
+            TestMessages.requestWithAcceptLanguage("en");
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.empty());
+            when(userRepository.save(any(UserEntity.class))).thenAnswer(inv -> {
+                UserEntity u = inv.getArgument(0);
+                setId(u, UUID.randomUUID());
+                return u;
+            });
+
+            RegisterRequest req = new RegisterRequest(PHONE, null, Set.of("SENDER"));
+            authService.register(FIREBASE_UID, mockPhoneToken(), req);
+
+            ArgumentCaptor<UserEntity> captor = ArgumentCaptor.forClass(UserEntity.class);
+            verify(userRepository).save(captor.capture());
+            assertThat(captor.getValue().getPreferredLanguage()).isEqualTo(AppLanguage.EN);
+        }
+
+        @Test
+        @DisplayName("inscription sans Accept-Language → compte enregistré en français")
+        void register_withoutAcceptLanguage_savesUserInFrench() {
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.empty());
+            when(userRepository.save(any(UserEntity.class))).thenAnswer(inv -> {
+                UserEntity u = inv.getArgument(0);
+                setId(u, UUID.randomUUID());
+                return u;
+            });
+
+            RegisterRequest req = new RegisterRequest(PHONE, null, Set.of("SENDER"));
+            authService.register(FIREBASE_UID, mockPhoneToken(), req);
+
+            ArgumentCaptor<UserEntity> captor = ArgumentCaptor.forClass(UserEntity.class);
+            verify(userRepository).save(captor.capture());
+            assertThat(captor.getValue().getPreferredLanguage()).isEqualTo(AppLanguage.FR);
+        }
+
+        @Test
         @DisplayName("SENDER+TRAVELER dans la requête → peu importe, le compte reçoit toujours les deux rôles")
         void register_dualRoles_alwaysAssignsBoth() {
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.empty());
@@ -422,6 +473,18 @@ class AuthServiceTest {
             assertThat(result.residenceStreet()).isNull();
             assertThat(result.residenceLine2()).isNull();
             assertThat(result.residencePostalCode()).isNull();
+        }
+
+        @Test
+        @DisplayName("utilisateur EN → preferredLanguage vaut \"en\"")
+        void getProfile_userEn_returnsPreferredLanguageEn() {
+            UserEntity user = buildUser();
+            user.setPreferredLanguage(AppLanguage.EN);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+
+            UserResponse result = authService.getProfile(FIREBASE_UID);
+
+            assertThat(result.preferredLanguage()).isEqualTo("en");
         }
 
         @Test

@@ -10,6 +10,8 @@ import java.util.UUID;
  * @param username identifiant public généré à la création (« user » + horodatage). Toujours
  *        présent : le client s'en sert comme nom de repli quand {@code firstName} est vide,
  *        au lieu d'afficher le numéro de téléphone ou l'email du compte.
+ * @param preferredLanguage {@code "fr"} ou {@code "en"} (colonne {@code preferred_language},
+ *        V264). Modifiable via {@code PATCH /users/me/preferences}.
  */
 public record UserResponse(
     UUID id,
@@ -36,5 +38,6 @@ public record UserResponse(
     String residenceStreet,
     String residenceLine2,
     String residencePostalCode,
-    String onboardingSeenAt
+    String onboardingSeenAt,
+    String preferredLanguage
 ) {}
