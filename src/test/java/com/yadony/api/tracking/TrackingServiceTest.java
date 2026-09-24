@@ -751,6 +751,26 @@ class TrackingServiceTest {
     }
 
     @Test
+    void refreshCode_codeErasedAfterTooManyAttempts_regeneratesInsteadOfDeadEnd() {
+        // Après trois codes faux, confirmDelivery efface le code. Le colis est HANDED_OVER :
+        // un second scan DEPART est refusé et processScan ne régénère qu'en ACCEPTED. Sans ce
+        // chemin, le colis n'était plus jamais confirmable.
+        BidEntity bid = buildBid(BidStatus.HANDED_OVER, "qt");
+        bid.setConfirmationCode(null);
+        AnnouncementEntity ann = buildAnnouncement();
+        UserEntity sender = buildUser(senderId, "uid-sender");
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+
+        ConfirmCodeResponse resp = service.refreshConfirmationCode(bidId, "uid-sender");
+
+        assertThat(resp.confirmationCode()).hasSize(6);
+        assertThat(bid.getConfirmationCode()).isEqualTo(resp.confirmationCode());
+        assertThat(bid.getConfirmationCodeAttempts()).isZero();
+    }
+
+    @Test
     void refreshCode_bidNotAccepted_throwsUnprocessable() {
         BidEntity bid = buildBid(BidStatus.COMPLETED, "qt");
         bid.setConfirmationCode("123456");
