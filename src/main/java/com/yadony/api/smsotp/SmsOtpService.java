@@ -4,6 +4,7 @@ import com.yadony.api.auth.FirebaseContactService;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
+import com.yadony.api.common.Msisdn;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.i18n.MessagesResolver;
 import com.yadony.api.notifications.InvalidSmsRecipientException;
@@ -69,7 +70,10 @@ public class SmsOtpService {
         this.auditService     = auditService;
         this.messagesResolver = messagesResolver;
         List<String> activeProfiles = Arrays.asList(environment.getActiveProfiles());
-        this.devProfile = !activeProfiles.contains("prod");
+        // Liste blanche, pas « tout sauf prod » : staging a de vrais testeurs et ses logs
+        // partent vers Loki et Sentry. L'ancienne condition y relayait le code OTP en
+        // clair dès que les SMS étaient coupés depuis le back-office.
+        this.devProfile = activeProfiles.contains("dev") || activeProfiles.contains("test");
     }
 
     @Transactional(isolation = Isolation.SERIALIZABLE)
@@ -272,11 +276,16 @@ public class SmsOtpService {
         smsOtpRepository.save(token);
     }
 
-    /** Les logs partent vers Loki : jamais de numéro complet en clair. */
+    /**
+     * Les logs partent vers Loki : jamais de numéro complet en clair. Même politique que
+     * {@link Msisdn#mask} (indicatif + deux derniers chiffres) ; l'ancien masque ne cachait
+     * que les quatre derniers chiffres, soit 10 000 valeurs possibles à côté du code OTP.
+     */
     private static String maskPhone(String phoneNumber) {
-        if (phoneNumber == null || phoneNumber.length() < 4) {
+        try {
+            return Msisdn.mask(phoneNumber);
+        } catch (IllegalArgumentException e) {
             return "***";
         }
-        return phoneNumber.substring(0, phoneNumber.length() - 4) + "****";
     }
 }

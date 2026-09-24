@@ -141,6 +141,21 @@ class SmsFallbackSchedulerTest {
     }
 
     @Test
+    void carrierRejectsRecipient_marksHandled_noRetryLoop() {
+        // InvalidSmsRecipientException sortait du lambda avant markSmsSent : la notification
+        // restait « pending » et repartait chez le transporteur toutes les 30 s, pour rien.
+        UUID userId = UUID.randomUUID();
+        var notification = criticalNotification(userId);
+        when(notificationRepository.findPendingSmsFallbacks(any())).thenReturn(List.of(notification));
+        stubBatch(List.of(user(userId, "uid-1")), Map.of("uid-1", phone("+22574884000")));
+        doThrow(new InvalidSmsRecipientException(21211)).when(smsService).send(anyString(), anyString());
+
+        scheduler.processPendingFallbacks();
+
+        assertThat(notification.getSmsSentAt()).isNotNull();
+    }
+
+    @Test
     void smsServiceThrows_doesNotPropagateAndContinues() {
         UUID userId1 = UUID.randomUUID();
         UUID userId2 = UUID.randomUUID();

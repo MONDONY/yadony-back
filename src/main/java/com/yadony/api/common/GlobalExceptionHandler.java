@@ -6,6 +6,7 @@ import com.yadony.api.payments.cash.exception.CommissionMethodMissingException;
 import com.yadony.api.payments.cash.exception.InvalidPaymentMethodForAnnouncementException;
 import com.yadony.api.payments.exceptions.TravelerNotEligibleForPaymentException;
 import io.sentry.Sentry;
+import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -66,13 +67,34 @@ public class GlobalExceptionHandler {
         return ResponseEntity.unprocessableEntity().body(problem);
     }
 
+    /**
+     * Le message Jakarta brut ({@code sendOtp.phoneNumber: must match ...}) expose le nom de
+     * la méthode et du paramètre côté serveur. Le client reçoit un détail générique et une
+     * carte {@code violations} champ → message (dernier segment du chemin seulement), même
+     * forme que {@link #handleValidation}. Le message complet reste dans les logs.
+     */
     @ExceptionHandler(ConstraintViolationException.class)
     public ResponseEntity<ProblemDetail> handleConstraintViolation(ConstraintViolationException ex) {
+        log.warn("Constraint violation: {}", ex.getMessage());
+        Map<String, String> violations = ex.getConstraintViolations() == null ? Map.of()
+                : ex.getConstraintViolations().stream()
+                        .collect(Collectors.toMap(
+                                v -> leafOf(v.getPropertyPath() == null ? "" : v.getPropertyPath().toString()),
+                                v -> v.getMessage() == null ? "invalide" : v.getMessage(),
+                                (first, second) -> first));
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(
-                HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage());
+                HttpStatus.UNPROCESSABLE_ENTITY, "Paramètres de requête invalides");
         problem.setType(URI.create(BASE_TYPE + "validation"));
         problem.setTitle("Constraint Violation");
+        problem.setProperty("violations", violations);
         return ResponseEntity.unprocessableEntity().body(problem);
+    }
+
+    /** {@code sendOtp.request.phoneNumber} → {@code phoneNumber}. */
+    private static String leafOf(String propertyPath) {
+        int dot = propertyPath.lastIndexOf('.');
+        String leaf = dot >= 0 ? propertyPath.substring(dot + 1) : propertyPath;
+        return leaf.isBlank() ? "request" : leaf;
     }
 
     @ExceptionHandler(AuthenticationException.class)

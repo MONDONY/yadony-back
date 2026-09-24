@@ -65,7 +65,9 @@ public class ResendEmailService {
     }
 
     public void sendOtp(String to, String code, Messages m) {
-        if (!prodProfile) {
+        // dev uniquement (liste blanche) : « pas prod » incluait staging, dont les logs
+        // partent vers Loki et Sentry avec de vrais testeurs derrière les adresses.
+        if (devProfile) {
             log.warn("📧 [DEV] Code OTP pour {} : {}", maskEmail(to), code);
         }
 

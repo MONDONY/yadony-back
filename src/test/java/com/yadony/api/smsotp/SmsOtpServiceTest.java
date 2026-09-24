@@ -159,6 +159,24 @@ class SmsOtpServiceTest {
         }
 
         @Test
+        @DisplayName("staging n'est pas un poste de dev : SMS coupés → 503, jamais de code relayé en log")
+        void stagingIsNotDev() {
+            // L'ancienne condition « pas prod » classait staging comme dev : le code OTP à six
+            // chiffres partait en clair dans Loki et Sentry à côté du numéro de vrais testeurs.
+            Environment stagingEnvironment = mock(Environment.class);
+            when(stagingEnvironment.getActiveProfiles()).thenReturn(new String[] {"staging"});
+            SmsOtpService service = new SmsOtpService(smsOtpRepository, passwordEncoder, smsService,
+                    properties, firebaseAuth, userRepository, firebaseContact, auditService, stagingEnvironment, messagesResolver);
+            when(smsService.isEnabled()).thenReturn(false);
+
+            assertThatThrownBy(() -> service.sendOtp(PHONE))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                            .isEqualTo("sms-otp-disabled"));
+            verify(smsOtpRepository, never()).save(any());
+        }
+
+        @Test
         @DisplayName("503 — SMS désactivé en prod (flag pas encore activé alors que l'écran reste accessible)")
         void smsDisabledInProd() {
             Environment prodEnvironment = mock(Environment.class);
