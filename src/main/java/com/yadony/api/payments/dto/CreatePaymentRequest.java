@@ -6,7 +6,7 @@ import java.util.UUID;
 
 public class CreatePaymentRequest {
 
-    @NotNull(message = "bidId est obligatoire")
+    @NotNull(message = "{validation.payment.bid-id.required}")
     private UUID bidId;
 
     // Indicatif uniquement : le montant net est TOUJOURS recalculé côté serveur

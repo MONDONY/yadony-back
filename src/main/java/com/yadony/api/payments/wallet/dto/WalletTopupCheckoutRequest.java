@@ -6,6 +6,6 @@ import java.math.BigDecimal;
 
 /** Montant à recharger, dans la devise active du portefeuille (résolue côté serveur). */
 public record WalletTopupCheckoutRequest(
-        @NotNull @DecimalMin(value = "1", message = "Le montant minimum est une unité de la devise")
+        @NotNull @DecimalMin(value = "1", message = "{validation.wallet.amount.min-unit}")
         BigDecimal amount
 ) {}

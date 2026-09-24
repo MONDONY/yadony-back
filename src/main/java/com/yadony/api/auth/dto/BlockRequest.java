@@ -4,6 +4,6 @@ import jakarta.validation.constraints.NotNull;
 import java.util.UUID;
 
 public record BlockRequest(
-        @NotNull(message = "blockedUserId est obligatoire")
+        @NotNull(message = "{validation.block.user-id.required}")
         UUID blockedUserId
 ) {}

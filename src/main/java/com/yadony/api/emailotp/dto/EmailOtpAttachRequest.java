@@ -13,5 +13,5 @@ import jakarta.validation.constraints.Size;
  */
 public record EmailOtpAttachRequest(
         @NotBlank @Email @Size(max = 255) String email,
-        @NotBlank @Pattern(regexp = "\\d{6}", message = "Code à 6 chiffres requis") String code
+        @NotBlank @Pattern(regexp = "\\d{6}", message = "{validation.code.six-digits-required}") String code
 ) {}

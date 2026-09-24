@@ -5,8 +5,8 @@ import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 public record FcmTokenRequest(
-        @NotBlank(message = "Le token FCM est obligatoire")
-        @Size(max = 512, message = "Token FCM invalide")
+        @NotBlank(message = "{validation.fcm-token.required}")
+        @Size(max = 512, message = "{validation.fcm-token.invalid}")
         String fcmToken,
 
         @Size(max = 128)

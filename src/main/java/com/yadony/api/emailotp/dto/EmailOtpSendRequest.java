@@ -4,7 +4,7 @@ import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 
 public record EmailOtpSendRequest(
-    @NotBlank(message = "L'email est obligatoire")
-    @Email(message = "Format email invalide")
+    @NotBlank(message = "{validation.email.required}")
+    @Email(message = "{validation.email.invalid}")
     String email
 ) {}

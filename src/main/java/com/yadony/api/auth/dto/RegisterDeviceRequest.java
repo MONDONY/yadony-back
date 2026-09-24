@@ -5,11 +5,11 @@ import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 public record RegisterDeviceRequest(
-        @NotBlank(message = "Le nom de l'appareil est obligatoire")
+        @NotBlank(message = "{validation.device.name.required}")
         @Size(max = 255)
         String deviceName,
 
         @NotBlank
-        @Pattern(regexp = "ios|android|web", message = "Plateforme invalide")
+        @Pattern(regexp = "ios|android|web", message = "{validation.device.platform.invalid}")
         String platform
 ) {}

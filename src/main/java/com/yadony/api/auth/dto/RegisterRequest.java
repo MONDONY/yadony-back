@@ -12,15 +12,15 @@ public record RegisterRequest(
     @Nullable
     @Pattern(
         regexp = "\\+[1-9]\\d{6,14}",
-        message = "Le numéro doit être au format E.164 (ex: +33612345678)"
+        message = "{validation.phone.e164}"
     )
     String phoneNumber,
 
     @Nullable
-    @Email(message = "Format email invalide")
+    @Email(message = "{validation.email.invalid}")
     String email,
 
     @Nullable
-    @Size(max = 2, message = "Maximum 2 rôles")
+    @Size(max = 2, message = "{validation.roles.max}")
     Set<String> roles
 ) {}

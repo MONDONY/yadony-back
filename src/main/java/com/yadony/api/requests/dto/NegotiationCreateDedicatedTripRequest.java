@@ -24,8 +24,8 @@ import java.util.List;
  * (package_request.acceptedPaymentMethods) et arrêté par lui au checkout.
  */
 public record NegotiationCreateDedicatedTripRequest(
-        @NotNull(message = "La date de départ est obligatoire")
-        @FutureOrPresent(message = "La date de départ ne peut pas être dans le passé")
+        @NotNull(message = "{validation.trip.departure-date.required}")
+        @FutureOrPresent(message = "{validation.trip.departure-date.past}")
         LocalDate departureDate,
 
         @JsonFormat(pattern = "HH:mm")
@@ -34,13 +34,13 @@ public record NegotiationCreateDedicatedTripRequest(
         @JsonFormat(pattern = "HH:mm")
         LocalTime arrivalTime,
 
-        @Valid @NotNull(message = "L'adresse de remise est obligatoire")
+        @Valid @NotNull(message = "{validation.trip.pickup-address.required}")
         AddressDto pickupAddress,
 
-        @Valid @NotNull(message = "L'adresse de récupération est obligatoire")
+        @Valid @NotNull(message = "{validation.trip.delivery-address.required}")
         AddressDto deliveryAddress,
 
-        @Size(max = 500, message = "La note ne peut pas dépasser 500 caractères")
+        @Size(max = 500, message = "{validation.trip.note.max}")
         String description,
 
         List<String> acceptedContentTypes,
