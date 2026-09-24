@@ -7,15 +7,17 @@ import com.yadony.api.cancellation.CancellationRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.CommissionRateResolver;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.matching.dto.BidGridItemRequest;
 import com.yadony.api.matching.dto.BidQuoteRequest;
 import com.yadony.api.matching.dto.BidQuoteResponse;
 import com.yadony.api.promo.PromoService;
 import com.yadony.api.ratings.RatingRepository;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
@@ -48,7 +50,20 @@ class BidQuoteServiceTest {
     @Mock CommissionRateResolver commissionRateResolver;
     @Mock PromoService promoService;
 
-    @InjectMocks BidService bidService;
+    BidService bidService;
+
+    @BeforeEach
+    void setUp() {
+        bidService = new BidService(bidRepository, announcementRepository, userRepository, auditService,
+                eventPublisher, ratingRepository, cancellationRepository, bidGridItemRepository,
+                annGridItemRepository, blockService, null, commissionRateResolver, promoService,
+                null, null, null, null, null, TestMessages.resolver());
+    }
+
+    @AfterEach
+    void clearRequest() {
+        TestMessages.clearRequest();
+    }
 
     private static final String SENDER_UID = "uid-sender";
     private static final UUID SENDER_ID = UUID.randomUUID();
@@ -145,6 +160,21 @@ class BidQuoteServiceTest {
         assertThat(resp.promoApplied()).isTrue();
         assertThat(resp.promoLabel()).contains("PROMO6");
         assertThat(resp.promoLabel()).contains("6 % de réduction");
+    }
+
+    @Test
+    @DisplayName("promo, requête anglaise : libellé traduit")
+    void quote_withPromo_englishRequest_returnsEnglishLabel() {
+        when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender()));
+        when(announcementRepository.findById(ANN_ID)).thenReturn(Optional.of(announcement()));
+        when(commissionRateResolver.resolve(TRAVELER_ID, SENDER_ID, "welcome")).thenReturn(new BigDecimal("0.07"));
+        when(commissionRateResolver.resolve(TRAVELER_ID, SENDER_ID)).thenReturn(new BigDecimal("0.12"));
+        TestMessages.requestWithAcceptLanguage("en");
+
+        BidQuoteRequest req = new BidQuoteRequest(ANN_ID, new BigDecimal("5"), "welcome", null);
+        BidQuoteResponse resp = bidService.quote(SENDER_UID, req);
+
+        assertThat(resp.promoLabel()).isEqualTo("Code WELCOME: 5% off");
     }
 
     @Test

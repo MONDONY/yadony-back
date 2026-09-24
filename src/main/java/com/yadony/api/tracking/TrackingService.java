@@ -4,6 +4,8 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.i18n.Messages;
+import com.yadony.api.common.i18n.MessagesResolver;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
@@ -58,6 +60,7 @@ public class TrackingService {
     private final ApplicationEventPublisher eventPublisher;
     private final com.yadony.api.common.StorageService storageService;
     private final NotificationDispatcher notificationDispatcher;
+    private final MessagesResolver messagesResolver;
 
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
     private static final int MAX_CODE_ATTEMPTS = 3;
@@ -74,7 +77,8 @@ public class TrackingService {
                            AuditService auditService,
                            ApplicationEventPublisher eventPublisher,
                            com.yadony.api.common.StorageService storageService,
-                           NotificationDispatcher notificationDispatcher) {
+                           NotificationDispatcher notificationDispatcher,
+                           MessagesResolver messagesResolver) {
         this.bidRepository = bidRepository;
         this.paymentRepository = paymentRepository;
         this.userRepository = userRepository;
@@ -84,6 +88,7 @@ public class TrackingService {
         this.eventPublisher = eventPublisher;
         this.storageService = storageService;
         this.notificationDispatcher = notificationDispatcher;
+        this.messagesResolver = messagesResolver;
     }
 
     public QrCodeResponse getQrCode(UUID bidId, String firebaseUid) {
@@ -144,36 +149,37 @@ public class TrackingService {
         }
 
         java.util.Optional<PaymentEntity> paymentOpt = paymentRepository.findByBidId(bid.getId());
+        Messages m = messagesResolver.forRequest();
 
         String currentStep;
         String stepLabel;
 
         if (bid.getStatus() == BidStatus.REJECTED) {
             currentStep = "REJECTED";
-            stepLabel = "Refusé";
+            stepLabel = m.get("tracking.step.rejected");
         } else if (bid.getStatus() == BidStatus.CANCELLED) {
             currentStep = "CANCELLED";
-            stepLabel = "Annulé";
+            stepLabel = m.get("tracking.step.cancelled");
         } else if (bid.getStatus() == BidStatus.PENDING) {
             currentStep = "PENDING";
-            stepLabel = "En attente de confirmation";
+            stepLabel = m.get("tracking.step.pending");
         } else if (bid.getStatus() == BidStatus.PAYMENT_ESCROWED) {
             currentStep = "PAYMENT_ESCROWED";
-            stepLabel = "Paiement gelé — confirmation voyageur en attente";
+            stepLabel = m.get("tracking.step.payment-escrowed");
         } else {
             // ACCEPTED — calcul de base depuis paiement/confirmation
             if (paymentOpt.isEmpty() || paymentOpt.get().getStatus() == PaymentStatus.PENDING) {
                 currentStep = "ACCEPTED";
-                stepLabel = "Voyage confirmé — paiement en attente";
+                stepLabel = m.get("tracking.step.accepted");
             } else if (paymentOpt.get().getStatus() == PaymentStatus.ESCROW && !bid.isVoyageurConfirmed()) {
                 currentStep = "PAYMENT_SECURED";
-                stepLabel = "Paiement sécurisé — remise prévue";
+                stepLabel = m.get("tracking.step.payment-secured");
             } else if (paymentOpt.get().getStatus() == PaymentStatus.ESCROW && bid.isVoyageurConfirmed()) {
                 currentStep = "IN_TRANSIT";
-                stepLabel = "En transit";
+                stepLabel = m.get("tracking.step.in-transit");
             } else {
                 currentStep = "DELIVERED";
-                stepLabel = "Livré";
+                stepLabel = m.get("tracking.step.delivered");
             }
 
             // Priorité aux scans réels — ils reflètent l'état physique du colis
@@ -188,13 +194,13 @@ public class TrackingService {
 
             if (hasArrivee) {
                 currentStep = "DELIVERED";
-                stepLabel = "Livraison confirmée ✓";
+                stepLabel = m.get("tracking.step.delivery-confirmed");
             } else if (hasTransit) {
                 currentStep = "IN_TRANSIT";
-                stepLabel = "En transit";
+                stepLabel = m.get("tracking.step.in-transit");
             } else if (hasDepart) {
                 currentStep = "DEPARTED";
-                stepLabel = "Colis remis au voyageur — en route";
+                stepLabel = m.get("tracking.step.departed");
             }
         }
 

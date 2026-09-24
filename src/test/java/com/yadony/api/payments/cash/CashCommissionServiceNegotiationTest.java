@@ -92,7 +92,7 @@ class CashCommissionServiceNegotiationTest {
                 walletService, walletTransactionRepository, auditService, commissionRateResolver,
                 negotiationThreadRepository, stripeCashGateway, bidGridItemRepository, stubbedContacts(),
                 voucherService, activeCurrencyResolver,
-                new WalletCommissionCollector(walletService, exchangeRateService));
+                new WalletCommissionCollector(walletService, exchangeRateService), null);
     }
 
     // --- helpers ---

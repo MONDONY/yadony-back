@@ -7,6 +7,7 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.payments.cash.CommissionProperties;
 import com.yadony.api.payments.cash.CommissionSource;
 import com.yadony.api.payments.cash.PaymentMethod;
@@ -67,7 +68,12 @@ class NegotiationServiceTest {
     @Mock private com.yadony.api.payments.currency.ExchangeRateService exchangeRateService;
     @Mock private com.yadony.api.requests.NegotiationMobileMoneyPort mobileMoneyPort;
 
-    @InjectMocks private NegotiationService service;
+    private NegotiationService service;
+
+    @AfterEach
+    void clearRequest() {
+        TestMessages.clearRequest();
+    }
 
     private final UUID SENDER_ID = UUID.randomUUID();
     private final UUID TRAVELER_ID = UUID.randomUUID();
@@ -118,6 +124,11 @@ class NegotiationServiceTest {
         lenient().when(negotiationProperties.commissionWindowMinutes()).thenReturn(120);
         // Pass-through for presigned avatar URLs
         lenient().when(storageService.avatarUrl(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service = new NegotiationService(requestRepo, threadRepo, messageRepo, userRepository,
+                announcementRepo, eventPublisher, auditService, config, negotiationProperties,
+                commissionProperties, cashGatePort, escrowPort, storageService, photoService,
+                commissionRateResolver, exchangeRateService, mobileMoneyPort, TestMessages.resolver());
     }
 
     private UserBusinessPrefsEntity prefsWithCurrency(UUID userId, String code) {
@@ -1713,6 +1724,23 @@ class NegotiationServiceTest {
             assertThat(quote.totalEur()).isEqualByComparingTo("42.40"); // 40 + 40*0.06
             assertThat(quote.promoApplied()).isTrue();
             assertThat(quote.promoLabel()).contains("6 % de réduction");
+        }
+
+        @Test
+        @DisplayName("promo valide, requête anglaise — libellé traduit")
+        void quote_validPromo_englishRequest_returnsEnglishLabel() {
+            UUID threadId = UUID.randomUUID();
+            var thread = threadFor(threadId, new BigDecimal("40.00"));
+            when(threadRepo.findById(threadId)).thenReturn(Optional.of(thread));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(commissionRateResolver.resolve(TRAVELER_ID, SENDER_ID, "welcome"))
+                    .thenReturn(new BigDecimal("0.07"));
+            when(commissionRateResolver.resolve(TRAVELER_ID, SENDER_ID)).thenReturn(new BigDecimal("0.12"));
+            TestMessages.requestWithAcceptLanguage("en");
+
+            var quote = service.quote(SENDER_ID, threadId, "welcome");
+
+            assertThat(quote.promoLabel()).isEqualTo("Code WELCOME: 5% off");
         }
 
         @Test

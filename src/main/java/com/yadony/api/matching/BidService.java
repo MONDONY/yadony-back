@@ -11,6 +11,7 @@ import com.yadony.api.common.BlockVisibility;
 import com.yadony.api.common.CommissionRateResolver;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
+import com.yadony.api.common.i18n.MessagesResolver;
 import com.yadony.api.config.ContentCategoryNormalizer;
 import com.yadony.api.matching.dto.BidGridItemRequest;
 import com.yadony.api.matching.dto.BidQuoteRequest;
@@ -88,6 +89,7 @@ public class BidService {
 
     /** Rail mobile money (pawaPay) : la même source que tous les autres lecteurs de l'interrupteur. */
     private final PawapayProperties pawapayProperties;
+    private final MessagesResolver messagesResolver;
 
     public BidService(BidRepository bidRepository, AnnouncementRepository announcementRepository,
                       UserRepository userRepository, AuditService auditService,
@@ -103,7 +105,8 @@ public class BidService {
                       BidPhotoService bidPhotoService,
                       FirebaseContactService firebaseContact,
                       PawapayProperties pawapayProperties,
-                      PaymentService paymentService) {
+                      PaymentService paymentService,
+                      MessagesResolver messagesResolver) {
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.userRepository = userRepository;
@@ -122,6 +125,7 @@ public class BidService {
         this.firebaseContact = firebaseContact;
         this.pawapayProperties = pawapayProperties;
         this.paymentService = paymentService;
+        this.messagesResolver = messagesResolver;
     }
 
     /**
@@ -196,7 +200,8 @@ public class BidService {
 
             BigDecimal discountPoints = rate.subtract(finalRate).max(BigDecimal.ZERO);
             long pct = discountPoints.multiply(java.math.BigDecimal.valueOf(100)).longValue();
-            promoLabel = "Code " + promoCode.toUpperCase() + " : " + pct + " % de réduction";
+            promoLabel = messagesResolver.forRequest()
+                    .get("quote.promo-label", promoCode.toUpperCase(), pct);
         } else {
             rate = commissionRateResolver.resolve(ann.getTravelerId(), sender.getId());
             commissionEur = netEur.multiply(rate).setScale(2, java.math.RoundingMode.HALF_UP);

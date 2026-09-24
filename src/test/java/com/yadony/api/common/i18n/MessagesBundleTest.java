@@ -29,9 +29,15 @@ class MessagesBundleTest {
 
     /**
      * Libellés français historiques contenant un tiret cadratin, exemptés de la
-     * règle D10. Vide à ce stade (tâche A1) ; complété par A6.
+     * règle D10 (tâche A6) : textes de suivi affichés depuis toujours avec un tiret
+     * cadratin — le français ne change pas, seul l'anglais suit la règle D10.
      */
-    private static final Set<String> EM_DASH_FR_HISTORIQUE = Set.of();
+    private static final Set<String> EM_DASH_FR_HISTORIQUE = Set.of(
+            "tracking.step.payment-escrowed",
+            "tracking.step.accepted",
+            "tracking.step.payment-secured",
+            "tracking.step.departed"
+    );
 
     private static final Pattern PLACEHOLDER = Pattern.compile("\\{(\\d+)[,}]?");
     private static final Pattern LONE_APOSTROPHE = Pattern.compile("(?<!')'(?!')");

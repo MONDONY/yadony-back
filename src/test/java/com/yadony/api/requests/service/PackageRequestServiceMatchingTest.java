@@ -174,7 +174,7 @@ class PackageRequestServiceMatchingTest {
                 exchangeRateService, realMapper, matchingService,
                 yadonyConfig, announcementRepository, commissionRateResolver,
                 com.yadony.api.config.PlatformSettingsTestFactory.defaults(),
-                blockVisibility);
+                blockVisibility, null);
     }
 
     @Test

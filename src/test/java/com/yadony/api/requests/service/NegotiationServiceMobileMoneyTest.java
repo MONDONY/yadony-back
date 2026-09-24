@@ -97,7 +97,8 @@ class NegotiationServiceMobileMoneyTest {
     void setUp() {
         service = new NegotiationService(requestRepo, threadRepo, messageRepo, userRepository, announcementRepo,
             eventPublisher, auditService, config, negotiationProperties, commissionProperties, cashGatePort,
-            escrowPort, storageService, photoService, commissionRateResolver, exchangeRateService, mobileMoneyPort);
+            escrowPort, storageService, photoService, commissionRateResolver, exchangeRateService, mobileMoneyPort,
+            null);
 
         request = new PackageRequestEntity();
         setId(request, UUID.randomUUID());
