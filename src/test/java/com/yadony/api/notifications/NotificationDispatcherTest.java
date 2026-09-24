@@ -1023,6 +1023,55 @@ class NotificationDispatcherTest {
         assertThat(title.getValue()).startsWith("Message from ");
     }
 
+    /**
+     * Correction 1 (relecture B2) : NotificationDispatcher.java:601-602 — « Message from »
+     * (13) + un {@code shortDisplayName} à son maximum (16) fait 29 caractères, au-delà de
+     * {@code TITLE_MAX} (28). Pire cas : prénom de 13 lettres + nom de famille.
+     */
+    @Test
+    void sendMessageNotification_worstCaseName_englishTitleStaysWithinCap() {
+        NotificationDispatcher englishDispatcher = new NotificationDispatcher(fcmService, smsService, userRepository,
+                notificationService, blockVisibility, pawapayProperties, TestMessages.resolver(AppLanguage.EN));
+        UserEntity messageSender = new UserEntity();
+        setUserId(messageSender, senderId);
+        messageSender.setFirstName("Mohammedaliyu");
+        messageSender.setLastName("Diallo");
+        UserEntity recipient = new UserEntity();
+        recipient.setFirebaseUid("uid-traveler");
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(messageSender));
+        when(userRepository.findById(travelerId)).thenReturn(Optional.of(recipient));
+        when(blockVisibility.isHidden(travelerId, senderId)).thenReturn(false);
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        englishDispatcher.sendMessageNotification(senderId, travelerId, "uid-sender", "Hello", "conv_1");
+
+        var title = ArgumentCaptor.forClass(String.class);
+        verify(fcmService).sendToUser(eq(travelerId), title.capture(), eq("Hello"), anyMap());
+        assertThat(title.getValue()).isEqualTo("Message from Mohammedaliyu…");
+        assertThat(title.getValue().length()).isLessThanOrEqualTo(NotificationCaps.TITLE_MAX);
+    }
+
+    /** Même pire cas en français : « Message de » (11) + 16 = 27 tient déjà, pas de régression. */
+    @Test
+    void sendMessageNotification_worstCaseName_frenchTitleUnchanged() {
+        UserEntity messageSender = new UserEntity();
+        setUserId(messageSender, senderId);
+        messageSender.setFirstName("Mohammedaliyu");
+        messageSender.setLastName("Diallo");
+        UserEntity recipient = new UserEntity();
+        recipient.setFirebaseUid("uid-traveler");
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(messageSender));
+        when(userRepository.findById(travelerId)).thenReturn(Optional.of(recipient));
+        when(blockVisibility.isHidden(travelerId, senderId)).thenReturn(false);
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.sendMessageNotification(senderId, travelerId, "uid-sender", "Bonjour", "conv_1");
+
+        var title = ArgumentCaptor.forClass(String.class);
+        verify(fcmService).sendToUser(eq(travelerId), title.capture(), eq("Bonjour"), anyMap());
+        assertThat(title.getValue()).isEqualTo("Message de Mohammedaliyu D.");
+    }
+
     // ── Langue du destinataire (tâche B1) ────────────────────────────────────
 
     /**

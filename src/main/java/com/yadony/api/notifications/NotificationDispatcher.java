@@ -605,8 +605,14 @@ public class NotificationDispatcher {
         // au milieu, à la longueur que deux lignes tiennent.
         String truncated = NotificationCaps.truncateAtWord(preview, NotificationCaps.BODY_MAX);
         Messages m = messagesFor(recipientId);
-        fcmService.sendToUser(recipientId,
-                m.get("notification.new-message.title", NotificationCaps.shortDisplayName(senderName)), truncated,
+        // « Message from » (13) + un nom au maximum de shortDisplayName (16) dépasse
+        // TITLE_MAX (28) : le français ("Message de ", 11) tient toujours, seul l'anglais
+        // a besoin de cette borne — mais on l'applique dans les deux langues par cohérence
+        // avec le reste du catalogue (jamais de titre au-delà du cap).
+        String title = NotificationCaps.truncateAtWord(
+                m.get("notification.new-message.title", NotificationCaps.shortDisplayName(senderName)),
+                NotificationCaps.TITLE_MAX);
+        fcmService.sendToUser(recipientId, title, truncated,
                 Map.of("type", "NEW_MESSAGE", "conversationId", conversationId));
 
         return userRepository.findById(recipientId)
