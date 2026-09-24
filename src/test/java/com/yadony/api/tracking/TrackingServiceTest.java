@@ -83,11 +83,6 @@ class TrackingServiceTest {
         TestMessages.clearRequest();
     }
 
-    @AfterEach
-    void clearRequest() {
-        TestMessages.clearRequest();
-    }
-
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static void assertYadonyError(ThrowableAssert.ThrowingCallable callable, String expectedErrorCode) {
