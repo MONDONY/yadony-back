@@ -62,6 +62,78 @@ class MessagesBundleTest {
         return result;
     }
 
+    private static Set<Integer> placeholderIndices(String value) {
+        Set<Integer> result = new TreeSet<>();
+        Matcher matcher = PLACEHOLDER.matcher(value);
+        while (matcher.find()) {
+            result.add(Integer.parseInt(matcher.group(1)));
+        }
+        return result;
+    }
+
+    /**
+     * Nombre d'apostrophes littérales qu'un {@code MessageFormat} doit rendre pour
+     * cette valeur brute : chaque paire {@code ''} du fichier source représente une
+     * apostrophe rendue (D4). Compte des paires non chevauchantes.
+     */
+    private static long literalApostropheCount(String rawValue) {
+        long count = 0;
+        int i = 0;
+        while (i < rawValue.length() - 1) {
+            if (rawValue.charAt(i) == '\'' && rawValue.charAt(i + 1) == '\'') {
+                count++;
+                i += 2;
+            } else {
+                i++;
+            }
+        }
+        return count;
+    }
+
+    /**
+     * Construit le {@link MessageFormat} directement sur la valeur brute, comme le
+     * fait {@code ResourceBundleMessageSource} en production (aucun dé-échappement
+     * préalable). {@link MessageFormat} ne lève jamais d'exception sur une apostrophe
+     * mal échappée : elle est avalée silencieusement dans le texte littéral qui suit.
+     * Ce contrôle la détecte quand même en vérifiant, après un rendu avec des
+     * arguments factices {@code Xn}, que :
+     * <ul>
+     *   <li>le nombre d'apostrophes rendues correspond au nombre de {@code ''} de la
+     *       valeur brute (une apostrophe simple non doublée en fait perdre) ;</li>
+     *   <li>chaque marqueur {@code {n}} de la valeur brute apparaît bien substitué par
+     *       {@code Xn} dans le rendu (une apostrophe non fermée avale le marqueur dans
+     *       le texte littéral, qui n'est alors jamais substitué).</li>
+     * </ul>
+     */
+    private static boolean isValidMessageFormat(String rawValue, Locale locale) {
+        Set<Integer> indices = placeholderIndices(rawValue);
+        int size = indices.isEmpty() ? 0 : indices.stream().mapToInt(Integer::intValue).max().orElseThrow() + 1;
+        Object[] args = new Object[size];
+        for (int i = 0; i < size; i++) {
+            args[i] = "X" + i;
+        }
+
+        String rendered;
+        try {
+            rendered = new MessageFormat(rawValue, locale).format(args);
+        } catch (RuntimeException e) {
+            return false;
+        }
+
+        long expectedApostrophes = literalApostropheCount(rawValue);
+        long actualApostrophes = rendered.chars().filter(c -> c == '\'').count();
+        if (expectedApostrophes != actualApostrophes) {
+            return false;
+        }
+
+        for (int index : indices) {
+            if (!rendered.contains("X" + index)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     @Test
     void memesClesDansLesDeuxFichiers() throws IOException {
         Map<String, String> fr = sorted(load("i18n/messages_fr.properties"));
@@ -106,27 +178,23 @@ class MessagesBundleTest {
 
     @Test
     void chaqueValeurEstUnMessageFormatValide() throws IOException {
-        Object[] fakeArgs = {"x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9"};
-
         Map<String, String> fr = sorted(load("i18n/messages_fr.properties"));
-        fr.forEach((key, value) -> {
-            String unescaped = value.replace("''", "'");
-            try {
-                new MessageFormat(unescaped, Locale.FRENCH).format(fakeArgs);
-            } catch (RuntimeException e) {
-                fail("messages_fr.properties / " + key + " n'est pas un MessageFormat valide : " + e.getMessage());
-            }
-        });
+        fr.forEach((key, value) -> assertThat(isValidMessageFormat(value, Locale.FRENCH))
+                .as("messages_fr.properties / " + key + " n'est pas un MessageFormat valide "
+                        + "(pattern invalide ou apostrophe mal échappée) : " + value)
+                .isTrue());
 
         Map<String, String> en = sorted(load("i18n/messages_en.properties"));
-        en.forEach((key, value) -> {
-            String unescaped = value.replace("''", "'");
-            try {
-                new MessageFormat(unescaped, Locale.ENGLISH).format(fakeArgs);
-            } catch (RuntimeException e) {
-                fail("messages_en.properties / " + key + " n'est pas un MessageFormat valide : " + e.getMessage());
-            }
-        });
+        en.forEach((key, value) -> assertThat(isValidMessageFormat(value, Locale.ENGLISH))
+                .as("messages_en.properties / " + key + " n'est pas un MessageFormat valide "
+                        + "(pattern invalide ou apostrophe mal échappée) : " + value)
+                .isTrue());
+    }
+
+    @Test
+    void isValidMessageFormat_detecteUneApostropheNonDoublee() {
+        assertThat(isValidMessageFormat("l'offre {0}", Locale.FRENCH)).isFalse();
+        assertThat(isValidMessageFormat("l''offre {0}", Locale.FRENCH)).isTrue();
     }
 
     @Test
