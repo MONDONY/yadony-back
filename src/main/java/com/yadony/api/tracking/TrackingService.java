@@ -514,7 +514,13 @@ public class TrackingService {
                     "Bid Not Accepted", "Ce colis ne peut pas recevoir un nouveau code dans son état actuel");
         }
 
-        if (bid.getConfirmationCode() == null) {
+        // Code absent ET colis pas encore remis : le DEPART n'a pas été scanné, il n'y a
+        // rien à régénérer. Code absent sur un colis déjà remis : il a été effacé après
+        // trois essais faux ou à l'expiration — c'est précisément le cas où l'expéditeur
+        // doit pouvoir en obtenir un nouveau, sinon le colis n'est plus jamais confirmable
+        // (un second scan DEPART est refusé, et processScan ne génère un code que depuis
+        // ACCEPTED).
+        if (bid.getConfirmationCode() == null && bid.getStatus() == BidStatus.ACCEPTED) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "code-not-generated",
                     "Code Not Generated",
                     "Le code de confirmation n'est pas encore disponible — le voyageur doit d'abord scanner le départ");
