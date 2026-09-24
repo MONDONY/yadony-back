@@ -10,4 +10,5 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_language VARCHAR(2) NOT NUL
 
 ALTER TABLE users DROP CONSTRAINT IF EXISTS chk_users_preferred_language;
 ALTER TABLE users
-    ADD CONSTRAINT chk_users_preferred_language CHECK (preferred_language IN ('fr', 'en'));
+    ADD CONSTRAINT chk_users_preferred_language CHECK (preferred_language IN ('fr', 'en')) NOT VALID;
+ALTER TABLE users VALIDATE CONSTRAINT chk_users_preferred_language;
