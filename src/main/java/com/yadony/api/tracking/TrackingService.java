@@ -307,7 +307,8 @@ public class TrackingService {
                 bid.setConfirmationCode(code);
                 bid.setConfirmationCodeAttempts(0);
                 bid.setConfirmationCodeExpiry(computeCodeExpiry(announcement));
-                var text = com.yadony.api.notifications.NotificationTexts.confirmationCodeReady();
+                var text = com.yadony.api.notifications.NotificationTexts.confirmationCodeReady(
+                        notificationDispatcher.messagesFor(bid.getSenderId()));
                 notificationDispatcher.notifyUser(
                         bid.getSenderId(),
                         text.title(),

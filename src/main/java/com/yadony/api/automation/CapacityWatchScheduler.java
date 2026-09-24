@@ -120,6 +120,7 @@ public class CapacityWatchScheduler {
 
         if (heldLongEnough && !alreadyAlertedThisWindow) {
             var text = com.yadony.api.notifications.NotificationTexts.capacityFree(
+                    notificationDispatcher.messagesFor(rule.getTravelerId()),
                     announcement.getAvailableKg(), consecutiveHours,
                     announcement.getDepartureCity(), announcement.getArrivalCity());
             notificationDispatcher.notifyUser(rule.getTravelerId(), text.title(), text.body(),

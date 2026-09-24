@@ -513,7 +513,7 @@ public class UserService {
         auditService.log("USER", userId, "USER_MESSAGING_MUTED", adminId,
                 Map.of("reason", reason != null ? reason : "", "until", until.toString()));
 
-        var text = com.yadony.api.notifications.NotificationTexts.messagingMuted();
+        var text = com.yadony.api.notifications.NotificationTexts.messagingMuted(notificationDispatcher.messagesFor(userId));
         notificationDispatcher.notifyUser(userId, text.title(), text.body(), Map.of("type", "MESSAGING_MUTED"));
 
         // En dernier, délibérément : un échec de l'audit ou de la notification annulerait la

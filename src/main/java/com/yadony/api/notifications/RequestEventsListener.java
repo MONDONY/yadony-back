@@ -36,7 +36,7 @@ public class RequestEventsListener {
     public void onNegotiationStarted(NegotiationStartedEvent e) {
         // Nouvelle offre déclenchée par le voyageur : supprimée si les deux comptes sont
         // masqués l'un pour l'autre.
-        var text = NotificationTexts.negotiationStarted(e.proposedPriceEur());
+        var text = NotificationTexts.negotiationStarted(dispatcher.messagesFor(e.senderId()), e.proposedPriceEur());
         dispatcher.notifyUnlessBlocked(
             e.senderId(),
             e.travelerId(),
@@ -54,7 +54,7 @@ public class RequestEventsListener {
     @Async
     public void onNegotiationCounterPosted(NegotiationCounterPostedEvent e) {
         // Contre-proposition postée par l'autre partie : même règle que l'offre initiale.
-        var text = NotificationTexts.negotiationCounter(e.newPriceEur(), e.roundsCount());
+        var text = NotificationTexts.negotiationCounter(dispatcher.messagesFor(e.toUserId()), e.newPriceEur(), e.roundsCount());
         dispatcher.notifyUnlessBlocked(
             e.toUserId(),
             e.fromUserId(),
@@ -75,7 +75,7 @@ public class RequestEventsListener {
     @EventListener
     @Async
     public void onNegotiationAwaitingTrip(NegotiationAwaitingTripEvent e) {
-        var text = NotificationTexts.negotiationAwaitingTrip(e.agreedPriceEur());
+        var text = NotificationTexts.negotiationAwaitingTrip(dispatcher.messagesFor(e.travelerId()), e.agreedPriceEur());
         dispatcher.notifyUser(
             e.travelerId(),
             text.title(),
@@ -95,7 +95,7 @@ public class RequestEventsListener {
     @EventListener
     @Async
     public void onNegotiationAwaitingPayment(NegotiationAwaitingPaymentEvent e) {
-        var text = NotificationTexts.negotiationAwaitingPayment(e.agreedPriceEur());
+        var text = NotificationTexts.negotiationAwaitingPayment(dispatcher.messagesFor(e.senderId()), e.agreedPriceEur());
         dispatcher.notifyUser(
             e.senderId(),
             text.title(),
@@ -115,7 +115,7 @@ public class RequestEventsListener {
     @EventListener
     @Async
     public void onNegotiationTripChanged(com.yadony.api.requests.event.NegotiationTripChangedEvent e) {
-        var text = NotificationTexts.negotiationTripChanged();
+        var text = NotificationTexts.negotiationTripChanged(dispatcher.messagesFor(e.senderId()));
         dispatcher.notifyUser(
             e.senderId(),
             text.title(),
@@ -136,7 +136,7 @@ public class RequestEventsListener {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
     public void onNegotiationCommissionPending(NegotiationCommissionPendingEvent e) {
-        var text = NotificationTexts.commissionPending(e.commissionAmount(), e.currency());
+        var text = NotificationTexts.commissionPending(dispatcher.messagesFor(e.travelerId()), e.commissionAmount(), e.currency());
         dispatcher.notifyUser(
             e.travelerId(),
             text.title(),
@@ -160,7 +160,7 @@ public class RequestEventsListener {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
     public void onNegotiationCommissionDeclined(NegotiationCommissionDeclinedEvent e) {
-        var text = NotificationTexts.commissionDeclined();
+        var text = NotificationTexts.commissionDeclined(dispatcher.messagesFor(e.senderId()));
         dispatcher.notifyUser(
             e.senderId(),
             text.title(),
@@ -187,9 +187,9 @@ public class RequestEventsListener {
                 "threadId", e.threadId().toString(),
                 "packageRequestId", e.packageRequestId().toString()
         );
-        var forSender = NotificationTexts.depositPendingSender(e.gross(), e.currency());
+        var forSender = NotificationTexts.depositPendingSender(dispatcher.messagesFor(e.senderId()), e.gross(), e.currency());
         dispatcher.notifyUser(e.senderId(), forSender.title(), forSender.body(), data);
-        var forTraveler = NotificationTexts.depositPendingTraveler();
+        var forTraveler = NotificationTexts.depositPendingTraveler(dispatcher.messagesFor(e.travelerId()));
         dispatcher.notifyUser(e.travelerId(), forTraveler.title(), forTraveler.body(), data);
     }
 
@@ -202,7 +202,7 @@ public class RequestEventsListener {
     @Async
     public void onNegotiationDepositReverted(NegotiationDepositRevertedEvent e) {
         if (e.senderId() == null) return;
-        var text = NotificationTexts.depositReverted(e.reason());
+        var text = NotificationTexts.depositReverted(dispatcher.messagesFor(e.senderId()), e.reason());
         dispatcher.notifyUser(
                 e.senderId(),
                 text.title(),
@@ -230,7 +230,7 @@ public class RequestEventsListener {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
     public void onNegotiationCommissionExpired(NegotiationCommissionExpiredEvent e) {
-        var forTraveler = NotificationTexts.commissionExpiredForTraveler();
+        var forTraveler = NotificationTexts.commissionExpiredForTraveler(dispatcher.messagesFor(e.travelerId()));
         dispatcher.notifyUser(
             e.travelerId(),
             forTraveler.title(),
@@ -247,7 +247,7 @@ public class RequestEventsListener {
         // violerait la contrainte NOT NULL de notifications.user_id. Même garde
         // que onNegotiationExpired.
         if (e.senderId() != null) {
-            var forSender = NotificationTexts.commissionExpiredForSender();
+            var forSender = NotificationTexts.commissionExpiredForSender(dispatcher.messagesFor(e.senderId()));
             dispatcher.notifyUser(
                 e.senderId(),
                 forSender.title(),
@@ -269,7 +269,7 @@ public class RequestEventsListener {
     @EventListener
     @Async
     public void onPackageRequestAccepted(PackageRequestAcceptedEvent e) {
-        var forTraveler = NotificationTexts.requestAcceptedForTraveler(e.agreedPriceEur());
+        var forTraveler = NotificationTexts.requestAcceptedForTraveler(dispatcher.messagesFor(e.travelerId()), e.agreedPriceEur());
         dispatcher.notifyUser(
             e.travelerId(),
             forTraveler.title(),
@@ -284,7 +284,7 @@ public class RequestEventsListener {
         // qu'il vient de confirmer dans l'application — l'écran de succès le lui a déjà dit.
         // Le voyageur, lui, garde son push : c'est une nouvelle pour lui, et elle appelle une
         // action (préparer le retrait du colis).
-        var forSender = NotificationTexts.requestAcceptedForSender(e.agreedPriceEur());
+        var forSender = NotificationTexts.requestAcceptedForSender(dispatcher.messagesFor(e.senderId()), e.agreedPriceEur());
         dispatcher.notifyUser(
             e.senderId(),
             forSender.title(),
@@ -301,7 +301,7 @@ public class RequestEventsListener {
     @EventListener
     @Async
     public void onPackageRequestExpired(PackageRequestExpiredEvent e) {
-        var text = NotificationTexts.requestExpired();
+        var text = NotificationTexts.requestExpired(dispatcher.messagesFor(e.senderId()));
         dispatcher.notifyUser(
             e.senderId(),
             text.title(),
@@ -321,7 +321,7 @@ public class RequestEventsListener {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
     public void onPackageRequestInvitationSent(PackageRequestInvitationSentEvent e) {
-        var text = NotificationTexts.senderInvite(e.senderName(), e.departureCity(), e.arrivalCity());
+        var text = NotificationTexts.senderInvite(dispatcher.messagesFor(e.travelerId()), e.senderName(), e.departureCity(), e.arrivalCity());
         dispatcher.notifyUnlessBlocked(
             e.travelerId(),
             e.senderId(),
@@ -343,7 +343,7 @@ public class RequestEventsListener {
     public void onNegotiationNudgeSent(NegotiationNudgeSentEvent e) {
         // Relance envoyée à la main par l'autre partie : c'est exactement le type de
         // sollicitation qu'un blocage doit faire taire.
-        var text = NotificationTexts.negotiationReminder(e.fromUserName());
+        var text = NotificationTexts.negotiationReminder(dispatcher.messagesFor(e.toUserId()), e.fromUserName());
         dispatcher.notifyUnlessBlocked(
             e.toUserId(),
             e.fromUserId(),
@@ -366,7 +366,7 @@ public class RequestEventsListener {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
     public void onNegotiationCancelled(NegotiationCancelledEvent e) {
-        var text = NotificationTexts.negotiationEnded(e.byName());
+        var text = NotificationTexts.negotiationEnded(dispatcher.messagesFor(e.toUserId()), e.byName());
         dispatcher.notifyUser(
             e.toUserId(),
             text.title(),
@@ -387,12 +387,12 @@ public class RequestEventsListener {
     @EventListener
     @Async
     public void onNegotiationExpired(NegotiationExpiredEvent e) {
-        // Notify traveler
-        var text = NotificationTexts.negotiationExpired();
+        // Notify traveler — texte rendu dans SA langue.
+        var travelerText = NotificationTexts.negotiationExpired(dispatcher.messagesFor(e.travelerId()));
         dispatcher.notifyUser(
             e.travelerId(),
-            text.title(),
-            text.body(),
+            travelerText.title(),
+            travelerText.body(),
             Map.of(
                 "type", "negotiation_expired",
                 "threadId", e.threadId().toString(),
@@ -403,10 +403,11 @@ public class RequestEventsListener {
         // senderId may be null — only notify if present
         // (event currently passes null for senderId per scheduler; can be enriched later)
         if (e.senderId() != null) {
+            var senderText = NotificationTexts.negotiationExpired(dispatcher.messagesFor(e.senderId()));
             dispatcher.notifyUser(
                 e.senderId(),
-                text.title(),
-                text.body(),
+                senderText.title(),
+                senderText.body(),
                 Map.of(
                     "type", "negotiation_expired",
                     "threadId", e.threadId().toString(),

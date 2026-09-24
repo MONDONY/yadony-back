@@ -3,6 +3,7 @@ package com.yadony.api.matching;
 import com.yadony.api.auth.Role;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.matching.dto.InviteRequest;
 import com.yadony.api.notifications.NotificationDispatcher;
 import com.yadony.api.requests.entity.PackageRequestEntity;
@@ -29,6 +30,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -70,6 +72,7 @@ class TravelerInviteBlockVisibilityTest {
         SecurityContextHolder.getContext().setAuthentication(
                 new UsernamePasswordAuthenticationToken(
                         UID, null, List.of(new SimpleGrantedAuthority("ROLE_TRAVELER"))));
+        lenient().when(notificationDispatcher.messagesFor(any())).thenReturn(TestMessages.fr());
     }
 
     @AfterEach

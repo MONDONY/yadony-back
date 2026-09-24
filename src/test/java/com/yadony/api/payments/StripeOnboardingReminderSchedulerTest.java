@@ -4,6 +4,7 @@ import com.yadony.api.auth.StripeAccountStatus;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.notifications.NotificationDispatcher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -25,6 +26,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -44,6 +46,7 @@ class StripeOnboardingReminderSchedulerTest {
         ReflectionTestUtils.setField(scheduler, "firstDelay", Duration.ofDays(1));
         ReflectionTestUtils.setField(scheduler, "secondDelay", Duration.ofDays(7));
         ReflectionTestUtils.setField(scheduler, "enabled", true);
+        lenient().when(notificationDispatcher.messagesFor(any())).thenReturn(TestMessages.fr());
     }
 
     private UserEntity staleUser(Instant lastReminderAt) {

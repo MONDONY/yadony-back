@@ -179,6 +179,7 @@ public class TravelerStatsController {
         }
 
         var text = com.yadony.api.notifications.NotificationTexts.travelerInvite(
+                notificationDispatcher.messagesFor(request.getSenderId()),
                 buildTravelerName(traveler), announcement.getDepartureCity(), announcement.getArrivalCity());
         // Confidentialité — sollicitation directe d'un tiers, donc exactement ce qu'un
         // blocage doit faire taire. Rien n'est renvoyé au voyageur : le 200 est conservé

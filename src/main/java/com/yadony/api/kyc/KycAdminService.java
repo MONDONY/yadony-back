@@ -132,7 +132,7 @@ public class KycAdminService {
                         "previousStatus", previousStatus.name(),
                         "previousSessionId", previousSessionId != null ? previousSessionId : ""));
 
-        var text = com.yadony.api.notifications.NotificationTexts.kycReset();
+        var text = com.yadony.api.notifications.NotificationTexts.kycReset(notificationDispatcher.messagesFor(userId));
         notificationDispatcher.notifyUser(userId, text.title(), text.body(), Map.of("type", "KYC_RESET"));
 
         log.info("KYC reset for user {} by admin {}", userId, adminId);

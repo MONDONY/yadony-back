@@ -85,6 +85,7 @@ public class CorridorAlertTripMatchListener {
                 // si le voyageur et le propriétaire de l'alerte sont masqués l'un pour
                 // l'autre. Le blocage reste silencieux, l'alerte n'est ni coupée ni marquée.
                 var text = com.yadony.api.notifications.NotificationTexts.corridorAlertTrip(
+                        notificationDispatcher.messagesFor(alert.getOwnerId()),
                         trip.getDepartureCity(), trip.getArrivalCity());
                 boolean notified = notificationDispatcher.notifyUnlessBlocked(
                         alert.getOwnerId(),

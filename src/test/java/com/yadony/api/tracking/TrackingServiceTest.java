@@ -75,6 +75,7 @@ class TrackingServiceTest {
                 auditService, eventPublisher, storageService, notificationDispatcher,
                 TestMessages.resolver());
         ReflectionTestUtils.setField(service, "appBaseUrl", "https://yadony.app");
+        lenient().when(notificationDispatcher.messagesFor(any())).thenReturn(TestMessages.fr());
     }
 
     @AfterEach

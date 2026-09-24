@@ -1,5 +1,6 @@
 package com.yadony.api.automation;
 
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.notifications.NotificationDispatcher;
@@ -37,6 +38,7 @@ class CapacityWatchSchedulerTest {
                 watermarkRepository, notificationDispatcher, executor);
         travelerId = UUID.randomUUID();
         announcementId = UUID.randomUUID();
+        lenient().when(notificationDispatcher.messagesFor(any())).thenReturn(TestMessages.fr());
     }
 
     private AutomationRuleEntity capacityRule(Map<String, Object> action) {

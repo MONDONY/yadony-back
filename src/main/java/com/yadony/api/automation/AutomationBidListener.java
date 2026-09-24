@@ -182,6 +182,7 @@ public class AutomationBidListener {
                     OffsetDateTime.now(), announcement.getDepartureAt()).toHours();
             if (hoursUntilDeparture >= 0 && hoursUntilDeparture < hoursBeforeDeparture) {
                 var text = com.yadony.api.notifications.NotificationTexts.lastMinuteOffer(
+                        notificationDispatcher.messagesFor(event.getTravelerId()),
                         hoursBeforeDeparture, event.getCorridor());
                 notificationDispatcher.notifyUser(event.getTravelerId(), text.title(), text.body(),
                         Map.of("type", "automation_last_minute", "bidId", event.getBidId().toString()));

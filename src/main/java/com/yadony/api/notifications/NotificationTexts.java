@@ -1,5 +1,7 @@
 package com.yadony.api.notifications;
 
+import com.yadony.api.common.i18n.Messages;
+
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.Locale;
@@ -11,10 +13,15 @@ import static com.yadony.api.notifications.NotificationCaps.truncateAtWord;
  * Catalogue des libellés de notification : une méthode par événement, la seule
  * source des titres et des corps servis dans le sheet et poussés par FCM.
  *
+ * <p>Chaque méthode qui rend un {@link NotificationText} prend {@link Messages}
+ * en premier paramètre : c'est la langue du <b>destinataire</b> de la notification
+ * (jamais celle de l'émetteur, ni celle de la requête HTTP courante), résolue par
+ * {@code NotificationDispatcher#messagesFor(UUID)}.
+ *
  * <p>Tout ce qui est écrit ici respecte {@link NotificationCaps} au pire cas
- * réaliste, vérifié par {@code NotificationTextsTest} : titre de 28 caractères
- * sans nom de ville (les villes ne sont pas bornées), corps de 72 caractères.
- * Trois règles, trouvées en mesurant :
+ * réaliste, vérifié par {@code NotificationTextsTest} dans les deux langues :
+ * titre de 28 caractères sans nom de ville (les villes ne sont pas bornées),
+ * corps de 72 caractères. Trois règles, trouvées en mesurant :
  * <ol>
  *   <li>aucune ville dans le titre, elles descendent dans le corps ;</li>
  *   <li>on raccourcit la <em>variable</em> ({@link NotificationCaps#shortDisplayName},
@@ -22,9 +29,9 @@ import static com.yadony.api.notifications.NotificationCaps.truncateAtWord;
  *   <li>les villes ne sont jamais raccourcies : c'est de l'identité, et ce sont
  *       elles qui consomment la marge.</li>
  * </ol>
- * Jamais de tiret cadratin ni de flèche dans un texte affiché : « vers » entre
- * deux villes, une virgule ou un point entre deux propositions. Vouvoiement
- * partout.
+ * Jamais de tiret cadratin ni de flèche dans un texte affiché : « vers »/« to »
+ * entre deux villes, une virgule ou un point entre deux propositions. Vouvoiement
+ * partout côté français ; « you » neutre côté anglais.
  */
 public final class NotificationTexts {
 
@@ -32,29 +39,32 @@ public final class NotificationTexts {
 
     // ── Aides de formatage ───────────────────────────────────────────────────
 
-    /** « Paris vers Dakar ». */
-    public static String corridor(String departure, String arrival) {
-        return departure + " vers " + arrival;
+    /** « Paris vers Dakar » / « Paris to Dakar ». */
+    public static String corridor(Messages m, String departure, String arrival) {
+        return departure + " " + m.get("notification.corridor.word") + " " + arrival;
     }
 
-    /** Convertit un libellé « Paris → Dakar » (MatchingTextUtil.corridorLabel) en « Paris vers Dakar ». */
-    public static String corridorFromLabel(String label) {
-        return label == null ? "" : label.replace(" → ", " vers ").replace("→", "vers");
+    /** Convertit un libellé « Paris → Dakar » (MatchingTextUtil.corridorLabel) selon la langue. */
+    public static String corridorFromLabel(Messages m, String label) {
+        if (label == null) return "";
+        String word = m.get("notification.corridor.word");
+        return label.replace(" → ", " " + word + " ").replace("→", word);
     }
 
-    /** « 12 kg » ou « 12,5 kg », jamais « 12.0 ». */
-    public static String kg(BigDecimal weight) {
+    /** « 12 kg » ou « 12,5 kg »/« 12.5 kg » selon la langue, jamais « 12.0 ». */
+    public static String kg(Messages m, BigDecimal weight) {
         if (weight == null) return "";
         BigDecimal w = weight.stripTrailingZeros();
-        return (w.scale() <= 0 ? w.toPlainString() : String.format(Locale.FRENCH, "%.1f", w)) + " kg";
+        String number = w.scale() <= 0 ? w.toPlainString() : String.format(m.locale(), "%.1f", w);
+        return number + " kg";
     }
 
-    /** « 1250,00 € ». */
+    /** « 1250,00 € ». Montant inchangé quelle que soit la langue (D7). */
     public static String eur(BigDecimal amount) {
         return amount == null ? "" : String.format(Locale.FRENCH, "%.2f €", amount.setScale(2, RoundingMode.HALF_UP));
     }
 
-    /** « 1250,00 XOF » ; l'euro prend son symbole. */
+    /** « 1250,00 XOF » ; l'euro prend son symbole. Montant inchangé quelle que soit la langue (D7). */
     public static String amount(BigDecimal amount, String currency) {
         if (amount == null) return "";
         if (currency == null || currency.isBlank() || "EUR".equalsIgnoreCase(currency)) return eur(amount);
@@ -69,7 +79,8 @@ public final class NotificationTexts {
      * utilisé côté admin ({@code ProAnalyticsService#formatAmount}). Distinct de
      * {@link #amount(BigDecimal, String)}, dont le contrat (code ISO, toujours deux
      * décimales) est déjà figé par {@code formattingHelpers()} et utilisé ailleurs (ex.
-     * {@code commissionPending}) — jamais modifié ici.
+     * {@code commissionPending}) — jamais modifié ici. Montant inchangé quelle que soit
+     * la langue (D7).
      */
     public static String mobileMoneyAmount(BigDecimal amount, String currencyCode) {
         if (amount == null) return "";
@@ -80,257 +91,275 @@ public final class NotificationTexts {
         return number + " " + currency.symbol();
     }
 
-    private static String plural(int n, String singular) {
-        return n + " " + singular + (n > 1 ? "s" : "");
-    }
-
     // ── Colis : offres et demandes ───────────────────────────────────────────
 
     /**
      * Une demande d'envoi arrive sur un trajet. {@code weightKg} peut être nul ;
      * {@code corridorLabel} est celui de l'événement (« Paris → Dakar »).
+     * {@code senderName} nul ou vide : l'expéditeur n'a pas de nom public, on
+     * reste générique.
      */
-    public static NotificationText newBid(String senderName, BigDecimal weightKg, String corridorLabel) {
-        String corridor = corridorFromLabel(corridorLabel);
+    public static NotificationText newBid(Messages m, String senderName, BigDecimal weightKg, String corridorLabel) {
+        String corridor = corridorFromLabel(m, corridorLabel);
+        String who = senderName == null || senderName.isBlank()
+                ? m.get("notification.fallback.sender")
+                : shortDisplayName(senderName);
         String body = weightKg != null
-                ? shortDisplayName(senderName) + ", " + kg(weightKg) + ", " + corridor + "."
-                : shortDisplayName(senderName) + ", " + corridor + ".";
-        return new NotificationText("Nouvelle demande d'envoi", body);
+                ? who + ", " + kg(m, weightKg) + ", " + corridor + "."
+                : who + ", " + corridor + ".";
+        return new NotificationText(m.get("notification.new-bid.title"), body);
     }
 
     /** {@code travelerName} nul ou vide : le voyageur n'a plus de nom public, on reste générique. */
-    public static NotificationText bidAccepted(String travelerName) {
-        String who = travelerName == null || travelerName.isBlank() ? "Le voyageur" : shortDisplayName(travelerName);
-        return new NotificationText("Demande acceptée !", who + " accepte votre colis.");
+    public static NotificationText bidAccepted(Messages m, String travelerName) {
+        String who = travelerName == null || travelerName.isBlank()
+                ? m.get("notification.fallback.traveler")
+                : shortDisplayName(travelerName);
+        return new NotificationText(m.get("notification.bid-accepted.title"),
+                m.get("notification.bid-accepted.body", who));
     }
 
-    public static NotificationText bidAcceptedPayNow() {
-        return new NotificationText("Demande acceptée !",
-                "Votre colis est accepté. Ouvrez l'app pour régler le paiement.");
+    public static NotificationText bidAcceptedPayNow(Messages m) {
+        return new NotificationText(m.get("notification.bid-accepted.title"),
+                m.get("notification.bid-accepted-pay-now.body"));
     }
 
-    public static NotificationText bidRejected() {
-        return new NotificationText("Demande refusée", "Le voyageur a refusé votre demande.");
+    public static NotificationText bidRejected(Messages m) {
+        return new NotificationText(m.get("notification.bid-rejected.title"), m.get("notification.bid-rejected.body"));
     }
 
-    public static NotificationText bidRejectedTripWithdrawn() {
-        return new NotificationText("Trajet retiré", "Ce trajet n'est plus disponible. Remboursement en cours.");
+    public static NotificationText bidRejectedTripWithdrawn(Messages m) {
+        return new NotificationText(m.get("notification.bid-rejected-trip-withdrawn.title"),
+                m.get("notification.bid-rejected-trip-withdrawn.body"));
     }
 
     /** Pourquoi une offre est perdue, quand le colis peut être reproposé. */
     public enum BidLoss { TRIP_DELETED, TRANSPORT_CANCELLED, REFUSED }
 
-    private static String bidLossTitle(BidLoss loss) {
+    private static String bidLossTitle(Messages m, BidLoss loss) {
         return switch (loss) {
-            case TRIP_DELETED -> "Trajet supprimé";
-            case TRANSPORT_CANCELLED -> "Transport annulé";
-            case REFUSED -> "Demande refusée";
+            case TRIP_DELETED -> m.get("notification.bid-loss.trip-deleted.title");
+            case TRANSPORT_CANCELLED -> m.get("notification.bid-loss.transport-cancelled.title");
+            case REFUSED -> m.get("notification.bid-loss.refused.title");
         };
     }
 
-    private static String bidLossPrefix(BidLoss loss) {
+    private static String bidLossPrefix(Messages m, BidLoss loss) {
         return switch (loss) {
-            case TRIP_DELETED -> "Le voyageur a supprimé son trajet";
-            case TRANSPORT_CANCELLED -> "Le voyageur a annulé le transport";
-            case REFUSED -> "Le voyageur a refusé votre demande";
+            case TRIP_DELETED -> m.get("notification.bid-loss.trip-deleted.prefix");
+            case TRANSPORT_CANCELLED -> m.get("notification.bid-loss.transport-cancelled.prefix");
+            case REFUSED -> m.get("notification.bid-loss.refused.prefix");
         };
     }
 
     /** Offre perdue, avec {@code alternatives} voyageurs proposés en remplacement. */
-    public static NotificationText bidLostWithRematch(BidLoss loss, int alternatives) {
-        return new NotificationText(bidLossTitle(loss),
-                bidLossPrefix(loss) + ". " + plural(alternatives, "voyageur") + " alternatif"
-                        + (alternatives > 1 ? "s proposés." : " proposé."));
+    public static NotificationText bidLostWithRematch(Messages m, BidLoss loss, int alternatives) {
+        return new NotificationText(bidLossTitle(m, loss),
+                bidLossPrefix(m, loss) + ". "
+                        + m.plural("notification.rematch.alternatives", alternatives, String.valueOf(alternatives)));
     }
 
-    public static NotificationText bidLostRefund(BidLoss loss) {
-        return new NotificationText(bidLossTitle(loss), bidLossPrefix(loss) + ". Remboursement en cours.");
+    public static NotificationText bidLostRefund(Messages m, BidLoss loss) {
+        return new NotificationText(bidLossTitle(m, loss),
+                bidLossPrefix(m, loss) + ". " + m.get("notification.refund-in-progress"));
     }
 
-    public static NotificationText bidExpired() {
-        return new NotificationText("Demande expirée",
-                "Le voyageur est parti avant d'accepter. Remboursement en cours.");
+    public static NotificationText bidExpired(Messages m) {
+        return new NotificationText(m.get("notification.bid-expired.title"), m.get("notification.bid-expired.body"));
     }
 
-    public static NotificationText parcelRefused(String reason) {
-        String motif = reason == null || reason.isBlank() ? "contenu non conforme" : truncateAtWord(reason.trim(), 39);
-        return new NotificationText("Colis refusé", "Refusé par le voyageur. Motif : " + motif + ".");
+    public static NotificationText parcelRefused(Messages m, String reason) {
+        String motif = reason == null || reason.isBlank()
+                ? m.get("notification.parcel-refused.default-reason")
+                : truncateAtWord(reason.trim(), 39);
+        return new NotificationText(m.get("notification.parcel-refused.title"),
+                m.get("notification.parcel-refused.body", motif));
     }
 
     // ── Colis : trajet du voyageur ───────────────────────────────────────────
 
-    public static NotificationText tripCancelledRefund() {
-        return new NotificationText("Trajet annulé", "Le voyageur a annulé son trajet. Remboursement en cours.");
+    public static NotificationText tripCancelledRefund(Messages m) {
+        return new NotificationText(m.get("notification.trip-cancelled.title"),
+                m.get("notification.trip-cancelled-refund.body"));
     }
 
-    public static NotificationText tripCancelledWithRematch(int alternatives) {
-        return new NotificationText("Trajet annulé",
-                "Remboursement en cours. " + plural(alternatives, "voyageur") + " alternatif"
-                        + (alternatives > 1 ? "s proposés." : " proposé."));
+    public static NotificationText tripCancelledWithRematch(Messages m, int alternatives) {
+        return new NotificationText(m.get("notification.trip-cancelled.title"),
+                m.get("notification.refund-in-progress") + " "
+                        + m.plural("notification.rematch.alternatives", alternatives, String.valueOf(alternatives)));
     }
 
-    public static NotificationText tripCancelledNoTraveler() {
-        return new NotificationText("Trajet annulé", "Aucun voyageur disponible sous 72 h. Remboursement traité.");
+    public static NotificationText tripCancelledNoTraveler(Messages m) {
+        return new NotificationText(m.get("notification.trip-cancelled.title"),
+                m.get("notification.trip-cancelled-no-traveler.body"));
     }
 
-    public static NotificationText travelerNoShow() {
-        return new NotificationText("Voyageur absent",
-                "Le voyageur n'est pas venu à la remise. Remboursement en cours.");
+    public static NotificationText travelerNoShow(Messages m) {
+        return new NotificationText(m.get("notification.traveler-no-show.title"),
+                m.get("notification.traveler-no-show.body"));
     }
 
-    public static NotificationText tripArrived() {
-        return new NotificationText("Votre voyageur est arrivé",
-                "Les instructions de retrait sont dans le suivi du colis.");
+    public static NotificationText tripArrived(Messages m) {
+        return new NotificationText(m.get("notification.trip-arrived.title"), m.get("notification.trip-arrived.body"));
     }
 
-    public static NotificationText tripInProgress() {
-        return new NotificationText("Bon voyage !", "Scannez les QR codes à la remise et à la livraison.");
+    public static NotificationText tripInProgress(Messages m) {
+        return new NotificationText(m.get("notification.trip-in-progress.title"),
+                m.get("notification.trip-in-progress.body"));
     }
 
     /** Rappel critique H-2 ; le lieu de remise est libre, donc raccourci au mot. */
-    public static NotificationText handoverReminder(String location) {
-        String lieu = location == null || location.isBlank() ? "le point de remise" : truncateAtWord(location.trim(), 33);
-        return new NotificationText("Plus que 2 h pour déposer",
-                "Dernier créneau : " + lieu + ". Le voyageur attend.");
+    public static NotificationText handoverReminder(Messages m, String location) {
+        String lieu = location == null || location.isBlank()
+                ? m.get("notification.handover-reminder.default-location")
+                : truncateAtWord(location.trim(), 33);
+        return new NotificationText(m.get("notification.handover-reminder.title"),
+                m.get("notification.handover-reminder.body", lieu));
     }
 
-    public static NotificationText confirmationCodeReady() {
-        return new NotificationText("Code de livraison disponible",
-                "Le voyageur est prêt à remettre votre colis. Partagez le code.");
+    public static NotificationText confirmationCodeReady(Messages m) {
+        return new NotificationText(m.get("notification.confirmation-code-ready.title"),
+                m.get("notification.confirmation-code-ready.body"));
     }
 
-    public static NotificationText deliveryConfirmed() {
-        return new NotificationText("Livraison confirmée", "Votre colis est arrivé à destination.");
+    public static NotificationText deliveryConfirmed(Messages m) {
+        return new NotificationText(m.get("notification.delivery-confirmed.title"),
+                m.get("notification.delivery-confirmed.body"));
     }
 
-    public static NotificationText deliveryNoShowForSender() {
-        return new NotificationText("Absence à la livraison",
-                "Le voyageur signale que votre destinataire était absent.");
+    public static NotificationText deliveryNoShowForSender(Messages m) {
+        return new NotificationText(m.get("notification.delivery-no-show.title"),
+                m.get("notification.delivery-no-show.sender.body"));
     }
 
-    public static NotificationText deliveryNoShowForTraveler() {
-        return new NotificationText("Absence à la livraison",
-                "L'expéditeur signale que le colis n'a pas été livré.");
+    public static NotificationText deliveryNoShowForTraveler(Messages m) {
+        return new NotificationText(m.get("notification.delivery-no-show.title"),
+                m.get("notification.delivery-no-show.traveler.body"));
     }
 
     // ── Colis : retours ──────────────────────────────────────────────────────
 
-    public static NotificationText parcelReturnedForSender() {
-        return new NotificationText("Colis rendu", "Le retour de votre colis a été confirmé.");
+    public static NotificationText parcelReturnedForSender(Messages m) {
+        return new NotificationText(m.get("notification.parcel-returned.sender.title"),
+                m.get("notification.parcel-returned.sender.body"));
     }
 
-    public static NotificationText parcelReturnedForTraveler() {
-        return new NotificationText("Retour confirmé", "La restitution du colis est enregistrée.");
+    public static NotificationText parcelReturnedForTraveler(Messages m) {
+        return new NotificationText(m.get("notification.parcel-returned.traveler.title"),
+                m.get("notification.parcel-returned.traveler.body"));
     }
 
-    public static NotificationText returnDeadlineWarningForSender() {
-        return new NotificationText("Code de retour à partager",
-                "Le délai de retour expire dans moins de 24 heures.");
+    public static NotificationText returnDeadlineWarningForSender(Messages m) {
+        return new NotificationText(m.get("notification.return-deadline-warning.sender.title"),
+                m.get("notification.return-deadline-warning.sender.body"));
     }
 
-    public static NotificationText returnDeadlineWarningForTraveler() {
-        return new NotificationText("Retour du colis à effectuer",
-                "Confirmez la restitution avant l'expiration du délai.");
+    public static NotificationText returnDeadlineWarningForTraveler(Messages m) {
+        return new NotificationText(m.get("notification.return-deadline-warning.traveler.title"),
+                m.get("notification.return-deadline-warning.traveler.body"));
     }
 
-    public static NotificationText returnDeadlineExpired() {
-        return new NotificationText("Délai de retour dépassé",
-                "Le retour du colis n'a pas été confirmé. Notre équipe est alertée.");
+    public static NotificationText returnDeadlineExpired(Messages m) {
+        return new NotificationText(m.get("notification.return-deadline-expired.title"),
+                m.get("notification.return-deadline-expired.body"));
     }
 
     // ── Colis : litiges ──────────────────────────────────────────────────────
 
-    public static NotificationText disputeOpenedForSender() {
-        return new NotificationText("Litige ouvert", "Un incident a été signalé sur votre envoi.");
+    public static NotificationText disputeOpenedForSender(Messages m) {
+        return new NotificationText(m.get("notification.dispute-opened.title"),
+                m.get("notification.dispute-opened.sender.body"));
     }
 
-    public static NotificationText disputeOpenedForTraveler() {
-        return new NotificationText("Litige ouvert", "Un incident a été signalé sur votre colis.");
+    public static NotificationText disputeOpenedForTraveler(Messages m) {
+        return new NotificationText(m.get("notification.dispute-opened.title"),
+                m.get("notification.dispute-opened.traveler.body"));
     }
 
-    public static NotificationText disputeUpdated() {
-        return new NotificationText("Litige mis à jour",
-                "Une nouvelle décision financière est enregistrée sur le litige.");
+    public static NotificationText disputeUpdated(Messages m) {
+        return new NotificationText(m.get("notification.dispute-updated.title"),
+                m.get("notification.dispute-updated.body"));
     }
 
-    public static NotificationText disputeResolved() {
-        return new NotificationText("Litige résolu",
-                "Une décision finale a été prise. Consultez le détail du litige.");
+    public static NotificationText disputeResolved(Messages m) {
+        return new NotificationText(m.get("notification.dispute-resolved.title"),
+                m.get("notification.dispute-resolved.body"));
     }
 
     // ── Colis : négociation de prix sur une offre ────────────────────────────
 
-    public static NotificationText bidNegotiationProposal(String grossEur) {
-        return new NotificationText("Nouvelle proposition de prix",
-                "Un expéditeur propose " + grossEur + " € pour votre trajet.");
+    public static NotificationText bidNegotiationProposal(Messages m, String grossEur) {
+        return new NotificationText(m.get("notification.bid-negotiation-proposal.title"),
+                m.get("notification.bid-negotiation-proposal.body", grossEur));
     }
 
-    public static NotificationText bidNegotiationCounter(String grossEur, int round) {
-        return new NotificationText("Nouvelle contre-proposition",
-                "Nouvelle offre : " + grossEur + " €, tour " + round + ".");
+    public static NotificationText bidNegotiationCounter(Messages m, String grossEur, int round) {
+        return new NotificationText(m.get("notification.counter-offer.title"),
+                m.get("notification.bid-negotiation-counter.body", grossEur, round));
     }
 
-    public static NotificationText bidNegotiationAccepted(String grossEur) {
-        return new NotificationText("Prix accepté", "Accord trouvé à " + grossEur + " €.");
+    public static NotificationText bidNegotiationAccepted(Messages m, String grossEur) {
+        return new NotificationText(m.get("notification.bid-negotiation-accepted.title"),
+                m.get("notification.bid-negotiation-accepted.body", grossEur));
     }
 
-    public static NotificationText bidNegotiationClosed() {
-        return new NotificationText("Discussion de prix close",
-                "La discussion de prix sur ce trajet est terminée.");
+    public static NotificationText bidNegotiationClosed(Messages m) {
+        return new NotificationText(m.get("notification.bid-negotiation-closed.title"),
+                m.get("notification.bid-negotiation-closed.body"));
     }
 
-    public static NotificationText bidNegotiationExpired() {
-        return new NotificationText("Discussion de prix expirée",
-                "Faute de réponse, la discussion de prix s'est refermée.");
+    public static NotificationText bidNegotiationExpired(Messages m) {
+        return new NotificationText(m.get("notification.bid-negotiation-expired.title"),
+                m.get("notification.bid-negotiation-expired.body"));
     }
 
     // ── Trajets : demandes de colis et négociation ───────────────────────────
 
-    public static NotificationText negotiationStarted(BigDecimal proposedEur) {
-        return new NotificationText("Nouvelle proposition reçue",
-                "Un voyageur propose " + eur(proposedEur) + " pour votre demande.");
+    public static NotificationText negotiationStarted(Messages m, BigDecimal proposedEur) {
+        return new NotificationText(m.get("notification.negotiation-started.title"),
+                m.get("notification.negotiation-started.body", eur(proposedEur)));
     }
 
-    public static NotificationText negotiationCounter(BigDecimal newPriceEur, int round) {
-        return new NotificationText("Nouvelle contre-proposition",
-                "Nouvelle offre : " + eur(newPriceEur) + ", tour " + round + ".");
+    public static NotificationText negotiationCounter(Messages m, BigDecimal newPriceEur, int round) {
+        return new NotificationText(m.get("notification.counter-offer.title"),
+                m.get("notification.negotiation-counter.body", eur(newPriceEur), round));
     }
 
-    public static NotificationText negotiationAwaitingTrip(BigDecimal agreedEur) {
-        return new NotificationText("Offre acceptée",
-                "L'expéditeur accepte " + eur(agreedEur) + ". Choisissez le trajet à lier.");
+    public static NotificationText negotiationAwaitingTrip(Messages m, BigDecimal agreedEur) {
+        return new NotificationText(m.get("notification.negotiation-awaiting-trip.title"),
+                m.get("notification.negotiation-awaiting-trip.body", eur(agreedEur)));
     }
 
-    public static NotificationText negotiationAwaitingPayment(BigDecimal agreedEur) {
-        return new NotificationText("Paiement requis",
-                "Le voyageur a confirmé son trajet. Payez " + eur(agreedEur) + " pour finaliser.");
+    public static NotificationText negotiationAwaitingPayment(Messages m, BigDecimal agreedEur) {
+        return new NotificationText(m.get("notification.negotiation-awaiting-payment.title"),
+                m.get("notification.negotiation-awaiting-payment.body", eur(agreedEur)));
     }
 
-    public static NotificationText negotiationTripChanged() {
-        return new NotificationText("Trajet mis à jour",
-                "Le voyageur a changé le trajet associé à votre demande.");
+    public static NotificationText negotiationTripChanged(Messages m) {
+        return new NotificationText(m.get("notification.negotiation-trip-changed.title"),
+                m.get("notification.negotiation-trip-changed.body"));
     }
 
-    public static NotificationText commissionPending(BigDecimal commission, String currency) {
-        return new NotificationText("Confirmez la prise en charge",
-                "Offre retenue. Réglez " + amount(commission, currency) + " de commission pour confirmer.");
+    public static NotificationText commissionPending(Messages m, BigDecimal commission, String currency) {
+        return new NotificationText(m.get("notification.commission-pending.title"),
+                m.get("notification.commission-pending.body", amount(commission, currency)));
     }
 
-    public static NotificationText commissionDeclined() {
-        return new NotificationText("Le voyageur a renoncé",
-                "Accord en espèces abandonné. Votre demande reste ouverte.");
+    public static NotificationText commissionDeclined(Messages m) {
+        return new NotificationText(m.get("notification.commission-declined.title"),
+                m.get("notification.commission-declined.body"));
     }
 
     /** Dépôt mobile money lancé sur un fil : à l'expéditeur de régler. */
-    public static NotificationText depositPendingSender(BigDecimal gross, String currency) {
-        return new NotificationText("Payez votre envoi",
-                "Offre acceptée. Réglez " + amount(gross, currency) + " par mobile money sous 30 min.");
+    public static NotificationText depositPendingSender(Messages m, BigDecimal gross, String currency) {
+        return new NotificationText(m.get("notification.pay-your-shipment.title"),
+                m.get("notification.deposit-pending.sender.body", amount(gross, currency)));
     }
 
     /** Même dépôt, côté voyageur : simple information, rien à faire de son côté. */
-    public static NotificationText depositPendingTraveler() {
-        return new NotificationText("Paiement en cours",
-                "L'expéditeur paie par mobile money. Vous serez notifié dès validation.");
+    public static NotificationText depositPendingTraveler(Messages m) {
+        return new NotificationText(m.get("notification.deposit-pending.traveler.title"),
+                m.get("notification.deposit-pending.traveler.body"));
     }
 
     /**
@@ -339,122 +368,127 @@ public final class NotificationTexts {
      * (deposit-failed, deposit-expired, sender-cancelled) ; un motif technique pawaPay
      * n'y apparaît jamais.
      */
-    public static NotificationText depositReverted(String reason) {
+    public static NotificationText depositReverted(Messages m, String reason) {
         String body = switch (reason) {
-            case "deposit-expired" -> "Le délai de paiement mobile money est dépassé. Vous pouvez relancer.";
-            case "sender-cancelled" -> "Vous avez interrompu le paiement. L'accord tient, vous pouvez relancer.";
-            default -> "Paiement mobile money refusé. Vérifiez votre solde puis réessayez.";
+            case "deposit-expired" -> m.get("notification.deposit-reverted.expired.body");
+            case "sender-cancelled" -> m.get("notification.deposit-reverted.sender-cancelled.body");
+            default -> m.get("notification.deposit-reverted.failed.body");
         };
-        return new NotificationText("Paiement non reçu", body);
+        return new NotificationText(m.get("notification.deposit-reverted.title"), body);
     }
 
-    public static NotificationText commissionExpiredForTraveler() {
-        return new NotificationText("Délai de commission dépassé",
-                "Commission non réglée à temps : la demande n'est plus disponible.");
+    public static NotificationText commissionExpiredForTraveler(Messages m) {
+        return new NotificationText(m.get("notification.commission-expired.traveler.title"),
+                m.get("notification.commission-expired.traveler.body"));
     }
 
-    public static NotificationText commissionExpiredForSender() {
-        return new NotificationText("Demande de nouveau ouverte",
-                "Le voyageur n'a pas réglé la commission. Votre demande reste ouverte.");
+    public static NotificationText commissionExpiredForSender(Messages m) {
+        return new NotificationText(m.get("notification.commission-expired.sender.title"),
+                m.get("notification.commission-expired.sender.body"));
     }
 
-    public static NotificationText requestAcceptedForTraveler(BigDecimal agreedEur) {
-        return new NotificationText("Paiement reçu, c'est parti",
-                eur(agreedEur) + " sous séquestre. Préparez le retrait du colis.");
+    public static NotificationText requestAcceptedForTraveler(Messages m, BigDecimal agreedEur) {
+        return new NotificationText(m.get("notification.request-accepted.traveler.title"),
+                m.get("notification.request-accepted.traveler.body", eur(agreedEur)));
     }
 
-    public static NotificationText requestAcceptedForSender(BigDecimal agreedEur) {
-        return new NotificationText("Demande finalisée",
-                "Paiement de " + eur(agreedEur) + " confirmé. Le voyageur va vous contacter.");
+    public static NotificationText requestAcceptedForSender(Messages m, BigDecimal agreedEur) {
+        return new NotificationText(m.get("notification.request-accepted.sender.title"),
+                m.get("notification.request-accepted.sender.body", eur(agreedEur)));
     }
 
-    public static NotificationText requestExpired() {
-        return new NotificationText("Votre demande a expiré",
-                "Aucun voyageur n'a accepté à temps. Vous pouvez en créer une autre.");
+    public static NotificationText requestExpired(Messages m) {
+        return new NotificationText(m.get("notification.request-expired.title"),
+                m.get("notification.request-expired.body"));
     }
 
     /** Un expéditeur invite un voyageur à répondre à sa demande (sens inverse de travelerInvite). */
-    public static NotificationText senderInvite(String senderName, String departureCity, String arrivalCity) {
-        return new NotificationText("Un expéditeur vous invite",
-                shortDisplayName(senderName) + " : colis " + departureCity + " vers " + arrivalCity + ".");
+    public static NotificationText senderInvite(Messages m, String senderName, String departureCity, String arrivalCity) {
+        return new NotificationText(m.get("notification.sender-invite.title"),
+                m.get("notification.sender-invite.body", shortDisplayName(senderName), departureCity, arrivalCity));
     }
 
-    public static NotificationText negotiationReminder(String fromName) {
-        return new NotificationText("Relance",
-                shortDisplayName(fromName) + " attend de vos nouvelles sur votre négociation.");
+    public static NotificationText negotiationReminder(Messages m, String fromName) {
+        return new NotificationText(m.get("notification.negotiation-reminder.title"),
+                m.get("notification.negotiation-reminder.body", shortDisplayName(fromName)));
     }
 
-    public static NotificationText negotiationEnded(String byName) {
-        return new NotificationText("Négociation terminée", shortDisplayName(byName) + " a mis fin à la négociation.");
+    public static NotificationText negotiationEnded(Messages m, String byName) {
+        return new NotificationText(m.get("notification.negotiation-ended.title"),
+                m.get("notification.negotiation-ended.body", shortDisplayName(byName)));
     }
 
-    public static NotificationText negotiationExpired() {
-        return new NotificationText("Négociation expirée", "Cette négociation a expiré faute d'activité.");
+    public static NotificationText negotiationExpired(Messages m) {
+        return new NotificationText(m.get("notification.negotiation-expired.title"),
+                m.get("notification.negotiation-expired.body"));
     }
 
     // ── Trajets : alertes, matches, abonnements ──────────────────────────────
 
-    public static NotificationText packageMatch(String departure, String arrival) {
-        return new NotificationText("Un colis pour votre trajet",
-                corridor(departure, arrival) + " : un colis correspond.");
+    public static NotificationText packageMatch(Messages m, String departure, String arrival) {
+        return new NotificationText(m.get("notification.package-match.title"),
+                m.get("notification.package-match.body", corridor(m, departure, arrival)));
     }
 
-    public static NotificationText travelerInvite(String travelerName, String departure, String arrival) {
-        return new NotificationText("Invitation d'un voyageur",
-                shortDisplayName(travelerName) + " propose " + corridor(departure, arrival) + ".");
+    public static NotificationText travelerInvite(Messages m, String travelerName, String departure, String arrival) {
+        return new NotificationText(m.get("notification.traveler-invite.title"),
+                m.get("notification.traveler-invite.body", shortDisplayName(travelerName), corridor(m, departure, arrival)));
     }
 
-    public static NotificationText travelerNewAnnouncement(String travelerName, String departure, String arrival) {
-        return new NotificationText("Nouveau trajet publié",
-                shortDisplayName(travelerName) + " publie " + corridor(departure, arrival) + ".");
+    public static NotificationText travelerNewAnnouncement(Messages m, String travelerName, String departure, String arrival) {
+        return new NotificationText(m.get("notification.traveler-new-announcement.title"),
+                m.get("notification.trip-posted.body", shortDisplayName(travelerName), corridor(m, departure, arrival)));
     }
 
-    public static NotificationText corridorAlertTrip(String departure, String arrival) {
-        return new NotificationText("Un trajet pour votre alerte",
-                corridor(departure, arrival) + " : un trajet correspond.");
+    public static NotificationText corridorAlertTrip(Messages m, String departure, String arrival) {
+        return new NotificationText(m.get("notification.corridor-alert-trip.title"),
+                m.get("notification.corridor-alert-trip.body", corridor(m, departure, arrival)));
     }
 
     /** Récapitulatif d'alerte ; au-delà de 99 le titre renonce au nombre pour rester sur une ligne. */
-    public static NotificationText corridorAlertDigest(boolean trips, int count, String departure, String arrival) {
-        String what = trips ? "trajet" : "colis";
+    public static NotificationText corridorAlertDigest(Messages m, boolean trips, int count, String departure, String arrival) {
+        String kind = trips ? "trips" : "parcels";
         String title = count < 100
-                ? count + " " + what + (trips && count > 1 ? "s" : "") + " pour votre alerte"
-                : (trips ? "Trajets" : "Colis") + " pour votre alerte";
-        String body = corridor(departure, arrival) + " : " + count + " " + what
-                + (trips && count > 1 ? "s" : "") + (count > 1 ? " correspondent." : " correspond.");
+                ? m.plural("notification.alert-digest." + kind + ".title", count, String.valueOf(count))
+                : m.get("notification.alert-digest." + kind + ".title.many");
+        String body = m.plural("notification.alert-digest." + kind + ".body", count,
+                corridor(m, departure, arrival), String.valueOf(count));
         return new NotificationText(title, body);
     }
 
-    public static NotificationText announcementRemoved(String publicReason) {
-        return new NotificationText("Annonce retirée", "Retirée par la modération : " + publicReason + ".");
+    public static NotificationText announcementRemoved(Messages m, String reasonCode) {
+        String reason = m.get("notification.removal-reason." + reasonCode);
+        return new NotificationText(m.get("notification.announcement-removed.title"),
+                m.get("notification.announcement-removed.body", reason));
     }
 
     // ── Trajets : automatisations voyageur ───────────────────────────────────
 
-    public static NotificationText capacityFree(BigDecimal availableKg, int hours, String departure, String arrival) {
-        return new NotificationText("Capacité libérée",
-                kg(availableKg) + " libres depuis " + hours + " h, " + corridor(departure, arrival) + ".");
+    public static NotificationText capacityFree(Messages m, BigDecimal availableKg, int hours, String departure, String arrival) {
+        return new NotificationText(m.get("notification.capacity-free.title"),
+                m.get("notification.capacity-free.body", kg(m, availableKg), hours, corridor(m, departure, arrival)));
     }
 
-    public static NotificationText lastMinuteOffer(int hoursBeforeDeparture, String corridorLabel) {
-        return new NotificationText("Offre de dernière minute",
-                "Départ dans moins de " + hoursBeforeDeparture + " h : " + corridorFromLabel(corridorLabel) + ".");
+    public static NotificationText lastMinuteOffer(Messages m, int hoursBeforeDeparture, String corridorLabel) {
+        return new NotificationText(m.get("notification.last-minute-offer.title"),
+                m.get("notification.last-minute-offer.body", hoursBeforeDeparture, corridorFromLabel(m, corridorLabel)));
     }
 
-    public static NotificationText loyalSender(String travelerName, String departure, String arrival) {
-        return new NotificationText("Trajet sur votre corridor",
-                shortDisplayName(travelerName) + " publie " + corridor(departure, arrival) + ".");
+    public static NotificationText loyalSender(Messages m, String travelerName, String departure, String arrival) {
+        return new NotificationText(m.get("notification.loyal-sender.title"),
+                m.get("notification.trip-posted.body", shortDisplayName(travelerName), corridor(m, departure, arrival)));
     }
 
     // ── Paiements et identité ────────────────────────────────────────────────
 
     /** {@code amount} déjà formaté par l'appelant (« 45,00 € »). */
-    public static NotificationText paymentReleased(String formattedAmount) {
-        return new NotificationText("Paiement reçu !", formattedAmount + ", virement en cours sous 24 h.");
+    public static NotificationText paymentReleased(Messages m, String formattedAmount) {
+        return new NotificationText(m.get("notification.payment-released.title"),
+                m.get("notification.payment-released.body", formattedAmount));
     }
 
     /**
-     * Rail pawaPay : jumeau mobile money de {@link #paymentReleased(String)},
+     * Rail pawaPay : jumeau mobile money de {@link #paymentReleased(Messages, String)},
      * poussé à la confirmation {@code COMPLETED} du payout (pas à la simple soumission).
      * {@code formattedAmount} déjà formaté par l'appelant (« 13200 F CFA », voir
      * {@link #mobileMoneyAmount(BigDecimal, String)}). Toujours envoyé en {@code notifyUser},
@@ -462,17 +496,20 @@ public final class NotificationTexts {
      * un versement déjà confirmé par pawaPay n'a rien d'urgent à faire dans la minute qui
      * suit, contrairement au virement carte (délai J+1, d'où le suivi ACK historique).
      */
-    public static NotificationText mobileMoneyPayoutSent(String formattedAmount) {
-        return new NotificationText("Versement envoyé", formattedAmount + " envoyés sur votre mobile money.");
+    public static NotificationText mobileMoneyPayoutSent(Messages m, String formattedAmount) {
+        return new NotificationText(m.get("notification.mobile-money-payout-sent.title"),
+                m.get("notification.mobile-money-payout-sent.body", formattedAmount));
     }
 
-    public static NotificationText mobileMoneyPaymentConfirmed() {
-        return new NotificationText("Paiement confirmé", "Le paiement Mobile Money de cet envoi est confirmé.");
+    public static NotificationText mobileMoneyPaymentConfirmed(Messages m) {
+        return new NotificationText(m.get("notification.mobile-money-payment-confirmed.title"),
+                m.get("notification.mobile-money-payment-confirmed.body"));
     }
 
     /** Push voyageur au deposit COMPLETED (séquestre acquis) : la préparation de la remise peut commencer. */
-    public static NotificationText mobileMoneyPaymentReceived() {
-        return new NotificationText("Colis payé", "L'expéditeur a payé en mobile money. Préparez la remise.");
+    public static NotificationText mobileMoneyPaymentReceived(Messages m) {
+        return new NotificationText(m.get("notification.mobile-money-payment-received.title"),
+                m.get("notification.mobile-money-payment-received.body"));
     }
 
     /**
@@ -480,80 +517,78 @@ public final class NotificationTexts {
      * {@code depositDeadlineMinutes} vient de la configuration ({@code yadony.pawapay.deposit-deadline-minutes})
      * — jamais en dur, sous peine de mentir si le délai est reconfiguré.
      */
-    public static NotificationText mobileMoneyPaymentPending(int depositDeadlineMinutes) {
-        return new NotificationText("Payez votre envoi",
-                "Le voyageur a accepté. Réglez en mobile money sous " + depositDeadlineMinutes + " min.");
+    public static NotificationText mobileMoneyPaymentPending(Messages m, int depositDeadlineMinutes) {
+        return new NotificationText(m.get("notification.pay-your-shipment.title"),
+                m.get("notification.mobile-money-payment-pending.body", depositDeadlineMinutes));
     }
 
     /**
      * Deposit FAILED (PIN refusé, solde insuffisant, opérateur indisponible…) : le motif
      * technique pawaPay n'est jamais exposé, l'expéditeur est seulement invité à réessayer.
      */
-    public static NotificationText mobileMoneyPaymentFailed() {
-        return new NotificationText("Paiement refusé", "Le paiement mobile money a échoué. Réessayez depuis l'app.");
+    public static NotificationText mobileMoneyPaymentFailed(Messages m) {
+        return new NotificationText(m.get("notification.mobile-money-payment-failed.title"),
+                m.get("notification.mobile-money-payment-failed.body"));
     }
 
     /**
      * Deadline de paiement (30 min après acceptation) dépassée côté expéditeur :
      * le bid est annulé, la capacité rendue au voyageur.
      */
-    public static NotificationText mobileMoneyPaymentExpired() {
-        return new NotificationText("Délai de paiement dépassé",
-                "Votre envoi est annulé, le paiement n'a pas été reçu à temps.");
+    public static NotificationText mobileMoneyPaymentExpired(Messages m) {
+        return new NotificationText(m.get("notification.mobile-money-payment-expired.title"),
+                m.get("notification.mobile-money-payment-expired.body"));
     }
 
     /** Même événement, côté voyageur : la capacité qu'il avait cédée lui est rendue. */
-    public static NotificationText mobileMoneyPaymentExpiredForTraveler() {
-        return new NotificationText("Colis annulé",
-                "L'expéditeur n'a pas payé dans le délai. Le colis est annulé.");
+    public static NotificationText mobileMoneyPaymentExpiredForTraveler(Messages m) {
+        return new NotificationText(m.get("notification.mobile-money-payment-expired.traveler.title"),
+                m.get("notification.mobile-money-payment-expired.traveler.body"));
     }
 
-    public static NotificationText kycVerified() {
-        return new NotificationText("Identité vérifiée",
-                "Vous pouvez maintenant publier et effectuer vos transactions.");
+    public static NotificationText kycVerified(Messages m) {
+        return new NotificationText(m.get("notification.kyc-verified.title"), m.get("notification.kyc-verified.body"));
     }
 
-    public static NotificationText kycActionRequired() {
-        return new NotificationText("Vérification à compléter",
-                "Une action est nécessaire pour terminer la vérification.");
+    public static NotificationText kycActionRequired(Messages m) {
+        return new NotificationText(m.get("notification.kyc-action-required.title"),
+                m.get("notification.kyc-action-required.body"));
     }
 
-    public static NotificationText kycReset() {
-        return new NotificationText("Vérification réinitialisée",
-                "Un administrateur a réinitialisé votre vérification. Relancez-la.");
+    public static NotificationText kycReset(Messages m) {
+        return new NotificationText(m.get("notification.kyc-reset.title"), m.get("notification.kyc-reset.body"));
     }
 
-    public static NotificationText stripeOnboardingIncomplete() {
-        return new NotificationText("Finalisez vos paiements",
-                "Il manque quelques informations pour être payé par carte. Deux minutes.");
+    public static NotificationText stripeOnboardingIncomplete(Messages m) {
+        return new NotificationText(m.get("notification.stripe-onboarding-incomplete.title"),
+                m.get("notification.stripe-onboarding-incomplete.body"));
     }
 
-    public static NotificationText cardExpiring(String brand, String last4) {
-        String b = brand == null || brand.isBlank() ? "Carte" : truncateAtWord(brand.trim(), 16);
+    public static NotificationText cardExpiring(Messages m, String brand, String last4) {
+        String b = brand == null || brand.isBlank() ? m.get("notification.card-expiring.default-brand") : truncateAtWord(brand.trim(), 16);
         String l = last4 == null || last4.isBlank() ? "****" : last4;
-        return new NotificationText("Votre carte expire bientôt",
-                b + " ***" + l + " expire ce mois-ci. Mettez-la à jour.");
+        return new NotificationText(m.get("notification.card-expiring.title"),
+                m.get("notification.card-expiring.body", b, l));
     }
 
     // ── Annonces et compte ───────────────────────────────────────────────────
 
-    public static NotificationText accountSuspended() {
-        return new NotificationText("Compte suspendu", "Votre compte est suspendu après des incidents répétés.");
+    public static NotificationText accountSuspended(Messages m) {
+        return new NotificationText(m.get("notification.account-suspended.title"),
+                m.get("notification.account-suspended.body"));
     }
 
-    public static NotificationText messagingMuted() {
-        return new NotificationText("Messagerie suspendue",
-                "Votre accès à la messagerie est suspendu par un administrateur.");
+    public static NotificationText messagingMuted(Messages m) {
+        return new NotificationText(m.get("notification.messaging-muted.title"),
+                m.get("notification.messaging-muted.body"));
     }
 
     /**
      * Avertissement de modération. La note est libre : c'est une annonce, donc
      * le service garde le texte complet dans {@code fullBody} et résume le corps.
      */
-    public static NotificationText adminWarning(String note) {
-        String body = note == null || note.isBlank()
-                ? "Un comportement signalé sur votre compte a été examiné."
-                : note.trim();
-        return new NotificationText("Avertissement Yadony", body);
+    public static NotificationText adminWarning(Messages m, String note) {
+        String body = note == null || note.isBlank() ? m.get("notification.admin-warning.default-body") : note.trim();
+        return new NotificationText(m.get("notification.admin-warning.title"), body);
     }
 }

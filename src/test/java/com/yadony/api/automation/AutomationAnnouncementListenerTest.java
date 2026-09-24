@@ -1,5 +1,6 @@
 package com.yadony.api.automation;
 
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.matching.AnnouncementPublishedEvent;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.notifications.NotificationDispatcher;
@@ -35,6 +36,7 @@ class AutomationAnnouncementListenerTest {
         senderId1 = UUID.randomUUID();
         senderId2 = UUID.randomUUID();
         announcementId = UUID.randomUUID();
+        lenient().when(notificationDispatcher.messagesFor(any())).thenReturn(TestMessages.fr());
     }
 
     private AutomationRuleEntity loyalRule(boolean enabled) {

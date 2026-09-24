@@ -10,6 +10,7 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.auth.UserService;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.AnnouncementService;
@@ -20,6 +21,7 @@ import com.yadony.api.signalements.ReportReason;
 import com.yadony.api.signalements.ReportRepository;
 import com.yadony.api.signalements.ReportStatus;
 import com.yadony.api.signalements.ReportTargetType;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -58,6 +60,11 @@ class AdminReportsControllerTest {
     @Mock UserService userService;
     @Mock AnnouncementService announcementService;
     @Mock NotificationDispatcher notificationDispatcher;
+
+    @BeforeEach
+    void stubMessages() {
+        lenient().when(notificationDispatcher.messagesFor(any())).thenReturn(TestMessages.fr());
+    }
 
     private AdminReportsController controller() {
         return new AdminReportsController(reportRepo, userRepo, announcementRepo, auditService, reportService,
