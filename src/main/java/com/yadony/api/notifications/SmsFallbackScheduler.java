@@ -67,9 +67,17 @@ public class SmsFallbackScheduler {
                             .getOrDefault(user.getFirebaseUid(), FirebaseContactService.Contact.EMPTY)
                             .phoneNumber();
                     if (phone != null && !phone.isBlank()) {
-                        smsService.send(phone, buildSmsText(notification));
-                        log.info("[SmsFallback] SMS sent for notificationId={} userId={}",
-                                notification.getId(), notification.getUserId());
+                        try {
+                            smsService.send(phone, buildSmsText(notification));
+                            log.info("[SmsFallback] SMS sent for notificationId={} userId={}",
+                                    notification.getId(), notification.getUserId());
+                        } catch (InvalidSmsRecipientException e) {
+                            // Le transporteur refuse ce numéro : le rejouer toutes les 30 s
+                            // ne changerait rien et facturerait un appel à chaque passage.
+                            // Traitée comme « pas de numéro » : marquée, pas retentée.
+                            log.warn("[SmsFallback] Recipient rejected by carrier (code {}) for notificationId={}, no retry",
+                                    e.getCarrierErrorCode(), notification.getId());
+                        }
                     } else {
                         log.warn("[SmsFallback] No phone number for userId={}, skipping",
                                 notification.getUserId());

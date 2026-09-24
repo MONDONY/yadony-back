@@ -110,6 +110,28 @@ class GlobalExceptionHandlerTest {
             assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
             assertThat(response.getBody().getType().toString()).contains("validation");
         }
+
+        @Test
+        @DisplayName("le chemin interne (méthode.paramètre) ne sort pas : détail générique + violations par champ")
+        void handleConstraintViolation_hidesInternalPath_exposesLeafField() {
+            @SuppressWarnings("unchecked")
+            ConstraintViolation<Object> violation = mock(ConstraintViolation.class);
+            jakarta.validation.Path path = mock(jakarta.validation.Path.class);
+            when(path.toString()).thenReturn("sendOtp.request.phoneNumber");
+            when(violation.getPropertyPath()).thenReturn(path);
+            when(violation.getMessage()).thenReturn("Le numéro doit être au format E.164");
+            ConstraintViolationException ex = new ConstraintViolationException(
+                    "sendOtp.request.phoneNumber: Le numéro doit être au format E.164", Set.of(violation));
+
+            ResponseEntity<ProblemDetail> response = handler.handleConstraintViolation(ex);
+
+            assertThat(response.getBody().getDetail()).doesNotContain("sendOtp");
+            @SuppressWarnings("unchecked")
+            Map<String, String> violations =
+                    (Map<String, String>) response.getBody().getProperties().get("violations");
+            assertThat(violations).containsEntry("phoneNumber", "Le numéro doit être au format E.164");
+            assertThat(violations).doesNotContainKey("sendOtp.request.phoneNumber");
+        }
     }
 
     @Nested
