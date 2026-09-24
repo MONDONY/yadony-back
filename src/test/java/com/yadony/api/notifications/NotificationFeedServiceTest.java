@@ -3,7 +3,10 @@ package com.yadony.api.notifications;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.i18n.MessagesResolver;
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.notifications.dto.FeedItemDTO;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -47,15 +50,22 @@ class NotificationFeedServiceTest {
     private final String annId = UUID.randomUUID().toString();
     private final LocalDateTime t0 = LocalDateTime.of(2026, 9, 3, 10, 0);
 
+    private final MessagesResolver messagesResolver = TestMessages.resolver();
+
     @BeforeEach
     void setUp() {
         var notificationService = new NotificationService(repository, userRepository,
                 new NotificationCapsPolicy(NotificationCapsPolicy.Mode.OFF));
-        service = new NotificationFeedService(repository, notificationService);
+        service = new NotificationFeedService(repository, notificationService, messagesResolver);
         var user = new UserEntity();
         user.setFirebaseUid(uid);
         ReflectionTestUtils.setField(user, "id", userId);
         when(userRepository.findByFirebaseUid(uid)).thenReturn(Optional.of(user));
+    }
+
+    @AfterEach
+    void tearDown() {
+        TestMessages.clearRequest();
     }
 
     private NotificationEntity bid(int minutesAgo, boolean read) {
@@ -118,6 +128,40 @@ class NotificationFeedServiceTest {
         assertThat(agg.read()).isFalse();
         assertThat(page.content().get(1).id()).isEqualTo(other.getId());
         assertThat(page.totalElements()).isEqualTo(2);
+    }
+
+    /** Le feed est lu par son propre destinataire : la langue vient de la requête (D6). */
+    @Test
+    void aggregateRow_isRenderedInEnglish_withAcceptLanguageHeader() {
+        var a = bid(1, false);
+        var b = bid(2, false);
+        var c = bid(3, false);
+        when(repository.findByUserIdAndReadAtIsNullAndGroupKeyIsNotNullOrderByCreatedAtDesc(userId))
+                .thenReturn(List.of(a, b, c));
+        when(repository.findFeed(eq(userId), eq(NotificationCategory.ANNONCE), anyCollection(), any()))
+                .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 30), 0));
+        TestMessages.requestWithAcceptLanguage("en");
+
+        var page = service.feed(uid, 0, 30);
+
+        assertThat(page.content()).hasSize(1);
+        assertThat(page.content().get(0).title()).isEqualTo("3 parcel requests");
+    }
+
+    @Test
+    void aggregateRow_isRenderedInFrench_withoutAcceptLanguageHeader() {
+        var a = bid(1, false);
+        var b = bid(2, false);
+        var c = bid(3, false);
+        when(repository.findByUserIdAndReadAtIsNullAndGroupKeyIsNotNullOrderByCreatedAtDesc(userId))
+                .thenReturn(List.of(a, b, c));
+        when(repository.findFeed(eq(userId), eq(NotificationCategory.ANNONCE), anyCollection(), any()))
+                .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 30), 0));
+
+        var page = service.feed(uid, 0, 30);
+
+        assertThat(page.content()).hasSize(1);
+        assertThat(page.content().get(0).title()).isEqualTo("3 demandes d'envoi");
     }
 
     @Test

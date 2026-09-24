@@ -1,5 +1,6 @@
 package com.yadony.api.notifications;
 
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.support.SupportMessageAuthorType;
 import com.yadony.api.support.events.SupportMessageCreatedEvent;
 import org.junit.jupiter.api.Test;
@@ -18,6 +19,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class SupportMessageEventListenerTest {
@@ -31,6 +33,8 @@ class SupportMessageEventListenerTest {
 
     @Test
     void notifiesTheTicketOwnerWhenAnAdminReplies() {
+        when(notificationDispatcher.messagesFor(ownerId)).thenReturn(TestMessages.fr());
+
         listener.onSupportMessage(new SupportMessageCreatedEvent(
                 ticketId, UUID.randomUUID(), ownerId, SupportMessageAuthorType.ADMIN));
 
@@ -40,6 +44,17 @@ class SupportMessageEventListenerTest {
 
         assertThat(data.getValue()).containsEntry("type", "SUPPORT_MESSAGE");
         assertThat(data.getValue()).containsEntry("ticketId", ticketId.toString());
+    }
+
+    @Test
+    void notifiesTheTicketOwnerInEnglish_whenRecipientPrefersEnglish() {
+        when(notificationDispatcher.messagesFor(ownerId)).thenReturn(TestMessages.en());
+
+        listener.onSupportMessage(new SupportMessageCreatedEvent(
+                ticketId, UUID.randomUUID(), ownerId, SupportMessageAuthorType.ADMIN));
+
+        verify(notificationDispatcher).notifyUser(eq(ownerId), eq("Support replied to you"),
+                eq("Open your request to read the reply."), any());
     }
 
     /** Le propre message de l'utilisateur ne doit pas lui revenir en push. */

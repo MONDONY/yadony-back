@@ -1,5 +1,7 @@
 package com.yadony.api.notifications;
 
+import com.yadony.api.common.i18n.Messages;
+import com.yadony.api.common.i18n.TestMessages;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -18,6 +20,9 @@ class NotificationAggregateTest {
     private static final String ALERT = "0f0e0d0c-0b0a-4908-8706-050403020100";
     private static final String TRAVELER = "9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c6b";
 
+    private static final Messages FR = TestMessages.fr();
+    private static final Messages EN = TestMessages.en();
+
     private static NotificationEntity latest(String type, Map<String, String> data) {
         return new NotificationEntity(UUID.randomUUID(), type, "Titre de la dernière", "Corps de la dernière.",
                 data, false);
@@ -28,7 +33,7 @@ class NotificationAggregateTest {
         var latest = latest("BID_CREATED", Map.of("type", "BID_CREATED", "announcementId", ANN,
                 "bidId", UUID.randomUUID().toString()));
 
-        var text = NotificationAggregate.text("bid:announcement:" + ANN, 3, latest);
+        var text = NotificationAggregate.text(FR, "bid:announcement:" + ANN, 3, latest);
 
         assertThat(text.title()).isEqualTo("3 demandes d'envoi");
         assertThat(text.body()).isEqualTo("Corps de la dernière.");
@@ -37,11 +42,25 @@ class NotificationAggregateTest {
     }
 
     @Test
+    void bids_titleInEnglish_singularAndPastTheCap() {
+        var latest = latest("BID_CREATED", Map.of("type", "BID_CREATED", "announcementId", ANN));
+
+        assertThat(NotificationAggregate.text(EN, "bid:announcement:" + ANN, 12, latest).title())
+                .isEqualTo("12 parcel requests");
+        assertThat(NotificationAggregate.text(EN, "bid:announcement:" + ANN, 100, latest).title())
+                .isEqualTo("Parcel requests");
+    }
+
+    @Test
     void thread_linksToNegotiation() {
         var latest = latest("negotiation_counter", Map.of("type", "negotiation_counter", "threadId", THREAD));
 
-        assertThat(NotificationAggregate.text("request:thread:" + THREAD, 4, latest).title())
+        assertThat(NotificationAggregate.text(FR, "request:thread:" + THREAD, 4, latest).title())
                 .isEqualTo("4 tours de négociation");
+        assertThat(NotificationAggregate.text(EN, "request:thread:" + THREAD, 4, latest).title())
+                .isEqualTo("4 negotiation rounds");
+        assertThat(NotificationAggregate.text(EN, "request:thread:" + THREAD, 100, latest).title())
+                .isEqualTo("Negotiation rounds");
         assertThat(NotificationAggregate.deeplink("request:thread:" + THREAD, latest))
                 .contains("yadony://negotiations/" + THREAD);
     }
@@ -53,10 +72,18 @@ class NotificationAggregateTest {
         var packages = latest("CORRIDOR_ALERT", Map.of("type", "CORRIDOR_ALERT", "alertId", ALERT,
                 "direction", "TRAVELER_WANTS_PACKAGES"));
 
-        assertThat(NotificationAggregate.text("alert:" + ALERT, 5, trips).title())
+        assertThat(NotificationAggregate.text(FR, "alert:" + ALERT, 5, trips).title())
                 .isEqualTo("5 trajets pour votre alerte");
-        assertThat(NotificationAggregate.text("alert:" + ALERT, 5, packages).title())
+        assertThat(NotificationAggregate.text(FR, "alert:" + ALERT, 5, packages).title())
                 .isEqualTo("5 colis pour votre alerte");
+        assertThat(NotificationAggregate.text(EN, "alert:" + ALERT, 5, trips).title())
+                .isEqualTo("5 trips for your alert");
+        assertThat(NotificationAggregate.text(EN, "alert:" + ALERT, 5, packages).title())
+                .isEqualTo("5 parcels for your alert");
+        assertThat(NotificationAggregate.text(EN, "alert:" + ALERT, 100, trips).title())
+                .isEqualTo("Trips for your alert");
+        assertThat(NotificationAggregate.text(EN, "alert:" + ALERT, 100, packages).title())
+                .isEqualTo("Parcels for your alert");
         assertThat(NotificationAggregate.deeplink("alert:" + ALERT, trips))
                 .contains("yadony://corridor-alerts/" + ALERT + "/matches");
     }
@@ -76,12 +103,20 @@ class NotificationAggregateTest {
         var follow = latest("TRAVELER_NEW_ANNOUNCEMENT", Map.of("type", "TRAVELER_NEW_ANNOUNCEMENT",
                 "announcementId", ANN, "travelerId", TRAVELER));
 
-        assertThat(NotificationAggregate.text("match:announcement:" + ANN, 3, match).title())
+        assertThat(NotificationAggregate.text(FR, "match:announcement:" + ANN, 3, match).title())
                 .isEqualTo("3 colis pour votre trajet");
+        assertThat(NotificationAggregate.text(EN, "match:announcement:" + ANN, 3, match).title())
+                .isEqualTo("3 parcels for your trip");
+        assertThat(NotificationAggregate.text(EN, "match:announcement:" + ANN, 100, match).title())
+                .isEqualTo("Parcels for your trip");
         assertThat(NotificationAggregate.deeplink("match:announcement:" + ANN, match))
                 .contains("yadony://announcements/" + ANN + "/trip");
-        assertThat(NotificationAggregate.text("follow:traveler:" + TRAVELER, 3, follow).title())
+        assertThat(NotificationAggregate.text(FR, "follow:traveler:" + TRAVELER, 3, follow).title())
                 .isEqualTo("3 trajets publiés");
+        assertThat(NotificationAggregate.text(EN, "follow:traveler:" + TRAVELER, 3, follow).title())
+                .isEqualTo("3 trips posted");
+        assertThat(NotificationAggregate.text(EN, "follow:traveler:" + TRAVELER, 100, follow).title())
+                .isEqualTo("Trips posted");
         assertThat(NotificationAggregate.deeplink("follow:traveler:" + TRAVELER, follow))
                 .contains("yadony://travelers/" + TRAVELER);
     }
@@ -90,7 +125,8 @@ class NotificationAggregateTest {
     void unknownKind_fallsBackToLatestTitleAndDeeplink() {
         var latest = latest("BID_ACCEPTED", Map.of("type", "BID_ACCEPTED", "bidId", THREAD));
 
-        assertThat(NotificationAggregate.text("mystery:" + ANN, 3, latest).title()).isEqualTo("Titre de la dernière");
+        assertThat(NotificationAggregate.text(FR, "mystery:" + ANN, 3, latest).title()).isEqualTo("Titre de la dernière");
+        assertThat(NotificationAggregate.text(EN, "mystery:" + ANN, 3, latest).title()).isEqualTo("Titre de la dernière");
         assertThat(NotificationAggregate.deeplink("mystery:" + ANN, latest)).contains("yadony://bids/" + THREAD);
     }
 
@@ -100,10 +136,12 @@ class NotificationAggregateTest {
         var trips = latest("CORRIDOR_ALERT", Map.of("direction", "SENDER_WANTS_TRIPS"));
         for (String key : new String[]{"bid:announcement:" + ANN, "request:thread:" + THREAD, "alert:" + ALERT,
                 "match:announcement:" + ANN, "follow:traveler:" + TRAVELER}) {
-            String title = NotificationAggregate.text(key, count, trips).title();
-            assertThat(title.length()).as(key + " / " + count + " : " + title)
-                    .isLessThanOrEqualTo(NotificationCaps.TITLE_MAX);
-            if (count >= 100) assertThat(title).doesNotContain(String.valueOf(count));
+            for (Messages m : new Messages[]{FR, EN}) {
+                String title = NotificationAggregate.text(m, key, count, trips).title();
+                assertThat(title.length()).as(m.language() + " / " + key + " / " + count + " : " + title)
+                        .isLessThanOrEqualTo(NotificationCaps.TITLE_MAX);
+                if (count >= 100) assertThat(title).doesNotContain(String.valueOf(count));
+            }
         }
     }
 }

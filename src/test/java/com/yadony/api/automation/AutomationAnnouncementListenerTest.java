@@ -65,6 +65,29 @@ class AutomationAnnouncementListenerTest {
     }
 
     /**
+     * Suivi de la relecture B1 : chaque expéditeur fidèle a sa propre langue, indépendante
+     * de celle du voyageur qui publie le trajet (le texte se rend une fois par expéditeur,
+     * cf. le commentaire du listener).
+     */
+    @Test
+    void onAnnouncementPublished_eachLoyalSenderGetsOwnLanguage() {
+        when(ruleRepository.findByTravelerIdOrderByCreatedAtAsc(travelerId))
+                .thenReturn(List.of(loyalRule(true)));
+        when(bidRepository.findLoyalSenderIds(travelerId, "Paris", "Dakar"))
+                .thenReturn(List.of(senderId1, senderId2));
+        when(notificationDispatcher.messagesFor(senderId1)).thenReturn(TestMessages.fr());
+        when(notificationDispatcher.messagesFor(senderId2)).thenReturn(TestMessages.en());
+
+        listener.onAnnouncementPublished(new AnnouncementPublishedEvent(
+                announcementId, travelerId, "Jean", "Paris", "Dakar"));
+
+        verify(notificationDispatcher).notifyUnlessBlocked(
+                eq(senderId1), eq(travelerId), eq("Trajet sur votre corridor"), any(), any(), eq(false));
+        verify(notificationDispatcher).notifyUnlessBlocked(
+                eq(senderId2), eq(travelerId), eq("Trip on your route"), any(), any(), eq(false));
+    }
+
+    /**
      * Confidentialité — la règle est armée par le voyageur et parle de son trajet : un
      * expéditeur masqué pour lui ne reçoit rien. Le listener délègue au dispatcher en lui
      * déclarant l'émetteur ; la voie générique, aveugle au blocage, est proscrite ici.

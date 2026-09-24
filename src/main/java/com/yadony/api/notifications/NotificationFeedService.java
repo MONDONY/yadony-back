@@ -2,6 +2,8 @@ package com.yadony.api.notifications;
 
 import com.yadony.api.common.PageResponse;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.i18n.Messages;
+import com.yadony.api.common.i18n.MessagesResolver;
 import com.yadony.api.notifications.dto.AnnouncementsSummaryDTO;
 import com.yadony.api.notifications.dto.FeedItemDTO;
 import com.yadony.api.notifications.dto.NotificationDTO;
@@ -43,10 +45,13 @@ public class NotificationFeedService {
 
     private final NotificationRepository repository;
     private final NotificationService notificationService;
+    private final MessagesResolver messagesResolver;
 
-    public NotificationFeedService(NotificationRepository repository, NotificationService notificationService) {
+    public NotificationFeedService(NotificationRepository repository, NotificationService notificationService,
+                                   MessagesResolver messagesResolver) {
         this.repository = repository;
         this.notificationService = notificationService;
+        this.messagesResolver = messagesResolver;
     }
 
     public PageResponse<FeedItemDTO> feed(String firebaseUid, int page, int size) {
@@ -68,12 +73,15 @@ public class NotificationFeedService {
         }
         LocalDateTime bottom = rows.isLast() || items.isEmpty() ? null : items.get(items.size() - 1).createdAt();
         boolean pageExists = page == 0 || !items.isEmpty(); // au-delà de la fin, rien ne s'ajoute
+        // La langue de la requête courante : c'est l'utilisateur qui lit son propre feed
+        // (D6), jamais celle du destinataire stockée en base.
+        Messages m = collapsed.isEmpty() ? null : messagesResolver.forRequest();
         for (var group : collapsed.entrySet()) {
             LocalDateTime at = group.getValue().get(0).getCreatedAt();
             boolean belowTop = top == null || !at.isAfter(top);
             boolean aboveBottom = bottom == null || at.isAfter(bottom);
             if (pageExists && belowTop && aboveBottom) {
-                items.add(FeedItemDTO.aggregate(group.getKey(), group.getValue()));
+                items.add(FeedItemDTO.aggregate(m, group.getKey(), group.getValue()));
             }
         }
         items.sort(Comparator.comparing(FeedItemDTO::createdAt, Comparator.nullsLast(Comparator.reverseOrder())));

@@ -604,7 +604,9 @@ public class NotificationDispatcher {
         // message (refonte du sheet, 2026-09). L'aperçu est coupé au mot, jamais
         // au milieu, à la longueur que deux lignes tiennent.
         String truncated = NotificationCaps.truncateAtWord(preview, NotificationCaps.BODY_MAX);
-        fcmService.sendToUser(recipientId, "Message de " + NotificationCaps.shortDisplayName(senderName), truncated,
+        Messages m = messagesFor(recipientId);
+        fcmService.sendToUser(recipientId,
+                m.get("notification.new-message.title", NotificationCaps.shortDisplayName(senderName)), truncated,
                 Map.of("type", "NEW_MESSAGE", "conversationId", conversationId));
 
         return userRepository.findById(recipientId)

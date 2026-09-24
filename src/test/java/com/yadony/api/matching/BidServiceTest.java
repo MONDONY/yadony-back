@@ -11,6 +11,7 @@ import com.yadony.api.matching.dto.BidRejectRequest;
 import com.yadony.api.matching.dto.BidRequest;
 import com.yadony.api.matching.dto.BidResponse;
 import com.yadony.api.matching.events.BidAcceptedEvent;
+import com.yadony.api.matching.events.CashBidCreatedEvent;
 import com.yadony.api.cancellation.CancellationEntity;
 import com.yadony.api.cancellation.CancellationRepository;
 import com.yadony.api.cancellation.CancellationScope;
@@ -788,6 +789,10 @@ class BidServiceTest {
             assertThat(eventCaptor.getValue()).isNotInstanceOf(BidCreatedEvent.class);
             assertThat(eventCaptor.getValue().getClass().getSimpleName())
                     .isEqualTo("CashBidCreatedEvent");
+            // Tâche B2 : plus de repli "Un expéditeur" en dur ici — buildSender() ne pose
+            // aucun prénom, l'événement doit porter null (le rendu du repli générique, dans
+            // la langue du destinataire, est délégué à NotificationTexts.newBid).
+            assertThat(((CashBidCreatedEvent) eventCaptor.getValue()).senderFirstName()).isNull();
         }
 
         @Test

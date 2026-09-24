@@ -671,6 +671,38 @@ class PaymentServiceTest {
         }
     }
 
+    /**
+     * Tâche B2 : plus de repli "Un expéditeur" en dur ici — buildUser() ne pose aucun
+     * prénom, l'événement doit porter null (le rendu du repli générique, dans la langue
+     * du destinataire, est délégué à NotificationTexts.newBid via NotificationDispatcher).
+     */
+    @Test
+    void confirmBidPayment_promotesWithoutSenderFirstName_eventCarriesNullSenderName() {
+        BidEntity bid = buildBid(BidStatus.AWAITING_PAYMENT);
+        bid.setPaymentIntentId("pi_test");
+        AnnouncementEntity ann = buildAnnouncement();
+        ann.setDepartureCity("Paris");
+        ann.setArrivalCity("Dakar");
+        UserEntity sender = buildUser(senderId, "uid-sender");
+
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(bidRepository.findByPaymentIntentId("pi_test")).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+        when(userRepository.findById(senderId)).thenReturn(Optional.of(sender));
+
+        try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class)) {
+            PaymentIntent pi = mock(PaymentIntent.class);
+            when(pi.getStatus()).thenReturn("requires_capture");
+            piStatic.when(() -> PaymentIntent.retrieve("pi_test")).thenReturn(pi);
+
+            service.confirmBidPayment(bidId);
+
+            var eventCaptor = org.mockito.ArgumentCaptor.forClass(com.yadony.api.matching.events.BidCreatedEvent.class);
+            verify(eventPublisher).publishEvent(eventCaptor.capture());
+            assertThat(eventCaptor.getValue().getSenderFirstName()).isNull();
+        }
+    }
+
     @Test
     void confirmBidPayment_idempotent_when_already_PAYMENT_ESCROWED() {
         BidEntity bid = buildBid(BidStatus.PAYMENT_ESCROWED);

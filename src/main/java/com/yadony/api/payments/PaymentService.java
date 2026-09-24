@@ -1010,8 +1010,10 @@ public class PaymentService {
         AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
                 .orElseThrow(() -> new IllegalStateException("announcement not found for bid " + bid.getId()));
         UserEntity sender = userRepository.findById(bid.getSenderId()).orElse(null);
+        // null (pas de repli en dur) : NotificationTexts.newBid rend le repli générique dans
+        // la langue du destinataire, jamais dans celle de l'expéditeur ni du serveur.
         String senderName = (sender != null && sender.getFirstName() != null && !sender.getFirstName().isBlank())
-                ? sender.getFirstName() : "Un expéditeur";
+                ? sender.getFirstName() : null;
         String corridor = announcement.getDepartureCity() + " → " + announcement.getArrivalCity();
 
         auditService.log("BID", bid.getId(), "BID_CREATED", bid.getSenderId(),

@@ -1,5 +1,7 @@
 package com.yadony.api.notifications;
 
+import com.yadony.api.common.i18n.Messages;
+
 import java.util.Map;
 import java.util.Optional;
 
@@ -23,16 +25,16 @@ public final class NotificationAggregate {
 
     private NotificationAggregate() {}
 
-    public static NotificationText text(String groupKey, int count, NotificationEntity latest) {
+    public static NotificationText text(Messages m, String groupKey, int count, NotificationEntity latest) {
         Kind kind = Kind.of(groupKey);
         String title = switch (kind) {
-            case BIDS -> label(count, "demandes d'envoi", "Demandes d'envoi");
-            case THREAD -> label(count, "tours de négociation", "Tours de négociation");
+            case BIDS -> label(m, count, "notification.aggregate.bids");
+            case THREAD -> label(m, count, "notification.aggregate.thread");
             case ALERT -> packagesAlert(latest)
-                    ? label(count, "colis pour votre alerte", "Colis pour votre alerte")
-                    : label(count, "trajets pour votre alerte", "Trajets pour votre alerte");
-            case MATCH -> label(count, "colis pour votre trajet", "Colis pour votre trajet");
-            case FOLLOW -> label(count, "trajets publiés", "Trajets publiés");
+                    ? label(m, count, "notification.aggregate.alert-parcels")
+                    : label(m, count, "notification.aggregate.alert-trips");
+            case MATCH -> label(m, count, "notification.aggregate.match");
+            case FOLLOW -> label(m, count, "notification.aggregate.follow");
             case OTHER -> latest.getTitle();
         };
         return new NotificationText(title, latest.getBody());
@@ -60,8 +62,8 @@ public final class NotificationAggregate {
                 .or(() -> Optional.ofNullable(latest.getDeeplink()));
     }
 
-    private static String label(int count, String plural, String capitalized) {
-        return count < 100 ? count + " " + plural : capitalized;
+    private static String label(Messages m, int count, String key) {
+        return count < 100 ? m.get(key, count) : m.get(key + ".many");
     }
 
     private static boolean packagesAlert(NotificationEntity latest) {

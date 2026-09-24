@@ -1,6 +1,7 @@
 package com.yadony.api.alerts;
 
 import com.yadony.api.common.MatchingTextUtil;
+import com.yadony.api.common.i18n.Messages;
 import com.yadony.api.notifications.NotificationDispatcher;
 import com.yadony.api.requests.entity.PackageRequestEntity;
 import com.yadony.api.requests.event.PackageRequestCreatedEvent;
@@ -85,11 +86,12 @@ public class CorridorAlertPackageMatchListener {
                 // l'expéditeur et le propriétaire de l'alerte sont masqués l'un pour
                 // l'autre, et l'alerte n'est pas horodatée pour ne pas priver le
                 // digest des colis visibles de la même fenêtre.
+                Messages m = notificationDispatcher.messagesFor(alert.getOwnerId());
                 boolean notified = notificationDispatcher.notifyUnlessBlocked(
                         alert.getOwnerId(),
                         pkg.getSenderId(),
-                        "Nouveau colis sur " + corridor,
-                        "Un colis correspond à votre alerte",
+                        m.get("notification.corridor-alert-package.title", corridor),
+                        m.get("notification.corridor-alert-package.body"),
                         Map.of(
                                 "type", "CORRIDOR_ALERT",
                                 "alertId", alert.getId().toString(),
