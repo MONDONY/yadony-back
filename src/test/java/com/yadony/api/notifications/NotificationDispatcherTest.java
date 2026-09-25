@@ -1,6 +1,7 @@
 package com.yadony.api.notifications;
 
 import com.yadony.api.auth.UserEntity;
+import com.yadony.api.messaging.SystemMessages;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.i18n.AppLanguage;
 import com.yadony.api.common.i18n.MessagesResolver;
@@ -932,6 +933,28 @@ class NotificationDispatcherTest {
 
         verifyNoInteractions(notificationService);
         verifyNoInteractions(fcmService);
+    }
+
+    // ── sendMessageNotification — message de la plateforme ───────────────────
+
+    /**
+     * Le silence est voulu : « Votre voyageur est arrivé » et « Connexion établie » ont déjà
+     * leur push dédié sur le même évènement. Ce qui était faux, c'est le WARN émis à chaque
+     * message système, qui faisait passer un chemin normal pour une panne dans Sentry.
+     */
+    @Test
+    void sendMessageNotification_systemSender_sendsNothing_withoutLookingUpAnySender() {
+        String recipientUid = dispatcher.sendMessageNotification(
+                senderId, travelerId, SystemMessages.SENDER_ID,
+                "Votre voyageur est arrivé à destination.", "conv_1");
+
+        assertThat(recipientUid).isNull();
+        verifyNoInteractions(fcmService);
+        verifyNoInteractions(notificationService);
+        // Ni recherche de l'expéditeur (il n'en existe pas), ni consultation du blocage :
+        // un message de la plateforme n'est pas masquable par un blocage entre personnes.
+        verify(userRepository, never()).findByFirebaseUid(SystemMessages.SENDER_ID);
+        verifyNoInteractions(blockVisibility);
     }
 
     // ── sendMessageNotification — fil masqué : ni push, ni crédit de non-lus ──

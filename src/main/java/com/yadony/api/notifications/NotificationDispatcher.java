@@ -26,6 +26,7 @@ import com.yadony.api.matching.events.BidRejectedEvent;
 import com.yadony.api.matching.events.HandoverAlertEvent;
 import com.yadony.api.matching.events.ParcelRefusedEvent;
 import com.yadony.api.matching.events.TripArrivedEvent;
+import com.yadony.api.messaging.SystemMessages;
 import com.yadony.api.matching.events.VoyageurNoShowEvent;
 import com.yadony.api.payments.events.MobileMoneyDepositFailedEvent;
 import com.yadony.api.payments.events.MobileMoneyPaymentConfirmedEvent;
@@ -579,6 +580,21 @@ public class NotificationDispatcher {
     public String sendMessageNotification(UUID senderId, UUID travelerId,
                                           String senderFirebaseUid, String preview,
                                           String conversationId) {
+        // Message posté par la plateforme (FirestoreService.addSystemMessage) : aucune push
+        // ici, volontairement. Chaque message système double un push déjà envoyé sur le même
+        // fait — « Votre voyageur est arrivé » suit onTripArrived, « Connexion établie » suit
+        // l'acceptation de l'offre. En notifier une seconde fois donnerait deux notifications
+        // pour un seul évènement. Le compteur de non-lus, lui, est déjà crédité par la Cloud
+        // Function à partir des participants du document Firestore.
+        //
+        // Ce cas passait par la branche « expéditeur inconnu » ci-dessous et journalisait un
+        // WARN à chaque message système : un chemin normal qui ressemblait à une panne dans
+        // Sentry (vu le 2026-09-25). Reconnu explicitement, en debug.
+        if (SystemMessages.isSystemSender(senderFirebaseUid)) {
+            log.debug("Message système sur {} : pas de push, l'évènement a le sien", conversationId);
+            return null;
+        }
+
         var senderUser = userRepository.findByFirebaseUid(senderFirebaseUid).orElse(null);
 
         if (senderUser == null) {
