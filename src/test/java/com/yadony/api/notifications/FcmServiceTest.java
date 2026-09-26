@@ -29,6 +29,7 @@ class FcmServiceTest {
     @Mock UserRepository userRepository;
     @Mock UserDeviceJpaRepository userDeviceRepository;
     @Mock NotificationPrefsService notificationPrefsService;
+    @Mock NotificationRepository notificationRepository;
     @InjectMocks FcmService service;
 
     private static final UUID USER_ID = UUID.randomUUID();
@@ -174,5 +175,41 @@ class FcmServiceTest {
         UserDeviceEntity device = new UserDeviceEntity();
         ReflectionTestUtils.setField(device, "fcmToken", fcmToken);
         return device;
+    }
+
+    // ── Pastille d'icône iOS ─────────────────────────────────────────────────
+    // Le champ APNs `badge` est ABSOLU : il écrit ce nombre sur l'icône, il ne
+    // l'incrémente pas. Il valait 1 en dur, donc l'icône affichait 1 dès la première
+    // notification et le gardait pour toujours, rien ne la remettant jamais à zéro.
+
+    @Test
+    void unreadBadge_rendLeNombreReelDeNonLues() {
+        when(notificationRepository.countByUserIdAndReadAtIsNull(USER_ID)).thenReturn(4L);
+
+        assertThat(service.unreadBadge(USER_ID)).isEqualTo(4);
+    }
+
+    @Test
+    void unreadBadge_rendZeroQuandToutEstLu() {
+        when(notificationRepository.countByUserIdAndReadAtIsNull(USER_ID)).thenReturn(0L);
+
+        // Zéro efface la pastille côté iOS : c'est ce qui manquait.
+        assertThat(service.unreadBadge(USER_ID)).isZero();
+    }
+
+    @Test
+    void unreadBadge_plafonneA99() {
+        when(notificationRepository.countByUserIdAndReadAtIsNull(USER_ID)).thenReturn(1_500L);
+
+        assertThat(service.unreadBadge(USER_ID)).isEqualTo(99);
+    }
+
+    @Test
+    void unreadBadge_compteurIndisponible_rendZeroSansLever() {
+        // Une notification doit partir même si le compteur est injoignable.
+        when(notificationRepository.countByUserIdAndReadAtIsNull(USER_ID))
+                .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("base injoignable"));
+
+        assertThat(service.unreadBadge(USER_ID)).isZero();
     }
 }
