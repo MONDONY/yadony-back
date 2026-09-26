@@ -57,7 +57,8 @@ class NotificationServiceTest {
     @Test
     void persist_derivesCategoryGroupKeyAndDeeplinkFromTypeAndData() {
         String annId = UUID.randomUUID().toString();
-        Map<String, String> data = Map.of("type", "BID_CREATED", "bidId", UUID.randomUUID().toString(),
+        String bidId = UUID.randomUUID().toString();
+        Map<String, String> data = Map.of("type", "BID_CREATED", "bidId", bidId,
                 "announcementId", annId);
         when(repository.save(any())).thenAnswer(i -> i.getArgument(0));
 
@@ -66,7 +67,7 @@ class NotificationServiceTest {
         assertThat(saved.getCategory()).isEqualTo(NotificationCategory.COLIS);
         assertThat(saved.getGroupKey()).isEqualTo("bid:announcement:" + annId);
         assertThat(saved.hasSharedGroupKey()).isTrue();
-        assertThat(saved.getDeeplink()).isEqualTo("yadony://announcements/" + annId + "/bids");
+        assertThat(saved.getDeeplink()).isEqualTo("yadony://demandes?bid=" + bidId);
         assertThat(saved.getFullBody()).isNull();
     }
 
