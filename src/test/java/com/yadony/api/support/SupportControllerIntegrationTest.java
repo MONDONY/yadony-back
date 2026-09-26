@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -66,6 +67,41 @@ class SupportControllerIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(1))
                 .andExpect(jsonPath("$[0].code").value("payment-refund"));
+    }
+
+    @Test
+    void listReplies_withoutAcceptLanguageHeader_rendsFrench() throws Exception {
+        mockMvc.perform(get("/support/replies").with(authentication(asUser(OWNER_UID))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].question").value("Quand arrive mon remboursement ?"))
+                .andExpect(jsonPath("$[0].answer").value("Comptez 5 a 10 jours ouvres."));
+    }
+
+    @Test
+    void listReplies_withEnglishAcceptLanguageHeader_rendsEnglish() throws Exception {
+        mockMvc.perform(get("/support/replies")
+                        .with(authentication(asUser(OWNER_UID)))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].question").value("When will my refund arrive?"))
+                .andExpect(jsonPath("$[0].answer").value("Within 5 to 10 business days."));
+    }
+
+    /** Une ligne sans traduction (V265 nullable) retombe sur le francais meme en anglais. */
+    @Test
+    void listReplies_withEnglishHeaderButNoTranslation_fallsBackToFrench() throws Exception {
+        replyRepository.deleteAll();
+        SupportPredefinedReplyEntity untranslated = reply("delivery-untranslated", 10, true);
+        untranslated.setQuestionEn(null);
+        untranslated.setAnswerEn(null);
+        replyRepository.save(untranslated);
+
+        mockMvc.perform(get("/support/replies")
+                        .with(authentication(asUser(OWNER_UID)))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].question").value("Quand arrive mon remboursement ?"))
+                .andExpect(jsonPath("$[0].answer").value("Comptez 5 a 10 jours ouvres."));
     }
 
     @Test
@@ -211,6 +247,8 @@ class SupportControllerIntegrationTest {
         reply.setCategory("PAYMENT");
         reply.setQuestion("Quand arrive mon remboursement ?");
         reply.setAnswer("Comptez 5 a 10 jours ouvres.");
+        reply.setQuestionEn("When will my refund arrive?");
+        reply.setAnswerEn("Within 5 to 10 business days.");
         reply.setSortOrder(sortOrder);
         reply.setActive(active);
         return reply;
