@@ -26,8 +26,16 @@ class NotificationDeeplinkTest {
     }
 
     @Test
-    void newOfferOpensTheOffersOfTheAnnouncement() {
+    void newOfferOpensTheRequestInReceivedRequests() {
         assertThat(NotificationDeeplink.of("BID_CREATED", Map.of("announcementId", annId, "bidId", bidId)))
+                .contains("yadony://demandes?bid=" + bidId);
+    }
+
+    @Test
+    void newOfferWithoutBidFallsBackToTheOffersOfTheAnnouncement() {
+        assertThat(NotificationDeeplink.of("BID_CREATED", Map.of("announcementId", annId)))
+                .contains("yadony://announcements/" + annId + "/bids");
+        assertThat(NotificationDeeplink.of("BID_CREATED", Map.of("announcementId", annId, "bidId", "../admin")))
                 .contains("yadony://announcements/" + annId + "/bids");
     }
 

@@ -44,7 +44,12 @@ public final class NotificationDeeplink {
             return threadId.map(id -> "negotiations/" + id);
         }
         return switch (type) {
-            case "BID_CREATED" -> announcementId.map(id -> "announcements/" + id + "/bids");
+            // La demande elle-même, ouverte par l'app par-dessus « Demandes
+            // reçues » sur « À traiter ». La page de l'annonce montrait d'abord
+            // les demandes acceptées et cachait la nouvelle derrière un bouton.
+            // Une app antérieure qui ignore la query ouvre « Demandes reçues ».
+            case "BID_CREATED" -> bidId.map(id -> "demandes?bid=" + id)
+                    .or(() -> announcementId.map(id -> "announcements/" + id + "/bids"));
 
             case "BID_ACCEPTED", "DELIVERY_CONFIRMED", "PAYMENT_RELEASED", "DISPUTE_OPENED", "PARCEL_REFUSED",
                  "BID_EXPIRED", "CONFIRMATION_CODE_READY", "DELIVERY_NOSHOW_REPORTED", "MM_PAYMENT_PENDING",
