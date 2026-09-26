@@ -4,6 +4,7 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.i18n.MessagesResolver;
 import com.yadony.api.support.dto.CreateSupportMessageRequest;
 import com.yadony.api.support.dto.CreateSupportTicketRequest;
 import com.yadony.api.support.dto.SupportAttachmentResponse;
@@ -46,21 +47,25 @@ public class SupportController {
     private final SupportAttachmentService attachmentService;
     private final StorageService storageService;
     private final UserRepository userRepository;
+    private final MessagesResolver messagesResolver;
 
     public SupportController(SupportTicketService supportTicketService,
                              SupportAttachmentService attachmentService,
                              StorageService storageService,
-                             UserRepository userRepository) {
+                             UserRepository userRepository,
+                             MessagesResolver messagesResolver) {
         this.supportTicketService = supportTicketService;
         this.attachmentService = attachmentService;
         this.storageService = storageService;
         this.userRepository = userRepository;
+        this.messagesResolver = messagesResolver;
     }
 
     @GetMapping("/replies")
     public List<SupportPredefinedReplyResponse> listReplies() {
+        var language = messagesResolver.requestLanguage();
         return supportTicketService.listActiveReplies().stream()
-                .map(SupportPredefinedReplyResponse::from)
+                .map(reply -> SupportPredefinedReplyResponse.from(reply, language))
                 .toList();
     }
 

@@ -28,6 +28,13 @@ public class SupportPredefinedReplyEntity extends BaseEntity {
     @Column(name = "answer", nullable = false, columnDefinition = "TEXT")
     private String answer;
 
+    /** Traduction anglaise (V265), nullable : repli sur le francais tant qu'elle manque. */
+    @Column(name = "question_en", length = 300)
+    private String questionEn;
+
+    @Column(name = "answer_en", columnDefinition = "TEXT")
+    private String answerEn;
+
     @Column(name = "sort_order", nullable = false)
     private int sortOrder;
 
@@ -49,6 +56,14 @@ public class SupportPredefinedReplyEntity extends BaseEntity {
     public String getAnswer() { return answer; }
 
     public void setAnswer(String answer) { this.answer = answer; }
+
+    public String getQuestionEn() { return questionEn; }
+
+    public void setQuestionEn(String questionEn) { this.questionEn = questionEn; }
+
+    public String getAnswerEn() { return answerEn; }
+
+    public void setAnswerEn(String answerEn) { this.answerEn = answerEn; }
 
     public int getSortOrder() { return sortOrder; }
 
