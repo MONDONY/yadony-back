@@ -31,13 +31,16 @@ public class FcmService {
     private final UserRepository userRepository;
     private final UserDeviceJpaRepository userDeviceRepository;
     private final NotificationPrefsService notificationPrefsService;
+    private final NotificationRepository notificationRepository;
 
     public FcmService(UserRepository userRepository,
                       UserDeviceJpaRepository userDeviceRepository,
-                      NotificationPrefsService notificationPrefsService) {
+                      NotificationPrefsService notificationPrefsService,
+                      NotificationRepository notificationRepository) {
         this.userRepository = userRepository;
         this.userDeviceRepository = userDeviceRepository;
         this.notificationPrefsService = notificationPrefsService;
+        this.notificationRepository = notificationRepository;
     }
 
     /**
@@ -45,6 +48,35 @@ public class FcmService {
      * Returns true if the message was dispatched, false if the user has no token or prefs block it.
      */
     @Transactional
+    /**
+     * Valeur de la pastille d'icône iOS. Le champ APNs {@code badge} est ABSOLU : il écrit ce
+     * nombre sur l'icône, il ne l'incrémente pas. Il valait {@code 1} en dur, si bien que
+     * l'icône affichait 1 dès la première notification reçue et le gardait pour toujours,
+     * puisque rien ne remettait jamais la valeur à zéro.
+     *
+     * <p>On envoie donc le nombre réel de notifications non lues, calculé après la
+     * persistance de celle qui déclenche cette push : l'icône est juste même application
+     * fermée, et elle s'efface d'elle-même quand tout a été lu.
+     *
+     * <p>Limite assumée : les messages de la messagerie ne sont pas comptés ici. Leur état de
+     * lecture vit dans Firestore, tenu par la Cloud Function, et le backend ne le connaît pas.
+     * Une push de message pose donc la pastille au nombre de notifications non lues, sans
+     * compter le message lui-même. L'application corrige le total à sa prochaine ouverture,
+     * en y ajoutant messages et support.
+     *
+     * <p>Jamais d'exception ici : un compteur indisponible ne doit pas empêcher une
+     * notification de partir.
+     */
+    int unreadBadge(UUID userId) {
+        try {
+            return (int) Math.min(notificationRepository.countByUserIdAndReadAtIsNull(userId), 99);
+        } catch (RuntimeException e) {
+            log.warn("[FCM] Compteur de non-lus indisponible pour la pastille ({})",
+                    e.getClass().getSimpleName());
+            return 0;
+        }
+    }
+
     public boolean sendToUser(UUID userId, String title, String body, Map<String, String> data) {
         String notifType = data != null ? data.get("type") : null;
         if (!notificationPrefsService.isAllowed(userId, notifType)) {
@@ -133,7 +165,7 @@ public class FcmService {
                 .setApnsConfig(ApnsConfig.builder()
                         .setAps(Aps.builder()
                                 .setSound("default")
-                                .setBadge(1)
+                                .setBadge(unreadBadge(userId))
                                 // Les notifications critiques attendent un ACK sous 60 s,
                                 // faute de quoi SmsFallbackScheduler envoie un SMS. Sans
                                 // content-available, iOS ne réveille pas l'application tant
