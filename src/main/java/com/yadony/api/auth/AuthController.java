@@ -14,6 +14,7 @@ import com.yadony.api.common.YadonyBusinessException;
 import com.google.firebase.auth.FirebaseToken;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -63,7 +64,33 @@ public class AuthController {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         FirebaseToken decodedToken = auth.getCredentials() instanceof FirebaseToken t ? t : null;
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(authService.register(firebaseUid, decodedToken, request));
+                .body(registerRetryingOnRace(firebaseUid, decodedToken, request));
+    }
+
+    /**
+     * {@code AuthService.register} lit la ligne active, puis la ligne supprimée, puis insère.
+     * Deux inscriptions simultanées du même compte Firebase passent toutes deux les lectures :
+     * la seconde heurte {@code uq_users_firebase_uid} et ressortait en 500
+     * (Sentry YADONY-BACK-STAGING-B, vu après un redémarrage du serveur, quand l'app rejoue
+     * un appel pendant que la personne retape).
+     *
+     * <p>Le rejeu est ici et non dans le service : {@code register} est {@code @Transactional},
+     * la violation ne surgit qu'au commit et la transaction Postgres est alors avortée, donc
+     * toute relecture depuis l'intérieur est impossible (même piège que documenté sur
+     * {@code WalletService.getOrCreate}). Un appel depuis le service vers lui-même ne
+     * traverserait pas le proxy et resterait dans la même transaction. Depuis le contrôleur,
+     * la seconde tentative ouvre une transaction saine, retrouve la ligne insérée par la
+     * requête gagnante et la renvoie telle quelle — l'inscription est idempotente.
+     *
+     * <p>Une seconde violation se propage : elle ne vient plus d'une course.
+     */
+    private UserResponse registerRetryingOnRace(String firebaseUid, FirebaseToken decodedToken,
+                                                RegisterRequest request) {
+        try {
+            return authService.register(firebaseUid, decodedToken, request);
+        } catch (DataIntegrityViolationException race) {
+            return authService.register(firebaseUid, decodedToken, request);
+        }
     }
 
     @GetMapping("/me")

@@ -6,6 +6,7 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.MatchingTextUtil;
+import com.yadony.api.messaging.SystemMessages;
 import com.yadony.api.messaging.ConversationEntity;
 import com.yadony.api.messaging.ConversationRepository;
 import com.yadony.api.messaging.FirestoreService;
@@ -146,7 +147,7 @@ public class AdminConversationController {
 
     private static String senderName(String senderId, Map<UUID, UserEntity> users) {
         if (senderId == null) return null;
-        if ("SYSTEM".equals(senderId)) return "Systeme";
+        if (SystemMessages.isSystemSender(senderId)) return "Systeme";
         UUID id = parseUuid(senderId);
         if (id == null) return senderId;
         UserEntity u = users.get(id);

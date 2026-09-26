@@ -65,7 +65,7 @@ public class FirestoreService {
         }
         try {
             Map<String, Object> msg = new HashMap<>();
-            msg.put("senderId", "SYSTEM");
+            msg.put("senderId", SystemMessages.SENDER_ID);
             msg.put("body", body);
             msg.put("imageUrl", null);
             msg.put("type", "SYSTEM");
