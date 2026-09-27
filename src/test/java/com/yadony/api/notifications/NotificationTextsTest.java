@@ -132,6 +132,7 @@ class NotificationTextsTest {
         map.put("kycVerified", NotificationTexts.kycVerified(m));
         map.put("kycActionRequired", NotificationTexts.kycActionRequired(m));
         map.put("kycReset", NotificationTexts.kycReset(m));
+        map.put("kycRevoked", NotificationTexts.kycRevoked(m));
         map.put("stripeOnboardingIncomplete", NotificationTexts.stripeOnboardingIncomplete(m));
         map.put("cardExpiring", NotificationTexts.cardExpiring(m, "American Express", "1234"));
         map.put("cardExpiring sans marque", NotificationTexts.cardExpiring(m, null, null));

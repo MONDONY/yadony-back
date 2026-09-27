@@ -49,6 +49,8 @@ class AdminUserKycControllerIT {
     @Autowired ObjectMapper objectMapper;
 
     @MockitoBean KycAdminService kycAdminService;
+    /** La fiche passe désormais par le service de revue, qui l'enrichit de la décision et de l'historique. */
+    @MockitoBean com.yadony.api.kyc.KycAdminReviewService review;
 
     private static final UUID USER_ID = UUID.randomUUID();
 
@@ -89,7 +91,7 @@ class AdminUserKycControllerIT {
     @Test
     @DisplayName("GET — admin avec USER_KYC → 200 + les deux statuts et la session Stripe")
     void get_withUserKyc_returns200() throws Exception {
-        when(kycAdminService.getForUser(USER_ID)).thenReturn(sampleResponse());
+        when(review.detail(USER_ID)).thenReturn(sampleResponse());
 
         mockMvc.perform(get("/admin/users/{userId}/kyc", USER_ID)
                         .with(authentication(adminAuth())))
@@ -103,7 +105,7 @@ class AdminUserKycControllerIT {
     @Test
     @DisplayName("GET — SUPPORT (qui possède USER_KYC) → 200")
     void get_withSupportRole_returns200() throws Exception {
-        when(kycAdminService.getForUser(USER_ID)).thenReturn(sampleResponse());
+        when(review.detail(USER_ID)).thenReturn(sampleResponse());
 
         mockMvc.perform(get("/admin/users/{userId}/kyc", USER_ID)
                         .with(authentication(supportAuth())))
@@ -121,7 +123,7 @@ class AdminUserKycControllerIT {
     @Test
     @DisplayName("GET — Stripe indisponible → 200 avec stripeUnavailable, jamais 500")
     void get_stripeUnavailable_returns200() throws Exception {
-        when(kycAdminService.getForUser(USER_ID)).thenReturn(new KycAdminStatusResponse(
+        when(review.detail(USER_ID)).thenReturn(new KycAdminStatusResponse(
                 USER_ID, "PENDING", "PENDING", null, null, "vs_001", null, null, null, null, true, "STRIPE"));
 
         mockMvc.perform(get("/admin/users/{userId}/kyc", USER_ID)
@@ -188,7 +190,7 @@ class AdminUserKycControllerIT {
     @Test
     @DisplayName("GET — utilisateur introuvable → 404 user-not-found (RFC 7807)")
     void get_userNotFound_returns404WithCode() throws Exception {
-        when(kycAdminService.getForUser(USER_ID))
+        when(review.detail(USER_ID))
                 .thenThrow(new YadonyBusinessException(HttpStatus.NOT_FOUND,
                         "user-not-found", "Not Found", "Utilisateur introuvable"));
 

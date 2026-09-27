@@ -16,6 +16,7 @@ import com.yadony.api.disputes.events.DisputeResolvedEvent;
 import com.yadony.api.disputes.events.DisputeUpdatedEvent;
 import com.yadony.api.kyc.events.UserKycVerifiedEvent;
 import com.yadony.api.kyc.events.UserKycActionRequiredEvent;
+import com.yadony.api.kyc.events.UserKycRevokedEvent;
 import com.yadony.api.matching.events.AnnouncementInProgressEvent;
 import com.yadony.api.matching.events.BidAcceptedEvent;
 import com.yadony.api.matching.events.BidCreatedEvent;
@@ -199,6 +200,18 @@ public class NotificationDispatcher {
     @Async
     public void onUserKycActionRequired(UserKycActionRequiredEvent event) {
         var text = NotificationTexts.kycActionRequired(messagesFor(event.userId()));
+        notifyUser(event.userId(), text.title(), text.body(), Map.of("type", "KYC_ACTION_REQUIRED"));
+    }
+
+    /**
+     * Verification retiree par un administrateur. Meme type de donnees que le refus
+     * ({@code KYC_ACTION_REQUIRED}) : l'application ouvre deja l'ecran KYC sur ce type, ou le
+     * libelle du code de refus est affiche. Le motif interne de l'admin n'est jamais transmis.
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
+    public void onUserKycRevoked(UserKycRevokedEvent event) {
+        var text = NotificationTexts.kycRevoked(messagesFor(event.userId()));
         notifyUser(event.userId(), text.title(), text.body(), Map.of("type", "KYC_ACTION_REQUIRED"));
     }
 

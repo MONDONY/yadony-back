@@ -2,7 +2,7 @@ package com.yadony.api.admin.account;
 
 /**
  * Admin permissions enum (Task 2).
- * 35 granular permissions for role-based access control.
+ * 36 granular permissions for role-based access control.
  */
 public enum AdminPermission {
     // Account management
@@ -16,6 +16,12 @@ public enum AdminPermission {
     USER_SUSPEND,
     USER_BAN,
     USER_KYC,
+    /**
+     * Valider, refuser ou revoquer une verification d'identite depuis la file KYC. Jamais
+     * accordee au support : un compte verifie ouvre les paiements et la publication. Le
+     * support garde la lecture de la file via {@link #USER_KYC}.
+     */
+    KYC_DECIDE,
     USER_GDPR_DELETE,
     /** Suppression d'un compte décidée par l'administrateur, distincte d'une demande RGPD reçue. */
     USER_DELETE,

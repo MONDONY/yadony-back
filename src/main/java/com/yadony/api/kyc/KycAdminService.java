@@ -119,6 +119,7 @@ public class KycAdminService {
         kyc.setVerificationSessionId(null);
         kyc.setRejectionReason(null);
         kyc.setRejectionCode(null);
+        kyc.clearDecision();
         kycRepository.save(kyc);
 
         // Les deux enums sont resynchronisés à la main à chaque transition : n'en toucher

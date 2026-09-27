@@ -79,7 +79,10 @@ class AdminMetricsControllerIT {
                 // Ancien contrat : la seule ligne EUR, en unités, jamais un mélange avec le XOF.
                 .andExpect(jsonPath("$.gmv.released").value(100.0))
                 .andExpect(jsonPath("$.gmv.commission").value(12.0))
-                .andExpect(jsonPath("$.gmv.escrowHeld").value(0.0));
+                .andExpect(jsonPath("$.gmv.escrowHeld").value(0.0))
+                // File KYC : demandes en revue, distinctes de pendingKyc (parcours en cours compris).
+                .andExpect(jsonPath("$.queues.kycInReview").isNumber())
+                .andExpect(jsonPath("$.queues.pendingKyc").isNumber());
     }
 
     @Test

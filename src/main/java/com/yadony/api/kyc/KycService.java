@@ -56,7 +56,12 @@ public class KycService {
         // bascule, l'identifiant de l'ancienne session ne veut plus rien dire pour le nouveau.
         // La reutilisation elle-meme appartient au fournisseur — Stripe la teste a la main,
         // Didit la fait seul.
-        String resumableSessionId = existing
+        //
+        // Une ligne figee par un refus ou une revocation d'administrateur ne se reprend jamais :
+        // la session refusee ne doit pas etre resservie, et la ligne doit etre reecrite pour
+        // quitter l'etat fige, meme si le fournisseur renvoie le meme identifiant.
+        boolean lockedByAdmin = existing.map(KycVerificationEntity::isLockedByAdmin).orElse(false);
+        String resumableSessionId = lockedByAdmin ? null : existing
                 .filter(kyc -> kyc.getProvider() == provider.kind())
                 .map(KycVerificationEntity::getVerificationSessionId)
                 .orElse(null);
@@ -69,7 +74,7 @@ public class KycService {
 
         ProviderSession session = provider.createSession(user, resumableSessionId);
 
-        if (session.sessionId().equals(resumableSessionId)) {
+        if (!lockedByAdmin && session.sessionId().equals(resumableSessionId)) {
             // Session reprise telle quelle : rien a reecrire en base.
             return new KycSessionResponse(session.url(), session.sessionId(), "PENDING");
         }
@@ -85,6 +90,9 @@ public class KycService {
         kyc.setStatus(KycVerificationStatus.PENDING);
         kyc.setRejectionReason(null);
         kyc.setRejectionCode(null);
+        // Nouvelle tentative : la decision d'administration et le passage en revue portaient
+        // sur la session precedente.
+        kyc.clearDecision();
         kycRepository.save(kyc);
 
         auditService.log("kyc_verification", kyc.getId(), "KYC_SESSION_CREATED",
