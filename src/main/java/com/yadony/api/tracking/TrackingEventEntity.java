@@ -46,6 +46,11 @@ public class TrackingEventEntity {
     @Column(name = "photo_url", length = 1024)
     private String photoUrl;
 
+    /** QR ou saisie du numéro ; null = inconnu (étapes antérieures à V269, anciennes apps). */
+    @Column(name = "scan_method", length = 10)
+    @Enumerated(EnumType.STRING)
+    private ScanMethod scanMethod;
+
     @Column(name = "offline_timestamp")
     private LocalDateTime offlineTimestamp;
 
@@ -84,6 +89,8 @@ public class TrackingEventEntity {
     public void setGpsLabel(String gpsLabel) { this.gpsLabel = gpsLabel; }
     public String getPhotoUrl() { return photoUrl; }
     public void setPhotoUrl(String photoUrl) { this.photoUrl = photoUrl; }
+    public ScanMethod getScanMethod() { return scanMethod; }
+    public void setScanMethod(ScanMethod scanMethod) { this.scanMethod = scanMethod; }
     public LocalDateTime getOfflineTimestamp() { return offlineTimestamp; }
     public void setOfflineTimestamp(LocalDateTime offlineTimestamp) { this.offlineTimestamp = offlineTimestamp; }
     public LocalDateTime getSyncedAt() { return syncedAt; }

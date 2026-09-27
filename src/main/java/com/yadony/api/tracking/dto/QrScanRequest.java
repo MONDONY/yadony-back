@@ -1,5 +1,6 @@
 package com.yadony.api.tracking.dto;
 
+import com.yadony.api.tracking.ScanMethod;
 import com.yadony.api.tracking.TrackingEventType;
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
@@ -15,6 +16,9 @@ import java.util.UUID;
  * ou un libellé trop long partait jusqu'à l'insert et ressortait en 500 (contrainte de
  * longueur en base) au lieu d'un 422 explicite. {@code ConfirmDeliveryRequest} bornait déjà
  * sa photo à 500.
+ *
+ * <p>{@code scanMethod} est facultatif : les apps déjà installées ne l'envoient pas, l'étape
+ * est alors enregistrée avec une provenance inconnue (null).
  */
 public record QrScanRequest(
         @NotNull UUID bidId,
@@ -23,5 +27,12 @@ public record QrScanRequest(
         @DecimalMin("-180") @DecimalMax("180") BigDecimal gpsLon,
         @Size(max = 255) String gpsLabel,
         @Size(max = 500) String photoUrl,
-        LocalDateTime offlineTimestamp
-) {}
+        LocalDateTime offlineTimestamp,
+        ScanMethod scanMethod
+) {
+    /** Contrat antérieur à la provenance QR / numéro. */
+    public QrScanRequest(UUID bidId, TrackingEventType eventType, BigDecimal gpsLat, BigDecimal gpsLon,
+                         String gpsLabel, String photoUrl, LocalDateTime offlineTimestamp) {
+        this(bidId, eventType, gpsLat, gpsLon, gpsLabel, photoUrl, offlineTimestamp, null);
+    }
+}

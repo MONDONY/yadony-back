@@ -1266,4 +1266,150 @@ class TrackingServiceTest {
         assertThat(result.get(0).recipientName()).isEqualTo("Awa Ndiaye");
         assertThat(result.get(0).eventType()).isEqualTo("DEPART");
     }
+
+    // ── Provenance QR / numéro (scanMethod) ───────────────────────────────────
+
+    private void stubTransitScanContext() {
+        BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(buildAnnouncement()));
+        when(userRepository.findByFirebaseUid("uid-traveler"))
+                .thenReturn(Optional.of(buildUser(travelerId, "uid-traveler")));
+        when(bidRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(trackingEventRepository.save(any())).thenAnswer(inv -> {
+            TrackingEventEntity e = inv.getArgument(0);
+            setId(e, UUID.randomUUID());
+            return e;
+        });
+    }
+
+    @Test
+    void processScan_withQrScanMethod_persistsAndReturnsIt() {
+        stubTransitScanContext();
+
+        TrackingEventResponse resp = service.processScan(new QrScanRequest(
+                bidId, TrackingEventType.TRANSIT, null, null, null, null, null, ScanMethod.QR), "uid-traveler");
+
+        ArgumentCaptor<TrackingEventEntity> captor = ArgumentCaptor.forClass(TrackingEventEntity.class);
+        verify(trackingEventRepository).save(captor.capture());
+        assertThat(captor.getValue().getScanMethod()).isEqualTo(ScanMethod.QR);
+        assertThat(resp.scanMethod()).isEqualTo("QR");
+    }
+
+    @Test
+    void processScan_withManualScanMethod_persistsAndReturnsIt() {
+        stubTransitScanContext();
+
+        TrackingEventResponse resp = service.processScan(new QrScanRequest(
+                bidId, TrackingEventType.TRANSIT, null, null, null, null, null, ScanMethod.MANUAL), "uid-traveler");
+
+        ArgumentCaptor<TrackingEventEntity> captor = ArgumentCaptor.forClass(TrackingEventEntity.class);
+        verify(trackingEventRepository).save(captor.capture());
+        assertThat(captor.getValue().getScanMethod()).isEqualTo(ScanMethod.MANUAL);
+        assertThat(resp.scanMethod()).isEqualTo("MANUAL");
+    }
+
+    @Test
+    void processScan_withoutScanMethod_storesNullForOldApps() {
+        stubTransitScanContext();
+
+        TrackingEventResponse resp = service.processScan(new QrScanRequest(
+                bidId, TrackingEventType.TRANSIT, null, null, null, null, null), "uid-traveler");
+
+        ArgumentCaptor<TrackingEventEntity> captor = ArgumentCaptor.forClass(TrackingEventEntity.class);
+        verify(trackingEventRepository).save(captor.capture());
+        assertThat(captor.getValue().getScanMethod()).isNull();
+        assertThat(resp.scanMethod()).isNull();
+    }
+
+    @Test
+    void confirmDelivery_withScanMethod_storesItOnArriveeEvent() {
+        BidEntity bid = buildBid(BidStatus.IN_TRANSIT, "qt");
+        bid.setConfirmationCode("123456");
+        bid.setConfirmationCodeAttempts(0);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(buildAnnouncement()));
+        when(userRepository.findByFirebaseUid("uid-traveler"))
+                .thenReturn(Optional.of(buildUser(travelerId, "uid-traveler")));
+        when(trackingEventRepository.save(any())).thenAnswer(inv -> {
+            TrackingEventEntity e = inv.getArgument(0);
+            setId(e, UUID.randomUUID());
+            return e;
+        });
+
+        TrackingEventResponse resp = service.confirmDelivery(
+                bidId, new ConfirmDeliveryRequest("123456", null, ScanMethod.MANUAL), "uid-traveler");
+
+        ArgumentCaptor<TrackingEventEntity> captor = ArgumentCaptor.forClass(TrackingEventEntity.class);
+        verify(trackingEventRepository).save(captor.capture());
+        assertThat(captor.getValue().getScanMethod()).isEqualTo(ScanMethod.MANUAL);
+        assertThat(resp.scanMethod()).isEqualTo("MANUAL");
+    }
+
+    @Test
+    void confirmDelivery_withoutScanMethod_storesNull() {
+        BidEntity bid = buildBid(BidStatus.IN_TRANSIT, "qt");
+        bid.setConfirmationCode("123456");
+        bid.setConfirmationCodeAttempts(0);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(buildAnnouncement()));
+        when(userRepository.findByFirebaseUid("uid-traveler"))
+                .thenReturn(Optional.of(buildUser(travelerId, "uid-traveler")));
+        when(trackingEventRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        TrackingEventResponse resp = service.confirmDelivery(
+                bidId, new ConfirmDeliveryRequest("123456"), "uid-traveler");
+
+        assertThat(resp.scanMethod()).isNull();
+    }
+
+    @Test
+    void getEvents_exposesScanMethodOrNull() {
+        BidEntity bid = buildBid(BidStatus.IN_TRANSIT, "qt");
+        TrackingEventEntity qr = new TrackingEventEntity();
+        setId(qr, UUID.randomUUID());
+        qr.setBidId(bidId);
+        qr.setEventType(TrackingEventType.DEPART);
+        qr.setScannedAt(LocalDateTime.now(ZoneOffset.UTC).minusHours(2));
+        qr.setScanMethod(ScanMethod.QR);
+        TrackingEventEntity legacy = new TrackingEventEntity();
+        setId(legacy, UUID.randomUUID());
+        legacy.setBidId(bidId);
+        legacy.setEventType(TrackingEventType.TRANSIT);
+        legacy.setScannedAt(LocalDateTime.now(ZoneOffset.UTC));
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(buildUser(senderId, "uid-sender")));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(buildAnnouncement()));
+        when(trackingEventRepository.findByBidIdOrderByScannedAtAsc(bidId)).thenReturn(List.of(qr, legacy));
+
+        List<TrackingEventResponse> events = service.getEvents(bidId, "uid-sender");
+
+        assertThat(events).extracting(TrackingEventResponse::scanMethod).containsExactly("QR", null);
+    }
+
+    @Test
+    void getTripScanHistory_exposesScanMethodOrNull() {
+        BidEntity bid = buildBid(BidStatus.IN_TRANSIT, "qt");
+        TrackingEventEntity manual = new TrackingEventEntity();
+        setId(manual, UUID.randomUUID());
+        manual.setBidId(bidId);
+        manual.setEventType(TrackingEventType.TRANSIT);
+        manual.setScannedAt(LocalDateTime.now(ZoneOffset.UTC));
+        manual.setScanMethod(ScanMethod.MANUAL);
+        TrackingEventEntity legacy = new TrackingEventEntity();
+        setId(legacy, UUID.randomUUID());
+        legacy.setBidId(bidId);
+        legacy.setEventType(TrackingEventType.DEPART);
+        legacy.setScannedAt(LocalDateTime.now(ZoneOffset.UTC).minusHours(2));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(buildAnnouncement()));
+        when(userRepository.findByFirebaseUid("uid-traveler"))
+                .thenReturn(Optional.of(buildUser(travelerId, "uid-traveler")));
+        when(bidRepository.findByAnnouncementId(annId)).thenReturn(List.of(bid));
+        when(trackingEventRepository.findByBidIdInOrderByScannedAtDesc(List.of(bidId)))
+                .thenReturn(List.of(manual, legacy));
+
+        List<TripScanHistoryEntryDto> result = service.getTripScanHistory(annId, "uid-traveler");
+
+        assertThat(result).extracting(TripScanHistoryEntryDto::scanMethod).containsExactly("MANUAL", null);
+    }
 }
