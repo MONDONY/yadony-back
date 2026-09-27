@@ -94,11 +94,12 @@ class AnnouncementArrivalControllerTest {
     }
 
     @Test
-    void markArrived_notAllInTransit_returns422() throws Exception {
+    void markArrived_noParcelInTransit_returns422() throws Exception {
         UUID announcementId = UUID.randomUUID();
         when(announcementService.markArrived(eq(announcementId), anyString(), isNull()))
-                .thenThrow(new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "trip/not-all-in-transit",
-                        "Not All In Transit", "Tous les colis doivent être en transit avant de marquer l'arrivée"));
+                .thenThrow(new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "trip/no-parcel-in-transit",
+                        "No Parcel In Transit",
+                        "Aucun colis n'est en transit : scannez l'étape Transit avant de marquer l'arrivée"));
 
         mockMvc.perform(post("/announcements/" + announcementId + "/mark-arrived")
                         .with(authentication(traveler("uid-traveler-mark-arrived-422")))

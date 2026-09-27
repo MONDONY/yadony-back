@@ -708,19 +708,26 @@ class NotificationDispatcherTest {
     void onTripArrived_notifiesEachSender() {
         UUID bid1Sender = UUID.randomUUID();
         UUID bid2Sender = UUID.randomUUID();
+        UUID bid1 = UUID.randomUUID();
+        UUID bid2 = UUID.randomUUID();
         TripArrivedEvent event = new TripArrivedEvent(annId, List.of(
-                new TripArrivedEvent.BidTarget(UUID.randomUUID(), bid1Sender),
-                new TripArrivedEvent.BidTarget(UUID.randomUUID(), bid2Sender)));
+                new TripArrivedEvent.BidTarget(bid1, bid1Sender),
+                new TripArrivedEvent.BidTarget(bid2, bid2Sender)));
         when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
 
         dispatcher.onTripArrived(event);
 
         var dataCaptor = ArgumentCaptor.forClass(Map.class);
         verify(fcmService).sendToUser(eq(bid1Sender), eq("Votre voyageur est arrivé"), any(), dataCaptor.capture());
+        // Chaque expéditeur reçoit l'identifiant de SON colis : le push ouvre le
+        // détail où vivent les instructions de retrait.
         assertThat(dataCaptor.getValue())
                 .containsEntry("type", "TRIP_ARRIVED")
-                .containsEntry("announcementId", annId.toString());
-        verify(fcmService).sendToUser(eq(bid2Sender), eq("Votre voyageur est arrivé"), any(), any());
+                .containsEntry("announcementId", annId.toString())
+                .containsEntry("bidId", bid1.toString());
+        var data2 = ArgumentCaptor.forClass(Map.class);
+        verify(fcmService).sendToUser(eq(bid2Sender), eq("Votre voyageur est arrivé"), any(), data2.capture());
+        assertThat(data2.getValue()).containsEntry("bidId", bid2.toString());
     }
 
     /** Suivi de la relecture B1 : chaque expéditeur reçoit sa propre langue, pas celle de l'autre. */
