@@ -22,6 +22,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
@@ -32,6 +33,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -42,6 +44,9 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -63,6 +68,7 @@ class BidNegotiationServiceTest {
     @Mock private AuditService auditService;
     @Mock private ApplicationEventPublisher eventPublisher;
     @Mock private BidService bidService;
+    @Mock private BidNegotiationMobileMoneyPort mobileMoneyPort;
     @Mock private HttpServletRequest httpRequest;
 
     /** Surcharges du profil test : 3 tours, 1 h d'inactivité, 24 h pour payer. */
@@ -85,7 +91,7 @@ class BidNegotiationServiceTest {
                 bidRepository, announcementRepository, userRepository, messageRepository,
                 customItemRepository, bidGridItemRepository, annGridItemRepository,
                 bidPhotoService, commissionRateResolver, auditService, eventPublisher,
-                config, bidService);
+                config, bidService, mobileMoneyPort);
     }
 
     // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -407,14 +413,11 @@ class BidNegotiationServiceTest {
         }
 
         @Test
-        @DisplayName("paymentMethod résolu en MOBILE_MONEY → 422 mobile-money-negotiation-unsupported, aucun bid créé")
-        void propose_mobileMoney_isRejected() {
-            // Ce test échoue si la garde de ce test est retirée : sans elle, propose()
-            // construirait et sauvegarderait un bid NEGOTIATING en MOBILE_MONEY, qu'aucun
-            // rail ne peut ensuite payer (accept() ne sait faire transiter que CASH/carte
-            // vers un aval qui règle vraiment le voyageur — cf. BidService.restoreCapacityIfNeeded).
+        @DisplayName("proposition en MOBILE_MONEY → bid NEGOTIATING en mobile money, numéro payeur enregistré")
+        void propose_mobileMoney_createsBidWithPayer() {
             UserEntity sender = buildSender();
             AnnouncementEntity announcement = buildAnnouncement();
+            announcement.setCurrency("XOF");
 
             when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
             when(announcementRepository.findByIdForUpdate(ANNOUNCEMENT_ID))
@@ -422,6 +425,9 @@ class BidNegotiationServiceTest {
             when(bidService.assertCanBidOn(sender, announcement, "CLOTHING")).thenReturn("CLOTHING");
             when(bidService.resolvePaymentMethodFor(announcement, "MOBILE_MONEY"))
                     .thenReturn(com.yadony.api.payments.cash.PaymentMethod.MOBILE_MONEY);
+            when(commissionRateResolver.resolve(TRAVELER_ID, SENDER_ID)).thenReturn(new BigDecimal("0.05"));
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(buildTraveler()));
+            stubSavedBid();
 
             BidNegotiationStartRequest request = new BidNegotiationStartRequest(
                     new BigDecimal("5.0"), "Vêtements", "CLOTHING",
@@ -429,16 +435,43 @@ class BidNegotiationServiceTest {
                     "MOBILE_MONEY", "+221701234567", "SN", null,
                     new BigDecimal("45.00"), null, null);
 
-            assertThatThrownBy(() -> service.propose(ANNOUNCEMENT_ID, SENDER_UID, request, httpRequest))
-                    .isInstanceOf(YadonyBusinessException.class)
-                    .satisfies(e -> {
-                        YadonyBusinessException ex = (YadonyBusinessException) e;
-                        assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
-                        assertThat(ex.getErrorCode()).isEqualTo("mobile-money-negotiation-unsupported");
-                    });
+            BidNegotiationResponse response =
+                    service.propose(ANNOUNCEMENT_ID, SENDER_UID, request, httpRequest);
 
-            verify(bidRepository, never()).save(any(BidEntity.class));
-            verifyNoInteractions(auditService);
+            ArgumentCaptor<BidEntity> bidCaptor = ArgumentCaptor.forClass(BidEntity.class);
+            verify(bidRepository).save(bidCaptor.capture());
+            BidEntity saved = bidCaptor.getValue();
+            assertThat(saved.getStatus()).isEqualTo(BidStatus.NEGOTIATING);
+            assertThat(saved.getPaymentMethod())
+                    .isEqualTo(com.yadony.api.payments.cash.PaymentMethod.MOBILE_MONEY);
+            // Même règle de numéro payeur que l'offre directe, partagée par BidService.
+            verify(bidService).applyMobileMoneyPayer(saved, "+221701234567", "SN");
+            assertThat(response.paymentMethod()).isEqualTo("MOBILE_MONEY");
+            // Le fil n'est pas une réservation : aucun paiement ni capacité avant l'accord.
+            verifyNoInteractions(mobileMoneyPort);
+        }
+
+        @Test
+        @DisplayName("proposition en espèces → aucun numéro payeur mobile money")
+        void propose_cash_doesNotApplyMobileMoneyPayer() {
+            UserEntity sender = buildSender();
+            AnnouncementEntity announcement = buildAnnouncement();
+
+            when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
+            when(announcementRepository.findByIdForUpdate(ANNOUNCEMENT_ID))
+                    .thenReturn(Optional.of(announcement));
+            when(bidService.assertCanBidOn(sender, announcement, "CLOTHING")).thenReturn("CLOTHING");
+            when(bidService.resolvePaymentMethodFor(announcement, "CASH"))
+                    .thenReturn(com.yadony.api.payments.cash.PaymentMethod.CASH);
+            when(commissionRateResolver.resolve(TRAVELER_ID, SENDER_ID)).thenReturn(new BigDecimal("0.05"));
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(buildTraveler()));
+            stubSavedBid();
+
+            BidNegotiationResponse response = service.propose(
+                    ANNOUNCEMENT_ID, SENDER_UID, buildStartRequest(new BigDecimal("45.00")), httpRequest);
+
+            verify(bidService, never()).applyMobileMoneyPayer(any(), any(), any());
+            assertThat(response.paymentMethod()).isEqualTo("CASH");
         }
     }
 
@@ -707,6 +740,87 @@ class BidNegotiationServiceTest {
             assertThat(bid.getPendingSince())
                     .describedAs("le compte à rebours « demande sans réponse » repart de l'accord")
                     .isAfter(before);
+        }
+
+        @Test
+        @DisplayName("accord en mobile money → acceptBid mène le bid à AWAITING_PAYMENT (capacité réservée)")
+        void accept_mobileMoneyBid_delegatesToMobileMoneyAcceptance() {
+            BidEntity bid = buildNegotiatingBid();
+            bid.setPaymentMethod(PaymentMethod.MOBILE_MONEY);
+            when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(buildSender()));
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID))
+                    .thenReturn(Optional.of(buildAnnouncement()));
+            // Contre-proposition du voyageur, acceptée par l'expéditeur : l'accord vaut
+            // acceptation du voyageur, sans second geste de sa part.
+            when(messageRepository.findFirstByBidIdOrderByCreatedAtDesc(BID_ID))
+                    .thenReturn(Optional.of(lastMessageFrom(TRAVELER_ID, "45.00")));
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(buildTraveler()));
+            stubSavedBid();
+            // acceptBid (vrai service) relit le bid en PENDING : le statut doit être posé
+            // AVANT l'appel, sinon il répond 409 invalid-status.
+            List<BidStatus> statusSeenByAcceptBid = new ArrayList<>();
+            doAnswer(inv -> {
+                statusSeenByAcceptBid.add(bid.getStatus());
+                bid.setStatus(BidStatus.AWAITING_PAYMENT);
+                return null;
+            }).when(mobileMoneyPort).acceptAgreement(BID_ID, TRAVELER_ID);
+
+            BidNegotiationResponse response = service.accept(BID_ID, SENDER_UID);
+
+            assertThat(statusSeenByAcceptBid).containsExactly(BidStatus.PENDING);
+            assertThat(bid.getNegotiatedGrossEur()).isEqualByComparingTo("45.00");
+            assertThat(response.status()).isEqualTo("AWAITING_PAYMENT");
+            assertThat(response.paymentMethod()).isEqualTo("MOBILE_MONEY");
+            InOrder order = inOrder(bidRepository, mobileMoneyPort);
+            order.verify(bidRepository).save(bid);
+            order.verify(mobileMoneyPort).acceptAgreement(BID_ID, TRAVELER_ID);
+            // Pas de file « demande à traiter » côté voyageur : il a déjà accepté le prix.
+            verify(eventPublisher, never()).publishEvent(any(CashBidCreatedEvent.class));
+        }
+
+        @Test
+        @DisplayName("accord en mobile money refusé par le rail → erreur propagée, aucun message d'accord")
+        void accept_mobileMoneyBid_refusedByAcceptBid_abortsAgreement() {
+            BidEntity bid = buildNegotiatingBid();
+            bid.setPaymentMethod(PaymentMethod.MOBILE_MONEY);
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(buildTraveler()));
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID))
+                    .thenReturn(Optional.of(buildAnnouncement()));
+            when(messageRepository.findFirstByBidIdOrderByCreatedAtDesc(BID_ID))
+                    .thenReturn(Optional.of(lastMessageFrom(SENDER_ID, "45.00")));
+            stubSavedBid();
+            doThrow(new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                            "mobile-money-account-required", "Mobile Money Account Required", "x"))
+                    .when(mobileMoneyPort).acceptAgreement(BID_ID, TRAVELER_ID);
+
+            assertThatThrownBy(() -> service.accept(BID_ID, TRAVELER_UID))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                            .isEqualTo("mobile-money-account-required"));
+
+            verify(messageRepository, never()).save(any(BidNegotiationMessageEntity.class));
+            verify(eventPublisher, never()).publishEvent(any());
+        }
+
+        @Test
+        @DisplayName("accord par carte → rail mobile money jamais appelé, mode exposé")
+        void accept_cardBid_neverTouchesMobileMoney() {
+            BidEntity bid = buildNegotiatingBid();
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(buildTraveler()));
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID))
+                    .thenReturn(Optional.of(buildAnnouncement()));
+            when(messageRepository.findFirstByBidIdOrderByCreatedAtDesc(BID_ID))
+                    .thenReturn(Optional.of(lastMessageFrom(SENDER_ID, "45.00")));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(buildSender()));
+            stubSavedBid();
+
+            BidNegotiationResponse response = service.accept(BID_ID, TRAVELER_UID);
+
+            verifyNoInteractions(mobileMoneyPort);
+            assertThat(response.paymentMethod()).isEqualTo("STRIPE");
         }
 
         @Test

@@ -319,6 +319,16 @@ public class BidCheckoutService {
                 "Cette demande n'est pas issue d'une négociation de prix");
         }
 
+        // Un accord mobile money se paie par POST /bids/{id}/mobile-money/initiate, jamais par
+        // la carte : le PaymentEntity pawaPay existe déjà et la capacité est réservée. La garde
+        // CFA ci-dessous le couvre aujourd'hui (pawaPay n'existe qu'en XOF/XAF), mais un
+        // futur rail mobile money hors zone CFA ouvrirait sinon un escrow Stripe en doublon.
+        if (bid.getPaymentMethod() == com.yadony.api.payments.cash.PaymentMethod.MOBILE_MONEY) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT,
+                "bid-paid-by-mobile-money", "Bid Paid By Mobile Money",
+                "Cette demande se règle par mobile money, pas par carte.");
+        }
+
         // Même garde que checkout() : le rail carte n'existe pas en zone CFA. createEscrow la
         // répète en aval, mais un chemin de paiement ne doit pas dépendre d'un seul filet.
         if (!CurrencyPaymentRails.allowsCode(bid.getCurrency(),

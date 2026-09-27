@@ -490,6 +490,24 @@ class BidCheckoutServiceTest {
         verify(paymentService, never()).createEscrow(any(), anyString());
     }
 
+    /**
+     * Un accord mobile money est lui aussi en AWAITING_PAYMENT, mais se paie par le dépôt
+     * pawaPay déjà créé : la carte ouvrirait un second encaissement sur le même bid. Devise
+     * laissée hors zone CFA exprès — la garde CFA ne doit pas être le seul filet.
+     */
+    @Test
+    void negotiationCheckout_onAMobileMoneyAgreement_isRejected() {
+        BidEntity bid = negotiatedBid();
+        bid.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.MOBILE_MONEY);
+        when(bidRepository.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
+
+        assertThatThrownBy(() -> service.negotiationCheckout("uid-sender", bid.getId()))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                        .isEqualTo("bid-paid-by-mobile-money"));
+        verifyNoInteractions(paymentService);
+    }
+
     /** Un accord en espèces vit en PENDING : il n'y a rien à encaisser en ligne. */
     @Test
     void negotiationCheckout_onACashAgreement_isRejected() {
