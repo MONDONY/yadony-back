@@ -2,7 +2,7 @@ package com.yadony.api.admin.account;
 
 /**
  * Admin permissions enum (Task 2).
- * 33 granular permissions for role-based access control.
+ * 35 granular permissions for role-based access control.
  */
 public enum AdminPermission {
     // Account management
@@ -30,6 +30,12 @@ public enum AdminPermission {
     PAYMENT_VIEW,
     PAYMENT_RELEASE,
     PAYMENT_REFUND,
+    /**
+     * Corriger a la main le solde wallet d'un utilisateur (credit ou debit, plafonne a
+     * 500 EUR d'equivalent par operation). Jamais accordee au support : c'est ecrire de
+     * l'argent.
+     */
+    WALLET_ADJUST,
 
     // Bid management
     BID_VIEW,

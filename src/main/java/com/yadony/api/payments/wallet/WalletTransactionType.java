@@ -25,4 +25,17 @@ public enum WalletTransactionType {
      * n'est remboursable. Cf. UserFinalizedPaymentsListener.
      */
     FORFEITED_ON_DELETION
+    ,
+    /**
+     * Correction manuelle du solde par un admin, au crédit (cf.
+     * {@code WalletAdminAdjustmentService}). Hors TOP_UP à paymentRef, donc rangée dans le
+     * non-cash par {@code WalletRefundAllocator} : jamais remboursable vers une carte.
+     */
+    ADMIN_CREDIT
+    ,
+    /**
+     * Correction manuelle du solde par un admin, au débit. Débit ordinaire pour
+     * {@code WalletRefundAllocator} : consomme le non-cash, puis les recharges LIFO.
+     */
+    ADMIN_DEBIT
 }

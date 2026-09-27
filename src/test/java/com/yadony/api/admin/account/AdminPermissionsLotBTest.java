@@ -44,8 +44,9 @@ class AdminPermissionsLotBTest {
     // tache 3 de feature/suppression-compte-admin, qui ajoute USER_DELETE. Passe a 31
     // avec la tache 2 du lot billing (feature/pro-saas-abonnement), qui ajoute
     // USER_PRO_GRANT. Passe a 33 avec la messagerie support, qui ajoute
-    // SUPPORT_TICKET_VIEW et SUPPORT_TICKET_MANAGE.
-    void enumHasExactlyThirtyFourValues() {
-        assertThat(AdminPermission.values()).hasSize(34);
+    // SUPPORT_TICKET_VIEW et SUPPORT_TICKET_MANAGE. Passe a 34 avec REPORT_DELETE, puis a 35
+    // avec WALLET_ADJUST (correction de solde wallet).
+    void enumHasExactlyThirtyFiveValues() {
+        assertThat(AdminPermission.values()).hasSize(35);
     }
 }

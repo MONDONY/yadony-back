@@ -72,6 +72,17 @@ public class WalletTransactionEntity {
     @Column(name = "applied_rate", precision = 18, scale = 6)
     private BigDecimal appliedRate;
 
+    /**
+     * Motif interne d'une correction admin (ADMIN_CREDIT / ADMIN_DEBIT), {@code NULL}
+     * sur tout autre mouvement. Jamais montré à l'utilisateur.
+     */
+    @Column(name = "admin_reason", length = 500)
+    private String adminReason;
+
+    /** Admin auteur d'une correction de solde, {@code NULL} hors ajustement. */
+    @Column(name = "admin_actor_id")
+    private UUID adminActorId;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -101,5 +112,9 @@ public class WalletTransactionEntity {
     public void setSourceAmount(BigDecimal sourceAmount) { this.sourceAmount = sourceAmount; }
     public BigDecimal getAppliedRate() { return appliedRate; }
     public void setAppliedRate(BigDecimal appliedRate) { this.appliedRate = appliedRate; }
+    public String getAdminReason() { return adminReason; }
+    public void setAdminReason(String adminReason) { this.adminReason = adminReason; }
+    public UUID getAdminActorId() { return adminActorId; }
+    public void setAdminActorId(UUID adminActorId) { this.adminActorId = adminActorId; }
     public Instant getCreatedAt() { return createdAt; }
 }

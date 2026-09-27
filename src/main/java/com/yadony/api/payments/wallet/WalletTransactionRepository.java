@@ -14,6 +14,17 @@ public interface WalletTransactionRepository extends JpaRepository<WalletTransac
 
     Optional<WalletTransactionEntity> findByIdempotencyKey(String idempotencyKey);
 
+    // Journal admin des mouvements (cf. WalletAdminAdjustmentService#transactions) : le tri
+    // vient du Pageable, un filtre absent choisit la variante sans ce critère.
+    Page<WalletTransactionEntity> findByUserId(UUID userId, Pageable pageable);
+
+    Page<WalletTransactionEntity> findByUserIdAndCurrency(UUID userId, String currency, Pageable pageable);
+
+    Page<WalletTransactionEntity> findByUserIdAndType(UUID userId, WalletTransactionType type, Pageable pageable);
+
+    Page<WalletTransactionEntity> findByUserIdAndCurrencyAndType(UUID userId, String currency,
+                                                                 WalletTransactionType type, Pageable pageable);
+
     boolean existsByUserIdAndBidIdAndType(UUID userId, UUID bidId, WalletTransactionType type);
 
     boolean existsByUserId(UUID userId);

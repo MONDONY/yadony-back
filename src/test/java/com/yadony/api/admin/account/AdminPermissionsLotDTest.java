@@ -49,11 +49,12 @@ class AdminPermissionsLotDTest {
     }
 
     @Test
-    void enumHolds34Permissions() {
+    void enumHolds35Permissions() {
         // USER_DELETE ajoutee en tache 3 (feature/suppression-compte-admin) — 29 → 30.
         // USER_PRO_GRANT ajoutee en tache 2 du lot billing (feature/pro-saas-abonnement) — 30 → 31.
         // SUPPORT_TICKET_VIEW + SUPPORT_TICKET_MANAGE (messagerie support) — 31 → 33.
         // REPORT_DELETE (suppression des signalements, admin-reports-search-delete) — 33 → 34.
-        assertThat(AdminPermission.values()).hasSize(34);
+        // WALLET_ADJUST (correction de solde wallet, admin-wallet-ajustement) — 34 → 35.
+        assertThat(AdminPermission.values()).hasSize(35);
     }
 }

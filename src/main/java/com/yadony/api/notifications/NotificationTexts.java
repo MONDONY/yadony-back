@@ -591,4 +591,14 @@ public final class NotificationTexts {
         String body = note == null || note.isBlank() ? m.get("notification.admin-warning.default-body") : note.trim();
         return new NotificationText(m.get("notification.admin-warning.title"), body);
     }
+
+    /**
+     * Solde corrigé à la main par l'équipe. {@code amountText} est déjà formaté
+     * ({@code WalletAmountText#format}) ; le motif interne de la correction n'apparaît
+     * jamais ici.
+     */
+    public static NotificationText walletAdjustedByAdmin(Messages m, boolean credit, String amountText) {
+        String key = credit ? "notification.wallet-admin-credit" : "notification.wallet-admin-debit";
+        return new NotificationText(m.get(key + ".title"), m.get(key + ".body", amountText));
+    }
 }
