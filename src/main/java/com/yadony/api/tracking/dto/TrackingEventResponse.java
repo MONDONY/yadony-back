@@ -4,6 +4,9 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
+/**
+ * @param scanMethod {@code QR}, {@code MANUAL} ou null (provenance inconnue)
+ */
 public record TrackingEventResponse(
         UUID id,
         UUID bidId,
@@ -14,5 +17,6 @@ public record TrackingEventResponse(
         String gpsLabel,
         String photoUrl,
         LocalDateTime offlineTimestamp,
-        LocalDateTime createdAt
+        LocalDateTime createdAt,
+        String scanMethod
 ) {}

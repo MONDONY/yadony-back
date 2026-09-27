@@ -288,6 +288,7 @@ public class TrackingService {
         event.setGpsLon(request.gpsLon());
         event.setGpsLabel(cleanGpsLabel(request.gpsLabel()));
         event.setPhotoUrl(photoKey);
+        event.setScanMethod(request.scanMethod());
         if (request.offlineTimestamp() != null) {
             event.setOfflineTimestamp(request.offlineTimestamp());
             event.setSyncedAt(LocalDateTime.now(ZoneOffset.UTC));
@@ -390,7 +391,8 @@ public class TrackingService {
                             bid != null ? bid.getTrackingNumber() : null,
                             bid != null ? bid.getRecipientName() : null,
                             event.getEventType().name(),
-                            event.getScannedAt());
+                            event.getScannedAt(),
+                            scanMethodName(event));
                 })
                 .toList();
     }
@@ -400,7 +402,11 @@ public class TrackingService {
                 e.getId(), e.getBidId(), e.getEventType().name(),
                 e.getScannedAt(), e.getGpsLat(), e.getGpsLon(), e.getGpsLabel(),
                 resolvedPhotoUrl != null ? resolvedPhotoUrl : e.getPhotoUrl(),
-                e.getOfflineTimestamp(), e.getCreatedAt());
+                e.getOfflineTimestamp(), e.getCreatedAt(), scanMethodName(e));
+    }
+
+    private static String scanMethodName(TrackingEventEntity e) {
+        return e.getScanMethod() != null ? e.getScanMethod().name() : null;
     }
 
     /**
@@ -647,6 +653,7 @@ public class TrackingService {
         event.setEventType(TrackingEventType.ARRIVEE);
         event.setScannedAt(LocalDateTime.now(ZoneOffset.UTC));
         event.setPhotoUrl(photoKey);
+        event.setScanMethod(request.scanMethod());
         trackingEventRepository.save(event);
 
         eventPublisher.publishEvent(new DeliveryConfirmedEvent(bid.getId(), bid.getSenderId(), traveler.getId()));
