@@ -74,6 +74,19 @@ public interface ReportRepository extends JpaRepository<ReportEntity, UUID> {
             @Param("reasons") List<ReportReason> reasons
     );
 
+    /** Signalements (non supprimés) visant ces cibles, comptés par cible : lignes {@code [targetId, count]}. */
+    @Query("""
+            SELECT r.targetId, COUNT(r) FROM ReportEntity r
+            WHERE r.targetType = :targetType AND r.targetId IN :targetIds
+            GROUP BY r.targetId
+            """)
+    List<Object[]> countByTargetIds(
+            @Param("targetType") ReportTargetType targetType,
+            @Param("targetIds") java.util.Collection<UUID> targetIds);
+
+    /** Signalements (non supprimés) d'une cible, du plus récent au plus ancien. */
+    List<ReportEntity> findByTargetTypeAndTargetIdOrderByCreatedAtDesc(ReportTargetType targetType, UUID targetId);
+
     /** Signalements visant ce compte, pour un statut donné. */
     List<ReportEntity> findByStatusAndTargetTypeAndTargetId(
             ReportStatus status, ReportTargetType targetType, UUID targetId);

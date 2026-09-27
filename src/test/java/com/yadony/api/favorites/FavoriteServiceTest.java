@@ -632,6 +632,25 @@ class FavoriteServiceTest {
     }
 
     @Test
+    void getFavoritePackageRequests_skipsRemovedByAdmin() {
+        UUID p1 = UUID.randomUUID(); // OPEN — kept
+        UUID p2 = UUID.randomUUID(); // REMOVED_BY_ADMIN — masquée par la modération
+        when(favoriteRepository.findTargetIds(userId, FavoriteTargetType.PACKAGE_REQUEST))
+                .thenReturn(List.of(p1, p2));
+        PackageRequestEntity pr1 = mock(PackageRequestEntity.class);
+        when(pr1.getStatus()).thenReturn(PackageRequestStatus.OPEN);
+        PackageRequestEntity pr2 = mock(PackageRequestEntity.class);
+        when(pr2.getStatus()).thenReturn(PackageRequestStatus.REMOVED_BY_ADMIN);
+        when(packageRequestRepository.findAllById(anyCollection())).thenReturn(List.of(pr1, pr2));
+        when(packageRequestSearchMapper.toSearchResponseList(anyList(), anySet(), any(ViewerPaymentCapabilities.class)))
+                .thenReturn(List.of(mock(PackageRequestSearchResponse.class)));
+
+        service.getFavoritePackageRequests(userId);
+
+        verify(packageRequestSearchMapper).toSearchResponseList(eq(List.of(pr1)), anySet(), any(ViewerPaymentCapabilities.class));
+    }
+
+    @Test
     void getFavoritePackageRequests_isFavoriteTruePassedToMapper() {
         UUID p1 = UUID.randomUUID();
         when(favoriteRepository.findTargetIds(userId, FavoriteTargetType.PACKAGE_REQUEST))

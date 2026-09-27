@@ -4,6 +4,7 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.requests.dto.PackageRequestReportRequest;
 import com.yadony.api.requests.entity.PackageRequestEntity;
 import com.yadony.api.requests.entity.PackageRequestReportEntity;
+import com.yadony.api.requests.event.PackageRequestReportedEvent;
 import com.yadony.api.requests.repository.PackageRequestReportRepository;
 import com.yadony.api.requests.repository.PackageRequestRepository;
 import org.junit.jupiter.api.Test;
@@ -11,6 +12,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Optional;
@@ -30,6 +32,7 @@ class PackageRequestReportServiceTest {
     @Mock private PackageRequestRepository requestRepository;
     @Mock private PackageRequestReportRepository reportRepository;
     @Mock private AuditService auditService;
+    @Mock private ApplicationEventPublisher eventPublisher;
     @InjectMocks private PackageRequestReportService service;
 
     private static final UUID REQ = UUID.randomUUID();
@@ -51,6 +54,9 @@ class PackageRequestReportServiceTest {
 
         verify(reportRepository).save(any(PackageRequestReportEntity.class));
         verify(auditService).log(eq("PACKAGE_REQUEST"), eq(REQ), eq("REPORTED"), eq(REPORTER), anyMap());
+        // Double écriture : la boîte générique des signalements reçoit sa copie.
+        verify(eventPublisher).publishEvent(
+            new PackageRequestReportedEvent(REQ, REPORTER, "SCAM", "annonce frauduleuse"));
     }
 
     @Test
@@ -81,5 +87,7 @@ class PackageRequestReportServiceTest {
 
         verify(reportRepository, never()).save(any());
         verify(auditService, never()).log(any(), any(), any(), any(), anyMap());
+        // Idempotent jusque dans la boîte générique : aucune seconde copie.
+        verify(eventPublisher, never()).publishEvent(any());
     }
 }

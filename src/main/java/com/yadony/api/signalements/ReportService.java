@@ -8,6 +8,7 @@ import com.yadony.api.common.StorageService;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.ratings.RatingRepository;
+import com.yadony.api.requests.repository.PackageRequestRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -41,6 +42,7 @@ public class ReportService {
     private final AnnouncementRepository announcementRepository;
     private final BidRepository bidRepository;
     private final RatingRepository ratingRepository;
+    private final PackageRequestRepository packageRequestRepository;
     private final StorageService storageService;
     private final AuditService auditService;
 
@@ -50,6 +52,7 @@ public class ReportService {
                          AnnouncementRepository announcementRepository,
                          BidRepository bidRepository,
                          RatingRepository ratingRepository,
+                         PackageRequestRepository packageRequestRepository,
                          StorageService storageService,
                          AuditService auditService) {
         this.reportRepository = reportRepository;
@@ -58,6 +61,7 @@ public class ReportService {
         this.announcementRepository = announcementRepository;
         this.bidRepository = bidRepository;
         this.ratingRepository = ratingRepository;
+        this.packageRequestRepository = packageRequestRepository;
         this.storageService = storageService;
         this.auditService = auditService;
     }
@@ -163,6 +167,35 @@ public class ReportService {
         return report;
     }
 
+    /**
+     * Copie, dans la boîte générique, d'un signalement de demande d'envoi fait depuis
+     * l'app ({@code package_request_reports}, motif libre). Le motif est converti par
+     * {@link PackageRequestReportReasons}, seul endroit de la table de conversion.
+     * L'idempotence par (demande, signalant) reste portée par l'ancienne table : cette
+     * méthode n'est appelée que pour un signalement nouveau.
+     */
+    @Transactional
+    public ReportEntity recordPackageRequestReport(UUID packageRequestId, UUID reporterId,
+                                                   String rawReason, String details) {
+        PackageRequestReportReasons.Converted converted = PackageRequestReportReasons.convert(rawReason, details);
+        ReportEntity report = new ReportEntity();
+        report.setTargetType(ReportTargetType.PACKAGE_REQUEST);
+        report.setTargetId(packageRequestId);
+        report.setReporterId(reporterId);
+        report.setReason(converted.reason());
+        report.setDescription(converted.description());
+        report.setStatus(ReportStatus.OPEN);
+        ReportEntity saved = reportRepository.save(report);
+        auditService.log("REPORT", saved.getId(), "REPORT_CREATED", reporterId,
+                Map.of(
+                        "targetType", ReportTargetType.PACKAGE_REQUEST.name(),
+                        "targetId", packageRequestId.toString(),
+                        "reason", converted.reason().name(),
+                        "photoCount", 0
+                ));
+        return saved;
+    }
+
     /** Route conservée pour la seule cible APP, vidée si blanche, tronquée à la colonne. */
     static String normalizeScreenRoute(ReportTargetType targetType, String screenRoute) {
         if (targetType != ReportTargetType.APP || screenRoute == null) {
@@ -193,6 +226,7 @@ public class ReportService {
             case ANNOUNCEMENT -> announcementRepository.existsById(targetId);
             case BID -> bidRepository.existsById(targetId);
             case RATING -> ratingRepository.existsById(targetId);
+            case PACKAGE_REQUEST -> packageRequestRepository.existsById(targetId);
             case MESSAGE, APP -> true;
         };
         if (!exists) {

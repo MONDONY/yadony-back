@@ -357,6 +357,27 @@ public class RequestEventsListener {
     }
 
     /**
+     * La modération a retiré la demande : l'expéditeur l'apprend dans sa langue, avec le
+     * seul motif public catalogué (l'événement ne porte pas la note interne).
+     * {@code AFTER_COMMIT} : aucun message si le retrait est annulé par un rollback.
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
+    public void onPackageRequestRemovedByAdmin(PackageRequestRemovedByAdminEvent e) {
+        var text = NotificationTexts.packageRequestRemoved(
+            dispatcher.messagesFor(e.senderId()), e.publicReasonCode());
+        dispatcher.notifyUser(
+            e.senderId(),
+            text.title(),
+            text.body(),
+            Map.of(
+                "type", "PACKAGE_REQUEST_REMOVED",
+                "packageRequestId", e.packageRequestId().toString()
+            )
+        );
+    }
+
+    /**
      * A participant ended the negotiation before payment. Notify the other party.
      *
      * <p>{@code AFTER_COMMIT} (not a plain {@code @EventListener}) so no spurious

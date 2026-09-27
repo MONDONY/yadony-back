@@ -47,6 +47,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import com.yadony.api.requests.entity.NegotiationThreadEntity;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -562,6 +563,12 @@ public class PackageRequestService {
         blockVisibility.assertVisible(callerUid, entity.getSenderId());
 
         boolean isOwner = entity.getSenderId().equals(callerUid);
+        // Retirée par la modération : n'existe plus que pour son expéditeur. Pas même pour
+        // un voyageur dont la négociation vient d'être close par le retrait, et un 404
+        // plutôt qu'un 403 : le contenu retiré (objet interdit, fraude) ne se consulte plus.
+        if (entity.getStatus() == PackageRequestStatus.REMOVED_BY_ADMIN && !isOwner) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found");
+        }
         boolean isThreadParticipant = threadRepository
             .existsByPackageRequestIdAndTravelerId(requestId, callerUid);
         // Les demandes publiquement listées en recherche (OPEN / NEGOTIATING)
@@ -663,32 +670,53 @@ public class PackageRequestService {
             .map(UserEntity::publicDisplayName)
             .orElse(UserEntity.UNKNOWN_DISPLAY_NAME);
 
-        threadRepository.findByPackageRequestId(requestId).stream()
-            .filter(t -> t.getStatus().isActive())
-            .forEach(t -> {
-                NegotiationThreadStatus previous = t.getStatus();
-                t.setStatus(NegotiationThreadStatus.AUTO_REJECTED);
-                t.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC));
-                threadRepository.save(t);
-                softDeleteOrphanedDedicatedTrip(t, callerUid);
-                // Chaque fil tué laisse sa propre trace, comme sur tous les
-                // autres chemins de mort d'un fil : c'est précisément ici qu'on
-                // en aura besoin, la demande étant soft-deletée donc introuvable.
-                auditService.log("NEGOTIATION_THREAD", t.getId(), "AUTO_REJECTED", callerUid,
-                    Map.of("reason", "request-cancelled", "previousStatus", previous.name()));
-
-                // Le statut d'avant l'annulation part dans l'événement — seul ce
-                // point du code le connaît. Les effets financiers (hold Stripe à
-                // annuler, commission à rembourser) en sont dérivés par le record
-                // et exécutés par des écouteurs AFTER_COMMIT : un rollback ne
-                // déclenche rien, donc aucune fuite d'argent sur une annulation
-                // qui n'a pas eu lieu.
-                eventPublisher.publishEvent(new NegotiationCancelledEvent(
-                    t.getId(), requestId, callerUid, t.getTravelerId(), senderName, previous));
-            });
+        terminateActiveNegotiations(requestId, callerUid, senderName,
+            NegotiationThreadStatus.AUTO_REJECTED, "request-cancelled");
 
         auditService.log("PACKAGE_REQUEST", requestId, "CANCELLED", callerUid,
             Map.of("status", "CANCELLED"));
+    }
+
+    /**
+     * Ferme tous les fils encore actifs d'une demande qui disparaît du marché : annulation
+     * par l'expéditeur ({@link #cancel}, fils {@code AUTO_REJECTED}) ou retrait par la
+     * modération ({@code PackageRequestModerationService#removeByAdmin}, fils
+     * {@code CANCELLED}). Un seul chemin pour les deux, pour que chaque fil mort solde ce
+     * qui lui reste : trajet dédié orphelin soft-deleté, trace d'audit, et
+     * {@link NegotiationCancelledEvent} qui prévient le voyageur et déclenche les effets
+     * financiers (hold carte annulé, commission remboursée).
+     *
+     * <p>À appeler dans la transaction qui tient déjà la demande sous verrou pessimiste.
+     *
+     * @return le nombre de fils fermés
+     */
+    public int terminateActiveNegotiations(UUID requestId, UUID actorId, String actorName,
+                                           NegotiationThreadStatus finalStatus, String reason) {
+        List<NegotiationThreadEntity> active = threadRepository.findByPackageRequestId(requestId).stream()
+            .filter(t -> t.getStatus().isActive())
+            .toList();
+        for (NegotiationThreadEntity t : active) {
+            NegotiationThreadStatus previous = t.getStatus();
+            t.setStatus(finalStatus);
+            t.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC));
+            threadRepository.save(t);
+            softDeleteOrphanedDedicatedTrip(t, actorId);
+            // Chaque fil tué laisse sa propre trace, comme sur tous les
+            // autres chemins de mort d'un fil : c'est précisément ici qu'on
+            // en aura besoin, la demande étant soft-deletée donc introuvable.
+            auditService.log("NEGOTIATION_THREAD", t.getId(), finalStatus.name(), actorId,
+                Map.of("reason", reason, "previousStatus", previous.name()));
+
+            // Le statut d'avant l'annulation part dans l'événement — seul ce
+            // point du code le connaît. Les effets financiers (hold Stripe à
+            // annuler, commission à rembourser) en sont dérivés par le record
+            // et exécutés par des écouteurs AFTER_COMMIT : un rollback ne
+            // déclenche rien, donc aucune fuite d'argent sur une annulation
+            // qui n'a pas eu lieu.
+            eventPublisher.publishEvent(new NegotiationCancelledEvent(
+                t.getId(), requestId, actorId, t.getTravelerId(), actorName, previous));
+        }
+        return active.size();
     }
 
     /**
@@ -1078,7 +1106,12 @@ public class PackageRequestService {
             e.getContentCategory(),
             e.getDescription(), e.getTargetPriceEur(), photoUrl,
             e.getPickupNeighborhood(), e.getDeliveryNeighborhood(),
-            e.getStatus(), e.getCreatedAt(),
+            // Compatibilité app : son parseur de statut lève sur une valeur inconnue et
+            // ferait tomber tout « Mes demandes ». Une demande retirée par la modération
+            // part donc en CANCELLED, avec moderationRemoved pour qui sait le lire.
+            e.getStatus() == PackageRequestStatus.REMOVED_BY_ADMIN
+                ? PackageRequestStatus.CANCELLED : e.getStatus(),
+            e.getCreatedAt(),
             e.isNegotiable(),
             e.getAcceptedPaymentMethods(),
             grossPriceEur,
@@ -1089,7 +1122,8 @@ public class PackageRequestService {
             e.getCurrency(),
             availablePaymentMethods,
             // Converti joint par getById (withConvertedPrice), qui connaît le lecteur.
-            null, null
+            null, null,
+            e.getStatus() == PackageRequestStatus.REMOVED_BY_ADMIN
         );
     }
 

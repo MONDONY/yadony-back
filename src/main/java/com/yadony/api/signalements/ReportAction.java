@@ -5,7 +5,7 @@ package com.yadony.api.signalements;
  *
  * <p>{@code SUSPEND_TARGET} et {@code REMOVE_CONTENT} délèguent à des services de modération
  * déjà existants (ils ne réimplémentent rien) : le premier n'a de sens que pour une cible
- * {@code USER}, le second que pour une cible {@code ANNOUNCEMENT}. Toute autre combinaison
+ * {@code USER}, le second que pour une cible {@code ANNOUNCEMENT} ou {@code PACKAGE_REQUEST}. Toute autre combinaison
  * est refusée par le contrôleur — voir {@code appliesTo}.
  */
 public enum ReportAction {
@@ -19,7 +19,8 @@ public enum ReportAction {
             case DISMISS -> true;
             case WARN -> targetType == ReportTargetType.USER;
             case SUSPEND_TARGET -> targetType == ReportTargetType.USER;
-            case REMOVE_CONTENT -> targetType == ReportTargetType.ANNOUNCEMENT;
+            case REMOVE_CONTENT -> targetType == ReportTargetType.ANNOUNCEMENT
+                    || targetType == ReportTargetType.PACKAGE_REQUEST;
         };
     }
 }

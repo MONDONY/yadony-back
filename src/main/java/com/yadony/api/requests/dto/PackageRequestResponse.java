@@ -50,8 +50,44 @@ public record PackageRequestResponse(
      */
     BigDecimal convertedDisplayPrice,
     /** Devise cible de {@code convertedDisplayPrice} : celle du lecteur. */
-    String convertedCurrency
+    String convertedCurrency,
+    /**
+     * {@code true} quand la demande a été retirée par la modération. {@code status} vaut
+     * alors {@code CANCELLED} : l'app plante sur un statut inconnu, REMOVED_BY_ADMIN n'est
+     * jamais exposé tel quel côté mobile.
+     */
+    boolean moderationRemoved
 ) {
+    /** Constructeur de compatibilité, sans {@code moderationRemoved} (faux). */
+    public PackageRequestResponse(
+            UUID id, UUID senderId,
+            String departureCity, String arrivalCity,
+            LocalDate desiredDate, int dateToleranceDays,
+            BigDecimal weightKg, ParcelSize parcelSize,
+            TransportMode transportMode,
+            String contentCategory,
+            String description, BigDecimal targetPriceEur, String photoUrl,
+            String pickupNeighborhood, String deliveryNeighborhood,
+            PackageRequestStatus status,
+            LocalDateTime createdAt,
+            boolean negotiable,
+            Set<PaymentMethod> acceptedPaymentMethods,
+            BigDecimal grossPriceEur,
+            List<PackageRequestPhotoResponse> photos,
+            UUID viewerThreadId,
+            String viewerThreadStatus,
+            String promoCode,
+            String currency,
+            Set<PaymentMethod> availablePaymentMethods,
+            BigDecimal convertedDisplayPrice,
+            String convertedCurrency) {
+        this(id, senderId, departureCity, arrivalCity, desiredDate, dateToleranceDays, weightKg, parcelSize,
+            transportMode, contentCategory, description, targetPriceEur, photoUrl, pickupNeighborhood,
+            deliveryNeighborhood, status, createdAt, negotiable, acceptedPaymentMethods, grossPriceEur, photos,
+            viewerThreadId, viewerThreadStatus, promoCode, currency, availablePaymentMethods,
+            convertedDisplayPrice, convertedCurrency, false);
+    }
+
     /** Constructeur de compatibilité (sans promoCode/currency/availablePaymentMethods) — évite de retoucher tous les tests. */
     public PackageRequestResponse(
             UUID id, UUID senderId,
@@ -84,6 +120,6 @@ public record PackageRequestResponse(
             transportMode, contentCategory, description, targetPriceEur, photoUrl, pickupNeighborhood,
             deliveryNeighborhood, status, createdAt, negotiable, acceptedPaymentMethods, grossPriceEur, photos,
             viewerThreadId, viewerThreadStatus, promoCode, currency, availablePaymentMethods,
-            convertedDisplayPrice, convertedCurrency);
+            convertedDisplayPrice, convertedCurrency, moderationRemoved);
     }
 }

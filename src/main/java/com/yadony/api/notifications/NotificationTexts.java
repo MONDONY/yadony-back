@@ -462,6 +462,17 @@ public final class NotificationTexts {
                 m.get("notification.announcement-removed.body", reason));
     }
 
+    /**
+     * Demande d'envoi retirée par la modération. {@code reasonCode} est le motif PUBLIC
+     * catalogué ({@code AnnouncementRemovalReason}) ; la note interne du modérateur n'entre
+     * jamais ici.
+     */
+    public static NotificationText packageRequestRemoved(Messages m, String reasonCode) {
+        String reason = m.get("notification.request-removal-reason." + reasonCode);
+        return new NotificationText(m.get("notification.package-request-removed.title"),
+                m.get("notification.package-request-removed.body", reason));
+    }
+
     // ── Trajets : automatisations voyageur ───────────────────────────────────
 
     public static NotificationText capacityFree(Messages m, BigDecimal availableKg, int hours, String departure, String arrival) {

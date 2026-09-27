@@ -116,6 +116,7 @@ class NotificationTextsTest {
         map.put("corridorAlertDigest 1", NotificationTexts.corridorAlertDigest(m, true, 1, DEPART, ARRIVEE));
         for (AnnouncementRemovalReason reason : AnnouncementRemovalReason.values()) {
             map.put("announcementRemoved " + reason, NotificationTexts.announcementRemoved(m, reason.name()));
+            map.put("packageRequestRemoved " + reason, NotificationTexts.packageRequestRemoved(m, reason.name()));
         }
         map.put("capacityFree", NotificationTexts.capacityFree(m, POIDS, 48, DEPART, ARRIVEE));
         map.put("lastMinuteOffer", NotificationTexts.lastMinuteOffer(m, 24, DEPART + " → " + ARRIVEE));

@@ -232,7 +232,10 @@ class GuestDataExposureIT {
             "photos", "objectKey", "url",
             "matchScore", "matchedTripId", "matchedTripDepartureDate",
             // Portee au lecteur : null pour un invite, qui n'a aucun fil.
-            "viewerThreadId", "viewerThreadStatus"));
+            "viewerThreadId", "viewerThreadStatus",
+            // Booleen de moderation : toujours faux pour un invite, une demande retiree n'etant
+            // servie qu'a son expediteur (404 pour tout autre lecteur).
+            "moderationRemoved"));
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 

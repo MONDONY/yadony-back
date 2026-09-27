@@ -276,4 +276,29 @@ class RequestEventsListenerTest {
 
         verifyNoInteractions(dispatcher);
     }
+
+    @Test
+    void onPackageRequestRemovedByAdmin_previentLExpediteurAvecLeSeulMotifPublic() {
+        UUID senderId = UUID.randomUUID();
+        UUID requestId = UUID.randomUUID();
+
+        listener.onPackageRequestRemovedByAdmin(
+            new PackageRequestRemovedByAdminEvent(requestId, senderId, "PROHIBITED_ITEM"));
+
+        verify(dispatcher).notifyUser(eq(senderId), eq("Demande retirée par Yadony"),
+            eq("Votre demande est retirée : objet interdit au transport."),
+            eq(Map.of("type", "PACKAGE_REQUEST_REMOVED", "packageRequestId", requestId.toString())));
+    }
+
+    @Test
+    void onPackageRequestRemovedByAdmin_enAnglaisPourUnExpediteurAnglophone() {
+        UUID senderId = UUID.randomUUID();
+        when(dispatcher.messagesFor(senderId)).thenReturn(com.yadony.api.common.i18n.TestMessages.en());
+
+        listener.onPackageRequestRemovedByAdmin(
+            new PackageRequestRemovedByAdminEvent(UUID.randomUUID(), senderId, "DUPLICATE"));
+
+        verify(dispatcher).notifyUser(eq(senderId), eq("Request removed by Yadony"),
+            eq("Your request was removed: duplicate request."), anyMap());
+    }
 }

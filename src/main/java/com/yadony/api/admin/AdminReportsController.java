@@ -15,6 +15,9 @@ import com.yadony.api.matching.AnnouncementRemovalReason;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.AnnouncementService;
 import com.yadony.api.notifications.NotificationDispatcher;
+import com.yadony.api.requests.entity.PackageRequestEntity;
+import com.yadony.api.requests.repository.PackageRequestRepository;
+import com.yadony.api.requests.service.PackageRequestModerationService;
 import com.yadony.api.signalements.ReportAction;
 import com.yadony.api.signalements.ReportEntity;
 import com.yadony.api.signalements.ReportReason;
@@ -56,6 +59,8 @@ public class AdminReportsController {
     private final UserService userService;
     private final AnnouncementService announcementService;
     private final NotificationDispatcher notificationDispatcher;
+    private final PackageRequestRepository packageRequestRepo;
+    private final PackageRequestModerationService packageRequestModerationService;
 
     public AdminReportsController(ReportRepository reportRepo,
                                   UserRepository userRepo,
@@ -64,7 +69,9 @@ public class AdminReportsController {
                                   ReportService reportService,
                                   UserService userService,
                                   AnnouncementService announcementService,
-                                  NotificationDispatcher notificationDispatcher) {
+                                  NotificationDispatcher notificationDispatcher,
+                                  PackageRequestRepository packageRequestRepo,
+                                  PackageRequestModerationService packageRequestModerationService) {
         this.reportRepo = reportRepo;
         this.userRepo = userRepo;
         this.announcementRepo = announcementRepo;
@@ -73,6 +80,8 @@ public class AdminReportsController {
         this.userService = userService;
         this.announcementService = announcementService;
         this.notificationDispatcher = notificationDispatcher;
+        this.packageRequestRepo = packageRequestRepo;
+        this.packageRequestModerationService = packageRequestModerationService;
     }
 
     @PreAuthorize("hasAuthority('REPORT_VIEW')")
@@ -115,11 +124,23 @@ public class AdminReportsController {
                 .filter(a -> a.getId() != null)
                 .collect(Collectors.toMap(AnnouncementEntity::getId, Function.identity(), (a, b) -> a));
 
+        Set<UUID> packageRequestIds = reports.getContent().stream()
+                .filter(r -> r.getTargetType() == ReportTargetType.PACKAGE_REQUEST)
+                .map(ReportEntity::getTargetId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<UUID, PackageRequestEntity> packageRequestsById = packageRequestIds.isEmpty()
+                ? Map.of()
+                : packageRequestRepo.findAllById(packageRequestIds).stream()
+                        .filter(p -> p.getId() != null)
+                        .collect(Collectors.toMap(PackageRequestEntity::getId, Function.identity(), (a, b) -> a));
+
         Map<UUID, List<String>> photosByReport = reportService.photoUrlsByReport(
                 reports.getContent().stream().map(ReportEntity::getId).collect(Collectors.toSet()));
 
         Page<AdminReportResponse> result = reports.map(r ->
-                toResponse(r, usersById, announcementsById, photosByReport.getOrDefault(r.getId(), List.of())));
+                toResponse(r, usersById, announcementsById, packageRequestsById,
+                        photosByReport.getOrDefault(r.getId(), List.of())));
         return ResponseEntity.ok(result);
     }
 
@@ -165,7 +186,8 @@ public class AdminReportsController {
                 report.getReporterId() != null ? Set.of(report.getReporterId()) : Set.of()).stream()
                 .filter(u -> u.getId() != null)
                 .collect(Collectors.toMap(UserEntity::getId, Function.identity(), (a, b) -> a));
-        return ResponseEntity.ok(toResponse(report, singleUser, Map.of(), reportService.photoUrls(report.getId())));
+        return ResponseEntity.ok(toResponse(report, singleUser, Map.of(), Map.of(),
+                reportService.photoUrls(report.getId())));
     }
 
     /**
@@ -190,8 +212,13 @@ public class AdminReportsController {
             }
             case REMOVE_CONTENT -> {
                 requireAuthority(authentication, AdminPermission.CONTENT_REMOVE.name());
-                announcementService.removeByAdmin(report.getTargetId(), adminId,
-                        AnnouncementRemovalReason.OTHER, note);
+                if (report.getTargetType() == ReportTargetType.PACKAGE_REQUEST) {
+                    packageRequestModerationService.removeByAdmin(report.getTargetId(), adminId,
+                            AnnouncementRemovalReason.OTHER, note);
+                } else {
+                    announcementService.removeByAdmin(report.getTargetId(), adminId,
+                            AnnouncementRemovalReason.OTHER, note);
+                }
             }
         }
     }
@@ -311,13 +338,15 @@ public class AdminReportsController {
     // -------------------------------------------------------------------------
 
     private AdminReportResponse toResponse(ReportEntity r, Map<UUID, UserEntity> users,
-                                           Map<UUID, AnnouncementEntity> announcements, List<String> photoUrls) {
+                                           Map<UUID, AnnouncementEntity> announcements,
+                                           Map<UUID, PackageRequestEntity> packageRequests,
+                                           List<String> photoUrls) {
         String reporterName = resolveReporterName(r.getReporterId(), users);
         return new AdminReportResponse(
                 r.getId(),
                 r.getTargetType() != null ? r.getTargetType().name() : null,
                 r.getTargetId(),
-                resolveTargetLabel(r, users, announcements),
+                resolveTargetLabel(r, users, announcements, packageRequests),
                 reporterName,
                 r.getReason() != null ? r.getReason().name() : null,
                 r.getDescription(),
@@ -339,7 +368,8 @@ public class AdminReportsController {
     }
 
     private String resolveTargetLabel(ReportEntity r, Map<UUID, UserEntity> users,
-                                      Map<UUID, AnnouncementEntity> announcements) {
+                                      Map<UUID, AnnouncementEntity> announcements,
+                                      Map<UUID, PackageRequestEntity> packageRequests) {
         if (r.getTargetId() == null || r.getTargetType() == null) return null;
         return switch (r.getTargetType()) {
             case USER -> {
@@ -349,6 +379,10 @@ public class AdminReportsController {
             case ANNOUNCEMENT -> {
                 AnnouncementEntity a = announcements.get(r.getTargetId());
                 yield a != null ? MatchingTextUtil.corridorLabel(a.getDepartureCity(), a.getArrivalCity()) : null;
+            }
+            case PACKAGE_REQUEST -> {
+                PackageRequestEntity p = packageRequests.get(r.getTargetId());
+                yield p != null ? MatchingTextUtil.corridorLabel(p.getDepartureCity(), p.getArrivalCity()) : null;
             }
             case BID, MESSAGE, RATING, APP -> null;
         };
