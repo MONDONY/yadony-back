@@ -1043,7 +1043,7 @@ public class BidService {
      *  instant, cette méthode restituera au voyageur une capacité qu'il n'a jamais cédée
      *  (surréservation silencieuse de la soute). C'est pourquoi l'accord d'une négociation en
      *  mobile money ({@link BidNegotiationService#accept}) ne pose jamais ce statut lui-même :
-     *  il délègue à {@code MobileMoneyBidPaymentService#acceptBid}, qui réserve la capacité
+     *  il délègue à {@code MobileMoneyBidPaymentService#acceptBid} (via {@link BidNegotiationMobileMoneyPort}), qui réserve la capacité
      *  dans la même transaction.
      *
      *  <p>Volontairement muet sur IN_TRANSIT/ARRIVED : ses deux appelants

@@ -17,7 +17,6 @@ import com.yadony.api.matching.dto.BidNegotiationSummaryResponse;
 import com.yadony.api.matching.events.BidNegotiationMessagePostedEvent;
 import com.yadony.api.matching.events.CashBidCreatedEvent;
 import com.yadony.api.payments.cash.PaymentMethod;
-import com.yadony.api.payments.mobilemoney.MobileMoneyBidPaymentService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
@@ -70,7 +69,7 @@ public class BidNegotiationService {
     private final ApplicationEventPublisher eventPublisher;
     private final MatchingNegotiationConfig config;
     private final BidService bidService;
-    private final MobileMoneyBidPaymentService mobileMoneyBidPaymentService;
+    private final BidNegotiationMobileMoneyPort mobileMoneyPort;
 
     public BidNegotiationService(BidRepository bidRepository,
                                  AnnouncementRepository announcementRepository,
@@ -85,7 +84,7 @@ public class BidNegotiationService {
                                  ApplicationEventPublisher eventPublisher,
                                  MatchingNegotiationConfig config,
                                  BidService bidService,
-                                 MobileMoneyBidPaymentService mobileMoneyBidPaymentService) {
+                                 BidNegotiationMobileMoneyPort mobileMoneyPort) {
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.userRepository = userRepository;
@@ -99,7 +98,7 @@ public class BidNegotiationService {
         this.eventPublisher = eventPublisher;
         this.config = config;
         this.bidService = bidService;
-        this.mobileMoneyBidPaymentService = mobileMoneyBidPaymentService;
+        this.mobileMoneyPort = mobileMoneyPort;
     }
 
     // ── Ouverture du fil ─────────────────────────────────────────────────────
@@ -278,8 +277,8 @@ public class BidNegotiationService {
         // via POST /bids/{id}/negotiation/checkout.
         //
         // MOBILE MONEY : l'accord vaut acceptation du voyageur (qu'il ait accepté le prix
-        // ou que ce soit lui qui l'ait proposé). Le bid passe par PENDING puis
-        // MobileMoneyBidPaymentService.acceptBid le mène, DANS CETTE TRANSACTION, à
+        // ou que ce soit lui qui l'ait proposé). Le bid passe par PENDING puis le port
+        // (MobileMoneyBidPaymentService.acceptBid côté payments/) le mène, DANS CETTE TRANSACTION, à
         // AWAITING_PAYMENT : capacité réservée, promo racheté, PaymentEntity pawaPay créé,
         // échéance de dépôt posée — exactement l'état d'une offre directe acceptée, que
         // l'expéditeur paie ensuite par POST /bids/{id}/mobile-money/initiate. Ne jamais
@@ -309,7 +308,7 @@ public class BidNegotiationService {
         }
         BidEntity saved = bidRepository.save(ctx.bid());
         if (mobileMoney) {
-            mobileMoneyBidPaymentService.acceptBid(bidId, ctx.announcement().getTravelerId());
+            mobileMoneyPort.acceptAgreement(bidId, ctx.announcement().getTravelerId());
         }
 
         BidNegotiationMessageEntity message = postMessage(ctx.bid(), ctx.userId(),
