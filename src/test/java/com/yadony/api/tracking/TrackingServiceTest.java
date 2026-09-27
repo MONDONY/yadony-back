@@ -494,7 +494,7 @@ class TrackingServiceTest {
 
     @Test
     void processScan_transitEvent_success_noCodeGeneration() {
-        BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");
+        BidEntity bid = buildBid(BidStatus.HANDED_OVER, "qt");
         AnnouncementEntity ann = buildAnnouncement();
         UserEntity traveler = buildUser(travelerId, "uid-traveler");
         when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
@@ -513,6 +513,27 @@ class TrackingServiceTest {
         assertThat(resp.eventType()).isEqualTo("TRANSIT");
         assertThat(bid.getStatus()).isEqualTo(BidStatus.IN_TRANSIT);
         verify(bidRepository).save(bid);
+    }
+
+    /**
+     * Le scan TRANSIT est facultatif, le DEPART ne l'est pas : c'est lui qui génère le
+     * code de confirmation du destinataire. Un TRANSIT avant le DEPART laissait la
+     * livraison inconfirmable (code-not-generated).
+     */
+    @Test
+    void processScan_transitBeforeDepart_isRejected_andNothingRecorded() {
+        BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");
+        AnnouncementEntity ann = buildAnnouncement();
+        UserEntity traveler = buildUser(travelerId, "uid-traveler");
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+        when(userRepository.findByFirebaseUid("uid-traveler")).thenReturn(Optional.of(traveler));
+
+        QrScanRequest req = new QrScanRequest(bidId, TrackingEventType.TRANSIT, null, null, null, null, null);
+        assertYadonyError(() -> service.processScan(req, "uid-traveler"), "depart-required");
+
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.ACCEPTED);
+        verify(trackingEventRepository, never()).save(any());
     }
 
     // ── confirmDelivery ───────────────────────────────────────────────────────
@@ -1100,7 +1121,7 @@ class TrackingServiceTest {
 
     @Test
     void processScan_withPastOfflineTimestamp_setsOfflineFields() {
-        BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");
+        BidEntity bid = buildBid(BidStatus.HANDED_OVER, "qt");
         AnnouncementEntity ann = buildAnnouncement();
         UserEntity traveler = buildUser(travelerId, "uid-traveler");
         when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));

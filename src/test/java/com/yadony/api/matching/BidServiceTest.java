@@ -3449,6 +3449,49 @@ class BidServiceTest {
             verify(eventPublisher).publishEvent(any(com.yadony.api.matching.events.ParcelRefusedEvent.class));
         }
 
+        /** Transit facultatif : le scan TRANSIT fermait la fenêtre de refus d'un colis
+         *  récupéré. C'est désormais le départ du trajet, comme pour l'annulation. */
+        @Test
+        @DisplayName("colis récupéré, trajet parti → 409 parcel-refusal-locked")
+        void refuseParcel_handedOverAfterDeparture_isLocked() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement();
+            announcement.setDepartureDate(LocalDate.now().minusDays(2));
+            BidEntity bid = buildBid();
+            bid.setStatus(BidStatus.HANDED_OVER);
+
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+
+            assertThatThrownBy(() -> bidService.refuseParcel(BID_ID, TRAVELER_UID, "raison", null))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                            .isEqualTo("parcel-refusal-locked"));
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.HANDED_OVER);
+        }
+
+        @Test
+        @DisplayName("colis récupéré, trajet pas encore parti → refus accepté")
+        void refuseParcel_handedOverBeforeDeparture_isAllowed() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement();
+            UserEntity sender = buildSender();
+            BidEntity bid = buildBid();
+            bid.setStatus(BidStatus.HANDED_OVER);
+
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+            when(bidRepository.save(any())).thenReturn(bid);
+            when(userRepository.save(any())).thenReturn(sender);
+
+            bidService.refuseParcel(BID_ID, TRAVELER_UID, "Colis non conforme", null);
+
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.PARCEL_REFUSED);
+        }
+
         @Test
         @DisplayName("status invalide → 422")
         void refuseParcel_invalidStatus_throwsUnprocessable() {

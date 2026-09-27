@@ -73,6 +73,24 @@ class CancellationGuardTest {
                 .doesNotThrowAnyException();
     }
 
+    /** Transit facultatif : sans departureAt, la date de départ ferme la fenêtre dès le
+     *  lendemain. Avant, un colis récupéré restait annulable (et remboursé) tout le voyage. */
+    @Test
+    void handed_over_without_departure_at_is_locked_the_day_after_departure_date() {
+        AnnouncementEntity a = announcement(null);
+        a.setDepartureDate(java.time.LocalDate.now().minusDays(1));
+        assertThatThrownBy(() -> CancellationGuard.assertCancellable(bid(BidStatus.HANDED_OVER), a))
+                .isInstanceOf(YadonyBusinessException.class);
+    }
+
+    @Test
+    void handed_over_on_departure_date_without_departure_at_is_still_cancellable() {
+        AnnouncementEntity a = announcement(null);
+        a.setDepartureDate(java.time.LocalDate.now());
+        assertThatCode(() -> CancellationGuard.assertCancellable(bid(BidStatus.HANDED_OVER), a))
+                .doesNotThrowAnyException();
+    }
+
     @Test
     void accepted_after_departure_is_still_cancellable() {
         // Le verrou de départ ne s'applique qu'au colis remis (HANDED_OVER).

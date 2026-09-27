@@ -63,7 +63,7 @@ class BidPhotoCleanupSchedulerTest {
 
     @ParameterizedTest
     @EnumSource(value = BidStatus.class, names = {
-            "REJECTED", "CANCELLED", "EXPIRED", "IN_TRANSIT", "NO_SHOW", "PARCEL_REFUSED", "COMPLETED"})
+            "REJECTED", "CANCELLED", "EXPIRED", "IN_TRANSIT", "ARRIVED", "NO_SHOW", "PARCEL_REFUSED", "COMPLETED"})
     void defensiveSweep_marksActivePhotoOfTerminalBidDeleting(BidStatus terminal) {
         UUID bidId = UUID.randomUUID();
         BidPhotoEntity p = photo(bidId, "bids/s/1.jpg");
