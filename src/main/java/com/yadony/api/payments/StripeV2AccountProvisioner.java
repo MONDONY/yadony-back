@@ -86,12 +86,32 @@ public class StripeV2AccountProvisioner implements ConnectAccountProvisioner {
         // ces pays. Le compte porte alors merchant + recipient, et la creation passe par
         // un account token (exigence account_token_required pour une plateforme FR).
         // Les 22 pays recipient-only gardent le chemin simple ci-dessous, inchange.
+        // Stripe exige un email de contact des qu'un compte porte `configuration.recipient`
+        // ({@code configuration.recipient: ... the Account must have a contact email}), ce
+        // que font les DEUX chemins ci-dessous. Or l'authentification de yadony est Firebase
+        // Phone : un compte inscrit par telephone n'a aucun email, et FirebaseContactService
+        // rend alors Contact.EMPTY — comme sur une panne Firebase. Sans cette garde, Stripe
+        // refusait la creation en 400, remonte en 500 opaque au voyageur
+        // (Sentry YADONY-BACK-STAGING-C, 6 echecs en staging les 26 et 27/09).
+        //
+        // L'email est lu ICI, une seule fois, et transmis aux deux chemins : relire plus bas
+        // rouvrirait la fenetre que cette garde ferme, le cache de FirebaseContactService
+        // pouvant expirer entre les deux lectures.
+        String contactEmail = firebaseContact.getContact(user.getFirebaseUid()).email();
+        if (contactEmail == null || contactEmail.isBlank()) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "contact-email-required", "Contact Email Required",
+                    "Ajoutez une adresse e-mail à votre compte avant de créer votre "
+                            + "compte de paiement : Stripe en a besoin pour vous envoyer "
+                            + "vos justificatifs de virement.");
+        }
+
         if (StripeConnectCountries.requiresMerchantConfiguration(country)) {
-            return provisionMerchantAndRecipient(user, country);
+            return provisionMerchantAndRecipient(user, country, contactEmail);
         }
 
         AccountCreateParams params = AccountCreateParams.builder()
-                .setContactEmail(firebaseContact.getContact(user.getFirebaseUid()).email())
+                .setContactEmail(contactEmail)
                 // Reproduit l'experience d'onboarding hebergee de l'ancien type "express".
                 .setDashboard(AccountCreateParams.Dashboard.EXPRESS)
                 .setIdentity(buildIdentity(user, country))
@@ -232,7 +252,8 @@ public class StripeV2AccountProvisioner implements ConnectAccountProvisioner {
      * ({@code param_alongside_account_token}). Chaîne complète validée en test mode le
      * 2026-09-03 (US et CA, account link d'onboarding compris).
      */
-    private String provisionMerchantAndRecipient(UserEntity user, String country)
+    private String provisionMerchantAndRecipient(UserEntity user, String country,
+                                                String contactEmail)
             throws StripeException {
         AccountTokenCreateParams.Identity.Builder tokenIdentity =
                 AccountTokenCreateParams.Identity.builder()
@@ -252,7 +273,7 @@ public class StripeV2AccountProvisioner implements ConnectAccountProvisioner {
         }
 
         AccountTokenCreateParams tokenParams = AccountTokenCreateParams.builder()
-                .setContactEmail(firebaseContact.getContact(user.getFirebaseUid()).email())
+                .setContactEmail(contactEmail)
                 .setIdentity(tokenIdentity.build())
                 .build();
         String accountToken = stripeGateway.createAccountToken(tokenParams).getId();

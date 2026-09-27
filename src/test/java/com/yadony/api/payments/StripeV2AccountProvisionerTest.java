@@ -120,6 +120,55 @@ class StripeV2AccountProvisionerTest {
         verify(stripeGateway, never()).createAccountV2(any());
     }
 
+    @Test
+    @DisplayName("Sans email de contact (compte Firebase telephone), aucun compte Connect n'est cree")
+    void refusesToProvisionWithoutContactEmail() throws Exception {
+        when(firebaseContact.getContact(any()))
+                .thenReturn(new FirebaseContactService.Contact("+33600000000", null));
+        UserEntity user = buildUser(false, "FR");
+
+        assertThatThrownBy(() -> provisioner.provision(user))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> {
+                    YadonyBusinessException ex = (YadonyBusinessException) e;
+                    assertThat(ex.getErrorCode()).isEqualTo("contact-email-required");
+                    assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                });
+
+        verify(stripeGateway, never()).createAccountV2(any());
+    }
+
+    @Test
+    @DisplayName("Email de contact vide (chaine vide), aucun compte Connect n'est cree")
+    void refusesToProvisionWithBlankContactEmail() throws Exception {
+        when(firebaseContact.getContact(any()))
+                .thenReturn(new FirebaseContactService.Contact("+33600000000", "   "));
+        UserEntity user = buildUser(false, "FR");
+
+        assertThatThrownBy(() -> provisioner.provision(user))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                        .isEqualTo("contact-email-required"));
+
+        verify(stripeGateway, never()).createAccountV2(any());
+    }
+
+    @Test
+    @DisplayName("La garde precede le branchement merchant : aucun token US sans email de contact")
+    void refusesMerchantCountryWithoutContactEmail() throws Exception {
+        when(firebaseContact.getContact(any()))
+                .thenReturn(new FirebaseContactService.Contact("+15550000000", null));
+        UserEntity user = buildUser(false, "US");
+
+        assertThatThrownBy(() -> provisioner.provision(user))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                        .isEqualTo("contact-email-required"));
+
+        verify(stripeGateway, never()).createAccountToken(any());
+        verify(stripeGateway, never()).createAccountV2(any());
+    }
+
     // ── Identite ─────────────────────────────────────────────────────────────
 
     @Test
