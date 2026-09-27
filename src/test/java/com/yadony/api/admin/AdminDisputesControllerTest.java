@@ -46,6 +46,16 @@ class AdminDisputesControllerTest {
 
     @Mock com.yadony.api.matching.BidRepository bidRepo;
 
+    static final UUID ADMIN_ID = UUID.randomUUID();
+
+    /** Admin authentifie : l'audit doit le designer comme acteur, jamais null. */
+    static org.springframework.security.core.Authentication adminAuth() {
+        return new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                new com.yadony.api.admin.account.AdminPrincipal(ADMIN_ID, "admin@yadony.test",
+                        com.yadony.api.admin.account.AdminRole.ADMIN, false, "uid-admin"),
+                null, List.of());
+    }
+
     private AdminDisputesController controller() {
         return new AdminDisputesController(
                 disputeRepo, cancellationRepo, auditService, userRepo, eventPublisher, bidRepo);
@@ -119,7 +129,7 @@ class AdminDisputesControllerTest {
         when(disputeRepo.save(entity)).thenReturn(entity);
 
         AdminResolveDisputeRequest request = new AdminResolveDisputeRequest("REFUND_SENDER", "note");
-        ResponseEntity<AdminDisputeDetailResponse> resp = controller().resolveDispute(id, request);
+        ResponseEntity<AdminDisputeDetailResponse> resp = controller().resolveDispute(id, request, adminAuth());
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(entity.getStatus()).isEqualTo("RESOLVED");
@@ -127,7 +137,7 @@ class AdminDisputesControllerTest {
         assertThat(entity.getResolutionNote()).isEqualTo("note");
         assertThat(entity.getResolvedAt()).isNotNull();
         verify(disputeRepo).save(entity);
-        verify(auditService).log(eq("DISPUTE"), eq(entity.getId()), eq("RESOLVE"), isNull(), any());
+        verify(auditService).log(eq("DISPUTE"), eq(entity.getId()), eq("RESOLVE"), eq(ADMIN_ID), any());
         verify(eventPublisher).publishEvent(ArgumentMatchers.<Object>argThat(event ->
                 event instanceof DisputeResolvedEvent resolved
                         && resolved.disputeId().equals(id)
@@ -140,7 +150,7 @@ class AdminDisputesControllerTest {
         when(disputeRepo.findById(id)).thenReturn(Optional.empty());
 
         assertThrows(YadonyBusinessException.class,
-                () -> controller().resolveDispute(id, new AdminResolveDisputeRequest("res", "note")));
+                () -> controller().resolveDispute(id, new AdminResolveDisputeRequest("res", "note"), adminAuth()));
     }
 
     @Test
@@ -152,7 +162,7 @@ class AdminDisputesControllerTest {
 
         YadonyBusinessException error = assertThrows(YadonyBusinessException.class,
                 () -> controller().resolveDispute(
-                        id, new AdminResolveDisputeRequest("REFUND_SENDER", "retry")));
+                        id, new AdminResolveDisputeRequest("REFUND_SENDER", "retry"), adminAuth()));
 
         assertThat(error.getStatus()).isEqualTo(HttpStatus.CONFLICT);
         verify(disputeRepo, never()).save(any());
@@ -174,7 +184,7 @@ class AdminDisputesControllerTest {
         cancellation.setNoShowStatus(CancellationStatus.CONTESTED);
         when(cancellationRepo.findByBidId(bidId)).thenReturn(Optional.of(cancellation));
 
-        controller().resolveDispute(id, new AdminResolveDisputeRequest("REFUND_SENDER", "note"));
+        controller().resolveDispute(id, new AdminResolveDisputeRequest("REFUND_SENDER", "note"), adminAuth());
 
         assertThat(cancellation.getNoShowStatus()).isEqualTo(CancellationStatus.RESOLVED);
         verify(cancellationRepo).save(cancellation);
@@ -197,7 +207,7 @@ class AdminDisputesControllerTest {
         when(cancellationRepo.findByBidIdAndScope(bidId, com.yadony.api.cancellation.CancellationScope.DELIVERY))
                 .thenReturn(Optional.of(cancellation));
 
-        controller().resolveDispute(id, new AdminResolveDisputeRequest("REFUND_SENDER", "note"));
+        controller().resolveDispute(id, new AdminResolveDisputeRequest("REFUND_SENDER", "note"), adminAuth());
 
         assertThat(cancellation.getNoShowStatus()).isEqualTo(CancellationStatus.RESOLVED);
         verify(cancellationRepo).save(cancellation);
@@ -216,7 +226,7 @@ class AdminDisputesControllerTest {
         when(disputeRepo.save(entity)).thenReturn(entity);
         when(cancellationRepo.findByBidId(bidId)).thenReturn(Optional.empty());
 
-        controller().resolveDispute(id, new AdminResolveDisputeRequest("REFUND_SENDER", "note"));
+        controller().resolveDispute(id, new AdminResolveDisputeRequest("REFUND_SENDER", "note"), adminAuth());
 
         verify(cancellationRepo, never()).save(any());
     }
@@ -236,7 +246,7 @@ class AdminDisputesControllerTest {
         cancellation.setNoShowStatus(CancellationStatus.CONFIRMED);
         when(cancellationRepo.findByBidId(bidId)).thenReturn(Optional.of(cancellation));
 
-        controller().resolveDispute(id, new AdminResolveDisputeRequest("REFUND_SENDER", "note"));
+        controller().resolveDispute(id, new AdminResolveDisputeRequest("REFUND_SENDER", "note"), adminAuth());
 
         assertThat(cancellation.getNoShowStatus()).isEqualTo(CancellationStatus.CONFIRMED);
         verify(cancellationRepo, never()).save(any());
@@ -255,7 +265,7 @@ class AdminDisputesControllerTest {
 
         // Litige sans bid : la devise doit être explicite, elle ne se devine pas en euros.
         AdminGuaranteeFundRequest request = new AdminGuaranteeFundRequest(5000, beneficiary, "paiement fonds de garantie", "EUR");
-        ResponseEntity<AdminDisputeDetailResponse> resp = controller().payGuaranteeFund(id, request);
+        ResponseEntity<AdminDisputeDetailResponse> resp = controller().payGuaranteeFund(id, request, adminAuth());
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(entity.getStatus()).isEqualTo("RESOLVED");
@@ -267,7 +277,7 @@ class AdminDisputesControllerTest {
         assertThat(resp.getBody().guaranteeAmountCents()).isEqualTo(5000L);
         assertThat(resp.getBody().guaranteeCurrency()).isEqualTo("EUR");
         verify(disputeRepo).save(entity);
-        verify(auditService).log(eq("DISPUTE"), eq(entity.getId()), eq("GUARANTEE_FUND"), isNull(), any());
+        verify(auditService).log(eq("DISPUTE"), eq(entity.getId()), eq("GUARANTEE_FUND"), eq(ADMIN_ID), any());
         verify(eventPublisher).publishEvent(ArgumentMatchers.<Object>argThat(event ->
                 event instanceof DisputeResolvedEvent resolved
                         && resolved.disputeId().equals(id)
@@ -293,7 +303,7 @@ class AdminDisputesControllerTest {
                 .thenReturn(Optional.of(cancellation));
 
         controller().payGuaranteeFund(id,
-                new AdminGuaranteeFundRequest(5000, beneficiary, "paiement fonds de garantie"));
+                new AdminGuaranteeFundRequest(5000, beneficiary, "paiement fonds de garantie"), adminAuth());
 
         assertThat(cancellation.getNoShowStatus()).isEqualTo(CancellationStatus.RESOLVED);
         verify(cancellationRepo).save(cancellation);
@@ -312,7 +322,7 @@ class AdminDisputesControllerTest {
         when(disputeRepo.save(entity)).thenReturn(entity);
         when(bidRepo.findById(bidId)).thenReturn(Optional.of(bidIn("xof")));
 
-        controller().payGuaranteeFund(id, new AdminGuaranteeFundRequest(500000, UUID.randomUUID(), "colis perdu"));
+        controller().payGuaranteeFund(id, new AdminGuaranteeFundRequest(500000, UUID.randomUUID(), "colis perdu"), adminAuth());
         assertThat(entity.getGuaranteeCurrency()).isEqualTo("XOF");
         assertThat(entity.getGuaranteeAmountCents()).isEqualTo(500000L);
 
@@ -324,7 +334,7 @@ class AdminDisputesControllerTest {
 
         YadonyBusinessException error = assertThrows(YadonyBusinessException.class,
                 () -> controller().payGuaranteeFund(otherId,
-                        new AdminGuaranteeFundRequest(5000, UUID.randomUUID(), "colis perdu", "EUR")));
+                        new AdminGuaranteeFundRequest(5000, UUID.randomUUID(), "colis perdu", "EUR"), adminAuth()));
         assertThat(error.getErrorCode()).isEqualTo("guarantee-currency-mismatch");
         assertThat(other.getStatus()).isEqualTo("OPEN");
     }
@@ -359,11 +369,11 @@ class AdminDisputesControllerTest {
         when(disputeRepo.findById(id)).thenReturn(Optional.of(entity));
 
         YadonyBusinessException noBeneficiary = assertThrows(YadonyBusinessException.class,
-                () -> controller().payGuaranteeFund(id, new AdminGuaranteeFundRequest(5000, null, "x", "EUR")));
+                () -> controller().payGuaranteeFund(id, new AdminGuaranteeFundRequest(5000, null, "x", "EUR"), adminAuth()));
         assertThat(noBeneficiary.getErrorCode()).isEqualTo("guarantee-beneficiary-required");
 
         YadonyBusinessException noCurrency = assertThrows(YadonyBusinessException.class,
-                () -> controller().payGuaranteeFund(id, new AdminGuaranteeFundRequest(5000, UUID.randomUUID(), "x")));
+                () -> controller().payGuaranteeFund(id, new AdminGuaranteeFundRequest(5000, UUID.randomUUID(), "x"), adminAuth()));
         assertThat(noCurrency.getErrorCode()).isEqualTo("guarantee-currency-required");
 
         assertThat(entity.getStatus()).isEqualTo("OPEN");
@@ -377,7 +387,7 @@ class AdminDisputesControllerTest {
 
         assertThrows(YadonyBusinessException.class,
                 () -> controller().payGuaranteeFund(id,
-                        new AdminGuaranteeFundRequest(5000, UUID.randomUUID(), "reason")));
+                        new AdminGuaranteeFundRequest(5000, UUID.randomUUID(), "reason"), adminAuth()));
     }
 
     @Test
@@ -389,7 +399,7 @@ class AdminDisputesControllerTest {
 
         YadonyBusinessException error = assertThrows(YadonyBusinessException.class,
                 () -> controller().payGuaranteeFund(id,
-                        new AdminGuaranteeFundRequest(5000, UUID.randomUUID(), "retry")));
+                        new AdminGuaranteeFundRequest(5000, UUID.randomUUID(), "retry"), adminAuth()));
 
         assertThat(error.getStatus()).isEqualTo(HttpStatus.CONFLICT);
         verify(disputeRepo, never()).save(any());

@@ -65,7 +65,23 @@ class AdminExchangeRateControllerTest {
         AdminPrincipal principal = new AdminPrincipal(
                 ADMIN_ID, "admin@yadony.test", AdminRole.ADMIN, false, "uid-admin-exrates");
         return new UsernamePasswordAuthenticationToken(principal, null,
-                List.of(new SimpleGrantedAuthority("ROLE_ADMIN")));
+                List.of(new SimpleGrantedAuthority("ROLE_ADMIN"),
+                        new SimpleGrantedAuthority("CONFIG_MANAGE")));
+    }
+
+    private static final UUID SUPPORT_ID = UUID.randomUUID();
+
+    /**
+     * Profil SUPPORT reel : ROLE_ADMIN + les permissions de {@link AdminRole#SUPPORT}, donc
+     * sans {@code CONFIG_MANAGE}.
+     */
+    private static UsernamePasswordAuthenticationToken supportAuth() {
+        AdminPrincipal principal = new AdminPrincipal(
+                SUPPORT_ID, "support@yadony.test", AdminRole.SUPPORT, false, "uid-support-exrates");
+        List<SimpleGrantedAuthority> authorities = new java.util.ArrayList<>();
+        authorities.add(new SimpleGrantedAuthority("ROLE_ADMIN"));
+        AdminRole.SUPPORT.permissions().forEach(p -> authorities.add(new SimpleGrantedAuthority(p.name())));
+        return new UsernamePasswordAuthenticationToken(principal, null, authorities);
     }
 
     /** Aucune ROLE_ADMIN — utilisateur business ordinaire. */
@@ -106,6 +122,40 @@ class AdminExchangeRateControllerTest {
                 .andExpect(status().isForbidden());
 
         verify(exchangeRateRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("GET — SUPPORT (ROLE_ADMIN sans CONFIG_MANAGE) -> 200 : la lecture reste ouverte")
+    void get_withSupport_returns200() throws Exception {
+        when(exchangeRateRepository.findAll()).thenReturn(List.of(usdRate()));
+
+        mockMvc.perform(get("/admin/exchange-rates").with(authentication(supportAuth())))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("PUT — SUPPORT (ROLE_ADMIN sans CONFIG_MANAGE) -> 403 et rien n'est ecrit")
+    void put_withSupport_returns403() throws Exception {
+        mockMvc.perform(put("/admin/exchange-rates/USD")
+                        .with(authentication(supportAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"unitsPerEur\":\"1.10\"}"))
+                .andExpect(status().isForbidden());
+
+        verify(exchangeRateRepository, never()).save(any());
+        verify(exchangeRateRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    @DisplayName("POST /sync — SUPPORT (ROLE_ADMIN sans CONFIG_MANAGE) -> 403, aucune synchronisation")
+    void sync_withSupport_returns403() throws Exception {
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .post("/admin/exchange-rates/sync")
+                        .with(authentication(supportAuth())))
+                .andExpect(status().isForbidden());
+
+        verify(exchangeRateSyncService, never()).syncAll(any());
+        verify(exchangeRateSyncService, never()).syncAll();
     }
 
     // ── GET ──────────────────────────────────────────────────────────────────
@@ -281,7 +331,7 @@ class AdminExchangeRateControllerTest {
     @Test
     @DisplayName("POST /sync — admin -> 200 avec le nombre de devises mises à jour")
     void sync_withAdmin_returnsUpdatedCount() throws Exception {
-        org.mockito.Mockito.when(exchangeRateSyncService.syncAll()).thenReturn(3);
+        org.mockito.Mockito.when(exchangeRateSyncService.syncAll(ADMIN_ID)).thenReturn(3);
 
         mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
                         .post("/admin/exchange-rates/sync")
@@ -291,5 +341,9 @@ class AdminExchangeRateControllerTest {
                         .status().isOk())
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
                         .jsonPath("$.updated").value(3));
+
+        // Déclenchement manuel : l'audit porte l'admin, jamais null comme le cron.
+        verify(exchangeRateSyncService).syncAll(ADMIN_ID);
+        verify(exchangeRateSyncService, never()).syncAll();
     }
 }

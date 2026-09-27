@@ -38,6 +38,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -687,16 +688,36 @@ public class CancellationService {
 
     @Transactional
     public void confirmSenderNoShow(UUID bidId) {
+        applySenderNoShowConfirmation(bidId);
+    }
+
+    /**
+     * Confirmation du no-show expéditeur tranchée par un administrateur (litige). Même
+     * transition que {@link #confirmSenderNoShow(UUID)}, plus une trace d'audit qui désigne
+     * l'admin : sans elle, rien ne distinguait cette décision d'une auto-confirmation de
+     * l'expéditeur. Pas de trace quand la confirmation est sans effet (déjà tranchée).
+     */
+    @Transactional
+    public void confirmSenderNoShowByAdmin(UUID bidId, UUID adminId) {
+        applySenderNoShowConfirmation(bidId).ifPresent(c ->
+                auditService.log("CANCELLATION", c.getId(), "NOSHOW_CONFIRMED_BY_ADMIN", adminId,
+                        Map.of("bidId", bidId.toString(),
+                                "reason", CancellationReason.SENDER_NO_SHOW.name())));
+    }
+
+    /** @return l'annulation confirmée, vide si elle n'était plus en attente de confirmation. */
+    private Optional<CancellationEntity> applySenderNoShowConfirmation(UUID bidId) {
         CancellationEntity c = cancellationRepository.findByBidId(bidId)
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND, "cancellation-not-found", "Not Found",
                         "Aucune annulation en attente pour ce bid"));
-        if (c.getNoShowStatus() != CancellationStatus.PENDING_CONFIRMATION) return;
+        if (c.getNoShowStatus() != CancellationStatus.PENDING_CONFIRMATION) return Optional.empty();
 
         c.setNoShowStatus(CancellationStatus.CONFIRMED);
         cancellationRepository.save(c);
         eventPublisher.publishEvent(
                 new CancellationConfirmedEvent(bidId, c.getId(), CancellationReason.SENDER_NO_SHOW));
+        return Optional.of(c);
     }
 
     /**

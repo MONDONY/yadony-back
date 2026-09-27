@@ -171,4 +171,42 @@ class AdminUserDeletionControllerIT {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.blocked").value(false));
     }
+
+    // ── Levée de suspension / débannissement (contrat consommé par le back-office) ──
+
+    @Test
+    @DisplayName("POST unsuspend — compte ACTIVE : 409 user-not-suspended en problem+json")
+    void unsuspend_activeUser_returns409Problem() throws Exception {
+        UserEntity user = new UserEntity();
+        org.springframework.test.util.ReflectionTestUtils.setField(user, "id", USER_ID);
+        user.setStatus(com.yadony.api.auth.UserStatus.ACTIVE);
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+
+        mockMvc.perform(post("/admin/users/{userId}/unsuspend", USER_ID)
+                        .with(authentication(auth(AdminRole.SUPPORT))))
+                .andExpect(status().isConflict())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
+                        .content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("user-not-suspended"));
+
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("POST unsuspend — compte BANNED : 200, le compte redevient ACTIVE")
+    void unsuspend_bannedUser_returns200() throws Exception {
+        UserEntity user = new UserEntity();
+        org.springframework.test.util.ReflectionTestUtils.setField(user, "id", USER_ID);
+        user.setStatus(com.yadony.api.auth.UserStatus.BANNED);
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(firebaseContact.getContact(any())).thenReturn(FirebaseContactService.Contact.EMPTY);
+
+        mockMvc.perform(post("/admin/users/{userId}/unsuspend", USER_ID)
+                        .with(authentication(auth(AdminRole.SUPPORT))))
+                .andExpect(status().isOk());
+
+        org.assertj.core.api.Assertions.assertThat(user.getStatus())
+                .isEqualTo(com.yadony.api.auth.UserStatus.ACTIVE);
+    }
 }

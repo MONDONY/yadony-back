@@ -39,7 +39,11 @@ public class CancellationSteps extends AbstractSteps {
 
     @Quand("l'administrateur confirme le no-show pour l'offre {string}")
     public void whenConfirmNoShow(String bidAlias) {
-        store(asCurrentUser().post("/cancellations/bids/{id}/confirm-noshow", ctx.getId(bidAlias)));
+        // Geste back-office : l'admin est journalisé comme acteur, il faut donc un AdminPrincipal.
+        String adminId = java.util.UUID.nameUUIDFromBytes(
+                String.valueOf(ctx.getCurrentUid()).getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();
+        store(asCurrentUser().header("X-Test-Admin-Id", adminId)
+                .post("/cancellations/bids/{id}/confirm-noshow", ctx.getId(bidAlias)));
     }
 
     @Quand("l'expéditeur conteste le no-show pour l'offre {string}")

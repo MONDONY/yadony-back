@@ -59,6 +59,24 @@ class ExchangeRateSyncServiceTest {
     }
 
     @Test
+    @DisplayName("déclenchement manuel par un admin → l'audit porte son id, distinct du cron")
+    void syncAll_withAdmin_passesAdminIdAsActor() {
+        java.util.UUID adminId = java.util.UUID.randomUUID();
+        when(ecbRateClient.fetchDailyRates()).thenReturn(Map.of(
+                "USD", new BigDecimal("1.1642")));
+        when(exchangeRateRepository.findByCurrency(anyString())).thenAnswer(inv ->
+                "USD".equals(inv.getArgument(0))
+                        ? Optional.of(new ExchangeRateEntity("USD", new BigDecimal("1.08")))
+                        : Optional.empty());
+
+        int updated = service("0.10").syncAll(adminId);
+
+        assertThat(updated).isEqualTo(1);
+        verify(updateService).apply(eq("USD"), eq(new BigDecimal("1.1642")),
+                eq(adminId), eq("EXCHANGE_RATE_SYNCED"));
+    }
+
+    @Test
     @DisplayName("variation au-delà du garde-fou → NON appliquée, alerte admin")
     void syncAll_rejectsSuspiciousJump_andAlerts() {
         when(ecbRateClient.fetchDailyRates()).thenReturn(Map.of(

@@ -1,5 +1,6 @@
 package com.yadony.api.admin.export;
 
+import com.yadony.api.admin.account.AdminPrincipal;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -9,6 +10,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -18,6 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.time.LocalDate;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 
 /**
  * Exports CSV du back-office admin (conformité / comptabilité).
@@ -40,8 +43,11 @@ public class AdminExportController {
     public ResponseEntity<byte[]> download(
             @PathVariable String type,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            Authentication authentication) {
 
+        // Résolu avant l'export : un export de données sans acteur identifié n'a pas lieu.
+        UUID adminId = AdminPrincipal.requireAdminId(authentication);
         byte[] content = switch (type) {
             case "transactions" -> exportService.exportTransactions(from, to);
             case "users" -> exportService.exportUsers(from, to);
@@ -52,7 +58,7 @@ public class AdminExportController {
                     "Type d'export invalide. Valeurs acceptées : transactions, users, disputes, payouts.");
         };
 
-        auditService.log("EXPORT", null, "EXPORT_RUN", null, Map.of(
+        auditService.log("EXPORT", null, "EXPORT_RUN", adminId, Map.of(
                 "type", type,
                 "from", Objects.toString(from, ""),
                 "to", Objects.toString(to, "")));

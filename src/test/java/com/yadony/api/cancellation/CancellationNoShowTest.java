@@ -213,6 +213,55 @@ class CancellationNoShowTest {
         }
 
         @Test
+        void adminConfirm_confirmsAndAuditsWithAdminAsActor() {
+            UUID adminId = UUID.randomUUID();
+            UUID cancellationId = UUID.randomUUID();
+            CancellationEntity c = new CancellationEntity();
+            ReflectionTestUtils.setField(c, "id", cancellationId);
+            c.setBidId(BID_ID);
+            c.setNoShowStatus(CancellationStatus.PENDING_CONFIRMATION);
+
+            when(cancellationRepository.findByBidId(BID_ID)).thenReturn(Optional.of(c));
+            when(cancellationRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            service.confirmSenderNoShowByAdmin(BID_ID, adminId);
+
+            assertThat(c.getNoShowStatus()).isEqualTo(CancellationStatus.CONFIRMED);
+            verify(eventPublisher).publishEvent(any(CancellationConfirmedEvent.class));
+            verify(auditService).log("CANCELLATION", cancellationId, "NOSHOW_CONFIRMED_BY_ADMIN", adminId,
+                    java.util.Map.of("bidId", BID_ID.toString(),
+                            "reason", CancellationReason.SENDER_NO_SHOW.name()));
+        }
+
+        @Test
+        void adminConfirm_alreadyConfirmed_isNoOpWithoutAudit() {
+            CancellationEntity c = new CancellationEntity();
+            c.setBidId(BID_ID);
+            c.setNoShowStatus(CancellationStatus.CONFIRMED);
+            when(cancellationRepository.findByBidId(BID_ID)).thenReturn(Optional.of(c));
+
+            service.confirmSenderNoShowByAdmin(BID_ID, UUID.randomUUID());
+
+            verify(cancellationRepository, never()).save(any());
+            verifyNoInteractions(eventPublisher);
+            verifyNoInteractions(auditService);
+        }
+
+        @Test
+        void selfConfirm_doesNotWriteAdminAudit() {
+            CancellationEntity c = new CancellationEntity();
+            ReflectionTestUtils.setField(c, "id", UUID.randomUUID());
+            c.setBidId(BID_ID);
+            c.setNoShowStatus(CancellationStatus.PENDING_CONFIRMATION);
+            when(cancellationRepository.findByBidId(BID_ID)).thenReturn(Optional.of(c));
+            when(cancellationRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            service.confirmSenderNoShow(BID_ID);
+
+            verify(auditService, never()).log(any(), any(), org.mockito.ArgumentMatchers.eq("NOSHOW_CONFIRMED_BY_ADMIN"), any(), any());
+        }
+
+        @Test
         void senderOverload_ownerConfirms() {
             CancellationEntity c = new CancellationEntity();
             ReflectionTestUtils.setField(c, "id", UUID.randomUUID());

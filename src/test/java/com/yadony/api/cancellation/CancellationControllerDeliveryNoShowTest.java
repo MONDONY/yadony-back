@@ -90,4 +90,34 @@ class CancellationControllerDeliveryNoShowTest {
 
     private static UUID eq(UUID v) { return org.mockito.ArgumentMatchers.eq(v); }
     private static UUID any() { return org.mockito.ArgumentMatchers.any(); }
+
+    // ── confirm-noshow (admin) : l'admin authentifié atteint le service pour l'audit ──
+
+    @Test
+    void confirmNoShow_admin_propagatesAdminId() throws Exception {
+        UUID adminId = UUID.randomUUID();
+        var principal = new com.yadony.api.admin.account.AdminPrincipal(
+                adminId, "admin@yadony.test", com.yadony.api.admin.account.AdminRole.ADMIN, false, "uid-admin");
+        var auth = new UsernamePasswordAuthenticationToken(principal, null,
+                List.of(new SimpleGrantedAuthority("ROLE_ADMIN"), new SimpleGrantedAuthority("DISPUTE_RESOLVE")));
+
+        mockMvc.perform(post("/cancellations/bids/{bidId}/confirm-noshow", BID_ID)
+                        .with(authentication(auth)))
+                .andExpect(status().isOk());
+
+        verify(cancellationService).confirmSenderNoShowByAdmin(BID_ID, adminId);
+        verify(cancellationService, never()).confirmSenderNoShow(any());
+    }
+
+    @Test
+    void confirmNoShow_adminWithoutAdminPrincipal_returns403() throws Exception {
+        var auth = new UsernamePasswordAuthenticationToken("uid-x", null,
+                List.of(new SimpleGrantedAuthority("ROLE_ADMIN"), new SimpleGrantedAuthority("DISPUTE_RESOLVE")));
+
+        mockMvc.perform(post("/cancellations/bids/{bidId}/confirm-noshow", BID_ID)
+                        .with(authentication(auth)))
+                .andExpect(status().isForbidden());
+
+        verifyNoInteractions(cancellationService);
+    }
 }

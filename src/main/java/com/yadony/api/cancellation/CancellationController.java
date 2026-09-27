@@ -1,5 +1,6 @@
 package com.yadony.api.cancellation;
 
+import com.yadony.api.admin.account.AdminPrincipal;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.cancellation.dto.CancellationRequest;
 import com.yadony.api.cancellation.dto.CancellationResponse;
@@ -61,8 +62,8 @@ public class CancellationController {
 
     @PostMapping("/bids/{bidId}/confirm-noshow")
     @PreAuthorize("hasRole('ADMIN') and hasAuthority('DISPUTE_RESOLVE')")
-    public ResponseEntity<Void> confirmNoShow(@PathVariable UUID bidId) {
-        cancellationService.confirmSenderNoShow(bidId);
+    public ResponseEntity<Void> confirmNoShow(@PathVariable UUID bidId, Authentication authentication) {
+        cancellationService.confirmSenderNoShowByAdmin(bidId, AdminPrincipal.requireAdminId(authentication));
         return ResponseEntity.ok().build();
     }
 
