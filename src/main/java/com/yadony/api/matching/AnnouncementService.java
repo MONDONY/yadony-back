@@ -1268,10 +1268,14 @@ public class AnnouncementService {
     }
 
     /**
-     * Marque tous les colis activement pris en charge sur ce trajet comme
-     * arrivés à destination (IN_TRANSIT → ARRIVED), en une action groupée par
-     * le voyageur. Refuse si un colis actif n'est pas encore IN_TRANSIT (reste
-     * à embarquer) ou si aucun colis n'est actuellement pris en charge.
+     * Marque les colis en vol sur ce trajet comme arrivés à destination
+     * (IN_TRANSIT → ARRIVED), en une action groupée par le voyageur. Les colis
+     * actifs pas encore partis (accepté, remis sans scan Transit) restent tels
+     * quels : un seul d'entre eux bloquait auparavant tout le trajet, et avec lui
+     * la saisie des instructions de retrait. Relancer l'action plus tard marque
+     * ceux qui sont passés en transit entre-temps.
+     *
+     * <p>Refuse si aucun colis n'est pris en charge, ou si aucun n'est en vol.
      */
     @Transactional
     public AnnouncementDetailResponse markArrived(UUID id, String firebaseUid, String arrivalInstructions) {
@@ -1286,24 +1290,27 @@ public class AnnouncementService {
                     "No Active Parcel", "Aucun colis n'est actuellement pris en charge sur ce trajet");
         }
 
-        boolean allInTransit = activeBids.stream().allMatch(b -> b.getStatus() == BidStatus.IN_TRANSIT);
-        if (!allInTransit) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "trip/not-all-in-transit",
-                    "Not All In Transit",
-                    "Tous les colis doivent être en transit avant de marquer l'arrivée");
+        List<BidEntity> inTransit = activeBids.stream()
+                .filter(b -> b.getStatus() == BidStatus.IN_TRANSIT)
+                .toList();
+        if (inTransit.isEmpty()) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "trip/no-parcel-in-transit",
+                    "No Parcel In Transit",
+                    "Aucun colis n'est en transit : scannez l'étape Transit avant de marquer l'arrivée");
         }
 
         announcement.setArrivalInstructions(arrivalInstructions);
-        for (BidEntity bid : activeBids) {
+        for (BidEntity bid : inTransit) {
             bid.setStatus(BidStatus.ARRIVED);
         }
-        bidRepository.saveAll(activeBids);
+        bidRepository.saveAll(inTransit);
         AnnouncementEntity saved = announcementRepository.save(announcement);
 
         auditService.log("ANNOUNCEMENT", saved.getId(), "TRIP_ARRIVED", user.getId(),
-                Map.of("bidCount", activeBids.size()));
+                Map.of("bidCount", inTransit.size(),
+                        "notYetDepartedCount", activeBids.size() - inTransit.size()));
 
-        List<TripArrivedEvent.BidTarget> targets = activeBids.stream()
+        List<TripArrivedEvent.BidTarget> targets = inTransit.stream()
                 .map(b -> new TripArrivedEvent.BidTarget(b.getId(), b.getSenderId()))
                 .toList();
         eventPublisher.publishEvent(new TripArrivedEvent(saved.getId(), targets));

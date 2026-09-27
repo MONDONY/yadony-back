@@ -434,9 +434,15 @@ public class NotificationDispatcher {
     // Trajet arrivé à destination — notif expéditeur par colis (instructions de retrait)
     @EventListener @Async
     public void onTripArrived(TripArrivedEvent event) {
-        Map<String, String> data = Map.of("type", "TRIP_ARRIVED",
-                "announcementId", event.getAnnouncementId().toString());
         for (TripArrivedEvent.BidTarget target : event.getTargets()) {
+            // bidId par expéditeur : le push et la notification persistée ouvrent
+            // le détail de SON colis, où vivent les instructions de retrait
+            // (NotificationDeeplink → bids/{id}). Sans lui, l'app tombait sur
+            // l'écran générique et le texte « les instructions sont dans le
+            // suivi » ne menait nulle part.
+            Map<String, String> data = Map.of("type", "TRIP_ARRIVED",
+                    "announcementId", event.getAnnouncementId().toString(),
+                    "bidId", target.bidId().toString());
             var text = NotificationTexts.tripArrived(messagesFor(target.senderId()));
             notifyUser(target.senderId(), text.title(), text.body(), data);
         }

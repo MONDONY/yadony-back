@@ -13,12 +13,18 @@ class NotificationDeeplinkTest {
     private final String annId = UUID.randomUUID().toString();
     private final String threadId = UUID.randomUUID().toString();
 
+    /** Sans bidId (notification persistée avant ce correctif), aucun lien : l'app ouvre l'écran générique. */
+    @Test
+    void tripArrivedWithoutBidId_hasNoDeeplink() {
+        assertThat(NotificationDeeplink.of("TRIP_ARRIVED", Map.of("announcementId", bidId))).isEmpty();
+    }
+
     @Test
     void bidLifecycleOpensTheBid() {
         for (String type : new String[]{"BID_ACCEPTED", "DELIVERY_CONFIRMED", "PAYMENT_RELEASED", "DISPUTE_OPENED",
                 "PARCEL_REFUSED", "BID_EXPIRED", "CONFIRMATION_CODE_READY", "DELIVERY_NOSHOW_REPORTED",
                 "MM_PAYMENT_PENDING", "HANDOVER_REMINDER_H2", "MOBILE_MONEY_PAYMENT_CONFIRMED",
-                "MOBILE_MONEY_PAYMENT_FAILED", "MM_PAYMENT_EXPIRED", "PARCEL_RETURNED",
+                "MOBILE_MONEY_PAYMENT_FAILED", "MM_PAYMENT_EXPIRED", "TRIP_ARRIVED", "PARCEL_RETURNED",
                 "RETURN_DEADLINE_WARNING", "RETURN_DEADLINE_EXPIRED", "automation_last_minute"}) {
             assertThat(NotificationDeeplink.of(type, Map.of("bidId", bidId)))
                     .as(type).contains("yadony://bids/" + bidId);
