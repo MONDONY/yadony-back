@@ -44,6 +44,8 @@ class PublicDisplayNameCallersTest {
      */
     private static final List<String> ALLOWED_FULL_NAME_CONTEXTS = List.of(
             "com/yadony/api/admin/",
+            // File de revue KYC du back-office : l'admin compare le nom complet à la pièce.
+            "com/yadony/api/kyc/KycAdminReviewService",
             "com/yadony/api/export/",
             "com/yadony/api/payments/FiscalExportService",
             "com/yadony/api/payments/StripeV2AccountProvisioner",

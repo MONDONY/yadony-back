@@ -227,6 +227,23 @@ class NotificationDispatcherTest {
                 .doesNotContainKey("reasonCode");
     }
 
+    @Test
+    void onUserKycRevoked_previentLUtilisateur_sansJamaisLeMotifInterne() {
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onUserKycRevoked(
+                new com.yadony.api.kyc.events.UserKycRevokedEvent(senderId, "document_unverified_other"));
+
+        var dataCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(fcmService).sendToUser(
+                eq(senderId), eq("Vérification retirée"),
+                contains("Yadony"), dataCaptor.capture());
+        // Même type que le refus : l'application ouvre déjà l'écran KYC sur ce type.
+        assertThat(dataCaptor.getValue())
+                .containsEntry("type", "KYC_ACTION_REQUIRED")
+                .doesNotContainKey("reasonCode");
+    }
+
     // ── Parcel return ────────────────────────────────────────────────────────
 
     @Test

@@ -9,6 +9,7 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.Table;
 import org.hibernate.annotations.Where;
 
+import java.time.LocalDateTime;
 import java.util.UUID;
 
 @Entity
@@ -41,6 +42,46 @@ public class KycVerificationEntity extends BaseEntity {
     @Column(name = "rejection_code", length = 64)
     private String rejectionCode;
 
+    /** Administrateur auteur de la derniere decision manuelle (V268). */
+    @Column(name = "decided_by_admin_id")
+    private UUID decidedByAdminId;
+
+    @Column(name = "decided_at")
+    private LocalDateTime decidedAt;
+
+    /** Motif interne de l'administrateur : jamais renvoye a l'utilisateur. */
+    @Column(name = "decision_reason", length = 1000)
+    private String decisionReason;
+
+    @Column(name = "decision_kind", length = 20)
+    @Enumerated(EnumType.STRING)
+    private KycDecisionKind decisionKind;
+
+    /**
+     * Passage en revue manuelle chez le fournisseur : le parcours de l'utilisateur est
+     * termine et la ligne attend une decision. Seul critere fiable, {@code users.kyc_status}
+     * passant deja a PENDING des la creation de la session.
+     */
+    @Column(name = "submitted_at")
+    private LocalDateTime submittedAt;
+
+    /**
+     * Efface la decision et le passage en revue : nouvelle session ou reset administrateur,
+     * la ligne repart d'un parcours vierge.
+     */
+    public void clearDecision() {
+        decidedByAdminId = null;
+        decidedAt = null;
+        decisionReason = null;
+        decisionKind = null;
+        submittedAt = null;
+    }
+
+    /** Vrai quand une decision d'administrateur negative fige la ligne face au fournisseur. */
+    public boolean isLockedByAdmin() {
+        return decisionKind != null && decisionKind.overridesProvider();
+    }
+
     public UUID getUserId() { return userId; }
     public void setUserId(UUID userId) { this.userId = userId; }
 
@@ -58,4 +99,19 @@ public class KycVerificationEntity extends BaseEntity {
 
     public String getRejectionCode() { return rejectionCode; }
     public void setRejectionCode(String rejectionCode) { this.rejectionCode = rejectionCode; }
+
+    public UUID getDecidedByAdminId() { return decidedByAdminId; }
+    public void setDecidedByAdminId(UUID decidedByAdminId) { this.decidedByAdminId = decidedByAdminId; }
+
+    public LocalDateTime getDecidedAt() { return decidedAt; }
+    public void setDecidedAt(LocalDateTime decidedAt) { this.decidedAt = decidedAt; }
+
+    public String getDecisionReason() { return decisionReason; }
+    public void setDecisionReason(String decisionReason) { this.decisionReason = decisionReason; }
+
+    public KycDecisionKind getDecisionKind() { return decisionKind; }
+    public void setDecisionKind(KycDecisionKind decisionKind) { this.decisionKind = decisionKind; }
+
+    public LocalDateTime getSubmittedAt() { return submittedAt; }
+    public void setSubmittedAt(LocalDateTime submittedAt) { this.submittedAt = submittedAt; }
 }

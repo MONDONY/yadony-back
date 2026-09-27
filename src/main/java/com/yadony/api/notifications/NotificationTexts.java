@@ -566,6 +566,11 @@ public final class NotificationTexts {
                 m.get("notification.kyc-action-required.body"));
     }
 
+    /** Revocation par un administrateur : jamais son motif interne, seulement l'action attendue. */
+    public static NotificationText kycRevoked(Messages m) {
+        return new NotificationText(m.get("notification.kyc-revoked.title"), m.get("notification.kyc-revoked.body"));
+    }
+
     public static NotificationText kycReset(Messages m) {
         return new NotificationText(m.get("notification.kyc-reset.title"), m.get("notification.kyc-reset.body"));
     }

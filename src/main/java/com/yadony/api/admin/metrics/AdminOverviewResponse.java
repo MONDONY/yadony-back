@@ -79,7 +79,13 @@ public record AdminOverviewResponse(
             long pendingNoShows,
             long unresolvedAlerts,
             long pendingKyc,
-            long escrowJ48
+            long escrowJ48,
+            /**
+             * Verifications en revue chez le fournisseur, en attente d'une decision (file
+             * {@code /admin/kyc/verifications?status=IN_REVIEW}). {@code pendingKyc} compte aussi
+             * les parcours en cours, {@code users.kyc_status} passant a PENDING des la session.
+             */
+            long kycInReview
     ) {}
 
     /** Replie les lignes (devise, statut) en une entrée par devise, dans l'ordre des lignes. */

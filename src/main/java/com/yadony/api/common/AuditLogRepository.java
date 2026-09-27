@@ -7,6 +7,8 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
+import java.util.List;
 import java.util.UUID;
 
 public interface AuditLogRepository extends JpaRepository<AuditLogEntity, Long> {
@@ -37,4 +39,13 @@ public interface AuditLogRepository extends JpaRepository<AuditLogEntity, Long> 
         @Param("to") LocalDateTime to,
         Pageable pageable
     );
+
+    /**
+     * Historique d'une verification d'identite, du plus recent au plus ancien. Deux
+     * identifiants : la ligne KYC, et l'utilisateur, que {@code KycService.abandonSession}
+     * utilise comme entite de sa trace.
+     */
+    @Query("SELECT a FROM AuditLogEntity a WHERE a.entityType = 'kyc_verification' "
+            + "AND a.entityId IN :entityIds ORDER BY a.createdAt DESC, a.id DESC")
+    List<AuditLogEntity> findKycHistory(@Param("entityIds") Collection<UUID> entityIds, Pageable pageable);
 }

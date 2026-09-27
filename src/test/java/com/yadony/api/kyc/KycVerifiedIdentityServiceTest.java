@@ -132,4 +132,23 @@ class KycVerifiedIdentityServiceTest {
             org.mockito.Mockito.verify(outputs, org.mockito.Mockito.never()).getAddress();
         }
     }
+
+    @Test
+    @DisplayName("Identite validee par un admin sur une session refusee chez le fournisseur : pas de nom, pas d'exception")
+    void adminApprovedRowWithoutProviderName_rendsEmpty() {
+        var didit = mock(com.yadony.api.kyc.provider.IdentityVerificationProvider.class);
+        when(didit.kind()).thenReturn(com.yadony.api.kyc.provider.VerificationProviderKind.DIDIT);
+        // Didit ne rend le nom que d'une session « Approved » : une session « Declined » que
+        // l'admin a validee a la main n'en a pas.
+        when(didit.fetchVerifiedName("sess_declined")).thenReturn(Optional.empty());
+        KycVerifiedIdentityService service = new KycVerifiedIdentityService(kycRepository,
+                new com.yadony.api.kyc.provider.IdentityProviderResolver(java.util.List.of(didit),
+                        mock(com.yadony.api.config.PlatformSettingsService.class)));
+        KycVerificationEntity row = verification(KycVerificationStatus.VERIFIED, "sess_declined");
+        row.setProvider(com.yadony.api.kyc.provider.VerificationProviderKind.DIDIT);
+        row.setDecisionKind(KycDecisionKind.APPROVED);
+        when(kycRepository.findByUserId(userId)).thenReturn(Optional.of(row));
+
+        assertThat(service.forUser(userId)).isEmpty();
+    }
 }

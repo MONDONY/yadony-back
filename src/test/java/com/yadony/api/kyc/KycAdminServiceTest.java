@@ -176,6 +176,11 @@ class KycAdminServiceTest {
         KycVerificationEntity kyc = buildKyc(user.getId(), KycVerificationStatus.REJECTED, "vs_001");
         kyc.setRejectionReason("document_expired");
         kyc.setRejectionCode("document_expired");
+        kyc.setDecisionKind(KycDecisionKind.REJECTED);
+        kyc.setDecidedByAdminId(ADMIN_ID);
+        kyc.setDecidedAt(java.time.LocalDateTime.now());
+        kyc.setDecisionReason("motif interne");
+        kyc.setSubmittedAt(java.time.LocalDateTime.now());
         when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
         when(kycRepository.findByUserId(user.getId())).thenReturn(Optional.of(kyc));
 
@@ -184,6 +189,12 @@ class KycAdminServiceTest {
             vs.when(() -> VerificationSession.retrieve("vs_001")).thenReturn(session);
 
             KycAdminStatusResponse resp = service.resetForUser(user.getId(), ADMIN_ID, "document illisible");
+
+            // Le reset efface aussi la décision d'administration et le passage en revue.
+            assertThat(kyc.getDecisionKind()).isNull();
+            assertThat(kyc.getDecidedByAdminId()).isNull();
+            assertThat(kyc.getDecisionReason()).isNull();
+            assertThat(kyc.getSubmittedAt()).isNull();
 
             assertThat(user.getKycStatus()).isEqualTo(KycStatus.NOT_STARTED);
             assertThat(kyc.getStatus()).isEqualTo(KycVerificationStatus.PENDING);

@@ -7,6 +7,7 @@ import com.yadony.api.auth.UserStatus;
 import com.yadony.api.cancellation.CancellationEntity;
 import com.yadony.api.cancellation.CancellationStatus;
 import com.yadony.api.disputes.DisputeEntity;
+import com.yadony.api.kyc.KycVerificationStatus;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementStatus;
 import com.yadony.api.matching.BidEntity;
@@ -172,8 +173,18 @@ public class AdminMetricsService {
                 countPendingNoShows(),
                 countUnresolvedAlerts(),
                 countUsers("kycStatus", KycStatus.PENDING),
-                countEscrowJ48(j48threshold)
+                countEscrowJ48(j48threshold),
+                countKycInReview()
         );
+    }
+
+    /** Meme definition que l'etat IN_REVIEW de la file KYC (KycAdminReviewService). */
+    private long countKycInReview() {
+        return em.createQuery(
+                        "SELECT COUNT(k) FROM KycVerificationEntity k "
+                                + "WHERE k.status = :pending AND k.submittedAt IS NOT NULL", Long.class)
+                .setParameter("pending", KycVerificationStatus.PENDING)
+                .getSingleResult();
     }
 
     private long countOpenDisputes() {

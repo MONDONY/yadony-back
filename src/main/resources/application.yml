@@ -243,6 +243,13 @@ yadony:
       # Faux = Stripe Identity, vrai = Didit. Ne concerne que les NOUVELLES sessions : une
       # session existante se relit toujours chez le fournisseur qui l'a produite.
       enabled: ${KYC_DIDIT_ENABLED:false}
+    # Lien « voir la session » de la fiche KYC admin, par fournisseur. Modele d'URL dont
+    # {sessionId} est remplace par l'identifiant de session. Vide = pas de lien (null).
+    # Stripe : https://dashboard.stripe.com/identity/verification-sessions/{sessionId}
+    # (prefixer par /test/ en staging). Didit : aucun format de console connu du code.
+    console-url:
+      stripe: ${KYC_CONSOLE_URL_STRIPE:}
+      didit: ${KYC_CONSOLE_URL_DIDIT:}
   didit:
     base-url: ${DIDIT_BASE_URL:https://verification.didit.me}
     api-key: ${DIDIT_API_KEY:}

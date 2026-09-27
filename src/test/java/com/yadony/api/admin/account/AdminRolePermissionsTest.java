@@ -38,4 +38,16 @@ class AdminRolePermissionsTest {
         assertThat(AdminRole.ADMIN.permissions()).contains(AdminPermission.USER_PRO_GRANT);
         assertThat(AdminRole.SUPPORT.permissions()).doesNotContain(AdminPermission.USER_PRO_GRANT);
     }
+
+    // Valider, refuser ou révoquer une identité engage la plateforme (un compte vérifié
+    // ouvre les paiements) : ADMIN et SUPER_ADMIN seulement. Le support garde la lecture
+    // de la file via USER_KYC.
+    @Test
+    @DisplayName("KYC_DECIDE : ADMIN et SUPER_ADMIN, jamais SUPPORT qui garde USER_KYC")
+    void onlyAdminsDecideKyc() {
+        assertThat(AdminRole.SUPER_ADMIN.permissions()).contains(AdminPermission.KYC_DECIDE);
+        assertThat(AdminRole.ADMIN.permissions()).contains(AdminPermission.KYC_DECIDE);
+        assertThat(AdminRole.SUPPORT.permissions()).doesNotContain(AdminPermission.KYC_DECIDE);
+        assertThat(AdminRole.SUPPORT.permissions()).contains(AdminPermission.USER_KYC);
+    }
 }
