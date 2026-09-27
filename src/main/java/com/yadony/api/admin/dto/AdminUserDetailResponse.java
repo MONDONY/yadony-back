@@ -9,6 +9,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
+import com.yadony.api.payments.hold.PayoutHoldSummary;
 
 public record AdminUserDetailResponse(
         UUID id,
@@ -43,7 +44,15 @@ public record AdminUserDetailResponse(
         String mobileMoneyProvider,
         String mobileMoneyCurrency,
         String mobileMoneyCountry,
-        String mobileMoneyMsisdnMasked
+        String mobileMoneyMsisdnMasked,
+        /** Debut du plus ancien gel actif des versements (V270) ; {@code null} si non gele. */
+        LocalDateTime payoutsHeldSince,
+        /** Motif principal du gel : {@code BANNED} ou {@code KYC_REVOKED} ; {@code null} si non gele. */
+        String payoutsHeldReason,
+        /** Tous les motifs actifs (les deux peuvent coexister) ; vide si non gele. */
+        List<String> payoutsHeldReasons,
+        /** Paiements ESCROW retenus a la livraison pour ce voyageur, a liberer a la main. */
+        long heldPaymentsCount
 ) {
     /**
      * Téléphone et email proviennent de Firebase : ils ne sont plus stockés en base.
@@ -51,6 +60,12 @@ public record AdminUserDetailResponse(
      */
     public static AdminUserDetailResponse from(UserEntity u, FirebaseContactService.Contact contact,
                                                 ProSubscriptionEntity sub) {
+        return from(u, contact, sub, PayoutHoldSummary.NONE);
+    }
+
+    public static AdminUserDetailResponse from(UserEntity u, FirebaseContactService.Contact contact,
+                                                ProSubscriptionEntity sub, PayoutHoldSummary payoutHold) {
+        PayoutHoldSummary hold = payoutHold != null ? payoutHold : PayoutHoldSummary.NONE;
         return new AdminUserDetailResponse(
                 u.getId(),
                 u.getFirstName(),
@@ -87,7 +102,11 @@ public record AdminUserDetailResponse(
                 u.getMobileMoneyProvider(),
                 u.getMobileMoneyCurrency(),
                 u.getMobileMoneyCountry(),
-                u.getMobileMoneyMsisdnMasked()
+                u.getMobileMoneyMsisdnMasked(),
+                hold.heldSince(),
+                hold.primaryReason() != null ? hold.primaryReason().name() : null,
+                hold.reasons() == null ? List.of() : hold.reasons().stream().map(Enum::name).toList(),
+                hold.heldPaymentsCount()
         );
     }
 }

@@ -99,4 +99,20 @@ class DiditClientTest {
 
         assertThat(client.retrieveDecision("sess_1")).isEmpty();
     }
+
+    @Test
+    void createSession_avecVendorDataExplicite_lEnvoieTelQuel() {
+        UUID userId = UUID.randomUUID();
+        server.expect(requestTo("https://verification.didit.me/v3/session/"))
+                .andExpect(jsonPath("$.vendor_data").value(userId + ":r2"))
+                .andExpect(jsonPath("$.metadata.user_id").value(userId.toString()))
+                .andRespond(withSuccess("""
+                        {"session_id":"sess_2","url":"https://verify.didit.me/fr/session/tok2"}
+                        """, MediaType.APPLICATION_JSON));
+
+        JsonNode response = client.createSession(userId, CALLBACK, userId + ":r2");
+
+        assertThat(response.path("session_id").asText()).isEqualTo("sess_2");
+        server.verify();
+    }
 }

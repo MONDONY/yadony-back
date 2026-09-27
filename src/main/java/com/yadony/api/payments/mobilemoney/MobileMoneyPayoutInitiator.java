@@ -6,6 +6,8 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.payments.PaymentEntity;
+import com.yadony.api.payments.hold.PayoutHeldException;
+import com.yadony.api.payments.hold.PayoutHoldPolicy;
 import com.yadony.api.payments.pawapay.PawapayOperationEntity;
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
 import com.yadony.api.payments.pawapay.PawapayOperationService;
@@ -66,10 +68,14 @@ public class MobileMoneyPayoutInitiator {
      */
     private final TransactionTemplate independentAuditTransaction;
 
+    private final PayoutHoldPolicy holdPolicy;
+
     public MobileMoneyPayoutInitiator(UserRepository userRepository, PawapayOperationService operations,
                                       PawapaySubmissionService submission, AdminAlertService adminAlert,
                                       AdminAlertEscalator alerts, AuditService audit,
-                                      PlatformTransactionManager transactionManager) {
+                                      PlatformTransactionManager transactionManager,
+                                      PayoutHoldPolicy holdPolicy) {
+        this.holdPolicy = holdPolicy;
         this.userRepository = userRepository;
         this.operations = operations;
         this.submission = submission;
@@ -102,8 +108,29 @@ public class MobileMoneyPayoutInitiator {
      *       {@link #independentAuditTransaction} — après ce point, la seule chose qui suit
      *       sur le chemin nominal est un {@code log.info}, qui ne peut rien faire annuler.</li>
      * </ol>
+     *
+     * <p>Sans dérogation : refuse ({@link PayoutHeldException}) un voyageur gelé ou un paiement en
+     * litige. Voir {@link #release(PaymentEntity, UUID, UUID, BigDecimal, String, boolean)}.
      */
     public PawapayOperationEntity release(PaymentEntity payment, UUID bidId, UUID travelerId, BigDecimal net, String source) {
+        return release(payment, bidId, travelerId, net, source, false);
+    }
+
+    /**
+     * @param holdOverridden {@code true} uniquement quand un administrateur a explicitement
+     *                       dérogé au gel ou au litige (motif audité par l'appelant)
+     */
+    public PawapayOperationEntity release(PaymentEntity payment, UUID bidId, UUID travelerId, BigDecimal net, String source,
+                                          boolean holdOverridden) {
+        // Défense en profondeur : aucun appelant ne verse à un voyageur gelé, ni sur un paiement
+        // en litige, sans poser explicitement la dérogation (force-release / relance admin
+        // motivés et audités). Refusé AVANT tout appel pawaPay.
+        if (!holdOverridden && (payment.isDisputed() || holdPolicy.isHeld(travelerId))) {
+            log.warn("Payout mobile money refusé pour le paiement {} ({}) : {}", payment.getId(), source,
+                    payment.isDisputed() ? "paiement en litige" : "voyageur gelé");
+            throw new PayoutHeldException("Payout blocked for payment " + payment.getId()
+                    + (payment.isDisputed() ? ": payment disputed" : ": traveler " + travelerId + " payouts are held"));
+        }
         UserEntity traveler = userRepository.findById(travelerId)
                 .orElseThrow(() -> new IllegalStateException("Traveler not found: " + travelerId));
         if (!traveler.canReceiveMobileMoney(payment.getCurrency())) {

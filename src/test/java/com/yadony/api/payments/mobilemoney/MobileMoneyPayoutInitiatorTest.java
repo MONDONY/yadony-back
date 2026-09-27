@@ -52,6 +52,7 @@ class MobileMoneyPayoutInitiatorTest {
     // null (jamais déréférencé), commit(null) est un no-op sur le mock — suffisant pour vérifier
     // que audit.log(...) est bien appelé (voir MobileMoneyBidPaymentServiceTest, même pattern).
     @Mock PlatformTransactionManager transactionManager;
+    @Mock com.yadony.api.payments.hold.PayoutHoldPolicy holdPolicy;
     @InjectMocks MobileMoneyPayoutInitiator initiator;
 
     private PaymentEntity payment;

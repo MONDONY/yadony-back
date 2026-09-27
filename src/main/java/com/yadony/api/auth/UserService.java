@@ -432,6 +432,8 @@ public class UserService {
         UserEntity saved = userRepository.save(user);
         auditService.log("USER", userId, "USER_BANNED_BY_ADMIN", adminId,
                 Map.of("reason", reason != null ? reason : ""));
+        // Gel des gains du voyageur (payments/hold), ecrit dans CETTE transaction.
+        eventPublisher.publishEvent(new com.yadony.api.auth.events.UserBannedEvent(userId, reason, adminId));
         log.info("User {} banned by admin", userId);
         return saved;
     }
@@ -463,6 +465,10 @@ public class UserService {
 
         auditService.log("USER", userId, "USER_UNSUSPENDED", adminId,
                 Map.of("previousStatus", previousStatus.name()));
+        if (previousStatus == UserStatus.BANNED) {
+            // Leve le gel BANNED des versements ; une suspension, elle, n'en posait aucun.
+            eventPublisher.publishEvent(new com.yadony.api.auth.events.UserReinstatedEvent(userId, adminId));
+        }
         log.info("User {} unsuspended by admin", userId);
         return saved;
     }

@@ -85,7 +85,12 @@ public record AdminOverviewResponse(
              * {@code /admin/kyc/verifications?status=IN_REVIEW}). {@code pendingKyc} compte aussi
              * les parcours en cours, {@code users.kyc_status} passant a PENDING des la session.
              */
-            long kycInReview
+            long kycInReview,
+            /**
+             * Versements retenus a la livraison, beneficiaire gele (banni ou KYC retire) : paiements
+             * ESCROW avec {@code payout_held_at} pose, file {@code /admin/payments?held=true}.
+             */
+            long heldPayouts
     ) {}
 
     /** Replie les lignes (devise, statut) en une entrée par devise, dans l'ordre des lignes. */

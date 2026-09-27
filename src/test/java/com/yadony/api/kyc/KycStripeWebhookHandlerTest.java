@@ -26,6 +26,7 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class KycStripeWebhookHandlerTest {
 
+    @org.mockito.Mock KycRefusedSessionRegistry refusedSessions;
     @Mock KycRepository kycRepository;
     @Mock UserRepository userRepository;
     @Mock AuditService auditService;
@@ -40,7 +41,7 @@ class KycStripeWebhookHandlerTest {
         // traduire la charge utile Stripe, mais les effets vérifiés ici restent les mêmes.
         handler = new KycStripeWebhookHandler(kycRepository, userRepository,
                 new KycStatusTransitionService(kycRepository, userRepository, auditService,
-                        eventPublisher, adminAlert),
+                        eventPublisher, adminAlert, refusedSessions),
                 objectMapper);
     }
 

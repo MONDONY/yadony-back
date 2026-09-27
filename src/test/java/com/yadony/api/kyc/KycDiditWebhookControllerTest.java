@@ -44,6 +44,7 @@ class KycDiditWebhookControllerTest {
     private static final String SIGNATURE = "sig";
     private static final String TIMESTAMP = "1760000000";
 
+    @org.mockito.Mock KycRefusedSessionRegistry refusedSessions;
     @Mock KycRepository kycRepository;
     @Mock UserRepository userRepository;
     @Mock AuditService auditService;
@@ -60,7 +61,7 @@ class KycDiditWebhookControllerTest {
         // Vrai service de transition : le contrôleur ne fait que traduire, ce sont les
         // effets réels qu'on vérifie ici.
         KycStatusTransitionService transitions = new KycStatusTransitionService(
-                kycRepository, userRepository, auditService, eventPublisher, adminAlert);
+                kycRepository, userRepository, auditService, eventPublisher, adminAlert, refusedSessions);
 
         controller = new KycDiditWebhookController(kycRepository, userRepository, transitions,
                 signatureVerifier,

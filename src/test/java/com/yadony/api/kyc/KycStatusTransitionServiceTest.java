@@ -30,6 +30,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 @ExtendWith(MockitoExtension.class)
 class KycStatusTransitionServiceTest {
 
+    @org.mockito.Mock KycRefusedSessionRegistry refusedSessions;
     @Mock KycRepository kycRepository;
     @Mock UserRepository userRepository;
     @Mock AuditService auditService;
@@ -43,7 +44,7 @@ class KycStatusTransitionServiceTest {
     @BeforeEach
     void setUp() {
         service = new KycStatusTransitionService(kycRepository, userRepository, auditService,
-                eventPublisher, adminAlert);
+                eventPublisher, adminAlert, refusedSessions);
 
         user = new UserEntity();
         ReflectionTestUtils.setField(user, "id", UUID.randomUUID());

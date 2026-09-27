@@ -174,7 +174,8 @@ public class AdminMetricsService {
                 countUnresolvedAlerts(),
                 countUsers("kycStatus", KycStatus.PENDING),
                 countEscrowJ48(j48threshold),
-                countKycInReview()
+                countKycInReview(),
+                countHeldPayouts()
         );
     }
 
@@ -184,6 +185,15 @@ public class AdminMetricsService {
                         "SELECT COUNT(k) FROM KycVerificationEntity k "
                                 + "WHERE k.status = :pending AND k.submittedAt IS NOT NULL", Long.class)
                 .setParameter("pending", KycVerificationStatus.PENDING)
+                .getSingleResult();
+    }
+
+    /** Meme definition que le filtre {@code GET /admin/payments?held=true}. */
+    private long countHeldPayouts() {
+        return em.createQuery(
+                        "SELECT COUNT(p) FROM PaymentEntity p WHERE p.status = :status AND p.payoutHeldAt IS NOT NULL",
+                        Long.class)
+                .setParameter("status", PaymentStatus.ESCROW)
                 .getSingleResult();
     }
 

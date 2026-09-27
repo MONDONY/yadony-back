@@ -83,9 +83,20 @@ public class DiditClient {
      * @throws RuntimeException si Didit refuse ou ne repond pas — l'appelant en fait un 503.
      */
     public JsonNode createSession(UUID userId, String callbackUrl) {
+        return createSession(userId, callbackUrl, userId.toString());
+    }
+
+    /**
+     * Meme appel avec un {@code vendor_data} explicite. Didit dedoublonnant sur ce champ, un
+     * {@code vendor_data} distinct de l'UUID force une session neuve (session refusee par un
+     * administrateur et encore inachevee chez Didit). {@code metadata.user_id} porte toujours
+     * l'UUID yadony ; les webhooks sont rapproches par {@code session_id}, jamais par
+     * {@code vendor_data}.
+     */
+    public JsonNode createSession(UUID userId, String callbackUrl, String vendorData) {
         Map<String, Object> body = Map.of(
                 "workflow_id", properties.workflowId(),
-                "vendor_data", userId.toString(),
+                "vendor_data", vendorData,
                 "callback", callbackUrl,
                 "language", "fr",
                 "metadata", Map.of("user_id", userId.toString()));

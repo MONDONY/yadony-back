@@ -38,6 +38,8 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class DeliveryEventListenerTest {
 
+    @org.mockito.Mock com.yadony.api.payments.hold.PayoutHoldPolicy holdPolicy;
+    @org.mockito.Mock com.yadony.api.admin.AdminAlertEscalator alertEscalator;
     @Mock private PaymentRepository paymentRepository;
     @Mock private UserRepository userRepository;
     @Mock private AuditService auditService;
@@ -53,7 +55,7 @@ class DeliveryEventListenerTest {
         // Ronde 1, point 5 : payoutInitiator est désormais un paramètre constructeur — null ici,
         // jamais déréférencé puisque tous les paiements de cette classe sont de rail STRIPE.
         listener = new DeliveryEventListener(paymentRepository, userRepository,
-                auditService, eventPublisher, bidRepository, adminAlert, voucherService, null);
+                auditService, eventPublisher, bidRepository, adminAlert, voucherService, null, holdPolicy, alertEscalator);
     }
 
     private PaymentEntity payment(boolean legacy, PaymentStatus status, String chargeId) {

@@ -190,4 +190,30 @@ class DiditIdentityProviderTest {
         assertThat(view.status()).isNull();
         verifyNoInteractions(client);
     }
+
+    /**
+     * Didit dedoublonne sur vendor_data : un vendor_data distinct est le seul moyen d'obtenir une
+     * nouvelle session quand l'ancienne, refusee par un administrateur, est encore inachevee chez
+     * lui.
+     */
+    @Test
+    void createFreshSession_envoieUnVendorDataDistinct() throws Exception {
+        org.mockito.ArgumentCaptor<String> vendorData = org.mockito.ArgumentCaptor.forClass(String.class);
+        when(client.createSession(eq(user.getId()), eq(RETURN_URL), vendorData.capture())).thenReturn(json("""
+                {"session_id":"sess_fresh","url":"https://verify.didit.me/fr/session/new"}
+                """));
+
+        var session = provider.createFreshSession(user);
+
+        assertThat(session.sessionId()).isEqualTo("sess_fresh");
+        assertThat(vendorData.getValue()).startsWith(user.getId() + ":").isNotEqualTo(user.getId().toString());
+    }
+
+    @Test
+    void createFreshSession_echecDidit_503() {
+        when(client.createSession(any(), anyString(), anyString())).thenThrow(new RuntimeException("boom"));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> provider.createFreshSession(user))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+    }
 }

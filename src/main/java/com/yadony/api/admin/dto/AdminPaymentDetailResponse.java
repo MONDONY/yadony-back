@@ -1,6 +1,7 @@
 package com.yadony.api.admin.dto;
 
 import com.yadony.api.payments.PaymentEntity;
+import com.yadony.api.payments.hold.PayoutHoldStatus;
 
 import java.time.LocalDateTime;
 import java.util.Locale;
@@ -32,7 +33,18 @@ public record AdminPaymentDetailResponse(
         String rail,
         UUID pawapayDepositId,
         UUID pawapayPayoutId,
-        UUID pawapayRefundId
+        UUID pawapayRefundId,
+        /**
+         * Voyageur beneficiaire (annonce du colis, classique ou materialise depuis un fil de
+         * negociation) ; {@code null} si le colis n'est pas encore materialise.
+         */
+        UUID travelerId,
+        /** Versement retenu a la livraison, beneficiaire gele (V270) ; {@code null} sinon. */
+        LocalDateTime payoutHeldAt,
+        /** Le voyageur beneficiaire est actuellement gele (banni ou KYC retire). */
+        boolean beneficiaryHeld,
+        /** Motif principal du gel : {@code BANNED} ou {@code KYC_REVOKED} ; {@code null} si non gele. */
+        String beneficiaryHoldReason
 ) {
     /** Paiement sans opération pawaPay (rail STRIPE). */
     public static AdminPaymentDetailResponse from(PaymentEntity p) {
@@ -41,6 +53,12 @@ public record AdminPaymentDetailResponse(
 
     public static AdminPaymentDetailResponse from(PaymentEntity p, UUID pawapayDepositId, UUID pawapayPayoutId,
                                                   UUID pawapayRefundId) {
+        return from(p, pawapayDepositId, pawapayPayoutId, pawapayRefundId, null, PayoutHoldStatus.NONE);
+    }
+
+    public static AdminPaymentDetailResponse from(PaymentEntity p, UUID pawapayDepositId, UUID pawapayPayoutId,
+                                                  UUID pawapayRefundId, UUID travelerId, PayoutHoldStatus hold) {
+        PayoutHoldStatus h = hold != null ? hold : PayoutHoldStatus.NONE;
         return new AdminPaymentDetailResponse(
                 p.getId(),
                 p.getBidId(),
@@ -57,7 +75,11 @@ public record AdminPaymentDetailResponse(
                 p.getRail().name(),
                 pawapayDepositId,
                 pawapayPayoutId,
-                pawapayRefundId
+                pawapayRefundId,
+                travelerId,
+                p.getPayoutHeldAt(),
+                h.held(),
+                h.primaryReason() != null ? h.primaryReason().name() : null
         );
     }
 }

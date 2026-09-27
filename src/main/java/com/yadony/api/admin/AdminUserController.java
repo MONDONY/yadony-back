@@ -3,6 +3,7 @@ package com.yadony.api.admin;
 import com.yadony.api.admin.account.AdminPrincipal;
 import com.yadony.api.admin.dto.AdminDeleteUserRequest;
 import com.yadony.api.admin.dto.AdminUserDetailResponse;
+import com.yadony.api.payments.hold.PayoutHoldService;
 import com.yadony.api.admin.dto.AdminUserListItemResponse;
 import com.yadony.api.admin.dto.DeletionImpactResponse;
 import com.yadony.api.admin.dto.MuteMessagingRequest;
@@ -50,6 +51,7 @@ public class AdminUserController {
     private final AdminUserDeletionService deletionService;
     private final ProSubscriptionService proSubscriptionService;
     private final ProSubscriptionRepository proSubscriptionRepository;
+    private final PayoutHoldService payoutHoldService;
 
     public AdminUserController(UserService userService,
                                UserRepository userRepository,
@@ -57,7 +59,9 @@ public class AdminUserController {
                                UserDeletionImpactService deletionImpactService,
                                AdminUserDeletionService deletionService,
                                ProSubscriptionService proSubscriptionService,
-                               ProSubscriptionRepository proSubscriptionRepository) {
+                               ProSubscriptionRepository proSubscriptionRepository,
+                               PayoutHoldService payoutHoldService) {
+        this.payoutHoldService = payoutHoldService;
         this.userService = userService;
         this.userRepository = userRepository;
         this.firebaseContact = firebaseContact;
@@ -259,7 +263,8 @@ public class AdminUserController {
         return AdminUserDetailResponse.from(
                 user,
                 firebaseContact.getContact(user.getFirebaseUid()),
-                proSubscriptionRepository.findByUserId(user.getId()).orElse(null));
+                proSubscriptionRepository.findByUserId(user.getId()).orElse(null),
+                payoutHoldService.summaryOf(user.getId()));
     }
 
     /** Résout l'utilisateur ou lève le 404 métier standard — réutilisé partout où
