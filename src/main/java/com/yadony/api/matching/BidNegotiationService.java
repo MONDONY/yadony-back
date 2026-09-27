@@ -17,6 +17,7 @@ import com.yadony.api.matching.dto.BidNegotiationSummaryResponse;
 import com.yadony.api.matching.events.BidNegotiationMessagePostedEvent;
 import com.yadony.api.matching.events.CashBidCreatedEvent;
 import com.yadony.api.payments.cash.PaymentMethod;
+import com.yadony.api.payments.mobilemoney.MobileMoneyBidPaymentService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
@@ -69,6 +70,7 @@ public class BidNegotiationService {
     private final ApplicationEventPublisher eventPublisher;
     private final MatchingNegotiationConfig config;
     private final BidService bidService;
+    private final MobileMoneyBidPaymentService mobileMoneyBidPaymentService;
 
     public BidNegotiationService(BidRepository bidRepository,
                                  AnnouncementRepository announcementRepository,
@@ -82,7 +84,8 @@ public class BidNegotiationService {
                                  AuditService auditService,
                                  ApplicationEventPublisher eventPublisher,
                                  MatchingNegotiationConfig config,
-                                 BidService bidService) {
+                                 BidService bidService,
+                                 MobileMoneyBidPaymentService mobileMoneyBidPaymentService) {
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.userRepository = userRepository;
@@ -96,6 +99,7 @@ public class BidNegotiationService {
         this.eventPublisher = eventPublisher;
         this.config = config;
         this.bidService = bidService;
+        this.mobileMoneyBidPaymentService = mobileMoneyBidPaymentService;
     }
 
     // ── Ouverture du fil ─────────────────────────────────────────────────────
@@ -151,20 +155,6 @@ public class BidNegotiationService {
         PaymentMethod paymentMethod =
                 bidService.resolvePaymentMethodFor(announcement, request.paymentMethod());
 
-        // Hors périmètre : le fil de négociation d'un bid ne sait pas encore porter ce rail —
-        // accept() ne fait transiter un accord que vers CASH (PENDING) ou carte
-        // (AWAITING_PAYMENT + checkout Stripe existant) ; un bid MOBILE_MONEY passerait en
-        // AWAITING_PAYMENT sans jamais réserver de capacité ni créer de PaymentEntity, un
-        // bid qu'ensuite plus aucun rail ne peut payer. À l'inverse, les demandes de colis
-        // l'ouvrent depuis le lot 2 (NegotiationService.travelerCanOffer, quand le voyageur
-        // est versable dans la devise du fil). Un lot dédié ouvrira la négociation de bid au
-        // mobile money si besoin.
-        if (paymentMethod == PaymentMethod.MOBILE_MONEY) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "mobile-money-negotiation-unsupported", "Mobile Money Negotiation Unsupported",
-                    "Le paiement mobile money n'est pas encore disponible sur un fil de négociation.");
-        }
-
         // Taux figé ICI et nulle part ailleurs — accept() relira ce snapshot.
         BigDecimal rate = commissionRateResolver.resolve(announcement.getTravelerId(), sender.getId());
 
@@ -183,6 +173,9 @@ public class BidNegotiationService {
         bid.setDisclaimerSignedIp(bidService.resolveClientIp(httpRequest));
         if (paymentMethod != null) {
             bid.setPaymentMethod(paymentMethod);
+        }
+        if (paymentMethod == PaymentMethod.MOBILE_MONEY) {
+            bidService.applyMobileMoneyPayer(bid, request.phoneNumber(), request.countryCode());
         }
         bid.setStatus(BidStatus.NEGOTIATING);
         bid.setCurrency(announcement.getCurrency());
@@ -266,7 +259,7 @@ public class BidNegotiationService {
         ctx.bid().setNegotiatedGrossEur(split.grossEur());
         ctx.bid().setNegotiatedNetEur(split.netEur());
 
-        // Deux aval possibles, et un seul des deux comporte un paiement en ligne.
+        // Trois aval possibles, selon le mode figé à la proposition.
         //
         // ESPÈCES : rien à encaisser auprès de l'expéditeur, il réglera le voyageur de
         // la main à la main. Le laisser en AWAITING_PAYMENT était une impasse — aucun
@@ -283,8 +276,23 @@ public class BidNegotiationService {
         //
         // CARTE : l'expéditeur doit encore autoriser l'escrow, sur le bid EXISTANT,
         // via POST /bids/{id}/negotiation/checkout.
+        //
+        // MOBILE MONEY : l'accord vaut acceptation du voyageur (qu'il ait accepté le prix
+        // ou que ce soit lui qui l'ait proposé). Le bid passe par PENDING puis
+        // MobileMoneyBidPaymentService.acceptBid le mène, DANS CETTE TRANSACTION, à
+        // AWAITING_PAYMENT : capacité réservée, promo racheté, PaymentEntity pawaPay créé,
+        // échéance de dépôt posée — exactement l'état d'une offre directe acceptée, que
+        // l'expéditeur paie ensuite par POST /bids/{id}/mobile-money/initiate. Ne jamais
+        // poser AWAITING_PAYMENT + MOBILE_MONEY soi-même : restoreCapacityIfNeeded suppose
+        // la capacité déjà prélevée (surréservation silencieuse sinon). Un refus d'acceptBid
+        // (compte de versement coupé, devise, capacité) annule tout l'accord.
         boolean cash = ctx.bid().getPaymentMethod() == PaymentMethod.CASH;
-        if (cash) {
+        boolean mobileMoney = ctx.bid().getPaymentMethod() == PaymentMethod.MOBILE_MONEY;
+        if (mobileMoney) {
+            ctx.bid().setStatus(BidStatus.PENDING);
+            ctx.bid().setAwaitingPaymentExpiresAt(null);
+            ctx.bid().setPendingSince(LocalDateTime.now(ZoneOffset.UTC));
+        } else if (cash) {
             ctx.bid().setStatus(BidStatus.PENDING);
             ctx.bid().setAwaitingPaymentExpiresAt(null);
             // L'accord entre MAINTENANT dans la file d'attente du voyageur : c'est
@@ -300,6 +308,9 @@ public class BidNegotiationService {
                     LocalDateTime.now(ZoneOffset.UTC).plusHours(config.awaitingPaymentHours()));
         }
         BidEntity saved = bidRepository.save(ctx.bid());
+        if (mobileMoney) {
+            mobileMoneyBidPaymentService.acceptBid(bidId, ctx.announcement().getTravelerId());
+        }
 
         BidNegotiationMessageEntity message = postMessage(ctx.bid(), ctx.userId(),
                 BidNegotiationMessageKind.ACCEPT, split.grossEur(), null);
@@ -637,7 +648,8 @@ public class BidNegotiationService {
                 announcement.getArrivalCity(),
                 announcement.getDepartureDate(),
                 expiresAt(bid, last, open),
-                messages);
+                messages,
+                bid.getPaymentMethod() != null ? bid.getPaymentMethod().name() : null);
     }
 
     /**

@@ -63,7 +63,7 @@ class BidNegotiationControllerIntegrationTest {
                 new BigDecimal("45.00"), null, new BigDecimal("2.14"), new BigDecimal("26.25"),
                 new BigDecimal("5.0"), "Vêtements", "CLOTHING",
                 List.of(), List.of(), List.of(), "Moussa D.", "Paris", "Dakar",
-                LocalDate.now().plusDays(10), LocalDateTime.now().plusHours(72), List.of());
+                LocalDate.now().plusDays(10), LocalDateTime.now().plusHours(72), List.of(), "CASH");
     }
 
     private static BidNegotiationStartRequest startRequest(BigDecimal proposed) {

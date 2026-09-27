@@ -43,5 +43,8 @@ public record BidNegotiationResponse(
         String arrivalCity,
         LocalDate departureDate,
         LocalDateTime expiresAt,
-        List<BidNegotiationMessageResponse> messages
+        List<BidNegotiationMessageResponse> messages,
+        // Mode figé à la proposition (STRIPE, CASH, MOBILE_MONEY) : l'app en déduit le
+        // geste de paiement après l'accord (carte → checkout, mobile money → dépôt pawaPay).
+        String paymentMethod
 ) {}

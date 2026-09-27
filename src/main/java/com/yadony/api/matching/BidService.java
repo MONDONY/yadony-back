@@ -278,24 +278,7 @@ public class BidService {
         bid.setDisclaimerSignedIp(clientIp);
         bid.setPaymentMethod(pm);
         if (pm == PaymentMethod.MOBILE_MONEY) {
-            // Numéro payeur optionnel à la création (repli sur le téléphone Firebase à
-            // l'initiation) ; validé par pawaPay (predict-provider) au moment de payer.
-            // Le @Pattern du DTO (7 à 20 chiffres) est plus large que Msisdn.normalize (8 à
-            // 15) : une entrée qui passe la validation Bean peut donc encore lui être
-            // invalide. C'est une erreur de saisie CLIENT — contrairement à
-            // MobileMoneyAccountService, où le numéro vient de pawaPay lui-même — d'où un
-            // 422 métier et non un 502 (elle ne doit jamais fuiter en 500 générique).
-            String payer = request.phoneNumber();
-            if (payer != null && !payer.isBlank()) {
-                try {
-                    bid.setMobileMoneyPhone(com.yadony.api.common.Msisdn.normalize(payer));
-                } catch (IllegalArgumentException e) {
-                    throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                            "mobile-money-invalid-phone", "Mobile Money Invalid Phone",
-                            "Numéro de téléphone invalide pour le paiement mobile money.");
-                }
-            }
-            bid.setMobileMoneyCountryCode(request.countryCode());
+            applyMobileMoneyPayer(bid, request.phoneNumber(), request.countryCode());
         }
         bid.setStatus(BidStatus.PENDING);
         bid.setCurrency(announcement.getCurrency());
@@ -502,6 +485,31 @@ public class BidService {
                         "paymentIntentId", paymentIntentId != null ? paymentIntentId : "null"));
         log.info("Bid {} (PI={}) abandonné : nouvelle demande du même expéditeur sur le trajet {}",
                 unpaid.getId(), paymentIntentId, announcement.getId());
+    }
+
+    /**
+     * Numéro payeur optionnel d'un bid mobile money (repli sur le téléphone Firebase à
+     * l'initiation) ; validé par pawaPay (predict-provider) au moment de payer.
+     * Partagé par l'offre directe ({@link #createBid}) et la proposition de prix
+     * ({@code BidNegotiationService#propose}), qui figent toutes deux le mode à la création.
+     *
+     * <p>Le @Pattern des DTO (7 à 20 chiffres) est plus large que Msisdn.normalize (8 à
+     * 15) : une entrée qui passe la validation Bean peut donc encore lui être invalide.
+     * C'est une erreur de saisie CLIENT — contrairement à MobileMoneyAccountService, où le
+     * numéro vient de pawaPay lui-même — d'où un 422 métier et non un 502 (elle ne doit
+     * jamais fuiter en 500 générique).
+     */
+    void applyMobileMoneyPayer(BidEntity bid, String payer, String countryCode) {
+        if (payer != null && !payer.isBlank()) {
+            try {
+                bid.setMobileMoneyPhone(com.yadony.api.common.Msisdn.normalize(payer));
+            } catch (IllegalArgumentException e) {
+                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "mobile-money-invalid-phone", "Mobile Money Invalid Phone",
+                        "Numéro de téléphone invalide pour le paiement mobile money.");
+            }
+        }
+        bid.setMobileMoneyCountryCode(countryCode);
     }
 
     /**
@@ -1033,10 +1041,10 @@ public class BidService {
      *  ne vérifie ni ne garantit rien de tel : si un futur chemin fait naître un bid
      *  {@code AWAITING_PAYMENT MOBILE_MONEY} sans avoir décrémenté la capacité au même
      *  instant, cette méthode restituera au voyageur une capacité qu'il n'a jamais cédée
-     *  (surréservation silencieuse de la soute). C'est précisément pour ne pas dépendre
-     *  d'un futur appelant qui casserait cet invariant que {@link BidNegotiationService#propose}
-     *  refuse ce rail (« mobile-money-negotiation-unsupported ») plutôt que de le laisser
-     *  atteindre {@code AWAITING_PAYMENT} par un chemin qui ne réserve pas la capacité.
+     *  (surréservation silencieuse de la soute). C'est pourquoi l'accord d'une négociation en
+     *  mobile money ({@link BidNegotiationService#accept}) ne pose jamais ce statut lui-même :
+     *  il délègue à {@code MobileMoneyBidPaymentService#acceptBid}, qui réserve la capacité
+     *  dans la même transaction.
      *
      *  <p>Volontairement muet sur IN_TRANSIT/ARRIVED : ses deux appelants
      *  ({@link #cancelBid} via CancellationGuard, {@link #cancelBidForDeletedSender}
