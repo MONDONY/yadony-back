@@ -44,6 +44,9 @@ public interface NegotiationThreadRepository extends JpaRepository<NegotiationTh
 
     List<NegotiationThreadEntity> findByPackageRequestId(UUID packageRequestId);
 
+    /** Fils de plusieurs demandes en une requête (liste admin : compte des négociations ouvertes). */
+    List<NegotiationThreadEntity> findByPackageRequestIdIn(java.util.Collection<UUID> packageRequestIds);
+
     /**
      * The single ACCEPTED thread for a given dedicated trip. Since Task 4, a trip can be
      * linked to multiple concurrent OPEN offers (spec §3.8), so the 1:1 relation only holds

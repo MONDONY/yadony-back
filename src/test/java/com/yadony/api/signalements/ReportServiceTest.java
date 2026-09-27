@@ -8,6 +8,7 @@ import com.yadony.api.common.StorageService;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.ratings.RatingRepository;
+import com.yadony.api.requests.repository.PackageRequestRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -43,6 +44,7 @@ class ReportServiceTest {
     @Mock AnnouncementRepository announcementRepository;
     @Mock BidRepository bidRepository;
     @Mock RatingRepository ratingRepository;
+    @Mock PackageRequestRepository packageRequestRepository;
     @Mock StorageService storageService;
     @Mock AuditService auditService;
 
@@ -51,7 +53,8 @@ class ReportServiceTest {
 
     private ReportService service() {
         return new ReportService(reportRepository, photoRepository, userRepository,
-                announcementRepository, bidRepository, ratingRepository, storageService, auditService);
+                announcementRepository, bidRepository, ratingRepository, packageRequestRepository,
+                storageService, auditService);
     }
 
     @BeforeEach
@@ -399,5 +402,41 @@ class ReportServiceTest {
         Map<UUID, List<String>> map = service().photoUrlsByReport(List.of(r1));
 
         assertThat(map).containsEntry(r1, List.of("u1"));
+    }
+
+    @Test
+    void createReport_targetPackageRequestDoesNotExist_throws404() {
+        stubUser();
+        UUID targetId = UUID.randomUUID();
+        when(packageRequestRepository.existsById(targetId)).thenReturn(false);
+
+        assertThatThrownBy(() -> service().createReport("uid-1", ReportTargetType.PACKAGE_REQUEST, targetId,
+                ReportReason.SCAM_ATTEMPT, null, List.of()))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getStatus())
+                .isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void recordPackageRequestReport_convertitLeMotifEtEcritUnSignalementOuvert() throws Exception {
+        UUID requestId = UUID.randomUUID();
+        when(reportRepository.save(any())).thenAnswer(inv -> {
+            ReportEntity r = inv.getArgument(0);
+            setId(r, UUID.randomUUID());
+            return r;
+        });
+
+        ReportEntity known = service().recordPackageRequestReport(requestId, reporterId, "SCAM", "frauduleuse");
+        ReportEntity unknown = service().recordPackageRequestReport(requestId, reporterId, "Libre", null);
+
+        assertThat(known.getTargetType()).isEqualTo(ReportTargetType.PACKAGE_REQUEST);
+        assertThat(known.getTargetId()).isEqualTo(requestId);
+        assertThat(known.getReporterId()).isEqualTo(reporterId);
+        assertThat(known.getReason()).isEqualTo(ReportReason.SCAM_ATTEMPT);
+        assertThat(known.getDescription()).isEqualTo("frauduleuse");
+        assertThat(known.getStatus()).isEqualTo(ReportStatus.OPEN);
+        assertThat(unknown.getReason()).isEqualTo(ReportReason.OTHER);
+        assertThat(unknown.getDescription()).isEqualTo("[Motif d'origine : Libre]");
+        verify(auditService, times(2)).log(eq("REPORT"), any(), eq("REPORT_CREATED"), eq(reporterId), any());
     }
 }

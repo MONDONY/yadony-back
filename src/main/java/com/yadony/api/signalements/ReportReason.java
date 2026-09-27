@@ -16,14 +16,15 @@ public enum ReportReason {
     HARASSMENT("Harcèlement ou comportement abusif", ReportTargetType.USER),
     FAKE_PROFILE("Faux profil", ReportTargetType.USER),
     SCAM_ATTEMPT("Tentative d'arnaque",
-            ReportTargetType.USER, ReportTargetType.ANNOUNCEMENT, ReportTargetType.BID),
+            ReportTargetType.USER, ReportTargetType.ANNOUNCEMENT, ReportTargetType.BID,
+            ReportTargetType.PACKAGE_REQUEST),
     PROHIBITED_ITEM("Objet interdit au transport",
-            ReportTargetType.ANNOUNCEMENT, ReportTargetType.BID),
+            ReportTargetType.ANNOUNCEMENT, ReportTargetType.BID, ReportTargetType.PACKAGE_REQUEST),
     FALSE_INFORMATION("Informations fausses ou trompeuses",
-            ReportTargetType.ANNOUNCEMENT, ReportTargetType.BID),
+            ReportTargetType.ANNOUNCEMENT, ReportTargetType.BID, ReportTargetType.PACKAGE_REQUEST),
     INAPPROPRIATE_CONTENT("Contenu inapproprié",
             ReportTargetType.USER, ReportTargetType.ANNOUNCEMENT,
-            ReportTargetType.MESSAGE, ReportTargetType.RATING),
+            ReportTargetType.MESSAGE, ReportTargetType.RATING, ReportTargetType.PACKAGE_REQUEST),
     SPAM("Spam", ReportTargetType.MESSAGE, ReportTargetType.RATING),
     PAYMENT_ISSUE("Problème de paiement", ReportTargetType.APP, ReportTargetType.BID),
     APP_BUG("Bug de l'application", ReportTargetType.APP),
@@ -31,7 +32,8 @@ public enum ReportReason {
     SCREEN_BUG("Bug signalé depuis un écran", ReportTargetType.APP),
     OTHER("Autre",
             ReportTargetType.USER, ReportTargetType.ANNOUNCEMENT, ReportTargetType.BID,
-            ReportTargetType.MESSAGE, ReportTargetType.RATING, ReportTargetType.APP);
+            ReportTargetType.MESSAGE, ReportTargetType.RATING, ReportTargetType.APP,
+            ReportTargetType.PACKAGE_REQUEST);
 
     private final String label;
     private final Set<ReportTargetType> applicableTargets;

@@ -83,6 +83,11 @@ public class PackageRequestEntity extends BaseEntity {
     @Column(nullable = false, length = 20)
     private PackageRequestStatus status;
 
+    /** Statut d'avant un retrait par la modération (V267), restitué par la restauration. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status_before_removal", length = 20)
+    private PackageRequestStatus statusBeforeRemoval;
+
     @Column(name = "currency", nullable = false, length = 3)
     private String currency = "EUR";
 
@@ -187,6 +192,8 @@ public class PackageRequestEntity extends BaseEntity {
         return status == PackageRequestStatus.OPEN || status == PackageRequestStatus.NEGOTIATING;
     }
 
+    public PackageRequestStatus getStatusBeforeRemoval() { return statusBeforeRemoval; }
+
     public String getCurrency() { return currency; }
 
     public boolean isNegotiable() { return negotiable; }
@@ -249,6 +256,8 @@ public class PackageRequestEntity extends BaseEntity {
     public void setDeliveryNeighborhood(String deliveryNeighborhood) { this.deliveryNeighborhood = deliveryNeighborhood; }
 
     public void setStatus(PackageRequestStatus status) { this.status = status; }
+
+    public void setStatusBeforeRemoval(PackageRequestStatus statusBeforeRemoval) { this.statusBeforeRemoval = statusBeforeRemoval; }
 
     public void setCurrency(String currency) { this.currency = currency; }
 

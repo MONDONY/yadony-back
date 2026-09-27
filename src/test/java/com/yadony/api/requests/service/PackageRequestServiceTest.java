@@ -1845,6 +1845,80 @@ class PackageRequestServiceTest {
         }
     }
 
+    @Nested @DisplayName("Demande retirée par la modération (REMOVED_BY_ADMIN)")
+    class RemovedByAdminTests {
+
+        @Test @DisplayName("« Mes demandes » : exposée en CANCELLED + moderationRemoved (l'app plante sur un statut inconnu)")
+        void findMine_removedByAdmin_exposedAsCancelledWithFlag() {
+            PackageRequestEntity removed = buildEntity(SENDER_ID, PackageRequestStatus.REMOVED_BY_ADMIN);
+            PackageRequestEntity open = buildEntity(SENDER_ID, PackageRequestStatus.OPEN);
+            when(repository.findBySenderIdOrderByCreatedAtDesc(eq(SENDER_ID), any()))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(removed, open)));
+
+            var result = service.findMine(SENDER_ID, org.springframework.data.domain.PageRequest.of(0, 20));
+
+            assertThat(result.getContent().get(0).status()).isEqualTo(PackageRequestStatus.CANCELLED);
+            assertThat(result.getContent().get(0).moderationRemoved()).isTrue();
+            assertThat(result.getContent().get(1).status()).isEqualTo(PackageRequestStatus.OPEN);
+            assertThat(result.getContent().get(1).moderationRemoved()).isFalse();
+        }
+
+        @Test @DisplayName("détail : l'expéditeur la voit encore")
+        void getById_owner_seesRemovedRequest() {
+            PackageRequestEntity entity = buildEntity(SENDER_ID, PackageRequestStatus.REMOVED_BY_ADMIN);
+            when(repository.findById(entity.getId())).thenReturn(Optional.of(entity));
+
+            var resp = service.getById(SENDER_ID, entity.getId());
+
+            assertThat(resp.moderationRemoved()).isTrue();
+            assertThat(resp.status()).isEqualTo(PackageRequestStatus.CANCELLED);
+        }
+
+        @Test @DisplayName("détail : un tiers, même ancien participant d'un fil, reçoit 404")
+        void getById_thirdParty_removedRequest_throws404() {
+            UUID traveler = UUID.randomUUID();
+            PackageRequestEntity entity = buildEntity(SENDER_ID, PackageRequestStatus.REMOVED_BY_ADMIN);
+            when(repository.findById(entity.getId())).thenReturn(Optional.of(entity));
+
+            assertThatThrownBy(() -> service.getById(traveler, entity.getId()))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("request/not-found");
+        }
+
+        @Test @DisplayName("terminateActiveNegotiations : fils actifs fermés au statut demandé, voyageur prévenu, terminaux intacts")
+        void terminateActiveNegotiations_closesActiveThreadsWithGivenStatus() {
+            UUID reqId = UUID.randomUUID();
+            UUID adminId = UUID.randomUUID();
+            NegotiationThreadEntity open = new NegotiationThreadEntity();
+            setId(open, UUID.randomUUID());
+            open.setPackageRequestId(reqId);
+            open.setTravelerId(UUID.randomUUID());
+            open.setStatus(NegotiationThreadStatus.AWAITING_PAYMENT);
+            NegotiationThreadEntity dead = new NegotiationThreadEntity();
+            setId(dead, UUID.randomUUID());
+            dead.setPackageRequestId(reqId);
+            dead.setTravelerId(UUID.randomUUID());
+            dead.setStatus(NegotiationThreadStatus.EXPIRED);
+            when(threadRepository.findByPackageRequestId(reqId)).thenReturn(List.of(open, dead));
+
+            int closed = service.terminateActiveNegotiations(reqId, adminId, "Yadony",
+                NegotiationThreadStatus.CANCELLED, "request-removed-by-admin");
+
+            assertThat(closed).isEqualTo(1);
+            assertThat(open.getStatus()).isEqualTo(NegotiationThreadStatus.CANCELLED);
+            assertThat(dead.getStatus()).isEqualTo(NegotiationThreadStatus.EXPIRED);
+            verify(auditService).log("NEGOTIATION_THREAD", open.getId(), "CANCELLED", adminId,
+                java.util.Map.of("reason", "request-removed-by-admin", "previousStatus", "AWAITING_PAYMENT"));
+            ArgumentCaptor<NegotiationCancelledEvent> captor = ArgumentCaptor.forClass(NegotiationCancelledEvent.class);
+            verify(eventPublisher).publishEvent(captor.capture());
+            assertThat(captor.getValue().threadId()).isEqualTo(open.getId());
+            assertThat(captor.getValue().byUserId()).isEqualTo(adminId);
+            assertThat(captor.getValue().byName()).isEqualTo("Yadony");
+            assertThat(captor.getValue().toUserId()).isEqualTo(open.getTravelerId());
+            assertThat(captor.getValue().releaseEscrow()).isTrue();
+        }
+    }
+
     @Nested @DisplayName("findMine() — own requests pagination")
     class FindMineTests {
         @Test @DisplayName("returns paginated responses for sender")

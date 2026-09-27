@@ -60,6 +60,8 @@ class AdminReportsControllerTest {
     @Mock UserService userService;
     @Mock AnnouncementService announcementService;
     @Mock NotificationDispatcher notificationDispatcher;
+    @Mock com.yadony.api.requests.repository.PackageRequestRepository packageRequestRepo;
+    @Mock com.yadony.api.requests.service.PackageRequestModerationService packageRequestModerationService;
 
     @BeforeEach
     void stubMessages() {
@@ -68,7 +70,8 @@ class AdminReportsControllerTest {
 
     private AdminReportsController controller() {
         return new AdminReportsController(reportRepo, userRepo, announcementRepo, auditService, reportService,
-                userService, announcementService, notificationDispatcher);
+                userService, announcementService, notificationDispatcher, packageRequestRepo,
+                packageRequestModerationService);
     }
 
     private static Authentication authAs(UUID adminId, List<AdminPermission> extraAuthorities) {
@@ -537,5 +540,49 @@ class AdminReportsControllerTest {
         r.setDescription("Envoi de spam répété");
         r.setStatus(status);
         return r;
+    }
+
+    // ---- Cible PACKAGE_REQUEST ----
+
+    @Test
+    void listReports_ciblePackageRequest_libelleDuCorridor() {
+        UUID requestId = UUID.randomUUID();
+        ReportEntity report = buildReport(UUID.randomUUID(), ReportStatus.OPEN);
+        report.setTargetType(ReportTargetType.PACKAGE_REQUEST);
+        report.setTargetId(requestId);
+        com.yadony.api.requests.entity.PackageRequestEntity pr = new com.yadony.api.requests.entity.PackageRequestEntity();
+        org.springframework.test.util.ReflectionTestUtils.setField(pr, "id", requestId);
+        pr.setDepartureCity("Paris");
+        pr.setArrivalCity("Dakar");
+        when(reportRepo.findFiltered(isNull(), eq(ReportTargetType.PACKAGE_REQUEST), any()))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(report)));
+        when(packageRequestRepo.findAllById(any())).thenReturn(List.of(pr));
+
+        var page = controller().listReports(null, ReportTargetType.PACKAGE_REQUEST, null, 0, 20).getBody();
+
+        assertThat(page.getContent()).hasSize(1);
+        assertThat(page.getContent().get(0).targetType()).isEqualTo("PACKAGE_REQUEST");
+        assertThat(page.getContent().get(0).targetLabel())
+                .isEqualTo(com.yadony.api.common.MatchingTextUtil.corridorLabel("Paris", "Dakar"));
+    }
+
+    @Test
+    void resolveReport_removeContent_ciblePackageRequest_passeParLaModerationDesDemandes() {
+        UUID id = UUID.randomUUID();
+        UUID adminId = UUID.randomUUID();
+        UUID targetId = UUID.randomUUID();
+        ReportEntity report = buildReport(UUID.randomUUID(), ReportStatus.OPEN);
+        report.setTargetType(ReportTargetType.PACKAGE_REQUEST);
+        report.setTargetId(targetId);
+        when(reportRepo.findById(id)).thenReturn(Optional.of(report));
+        when(reportRepo.save(report)).thenReturn(report);
+
+        controller().resolveReport(id, new ResolveReportRequest(ReportAction.REMOVE_CONTENT, "fraude"),
+                authAs(adminId, List.of(AdminPermission.CONTENT_REMOVE)));
+
+        verify(packageRequestModerationService).removeByAdmin(eq(targetId), eq(adminId),
+                eq(com.yadony.api.matching.AnnouncementRemovalReason.OTHER), eq("fraude"));
+        verifyNoInteractions(announcementService);
+        assertThat(report.getStatus()).isEqualTo(ReportStatus.RESOLVED);
     }
 }

@@ -103,6 +103,16 @@ class PublicPackageRequestPageControllerIntegrationTest {
     }
 
     @Test
+    void removedByAdminRequest_isNotExposedPublicly() throws Exception {
+        PackageRequestEntity r = persistRequest(PackageRequestStatus.REMOVED_BY_ADMIN);
+
+        mockMvc.perform(get("/public/demande/" + r.getId()).header("User-Agent", BROWSER_UA))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("n'est plus disponible")))
+                .andExpect(content().string(not(containsString("18e arrondissement"))));
+    }
+
+    @Test
     void acceptedRequest_isNotExposedPublicly() throws Exception {
         PackageRequestEntity r = persistRequest(PackageRequestStatus.ACCEPTED);
 

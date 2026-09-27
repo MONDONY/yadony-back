@@ -210,6 +210,8 @@ public class FavoriteService {
                         && pr.getStatus() != PackageRequestStatus.COMPLETED
                         && pr.getStatus() != PackageRequestStatus.EXPIRED
                         && pr.getStatus() != PackageRequestStatus.DRAFT
+                        // Retirée par la modération : invisible hors de son expéditeur.
+                        && pr.getStatus() != PackageRequestStatus.REMOVED_BY_ADMIN
                         && !ownerHidden(hidden, pr.getSenderId()))
                 .toList();
     }
