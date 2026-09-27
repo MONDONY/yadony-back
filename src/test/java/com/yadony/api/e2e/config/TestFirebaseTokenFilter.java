@@ -56,8 +56,16 @@ public class TestFirebaseTokenFilter extends FirebaseTokenFilter {
                     request.getHeader("X-Test-Phone"),
                     testUid.trim());
             List<SimpleGrantedAuthority> authorities = parseRoles(testRoles);
+            // X-Test-Admin-Id : compte back-office (admin_users). Le principal devient alors un
+            // AdminPrincipal, comme en production, pour les endpoints qui journalisent l'admin.
+            String testAdminId = request.getHeader("X-Test-Admin-Id");
+            Object principal = testAdminId != null && !testAdminId.isBlank()
+                    ? new com.yadony.api.admin.account.AdminPrincipal(
+                            java.util.UUID.fromString(testAdminId.trim()), null,
+                            com.yadony.api.admin.account.AdminRole.ADMIN, false, testUid.trim())
+                    : testUid.trim();
             UsernamePasswordAuthenticationToken auth =
-                    new UsernamePasswordAuthenticationToken(testUid.trim(), token, authorities);
+                    new UsernamePasswordAuthenticationToken(principal, token, authorities);
             SecurityContextHolder.getContext().setAuthentication(auth);
         }
 

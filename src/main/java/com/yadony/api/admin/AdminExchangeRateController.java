@@ -3,9 +3,7 @@ package com.yadony.api.admin;
 import com.yadony.api.admin.account.AdminPrincipal;
 import com.yadony.api.admin.dto.ExchangeRateResponse;
 import com.yadony.api.admin.dto.UpdateExchangeRateRequest;
-import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.currency.ExchangeRateRepository;
-import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -23,10 +21,10 @@ import java.util.UUID;
 /**
  * Tache 11 — pilotage des taux de {@code exchange_rates} depuis le back-office.
  *
- * <p>Reserve a ROLE_ADMIN, sans authority dediee : contrairement aux ecrans Lot D
- * ({@code CONFIG_MANAGE}, {@code PROMO_MANAGE}...), un taux de change n'est pas une feature a
- * activer/desactiver selon le profil admin, c'est une donnee de reference unique dont la
- * modification affecte tout affichage multidevise en cours.
+ * <p>La lecture reste ouverte a tout ROLE_ADMIN. L'ecriture (PUT d'un taux, synchronisation
+ * BCE manuelle) exige en plus {@code CONFIG_MANAGE}, comme les parametres plateforme : un taux
+ * est une donnee de reference unique dont la modification affecte tout affichage multidevise
+ * et toute commission convertie. Sans cette authority, le profil SUPPORT pouvait la changer.
  *
  * <p>{@code XOF} et {@code XAF} sont en lecture SEULE : leur parite avec l'euro est fixe
  * (655,957 CFA/EUR, un traite monetaire, pas un taux de marche) — les modifier depuis cet
@@ -62,6 +60,7 @@ public class AdminExchangeRateController {
      * {@code ExchangeRateUpdateService}, partagée avec la synchronisation BCE : deux
      * copies divergeraient. Ici ne restent que l'identité de l'admin et le mapping HTTP.
      */
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('CONFIG_MANAGE')")
     @PutMapping("/{currency}")
     public ExchangeRateResponse update(@PathVariable String currency,
                                        @RequestBody UpdateExchangeRateRequest request,
@@ -71,12 +70,7 @@ public class AdminExchangeRateController {
     }
 
     private UUID adminId(Authentication authentication) {
-        if (authentication != null && authentication.getPrincipal() instanceof AdminPrincipal principal) {
-            return principal.adminId();
-        }
-        throw new YadonyBusinessException(HttpStatus.FORBIDDEN,
-                "admin-principal-required", "Admin Principal Required",
-                "Authentification administrateur requise");
+        return AdminPrincipal.requireAdminId(authentication);
     }
 
     /**
@@ -87,8 +81,11 @@ public class AdminExchangeRateController {
      *
      * @return nombre de devises effectivement mises à jour.
      */
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('CONFIG_MANAGE')")
     @PostMapping("/sync")
-    public java.util.Map<String, Integer> syncNow() {
-        return java.util.Map.of("updated", syncService.syncAll());
+    public java.util.Map<String, Integer> syncNow(Authentication authentication) {
+        // L'admin est l'acteur de l'audit : sans lui, une synchro manuelle ne se distinguait
+        // pas du cron (actorId null).
+        return java.util.Map.of("updated", syncService.syncAll(adminId(authentication)));
     }
 }

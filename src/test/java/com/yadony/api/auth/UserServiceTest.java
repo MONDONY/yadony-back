@@ -50,6 +50,8 @@ class UserServiceTest {
     @InjectMocks private UserService userService;
 
     private static final UUID USER_ID = UUID.randomUUID();
+    /** Acteur des gestes admin : l'audit ne doit jamais désigner la cible à sa place. */
+    private static final UUID ADMIN_ID = UUID.randomUUID();
     private static final String FIREBASE_UID = "uid-user-001";
 
     private UserEntity user;
@@ -443,17 +445,53 @@ class UserServiceTest {
     class UnsuspendTests {
 
         @Test
-        @DisplayName("utilisateur suspendu → status ACTIVE")
+        @DisplayName("utilisateur suspendu → status ACTIVE, audit par l'admin avec le statut précédent")
         void unsuspend_suspendedUser_activates() throws Exception {
             setField(user, "status", UserStatus.SUSPENDED);
             when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
             when(userRepository.save(any())).thenReturn(user);
 
-            userService.unsuspendUser(USER_ID);
+            userService.unsuspendUser(USER_ID, ADMIN_ID);
 
             assertThat(user.getStatus()).isEqualTo(UserStatus.ACTIVE);
             verify(userRepository).save(user);
-            verify(auditService).log(eq("USER"), eq(USER_ID), eq("USER_UNSUSPENDED"), any(), any());
+            verify(auditService).log(eq("USER"), eq(USER_ID), eq("USER_UNSUSPENDED"), eq(ADMIN_ID),
+                    eq(java.util.Map.of("previousStatus", "SUSPENDED")));
+        }
+
+        @Test
+        @DisplayName("utilisateur banni → status ACTIVE (débannissement), previousStatus BANNED")
+        void unsuspend_bannedUser_activates() throws Exception {
+            setField(user, "status", UserStatus.BANNED);
+            when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+            when(userRepository.save(any())).thenReturn(user);
+
+            userService.unsuspendUser(USER_ID, ADMIN_ID);
+
+            assertThat(user.getStatus()).isEqualTo(UserStatus.ACTIVE);
+            verify(auditService).log(eq("USER"), eq(USER_ID), eq("USER_UNSUSPENDED"), eq(ADMIN_ID),
+                    eq(java.util.Map.of("previousStatus", "BANNED")));
+        }
+
+        @org.junit.jupiter.params.ParameterizedTest
+        @org.junit.jupiter.params.provider.EnumSource(value = UserStatus.class,
+                names = {"ACTIVE", "PENDING_DELETION"})
+        @DisplayName("statut ni SUSPENDED ni BANNED → 409 user-not-suspended, rien n'est écrit")
+        void unsuspend_notSuspended_throws409(UserStatus status) throws Exception {
+            setField(user, "status", status);
+            when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+
+            assertThatThrownBy(() -> userService.unsuspendUser(USER_ID, ADMIN_ID))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> {
+                        assertThat(((YadonyBusinessException) e).getStatus())
+                                .isEqualTo(HttpStatus.CONFLICT);
+                        assertThat(((YadonyBusinessException) e).getErrorCode())
+                                .isEqualTo("user-not-suspended");
+                    });
+            assertThat(user.getStatus()).isEqualTo(status);
+            verify(userRepository, never()).save(any());
+            verify(auditService, never()).log(any(), any(), any(), any(), any());
         }
 
         @Test
@@ -461,7 +499,7 @@ class UserServiceTest {
         void unsuspend_unknownUser_throws404() {
             when(userRepository.findById(USER_ID)).thenReturn(Optional.empty());
 
-            assertThatThrownBy(() -> userService.unsuspendUser(USER_ID))
+            assertThatThrownBy(() -> userService.unsuspendUser(USER_ID, ADMIN_ID))
                     .isInstanceOf(YadonyBusinessException.class)
                     .satisfies(e -> assertThat(((YadonyBusinessException) e).getStatus())
                             .isEqualTo(HttpStatus.NOT_FOUND));
@@ -478,12 +516,12 @@ class UserServiceTest {
             when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
             when(userRepository.save(any())).thenReturn(user);
 
-            userService.setCommissionRateOverride(USER_ID, new java.math.BigDecimal("0.08"));
+            userService.setCommissionRateOverride(USER_ID, new java.math.BigDecimal("0.08"), ADMIN_ID);
 
             assertThat(user.getCommissionRateOverride()).isEqualByComparingTo("0.08");
             verify(userRepository).save(user);
             verify(auditService).log(eq("USER"), eq(USER_ID),
-                    eq("USER_COMMISSION_RATE_OVERRIDE_SET"), eq(USER_ID), any());
+                    eq("USER_COMMISSION_RATE_OVERRIDE_SET"), eq(ADMIN_ID), any());
         }
 
         @Test
@@ -493,19 +531,19 @@ class UserServiceTest {
             when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
             when(userRepository.save(any())).thenReturn(user);
 
-            userService.setCommissionRateOverride(USER_ID, null);
+            userService.setCommissionRateOverride(USER_ID, null, ADMIN_ID);
 
             assertThat(user.getCommissionRateOverride()).isNull();
             verify(userRepository).save(user);
             verify(auditService).log(eq("USER"), eq(USER_ID),
-                    eq("USER_COMMISSION_RATE_OVERRIDE_SET"), eq(USER_ID), any());
+                    eq("USER_COMMISSION_RATE_OVERRIDE_SET"), eq(ADMIN_ID), any());
         }
 
         @Test
         @DisplayName("taux négatif → 422 invalid-commission-rate, pas de save")
         void negativeRate_throws422() {
             assertThatThrownBy(() ->
-                    userService.setCommissionRateOverride(USER_ID, new java.math.BigDecimal("-0.01")))
+                    userService.setCommissionRateOverride(USER_ID, new java.math.BigDecimal("-0.01"), ADMIN_ID))
                     .isInstanceOf(YadonyBusinessException.class)
                     .satisfies(e -> {
                         assertThat(((YadonyBusinessException) e).getStatus())
@@ -520,7 +558,7 @@ class UserServiceTest {
         @DisplayName("taux ≥ 1 → 422 invalid-commission-rate, pas de save")
         void rateAtOrAboveOne_throws422() {
             assertThatThrownBy(() ->
-                    userService.setCommissionRateOverride(USER_ID, java.math.BigDecimal.ONE))
+                    userService.setCommissionRateOverride(USER_ID, java.math.BigDecimal.ONE, ADMIN_ID))
                     .isInstanceOf(YadonyBusinessException.class)
                     .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
                             .isEqualTo("invalid-commission-rate"));
@@ -533,7 +571,7 @@ class UserServiceTest {
             when(userRepository.findById(USER_ID)).thenReturn(Optional.empty());
 
             assertThatThrownBy(() ->
-                    userService.setCommissionRateOverride(USER_ID, new java.math.BigDecimal("0.10")))
+                    userService.setCommissionRateOverride(USER_ID, new java.math.BigDecimal("0.10"), ADMIN_ID))
                     .isInstanceOf(YadonyBusinessException.class)
                     .satisfies(e -> {
                         assertThat(((YadonyBusinessException) e).getStatus())
@@ -554,12 +592,12 @@ class UserServiceTest {
             when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
             when(userRepository.save(any())).thenReturn(user);
 
-            userService.suspendPublishing(USER_ID, "retour non rendu");
+            userService.suspendPublishing(USER_ID, "retour non rendu", ADMIN_ID);
 
             assertThat(user.isPublishingSuspended()).isTrue();
             assertThat(user.getPublishingSuspendedReason()).isEqualTo("retour non rendu");
             verify(auditService).log(eq("USER"), eq(USER_ID),
-                    eq("TRAVELER_PUBLISHING_SUSPENDED"), eq(USER_ID), anyMap());
+                    eq("TRAVELER_PUBLISHING_SUSPENDED"), eq(ADMIN_ID), anyMap());
         }
 
         @Test
@@ -569,18 +607,18 @@ class UserServiceTest {
             when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
             when(userRepository.save(any())).thenReturn(user);
 
-            userService.liftPublishingSuspension(USER_ID);
+            userService.liftPublishingSuspension(USER_ID, ADMIN_ID);
 
             assertThat(user.isPublishingSuspended()).isFalse();
             verify(auditService).log(eq("USER"), eq(USER_ID),
-                    eq("TRAVELER_PUBLISHING_SUSPENSION_LIFTED"), eq(USER_ID), anyMap());
+                    eq("TRAVELER_PUBLISHING_SUSPENSION_LIFTED"), eq(ADMIN_ID), anyMap());
         }
 
         @Test
         @DisplayName("suspendPublishing user introuvable → 404")
         void suspendPublishing_userNotFound() {
             when(userRepository.findById(USER_ID)).thenReturn(Optional.empty());
-            assertThatThrownBy(() -> userService.suspendPublishing(USER_ID, "x"))
+            assertThatThrownBy(() -> userService.suspendPublishing(USER_ID, "x", ADMIN_ID))
                     .isInstanceOf(YadonyBusinessException.class)
                     .satisfies(e -> assertThat(((YadonyBusinessException) e).getStatus())
                             .isEqualTo(HttpStatus.NOT_FOUND));

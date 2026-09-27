@@ -307,7 +307,7 @@ public class UserService {
 
     // Admin — override du taux de commission Yadony d'un utilisateur (null = retour au taux global).
     @Transactional
-    public UserEntity setCommissionRateOverride(UUID userId, java.math.BigDecimal rate) {
+    public UserEntity setCommissionRateOverride(UUID userId, java.math.BigDecimal rate, UUID adminId) {
         if (rate != null && (rate.signum() < 0 || rate.compareTo(java.math.BigDecimal.ONE) >= 0)) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-commission-rate",
                     "Invalid Commission Rate", "Le taux doit être dans [0, 1[ ou null (taux global)");
@@ -317,7 +317,7 @@ public class UserService {
                         "Not Found", "Utilisateur introuvable"));
         user.setCommissionRateOverride(rate);
         userRepository.save(user);
-        auditService.log("USER", user.getId(), "USER_COMMISSION_RATE_OVERRIDE_SET", user.getId(),
+        auditService.log("USER", user.getId(), "USER_COMMISSION_RATE_OVERRIDE_SET", adminId,
                 Map.of("rate", rate == null ? "global" : rate.toPlainString()));
         return user;
     }
@@ -436,17 +436,33 @@ public class UserService {
         return saved;
     }
 
-    // Story 9.5 — Admin unsuspend
+    /**
+     * Story 9.5 — Levée d'une suspension ou d'un bannissement par l'admin.
+     *
+     * <p>Seuls SUSPENDED et BANNED se lèvent : remettre ACTIVE un compte en
+     * PENDING_DELETION annulerait en silence une demande de suppression RGPD, et
+     * « lever » un compte déjà ACTIVE écrirait une trace d'audit sans objet. Le statut
+     * précédent part dans l'audit : un débannissement se distingue d'une levée de
+     * suspension.
+     */
     @Transactional
-    public UserEntity unsuspendUser(UUID userId) {
+    public UserEntity unsuspendUser(UUID userId, UUID adminId) {
         UserEntity user = userRepository.findById(userId)
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
 
+        UserStatus previousStatus = user.getStatus();
+        if (previousStatus != UserStatus.SUSPENDED && previousStatus != UserStatus.BANNED) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "user-not-suspended",
+                    "User Not Suspended",
+                    "Ce compte n'est ni suspendu ni banni : il n'y a rien à lever");
+        }
+
         user.setStatus(UserStatus.ACTIVE);
         UserEntity saved = userRepository.save(user);
 
-        auditService.log("USER", userId, "USER_UNSUSPENDED", userId, Map.of());
+        auditService.log("USER", userId, "USER_UNSUSPENDED", adminId,
+                Map.of("previousStatus", previousStatus.name()));
         log.info("User {} unsuspended by admin", userId);
         return saved;
     }
@@ -456,7 +472,7 @@ public class UserService {
      * typiquement après un délai de retour de colis dépassé. N'impacte pas le login.
      */
     @Transactional
-    public void suspendPublishing(UUID userId, String reason) {
+    public void suspendPublishing(UUID userId, String reason, UUID adminId) {
         UserEntity user = userRepository.findById(userId)
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
@@ -466,14 +482,14 @@ public class UserService {
         user.setPublishingSuspendedReason(reason);
         userRepository.save(user);
 
-        auditService.log("USER", userId, "TRAVELER_PUBLISHING_SUSPENDED", userId,
+        auditService.log("USER", userId, "TRAVELER_PUBLISHING_SUSPENDED", adminId,
                 Map.of("reason", reason != null ? reason : ""));
         log.info("User {} publishing suspended by admin", userId);
     }
 
     /** Lève la suspension de publication (D4). */
     @Transactional
-    public void liftPublishingSuspension(UUID userId) {
+    public void liftPublishingSuspension(UUID userId, UUID adminId) {
         UserEntity user = userRepository.findById(userId)
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
@@ -483,7 +499,7 @@ public class UserService {
         user.setPublishingSuspendedReason(null);
         userRepository.save(user);
 
-        auditService.log("USER", userId, "TRAVELER_PUBLISHING_SUSPENSION_LIFTED", userId, Map.of());
+        auditService.log("USER", userId, "TRAVELER_PUBLISHING_SUSPENSION_LIFTED", adminId, Map.of());
         log.info("User {} publishing suspension lifted by admin", userId);
     }
 

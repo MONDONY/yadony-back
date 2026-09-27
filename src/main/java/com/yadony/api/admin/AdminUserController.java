@@ -144,22 +144,24 @@ public class AdminUserController {
 
     @PreAuthorize("hasAuthority('USER_SUSPEND')")
     @PostMapping("/{userId}/unsuspend")
-    public AdminUserDetailResponse unsuspendUser(@PathVariable UUID userId) {
-        return detail(userService.unsuspendUser(userId));
+    public AdminUserDetailResponse unsuspendUser(@PathVariable UUID userId,
+            Authentication authentication) {
+        return detail(userService.unsuspendUser(userId, adminId(authentication)));
     }
 
     @PreAuthorize("hasAuthority('USER_SUSPEND')")
     @PostMapping("/{userId}/suspend-publishing")
     public ResponseEntity<Void> suspendPublishing(@PathVariable UUID userId,
-            @RequestParam(required = false) String reason) {
-        userService.suspendPublishing(userId, reason);
+            @RequestParam(required = false) String reason, Authentication authentication) {
+        userService.suspendPublishing(userId, reason, adminId(authentication));
         return ResponseEntity.noContent().build();
     }
 
     @PreAuthorize("hasAuthority('USER_SUSPEND')")
     @PostMapping("/{userId}/lift-publishing-suspension")
-    public ResponseEntity<Void> liftPublishingSuspension(@PathVariable UUID userId) {
-        userService.liftPublishingSuspension(userId);
+    public ResponseEntity<Void> liftPublishingSuspension(@PathVariable UUID userId,
+            Authentication authentication) {
+        userService.liftPublishingSuspension(userId, adminId(authentication));
         return ResponseEntity.noContent().build();
     }
 
@@ -167,8 +169,10 @@ public class AdminUserController {
     @PutMapping("/{userId}/commission-rate")
     public AdminUserDetailResponse setCommissionRate(
             @PathVariable UUID userId,
-            @RequestBody @jakarta.validation.Valid CommissionRateOverrideRequest request) {
-        return detail(userService.setCommissionRateOverride(userId, request.rate()));
+            @RequestBody @jakarta.validation.Valid CommissionRateOverrideRequest request,
+            Authentication authentication) {
+        return detail(userService.setCommissionRateOverride(userId, request.rate(),
+                adminId(authentication)));
     }
 
     // Lot B — Coupure de messagerie. SUPPORT REÇOIT USER_MESSAGE_MUTE (arbitrage produit du

@@ -10,6 +10,7 @@ import java.math.BigDecimal;
 import java.math.MathContext;
 import java.math.RoundingMode;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * Synchronisation quotidienne des taux flottants depuis la BCE.
@@ -59,8 +60,22 @@ public class ExchangeRateSyncService {
         this.maxRelativeChange = maxRelativeChange;
     }
 
-    /** @return nombre de devises effectivement mises à jour. */
+    /**
+     * Passage planifié (cron) : aucun acteur humain, l'audit porte {@code actorId} null.
+     *
+     * @return nombre de devises effectivement mises à jour.
+     */
     public int syncAll() {
+        return syncAll(null);
+    }
+
+    /**
+     * @param actorId administrateur qui déclenche la synchronisation depuis le back-office,
+     *                {@code null} pour le cron : l'historique distingue ainsi la main humaine
+     *                du robot.
+     * @return nombre de devises effectivement mises à jour.
+     */
+    public int syncAll(UUID actorId) {
         Map<String, BigDecimal> ecbRates = ecbRateClient.fetchDailyRates();
         if (ecbRates.isEmpty()) {
             // Flux injoignable ou illisible : les taux de la veille restent (état
@@ -81,7 +96,7 @@ public class ExchangeRateSyncService {
             if (ExchangeRateUpdateService.FIXED_PARITY_CURRENCIES.contains(code)) {
                 continue; // XOF/XAF : parité fixe par traité, hors marché.
             }
-            if (syncOne(code, ecbRates.get(code))) {
+            if (syncOne(code, ecbRates.get(code), actorId)) {
                 updated++;
             }
         }
@@ -89,7 +104,7 @@ public class ExchangeRateSyncService {
         return updated;
     }
 
-    private boolean syncOne(String code, BigDecimal ecbRate) {
+    private boolean syncOne(String code, BigDecimal ecbRate, UUID actorId) {
         if (ecbRate == null) {
             // Devise du catalogue absente du flux du jour : on n'invente rien.
             log.warn("Devise {} absente du flux BCE, taux inchangé", code);
@@ -122,7 +137,7 @@ public class ExchangeRateSyncService {
         }
 
         try {
-            updateService.apply(code, ecbRate, null, AUDIT_ACTION);
+            updateService.apply(code, ecbRate, actorId, AUDIT_ACTION);
             log.info("Taux {} synchronisé : {} -> {}", code, current, ecbRate);
             return true;
         } catch (RuntimeException e) {

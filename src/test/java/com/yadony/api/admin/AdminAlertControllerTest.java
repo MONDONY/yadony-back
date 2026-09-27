@@ -22,9 +22,19 @@ import static org.mockito.Mockito.*;
 class AdminAlertControllerTest {
 
     @Mock AdminAlertRepository alertRepo;
+    @Mock com.yadony.api.common.AuditService auditService;
+
+    private static final UUID ADMIN_ID = UUID.randomUUID();
+
+    private static org.springframework.security.core.Authentication adminAuth() {
+        return new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                new com.yadony.api.admin.account.AdminPrincipal(ADMIN_ID, "admin@yadony.test",
+                        com.yadony.api.admin.account.AdminRole.SUPPORT, false, "uid-admin"),
+                null, List.of());
+    }
 
     private AdminAlertController controller() {
-        return new AdminAlertController(alertRepo);
+        return new AdminAlertController(alertRepo, auditService);
     }
 
     @Test
@@ -46,7 +56,7 @@ class AdminAlertControllerTest {
         when(alertRepo.save(entity)).thenReturn(entity);
 
         ResponseEntity<AdminAlertResponse> resp =
-            controller().resolve(id, new ResolveAlertRequest("note de résolution"));
+            controller().resolve(id, new ResolveAlertRequest("note de résolution"), adminAuth());
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(entity.isResolved()).isTrue();
@@ -60,7 +70,39 @@ class AdminAlertControllerTest {
 
         org.junit.jupiter.api.Assertions.assertThrows(
             com.yadony.api.common.YadonyBusinessException.class,
-            () -> controller().resolve(id, new ResolveAlertRequest("note"))
+            () -> controller().resolve(id, new ResolveAlertRequest("note"), adminAuth())
         );
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    void resolve_writesAuditEntryWithAdminAsActorAndNote() {
+        UUID id = UUID.randomUUID();
+        AdminAlertEntity entity = new AdminAlertEntity();
+        entity.setType("PAYOUT_FAILED");
+        entity.setSeverity("CRITICAL");
+        when(alertRepo.findById(id)).thenReturn(Optional.of(entity));
+        when(alertRepo.save(entity)).thenReturn(entity);
+
+        controller().resolve(id, new ResolveAlertRequest("rejoué à la main"), adminAuth());
+
+        verify(auditService).log(eq("ADMIN_ALERT"), eq(id), eq("ADMIN_ALERT_RESOLVED"), eq(ADMIN_ID),
+                eq(java.util.Map.of("alertType", "PAYOUT_FAILED",
+                        "severity", "CRITICAL",
+                        "note", "rejoué à la main")));
+    }
+
+    @Test
+    void resolve_withoutNote_auditsEmptyNote() {
+        UUID id = UUID.randomUUID();
+        AdminAlertEntity entity = new AdminAlertEntity();
+        entity.setType("X");
+        when(alertRepo.findById(id)).thenReturn(Optional.of(entity));
+        when(alertRepo.save(entity)).thenReturn(entity);
+
+        controller().resolve(id, null, adminAuth());
+
+        verify(auditService).log(eq("ADMIN_ALERT"), eq(id), eq("ADMIN_ALERT_RESOLVED"), eq(ADMIN_ID),
+                eq(java.util.Map.of("alertType", "X", "severity", "INFO", "note", "")));
     }
 }

@@ -16,7 +16,8 @@ class CancellationControllerSecurityTest {
     @Test
     void confirmNoShow_requiresDisputeResolveAuthority() throws NoSuchMethodException {
         PreAuthorize annotation = CancellationController.class
-                .getMethod("confirmNoShow", UUID.class)
+                .getMethod("confirmNoShow", UUID.class,
+                        org.springframework.security.core.Authentication.class)
                 .getAnnotation(PreAuthorize.class);
 
         assertThat(annotation).isNotNull();

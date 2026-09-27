@@ -1,5 +1,6 @@
 package com.yadony.api.admin;
 
+import com.yadony.api.admin.account.AdminPrincipal;
 import com.yadony.api.admin.dto.AdminCancellationResponse;
 import com.yadony.api.admin.dto.AdminDisputeDetailResponse;
 import com.yadony.api.admin.dto.AdminDisputeListItemResponse;
@@ -26,6 +27,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
@@ -112,8 +114,10 @@ public class AdminDisputesController {
     @Transactional
     public ResponseEntity<AdminDisputeDetailResponse> resolveDispute(
             @PathVariable UUID id,
-            @RequestBody AdminResolveDisputeRequest request) {
+            @RequestBody AdminResolveDisputeRequest request,
+            Authentication authentication) {
 
+        UUID adminId = AdminPrincipal.requireAdminId(authentication);
         DisputeEntity entity = findDisputeOrThrow(id);
         requireNotResolved(entity);
         entity.setStatus("RESOLVED");
@@ -123,7 +127,7 @@ public class AdminDisputesController {
         disputeRepo.save(entity);
         resolveLinkedCancellation(entity);
 
-        auditService.log("DISPUTE", entity.getId(), "RESOLVE", null,
+        auditService.log("DISPUTE", entity.getId(), "RESOLVE", adminId,
                 Map.of("resolution", Objects.toString(request.resolution(), ""),
                        "note", Objects.toString(request.note(), "")));
         eventPublisher.publishEvent(new DisputeResolvedEvent(
@@ -144,8 +148,10 @@ public class AdminDisputesController {
     @Transactional
     public ResponseEntity<AdminDisputeDetailResponse> payGuaranteeFund(
             @PathVariable UUID id,
-            @RequestBody AdminGuaranteeFundRequest request) {
+            @RequestBody AdminGuaranteeFundRequest request,
+            Authentication authentication) {
 
+        UUID adminId = AdminPrincipal.requireAdminId(authentication);
         DisputeEntity entity = findDisputeOrThrow(id);
         requireNotResolved(entity);
         // Un versement sans bénéficiaire était enregistré tel quel : personne à payer, et le
@@ -171,7 +177,7 @@ public class AdminDisputesController {
         disputeRepo.save(entity);
         resolveLinkedCancellation(entity);
 
-        auditService.log("DISPUTE", entity.getId(), "GUARANTEE_FUND", null,
+        auditService.log("DISPUTE", entity.getId(), "GUARANTEE_FUND", adminId,
                 Map.of("amountCents", request.amountCents(),
                        "currency", currency,
                        "beneficiaryUserId", request.beneficiaryUserId().toString(),

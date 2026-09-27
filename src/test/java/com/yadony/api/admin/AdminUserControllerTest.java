@@ -45,12 +45,12 @@ class AdminUserControllerTest {
         UUID userId = UUID.randomUUID();
         BigDecimal rate = new BigDecimal("0.08");
         com.yadony.api.auth.UserEntity user = new com.yadony.api.auth.UserEntity();
-        when(userService.setCommissionRateOverride(userId, rate)).thenReturn(user);
+        when(userService.setCommissionRateOverride(userId, rate, ADMIN_ID)).thenReturn(user);
 
-        var resp = controller.setCommissionRate(userId, new CommissionRateOverrideRequest(rate));
+        var resp = controller.setCommissionRate(userId, new CommissionRateOverrideRequest(rate), adminAuth());
 
         assertThat(resp).isNotNull();
-        verify(userService).setCommissionRateOverride(userId, rate);
+        verify(userService).setCommissionRateOverride(userId, rate, ADMIN_ID);
     }
 
     @Test
@@ -60,12 +60,49 @@ class AdminUserControllerTest {
         when(firebaseContact.getContact(any())).thenReturn(
                 com.yadony.api.auth.FirebaseContactService.Contact.EMPTY);
         UUID userId = UUID.randomUUID();
-        when(userService.setCommissionRateOverride(userId, null))
+        when(userService.setCommissionRateOverride(userId, null, ADMIN_ID))
                 .thenReturn(new com.yadony.api.auth.UserEntity());
 
-        controller.setCommissionRate(userId, new CommissionRateOverrideRequest(null));
+        controller.setCommissionRate(userId, new CommissionRateOverrideRequest(null), adminAuth());
 
-        verify(userService).setCommissionRateOverride(userId, null);
+        verify(userService).setCommissionRateOverride(userId, null, ADMIN_ID);
+    }
+
+    // ── Suspension / levée : l'admin est l'acteur de l'audit ─────────────────
+
+    @Test
+    void unsuspend_propagatesAdminId() {
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository);
+        when(firebaseContact.getContact(any())).thenReturn(
+                com.yadony.api.auth.FirebaseContactService.Contact.EMPTY);
+        UUID userId = UUID.randomUUID();
+        when(userService.unsuspendUser(userId, ADMIN_ID)).thenReturn(new com.yadony.api.auth.UserEntity());
+
+        controller.unsuspendUser(userId, adminAuth());
+
+        verify(userService).unsuspendUser(userId, ADMIN_ID);
+    }
+
+    @Test
+    void suspendPublishing_propagatesAdminId() {
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository);
+        UUID userId = UUID.randomUUID();
+
+        ResponseEntity<Void> resp = controller.suspendPublishing(userId, "retour non rendu", adminAuth());
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+        verify(userService).suspendPublishing(userId, "retour non rendu", ADMIN_ID);
+    }
+
+    @Test
+    void liftPublishingSuspension_propagatesAdminId() {
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository);
+        UUID userId = UUID.randomUUID();
+
+        ResponseEntity<Void> resp = controller.liftPublishingSuspension(userId, adminAuth());
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+        verify(userService).liftPublishingSuspension(userId, ADMIN_ID);
     }
 
     // ── Lot B : coupure de messagerie ────────────────────────────────────────

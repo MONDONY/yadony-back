@@ -34,6 +34,16 @@ class AdminRatingsControllerTest {
     @Mock UserRepository userRepo;
     @Mock AuditService auditService;
 
+    static final UUID ADMIN_ID = UUID.randomUUID();
+
+    /** Admin authentifie : l'audit doit le designer comme acteur, jamais null. */
+    static org.springframework.security.core.Authentication adminAuth() {
+        return new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                new com.yadony.api.admin.account.AdminPrincipal(ADMIN_ID, "admin@yadony.test",
+                        com.yadony.api.admin.account.AdminRole.ADMIN, false, "uid-admin"),
+                null, List.of());
+    }
+
     private AdminRatingsController controller() {
         return new AdminRatingsController(ratingRepo, userRepo, auditService);
     }
@@ -122,12 +132,12 @@ class AdminRatingsControllerTest {
         when(userRepo.findAllById(any())).thenReturn(List.of());
 
         ResponseEntity<AdminRatingResponse> resp = controller().excludeRating(id,
-                new ExcludeRatingRequest(true, "farming détecté"));
+                new ExcludeRatingRequest(true, "farming détecté"), adminAuth());
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(rating.isExcludedFromAverage()).isTrue();
         verify(ratingRepo).save(rating);
-        verify(auditService).log(eq("RATING"), eq(id), eq("RATING_EXCLUDED"), isNull(), anyMap());
+        verify(auditService).log(eq("RATING"), eq(id), eq("RATING_EXCLUDED"), eq(ADMIN_ID), anyMap());
     }
 
     @Test
@@ -141,14 +151,14 @@ class AdminRatingsControllerTest {
         when(userRepo.findAllById(any())).thenReturn(List.of());
 
         ResponseEntity<AdminRatingResponse> resp = controller().excludeRating(id,
-                new ExcludeRatingRequest(true, "farming détecté"));
+                new ExcludeRatingRequest(true, "farming détecté"), adminAuth());
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(rating.isExcludedFromAverage()).isTrue();
         assertThat(resp.getBody()).isNotNull();
         assertThat(resp.getBody().excluded()).isTrue();
         verify(ratingRepo).save(rating);
-        verify(auditService).log(eq("RATING"), eq(id), eq("RATING_EXCLUDED"), isNull(), anyMap());
+        verify(auditService).log(eq("RATING"), eq(id), eq("RATING_EXCLUDED"), eq(ADMIN_ID), anyMap());
     }
 
     @Test
@@ -157,7 +167,7 @@ class AdminRatingsControllerTest {
         when(ratingRepo.findById(id)).thenReturn(Optional.empty());
 
         YadonyBusinessException ex = assertThrows(YadonyBusinessException.class,
-                () -> controller().excludeRating(id, new ExcludeRatingRequest(true, null)));
+                () -> controller().excludeRating(id, new ExcludeRatingRequest(true, null), adminAuth()));
         assertThat(ex.getStatus()).isEqualTo(HttpStatus.NOT_FOUND);
     }
 
@@ -171,12 +181,62 @@ class AdminRatingsControllerTest {
 
         when(ratingRepo.findById(id)).thenReturn(Optional.of(rating));
 
-        ResponseEntity<Void> resp = controller().deleteRating(id);
+        ResponseEntity<Void> resp = controller().deleteRating(id, null, adminAuth());
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
         assertThat(rating.getDeletedAt()).isNotNull();
         verify(ratingRepo).save(rating);
-        verify(auditService).log(eq("RATING"), eq(id), eq("RATING_DELETED"), isNull(), anyMap());
+        verify(auditService).log(eq("RATING"), eq(id), eq("RATING_DELETED"), eq(ADMIN_ID), anyMap());
+    }
+
+    @Test
+    void deleteRating_withReason_storesReasonInAudit() {
+        UUID id = UUID.randomUUID();
+        RatingEntity rating = new RatingEntity();
+        when(ratingRepo.findById(id)).thenReturn(Optional.of(rating));
+
+        controller().deleteRating(id, "  propos injurieux  ", adminAuth());
+
+        verify(auditService).log(eq("RATING"), eq(id), eq("RATING_DELETED"), eq(ADMIN_ID),
+                eq(java.util.Map.of("ratingId", id.toString(), "reason", "propos injurieux")));
+    }
+
+    @Test
+    void deleteRating_withoutReason_storesEmptyReason() {
+        UUID id = UUID.randomUUID();
+        when(ratingRepo.findById(id)).thenReturn(Optional.of(new RatingEntity()));
+
+        controller().deleteRating(id, null, adminAuth());
+
+        verify(auditService).log(eq("RATING"), eq(id), eq("RATING_DELETED"), eq(ADMIN_ID),
+                eq(java.util.Map.of("ratingId", id.toString(), "reason", "")));
+    }
+
+    @Test
+    void deleteRating_reasonAt500Chars_isAccepted() {
+        UUID id = UUID.randomUUID();
+        when(ratingRepo.findById(id)).thenReturn(Optional.of(new RatingEntity()));
+        String reason = "a".repeat(500);
+
+        ResponseEntity<Void> resp = controller().deleteRating(id, reason, adminAuth());
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+        verify(auditService).log(eq("RATING"), eq(id), eq("RATING_DELETED"), eq(ADMIN_ID),
+                eq(java.util.Map.of("ratingId", id.toString(), "reason", reason)));
+    }
+
+    @Test
+    void deleteRating_reasonTooLong_throws400_andDeletesNothing() {
+        UUID id = UUID.randomUUID();
+
+        YadonyBusinessException ex = assertThrows(YadonyBusinessException.class,
+                () -> controller().deleteRating(id, "a".repeat(501), adminAuth()));
+
+        assertThat(ex.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(ex.getErrorCode()).isEqualTo("rating-delete-reason-too-long");
+        verify(ratingRepo, never()).findById(any());
+        verify(ratingRepo, never()).save(any());
+        verifyNoInteractions(auditService);
     }
 
     @Test
@@ -185,7 +245,7 @@ class AdminRatingsControllerTest {
         when(ratingRepo.findById(id)).thenReturn(Optional.empty());
 
         YadonyBusinessException ex = assertThrows(YadonyBusinessException.class,
-                () -> controller().deleteRating(id));
+                () -> controller().deleteRating(id, null, adminAuth()));
         assertThat(ex.getStatus()).isEqualTo(HttpStatus.NOT_FOUND);
     }
 }
