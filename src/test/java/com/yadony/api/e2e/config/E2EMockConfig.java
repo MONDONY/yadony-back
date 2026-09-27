@@ -1,6 +1,7 @@
 package com.yadony.api.e2e.config;
 
 import com.yadony.api.admin.account.AdminAuthService;
+import com.yadony.api.auth.FirebaseContactService;
 import com.yadony.api.auth.FirebaseTokenFilter;
 import com.yadony.api.auth.UserLinkerService;
 import com.yadony.api.common.StorageService;
@@ -51,6 +52,40 @@ public class E2EMockConfig {
                 new FilterRegistrationBean<>(firebaseTokenFilter);
         reg.setEnabled(false);
         return reg;
+    }
+
+    /**
+     * Sans ce stub, le vrai FirebaseContactService tourne avec {@code firebaseAuth == null}
+     * (aucun credential en test) et rend {@code Contact.EMPTY} : tout scenario E2E touchant
+     * aux coordonnees s'executait donc dans un monde sans telephone ni email. La creation de
+     * compte Connect y partait avec {@code contact_email: null}, que le double Stripe
+     * ci-dessous acceptait alors que le vrai Stripe la refuse — c'est ce qui a laisse passer
+     * Sentry YADONY-BACK-STAGING-C jusqu'en staging.
+     */
+    @Bean
+    @Primary
+    public FirebaseContactService firebaseContactService() {
+        FirebaseContactService mock = Mockito.mock(FirebaseContactService.class);
+        FirebaseContactService.Contact contact =
+                new FirebaseContactService.Contact("+33600000000", "e2e@yadony.app");
+        Mockito.lenient().when(mock.getContact(Mockito.any())).thenReturn(contact);
+        // Le contrat des methodes rendant un objet est reproduit explicitement : un mock nu
+        // rendrait `null` la ou le vrai service garantit une map par UID demande et un
+        // Optional vide, ce qui ferait tomber en NPE les scenarios qui les traversent.
+        Mockito.lenient().when(mock.getContacts(Mockito.any())).thenAnswer(inv -> {
+            java.util.Collection<String> uids = inv.getArgument(0);
+            java.util.Map<String, FirebaseContactService.Contact> byUid = new java.util.HashMap<>();
+            if (uids != null) {
+                uids.stream().filter(java.util.Objects::nonNull)
+                        .forEach(uid -> byUid.put(uid, contact));
+            }
+            return byUid;
+        });
+        Mockito.lenient().when(mock.findUidByEmail(Mockito.any()))
+                .thenReturn(java.util.Optional.empty());
+        Mockito.lenient().when(mock.findUidByPhone(Mockito.any()))
+                .thenReturn(java.util.Optional.empty());
+        return mock;
     }
 
     @Bean
