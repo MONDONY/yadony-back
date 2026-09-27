@@ -26,8 +26,10 @@ Fonctionnalité: Suivi de colis
     Alors la réponse HTTP est 404
     Et le code d'erreur de la réponse est "tracking-not-found"
 
+  # Le scan TRANSIT est facultatif, mais jamais avant le DEPART (qui génère le
+  # code du destinataire).
   @happy-path @critical
-  Scénario: Scan d'un événement de transit par le voyageur
+  Scénario: Scan facultatif d'un événement de transit après le départ
     Etant donné un utilisateur VOYAGEUR enregistré avec l'uid "traveler-track-002" et le téléphone "+33688000003"
     Et il existe une annonce de "Paris" à "Dakar" avec 20 kg disponibles à 5.0 €/kg sauvegardée sous "annonce-track-2"
     Etant donné un utilisateur EXPÉDITEUR enregistré avec l'uid "sender-track-002" et le téléphone "+33688000004"
@@ -36,6 +38,7 @@ Fonctionnalité: Suivi de colis
     Etant donné l'utilisateur "traveler-track-002" est authentifié en tant que VOYAGEUR
     Et le paiement de l'offre "offre-track-2" est validé
     Et j'accepte l'offre "offre-track-2"
+    Et je scanne un événement "DEPART" sur l'offre "offre-track-2"
     Quand je scanne un événement "TRANSIT" sur l'offre "offre-track-2"
     Alors la réponse HTTP est 201
     Et la réponse contient le type d'événement "TRANSIT"
@@ -57,6 +60,20 @@ Fonctionnalité: Suivi de colis
     Quand le voyageur confirme la livraison de l'offre "offre-track-3" avec le code sauvegardé
     Alors la réponse HTTP est 200
     Et la réponse contient le type d'événement "ARRIVEE"
+
+  @error-case
+  Scénario: Transit scanné avant le départ — refusé
+    Etant donné un utilisateur VOYAGEUR enregistré avec l'uid "traveler-track-008" et le téléphone "+33688000015"
+    Et il existe une annonce de "Paris" à "Dakar" avec 20 kg disponibles à 5.0 €/kg sauvegardée sous "annonce-track-8"
+    Etant donné un utilisateur EXPÉDITEUR enregistré avec l'uid "sender-track-008" et le téléphone "+33688000016"
+    Et je dépose une offre de 5.0 kg à 50.0 € sur l'annonce "annonce-track-8"
+    Et l'offre "offre-track-8" est sauvegardée
+    Etant donné l'utilisateur "traveler-track-008" est authentifié en tant que VOYAGEUR
+    Et le paiement de l'offre "offre-track-8" est validé
+    Et j'accepte l'offre "offre-track-8"
+    Quand je scanne un événement "TRANSIT" sur l'offre "offre-track-8"
+    Alors la réponse HTTP est 422
+    Et le code d'erreur de la réponse est "depart-required"
 
   @error-case
   Scénario: Tentative de scanner un ARRIVEE directement — refusée
@@ -101,6 +118,7 @@ Fonctionnalité: Suivi de colis
     Quand je consulte le QR code de l'offre "offre-track-7"
     Alors la réponse HTTP est 200
     Etant donné l'utilisateur "traveler-track-007" est authentifié en tant que VOYAGEUR
+    Et je scanne un événement "DEPART" sur l'offre "offre-track-7"
     Quand je scanne un événement "TRANSIT" sur l'offre "offre-track-7"
     Alors la réponse HTTP est 201
     Quand je consulte les événements de l'offre "offre-track-7"
@@ -117,7 +135,8 @@ Fonctionnalité: Suivi de colis
     Etant donné l'utilisateur "traveler-track-006" est authentifié en tant que VOYAGEUR
     Et le paiement de l'offre "offre-track-6" est validé
     Et j'accepte l'offre "offre-track-6"
+    Et je scanne un événement "DEPART" sur l'offre "offre-track-6"
     Et je scanne un événement "TRANSIT" sur l'offre "offre-track-6"
     Quand je consulte les événements de l'offre "offre-track-6"
     Alors la réponse HTTP est 200
-    Et la réponse contient 1 événements de suivi
+    Et la réponse contient 2 événements de suivi

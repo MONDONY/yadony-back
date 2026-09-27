@@ -1162,6 +1162,13 @@ public class BidService {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-bid-status",
                     "Unprocessable", "Le refus de colis n'est possible que sur un envoi accepté ou remis");
         }
+        // Le refus sert à l'inspection au moment de la remise. Le scan TRANSIT, qui
+        // le fermait, est facultatif : même fenêtre que l'annulation, fermée au départ.
+        if (bid.getStatus() == BidStatus.HANDED_OVER
+                && com.yadony.api.cancellation.CancellationGuard.hasDeparted(announcement)) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "parcel-refusal-locked",
+                    "Parcel Refusal Locked", "Le trajet est parti : le colis ne peut plus être refusé");
+        }
 
         bid.setStatus(BidStatus.PARCEL_REFUSED);
         bid.setRefusalReason(reason);

@@ -438,19 +438,23 @@ public class CancellationService {
         return saved;
     }
 
-    /** Garde commune aux deux signalements de livraison : bid IN_TRANSIT ou ARRIVED,
-     *  trajet déjà parti, aucun signalement DELIVERY déjà en cours ou contesté sur ce bid.
+    /** Garde commune aux deux signalements de livraison : bid récupéré (HANDED_OVER,
+     *  IN_TRANSIT ou ARRIVED), trajet déjà parti, aucun signalement DELIVERY déjà en cours ou contesté sur ce bid.
      *  Retourne l'annonce chargée pour éviter un second fetch chez l'appelant (D8 :
      *  sert notamment à vérifier que l'appelant est bien le voyageur assigné).
      *
      *  <p>ARRIVED est indispensable : les signalements d'absence à la livraison ne se
      *  déclenchent qu'à destination, donc sur un bid que le voyageur a justement
      *  marqué comme arrivé. Le restreindre à IN_TRANSIT bloquerait tous les
-     *  signalements réels. */
+     *  signalements réels. HANDED_OVER aussi : le scan TRANSIT est facultatif, un colis
+     *  récupéré puis jamais marqué arrivé doit rester signalable une fois le trajet parti
+     *  (l'annulation lui est alors fermée par CancellationGuard). */
     private AnnouncementEntity assertDeliveryReportable(BidEntity bid) {
-        if (bid.getStatus() != BidStatus.IN_TRANSIT && bid.getStatus() != BidStatus.ARRIVED) {
+        if (bid.getStatus() != BidStatus.HANDED_OVER
+                && bid.getStatus() != BidStatus.IN_TRANSIT
+                && bid.getStatus() != BidStatus.ARRIVED) {
             throw new YadonyBusinessException(HttpStatus.CONFLICT, "bid-not-in-transit", "Invalid Status",
-                    "Le bid doit être en statut IN_TRANSIT ou ARRIVED.");
+                    "Le colis doit avoir été récupéré par le voyageur.");
         }
         AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
                 .orElseThrow(() -> new YadonyBusinessException(

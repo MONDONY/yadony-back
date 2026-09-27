@@ -280,6 +280,15 @@ public class TrackingService {
 
         String photoKey = validatedPhotoKey(bid, request.photoUrl());
 
+        // Le scan TRANSIT est facultatif, le DEPART ne l'est pas : c'est lui qui
+        // génère le code de confirmation du destinataire. Un TRANSIT scanné avant
+        // tout DEPART sautait cette génération et laissait la livraison
+        // inconfirmable (code-not-generated).
+        if (request.eventType() == TrackingEventType.TRANSIT && bid.getStatus() == BidStatus.ACCEPTED) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "depart-required",
+                    "Depart Required", "Scannez d'abord le départ du colis");
+        }
+
         TrackingEventEntity event = new TrackingEventEntity();
         event.setBidId(bid.getId());
         event.setEventType(request.eventType());
@@ -321,8 +330,7 @@ public class TrackingService {
             bidRepository.save(bid);
         }
 
-        if (request.eventType() == TrackingEventType.TRANSIT
-                && (bid.getStatus() == BidStatus.ACCEPTED || bid.getStatus() == BidStatus.HANDED_OVER)) {
+        if (request.eventType() == TrackingEventType.TRANSIT && bid.getStatus() == BidStatus.HANDED_OVER) {
             bid.setStatus(BidStatus.IN_TRANSIT);
             bidRepository.save(bid);
         }

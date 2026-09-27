@@ -88,6 +88,25 @@ class CancellationServiceDeliveryNoShowTest {
                         .isEqualTo(HttpStatus.CONFLICT));
     }
 
+    /** Transit facultatif : un colis récupéré (HANDED_OVER), jamais scanné en transit ni
+     *  marqué arrivé, doit rester signalable une fois le trajet parti. */
+    @Test
+    void reportDeliveryNoShow_acceptsHandedOverBidOnceTripDeparted() {
+        BidEntity bid = inTransitBid(null);
+        bid.setStatus(BidStatus.HANDED_OVER);
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(ANNOUNCEMENT_ID))
+                .thenReturn(Optional.of(announcement(java.time.LocalDate.now().minusDays(1))));
+        when(cancellationRepository.existsByBidIdAndScopeAndNoShowStatusIn(any(), any(), any()))
+                .thenReturn(false);
+        when(cancellationRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        CancellationEntity result = service.reportDeliveryNoShow(BID_ID, TRAVELER_ID);
+
+        assertThat(result.getScope()).isEqualTo(CancellationScope.DELIVERY);
+        verify(eventPublisher).publishEvent(any(DeliveryNoShowReportedEvent.class));
+    }
+
     /** Régression C3 : les signalements d'absence à la livraison ne se déclenchent
      *  qu'à destination, donc sur un bid que le voyageur vient de marquer ARRIVED.
      *  La garde stricte {@code == IN_TRANSIT} bloquait donc TOUS les signalements réels. */

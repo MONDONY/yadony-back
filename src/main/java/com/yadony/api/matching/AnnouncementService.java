@@ -1268,14 +1268,14 @@ public class AnnouncementService {
     }
 
     /**
-     * Marque les colis en vol sur ce trajet comme arrivés à destination
-     * (IN_TRANSIT → ARRIVED), en une action groupée par le voyageur. Les colis
-     * actifs pas encore partis (accepté, remis sans scan Transit) restent tels
-     * quels : un seul d'entre eux bloquait auparavant tout le trajet, et avec lui
-     * la saisie des instructions de retrait. Relancer l'action plus tard marque
-     * ceux qui sont passés en transit entre-temps.
+     * Marque les colis récupérés sur ce trajet comme arrivés à destination
+     * (HANDED_OVER ou IN_TRANSIT → ARRIVED), en une action groupée par le
+     * voyageur. Le scan Transit est facultatif : seuls le départ (récupération du
+     * colis) et la remise au destinataire sont obligatoires. Les colis pas encore
+     * récupérés (ACCEPTED) restent tels quels ; relancer l'action plus tard marque
+     * ceux récupérés entre-temps.
      *
-     * <p>Refuse si aucun colis n'est pris en charge, ou si aucun n'est en vol.
+     * <p>Refuse si aucun colis n'est pris en charge, ou si aucun n'a été récupéré.
      */
     @Transactional
     public AnnouncementDetailResponse markArrived(UUID id, String firebaseUid, String arrivalInstructions) {
@@ -1290,27 +1290,27 @@ public class AnnouncementService {
                     "No Active Parcel", "Aucun colis n'est actuellement pris en charge sur ce trajet");
         }
 
-        List<BidEntity> inTransit = activeBids.stream()
-                .filter(b -> b.getStatus() == BidStatus.IN_TRANSIT)
+        List<BidEntity> enRoute = activeBids.stream()
+                .filter(b -> b.getStatus() == BidStatus.HANDED_OVER || b.getStatus() == BidStatus.IN_TRANSIT)
                 .toList();
-        if (inTransit.isEmpty()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "trip/no-parcel-in-transit",
-                    "No Parcel In Transit",
-                    "Aucun colis n'est en transit : scannez l'étape Transit avant de marquer l'arrivée");
+        if (enRoute.isEmpty()) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "trip/no-parcel-departed",
+                    "No Parcel Departed",
+                    "Aucun colis n'a été récupéré : scannez le départ avant de marquer l'arrivée");
         }
 
         announcement.setArrivalInstructions(arrivalInstructions);
-        for (BidEntity bid : inTransit) {
+        for (BidEntity bid : enRoute) {
             bid.setStatus(BidStatus.ARRIVED);
         }
-        bidRepository.saveAll(inTransit);
+        bidRepository.saveAll(enRoute);
         AnnouncementEntity saved = announcementRepository.save(announcement);
 
         auditService.log("ANNOUNCEMENT", saved.getId(), "TRIP_ARRIVED", user.getId(),
-                Map.of("bidCount", inTransit.size(),
-                        "notYetDepartedCount", activeBids.size() - inTransit.size()));
+                Map.of("bidCount", enRoute.size(),
+                        "notYetDepartedCount", activeBids.size() - enRoute.size()));
 
-        List<TripArrivedEvent.BidTarget> targets = inTransit.stream()
+        List<TripArrivedEvent.BidTarget> targets = enRoute.stream()
                 .map(b -> new TripArrivedEvent.BidTarget(b.getId(), b.getSenderId()))
                 .toList();
         eventPublisher.publishEvent(new TripArrivedEvent(saved.getId(), targets));

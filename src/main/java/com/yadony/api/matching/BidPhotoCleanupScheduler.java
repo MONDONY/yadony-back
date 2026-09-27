@@ -23,7 +23,7 @@ public class BidPhotoCleanupScheduler {
     /** États du bid où les photos ne sont plus nécessaires et doivent être purgées. */
     private static final Set<BidStatus> DELETING_TRIGGER_STATES = Set.of(
             BidStatus.REJECTED, BidStatus.CANCELLED, BidStatus.EXPIRED,
-            BidStatus.IN_TRANSIT, BidStatus.NO_SHOW, BidStatus.PARCEL_REFUSED,
+            BidStatus.IN_TRANSIT, BidStatus.ARRIVED, BidStatus.NO_SHOW, BidStatus.PARCEL_REFUSED,
             BidStatus.COMPLETED);
 
     private final BidPhotoRepository photoRepository;
