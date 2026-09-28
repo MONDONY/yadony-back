@@ -146,6 +146,7 @@ jobs:
           SMS_ENABLED=${{ vars.SMS_ENABLED }}
           AT_USERNAME=${{ vars.AT_USERNAME }}
           TWILIO_FROM=${{ vars.TWILIO_FROM }}
+          TWILIO_VERIFY_SERVICE_SID=${{ vars.TWILIO_VERIFY_SERVICE_SID }}
           WAVE_API_URL=${{ vars.WAVE_API_URL }}
           ORANGE_MONEY_API_URL=${{ vars.ORANGE_MONEY_API_URL }}
           # Essai gratuit de l'abonnement PRO, en jours. Absente ou nulle : pas d'essai.

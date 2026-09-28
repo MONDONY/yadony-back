@@ -77,6 +77,20 @@ class SmsServiceTest {
     }
 
     @Test
+    void send_corridorWithoutAfricasTalkingKey_goesDirectlyToTwilio() {
+        // AT_API_KEY n'a jamais été posé : chaque SMS vers l'Afrique partait d'abord en 401
+        // chez Africa's Talking, puis retombait sur Twilio. Sans clé, on va droit à Twilio.
+        ReflectionTestUtils.setField(smsService, "atApiKey", "");
+        when(restTemplate.postForEntity(contains("twilio.com"), any(HttpEntity.class), eq(String.class)))
+                .thenReturn(ResponseEntity.ok("{}"));
+
+        smsService.send("+221701234567", "Ton code Yadony est : 123456");
+
+        verify(restTemplate, times(1)).postForEntity(anyString(), any(), eq(String.class));
+        verify(restTemplate, never()).postForEntity(contains("africastalking"), any(), eq(String.class));
+    }
+
+    @Test
     void devMode_logsAndSkipsHttpCall() {
         // Une coupure decidee depuis le back-office doit arreter l'envoi REEL, pas seulement
         // masquer un bouton : aucun appel au transporteur ne doit partir.

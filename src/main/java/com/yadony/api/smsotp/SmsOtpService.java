@@ -9,6 +9,8 @@ import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.i18n.MessagesResolver;
 import com.yadony.api.notifications.InvalidSmsRecipientException;
 import com.yadony.api.notifications.SmsService;
+import com.yadony.api.notifications.TwilioVerifyService;
+import com.yadony.api.notifications.TwilioVerifyService.VerifyUnavailableException;
 import com.google.firebase.auth.AuthErrorCode;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseAuthException;
@@ -16,6 +18,7 @@ import com.google.firebase.auth.UserRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.i18n.LocaleContextHolder;
 import org.springframework.core.env.Environment;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -48,6 +51,7 @@ public class SmsOtpService {
     private final FirebaseContactService firebaseContact;
     private final AuditService auditService;
     private final MessagesResolver messagesResolver;
+    private final TwilioVerifyService twilioVerify;
     private final boolean devProfile;
 
     public SmsOtpService(SmsOtpRepository smsOtpRepository,
@@ -59,7 +63,8 @@ public class SmsOtpService {
                           FirebaseContactService firebaseContact,
                           AuditService auditService,
                           Environment environment,
-                          MessagesResolver messagesResolver) {
+                          MessagesResolver messagesResolver,
+                          TwilioVerifyService twilioVerify) {
         this.smsOtpRepository = smsOtpRepository;
         this.passwordEncoder  = passwordEncoder;
         this.smsService       = smsService;
@@ -69,6 +74,7 @@ public class SmsOtpService {
         this.firebaseContact  = firebaseContact;
         this.auditService     = auditService;
         this.messagesResolver = messagesResolver;
+        this.twilioVerify     = twilioVerify;
         List<String> activeProfiles = Arrays.asList(environment.getActiveProfiles());
         // Liste blanche, pas « tout sauf prod » : staging a de vrais testeurs et ses logs
         // partent vers Loki et Sentry. L'ancienne condition y relayait le code OTP en
@@ -97,7 +103,12 @@ public class SmsOtpService {
                     "Trop de codes demandés, réessaie dans " + windowMinutes + " min");
         }
 
-        String code = String.format("%06d", SECURE_RANDOM.nextInt(1_000_000));
+        // Par Verify, Twilio génère le code et yadony ne le voit jamais : la ligne ne porte
+        // qu'un hash aléatoire, elle sert au budget d'envois et de tentatives, pas au contrôle.
+        boolean viaVerify = usesVerify(phoneNumber);
+        String code = viaVerify
+                ? Long.toHexString(SECURE_RANDOM.nextLong()) + Long.toHexString(SECURE_RANDOM.nextLong())
+                : String.format("%06d", SECURE_RANDOM.nextInt(1_000_000));
         LocalDateTime expiresAt = LocalDateTime.now(ZoneOffset.UTC)
                 .plusMinutes(properties.getOtpValidMinutes());
 
@@ -108,7 +119,13 @@ public class SmsOtpService {
         smsOtpRepository.save(entity);
 
         try {
-            smsService.send(phoneNumber, messagesResolver.forRequest().get("sms.otp", code));
+            if (viaVerify) {
+                twilioVerify.start(phoneNumber, LocaleContextHolder.getLocale().getLanguage());
+            } else {
+                smsService.send(phoneNumber, messagesResolver.forRequest().get("sms.otp", code));
+            }
+        } catch (VerifyUnavailableException e) {
+            throw verifyUnavailable();
         } catch (InvalidSmsRecipientException e) {
             // Le transporteur refuse le numéro lui-même : 422 au client plutôt qu'un
             // « code envoyé » qui n'arrive jamais. L'exception fait rollback de la ligne OTP
@@ -256,7 +273,14 @@ public class SmsOtpService {
         }
 
         // BCrypt appelé avant le check expiration pour éviter les timing attacks
-        boolean validCode = passwordEncoder.matches(code, token.getCodeHash());
+        boolean validCode;
+        try {
+            validCode = usesVerify(phoneNumber)
+                    ? twilioVerify.check(phoneNumber, code)
+                    : passwordEncoder.matches(code, token.getCodeHash());
+        } catch (VerifyUnavailableException e) {
+            throw verifyUnavailable();
+        }
 
         if (LocalDateTime.now(ZoneOffset.UTC).isAfter(token.getExpiresAt())) {
             throw new YadonyBusinessException(
@@ -274,6 +298,23 @@ public class SmsOtpService {
 
         token.setUsedAt(LocalDateTime.now(ZoneOffset.UTC));
         smsOtpRepository.save(token);
+    }
+
+    /**
+     * Vrai si ce numéro passe par Twilio Verify (États-Unis, Canada : voir
+     * {@link TwilioVerifyService}). Jamais quand les SMS sont coupés : en dev, le code doit
+     * rester local pour être relayé dans les logs. Lu à l'envoi comme au contrôle ; un
+     * changement de configuration entre les deux invalide seulement le code en cours.
+     */
+    private boolean usesVerify(String phoneNumber) {
+        return smsService.isEnabled() && twilioVerify.handles(phoneNumber);
+    }
+
+    private static YadonyBusinessException verifyUnavailable() {
+        return new YadonyBusinessException(
+                HttpStatus.SERVICE_UNAVAILABLE, "sms-otp-unavailable",
+                "SMS OTP Unavailable",
+                "L'envoi du code est momentanément indisponible, réessaie dans quelques minutes");
     }
 
     /**
