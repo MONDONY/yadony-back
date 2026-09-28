@@ -83,7 +83,8 @@ final class AdminNotificationItems {
     static AdminNotificationItem noShow(UUID id, Instant at) {
         return item(AdminNotificationType.NOSHOW_PENDING, id, "No-show à confirmer",
                 "Une absence à la remise attend une décision", AdminNotificationSeverity.WARNING, at,
-                "/incidents?tab=noshows");
+                // ?open= : le panel ouvre directement le détail de la déclaration (dony-admin #46).
+                "/incidents?tab=noshows&open=" + id);
     }
 
     static AdminNotificationItem kycInReview(UUID verificationId, UUID userId, Instant at, String first, String last) {

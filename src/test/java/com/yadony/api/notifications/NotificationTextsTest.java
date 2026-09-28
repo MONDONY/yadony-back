@@ -80,6 +80,11 @@ class NotificationTextsTest {
         map.put("disputeOpenedForTraveler", NotificationTexts.disputeOpenedForTraveler(m));
         map.put("disputeUpdated", NotificationTexts.disputeUpdated(m));
         map.put("disputeResolved", NotificationTexts.disputeResolved(m));
+        // Délai de contestation à trois chiffres : le réglage n'est pas borné.
+        map.put("senderNoShowReported", NotificationTexts.senderNoShowReported(m, 168));
+        map.put("noShowConfirmedHandover", NotificationTexts.noShowConfirmedHandover(m));
+        map.put("noShowConfirmedDelivery", NotificationTexts.noShowConfirmedDelivery(m));
+        map.put("noShowRejected", NotificationTexts.noShowRejected(m));
         map.put("bidNegotiationProposal", NotificationTexts.bidNegotiationProposal(m, "1250.50"));
         map.put("bidNegotiationCounter", NotificationTexts.bidNegotiationCounter(m, "1250.50", 3));
         map.put("bidNegotiationAccepted", NotificationTexts.bidNegotiationAccepted(m, "1250.50"));

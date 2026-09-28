@@ -26,6 +26,7 @@ class CancellationControllerDeliveryNoShowTest {
     @Autowired MockMvc mockMvc;
     @MockBean CancellationService cancellationService;
     @MockBean com.yadony.api.auth.UserRepository userRepository;
+    @MockBean NoShowArbitrationService arbitrationService;
 
     static final UUID BID_ID = UUID.randomUUID();
 
@@ -91,7 +92,8 @@ class CancellationControllerDeliveryNoShowTest {
     private static UUID eq(UUID v) { return org.mockito.ArgumentMatchers.eq(v); }
     private static UUID any() { return org.mockito.ArgumentMatchers.any(); }
 
-    // ── confirm-noshow (admin) : l'admin authentifié atteint le service pour l'audit ──
+    // ── confirm-noshow (admin, historique) : délègue à l'arbitrage admin, l'admin
+    // authentifié y est propagé pour l'audit ──
 
     @Test
     void confirmNoShow_admin_propagatesAdminId() throws Exception {
@@ -105,7 +107,7 @@ class CancellationControllerDeliveryNoShowTest {
                         .with(authentication(auth)))
                 .andExpect(status().isOk());
 
-        verify(cancellationService).confirmSenderNoShowByAdmin(BID_ID, adminId);
+        verify(arbitrationService).confirmLegacyByBid(BID_ID, adminId);
         verify(cancellationService, never()).confirmSenderNoShow(any());
     }
 
@@ -118,6 +120,6 @@ class CancellationControllerDeliveryNoShowTest {
                         .with(authentication(auth)))
                 .andExpect(status().isForbidden());
 
-        verifyNoInteractions(cancellationService);
+        verifyNoInteractions(cancellationService, arbitrationService);
     }
 }

@@ -105,7 +105,16 @@ public class DeliveryNoShowUncontestedScheduler {
                     bid.getAnnouncementId(), c.getBidId(), c.getId());
             return;
         }
+        openUncontestedDispute(c, bid, announcement);
+    }
 
+    /**
+     * Passe la déclaration DELIVERY en CONFIRMED et ouvre le litige « non contesté »
+     * ({@link DisputeOpenedEvent}, idempotent par (bidId, type) côté disputes).
+     * Partagé avec la confirmation admin ({@link NoShowArbitrationService#confirm}),
+     * pour que l'échéance et la décision admin ouvrent exactement le même litige.
+     */
+    void openUncontestedDispute(CancellationEntity c, BidEntity bid, AnnouncementEntity announcement) {
         String type = DeliveryNoShowTypes.uncontestedDisputeType(c.getReason());
 
         c.setNoShowStatus(CancellationStatus.CONFIRMED);

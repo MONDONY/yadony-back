@@ -105,6 +105,43 @@ class CancellationNoShowTest {
         }
 
         @Test
+        void previentLExpediteurApresCommit() {
+            BidEntity bid = cashBid(BidStatus.ACCEPTED, LocalDateTime.now().minusHours(1));
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(cancellationRepository.existsByBidIdAndNoShowStatusIn(any(), any())).thenReturn(false);
+            when(cancellationRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            service.reportSenderNoShow(BID_ID, TRAVELER_ID);
+
+            ArgumentCaptor<com.yadony.api.cancellation.events.SenderNoShowReportedEvent> captor =
+                    ArgumentCaptor.forClass(com.yadony.api.cancellation.events.SenderNoShowReportedEvent.class);
+            verify(eventPublisher).publishEvent(captor.capture());
+            assertThat(captor.getValue().bidId()).isEqualTo(BID_ID);
+            assertThat(captor.getValue().senderId()).isEqualTo(SENDER_ID);
+            assertThat(captor.getValue().travelerId()).isEqualTo(TRAVELER_ID);
+            assertThat(captor.getValue().contestationHours()).isEqualTo(24);
+        }
+
+        @Test
+        void declarationDejaTranchee_409PlutotQuUneViolationDUnicite() {
+            BidEntity bid = cashBid(BidStatus.ACCEPTED, LocalDateTime.now().minusHours(1));
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(cancellationRepository.existsByBidIdAndNoShowStatusIn(any(), any())).thenReturn(false);
+            CancellationEntity rejected = new CancellationEntity();
+            rejected.setNoShowStatus(CancellationStatus.RESOLVED);
+            rejected.setAdminDecision(NoShowAdminDecision.REJECTED);
+            when(cancellationRepository.findByBidId(BID_ID)).thenReturn(Optional.of(rejected));
+
+            assertThatThrownBy(() -> service.reportSenderNoShow(BID_ID, TRAVELER_ID))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> {
+                        assertThat(((YadonyBusinessException) e).getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                        assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("noshow-already-reported");
+                    });
+            verify(cancellationRepository, never()).save(any());
+        }
+
+        @Test
         void failsWhenBidNotAccepted() {
             BidEntity bid = cashBid(BidStatus.PENDING, LocalDateTime.now().minusHours(1));
             when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
@@ -212,40 +249,8 @@ class CancellationNoShowTest {
                             .isEqualTo(HttpStatus.NOT_FOUND));
         }
 
-        @Test
-        void adminConfirm_confirmsAndAuditsWithAdminAsActor() {
-            UUID adminId = UUID.randomUUID();
-            UUID cancellationId = UUID.randomUUID();
-            CancellationEntity c = new CancellationEntity();
-            ReflectionTestUtils.setField(c, "id", cancellationId);
-            c.setBidId(BID_ID);
-            c.setNoShowStatus(CancellationStatus.PENDING_CONFIRMATION);
-
-            when(cancellationRepository.findByBidId(BID_ID)).thenReturn(Optional.of(c));
-            when(cancellationRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-
-            service.confirmSenderNoShowByAdmin(BID_ID, adminId);
-
-            assertThat(c.getNoShowStatus()).isEqualTo(CancellationStatus.CONFIRMED);
-            verify(eventPublisher).publishEvent(any(CancellationConfirmedEvent.class));
-            verify(auditService).log("CANCELLATION", cancellationId, "NOSHOW_CONFIRMED_BY_ADMIN", adminId,
-                    java.util.Map.of("bidId", BID_ID.toString(),
-                            "reason", CancellationReason.SENDER_NO_SHOW.name()));
-        }
-
-        @Test
-        void adminConfirm_alreadyConfirmed_isNoOpWithoutAudit() {
-            CancellationEntity c = new CancellationEntity();
-            c.setBidId(BID_ID);
-            c.setNoShowStatus(CancellationStatus.CONFIRMED);
-            when(cancellationRepository.findByBidId(BID_ID)).thenReturn(Optional.of(c));
-
-            service.confirmSenderNoShowByAdmin(BID_ID, UUID.randomUUID());
-
-            verify(cancellationRepository, never()).save(any());
-            verifyNoInteractions(eventPublisher);
-            verifyNoInteractions(auditService);
-        }
+        // La confirmation admin (ancien confirm-noshow) vit désormais dans
+        // NoShowArbitrationService : voir NoShowArbitrationServiceTest.AncienPointDEntree.
 
         @Test
         void selfConfirm_doesNotWriteAdminAudit() {

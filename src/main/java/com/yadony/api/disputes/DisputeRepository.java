@@ -22,6 +22,9 @@ public interface DisputeRepository extends JpaRepository<DisputeEntity, UUID> {
     // Nouveau — idempotence par type pour les litiges d'arrivée.
     Optional<DisputeEntity> findByBidIdAndType(UUID bidId, String type);
 
+    /** Litiges d'une page de bids en une requête (file admin des no-shows). */
+    List<DisputeEntity> findByBidIdIn(java.util.Collection<UUID> bidIds);
+
     List<DisputeEntity> findBySenderIdOrTravelerIdOrderByCreatedAtDesc(UUID senderId, UUID travelerId);
 
     @Query("SELECT d FROM DisputeEntity d WHERE (:status IS NULL OR d.status = :status) ORDER BY d.createdAt DESC")

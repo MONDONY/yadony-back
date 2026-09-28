@@ -23,6 +23,9 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
 
     Optional<PaymentEntity> findByBidId(UUID bidId);
 
+    /** Paiements d'une page de bids en une requête (file admin des no-shows). */
+    List<PaymentEntity> findByBidIdIn(Collection<UUID> bidIds);
+
     Optional<PaymentEntity> findByNegotiationThreadId(UUID negotiationThreadId);
 
     Optional<PaymentEntity> findByStripePaymentIntentId(String stripePaymentIntentId);

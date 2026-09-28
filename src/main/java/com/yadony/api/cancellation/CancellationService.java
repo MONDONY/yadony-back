@@ -7,6 +7,7 @@ import com.yadony.api.cancellation.dto.CancellationResponse;
 import com.yadony.api.cancellation.dto.RematchSuggestionDto;
 import com.yadony.api.cancellation.events.CancellationConfirmedEvent;
 import com.yadony.api.cancellation.events.DeliveryNoShowReportedEvent;
+import com.yadony.api.cancellation.events.SenderNoShowReportedEvent;
 import com.yadony.api.disputes.events.DisputeOpenedEvent;
 import com.yadony.api.cancellation.dto.ReturnCodeResponse;
 import com.yadony.api.cancellation.events.ParcelReturnedEvent;
@@ -342,14 +343,25 @@ public class CancellationService {
                 List.of(CancellationStatus.PENDING_CONFIRMATION, CancellationStatus.CONFIRMED))) {
             throw new IllegalStateException("Une annulation est déjà en cours pour ce bid.");
         }
+        // Une ligne HANDOVER déjà tranchée (contestée, rejetée par l'admin, litige résolu)
+        // violerait UNIQUE(bid_id, scope) : 409 lisible plutôt qu'une erreur SQL en 500.
+        if (cancellationRepository.findByBidId(bidId).isPresent()) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "noshow-already-reported",
+                    "No-show Already Reported", "Une déclaration d'absence existe déjà pour ce bid.");
+        }
+        int contestationHours = commissionProperties.noShowContestationHours();
         CancellationEntity c = new CancellationEntity();
         c.setBidId(bidId);
         c.setCancelledBy(travelerId);
         c.setReason(CancellationReason.SENDER_NO_SHOW.name());
         c.setNoShowStatus(CancellationStatus.PENDING_CONFIRMATION);
-        c.setContestationDeadline(
-                OffsetDateTime.now().plusHours(commissionProperties.noShowContestationHours()));
-        return cancellationRepository.save(c);
+        c.setContestationDeadline(OffsetDateTime.now().plusHours(contestationHours));
+        CancellationEntity saved = cancellationRepository.save(c);
+        // L'expéditeur est prévenu après commit (NoShowNotificationListener) : sans cela, il
+        // découvrait la déclaration une fois le délai de contestation écoulé.
+        eventPublisher.publishEvent(new SenderNoShowReportedEvent(
+                bidId, c.getId(), bid.getSenderId(), travelerId, contestationHours));
+        return saved;
     }
 
     /**
@@ -469,6 +481,12 @@ public class CancellationService {
             throw new YadonyBusinessException(HttpStatus.CONFLICT, "delivery-noshow-in-progress",
                     "Already In Progress",
                     "Un signalement d'absence à la livraison est déjà en cours pour ce bid.");
+        }
+        // Signalement DELIVERY déjà tranché (confirmé, rejeté, résolu) : UNIQUE(bid_id, scope)
+        // interdit une seconde ligne, 409 lisible plutôt qu'une erreur SQL en 500.
+        if (cancellationRepository.findByBidIdAndScope(bid.getId(), CancellationScope.DELIVERY).isPresent()) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "delivery-noshow-already-decided",
+                    "Already Decided", "Un signalement d'absence à la livraison a déjà été tranché pour ce bid.");
         }
         return announcement;
     }
@@ -693,20 +711,6 @@ public class CancellationService {
     @Transactional
     public void confirmSenderNoShow(UUID bidId) {
         applySenderNoShowConfirmation(bidId);
-    }
-
-    /**
-     * Confirmation du no-show expéditeur tranchée par un administrateur (litige). Même
-     * transition que {@link #confirmSenderNoShow(UUID)}, plus une trace d'audit qui désigne
-     * l'admin : sans elle, rien ne distinguait cette décision d'une auto-confirmation de
-     * l'expéditeur. Pas de trace quand la confirmation est sans effet (déjà tranchée).
-     */
-    @Transactional
-    public void confirmSenderNoShowByAdmin(UUID bidId, UUID adminId) {
-        applySenderNoShowConfirmation(bidId).ifPresent(c ->
-                auditService.log("CANCELLATION", c.getId(), "NOSHOW_CONFIRMED_BY_ADMIN", adminId,
-                        Map.of("bidId", bidId.toString(),
-                                "reason", CancellationReason.SENDER_NO_SHOW.name())));
     }
 
     /** @return l'annulation confirmée, vide si elle n'était plus en attente de confirmation. */

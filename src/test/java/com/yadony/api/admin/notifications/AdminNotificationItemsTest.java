@@ -66,7 +66,8 @@ class AdminNotificationItemsTest {
         assertThat(items.get(2).link()).isEqualTo("/support?ticket=" + ID);
         assertThat(items.get(2).id()).isEqualTo("SUPPORT_MESSAGE_RECEIVED:" + OTHER);
         assertThat(items.get(3).link()).isEqualTo("/incidents?tab=disputes");
-        assertThat(items.get(4).link()).isEqualTo("/incidents?tab=noshows");
+        // Le panel ouvre directement le détail de la déclaration par son id (dony-admin #46).
+        assertThat(items.get(4).link()).isEqualTo("/incidents?tab=noshows&open=" + ID);
         assertThat(items.get(5).link()).isEqualTo("/kyc?status=IN_REVIEW&open=" + OTHER);
         assertThat(items.get(6).link()).isEqualTo("/transactions?held=true");
         assertThat(items.get(7).link()).isEqualTo("/transactions?tab=wallet-refunds");
