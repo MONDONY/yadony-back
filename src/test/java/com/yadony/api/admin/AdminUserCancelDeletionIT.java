@@ -130,7 +130,7 @@ class AdminUserCancelDeletionIT {
     void list_pendingDeletion_filtersAndExposesDates() throws Exception {
         UserEntity pending = user(UserStatus.PENDING_DELETION);
         pending.setDeletionRequestedAt(Instant.parse("2026-09-10T08:00:00Z"));
-        when(userRepository.findAdminFiltered(eq("PENDING_DELETION"), any(), any(), any(), any(), any(), any(), any()))
+        when(userRepository.findAdminFiltered(eq("PENDING_DELETION"), any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(new PageImpl<>(List.of(pending), PageRequest.of(0, 20), 1));
         when(firebaseContact.getContacts(any())).thenReturn(Map.of());
 
@@ -140,5 +140,27 @@ class AdminUserCancelDeletionIT {
                 .andExpect(jsonPath("$.content[0].status").value("PENDING_DELETION"))
                 .andExpect(jsonPath("$.content[0].deletionRequestedAt").value("2026-09-10T08:00:00Z"))
                 .andExpect(jsonPath("$.content[0].deletionScheduledFor").value("2026-10-10T08:00:00Z"));
+    }
+
+    @Test
+    @DisplayName("GET /admin/users/{id} — le détail expose l'UID Firebase, la liste non")
+    void detail_exposesFirebaseUid_listDoesNot() throws Exception {
+        UserEntity u = user(UserStatus.ACTIVE);
+        u.setFirebaseUid("FbUidAwa123XYZ");
+        when(userRepository.findById(USER_ID)).thenReturn(java.util.Optional.of(u));
+        when(firebaseContact.getContact(any())).thenReturn(FirebaseContactService.Contact.EMPTY);
+
+        mockMvc.perform(get("/admin/users/{id}", USER_ID)
+                        .with(authentication(auth(AdminRole.SUPPORT))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.firebaseUid").value("FbUidAwa123XYZ"));
+
+        when(userRepository.findAdminFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(new PageImpl<>(List.of(u), PageRequest.of(0, 20), 1));
+        when(firebaseContact.getContacts(any())).thenReturn(Map.of());
+
+        mockMvc.perform(get("/admin/users").with(authentication(auth(AdminRole.SUPPORT))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].firebaseUid").doesNotExist());
     }
 }
