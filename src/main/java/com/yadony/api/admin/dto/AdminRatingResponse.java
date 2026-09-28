@@ -18,9 +18,20 @@ public record AdminRatingResponse(
         boolean flagged,
         boolean excluded,
         String excludedReason,
-        LocalDateTime createdAt
+        LocalDateTime createdAt,
+        /** Date de suppression (soft delete) ; {@code null} pour un avis visible. */
+        LocalDateTime deletedAt,
+        /** Email de l'admin auteur de la suppression, lu dans l'audit {@code RATING_DELETED}. */
+        String deletedByAdminEmail,
+        /** Motif saisi à la suppression (audit {@code RATING_DELETED}), éventuellement vide. */
+        String deleteReason
 ) {
     public static AdminRatingResponse from(RatingEntity e, Map<UUID, UserEntity> users) {
+        return from(e, users, null);
+    }
+
+    public static AdminRatingResponse from(RatingEntity e, Map<UUID, UserEntity> users,
+                                           com.yadony.api.admin.DeletionTraceService.DeletionTrace trace) {
         return new AdminRatingResponse(
                 e.getId(),
                 e.getBidId(),
@@ -31,7 +42,10 @@ public record AdminRatingResponse(
                 e.isFlagged(),
                 e.isExcludedFromAverage(),
                 e.getExcludedReason(),
-                e.getCreatedAt()
+                e.getCreatedAt(),
+                e.getDeletedAt(),
+                e.getDeletedAt() != null && trace != null ? trace.adminEmail() : null,
+                e.getDeletedAt() != null && trace != null ? trace.reason() : null
         );
     }
 

@@ -8,6 +8,7 @@ import com.yadony.api.admin.dto.AdminUserListItemResponse;
 import com.yadony.api.admin.dto.DeletionImpactResponse;
 import com.yadony.api.admin.dto.MuteMessagingRequest;
 import com.yadony.api.admin.dto.ProGrantRequest;
+import com.yadony.api.admin.dto.RestoreRequest;
 import com.yadony.api.auth.FirebaseContactService;
 import com.yadony.api.auth.KycStatus;
 import com.yadony.api.auth.Role;
@@ -216,6 +217,20 @@ public class AdminUserController {
                            @Valid @RequestBody AdminDeleteUserRequest request,
                            Authentication authentication) {
         deletionService.delete(userId, adminId(authentication), request.reasonCode(), request.reason());
+    }
+
+    /**
+     * Annule une demande de suppression encore en délai de grâce (PENDING_DELETION). Un compte
+     * finalisé (anonymisé) n'est pas restaurable : 409 {@code user-deletion-not-cancellable}.
+     * Même permission que la suppression elle-même : c'est le geste inverse.
+     */
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('USER_DELETE')")
+    @PostMapping("/{userId}/cancel-deletion")
+    public AdminUserDetailResponse cancelDeletion(@PathVariable UUID userId,
+                                                  @Valid @RequestBody RestoreRequest request,
+                                                  Authentication authentication) {
+        return detail(userService.cancelDeletionByAdmin(userId, adminId(authentication),
+                request.normalizedReason()));
     }
 
     /**

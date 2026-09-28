@@ -93,4 +93,43 @@ public interface ReportRepository extends JpaRepository<ReportEntity, UUID> {
 
     /** Signalements écrits par ce compte, pour un statut donné. */
     List<ReportEntity> findByStatusAndReporterId(ReportStatus status, UUID reporterId);
+
+    /**
+     * Signalements supprimés (soft delete) pour la corbeille admin, du plus récemment supprimé
+     * au plus ancien. Requête native délibérée : le {@code @Where(deleted_at IS NULL)} de
+     * {@link ReportEntity} masquerait toutes ces lignes à une requête JPQL. {@code q} (déjà en
+     * minuscules, entouré de %) balaie la description, la route d'écran et le code du motif.
+     * Le tri est porté par la requête : passer un {@code Pageable} non trié.
+     */
+    @Query(value = """
+            SELECT r.* FROM reports r
+            WHERE r.deleted_at IS NOT NULL
+              AND (CAST(:status AS VARCHAR) IS NULL OR r.status = CAST(:status AS VARCHAR))
+              AND (CAST(:targetType AS VARCHAR) IS NULL OR r.target_type = CAST(:targetType AS VARCHAR))
+              AND (CAST(:q AS VARCHAR) IS NULL
+                   OR lower(coalesce(r.description, '')) LIKE CAST(:q AS VARCHAR)
+                   OR lower(coalesce(r.screen_route, '')) LIKE CAST(:q AS VARCHAR)
+                   OR lower(r.reason) LIKE CAST(:q AS VARCHAR))
+            ORDER BY r.deleted_at DESC, r.id
+            """,
+            countQuery = """
+            SELECT COUNT(*) FROM reports r
+            WHERE r.deleted_at IS NOT NULL
+              AND (CAST(:status AS VARCHAR) IS NULL OR r.status = CAST(:status AS VARCHAR))
+              AND (CAST(:targetType AS VARCHAR) IS NULL OR r.target_type = CAST(:targetType AS VARCHAR))
+              AND (CAST(:q AS VARCHAR) IS NULL
+                   OR lower(coalesce(r.description, '')) LIKE CAST(:q AS VARCHAR)
+                   OR lower(coalesce(r.screen_route, '')) LIKE CAST(:q AS VARCHAR)
+                   OR lower(r.reason) LIKE CAST(:q AS VARCHAR))
+            """,
+            nativeQuery = true)
+    Page<ReportEntity> findDeletedFiltered(
+            @Param("status") String status,
+            @Param("targetType") String targetType,
+            @Param("q") String q,
+            Pageable pageable);
+
+    /** Signalements par identifiants, supprimés ou non (restauration unitaire et groupée). */
+    @Query(value = "SELECT * FROM reports WHERE id IN (:ids)", nativeQuery = true)
+    List<ReportEntity> findAllByIdIncludingDeleted(@Param("ids") java.util.Collection<UUID> ids);
 }

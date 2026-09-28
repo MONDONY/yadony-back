@@ -71,6 +71,16 @@ public class AdminBroadcastController {
         UUID adminId = adminId(authentication);
         BroadcastTarget target = request.target().toDomain();
 
+        // Ciblage nominatif : 404 si le compte n'existe pas, 422 s'il ne peut plus rien
+        // recevoir. Sans cette garde, l'envoi partait « a 0 destinataire » en 202, et
+        // l'historique affichait un envoi reussi que personne n'a recu.
+        var targetUser = audienceService.targetUser(target);
+        if (targetUser.isPresent() && !targetUser.get().reachable()) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "broadcast-user-not-reachable", "Unprocessable Entity",
+                    "Ce compte est banni, en cours de suppression ou supprimé : il ne peut pas être notifié");
+        }
+
         AdminBroadcastEntity saved = broadcastService.record(
                 request.title(), request.body(), target, adminId);
 
@@ -94,7 +104,11 @@ public class AdminBroadcastController {
     @PreAuthorize("hasRole('ADMIN') and hasAuthority('NOTIFICATION_SEND')")
     @PostMapping("/admin/notifications/broadcast/preview")
     public BroadcastAudienceResponse preview(@RequestBody @Valid BroadcastTargetRequest request) {
-        return new BroadcastAudienceResponse(audienceService.count(request.toDomain()));
+        BroadcastTarget target = request.toDomain();
+        var targetUser = audienceService.targetUser(target);
+        return new BroadcastAudienceResponse(audienceService.count(target),
+                targetUser.map(BroadcastAudienceService.TargetUser::displayName).orElse(null),
+                targetUser.map(BroadcastAudienceService.TargetUser::reachable).orElse(null));
     }
 
     @PreAuthorize("hasRole('ADMIN') and hasAuthority('NOTIFICATION_SEND')")

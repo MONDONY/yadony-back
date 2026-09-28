@@ -21,7 +21,11 @@ public record AdminUserListItemResponse(
         BigDecimal averageRating,
         int totalTrips,
         int totalShipments,
-        LocalDateTime createdAt
+        LocalDateTime createdAt,
+        /** Demande de suppression en cours ; {@code null} sinon. */
+        LocalDateTime deletionRequestedAt,
+        /** Finalisation prevue de cette demande (demande + delai de grace) ; {@code null} sinon. */
+        LocalDateTime deletionScheduledFor
 ) {
     /** Le téléphone et l'email proviennent de Firebase : ils ne sont plus stockés en base. */
     public static AdminUserListItemResponse from(UserEntity u, FirebaseContactService.Contact contact) {
@@ -39,7 +43,13 @@ public record AdminUserListItemResponse(
                 u.getAverageRating(),
                 u.getTotalTrips(),
                 u.getTotalShipments(),
-                u.getCreatedAt()
+                u.getCreatedAt(),
+                toUtc(u.getDeletionRequestedAt()),
+                toUtc(com.yadony.api.auth.AccountDeletionScheduler.scheduledFinalization(u.getDeletionRequestedAt()))
         );
+    }
+
+    private static LocalDateTime toUtc(java.time.Instant instant) {
+        return instant != null ? LocalDateTime.ofInstant(instant, java.time.ZoneOffset.UTC) : null;
     }
 }

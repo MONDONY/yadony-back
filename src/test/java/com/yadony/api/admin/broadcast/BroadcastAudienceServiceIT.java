@@ -180,4 +180,57 @@ class BroadcastAudienceServiceIT {
                 .isInstanceOf(YadonyBusinessException.class)
                 .hasMessageContaining("identifiant d'utilisateur");
     }
+
+    @Test
+    void userTargetExcludesBannedAndPendingDeletion_butKeepsSuspended() {
+        UUID banned = persistUser(UserStatus.BANNED);
+        UUID pending = persistUser(UserStatus.PENDING_DELETION);
+        UUID suspended = persistUser(UserStatus.SUSPENDED);
+
+        assertThat(service.count(new BroadcastTarget(BroadcastTargetType.USER, null, null, banned))).isZero();
+        assertThat(service.count(new BroadcastTarget(BroadcastTargetType.USER, null, null, pending))).isZero();
+        // Un compte suspendu doit pouvoir etre prevenu de sa suspension.
+        assertThat(service.count(new BroadcastTarget(BroadcastTargetType.USER, null, null, suspended))).isEqualTo(1);
+    }
+
+    @Test
+    void targetUser_reportsNameAndReachability() {
+        UUID active = persistUser(UserStatus.ACTIVE);
+        UserEntity named = userRepository.findById(active).orElseThrow();
+        named.setFirstName("Awa");
+        named.setLastName("Diop");
+        userRepository.saveAndFlush(named);
+        UUID banned = persistUser(UserStatus.BANNED);
+        UUID pending = persistUser(UserStatus.PENDING_DELETION);
+        UUID deleted = persistUser(UserStatus.ACTIVE);
+        UserEntity toDelete = userRepository.findById(deleted).orElseThrow();
+        toDelete.setDeletedAt(java.time.LocalDateTime.now());
+        userRepository.saveAndFlush(toDelete);
+
+        var activeView = service.targetUser(new BroadcastTarget(BroadcastTargetType.USER, null, null, active));
+        assertThat(activeView).isPresent();
+        assertThat(activeView.get().reachable()).isTrue();
+        assertThat(activeView.get().displayName()).contains("Awa");
+
+        assertThat(service.targetUser(new BroadcastTarget(BroadcastTargetType.USER, null, null, banned))
+                .orElseThrow().reachable()).isFalse();
+        assertThat(service.targetUser(new BroadcastTarget(BroadcastTargetType.USER, null, null, pending))
+                .orElseThrow().reachable()).isFalse();
+        assertThat(service.targetUser(new BroadcastTarget(BroadcastTargetType.USER, null, null, deleted))
+                .orElseThrow().reachable()).isFalse();
+    }
+
+    @Test
+    void targetUser_unknownUser_is404() {
+        UUID ghost = UUID.randomUUID();
+        assertThatThrownBy(() -> service.targetUser(new BroadcastTarget(BroadcastTargetType.USER, null, null, ghost)))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode())
+                .isEqualTo("user-not-found");
+    }
+
+    @Test
+    void targetUser_isEmptyForSegmentTargets() {
+        assertThat(service.targetUser(new BroadcastTarget(BroadcastTargetType.ALL, null, null, null))).isEmpty();
+    }
 }

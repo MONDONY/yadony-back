@@ -274,6 +274,24 @@ class RatingServiceTest {
             assertThat(traveler.getAverageRating()).isNull();
             verify(userRepository).save(traveler);
         }
+
+        @Test
+        @DisplayName("dernière notation retirée → l'ancienne moyenne ne survit pas au décompte à 0")
+        void recalculate_lastRatingRemoved_clearsStaleAverage() throws Exception {
+            UserEntity traveler = new UserEntity();
+            setId(traveler, TRAVELER_ID);
+            traveler.setAverageRating(new BigDecimal("1.00"));
+            traveler.setRatingCount(1);
+
+            when(ratingRepository.findIncludedRatingsByRatedUserId(TRAVELER_ID)).thenReturn(List.of());
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(userRepository.save(any())).thenReturn(traveler);
+
+            ratingService.recalculateAverageRating(TRAVELER_ID);
+
+            assertThat(traveler.getRatingCount()).isZero();
+            assertThat(traveler.getAverageRating()).isNull();
+        }
     }
 
     @Nested

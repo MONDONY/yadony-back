@@ -52,7 +52,13 @@ public record AdminUserDetailResponse(
         /** Tous les motifs actifs (les deux peuvent coexister) ; vide si non gele. */
         List<String> payoutsHeldReasons,
         /** Paiements ESCROW retenus a la livraison pour ce voyageur, a liberer a la main. */
-        long heldPaymentsCount
+        long heldPaymentsCount,
+        /**
+         * Finalisation prevue d'une demande de suppression ({@code deletionRequestedAt} + delai de
+         * grace) ; {@code null} sans demande en cours. Le scheduler tourne a 2 h : la finalisation
+         * effective survient au premier passage apres cette date.
+         */
+        LocalDateTime deletionScheduledFor
 ) {
     /**
      * Téléphone et email proviennent de Firebase : ils ne sont plus stockés en base.
@@ -106,7 +112,12 @@ public record AdminUserDetailResponse(
                 hold.heldSince(),
                 hold.primaryReason() != null ? hold.primaryReason().name() : null,
                 hold.reasons() == null ? List.of() : hold.reasons().stream().map(Enum::name).toList(),
-                hold.heldPaymentsCount()
+                hold.heldPaymentsCount(),
+                toUtc(com.yadony.api.auth.AccountDeletionScheduler.scheduledFinalization(u.getDeletionRequestedAt()))
         );
+    }
+
+    private static LocalDateTime toUtc(java.time.Instant instant) {
+        return instant != null ? LocalDateTime.ofInstant(instant, java.time.ZoneOffset.UTC) : null;
     }
 }

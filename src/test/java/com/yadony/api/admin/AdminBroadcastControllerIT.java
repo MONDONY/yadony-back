@@ -212,4 +212,86 @@ class AdminBroadcastControllerIT {
                 .andExpect(jsonPath("$.content[0].title").value("Maintenance"))
                 .andExpect(jsonPath("$.totalElements").value(1));
     }
+
+    // ── Ciblage nominatif (USER) ─────────────────────────────────────────────
+
+    private static final UUID TARGET_USER = UUID.randomUUID();
+
+    private String userTargetJson() {
+        return """
+                {"title":"Votre dossier","body":"Merci de nous recontacter.",
+                 "target":{"type":"USER","userId":"%s"}}
+                """.formatted(TARGET_USER);
+    }
+
+    @Test
+    @DisplayName("POST USER — compte banni, en suppression ou supprime : 422 broadcast-user-not-reachable, rien d'enregistre")
+    void send_toUnreachableUser_returns422() throws Exception {
+        when(audienceService.targetUser(any(BroadcastTarget.class))).thenReturn(
+                java.util.Optional.of(new BroadcastAudienceService.TargetUser(TARGET_USER, "Awa D.", false)));
+
+        mockMvc.perform(post("/admin/notifications/broadcast")
+                        .with(authentication(adminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(userTargetJson()))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("broadcast-user-not-reachable"));
+
+        verify(broadcastService, never()).record(any(), any(), any(), any());
+        verify(broadcastService, never()).dispatchAsync(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("POST USER — utilisateur inconnu : 404 user-not-found en problem+json")
+    void send_toUnknownUser_returns404() throws Exception {
+        when(audienceService.targetUser(any(BroadcastTarget.class))).thenThrow(
+                new com.yadony.api.common.YadonyBusinessException(org.springframework.http.HttpStatus.NOT_FOUND,
+                        "user-not-found", "Not Found", "Utilisateur introuvable"));
+
+        mockMvc.perform(post("/admin/notifications/broadcast")
+                        .with(authentication(adminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(userTargetJson()))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("user-not-found"));
+
+        verify(broadcastService, never()).record(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("POST USER — compte joignable : 202, envoi enregistre")
+    void send_toReachableUser_returns202() throws Exception {
+        when(audienceService.targetUser(any(BroadcastTarget.class))).thenReturn(
+                java.util.Optional.of(new BroadcastAudienceService.TargetUser(TARGET_USER, "Awa D.", true)));
+        AdminBroadcastEntity saved = new AdminBroadcastEntity("Votre dossier", "Merci de nous recontacter.",
+                BroadcastTargetType.USER, null, null, TARGET_USER, 1, ADMIN_ID);
+        ReflectionTestUtils.setField(saved, "id", UUID.randomUUID());
+        when(broadcastService.record(any(), any(), any(BroadcastTarget.class), eq(ADMIN_ID))).thenReturn(saved);
+
+        mockMvc.perform(post("/admin/notifications/broadcast")
+                        .with(authentication(adminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(userTargetJson()))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.recipientCount").value(1));
+    }
+
+    @Test
+    @DisplayName("preview USER — renvoie le nombre (0 ou 1) et le nom du compte cible")
+    void preview_userTarget_returnsCountAndName() throws Exception {
+        when(audienceService.count(any(BroadcastTarget.class))).thenReturn(0L);
+        when(audienceService.targetUser(any(BroadcastTarget.class))).thenReturn(
+                java.util.Optional.of(new BroadcastAudienceService.TargetUser(TARGET_USER, "Awa D.", false)));
+
+        mockMvc.perform(post("/admin/notifications/broadcast/preview")
+                        .with(authentication(adminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"type":"USER","userId":"%s"}
+                                """.formatted(TARGET_USER)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recipientCount").value(0))
+                .andExpect(jsonPath("$.targetUserName").value("Awa D."))
+                .andExpect(jsonPath("$.targetUserReachable").value(false));
+    }
 }
