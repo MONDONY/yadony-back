@@ -1291,7 +1291,8 @@ class TrackingServiceTest {
     // ── Provenance QR / numéro (scanMethod) ───────────────────────────────────
 
     private void stubTransitScanContext() {
-        BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");
+        // TRANSIT exige un départ scanné (transit facultatif, #336).
+        BidEntity bid = buildBid(BidStatus.HANDED_OVER, "qt");
         when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
         when(announcementRepository.findById(annId)).thenReturn(Optional.of(buildAnnouncement()));
         when(userRepository.findByFirebaseUid("uid-traveler"))
