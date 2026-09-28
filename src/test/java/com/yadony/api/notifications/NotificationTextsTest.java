@@ -140,6 +140,7 @@ class NotificationTextsTest {
         map.put("accountDeletionCancelledByAdmin", NotificationTexts.accountDeletionCancelledByAdmin(m));
         map.put("messagingMuted", NotificationTexts.messagingMuted(m));
         map.put("adminWarning", NotificationTexts.adminWarning(m, null));
+        map.put("reportResolved", NotificationTexts.reportResolved(m));
         // Plafond d'un ajustement : 500 € d'équivalent, soit au plus 6 chiffres + symbole.
         String pireMontant = com.yadony.api.payments.wallet.WalletAmountText.format(new BigDecimal("99999.99"), "CAD");
         map.put("walletAdjustedByAdmin crédit", NotificationTexts.walletAdjustedByAdmin(m, true, pireMontant));
