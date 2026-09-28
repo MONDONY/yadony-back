@@ -72,6 +72,18 @@ public class CacheConfig {
                         .recordStats()
                         .build());
 
+        // admin-notifications : cloche du panel admin (AdminNotificationCache). Files a traiter
+        // et dernieres entrees de chaque source, PARTAGEES par tous les administrateurs (le
+        // filtrage par permission se fait apres). Chaque panel ouvert tire les compteurs toutes
+        // les 30 s : la TTL de 15 s borne la charge a une serie de requetes par quart de minute,
+        // quel que soit le nombre d'administrateurs. Onze entrees (10 sources + les files).
+        manager.registerCustomCache("admin-notifications",
+                Caffeine.newBuilder()
+                        .maximumSize(32)
+                        .expireAfterWrite(15, TimeUnit.SECONDS)
+                        .recordStats()
+                        .build());
+
         // city-search / popular-corridors : referentiel tire a chaque frappe de
         // l'autocompletion des villes et a chaque ouverture des formulaires de
         // publication (CityService / CorridorService). Les villes (GeoNames) ne
