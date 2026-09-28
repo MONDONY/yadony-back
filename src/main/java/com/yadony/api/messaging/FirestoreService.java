@@ -148,6 +148,39 @@ public class FirestoreService {
         }
     }
 
+    /** Issue d'une restauration de message : le contrôleur admin la traduit en 204 / 404 / 409. */
+    public enum MessageRestoreOutcome { RESTORED, NOT_DELETED, NOT_FOUND }
+
+    /**
+     * Annule {@link #softDeleteMessage} : le corps n'a jamais été effacé, retirer
+     * {@code deletedAt} suffit à ce que l'application réaffiche le message (elle écoute la
+     * sous-collection en temps réel et ne masque que les documents qui portent ce champ).
+     *
+     * <p>Firestore indisponible : {@link MessageRestoreOutcome#NOT_FOUND}, jamais un faux
+     * succès qui laisserait une trace d'audit sans restauration réelle.
+     */
+    public MessageRestoreOutcome restoreMessage(String conversationId, String messageId) {
+        if (firestore == null) {
+            log.warn("Firestore disabled — restoreMessage impossible");
+            return MessageRestoreOutcome.NOT_FOUND;
+        }
+        try {
+            var ref = firestore.collection("conversations").document(conversationId)
+                    .collection("messages").document(messageId);
+            var snap = ref.get().get();
+            if (!snap.exists()) {
+                return MessageRestoreOutcome.NOT_FOUND;
+            }
+            if (snap.get("deletedAt") == null) {
+                return MessageRestoreOutcome.NOT_DELETED;
+            }
+            ref.update("deletedAt", com.google.cloud.firestore.FieldValue.delete()).get();
+            return MessageRestoreOutcome.RESTORED;
+        } catch (Exception e) {
+            throw new RuntimeException("Firestore restoreMessage failed", e);
+        }
+    }
+
     public void clearConversationDeleted(String conversationId) {
         if (firestore == null) {
             log.warn("Firestore disabled — skipping clearConversationDeleted");

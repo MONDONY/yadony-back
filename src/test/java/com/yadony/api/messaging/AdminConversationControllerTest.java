@@ -25,6 +25,15 @@ class AdminConversationControllerTest {
 
     AdminConversationController controller;
 
+    static final UUID ADMIN_ID = UUID.randomUUID();
+
+    static org.springframework.security.core.Authentication adminAuth() {
+        return new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                new com.yadony.api.admin.account.AdminPrincipal(ADMIN_ID, "admin@yadony.test",
+                        com.yadony.api.admin.account.AdminRole.SUPPORT, false, "uid-admin"),
+                null, java.util.List.of());
+    }
+
     @BeforeEach
     void setUp() {
         controller = new AdminConversationController(repo, firestoreService, auditService, userRepository);
@@ -36,22 +45,19 @@ class AdminConversationControllerTest {
         var conv = new ConversationEntity(bidId, UUID.randomUUID(), UUID.randomUUID(), "conv_test");
         when(repo.findByFirestoreConversationId("conv_test")).thenReturn(Optional.of(conv));
 
-        UserEntity admin = mock(UserEntity.class);
-        when(admin.getId()).thenReturn(UUID.randomUUID());
-
-        controller.deleteMessage("conv_test", "msg_001", admin);
+        controller.deleteMessage("conv_test", "msg_001", adminAuth());
 
         verify(firestoreService).softDeleteMessage("conv_test", "msg_001");
-        verify(auditService).log(eq("message"), any(), eq("MESSAGE_ADMIN_DELETED"), any(), anyMap());
+        // L'acteur est l'admin authentifie (AdminPrincipal), jamais null.
+        verify(auditService).log(eq("message"), any(), eq("MESSAGE_ADMIN_DELETED"), eq(ADMIN_ID), anyMap());
     }
 
     @Test
     void deleteMessage_returns404_whenConversationNotFound() {
         when(repo.findByFirestoreConversationId("conv_unknown")).thenReturn(Optional.empty());
-        UserEntity admin = mock(UserEntity.class);
 
         try {
-            controller.deleteMessage("conv_unknown", "msg_001", admin);
+            controller.deleteMessage("conv_unknown", "msg_001", adminAuth());
             throw new AssertionError("Expected exception");
         } catch (org.springframework.web.server.ResponseStatusException e) {
             assert e.getStatusCode().value() == 404;
@@ -90,6 +96,90 @@ class AdminConversationControllerTest {
         org.assertj.core.api.Assertions.assertThat(messages.get(0).deleted()).isFalse();
         org.assertj.core.api.Assertions.assertThat(messages.get(1).senderName()).isEqualTo("Systeme");
         org.assertj.core.api.Assertions.assertThat(messages.get(1).deleted()).isTrue();
+        org.assertj.core.api.Assertions.assertThat(messages.get(0).deletedAt()).isNull();
+        org.assertj.core.api.Assertions.assertThat(messages.get(0).deletedByAdmin()).isFalse();
+        org.assertj.core.api.Assertions.assertThat(messages.get(1).deletedAt()).isEqualTo("2026-07-02T09:00:00Z");
+        // Seul le serveur (moderation admin) ecrit deletedAt sur un message : les regles
+        // Firestore l'interdisent aux clients.
+        org.assertj.core.api.Assertions.assertThat(messages.get(1).deletedByAdmin()).isTrue();
+    }
+
+    // ---- restoreMessage ----
+
+    private static com.yadony.api.admin.dto.RestoreRequest reason() {
+        return new com.yadony.api.admin.dto.RestoreRequest("Suppression faite par erreur");
+    }
+
+    @Test
+    void restoreMessage_restored_auditsAdminAndReason() {
+        var conv = new ConversationEntity(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "conv_r");
+        when(repo.findByFirestoreConversationId("conv_r")).thenReturn(Optional.of(conv));
+        when(firestoreService.restoreMessage("conv_r", "m1"))
+                .thenReturn(FirestoreService.MessageRestoreOutcome.RESTORED);
+
+        var resp = controller.restoreMessage("conv_r", "m1", reason(), adminAuth());
+
+        org.assertj.core.api.Assertions.assertThat(resp.getStatusCode().value()).isEqualTo(204);
+        verify(auditService).log(eq("message"), any(), eq("MESSAGE_ADMIN_RESTORED"), eq(ADMIN_ID),
+                eq(java.util.Map.of("conversationId", "conv_r", "messageId", "m1",
+                        "reason", "Suppression faite par erreur")));
+    }
+
+    @Test
+    void restoreMessage_notDeleted_is409_withoutAudit() {
+        var conv = new ConversationEntity(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "conv_r");
+        when(repo.findByFirestoreConversationId("conv_r")).thenReturn(Optional.of(conv));
+        when(firestoreService.restoreMessage("conv_r", "m1"))
+                .thenReturn(FirestoreService.MessageRestoreOutcome.NOT_DELETED);
+
+        var ex = org.junit.jupiter.api.Assertions.assertThrows(
+                com.yadony.api.common.YadonyBusinessException.class,
+                () -> controller.restoreMessage("conv_r", "m1", reason(), adminAuth()));
+
+        org.assertj.core.api.Assertions.assertThat(ex.getStatus().value()).isEqualTo(409);
+        org.assertj.core.api.Assertions.assertThat(ex.getErrorCode()).isEqualTo("message-not-deleted");
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    void restoreMessage_unknownMessage_is404() {
+        var conv = new ConversationEntity(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "conv_r");
+        when(repo.findByFirestoreConversationId("conv_r")).thenReturn(Optional.of(conv));
+        when(firestoreService.restoreMessage("conv_r", "m1"))
+                .thenReturn(FirestoreService.MessageRestoreOutcome.NOT_FOUND);
+
+        var ex = org.junit.jupiter.api.Assertions.assertThrows(
+                com.yadony.api.common.YadonyBusinessException.class,
+                () -> controller.restoreMessage("conv_r", "m1", reason(), adminAuth()));
+
+        org.assertj.core.api.Assertions.assertThat(ex.getStatus().value()).isEqualTo(404);
+        org.assertj.core.api.Assertions.assertThat(ex.getErrorCode()).isEqualTo("message-not-found");
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    void restoreMessage_unknownConversation_is404_withoutTouchingFirestore() {
+        when(repo.findByFirestoreConversationId("ghost")).thenReturn(Optional.empty());
+
+        var ex = org.junit.jupiter.api.Assertions.assertThrows(
+                com.yadony.api.common.YadonyBusinessException.class,
+                () -> controller.restoreMessage("ghost", "m1", reason(), adminAuth()));
+
+        org.assertj.core.api.Assertions.assertThat(ex.getErrorCode()).isEqualTo("conversation-not-found");
+        verifyNoInteractions(firestoreService);
+    }
+
+    @Test
+    void restoreMessage_withoutAdminPrincipal_is403_beforeAnyWrite() {
+        var anonymous = new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                "someone", null, java.util.List.of());
+
+        var ex = org.junit.jupiter.api.Assertions.assertThrows(
+                com.yadony.api.common.YadonyBusinessException.class,
+                () -> controller.restoreMessage("conv_r", "m1", reason(), anonymous));
+
+        org.assertj.core.api.Assertions.assertThat(ex.getStatus().value()).isEqualTo(403);
+        verifyNoInteractions(firestoreService);
     }
 
     @Test

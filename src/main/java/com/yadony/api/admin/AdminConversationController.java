@@ -1,6 +1,11 @@
 package com.yadony.api.admin;
 
+import com.yadony.api.admin.account.AdminPrincipal;
 import com.yadony.api.admin.dto.AdminConversationResponse;
+import com.yadony.api.admin.dto.RestoreRequest;
+import com.yadony.api.common.YadonyBusinessException;
+import jakarta.validation.Valid;
+import org.springframework.security.core.Authentication;
 import com.yadony.api.admin.dto.AdminMessageResponse;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
@@ -16,7 +21,6 @@ import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -105,24 +109,33 @@ public class AdminConversationController {
                 .collect(Collectors.toMap(UserEntity::getId, Function.identity(), (a, b) -> a));
 
         List<AdminMessageResponse> messages = raw.stream()
-                .map(m -> new AdminMessageResponse(
-                        (String) m.get("id"),
-                        conversationId,
-                        senderName((String) m.get("senderId"), usersById),
-                        (String) m.getOrDefault("body", ""),
-                        false,
-                        m.get("deletedAt") != null,
-                        (String) m.get("sentAt")))
+                .map(m -> {
+                    String deletedAt = m.get("deletedAt") != null ? m.get("deletedAt").toString() : null;
+                    return new AdminMessageResponse(
+                            (String) m.get("id"),
+                            conversationId,
+                            senderName((String) m.get("senderId"), usersById),
+                            (String) m.getOrDefault("body", ""),
+                            false,
+                            deletedAt != null,
+                            (String) m.get("sentAt"),
+                            deletedAt,
+                            // Seul le serveur écrit deletedAt sur un message (règles Firestore).
+                            deletedAt != null);
+                })
                 .toList();
         return ResponseEntity.ok(messages);
     }
 
-    @PreAuthorize("hasAuthority('MESSAGE_DELETE')")
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('MESSAGE_DELETE')")
     @DeleteMapping("/{conversationId}/messages/{messageId}")
     public ResponseEntity<Void> deleteMessage(
             @PathVariable String conversationId,
             @PathVariable String messageId,
-            @AuthenticationPrincipal UserEntity admin) {
+            Authentication authentication) {
+        // L'admin authentifié est un AdminPrincipal : l'ancien @AuthenticationPrincipal
+        // UserEntity valait toujours null et gravait une trace sans acteur dans audit_log.
+        UUID adminId = AdminPrincipal.requireAdminId(authentication);
 
         ConversationEntity conv = conversationRepository
                 .findByFirestoreConversationId(conversationId)
@@ -130,10 +143,41 @@ public class AdminConversationController {
 
         firestoreService.softDeleteMessage(conversationId, messageId);
 
-        auditService.log("message", conv.getId(), "MESSAGE_ADMIN_DELETED",
-                admin != null ? admin.getId() : null,
+        auditService.log("message", conv.getId(), "MESSAGE_ADMIN_DELETED", adminId,
                 Map.of("conversationId", conversationId, "messageId", messageId));
 
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Annule une suppression de message. Possible parce que {@code softDeleteMessage} ne pose
+     * que {@code deletedAt} : le corps, l'image et la position restent dans le document.
+     */
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('MESSAGE_DELETE')")
+    @PostMapping("/{conversationId}/messages/{messageId}/restore")
+    public ResponseEntity<Void> restoreMessage(
+            @PathVariable String conversationId,
+            @PathVariable String messageId,
+            @Valid @RequestBody RestoreRequest request,
+            Authentication authentication) {
+        UUID adminId = AdminPrincipal.requireAdminId(authentication);
+
+        ConversationEntity conv = conversationRepository
+                .findByFirestoreConversationId(conversationId)
+                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
+                        "conversation-not-found", "Not Found", "Conversation introuvable"));
+
+        switch (firestoreService.restoreMessage(conversationId, messageId)) {
+            case NOT_FOUND -> throw new YadonyBusinessException(HttpStatus.NOT_FOUND,
+                    "message-not-found", "Not Found", "Message introuvable");
+            case NOT_DELETED -> throw new YadonyBusinessException(HttpStatus.CONFLICT,
+                    "message-not-deleted", "Conflict", "Ce message n'est pas supprimé");
+            case RESTORED -> { }
+        }
+
+        auditService.log("message", conv.getId(), "MESSAGE_ADMIN_RESTORED", adminId,
+                Map.of("conversationId", conversationId, "messageId", messageId,
+                        "reason", request.normalizedReason()));
         return ResponseEntity.noContent().build();
     }
 

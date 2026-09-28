@@ -136,4 +136,82 @@ class FirestoreServiceTest {
         verify(collection).document("fb-uid-123");
         verify(document).delete();
     }
+    // ── Restauration d'un message supprime par un admin ──────────────────────
+
+    private DocumentReference messageRef(Firestore firestore) {
+        CollectionReference conversations = mock(CollectionReference.class);
+        DocumentReference conversation = mock(DocumentReference.class);
+        CollectionReference messages = mock(CollectionReference.class);
+        DocumentReference message = mock(DocumentReference.class);
+        when(firestore.collection("conversations")).thenReturn(conversations);
+        when(conversations.document("conv_1")).thenReturn(conversation);
+        when(conversation.collection("messages")).thenReturn(messages);
+        when(messages.document("msg_1")).thenReturn(message);
+        return message;
+    }
+
+    private static com.google.cloud.firestore.DocumentSnapshot snapshot(boolean exists, Object deletedAt) {
+        com.google.cloud.firestore.DocumentSnapshot snap = mock(com.google.cloud.firestore.DocumentSnapshot.class);
+        when(snap.exists()).thenReturn(exists);
+        if (exists) {
+            when(snap.get("deletedAt")).thenReturn(deletedAt);
+        }
+        return snap;
+    }
+
+    @Test
+    void restoreMessage_deletedMessage_removesDeletedAt_andReportsRestored() {
+        Firestore firestore = mock(Firestore.class);
+        DocumentReference message = messageRef(firestore);
+        var snap = snapshot(true, "2026-09-01T10:00:00Z");
+        when(message.get()).thenReturn(ApiFutures.immediateFuture(snap));
+        when(message.update(org.mockito.ArgumentMatchers.eq("deletedAt"), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(ApiFutures.immediateFuture(mock(WriteResult.class)));
+
+        var outcome = new FirestoreService(firestore).restoreMessage("conv_1", "msg_1");
+
+        assertThat(outcome).isEqualTo(FirestoreService.MessageRestoreOutcome.RESTORED);
+        verify(message).update("deletedAt", com.google.cloud.firestore.FieldValue.delete());
+    }
+
+    @Test
+    void restoreMessage_notDeleted_reportsNotDeleted_withoutWriting() {
+        Firestore firestore = mock(Firestore.class);
+        DocumentReference message = messageRef(firestore);
+        var snap = snapshot(true, null);
+        when(message.get()).thenReturn(ApiFutures.immediateFuture(snap));
+
+        var outcome = new FirestoreService(firestore).restoreMessage("conv_1", "msg_1");
+
+        assertThat(outcome).isEqualTo(FirestoreService.MessageRestoreOutcome.NOT_DELETED);
+        org.mockito.Mockito.verify(message, org.mockito.Mockito.never())
+                .update(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void restoreMessage_unknownMessage_reportsNotFound() {
+        Firestore firestore = mock(Firestore.class);
+        DocumentReference message = messageRef(firestore);
+        var snap = snapshot(false, null);
+        when(message.get()).thenReturn(ApiFutures.immediateFuture(snap));
+
+        assertThat(new FirestoreService(firestore).restoreMessage("conv_1", "msg_1"))
+                .isEqualTo(FirestoreService.MessageRestoreOutcome.NOT_FOUND);
+    }
+
+    @Test
+    void restoreMessage_firestoreDisabled_reportsNotFound() {
+        assertThat(new FirestoreService(null).restoreMessage("conv_1", "msg_1"))
+                .isEqualTo(FirestoreService.MessageRestoreOutcome.NOT_FOUND);
+    }
+
+    @Test
+    void restoreMessage_firestoreFailure_isWrapped() {
+        Firestore firestore = mock(Firestore.class);
+        DocumentReference message = messageRef(firestore);
+        when(message.get()).thenReturn(ApiFutures.immediateFailedFuture(new IllegalStateException("down")));
+
+        org.junit.jupiter.api.Assertions.assertThrows(RuntimeException.class,
+                () -> new FirestoreService(firestore).restoreMessage("conv_1", "msg_1"));
+    }
 }
