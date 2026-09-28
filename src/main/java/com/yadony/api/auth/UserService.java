@@ -297,12 +297,52 @@ public class UserService {
                     "Conflict", "Ce compte n'est pas en cours de suppression");
         }
 
-        user.setStatus(UserStatus.ACTIVE);
-        user.setDeletionRequestedAt(null);
-        userRepository.save(user);
+        clearPendingDeletion(user);
 
         auditService.log("USER", user.getId(), "USER_DELETION_CANCELLED", user.getId(), Map.of());
         log.info("Account deletion cancelled for user {}", user.getId());
+    }
+
+    /**
+     * Annulation, par un administrateur, d'une demande de suppression encore en délai de grâce.
+     * Même cœur que {@link #reactivateAccount} ; seuls l'acteur de l'audit et la notification
+     * diffèrent.
+     *
+     * <p>409 {@code user-deletion-not-cancellable} hors PENDING_DELETION, et pour un compte déjà
+     * finalisé (anonymisé, {@code deleted_at} posé) : l'anonymisation est irréversible.
+     *
+     * <p>Ce qui n'est PAS rétabli, parce que déjà exécuté au passage en PENDING_DELETION et
+     * irréversible : les remboursements wallet demandés à J0 ({@link #settleWalletsForDeletion}),
+     * les offres de l'utilisateur comme expéditeur et ses annonces comme voyageur annulées par
+     * les écouteurs d'{@link AccountDeletionRequestedEvent} (remboursements et notifications
+     * déjà partis vers les contreparties). Aucun statut antérieur n'étant mémorisé, le compte
+     * repasse ACTIVE, comme pour l'annulation par l'utilisateur.
+     */
+    @Transactional
+    public UserEntity cancelDeletionByAdmin(UUID userId, UUID adminId, String reason) {
+        UserEntity user = userRepository.findByIdIncludingDeleted(userId)
+                .orElseThrow(() -> new YadonyBusinessException(
+                        HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
+        if (user.getDeletedAt() != null || user.getStatus() != UserStatus.PENDING_DELETION) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "user-deletion-not-cancellable",
+                    "Conflict",
+                    "Ce compte n'a pas de demande de suppression en cours, ou sa suppression est déjà finalisée");
+        }
+
+        UserStatus previousStatus = user.getStatus();
+        UserEntity saved = clearPendingDeletion(user);
+
+        auditService.log("USER", userId, "USER_DELETION_CANCELLED_BY_ADMIN", adminId,
+                Map.of("reason", reason != null ? reason : "", "previousStatus", previousStatus.name()));
+        eventPublisher.publishEvent(new com.yadony.api.auth.events.AccountDeletionCancelledByAdminEvent(userId, adminId));
+        log.info("Account deletion cancelled by admin for user {}", userId);
+        return saved;
+    }
+
+    private UserEntity clearPendingDeletion(UserEntity user) {
+        user.setStatus(UserStatus.ACTIVE);
+        user.setDeletionRequestedAt(null);
+        return userRepository.save(user);
     }
 
     // Admin — override du taux de commission Yadony d'un utilisateur (null = retour au taux global).

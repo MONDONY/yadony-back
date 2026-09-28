@@ -350,4 +350,70 @@ class AdminUserControllerTest {
         assertThat(detail.payoutsHeldReason()).isEqualTo("KYC_REVOKED");
         assertThat(detail.heldPaymentsCount()).isEqualTo(2L);
     }
+
+    // ── Annulation d'une suppression de compte ───────────────────────────────
+
+    private AdminUserController newController() {
+        return new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService,
+                deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService);
+    }
+
+    @Test
+    void cancelDeletion_delegatesWithAdminAndTrimmedReason_andReturnsDetail() {
+        when(firebaseContact.getContact(any())).thenReturn(
+                com.yadony.api.auth.FirebaseContactService.Contact.EMPTY);
+        UUID userId = UUID.randomUUID();
+        com.yadony.api.auth.UserEntity user = new com.yadony.api.auth.UserEntity();
+        user.setStatus(com.yadony.api.auth.UserStatus.ACTIVE);
+        user.setKycStatus(com.yadony.api.auth.KycStatus.NOT_STARTED);
+        when(userService.cancelDeletionByAdmin(userId, ADMIN_ID, "Demande faite par erreur")).thenReturn(user);
+
+        var detail = newController().cancelDeletion(userId,
+                new com.yadony.api.admin.dto.RestoreRequest("  Demande faite par erreur "), adminAuth());
+
+        assertThat(detail.status()).isEqualTo("ACTIVE");
+        assertThat(detail.deletionRequestedAt()).isNull();
+        assertThat(detail.deletionScheduledFor()).isNull();
+        verify(userService).cancelDeletionByAdmin(userId, ADMIN_ID, "Demande faite par erreur");
+    }
+
+    @Test
+    void getUser_pendingDeletion_exposesRequestAndScheduledFinalization() {
+        when(firebaseContact.getContact(any())).thenReturn(
+                com.yadony.api.auth.FirebaseContactService.Contact.EMPTY);
+        UUID userId = UUID.randomUUID();
+        com.yadony.api.auth.UserEntity user = new com.yadony.api.auth.UserEntity();
+        user.setStatus(com.yadony.api.auth.UserStatus.PENDING_DELETION);
+        user.setKycStatus(com.yadony.api.auth.KycStatus.NOT_STARTED);
+        java.time.Instant requested = java.time.Instant.parse("2026-09-10T08:00:00Z");
+        user.setDeletionRequestedAt(requested);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+
+        var detail = newController().getUser(userId);
+
+        assertThat(detail.deletionRequestedAt()).isEqualTo(java.time.LocalDateTime.of(2026, 9, 10, 8, 0));
+        // Le scheduler finalise les demandes de plus de 30 jours.
+        assertThat(detail.deletionScheduledFor()).isEqualTo(java.time.LocalDateTime.of(2026, 10, 10, 8, 0));
+    }
+
+    @Test
+    void listUsers_itemsExposeDeletionDates() {
+        com.yadony.api.auth.UserEntity user = new com.yadony.api.auth.UserEntity();
+        user.setStatus(com.yadony.api.auth.UserStatus.PENDING_DELETION);
+        user.setKycStatus(com.yadony.api.auth.KycStatus.NOT_STARTED);
+        user.setDeletionRequestedAt(java.time.Instant.parse("2026-09-10T08:00:00Z"));
+        user.setFirebaseUid("uid-pending");
+        when(userRepository.findAdminFiltered(org.mockito.ArgumentMatchers.eq("PENDING_DELETION"), any(), any(),
+                any(), any(), any(), any(), any()))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of(user)));
+        when(firebaseContact.getContacts(any())).thenReturn(java.util.Map.of());
+
+        var page = newController().listUsers(com.yadony.api.auth.UserStatus.PENDING_DELETION,
+                null, null, null, null, null, 0, 20);
+
+        var item = page.getContent().get(0);
+        assertThat(item.status()).isEqualTo("PENDING_DELETION");
+        assertThat(item.deletionRequestedAt()).isEqualTo(java.time.LocalDateTime.of(2026, 9, 10, 8, 0));
+        assertThat(item.deletionScheduledFor()).isEqualTo(java.time.LocalDateTime.of(2026, 10, 10, 8, 0));
+    }
 }

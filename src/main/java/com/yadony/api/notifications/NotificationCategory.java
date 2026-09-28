@@ -25,7 +25,8 @@ public enum NotificationCategory {
     ANNONCE("annonce");
 
     private static final Set<String> ANNONCES = Set.of(
-            "ADMIN_BROADCAST", "SYSTEM", "ADMIN_WARNING", "MESSAGING_MUTED");
+            "ADMIN_BROADCAST", "SYSTEM", "ADMIN_WARNING", "MESSAGING_MUTED",
+            "ACCOUNT_DELETION_CANCELLED");
 
     private static final Set<String> PAIEMENTS_TYPES = Set.of(
             "PAYMENT_RELEASED", "MM_PAYMENT_PENDING", "MOBILE_MONEY_PAYMENT_CONFIRMED",

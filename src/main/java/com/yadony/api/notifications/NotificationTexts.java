@@ -589,6 +589,12 @@ public final class NotificationTexts {
 
     // ── Annonces et compte ───────────────────────────────────────────────────
 
+    /** Demande de suppression de compte annulée par l'équipe (compte encore en délai de grâce). */
+    public static NotificationText accountDeletionCancelledByAdmin(Messages m) {
+        return new NotificationText(m.get("notification.account-deletion-cancelled.title"),
+                m.get("notification.account-deletion-cancelled.body"));
+    }
+
     public static NotificationText accountSuspended(Messages m) {
         return new NotificationText(m.get("notification.account-suspended.title"),
                 m.get("notification.account-suspended.body"));

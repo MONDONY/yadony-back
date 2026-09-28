@@ -432,6 +432,83 @@ class UserServiceDeleteAccountTest {
     }
 
     @Nested
+    @DisplayName("cancelDeletionByAdmin")
+    class CancelByAdmin {
+
+        private final UUID adminId = UUID.randomUUID();
+
+        @Test
+        @DisplayName("PENDING_DELETION → ACTIVE, date effacée, audit admin + motif, événement de notification")
+        void success_restoresActive_auditsAdmin_andPublishesEvent() {
+            UserEntity user = makeUser(UserStatus.PENDING_DELETION);
+            user.setDeletionRequestedAt(Instant.now().minusSeconds(86_400));
+            when(userRepository.findByIdIncludingDeleted(USER_ID)).thenReturn(Optional.of(user));
+            when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            UserEntity result = userService.cancelDeletionByAdmin(USER_ID, adminId, "Demande faite par erreur");
+
+            assertThat(result.getStatus()).isEqualTo(UserStatus.ACTIVE);
+            assertThat(result.getDeletionRequestedAt()).isNull();
+            verify(auditService).log(eq("USER"), eq(USER_ID), eq("USER_DELETION_CANCELLED_BY_ADMIN"), eq(adminId),
+                    eq(java.util.Map.of("reason", "Demande faite par erreur", "previousStatus", "PENDING_DELETION")));
+            verify(auditService, never()).log(any(), any(), eq("USER_DELETION_CANCELLED"), any(), any());
+            verify(eventPublisher).publishEvent(
+                    new com.yadony.api.auth.events.AccountDeletionCancelledByAdminEvent(USER_ID, adminId));
+        }
+
+        @Test
+        @DisplayName("compte non en suppression → 409 user-deletion-not-cancellable, rien écrit")
+        void notPending_throws409() {
+            when(userRepository.findByIdIncludingDeleted(USER_ID)).thenReturn(Optional.of(makeUser(UserStatus.ACTIVE)));
+
+            assertThatThrownBy(() -> userService.cancelDeletionByAdmin(USER_ID, adminId, "Demande faite par erreur"))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> {
+                    assertThat(((YadonyBusinessException) e).getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("user-deletion-not-cancellable");
+                });
+            verify(userRepository, never()).save(any());
+            verifyNoInteractions(auditService, eventPublisher);
+        }
+
+        @Test
+        @DisplayName("compte déjà finalisé (anonymisé, deleted_at posé) → 409, jamais restauré")
+        void finalized_throws409() {
+            UserEntity user = makeUser(UserStatus.BANNED);
+            user.setDeletedAt(java.time.LocalDateTime.now());
+            when(userRepository.findByIdIncludingDeleted(USER_ID)).thenReturn(Optional.of(user));
+
+            assertThatThrownBy(() -> userService.cancelDeletionByAdmin(USER_ID, adminId, "Demande faite par erreur"))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo("user-deletion-not-cancellable");
+            verify(userRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("PENDING_DELETION mais déjà soft-deleted (finalisation en cours) → 409")
+        void pendingButDeleted_throws409() {
+            UserEntity user = makeUser(UserStatus.PENDING_DELETION);
+            user.setDeletedAt(java.time.LocalDateTime.now());
+            when(userRepository.findByIdIncludingDeleted(USER_ID)).thenReturn(Optional.of(user));
+
+            assertThatThrownBy(() -> userService.cancelDeletionByAdmin(USER_ID, adminId, "Demande faite par erreur"))
+                .extracting("errorCode")
+                .isEqualTo("user-deletion-not-cancellable");
+        }
+
+        @Test
+        @DisplayName("utilisateur inconnu → 404")
+        void unknown_throws404() {
+            when(userRepository.findByIdIncludingDeleted(USER_ID)).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> userService.cancelDeletionByAdmin(USER_ID, adminId, "Demande faite par erreur"))
+                .extracting("status")
+                .isEqualTo(HttpStatus.NOT_FOUND);
+        }
+    }
+
+    @Nested
     @DisplayName("finalizeGdprDeletion")
     class FinalizeGdpr {
 
