@@ -47,7 +47,8 @@ class AdminRatingsControllerTest {
     }
 
     private AdminRatingsController controller() {
-        return new AdminRatingsController(ratingRepo, userRepo, auditService, ratingService, deletionTraceService);
+        return new AdminRatingsController(ratingRepo, userRepo, auditService, deletionTraceService,
+                new AdminRatingModerationService(ratingRepo, auditService, ratingService));
     }
 
     // ---- listRatings ----
