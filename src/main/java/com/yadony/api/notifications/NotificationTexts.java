@@ -651,4 +651,28 @@ public final class NotificationTexts {
         String key = credit ? "notification.wallet-admin-credit" : "notification.wallet-admin-debit";
         return new NotificationText(m.get(key + ".title"), m.get(key + ".body", amountText));
     }
+
+    // ── Support ──────────────────────────────────────────────────────────────
+
+    /** Réponse du support dans un fil que l'utilisateur connaît déjà. */
+    public static NotificationText supportReply(Messages m) {
+        return new NotificationText(m.get("notification.support-reply.title"),
+                m.get("notification.support-reply.body"));
+    }
+
+    /**
+     * Premier message d'une conversation ouverte par le support : l'utilisateur
+     * n'a rien demandé, le corps cite donc le sujet. On raccourcit le sujet (la
+     * variable) au mot pour que la phrase assemblée tienne dans le cap, jamais
+     * la phrase elle-même. Sujet vide : phrase sans sujet.
+     */
+    public static NotificationText supportStarted(Messages m, String subject) {
+        String title = m.get("notification.support-started.title");
+        if (subject == null || subject.isBlank()) {
+            return new NotificationText(title, m.get("notification.support-started.default-body"));
+        }
+        int room = NotificationCaps.BODY_MAX - m.get("notification.support-started.body", "").length();
+        String flat = subject.trim().replaceAll("\\s+", " ");
+        return new NotificationText(title, m.get("notification.support-started.body", truncateAtWord(flat, room)));
+    }
 }

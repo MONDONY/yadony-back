@@ -116,6 +116,13 @@ class NotificationPrefsServiceTest {
         assertThat(service.isAllowed(USER_ID, "request_accepted")).isFalse();
     }
 
+    /** Un message du support suit l'interrupteur « Messages » : il s'affiche dans l'onglet Messages. */
+    @Test
+    void isAllowed_supportMessage_followsTheMessagesPref() {
+        when(repository.findById(USER_ID)).thenReturn(Optional.of(buildEntity(true, true, false, true, false)));
+        assertThat(service.isAllowed(USER_ID, "SUPPORT_MESSAGE")).isFalse();
+    }
+
     @Test
     void isAllowed_newMessage_withPrefDisabled_returnsFalse() {
         when(repository.findById(USER_ID)).thenReturn(Optional.of(buildEntity(true, true, false, true, false)));

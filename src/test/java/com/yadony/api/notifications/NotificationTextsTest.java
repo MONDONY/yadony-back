@@ -150,6 +150,11 @@ class NotificationTextsTest {
         String pireMontant = com.yadony.api.payments.wallet.WalletAmountText.format(new BigDecimal("99999.99"), "CAD");
         map.put("walletAdjustedByAdmin crédit", NotificationTexts.walletAdjustedByAdmin(m, true, pireMontant));
         map.put("walletAdjustedByAdmin débit", NotificationTexts.walletAdjustedByAdmin(m, false, pireMontant));
+        map.put("supportReply", NotificationTexts.supportReply(m));
+        map.put("supportStarted", NotificationTexts.supportStarted(m,
+                "Votre vérification d'identité doit être refaite avant votre prochain envoi vers Dakar"));
+        map.put("supportStarted court", NotificationTexts.supportStarted(m, "Compte"));
+        map.put("supportStarted sans sujet", NotificationTexts.supportStarted(m, "  "));
         return map;
     }
 

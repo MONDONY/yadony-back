@@ -1,6 +1,7 @@
 package com.yadony.api.support;
 
 import com.yadony.api.auth.UserEntity;
+import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.stripe.AdminAlertService;
@@ -48,6 +49,7 @@ public class SupportTicketService {
     private final AuditService auditService;
     private final SupportAttachmentService attachmentService;
     private final ApplicationEventPublisher eventPublisher;
+    private final UserRepository userRepository;
 
     public SupportTicketService(SupportTicketRepository ticketRepository,
                                 SupportMessageRepository messageRepository,
@@ -55,7 +57,8 @@ public class SupportTicketService {
                                 AdminAlertService adminAlertService,
                                 AuditService auditService,
                                 SupportAttachmentService attachmentService,
-                                ApplicationEventPublisher eventPublisher) {
+                                ApplicationEventPublisher eventPublisher,
+                                UserRepository userRepository) {
         this.ticketRepository = ticketRepository;
         this.messageRepository = messageRepository;
         this.replyRepository = replyRepository;
@@ -63,6 +66,7 @@ public class SupportTicketService {
         this.auditService = auditService;
         this.attachmentService = attachmentService;
         this.eventPublisher = eventPublisher;
+        this.userRepository = userRepository;
     }
 
     // ---------------------------------------------------------------- lecture
@@ -265,6 +269,60 @@ public class SupportTicketService {
         return message;
     }
 
+    /**
+     * Conversation ouverte par le support vers un utilisateur qui n'a rien
+     * demande. Le ticket nait assigne a l'admin qui l'ouvre (il peut donc
+     * repondre et resoudre sans passer par /assign) et en WAITING_USER : la balle
+     * est dans le camp de l'utilisateur.
+     *
+     * <p>Seul un compte supprime (soft delete, donc invisible au {@code @Where}
+     * de UserEntity) est refuse en 404. Un compte suspendu, banni ou en cours de
+     * suppression reste joignable : c'est precisement a lui qu'on a le plus
+     * souvent quelque chose a expliquer.
+     *
+     * <p>Pas d'alerte Telegram : elle sert a signaler au support un ticket qu'il
+     * ne connait pas encore, ce qui n'a pas de sens quand c'est lui qui l'ouvre.
+     */
+    public SupportTicketEntity adminStartTicket(UUID userId, UUID adminId, String category,
+                                                String subject, String firstMessage,
+                                                List<String> attachmentKeys) {
+        String normalizedCategory = category == null || category.isBlank()
+                ? SupportCategory.OTHER.name()
+                : normalizeCategory(category);
+        String normalizedSubject = requireText(subject, "subject", MAX_SUBJECT_LENGTH);
+        String normalizedMessage = requireContentOrAttachments(firstMessage, attachmentKeys);
+
+        UserEntity user = userRepository.findById(userId)
+                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
+                        "user-not-found", "Utilisateur introuvable",
+                        "Aucun utilisateur actif ne correspond a cet identifiant"));
+        List<String> ownedKeys = attachmentService.requireOwnedKeys(
+                attachmentKeys, attachmentService.adminPrefix(adminId));
+
+        SupportTicketEntity ticket = new SupportTicketEntity();
+        ticket.setUserId(user.getId());
+        ticket.setCategory(normalizedCategory);
+        ticket.setSubject(normalizedSubject);
+        ticket.setStatus(SupportTicketStatus.WAITING_USER);
+        ticket.setPriority(SupportPriority.NORMAL);
+        ticket.setAssignedAdminId(adminId);
+        ticket.setLastMessageAt(now());
+        SupportTicketEntity saved = ticketRepository.save(ticket);
+
+        SupportMessageEntity message = appendMessage(saved, SupportMessageAuthorType.ADMIN, adminId,
+                normalizedMessage, true);
+        attachmentService.attach(message.getId(), ownedKeys, guessContentType(ownedKeys));
+
+        auditService.log(AUDIT_ENTITY, saved.getId(), "SUPPORT_TICKET_ADMIN_STARTED", adminId,
+                payload("adminId", adminId.toString(),
+                        "userId", user.getId().toString(),
+                        "ticketId", saved.getId().toString(),
+                        "category", normalizedCategory,
+                        "messageId", String.valueOf(message.getId()),
+                        "attachmentCount", String.valueOf(ownedKeys.size())));
+        return saved;
+    }
+
     public SupportTicketEntity resolve(UUID ticketId, UUID adminId) {
         SupportTicketEntity ticket = requireTicket(ticketId);
         requireAssignedTo(ticket, adminId);
@@ -285,6 +343,14 @@ public class SupportTicketService {
                                                SupportMessageAuthorType authorType,
                                                UUID authorId,
                                                String content) {
+        return appendMessage(ticket, authorType, authorId, content, false);
+    }
+
+    private SupportMessageEntity appendMessage(SupportTicketEntity ticket,
+                                               SupportMessageAuthorType authorType,
+                                               UUID authorId,
+                                               String content,
+                                               boolean startedByAdmin) {
         SupportMessageEntity message = new SupportMessageEntity();
         message.setTicketId(ticket.getId());
         message.setAuthorType(authorType);
@@ -293,7 +359,8 @@ public class SupportTicketService {
         SupportMessageEntity saved = messageRepository.save(message);
         ticket.setLastMessageAt(now());
         eventPublisher.publishEvent(new SupportMessageCreatedEvent(
-                ticket.getId(), saved.getId(), ticket.getUserId(), authorType));
+                ticket.getId(), saved.getId(), ticket.getUserId(), authorType,
+                startedByAdmin, startedByAdmin ? ticket.getSubject() : null));
         return saved;
     }
 

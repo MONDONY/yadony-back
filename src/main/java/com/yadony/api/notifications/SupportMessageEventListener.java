@@ -13,7 +13,13 @@ import org.springframework.transaction.event.TransactionalEventListener;
 import java.util.Map;
 
 /**
- * Push simple, sans repli SMS : une reponse du support n'a pas la criticite
+ * Chaque message d'un admin produit une entree du centre de notifications et
+ * un push (type {@code SUPPORT_MESSAGE}, donnee {@code ticketId}). Le push suit
+ * l'interrupteur « Messages » des preferences ; l'entree in-app, elle, est
+ * toujours enregistree. Premier message d'une conversation ouverte par le
+ * support : texte distinct, qui cite le sujet.
+ *
+ * <p>Push simple, sans repli SMS : une reponse du support n'a pas la criticite
  * d'un evenement de livraison. AFTER_COMMIT, sinon la notification pointerait
  * vers un message que la base n'a pas encore.
  */
@@ -34,10 +40,15 @@ public class SupportMessageEventListener {
             return;
         }
         Messages m = notificationDispatcher.messagesFor(event.getOwnerUserId());
+        NotificationText text = event.isStartedByAdmin()
+                ? NotificationTexts.supportStarted(m, event.getSubject())
+                : NotificationTexts.supportReply(m);
+        // notifyUser persiste l'entree du centre de notifications PUIS pousse,
+        // en un seul appel : jamais de push sans entree in-app, ni l'inverse.
         notificationDispatcher.notifyUser(
                 event.getOwnerUserId(),
-                m.get("notification.support-reply.title"),
-                m.get("notification.support-reply.body"),
+                text.title(),
+                text.body(),
                 Map.of("type", "SUPPORT_MESSAGE",
                         "ticketId", event.getTicketId().toString()));
     }
