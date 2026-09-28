@@ -53,4 +53,36 @@ public interface RatingRepository extends JpaRepository<RatingEntity, UUID> {
             @Param("minScore") Integer minScore,
             @Param("maxScore") Integer maxScore,
             Pageable pageable);
+
+    /**
+     * Avis supprimés (soft delete) pour la corbeille admin, du plus récemment supprimé au plus
+     * ancien. Requête native délibérée : une requête JPQL subirait le
+     * {@code @Where(deleted_at IS NULL)} de {@link RatingEntity} et ne renverrait jamais rien.
+     * Le tri est porté par la requête : passer un {@code Pageable} non trié.
+     */
+    @Query(value = """
+            SELECT r.* FROM ratings r
+            WHERE r.deleted_at IS NOT NULL
+              AND (CAST(:flagged AS BOOLEAN) IS NULL OR r.flagged = CAST(:flagged AS BOOLEAN))
+              AND (CAST(:minScore AS INTEGER) IS NULL OR r.stars >= CAST(:minScore AS INTEGER))
+              AND (CAST(:maxScore AS INTEGER) IS NULL OR r.stars <= CAST(:maxScore AS INTEGER))
+            ORDER BY r.deleted_at DESC, r.id
+            """,
+            countQuery = """
+            SELECT COUNT(*) FROM ratings r
+            WHERE r.deleted_at IS NOT NULL
+              AND (CAST(:flagged AS BOOLEAN) IS NULL OR r.flagged = CAST(:flagged AS BOOLEAN))
+              AND (CAST(:minScore AS INTEGER) IS NULL OR r.stars >= CAST(:minScore AS INTEGER))
+              AND (CAST(:maxScore AS INTEGER) IS NULL OR r.stars <= CAST(:maxScore AS INTEGER))
+            """,
+            nativeQuery = true)
+    Page<RatingEntity> findDeletedAdminFiltered(
+            @Param("flagged") Boolean flagged,
+            @Param("minScore") Integer minScore,
+            @Param("maxScore") Integer maxScore,
+            Pageable pageable);
+
+    /** Avis par id, supprimé ou non (même motif que {@link #findDeletedAdminFiltered}). */
+    @Query(value = "SELECT * FROM ratings WHERE id = :id", nativeQuery = true)
+    Optional<RatingEntity> findByIdIncludingDeleted(@Param("id") UUID id);
 }

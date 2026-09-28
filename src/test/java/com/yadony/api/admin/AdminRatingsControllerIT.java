@@ -30,6 +30,8 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -109,5 +111,90 @@ class AdminRatingsControllerIT {
                 .andExpect(status().isForbidden());
 
         verify(ratingRepository, never()).save(any());
+    }
+
+    // ---- Restauration ----
+
+    private RatingEntity deletedRating() {
+        RatingEntity r = new RatingEntity();
+        org.springframework.test.util.ReflectionTestUtils.setField(r, "id", RATING_ID);
+        r.setRatedUserId(UUID.randomUUID());
+        r.setBidId(UUID.randomUUID());
+        r.setStars(2);
+        r.setDeletedAt(java.time.LocalDateTime.now());
+        return r;
+    }
+
+    @Test
+    @DisplayName("POST restore — ADMIN : 200, avis rendu sans deletedAt, audit RATING_RESTORED")
+    void restore_asAdmin_returns200() throws Exception {
+        when(ratingRepository.findByIdIncludingDeleted(RATING_ID)).thenReturn(Optional.of(deletedRating()));
+
+        mockMvc.perform(post("/admin/ratings/{id}/restore", RATING_ID)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reason\":\"Suppression faite par erreur\"}")
+                        .with(authentication(auth(AdminRole.ADMIN))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(RATING_ID.toString()))
+                .andExpect(jsonPath("$.deletedAt").doesNotExist());
+
+        verify(auditService).log(eq("RATING"), eq(RATING_ID), eq("RATING_RESTORED"), eq(ADMIN_ID),
+                eq(Map.of("ratingId", RATING_ID.toString(), "reason", "Suppression faite par erreur")));
+    }
+
+    @Test
+    @DisplayName("POST restore — le support (sans RATING_DELETE) : 403")
+    void restore_asSupport_isForbidden() throws Exception {
+        mockMvc.perform(post("/admin/ratings/{id}/restore", RATING_ID)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reason\":\"Suppression faite par erreur\"}")
+                        .with(authentication(auth(AdminRole.SUPPORT))))
+                .andExpect(status().isForbidden());
+
+        verify(ratingRepository, never()).findByIdIncludingDeleted(any());
+    }
+
+    @Test
+    @DisplayName("POST restore — avis visible : 409 rating-not-deleted en problem+json")
+    void restore_notDeleted_returns409() throws Exception {
+        RatingEntity visible = deletedRating();
+        visible.setDeletedAt(null);
+        when(ratingRepository.findByIdIncludingDeleted(RATING_ID)).thenReturn(Optional.of(visible));
+
+        mockMvc.perform(post("/admin/ratings/{id}/restore", RATING_ID)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reason\":\"Suppression faite par erreur\"}")
+                        .with(authentication(auth(AdminRole.ADMIN))))
+                .andExpect(status().isConflict())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("rating-not-deleted"));
+    }
+
+    @Test
+    @DisplayName("POST restore — motif absent ou trop court : 422")
+    void restore_shortReason_returns422() throws Exception {
+        mockMvc.perform(post("/admin/ratings/{id}/restore", RATING_ID)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reason\":\"oups\"}")
+                        .with(authentication(auth(AdminRole.ADMIN))))
+                .andExpect(status().isUnprocessableEntity());
+
+        verify(ratingRepository, never()).findByIdIncludingDeleted(any());
+    }
+
+    @Test
+    @DisplayName("GET deleted=true — la corbeille, lisible par le support (RATING_MODERATE)")
+    void listDeleted_asSupport_returnsTrash() throws Exception {
+        when(ratingRepository.findDeletedAdminFiltered(any(), any(), any(), any()))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of(deletedRating()),
+                        org.springframework.data.domain.PageRequest.of(0, 20), 1));
+
+        mockMvc.perform(get("/admin/ratings").param("deleted", "true")
+                        .with(authentication(auth(AdminRole.SUPPORT))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].id").value(RATING_ID.toString()))
+                .andExpect(jsonPath("$.content[0].deletedAt").exists());
+
+        verify(ratingRepository, never()).findAdminFiltered(any(), any(), any(), any());
     }
 }

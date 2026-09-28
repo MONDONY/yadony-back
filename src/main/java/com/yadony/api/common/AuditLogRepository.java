@@ -48,4 +48,12 @@ public interface AuditLogRepository extends JpaRepository<AuditLogEntity, Long> 
     @Query("SELECT a FROM AuditLogEntity a WHERE a.entityType = 'kyc_verification' "
             + "AND a.entityId IN :entityIds ORDER BY a.createdAt DESC, a.id DESC")
     List<AuditLogEntity> findKycHistory(@Param("entityIds") Collection<UUID> entityIds, Pageable pageable);
+
+    /**
+     * Traces d'une action sur un lot d'entités, de la plus récente à la plus ancienne. Sert à
+     * retrouver qui a supprimé un élément, et pourquoi, sans dupliquer ces informations dans
+     * une colonne : l'audit, immuable, fait déjà foi.
+     */
+    List<AuditLogEntity> findByEntityTypeAndActionAndEntityIdInOrderByCreatedAtDescIdDesc(
+            String entityType, String action, Collection<UUID> entityIds);
 }

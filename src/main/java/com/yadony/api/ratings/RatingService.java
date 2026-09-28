@@ -363,6 +363,10 @@ public class RatingService {
             if (!ratings.isEmpty()) {
                 double avg = ratings.stream().mapToInt(RatingEntity::getStars).average().orElse(0.0);
                 user.setAverageRating(BigDecimal.valueOf(avg).setScale(2, RoundingMode.HALF_UP));
+            } else {
+                // Le dernier avis compté vient d'être retiré (suppression, exclusion admin) :
+                // l'ancienne moyenne ne décrit plus rien et ne doit pas survivre au décompte à 0.
+                user.setAverageRating(null);
             }
             userRepository.save(user);
         });
