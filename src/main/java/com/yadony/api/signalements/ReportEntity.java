@@ -19,6 +19,13 @@ public class ReportEntity extends BaseEntity {
     @Column(name = "target_id")
     private UUID targetId;
 
+    /**
+     * Identifiant Firestore du message signalé (cible MESSAGE, dont {@code targetId} est alors
+     * la conversation). {@code null} pour les autres cibles.
+     */
+    @Column(name = "target_message_id", length = 128)
+    private String targetMessageId;
+
     @Column(name = "reporter_id")
     private UUID reporterId;
 
@@ -52,6 +59,9 @@ public class ReportEntity extends BaseEntity {
 
     public UUID getTargetId() { return targetId; }
     public void setTargetId(UUID targetId) { this.targetId = targetId; }
+
+    public String getTargetMessageId() { return targetMessageId; }
+    public void setTargetMessageId(String targetMessageId) { this.targetMessageId = targetMessageId; }
 
     public UUID getReporterId() { return reporterId; }
     public void setReporterId(UUID reporterId) { this.reporterId = reporterId; }

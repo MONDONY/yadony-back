@@ -36,7 +36,8 @@ class AdminConversationControllerTest {
 
     @BeforeEach
     void setUp() {
-        controller = new AdminConversationController(repo, firestoreService, auditService, userRepository);
+        controller = new AdminConversationController(repo, firestoreService, auditService, userRepository,
+                new com.yadony.api.admin.AdminMessageModerationService(firestoreService, auditService));
     }
 
     @Test

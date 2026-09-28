@@ -4,7 +4,6 @@ import com.yadony.api.admin.account.AdminPrincipal;
 import com.yadony.api.admin.dto.AdminRatingResponse;
 import com.yadony.api.admin.dto.ExcludeRatingRequest;
 import com.yadony.api.admin.dto.RestoreRequest;
-import com.yadony.api.ratings.RatingService;
 import jakarta.validation.Valid;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
@@ -22,8 +21,6 @@ import org.springframework.security.core.Authentication;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
-import java.time.LocalDateTime;
-import java.time.ZoneOffset;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -39,19 +36,19 @@ public class AdminRatingsController {
     private final RatingRepository ratingRepo;
     private final UserRepository userRepo;
     private final AuditService auditService;
-    private final RatingService ratingService;
     private final DeletionTraceService deletionTraceService;
+    private final AdminRatingModerationService ratingModeration;
 
     public AdminRatingsController(RatingRepository ratingRepo,
                                   UserRepository userRepo,
                                   AuditService auditService,
-                                  RatingService ratingService,
-                                  DeletionTraceService deletionTraceService) {
+                                  DeletionTraceService deletionTraceService,
+                                  AdminRatingModerationService ratingModeration) {
         this.ratingRepo = ratingRepo;
         this.userRepo = userRepo;
         this.auditService = auditService;
-        this.ratingService = ratingService;
         this.deletionTraceService = deletionTraceService;
+        this.ratingModeration = ratingModeration;
     }
 
     @GetMapping("/admin/ratings")
@@ -100,21 +97,14 @@ public class AdminRatingsController {
                                                               @RequestBody ExcludeRatingRequest request,
                                                               Authentication authentication) {
         UUID adminId = AdminPrincipal.requireAdminId(authentication);
-        RatingEntity rating = findRatingOrThrow(id);
-        rating.setExcludedFromAverage(request.excluded());
-        rating.setExcludedReason(request.excluded() ? request.reason() : null);
-        ratingRepo.save(rating);
-        // L'exclusion sort l'avis de la moyenne : la moyenne stockée doit suivre.
-        recalculateAggregates(rating);
-        auditService.log("RATING", id, "RATING_EXCLUDED", adminId,
-                Map.of("ratingId", id.toString(), "reason", request.reason() != null ? request.reason() : ""));
+        RatingEntity rating = ratingModeration.exclude(id, request.excluded(), request.reason(), adminId);
 
         Map<UUID, UserEntity> usersById = buildUsersMap(rating);
         return ResponseEntity.ok(AdminRatingResponse.from(rating, usersById));
     }
 
     /** Longueur maximale du motif de suppression, conservé à vie dans {@code audit_log}. */
-    static final int MAX_DELETE_REASON_LENGTH = 500;
+    static final int MAX_DELETE_REASON_LENGTH = AdminRatingModerationService.MAX_DELETE_REASON_LENGTH;
 
     // Lot C : suppression definitive detachee de la moderation courante. L'annotation de
     // methode REMPLACE celle de classe (elle ne s'y ajoute pas), donc les deux conditions
@@ -129,21 +119,7 @@ public class AdminRatingsController {
                                              @RequestParam(required = false) String reason,
                                              Authentication authentication) {
         UUID adminId = AdminPrincipal.requireAdminId(authentication);
-        String normalizedReason = reason != null ? reason.trim() : "";
-        if (normalizedReason.length() > MAX_DELETE_REASON_LENGTH) {
-            throw new YadonyBusinessException(HttpStatus.BAD_REQUEST,
-                    "rating-delete-reason-too-long", "Rating Delete Reason Too Long",
-                    "Le motif de suppression ne doit pas dépasser "
-                            + MAX_DELETE_REASON_LENGTH + " caractères");
-        }
-        RatingEntity rating = findRatingOrThrow(id);
-        rating.setDeletedAt(LocalDateTime.now(ZoneOffset.UTC));
-        // Flush avant recalcul : la requête de moyenne doit déjà ignorer l'avis supprimé.
-        // Sans ce recalcul, la moyenne et le nombre d'avis du voyageur gardaient l'avis effacé.
-        ratingRepo.saveAndFlush(rating);
-        recalculateAggregates(rating);
-        auditService.log("RATING", id, "RATING_DELETED", adminId,
-                Map.of("ratingId", id.toString(), "reason", normalizedReason));
+        ratingModeration.delete(id, reason, adminId);
         return ResponseEntity.noContent().build();
     }
 
@@ -181,7 +157,7 @@ public class AdminRatingsController {
 
         rating.setDeletedAt(null);
         ratingRepo.saveAndFlush(rating);
-        recalculateAggregates(rating);
+        ratingModeration.recalculateAggregates(rating);
         auditService.log("RATING", id, "RATING_RESTORED", adminId,
                 Map.of("ratingId", id.toString(), "reason", request.normalizedReason()));
 
@@ -191,19 +167,6 @@ public class AdminRatingsController {
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
-
-    /** Moyenne et nombre d'avis du compte noté, relus depuis les avis encore comptés. */
-    private void recalculateAggregates(RatingEntity rating) {
-        if (rating.getRatedUserId() != null) {
-            ratingService.recalculateAverageRating(rating.getRatedUserId());
-        }
-    }
-
-    private RatingEntity findRatingOrThrow(UUID id) {
-        return ratingRepo.findById(id)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "rating-not-found", "Not Found", "Avis introuvable"));
-    }
 
     private Map<UUID, UserEntity> buildUsersMap(RatingEntity r) {
         Set<UUID> userIds = new HashSet<>();

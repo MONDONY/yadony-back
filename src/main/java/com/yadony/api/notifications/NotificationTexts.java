@@ -614,6 +614,11 @@ public final class NotificationTexts {
         return new NotificationText(m.get("notification.admin-warning.title"), body);
     }
 
+    /** Signalement traité : un remerciement, jamais la décision ni la sanction. */
+    public static NotificationText reportResolved(Messages m) {
+        return new NotificationText(m.get("notification.report-resolved.title"), m.get("notification.report-resolved.body"));
+    }
+
     /**
      * Solde corrigé à la main par l'équipe. {@code amountText} est déjà formaté
      * ({@code WalletAmountText#format}) ; le motif interne de la correction n'apparaît

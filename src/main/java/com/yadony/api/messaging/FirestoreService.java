@@ -148,6 +148,31 @@ public class FirestoreService {
         }
     }
 
+    /** Auteur d'un message ({@code senderId} : UUID du compte ou {@code SYSTEM}) et suppression éventuelle. */
+    public record MessageSnapshot(String senderId, boolean deleted) {}
+
+    /**
+     * Lecture d'un seul message, pour retrouver la cible d'un signalement. Vide si Firestore
+     * est désactivé, si le message n'existe pas ou si la lecture échoue : l'admin voit alors
+     * le message comme introuvable, sans que la liste des signalements tombe en 500.
+     */
+    public java.util.Optional<MessageSnapshot> findMessage(String conversationId, String messageId) {
+        if (firestore == null) {
+            return java.util.Optional.empty();
+        }
+        try {
+            var snap = firestore.collection("conversations").document(conversationId)
+                    .collection("messages").document(messageId).get().get();
+            if (!snap.exists()) {
+                return java.util.Optional.empty();
+            }
+            return java.util.Optional.of(new MessageSnapshot(snap.getString("senderId"), snap.get("deletedAt") != null));
+        } catch (Exception e) {
+            log.warn("Firestore findMessage failed for {}/{}: {}", conversationId, messageId, e.getMessage());
+            return java.util.Optional.empty();
+        }
+    }
+
     /** Issue d'une restauration de message : le contrôleur admin la traduit en 204 / 404 / 409. */
     public enum MessageRestoreOutcome { RESTORED, NOT_DELETED, NOT_FOUND }
 

@@ -42,15 +42,18 @@ public class AdminConversationController {
     private final FirestoreService firestoreService;
     private final AuditService auditService;
     private final UserRepository userRepository;
+    private final AdminMessageModerationService messageModeration;
 
     public AdminConversationController(ConversationRepository conversationRepository,
                                        FirestoreService firestoreService,
                                        AuditService auditService,
-                                       UserRepository userRepository) {
+                                       UserRepository userRepository,
+                                       AdminMessageModerationService messageModeration) {
         this.conversationRepository = conversationRepository;
         this.firestoreService = firestoreService;
         this.auditService = auditService;
         this.userRepository = userRepository;
+        this.messageModeration = messageModeration;
     }
 
     @PreAuthorize("hasAuthority('MODERATION_VIEW')")
@@ -141,10 +144,7 @@ public class AdminConversationController {
                 .findByFirestoreConversationId(conversationId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Conversation not found"));
 
-        firestoreService.softDeleteMessage(conversationId, messageId);
-
-        auditService.log("message", conv.getId(), "MESSAGE_ADMIN_DELETED", adminId,
-                Map.of("conversationId", conversationId, "messageId", messageId));
+        messageModeration.deleteMessage(conv, messageId, adminId);
 
         return ResponseEntity.noContent().build();
     }
