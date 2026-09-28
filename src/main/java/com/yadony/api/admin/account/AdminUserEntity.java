@@ -9,6 +9,7 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.Table;
 import org.hibernate.annotations.Where;
 
+import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.util.HashMap;
 import java.util.Map;
@@ -50,6 +51,13 @@ public class AdminUserEntity extends BaseEntity {
     @Column(name = "last_login_at")
     private OffsetDateTime lastLoginAt;
 
+    /**
+     * Dernière consultation de la cloche du panel (UTC). NULL = jamais consultée. Écrite
+     * uniquement par {@link AdminUserRepository#advanceNotificationsSeenAt}, qui ne recule jamais.
+     */
+    @Column(name = "notifications_seen_at")
+    private LocalDateTime notificationsSeenAt;
+
     // Constructors
     public AdminUserEntity() {
         this.mustChangePassword = true;
@@ -88,4 +96,6 @@ public class AdminUserEntity extends BaseEntity {
 
     public OffsetDateTime getLastLoginAt() { return lastLoginAt; }
     public void setLastLoginAt(OffsetDateTime lastLoginAt) { this.lastLoginAt = lastLoginAt; }
+
+    public LocalDateTime getNotificationsSeenAt() { return notificationsSeenAt; }
 }

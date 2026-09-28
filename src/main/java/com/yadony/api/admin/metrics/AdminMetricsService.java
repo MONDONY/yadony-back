@@ -1,13 +1,8 @@
 package com.yadony.api.admin.metrics;
 
-import com.yadony.api.admin.AdminAlertEntity;
 import com.yadony.api.auth.KycStatus;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserStatus;
-import com.yadony.api.cancellation.CancellationEntity;
-import com.yadony.api.cancellation.CancellationStatus;
-import com.yadony.api.disputes.DisputeEntity;
-import com.yadony.api.kyc.KycVerificationStatus;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementStatus;
 import com.yadony.api.matching.BidEntity;
@@ -29,10 +24,13 @@ public class AdminMetricsService {
 
     private final EntityManager em;
     private final PaymentRepository paymentRepository;
+    private final AdminQueueCounter queueCounter;
 
-    public AdminMetricsService(EntityManager em, PaymentRepository paymentRepository) {
+    public AdminMetricsService(EntityManager em, PaymentRepository paymentRepository,
+                               AdminQueueCounter queueCounter) {
         this.em = em;
         this.paymentRepository = paymentRepository;
+        this.queueCounter = queueCounter;
     }
 
     public AdminOverviewResponse buildOverview() {
@@ -169,52 +167,14 @@ public class AdminMetricsService {
     private AdminOverviewResponse.Queues buildQueues() {
         LocalDateTime j48threshold = LocalDateTime.now(ZoneOffset.UTC).minusHours(48);
         return new AdminOverviewResponse.Queues(
-                countOpenDisputes(),
-                countPendingNoShows(),
-                countUnresolvedAlerts(),
+                queueCounter.countOpenDisputes(),
+                queueCounter.countPendingNoShows(),
+                queueCounter.countUnresolvedAlerts(),
                 countUsers("kycStatus", KycStatus.PENDING),
                 countEscrowJ48(j48threshold),
-                countKycInReview(),
-                countHeldPayouts()
+                queueCounter.countKycInReview(),
+                queueCounter.countHeldPayouts()
         );
-    }
-
-    /** Meme definition que l'etat IN_REVIEW de la file KYC (KycAdminReviewService). */
-    private long countKycInReview() {
-        return em.createQuery(
-                        "SELECT COUNT(k) FROM KycVerificationEntity k "
-                                + "WHERE k.status = :pending AND k.submittedAt IS NOT NULL", Long.class)
-                .setParameter("pending", KycVerificationStatus.PENDING)
-                .getSingleResult();
-    }
-
-    /** Meme definition que le filtre {@code GET /admin/payments?held=true}. */
-    private long countHeldPayouts() {
-        return em.createQuery(
-                        "SELECT COUNT(p) FROM PaymentEntity p WHERE p.status = :status AND p.payoutHeldAt IS NOT NULL",
-                        Long.class)
-                .setParameter("status", PaymentStatus.ESCROW)
-                .getSingleResult();
-    }
-
-    private long countOpenDisputes() {
-        return em.createQuery(
-                        "SELECT COUNT(d) FROM DisputeEntity d WHERE d.status = 'OPEN'", Long.class)
-                .getSingleResult();
-    }
-
-    private long countPendingNoShows() {
-        return em.createQuery(
-                        "SELECT COUNT(c) FROM CancellationEntity c WHERE c.noShowStatus = :status",
-                        Long.class)
-                .setParameter("status", CancellationStatus.PENDING_CONFIRMATION)
-                .getSingleResult();
-    }
-
-    private long countUnresolvedAlerts() {
-        return em.createQuery(
-                        "SELECT COUNT(a) FROM AdminAlertEntity a WHERE a.resolved = false", Long.class)
-                .getSingleResult();
     }
 
     private long countEscrowJ48(LocalDateTime threshold) {
