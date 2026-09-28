@@ -48,7 +48,8 @@ public class ReportController {
                 request.reason(),
                 request.description(),
                 request.photoKeys(),
-                request.screenRoute());
+                request.screenRoute(),
+                request.messageId());
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(Map.of("id", report.getId().toString()));
     }
@@ -69,6 +70,12 @@ public class ReportController {
             @Size(max = 4000) String description,
             @Size(max = ReportService.MAX_PHOTOS) List<String> photoKeys,
             /** Route de l'écran d'origine (scarabée), facultative, cible APP seulement. */
-            @Size(max = ReportService.SCREEN_ROUTE_MAX_LENGTH) String screenRoute
+            @Size(max = ReportService.SCREEN_ROUTE_MAX_LENGTH) String screenRoute,
+            /**
+             * Identifiant Firestore du message signalé, cible MESSAGE seulement ({@code targetId}
+             * est alors la conversation). Facultatif : sans lui, le message reste introuvable
+             * côté admin et seules les actions « traité » et « rejeté » sont proposées.
+             */
+            @Size(max = ReportService.MESSAGE_ID_MAX_LENGTH) String messageId
     ) {}
 }

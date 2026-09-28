@@ -7,6 +7,8 @@ import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidRepository;
+import com.yadony.api.messaging.ConversationEntity;
+import com.yadony.api.messaging.ConversationRepository;
 import com.yadony.api.ratings.RatingRepository;
 import com.yadony.api.requests.repository.PackageRequestRepository;
 import org.springframework.http.HttpStatus;
@@ -17,6 +19,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -34,6 +37,8 @@ public class ReportService {
     static final int MAX_PHOTOS = 5;
     static final int SCREEN_ROUTE_MAX_LENGTH = 200;
     static final String PHOTO_PREFIX = "reports/";
+    /** Borne de {@code reports.target_message_id} (V272) ; un identifiant Firestore auto fait 20 caractères. */
+    static final int MESSAGE_ID_MAX_LENGTH = 128;
     private static final Duration PRESIGN_TTL = Duration.ofMinutes(15);
 
     private final ReportRepository reportRepository;
@@ -43,6 +48,7 @@ public class ReportService {
     private final BidRepository bidRepository;
     private final RatingRepository ratingRepository;
     private final PackageRequestRepository packageRequestRepository;
+    private final ConversationRepository conversationRepository;
     private final StorageService storageService;
     private final AuditService auditService;
 
@@ -53,6 +59,7 @@ public class ReportService {
                          BidRepository bidRepository,
                          RatingRepository ratingRepository,
                          PackageRequestRepository packageRequestRepository,
+                         ConversationRepository conversationRepository,
                          StorageService storageService,
                          AuditService auditService) {
         this.reportRepository = reportRepository;
@@ -62,6 +69,7 @@ public class ReportService {
         this.bidRepository = bidRepository;
         this.ratingRepository = ratingRepository;
         this.packageRequestRepository = packageRequestRepository;
+        this.conversationRepository = conversationRepository;
         this.storageService = storageService;
         this.auditService = auditService;
     }
@@ -102,7 +110,27 @@ public class ReportService {
                                      String description,
                                      List<String> photoKeys,
                                      String screenRoute) {
+        return createReport(firebaseUid, targetType, targetId, reason, description, photoKeys, screenRoute, null);
+    }
+
+    /**
+     * Variante complète. Pour une cible MESSAGE, {@code targetId} est la conversation
+     * ({@code conversations.id}) et {@code messageId} l'identifiant Firestore du message :
+     * s'il est fourni, la conversation doit exister et le signalant en être participant.
+     * Sans lui, le signalement est accepté comme avant, mais son message restera introuvable
+     * côté admin. Ignoré hors cible MESSAGE.
+     */
+    @Transactional
+    public ReportEntity createReport(String firebaseUid,
+                                     ReportTargetType targetType,
+                                     UUID targetId,
+                                     ReportReason reason,
+                                     String description,
+                                     List<String> photoKeys,
+                                     String screenRoute,
+                                     String messageId) {
         UserEntity reporter = requireUser(firebaseUid);
+        String targetMessageId = normalizeMessageId(targetType, messageId);
 
         if (targetType == null) {
             throw new YadonyBusinessException(HttpStatus.BAD_REQUEST, "target-type-required",
@@ -125,6 +153,9 @@ public class ReportService {
                     "Unprocessable", "Vous ne pouvez pas vous signaler vous-même");
         }
         requireTargetExists(targetType, targetId);
+        if (targetMessageId != null) {
+            requireConversationParticipant(targetId, reporter.getId());
+        }
 
         List<String> keys = photoKeys != null ? photoKeys : List.of();
         if (keys.size() > MAX_PHOTOS) {
@@ -146,6 +177,7 @@ public class ReportService {
         report.setReason(reason);
         report.setDescription(description);
         report.setScreenRoute(normalizeScreenRoute(targetType, screenRoute));
+        report.setTargetMessageId(targetMessageId);
         report.setStatus(ReportStatus.OPEN);
         reportRepository.save(report);
 
@@ -156,13 +188,15 @@ public class ReportService {
             photoRepository.save(photo);
         }
 
-        auditService.log("REPORT", report.getId(), "REPORT_CREATED", reporter.getId(),
-                Map.of(
-                        "targetType", targetType.name(),
-                        "targetId", Objects.toString(targetId, ""),
-                        "reason", report.getReason().name(),
-                        "photoCount", keys.size()
-                ));
+        Map<String, Object> details = new HashMap<>(Map.of(
+                "targetType", targetType.name(),
+                "targetId", Objects.toString(targetId, ""),
+                "reason", report.getReason().name(),
+                "photoCount", keys.size()));
+        if (targetMessageId != null) {
+            details.put("messageId", targetMessageId);
+        }
+        auditService.log("REPORT", report.getId(), "REPORT_CREATED", reporter.getId(), Map.copyOf(details));
 
         return report;
     }
@@ -196,6 +230,30 @@ public class ReportService {
         return saved;
     }
 
+    /** Identifiant de message conservé pour la seule cible MESSAGE, vidé si blanc ; 400 si trop long. */
+    static String normalizeMessageId(ReportTargetType targetType, String messageId) {
+        if (targetType != ReportTargetType.MESSAGE || messageId == null || messageId.isBlank()) {
+            return null;
+        }
+        String trimmed = messageId.trim();
+        if (trimmed.length() > MESSAGE_ID_MAX_LENGTH) {
+            throw new YadonyBusinessException(HttpStatus.BAD_REQUEST, "message-id-too-long",
+                    "Invalid Request", "Identifiant de message trop long");
+        }
+        return trimmed;
+    }
+
+    /** On ne signale que les messages d'une conversation où l'on est expéditeur ou voyageur. */
+    private void requireConversationParticipant(UUID conversationId, UUID reporterId) {
+        ConversationEntity conversation = conversationRepository.findById(conversationId)
+                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "target-not-found",
+                        "Not Found", "La cible du signalement est introuvable"));
+        if (!reporterId.equals(conversation.getSenderId()) && !reporterId.equals(conversation.getTravelerId())) {
+            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "not-conversation-participant",
+                    "Forbidden", "Vous ne participez pas à cette conversation");
+        }
+    }
+
     /** Route conservée pour la seule cible APP, vidée si blanche, tronquée à la colonne. */
     static String normalizeScreenRoute(ReportTargetType targetType, String screenRoute) {
         if (targetType != ReportTargetType.APP || screenRoute == null) {
@@ -211,11 +269,10 @@ public class ReportService {
     }
 
     /**
-     * MESSAGE n'est volontairement pas vérifié : {@code target_id} est un {@code UUID} alors
-     * que les identifiants de message vivent côté Firestore (chaînes), pas dans une table
-     * relationnelle référençable ici. Vérifier l'existence pour ce type nécessiterait de
-     * faire porter au modèle une colonne qu'il ne peut pas représenter correctement — hors
-     * périmètre de ce correctif.
+     * MESSAGE n'est pas vérifié ici : {@code target_id} y désigne la conversation, vérifiée
+     * (avec la participation du signalant) seulement quand l'identifiant du message est fourni
+     * — voir {@link #requireConversationParticipant}. Sans lui, le comportement d'avant V272
+     * est conservé.
      */
     private void requireTargetExists(ReportTargetType targetType, UUID targetId) {
         if (targetId == null) {

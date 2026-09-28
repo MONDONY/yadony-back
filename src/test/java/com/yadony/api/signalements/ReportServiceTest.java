@@ -47,6 +47,7 @@ class ReportServiceTest {
     @Mock PackageRequestRepository packageRequestRepository;
     @Mock StorageService storageService;
     @Mock AuditService auditService;
+    @Mock com.yadony.api.messaging.ConversationRepository conversationRepository;
 
     private UserEntity reporter;
     private UUID reporterId;
@@ -54,7 +55,7 @@ class ReportServiceTest {
     private ReportService service() {
         return new ReportService(reportRepository, photoRepository, userRepository,
                 announcementRepository, bidRepository, ratingRepository, packageRequestRepository,
-                storageService, auditService);
+                conversationRepository, storageService, auditService);
     }
 
     @BeforeEach
@@ -438,5 +439,92 @@ class ReportServiceTest {
         assertThat(unknown.getReason()).isEqualTo(ReportReason.OTHER);
         assertThat(unknown.getDescription()).isEqualTo("[Motif d'origine : Libre]");
         verify(auditService, times(2)).log(eq("REPORT"), any(), eq("REPORT_CREATED"), eq(reporterId), any());
+    }
+
+    // ── message signalé : conversation (targetId) + identifiant Firestore (messageId) ──
+
+    private com.yadony.api.messaging.ConversationEntity conversationWith(UUID senderId, UUID travelerId) throws Exception {
+        var conv = new com.yadony.api.messaging.ConversationEntity(UUID.randomUUID(), senderId, travelerId, "conv_fs");
+        setId(conv, UUID.randomUUID());
+        return conv;
+    }
+
+    @Test
+    void createReport_message_conserveLIdentifiantDuMessage() throws Exception {
+        stubUser();
+        var conv = conversationWith(reporterId, UUID.randomUUID());
+        when(conversationRepository.findById(conv.getId())).thenReturn(Optional.of(conv));
+
+        ReportEntity report = service().createReport("uid-1", ReportTargetType.MESSAGE, conv.getId(),
+                ReportReason.SPAM, null, List.of(), null, "  msgFs123  ");
+
+        assertThat(report.getTargetMessageId()).isEqualTo("msgFs123");
+        verify(auditService).log(eq("REPORT"), any(), eq("REPORT_CREATED"), eq(reporterId),
+                eq(Map.of("targetType", "MESSAGE", "targetId", conv.getId().toString(),
+                        "reason", "SPAM", "photoCount", 0, "messageId", "msgFs123")));
+    }
+
+    @Test
+    void createReport_message_conversationIntrouvable_404() {
+        stubUser();
+        UUID convId = UUID.randomUUID();
+        when(conversationRepository.findById(convId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service().createReport("uid-1", ReportTargetType.MESSAGE, convId,
+                ReportReason.SPAM, null, List.of(), null, "m1"))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode())
+                .isEqualTo("target-not-found");
+        verify(reportRepository, never()).save(any());
+    }
+
+    @Test
+    void createReport_message_signalantHorsConversation_403() throws Exception {
+        stubUser();
+        var conv = conversationWith(UUID.randomUUID(), UUID.randomUUID());
+        when(conversationRepository.findById(conv.getId())).thenReturn(Optional.of(conv));
+
+        assertThatThrownBy(() -> service().createReport("uid-1", ReportTargetType.MESSAGE, conv.getId(),
+                ReportReason.SPAM, null, List.of(), null, "m1"))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> {
+                    assertThat(((YadonyBusinessException) e).getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+                    assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("not-conversation-participant");
+                });
+        verify(reportRepository, never()).save(any());
+    }
+
+    @Test
+    void createReport_message_identifiantTropLong_400() {
+        stubUser();
+        String tropLong = "m".repeat(ReportService.MESSAGE_ID_MAX_LENGTH + 1);
+
+        assertThatThrownBy(() -> service().createReport("uid-1", ReportTargetType.MESSAGE, UUID.randomUUID(),
+                ReportReason.SPAM, null, List.of(), null, tropLong))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode())
+                .isEqualTo("message-id-too-long");
+    }
+
+    @Test
+    void createReport_message_sansIdentifiant_comportementInchange() {
+        stubUser();
+
+        ReportEntity report = service().createReport("uid-1", ReportTargetType.MESSAGE, UUID.randomUUID(),
+                ReportReason.SPAM, null, List.of(), null, "   ");
+
+        assertThat(report.getTargetMessageId()).isNull();
+        verify(conversationRepository, never()).findById(any());
+    }
+
+    @Test
+    void createReport_messageIdIgnoreHorsCibleMessage() {
+        stubUser();
+
+        ReportEntity report = service().createReport("uid-1", ReportTargetType.APP, null,
+                ReportReason.APP_BUG, null, List.of(), null, "m1");
+
+        assertThat(report.getTargetMessageId()).isNull();
+        verify(conversationRepository, never()).findById(any());
     }
 }
