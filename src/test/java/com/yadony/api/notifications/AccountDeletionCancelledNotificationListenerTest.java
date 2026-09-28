@@ -31,8 +31,8 @@ class AccountDeletionCancelledNotificationListenerTest {
 
         listener.onCancelled(new AccountDeletionCancelledByAdminEvent(userId, UUID.randomUUID()));
 
-        verify(notificationDispatcher).notifyUser(eq(userId), eq("Suppression de compte annulée"),
-                eq("Votre demande de suppression de compte a été annulée par l'équipe Yadony."),
+        verify(notificationDispatcher).notifyUser(eq(userId), eq("Suppression annulée"),
+                eq("Votre demande de suppression de compte est annulée par l'équipe Yadony."),
                 eq(Map.of("type", "ACCOUNT_DELETION_CANCELLED")));
     }
 

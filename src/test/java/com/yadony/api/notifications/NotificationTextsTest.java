@@ -137,6 +137,7 @@ class NotificationTextsTest {
         map.put("cardExpiring", NotificationTexts.cardExpiring(m, "American Express", "1234"));
         map.put("cardExpiring sans marque", NotificationTexts.cardExpiring(m, null, null));
         map.put("accountSuspended", NotificationTexts.accountSuspended(m));
+        map.put("accountDeletionCancelledByAdmin", NotificationTexts.accountDeletionCancelledByAdmin(m));
         map.put("messagingMuted", NotificationTexts.messagingMuted(m));
         map.put("adminWarning", NotificationTexts.adminWarning(m, null));
         // Plafond d'un ajustement : 500 € d'équivalent, soit au plus 6 chiffres + symbole.
