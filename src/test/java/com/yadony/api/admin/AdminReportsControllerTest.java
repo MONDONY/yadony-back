@@ -63,6 +63,13 @@ class AdminReportsControllerTest {
     @Mock com.yadony.api.requests.repository.PackageRequestRepository packageRequestRepo;
     @Mock com.yadony.api.requests.service.PackageRequestModerationService packageRequestModerationService;
     @Mock DeletionTraceService deletionTraceService;
+    @Mock com.yadony.api.matching.BidRepository bidRepo;
+    @Mock com.yadony.api.ratings.RatingRepository ratingRepo;
+    @Mock com.yadony.api.messaging.ConversationRepository conversationRepo;
+    @Mock com.yadony.api.messaging.FirestoreService firestoreService;
+    @Mock AdminMessageModerationService messageModeration;
+    @Mock AdminRatingModerationService ratingModeration;
+    @Mock org.springframework.context.ApplicationEventPublisher eventPublisher;
 
     @BeforeEach
     void stubMessages() {
@@ -70,9 +77,12 @@ class AdminReportsControllerTest {
     }
 
     private AdminReportsController controller() {
+        ReportTargetResolver resolver = new ReportTargetResolver(userRepo, announcementRepo, packageRequestRepo,
+                bidRepo, ratingRepo, conversationRepo, firestoreService);
+        ReportActionExecutor executor = new ReportActionExecutor(userService, announcementService,
+                packageRequestModerationService, notificationDispatcher, messageModeration, ratingModeration);
         return new AdminReportsController(reportRepo, userRepo, announcementRepo, auditService, reportService,
-                userService, announcementService, notificationDispatcher, packageRequestRepo,
-                packageRequestModerationService, deletionTraceService);
+                packageRequestRepo, deletionTraceService, resolver, executor, eventPublisher);
     }
 
     private static Authentication authAs(UUID adminId, List<AdminPermission> extraAuthorities) {
@@ -91,7 +101,7 @@ class AdminReportsControllerTest {
         when(reportRepo.findFiltered(isNull(), isNull(), any(Pageable.class))).thenReturn(page);
 
         ResponseEntity<Page<AdminReportResponse>> resp =
-                controller().listReports(null, null, null, false, 0, 20);
+                controller().listReports(null, null, null, false, 0, 20, null);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(resp.getBody()).isNotNull();
@@ -104,7 +114,7 @@ class AdminReportsControllerTest {
         when(reportRepo.findFiltered(eq(ReportStatus.OPEN), isNull(), any(Pageable.class))).thenReturn(page);
 
         ResponseEntity<Page<AdminReportResponse>> resp =
-                controller().listReports(ReportStatus.OPEN, null, null, false, 0, 20);
+                controller().listReports(ReportStatus.OPEN, null, null, false, 0, 20, null);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         verify(reportRepo).findFiltered(eq(ReportStatus.OPEN), isNull(), any(Pageable.class));
@@ -116,7 +126,7 @@ class AdminReportsControllerTest {
         when(reportRepo.findFiltered(isNull(), eq(ReportTargetType.USER), any(Pageable.class))).thenReturn(page);
 
         ResponseEntity<Page<AdminReportResponse>> resp =
-                controller().listReports(null, ReportTargetType.USER, null, false, 0, 20);
+                controller().listReports(null, ReportTargetType.USER, null, false, 0, 20, null);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         verify(reportRepo).findFiltered(isNull(), eq(ReportTargetType.USER), any(Pageable.class));
@@ -137,7 +147,7 @@ class AdminReportsControllerTest {
         when(userRepo.findAllById(anyCollection())).thenReturn(List.of(reporter));
 
         ResponseEntity<Page<AdminReportResponse>> resp =
-                controller().listReports(null, null, null, false, 0, 20);
+                controller().listReports(null, null, null, false, 0, 20, null);
 
         assertThat(resp.getBody()).isNotNull();
         assertThat(resp.getBody().getContent()).hasSize(1);
@@ -158,7 +168,7 @@ class AdminReportsControllerTest {
         when(userRepo.findAllById(anyCollection())).thenReturn(List.of());
 
         ResponseEntity<Page<AdminReportResponse>> resp =
-                controller().listReports(null, null, null, false, 0, 20);
+                controller().listReports(null, null, null, false, 0, 20, null);
 
         AdminReportResponse first = resp.getBody().getContent().get(0);
         assertThat(first.reason()).isEqualTo("SCREEN_BUG");
@@ -183,7 +193,7 @@ class AdminReportsControllerTest {
         when(reportRepo.findFiltered(isNull(), isNull(), any(Pageable.class))).thenReturn(page);
         when(userRepo.findAllById(anyCollection())).thenReturn(List.of(target));
 
-        ResponseEntity<Page<AdminReportResponse>> resp = controller().listReports(null, null, null, false, 0, 20);
+        ResponseEntity<Page<AdminReportResponse>> resp = controller().listReports(null, null, null, false, 0, 20, null);
 
         assertThat(resp.getBody().getContent().get(0).targetLabel()).isEqualTo("Awa Ndiaye");
     }
@@ -206,7 +216,7 @@ class AdminReportsControllerTest {
         when(userRepo.findAllById(anyCollection())).thenReturn(List.of());
         when(announcementRepo.findAllById(anyCollection())).thenReturn(List.of(ann));
 
-        ResponseEntity<Page<AdminReportResponse>> resp = controller().listReports(null, null, null, false, 0, 20);
+        ResponseEntity<Page<AdminReportResponse>> resp = controller().listReports(null, null, null, false, 0, 20, null);
 
         assertThat(resp.getBody().getContent().get(0).targetLabel()).contains("Lyon").contains("Abidjan");
     }
@@ -412,7 +422,7 @@ class AdminReportsControllerTest {
         when(reportRepo.searchFiltered(isNull(), isNull(), eq("%badge%"), eq(false), eq(List.of()),
                 any(Pageable.class))).thenReturn(page);
 
-        controller().listReports(null, null, "  Badge ", false, 0, 20);
+        controller().listReports(null, null, "  Badge ", false, 0, 20, null);
 
         verify(reportRepo).searchFiltered(isNull(), isNull(), eq("%badge%"), eq(false), eq(List.of()),
                 any(Pageable.class));
@@ -425,7 +435,7 @@ class AdminReportsControllerTest {
         when(reportRepo.searchFiltered(isNull(), isNull(), eq("%écran%"), eq(true),
                 eq(List.of(ReportReason.SCREEN_BUG)), any(Pageable.class))).thenReturn(page);
 
-        controller().listReports(null, null, "écran", false, 0, 20);
+        controller().listReports(null, null, "écran", false, 0, 20, null);
 
         verify(reportRepo).searchFiltered(isNull(), isNull(), eq("%écran%"), eq(true),
                 eq(List.of(ReportReason.SCREEN_BUG)), any(Pageable.class));
@@ -436,7 +446,7 @@ class AdminReportsControllerTest {
         when(reportRepo.findFiltered(isNull(), isNull(), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of()));
 
-        controller().listReports(null, null, "   ", false, 0, 20);
+        controller().listReports(null, null, "   ", false, 0, 20, null);
 
         verify(reportRepo).findFiltered(isNull(), isNull(), any(Pageable.class));
     }
@@ -546,7 +556,7 @@ class AdminReportsControllerTest {
                 .thenReturn(Map.of(id, new DeletionTraceService.DeletionTrace(admin, "admin@yadony.test",
                         "HARASSMENT", r.getDeletedAt())));
 
-        var resp = controller().listReports(ReportStatus.OPEN, ReportTargetType.USER, " Spam ", true, 0, 20);
+        var resp = controller().listReports(ReportStatus.OPEN, ReportTargetType.USER, " Spam ", true, 0, 20, null);
 
         AdminReportResponse item = resp.getBody().getContent().get(0);
         assertThat(item.deletedAt()).isEqualTo(r.getDeletedAt());
@@ -562,7 +572,7 @@ class AdminReportsControllerTest {
                         List.of(buildReport(UUID.randomUUID(), ReportStatus.OPEN))));
         when(userRepo.findAllById(any())).thenReturn(List.of());
 
-        var item = controller().listReports(null, null, null, false, 0, 20).getBody().getContent().get(0);
+        var item = controller().listReports(null, null, null, false, 0, 20, null).getBody().getContent().get(0);
 
         assertThat(item.deletedAt()).isNull();
         assertThat(item.deletedByAdminEmail()).isNull();
@@ -711,7 +721,7 @@ class AdminReportsControllerTest {
                 .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(report)));
         when(packageRequestRepo.findAllById(any())).thenReturn(List.of(pr));
 
-        var page = controller().listReports(null, ReportTargetType.PACKAGE_REQUEST, null, false, 0, 20).getBody();
+        var page = controller().listReports(null, ReportTargetType.PACKAGE_REQUEST, null, false, 0, 20, null).getBody();
 
         assertThat(page.getContent()).hasSize(1);
         assertThat(page.getContent().get(0).targetType()).isEqualTo("PACKAGE_REQUEST");
@@ -737,5 +747,250 @@ class AdminReportsControllerTest {
                 eq(com.yadony.api.matching.AnnouncementRemovalReason.OTHER), eq("fraude"));
         verifyNoInteractions(announcementService);
         assertThat(report.getStatus()).isEqualTo(ReportStatus.RESOLVED);
+    }
+
+    // ---- actions adaptées à la cible, auteur, notification du signalant ----
+
+    private static final List<AdminPermission> TOUTES = List.of(AdminPermission.values());
+
+    private static UserEntity userWithId(UUID id, String first, String last) {
+        UserEntity u = new UserEntity();
+        ReflectionTestUtils.setField(u, "id", id);
+        u.setFirstName(first);
+        u.setLastName(last);
+        return u;
+    }
+
+    private com.yadony.api.ratings.RatingEntity ratingBy(UUID ratingId, UUID raterId) {
+        var rating = new com.yadony.api.ratings.RatingEntity();
+        ReflectionTestUtils.setField(rating, "id", ratingId);
+        rating.setRaterId(raterId);
+        return rating;
+    }
+
+    @Test
+    void listReports_signalementOuvert_actionsDisponiblesEtAuteur() {
+        UUID ratingId = UUID.randomUUID();
+        UUID raterId = UUID.randomUUID();
+        ReportEntity report = buildReport(UUID.randomUUID(), ReportStatus.OPEN);
+        report.setTargetType(ReportTargetType.RATING);
+        report.setTargetId(ratingId);
+        when(reportRepo.findFiltered(isNull(), isNull(), any(Pageable.class))).thenReturn(new PageImpl<>(List.of(report)));
+        when(ratingRepo.findAllById(anyCollection())).thenReturn(List.of(ratingBy(ratingId, raterId)));
+        when(userRepo.findAllById(anyCollection())).thenReturn(List.of(userWithId(raterId, "Awa", "Diallo")));
+
+        var item = controller().listReports(null, null, null, false, 0, 20, authAs(UUID.randomUUID(), TOUTES))
+                .getBody().getContent().get(0);
+
+        assertThat(item.availableActions()).containsExactly("RESOLVE", "DISMISS", "WARN_AUTHOR", "SUSPEND_AUTHOR",
+                "EXCLUDE_RATING", "DELETE_RATING");
+        assertThat(item.targetAuthor()).isEqualTo(new AdminReportResponse.TargetAuthor(raterId, "Awa D."));
+    }
+
+    @Test
+    void listReports_supportSansPermissionsDeModeration_actionsRestreintes() {
+        ReportEntity report = buildReport(UUID.randomUUID(), ReportStatus.OPEN);
+        report.setTargetType(ReportTargetType.APP);
+        report.setTargetId(null);
+        when(reportRepo.findFiltered(isNull(), isNull(), any(Pageable.class))).thenReturn(new PageImpl<>(List.of(report)));
+
+        var item = controller().listReports(null, null, null, false, 0, 20,
+                authAs(UUID.randomUUID(), List.of(AdminPermission.REPORT_VIEW, AdminPermission.REPORT_RESOLVE)))
+                .getBody().getContent().get(0);
+
+        assertThat(item.availableActions()).containsExactly("RESOLVE", "DISMISS");
+        assertThat(item.targetAuthor()).isNull();
+    }
+
+    @Test
+    void listReports_signalementDejaTraite_aucuneAction() {
+        ReportEntity report = buildReport(UUID.randomUUID(), ReportStatus.RESOLVED);
+        when(reportRepo.findFiltered(isNull(), isNull(), any(Pageable.class))).thenReturn(new PageImpl<>(List.of(report)));
+
+        var item = controller().listReports(null, null, null, false, 0, 20, authAs(UUID.randomUUID(), TOUTES))
+                .getBody().getContent().get(0);
+
+        assertThat(item.availableActions()).isEmpty();
+    }
+
+    @Test
+    void getReport_detailAvecActions() {
+        UUID id = UUID.randomUUID();
+        ReportEntity report = buildReport(UUID.randomUUID(), ReportStatus.OPEN);
+        report.setTargetType(ReportTargetType.APP);
+        report.setTargetId(null);
+        when(reportRepo.findById(id)).thenReturn(Optional.of(report));
+
+        var body = controller().getReport(id, authAs(UUID.randomUUID(), TOUTES)).getBody();
+
+        assertThat(body.availableActions()).containsExactly("RESOLVE", "DISMISS");
+    }
+
+    @Test
+    void getReport_introuvable_404() {
+        UUID id = UUID.randomUUID();
+        when(reportRepo.findById(id)).thenReturn(Optional.empty());
+
+        YadonyBusinessException ex = assertThrows(YadonyBusinessException.class,
+                () -> controller().getReport(id, authAs(UUID.randomUUID(), TOUTES)));
+        assertThat(ex.getErrorCode()).isEqualTo("report-not-found");
+    }
+
+    @Test
+    void resolve_rapportScarabee_marqueTraiteEtRemercieLeSignalant() {
+        UUID id = UUID.randomUUID();
+        UUID reporterId = UUID.randomUUID();
+        ReportEntity report = buildReport(reporterId, ReportStatus.OPEN);
+        report.setTargetType(ReportTargetType.APP);
+        report.setTargetId(null);
+        when(reportRepo.findById(id)).thenReturn(Optional.of(report));
+        when(userRepo.findAllById(anyCollection())).thenReturn(List.of(userWithId(reporterId, "Jean", "Dupont")));
+
+        var resp = controller().resolveReport(id, new ResolveReportRequest(ReportAction.RESOLVE, "Corrigé en 1.0.84"),
+                authAs(UUID.randomUUID(), List.of()));
+
+        assertThat(report.getStatus()).isEqualTo(ReportStatus.RESOLVED);
+        assertThat(report.getActionTaken()).isEqualTo(ReportAction.RESOLVE);
+        assertThat(resp.getBody().availableActions()).isEmpty();
+        verify(eventPublisher).publishEvent(new com.yadony.api.signalements.events.ReportResolvedEvent(id, reporterId));
+        verifyNoInteractions(userService, announcementService, notificationDispatcher);
+    }
+
+    @Test
+    void resolve_rejet_neNotifiePasLeSignalant() {
+        UUID id = UUID.randomUUID();
+        UUID reporterId = UUID.randomUUID();
+        ReportEntity report = buildReport(reporterId, ReportStatus.OPEN);
+        when(reportRepo.findById(id)).thenReturn(Optional.of(report));
+        lenient().when(userRepo.findAllById(anyCollection())).thenReturn(List.of(userWithId(reporterId, "Jean", "D")));
+
+        controller().resolveReport(id, new ResolveReportRequest(ReportAction.DISMISS, "non fondé"),
+                authAs(UUID.randomUUID(), List.of()));
+
+        verifyNoInteractions(eventPublisher);
+    }
+
+    @Test
+    void resolve_signalantSupprimeOuAbsent_pasDeNotification() {
+        UUID id = UUID.randomUUID();
+        ReportEntity report = buildReport(UUID.randomUUID(), ReportStatus.OPEN);
+        report.setTargetType(ReportTargetType.APP);
+        report.setTargetId(null);
+        when(reportRepo.findById(id)).thenReturn(Optional.of(report));
+        // compte supprimé : non relu (@Where deleted_at IS NULL)
+        when(userRepo.findAllById(anyCollection())).thenReturn(List.of());
+
+        controller().resolveReport(id, new ResolveReportRequest(ReportAction.RESOLVE, null),
+                authAs(UUID.randomUUID(), List.of()));
+
+        UUID id2 = UUID.randomUUID();
+        ReportEntity anonyme = buildReport(null, ReportStatus.OPEN);
+        anonyme.setTargetType(ReportTargetType.APP);
+        anonyme.setTargetId(null);
+        when(reportRepo.findById(id2)).thenReturn(Optional.of(anonyme));
+        controller().resolveReport(id2, new ResolveReportRequest(ReportAction.RESOLVE, null),
+                authAs(UUID.randomUUID(), List.of()));
+
+        verifyNoInteractions(eventPublisher);
+    }
+
+    @Test
+    void resolve_dejaTraite_409() {
+        UUID id = UUID.randomUUID();
+        ReportEntity report = buildReport(UUID.randomUUID(), ReportStatus.RESOLVED);
+        when(reportRepo.findById(id)).thenReturn(Optional.of(report));
+
+        YadonyBusinessException ex = assertThrows(YadonyBusinessException.class,
+                () -> controller().resolveReport(id, new ResolveReportRequest(ReportAction.RESOLVE, null),
+                        authAs(UUID.randomUUID(), TOUTES)));
+        assertThat(ex.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(ex.getErrorCode()).isEqualTo("report-already-closed");
+        verifyNoInteractions(eventPublisher, auditService);
+    }
+
+    @Test
+    void resolve_deleteMessage_messageIntrouvable_422() {
+        UUID id = UUID.randomUUID();
+        ReportEntity report = buildReport(UUID.randomUUID(), ReportStatus.OPEN);
+        report.setTargetType(ReportTargetType.MESSAGE);
+        report.setTargetId(UUID.randomUUID());
+        when(reportRepo.findById(id)).thenReturn(Optional.of(report));
+
+        YadonyBusinessException ex = assertThrows(YadonyBusinessException.class,
+                () -> controller().resolveReport(id, new ResolveReportRequest(ReportAction.DELETE_MESSAGE, "x"),
+                        authAs(UUID.randomUUID(), TOUTES)));
+        assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+        assertThat(ex.getErrorCode()).isEqualTo("report-target-unresolvable");
+        verifyNoInteractions(messageModeration, eventPublisher);
+    }
+
+    @Test
+    void resolve_deleteRating_sansPermission_403AvantToutGeste() {
+        UUID id = UUID.randomUUID();
+        ReportEntity report = buildReport(UUID.randomUUID(), ReportStatus.OPEN);
+        report.setTargetType(ReportTargetType.RATING);
+        report.setTargetId(UUID.randomUUID());
+        when(reportRepo.findById(id)).thenReturn(Optional.of(report));
+
+        YadonyBusinessException ex = assertThrows(YadonyBusinessException.class,
+                () -> controller().resolveReport(id, new ResolveReportRequest(ReportAction.DELETE_RATING, "x"),
+                        authAs(UUID.randomUUID(), List.of(AdminPermission.RATING_MODERATE))));
+        assertThat(ex.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+        verifyNoInteractions(ratingModeration, ratingRepo);
+    }
+
+    @Test
+    void resolve_deleteRating_delegueEtAuditeLaResolution() {
+        UUID id = UUID.randomUUID();
+        UUID adminId = UUID.randomUUID();
+        UUID ratingId = UUID.randomUUID();
+        ReportEntity report = buildReport(UUID.randomUUID(), ReportStatus.OPEN);
+        report.setTargetType(ReportTargetType.RATING);
+        report.setTargetId(ratingId);
+        when(reportRepo.findById(id)).thenReturn(Optional.of(report));
+        when(ratingRepo.findAllById(anyCollection())).thenReturn(List.of(ratingBy(ratingId, null)));
+
+        controller().resolveReport(id, new ResolveReportRequest(ReportAction.DELETE_RATING, "insultes"),
+                authAs(adminId, List.of(AdminPermission.RATING_DELETE)));
+
+        verify(ratingModeration).delete(ratingId, "insultes", adminId);
+        verify(auditService).log("REPORT", id, "REPORT_RESOLVED", adminId,
+                Map.of("reportId", id.toString(), "action", "DELETE_RATING", "note", "insultes"));
+        assertThat(report.getStatus()).isEqualTo(ReportStatus.RESOLVED);
+    }
+
+    @Test
+    void resolve_suspendAuthor_offre_suspendLaPartieAdverseEtAuditeLAuteur() {
+        UUID id = UUID.randomUUID();
+        UUID adminId = UUID.randomUUID();
+        UUID sender = UUID.randomUUID();
+        UUID traveler = UUID.randomUUID();
+        UUID bidId = UUID.randomUUID();
+        UUID annId = UUID.randomUUID();
+        ReportEntity report = buildReport(sender, ReportStatus.OPEN);
+        report.setTargetType(ReportTargetType.BID);
+        report.setTargetId(bidId);
+        var bid = new com.yadony.api.matching.BidEntity();
+        ReflectionTestUtils.setField(bid, "id", bidId);
+        bid.setSenderId(sender);
+        bid.setAnnouncementId(annId);
+        AnnouncementEntity ann = new AnnouncementEntity();
+        ReflectionTestUtils.setField(ann, "id", annId);
+        ann.setTravelerId(traveler);
+        when(reportRepo.findById(id)).thenReturn(Optional.of(report));
+        when(bidRepo.findAllById(anyCollection())).thenReturn(List.of(bid));
+        when(announcementRepo.findAllById(anyCollection())).thenReturn(List.of(ann));
+        when(userRepo.findAllById(anyCollection())).thenReturn(List.of(
+                userWithId(traveler, "Ibrahim", "Koné"), userWithId(sender, "Fatou", "Sow")));
+
+        var resp = controller().resolveReport(id, new ResolveReportRequest(ReportAction.SUSPEND_AUTHOR, "arnaque"),
+                authAs(adminId, List.of(AdminPermission.USER_SUSPEND)));
+
+        verify(userService).suspendUser(traveler, "arnaque", adminId);
+        verify(auditService).log("REPORT", id, "REPORT_RESOLVED", adminId,
+                Map.of("reportId", id.toString(), "action", "SUSPEND_AUTHOR", "note", "arnaque",
+                        "authorId", traveler.toString()));
+        assertThat(resp.getBody().targetAuthor()).isEqualTo(new AdminReportResponse.TargetAuthor(traveler, "Ibrahim K."));
+        verify(eventPublisher).publishEvent(new com.yadony.api.signalements.events.ReportResolvedEvent(id, sender));
     }
 }

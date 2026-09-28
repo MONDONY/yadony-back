@@ -214,4 +214,43 @@ class FirestoreServiceTest {
         org.junit.jupiter.api.Assertions.assertThrows(RuntimeException.class,
                 () -> new FirestoreService(firestore).restoreMessage("conv_1", "msg_1"));
     }
+
+    // ── Lecture d'un message signalé (auteur, déjà supprimé ?) ─────────────────
+
+    @Test
+    void findMessage_firestoreDesactive_vide() {
+        assertThat(new FirestoreService(null).findMessage("conv_1", "msg_1")).isEmpty();
+    }
+
+    @Test
+    void findMessage_messageExistant_auteurEtSuppression() {
+        Firestore firestore = mock(Firestore.class);
+        DocumentReference message = messageRef(firestore);
+        var snap = snapshot(true, "2026-09-01T10:00:00Z");
+        when(snap.getString("senderId")).thenReturn("user-uuid");
+        when(message.get()).thenReturn(ApiFutures.immediateFuture(snap));
+
+        var found = new FirestoreService(firestore).findMessage("conv_1", "msg_1");
+
+        assertThat(found).contains(new FirestoreService.MessageSnapshot("user-uuid", true));
+    }
+
+    @Test
+    void findMessage_messageInconnu_vide() {
+        Firestore firestore = mock(Firestore.class);
+        DocumentReference message = messageRef(firestore);
+        var snap = snapshot(false, null);
+        when(message.get()).thenReturn(ApiFutures.immediateFuture(snap));
+
+        assertThat(new FirestoreService(firestore).findMessage("conv_1", "msg_1")).isEmpty();
+    }
+
+    @Test
+    void findMessage_erreurFirestore_videSansPropager() {
+        Firestore firestore = mock(Firestore.class);
+        DocumentReference message = messageRef(firestore);
+        when(message.get()).thenReturn(ApiFutures.immediateFailedFuture(new IllegalStateException("down")));
+
+        assertThat(new FirestoreService(firestore).findMessage("conv_1", "msg_1")).isEmpty();
+    }
 }

@@ -8,18 +8,13 @@ import com.yadony.api.admin.dto.RestoreRequest;
 import jakarta.validation.Valid;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
-import com.yadony.api.auth.UserService;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.MatchingTextUtil;
 import com.yadony.api.matching.AnnouncementEntity;
-import com.yadony.api.matching.AnnouncementRemovalReason;
 import com.yadony.api.matching.AnnouncementRepository;
-import com.yadony.api.matching.AnnouncementService;
-import com.yadony.api.notifications.NotificationDispatcher;
 import com.yadony.api.requests.entity.PackageRequestEntity;
 import com.yadony.api.requests.repository.PackageRequestRepository;
-import com.yadony.api.requests.service.PackageRequestModerationService;
 import com.yadony.api.signalements.ReportAction;
 import com.yadony.api.signalements.ReportEntity;
 import com.yadony.api.signalements.ReportReason;
@@ -27,6 +22,8 @@ import com.yadony.api.signalements.ReportRepository;
 import com.yadony.api.signalements.ReportService;
 import com.yadony.api.signalements.ReportStatus;
 import com.yadony.api.signalements.ReportTargetType;
+import com.yadony.api.signalements.events.ReportResolvedEvent;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -40,6 +37,7 @@ import org.springframework.web.bind.annotation.*;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -58,12 +56,11 @@ public class AdminReportsController {
     private final AnnouncementRepository announcementRepo;
     private final AuditService auditService;
     private final ReportService reportService;
-    private final UserService userService;
-    private final AnnouncementService announcementService;
-    private final NotificationDispatcher notificationDispatcher;
     private final PackageRequestRepository packageRequestRepo;
-    private final PackageRequestModerationService packageRequestModerationService;
     private final DeletionTraceService deletionTraceService;
+    private final ReportTargetResolver targetResolver;
+    private final ReportActionExecutor actionExecutor;
+    private final ApplicationEventPublisher eventPublisher;
 
     /** Borne d'une restauration groupée : une page d'écran, pas une restauration de masse. */
     static final int MAX_BULK_RESTORE = 100;
@@ -73,23 +70,21 @@ public class AdminReportsController {
                                   AnnouncementRepository announcementRepo,
                                   AuditService auditService,
                                   ReportService reportService,
-                                  UserService userService,
-                                  AnnouncementService announcementService,
-                                  NotificationDispatcher notificationDispatcher,
                                   PackageRequestRepository packageRequestRepo,
-                                  PackageRequestModerationService packageRequestModerationService,
-                                  DeletionTraceService deletionTraceService) {
+                                  DeletionTraceService deletionTraceService,
+                                  ReportTargetResolver targetResolver,
+                                  ReportActionExecutor actionExecutor,
+                                  ApplicationEventPublisher eventPublisher) {
         this.reportRepo = reportRepo;
         this.userRepo = userRepo;
         this.announcementRepo = announcementRepo;
         this.auditService = auditService;
         this.reportService = reportService;
-        this.userService = userService;
-        this.announcementService = announcementService;
-        this.notificationDispatcher = notificationDispatcher;
         this.packageRequestRepo = packageRequestRepo;
-        this.packageRequestModerationService = packageRequestModerationService;
         this.deletionTraceService = deletionTraceService;
+        this.targetResolver = targetResolver;
+        this.actionExecutor = actionExecutor;
+        this.eventPublisher = eventPublisher;
     }
 
     @PreAuthorize("hasAuthority('REPORT_VIEW')")
@@ -100,7 +95,8 @@ public class AdminReportsController {
             @RequestParam(required = false) String q,
             @RequestParam(defaultValue = "false") boolean deleted,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size) {
+            @RequestParam(defaultValue = "20") int size,
+            Authentication authentication) {
 
         PageRequest pageable = PageRequest.of(page, size, Sort.by("createdAt").descending());
         String needle = normalizeQuery(q);
@@ -157,12 +153,28 @@ public class AdminReportsController {
         Map<UUID, List<String>> photosByReport = reportService.photoUrlsByReport(
                 reports.getContent().stream().map(ReportEntity::getId).collect(Collectors.toSet()));
 
+        // Corbeille : ni actions ni auteur (un signalement supprimé ne se traite pas).
+        Map<ReportEntity, ResolvedReportTarget> targets = deleted
+                ? Map.of()
+                : targetResolver.resolve(reports.getContent());
+        Set<String> authorities = ReportActionPolicy.authorities(authentication);
+
         Map<UUID, DeletionTraceService.DeletionTrace> tracesById = traces;
         Page<AdminReportResponse> result = reports.map(r ->
                 toResponse(r, usersById, announcementsById, packageRequestsById,
                         photosByReport.getOrDefault(r.getId(), List.of()),
-                        r.getId() != null ? tracesById.get(r.getId()) : null));
+                        r.getId() != null ? tracesById.get(r.getId()) : null,
+                        targets.get(r), authorities));
         return ResponseEntity.ok(result);
+    }
+
+    /** Détail d'un signalement, avec les actions proposées à l'admin appelant. */
+    @PreAuthorize("hasAuthority('REPORT_VIEW')")
+    @GetMapping("/admin/reports/{id}")
+    public ResponseEntity<AdminReportResponse> getReport(@PathVariable UUID id, Authentication authentication) {
+        ReportEntity report = findOrThrow(id);
+        return ResponseEntity.ok(single(report, targetResolver.resolve(report),
+                ReportActionPolicy.authorities(authentication)));
     }
 
     @PreAuthorize("hasAuthority('REPORT_RESOLVE')")
@@ -173,9 +185,7 @@ public class AdminReportsController {
             @RequestBody ResolveReportRequest request,
             Authentication authentication) {
 
-        ReportEntity report = reportRepo.findById(id)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "report-not-found", "Not Found", "Signalement introuvable"));
+        ReportEntity report = findOrThrow(id);
 
         ReportAction action = request.action();
         if (action == null) {
@@ -186,71 +196,62 @@ public class AdminReportsController {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "action-not-applicable",
                     "Unprocessable", "Cette action ne s'applique pas à ce type de cible");
         }
+        if (report.getStatus() != ReportStatus.OPEN) {
+            // Sans ce garde, une seconde résolution rejouait la sanction et remerciait deux fois.
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "report-already-closed",
+                    "Conflict", "Ce signalement est déjà traité");
+        }
+        // La permission propre au geste AVANT toute lecture de la cible : un 403 ne doit
+        // rien apprendre de la cible à l'appelant.
+        ReportActionPolicy.requireAuthorities(action, authentication);
 
         UUID adminId = adminId(authentication);
-        applyAction(id, action, report, request.note(), authentication, adminId);
+        ResolvedReportTarget target = targetResolver.resolve(report);
+        if (!ReportActionPolicy.isExecutable(action, target)) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "report-target-unresolvable",
+                    "Unprocessable", "La cible de ce signalement (ou son auteur) est introuvable");
+        }
+        actionExecutor.apply(id, action, report, target, request.note(), adminId);
 
-        report.setStatus(action == ReportAction.DISMISS ? ReportStatus.DISMISSED : ReportStatus.RESOLVED);
+        report.setStatus(action.resultingStatus());
         report.setActionTaken(action);
         report.setResolutionNote(request.note());
         report.setResolvedAt(OffsetDateTime.now(ZoneOffset.UTC));
         reportRepo.save(report);
 
-        auditService.log("REPORT", id, "REPORT_RESOLVED", adminId,
-                Map.of(
-                        "reportId", id.toString(),
-                        "action", action.name(),
-                        "note", request.note() != null ? request.note() : ""
-                ));
+        Map<String, Object> details = new HashMap<>(Map.of(
+                "reportId", id.toString(),
+                "action", action.name(),
+                "note", request.note() != null ? request.note() : ""));
+        if ((action == ReportAction.WARN_AUTHOR || action == ReportAction.SUSPEND_AUTHOR) && target.author() != null) {
+            details.put("authorId", String.valueOf(target.author().getId()));
+        }
+        auditService.log("REPORT", id, "REPORT_RESOLVED", adminId, Map.copyOf(details));
 
+        AdminReportResponse response = single(report, target, ReportActionPolicy.authorities(authentication));
+
+        // Le signalant est remercié (jamais au rejet), s'il existe encore : relu avec les
+        // noms de la réponse, un compte supprimé n'y figure pas (@Where deleted_at IS NULL).
+        if (report.getStatus() == ReportStatus.RESOLVED && response.reporterName() != null) {
+            eventPublisher.publishEvent(new ReportResolvedEvent(id, report.getReporterId()));
+        }
+        return ResponseEntity.ok(response);
+    }
+
+    private ReportEntity findOrThrow(UUID id) {
+        return reportRepo.findById(id)
+                .orElseThrow(() -> new YadonyBusinessException(
+                        HttpStatus.NOT_FOUND, "report-not-found", "Not Found", "Signalement introuvable"));
+    }
+
+    /** Réponse d'un signalement seul (détail, résolution) : signalant relu, photos présignées. */
+    private AdminReportResponse single(ReportEntity report, ResolvedReportTarget target, Set<String> authorities) {
         Map<UUID, UserEntity> singleUser = userRepo.findAllById(
                 report.getReporterId() != null ? Set.of(report.getReporterId()) : Set.of()).stream()
                 .filter(u -> u.getId() != null)
                 .collect(Collectors.toMap(UserEntity::getId, Function.identity(), (a, b) -> a));
-        return ResponseEntity.ok(toResponse(report, singleUser, Map.of(), Map.of(),
-                reportService.photoUrls(report.getId()), null));
-    }
-
-    /**
-     * SUSPEND_TARGET et REMOVE_CONTENT délèguent aux services de modération déjà existants
-     * (UserService, AnnouncementService) plutôt que de réimplémenter la logique — et exigent
-     * la permission spécifique de ce geste au-delà de REPORT_RESOLVE : un support qui traite
-     * des signalements ne doit pas pouvoir retirer du contenu (CONTENT_REMOVE) par ce détour.
-     */
-    private void applyAction(UUID reportId, ReportAction action, ReportEntity report, String note,
-                             Authentication authentication, UUID adminId) {
-        switch (action) {
-            case DISMISS -> { }
-            case WARN -> {
-                var text = com.yadony.api.notifications.NotificationTexts.adminWarning(
-                        notificationDispatcher.messagesFor(report.getTargetId()), note);
-                notificationDispatcher.notifyUser(report.getTargetId(), text.title(), text.body(),
-                        Map.of("type", "ADMIN_WARNING", "reportId", reportId.toString()));
-            }
-            case SUSPEND_TARGET -> {
-                requireAuthority(authentication, AdminPermission.USER_SUSPEND.name());
-                userService.suspendUser(report.getTargetId(), note, adminId);
-            }
-            case REMOVE_CONTENT -> {
-                requireAuthority(authentication, AdminPermission.CONTENT_REMOVE.name());
-                if (report.getTargetType() == ReportTargetType.PACKAGE_REQUEST) {
-                    packageRequestModerationService.removeByAdmin(report.getTargetId(), adminId,
-                            AnnouncementRemovalReason.OTHER, note);
-                } else {
-                    announcementService.removeByAdmin(report.getTargetId(), adminId,
-                            AnnouncementRemovalReason.OTHER, note);
-                }
-            }
-        }
-    }
-
-    private void requireAuthority(Authentication authentication, String authority) {
-        boolean has = authentication.getAuthorities().stream()
-                .anyMatch(a -> a.getAuthority().equals(authority));
-        if (!has) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "authority-required",
-                    "Forbidden", "Permission " + authority + " requise pour cette action");
-        }
+        return toResponse(report, singleUser, Map.of(), Map.of(),
+                reportService.photoUrls(report.getId()), null, target, authorities);
     }
 
     private UUID adminId(Authentication authentication) {
@@ -344,7 +345,7 @@ public class AdminReportsController {
                 .filter(u -> u.getId() != null)
                 .collect(Collectors.toMap(UserEntity::getId, Function.identity(), (a, b) -> a));
         return ResponseEntity.ok(toResponse(report, singleUser, Map.of(), Map.of(),
-                reportService.photoUrls(report.getId()), null));
+                reportService.photoUrls(report.getId()), null, null, Set.of()));
     }
 
     /**
@@ -436,8 +437,13 @@ public class AdminReportsController {
                                            Map<UUID, AnnouncementEntity> announcements,
                                            Map<UUID, PackageRequestEntity> packageRequests,
                                            List<String> photoUrls,
-                                           DeletionTraceService.DeletionTrace deletion) {
+                                           DeletionTraceService.DeletionTrace deletion,
+                                           ResolvedReportTarget target,
+                                           Set<String> authorities) {
         String reporterName = resolveReporterName(r.getReporterId(), users);
+        List<String> availableActions = r.getDeletedAt() != null ? List.of()
+                : ReportActionPolicy.availableActions(r, target, authorities).stream().map(Enum::name).toList();
+        UserEntity author = target != null ? target.author() : null;
         return new AdminReportResponse(
                 r.getId(),
                 r.getTargetType() != null ? r.getTargetType().name() : null,
@@ -454,7 +460,9 @@ public class AdminReportsController {
                 photoUrls,
                 r.getScreenRoute(),
                 r.getDeletedAt(),
-                r.getDeletedAt() != null && deletion != null ? deletion.adminEmail() : null
+                r.getDeletedAt() != null && deletion != null ? deletion.adminEmail() : null,
+                availableActions,
+                author != null ? new AdminReportResponse.TargetAuthor(author.getId(), author.publicDisplayName()) : null
         );
     }
 
