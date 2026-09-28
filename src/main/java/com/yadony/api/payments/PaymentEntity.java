@@ -93,6 +93,19 @@ public class PaymentEntity extends BaseEntity {
     @Column(name = "disputed", nullable = false)
     private boolean disputed = false;
 
+    /**
+     * Date a laquelle le versement au voyageur a ete retenu a la livraison, le beneficiaire
+     * etant gele (V270, {@code payments/hold}). Le paiement reste ESCROW ; seul un geste admin le
+     * libere ensuite.
+     *
+     * <p>{@code updatable = false} : ecrite uniquement par l'UPDATE cible
+     * {@link PaymentRepository#markPayoutHeld}, jamais par le flush d'une entite chargee avant
+     * lui (cette entite n'a ni {@code @DynamicUpdate} ni {@code @Version}, un flush reecrirait
+     * toutes les colonnes depuis un snapshot perime et effacerait la marque).
+     */
+    @Column(name = "payout_held_at", updatable = false)
+    private LocalDateTime payoutHeldAt;
+
     public UUID getBidId() { return bidId; }
     public void setBidId(UUID bidId) { this.bidId = bidId; }
 
@@ -151,6 +164,9 @@ public class PaymentEntity extends BaseEntity {
 
     public Instant getCapturedAt() { return capturedAt; }
     public void setCapturedAt(Instant capturedAt) { this.capturedAt = capturedAt; }
+
+    public LocalDateTime getPayoutHeldAt() { return payoutHeldAt; }
+    public void setPayoutHeldAt(LocalDateTime payoutHeldAt) { this.payoutHeldAt = payoutHeldAt; }
 
     public boolean isDisputed() { return disputed; }
     public void setDisputed(boolean disputed) { this.disputed = disputed; }

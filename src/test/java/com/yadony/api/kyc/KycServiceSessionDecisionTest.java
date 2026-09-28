@@ -41,6 +41,7 @@ import static org.mockito.Mockito.when;
 @DisplayName("KycService.createSession — décisions d'administration")
 class KycServiceSessionDecisionTest {
 
+    @org.mockito.Mock KycRefusedSessionRegistry refusedSessions;
     @Mock KycRepository kycRepository;
     @Mock UserRepository userRepository;
     @Mock AuditService auditService;
@@ -57,7 +58,7 @@ class KycServiceSessionDecisionTest {
         lenient().when(provider.kind()).thenReturn(VerificationProviderKind.DIDIT);
         when(settings.kycDiditEnabled()).thenReturn(true);
         service = new KycService(kycRepository, userRepository, auditService,
-                new IdentityProviderResolver(List.of(provider), settings));
+                new IdentityProviderResolver(List.of(provider), settings), refusedSessions);
 
         user = new UserEntity();
         ReflectionTestUtils.setField(user, "id", UUID.randomUUID());

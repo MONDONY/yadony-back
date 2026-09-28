@@ -309,6 +309,7 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
               AND (CAST(:to AS TIMESTAMP) IS NULL OR p.created_at <= CAST(:to AS TIMESTAMP))
               AND (CAST(:rail AS VARCHAR) IS NULL OR p.rail = :rail)
               AND (CAST(:currency AS VARCHAR) IS NULL OR UPPER(p.currency) = :currency)
+              AND (:held = FALSE OR (p.status = 'ESCROW' AND p.payout_held_at IS NOT NULL))
             ORDER BY p.created_at DESC
             """,
            countQuery = """
@@ -319,6 +320,7 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
               AND (CAST(:to AS TIMESTAMP) IS NULL OR p.created_at <= CAST(:to AS TIMESTAMP))
               AND (CAST(:rail AS VARCHAR) IS NULL OR p.rail = :rail)
               AND (CAST(:currency AS VARCHAR) IS NULL OR UPPER(p.currency) = :currency)
+              AND (:held = FALSE OR (p.status = 'ESCROW' AND p.payout_held_at IS NOT NULL))
             """,
            nativeQuery = true)
     Page<PaymentEntity> findAdminFiltered(
@@ -327,7 +329,24 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
             @Param("to") java.time.LocalDateTime to,
             @Param("rail") String rail,
             @Param("currency") String currency,
+            @Param("held") boolean held,
             Pageable pageable);
+
+    /**
+     * Voyageur beneficiaire de chaque paiement : {@code [paymentId, travelerId]}, en texte (H2 rend
+     * un UUID natif en {@code byte[]}, PostgreSQL en {@code UUID}). Un paiement dont
+     * le colis n'est pas (encore) materialise est absent. Meme resolution que le force-release :
+     * {@code bid_id}, sinon le colis materialise depuis le fil de negociation.
+     */
+    @Query(value = """
+            SELECT CAST(p.id AS VARCHAR(36)), CAST(a.traveler_id AS VARCHAR(36)) FROM payments p
+            JOIN bids b ON (b.id = p.bid_id
+                            OR (p.bid_id IS NULL AND p.negotiation_thread_id IS NOT NULL
+                                AND b.linked_negotiation_thread_id = p.negotiation_thread_id))
+            JOIN announcements a ON a.id = b.announcement_id
+            WHERE p.id IN (:ids)
+            """, nativeQuery = true)
+    List<Object[]> findBeneficiaries(@Param("ids") Collection<UUID> ids);
 
     /**
      * Commissions du rail mobile money sur une période, groupées par devise ET par statut.
@@ -388,4 +407,33 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
         ORDER BY UPPER(p.currency)
     """)
     List<PaymentVolumeRow> sumVolumesByCurrencyAndStatus(@Param("statuses") Collection<PaymentStatus> statuses);
+
+    /**
+     * Paiements ESCROW retenus a la livraison (V270, {@code payout_held_at}) dont le voyageur est
+     * {@code travelerId}. Le voyageur se lit sur l'annonce du colis, classique ou materialise
+     * depuis un fil de negociation (meme resolution que le force-release).
+     */
+    @Query(value = """
+            SELECT COUNT(*) FROM payments p
+            JOIN bids b ON (b.id = p.bid_id
+                            OR (p.bid_id IS NULL AND p.negotiation_thread_id IS NOT NULL
+                                AND b.linked_negotiation_thread_id = p.negotiation_thread_id))
+            JOIN announcements a ON a.id = b.announcement_id
+            WHERE p.deleted_at IS NULL
+              AND p.status = 'ESCROW'
+              AND p.payout_held_at IS NOT NULL
+              AND a.traveler_id = :travelerId
+            """, nativeQuery = true)
+    long countHeldEscrowForTraveler(@Param("travelerId") UUID travelerId);
+
+    /**
+     * Marque le versement comme retenu (beneficiaire gele) sans toucher au statut : le paiement
+     * reste ESCROW. La premiere date est conservee, une livraison rejouee ne la deplace pas.
+     */
+    @Modifying
+    @Query(value = """
+            UPDATE payments SET payout_held_at = :heldAt
+            WHERE id = :id AND status = 'ESCROW' AND payout_held_at IS NULL
+            """, nativeQuery = true)
+    int markPayoutHeld(@Param("id") UUID id, @Param("heldAt") LocalDateTime heldAt);
 }

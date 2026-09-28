@@ -30,6 +30,8 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class DeliveryEventListenerChargebackTest {
 
+    @org.mockito.Mock com.yadony.api.payments.hold.PayoutHoldPolicy holdPolicy;
+    @org.mockito.Mock com.yadony.api.admin.AdminAlertEscalator alertEscalator;
     @Mock private PaymentRepository paymentRepository;
     @Mock private UserRepository userRepository;
     @Mock private AuditService auditService;
@@ -45,7 +47,7 @@ class DeliveryEventListenerChargebackTest {
         // Ronde 1, point 5 : payoutInitiator est désormais un paramètre constructeur — null ici,
         // jamais déréférencé (paiement disputé, bloqué avant tout branchement par rail).
         listener = new DeliveryEventListener(paymentRepository, userRepository,
-                auditService, eventPublisher, bidRepository, adminAlert, voucherService, null);
+                auditService, eventPublisher, bidRepository, adminAlert, voucherService, null, holdPolicy, alertEscalator);
     }
 
     private static void setId(Object entity, UUID id) throws Exception {

@@ -25,6 +25,15 @@ public interface IdentityVerificationProvider {
      */
     ProviderSession createSession(UserEntity user, String existingSessionId);
 
+    /**
+     * Ouvre une session NEUVE, jamais la reprise d'une session existante : appelee quand le
+     * fournisseur a resservi une session qu'un administrateur a refusee. Par defaut, une creation
+     * sans session existante suffit (Stripe cree alors toujours une nouvelle session).
+     */
+    default ProviderSession createFreshSession(UserEntity user) {
+        return createSession(user, null);
+    }
+
     void abandonSession(String providerSessionId);
 
     Optional<VerifiedIdentitySnapshot> fetchVerifiedName(String providerSessionId);

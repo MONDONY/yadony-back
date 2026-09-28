@@ -75,4 +75,31 @@ class AdminUserDetailResponseTest {
         assertThat(view.adminGrantReason()).isEqualTo("Partenariat presse");
         assertThat(view.grantedAt()).isEqualTo(grantedAt);
     }
+
+    @Test
+    @DisplayName("gel des versements : date, motif principal, motifs et paiements retenus")
+    void payoutHoldFields() {
+        java.time.LocalDateTime since = java.time.LocalDateTime.now().minusDays(2);
+        AdminUserDetailResponse response = AdminUserDetailResponse.from(sampleUser(), sampleContact(), null,
+                new com.yadony.api.payments.hold.PayoutHoldSummary(since, java.util.List.of(
+                        com.yadony.api.payments.hold.PayoutHoldReason.BANNED,
+                        com.yadony.api.payments.hold.PayoutHoldReason.KYC_REVOKED), 3L));
+
+        assertThat(response.payoutsHeldSince()).isEqualTo(since);
+        assertThat(response.payoutsHeldReason()).isEqualTo("BANNED");
+        assertThat(response.payoutsHeldReasons()).containsExactly("BANNED", "KYC_REVOKED");
+        assertThat(response.heldPaymentsCount()).isEqualTo(3L);
+    }
+
+    @Test
+    @DisplayName("sans gel : champs nuls, liste vide, compteur a zero")
+    void withoutPayoutHold() {
+        AdminUserDetailResponse response = AdminUserDetailResponse.from(sampleUser(), sampleContact(), null);
+
+        assertThat(response.payoutsHeldSince()).isNull();
+        assertThat(response.payoutsHeldReason()).isNull();
+        assertThat(response.payoutsHeldReasons()).isEmpty();
+        assertThat(response.heldPaymentsCount()).isZero();
+        assertThat(AdminUserDetailResponse.from(sampleUser(), sampleContact(), null, null).heldPaymentsCount()).isZero();
+    }
 }

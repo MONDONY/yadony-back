@@ -3,6 +3,8 @@ package com.yadony.api.admin;
 import com.yadony.api.admin.dto.AdminChargebackResponse;
 import com.yadony.api.admin.dto.AdminPaymentDetailResponse;
 import com.yadony.api.admin.dto.AdminPaymentListItemResponse;
+import com.yadony.api.admin.dto.PayoutReleaseRequest;
+import com.yadony.api.auth.StripeAccountStatus;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
@@ -20,6 +22,8 @@ import com.yadony.api.payments.PaymentStatus;
 import com.yadony.api.payments.RefundProcessor;
 import com.yadony.api.payments.chargeback.ChargebackRepository;
 import com.yadony.api.payments.events.PaymentReleasedEvent;
+import com.yadony.api.payments.hold.PayoutHoldPolicy;
+import com.yadony.api.payments.hold.PayoutHoldStatus;
 import com.yadony.api.payments.mobilemoney.MobileMoneyPayoutInitiator;
 import com.yadony.api.payments.pawapay.PawapayAmounts;
 import com.yadony.api.payments.pawapay.PawapayOperationEntity;
@@ -27,10 +31,12 @@ import com.yadony.api.payments.pawapay.PawapayOperationKind;
 import com.yadony.api.payments.pawapay.PawapayOperationService;
 import com.yadony.api.payments.pawapay.PawapayOperationStatus;
 import com.yadony.api.payments.pawapay.PawapaySubmissionService;
+import com.stripe.exception.IdempotencyException;
 import com.stripe.exception.StripeException;
 import com.stripe.model.PaymentIntent;
 import com.stripe.model.Refund;
 import com.stripe.model.Transfer;
+import com.stripe.net.RequestOptions;
 import com.stripe.param.RefundCreateParams;
 import com.stripe.param.TransferCreateParams;
 import jakarta.persistence.EntityManager;
@@ -52,6 +58,7 @@ import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -115,6 +122,9 @@ public class AdminPaymentController {
      */
     private final TransactionTemplate independentAuditTransaction;
 
+    /** Gel des versements du beneficiaire (banni ou KYC retire), lu avant tout versement. */
+    private final PayoutHoldPolicy holdPolicy;
+
     public AdminPaymentController(PaymentRepository paymentRepository,
                                   AdminAlertRepository adminAlertRepository,
                                   AuditService auditService,
@@ -128,7 +138,9 @@ public class AdminPaymentController {
                                   PawapaySubmissionService pawapaySubmission,
                                   RefundProcessor refundProcessor,
                                   EntityManager entityManager,
-                                  PlatformTransactionManager transactionManager) {
+                                  PlatformTransactionManager transactionManager,
+                                  PayoutHoldPolicy holdPolicy) {
+        this.holdPolicy = holdPolicy;
         this.paymentRepository = paymentRepository;
         this.adminAlertRepository = adminAlertRepository;
         this.auditService = auditService;
@@ -154,6 +166,7 @@ public class AdminPaymentController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime dateFrom,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime dateTo,
             @RequestParam(required = false) String currency,
+            @RequestParam(required = false) Boolean held,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
         // method filtre réellement par rail (STRIPE/PAWAPAY) — l'ancien raccourci
@@ -163,8 +176,17 @@ public class AdminPaymentController {
         // currency sépare les devises : un tableau qui mêle des EUR et des XOF n'est lisible
         // qu'à condition de pouvoir n'en garder qu'une.
         String cur = (currency != null && !currency.isBlank()) ? currency.toUpperCase(Locale.ROOT) : null;
-        Page<PaymentEntity> raw = paymentRepository.findAdminFiltered(status, dateFrom, dateTo, rail, cur, PageRequest.of(page, size));
-        return ResponseEntity.ok(raw.map(AdminPaymentListItemResponse::from));
+        Page<PaymentEntity> raw = paymentRepository.findAdminFiltered(status, dateFrom, dateTo, rail, cur,
+                Boolean.TRUE.equals(held), PageRequest.of(page, size));
+        Map<UUID, UUID> beneficiaries = beneficiariesOf(raw.getContent());
+        Map<UUID, PayoutHoldStatus> holds = beneficiaries.isEmpty()
+                ? Map.of()
+                : holdPolicy.statusesOf(List.copyOf(new java.util.LinkedHashSet<>(beneficiaries.values())));
+        return ResponseEntity.ok(raw.map(p -> {
+            UUID travelerId = p.getId() == null ? null : beneficiaries.get(p.getId());
+            PayoutHoldStatus hold = (travelerId == null || holds == null) ? null : holds.get(travelerId);
+            return AdminPaymentListItemResponse.from(p, travelerId, holdOrNone(hold));
+        }));
     }
 
     @PreAuthorize("hasAuthority('PAYMENT_VIEW')")
@@ -201,7 +223,8 @@ public class AdminPaymentController {
     @PreAuthorize("hasAuthority('PAYMENT_RELEASE')")
     @PostMapping("/{id}/force-release")
     @Transactional
-    public ResponseEntity<AdminPaymentDetailResponse> forceRelease(@PathVariable UUID id) {
+    public ResponseEntity<AdminPaymentDetailResponse> forceRelease(@PathVariable UUID id,
+            @RequestBody(required = false) PayoutReleaseRequest request) {
         PaymentEntity payment = paymentRepository.findById(id)
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND, "payment-not-found", "Not Found",
@@ -230,6 +253,20 @@ public class AdminPaymentController {
                 : null;
         UUID bidId = (bid != null) ? bid.getId() : payment.getBidId();
 
+        // Lecture non atomique, seulement pour l'ordre des erreurs : un paiement déjà sorti
+        // d'ESCROW répond 422 comme avant, pas 409 « gelé ». Le claim ci-dessous reste la garde.
+        if (payment.getStatus() != PaymentStatus.ESCROW) {
+            throw notInEscrow("Seuls les paiements en statut ESCROW peuvent faire l'objet d'une libération forcée");
+        }
+
+        // Bénéficiaire gelé ou paiement en litige : 409 sauf dérogation motivée, AVANT le claim.
+        boolean holdOverridden = guardPayout(payment, travelerId, request, "admin-force-release");
+
+        // Compte Connect désactivé ou refusé : Stripe refuserait le Transfer après le claim.
+        if (payment.getRail() != PaymentRail.PAWAPAY && !payment.isLegacyDestinationCharge()) {
+            requireUsableStripeAccount(payment, traveler, travelerId);
+        }
+
         // Atomic ESCROW → RELEASED transition — prevents a double release/transfer race.
         int updated = paymentRepository.markReleasedIfEscrow(id, LocalDateTime.now(ZoneOffset.UTC));
         if (updated == 0) {
@@ -253,7 +290,11 @@ public class AdminPaymentController {
             BigDecimal net = PawapayAmounts.round(
                     payment.getAmount().subtract(payment.getCommissionAmount()), payment.getCurrency());
             try {
-                payoutInitiator.release(payment, bidId, travelerId, net, "admin-force-release");
+                if (holdOverridden) {
+                    payoutInitiator.release(payment, bidId, travelerId, net, "admin-force-release", true);
+                } else {
+                    payoutInitiator.release(payment, bidId, travelerId, net, "admin-force-release");
+                }
             } catch (IllegalStateException e) {
                 // @Transactional : l'exception annule le claim, le paiement reste ESCROW.
                 throw payoutFailed("Versement mobile money impossible : " + e.getMessage());
@@ -317,8 +358,20 @@ public class AdminPaymentController {
                 if (chargeId != null && !chargeId.isBlank()) {
                     builder.setSourceTransaction(chargeId);
                 }
-                Transfer.create(builder.build());
+                // Même clé que la livraison (DeliveryEventListener#releaseV2) : si la livraison a
+                // déjà émis ce Transfer (réussi chez Stripe, transaction locale annulée ensuite),
+                // Stripe renvoie le Transfer existant ou refuse la clé — jamais un second Transfer
+                // pendant la durée de vie de la clé.
+                Transfer.create(builder.build(),
+                        RequestOptions.builder().setIdempotencyKey("transfer-" + id).build());
             }
+        } catch (IdempotencyException e) {
+            log.error("Admin force-release: idempotency key transfer-{} already used with other parameters: {}",
+                    id, e.getMessage());
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "transfer-already-attempted",
+                    "Transfer Already Attempted",
+                    "Un Transfer a déjà été tenté pour ce paiement avec d'autres paramètres : vérifier dans "
+                            + "Stripe avant toute nouvelle tentative");
         } catch (StripeException e) {
             log.error("Admin force-release: Stripe op failed for payment {} (PI={}): {}",
                     id, payment.getStripePaymentIntentId(), e.getMessage(), e);
@@ -494,7 +547,8 @@ public class AdminPaymentController {
     @PreAuthorize("hasAuthority('PAYMENT_RELEASE')")
     @PostMapping("/{id}/mobile-money/retry-payout")
     @Transactional
-    public ResponseEntity<AdminPaymentDetailResponse> retryMobileMoneyPayout(@PathVariable UUID id) {
+    public ResponseEntity<AdminPaymentDetailResponse> retryMobileMoneyPayout(@PathVariable UUID id,
+            @RequestBody(required = false) PayoutReleaseRequest request) {
         PaymentEntity payment = requirePawapayPayment(id);
         if (payment.getStatus() != PaymentStatus.RELEASED) {
             throw retryNotAllowed("Le paiement doit être RELEASED pour relancer le versement");
@@ -518,9 +572,12 @@ public class AdminPaymentController {
         // Le montant de l'opération morte est PAR DÉFINITION celui à réémettre — déjà arrondi à
         // sa création, jamais recalculé ici.
         BigDecimal net = deadPayout.getAmount();
+        boolean holdOverridden = guardPayout(payment, announcement.getTravelerId(), request, "admin-retry");
         PawapayOperationEntity op;
         try {
-            op = payoutInitiator.release(payment, bid.getId(), announcement.getTravelerId(), net, "admin-retry");
+            op = holdOverridden
+                    ? payoutInitiator.release(payment, bid.getId(), announcement.getTravelerId(), net, "admin-retry", true)
+                    : payoutInitiator.release(payment, bid.getId(), announcement.getTravelerId(), net, "admin-retry");
         } catch (IllegalStateException e) {
             throw payoutFailed("Versement mobile money impossible : " + e.getMessage());
         }
@@ -577,13 +634,139 @@ public class AdminPaymentController {
      * autorité, jamais une colonne de {@code payments}.
      */
     private AdminPaymentDetailResponse detail(PaymentEntity payment) {
+        UUID travelerId = beneficiaryOf(payment);
+        PayoutHoldStatus hold = holdOf(travelerId);
         if (payment.getRail() != PaymentRail.PAWAPAY) {
-            return AdminPaymentDetailResponse.from(payment);
+            return AdminPaymentDetailResponse.from(payment, null, null, null, travelerId, hold);
         }
         return AdminPaymentDetailResponse.from(payment,
                 latestOperationId(payment.getId(), PawapayOperationKind.DEPOSIT),
                 latestOperationId(payment.getId(), PawapayOperationKind.PAYOUT),
-                latestOperationId(payment.getId(), PawapayOperationKind.REFUND));
+                latestOperationId(payment.getId(), PawapayOperationKind.REFUND),
+                travelerId, hold);
+    }
+
+    // ── Gel du bénéficiaire, litige, dérogation ────────────────────────────────
+
+    /**
+     * Refuse (409) un versement à un bénéficiaire gelé ou sur un paiement en litige, sauf
+     * dérogation explicite et motivée de l'administrateur, auditée dans une transaction
+     * indépendante (la trace survit à un échec ultérieur du versement).
+     *
+     * @return {@code true} si la dérogation a été utilisée
+     */
+    private boolean guardPayout(PaymentEntity payment, UUID travelerId, PayoutReleaseRequest request, String source) {
+        PayoutHoldStatus hold = holdOf(travelerId);
+        List<String> blockers = new java.util.ArrayList<>();
+        if (payment.isDisputed()) {
+            blockers.add("DISPUTED");
+        }
+        if (hold.held()) {
+            blockers.add("BENEFICIARY_HELD");
+        }
+        boolean override = request != null && request.override();
+        if (override) {
+            String reason = request.trimmedReason();
+            if (reason == null || reason.length() < PayoutReleaseRequest.REASON_MIN
+                    || reason.length() > PayoutReleaseRequest.REASON_MAX) {
+                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "override-reason-invalid",
+                        "Invalid Override Reason",
+                        "Le motif de dérogation est obligatoire : entre " + PayoutReleaseRequest.REASON_MIN
+                                + " et " + PayoutReleaseRequest.REASON_MAX + " caractères");
+            }
+        }
+        if (blockers.isEmpty()) {
+            return false;
+        }
+        List<String> holdReasons = hold.reasons().stream().map(Enum::name).toList();
+        if (!override) {
+            boolean disputed = payment.isDisputed();
+            throw new YadonyBusinessException(HttpStatus.CONFLICT,
+                    disputed ? "payment-disputed" : "payout-beneficiary-held",
+                    disputed ? "Payment Disputed" : "Payout Beneficiary Held",
+                    disputed
+                            ? "Paiement en litige (chargeback) : versement refusé sans dérogation motivée"
+                            : "Les versements de ce voyageur sont gelés (" + String.join(", ", holdReasons)
+                                    + ") : versement refusé sans dérogation motivée",
+                    Map.of("blockers", List.copyOf(blockers), "holdReasons", holdReasons,
+                            "travelerId", String.valueOf(travelerId)));
+        }
+        UUID adminId = currentAdminId();
+        Map<String, Object> payload = Map.of(
+                "paymentId", payment.getId().toString(),
+                "travelerId", String.valueOf(travelerId),
+                "blockers", String.join(",", blockers),
+                "holdReasons", String.join(",", holdReasons),
+                "overrideReason", request.trimmedReason(),
+                "source", source);
+        independentAuditTransaction.executeWithoutResult(status ->
+                auditService.log("PAYMENT", payment.getId(), "PAYOUT_HOLD_OVERRIDDEN_BY_ADMIN", adminId, payload));
+        log.warn("Admin {} overrode payout blockers {} on payment {} ({})", adminId, blockers, payment.getId(), source);
+        return true;
+    }
+
+    /**
+     * Un compte Connect {@code DISABLED} ou {@code REJECTED} ne recevra jamais le Transfer :
+     * 409 {@code stripe-account-unusable}, audité, AVANT le claim (le paiement reste ESCROW).
+     * Aucune dérogation : Stripe refuserait de toute façon.
+     */
+    private void requireUsableStripeAccount(PaymentEntity payment, UserEntity traveler, UUID travelerId) {
+        StripeAccountStatus status = traveler != null ? traveler.getStripeAccountStatus() : null;
+        if (status != StripeAccountStatus.DISABLED && status != StripeAccountStatus.REJECTED) {
+            return;
+        }
+        UUID adminId = currentAdminId();
+        independentAuditTransaction.executeWithoutResult(tx -> auditService.log("PAYMENT", payment.getId(),
+                "PAYOUT_BLOCKED_STRIPE_ACCOUNT_UNUSABLE", adminId, Map.of(
+                        "paymentId", payment.getId().toString(),
+                        "travelerId", String.valueOf(travelerId),
+                        "stripeAccountStatus", status.name(),
+                        "source", "admin-force-release")));
+        throw new YadonyBusinessException(HttpStatus.CONFLICT, "stripe-account-unusable",
+                "Stripe Account Unusable",
+                "Le compte Stripe du voyageur est " + status + " : aucun Transfer possible, le paiement reste en séquestre",
+                Map.of("stripeAccountStatus", status.name()));
+    }
+
+    private PayoutHoldStatus holdOf(UUID travelerId) {
+        return travelerId == null ? PayoutHoldStatus.NONE : holdOrNone(holdPolicy.statusOf(travelerId));
+    }
+
+    private static PayoutHoldStatus holdOrNone(PayoutHoldStatus status) {
+        return status != null ? status : PayoutHoldStatus.NONE;
+    }
+
+    /** Voyageur bénéficiaire d'un paiement, résolu comme au force-release ; {@code null} si inconnu. */
+    private UUID beneficiaryOf(PaymentEntity payment) {
+        BidEntity bid = resolveBid(payment);
+        if (bid == null) {
+            return null;
+        }
+        return announcementRepository.findById(bid.getAnnouncementId())
+                .map(AnnouncementEntity::getTravelerId)
+                .orElse(null);
+    }
+
+    /** Bénéficiaires d'une page de paiements, en une requête : {@code paymentId → travelerId}. */
+    private Map<UUID, UUID> beneficiariesOf(List<PaymentEntity> payments) {
+        List<UUID> ids = payments.stream().map(PaymentEntity::getId).filter(java.util.Objects::nonNull).toList();
+        if (ids.isEmpty()) {
+            return Map.of();
+        }
+        Map<UUID, UUID> result = new java.util.HashMap<>();
+        List<Object[]> rows = paymentRepository.findBeneficiaries(ids);
+        if (rows != null) {
+            for (Object[] row : rows) {
+                if (row != null && row.length >= 2 && row[0] != null && row[1] != null) {
+                    result.put(toUuid(row[0]), toUuid(row[1]));
+                }
+            }
+        }
+        return result;
+    }
+
+    private static UUID toUuid(Object value) {
+        return value instanceof UUID uuid ? uuid : UUID.fromString(value.toString());
     }
 
     private UUID latestOperationId(UUID paymentId, PawapayOperationKind kind) {

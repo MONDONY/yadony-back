@@ -31,6 +31,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 @ExtendWith(MockitoExtension.class)
 class DeliveryEventListenerMobileMoneyTest {
 
+    @org.mockito.Mock com.yadony.api.payments.hold.PayoutHoldPolicy holdPolicy;
+    @org.mockito.Mock com.yadony.api.admin.AdminAlertEscalator alertEscalator;
     @Mock PaymentRepository paymentRepository;
     @Mock UserRepository userRepository;
     @Mock AuditService auditService;
@@ -50,7 +52,7 @@ class DeliveryEventListenerMobileMoneyTest {
         // Ronde 1, point 5 : payoutInitiator est désormais un paramètre constructeur (jamais un
         // champ contournable) — plus besoin de ReflectionTestUtils pour l'injecter.
         listener = new DeliveryEventListener(paymentRepository, userRepository, auditService, eventPublisher,
-                bidRepository, adminAlert, voucherService, payoutInitiator);
+                bidRepository, adminAlert, voucherService, payoutInitiator, holdPolicy, alertEscalator);
         bid = new BidEntity();
         ReflectionTestUtils.setField(bid, "id", UUID.randomUUID());
         bid.setPaymentMethod(PaymentMethod.MOBILE_MONEY);

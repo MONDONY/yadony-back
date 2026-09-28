@@ -29,11 +29,14 @@ public class KycService {
     private final UserRepository userRepository;
     private final AuditService auditService;
     private final IdentityProviderResolver providers;
+    private final KycRefusedSessionRegistry refusedSessions;
 
     public KycService(KycRepository kycRepository,
                       UserRepository userRepository,
                       AuditService auditService,
-                      IdentityProviderResolver providers) {
+                      IdentityProviderResolver providers,
+                      KycRefusedSessionRegistry refusedSessions) {
+        this.refusedSessions = refusedSessions;
         this.kycRepository = kycRepository;
         this.userRepository = userRepository;
         this.auditService = auditService;
@@ -64,6 +67,7 @@ public class KycService {
         String resumableSessionId = lockedByAdmin ? null : existing
                 .filter(kyc -> kyc.getProvider() == provider.kind())
                 .map(KycVerificationEntity::getVerificationSessionId)
+                .filter(sessionId -> !refusedSessions.isRefused(sessionId))
                 .orElse(null);
 
         // Transition NOT_STARTED → PENDING when session is created
@@ -73,6 +77,20 @@ public class KycService {
         }
 
         ProviderSession session = provider.createSession(user, resumableSessionId);
+        String refusedSessionId = null;
+        if (refusedSessions.isRefused(session.sessionId())) {
+            // Le fournisseur resert une session qu'un administrateur a refusee (Didit resert une
+            // session inachevee du meme utilisateur) : on en exige une neuve, sinon une
+            // approbation tardive de cette session validerait le compte.
+            refusedSessionId = session.sessionId();
+            session = provider.createFreshSession(user);
+            if (refusedSessions.isRefused(session.sessionId())) {
+                log.error("Provider {} keeps serving refused session {} for user {}",
+                        provider.kind(), session.sessionId(), user.getId());
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                        "Impossible de créer la session de vérification");
+            }
+        }
 
         if (!lockedByAdmin && session.sessionId().equals(resumableSessionId)) {
             // Session reprise telle quelle : rien a reecrire en base.
@@ -95,6 +113,11 @@ public class KycService {
         kyc.clearDecision();
         kycRepository.save(kyc);
 
+        if (refusedSessionId != null) {
+            auditService.log("kyc_verification", kyc.getId(), "KYC_REFUSED_SESSION_NOT_REUSED",
+                    user.getId(), Map.of("refusedSessionId", refusedSessionId, "sessionId", session.sessionId(),
+                            "provider", provider.kind().name()));
+        }
         auditService.log("kyc_verification", kyc.getId(), "KYC_SESSION_CREATED",
                 user.getId(), Map.of("sessionId", session.sessionId(),
                         "provider", provider.kind().name()));

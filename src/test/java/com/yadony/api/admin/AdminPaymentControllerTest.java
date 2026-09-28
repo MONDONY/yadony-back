@@ -64,6 +64,7 @@ class AdminPaymentControllerTest {
     @Mock private com.yadony.api.payments.RefundProcessor refundProcessor;
     @Mock private jakarta.persistence.EntityManager entityManager;
     @Mock private org.springframework.transaction.PlatformTransactionManager transactionManager;
+    @Mock private com.yadony.api.payments.hold.PayoutHoldPolicy holdPolicy;
 
     private AdminPaymentController controller;
 
@@ -79,7 +80,7 @@ class AdminPaymentControllerTest {
         controller = new AdminPaymentController(paymentRepository, adminAlertRepository, auditService,
                 bidRepository, announcementRepository, userRepository, eventPublisher, chargebackRepository,
                 payoutInitiator, pawapayOperations, pawapaySubmission, refundProcessor, entityManager,
-                transactionManager);
+                transactionManager, holdPolicy);
     }
 
     /**
@@ -98,10 +99,10 @@ class AdminPaymentControllerTest {
         xof.setStripePaymentIntentId("mm_" + bidId);
         xof.setAmount(new BigDecimal("6600.00"));
         xof.setCommissionAmount(new BigDecimal("600.00"));
-        when(paymentRepository.findAdminFiltered(isNull(), isNull(), isNull(), eq("PAWAPAY"), eq("XOF"), any()))
+        when(paymentRepository.findAdminFiltered(isNull(), isNull(), isNull(), eq("PAWAPAY"), eq("XOF"), eq(false), any()))
                 .thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of(xof)));
 
-        var body = controller.list(null, "pawapay", null, null, "xof", 0, 20).getBody();
+        var body = controller.list(null, "pawapay", null, null, "xof", null, 0, 20).getBody();
 
         assertThat(body).isNotNull();
         assertThat(body.getContent()).hasSize(1);
@@ -114,12 +115,12 @@ class AdminPaymentControllerTest {
 
     @Test
     void list_sansFiltreDevise_passeNullAuDepot() {
-        when(paymentRepository.findAdminFiltered(isNull(), isNull(), isNull(), isNull(), isNull(), any()))
+        when(paymentRepository.findAdminFiltered(isNull(), isNull(), isNull(), isNull(), isNull(), eq(false), any()))
                 .thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of()));
 
-        controller.list(null, " ", null, null, "", 0, 20);
+        controller.list(null, " ", null, null, "", null, 0, 20);
 
-        verify(paymentRepository).findAdminFiltered(isNull(), isNull(), isNull(), isNull(), isNull(), any());
+        verify(paymentRepository).findAdminFiltered(isNull(), isNull(), isNull(), isNull(), isNull(), eq(false), any());
     }
 
     private PaymentEntity threadPayment(PaymentStatus status, boolean legacy, String chargeId) {
@@ -150,9 +151,9 @@ class AdminPaymentControllerTest {
             when(pi.getStatus()).thenReturn("succeeded");
             piStatic.when(() -> PaymentIntent.retrieve("pi_xxx")).thenReturn(pi);
             ArgumentCaptor<TransferCreateParams> captor = ArgumentCaptor.forClass(TransferCreateParams.class);
-            trStatic.when(() -> Transfer.create(captor.capture())).thenReturn(mock(Transfer.class));
+            trStatic.when(() -> Transfer.create(captor.capture(), any(com.stripe.net.RequestOptions.class))).thenReturn(mock(Transfer.class));
 
-            controller.forceRelease(paymentId);
+            controller.forceRelease(paymentId, null);
 
             TransferCreateParams params = captor.getValue();
             assertThat(params.getCurrency()).isEqualTo("cad");
@@ -190,9 +191,9 @@ class AdminPaymentControllerTest {
             when(pi.getStatus()).thenReturn("succeeded"); // already captured (e.g. dashboard)
             piStatic.when(() -> PaymentIntent.retrieve("pi_xxx")).thenReturn(pi);
             ArgumentCaptor<TransferCreateParams> captor = ArgumentCaptor.forClass(TransferCreateParams.class);
-            trStatic.when(() -> Transfer.create(captor.capture())).thenReturn(mock(Transfer.class));
+            trStatic.when(() -> Transfer.create(captor.capture(), any(com.stripe.net.RequestOptions.class))).thenReturn(mock(Transfer.class));
 
-            ResponseEntity<AdminPaymentDetailResponse> resp = controller.forceRelease(paymentId);
+            ResponseEntity<AdminPaymentDetailResponse> resp = controller.forceRelease(paymentId, null);
 
             verify(pi, never()).capture();
             TransferCreateParams params = captor.getValue();
@@ -222,9 +223,9 @@ class AdminPaymentControllerTest {
             when(pi.getStatus()).thenReturn("requires_capture");
             when(pi.capture()).thenReturn(pi);
             piStatic.when(() -> PaymentIntent.retrieve("pi_xxx")).thenReturn(pi);
-            trStatic.when(() -> Transfer.create(any(TransferCreateParams.class))).thenReturn(mock(Transfer.class));
+            trStatic.when(() -> Transfer.create(any(TransferCreateParams.class), any(com.stripe.net.RequestOptions.class))).thenReturn(mock(Transfer.class));
 
-            controller.forceRelease(paymentId);
+            controller.forceRelease(paymentId, null);
 
             verify(pi).capture();
         }
@@ -247,7 +248,7 @@ class AdminPaymentControllerTest {
             when(pi.capture()).thenReturn(pi);
             piStatic.when(() -> PaymentIntent.retrieve("pi_xxx")).thenReturn(pi);
 
-            controller.forceRelease(paymentId);
+            controller.forceRelease(paymentId, null);
 
             verify(pi).capture();
             trStatic.verifyNoInteractions();
@@ -258,7 +259,7 @@ class AdminPaymentControllerTest {
     @Test
     void payment_not_found_throws_404() {
         when(paymentRepository.findById(paymentId)).thenReturn(Optional.empty());
-        assertThatThrownBy(() -> controller.forceRelease(paymentId))
+        assertThatThrownBy(() -> controller.forceRelease(paymentId, null))
                 .isInstanceOf(YadonyBusinessException.class)
                 .extracting(e -> ((YadonyBusinessException) e).getStatus())
                 .isEqualTo(HttpStatus.NOT_FOUND);
@@ -268,9 +269,11 @@ class AdminPaymentControllerTest {
     void payment_not_in_escrow_throws_422() {
         PaymentEntity p = threadPayment(PaymentStatus.RELEASED, false, "ch_x");
         when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(p));
-        when(paymentRepository.markReleasedIfEscrow(eq(paymentId), any())).thenReturn(0); // already released
+        // Le statut lu suffit désormais à répondre 422 avant le claim (ordre des erreurs face au
+        // gel) ; le claim reste la garde atomique, il n'est simplement plus atteint ici.
+        lenient().when(paymentRepository.markReleasedIfEscrow(eq(paymentId), any())).thenReturn(0); // already released
 
-        assertThatThrownBy(() -> controller.forceRelease(paymentId))
+        assertThatThrownBy(() -> controller.forceRelease(paymentId, null))
                 .isInstanceOf(YadonyBusinessException.class)
                 .extracting(e -> ((YadonyBusinessException) e).getErrorCode())
                 .isEqualTo("payment-not-in-escrow");
@@ -284,7 +287,7 @@ class AdminPaymentControllerTest {
         when(paymentRepository.markReleasedIfEscrow(eq(paymentId), any())).thenReturn(1);
 
         try (MockedStatic<Transfer> trStatic = mockStatic(Transfer.class)) {
-            assertThatThrownBy(() -> controller.forceRelease(paymentId))
+            assertThatThrownBy(() -> controller.forceRelease(paymentId, null))
                     .isInstanceOf(YadonyBusinessException.class)
                     .extracting(e -> ((YadonyBusinessException) e).getErrorCode())
                     .isEqualTo("traveler-no-connect");
@@ -435,7 +438,7 @@ class AdminPaymentControllerTest {
         when(bidRepository.findByLinkedNegotiationThreadId(threadId)).thenReturn(Optional.of(bid));
 
         try (MockedStatic<Transfer> trStatic = mockStatic(Transfer.class)) {
-            assertThatThrownBy(() -> controller.forceRelease(paymentId))
+            assertThatThrownBy(() -> controller.forceRelease(paymentId, null))
                     .isInstanceOf(YadonyBusinessException.class)
                     .extracting(e -> ((YadonyBusinessException) e).getErrorCode())
                     .isEqualTo("bid-cancelled");
@@ -456,10 +459,10 @@ class AdminPaymentControllerTest {
             PaymentIntent pi = mock(PaymentIntent.class);
             when(pi.getStatus()).thenReturn("succeeded");
             piStatic.when(() -> PaymentIntent.retrieve("pi_xxx")).thenReturn(pi);
-            trStatic.when(() -> Transfer.create(any(TransferCreateParams.class)))
+            trStatic.when(() -> Transfer.create(any(TransferCreateParams.class), any(com.stripe.net.RequestOptions.class)))
                     .thenThrow(mock(com.stripe.exception.InvalidRequestException.class));
 
-            assertThatThrownBy(() -> controller.forceRelease(paymentId))
+            assertThatThrownBy(() -> controller.forceRelease(paymentId, null))
                     .isInstanceOf(YadonyBusinessException.class)
                     .extracting(e -> ((YadonyBusinessException) e).getStatus())
                     .isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);

@@ -82,6 +82,7 @@ class AdminMetricsControllerIT {
                 .andExpect(jsonPath("$.gmv.escrowHeld").value(0.0))
                 // File KYC : demandes en revue, distinctes de pendingKyc (parcours en cours compris).
                 .andExpect(jsonPath("$.queues.kycInReview").isNumber())
+                .andExpect(jsonPath("$.queues.heldPayouts").isNumber())
                 .andExpect(jsonPath("$.queues.pendingKyc").isNumber());
     }
 

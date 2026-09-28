@@ -1,5 +1,7 @@
 package com.yadony.api.payments;
 
+import com.yadony.api.admin.AdminAlertEscalator;
+import com.yadony.api.auth.StripeAccountStatus;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
@@ -8,6 +10,8 @@ import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.payments.events.PaymentReleasedEvent;
+import com.yadony.api.payments.hold.PayoutHoldPolicy;
+import com.yadony.api.payments.hold.PayoutHoldStatus;
 import com.yadony.api.payments.currency.CurrencyAmount;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.tracking.events.DeliveryConfirmedEvent;
@@ -79,6 +83,9 @@ public class DeliveryEventListener {
      */
     private final com.yadony.api.payments.mobilemoney.MobileMoneyPayoutInitiator payoutInitiator;
 
+    private final PayoutHoldPolicy holdPolicy;
+    private final AdminAlertEscalator alertEscalator;
+
     public DeliveryEventListener(PaymentRepository paymentRepository,
                                  UserRepository userRepository,
                                  AuditService auditService,
@@ -86,7 +93,9 @@ public class DeliveryEventListener {
                                  BidRepository bidRepository,
                                  AdminAlertService adminAlert,
                                  com.yadony.api.voucher.CommissionVoucherService voucherService,
-                                 com.yadony.api.payments.mobilemoney.MobileMoneyPayoutInitiator payoutInitiator) {
+                                 com.yadony.api.payments.mobilemoney.MobileMoneyPayoutInitiator payoutInitiator,
+                                 PayoutHoldPolicy holdPolicy,
+                                 AdminAlertEscalator alertEscalator) {
         this.paymentRepository = paymentRepository;
         this.userRepository = userRepository;
         this.auditService = auditService;
@@ -95,6 +104,8 @@ public class DeliveryEventListener {
         this.adminAlert = adminAlert;
         this.voucherService = voucherService;
         this.payoutInitiator = payoutInitiator;
+        this.holdPolicy = holdPolicy;
+        this.alertEscalator = alertEscalator;
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -139,6 +150,22 @@ public class DeliveryEventListener {
             adminAlert.raise("CHARGEBACK_TRANSFER_BLOCKED",
                     "Tentative de liberation escrow bloquee — litige ouvert sur payment " + payment.getId(),
                     Map.of("paymentId", payment.getId().toString(), "bidId", event.getBidId().toString()));
+            return;
+        }
+
+        // Bénéficiaire gelé (banni ou vérification d'identité retirée) : même modèle que la garde
+        // litige ci-dessus — AVANT le claim, le paiement reste ESCROW et rien ne part, sur les
+        // trois rails (carte V2, carte legacy, mobile money). Seul un geste admin explicite
+        // (force-release avec dérogation) le libère ensuite.
+        if (holdPolicy.isHeld(event.getTravelerId())) {
+            holdPayout(payment, event);
+            return;
+        }
+
+        // Compte Connect désactivé ou refusé : un Transfer serait refusé par Stripe après le
+        // claim (rollback, nouvelle tentative à chaque rejeu). On le constate avant, sans claim.
+        if (payment.getRail() != PaymentRail.PAWAPAY && !payment.isLegacyDestinationCharge()
+                && stripeAccountUnusable(payment, event)) {
             return;
         }
 
@@ -208,6 +235,58 @@ public class DeliveryEventListener {
         // is NULL for negotiation/thread payments.
         eventPublisher.publishEvent(new PaymentReleasedEvent(
                 event.getBidId(), event.getTravelerId(), event.getSenderId(), payment.getAmount()));
+    }
+
+    /**
+     * Versement retenu : trace, marque {@code payout_held_at} (le paiement reste ESCROW) et
+     * alerte dédupliquée par paiement — un événement de livraison rejoué ne re-poste rien.
+     */
+    private void holdPayout(PaymentEntity payment, DeliveryConfirmedEvent event) {
+        PayoutHoldStatus hold = holdPolicy.statusOf(event.getTravelerId());
+        String reason = hold.primaryReason() != null ? hold.primaryReason().name() : "";
+        String reasons = String.join(",", hold.reasons().stream().map(Enum::name).toList());
+        log.warn("Payment {} for bid {}: traveler {} payouts are held ({}) — payout retained in escrow",
+                payment.getId(), event.getBidId(), event.getTravelerId(), reasons);
+        paymentRepository.markPayoutHeld(payment.getId(), LocalDateTime.now(ZoneOffset.UTC));
+        auditService.log("PAYMENT", payment.getId(), "PAYOUT_HELD_BENEFICIARY", event.getBidId(), Map.of(
+                "paymentId", payment.getId().toString(),
+                "bidId", event.getBidId().toString(),
+                "travelerId", event.getTravelerId().toString(),
+                "reason", reason,
+                "reasons", reasons));
+        alertEscalator.raiseOnce("PAYOUT_HELD_" + payment.getId(),
+                "Versement retenu : le voyageur " + event.getTravelerId() + " est gelé (" + reasons
+                        + "), le paiement " + payment.getId() + " reste en séquestre",
+                Map.of("paymentId", payment.getId().toString(), "bidId", event.getBidId().toString(),
+                        "travelerId", event.getTravelerId().toString(), "reason", reason));
+    }
+
+    /**
+     * Statuts Connect qui ne recevront jamais un Transfer : {@code DISABLED} (désactivé par
+     * l'administration) et {@code REJECTED} (refusé par Stripe). Un compte en cours d'onboarding,
+     * ou dont le statut local n'a pas encore été rafraîchi, est laissé à l'arbitrage de Stripe :
+     * un refus y annule le claim comme avant.
+     */
+    private boolean stripeAccountUnusable(PaymentEntity payment, DeliveryConfirmedEvent event) {
+        StripeAccountStatus status = userRepository.findById(event.getTravelerId())
+                .map(UserEntity::getStripeAccountStatus)
+                .orElse(null);
+        if (status != StripeAccountStatus.DISABLED && status != StripeAccountStatus.REJECTED) {
+            return false;
+        }
+        log.warn("Payment {} for bid {}: traveler {} Stripe account is {} — transfer not attempted",
+                payment.getId(), event.getBidId(), event.getTravelerId(), status);
+        auditService.log("PAYMENT", payment.getId(), "PAYOUT_BLOCKED_STRIPE_ACCOUNT_UNUSABLE", event.getBidId(), Map.of(
+                "paymentId", payment.getId().toString(),
+                "bidId", event.getBidId().toString(),
+                "travelerId", event.getTravelerId().toString(),
+                "stripeAccountStatus", status.name()));
+        alertEscalator.raiseOnce("PAYOUT_STRIPE_UNUSABLE_" + payment.getId(),
+                "Versement impossible : le compte Stripe du voyageur " + event.getTravelerId() + " est " + status
+                        + ", le paiement " + payment.getId() + " reste en séquestre",
+                Map.of("paymentId", payment.getId().toString(), "travelerId", event.getTravelerId().toString(),
+                        "stripeAccountStatus", status.name()));
+        return true;
     }
 
     /**

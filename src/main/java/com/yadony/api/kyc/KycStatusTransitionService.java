@@ -47,12 +47,15 @@ public class KycStatusTransitionService {
     private final AuditService auditService;
     private final ApplicationEventPublisher eventPublisher;
     private final AdminAlertService adminAlert;
+    private final KycRefusedSessionRegistry refusedSessions;
 
     public KycStatusTransitionService(KycRepository kycRepository,
                                       UserRepository userRepository,
                                       AuditService auditService,
                                       ApplicationEventPublisher eventPublisher,
-                                      AdminAlertService adminAlert) {
+                                      AdminAlertService adminAlert,
+                                      KycRefusedSessionRegistry refusedSessions) {
+        this.refusedSessions = refusedSessions;
         this.kycRepository = kycRepository;
         this.userRepository = userRepository;
         this.auditService = auditService;
@@ -62,7 +65,8 @@ public class KycStatusTransitionService {
 
     /** Idempotent : un webhook rejoue ne republie pas l'evenement de verification. */
     public void markVerified(KycVerificationEntity kyc, UserEntity user, String sessionId) {
-        if (kyc.getStatus() == KycVerificationStatus.VERIFIED || lockedByAdmin(kyc, "KYC_VERIFIED", sessionId)) {
+        if (kyc.getStatus() == KycVerificationStatus.VERIFIED || lockedByAdmin(kyc, "KYC_VERIFIED", sessionId)
+                || refusedByAdmin(kyc, user, "KYC_VERIFIED", sessionId)) {
             return;
         }
         applyVerified(kyc, user);
@@ -100,6 +104,7 @@ public class KycStatusTransitionService {
                               String code, String reason) {
         KycVerificationStatus previous = kyc.getStatus();
         recordDecision(kyc, KycDecisionKind.REJECTED, adminId, reason);
+        refusedSessions.remember(kyc, KycDecisionKind.REJECTED, adminId);
         applyRejected(kyc, user, code, code);
         auditService.log("kyc_verification", kyc.getId(), "KYC_REJECTED_BY_ADMIN", adminId,
                 decisionPayload(kyc, user, previous, code, reason));
@@ -114,10 +119,11 @@ public class KycStatusTransitionService {
                               String code, String reason) {
         KycVerificationStatus previous = kyc.getStatus();
         recordDecision(kyc, KycDecisionKind.REVOKED, adminId, reason);
+        refusedSessions.remember(kyc, KycDecisionKind.REVOKED, adminId);
         applyRejected(kyc, user, code, code);
         auditService.log("kyc_verification", kyc.getId(), "KYC_REVOKED_BY_ADMIN", adminId,
                 decisionPayload(kyc, user, previous, code, reason));
-        eventPublisher.publishEvent(new UserKycRevokedEvent(user.getId(), code));
+        eventPublisher.publishEvent(new UserKycRevokedEvent(user.getId(), code, adminId));
     }
 
     /** Une ligne verifiee n'est jamais retrogradee : un evenement tardif ne doit rien casser. */
@@ -145,7 +151,8 @@ public class KycStatusTransitionService {
      * rien a refaire. Aucun evenement — il n'y a rien a lui demander.
      */
     public void markInReview(KycVerificationEntity kyc, UserEntity user, String sessionId) {
-        if (kyc.getStatus() == KycVerificationStatus.VERIFIED || lockedByAdmin(kyc, "KYC_IN_REVIEW", sessionId)) {
+        if (kyc.getStatus() == KycVerificationStatus.VERIFIED || lockedByAdmin(kyc, "KYC_IN_REVIEW", sessionId)
+                || refusedByAdmin(kyc, user, "KYC_IN_REVIEW", sessionId)) {
             return;
         }
         kyc.setStatus(KycVerificationStatus.PENDING);
@@ -235,6 +242,21 @@ public class KycStatusTransitionService {
             return true;
         }
         return false;
+    }
+
+    /**
+     * Session deja refusee ou revoquee par un administrateur, resservie par le fournisseur apres
+     * une nouvelle tentative : la decision a quitte la ligne, pas le registre. Un webhook positif
+     * qui la porte ne peut plus rien valider.
+     */
+    private boolean refusedByAdmin(KycVerificationEntity kyc, UserEntity user, String event, String sessionId) {
+        if (!refusedSessions.isRefused(sessionId)) {
+            return false;
+        }
+        log.warn("Ignoring {} for session {}: this session was refused by an administrator", event, sessionId);
+        auditService.log("kyc_verification", kyc.getId(), "KYC_WEBHOOK_IGNORED_REFUSED_SESSION", user.getId(),
+                Map.of("sessionId", sessionId, "event", event));
+        return true;
     }
 
     private static LocalDateTime now() {

@@ -56,8 +56,23 @@ public class DiditIdentityProvider implements IdentityVerificationProvider {
      */
     @Override
     public ProviderSession createSession(UserEntity user, String existingSessionId) {
+        return open(user, () -> client.createSession(user.getId(), kycReturnUrl));
+    }
+
+    /**
+     * Didit dedoublonne sur {@code vendor_data} : un suffixe unique force une session neuve quand
+     * la session inachevee du meme utilisateur a ete refusee par un administrateur. Les webhooks
+     * sont rapproches par {@code session_id}, le suffixe n'a aucun autre effet.
+     */
+    @Override
+    public ProviderSession createFreshSession(UserEntity user) {
+        String vendorData = user.getId() + ":" + java.util.UUID.randomUUID();
+        return open(user, () -> client.createSession(user.getId(), kycReturnUrl, vendorData));
+    }
+
+    private ProviderSession open(UserEntity user, java.util.function.Supplier<JsonNode> call) {
         try {
-            JsonNode response = client.createSession(user.getId(), kycReturnUrl);
+            JsonNode response = call.get();
             String sessionId = text(response, "session_id");
             String url = text(response, "url");
             if (sessionId == null || url == null) {

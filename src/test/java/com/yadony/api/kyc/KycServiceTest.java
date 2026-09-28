@@ -31,6 +31,7 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class KycServiceTest {
 
+    @org.mockito.Mock KycRefusedSessionRegistry refusedSessions;
     @Mock KycRepository kycRepository;
     @Mock UserRepository userRepository;
     @Mock AuditService auditService;
@@ -53,7 +54,7 @@ class KycServiceTest {
                 new com.yadony.api.kyc.provider.IdentityProviderResolver(
                         java.util.List.of(new com.yadony.api.kyc.provider.stripe.StripeIdentityProvider(
                                 "https://yadony.com/kyc/complete", verificationFlowId)),
-                        settings));
+                        settings), refusedSessions);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
