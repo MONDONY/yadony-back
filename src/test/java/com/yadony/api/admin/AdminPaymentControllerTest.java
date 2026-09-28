@@ -269,7 +269,9 @@ class AdminPaymentControllerTest {
     void payment_not_in_escrow_throws_422() {
         PaymentEntity p = threadPayment(PaymentStatus.RELEASED, false, "ch_x");
         when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(p));
-        when(paymentRepository.markReleasedIfEscrow(eq(paymentId), any())).thenReturn(0); // already released
+        // Le statut lu suffit désormais à répondre 422 avant le claim (ordre des erreurs face au
+        // gel) ; le claim reste la garde atomique, il n'est simplement plus atteint ici.
+        lenient().when(paymentRepository.markReleasedIfEscrow(eq(paymentId), any())).thenReturn(0); // already released
 
         assertThatThrownBy(() -> controller.forceRelease(paymentId, null))
                 .isInstanceOf(YadonyBusinessException.class)

@@ -253,6 +253,12 @@ public class AdminPaymentController {
                 : null;
         UUID bidId = (bid != null) ? bid.getId() : payment.getBidId();
 
+        // Lecture non atomique, seulement pour l'ordre des erreurs : un paiement déjà sorti
+        // d'ESCROW répond 422 comme avant, pas 409 « gelé ». Le claim ci-dessous reste la garde.
+        if (payment.getStatus() != PaymentStatus.ESCROW) {
+            throw notInEscrow("Seuls les paiements en statut ESCROW peuvent faire l'objet d'une libération forcée");
+        }
+
         // Bénéficiaire gelé ou paiement en litige : 409 sauf dérogation motivée, AVANT le claim.
         boolean holdOverridden = guardPayout(payment, travelerId, request, "admin-force-release");
 

@@ -185,6 +185,15 @@ class AdminPaymentControllerHoldTest {
     }
 
     @Test
+    void forceRelease_paiementDejaLibere_beneficiaireGele_422CommeAvant() {
+        held();
+        payment.setStatus(PaymentStatus.RELEASED);
+        assertThatThrownBy(() -> controller.forceRelease(payment.getId(), null))
+                .satisfies(e -> assertThat(code(e)).isEqualTo("payment-not-in-escrow"));
+        verify(paymentRepository, never()).markReleasedIfEscrow(any(), any());
+    }
+
+    @Test
     void forceRelease_paiementDispute_sansDerogation_409() {
         payment.setDisputed(true);
         held();
