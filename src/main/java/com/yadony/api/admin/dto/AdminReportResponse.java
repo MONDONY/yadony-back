@@ -20,6 +20,10 @@ public record AdminReportResponse(
         LocalDateTime createdAt,
         List<String> photoUrls,
         /** Route de l'écran d'origine pour un rapport SCREEN_BUG, sinon null. */
-        String screenRoute
+        String screenRoute,
+        /** Date de suppression (soft delete) ; {@code null} pour un signalement visible. */
+        java.time.LocalDateTime deletedAt,
+        /** Email de l'admin auteur de la suppression, lu dans l'audit {@code REPORT_DELETED}. */
+        String deletedByAdminEmail
 ) {
 }

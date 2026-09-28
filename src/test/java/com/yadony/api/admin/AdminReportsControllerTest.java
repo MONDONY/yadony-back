@@ -62,6 +62,7 @@ class AdminReportsControllerTest {
     @Mock NotificationDispatcher notificationDispatcher;
     @Mock com.yadony.api.requests.repository.PackageRequestRepository packageRequestRepo;
     @Mock com.yadony.api.requests.service.PackageRequestModerationService packageRequestModerationService;
+    @Mock DeletionTraceService deletionTraceService;
 
     @BeforeEach
     void stubMessages() {
@@ -71,7 +72,7 @@ class AdminReportsControllerTest {
     private AdminReportsController controller() {
         return new AdminReportsController(reportRepo, userRepo, announcementRepo, auditService, reportService,
                 userService, announcementService, notificationDispatcher, packageRequestRepo,
-                packageRequestModerationService);
+                packageRequestModerationService, deletionTraceService);
     }
 
     private static Authentication authAs(UUID adminId, List<AdminPermission> extraAuthorities) {
@@ -90,7 +91,7 @@ class AdminReportsControllerTest {
         when(reportRepo.findFiltered(isNull(), isNull(), any(Pageable.class))).thenReturn(page);
 
         ResponseEntity<Page<AdminReportResponse>> resp =
-                controller().listReports(null, null, null, 0, 20);
+                controller().listReports(null, null, null, false, 0, 20);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(resp.getBody()).isNotNull();
@@ -103,7 +104,7 @@ class AdminReportsControllerTest {
         when(reportRepo.findFiltered(eq(ReportStatus.OPEN), isNull(), any(Pageable.class))).thenReturn(page);
 
         ResponseEntity<Page<AdminReportResponse>> resp =
-                controller().listReports(ReportStatus.OPEN, null, null, 0, 20);
+                controller().listReports(ReportStatus.OPEN, null, null, false, 0, 20);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         verify(reportRepo).findFiltered(eq(ReportStatus.OPEN), isNull(), any(Pageable.class));
@@ -115,7 +116,7 @@ class AdminReportsControllerTest {
         when(reportRepo.findFiltered(isNull(), eq(ReportTargetType.USER), any(Pageable.class))).thenReturn(page);
 
         ResponseEntity<Page<AdminReportResponse>> resp =
-                controller().listReports(null, ReportTargetType.USER, null, 0, 20);
+                controller().listReports(null, ReportTargetType.USER, null, false, 0, 20);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         verify(reportRepo).findFiltered(isNull(), eq(ReportTargetType.USER), any(Pageable.class));
@@ -136,7 +137,7 @@ class AdminReportsControllerTest {
         when(userRepo.findAllById(anyCollection())).thenReturn(List.of(reporter));
 
         ResponseEntity<Page<AdminReportResponse>> resp =
-                controller().listReports(null, null, null, 0, 20);
+                controller().listReports(null, null, null, false, 0, 20);
 
         assertThat(resp.getBody()).isNotNull();
         assertThat(resp.getBody().getContent()).hasSize(1);
@@ -157,7 +158,7 @@ class AdminReportsControllerTest {
         when(userRepo.findAllById(anyCollection())).thenReturn(List.of());
 
         ResponseEntity<Page<AdminReportResponse>> resp =
-                controller().listReports(null, null, null, 0, 20);
+                controller().listReports(null, null, null, false, 0, 20);
 
         AdminReportResponse first = resp.getBody().getContent().get(0);
         assertThat(first.reason()).isEqualTo("SCREEN_BUG");
@@ -182,7 +183,7 @@ class AdminReportsControllerTest {
         when(reportRepo.findFiltered(isNull(), isNull(), any(Pageable.class))).thenReturn(page);
         when(userRepo.findAllById(anyCollection())).thenReturn(List.of(target));
 
-        ResponseEntity<Page<AdminReportResponse>> resp = controller().listReports(null, null, null, 0, 20);
+        ResponseEntity<Page<AdminReportResponse>> resp = controller().listReports(null, null, null, false, 0, 20);
 
         assertThat(resp.getBody().getContent().get(0).targetLabel()).isEqualTo("Awa Ndiaye");
     }
@@ -205,7 +206,7 @@ class AdminReportsControllerTest {
         when(userRepo.findAllById(anyCollection())).thenReturn(List.of());
         when(announcementRepo.findAllById(anyCollection())).thenReturn(List.of(ann));
 
-        ResponseEntity<Page<AdminReportResponse>> resp = controller().listReports(null, null, null, 0, 20);
+        ResponseEntity<Page<AdminReportResponse>> resp = controller().listReports(null, null, null, false, 0, 20);
 
         assertThat(resp.getBody().getContent().get(0).targetLabel()).contains("Lyon").contains("Abidjan");
     }
@@ -411,7 +412,7 @@ class AdminReportsControllerTest {
         when(reportRepo.searchFiltered(isNull(), isNull(), eq("%badge%"), eq(false), eq(List.of()),
                 any(Pageable.class))).thenReturn(page);
 
-        controller().listReports(null, null, "  Badge ", 0, 20);
+        controller().listReports(null, null, "  Badge ", false, 0, 20);
 
         verify(reportRepo).searchFiltered(isNull(), isNull(), eq("%badge%"), eq(false), eq(List.of()),
                 any(Pageable.class));
@@ -424,7 +425,7 @@ class AdminReportsControllerTest {
         when(reportRepo.searchFiltered(isNull(), isNull(), eq("%écran%"), eq(true),
                 eq(List.of(ReportReason.SCREEN_BUG)), any(Pageable.class))).thenReturn(page);
 
-        controller().listReports(null, null, "écran", 0, 20);
+        controller().listReports(null, null, "écran", false, 0, 20);
 
         verify(reportRepo).searchFiltered(isNull(), isNull(), eq("%écran%"), eq(true),
                 eq(List.of(ReportReason.SCREEN_BUG)), any(Pageable.class));
@@ -435,7 +436,7 @@ class AdminReportsControllerTest {
         when(reportRepo.findFiltered(isNull(), isNull(), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of()));
 
-        controller().listReports(null, null, "   ", 0, 20);
+        controller().listReports(null, null, "   ", false, 0, 20);
 
         verify(reportRepo).findFiltered(isNull(), isNull(), any(Pageable.class));
     }
@@ -529,6 +530,158 @@ class AdminReportsControllerTest {
         verify(auditService, never()).log(any(), any(), any(), any(), any());
     }
 
+    // ---- corbeille et restauration ----
+
+    @Test
+    void listReports_deleted_readsTrashWithDeletingAdmin() {
+        UUID id = UUID.randomUUID();
+        UUID admin = UUID.randomUUID();
+        ReportEntity r = buildReport(UUID.randomUUID(), ReportStatus.OPEN);
+        ReflectionTestUtils.setField(r, "id", id);
+        r.softDelete();
+        when(reportRepo.findDeletedFiltered(eq("OPEN"), eq("USER"), eq("%spam%"), any()))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(r)));
+        when(userRepo.findAllById(any())).thenReturn(List.of());
+        when(deletionTraceService.latest(eq("REPORT"), eq("REPORT_DELETED"), any()))
+                .thenReturn(Map.of(id, new DeletionTraceService.DeletionTrace(admin, "admin@yadony.test",
+                        "HARASSMENT", r.getDeletedAt())));
+
+        var resp = controller().listReports(ReportStatus.OPEN, ReportTargetType.USER, " Spam ", true, 0, 20);
+
+        AdminReportResponse item = resp.getBody().getContent().get(0);
+        assertThat(item.deletedAt()).isEqualTo(r.getDeletedAt());
+        assertThat(item.deletedByAdminEmail()).isEqualTo("admin@yadony.test");
+        verify(reportRepo, never()).findFiltered(any(), any(), any());
+        verify(reportRepo, never()).searchFiltered(any(), any(), any(), anyBoolean(), any(), any());
+    }
+
+    @Test
+    void listReports_active_hasNoDeletionFields() {
+        when(reportRepo.findFiltered(isNull(), isNull(), any(Pageable.class)))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(
+                        List.of(buildReport(UUID.randomUUID(), ReportStatus.OPEN))));
+        when(userRepo.findAllById(any())).thenReturn(List.of());
+
+        var item = controller().listReports(null, null, null, false, 0, 20).getBody().getContent().get(0);
+
+        assertThat(item.deletedAt()).isNull();
+        assertThat(item.deletedByAdminEmail()).isNull();
+        verifyNoInteractions(deletionTraceService);
+    }
+
+    private ReportEntity deletedReport(UUID id) {
+        ReportEntity r = buildReport(UUID.randomUUID(), ReportStatus.RESOLVED);
+        ReflectionTestUtils.setField(r, "id", id);
+        r.softDelete();
+        return r;
+    }
+
+    @Test
+    void restoreReport_clearsDeletedAt_andAuditsAdminWithReason() {
+        UUID id = UUID.randomUUID();
+        UUID admin = UUID.randomUUID();
+        ReportEntity r = deletedReport(id);
+        when(reportRepo.findAllByIdIncludingDeleted(List.of(id))).thenReturn(List.of(r));
+        when(userRepo.findAllById(any())).thenReturn(List.of());
+
+        var resp = controller().restoreReport(id,
+                new com.yadony.api.admin.dto.RestoreRequest("  Supprime par erreur  "), authAs(admin, List.of()));
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(r.getDeletedAt()).isNull();
+        assertThat(resp.getBody().deletedAt()).isNull();
+        verify(reportRepo).save(r);
+        verify(auditService).log(eq("REPORT"), eq(id), eq("REPORT_RESTORED"), eq(admin),
+                eq(Map.of("reportId", id.toString(), "mode", "single", "reason", "Supprime par erreur")));
+    }
+
+    @Test
+    void restoreReport_withoutBody_auditsEmptyReason() {
+        UUID id = UUID.randomUUID();
+        UUID admin = UUID.randomUUID();
+        when(reportRepo.findAllByIdIncludingDeleted(List.of(id))).thenReturn(List.of(deletedReport(id)));
+        when(userRepo.findAllById(any())).thenReturn(List.of());
+
+        controller().restoreReport(id, null, authAs(admin, List.of()));
+
+        verify(auditService).log(eq("REPORT"), eq(id), eq("REPORT_RESTORED"), eq(admin),
+                eq(Map.of("reportId", id.toString(), "mode", "single", "reason", "")));
+    }
+
+    @Test
+    void restoreReport_notDeleted_throws409() {
+        UUID id = UUID.randomUUID();
+        ReportEntity r = deletedReport(id);
+        r.setDeletedAt(null);
+        when(reportRepo.findAllByIdIncludingDeleted(List.of(id))).thenReturn(List.of(r));
+
+        YadonyBusinessException ex = assertThrows(YadonyBusinessException.class,
+                () -> controller().restoreReport(id, null, authAs(UUID.randomUUID(), List.of())));
+
+        assertThat(ex.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(ex.getErrorCode()).isEqualTo("report-not-deleted");
+        verify(reportRepo, never()).save(any());
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    void restoreReport_unknown_throws404() {
+        UUID id = UUID.randomUUID();
+        when(reportRepo.findAllByIdIncludingDeleted(List.of(id))).thenReturn(List.of());
+
+        YadonyBusinessException ex = assertThrows(YadonyBusinessException.class,
+                () -> controller().restoreReport(id, null, authAs(UUID.randomUUID(), List.of())));
+
+        assertThat(ex.getStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(ex.getErrorCode()).isEqualTo("report-not-found");
+    }
+
+    @Test
+    void bulkRestore_restoresDeleted_andCountsVisibleOrUnknownAsSkipped() {
+        UUID deleted = UUID.randomUUID();
+        UUID visible = UUID.randomUUID();
+        UUID unknown = UUID.randomUUID();
+        UUID admin = UUID.randomUUID();
+        ReportEntity rd = deletedReport(deleted);
+        ReportEntity rv = deletedReport(visible);
+        rv.setDeletedAt(null);
+        when(reportRepo.findAllByIdIncludingDeleted(any())).thenReturn(List.of(rd, rv));
+
+        var resp = controller().bulkRestoreReports(
+                new AdminReportsController.BulkRestoreReportsRequest(List.of(deleted, visible, unknown, deleted)),
+                authAs(admin, List.of()));
+
+        assertThat(resp.getBody()).containsEntry("restored", 1).containsEntry("skipped", 2);
+        assertThat(rd.getDeletedAt()).isNull();
+        verify(reportRepo, times(1)).save(rd);
+        verify(auditService).log(eq("REPORT"), eq(deleted), eq("REPORT_RESTORED"), eq(admin),
+                eq(Map.of("reportId", deleted.toString(), "mode", "bulk", "reason", "")));
+        verify(auditService, times(1)).log(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void bulkRestore_empty_restoresNothing() {
+        var resp = controller().bulkRestoreReports(
+                new AdminReportsController.BulkRestoreReportsRequest(List.of()), authAs(UUID.randomUUID(), List.of()));
+
+        assertThat(resp.getBody()).containsEntry("restored", 0).containsEntry("skipped", 0);
+        verify(reportRepo, never()).findAllByIdIncludingDeleted(any());
+    }
+
+    @Test
+    void bulkRestore_moreThan100Ids_is422_beforeAnyRead() {
+        List<UUID> ids = java.util.stream.Stream.generate(UUID::randomUUID).limit(101).toList();
+
+        YadonyBusinessException ex = assertThrows(YadonyBusinessException.class,
+                () -> controller().bulkRestoreReports(new AdminReportsController.BulkRestoreReportsRequest(ids),
+                        authAs(UUID.randomUUID(), List.of())));
+
+        assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+        assertThat(ex.getErrorCode()).isEqualTo("bulk-restore-too-many");
+        verifyNoInteractions(auditService);
+        verify(reportRepo, never()).findAllByIdIncludingDeleted(any());
+    }
+
     // ---- helpers ----
 
     private ReportEntity buildReport(UUID reporterId, ReportStatus status) {
@@ -558,7 +711,7 @@ class AdminReportsControllerTest {
                 .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(report)));
         when(packageRequestRepo.findAllById(any())).thenReturn(List.of(pr));
 
-        var page = controller().listReports(null, ReportTargetType.PACKAGE_REQUEST, null, 0, 20).getBody();
+        var page = controller().listReports(null, ReportTargetType.PACKAGE_REQUEST, null, false, 0, 20).getBody();
 
         assertThat(page.getContent()).hasSize(1);
         assertThat(page.getContent().get(0).targetType()).isEqualTo("PACKAGE_REQUEST");

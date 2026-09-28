@@ -4,6 +4,8 @@ import com.yadony.api.admin.account.AdminPermission;
 import com.yadony.api.admin.account.AdminPrincipal;
 import com.yadony.api.admin.dto.AdminReportResponse;
 import com.yadony.api.admin.dto.ResolveReportRequest;
+import com.yadony.api.admin.dto.RestoreRequest;
+import jakarta.validation.Valid;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.auth.UserService;
@@ -61,6 +63,10 @@ public class AdminReportsController {
     private final NotificationDispatcher notificationDispatcher;
     private final PackageRequestRepository packageRequestRepo;
     private final PackageRequestModerationService packageRequestModerationService;
+    private final DeletionTraceService deletionTraceService;
+
+    /** Borne d'une restauration groupée : une page d'écran, pas une restauration de masse. */
+    static final int MAX_BULK_RESTORE = 100;
 
     public AdminReportsController(ReportRepository reportRepo,
                                   UserRepository userRepo,
@@ -71,7 +77,8 @@ public class AdminReportsController {
                                   AnnouncementService announcementService,
                                   NotificationDispatcher notificationDispatcher,
                                   PackageRequestRepository packageRequestRepo,
-                                  PackageRequestModerationService packageRequestModerationService) {
+                                  PackageRequestModerationService packageRequestModerationService,
+                                  DeletionTraceService deletionTraceService) {
         this.reportRepo = reportRepo;
         this.userRepo = userRepo;
         this.announcementRepo = announcementRepo;
@@ -82,6 +89,7 @@ public class AdminReportsController {
         this.notificationDispatcher = notificationDispatcher;
         this.packageRequestRepo = packageRequestRepo;
         this.packageRequestModerationService = packageRequestModerationService;
+        this.deletionTraceService = deletionTraceService;
     }
 
     @PreAuthorize("hasAuthority('REPORT_VIEW')")
@@ -90,13 +98,24 @@ public class AdminReportsController {
             @RequestParam(required = false) ReportStatus status,
             @RequestParam(required = false) ReportTargetType targetType,
             @RequestParam(required = false) String q,
+            @RequestParam(defaultValue = "false") boolean deleted,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
 
         PageRequest pageable = PageRequest.of(page, size, Sort.by("createdAt").descending());
         String needle = normalizeQuery(q);
         Page<ReportEntity> reports;
-        if (needle == null) {
+        Map<UUID, DeletionTraceService.DeletionTrace> traces = Map.of();
+        if (deleted) {
+            // Corbeille : requête native triée par date de suppression, Pageable non trié.
+            // La recherche y couvre description, route d'écran et code du motif.
+            reports = reportRepo.findDeletedFiltered(
+                    status != null ? status.name() : null,
+                    targetType != null ? targetType.name() : null,
+                    needle, PageRequest.of(page, size));
+            traces = deletionTraceService.latest("REPORT", "REPORT_DELETED",
+                    reports.getContent().stream().map(ReportEntity::getId).filter(Objects::nonNull).toList());
+        } else if (needle == null) {
             reports = reportRepo.findFiltered(status, targetType, pageable);
         } else {
             List<ReportReason> reasons = reasonsMatching(needle);
@@ -138,9 +157,11 @@ public class AdminReportsController {
         Map<UUID, List<String>> photosByReport = reportService.photoUrlsByReport(
                 reports.getContent().stream().map(ReportEntity::getId).collect(Collectors.toSet()));
 
+        Map<UUID, DeletionTraceService.DeletionTrace> tracesById = traces;
         Page<AdminReportResponse> result = reports.map(r ->
                 toResponse(r, usersById, announcementsById, packageRequestsById,
-                        photosByReport.getOrDefault(r.getId(), List.of())));
+                        photosByReport.getOrDefault(r.getId(), List.of()),
+                        r.getId() != null ? tracesById.get(r.getId()) : null));
         return ResponseEntity.ok(result);
     }
 
@@ -187,7 +208,7 @@ public class AdminReportsController {
                 .filter(u -> u.getId() != null)
                 .collect(Collectors.toMap(UserEntity::getId, Function.identity(), (a, b) -> a));
         return ResponseEntity.ok(toResponse(report, singleUser, Map.of(), Map.of(),
-                reportService.photoUrls(report.getId())));
+                reportService.photoUrls(report.getId()), null));
     }
 
     /**
@@ -295,6 +316,80 @@ public class AdminReportsController {
             String q
     ) {}
 
+    /**
+     * Annule la suppression d'un signalement : il revient dans la file avec son statut, sa
+     * résolution et ses photos intacts (la suppression n'y touchait pas). Le corps
+     * {@code { reason }} est facultatif ; présent, il est validé (10 à 500 caractères) et audité.
+     */
+    @PreAuthorize("hasAuthority('REPORT_DELETE')")
+    @PostMapping("/admin/reports/{id}/restore")
+    @Transactional
+    public ResponseEntity<AdminReportResponse> restoreReport(
+            @PathVariable UUID id,
+            @Valid @RequestBody(required = false) RestoreRequest request,
+            Authentication authentication) {
+        UUID adminId = adminId(authentication);
+        ReportEntity report = reportRepo.findAllByIdIncludingDeleted(List.of(id)).stream()
+                .findFirst()
+                .orElseThrow(() -> new YadonyBusinessException(
+                        HttpStatus.NOT_FOUND, "report-not-found", "Not Found", "Signalement introuvable"));
+        if (report.getDeletedAt() == null) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "report-not-deleted",
+                    "Conflict", "Ce signalement n'est pas supprimé");
+        }
+        restore(report, adminId, "single", request != null ? request.normalizedReason() : "");
+
+        Map<UUID, UserEntity> singleUser = userRepo.findAllById(
+                report.getReporterId() != null ? Set.of(report.getReporterId()) : Set.of()).stream()
+                .filter(u -> u.getId() != null)
+                .collect(Collectors.toMap(UserEntity::getId, Function.identity(), (a, b) -> a));
+        return ResponseEntity.ok(toResponse(report, singleUser, Map.of(), Map.of(),
+                reportService.photoUrls(report.getId()), null));
+    }
+
+    /**
+     * Restauration groupée d'au plus {@value #MAX_BULK_RESTORE} signalements. Les identifiants
+     * inconnus ou non supprimés sont ignorés et comptés dans {@code skipped}, sans 409 : une
+     * sélection partiellement périmée ne doit pas bloquer le reste.
+     */
+    @PreAuthorize("hasAuthority('REPORT_DELETE')")
+    @PostMapping("/admin/reports/bulk-restore")
+    @Transactional
+    public ResponseEntity<Map<String, Integer>> bulkRestoreReports(
+            @RequestBody BulkRestoreReportsRequest request,
+            Authentication authentication) {
+        UUID adminId = adminId(authentication);
+        List<UUID> ids = request.ids() == null ? List.of()
+                : request.ids().stream().filter(Objects::nonNull).distinct().toList();
+        if (ids.size() > MAX_BULK_RESTORE) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "bulk-restore-too-many",
+                    "Unprocessable Entity",
+                    "Au plus " + MAX_BULK_RESTORE + " signalements par restauration groupée");
+        }
+        if (ids.isEmpty()) {
+            return ResponseEntity.ok(Map.of("restored", 0, "skipped", 0));
+        }
+        int restored = 0;
+        for (ReportEntity report : reportRepo.findAllByIdIncludingDeleted(ids)) {
+            if (report.getDeletedAt() == null) {
+                continue;
+            }
+            restore(report, adminId, "bulk", "");
+            restored++;
+        }
+        return ResponseEntity.ok(Map.of("restored", restored, "skipped", ids.size() - restored));
+    }
+
+    /** Corps de {@link #bulkRestoreReports}. */
+    public record BulkRestoreReportsRequest(List<UUID> ids) {}
+
+    private void restore(ReportEntity report, UUID adminId, String mode, String reason) {
+        report.setDeletedAt(null);
+        reportRepo.save(report);
+        auditService.log("REPORT", report.getId(), "REPORT_RESTORED", adminId,
+                Map.of("reportId", String.valueOf(report.getId()), "mode", mode, "reason", reason));
+    }
+
     private int softDelete(List<ReportEntity> reports, UUID adminId, String mode) {
         int count = 0;
         for (ReportEntity report : reports) {
@@ -340,7 +435,8 @@ public class AdminReportsController {
     private AdminReportResponse toResponse(ReportEntity r, Map<UUID, UserEntity> users,
                                            Map<UUID, AnnouncementEntity> announcements,
                                            Map<UUID, PackageRequestEntity> packageRequests,
-                                           List<String> photoUrls) {
+                                           List<String> photoUrls,
+                                           DeletionTraceService.DeletionTrace deletion) {
         String reporterName = resolveReporterName(r.getReporterId(), users);
         return new AdminReportResponse(
                 r.getId(),
@@ -356,7 +452,9 @@ public class AdminReportsController {
                 r.getResolvedAt(),
                 r.getCreatedAt(),
                 photoUrls,
-                r.getScreenRoute()
+                r.getScreenRoute(),
+                r.getDeletedAt(),
+                r.getDeletedAt() != null && deletion != null ? deletion.adminEmail() : null
         );
     }
 
