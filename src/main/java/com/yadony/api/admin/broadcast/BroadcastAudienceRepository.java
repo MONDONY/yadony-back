@@ -62,12 +62,14 @@ public interface BroadcastAudienceRepository extends Repository<UserEntity, UUID
                                      Pageable pageable);
 
     /**
-     * Ciblage nominatif. Le filtre de statut est volontairement absent : un administrateur
-     * doit pouvoir prevenir un compte suspendu de sa suspension. Seule la suppression
-     * (soft delete) ecarte le compte.
+     * Ciblage nominatif. Un compte SUSPENDED reste joignable : un administrateur doit pouvoir
+     * le prevenir de sa suspension. Sont ecartes le compte supprime (soft delete), le compte
+     * BANNED et le compte PENDING_DELETION, qui a demande a partir.
      */
-    @Query(value = "SELECT u.id FROM users u WHERE u.deleted_at IS NULL AND u.id = :userId",
-           countQuery = "SELECT COUNT(*) FROM users u WHERE u.deleted_at IS NULL AND u.id = :userId",
+    String REACHABLE_USER = "u.deleted_at IS NULL AND u.status NOT IN ('BANNED', 'PENDING_DELETION') AND u.id = :userId";
+
+    @Query(value = "SELECT u.id FROM users u WHERE " + REACHABLE_USER,
+           countQuery = "SELECT COUNT(*) FROM users u WHERE " + REACHABLE_USER,
            nativeQuery = true)
     Page<UUID> findExistingIdById(@Param("userId") UUID userId, Pageable pageable);
 }
