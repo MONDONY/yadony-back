@@ -293,6 +293,11 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
      * téléphone et email ont quitté la base pour Firebase. Une recherche sur l'un des
      * deux est résolue en amont en UID Firebase, passé ici via {@code queryFirebaseUid}
      * et apparié exactement.
+     *
+     * <p>Le terme brut {@code queryRaw} est aussi comparé exactement à l'UID Firebase
+     * (sensible à la casse, comme les UID), et {@code queryId}, non nul seulement quand le
+     * terme a la forme canonique d'un UUID, à la clé primaire. Aucune correspondance
+     * partielle sur les identifiants : les deux colonnes sont indexées (unique et PK).
      */
     @Query(value = """
             SELECT u.* FROM users u
@@ -305,7 +310,11 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
                  OR u.first_name ILIKE :queryLike
                  OR u.last_name  ILIKE :queryLike
                  OR (CAST(:queryFirebaseUid AS VARCHAR) IS NOT NULL
-                     AND u.firebase_uid = :queryFirebaseUid))
+                     AND u.firebase_uid = :queryFirebaseUid)
+                 OR (CAST(:queryRaw AS VARCHAR) IS NOT NULL
+                     AND u.firebase_uid = :queryRaw)
+                 OR (CAST(:queryId AS UUID) IS NOT NULL
+                     AND u.id = :queryId))
             AND (CAST(:role AS VARCHAR) IS NULL OR EXISTS (
                  SELECT 1 FROM user_roles r WHERE r.user_id = u.id AND r.role = :role))
             ORDER BY u.created_at DESC
@@ -321,7 +330,11 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
                  OR u.first_name ILIKE :queryLike
                  OR u.last_name  ILIKE :queryLike
                  OR (CAST(:queryFirebaseUid AS VARCHAR) IS NOT NULL
-                     AND u.firebase_uid = :queryFirebaseUid))
+                     AND u.firebase_uid = :queryFirebaseUid)
+                 OR (CAST(:queryRaw AS VARCHAR) IS NOT NULL
+                     AND u.firebase_uid = :queryRaw)
+                 OR (CAST(:queryId AS UUID) IS NOT NULL
+                     AND u.id = :queryId))
             AND (CAST(:role AS VARCHAR) IS NULL OR EXISTS (
                  SELECT 1 FROM user_roles r WHERE r.user_id = u.id AND r.role = :role))
             """,
@@ -333,6 +346,8 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
             @Param("city") String city,
             @Param("queryLike") String queryLike,
             @Param("queryFirebaseUid") String queryFirebaseUid,
+            @Param("queryRaw") String queryRaw,
+            @Param("queryId") UUID queryId,
             @Param("role") String role,
             Pageable pageable);
 

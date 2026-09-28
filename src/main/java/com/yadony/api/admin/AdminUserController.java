@@ -95,6 +95,8 @@ public class AdminUserController {
                 normalizedCity,
                 queryLike,
                 resolveQueryToFirebaseUid(normalizedQuery),
+                normalizedQuery,
+                parseCanonicalUuid(normalizedQuery),
                 role != null ? role.name() : null,
                 PageRequest.of(page, size)
         );
@@ -126,6 +128,20 @@ public class AdminUserController {
         }
         return null;
     }
+
+    /**
+     * UUID de la base collé tel quel par un admin. {@link UUID#fromString} accepte des formes
+     * abrégées (« 1-1-1-1-1 ») : seule la forme canonique à 36 caractères est retenue.
+     */
+    private static UUID parseCanonicalUuid(String normalizedQuery) {
+        if (normalizedQuery == null || !CANONICAL_UUID.matcher(normalizedQuery).matches()) {
+            return null;
+        }
+        return UUID.fromString(normalizedQuery);
+    }
+
+    private static final java.util.regex.Pattern CANONICAL_UUID = java.util.regex.Pattern.compile(
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
 
     @PreAuthorize("hasAuthority('USER_VIEW')")
     @GetMapping("/{userId}")

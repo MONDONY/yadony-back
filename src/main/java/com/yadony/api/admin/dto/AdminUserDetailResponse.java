@@ -58,7 +58,12 @@ public record AdminUserDetailResponse(
          * grace) ; {@code null} sans demande en cours. Le scheduler tourne a 2 h : la finalisation
          * effective survient au premier passage apres cette date.
          */
-        LocalDateTime deletionScheduledFor
+        LocalDateTime deletionScheduledFor,
+        /**
+         * UID Firebase du compte, pour que l'admin le copie (support, recherche
+         * {@code GET /admin/users?query=}). Détail seulement : la liste ne l'expose pas.
+         */
+        String firebaseUid
 ) {
     /**
      * Téléphone et email proviennent de Firebase : ils ne sont plus stockés en base.
@@ -113,7 +118,8 @@ public record AdminUserDetailResponse(
                 hold.primaryReason() != null ? hold.primaryReason().name() : null,
                 hold.reasons() == null ? List.of() : hold.reasons().stream().map(Enum::name).toList(),
                 hold.heldPaymentsCount(),
-                toUtc(com.yadony.api.auth.AccountDeletionScheduler.scheduledFinalization(u.getDeletionRequestedAt()))
+                toUtc(com.yadony.api.auth.AccountDeletionScheduler.scheduledFinalization(u.getDeletionRequestedAt())),
+                u.getFirebaseUid()
         );
     }
 
