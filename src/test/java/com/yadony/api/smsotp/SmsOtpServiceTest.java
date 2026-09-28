@@ -9,6 +9,8 @@ import com.yadony.api.common.i18n.MessagesResolver;
 import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.notifications.InvalidSmsRecipientException;
 import com.yadony.api.notifications.SmsService;
+import com.yadony.api.notifications.TwilioVerifyService;
+import com.yadony.api.notifications.TwilioVerifyService.VerifyUnavailableException;
 import com.google.firebase.auth.AuthErrorCode;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseAuthException;
@@ -50,6 +52,9 @@ class SmsOtpServiceTest {
     @Mock private FirebaseContactService firebaseContact;
     @Mock private AuditService auditService;
     @Mock private Environment environment;
+    // Mock muet par défaut : handles() rend faux, donc tous les tests historiques restent
+    // sur la route SMS classique. Seul le groupe « Twilio Verify » l'active.
+    @Mock private TwilioVerifyService twilioVerify;
     // Instance réelle et non un mock : messagesResolver.forRequest().get("sms.otp", ...)
     // doit lire le vrai RequestContextHolder posé par TestMessages, pas un mock muet.
     private final MessagesResolver messagesResolver = TestMessages.resolver();
@@ -59,7 +64,8 @@ class SmsOtpServiceTest {
     private SmsOtpService newService() {
         when(environment.getActiveProfiles()).thenReturn(new String[] {"test"});
         return new SmsOtpService(smsOtpRepository, passwordEncoder, smsService, properties,
-                firebaseAuth, userRepository, firebaseContact, auditService, environment, messagesResolver);
+                firebaseAuth, userRepository, firebaseContact, auditService, environment, messagesResolver,
+                twilioVerify);
     }
 
     @AfterEach
@@ -166,7 +172,8 @@ class SmsOtpServiceTest {
             Environment stagingEnvironment = mock(Environment.class);
             when(stagingEnvironment.getActiveProfiles()).thenReturn(new String[] {"staging"});
             SmsOtpService service = new SmsOtpService(smsOtpRepository, passwordEncoder, smsService,
-                    properties, firebaseAuth, userRepository, firebaseContact, auditService, stagingEnvironment, messagesResolver);
+                    properties, firebaseAuth, userRepository, firebaseContact, auditService, stagingEnvironment, messagesResolver,
+                    twilioVerify);
             when(smsService.isEnabled()).thenReturn(false);
 
             assertThatThrownBy(() -> service.sendOtp(PHONE))
@@ -183,7 +190,7 @@ class SmsOtpServiceTest {
             when(prodEnvironment.getActiveProfiles()).thenReturn(new String[] {"prod"});
             SmsOtpService service = new SmsOtpService(smsOtpRepository, passwordEncoder, smsService,
                     properties, firebaseAuth, userRepository, firebaseContact, auditService, prodEnvironment,
-                    messagesResolver);
+                    messagesResolver, twilioVerify);
             when(smsService.isEnabled()).thenReturn(false);
 
             assertThatThrownBy(() -> service.sendOtp(PHONE))
@@ -408,7 +415,7 @@ class SmsOtpServiceTest {
             when(environment.getActiveProfiles()).thenReturn(new String[] {"test"});
             SmsOtpService serviceWithoutFirebase = new SmsOtpService(
                     smsOtpRepository, passwordEncoder, smsService, properties, null,
-                    userRepository, firebaseContact, auditService, environment, null);
+                    userRepository, firebaseContact, auditService, environment, null, twilioVerify);
             givenValidOtp();
 
             String result = serviceWithoutFirebase.verifyOtp(PHONE, "123456");
@@ -585,6 +592,170 @@ class SmsOtpServiceTest {
             // en UCS-2 (limite 70) ni en SMS multipart (limite 153/segment).
             assertThat(isGsm7(fr)).isEqualTo(isGsm7(en));
             assertThat(fr.length() <= 160).isEqualTo(en.length() <= 160);
+        }
+    }
+
+    /**
+     * Numéros +1 : les opérateurs américains bloquent les SMS de notre numéro local non
+     * enregistré A2P 10DLC (un testeur de Houston ne recevait jamais son code, 27/09). Twilio
+     * Verify génère, envoie et contrôle le code ; yadony garde la ligne pour ses budgets.
+     */
+    @Nested
+    @DisplayName("Twilio Verify (+1)")
+    class ViaTwilioVerify {
+
+        private static final String US_PHONE = "+17135550123";
+
+        private SmsOtpEntity usToken() {
+            SmsOtpEntity t = new SmsOtpEntity();
+            t.setPhoneNumber(US_PHONE);
+            t.setCodeHash("$2a$10$random");
+            t.setExpiresAt(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(5));
+            t.setAttempts(0);
+            return t;
+        }
+
+        @Test
+        @DisplayName("envoi — passe par Verify dans la langue de la requête, jamais par un SMS classique")
+        void send_usesVerify() {
+            TestMessages.requestWithAcceptLanguage("en");
+            SmsOtpService service = newService();
+            when(smsService.isEnabled()).thenReturn(true);
+            when(twilioVerify.handles(US_PHONE)).thenReturn(true);
+            when(smsOtpRepository.countByPhoneSince(eq(US_PHONE), any())).thenReturn(0L);
+            when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$random");
+            when(smsOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+            assertThat(service.sendOtp(US_PHONE)).isNotNull();
+
+            verify(twilioVerify).start(eq(US_PHONE), anyString());
+            verify(smsService, never()).send(any(), any());
+            // La ligne est gardée : elle porte le budget anti-spam et le budget de tentatives.
+            verify(smsOtpRepository).save(argThat(e -> US_PHONE.equals(e.getPhoneNumber())));
+        }
+
+        @Test
+        @DisplayName("envoi — la ligne ne porte pas un code à 6 chiffres devinable")
+        void send_storesNoGuessableCode() {
+            SmsOtpService service = newService();
+            when(smsService.isEnabled()).thenReturn(true);
+            when(twilioVerify.handles(US_PHONE)).thenReturn(true);
+            when(smsOtpRepository.countByPhoneSince(eq(US_PHONE), any())).thenReturn(0L);
+            when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$random");
+            when(smsOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+            service.sendOtp(US_PHONE);
+
+            verify(passwordEncoder).encode(argThat(raw -> !raw.toString().matches("\\d{6}")));
+        }
+
+        @Test
+        @DisplayName("envoi — numéro refusé par Verify → 422 invalid-phone-number")
+        void send_invalidRecipient() {
+            SmsOtpService service = newService();
+            when(smsService.isEnabled()).thenReturn(true);
+            when(twilioVerify.handles(US_PHONE)).thenReturn(true);
+            when(smsOtpRepository.countByPhoneSince(eq(US_PHONE), any())).thenReturn(0L);
+            when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$random");
+            when(smsOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+            doThrow(new InvalidSmsRecipientException(60200)).when(twilioVerify).start(eq(US_PHONE), anyString());
+
+            assertThatThrownBy(() -> service.sendOtp(US_PHONE))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .extracting(e -> ((YadonyBusinessException) e).getErrorCode())
+                    .isEqualTo("invalid-phone-number");
+        }
+
+        @Test
+        @DisplayName("envoi — Verify en panne → 503 sms-otp-unavailable, pas de « code envoyé » fantôme")
+        void send_verifyDown() {
+            SmsOtpService service = newService();
+            when(smsService.isEnabled()).thenReturn(true);
+            when(twilioVerify.handles(US_PHONE)).thenReturn(true);
+            when(smsOtpRepository.countByPhoneSince(eq(US_PHONE), any())).thenReturn(0L);
+            when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$random");
+            when(smsOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+            doThrow(new VerifyUnavailableException()).when(twilioVerify).start(eq(US_PHONE), anyString());
+
+            assertThatThrownBy(() -> service.sendOtp(US_PHONE))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> {
+                        assertThat(((YadonyBusinessException) e).getStatus())
+                                .isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+                        assertThat(((YadonyBusinessException) e).getErrorCode())
+                                .isEqualTo("sms-otp-unavailable");
+                    });
+        }
+
+        @Test
+        @DisplayName("SMS coupés (dev) → reste en local même pour un +1, pour que le code soit relayé")
+        void smsDisabled_staysLocal() {
+            SmsOtpService service = newService();
+            when(smsService.isEnabled()).thenReturn(false);
+            when(smsOtpRepository.countByPhoneSince(eq(US_PHONE), any())).thenReturn(0L);
+            when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$hashed");
+            when(smsOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+            service.sendOtp(US_PHONE);
+
+            verify(twilioVerify, never()).start(any(), any());
+            verify(smsService).send(eq(US_PHONE), anyString());
+        }
+
+        @Test
+        @DisplayName("vérification — code approuvé par Twilio → consommé, sans BCrypt")
+        void check_approved() {
+            SmsOtpService service = newService();
+            SmsOtpEntity token = usToken();
+            when(smsService.isEnabled()).thenReturn(true);
+            when(twilioVerify.handles(US_PHONE)).thenReturn(true);
+            when(smsOtpRepository.findTopByPhoneNumberAndUsedAtIsNullOrderByCreatedAtDesc(US_PHONE))
+                    .thenReturn(Optional.of(token));
+            when(twilioVerify.check(US_PHONE, "482913")).thenReturn(true);
+            when(smsOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+            service.consumeOtp(US_PHONE, "482913");
+
+            assertThat(token.getUsedAt()).isNotNull();
+            verify(passwordEncoder, never()).matches(any(), any());
+        }
+
+        @Test
+        @DisplayName("vérification — code refusé par Twilio → 400 et une tentative décomptée")
+        void check_rejected_countsAttempt() {
+            SmsOtpService service = newService();
+            SmsOtpEntity token = usToken();
+            when(smsService.isEnabled()).thenReturn(true);
+            when(twilioVerify.handles(US_PHONE)).thenReturn(true);
+            when(smsOtpRepository.findTopByPhoneNumberAndUsedAtIsNullOrderByCreatedAtDesc(US_PHONE))
+                    .thenReturn(Optional.of(token));
+            when(twilioVerify.check(US_PHONE, "000000")).thenReturn(false);
+            when(smsOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+            assertThatThrownBy(() -> service.consumeOtp(US_PHONE, "000000"))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .extracting(e -> ((YadonyBusinessException) e).getErrorCode())
+                    .isEqualTo("phone-otp-invalid");
+            assertThat(token.getAttempts()).isEqualTo(1);
+            assertThat(token.getUsedAt()).isNull();
+        }
+
+        @Test
+        @DisplayName("vérification — Verify en panne → 503, la tentative n'est pas décomptée")
+        void check_verifyDown() {
+            SmsOtpService service = newService();
+            SmsOtpEntity token = usToken();
+            when(smsService.isEnabled()).thenReturn(true);
+            when(twilioVerify.handles(US_PHONE)).thenReturn(true);
+            when(smsOtpRepository.findTopByPhoneNumberAndUsedAtIsNullOrderByCreatedAtDesc(US_PHONE))
+                    .thenReturn(Optional.of(token));
+            when(twilioVerify.check(US_PHONE, "482913")).thenThrow(new VerifyUnavailableException());
+
+            assertThatThrownBy(() -> service.consumeOtp(US_PHONE, "482913"))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .extracting(e -> ((YadonyBusinessException) e).getStatus())
+                    .isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+            assertThat(token.getAttempts()).isZero();
         }
     }
 }

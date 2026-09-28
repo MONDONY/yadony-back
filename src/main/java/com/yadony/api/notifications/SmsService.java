@@ -89,7 +89,9 @@ public class SmsService {
             log.info("[SMS-DEV] To=*** | [message redacted]");
             return;
         }
-        if (isAfricasTalkingCorridor(phoneNumber)) {
+        // Sans clé, l'appel à Africa's Talking part forcément en 401 : un aller-retour perdu et
+        // deux WARN par SMS avant le repli Twilio (le cas en staging et en prod jusqu'ici).
+        if (isAfricasTalkingCorridor(phoneNumber) && isAfricasTalkingConfigured()) {
             if (!sendViaAfricasTalking(phoneNumber, message)) {
                 log.warn("[SMS] Africa's Talking failed, falling back to Twilio");
                 sendViaTwilio(phoneNumber, message);
@@ -97,6 +99,10 @@ public class SmsService {
         } else {
             sendViaTwilio(phoneNumber, message);
         }
+    }
+
+    boolean isAfricasTalkingConfigured() {
+        return atApiKey != null && !atApiKey.isBlank();
     }
 
     /** Numéro E.164 (ex: +2250712345678) dont l'indicatif fait partie des corridors Africa's Talking. */

@@ -418,6 +418,11 @@ app:
       account-sid: ${TWILIO_ACCOUNT_SID:}
       auth-token: ${TWILIO_AUTH_TOKEN:}
       from: ${TWILIO_FROM:}
+      # Twilio Verify, pour les indicatifs où un SMS depuis notre numéro est bloqué par les
+      # opérateurs (États-Unis/Canada : enregistrement A2P 10DLC exigé). Vide = désactivé,
+      # tous les numéros gardent la route SMS classique.
+      verify-service-sid: ${TWILIO_VERIFY_SERVICE_SID:}
+      verify-calling-codes: ${TWILIO_VERIFY_CALLING_CODES:1}
   places:
     api-key: ${GOOGLE_PLACES_API_KEY}
     # Autocomplétion mondiale : la liste blanche de pays est levée. L'ancienne
