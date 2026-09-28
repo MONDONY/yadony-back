@@ -28,11 +28,14 @@ public class CancellationController {
 
     private final CancellationService cancellationService;
     private final UserRepository userRepository;
+    private final NoShowArbitrationService noShowArbitrationService;
 
     public CancellationController(CancellationService cancellationService,
-                                   UserRepository userRepository) {
+                                   UserRepository userRepository,
+                                   NoShowArbitrationService noShowArbitrationService) {
         this.cancellationService = cancellationService;
         this.userRepository = userRepository;
+        this.noShowArbitrationService = noShowArbitrationService;
     }
 
     @PostMapping
@@ -60,10 +63,14 @@ public class CancellationController {
         return ResponseEntity.ok().build();
     }
 
+    /**
+     * Historique, gardé pour la rétrocompatibilité : délègue à l'arbitrage admin
+     * ({@code POST /admin/cancellations/{id}/confirm} est le point d'entrée actuel).
+     */
     @PostMapping("/bids/{bidId}/confirm-noshow")
     @PreAuthorize("hasRole('ADMIN') and hasAuthority('DISPUTE_RESOLVE')")
     public ResponseEntity<Void> confirmNoShow(@PathVariable UUID bidId, Authentication authentication) {
-        cancellationService.confirmSenderNoShowByAdmin(bidId, AdminPrincipal.requireAdminId(authentication));
+        noShowArbitrationService.confirmLegacyByBid(bidId, AdminPrincipal.requireAdminId(authentication));
         return ResponseEntity.ok().build();
     }
 

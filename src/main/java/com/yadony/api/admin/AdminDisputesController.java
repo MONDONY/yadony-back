@@ -1,7 +1,6 @@
 package com.yadony.api.admin;
 
 import com.yadony.api.admin.account.AdminPrincipal;
-import com.yadony.api.admin.dto.AdminCancellationResponse;
 import com.yadony.api.admin.dto.AdminDisputeDetailResponse;
 import com.yadony.api.admin.dto.AdminDisputeListItemResponse;
 import com.yadony.api.admin.dto.AdminGuaranteeFundRequest;
@@ -255,22 +254,8 @@ public class AdminDisputesController {
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Cancellations
-    // -------------------------------------------------------------------------
-
-    @PreAuthorize("hasAuthority('DISPUTE_VIEW')")
-    @GetMapping("/admin/cancellations")
-    public ResponseEntity<Page<AdminCancellationResponse>> listCancellations(
-            @RequestParam(required = false) CancellationStatus noShowStatus,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size) {
-
-        Page<AdminCancellationResponse> result = cancellationRepo
-                .findAdminFiltered(noShowStatus, PageRequest.of(page, size, Sort.by("createdAt").descending()))
-                .map(this::toCancellationResponse);
-        return ResponseEntity.ok(result);
-    }
+    // La file des no-shows (GET /admin/cancellations) et leur arbitrage vivent dans
+    // cancellation/AdminNoShowController : la logique d'annulation reste dans cancellation/.
 
     // -------------------------------------------------------------------------
     // Mapping helpers
@@ -331,14 +316,4 @@ public class AdminDisputesController {
                 .orElse(null);
     }
 
-    private AdminCancellationResponse toCancellationResponse(CancellationEntity e) {
-        return new AdminCancellationResponse(
-                e.getId(),
-                e.getBidId(),
-                e.getCancelledBy(),
-                e.getReason(),
-                e.getNoShowStatus() != null ? e.getNoShowStatus().name() : null,
-                e.getContestationDeadline(),
-                e.getCreatedAt());
-    }
 }

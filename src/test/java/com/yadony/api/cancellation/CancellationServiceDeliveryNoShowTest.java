@@ -160,6 +160,25 @@ class CancellationServiceDeliveryNoShowTest {
     }
 
     @Test
+    void reportDeliveryNoShow_declarationDejaTranchee_409PlutotQuUneViolationDUnicite() {
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(inTransitBid(null)));
+        when(announcementRepository.findById(ANNOUNCEMENT_ID))
+                .thenReturn(Optional.of(announcement(java.time.LocalDate.now().minusDays(1))));
+        when(cancellationRepository.existsByBidIdAndScopeAndNoShowStatusIn(any(), any(), any())).thenReturn(false);
+        CancellationEntity rejected = new CancellationEntity();
+        rejected.setScope(CancellationScope.DELIVERY);
+        rejected.setNoShowStatus(CancellationStatus.RESOLVED);
+        when(cancellationRepository.findByBidIdAndScope(BID_ID, CancellationScope.DELIVERY))
+                .thenReturn(Optional.of(rejected));
+
+        assertThatThrownBy(() -> service.reportDeliveryNoShow(BID_ID, TRAVELER_ID))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(ex -> assertThat(((YadonyBusinessException) ex).getErrorCode())
+                        .isEqualTo("delivery-noshow-already-decided"));
+        verify(cancellationRepository, never()).save(any());
+    }
+
+    @Test
     void reportDeliveryNoShow_rejectsIfAlreadyPendingOrContested() {
         when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(inTransitBid(null)));
         when(announcementRepository.findById(ANNOUNCEMENT_ID))

@@ -46,6 +46,32 @@ public class CancellationEntity extends BaseEntity {
     @Column(name = "contestation_deadline")
     private OffsetDateTime contestationDeadline;
 
+    // Décision d'un administrateur (V273) : nulle tant que personne n'a tranché.
+    @Enumerated(EnumType.STRING)
+    @Column(name = "admin_decision", length = 10)
+    private NoShowAdminDecision adminDecision;
+
+    @Column(name = "decided_by_admin_id")
+    private UUID decidedByAdminId;
+
+    @Column(name = "decided_at")
+    private OffsetDateTime decidedAt;
+
+    @Column(name = "decision_reason", columnDefinition = "TEXT")
+    private String decisionReason;
+
+    public NoShowAdminDecision getAdminDecision() { return adminDecision; }
+    public void setAdminDecision(NoShowAdminDecision adminDecision) { this.adminDecision = adminDecision; }
+
+    public UUID getDecidedByAdminId() { return decidedByAdminId; }
+    public void setDecidedByAdminId(UUID decidedByAdminId) { this.decidedByAdminId = decidedByAdminId; }
+
+    public OffsetDateTime getDecidedAt() { return decidedAt; }
+    public void setDecidedAt(OffsetDateTime decidedAt) { this.decidedAt = decidedAt; }
+
+    public String getDecisionReason() { return decisionReason; }
+    public void setDecisionReason(String decisionReason) { this.decisionReason = decisionReason; }
+
     public UUID getBidId() { return bidId; }
     public void setBidId(UUID bidId) { this.bidId = bidId; }
 

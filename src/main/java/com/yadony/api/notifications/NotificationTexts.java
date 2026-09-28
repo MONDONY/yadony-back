@@ -237,6 +237,29 @@ public final class NotificationTexts {
                 m.get("notification.delivery-no-show.traveler.body"));
     }
 
+    // ── Colis : déclaration d'absence (no-show) et décision de l'administration ──
+
+    /** L'expéditeur déclaré absent à la remise par le voyageur : il peut contester. */
+    public static NotificationText senderNoShowReported(Messages m, int contestationHours) {
+        return new NotificationText(m.get("notification.sender-no-show-reported.title"),
+                m.get("notification.sender-no-show-reported.body", contestationHours));
+    }
+
+    public static NotificationText noShowConfirmedHandover(Messages m) {
+        return new NotificationText(m.get("notification.no-show-confirmed.title"),
+                m.get("notification.no-show-confirmed.handover.body"));
+    }
+
+    public static NotificationText noShowConfirmedDelivery(Messages m) {
+        return new NotificationText(m.get("notification.no-show-confirmed.title"),
+                m.get("notification.no-show-confirmed.delivery.body"));
+    }
+
+    public static NotificationText noShowRejected(Messages m) {
+        return new NotificationText(m.get("notification.no-show-rejected.title"),
+                m.get("notification.no-show-rejected.body"));
+    }
+
     // ── Colis : retours ──────────────────────────────────────────────────────
 
     public static NotificationText parcelReturnedForSender(Messages m) {

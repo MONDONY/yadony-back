@@ -1,6 +1,5 @@
 package com.yadony.api.admin;
 
-import com.yadony.api.admin.dto.AdminCancellationResponse;
 import com.yadony.api.admin.dto.AdminDisputeDetailResponse;
 import com.yadony.api.admin.dto.AdminDisputeListItemResponse;
 import com.yadony.api.admin.dto.AdminGuaranteeFundRequest;
@@ -406,43 +405,5 @@ class AdminDisputesControllerTest {
         verifyNoInteractions(eventPublisher);
     }
 
-    // ---- listCancellations ----
-
-    @Test
-    void listCancellations_noFilter_returnsPage() {
-        Page<CancellationEntity> page = new PageImpl<>(List.of());
-        when(cancellationRepo.findAdminFiltered(isNull(), any(Pageable.class))).thenReturn(page);
-
-        ResponseEntity<Page<AdminCancellationResponse>> resp =
-                controller().listCancellations(null, 0, 20);
-
-        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(resp.getBody()).isNotNull();
-    }
-
-    @Test
-    void listCancellations_withStatusFilter_passesEnum() {
-        Page<CancellationEntity> page = new PageImpl<>(List.of());
-        when(cancellationRepo.findAdminFiltered(eq(CancellationStatus.CONTESTED), any(Pageable.class)))
-                .thenReturn(page);
-
-        ResponseEntity<Page<AdminCancellationResponse>> resp =
-                controller().listCancellations(CancellationStatus.CONTESTED, 0, 20);
-
-        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
-        verify(cancellationRepo).findAdminFiltered(eq(CancellationStatus.CONTESTED), any(Pageable.class));
-    }
-
-    @Test
-    void listCancellations_withNullStatus_returnsOk() {
-        Page<CancellationEntity> page = new PageImpl<>(List.of());
-        when(cancellationRepo.findAdminFiltered(eq(null), any(Pageable.class)))
-                .thenReturn(page);
-
-        ResponseEntity<Page<AdminCancellationResponse>> resp =
-                controller().listCancellations(null, 0, 20);
-
-        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
-        verify(cancellationRepo).findAdminFiltered(eq(null), any(Pageable.class));
-    }
+    // listCancellations : déplacé vers cancellation/AdminNoShowQueryServiceTest et AdminNoShowControllerIT.
 }
