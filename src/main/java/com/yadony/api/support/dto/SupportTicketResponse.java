@@ -15,23 +15,36 @@ public record SupportTicketResponse(
         LocalDateTime lastMessageAt,
         LocalDateTime resolvedAt,
         List<SupportMessageResponse> messages,
-        long unreadCount) {
+        long unreadCount,
+        String lastMessagePreview,
+        Boolean lastMessageFromAdmin) {
 
     /** Vue liste : le fil n'est pas charge. */
     public static SupportTicketResponse summary(SupportTicketEntity ticket, long unreadCount) {
-        return build(ticket, null, unreadCount);
+        return build(ticket, null, unreadCount, null, null);
+    }
+
+    /**
+     * Vue liste avec l'apercu du dernier message ({@code lastMessageAt} est deja
+     * celui du ticket). Champs absents du JSON si le fil est vide.
+     */
+    public static SupportTicketResponse summary(SupportTicketEntity ticket, long unreadCount,
+                                                String lastMessagePreview, Boolean lastMessageFromAdmin) {
+        return build(ticket, null, unreadCount, lastMessagePreview, lastMessageFromAdmin);
     }
 
     /** Vue detail : le fil complet, du plus ancien au plus recent. */
     public static SupportTicketResponse withMessages(SupportTicketEntity ticket,
                                                      List<SupportMessageResponse> messages,
                                                      long unreadCount) {
-        return build(ticket, messages, unreadCount);
+        return build(ticket, messages, unreadCount, null, null);
     }
 
     private static SupportTicketResponse build(SupportTicketEntity ticket,
                                                List<SupportMessageResponse> messages,
-                                               long unreadCount) {
+                                               long unreadCount,
+                                               String lastMessagePreview,
+                                               Boolean lastMessageFromAdmin) {
         return new SupportTicketResponse(
                 ticket.getId(),
                 ticket.getCategory(),
@@ -41,6 +54,8 @@ public record SupportTicketResponse(
                 ticket.getLastMessageAt(),
                 ticket.getResolvedAt(),
                 messages,
-                unreadCount);
+                unreadCount,
+                lastMessagePreview,
+                lastMessageFromAdmin);
     }
 }

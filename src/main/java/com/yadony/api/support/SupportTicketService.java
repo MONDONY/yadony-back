@@ -21,6 +21,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -107,6 +108,30 @@ public class SupportTicketService {
                     ? ticketRepository.findAllByOrderByLastMessageAtDesc(pageable)
                     : ticketRepository.findByStatusOrderByLastMessageAtDesc(status, pageable);
         };
+    }
+
+    /**
+     * Tickets d'un utilisateur pour sa fiche back-office. Le filtre utilisateur
+     * se combine avec le statut mais pas avec le scope : la fiche veut tout
+     * l'historique, quel que soit l'admin assigne.
+     */
+    @Transactional(readOnly = true)
+    public Page<SupportTicketEntity> listAdminTicketsOfUser(UUID userId, SupportTicketStatus status,
+                                                            Pageable pageable) {
+        return status == null
+                ? ticketRepository.findByUserIdOrderByLastMessageAtDesc(userId, pageable)
+                : ticketRepository.findByUserIdAndStatusOrderByLastMessageAtDesc(userId, status, pageable);
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<SupportMessageEntity> lastMessage(UUID ticketId) {
+        return messageRepository.findFirstByTicketIdOrderByCreatedAtDesc(ticketId);
+    }
+
+    /** Tous les tickets d'un utilisateur, pour le resume de sa boite support. */
+    @Transactional(readOnly = true)
+    public List<SupportTicketEntity> listAllUserTickets(UUID userId) {
+        return ticketRepository.findByUserId(userId);
     }
 
     @Transactional(readOnly = true)

@@ -10,6 +10,7 @@ import com.yadony.api.support.dto.CreateSupportTicketRequest;
 import com.yadony.api.support.dto.SupportAttachmentResponse;
 import com.yadony.api.support.dto.SupportMessageResponse;
 import com.yadony.api.support.dto.SupportPredefinedReplyResponse;
+import com.yadony.api.support.dto.SupportSummaryResponse;
 import com.yadony.api.support.dto.SupportTicketResponse;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
@@ -74,9 +75,53 @@ public class SupportController {
                                                    @RequestParam(defaultValue = "0") int page,
                                                    @RequestParam(defaultValue = "20") int size) {
         UserEntity user = requireUser(firebaseUid);
+        String attachmentLabel = attachmentLabel();
         return supportTicketService
                 .listUserTickets(user.getId(), PageRequest.of(Math.max(page, 0), clampSize(size)))
-                .map(t -> SupportTicketResponse.summary(t, supportTicketService.unreadCount(t)));
+                .map(t -> {
+                    SupportMessageEntity last = supportTicketService.lastMessage(t.getId()).orElse(null);
+                    return SupportTicketResponse.summary(t, supportTicketService.unreadCount(t),
+                            SupportMessagePreview.of(last, attachmentLabel),
+                            last == null ? null : last.getAuthorType() == SupportMessageAuthorType.ADMIN);
+                });
+    }
+
+    /**
+     * Resume pour la tuile « Yadony Support » : non-lus au total, nombre de
+     * tickets non resolus, et le ticket a mettre en avant (le non resolu le plus
+     * recent, sinon le plus recent), pour ouvrir directement la conversation.
+     */
+    @GetMapping("/summary")
+    public SupportSummaryResponse summary(@AuthenticationPrincipal String firebaseUid) {
+        UserEntity user = requireUser(firebaseUid);
+        List<SupportTicketEntity> tickets = supportTicketService.listAllUserTickets(user.getId());
+        long unread = 0;
+        long open = 0;
+        SupportTicketEntity latestOpen = null;
+        SupportTicketEntity latestAny = null;
+        Map<UUID, Long> unreadByTicket = new java.util.HashMap<>();
+        for (SupportTicketEntity t : tickets) {
+            long count = supportTicketService.unreadCount(t);
+            unreadByTicket.put(t.getId(), count);
+            unread += count;
+            if (!t.isResolved()) {
+                open++;
+                latestOpen = moreRecent(latestOpen, t);
+            }
+            latestAny = moreRecent(latestAny, t);
+        }
+        SupportTicketEntity latest = latestOpen != null ? latestOpen : latestAny;
+        if (latest == null) {
+            return new SupportSummaryResponse(unread, open, null);
+        }
+        SupportMessageEntity last = supportTicketService.lastMessage(latest.getId()).orElse(null);
+        return new SupportSummaryResponse(unread, open, new SupportSummaryResponse.LatestTicket(
+                latest.getId(),
+                latest.getSubject(),
+                SupportMessagePreview.of(last, attachmentLabel()),
+                latest.getLastMessageAt(),
+                last != null && last.getAuthorType() == SupportMessageAuthorType.ADMIN,
+                unreadByTicket.get(latest.getId())));
     }
 
     @PostMapping("/tickets")
@@ -155,6 +200,17 @@ public class SupportController {
         return userRepository.findByFirebaseUid(firebaseUid)
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
                         "user-not-found", "User Not Found", "Utilisateur introuvable"));
+    }
+
+    private String attachmentLabel() {
+        return messagesResolver.forRequest().get("support.preview.attachment");
+    }
+
+    private static SupportTicketEntity moreRecent(SupportTicketEntity current, SupportTicketEntity candidate) {
+        if (current == null) {
+            return candidate;
+        }
+        return candidate.getLastMessageAt().isAfter(current.getLastMessageAt()) ? candidate : current;
     }
 
     private static int clampSize(int size) {

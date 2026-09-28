@@ -4,6 +4,7 @@ import com.yadony.api.admin.account.AdminPrincipal;
 import com.yadony.api.admin.account.AdminStatus;
 import com.yadony.api.admin.account.AdminUserEntity;
 import com.yadony.api.admin.account.AdminUserRepository;
+import com.yadony.api.admin.dto.AdminStartSupportTicketRequest;
 import com.yadony.api.admin.dto.AdminSupportTicketResponse;
 import com.yadony.api.admin.dto.ReassignSupportTicketRequest;
 import com.yadony.api.auth.UserEntity;
@@ -31,6 +32,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -80,14 +82,19 @@ public class AdminSupportController {
     public Page<AdminSupportTicketResponse> list(Authentication auth,
                                                  @RequestParam(defaultValue = "all") String scope,
                                                  @RequestParam(required = false) String status,
+                                                 @RequestParam(required = false) UUID userId,
                                                  @RequestParam(defaultValue = "0") int page,
                                                  @RequestParam(defaultValue = "20") int size) {
         UUID adminId = adminId(auth);
-        Page<SupportTicketEntity> tickets = supportTicketService.listAdminTickets(
-                parseScope(scope),
-                parseStatus(status),
-                adminId,
-                PageRequest.of(Math.max(page, 0), clampSize(size)));
+        PageRequest pageRequest = PageRequest.of(Math.max(page, 0), clampSize(size));
+        // userId (fiche utilisateur) : combinable avec status, le scope est ignore.
+        Page<SupportTicketEntity> tickets = userId != null
+                ? supportTicketService.listAdminTicketsOfUser(userId, parseStatus(status), pageRequest)
+                : supportTicketService.listAdminTickets(
+                        parseScope(scope),
+                        parseStatus(status),
+                        adminId,
+                        pageRequest);
 
         Map<UUID, UserEntity> users = loadUsers(tickets.getContent());
         Map<UUID, String> adminEmails = loadAdminEmails(tickets.getContent());
@@ -96,6 +103,21 @@ public class AdminSupportController {
                 users.get(ticket.getUserId()),
                 ticket.getAssignedAdminId() == null ? null
                         : adminEmails.get(ticket.getAssignedAdminId())));
+    }
+
+    /**
+     * Le support ouvre une conversation avec un utilisateur. Le ticket nait
+     * assigne a l'admin appelant, en WAITING_USER ; l'utilisateur le voit dans
+     * « Yadony Support » et recoit un push + une notification in-app.
+     */
+    @PostMapping
+    @ResponseStatus(HttpStatus.CREATED)
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('SUPPORT_TICKET_MANAGE')")
+    public AdminSupportTicketResponse start(Authentication auth,
+                                            @Valid @RequestBody AdminStartSupportTicketRequest request) {
+        return detail(supportTicketService.adminStartTicket(
+                request.userId(), adminId(auth), request.category(), request.subject(),
+                request.message(), request.attachmentKeys()));
     }
 
     @GetMapping("/{ticketId}")

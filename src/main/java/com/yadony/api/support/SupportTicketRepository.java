@@ -11,6 +11,9 @@ public interface SupportTicketRepository extends JpaRepository<SupportTicketEnti
 
     Page<SupportTicketEntity> findByUserIdOrderByLastMessageAtDesc(UUID userId, Pageable pageable);
 
+    Page<SupportTicketEntity> findByUserIdAndStatusOrderByLastMessageAtDesc(
+            UUID userId, SupportTicketStatus status, Pageable pageable);
+
     // Les six variantes admin sont volontairement derivees plutot qu'une seule
     // @Query a parametres nullables : un `:status IS NULL` sur un parametre enum
     // se comporte differemment selon le dialecte et a deja produit des 500 ici.

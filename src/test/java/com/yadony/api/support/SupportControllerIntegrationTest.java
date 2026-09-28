@@ -215,7 +215,98 @@ class SupportControllerIntegrationTest {
                 .andExpect(status().isNotFound());
     }
 
+    // ---------------------------------------------------------- apercu et resume
+
+    @Test
+    void listTickets_exposesThePreviewOfTheLastMessage() throws Exception {
+        SupportTicketEntity ticket = persistTicket(owner, SupportTicketStatus.WAITING_USER);
+        persistMessage(ticket, SupportMessageAuthorType.USER, "Premier message", 0);
+        persistMessage(ticket, SupportMessageAuthorType.ADMIN,
+                "Bonjour,\n\nnous avons   bien recu votre demande et nous revenons vers vous tres vite avec une reponse.", 1);
+
+        mockMvc.perform(get("/support/tickets").with(authentication(asUser(OWNER_UID))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].lastMessagePreview").value(
+                        "Bonjour, nous avons bien recu votre demande et nous revenons vers vous tres…"))
+                .andExpect(jsonPath("$.content[0].lastMessageFromAdmin").value(true))
+                .andExpect(jsonPath("$.content[0].unreadCount").value(1));
+    }
+
+    @Test
+    void listTickets_previewOfAnAttachmentOnlyMessage_isLocalized() throws Exception {
+        SupportTicketEntity ticket = persistTicket(owner, SupportTicketStatus.WAITING_SUPPORT);
+        persistMessage(ticket, SupportMessageAuthorType.USER, "", 0);
+
+        mockMvc.perform(get("/support/tickets").with(authentication(asUser(OWNER_UID))))
+                .andExpect(jsonPath("$.content[0].lastMessagePreview").value("Pièce jointe"))
+                .andExpect(jsonPath("$.content[0].lastMessageFromAdmin").value(false));
+
+        mockMvc.perform(get("/support/tickets")
+                        .with(authentication(asUser(OWNER_UID)))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en"))
+                .andExpect(jsonPath("$.content[0].lastMessagePreview").value("Attachment"));
+    }
+
+    @Test
+    void summary_withoutTickets_hasANullLatestTicket() throws Exception {
+        mockMvc.perform(get("/support/summary").with(authentication(asUser(OWNER_UID))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.unreadCount").value(0))
+                .andExpect(jsonPath("$.openTicketCount").value(0))
+                // null explicite (et non champ absent) : l'API omet d'ordinaire les nulls.
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content()
+                        .string(org.hamcrest.Matchers.containsString("\"latestTicket\":null")));
+    }
+
+    /** Le ticket ouvert le plus recent passe devant un ticket resolu plus recent. */
+    @Test
+    void summary_prefersTheMostRecentOpenTicket() throws Exception {
+        SupportTicketEntity open = persistTicket(owner, SupportTicketStatus.WAITING_USER);
+        open.setLastMessageAt(LocalDateTime.now(ZoneOffset.UTC).minusDays(2));
+        ticketRepository.save(open);
+        persistMessage(open, SupportMessageAuthorType.ADMIN, "Il manque une photo.", 0);
+        SupportTicketEntity resolved = persistTicket(owner, SupportTicketStatus.RESOLVED);
+        persistMessage(resolved, SupportMessageAuthorType.USER, "Merci", 0);
+        persistTicket(intruder, SupportTicketStatus.NEW);
+
+        mockMvc.perform(get("/support/summary").with(authentication(asUser(OWNER_UID))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.unreadCount").value(1))
+                .andExpect(jsonPath("$.openTicketCount").value(1))
+                .andExpect(jsonPath("$.latestTicket.id").value(open.getId().toString()))
+                .andExpect(jsonPath("$.latestTicket.subject").value("Paiement bloque"))
+                .andExpect(jsonPath("$.latestTicket.lastMessagePreview").value("Il manque une photo."))
+                .andExpect(jsonPath("$.latestTicket.lastMessageFromAdmin").value(true))
+                .andExpect(jsonPath("$.latestTicket.lastMessageAt").exists())
+                .andExpect(jsonPath("$.latestTicket.unreadCount").value(1));
+    }
+
+    @Test
+    void summary_fallsBackToTheMostRecentTicketWhenAllAreResolved() throws Exception {
+        SupportTicketEntity older = persistTicket(owner, SupportTicketStatus.RESOLVED);
+        older.setLastMessageAt(LocalDateTime.now(ZoneOffset.UTC).minusDays(3));
+        ticketRepository.save(older);
+        SupportTicketEntity newer = persistTicket(owner, SupportTicketStatus.RESOLVED);
+
+        mockMvc.perform(get("/support/summary").with(authentication(asUser(OWNER_UID))))
+                .andExpect(jsonPath("$.openTicketCount").value(0))
+                .andExpect(jsonPath("$.latestTicket.id").value(newer.getId().toString()))
+                .andExpect(jsonPath("$.latestTicket.lastMessageFromAdmin").value(false));
+    }
+
     // ---------------------------------------------------------------- helpers
+
+    private void persistMessage(SupportTicketEntity ticket, SupportMessageAuthorType author,
+                                String content, int order) throws InterruptedException {
+        SupportMessageEntity message = new SupportMessageEntity();
+        message.setTicketId(ticket.getId());
+        message.setAuthorType(author);
+        message.setAuthorId(author == SupportMessageAuthorType.USER ? ticket.getUserId() : UUID.randomUUID());
+        message.setContent(content);
+        messageRepository.save(message);
+        // created_at est pose a l'insertion : on espace les messages pour un ordre stable.
+        Thread.sleep(15);
+    }
 
     private static UsernamePasswordAuthenticationToken asUser(String uid) {
         return new UsernamePasswordAuthenticationToken(
