@@ -44,6 +44,9 @@ public class NotificationPrefsService {
             Map.entry("RETURN_DEADLINE_WARNING",      "pushActivityBids"),
             Map.entry("RETURN_DEADLINE_EXPIRED",      "pushActivityBids"),
             Map.entry("NEW_MESSAGE",                  "pushMessages"),
+            // Le support vit dans l'onglet Messages (« Yadony Support ») : même interrupteur.
+            // Seul le push est coupé, l'entrée du centre de notifications reste.
+            Map.entry("SUPPORT_MESSAGE",              "pushMessages"),
             Map.entry("TRIP_IN_PROGRESS",             "pushTripReminder"),
             Map.entry("PROMO",                        "pushPromo"),
             Map.entry("CORRIDOR_ALERT",               "pushCorridorAlerts"),

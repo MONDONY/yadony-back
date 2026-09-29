@@ -39,6 +39,7 @@ public final class NotificationDeeplink {
         Optional<String> cancellationId = uuid(data, "cancellationId");
         Optional<String> packageRequestId = uuid(data, "packageRequestId");
         Optional<String> conversationId = uuid(data, "conversationId");
+        Optional<String> ticketId = uuid(data, "ticketId");
 
         if (type.startsWith("negotiation")) {
             return threadId.map(id -> "negotiations/" + id);
@@ -79,6 +80,9 @@ public final class NotificationDeeplink {
 
             case "NEW_MESSAGE" -> conversationId.map(id -> "conversations/" + id)
                     .or(() -> Optional.of("messages"));
+
+            case "SUPPORT_MESSAGE" -> ticketId.map(id -> "support/tickets/" + id)
+                    .or(() -> Optional.of("support"));
 
             case "ACCOUNT_SUSPENDED" -> Optional.of("account/disabled");
             case "STRIPE_ONBOARDING_INCOMPLETE" -> Optional.of("connect/onboarding/intro");

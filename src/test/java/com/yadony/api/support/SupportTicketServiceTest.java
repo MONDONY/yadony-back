@@ -1,6 +1,8 @@
 package com.yadony.api.support;
 
 import com.yadony.api.auth.UserEntity;
+import com.yadony.api.auth.UserRepository;
+import com.yadony.api.auth.UserStatus;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.stripe.AdminAlertService;
@@ -28,6 +30,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -53,6 +56,7 @@ class SupportTicketServiceTest {
     @Mock AuditService auditService;
     @Mock SupportAttachmentService attachmentService;
     @Mock private ApplicationEventPublisher eventPublisher;
+    @Mock UserRepository userRepository;
 
     private SupportTicketService service;
 
@@ -65,7 +69,160 @@ class SupportTicketServiceTest {
                 adminAlertService,
                 auditService,
                 attachmentService,
-                eventPublisher);
+                eventPublisher,
+                userRepository);
+    }
+
+    // ------------------------------------------------ conversation initiee par l'admin
+
+    @Test
+    void adminStartTicket_opensAThreadWaitingForTheUser_assignedToTheAdmin() {
+        UserEntity target = user(USER_ID);
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(target));
+        stubSaves();
+        when(attachmentService.adminPrefix(ADMIN_ID)).thenReturn("support/admin/" + ADMIN_ID + "/");
+        when(attachmentService.requireOwnedKeys(any(), eq("support/admin/" + ADMIN_ID + "/"))).thenReturn(List.of());
+
+        SupportTicketEntity ticket = service.adminStartTicket(
+                USER_ID, ADMIN_ID, "kyc", "  Votre verification  ", "  Bonjour, il manque une photo.  ", null);
+
+        assertThat(ticket.getId()).isEqualTo(TICKET_ID);
+        assertThat(ticket.getUserId()).isEqualTo(USER_ID);
+        assertThat(ticket.getAssignedAdminId()).isEqualTo(ADMIN_ID);
+        assertThat(ticket.getStatus()).isEqualTo(SupportTicketStatus.WAITING_USER);
+        assertThat(ticket.getCategory()).isEqualTo("KYC");
+        assertThat(ticket.getSubject()).isEqualTo("Votre verification");
+        assertThat(ticket.getPriority()).isEqualTo(SupportPriority.NORMAL);
+        assertThat(ticket.getLastMessageAt()).isNotNull();
+
+        ArgumentCaptor<SupportMessageEntity> message = ArgumentCaptor.forClass(SupportMessageEntity.class);
+        verify(messageRepository).save(message.capture());
+        assertThat(message.getValue().getAuthorType()).isEqualTo(SupportMessageAuthorType.ADMIN);
+        assertThat(message.getValue().getAuthorId()).isEqualTo(ADMIN_ID);
+        assertThat(message.getValue().getContent()).isEqualTo("Bonjour, il manque une photo.");
+
+        ArgumentCaptor<SupportMessageCreatedEvent> event = ArgumentCaptor.forClass(SupportMessageCreatedEvent.class);
+        verify(eventPublisher).publishEvent(event.capture());
+        assertThat(event.getValue().getAuthorType()).isEqualTo(SupportMessageAuthorType.ADMIN);
+        assertThat(event.getValue().getOwnerUserId()).isEqualTo(USER_ID);
+        assertThat(event.getValue().getTicketId()).isEqualTo(TICKET_ID);
+        assertThat(event.getValue().isStartedByAdmin()).isTrue();
+        assertThat(event.getValue().getSubject()).isEqualTo("Votre verification");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> details = ArgumentCaptor.forClass(Map.class);
+        verify(auditService).log(eq("support_ticket"), eq(TICKET_ID), eq("SUPPORT_TICKET_ADMIN_STARTED"),
+                eq(ADMIN_ID), details.capture());
+        assertThat(details.getValue())
+                .containsEntry("adminId", ADMIN_ID.toString())
+                .containsEntry("userId", USER_ID.toString())
+                .containsEntry("ticketId", TICKET_ID.toString())
+                .containsEntry("category", "KYC");
+
+        verifyNoInteractions(adminAlertService);
+    }
+
+    @Test
+    void adminStartTicket_defaultsTheCategoryToOther() {
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user(USER_ID)));
+        stubSaves();
+        when(attachmentService.requireOwnedKeys(any(), any())).thenReturn(List.of());
+
+        SupportTicketEntity ticket = service.adminStartTicket(
+                USER_ID, ADMIN_ID, null, "Question", "Bonjour", null);
+
+        assertThat(ticket.getCategory()).isEqualTo("OTHER");
+    }
+
+    /** Un compte suspendu ou banni reste joignable : c'est souvent pour lui expliquer. */
+    @Test
+    void adminStartTicket_allowsASuspendedAccount() {
+        UserEntity suspended = user(USER_ID);
+        suspended.setStatus(UserStatus.BANNED);
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(suspended));
+        stubSaves();
+        when(attachmentService.requireOwnedKeys(any(), any())).thenReturn(List.of());
+
+        assertThat(service.adminStartTicket(USER_ID, ADMIN_ID, "ACCOUNT", "Compte", "Bonjour", null)
+                .getStatus()).isEqualTo(SupportTicketStatus.WAITING_USER);
+    }
+
+    @Test
+    void adminStartTicket_attachesAdminKeys() {
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user(USER_ID)));
+        stubSaves();
+        List<String> keys = List.of("support/admin/" + ADMIN_ID + "/a.png");
+        when(attachmentService.adminPrefix(ADMIN_ID)).thenReturn("support/admin/" + ADMIN_ID + "/");
+        when(attachmentService.requireOwnedKeys(keys, "support/admin/" + ADMIN_ID + "/")).thenReturn(keys);
+
+        service.adminStartTicket(USER_ID, ADMIN_ID, "OTHER", "Capture", null, keys);
+
+        verify(attachmentService).attach(any(), eq(keys), eq("image/png"));
+    }
+
+    @Test
+    void adminStartTicket_refusesAttachmentsOutsideTheAdminPrefix() {
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user(USER_ID)));
+        when(attachmentService.adminPrefix(ADMIN_ID)).thenReturn("support/admin/" + ADMIN_ID + "/");
+        when(attachmentService.requireOwnedKeys(any(), eq("support/admin/" + ADMIN_ID + "/")))
+                .thenThrow(new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "support-attachment-not-owned", "Piece jointe invalide", "x"));
+
+        assertThatThrownBy(() -> service.adminStartTicket(USER_ID, ADMIN_ID, "OTHER", "Sujet", "Bonjour",
+                List.of("support/user/" + USER_ID + "/a.jpg")))
+                .satisfies(e -> assertThat(statusOf(e)).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY));
+        verify(ticketRepository, never()).save(any());
+        verifyNoInteractions(eventPublisher);
+    }
+
+    /** Un compte supprime sort du @Where de UserEntity : findById ne le voit plus. */
+    @Test
+    void adminStartTicket_returns404ForAnUnknownOrDeletedUser() {
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.adminStartTicket(USER_ID, ADMIN_ID, "OTHER", "Sujet", "Bonjour", null))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+                    assertThat(e.getErrorCode()).isEqualTo("user-not-found");
+                });
+        verify(ticketRepository, never()).save(any());
+        verifyNoInteractions(auditService, eventPublisher);
+    }
+
+    @Test
+    void adminStartTicket_validatesSubjectAndMessage() {
+        assertThatThrownBy(() -> service.adminStartTicket(USER_ID, ADMIN_ID, "OTHER", " ", "Bonjour", null))
+                .satisfies(e -> assertThat(statusOf(e)).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY));
+        assertThatThrownBy(() -> service.adminStartTicket(USER_ID, ADMIN_ID, "OTHER", "Sujet", " ", null))
+                .satisfies(e -> assertThat(statusOf(e)).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY));
+        assertThatThrownBy(() -> service.adminStartTicket(USER_ID, ADMIN_ID, "NOPE", "Sujet", "Bonjour", null))
+                .satisfies(e -> assertThat(statusOf(e)).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY));
+        verifyNoInteractions(ticketRepository, eventPublisher);
+    }
+
+    /** Une reponse ordinaire ne se presente pas comme une nouvelle conversation. */
+    @Test
+    void adminReply_publishesAnEventThatIsNotAConversationStart() {
+        SupportTicketEntity ticket = ticket(USER_ID, SupportTicketStatus.ASSIGNED);
+        ticket.setAssignedAdminId(ADMIN_ID);
+        when(ticketRepository.findById(TICKET_ID)).thenReturn(Optional.of(ticket));
+        when(messageRepository.save(any(SupportMessageEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(attachmentService.requireOwnedKeys(any(), any())).thenReturn(List.of());
+
+        service.adminReply(TICKET_ID, ADMIN_ID, "On regarde.", null);
+
+        ArgumentCaptor<SupportMessageCreatedEvent> event = ArgumentCaptor.forClass(SupportMessageCreatedEvent.class);
+        verify(eventPublisher).publishEvent(event.capture());
+        assertThat(event.getValue().isStartedByAdmin()).isFalse();
+    }
+
+    private void stubSaves() {
+        when(ticketRepository.save(any(SupportTicketEntity.class))).thenAnswer(inv -> {
+            SupportTicketEntity t = inv.getArgument(0);
+            ReflectionTestUtils.setField(t, "id", TICKET_ID);
+            return t;
+        });
+        when(messageRepository.save(any(SupportMessageEntity.class))).thenAnswer(inv -> inv.getArgument(0));
     }
 
     @Test

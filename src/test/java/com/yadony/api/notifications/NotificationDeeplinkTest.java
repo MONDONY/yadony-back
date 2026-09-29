@@ -19,6 +19,18 @@ class NotificationDeeplinkTest {
         assertThat(NotificationDeeplink.of("TRIP_ARRIVED", Map.of("announcementId", bidId))).isEmpty();
     }
 
+    /** Même table que notification_route_resolver.dart : le ticket, sinon la liste des tickets. */
+    @Test
+    void supportMessageOpensTheTicket() {
+        String ticketId = UUID.randomUUID().toString();
+        assertThat(NotificationDeeplink.of("SUPPORT_MESSAGE", Map.of("ticketId", ticketId)))
+                .contains("yadony://support/tickets/" + ticketId);
+        assertThat(NotificationDeeplink.of("SUPPORT_MESSAGE", Map.of("ticketId", "../admin")))
+                .contains("yadony://support");
+        assertThat(NotificationDeeplink.of("SUPPORT_MESSAGE", Map.of()))
+                .contains("yadony://support");
+    }
+
     @Test
     void bidLifecycleOpensTheBid() {
         for (String type : new String[]{"BID_ACCEPTED", "DELIVERY_CONFIRMED", "PAYMENT_RELEASED", "DISPUTE_OPENED",
