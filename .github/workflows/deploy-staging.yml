@@ -209,6 +209,7 @@ jobs:
           AT_USERNAME=${{ vars.AT_USERNAME }}
           TWILIO_FROM=${{ vars.TWILIO_FROM }}
           TWILIO_VERIFY_SERVICE_SID=${{ vars.TWILIO_VERIFY_SERVICE_SID }}
+          ANDROID_SMS_APP_HASHES=${{ vars.ANDROID_SMS_APP_HASHES }}
           WAVE_API_URL=${{ vars.WAVE_API_URL }}
           ORANGE_MONEY_API_URL=${{ vars.ORANGE_MONEY_API_URL }}
           # Rail mobile money pawaPay. PAWAPAY_ENABLED=true ouvre le rail (annonces XOF/XAF,

@@ -86,7 +86,7 @@ class TwilioVerifyServiceTest {
         when(restTemplate.postForEntity(eq(START_URL), any(HttpEntity.class), eq(String.class)))
                 .thenReturn(ResponseEntity.status(201).body("{\"status\":\"pending\"}"));
 
-        verify.start(US_PHONE, "en");
+        verify.start(US_PHONE, "en", "QR5XSgGkFEN");
 
         ArgumentCaptor<HttpEntity<MultiValueMap<String, String>>> request = ArgumentCaptor.forClass(HttpEntity.class);
         verify(restTemplate).postForEntity(eq(START_URL), request.capture(), eq(String.class));
@@ -94,6 +94,7 @@ class TwilioVerifyServiceTest {
         assertThat(body.getFirst("To")).isEqualTo(US_PHONE);
         assertThat(body.getFirst("Channel")).isEqualTo("sms");
         assertThat(body.getFirst("Locale")).isEqualTo("en");
+        assertThat(body.getFirst("AppHash")).isEqualTo("QR5XSgGkFEN");
         assertThat(request.getValue().getHeaders().getFirst(HttpHeaders.AUTHORIZATION)).startsWith("Basic ");
     }
 
@@ -103,7 +104,7 @@ class TwilioVerifyServiceTest {
         when(restTemplate.postForEntity(eq(START_URL), any(HttpEntity.class), eq(String.class)))
                 .thenThrow(twilioError(HttpStatus.BAD_REQUEST, 60200));
 
-        assertThatThrownBy(() -> verify.start(US_PHONE, "fr"))
+        assertThatThrownBy(() -> verify.start(US_PHONE, "fr", null))
                 .isInstanceOf(InvalidSmsRecipientException.class);
     }
 
@@ -113,7 +114,7 @@ class TwilioVerifyServiceTest {
         when(restTemplate.postForEntity(eq(START_URL), any(HttpEntity.class), eq(String.class)))
                 .thenThrow(twilioError(HttpStatus.NOT_FOUND, 20404));
 
-        assertThatThrownBy(() -> verify.start(US_PHONE, "fr"))
+        assertThatThrownBy(() -> verify.start(US_PHONE, "fr", null))
                 .isInstanceOf(TwilioVerifyService.VerifyUnavailableException.class);
     }
 
@@ -123,7 +124,7 @@ class TwilioVerifyServiceTest {
         when(restTemplate.postForEntity(eq(START_URL), any(HttpEntity.class), eq(String.class)))
                 .thenThrow(new ResourceAccessException("timeout"));
 
-        assertThatThrownBy(() -> verify.start(US_PHONE, "fr"))
+        assertThatThrownBy(() -> verify.start(US_PHONE, "fr", null))
                 .isInstanceOf(TwilioVerifyService.VerifyUnavailableException.class);
     }
 
@@ -164,5 +165,19 @@ class TwilioVerifyServiceTest {
 
         assertThatThrownBy(() -> verify.check(US_PHONE, "482913"))
                 .isInstanceOf(TwilioVerifyService.VerifyUnavailableException.class);
+    }
+
+    @Test
+    @DisplayName("envoi — sans empreinte, aucun paramètre AppHash")
+    @SuppressWarnings("unchecked")
+    void start_withoutAppHash() {
+        when(restTemplate.postForEntity(eq(START_URL), any(HttpEntity.class), eq(String.class)))
+                .thenReturn(ResponseEntity.status(201).body("{\"status\":\"pending\"}"));
+
+        verify.start(US_PHONE, "fr", null);
+
+        ArgumentCaptor<HttpEntity<MultiValueMap<String, String>>> request = ArgumentCaptor.forClass(HttpEntity.class);
+        verify(restTemplate).postForEntity(eq(START_URL), request.capture(), eq(String.class));
+        assertThat(request.getValue().getBody()).doesNotContainKey("AppHash");
     }
 }

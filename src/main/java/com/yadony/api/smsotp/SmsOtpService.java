@@ -80,6 +80,13 @@ public class SmsOtpService {
         // partent vers Loki et Sentry. L'ancienne condition y relayait le code OTP en
         // clair dès que les SMS étaient coupés depuis le back-office.
         this.devProfile = activeProfiles.contains("dev") || activeProfiles.contains("test");
+        // Une empreinte mal copiée ne casse rien (le code reste saisissable), mais la
+        // lecture automatique sur Android ne marcherait pas sans que rien ne le dise.
+        List<String> rejected = properties.getRejectedAndroidAppHashes();
+        if (!rejected.isEmpty()) {
+            log.warn("ANDROID_SMS_APP_HASHES : {} valeur(s) ignorée(s), une empreinte fait "
+                    + "11 caractères base64", rejected.size());
+        }
     }
 
     @Transactional(isolation = Isolation.SERIALIZABLE)
@@ -119,10 +126,14 @@ public class SmsOtpService {
         smsOtpRepository.save(entity);
 
         try {
+            List<String> appHashes = properties.getAndroidAppHashes();
             if (viaVerify) {
-                twilioVerify.start(phoneNumber, LocaleContextHolder.getLocale().getLanguage());
+                // Verify n'accepte qu'une empreinte : la première, celle du build Play.
+                twilioVerify.start(phoneNumber, LocaleContextHolder.getLocale().getLanguage(),
+                        appHashes.isEmpty() ? null : appHashes.get(0));
             } else {
-                smsService.send(phoneNumber, messagesResolver.forRequest().get("sms.otp", code));
+                smsService.send(phoneNumber, withAppHashes(
+                        messagesResolver.forRequest().get("sms.otp", code), appHashes));
             }
         } catch (VerifyUnavailableException e) {
             throw verifyUnavailable();
@@ -298,6 +309,15 @@ public class SmsOtpService {
 
         token.setUsedAt(LocalDateTime.now(ZoneOffset.UTC));
         smsOtpRepository.save(token);
+    }
+
+    /**
+     * Ajoute les empreintes SMS Retriever en fin de message, sur une ligne à part : Android
+     * remet le SMS à l'app dont l'empreinte y figure, qui remplit le code sans que
+     * l'utilisateur ouvre Messages. Le texte lu par l'utilisateur ne change pas.
+     */
+    static String withAppHashes(String text, List<String> appHashes) {
+        return appHashes.isEmpty() ? text : text + "\n" + String.join(" ", appHashes);
     }
 
     /**

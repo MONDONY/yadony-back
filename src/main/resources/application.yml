@@ -365,6 +365,10 @@ yadony:
     rate-window-minutes: ${YADONY_SMS_OTP_WINDOW_MINUTES:5}
     max-attempts: ${YADONY_SMS_OTP_MAX_ATTEMPTS:5}
     otp-valid-minutes: ${YADONY_SMS_OTP_VALID_MINUTES:10}
+    # Empreintes SMS Retriever de l'app Android, séparées par des virgules (debug, clé de
+    # signature Play). Ajoutées à la fin du SMS de code : Android remet alors le SMS à
+    # l'app, qui remplit le code toute seule. Vide = SMS inchangé.
+    android-app-hashes: ${ANDROID_SMS_APP_HASHES:}
 
 # Encryption (AES-256 for KYC sensitive data)
 app:
