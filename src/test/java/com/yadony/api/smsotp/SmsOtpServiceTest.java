@@ -628,7 +628,7 @@ class SmsOtpServiceTest {
 
             assertThat(service.sendOtp(US_PHONE)).isNotNull();
 
-            verify(twilioVerify).start(eq(US_PHONE), anyString());
+            verify(twilioVerify).start(eq(US_PHONE), anyString(), any());
             verify(smsService, never()).send(any(), any());
             // La ligne est gardée : elle porte le budget anti-spam et le budget de tentatives.
             verify(smsOtpRepository).save(argThat(e -> US_PHONE.equals(e.getPhoneNumber())));
@@ -658,7 +658,7 @@ class SmsOtpServiceTest {
             when(smsOtpRepository.countByPhoneSince(eq(US_PHONE), any())).thenReturn(0L);
             when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$random");
             when(smsOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
-            doThrow(new InvalidSmsRecipientException(60200)).when(twilioVerify).start(eq(US_PHONE), anyString());
+            doThrow(new InvalidSmsRecipientException(60200)).when(twilioVerify).start(eq(US_PHONE), anyString(), any());
 
             assertThatThrownBy(() -> service.sendOtp(US_PHONE))
                     .isInstanceOf(YadonyBusinessException.class)
@@ -675,7 +675,7 @@ class SmsOtpServiceTest {
             when(smsOtpRepository.countByPhoneSince(eq(US_PHONE), any())).thenReturn(0L);
             when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$random");
             when(smsOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
-            doThrow(new VerifyUnavailableException()).when(twilioVerify).start(eq(US_PHONE), anyString());
+            doThrow(new VerifyUnavailableException()).when(twilioVerify).start(eq(US_PHONE), anyString(), any());
 
             assertThatThrownBy(() -> service.sendOtp(US_PHONE))
                     .isInstanceOf(YadonyBusinessException.class)
@@ -698,7 +698,7 @@ class SmsOtpServiceTest {
 
             service.sendOtp(US_PHONE);
 
-            verify(twilioVerify, never()).start(any(), any());
+            verify(twilioVerify, never()).start(any(), any(), any());
             verify(smsService).send(eq(US_PHONE), anyString());
         }
 
@@ -756,6 +756,91 @@ class SmsOtpServiceTest {
                     .extracting(e -> ((YadonyBusinessException) e).getStatus())
                     .isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
             assertThat(token.getAttempts()).isZero();
+        }
+    }
+
+    /**
+     * API SMS Retriever : Android ne remet le SMS à l'app que s'il contient son empreinte.
+     * Le code se remplit alors sans que l'utilisateur ouvre Messages, où iOS et Android
+     * rangent les codes d'expéditeurs inconnus hors de la liste principale.
+     */
+    @Nested
+    @DisplayName("empreinte Android (SMS Retriever)")
+    class AndroidAppHash {
+
+        private static final String DEBUG_HASH = "QR5XSgGkFEN";
+        private static final String PLAY_HASH = "Ab+/Cd12Ef3";
+
+        private void givenSendable() {
+            when(smsOtpRepository.countByPhoneSince(eq(PHONE), any())).thenReturn(0L);
+            when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$hashed");
+            when(smsOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+            when(smsService.isEnabled()).thenReturn(true);
+        }
+
+        @Test
+        @DisplayName("les empreintes configurées suivent le texte, sur une ligne à part")
+        void appendsConfiguredHashes() {
+            properties.setAndroidAppHashes(java.util.List.of(PLAY_HASH, DEBUG_HASH));
+            SmsOtpService service = newService();
+            givenSendable();
+
+            service.sendOtp(PHONE);
+
+            verify(smsService).send(eq(PHONE), argThat(msg -> msg.matches(
+                    "Ton code Yadony est : \\d{6}\\. Valable 10 minutes\\.\n"
+                            + java.util.regex.Pattern.quote(PLAY_HASH + " " + DEBUG_HASH))));
+        }
+
+        @Test
+        @DisplayName("sans empreinte configurée, le SMS reste inchangé")
+        void noHash_unchangedText() {
+            SmsOtpService service = newService();
+            givenSendable();
+
+            service.sendOtp(PHONE);
+
+            verify(smsService).send(eq(PHONE), argThat(msg ->
+                    msg.matches("Ton code Yadony est : \\d{6}\\. Valable 10 minutes\\.")));
+        }
+
+        @Test
+        @DisplayName("une valeur mal copiée est écartée, les bonnes restent")
+        void invalidHashesAreDropped() {
+            properties.setAndroidAppHashes(java.util.List.of(" " + DEBUG_HASH + " ", "trop-court", "", DEBUG_HASH));
+
+            assertThat(properties.getAndroidAppHashes()).containsExactly(DEBUG_HASH);
+            assertThat(properties.getRejectedAndroidAppHashes()).containsExactly("trop-court");
+        }
+
+        @Test
+        @DisplayName("SMS Retriever exige au plus 140 octets : tenu avec deux empreintes, dans les deux langues")
+        void fitsRetrieverLimitWithTwoHashes() {
+            java.util.List<String> hashes = java.util.List.of(PLAY_HASH, DEBUG_HASH);
+            for (String text : java.util.List.of(
+                    TestMessages.fr().get("sms.otp", "123456"),
+                    TestMessages.en().get("sms.otp", "123456"))) {
+                String sms = SmsOtpService.withAppHashes(text, hashes);
+                assertThat(sms.getBytes(java.nio.charset.StandardCharsets.UTF_8).length)
+                        .as(sms).isLessThanOrEqualTo(140);
+            }
+        }
+
+        @Test
+        @DisplayName("Twilio Verify (+1) reçoit la première empreinte en AppHash")
+        void verifyRouteGetsFirstHash() {
+            properties.setAndroidAppHashes(java.util.List.of(PLAY_HASH, DEBUG_HASH));
+            SmsOtpService service = newService();
+            String usPhone = "+17135550123";
+            when(smsService.isEnabled()).thenReturn(true);
+            when(twilioVerify.handles(usPhone)).thenReturn(true);
+            when(smsOtpRepository.countByPhoneSince(eq(usPhone), any())).thenReturn(0L);
+            when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$random");
+            when(smsOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+            service.sendOtp(usPhone);
+
+            verify(twilioVerify).start(eq(usPhone), anyString(), eq(PLAY_HASH));
         }
     }
 }

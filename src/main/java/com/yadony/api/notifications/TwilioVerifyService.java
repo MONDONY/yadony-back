@@ -81,15 +81,20 @@ public class TwilioVerifyService {
      * Demande à Twilio d'envoyer un code à ce numéro.
      *
      * @param locale langue du SMS ({@code fr}, {@code en}) : Verify rédige lui-même le message
+     * @param appHash empreinte SMS Retriever de l'app Android, ajoutée par Verify au SMS ;
+     *                {@code null} pour n'en mettre aucune
      * @throws InvalidSmsRecipientException si le numéro lui-même est refusé
      * @throws VerifyUnavailableException pour toute autre panne
      */
-    public void start(String phoneNumber, String locale) {
+    public void start(String phoneNumber, String locale, String appHash) {
         MultiValueMap<String, String> body = new LinkedMultiValueMap<>();
         body.add("To", phoneNumber);
         body.add("Channel", "sms");
         if (notBlank(locale)) {
             body.add("Locale", locale);
+        }
+        if (notBlank(appHash)) {
+            body.add("AppHash", appHash);
         }
         try {
             restTemplate.postForEntity(VERIFY_URL + serviceSid + "/Verifications",
