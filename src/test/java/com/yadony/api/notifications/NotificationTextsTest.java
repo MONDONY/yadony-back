@@ -90,10 +90,10 @@ class NotificationTextsTest {
         map.put("bidNegotiationAccepted", NotificationTexts.bidNegotiationAccepted(m, "1250.50"));
         map.put("bidNegotiationClosed", NotificationTexts.bidNegotiationClosed(m));
         map.put("bidNegotiationExpired", NotificationTexts.bidNegotiationExpired(m));
-        map.put("negotiationStarted", NotificationTexts.negotiationStarted(m, MONTANT));
-        map.put("negotiationCounter", NotificationTexts.negotiationCounter(m, MONTANT, 3));
-        map.put("negotiationAwaitingTrip", NotificationTexts.negotiationAwaitingTrip(m, MONTANT));
-        map.put("negotiationAwaitingPayment", NotificationTexts.negotiationAwaitingPayment(m, MONTANT));
+        map.put("negotiationStarted", NotificationTexts.negotiationStarted(m, MONTANT, "XOF"));
+        map.put("negotiationCounter", NotificationTexts.negotiationCounter(m, MONTANT, "XOF", 3));
+        map.put("negotiationAwaitingTrip", NotificationTexts.negotiationAwaitingTrip(m, MONTANT, "XOF"));
+        map.put("negotiationAwaitingPayment", NotificationTexts.negotiationAwaitingPayment(m, MONTANT, "XOF"));
         map.put("negotiationTripChanged", NotificationTexts.negotiationTripChanged(m));
         map.put("commissionPending", NotificationTexts.commissionPending(m, MONTANT, "XOF"));
         map.put("commissionDeclined", NotificationTexts.commissionDeclined(m));
@@ -104,8 +104,8 @@ class NotificationTextsTest {
         map.put("depositReverted sender-cancelled", NotificationTexts.depositReverted(m, "sender-cancelled"));
         map.put("commissionExpiredForTraveler", NotificationTexts.commissionExpiredForTraveler(m));
         map.put("commissionExpiredForSender", NotificationTexts.commissionExpiredForSender(m));
-        map.put("requestAcceptedForTraveler", NotificationTexts.requestAcceptedForTraveler(m, MONTANT));
-        map.put("requestAcceptedForSender", NotificationTexts.requestAcceptedForSender(m, MONTANT));
+        map.put("requestAcceptedForTraveler", NotificationTexts.requestAcceptedForTraveler(m, MONTANT, "XOF"));
+        map.put("requestAcceptedForSender", NotificationTexts.requestAcceptedForSender(m, MONTANT, "XOF"));
         map.put("requestExpired", NotificationTexts.requestExpired(m));
         map.put("negotiationReminder", NotificationTexts.negotiationReminder(m, NOM));
         map.put("negotiationEnded", NotificationTexts.negotiationEnded(m, NOM));
@@ -238,15 +238,17 @@ class NotificationTextsTest {
         assertThat(NotificationTexts.kg(fr, new BigDecimal("12.50"))).isEqualTo("12,5 kg");
         assertThat(NotificationTexts.kg(en, new BigDecimal("12.50"))).isEqualTo("12.5 kg");
         assertThat(NotificationTexts.kg(en, new BigDecimal("12.0"))).isEqualTo("12 kg");
-        assertThat(NotificationTexts.eur(new BigDecimal("45"))).isEqualTo("45,00 €");
-        assertThat(NotificationTexts.amount(new BigDecimal("1250"), "XOF")).isEqualTo("1250,00 XOF");
-        assertThat(NotificationTexts.amount(new BigDecimal("12.5"), "eur")).isEqualTo("12,50 €");
-        // mobileMoneyAmount (tâche 16) : distinct de amount() ci-dessus (jamais modifié, son
-        // contrat "code ISO, deux décimales" est utilisé ailleurs, ex. commissionPending) —
-        // symbole du catalogue SupportedCurrency (« F CFA »), sans décimale pour les francs CFA.
-        // Montants inchangés quelle que soit la langue (D7).
-        assertThat(NotificationTexts.mobileMoneyAmount(new BigDecimal("15000"), "XOF")).isEqualTo("15000 F CFA");
-        assertThat(NotificationTexts.mobileMoneyAmount(new BigDecimal("45"), "EUR")).isEqualTo("45,00 €");
+        // Montant dans SA devise, rendu du portefeuille (WalletAmountText) : décimales et
+        // symbole du catalogue SupportedCurrency, milliers séparés par une espace insécable.
+        // Les francs CFA n'ont pas de décimales. Montants inchangés quelle que soit la langue (D7).
+        assertThat(NotificationTexts.amount(new BigDecimal("15000"), "XOF")).isEqualTo("15\u00A0000\u00A0F CFA");
+        assertThat(NotificationTexts.amount(new BigDecimal("1250"), "XAF")).isEqualTo("1\u00A0250\u00A0FCFA");
+        assertThat(NotificationTexts.amount(new BigDecimal("12.5"), "eur")).isEqualTo("12,50\u00A0€");
+        assertThat(NotificationTexts.amount(new BigDecimal("1250.5"), "EUR")).isEqualTo("1\u00A0250,50\u00A0€");
+        // Devise absente : euro, jamais le code d'une autre devise.
+        assertThat(NotificationTexts.amount(new BigDecimal("45"), null)).isEqualTo("45,00\u00A0€");
+        assertThat(NotificationTexts.amount(null, "XOF")).isEmpty();
+        assertThat(NotificationTexts.mobileMoneyAmount(new BigDecimal("15000"), "XOF")).isEqualTo("15\u00A0000\u00A0F CFA");
         assertThat(NotificationTexts.corridorFromLabel(fr, "Paris → Dakar")).isEqualTo("Paris vers Dakar");
         assertThat(NotificationTexts.corridor(fr, "Paris", "Dakar")).isEqualTo("Paris vers Dakar");
         assertThat(NotificationTexts.corridorFromLabel(en, "Paris → Dakar")).isEqualTo("Paris to Dakar");

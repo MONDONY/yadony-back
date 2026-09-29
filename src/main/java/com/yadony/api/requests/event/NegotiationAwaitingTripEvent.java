@@ -12,5 +12,13 @@ public record NegotiationAwaitingTripEvent(
     UUID packageRequestId,
     UUID senderId,
     UUID travelerId,
-    BigDecimal agreedPriceEur
-) {}
+    BigDecimal agreedPriceEur,
+    /** Devise du fil : {@code agreedPriceEur} (net du voyageur) est exprimé dans cette devise. */
+    String currency
+) {
+    /** Sans devise : euros (anciens appelants de test). */
+    public NegotiationAwaitingTripEvent(UUID threadId, UUID packageRequestId, UUID senderId,
+                                        UUID travelerId, BigDecimal agreedPriceEur) {
+        this(threadId, packageRequestId, senderId, travelerId, agreedPriceEur, null);
+    }
+}

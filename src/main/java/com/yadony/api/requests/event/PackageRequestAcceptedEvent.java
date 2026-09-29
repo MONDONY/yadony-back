@@ -36,5 +36,26 @@ public record PackageRequestAcceptedEvent(
      * UNIQUE(promo_code_id, bid_id) de {@code promo_redemptions}.
      */
     String promoCode,
-    BigDecimal commissionRate
-) {}
+    BigDecimal commissionRate,
+    /** Devise du fil : {@code agreedPriceEur} (net) est exprimé dans cette devise, pas en euros. */
+    String currency
+) {
+    /** Sans devise : euros (anciens appelants de test). */
+    public PackageRequestAcceptedEvent(UUID threadId, UUID packageRequestId, UUID senderId,
+                                       UUID travelerId, BigDecimal agreedPriceEur,
+                                       UUID travelerAnnouncementId, BigDecimal weightKg,
+                                       String description, String contentCategory,
+                                       String paymentIntentId, String recipientName,
+                                       String recipientPhone, LocalDateTime disclaimerSignedAt,
+                                       String disclaimerSignedIp,
+                                       com.yadony.api.payments.cash.PaymentMethod paymentMethod,
+                                       java.util.List<String> photoObjectKeys,
+                                       String commissionChargedVia, String promoCode,
+                                       BigDecimal commissionRate) {
+        this(threadId, packageRequestId, senderId, travelerId, agreedPriceEur,
+                travelerAnnouncementId, weightKg, description, contentCategory, paymentIntentId,
+                recipientName, recipientPhone, disclaimerSignedAt, disclaimerSignedIp,
+                paymentMethod, photoObjectKeys, commissionChargedVia, promoCode, commissionRate,
+                null);
+    }
+}

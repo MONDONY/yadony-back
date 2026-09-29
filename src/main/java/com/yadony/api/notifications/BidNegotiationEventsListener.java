@@ -8,6 +8,7 @@ import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.util.Map;
 
 /**
@@ -72,7 +73,8 @@ public class BidNegotiationEventsListener {
                     ? NotificationTexts.bidNegotiationClosed(m)
                     : new NotificationText(titleFor(m, e.kind()), NotificationTexts.bidNegotiationClosed(m).body());
         }
-        String gross = e.proposedGrossEur().toPlainString();
+        BigDecimal shown = e.amountForRecipient() != null ? e.amountForRecipient() : e.proposedGrossEur();
+        String gross = NotificationTexts.amount(shown, e.currency());
         return switch (e.kind()) {
             case PROPOSAL -> NotificationTexts.bidNegotiationProposal(m, gross);
             case COUNTER -> NotificationTexts.bidNegotiationCounter(m, gross, e.round());

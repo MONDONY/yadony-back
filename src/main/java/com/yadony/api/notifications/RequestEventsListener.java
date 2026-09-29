@@ -1,5 +1,6 @@
 package com.yadony.api.notifications;
 
+import com.yadony.api.payments.PriceBreakdown;
 import com.yadony.api.requests.event.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,7 +37,8 @@ public class RequestEventsListener {
     public void onNegotiationStarted(NegotiationStartedEvent e) {
         // Nouvelle offre déclenchée par le voyageur : supprimée si les deux comptes sont
         // masqués l'un pour l'autre.
-        var text = NotificationTexts.negotiationStarted(dispatcher.messagesFor(e.senderId()), e.proposedPriceEur());
+        var text = NotificationTexts.negotiationStarted(dispatcher.messagesFor(e.senderId()),
+            e.proposedGross() != null ? e.proposedGross() : e.proposedPriceEur(), e.currency());
         dispatcher.notifyUnlessBlocked(
             e.senderId(),
             e.travelerId(),
@@ -54,7 +56,8 @@ public class RequestEventsListener {
     @Async
     public void onNegotiationCounterPosted(NegotiationCounterPostedEvent e) {
         // Contre-proposition postée par l'autre partie : même règle que l'offre initiale.
-        var text = NotificationTexts.negotiationCounter(dispatcher.messagesFor(e.toUserId()), e.newPriceEur(), e.roundsCount());
+        var text = NotificationTexts.negotiationCounter(dispatcher.messagesFor(e.toUserId()),
+            e.amountForRecipient() != null ? e.amountForRecipient() : e.newPriceEur(), e.currency(), e.roundsCount());
         dispatcher.notifyUnlessBlocked(
             e.toUserId(),
             e.fromUserId(),
@@ -75,7 +78,7 @@ public class RequestEventsListener {
     @EventListener
     @Async
     public void onNegotiationAwaitingTrip(NegotiationAwaitingTripEvent e) {
-        var text = NotificationTexts.negotiationAwaitingTrip(dispatcher.messagesFor(e.travelerId()), e.agreedPriceEur());
+        var text = NotificationTexts.negotiationAwaitingTrip(dispatcher.messagesFor(e.travelerId()), e.agreedPriceEur(), e.currency());
         dispatcher.notifyUser(
             e.travelerId(),
             text.title(),
@@ -95,7 +98,8 @@ public class RequestEventsListener {
     @EventListener
     @Async
     public void onNegotiationAwaitingPayment(NegotiationAwaitingPaymentEvent e) {
-        var text = NotificationTexts.negotiationAwaitingPayment(dispatcher.messagesFor(e.senderId()), e.agreedPriceEur());
+        var text = NotificationTexts.negotiationAwaitingPayment(dispatcher.messagesFor(e.senderId()),
+            e.grossToPay() != null ? e.grossToPay() : e.agreedPriceEur(), e.currency());
         dispatcher.notifyUser(
             e.senderId(),
             text.title(),
@@ -269,7 +273,7 @@ public class RequestEventsListener {
     @EventListener
     @Async
     public void onPackageRequestAccepted(PackageRequestAcceptedEvent e) {
-        var forTraveler = NotificationTexts.requestAcceptedForTraveler(dispatcher.messagesFor(e.travelerId()), e.agreedPriceEur());
+        var forTraveler = NotificationTexts.requestAcceptedForTraveler(dispatcher.messagesFor(e.travelerId()), e.agreedPriceEur(), e.currency());
         dispatcher.notifyUser(
             e.travelerId(),
             forTraveler.title(),
@@ -284,7 +288,11 @@ public class RequestEventsListener {
         // qu'il vient de confirmer dans l'application — l'écran de succès le lui a déjà dit.
         // Le voyageur, lui, garde son push : c'est une nouvelle pour lui, et elle appelle une
         // action (préparer le retrait du colis).
-        var forSender = NotificationTexts.requestAcceptedForSender(dispatcher.messagesFor(e.senderId()), e.agreedPriceEur());
+        var forSender = NotificationTexts.requestAcceptedForSender(dispatcher.messagesFor(e.senderId()),
+            e.commissionRate() != null
+                ? PriceBreakdown.fromNet(e.agreedPriceEur(), e.commissionRate()).gross()
+                : e.agreedPriceEur(),
+            e.currency());
         dispatcher.notifyUser(
             e.senderId(),
             forSender.title(),

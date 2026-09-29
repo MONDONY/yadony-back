@@ -59,6 +59,21 @@ class BidNegotiationEventsListenerTest {
     }
 
     @Test
+    @DisplayName("le montant est dans la devise du trajet, tel que le destinataire le voit")
+    void amountInTripCurrencyAsSeenByRecipient() {
+        // Voyageur destinataire : il voit son net (9 000 F CFA), pas le brut de l'expéditeur,
+        // et jamais « € » sur un trajet en francs CFA.
+        listener.onMessagePosted(new BidNegotiationMessagePostedEvent(
+                BID_ID, ANNOUNCEMENT_ID, AUTHOR_ID, RECIPIENT_ID,
+                BidNegotiationMessageKind.PROPOSAL, new BigDecimal("10080"), 1,
+                "XOF", new BigDecimal("9000")));
+
+        ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+        verify(dispatcher).notifyUnlessBlocked(eq(RECIPIENT_ID), eq(AUTHOR_ID), anyString(), body.capture(), anyMap());
+        assertThat(body.getValue()).contains("9\u00A0000\u00A0F CFA").doesNotContain("€").doesNotContain("10080");
+    }
+
+    @Test
     @DisplayName("un message sans montant ne casse pas la mise en forme")
     void handlesMessageWithoutAmount() {
         listener.onMessagePosted(new BidNegotiationMessagePostedEvent(
