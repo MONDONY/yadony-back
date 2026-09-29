@@ -31,7 +31,15 @@ public record AdminReportResponse(
          */
         List<String> availableActions,
         /** Auteur du contenu signalé quand il est retrouvé (« Prénom N. »), sinon {@code null}. */
-        TargetAuthor targetAuthor
+        TargetAuthor targetAuthor,
+        /** Conversation support ouverte avec le signalant (POST /reply), sinon {@code null}. */
+        UUID supportTicketId,
+        /**
+         * L'admin APPELANT peut-il répondre au signalant (POST /admin/reports/{id}/reply) :
+         * cible APP, signalant encore présent, non supprimé, permissions REPORT_VIEW et
+         * SUPPORT_TICKET_MANAGE. Indépendant du statut : répondre ne traite pas le signalement.
+         */
+        boolean canReply
 ) {
     public record TargetAuthor(UUID userId, String name) {}
 }

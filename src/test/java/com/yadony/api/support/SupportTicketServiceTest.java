@@ -566,6 +566,154 @@ class SupportTicketServiceTest {
         return ticket;
     }
 
+    // ------------------------------------- conversation issue d'un signalement (contexte)
+
+    @Test
+    void adminStartTicketFromContext_postsTheContextSilentlyThenTheReplyWithThePush() {
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user(USER_ID)));
+        when(ticketRepository.save(any(SupportTicketEntity.class))).thenAnswer(inv -> {
+            SupportTicketEntity t = inv.getArgument(0);
+            ReflectionTestUtils.setField(t, "id", TICKET_ID);
+            return t;
+        });
+        List<SupportMessageEntity> saved = new java.util.ArrayList<>();
+        when(messageRepository.save(any(SupportMessageEntity.class))).thenAnswer(inv -> {
+            SupportMessageEntity m = inv.getArgument(0);
+            ReflectionTestUtils.setField(m, "id", UUID.randomUUID());
+            saved.add(m);
+            return m;
+        });
+        String adminPrefix = "support/admin/" + ADMIN_ID + "/";
+        when(attachmentService.adminPrefix(ADMIN_ID)).thenReturn(adminPrefix);
+        List<String> adminKeys = List.of(adminPrefix + "fix.png");
+        when(attachmentService.requireOwnedKeys(adminKeys, adminPrefix)).thenReturn(adminKeys);
+        List<String> sourceKeys = List.of("reports/" + USER_ID + "/a.png", "reports/" + USER_ID + "/b.jpg");
+        List<String> copies = List.of("support/" + USER_ID + "/1.png", "support/" + USER_ID + "/2.jpg");
+        when(attachmentService.copyIntoUserPrefix(USER_ID, sourceKeys)).thenReturn(copies);
+
+        SupportTicketEntity ticket = service.adminStartTicketFromContext(USER_ID, ADMIN_ID, "OTHER",
+                "Votre signalement du 28/09/2026", "Votre signalement : ...", sourceKeys,
+                "  Merci, c'est corrige.  ", adminKeys);
+
+        assertThat(ticket.getStatus()).isEqualTo(SupportTicketStatus.WAITING_USER);
+        assertThat(ticket.getAssignedAdminId()).isEqualTo(ADMIN_ID);
+        assertThat(ticket.getCategory()).isEqualTo("OTHER");
+
+        assertThat(saved).hasSize(2);
+        SupportMessageEntity context = saved.get(0);
+        SupportMessageEntity reply = saved.get(1);
+        assertThat(context.getContent()).isEqualTo("Votre signalement : ...");
+        assertThat(context.getAuthorType()).isEqualTo(SupportMessageAuthorType.ADMIN);
+        assertThat(context.getAuthorId()).isEqualTo(ADMIN_ID);
+        assertThat(reply.getContent()).isEqualTo("Merci, c'est corrige.");
+        assertThat(reply.getAuthorType()).isEqualTo(SupportMessageAuthorType.ADMIN);
+
+        verify(attachmentService).attach(eq(context.getId()), eq(copies), eq("image/png"));
+        verify(attachmentService).attach(eq(reply.getId()), eq(adminKeys), eq("image/png"));
+
+        ArgumentCaptor<SupportMessageCreatedEvent> events = ArgumentCaptor.forClass(SupportMessageCreatedEvent.class);
+        verify(eventPublisher, org.mockito.Mockito.times(2)).publishEvent(events.capture());
+        assertThat(events.getAllValues().get(0).getMessageId()).isEqualTo(context.getId());
+        assertThat(events.getAllValues().get(0).isNotifyOwner()).isFalse();
+        assertThat(events.getAllValues().get(1).getMessageId()).isEqualTo(reply.getId());
+        assertThat(events.getAllValues().get(1).isNotifyOwner()).isTrue();
+        assertThat(events.getAllValues().get(1).isStartedByAdmin()).isTrue();
+        assertThat(events.getAllValues().get(1).getSubject()).isEqualTo("Votre signalement du 28/09/2026");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> details = ArgumentCaptor.forClass(Map.class);
+        verify(auditService).log(eq("support_ticket"), eq(TICKET_ID), eq("SUPPORT_TICKET_ADMIN_STARTED"),
+                eq(ADMIN_ID), details.capture());
+        assertThat(details.getValue())
+                .containsEntry("messageId", String.valueOf(reply.getId()))
+                .containsEntry("contextMessageId", String.valueOf(context.getId()))
+                .containsEntry("contextAttachmentCount", "2")
+                .containsEntry("attachmentCount", "1");
+        verifyNoInteractions(adminAlertService);
+    }
+
+    @Test
+    void adminStartTicketFromContext_rejectsAnEmptyReply_beforeCopyingAnything() {
+        assertThatThrownBy(() -> service.adminStartTicketFromContext(USER_ID, ADMIN_ID, "OTHER",
+                "Sujet", "Contexte", List.of("reports/x.png"), "  ", null))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo("support-invalid-field"));
+        verify(attachmentService, never()).copyIntoUserPrefix(any(), any());
+        verify(ticketRepository, never()).save(any());
+    }
+
+    @Test
+    void adminStartTicketFromContext_unknownUser_is404_withoutCopy() {
+        when(attachmentService.requireOwnedKeys(any(), any())).thenReturn(List.of());
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.adminStartTicketFromContext(USER_ID, ADMIN_ID, null,
+                "Sujet", "Contexte", List.of("reports/x.png"), "Bonjour", null))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e ->
+                        assertThat(e.getStatus()).isEqualTo(HttpStatus.NOT_FOUND));
+        verify(attachmentService, never()).copyIntoUserPrefix(any(), any());
+    }
+
+    @Test
+    void adminReplyTakingOver_assignsAnUnassignedTicketThenReplies() {
+        SupportTicketEntity ticket = ticketWith(SupportTicketStatus.NEW, null);
+        when(ticketRepository.findById(TICKET_ID)).thenReturn(Optional.of(ticket));
+        when(messageRepository.save(any(SupportMessageEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(attachmentService.requireOwnedKeys(any(), any())).thenReturn(List.of());
+
+        SupportMessageEntity message = service.adminReplyTakingOver(TICKET_ID, ADMIN_ID, "Bonjour", null);
+
+        assertThat(message.getAuthorType()).isEqualTo(SupportMessageAuthorType.ADMIN);
+        assertThat(ticket.getAssignedAdminId()).isEqualTo(ADMIN_ID);
+        assertThat(ticket.getStatus()).isEqualTo(SupportTicketStatus.WAITING_USER);
+        verify(auditService).log(eq("support_ticket"), eq(TICKET_ID), eq("SUPPORT_TICKET_ASSIGNED"), eq(ADMIN_ID), any());
+    }
+
+    @Test
+    void adminReplyTakingOver_reassignsAColleaguesTicketThenReplies() {
+        SupportTicketEntity ticket = ticketWith(SupportTicketStatus.WAITING_SUPPORT, OTHER_ADMIN_ID);
+        when(ticketRepository.findById(TICKET_ID)).thenReturn(Optional.of(ticket));
+        when(messageRepository.save(any(SupportMessageEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(attachmentService.requireOwnedKeys(any(), any())).thenReturn(List.of());
+
+        service.adminReplyTakingOver(TICKET_ID, ADMIN_ID, "Je reprends", null);
+
+        assertThat(ticket.getAssignedAdminId()).isEqualTo(ADMIN_ID);
+        verify(auditService).log(eq("support_ticket"), eq(TICKET_ID), eq("SUPPORT_TICKET_REASSIGNED"), eq(ADMIN_ID), any());
+    }
+
+    @Test
+    void adminReplyTakingOver_onItsOwnTicket_justReplies() {
+        SupportTicketEntity ticket = ticketWith(SupportTicketStatus.WAITING_SUPPORT, ADMIN_ID);
+        when(ticketRepository.findById(TICKET_ID)).thenReturn(Optional.of(ticket));
+        when(messageRepository.save(any(SupportMessageEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(attachmentService.requireOwnedKeys(any(), any())).thenReturn(List.of());
+
+        service.adminReplyTakingOver(TICKET_ID, ADMIN_ID, "Suite", null);
+
+        verify(auditService, never()).log(any(), any(), eq("SUPPORT_TICKET_ASSIGNED"), any(), any());
+        verify(auditService, never()).log(any(), any(), eq("SUPPORT_TICKET_REASSIGNED"), any(), any());
+        verify(auditService).log(eq("support_ticket"), eq(TICKET_ID), eq("SUPPORT_TICKET_ADMIN_REPLIED"), eq(ADMIN_ID), any());
+    }
+
+    @Test
+    void findTicketForAdmin_isEmptyForAnUnknownTicket() {
+        when(ticketRepository.findById(TICKET_ID)).thenReturn(Optional.empty());
+
+        assertThat(service.findTicketForAdmin(TICKET_ID)).isEmpty();
+    }
+
+    private static SupportTicketEntity ticketWith(SupportTicketStatus status, UUID assignedAdminId) {
+        SupportTicketEntity ticket = new SupportTicketEntity();
+        ReflectionTestUtils.setField(ticket, "id", TICKET_ID);
+        ticket.setUserId(USER_ID);
+        ticket.setCategory("OTHER");
+        ticket.setSubject("Sujet");
+        ticket.setStatus(status);
+        ticket.setAssignedAdminId(assignedAdminId);
+        return ticket;
+    }
+
     private static UserEntity user(UUID id) {
         UserEntity user = new UserEntity();
         ReflectionTestUtils.setField(user, "id", id);

@@ -55,6 +55,24 @@ public class SupportAttachmentService {
     }
 
     /**
+     * Copie cote serveur (R2 CopyObject) d'objets deja stockes vers le prefixe support
+     * de l'utilisateur ; renvoie les nouvelles cles, dans l'ordre. Sert aux captures
+     * d'un signalement reprises dans la conversation ouverte pour y repondre : le fil
+     * a ses propres objets (independants du cycle de vie de reports/), et ils tombent
+     * sous {@code support/{userId}/}, que la finalisation de compte purge (RGPD).
+     *
+     * <p>Les cles sources ne viennent JAMAIS du client : l'appelant les lit en base
+     * (photos d'un signalement), ce qui dispense du controle de prefixe.
+     */
+    public List<String> copyIntoUserPrefix(UUID userId, List<String> sourceKeys) {
+        if (sourceKeys == null || sourceKeys.isEmpty()) {
+            return List.of();
+        }
+        String prefix = userPrefix(userId);
+        return sourceKeys.stream().map(key -> storageService.copyObject(key, prefix)).toList();
+    }
+
+    /**
      * Garde-fou central : sans lui, un message pourrait referencer la cle d'un
      * fichier appartenant a quelqu'un d'autre.
      */
