@@ -775,7 +775,23 @@ class NotificationDispatcherTest {
 
         dispatcher.onPaymentReleased(new PaymentReleasedEvent(bidId, travelerId, senderId, BigDecimal.valueOf(45.00)));
 
-        verify(fcmService).sendToUser(eq(travelerId), eq("Paiement reçu !"), contains("45,00 €"), any());
+        verify(fcmService).sendToUser(eq(travelerId), eq("Paiement reçu !"), contains("45,00\u00A0€"), any());
+    }
+
+    /**
+     * Rail carte : le voyageur voit ce qu'il TOUCHE (brut − commission), dans la devise du
+     * paiement — pas le brut de l'expéditeur, et pas « € » collé sur un paiement en dollars.
+     */
+    @Test
+    void onPaymentReleased_card_showsTravelerNetInPaymentCurrency() {
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onPaymentReleased(PaymentReleasedEvent.card(bidId, travelerId, senderId,
+                new BigDecimal("112.00"), new BigDecimal("12.00"), "USD"));
+
+        ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+        verify(fcmService).sendToUser(eq(travelerId), eq("Paiement reçu !"), body.capture(), any());
+        assertThat(body.getValue()).contains("100,00").doesNotContain("€").doesNotContain("112");
     }
 
     /**

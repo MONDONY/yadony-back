@@ -1,6 +1,7 @@
 package com.yadony.api.notifications;
 
 import com.yadony.api.common.i18n.Messages;
+import com.yadony.api.payments.wallet.WalletAmountText;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -59,36 +60,23 @@ public final class NotificationTexts {
         return number + " kg";
     }
 
-    /** « 1250,00 € ». Montant inchangé quelle que soit la langue (D7). */
-    public static String eur(BigDecimal amount) {
-        return amount == null ? "" : String.format(Locale.FRENCH, "%.2f €", amount.setScale(2, RoundingMode.HALF_UP));
-    }
-
-    /** « 1250,00 XOF » ; l'euro prend son symbole. Montant inchangé quelle que soit la langue (D7). */
-    public static String amount(BigDecimal amount, String currency) {
-        if (amount == null) return "";
-        if (currency == null || currency.isBlank() || "EUR".equalsIgnoreCase(currency)) return eur(amount);
-        return String.format(Locale.FRENCH, "%.2f %s", amount.setScale(2, RoundingMode.HALF_UP), currency.toUpperCase(Locale.ROOT));
-    }
-
     /**
-     * Montant tel qu'affiché dans un push mobile money : « 15000 F CFA », sans
-     * décimale pour les deux francs CFA (XOF, XAF), symbole du catalogue
-     * {@link com.yadony.api.payments.currency.SupportedCurrency} plutôt que le code ISO —
-     * plus lisible dans un push qu'un code à trois lettres, et cohérent avec le rendu déjà
-     * utilisé côté admin ({@code ProAnalyticsService#formatAmount}). Distinct de
-     * {@link #amount(BigDecimal, String)}, dont le contrat (code ISO, toujours deux
-     * décimales) est déjà figé par {@code formattingHelpers()} et utilisé ailleurs (ex.
-     * {@code commissionPending}) — jamais modifié ici. Montant inchangé quelle que soit
-     * la langue (D7).
+     * Montant dans SA devise, tel qu'on le montre : « 15 000 F CFA », « 1 250,00 € »,
+     * « 45,00 $ ». Décimales et symbole du catalogue {@code SupportedCurrency} (aucune
+     * décimale pour XOF/XAF), milliers séparés par une espace insécable : même rendu que le
+     * portefeuille ({@link WalletAmountText}). Devise absente : euro. Montant inchangé
+     * quelle que soit la langue (D7).
+     *
+     * <p>Les champs {@code …Eur} des négociations portent un montant dans la devise du
+     * trajet ou du fil, pas en euros : on ne leur colle jamais « € » d'office.
      */
+    public static String amount(BigDecimal amount, String currency) {
+        return amount == null ? "" : WalletAmountText.format(amount, currency);
+    }
+
+    /** Rail mobile money : même rendu que {@link #amount(BigDecimal, String)}. */
     public static String mobileMoneyAmount(BigDecimal amount, String currencyCode) {
-        if (amount == null) return "";
-        com.yadony.api.payments.currency.SupportedCurrency currency =
-                com.yadony.api.payments.currency.SupportedCurrency.fromCodeOrDefault(currencyCode);
-        String number = String.format(Locale.FRENCH, "%." + currency.minorUnit() + "f",
-                amount.setScale(currency.minorUnit(), RoundingMode.HALF_UP));
-        return number + " " + currency.symbol();
+        return amount(amount, currencyCode);
     }
 
     // ── Colis : offres et demandes ───────────────────────────────────────────
@@ -338,24 +326,25 @@ public final class NotificationTexts {
 
     // ── Trajets : demandes de colis et négociation ───────────────────────────
 
-    public static NotificationText negotiationStarted(Messages m, BigDecimal proposedEur) {
+    public static NotificationText negotiationStarted(Messages m, BigDecimal proposed, String currency) {
         return new NotificationText(m.get("notification.negotiation-started.title"),
-                m.get("notification.negotiation-started.body", eur(proposedEur)));
+                m.get("notification.negotiation-started.body", amount(proposed, currency)));
     }
 
-    public static NotificationText negotiationCounter(Messages m, BigDecimal newPriceEur, int round) {
+    public static NotificationText negotiationCounter(Messages m, BigDecimal newPrice, String currency, int round) {
         return new NotificationText(m.get("notification.counter-offer.title"),
-                m.get("notification.negotiation-counter.body", eur(newPriceEur), round));
+                m.get("notification.negotiation-counter.body", amount(newPrice, currency), round));
     }
 
-    public static NotificationText negotiationAwaitingTrip(Messages m, BigDecimal agreedEur) {
+    public static NotificationText negotiationAwaitingTrip(Messages m, BigDecimal agreed, String currency) {
         return new NotificationText(m.get("notification.negotiation-awaiting-trip.title"),
-                m.get("notification.negotiation-awaiting-trip.body", eur(agreedEur)));
+                m.get("notification.negotiation-awaiting-trip.body", amount(agreed, currency)));
     }
 
-    public static NotificationText negotiationAwaitingPayment(Messages m, BigDecimal agreedEur) {
+    /** {@code grossToPay} : ce que l'expéditeur va payer, commission comprise. */
+    public static NotificationText negotiationAwaitingPayment(Messages m, BigDecimal grossToPay, String currency) {
         return new NotificationText(m.get("notification.negotiation-awaiting-payment.title"),
-                m.get("notification.negotiation-awaiting-payment.body", eur(agreedEur)));
+                m.get("notification.negotiation-awaiting-payment.body", amount(grossToPay, currency)));
     }
 
     public static NotificationText negotiationTripChanged(Messages m) {
@@ -410,14 +399,16 @@ public final class NotificationTexts {
                 m.get("notification.commission-expired.sender.body"));
     }
 
-    public static NotificationText requestAcceptedForTraveler(Messages m, BigDecimal agreedEur) {
+    /** {@code net} : ce que touche le voyageur. */
+    public static NotificationText requestAcceptedForTraveler(Messages m, BigDecimal net, String currency) {
         return new NotificationText(m.get("notification.request-accepted.traveler.title"),
-                m.get("notification.request-accepted.traveler.body", eur(agreedEur)));
+                m.get("notification.request-accepted.traveler.body", amount(net, currency)));
     }
 
-    public static NotificationText requestAcceptedForSender(Messages m, BigDecimal agreedEur) {
+    /** {@code grossPaid} : ce que l'expéditeur a payé, commission comprise. */
+    public static NotificationText requestAcceptedForSender(Messages m, BigDecimal grossPaid, String currency) {
         return new NotificationText(m.get("notification.request-accepted.sender.title"),
-                m.get("notification.request-accepted.sender.body", eur(agreedEur)));
+                m.get("notification.request-accepted.sender.body", amount(grossPaid, currency)));
     }
 
     public static NotificationText requestExpired(Messages m) {

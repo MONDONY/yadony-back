@@ -21,5 +21,21 @@ public record BidNegotiationMessagePostedEvent(
         UUID recipientId,
         BidNegotiationMessageKind kind,
         BigDecimal proposedGrossEur,
-        int round
-) {}
+        int round,
+        /** Devise du trajet : {@code proposedGrossEur} est exprimé dans cette devise, pas en euros. */
+        String currency,
+        /**
+         * Montant tel que le destinataire le voit dans son fil : le brut pour l'expéditeur,
+         * son net pour le voyageur (le net ne descend jamais vers l'expéditeur, et le brut
+         * n'est pas ce que le voyageur touche).
+         */
+        BigDecimal amountForRecipient
+) {
+    /** Sans devise : euros, brut affiché tel quel (anciens appelants de test). */
+    public BidNegotiationMessagePostedEvent(UUID bidId, UUID announcementId, UUID authorId,
+                                            UUID recipientId, BidNegotiationMessageKind kind,
+                                            BigDecimal proposedGrossEur, int round) {
+        this(bidId, announcementId, authorId, recipientId, kind, proposedGrossEur, round,
+                null, proposedGrossEur);
+    }
+}

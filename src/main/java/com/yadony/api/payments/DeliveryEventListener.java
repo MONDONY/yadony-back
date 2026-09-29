@@ -233,8 +233,9 @@ public class DeliveryEventListener {
 
         // Notify traveler of payout (Story 8.2). event.getBidId() — payment.getBidId()
         // is NULL for negotiation/thread payments.
-        eventPublisher.publishEvent(new PaymentReleasedEvent(
-                event.getBidId(), event.getTravelerId(), event.getSenderId(), payment.getAmount()));
+        eventPublisher.publishEvent(PaymentReleasedEvent.card(
+                event.getBidId(), event.getTravelerId(), event.getSenderId(), payment.getAmount(),
+                payment.getCommissionAmount(), payment.getCurrency()));
     }
 
     /**

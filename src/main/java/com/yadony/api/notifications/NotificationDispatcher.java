@@ -487,8 +487,10 @@ public class NotificationDispatcher {
             notifyUser(event.getTravelerId(), text.title(), text.body(), data);
             return;
         }
+        // Le voyageur voit ce qu'il touche (net), dans la devise du paiement.
+        BigDecimal shown = event.getTravelerNet() != null ? event.getTravelerNet() : event.getAmount();
         var text = NotificationTexts.paymentReleased(messagesFor(event.getTravelerId()),
-                NotificationTexts.eur(event.getAmount()));
+                NotificationTexts.amount(shown, event.getCurrency()));
         notifyCritical(event.getTravelerId(), text.title(), text.body(), data);
     }
 

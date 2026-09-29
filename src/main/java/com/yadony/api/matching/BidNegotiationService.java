@@ -517,9 +517,16 @@ public class BidNegotiationService {
                                BidNegotiationMessageKind kind, BigDecimal proposedGrossEur) {
         UUID recipientId = authorId.equals(bid.getSenderId())
                 ? announcement.getTravelerId() : bid.getSenderId();
+        // Chacun reçoit le montant de SON fil : le voyageur son net, l'expéditeur le brut.
+        BigDecimal amountForRecipient = proposedGrossEur;
+        if (proposedGrossEur != null && recipientId.equals(announcement.getTravelerId())) {
+            BigDecimal rate = bid.getCommissionRate() != null ? bid.getCommissionRate() : BigDecimal.ZERO;
+            amountForRecipient = BidNegotiationPricing.split(proposedGrossEur, rate).netEur();
+        }
         eventPublisher.publishEvent(new BidNegotiationMessagePostedEvent(
                 bid.getId(), announcement.getId(), authorId, recipientId,
-                kind, proposedGrossEur, bid.getNegotiationRound()));
+                kind, proposedGrossEur, bid.getNegotiationRound(),
+                bid.getCurrency(), amountForRecipient));
     }
 
     private void persistGridItems(BidEntity bid, AnnouncementEntity announcement,

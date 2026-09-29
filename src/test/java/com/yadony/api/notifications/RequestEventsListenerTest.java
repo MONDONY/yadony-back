@@ -52,6 +52,37 @@ class RequestEventsListenerTest {
     }
 
     @Test
+    void onNegotiationAwaitingPayment_asksSenderForGrossInThreadCurrency() {
+        UUID senderId = UUID.randomUUID();
+        // Net 10 000 F CFA, brut 11 200 F CFA : l'expéditeur paie le brut, en francs CFA.
+        var event = new NegotiationAwaitingPaymentEvent(
+            UUID.randomUUID(), UUID.randomUUID(), senderId, UUID.randomUUID(),
+            new BigDecimal("10000"), UUID.randomUUID(), "XOF", new BigDecimal("11200")
+        );
+
+        listener.onNegotiationAwaitingPayment(event);
+
+        ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+        verify(dispatcher).notifyUser(eq(senderId), anyString(), body.capture(), anyMap());
+        assertThat(body.getValue()).contains("11\u00A0200\u00A0F CFA").doesNotContain("€");
+    }
+
+    @Test
+    void onNegotiationStarted_senderSeesGrossInThreadCurrency() {
+        UUID senderId = UUID.randomUUID();
+        var event = new NegotiationStartedEvent(
+            UUID.randomUUID(), UUID.randomUUID(), senderId, UUID.randomUUID(),
+            new BigDecimal("5000"), "XAF", new BigDecimal("5600")
+        );
+
+        listener.onNegotiationStarted(event);
+
+        ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+        verify(dispatcher).notifyUnlessBlocked(eq(senderId), any(), anyString(), body.capture(), anyMap());
+        assertThat(body.getValue()).contains("5\u00A0600\u00A0FCFA").doesNotContain("€");
+    }
+
+    @Test
     void onNegotiationCounterPosted_notifiesToUser() {
         UUID toUserId = UUID.randomUUID();
         UUID fromUserId = UUID.randomUUID();

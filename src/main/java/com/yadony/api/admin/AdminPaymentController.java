@@ -404,8 +404,9 @@ public class AdminPaymentController {
 
         // Notify the traveler of the payout (parity with DeliveryEventListener).
         if (bidId != null && travelerId != null) {
-            eventPublisher.publishEvent(new PaymentReleasedEvent(
-                    bidId, travelerId, bid.getSenderId(), payment.getAmount()));
+            eventPublisher.publishEvent(PaymentReleasedEvent.card(
+                    bidId, travelerId, bid.getSenderId(), payment.getAmount(),
+                    payment.getCommissionAmount(), payment.getCurrency()));
         }
 
         log.info("Admin force-released escrow for payment {} (bid={}, PI={})",

@@ -276,7 +276,8 @@ public class NegotiationService {
 
         eventPublisher.publishEvent(new NegotiationStartedEvent(
             saved.getId(), saved.getPackageRequestId(),
-            request.getSenderId(), travelerId, req.proposedPriceEur()
+            request.getSenderId(), travelerId, req.proposedPriceEur(),
+            saved.getCurrency(), senderGross(saved, req.proposedPriceEur())
         ));
 
         auditService.log("NEGOTIATION_THREAD", saved.getId(), "CREATED", travelerId,
@@ -357,7 +358,8 @@ public class NegotiationService {
         UUID toUser = callerId.equals(senderId) ? travelerId : senderId;
         eventPublisher.publishEvent(new NegotiationCounterPostedEvent(
             threadId, msg.getId(), callerId, toUser, req.proposedPriceEur(),
-            thread.getRoundsCount().intValue()
+            thread.getRoundsCount().intValue(), thread.getCurrency(),
+            toUser.equals(senderId) ? senderGross(thread, req.proposedPriceEur()) : req.proposedPriceEur()
         ));
         auditService.log("NEGOTIATION_THREAD", threadId, "COUNTER_POSTED", callerId,
             Map.of("price", req.proposedPriceEur().toString(),
@@ -587,13 +589,14 @@ public class NegotiationService {
             eventPublisher.publishEvent(new NegotiationAwaitingPaymentEvent(
                 thread.getId(), request.getId(),
                 request.getSenderId(), thread.getTravelerId(),
-                thread.getCurrentPriceEur(), thread.getTravelerAnnouncementId()
+                thread.getCurrentPriceEur(), thread.getTravelerAnnouncementId(),
+                thread.getCurrency(), senderGross(thread, thread.getCurrentPriceEur())
             ));
         } else {
             eventPublisher.publishEvent(new NegotiationAwaitingTripEvent(
                 thread.getId(), request.getId(),
                 request.getSenderId(), thread.getTravelerId(),
-                thread.getCurrentPriceEur()
+                thread.getCurrentPriceEur(), thread.getCurrency()
             ));
         }
 
@@ -648,7 +651,8 @@ public class NegotiationService {
         eventPublisher.publishEvent(new NegotiationAwaitingPaymentEvent(
             thread.getId(), request.getId(),
             request.getSenderId(), thread.getTravelerId(),
-            thread.getCurrentPriceEur(), travelerAnnouncementId
+            thread.getCurrentPriceEur(), travelerAnnouncementId,
+            thread.getCurrency(), senderGross(thread, thread.getCurrentPriceEur())
         ));
         auditService.log("NEGOTIATION_THREAD", threadId, "TRIP_LINKED", callerId,
             Map.of("announcementId", travelerAnnouncementId.toString(),
@@ -923,7 +927,8 @@ public class NegotiationService {
         eventPublisher.publishEvent(new NegotiationAwaitingPaymentEvent(
             thread.getId(), request.getId(),
             request.getSenderId(), thread.getTravelerId(),
-            thread.getCurrentPriceEur(), savedAnn.getId()
+            thread.getCurrentPriceEur(), savedAnn.getId(),
+            thread.getCurrency(), senderGross(thread, thread.getCurrentPriceEur())
         ));
         auditService.log("NEGOTIATION_THREAD", threadId, "DEDICATED_TRIP_CREATED", callerId,
             Map.of("announcementId", savedAnn.getId().toString(),
@@ -1113,6 +1118,20 @@ public class NegotiationService {
         eventPublisher.publishEvent(new NegotiationDepositPendingEvent(threadId, request.getId(), request.getSenderId(),
             thread.getTravelerId(), pending.gross(), thread.getCurrency(), pending.expiresAt()));
         return new PreparedDeposit(threadId, pending.paymentId(), pending.gross(), thread.getCurrency(), pending.expiresAt());
+    }
+
+    /**
+     * Brut vu (et payé) par l'expéditeur pour un net du fil : taux figé sur le fil s'il
+     * existe, sinon le taux de base, celui de l'écran du fil ({@code gross} de la réponse).
+     * Les notifications à l'expéditeur annoncent ce montant, pas le net du voyageur.
+     */
+    private BigDecimal senderGross(NegotiationThreadEntity thread, BigDecimal net) {
+        if (net == null) {
+            return null;
+        }
+        BigDecimal rate = thread.getCommissionRate() != null
+            ? thread.getCommissionRate() : commissionProperties.rate();
+        return PriceBreakdown.fromNet(net, rate).gross();
     }
 
     /**
@@ -1478,7 +1497,8 @@ public class NegotiationService {
             photoService.objectKeys(request.getId()),
             thread.getCommissionChargedVia(),
             thread.getPromoCode(),
-            thread.getCommissionRate()
+            thread.getCommissionRate(),
+            thread.getCurrency()
         ));
         // paymentIntentId est null pour un accord cash scellé par settleCommission/
         // confirmCommission (aucun escrow Stripe pour ce fil) — Map.of() rejette les
@@ -1841,7 +1861,7 @@ public class NegotiationService {
         eventPublisher.publishEvent(new NegotiationAwaitingTripEvent(
             thread.getId(), request.getId(),
             request.getSenderId(), thread.getTravelerId(),
-            thread.getCurrentPriceEur()
+            thread.getCurrentPriceEur(), thread.getCurrency()
         ));
 
         List<NegotiationMessageResponse> messages = messageRepo.findByThreadIdOrderByCreatedAtAsc(threadId)

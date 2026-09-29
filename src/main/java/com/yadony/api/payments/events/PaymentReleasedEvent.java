@@ -30,6 +30,24 @@ public class PaymentReleasedEvent {
     private final BigDecimal amount;
     private final String currency;
     private final boolean mobileMoney;
+    /**
+     * Ce que le voyageur touche réellement, dans {@code currency}, pour le TEXTE de la
+     * notification seulement. Null quand l'appelant ne le connaît pas : le texte retombe
+     * alors sur {@code amount}. {@code amount} garde sa sémantique historique (voir plus haut).
+     */
+    private final BigDecimal travelerNet;
+
+    /**
+     * Rail carte : {@code amount} reste le brut (sémantique historique), la devise est celle
+     * du paiement (EUR, USD, GBP…) et {@code travelerNet} = brut − commission, le montant que
+     * le voyageur voit annoncé.
+     */
+    public static PaymentReleasedEvent card(UUID bidId, UUID travelerId, UUID senderId,
+                                            BigDecimal gross, BigDecimal commission, String currency) {
+        BigDecimal net = gross != null && commission != null ? gross.subtract(commission) : null;
+        return new PaymentReleasedEvent(bidId, travelerId, senderId, gross,
+                currency != null ? currency : "EUR", false, net);
+    }
 
     /** Rail carte (legacy) : montant en euros, texte historique. */
     public PaymentReleasedEvent(UUID bidId, UUID travelerId, UUID senderId, BigDecimal amount) {
@@ -45,12 +63,18 @@ public class PaymentReleasedEvent {
      */
     public PaymentReleasedEvent(UUID bidId, UUID travelerId, UUID senderId, BigDecimal amount,
                                 String currency, boolean mobileMoney) {
+        this(bidId, travelerId, senderId, amount, currency, mobileMoney, null);
+    }
+
+    private PaymentReleasedEvent(UUID bidId, UUID travelerId, UUID senderId, BigDecimal amount,
+                                 String currency, boolean mobileMoney, BigDecimal travelerNet) {
         this.bidId = bidId;
         this.travelerId = travelerId;
         this.senderId = senderId;
         this.amount = amount;
         this.currency = currency;
         this.mobileMoney = mobileMoney;
+        this.travelerNet = travelerNet;
     }
 
     public UUID getBidId()       { return bidId; }
@@ -59,4 +83,5 @@ public class PaymentReleasedEvent {
     public BigDecimal getAmount(){ return amount; }
     public String getCurrency()  { return currency; }
     public boolean isMobileMoney(){ return mobileMoney; }
+    public BigDecimal getTravelerNet() { return travelerNet; }
 }
