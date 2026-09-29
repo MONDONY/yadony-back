@@ -53,25 +53,44 @@ public class ConversationController {
     }
 
     // GET /conversations — paginated list for the authenticated user
+    //
+    // La liste est triée par dernier message, le plus récent en tête, AVANT d'être
+    // découpée en pages. La requête SQL n'avait pas d'ORDER BY : Postgres rendait les
+    // lignes dans l'ordre physique de la table, et un utilisateur au-delà de 20 fils
+    // voyait ses conversations actives sortir de la première page, la seule que l'app
+    // charge. L'app remettait alors à zéro les non-lus des fils absents de cette page
+    // (cf. FirestoreChatRepository.cleanupOrphanUnreadCounters) : nouveaux messages,
+    // compteurs et badge disparaissaient ensemble.
+    //
+    // L'instant du dernier message vit dans Firestore et non dans Postgres, d'où le tri
+    // en mémoire. Les réponses, qui coûtent plusieurs lectures chacune, ne sont
+    // construites que pour la page demandée.
     @GetMapping
     public ResponseEntity<PageResponse<ConversationResponse>> listConversations(
             @PageableDefault(size = 20) Pageable pageable) {
 
         UserEntity currentUser = resolveCurrentUser();
         // Les fils dont la contrepartie est masquée disparaissent de la liste. Le filtrage
-        // se fait en base pour que la pagination reste juste ; l'appel sans exclusion est
-        // conservé pour le cas courant (aucun blocage), un NOT IN vide n'étant pas valide.
+        // se fait en base ; l'appel sans exclusion est conservé pour le cas courant (aucun
+        // blocage), un NOT IN vide n'étant pas valide.
         java.util.Set<UUID> hidden = blockVisibility.hiddenUserIdsFor(currentUser.getId());
-        Page<ConversationEntity> page = hidden.isEmpty()
-                ? conversationRepository.findByParticipant(currentUser.getId(), pageable)
+        List<ConversationEntity> all = (hidden.isEmpty()
+                ? conversationRepository.findByParticipant(currentUser.getId(), Pageable.unpaged())
                 : conversationRepository.findByParticipantExcludingHidden(
-                        currentUser.getId(), hidden, pageable);
+                        currentUser.getId(), hidden, Pageable.unpaged()))
+                .getContent();
 
         java.util.Map<String, java.util.Map<String, Object>> meta = conversationService.fetchConversationMeta(
-                page.getContent().stream().map(ConversationEntity::getFirestoreConversationId).toList());
+                all.stream().map(ConversationEntity::getFirestoreConversationId).toList());
 
-        Page<ConversationResponse> responsePage = page.map(
-                c -> conversationService.toResponse(c, currentUser.getId(), meta));
+        List<ConversationEntity> sorted = ConversationService.sortByLastActivity(all, meta);
+        int from = (int) Math.min(pageable.getOffset(), sorted.size());
+        int to = Math.min(from + pageable.getPageSize(), sorted.size());
+        List<ConversationResponse> content = sorted.subList(from, to).stream()
+                .map(c -> conversationService.toResponse(c, currentUser.getId(), meta))
+                .toList();
+
+        Page<ConversationResponse> responsePage = new PageImpl<>(content, pageable, sorted.size());
         return ResponseEntity.ok(PageResponse.from(responsePage));
     }
 

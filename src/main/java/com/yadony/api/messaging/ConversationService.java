@@ -397,6 +397,25 @@ public class ConversationService {
     }
 
     /**
+     * Trie les conversations par dernier message, la plus récente en tête.
+     *
+     * <p>Même instant que celui affiché par la liste ({@code lastMessageAt} Firestore,
+     * repli sur {@code updated_at}) ; à égalité, l'identifiant départage pour que deux
+     * appels successifs rendent le même ordre et que la pagination reste stable.
+     */
+    static List<ConversationEntity> sortByLastActivity(List<ConversationEntity> conversations,
+                                                       Map<String, Map<String, Object>> metaByFirestoreId) {
+        java.util.Comparator<ConversationEntity> byActivity = java.util.Comparator.comparing(
+                (ConversationEntity c) -> parseLastMessageAt(
+                        metaByFirestoreId.get(c.getFirestoreConversationId()), c.getUpdatedAt()),
+                java.util.Comparator.nullsLast(java.util.Comparator.reverseOrder()));
+        return conversations.stream()
+                .sorted(byActivity.thenComparing(ConversationEntity::getId,
+                        java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder())))
+                .toList();
+    }
+
+    /**
      * lastMessageAt vit dans Firestore (Instant ISO-8601, ex. "2026-07-14T17:03:56.739Z").
      * Retombe sur updated_at Postgres si Firestore est désactivé, la conversation
      * n'a jamais reçu de message, ou le champ est absent/mal formé.
@@ -437,6 +456,10 @@ public class ConversationService {
         if (status == null) return null;
         return switch (status) {
             case ACCEPTED -> "BID_ACCEPTED";
+            // Colis remis puis en route : le fil reste « En cours » côté app. Sans
+            // valeur, il sortait de ce filtre dès la remise, au moment où l'on se
+            // parle le plus. Un client plus ancien ignore ce code (bandeau masqué).
+            case HANDED_OVER, IN_TRANSIT -> "IN_TRANSIT";
             case ARRIVED -> "TRIP_ARRIVED";
             case COMPLETED -> "DELIVERY_CONFIRMED";
             case CANCELLED, NO_SHOW, PARCEL_REFUSED -> "TRIP_CANCELLED";

@@ -379,6 +379,89 @@ class ConversationServiceTest {
         assertThat(result.get(0).bidId()).isEqualTo(bidId);
     }
 
+    // -------------------------------------------------------------------------
+    // Statut du fil : un colis remis ou en route reste « En cours » côté app
+    // -------------------------------------------------------------------------
+
+    @Test
+    void toResponse_mapsHandedOverAndInTransitToInTransit() {
+        ConversationEntity conv = new ConversationEntity(bidId, senderId, travelerId, "conv_" + bidId);
+
+        BidEntity handedOver = mockBid(BidStatus.HANDED_OVER);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(handedOver));
+        assertThat(service.toResponse(conv, senderId).bidStatus()).isEqualTo("IN_TRANSIT");
+
+        BidEntity inTransit = mockBid(BidStatus.IN_TRANSIT);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(inTransit));
+        assertThat(service.toResponse(conv, senderId).bidStatus()).isEqualTo("IN_TRANSIT");
+
+        BidEntity arrived = mockBid(BidStatus.ARRIVED);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(arrived));
+        assertThat(service.toResponse(conv, senderId).bidStatus()).isEqualTo("TRIP_ARRIVED");
+    }
+
+    // -------------------------------------------------------------------------
+    // Tri de la liste : dernier message en tête, repli sur updated_at
+    // -------------------------------------------------------------------------
+
+    @Test
+    void sortByLastActivity_putsMostRecentMessageFirst() throws Exception {
+        ConversationEntity old = conversation("conv_old", "2026-09-01T10:00:00");
+        ConversationEntity recent = conversation("conv_recent", "2026-09-01T10:00:00");
+        ConversationEntity middle = conversation("conv_middle", "2026-09-01T10:00:00");
+        Map<String, Map<String, Object>> meta = Map.of(
+                "conv_old", Map.of("lastMessageAt", "2026-09-10T08:00:00Z"),
+                "conv_recent", Map.of("lastMessageAt", "2026-09-29T07:55:00.123Z"),
+                "conv_middle", Map.of("lastMessageAt", "2026-09-20T12:00:00Z"));
+
+        List<ConversationEntity> sorted =
+                ConversationService.sortByLastActivity(List.of(old, recent, middle), meta);
+
+        assertThat(sorted).containsExactly(recent, middle, old);
+    }
+
+    @Test
+    void sortByLastActivity_fallsBackOnUpdatedAt_andKeepsUndatedLast() throws Exception {
+        // Sans document Firestore ni message, c'est updated_at qui date le fil ;
+        // un lastMessageAt illisible retombe aussi sur updated_at.
+        ConversationEntity withMessage = conversation("conv_msg", "2026-09-01T10:00:00");
+        ConversationEntity updatedLately = conversation("conv_updated", "2026-09-25T10:00:00");
+        ConversationEntity garbled = conversation("conv_garbled", "2026-09-15T10:00:00");
+        ConversationEntity undated = conversation("conv_undated", null);
+        Map<String, Map<String, Object>> meta = Map.of(
+                "conv_msg", Map.of("lastMessageAt", "2026-09-20T10:00:00Z"),
+                "conv_garbled", Map.of("lastMessageAt", "pas une date"));
+
+        List<ConversationEntity> sorted = ConversationService.sortByLastActivity(
+                List.of(undated, withMessage, garbled, updatedLately), meta);
+
+        assertThat(sorted).containsExactly(updatedLately, withMessage, garbled, undated);
+    }
+
+    @Test
+    void sortByLastActivity_isStableOnTies() throws Exception {
+        ConversationEntity a = conversation("conv_a", "2026-09-01T10:00:00");
+        ConversationEntity b = conversation("conv_b", "2026-09-01T10:00:00");
+
+        List<ConversationEntity> first = ConversationService.sortByLastActivity(List.of(a, b), Map.of());
+        List<ConversationEntity> second = ConversationService.sortByLastActivity(List.of(b, a), Map.of());
+
+        assertThat(first).isEqualTo(second);
+    }
+
+    private ConversationEntity conversation(String firestoreId, String updatedAt) throws Exception {
+        ConversationEntity c = new ConversationEntity(UUID.randomUUID(), senderId, travelerId, firestoreId);
+        java.lang.reflect.Field id = c.getClass().getSuperclass().getDeclaredField("id");
+        id.setAccessible(true);
+        id.set(c, UUID.randomUUID());
+        if (updatedAt != null) {
+            java.lang.reflect.Field updated = c.getClass().getSuperclass().getDeclaredField("updatedAt");
+            updated.setAccessible(true);
+            updated.set(c, java.time.LocalDateTime.parse(updatedAt));
+        }
+        return c;
+    }
+
     private BidEntity mockBid(BidStatus status) {
         BidEntity b = mock(BidEntity.class);
         when(b.getStatus()).thenReturn(status);
