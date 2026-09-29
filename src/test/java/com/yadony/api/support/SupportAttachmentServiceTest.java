@@ -84,4 +84,26 @@ class SupportAttachmentServiceTest {
         service.attach(messageId, List.of(), "image/jpeg");
         verifyNoInteractions(attachmentRepository);
     }
+
+    /**
+     * Captures d'un signalement copiees cote serveur sous le prefixe support de
+     * l'utilisateur : le fil a ses propres objets (purge RGPD du prefixe support/{userId}/).
+     */
+    @Test
+    void copyIntoUserPrefix_copiesEachSourceKeyUnderTheUsersSupportPrefix() {
+        org.mockito.Mockito.when(storageService.copyObject("reports/a.png", "support/" + userId + "/"))
+                .thenReturn("support/" + userId + "/1_a.png");
+        org.mockito.Mockito.when(storageService.copyObject("reports/b.jpg", "support/" + userId + "/"))
+                .thenReturn("support/" + userId + "/2_b.jpg");
+
+        assertThat(service.copyIntoUserPrefix(userId, List.of("reports/a.png", "reports/b.jpg")))
+                .containsExactly("support/" + userId + "/1_a.png", "support/" + userId + "/2_b.jpg");
+    }
+
+    @Test
+    void copyIntoUserPrefix_withNothingToCopy_touchesNoStorage() {
+        assertThat(service.copyIntoUserPrefix(userId, null)).isEmpty();
+        assertThat(service.copyIntoUserPrefix(userId, List.of())).isEmpty();
+        verifyNoInteractions(storageService);
+    }
 }

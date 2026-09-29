@@ -993,4 +993,51 @@ class AdminReportsControllerTest {
         assertThat(resp.getBody().targetAuthor()).isEqualTo(new AdminReportResponse.TargetAuthor(traveler, "Ibrahim K."));
         verify(eventPublisher).publishEvent(new com.yadony.api.signalements.events.ReportResolvedEvent(id, sender));
     }
+
+    // ---- canReply ----
+
+    @Test
+    void canReply_appReportWithReporterAndBothPermissions() {
+        ReportEntity report = new ReportEntity();
+        report.setTargetType(ReportTargetType.APP);
+        java.util.Set<String> both = java.util.Set.of("REPORT_VIEW", "SUPPORT_TICKET_MANAGE");
+
+        assertThat(AdminReportsController.canReply(report, true, both)).isTrue();
+        assertThat(AdminReportsController.canReply(report, false, both)).isFalse();
+        assertThat(AdminReportsController.canReply(report, true, java.util.Set.of("REPORT_VIEW"))).isFalse();
+        assertThat(AdminReportsController.canReply(report, true, java.util.Set.of("SUPPORT_TICKET_MANAGE"))).isFalse();
+
+        report.setStatus(ReportStatus.RESOLVED);
+        assertThat(AdminReportsController.canReply(report, true, both)).isTrue();
+
+        report.softDelete();
+        assertThat(AdminReportsController.canReply(report, true, both)).isFalse();
+
+        ReportEntity userReport = new ReportEntity();
+        userReport.setTargetType(ReportTargetType.USER);
+        assertThat(AdminReportsController.canReply(userReport, true, both)).isFalse();
+    }
+
+    @Test
+    void getReport_exposesTheSupportTicketLinkAndCanReply() {
+        UUID reporterId = UUID.randomUUID();
+        UUID ticketId = UUID.randomUUID();
+        ReportEntity report = buildReport(reporterId, ReportStatus.OPEN);
+        report.setTargetType(ReportTargetType.APP);
+        report.setTargetId(null);
+        report.setSupportTicketId(ticketId);
+        ReflectionTestUtils.setField(report, "id", UUID.randomUUID());
+        UserEntity reporter = new UserEntity();
+        ReflectionTestUtils.setField(reporter, "id", reporterId);
+        when(reportRepo.findById(report.getId())).thenReturn(Optional.of(report));
+        when(userRepo.findAllById(any())).thenReturn(List.of(reporter));
+
+        AdminReportResponse resp = controller().getReport(report.getId(),
+                authAs(UUID.randomUUID(), List.of(AdminPermission.REPORT_VIEW, AdminPermission.SUPPORT_TICKET_MANAGE)))
+                .getBody();
+
+        assertThat(resp).isNotNull();
+        assertThat(resp.supportTicketId()).isEqualTo(ticketId);
+        assertThat(resp.canReply()).isTrue();
+    }
 }

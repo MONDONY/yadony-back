@@ -12,6 +12,11 @@ import java.util.UUID;
  * conversation ouverte par le support : l'utilisateur n'a rien demande, le push
  * doit donc annoncer un nouveau message (avec le sujet) et non « une reponse ».
  * {@code subject} n'est renseigne que dans ce cas.
+ *
+ * <p>{@code notifyOwner} faux : message enregistre sans push ni entree in-app. Seul
+ * cas aujourd'hui, le message de CONTEXTE d'une conversation issue d'un signalement
+ * (il reprend ce que l'utilisateur a ecrit) : la reponse de l'admin qui le suit porte
+ * la seule notification.
  */
 public class SupportMessageCreatedEvent {
 
@@ -21,6 +26,7 @@ public class SupportMessageCreatedEvent {
     private final SupportMessageAuthorType authorType;
     private final boolean startedByAdmin;
     private final String subject;
+    private final boolean notifyOwner;
 
     public SupportMessageCreatedEvent(UUID ticketId, UUID messageId, UUID ownerUserId,
                                       SupportMessageAuthorType authorType) {
@@ -30,12 +36,19 @@ public class SupportMessageCreatedEvent {
     public SupportMessageCreatedEvent(UUID ticketId, UUID messageId, UUID ownerUserId,
                                       SupportMessageAuthorType authorType,
                                       boolean startedByAdmin, String subject) {
+        this(ticketId, messageId, ownerUserId, authorType, startedByAdmin, subject, true);
+    }
+
+    public SupportMessageCreatedEvent(UUID ticketId, UUID messageId, UUID ownerUserId,
+                                      SupportMessageAuthorType authorType,
+                                      boolean startedByAdmin, String subject, boolean notifyOwner) {
         this.ticketId = ticketId;
         this.messageId = messageId;
         this.ownerUserId = ownerUserId;
         this.authorType = authorType;
         this.startedByAdmin = startedByAdmin;
         this.subject = subject;
+        this.notifyOwner = notifyOwner;
     }
 
     public UUID getTicketId() { return ticketId; }
@@ -49,4 +62,6 @@ public class SupportMessageCreatedEvent {
     public boolean isStartedByAdmin() { return startedByAdmin; }
 
     public String getSubject() { return subject; }
+
+    public boolean isNotifyOwner() { return notifyOwner; }
 }

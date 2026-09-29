@@ -19,6 +19,9 @@ import java.util.UUID;
  * <p>Les messages embarquent leurs pieces jointes (même mecanique responsesFor que
  * le DTO utilisateur) : un fil ou l'utilisateur envoie une photo doit etre visible
  * cote admin.
+ *
+ * <p>{@code sourceReportId} : signalement de l'app dont la conversation est issue
+ * (POST /admin/reports/{id}/reply, lien {@code reports.support_ticket_id}), sinon null.
  */
 public record AdminSupportTicketResponse(
         UUID id,
@@ -33,29 +36,33 @@ public record AdminSupportTicketResponse(
         LocalDateTime createdAt,
         LocalDateTime lastMessageAt,
         LocalDateTime resolvedAt,
-        List<SupportMessageResponse> messages) {
+        List<SupportMessageResponse> messages,
+        UUID sourceReportId) {
 
     public static AdminSupportTicketResponse summary(SupportTicketEntity ticket,
                                                      UserEntity user,
-                                                     String assignedAdminEmail) {
-        return build(ticket, user, assignedAdminEmail, null);
+                                                     String assignedAdminEmail,
+                                                     UUID sourceReportId) {
+        return build(ticket, user, assignedAdminEmail, null, sourceReportId);
     }
 
     public static AdminSupportTicketResponse withMessages(SupportTicketEntity ticket,
                                                           UserEntity user,
                                                           String assignedAdminEmail,
                                                           List<SupportMessageEntity> messages,
-                                                          Map<UUID, List<SupportAttachmentResponse>> attachMap) {
+                                                          Map<UUID, List<SupportAttachmentResponse>> attachMap,
+                                                          UUID sourceReportId) {
         List<SupportMessageResponse> mapped = messages.stream()
                 .map(m -> SupportMessageResponse.from(m, attachMap.getOrDefault(m.getId(), List.of())))
                 .toList();
-        return build(ticket, user, assignedAdminEmail, mapped);
+        return build(ticket, user, assignedAdminEmail, mapped, sourceReportId);
     }
 
     private static AdminSupportTicketResponse build(SupportTicketEntity ticket,
                                                     UserEntity user,
                                                     String assignedAdminEmail,
-                                                    List<SupportMessageResponse> messages) {
+                                                    List<SupportMessageResponse> messages,
+                                                    UUID sourceReportId) {
         return new AdminSupportTicketResponse(
                 ticket.getId(),
                 ticket.getCategory(),
@@ -69,7 +76,8 @@ public record AdminSupportTicketResponse(
                 ticket.getCreatedAt(),
                 ticket.getLastMessageAt(),
                 ticket.getResolvedAt(),
-                messages);
+                messages,
+                sourceReportId);
     }
 
     /**

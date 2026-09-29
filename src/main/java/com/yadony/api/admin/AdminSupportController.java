@@ -7,8 +7,6 @@ import com.yadony.api.admin.account.AdminUserRepository;
 import com.yadony.api.admin.dto.AdminStartSupportTicketRequest;
 import com.yadony.api.admin.dto.AdminSupportTicketResponse;
 import com.yadony.api.admin.dto.ReassignSupportTicketRequest;
-import com.yadony.api.auth.UserEntity;
-import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.support.SupportAttachmentService;
@@ -41,11 +39,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
 import java.util.UUID;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 
 /**
  * File support du back-office. Repondre et resoudre sont reserves a l'admin
@@ -62,19 +56,19 @@ public class AdminSupportController {
     private final SupportTicketService supportTicketService;
     private final SupportAttachmentService attachmentService;
     private final StorageService storageService;
-    private final UserRepository userRepository;
     private final AdminUserRepository adminUserRepository;
+    private final AdminSupportTicketViews views;
 
     public AdminSupportController(SupportTicketService supportTicketService,
                                   SupportAttachmentService attachmentService,
                                   StorageService storageService,
-                                  UserRepository userRepository,
-                                  AdminUserRepository adminUserRepository) {
+                                  AdminUserRepository adminUserRepository,
+                                  AdminSupportTicketViews views) {
         this.supportTicketService = supportTicketService;
         this.attachmentService = attachmentService;
         this.storageService = storageService;
-        this.userRepository = userRepository;
         this.adminUserRepository = adminUserRepository;
+        this.views = views;
     }
 
     @GetMapping
@@ -96,13 +90,7 @@ public class AdminSupportController {
                         adminId,
                         pageRequest);
 
-        Map<UUID, UserEntity> users = loadUsers(tickets.getContent());
-        Map<UUID, String> adminEmails = loadAdminEmails(tickets.getContent());
-        return tickets.map(ticket -> AdminSupportTicketResponse.summary(
-                ticket,
-                users.get(ticket.getUserId()),
-                ticket.getAssignedAdminId() == null ? null
-                        : adminEmails.get(ticket.getAssignedAdminId())));
+        return views.summaries(tickets);
     }
 
     /**
@@ -174,36 +162,7 @@ public class AdminSupportController {
     // ---------------------------------------------------------------- privees
 
     private AdminSupportTicketResponse detail(SupportTicketEntity ticket) {
-        List<SupportMessageEntity> messages = supportTicketService.listMessages(ticket.getId());
-        List<UUID> messageIds = messages.stream().map(SupportMessageEntity::getId).toList();
-        Map<UUID, List<SupportAttachmentResponse>> attachMap = attachmentService.responsesFor(messageIds);
-        UserEntity user = userRepository.findById(ticket.getUserId()).orElse(null);
-        String adminEmail = ticket.getAssignedAdminId() == null ? null
-                : adminUserRepository.findById(ticket.getAssignedAdminId())
-                        .map(AdminUserEntity::getEmail)
-                        .orElse(null);
-        return AdminSupportTicketResponse.withMessages(ticket, user, adminEmail, messages, attachMap);
-    }
-
-    private Map<UUID, UserEntity> loadUsers(List<SupportTicketEntity> tickets) {
-        Set<UUID> ids = tickets.stream().map(SupportTicketEntity::getUserId).collect(Collectors.toSet());
-        if (ids.isEmpty()) {
-            return Map.of();
-        }
-        return userRepository.findAllById(ids).stream()
-                .collect(Collectors.toMap(UserEntity::getId, Function.identity()));
-    }
-
-    private Map<UUID, String> loadAdminEmails(List<SupportTicketEntity> tickets) {
-        Set<UUID> ids = tickets.stream()
-                .map(SupportTicketEntity::getAssignedAdminId)
-                .filter(Objects::nonNull)
-                .collect(Collectors.toSet());
-        if (ids.isEmpty()) {
-            return Map.of();
-        }
-        return adminUserRepository.findAllById(ids).stream()
-                .collect(Collectors.toMap(AdminUserEntity::getId, AdminUserEntity::getEmail));
+        return views.detail(ticket);
     }
 
     private void requireActiveAdmin(UUID targetAdminId) {

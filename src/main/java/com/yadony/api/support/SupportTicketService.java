@@ -348,6 +348,94 @@ public class SupportTicketService {
         return saved;
     }
 
+    /**
+     * Conversation ouverte par le support pour repondre a un signalement de l'app :
+     * comme {@link #adminStartTicket}, mais le fil commence par un message de CONTEXTE
+     * (le signalement de l'utilisateur, ses captures) avant la reponse de l'admin.
+     *
+     * <p>Les deux messages sont de l'auteur ADMIN (l'app les affiche cote Yadony). Le
+     * contexte est publie sans notification ; la reponse porte l'unique push « Nouveau
+     * message de Yadony » (startedByAdmin). La reponse est validee AVANT toute copie
+     * R2 : un refus ne laisse aucun objet orphelin. {@code contextSourceKeys} sont des
+     * cles lues en base par l'appelant (jamais une entree client), copiees sous
+     * {@code support/{userId}/} ; elles ne sont pas soumises a la borne de
+     * {@link SupportAttachmentService#MAX_ATTACHMENTS_PER_MESSAGE}, qui encadre ce que
+     * l'admin joint lui-meme.
+     */
+    public SupportTicketEntity adminStartTicketFromContext(UUID userId, UUID adminId, String category,
+                                                           String subject, String contextMessage,
+                                                           List<String> contextSourceKeys,
+                                                           String message, List<String> attachmentKeys) {
+        String normalizedCategory = category == null || category.isBlank()
+                ? SupportCategory.OTHER.name()
+                : normalizeCategory(category);
+        String normalizedSubject = requireText(subject, "subject", MAX_SUBJECT_LENGTH);
+        String normalizedContext = requireText(contextMessage, "context", MAX_MESSAGE_LENGTH);
+        String normalizedMessage = requireContentOrAttachments(message, attachmentKeys);
+        List<String> ownedKeys = attachmentService.requireOwnedKeys(
+                attachmentKeys, attachmentService.adminPrefix(adminId));
+
+        UserEntity user = userRepository.findById(userId)
+                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
+                        "user-not-found", "Utilisateur introuvable",
+                        "Aucun utilisateur actif ne correspond a cet identifiant"));
+        List<String> contextKeys = attachmentService.copyIntoUserPrefix(user.getId(), contextSourceKeys);
+
+        SupportTicketEntity ticket = new SupportTicketEntity();
+        ticket.setUserId(user.getId());
+        ticket.setCategory(normalizedCategory);
+        ticket.setSubject(normalizedSubject);
+        ticket.setStatus(SupportTicketStatus.WAITING_USER);
+        ticket.setPriority(SupportPriority.NORMAL);
+        ticket.setAssignedAdminId(adminId);
+        ticket.setLastMessageAt(now());
+        SupportTicketEntity saved = ticketRepository.save(ticket);
+
+        SupportMessageEntity context = appendMessage(saved, SupportMessageAuthorType.ADMIN, adminId,
+                normalizedContext, false, false);
+        attachmentService.attach(context.getId(), contextKeys, guessContentType(contextKeys));
+
+        SupportMessageEntity reply = appendMessage(saved, SupportMessageAuthorType.ADMIN, adminId,
+                normalizedMessage, true, true);
+        attachmentService.attach(reply.getId(), ownedKeys, guessContentType(ownedKeys));
+
+        auditService.log(AUDIT_ENTITY, saved.getId(), "SUPPORT_TICKET_ADMIN_STARTED", adminId,
+                payload("adminId", adminId.toString(),
+                        "userId", user.getId().toString(),
+                        "ticketId", saved.getId().toString(),
+                        "category", normalizedCategory,
+                        "messageId", String.valueOf(reply.getId()),
+                        "attachmentCount", String.valueOf(ownedKeys.size()),
+                        "contextMessageId", String.valueOf(context.getId()),
+                        "contextAttachmentCount", String.valueOf(contextKeys.size())));
+        return saved;
+    }
+
+    /**
+     * Reponse admin sur un ticket que l'appelant n'a peut-etre pas en main : il se
+     * l'assigne s'il est libre, le reprend (trace SUPPORT_TICKET_REASSIGNED) s'il est
+     * a un collegue, puis repond comme {@link #adminReply}. Reprendre exige la meme
+     * permission que /reassign (SUPPORT_TICKET_MANAGE), portee par l'endpoint appelant.
+     */
+    public SupportMessageEntity adminReplyTakingOver(UUID ticketId, UUID adminId, String content,
+                                                     List<String> attachmentKeys) {
+        SupportTicketEntity ticket = requireTicket(ticketId);
+        requireNotResolved(ticket);
+        UUID current = ticket.getAssignedAdminId();
+        if (current == null) {
+            assign(ticketId, adminId);
+        } else if (!current.equals(adminId)) {
+            reassign(ticketId, adminId, adminId);
+        }
+        return adminReply(ticketId, adminId, content, attachmentKeys);
+    }
+
+    /** Ticket par identifiant, vide s'il n'existe pas (ou plus : suppression douce). */
+    @Transactional(readOnly = true)
+    public Optional<SupportTicketEntity> findTicketForAdmin(UUID ticketId) {
+        return ticketRepository.findById(ticketId);
+    }
+
     public SupportTicketEntity resolve(UUID ticketId, UUID adminId) {
         SupportTicketEntity ticket = requireTicket(ticketId);
         requireAssignedTo(ticket, adminId);
@@ -368,7 +456,7 @@ public class SupportTicketService {
                                                SupportMessageAuthorType authorType,
                                                UUID authorId,
                                                String content) {
-        return appendMessage(ticket, authorType, authorId, content, false);
+        return appendMessage(ticket, authorType, authorId, content, false, true);
     }
 
     private SupportMessageEntity appendMessage(SupportTicketEntity ticket,
@@ -376,6 +464,15 @@ public class SupportTicketService {
                                                UUID authorId,
                                                String content,
                                                boolean startedByAdmin) {
+        return appendMessage(ticket, authorType, authorId, content, startedByAdmin, true);
+    }
+
+    private SupportMessageEntity appendMessage(SupportTicketEntity ticket,
+                                               SupportMessageAuthorType authorType,
+                                               UUID authorId,
+                                               String content,
+                                               boolean startedByAdmin,
+                                               boolean notifyOwner) {
         SupportMessageEntity message = new SupportMessageEntity();
         message.setTicketId(ticket.getId());
         message.setAuthorType(authorType);
@@ -385,7 +482,7 @@ public class SupportTicketService {
         ticket.setLastMessageAt(now());
         eventPublisher.publishEvent(new SupportMessageCreatedEvent(
                 ticket.getId(), saved.getId(), ticket.getUserId(), authorType,
-                startedByAdmin, startedByAdmin ? ticket.getSubject() : null));
+                startedByAdmin, startedByAdmin ? ticket.getSubject() : null, notifyOwner));
         return saved;
     }
 

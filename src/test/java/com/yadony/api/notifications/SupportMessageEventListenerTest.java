@@ -97,4 +97,24 @@ class SupportMessageEventListenerTest {
 
         verify(notificationDispatcher, never()).notifyUser(any(), anyString(), anyString(), any());
     }
+
+    /**
+     * Message de contexte d'une conversation issue d'un signalement : enregistre sans
+     * push ni entree in-app, la reponse qui le suit porte la seule notification.
+     */
+    @Test
+    void staysSilentForAMessageFlaggedWithoutNotification() {
+        listener.onSupportMessage(new SupportMessageCreatedEvent(
+                ticketId, UUID.randomUUID(), ownerId, SupportMessageAuthorType.ADMIN, false, null, false));
+
+        verify(notificationDispatcher, never()).notifyUser(any(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void notifiesByDefault() {
+        assertThat(new SupportMessageCreatedEvent(ticketId, UUID.randomUUID(), ownerId,
+                SupportMessageAuthorType.ADMIN).isNotifyOwner()).isTrue();
+        assertThat(new SupportMessageCreatedEvent(ticketId, UUID.randomUUID(), ownerId,
+                SupportMessageAuthorType.ADMIN, true, "Sujet").isNotifyOwner()).isTrue();
+    }
 }

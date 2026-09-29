@@ -17,7 +17,8 @@ import java.util.Map;
  * un push (type {@code SUPPORT_MESSAGE}, donnee {@code ticketId}). Le push suit
  * l'interrupteur « Messages » des preferences ; l'entree in-app, elle, est
  * toujours enregistree. Premier message d'une conversation ouverte par le
- * support : texte distinct, qui cite le sujet.
+ * support : texte distinct, qui cite le sujet. Un message marque sans notification
+ * (contexte d'une conversation issue d'un signalement) ne produit ni l'un ni l'autre.
  *
  * <p>Push simple, sans repli SMS : une reponse du support n'a pas la criticite
  * d'un evenement de livraison. AFTER_COMMIT, sinon la notification pointerait
@@ -36,7 +37,7 @@ public class SupportMessageEventListener {
     @Async
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onSupportMessage(SupportMessageCreatedEvent event) {
-        if (event.getAuthorType() != SupportMessageAuthorType.ADMIN) {
+        if (event.getAuthorType() != SupportMessageAuthorType.ADMIN || !event.isNotifyOwner()) {
             return;
         }
         Messages m = notificationDispatcher.messagesFor(event.getOwnerUserId());

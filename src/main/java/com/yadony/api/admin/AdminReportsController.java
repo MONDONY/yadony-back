@@ -462,8 +462,24 @@ public class AdminReportsController {
                 r.getDeletedAt(),
                 r.getDeletedAt() != null && deletion != null ? deletion.adminEmail() : null,
                 availableActions,
-                author != null ? new AdminReportResponse.TargetAuthor(author.getId(), author.publicDisplayName()) : null
+                author != null ? new AdminReportResponse.TargetAuthor(author.getId(), author.publicDisplayName()) : null,
+                r.getSupportTicketId(),
+                canReply(r, r.getReporterId() != null && users.containsKey(r.getReporterId()), authorities)
         );
+    }
+
+    /**
+     * « Répondre » (POST /admin/reports/{id}/reply) est proposé pour un signalement de
+     * l'app non supprimé dont le signalant existe encore, à un admin qui porte
+     * REPORT_VIEW et SUPPORT_TICKET_MANAGE. Le statut n'entre pas en compte : répondre
+     * ne traite pas le signalement.
+     */
+    static boolean canReply(ReportEntity report, boolean reporterAvailable, Set<String> authorities) {
+        return report.getTargetType() == ReportTargetType.APP
+                && report.getDeletedAt() == null
+                && reporterAvailable
+                && authorities.contains(AdminPermission.REPORT_VIEW.name())
+                && authorities.contains(AdminPermission.SUPPORT_TICKET_MANAGE.name());
     }
 
     private String resolveReporterName(UUID reporterId, Map<UUID, UserEntity> users) {

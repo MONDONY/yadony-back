@@ -132,4 +132,11 @@ public interface ReportRepository extends JpaRepository<ReportEntity, UUID> {
     /** Signalements par identifiants, supprimés ou non (restauration unitaire et groupée). */
     @Query(value = "SELECT * FROM reports WHERE id IN (:ids)", nativeQuery = true)
     List<ReportEntity> findAllByIdIncludingDeleted(@Param("ids") java.util.Collection<UUID> ids);
+
+    /**
+     * Signalements liés à ces tickets support (lien inverse de la page Support). Un
+     * signalement supprimé (soft delete) n'y figure pas : le ticket s'affiche alors sans
+     * « Issu du signalement ».
+     */
+    List<ReportEntity> findBySupportTicketIdIn(java.util.Collection<UUID> supportTicketIds);
 }
