@@ -54,6 +54,13 @@ public class ReportEntity extends BaseEntity {
     @Column(name = "resolved_at")
     private OffsetDateTime resolvedAt;
 
+    /**
+     * Conversation support ouverte avec le signalant depuis l'admin (V274, cible APP
+     * seulement), sinon {@code null}. Répondre ne change pas le statut du signalement.
+     */
+    @Column(name = "support_ticket_id")
+    private UUID supportTicketId;
+
     public ReportTargetType getTargetType() { return targetType; }
     public void setTargetType(ReportTargetType targetType) { this.targetType = targetType; }
 
@@ -86,4 +93,7 @@ public class ReportEntity extends BaseEntity {
 
     public OffsetDateTime getResolvedAt() { return resolvedAt; }
     public void setResolvedAt(OffsetDateTime resolvedAt) { this.resolvedAt = resolvedAt; }
+
+    public UUID getSupportTicketId() { return supportTicketId; }
+    public void setSupportTicketId(UUID supportTicketId) { this.supportTicketId = supportTicketId; }
 }
