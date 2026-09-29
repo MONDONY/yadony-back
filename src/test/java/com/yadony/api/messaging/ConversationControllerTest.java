@@ -156,7 +156,7 @@ class ConversationControllerTest {
                 null, LocalDateTime.now(), false,
                 null, null, null, null, null, false, false);
 
-        when(conversationRepository.findByParticipant(currentUserId, pageable)).thenReturn(page);
+        when(conversationRepository.findByParticipant(currentUserId, Pageable.unpaged())).thenReturn(page);
         when(conversationService.fetchConversationMeta(anyList())).thenReturn(Map.of());
         when(conversationService.toResponse(eq(conversation), eq(currentUserId), anyMap())).thenReturn(fakeResponse);
 
@@ -180,7 +180,7 @@ class ConversationControllerTest {
                 null, LocalDateTime.now(), false,
                 null, null, null, null, null, false, false);
 
-        when(conversationRepository.findByParticipant(currentUserId, pageable)).thenReturn(page);
+        when(conversationRepository.findByParticipant(currentUserId, Pageable.unpaged())).thenReturn(page);
         when(conversationService.fetchConversationMeta(List.of(conversation.getFirestoreConversationId())))
                 .thenReturn(Map.of());
         when(conversationService.toResponse(eq(conversation), eq(currentUserId), anyMap())).thenReturn(fakeResponse);
@@ -188,6 +188,70 @@ class ConversationControllerTest {
         controller.listConversations(pageable);
 
         verify(conversationService).fetchConversationMeta(List.of(conversation.getFirestoreConversationId()));
+    }
+
+    @Test
+    void listConversations_sortsByLastMessageBeforePaginating() throws Exception {
+        // Sans ORDER BY, la première page (la seule que l'app charge) rendait les fils
+        // dans l'ordre physique de la table : un fil actif pouvait en sortir, et ses
+        // non-lus étaient alors remis à zéro côté app.
+        ConversationEntity older = newConversation();
+        ConversationEntity newest = newConversation();
+        ConversationEntity middle = newConversation();
+        when(conversationRepository.findByParticipant(currentUserId, Pageable.unpaged()))
+                .thenReturn(new PageImpl<>(List.of(older, newest, middle)));
+        when(conversationService.fetchConversationMeta(anyList())).thenReturn(Map.of(
+                older.getFirestoreConversationId(), Map.of("lastMessageAt", "2026-09-01T10:00:00Z"),
+                newest.getFirestoreConversationId(), Map.of("lastMessageAt", "2026-09-29T10:00:00Z"),
+                middle.getFirestoreConversationId(), Map.of("lastMessageAt", "2026-09-15T10:00:00Z")));
+        when(conversationService.toResponse(any(ConversationEntity.class), eq(currentUserId), anyMap()))
+                .thenAnswer(inv -> responseFor(inv.getArgument(0)));
+
+        PageResponse<ConversationResponse> firstPage =
+                controller.listConversations(PageRequest.of(0, 2)).getBody();
+        PageResponse<ConversationResponse> secondPage =
+                controller.listConversations(PageRequest.of(1, 2)).getBody();
+
+        assertThat(firstPage).isNotNull();
+        assertThat(firstPage.content()).extracting(ConversationResponse::id)
+                .containsExactly(newest.getId(), middle.getId());
+        assertThat(firstPage.totalElements()).isEqualTo(3);
+        assertThat(firstPage.last()).isFalse();
+        assertThat(secondPage).isNotNull();
+        assertThat(secondPage.content()).extracting(ConversationResponse::id)
+                .containsExactly(older.getId());
+        assertThat(secondPage.last()).isTrue();
+        // Les réponses, coûteuses, ne sont construites que pour la page demandée.
+        verify(conversationService, times(3)).toResponse(any(ConversationEntity.class), eq(currentUserId), anyMap());
+    }
+
+    @Test
+    void listConversations_pageBeyondTheEndIsEmpty() {
+        when(conversationRepository.findByParticipant(currentUserId, Pageable.unpaged()))
+                .thenReturn(new PageImpl<>(List.of(conversation)));
+        when(conversationService.fetchConversationMeta(anyList())).thenReturn(Map.of());
+
+        PageResponse<ConversationResponse> body =
+                controller.listConversations(PageRequest.of(3, 20)).getBody();
+
+        assertThat(body).isNotNull();
+        assertThat(body.content()).isEmpty();
+        assertThat(body.totalElements()).isEqualTo(1);
+    }
+
+    private ConversationEntity newConversation() throws Exception {
+        UUID bid = UUID.randomUUID();
+        ConversationEntity c = new ConversationEntity(bid, currentUserId, UUID.randomUUID(), "conv_" + bid);
+        setId(c, UUID.randomUUID());
+        return c;
+    }
+
+    private static ConversationResponse responseFor(ConversationEntity c) {
+        return new ConversationResponse(
+                c.getId(), c.getBidId(), c.getFirestoreConversationId(),
+                new ParticipantDTO(UUID.randomUUID().toString(), "Other User", null, false, null, false),
+                null, LocalDateTime.now(), false,
+                null, null, null, null, null, false, false);
     }
 
     // -------------------------------------------------------------------------
@@ -204,7 +268,7 @@ class ConversationControllerTest {
 
         when(blockVisibility.hiddenUserIdsFor(currentUserId)).thenReturn(java.util.Set.of(hiddenUserId));
         when(conversationRepository.findByParticipantExcludingHidden(
-                eq(currentUserId), eq(java.util.Set.of(hiddenUserId)), eq(pageable))).thenReturn(page);
+                eq(currentUserId), eq(java.util.Set.of(hiddenUserId)), eq(Pageable.unpaged()))).thenReturn(page);
         when(conversationService.fetchConversationMeta(anyList())).thenReturn(Map.of());
 
         ResponseEntity<PageResponse<ConversationResponse>> response =
