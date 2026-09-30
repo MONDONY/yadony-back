@@ -186,9 +186,13 @@ class EmailOtpServiceTest {
                     .thenReturn(com.yadony.api.auth.FirebaseContactService.Contact.EMPTY);
             when(firebaseContact.isEmailTakenByAnother(EMAIL, UID)).thenReturn(false);
 
-            emailOtpService.attachEmailToAccount(UID, EMAIL, "123456");
+            when(firebaseContact.issueSessionToken(UID)).thenReturn("session-token");
+
+            String sessionToken = emailOtpService.attachEmailToAccount(UID, EMAIL, "123456");
 
             verify(firebaseContact).updateEmail(UID, EMAIL);
+            // Firebase révoque la session à l'écriture : le client reçoit de quoi la rouvrir (FLUTTER-4C)
+            assertThat(sessionToken).isEqualTo("session-token");
             verify(auditService).log(eq("USER"), any(), eq("USER_EMAIL_ATTACHED"), any(), any());
         }
 

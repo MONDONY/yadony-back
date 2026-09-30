@@ -205,4 +205,30 @@ class FirebaseContactServiceTest {
         assertThat(service.findUidByPhone("+221701234567")).contains("uid-7");
         assertThat(service.findUidByPhone("")).isEmpty();
     }
+
+    // ── issueSessionToken (FLUTTER-4C) ───────────────────────────────────────
+
+    @Test
+    @DisplayName("issueSessionToken → jeton personnalisé sur le même UID")
+    void issueSessionToken_returnsCustomToken() throws Exception {
+        when(firebaseAuth.createCustomToken("uid-1")).thenReturn("custom-token");
+
+        assertThat(service.issueSessionToken("uid-1")).isEqualTo("custom-token");
+    }
+
+    @Test
+    @DisplayName("issueSessionToken → null si Firebase échoue (jamais bloquant)")
+    void issueSessionToken_nullOnFailure() throws Exception {
+        when(firebaseAuth.createCustomToken("uid-1")).thenThrow(mock(FirebaseAuthException.class));
+
+        assertThat(service.issueSessionToken("uid-1")).isNull();
+    }
+
+    @Test
+    @DisplayName("issueSessionToken → null sans Firebase ou sans UID")
+    void issueSessionToken_nullWhenUnavailable() throws Exception {
+        assertThat(new FirebaseContactService(null).issueSessionToken("uid-1")).isNull();
+        assertThat(service.issueSessionToken(null)).isNull();
+        verify(firebaseAuth, never()).createCustomToken(anyString());
+    }
 }

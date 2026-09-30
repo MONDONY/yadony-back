@@ -163,7 +163,7 @@ public class EmailOtpService {
      * <p>Ajout seulement, jamais remplacement : l'email identifie le compte Firebase.
      * Un compte qui en porte déjà un est refusé (409).
      */
-    public void attachEmailToAccount(String firebaseUid, String email, String code) {
+    public String attachEmailToAccount(String firebaseUid, String email, String code) {
         log.info("attachEmailToAccount: uid={} email='{}'", firebaseUid, maskEmail(email));
 
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
@@ -192,6 +192,10 @@ public class EmailOtpService {
         // Payload sans PII : l'adresse elle-même ne doit pas atterrir dans audit_log.
         auditService.log("USER", user.getId(), "USER_EMAIL_ATTACHED", user.getId(),
                 java.util.Map.of("verifiedBy", "email-otp"));
+
+        // Firebase vient de révoquer le jeton de rafraîchissement du client (changement
+        // de coordonnées) : on lui rend de quoi rouvrir sa session sans la perdre.
+        return firebaseContact.issueSessionToken(firebaseUid);
     }
 
     /**

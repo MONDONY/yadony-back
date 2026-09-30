@@ -479,9 +479,13 @@ class SmsOtpServiceTest {
             when(firebaseContact.getContact(UID)).thenReturn(FirebaseContactService.Contact.EMPTY);
             when(firebaseContact.isPhoneTakenByAnother(PHONE, UID)).thenReturn(false);
 
-            service.attachPhoneToAccount(UID, PHONE, "123456");
+            when(firebaseContact.issueSessionToken(UID)).thenReturn("session-token");
+
+            String sessionToken = service.attachPhoneToAccount(UID, PHONE, "123456");
 
             verify(firebaseContact).updatePhone(UID, PHONE);
+            // Firebase révoque la session à l'écriture : le client reçoit de quoi la rouvrir (FLUTTER-4C)
+            assertThat(sessionToken).isEqualTo("session-token");
             verify(auditService).log(eq("USER"), any(), eq("USER_PHONE_ATTACHED"), any(), any());
         }
 

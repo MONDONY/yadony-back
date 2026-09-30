@@ -223,7 +223,7 @@ public class SmsOtpService {
      * <p>Ajout seulement, jamais remplacement : le numéro identifie le compte
      * Firebase. Un compte qui en porte déjà un est refusé (409).
      */
-    public void attachPhoneToAccount(String firebaseUid, String phoneNumber, String code) {
+    public String attachPhoneToAccount(String firebaseUid, String phoneNumber, String code) {
         log.info("attachPhoneToAccount: uid={} phone='{}'", firebaseUid, maskPhone(phoneNumber));
 
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
@@ -252,6 +252,10 @@ public class SmsOtpService {
         // Payload sans PII : le numéro lui-même ne doit pas atterrir dans audit_log.
         auditService.log("USER", user.getId(), "USER_PHONE_ATTACHED", user.getId(),
                 Map.of("verifiedBy", "sms-otp"));
+
+        // Firebase vient de révoquer le jeton de rafraîchissement du client (changement
+        // de coordonnées) : on lui rend de quoi rouvrir sa session sans la perdre.
+        return firebaseContact.issueSessionToken(firebaseUid);
     }
 
     /**
