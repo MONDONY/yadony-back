@@ -50,15 +50,10 @@ jobs:
       # en mémoire et ses propres contextes Spring. Le pom ne fixe pas forkCount :
       # en local la suite reste sur un fork (RAM du poste), `-DforkCount=2` pour
       # l'accélérer si la machine le permet.
-      #
-      # TieredStopAtLevel=1 : JIT C1 seul. Avec trois forks, le CPU est le goulot
-      # (temps cumulé par classe doublé, démarrage de contexte Spring passé de 2,5 à
-      # 7 s) ; le compilateur C2 en consomme une bonne part pour des JVM qui vivent
-      # quelques minutes et n'en tirent presque rien.
       - name: Tests + gate couverture (bloquant — seuil configuré dans pom.xml)
         run: |
           chmod +x mvnw
-          ./mvnw verify -Dspring.profiles.active=test -DforkCount=3 "-Dsurefire.jvmExtraArgs=-XX:TieredStopAtLevel=1" --no-transfer-progress
+          ./mvnw verify -Dspring.profiles.active=test -DforkCount=3 --no-transfer-progress
       - name: Upload rapport couverture
         uses: actions/upload-artifact@v4
         if: always()
