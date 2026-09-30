@@ -19,6 +19,9 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/auth/sms-otp")
 public class SmsOtpController {
 
+    /** Jeton personnalisé de reconnexion après rattachement (voir FirebaseContactService#issueSessionToken). */
+    static final String SESSION_TOKEN_HEADER = "X-Session-Token";
+
     private final SmsOtpService smsOtpService;
     private final AuthService authService;
 
@@ -47,8 +50,14 @@ public class SmsOtpController {
     @PostMapping("/attach")
     public ResponseEntity<UserResponse> attach(@Valid @RequestBody SmsOtpAttachRequest request) {
         String firebaseUid = requireFirebaseUid();
-        smsOtpService.attachPhoneToAccount(firebaseUid, request.phoneNumber(), request.code());
-        return ResponseEntity.ok(authService.getProfile(firebaseUid));
+        String sessionToken = smsOtpService.attachPhoneToAccount(firebaseUid, request.phoneNumber(), request.code());
+        ResponseEntity.BodyBuilder response = ResponseEntity.ok();
+        if (sessionToken != null) {
+            // En-tête plutôt que champ du profil : UserResponse sert partout, et un
+            // client antérieur ignore simplement l'en-tête (FirebaseContactService#issueSessionToken).
+            response.header(SESSION_TOKEN_HEADER, sessionToken);
+        }
+        return response.body(authService.getProfile(firebaseUid));
     }
 
     /**

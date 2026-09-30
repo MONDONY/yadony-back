@@ -19,6 +19,9 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/auth/email-otp")
 public class EmailOtpController {
 
+    /** Jeton personnalisé de reconnexion après rattachement (voir FirebaseContactService#issueSessionToken). */
+    static final String SESSION_TOKEN_HEADER = "X-Session-Token";
+
     private final EmailOtpService emailOtpService;
     private final AuthService authService;
 
@@ -47,8 +50,14 @@ public class EmailOtpController {
     @PostMapping("/attach")
     public ResponseEntity<UserResponse> attach(@Valid @RequestBody EmailOtpAttachRequest request) {
         String firebaseUid = requireFirebaseUid();
-        emailOtpService.attachEmailToAccount(firebaseUid, request.email(), request.code());
-        return ResponseEntity.ok(authService.getProfile(firebaseUid));
+        String sessionToken = emailOtpService.attachEmailToAccount(firebaseUid, request.email(), request.code());
+        ResponseEntity.BodyBuilder response = ResponseEntity.ok();
+        if (sessionToken != null) {
+            // En-tête plutôt que champ du profil : UserResponse sert partout, et un
+            // client antérieur ignore simplement l'en-tête (FirebaseContactService#issueSessionToken).
+            response.header(SESSION_TOKEN_HEADER, sessionToken);
+        }
+        return response.body(authService.getProfile(firebaseUid));
     }
 
     /**

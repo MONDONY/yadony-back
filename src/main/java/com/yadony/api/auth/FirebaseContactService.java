@@ -207,6 +207,32 @@ public class FirebaseContactService {
         }
     }
 
+    /**
+     * Jeton personnalisé permettant au client de rouvrir sa session sur le même UID.
+     *
+     * <p>Écrire l'email (ou le numéro) d'un compte via l'Admin SDK est un « changement
+     * majeur » pour Firebase : le jeton de rafraîchissement du client est révoqué. La
+     * session survit tant que le jeton d'identité en cache est valide (1 h au plus),
+     * puis le premier rafraîchissement forcé (appels paiement, KYC, suivi) échoue et le
+     * SDK déconnecte l'utilisateur sans prévenir (feedback FLUTTER-4C : « le système
+     * m'amène à faire une nouvelle inscription »). Le client s'en sert pour se
+     * reconnecter aussitôt, avec un jeton de rafraîchissement neuf.
+     *
+     * <p>Jamais bloquant : la mutation a déjà réussi. Sans Firebase ou en cas d'échec,
+     * renvoie {@code null} et le client garde son comportement antérieur.
+     */
+    public String issueSessionToken(String firebaseUid) {
+        if (unavailable() || firebaseUid == null) {
+            return null;
+        }
+        try {
+            return firebaseAuth.createCustomToken(firebaseUid);
+        } catch (FirebaseAuthException e) {
+            log.warn("Firebase createCustomToken({}) a échoué : {}", firebaseUid, e.getAuthErrorCode());
+            return null;
+        }
+    }
+
     /** Met à jour l'email côté Firebase (source de vérité) et rafraîchit le cache. */
     public void updateEmail(String firebaseUid, String email) {
         if (unavailable()) {
