@@ -18,6 +18,7 @@ Fonctionnalité: Cycle de vie d'une offre
     Alors la réponse HTTP est 200
     Et le statut de l'offre est "ACCEPTED"
     Et l'offre a un numéro de suivi
+    Et le numéro de suivi n'est pas communiqué au voyageur
 
   @happy-path
   Scénario: Voyageur refuse une offre

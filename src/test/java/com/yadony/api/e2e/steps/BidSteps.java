@@ -74,10 +74,18 @@ public class BidSteps extends AbstractSteps {
     @Quand("j'accepte l'offre {string}")
     public void whenAcceptBid(String bidAlias) {
         store(asCurrentUser().put("/bids/{id}/accept", ctx.getId(bidAlias)));
-        String tn = lastResponse().jsonPath().getString("trackingNumber");
+        // Le voyageur ne reçoit plus le numéro avant la remise (FLUTTER-4R) : il est
+        // lu en base, là où l'acceptation l'a généré.
+        String tn = trackingNumberInDb(ctx.getId(bidAlias));
         if (tn != null) {
             ctx.saveString("tracking-number-" + bidAlias, tn);
         }
+    }
+
+    private String trackingNumberInDb(UUID bidId) {
+        List<String> numbers = jdbcTemplate.queryForList(
+                "SELECT tracking_number FROM bids WHERE id = ?", String.class, bidId);
+        return numbers.isEmpty() ? null : numbers.get(0);
     }
 
     @Quand("je refuse l'offre {string} avec la raison {string}")
@@ -117,8 +125,14 @@ public class BidSteps extends AbstractSteps {
 
     @Alors("l'offre a un numéro de suivi")
     public void thenBidHasTrackingNumber() {
-        String trackingNumber = lastResponse().jsonPath().getString("trackingNumber");
-        Assertions.assertThat(trackingNumber).startsWith("DON-");
+        UUID bidId = UUID.fromString(lastResponse().jsonPath().getString("id"));
+        Assertions.assertThat(trackingNumberInDb(bidId)).startsWith("DON-");
+    }
+
+    @Alors("le numéro de suivi n'est pas communiqué au voyageur")
+    public void thenTrackingNumberHiddenFromTraveler() {
+        Assertions.assertThat(lastResponse().jsonPath().getString("trackingNumber")).isNull();
+        Assertions.assertThat(lastResponse().jsonPath().getString("trackingToken")).isNull();
     }
 
     @Alors("la réponse contient {int} offre(s)")
