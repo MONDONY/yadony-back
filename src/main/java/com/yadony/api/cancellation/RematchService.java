@@ -145,6 +145,8 @@ public class RematchService {
                 .and(AnnouncementSpecification.departureDateFrom(from))
                 .and(AnnouncementSpecification.departureDateTo(to))
                 .and(AnnouncementSpecification.publicOrOpenSurplus())
+                .and(AnnouncementSpecification.handoverDeadlineNotPassed(
+                        java.time.LocalDateTime.now(java.time.ZoneOffset.UTC)))
                 .and(AnnouncementSpecification.notBlockedBy(senderId))
                 .and((root, query, cb) -> cb.notEqual(root.get("id"), cancelled.getId()))
                 .and((root, query, cb) -> cb.notEqual(root.get("travelerId"), cancelled.getTravelerId()));

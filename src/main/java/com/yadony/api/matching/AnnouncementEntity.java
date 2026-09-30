@@ -17,10 +17,12 @@ import jakarta.persistence.Table;
 import org.hibernate.annotations.Where;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
@@ -280,6 +282,28 @@ public class AnnouncementEntity extends BaseEntity {
      */
     public boolean isPubliclyListable() {
         return status == AnnouncementStatus.ACTIVE && !isClosedToThirdPartyBids();
+    }
+
+    /**
+     * La date limite de remise des colis est-elle atteinte à l'instant {@code now} ?
+     *
+     * <p>{@code handoverDeadline} est une heure murale dans le fuseau du trajet (comparée
+     * à {@code departureDate/departureTime} à la publication), jamais de l'UTC : on la
+     * replace donc dans {@link #timezone} avant de la comparer. Sans date limite
+     * (annonces antérieures à V207), rien n'est considéré comme dépassé.
+     *
+     * <p>Au-delà de cette date, le voyageur n'attend plus de colis : une demande créée
+     * après coup naît directement « fenêtre de remise dépassée », et la seule issue que
+     * l'app proposait était de signaler l'absence du voyageur (feedback FLUTTER-46/47).
+     */
+    public boolean isHandoverDeadlinePassed(Instant now) {
+        if (handoverDeadline == null) {
+            return false;
+        }
+        ZoneId zone = (timezone == null || timezone.isBlank())
+                ? ZoneId.of("Europe/Paris")
+                : ZoneId.of(timezone);
+        return !handoverDeadline.atZone(zone).toInstant().isAfter(now);
     }
 
     public UUID getReservedSenderId() { return reservedSenderId; }

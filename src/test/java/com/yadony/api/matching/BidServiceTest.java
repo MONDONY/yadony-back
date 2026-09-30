@@ -620,6 +620,29 @@ class BidServiceTest {
         }
 
         @Test
+        @DisplayName("date limite de remise passée → 409 handover-deadline-passed, aucun bid créé (FLUTTER-46)")
+        void createBid_handoverDeadlinePassed_throwsConflict() {
+            UserEntity sender = buildSender();
+            AnnouncementEntity announcement = buildAnnouncement();
+            announcement.setTimezone("Africa/Abidjan");
+            announcement.setHandoverDeadline(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1));
+
+            when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+
+            assertThatThrownBy(() -> bidService.createBid(
+                    ANNOUNCEMENT_ID, SENDER_UID, buildRequest(BigDecimal.valueOf(5)),
+                    httpRequest))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> {
+                        YadonyBusinessException ex = (YadonyBusinessException) e;
+                        assertThat(ex.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                        assertThat(ex.getErrorCode()).isEqualTo("handover-deadline-passed");
+                    });
+            verify(bidRepository, never()).save(any());
+        }
+
+        @Test
         @DisplayName("annonce DRAFT (brouillon non publié) → 409 CONFLICT, aucun bid créé")
         void createBidOnDraft_rejected() {
             UserEntity sender = buildSender();
