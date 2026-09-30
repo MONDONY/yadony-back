@@ -2,8 +2,11 @@
 
 ## Vue d'ensemble
 
-- `ci.yml` — quality gates sur chaque PR et push `main`.
-- `deploy-staging.yml` — après une CI réussie sur `main` : build l'image,
+- `ci.yml` — quality gates sur chaque PR, et sur chaque push d'une branche
+  `staging/**`. Un push sur une branche de travail ne lance plus rien : c'est sa PR
+  qui la teste. Un nouveau commit sur une PR annule la CI précédente.
+- `deploy-staging.yml` — après une CI réussie sur une branche `staging/**`
+  (`main` part en recette via `staging/main`) : build l'image,
   push sur `ghcr.io` (tags `sha-<court>` + `staging`), déploie sur le VPS staging.
 - `deploy-prod.yml` — déclenchement manuel : promeut une image existante vers
   le VPS prod, après approbation.

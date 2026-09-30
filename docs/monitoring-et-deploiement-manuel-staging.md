@@ -77,8 +77,9 @@ VPS staging : `141.95.41.96` · utilisateur `debian` · dossier projet `~/yadony
 
 Flux automatique quand GitHub Actions fonctionne :
 
-1. Push sur `main` ou une branche `feat/**` → workflow **CI** (`.github/workflows/ci.yml`).
-2. À la réussite de la CI → workflow **Deploy Staging** (`.github/workflows/deploy-staging.yml`).
+1. Push sur une branche `staging/**` (en général `git push origin origin/main:refs/heads/staging/main`)
+   → workflow **CI** (`.github/workflows/ci.yml`). Les branches de travail n'ont de CI que par leur PR.
+2. À la réussite de cette CI → workflow **Deploy Staging** (`.github/workflows/deploy-staging.yml`).
 3. Le déploiement : build + push de l'image vers GHCR, transfert du compose + `monitoring/`
    sur le VPS, puis `docker compose up -d` de **tous** les services.
 
