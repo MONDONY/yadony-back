@@ -82,8 +82,8 @@ public class DiditClient {
      *
      * @throws RuntimeException si Didit refuse ou ne repond pas — l'appelant en fait un 503.
      */
-    public JsonNode createSession(UUID userId, String callbackUrl) {
-        return createSession(userId, callbackUrl, userId.toString());
+    public JsonNode createSession(UUID userId, String callbackUrl, String language) {
+        return createSession(userId, callbackUrl, userId.toString(), language);
     }
 
     /**
@@ -92,13 +92,17 @@ public class DiditClient {
      * administrateur et encore inachevee chez Didit). {@code metadata.user_id} porte toujours
      * l'UUID yadony ; les webhooks sont rapproches par {@code session_id}, jamais par
      * {@code vendor_data}.
+     *
+     * <p>{@code language} : langue de l'interface Didit, celle de l'app de l'utilisateur
+     * ({@code fr}, {@code en}). Elle était forcée en français, y compris pour un testeur
+     * anglophone (feedback FLUTTER-27).
      */
-    public JsonNode createSession(UUID userId, String callbackUrl, String vendorData) {
+    public JsonNode createSession(UUID userId, String callbackUrl, String vendorData, String language) {
         Map<String, Object> body = Map.of(
                 "workflow_id", properties.workflowId(),
                 "vendor_data", vendorData,
                 "callback", callbackUrl,
-                "language", "fr",
+                "language", language,
                 "metadata", Map.of("user_id", userId.toString()));
 
         return restClient.post()

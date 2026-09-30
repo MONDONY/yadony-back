@@ -59,7 +59,7 @@ class DiditIdentityProviderTest {
 
     @Test
     void createSession_mapsUrlAndSessionId() {
-        when(client.createSession(eq(user.getId()), eq(RETURN_URL))).thenReturn(json("""
+        when(client.createSession(eq(user.getId()), eq(RETURN_URL), eq("fr"))).thenReturn(json("""
                 {"session_id":"sess_1","url":"https://verify.didit.me/fr/session/tok","status":"Not Started"}
                 """));
 
@@ -69,10 +69,21 @@ class DiditIdentityProviderTest {
         assertThat(session.url()).isEqualTo("https://verify.didit.me/fr/session/tok");
     }
 
+    /** Feedback FLUTTER-27 : un utilisateur anglophone recevait l'interface Didit en français. */
+    @Test
+    void createSession_usesTheUserLanguage() {
+        user.setPreferredLanguage(com.yadony.api.common.i18n.AppLanguage.EN);
+        when(client.createSession(eq(user.getId()), eq(RETURN_URL), eq("en"))).thenReturn(json("""
+                {"session_id":"sess_en","url":"https://verify.didit.me/en/session/tok","status":"Not Started"}
+                """));
+
+        assertThat(provider.createSession(user, null).sessionId()).isEqualTo("sess_en");
+    }
+
     /** Didit dédoublonne seul : l'identifiant précédent ne change rien à l'appel. */
     @Test
     void createSession_ignoresTheExistingSessionId() {
-        when(client.createSession(eq(user.getId()), eq(RETURN_URL))).thenReturn(json("""
+        when(client.createSession(eq(user.getId()), eq(RETURN_URL), eq("fr"))).thenReturn(json("""
                 {"session_id":"sess_2","url":"https://verify.didit.me/fr/session/tok2"}
                 """));
 
@@ -81,7 +92,7 @@ class DiditIdentityProviderTest {
 
     @Test
     void createSession_throwsServiceUnavailable_whenDiditFails() {
-        when(client.createSession(any(), anyString())).thenThrow(new RuntimeException("boom"));
+        when(client.createSession(any(), anyString(), anyString())).thenThrow(new RuntimeException("boom"));
 
         assertThatThrownBy(() -> provider.createSession(user, null))
                 .isInstanceOf(ResponseStatusException.class)
@@ -90,7 +101,7 @@ class DiditIdentityProviderTest {
 
     @Test
     void createSession_throwsServiceUnavailable_whenTheResponseIsIncomplete() {
-        when(client.createSession(any(), anyString())).thenReturn(json("""
+        when(client.createSession(any(), anyString(), anyString())).thenReturn(json("""
                 {"status":"Not Started"}
                 """));
 
@@ -199,7 +210,7 @@ class DiditIdentityProviderTest {
     @Test
     void createFreshSession_envoieUnVendorDataDistinct() throws Exception {
         org.mockito.ArgumentCaptor<String> vendorData = org.mockito.ArgumentCaptor.forClass(String.class);
-        when(client.createSession(eq(user.getId()), eq(RETURN_URL), vendorData.capture())).thenReturn(json("""
+        when(client.createSession(eq(user.getId()), eq(RETURN_URL), vendorData.capture(), eq("fr"))).thenReturn(json("""
                 {"session_id":"sess_fresh","url":"https://verify.didit.me/fr/session/new"}
                 """));
 

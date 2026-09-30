@@ -56,7 +56,8 @@ public class DiditIdentityProvider implements IdentityVerificationProvider {
      */
     @Override
     public ProviderSession createSession(UserEntity user, String existingSessionId) {
-        return open(user, () -> client.createSession(user.getId(), kycReturnUrl));
+        return open(user, () -> client.createSession(
+                user.getId(), kycReturnUrl, user.getPreferredLanguage().code()));
     }
 
     /**
@@ -67,7 +68,8 @@ public class DiditIdentityProvider implements IdentityVerificationProvider {
     @Override
     public ProviderSession createFreshSession(UserEntity user) {
         String vendorData = user.getId() + ":" + java.util.UUID.randomUUID();
-        return open(user, () -> client.createSession(user.getId(), kycReturnUrl, vendorData));
+        return open(user, () -> client.createSession(
+                user.getId(), kycReturnUrl, vendorData, user.getPreferredLanguage().code()));
     }
 
     private ProviderSession open(UserEntity user, java.util.function.Supplier<JsonNode> call) {
