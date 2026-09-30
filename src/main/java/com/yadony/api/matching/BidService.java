@@ -771,8 +771,11 @@ public class BidService {
                 .stream()
                 .filter(b -> !b.isDeletedBySender())
                 .toList();
+        // Un fil de négociation, ouvert ou clos, n'est pas un envoi : il vit dans
+        // /bids/negotiations/me. Les fils clos (NEGOTIATION_CLOSED) remontaient
+        // dans « Mes colis » sans puce de filtre qui les contienne (FLUTTER-4Q).
         return mine.stream()
-                .filter(b -> !BidStatus.NEGOTIATION_ACTIVE.contains(b.getStatus()))
+                .filter(b -> !BidStatus.NEGOTIATION_STATUSES.contains(b.getStatus()))
                 .map(b -> toResponse(b, user))
                 .toList();
     }

@@ -2610,6 +2610,28 @@ class BidServiceTest {
         assertThat(result).hasSize(1);
     }
 
+    @Test
+    @DisplayName("getMyBids → exclut les fils de négociation, ouverts comme clos (FLUTTER-4Q)")
+    void getMyBids_excludesNegotiationThreads() {
+        UserEntity sender = buildSender();
+        BidEntity shipment = buildBid();
+        BidEntity openThread = buildBid();
+        setId(openThread, UUID.randomUUID());
+        openThread.setStatus(BidStatus.NEGOTIATING);
+        BidEntity closedThread = buildBid();
+        setId(closedThread, UUID.randomUUID());
+        closedThread.setStatus(BidStatus.NEGOTIATION_CLOSED);
+
+        when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
+        when(bidRepository.findBySenderId(SENDER_ID))
+                .thenReturn(List.of(shipment, openThread, closedThread));
+        when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(buildAnnouncement()));
+
+        List<BidResponse> result = bidService.getMyBids(SENDER_UID);
+
+        assertThat(result).extracting(BidResponse::id).containsExactly(shipment.getId());
+    }
+
     // ─── getBidById ────────────────────────────────────────────────────────────
 
     @Test
