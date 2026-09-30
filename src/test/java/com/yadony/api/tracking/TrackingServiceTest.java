@@ -609,6 +609,33 @@ class TrackingServiceTest {
         assertThat(captor.getValue().getBidId()).isEqualTo(bidId);
     }
 
+    /** Feedback FLUTTER-2A : l'arrivée n'enregistrait jamais de lieu. */
+    @Test
+    void confirmDelivery_withGps_recordsArrivalLocation() {
+        BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");
+        bid.setConfirmationCode("123456");
+        bid.setConfirmationCodeAttempts(0);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(buildAnnouncement()));
+        when(userRepository.findByFirebaseUid("uid-traveler"))
+                .thenReturn(Optional.of(buildUser(travelerId, "uid-traveler")));
+        when(trackingEventRepository.save(any())).thenAnswer(inv -> {
+            TrackingEventEntity e = inv.getArgument(0);
+            setId(e, UUID.randomUUID());
+            return e;
+        });
+
+        ConfirmDeliveryRequest req = new ConfirmDeliveryRequest("123456", null, null,
+                new java.math.BigDecimal("14.6928"), new java.math.BigDecimal("-17.4467"), "Dakar, Plateau");
+        service.confirmDelivery(bidId, req, "uid-traveler");
+
+        ArgumentCaptor<TrackingEventEntity> saved = ArgumentCaptor.forClass(TrackingEventEntity.class);
+        verify(trackingEventRepository).save(saved.capture());
+        assertThat(saved.getValue().getGpsLat()).isEqualByComparingTo("14.6928");
+        assertThat(saved.getValue().getGpsLon()).isEqualByComparingTo("-17.4467");
+        assertThat(saved.getValue().getGpsLabel()).isEqualTo("Dakar, Plateau");
+    }
+
     @Test
     void confirmDelivery_bidArrived_succeeds() {
         BidEntity bid = buildBid(BidStatus.ARRIVED, "qt");

@@ -662,6 +662,10 @@ public class TrackingService {
         event.setScannedAt(LocalDateTime.now(ZoneOffset.UTC));
         event.setPhotoUrl(photoKey);
         event.setScanMethod(request.scanMethod());
+        // Lieu de l'arrivée, comme pour les autres étapes (FLUTTER-2A).
+        event.setGpsLat(request.gpsLat());
+        event.setGpsLon(request.gpsLon());
+        event.setGpsLabel(cleanGpsLabel(request.gpsLabel()));
         trackingEventRepository.save(event);
 
         eventPublisher.publishEvent(new DeliveryConfirmedEvent(bid.getId(), bid.getSenderId(), traveler.getId()));
