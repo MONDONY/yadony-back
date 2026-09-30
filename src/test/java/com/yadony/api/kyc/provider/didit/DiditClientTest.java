@@ -43,10 +43,24 @@ class DiditClientTest {
                         {"session_id":"sess_1","url":"https://verify.didit.me/fr/session/tok","status":"Not Started"}
                         """, MediaType.APPLICATION_JSON));
 
-        JsonNode response = client.createSession(userId, CALLBACK);
+        JsonNode response = client.createSession(userId, CALLBACK, "fr");
 
         assertThat(response.path("session_id").asText()).isEqualTo("sess_1");
         assertThat(response.path("url").asText()).isEqualTo("https://verify.didit.me/fr/session/tok");
+        server.verify();
+    }
+
+    @Test
+    void createSession_sendsTheGivenLanguage() {
+        UUID userId = UUID.randomUUID();
+        server.expect(requestTo("https://verification.didit.me/v3/session/"))
+                .andExpect(jsonPath("$.language").value("en"))
+                .andRespond(withSuccess("""
+                        {"session_id":"sess_1","url":"https://verify.didit.me/en/session/tok"}
+                        """, MediaType.APPLICATION_JSON));
+
+        client.createSession(userId, CALLBACK, "en");
+
         server.verify();
     }
 
@@ -61,7 +75,7 @@ class DiditClientTest {
                         {"session_id":"sess_1","url":"https://verify.didit.me/fr/session/tok"}
                         """, MediaType.APPLICATION_JSON));
 
-        client.createSession(userId, CALLBACK);
+        client.createSession(userId, CALLBACK, "fr");
 
         server.verify();
     }
@@ -71,7 +85,7 @@ class DiditClientTest {
         server.expect(requestTo("https://verification.didit.me/v3/session/"))
                 .andRespond(withServerError());
 
-        assertThatThrownBy(() -> client.createSession(UUID.randomUUID(), CALLBACK))
+        assertThatThrownBy(() -> client.createSession(UUID.randomUUID(), CALLBACK, "fr"))
                 .isInstanceOf(RuntimeException.class);
     }
 
@@ -110,7 +124,7 @@ class DiditClientTest {
                         {"session_id":"sess_2","url":"https://verify.didit.me/fr/session/tok2"}
                         """, MediaType.APPLICATION_JSON));
 
-        JsonNode response = client.createSession(userId, CALLBACK, userId + ":r2");
+        JsonNode response = client.createSession(userId, CALLBACK, userId + ":r2", "fr");
 
         assertThat(response.path("session_id").asText()).isEqualTo("sess_2");
         server.verify();
