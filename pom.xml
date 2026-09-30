@@ -358,6 +358,14 @@
 					<execution>
 						<id>jacoco-prepare-agent</id>
 						<goals><goal>prepare-agent</goal></goals>
+						<!-- Sans filtre, l'agent instrumente chaque classe chargée : Spring,
+						     Hibernate, Jackson, Flyway… alors que le rapport ne couvre que
+						     com.yadony. Le filtre retire ce coût sans changer la couverture. -->
+						<configuration>
+							<includes>
+								<include>com.yadony.*</include>
+							</includes>
+						</configuration>
 					</execution>
 					<!-- 2. Generate HTML report in target/site/jacoco after tests -->
 					<execution>

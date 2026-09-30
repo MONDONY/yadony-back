@@ -44,10 +44,16 @@ jobs:
       # à la phase test), le package et jacoco:check (seuil dans pom.xml). L'ancien
       # `mvnw test` suivi de `mvnw verify` exécutait toute la suite deux fois,
       # 16 min chacune (mesuré le 2026-09-30).
+      #
+      # -DforkCount=3 : trois JVM de test se partagent les classes au lieu d'une
+      # seule, sur un runner qui a 4 vCPU et 16 Go. Chaque JVM a sa propre base H2
+      # en mémoire et ses propres contextes Spring. Le pom ne fixe pas forkCount :
+      # en local la suite reste sur un fork (RAM du poste), `-DforkCount=2` pour
+      # l'accélérer si la machine le permet.
       - name: Tests + gate couverture (bloquant — seuil configuré dans pom.xml)
         run: |
           chmod +x mvnw
-          ./mvnw verify -Dspring.profiles.active=test --no-transfer-progress
+          ./mvnw verify -Dspring.profiles.active=test -DforkCount=3 --no-transfer-progress
       - name: Upload rapport couverture
         uses: actions/upload-artifact@v4
         if: always()
