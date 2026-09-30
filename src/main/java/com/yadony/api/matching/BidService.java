@@ -341,7 +341,7 @@ public class BidService {
                     senderName, saved.getWeightKg(), corridor));
         }
 
-        return toResponse(saved, sender);
+        return toResponse(saved, sender, sender.getId());
     }
 
     /**
@@ -776,7 +776,9 @@ public class BidService {
         // dans « Mes colis » sans puce de filtre qui les contienne (FLUTTER-4Q).
         return mine.stream()
                 .filter(b -> !BidStatus.NEGOTIATION_STATUSES.contains(b.getStatus()))
-                .map(b -> toResponse(b, user))
+                // L'appelant est l'expéditeur : il reçoit ses numéros et liens de
+                // suivi, et le téléphone de ses destinataires.
+                .map(b -> toResponse(b, user, user.getId()))
                 .toList();
     }
 
@@ -1040,7 +1042,7 @@ public class BidService {
         UserEntity senderUser = isSender
                 ? caller
                 : userRepository.findById(bid.getSenderId()).orElse(null);
-        return toResponse(bid, senderUser);
+        return toResponse(bid, senderUser, caller.getId());
     }
 
     /** Si le bid était déjà accepté ou remis, ou en attente de paiement mobile money, on rend
@@ -1556,7 +1558,11 @@ public class BidService {
                 // (tiers non consentant) n'est révélé qu'à partir de l'acceptation,
                 // sinon un voyageur pourrait moissonner des numéros via des offres
                 // PENDING qu'il refuse ensuite.
-                phoneForStatus(bid.getRecipientPhone(), bid.getStatus()),
+                // Téléphone du destinataire : l'expéditeur l'a saisi, il le voit
+                // toujours. Le voyageur ne le reçoit qu'une fois la demande acceptée.
+                callerIsSender
+                        ? bid.getRecipientPhone()
+                        : phoneForStatus(bid.getRecipientPhone(), bid.getStatus()),
                 bid.getStatus().name(),
                 bid.getRejectionReason(),
                 bid.getHandoverLocation(),
