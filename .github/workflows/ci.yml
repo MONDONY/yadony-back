@@ -1,10 +1,24 @@
 name: CI
 
 on:
+  # Une branche de travail est testée par sa PR, et par elle seule. L'ancien
+  # `push: branches-ignore: [main]` relançait la même suite en parallèle à chaque
+  # commit poussé, et la fusion attendait les deux (32 min pour la PR, 42 pour le
+  # push, mesuré le 2026-09-30). Seules les branches `staging/**` gardent le push :
+  # c'est ce run qui émet le `workflow_run` dont dépend Deploy Staging.
   push:
-    branches-ignore: [main]
+    branches: ['staging/**']
+  # Sans filtre de base : une PR empilée sur une autre branche que main était
+  # couverte par le push, elle doit garder sa CI.
   pull_request:
-    branches: [main]
+
+# Un nouveau commit sur une PR annule la CI du commit précédent, devenue caduque.
+# Chaque push sur staging/** a son propre groupe (run_id) et n'est jamais annulé :
+# Deploy Staging lit la conclusion de ce run, un run annulé ferait échouer le
+# déploiement au lieu de simplement laisser passer le suivant.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: true
 
 env:
   JAVA_VERSION: '21'
@@ -26,12 +40,14 @@ jobs:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: temurin
           cache: maven
-      - name: Tests unitaires (gate bloquant)
+      # Une seule passe : `verify` enchaîne déjà les tests, le rapport JaCoCo (lié
+      # à la phase test), le package et jacoco:check (seuil dans pom.xml). L'ancien
+      # `mvnw test` suivi de `mvnw verify` exécutait toute la suite deux fois,
+      # 16 min chacune (mesuré le 2026-09-30).
+      - name: Tests + gate couverture (bloquant — seuil configuré dans pom.xml)
         run: |
           chmod +x mvnw
-          ./mvnw test -Dspring.profiles.active=test --no-transfer-progress
-      - name: Rapport JaCoCo + gate couverture (bloquant — seuil configuré dans pom.xml)
-        run: ./mvnw verify -Dspring.profiles.active=test --no-transfer-progress
+          ./mvnw verify -Dspring.profiles.active=test --no-transfer-progress
       - name: Upload rapport couverture
         uses: actions/upload-artifact@v4
         if: always()
