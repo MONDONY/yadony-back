@@ -2632,6 +2632,41 @@ class BidServiceTest {
         assertThat(result).extracting(BidResponse::id).containsExactly(shipment.getId());
     }
 
+    @Test
+    @DisplayName("getMyBids → l'expéditeur reçoit son numéro de suivi et le téléphone du destinataire, même en attente")
+    void getMyBids_senderSeesTrackingNumberAndRecipientPhone() {
+        UserEntity sender = buildSender();
+        BidEntity bid = buildBid();
+        bid.setStatus(BidStatus.PENDING);
+        bid.setTrackingNumber("DON-ABCD1234");
+        bid.setRecipientPhone("+221700000000");
+        when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
+        when(bidRepository.findBySenderId(SENDER_ID)).thenReturn(List.of(bid));
+        when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(buildAnnouncement()));
+
+        BidResponse result = bidService.getMyBids(SENDER_UID).get(0);
+
+        assertThat(result.trackingNumber()).isEqualTo("DON-ABCD1234");
+        assertThat(result.recipientPhone()).isEqualTo("+221700000000");
+    }
+
+    @Test
+    @DisplayName("voyageur : téléphone du destinataire masqué en attente, servi une fois la demande acceptée")
+    void getBidById_traveler_recipientPhoneOnlyOnceAccepted() {
+        BidEntity bid = buildBid();
+        bid.setRecipientPhone("+221700000000");
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(buildAnnouncement()));
+        when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(buildTraveler()));
+        when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(buildSender()));
+
+        bid.setStatus(BidStatus.PAYMENT_ESCROWED);
+        assertThat(bidService.getBidById(BID_ID, TRAVELER_UID).recipientPhone()).isNull();
+
+        bid.setStatus(BidStatus.ACCEPTED);
+        assertThat(bidService.getBidById(BID_ID, TRAVELER_UID).recipientPhone()).isEqualTo("+221700000000");
+    }
+
     // ─── getBidById ────────────────────────────────────────────────────────────
 
     @Test
