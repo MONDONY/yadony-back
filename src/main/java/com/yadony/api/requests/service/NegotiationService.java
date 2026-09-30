@@ -802,6 +802,12 @@ public class NegotiationService {
      * capacité entretemps), et ce lot de modération ne doit pas changer silencieusement le
      * comportement de paiement des trajets partagés. Le sur-booking éventuel est un sujet
      * préexistant, hors périmètre.
+     *
+     * <p>Refuse aussi un trajet dont la remise des colis est passée (409
+     * {@code handover-deadline-passed}, même code que {@code BidService#assertCanBidOn}) :
+     * un trajet parti reste ACTIVE, et le voyageur pouvait encore régler sa commission
+     * après la date du voyage (feedback FLUTTER-44). Sans date limite de remise
+     * (annonces antérieures à V207), la date de départ passée en fait office.
      */
     public void assertTravelerAnnouncementActive(UUID travelerAnnouncementId) {
         if (travelerAnnouncementId == null) {
@@ -812,7 +818,23 @@ public class NegotiationService {
                 throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
                         "announcement/not-active");
             }
+            if (isTripHandoverOver(ann, java.time.Instant.now())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "handover-deadline-passed");
+            }
         });
+    }
+
+    static boolean isTripHandoverOver(com.yadony.api.matching.AnnouncementEntity ann, java.time.Instant now) {
+        if (ann.getHandoverDeadline() != null) {
+            return ann.isHandoverDeadlinePassed(now);
+        }
+        if (ann.getDepartureDate() == null) {
+            return false;
+        }
+        java.time.ZoneId zone = (ann.getTimezone() == null || ann.getTimezone().isBlank())
+                ? java.time.ZoneId.of("Europe/Paris")
+                : java.time.ZoneId.of(ann.getTimezone());
+        return ann.getDepartureDate().isBefore(now.atZone(zone).toLocalDate());
     }
 
     /**

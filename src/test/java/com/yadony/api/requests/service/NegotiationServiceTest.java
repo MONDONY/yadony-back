@@ -3938,6 +3938,24 @@ class NegotiationServiceTest {
             verifyNoInteractions(cashGatePort);
         }
 
+        @Test
+        @DisplayName("date du voyage passée → 409 handover-deadline-passed, avant tout débit (FLUTTER-44)")
+        void settleCommission_tripAlreadyGone_rejectsBeforeAnyCharge() {
+            UUID announcementId = UUID.randomUUID();
+            thread.setTravelerAnnouncementId(announcementId);
+            com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
+            ann.setStatus(com.yadony.api.matching.AnnouncementStatus.ACTIVE);
+            ann.setHandoverDeadline(java.time.LocalDateTime.now(java.time.ZoneId.of("Europe/Paris")).minusDays(2));
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            when(requestRepo.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(announcementRepo.findById(announcementId)).thenReturn(Optional.of(ann));
+
+            assertThatThrownBy(() -> service.settleCommission(TRAVELER_ID, THREAD_ID, CommissionSource.WALLET_FIRST))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("handover-deadline-passed");
+            verifyNoInteractions(cashGatePort);
+        }
+
         // Revue task 5, critique 1 : sans verrou pessimiste, deux voyageurs
         // AWAITING_COMMISSION sur la même demande peuvent tous deux lire
         // "disponible" avant que l'un n'ait débité — PackageRequestEntity n'a pas
@@ -5521,6 +5539,62 @@ class NegotiationServiceTest {
             when(announcementRepo.findById(announcementId)).thenReturn(Optional.of(ann));
 
             assertThatCode(() -> service.assertTravelerAnnouncementActive(announcementId))
+                    .doesNotThrowAnyException();
+        }
+
+        // Feedback FLUTTER-44 : un trajet parti reste ACTIVE, et le voyageur pouvait
+        // encore régler sa commission après la date du voyage.
+        @Test
+        @DisplayName("remise passée → 409 handover-deadline-passed")
+        void handoverDeadlinePassed_throwsConflict() {
+            UUID announcementId = UUID.randomUUID();
+            com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
+            ann.setStatus(com.yadony.api.matching.AnnouncementStatus.ACTIVE);
+            ann.setTimezone("Africa/Bamako");
+            ann.setHandoverDeadline(java.time.LocalDateTime.now(java.time.ZoneId.of("Africa/Bamako")).minusHours(1));
+            when(announcementRepo.findById(announcementId)).thenReturn(Optional.of(ann));
+
+            assertThatThrownBy(() -> service.assertTravelerAnnouncementActive(announcementId))
+                    .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                    .satisfies(e -> {
+                        var rse = (org.springframework.web.server.ResponseStatusException) e;
+                        assertThat(rse.getStatusCode()).isEqualTo(org.springframework.http.HttpStatus.CONFLICT);
+                        assertThat(rse.getReason()).isEqualTo("handover-deadline-passed");
+                    });
+        }
+
+        @Test
+        @DisplayName("remise à venir → aucune exception")
+        void handoverDeadlineAhead_doesNotThrow() {
+            UUID announcementId = UUID.randomUUID();
+            com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
+            ann.setStatus(com.yadony.api.matching.AnnouncementStatus.ACTIVE);
+            ann.setTimezone("Africa/Bamako");
+            ann.setHandoverDeadline(java.time.LocalDateTime.now(java.time.ZoneId.of("Africa/Bamako")).plusHours(1));
+            when(announcementRepo.findById(announcementId)).thenReturn(Optional.of(ann));
+
+            assertThatCode(() -> service.assertTravelerAnnouncementActive(announcementId))
+                    .doesNotThrowAnyException();
+        }
+
+        @Test
+        @DisplayName("sans date limite de remise : départ d'hier → 409, départ du jour → accepté")
+        void noHandoverDeadline_fallsBackOnDepartureDate() {
+            java.time.ZoneId paris = java.time.ZoneId.of("Europe/Paris");
+            com.yadony.api.matching.AnnouncementEntity yesterday = new com.yadony.api.matching.AnnouncementEntity();
+            yesterday.setStatus(com.yadony.api.matching.AnnouncementStatus.ACTIVE);
+            yesterday.setDepartureDate(java.time.LocalDate.now(paris).minusDays(1));
+            com.yadony.api.matching.AnnouncementEntity today = new com.yadony.api.matching.AnnouncementEntity();
+            today.setStatus(com.yadony.api.matching.AnnouncementStatus.ACTIVE);
+            today.setDepartureDate(java.time.LocalDate.now(paris));
+            UUID yesterdayId = UUID.randomUUID();
+            UUID todayId = UUID.randomUUID();
+            when(announcementRepo.findById(yesterdayId)).thenReturn(Optional.of(yesterday));
+            when(announcementRepo.findById(todayId)).thenReturn(Optional.of(today));
+
+            assertThatThrownBy(() -> service.assertTravelerAnnouncementActive(yesterdayId))
+                    .hasMessageContaining("handover-deadline-passed");
+            assertThatCode(() -> service.assertTravelerAnnouncementActive(todayId))
                     .doesNotThrowAnyException();
         }
 
