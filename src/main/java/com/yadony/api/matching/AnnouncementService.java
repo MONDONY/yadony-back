@@ -207,7 +207,9 @@ public class AnnouncementService {
         String viewerCurrency = activeCurrencyResolver.resolveDisplay(viewerId);
 
         Specification<AnnouncementEntity> spec = AnnouncementSpecification.hasStatus(AnnouncementStatus.ACTIVE)
-                .and(AnnouncementSpecification.publicOrOpenSurplus());
+                .and(AnnouncementSpecification.publicOrOpenSurplus())
+                .and(AnnouncementSpecification.handoverDeadlineNotPassed(
+                        java.time.LocalDateTime.now(java.time.ZoneOffset.UTC)));
 
         if (viewerId != null)
             spec = spec.and(AnnouncementSpecification.notBlockedBy(viewerId));

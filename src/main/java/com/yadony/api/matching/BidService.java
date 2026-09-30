@@ -50,6 +50,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -364,6 +365,15 @@ public class BidService {
             throw new YadonyBusinessException(
                     HttpStatus.CONFLICT, "announcement-not-active", "Announcement Not Active",
                     "Cette annonce n'est plus disponible");
+        }
+
+        // Date limite de remise atteinte : le voyageur n'attend plus de colis. Sans cette
+        // garde, la demande naissait déjà « fenêtre dépassée » et l'expéditeur n'avait
+        // plus que le signalement d'absence du voyageur comme issue (FLUTTER-46/47).
+        if (announcement.isHandoverDeadlinePassed(Instant.now())) {
+            throw new YadonyBusinessException(
+                    HttpStatus.CONFLICT, "handover-deadline-passed", "Handover Deadline Passed",
+                    "La date limite de remise des colis pour ce trajet est passée");
         }
 
         if (!sender.getRoles().contains(Role.SENDER)) {
