@@ -1299,6 +1299,17 @@ public class BidService {
         ARRIVAL_INSTRUCTIONS_VISIBLE_STATUSES = arrivalVisible;
     }
 
+    /** Statuts où le voyageur a physiquement le colis ou l'a déjà livré : le numéro
+     *  de suivi lui est alors servi. Avant (ACCEPTED, en attente de remise), c'est
+     *  l'expéditeur qui le lui communique au moment de la remise. */
+    private static final java.util.Set<BidStatus> TRACKING_NUMBER_VISIBLE_TO_TRAVELER_STATUSES;
+
+    static {
+        java.util.EnumSet<BidStatus> numberVisible = java.util.EnumSet.of(BidStatus.COMPLETED);
+        numberVisible.addAll(BidStatus.EN_ROUTE);
+        TRACKING_NUMBER_VISIBLE_TO_TRAVELER_STATUSES = numberVisible;
+    }
+
     /** Valeurs programmatiques (non-libres) de {@code CancellationEntity.reason} écrites par les
      * flux HANDOVER qui n'annulent PAS le trajet entier (no-show expéditeur, annulation après
      * remise) — cf. {@code CancellationService#reportSenderNoShow} et le flux "cancel after
@@ -1378,6 +1389,15 @@ public class BidService {
         // Le code de retour n'est visible que par l'expéditeur (qui le communique au voyageur).
         String returnCode = (callerId != null && callerId.equals(bid.getSenderId()))
                 ? bid.getReturnCode() : null;
+        // Le numéro de suivi sert au voyageur à identifier le colis à la remise
+        // (« QR illisible ? Saisir le numéro ») : c'est l'expéditeur qui le lui donne.
+        // Le voyageur ne le reçoit qu'une fois le colis pris en charge ; le jeton du
+        // lien de suivi public reste à l'expéditeur seul.
+        boolean callerIsSender = callerId != null && callerId.equals(bid.getSenderId());
+        String trackingNumber = (callerIsSender
+                || TRACKING_NUMBER_VISIBLE_TO_TRAVELER_STATUSES.contains(bid.getStatus()))
+                ? bid.getTrackingNumber() : null;
+        String trackingToken = callerIsSender ? bid.getTrackingToken() : null;
 
         UserEntity traveler = (announcement != null)
                 ? userRepository.findById(announcement.getTravelerId()).orElse(null)
@@ -1553,8 +1573,8 @@ public class BidService {
                 pricePerKg,
                 pricePerKgSenderEur,
                 transportMode,
-                bid.getTrackingNumber(),
-                bid.getTrackingToken(),
+                trackingNumber,
+                trackingToken,
                 confirmationCode,
                 bid.isConfirmationCodePublicEnabled(),
                 travelerId,

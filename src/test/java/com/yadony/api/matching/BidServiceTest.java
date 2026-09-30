@@ -2653,6 +2653,66 @@ class BidServiceTest {
     }
 
     @Test
+    @DisplayName("expéditeur : numéro et jeton de suivi visibles dès l'acceptation")
+    void getBidById_callerIsSender_seesTrackingNumberAndToken() {
+        UserEntity sender = buildSender();
+        BidEntity bid = buildBid();
+        bid.setStatus(BidStatus.ACCEPTED);
+        bid.setTrackingNumber("DON-ABCD1234");
+        bid.setTrackingToken("tok-123");
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(buildAnnouncement()));
+        when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
+        when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+
+        BidResponse result = bidService.getBidById(BID_ID, SENDER_UID);
+
+        assertThat(result.trackingNumber()).isEqualTo("DON-ABCD1234");
+        assertThat(result.trackingToken()).isEqualTo("tok-123");
+    }
+
+    /**
+     * Feedback FLUTTER-4R : le numéro de suivi est ce que l'expéditeur communique
+     * au voyageur à la remise. Le servir au voyageur avant la prise en charge lui
+     * permettait de valider la remise sans l'expéditeur.
+     */
+    @Test
+    @DisplayName("voyageur : numéro et jeton de suivi masqués avant la remise")
+    void getBidById_callerIsTraveler_beforeHandover_hidesTrackingNumber() {
+        BidEntity bid = buildBid();
+        bid.setStatus(BidStatus.ACCEPTED);
+        bid.setTrackingNumber("DON-ABCD1234");
+        bid.setTrackingToken("tok-123");
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(buildAnnouncement()));
+        when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(buildTraveler()));
+        when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(buildSender()));
+
+        BidResponse result = bidService.getBidById(BID_ID, TRAVELER_UID);
+
+        assertThat(result.trackingNumber()).isNull();
+        assertThat(result.trackingToken()).isNull();
+    }
+
+    @Test
+    @DisplayName("voyageur : numéro visible une fois le colis pris en charge, jeton toujours masqué")
+    void getBidById_callerIsTraveler_afterHandover_showsTrackingNumber() {
+        BidEntity bid = buildBid();
+        bid.setStatus(BidStatus.HANDED_OVER);
+        bid.setTrackingNumber("DON-ABCD1234");
+        bid.setTrackingToken("tok-123");
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(buildAnnouncement()));
+        when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(buildTraveler()));
+        when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(buildSender()));
+
+        BidResponse result = bidService.getBidById(BID_ID, TRAVELER_UID);
+
+        assertThat(result.trackingNumber()).isEqualTo("DON-ABCD1234");
+        assertThat(result.trackingToken()).isNull();
+    }
+
+    @Test
     @DisplayName("getBidById expose la devise du bid, pas toujours EUR")
     void getBidById_exposesBidCurrency() {
         UserEntity sender = buildSender();
