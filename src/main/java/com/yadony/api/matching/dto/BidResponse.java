@@ -92,5 +92,9 @@ public record BidResponse(
         String arrivalInstructions,
         /** Dernier report du trajet (vol annulé, voyage repoussé) et la réponse attendue de
          * l'expéditeur. Null si le trajet n'a jamais été reporté. */
-        TripRescheduleInfo reschedule
+        TripRescheduleInfo reschedule,
+        /** Réponse du destinataire dont le compte est rattaché au colis : PENDING,
+         * CONFIRMED ou DECLINED. Servie à l'expéditeur seul ; null sans lien ou pour
+         * le voyageur. */
+        String recipientAppStatus
 ) {}

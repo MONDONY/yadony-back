@@ -59,6 +59,7 @@ class TrackingServiceTest {
     @Mock org.springframework.context.ApplicationEventPublisher eventPublisher;
     @Mock StorageService storageService;
     @Mock NotificationDispatcher notificationDispatcher;
+    @Mock com.yadony.api.matching.reception.BidRecipientLinkRepository recipientLinkRepository;
 
     TrackingService service;
 
@@ -73,7 +74,7 @@ class TrackingServiceTest {
                 bidRepository, paymentRepository, userRepository,
                 announcementRepository, trackingEventRepository,
                 auditService, eventPublisher, storageService, notificationDispatcher,
-                TestMessages.resolver());
+                TestMessages.resolver(), recipientLinkRepository);
         ReflectionTestUtils.setField(service, "appBaseUrl", "https://yadony.app");
         lenient().when(notificationDispatcher.messagesFor(any())).thenReturn(TestMessages.fr());
     }
@@ -1233,6 +1234,37 @@ class TrackingServiceTest {
         service.processScan(req, "uid-traveler");
 
         verify(notificationDispatcher).notifyUser(eq(senderId), contains("livraison"), any(), argThat(d -> "CONFIRMATION_CODE_READY".equals(d.get("type"))));
+        // Le destinataire qui suit le colis dans l'app est prévenu par événement.
+        verify(eventPublisher).publishEvent(new com.yadony.api.tracking.events.ParcelDepartedEvent(bidId));
+    }
+
+    // ── getEvents : destinataire rattaché (lot 2) ─────────────────────────────
+
+    @Test
+    void getEvents_confirmedRecipientCanRead() {
+        BidEntity bid = buildBid(BidStatus.HANDED_OVER, "qt");
+        UUID recipientId = UUID.randomUUID();
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(userRepository.findByFirebaseUid("uid-recipient")).thenReturn(Optional.of(buildUser(recipientId, "uid-recipient")));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(buildAnnouncement()));
+        when(recipientLinkRepository.existsByBidIdAndRecipientUserIdAndStatus(bidId, recipientId,
+                com.yadony.api.matching.reception.ReceptionLinkStatus.CONFIRMED)).thenReturn(true);
+        when(trackingEventRepository.findByBidIdOrderByScannedAtAsc(bidId)).thenReturn(List.of());
+
+        assertThat(service.getEvents(bidId, "uid-recipient")).isEmpty();
+    }
+
+    @Test
+    void getEvents_pendingRecipientIsForbidden() {
+        BidEntity bid = buildBid(BidStatus.HANDED_OVER, "qt");
+        UUID recipientId = UUID.randomUUID();
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(userRepository.findByFirebaseUid("uid-recipient")).thenReturn(Optional.of(buildUser(recipientId, "uid-recipient")));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(buildAnnouncement()));
+        when(recipientLinkRepository.existsByBidIdAndRecipientUserIdAndStatus(bidId, recipientId,
+                com.yadony.api.matching.reception.ReceptionLinkStatus.CONFIRMED)).thenReturn(false);
+
+        assertYadonyError(() -> service.getEvents(bidId, "uid-recipient"), "forbidden");
     }
 
     // ── getEvents additional branches ─────────────────────────────────────────

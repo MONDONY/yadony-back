@@ -161,6 +161,16 @@ class NotificationTextsTest {
                 "Votre vérification d'identité doit être refaite avant votre prochain envoi vers Dakar"));
         map.put("supportStarted court", NotificationTexts.supportStarted(m, "Compte"));
         map.put("supportStarted sans sujet", NotificationTexts.supportStarted(m, "  "));
+        map.put("recipientParcelIncoming", NotificationTexts.recipientParcelIncoming(m, NOM, DEPART, ARRIVEE));
+        map.put("recipientParcelIncoming sans trajet", NotificationTexts.recipientParcelIncoming(m, NOM, null, null));
+        map.put("recipientParcelIncoming sans prénom", NotificationTexts.recipientParcelIncoming(m, " ", DEPART, ARRIVEE));
+        map.put("recipientParcelDeparted", NotificationTexts.recipientParcelDeparted(m));
+        map.put("recipientParcelArrived", NotificationTexts.recipientParcelArrived(m, ARRIVEE));
+        map.put("recipientParcelArrived sans ville", NotificationTexts.recipientParcelArrived(m, null));
+        map.put("recipientParcelDelivered", NotificationTexts.recipientParcelDelivered(m));
+        map.put("recipientConfirmed", NotificationTexts.recipientConfirmed(m, NOM));
+        map.put("recipientConfirmed sans prénom", NotificationTexts.recipientConfirmed(m, null));
+        map.put("recipientDeclined", NotificationTexts.recipientDeclined(m));
         return map;
     }
 
@@ -289,6 +299,23 @@ class NotificationTextsTest {
         var two = NotificationTexts.corridorAlertDigest(en, true, 2, "Paris", "Dakar");
         assertThat(two.title()).isEqualTo("2 trips for your alert");
         assertThat(two.body()).isEqualTo("Paris to Dakar: 2 trips match.");
+    }
+
+    @Test
+    void recipientTexts_bothLanguages() {
+        var fr = TestMessages.fr();
+        var en = TestMessages.en();
+        assertThat(NotificationTexts.recipientParcelIncoming(fr, "Awa", "Paris", "Dakar").body())
+                .isEqualTo("Awa : colis Paris vers Dakar.");
+        assertThat(NotificationTexts.recipientParcelIncoming(en, "Awa", "Paris", "Dakar").body())
+                .isEqualTo("Awa: parcel from Paris to Dakar.");
+        assertThat(NotificationTexts.recipientParcelIncoming(fr, null, "Paris", "Dakar").body())
+                .startsWith("Un expéditeur");
+        assertThat(NotificationTexts.recipientParcelArrived(en, "Dakar").body())
+                .isEqualTo("It is in Dakar. Have your pickup code ready.");
+        assertThat(NotificationTexts.recipientConfirmed(fr, null).body()).startsWith("Le destinataire suit");
+        assertThat(NotificationTexts.recipientConfirmed(en, "Fatou").body()).startsWith("Fatou tracks");
+        assertThat(NotificationTexts.recipientDeclined(en).title()).isEqualTo("Check the recipient");
     }
 
     @Test

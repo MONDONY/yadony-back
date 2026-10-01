@@ -93,6 +93,7 @@ public class BidService {
     private final MessagesResolver messagesResolver;
 
     private final TripRescheduleRepository rescheduleRepository;
+    private final com.yadony.api.matching.reception.BidRecipientLinkRepository recipientLinkRepository;
 
     public BidService(BidRepository bidRepository, AnnouncementRepository announcementRepository,
                       UserRepository userRepository, AuditService auditService,
@@ -110,7 +111,8 @@ public class BidService {
                       PawapayProperties pawapayProperties,
                       PaymentService paymentService,
                       MessagesResolver messagesResolver,
-                      TripRescheduleRepository rescheduleRepository) {
+                      TripRescheduleRepository rescheduleRepository,
+                      com.yadony.api.matching.reception.BidRecipientLinkRepository recipientLinkRepository) {
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.userRepository = userRepository;
@@ -131,6 +133,7 @@ public class BidService {
         this.paymentService = paymentService;
         this.messagesResolver = messagesResolver;
         this.rescheduleRepository = rescheduleRepository;
+        this.recipientLinkRepository = recipientLinkRepository;
     }
 
     /**
@@ -1623,8 +1626,16 @@ public class BidService {
                 tripCancellationRematchStatus,
                 bid.getCurrency(),
                 arrivalInstructions,
-                rescheduleInfo(bid, announcement)
+                rescheduleInfo(bid, announcement),
+                callerIsSender ? recipientAppStatus(bid) : null
         );
+    }
+
+    /** Réponse du destinataire rattaché au colis, null s'il n'a pas de compte lié. */
+    private String recipientAppStatus(BidEntity bid) {
+        return recipientLinkRepository.findByBidId(bid.getId())
+                .map(link -> link.getStatus().name())
+                .orElse(null);
     }
 
     /**

@@ -43,6 +43,21 @@ class NotificationDeeplinkTest {
         }
     }
 
+    /** Le destinataire suit son colis depuis ses réceptions ; l'expéditeur reste sur le bid. */
+    @Test
+    void recipientTypesOpenTheReception() {
+        for (String type : new String[]{"RECIPIENT_PARCEL_INCOMING", "RECIPIENT_PARCEL_DEPARTED",
+                "RECIPIENT_PARCEL_ARRIVED", "RECIPIENT_PARCEL_DELIVERED"}) {
+            assertThat(NotificationDeeplink.of(type, Map.of("bidId", bidId)))
+                    .as(type).contains("yadony://receptions/" + bidId);
+        }
+        assertThat(NotificationDeeplink.of("RECIPIENT_CONFIRMED", Map.of("bidId", bidId)))
+                .contains("yadony://bids/" + bidId);
+        assertThat(NotificationDeeplink.of("RECIPIENT_DECLINED", Map.of("bidId", bidId)))
+                .contains("yadony://bids/" + bidId);
+        assertThat(NotificationCategory.fromType("RECIPIENT_PARCEL_INCOMING")).isEqualTo(NotificationCategory.COLIS);
+    }
+
     @Test
     void newOfferOpensTheRequestInReceivedRequests() {
         assertThat(NotificationDeeplink.of("BID_CREATED", Map.of("announcementId", annId, "bidId", bidId)))

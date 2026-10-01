@@ -45,6 +45,7 @@ import static org.mockito.Mockito.when;
 class BidContactRevealTest {
 
     @Mock private BidRepository bidRepository;
+    @Mock private com.yadony.api.matching.reception.BidRecipientLinkRepository recipientLinkRepository;
     @Mock private AnnouncementRepository announcementRepository;
     @Mock private UserRepository userRepository;
     @Mock private AuditService auditService;
