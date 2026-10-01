@@ -225,7 +225,10 @@ public class TripRecurrenceService {
                 handoverDeadline,
                 Boolean.FALSE,
                 rec.isNegotiable(),
-                rec.getCurrency()
+                rec.getCurrency(),
+                // Vol de nuit mémorisé dans la récurrence : la date d'arrivée suit chaque
+                // occurrence. Nulle le même jour, comme un trajet saisi à la main.
+                rec.getArrivalDayOffset() > 0 ? date.plusDays(rec.getArrivalDayOffset()) : null
         );
     }
 
@@ -251,6 +254,7 @@ public class TripRecurrenceService {
         e.setDeliveryLng(r.deliveryAddress().lng());
         e.setDepartureTime(r.departureTime());
         e.setArrivalTime(r.arrivalTime());
+        e.setArrivalDayOffset(r.arrivalDayOffset() == null ? 0 : r.arrivalDayOffset());
         e.setCashAccepted(r.cashAccepted());
         e.setWeekdays(r.weekdays());
         int publicationLeadDays = r.publicationLeadDays() != null
@@ -298,6 +302,7 @@ public class TripRecurrenceService {
                 e.getDepartureTime(), e.getArrivalTime(), e.isCashAccepted(),
                 e.getWeekdays(), e.getHorizonDays(), e.getStartDate(), e.getEndDate(),
                 e.getWeekInterval(), e.getPublicationLeadDays(), e.getHandoverLeadDays(), e.isActive(),
+                e.getArrivalDayOffset(),
                 e.getLastGeneratedDate(), e.getLastPublicationErrorCode(),
                 e.getLastPublicationErrorMessage(), e.getLastPublicationErrorAt(), status,
                 nextOccurrence.map(TripRecurrenceCalendar.OccurrenceDate::departureDate).orElse(null),

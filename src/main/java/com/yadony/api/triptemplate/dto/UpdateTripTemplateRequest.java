@@ -44,5 +44,26 @@ public record UpdateTripTemplateRequest(
     @JsonFormat(pattern = "HH:mm") LocalTime departureTime,
     @Min(0) @Max(7) Integer handoverLeadDays,
     @Pattern(regexp = "[A-Za-z]{2}") String departureCountryCode,
-    @Pattern(regexp = "[A-Za-z]{2}") String arrivalCountryCode
-) implements TripTemplatePayload {}
+    @Pattern(regexp = "[A-Za-z]{2}") String arrivalCountryCode,
+    // Jour d'arrivée relatif au départ (FLUTTER-4E). Absent = même jour.
+    @Min(0) @Max(3) Integer arrivalDayOffset
+) implements TripTemplatePayload {
+
+    /** Arité historique (sans jour d'arrivée), conservée pour les appels existants. */
+    public UpdateTripTemplateRequest(String label, String emoji, String departureCity, Double departureLat,
+                                     Double departureLng, String arrivalCity, Double arrivalLat, Double arrivalLng,
+                                     String transportMode, String capacityUnit, Integer availableKg,
+                                     Double pricePerKg, List<String> acceptedCategories, boolean cashAccepted,
+                                     LocalTime arrivalTime, String currency, String pricingMode,
+                                     Set<PaymentMethod> acceptedPaymentMethods, Boolean negotiable,
+                                     List<String> refusedTypes, String description, AddressDto pickupAddress,
+                                     AddressDto deliveryAddress, LocalTime departureTime,
+                                     Integer handoverLeadDays, String departureCountryCode,
+                                     String arrivalCountryCode) {
+        this(label, emoji, departureCity, departureLat, departureLng, arrivalCity, arrivalLat, arrivalLng,
+                transportMode, capacityUnit, availableKg, pricePerKg, acceptedCategories, cashAccepted,
+                arrivalTime, currency, pricingMode, acceptedPaymentMethods, negotiable, refusedTypes,
+                description, pickupAddress, deliveryAddress, departureTime, handoverLeadDays,
+                departureCountryCode, arrivalCountryCode, null);
+    }
+}

@@ -96,6 +96,33 @@ class TripRecurrenceServiceTest {
         assertThat(cap.getValue().acceptedPaymentMethods()).containsExactly(PaymentMethod.CASH);
     }
 
+    // FLUTTER-4E : une récurrence de vol de nuit publie chaque occurrence avec sa
+    // date d'arrivée au lendemain ; le même jour, la date reste absente.
+    @Test
+    void generate_overnightRecurrence_setsArrivalDateOnEachOccurrence() {
+        mockUser();
+        TripRecurrenceEntity rec = entity("1111111", 0, null);
+        rec.setArrivalDayOffset(1);
+
+        service.generateForRecurrence(rec);
+
+        ArgumentCaptor<AnnouncementRequest> cap = ArgumentCaptor.forClass(AnnouncementRequest.class);
+        verify(announcementService).createRecurringAnnouncement(eq("firebase-uid"), cap.capture(), eq(rec.getId()));
+        assertThat(cap.getValue().arrivalDate()).isEqualTo(cap.getValue().departureDate().plusDays(1));
+    }
+
+    @Test
+    void generate_sameDayRecurrence_leavesArrivalDateEmpty() {
+        mockUser();
+        TripRecurrenceEntity rec = entity("1111111", 0, null);
+
+        service.generateForRecurrence(rec);
+
+        ArgumentCaptor<AnnouncementRequest> cap = ArgumentCaptor.forClass(AnnouncementRequest.class);
+        verify(announcementService).createRecurringAnnouncement(eq("firebase-uid"), cap.capture(), eq(rec.getId()));
+        assertThat(cap.getValue().arrivalDate()).isNull();
+    }
+
     @Test
     void generate_travelerWithoutConnect_fallsBackToCash() {
         mockUser(false);
@@ -309,6 +336,23 @@ class TripRecurrenceServiceTest {
         verify(repository).save(captor.capture());
         assertThat(captor.getValue().getAcceptedCategories()).isEqualTo("Téléphone & électronique,Vêtements & tissus");
         assertThat(dto.acceptedCategories()).containsExactly("Téléphone & électronique", "Vêtements & tissus");
+    }
+
+    @Test
+    void create_storesArrivalDayOffset() {
+        var base = request("1111111", 0, false);
+        var req = new TripRecurrenceRequest(base.sourceTemplateId(), base.departureCity(), base.arrivalCity(),
+                base.transportMode(), base.capacityUnit(), base.availableKg(), base.pricePerKg(),
+                base.acceptedCategories(), base.refusedCategories(), base.description(), base.pickupAddress(),
+                base.deliveryAddress(), base.departureTime(), base.arrivalTime(), base.cashAccepted(),
+                base.weekdays(), base.horizonDays(), base.startDate(), base.endDate(), base.weekInterval(),
+                base.publicationLeadDays(), base.handoverLeadDays(), base.pricingMode(), base.negotiable(),
+                base.currency(), false, 2);
+
+        var dto = service.create(userId, req);
+
+        assertThat(dto.arrivalDayOffset()).isEqualTo(2);
+        assertThat(service.create(userId, base).arrivalDayOffset()).isZero();
     }
 
     @Test
