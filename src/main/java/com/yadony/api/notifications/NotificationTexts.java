@@ -727,6 +727,18 @@ public final class NotificationTexts {
                 m.get("notification.recipient-cancelled.body"));
     }
 
+    /** À l'ancien destinataire : l'expéditeur a changé de destinataire, le colis n'est plus pour lui. */
+    public static NotificationText recipientParcelReassigned(Messages m) {
+        return new NotificationText(m.get("notification.recipient-reassigned.title"),
+                m.get("notification.recipient-reassigned.body"));
+    }
+
+    /** Au voyageur : l'expéditeur a changé le destinataire d'un colis. */
+    public static NotificationText recipientChanged(Messages m) {
+        return new NotificationText(m.get("notification.recipient-changed.title"),
+                m.get("notification.recipient-changed.body"));
+    }
+
     /** Au destinataire : le voyageur a reporté le trajet de son colis. */
     public static NotificationText recipientParcelRescheduled(Messages m) {
         return new NotificationText(m.get("notification.recipient-rescheduled.title"),

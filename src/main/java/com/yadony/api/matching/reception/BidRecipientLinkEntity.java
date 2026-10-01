@@ -13,14 +13,15 @@ import java.util.UUID;
 
 /**
  * Rattachement d'un colis au compte Yadony de son destinataire, trouvé par le numéro
- * saisi par l'expéditeur ({@code bids.recipient_phone}). Un seul lien par colis.
+ * saisi par l'expéditeur ({@code bids.recipient_phone}). Un seul lien actif par colis
+ * (index unique partiel V282) : changer de destinataire soft-delete l'ancien.
  */
 @Entity
 @Table(name = "bid_recipient_links")
 @Where(clause = "deleted_at IS NULL")
 public class BidRecipientLinkEntity extends BaseEntity {
 
-    @Column(name = "bid_id", nullable = false, unique = true)
+    @Column(name = "bid_id", nullable = false)
     private UUID bidId;
 
     @Column(name = "recipient_user_id", nullable = false)

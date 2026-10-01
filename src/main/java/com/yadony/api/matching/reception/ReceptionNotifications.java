@@ -13,4 +13,8 @@ public final class ReceptionNotifications {
     public static final String RESCHEDULED = "RECIPIENT_PARCEL_RESCHEDULED";
     public static final String CONFIRMED = "RECIPIENT_CONFIRMED";
     public static final String DECLINED = "RECIPIENT_DECLINED";
+    /** À l'ancien destinataire : l'expéditeur a changé de destinataire. */
+    public static final String REASSIGNED = "RECIPIENT_PARCEL_REASSIGNED";
+    /** Au voyageur : le colis a un nouveau destinataire. */
+    public static final String RECIPIENT_CHANGED = "RECIPIENT_CHANGED";
 }

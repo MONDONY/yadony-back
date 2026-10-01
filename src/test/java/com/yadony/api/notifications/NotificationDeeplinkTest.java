@@ -60,6 +60,19 @@ class NotificationDeeplinkTest {
         assertThat(NotificationCategory.fromType("RECIPIENT_PARCEL_INCOMING")).isEqualTo(NotificationCategory.COLIS);
     }
 
+    /** Changement de destinataire : l'ancien retombe sur son Suivi, le voyageur ouvre le colis. */
+    @Test
+    void recipientChangeTypes() {
+        assertThat(NotificationDeeplink.of("RECIPIENT_PARCEL_REASSIGNED", Map.of("bidId", bidId)))
+                .contains("yadony://tracking");
+        assertThat(NotificationDeeplink.of("RECIPIENT_PARCEL_REASSIGNED", Map.of()))
+                .contains("yadony://tracking");
+        assertThat(NotificationDeeplink.of("RECIPIENT_CHANGED", Map.of("bidId", bidId)))
+                .contains("yadony://bids/" + bidId);
+        assertThat(NotificationCategory.fromType("RECIPIENT_PARCEL_REASSIGNED")).isEqualTo(NotificationCategory.COLIS);
+        assertThat(NotificationCategory.fromType("RECIPIENT_CHANGED")).isEqualTo(NotificationCategory.COLIS);
+    }
+
     @Test
     void newOfferOpensTheRequestInReceivedRequests() {
         assertThat(NotificationDeeplink.of("BID_CREATED", Map.of("announcementId", annId, "bidId", bidId)))
