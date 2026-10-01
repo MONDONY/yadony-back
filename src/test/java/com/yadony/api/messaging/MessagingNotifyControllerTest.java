@@ -150,4 +150,33 @@ class MessagingNotifyControllerTest {
         field.setAccessible(true);
         field.set(target, value);
     }
+
+    // ── Lot 3C : conversation voyageur ↔ destinataire ──────────────────────
+
+    @Test
+    void notify_recipientConversation_pushesTheOtherParticipant() {
+        UUID recipientId = UUID.randomUUID();
+        UUID travelerId = UUID.randomUUID();
+        var conv = ConversationEntity.forRecipient(UUID.randomUUID(), recipientId, travelerId, "rconv_bid1");
+        when(conversationRepository.findByFirestoreConversationId("rconv_bid1")).thenReturn(Optional.of(conv));
+
+        controller.notify("test-secret", new NotifyMessageRequest("rconv_bid1", "uid-traveler", "Bonjour"));
+
+        verify(notificationDispatcher).sendMessageNotification(
+            eq(recipientId), eq(travelerId), eq("uid-traveler"), eq("Bonjour"), eq("rconv_bid1"));
+    }
+
+    @Test
+    void notify_closedRecipientConversation_noPushAndNoUnreadCredit() {
+        var conv = ConversationEntity.forRecipient(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "rconv_bid1");
+        conv.close(java.time.LocalDateTime.now());
+        when(conversationRepository.findByFirestoreConversationId("rconv_bid1")).thenReturn(Optional.of(conv));
+
+        var response = controller.notify("test-secret",
+            new NotifyMessageRequest("rconv_bid1", "uid-traveler", "Bonjour"));
+
+        assert response.getBody().recipientFirebaseUid() == null;
+        verifyNoInteractions(notificationDispatcher);
+        verify(conversationService, never()).ensureFirestoreDocument(any());
+    }
 }

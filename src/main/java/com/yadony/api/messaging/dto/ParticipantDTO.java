@@ -10,7 +10,7 @@ public record ParticipantDTO(
          * {@code GET /bids/{bidId}/contact} — il ne voyage pas dans les conversations.
          */
         boolean phoneAvailable,
-        /** Rôle relatif à la conversation : "Voyageur" | "Expéditeur". */
+        /** Rôle relatif à la conversation : "Voyageur" | "Expéditeur" | "Destinataire". */
         String role,
         boolean kycVerified
 ) {}

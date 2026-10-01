@@ -219,6 +219,27 @@ public class FirestoreService {
         }
     }
 
+    /**
+     * Ferme une conversation destinataire dans Firestore : {@code senderId} (le destinataire)
+     * passe à {@code null}, son ancien UID est conservé dans {@code revokedRecipientId}. Les
+     * règles n'autorisant que {@code senderId}/{@code travelerId}, l'ancien destinataire perd
+     * tout accès sans que les règles ni la Cloud Function ne changent.
+     */
+    public void revokeRecipient(String conversationId, String revokedRecipientUid) {
+        if (firestore == null) {
+            log.warn("Firestore disabled — skipping revokeRecipient");
+            return;
+        }
+        try {
+            firestore.collection("conversations").document(conversationId)
+                     .update("senderId", null,
+                             "revokedRecipientId", revokedRecipientUid,
+                             "closedAt", Instant.now().toString()).get();
+        } catch (Exception e) {
+            throw new RuntimeException("Firestore revokeRecipient failed", e);
+        }
+    }
+
     public void markConversationDeleted(String conversationId) {
         if (firestore == null) {
             log.warn("Firestore disabled — skipping markConversationDeleted");

@@ -7,13 +7,29 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.UUID;
 
+/**
+ * Conversation entre deux participants, adossée à un bid.
+ *
+ * <p><b>Participants selon le type</b> ({@link ConversationKind}) :
+ * <ul>
+ *   <li>{@code SENDER_TRAVELER} : {@code senderId} = expéditeur du bid, {@code travelerId} = voyageur ;</li>
+ *   <li>{@code RECIPIENT_TRAVELER} : {@code senderId} = <b>destinataire</b> rattaché au colis
+ *       (lien CONFIRMED), {@code travelerId} = voyageur.</li>
+ * </ul>
+ * Le nom de colonne est historique (et partagé avec le champ Firestore {@code senderId}, lu par
+ * la Cloud Function et les règles). Tout code qui a besoin de « l'expéditeur du bid » doit le lire
+ * sur le bid, jamais ici ; {@link #participantAId()} nomme ce que la colonne porte vraiment.
+ *
+ * <p>L'unicité est par {@code (bid_id, kind)} parmi les conversations non fermées (index V283).
+ */
 @Entity
 @Table(name = "conversations")
 public class ConversationEntity extends BaseEntity {
 
-    @Column(name = "bid_id", nullable = false, unique = true)
+    @Column(name = "bid_id", nullable = false)
     private UUID bidId;
 
+    /** Participant A : expéditeur (SENDER_TRAVELER) ou destinataire (RECIPIENT_TRAVELER). */
     @Column(name = "sender_id", nullable = false)
     private UUID senderId;
 
@@ -35,6 +51,17 @@ public class ConversationEntity extends BaseEntity {
     @Column(name = "traveler_archived_at")
     private LocalDateTime travelerArchivedAt;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "kind", nullable = false, length = 20)
+    private ConversationKind kind = ConversationKind.SENDER_TRAVELER;
+
+    /**
+     * Fermeture d'une conversation destinataire (changement de destinataire) : le participant A
+     * n'y a plus accès, le voyageur la garde en lecture seule. Toujours nul pour SENDER_TRAVELER.
+     */
+    @Column(name = "closed_at")
+    private LocalDateTime closedAt;
+
     public ConversationEntity() {}
 
     public ConversationEntity(UUID bidId, UUID senderId, UUID travelerId, String firestoreConversationId) {
@@ -42,6 +69,37 @@ public class ConversationEntity extends BaseEntity {
         this.senderId = senderId;
         this.travelerId = travelerId;
         this.firestoreConversationId = firestoreConversationId;
+    }
+
+    /** Conversation voyageur ↔ destinataire : {@code sender_id} porte le destinataire. */
+    public static ConversationEntity forRecipient(UUID bidId, UUID recipientId, UUID travelerId,
+                                                  String firestoreConversationId) {
+        ConversationEntity c = new ConversationEntity(bidId, recipientId, travelerId, firestoreConversationId);
+        c.kind = ConversationKind.RECIPIENT_TRAVELER;
+        return c;
+    }
+
+    public boolean isRecipientConversation() {
+        return kind == ConversationKind.RECIPIENT_TRAVELER;
+    }
+
+    /**
+     * Participant A, celui que porte la colonne {@code sender_id} : l'expéditeur pour
+     * SENDER_TRAVELER, le destinataire pour RECIPIENT_TRAVELER.
+     */
+    public UUID participantAId() {
+        return senderId;
+    }
+
+    public boolean isClosed() {
+        return closedAt != null;
+    }
+
+    /** Ferme la conversation (idempotent). */
+    public void close(LocalDateTime at) {
+        if (closedAt == null) {
+            closedAt = at;
+        }
     }
 
     public void deleteForUser(UUID userId) {
@@ -89,6 +147,8 @@ public class ConversationEntity extends BaseEntity {
     }
 
     public boolean isReadOnlyFor(UUID userId) {
+        // Conversation destinataire fermée : plus personne n'y écrit.
+        if (closedAt != null && (userId.equals(senderId) || userId.equals(travelerId))) return true;
         // Read-only when the OTHER party deleted, but current user hasn't
         if (userId.equals(senderId)) return travelerDeletedAt != null && senderDeletedAt == null;
         if (userId.equals(travelerId)) return senderDeletedAt != null && travelerDeletedAt == null;
@@ -96,6 +156,10 @@ public class ConversationEntity extends BaseEntity {
     }
 
     public UUID getBidId() { return bidId; }
+    /**
+     * Valeur brute de {@code sender_id}. ATTENTION : pour RECIPIENT_TRAVELER, c'est le
+     * destinataire, pas l'expéditeur du bid. Préférer {@link #participantAId()}.
+     */
     public UUID getSenderId() { return senderId; }
     public UUID getTravelerId() { return travelerId; }
     public String getFirestoreConversationId() { return firestoreConversationId; }
@@ -103,4 +167,6 @@ public class ConversationEntity extends BaseEntity {
     public LocalDateTime getTravelerDeletedAt() { return travelerDeletedAt; }
     public LocalDateTime getSenderArchivedAt() { return senderArchivedAt; }
     public LocalDateTime getTravelerArchivedAt() { return travelerArchivedAt; }
+    public ConversationKind getKind() { return kind; }
+    public LocalDateTime getClosedAt() { return closedAt; }
 }
