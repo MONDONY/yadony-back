@@ -27,6 +27,11 @@ public final class TripRescheduleRules {
 
     private TripRescheduleRules() {}
 
+    /** Reports encore possibles, affichés au voyageur avant qu'il n'essaie. */
+    public static int remaining(AnnouncementEntity announcement) {
+        return Math.max(0, MAX_RESCHEDULES - announcement.getRescheduleCount());
+    }
+
     /**
      * Jusqu'à quand l'expéditeur peut se retirer, en heure locale du trajet. Colis
      * accepté : la nouvelle date limite de remise (après, il doit remettre le colis).

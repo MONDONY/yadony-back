@@ -872,7 +872,9 @@ public class AnnouncementService {
                         traveler != null && traveler.hasActiveStripeConnect(),
                         traveler != null && traveler.hasActiveMobileMoney()),
                 // Convertis joints juste en dessous (withConvertedPrices).
-                null, null, null
+                null, null, null,
+                viewerId != null && viewerId.equals(announcement.getTravelerId())
+                        ? TripRescheduleRules.remaining(announcement) : null
         );
 
         // Même repère de lecture que le fil (Tâche 10) : équivalents « environ » dans
@@ -1103,7 +1105,8 @@ public class AnnouncementService {
                         user.hasActiveMobileMoney()),
                 // Retour d'écriture : le lecteur est le propriétaire, qui lit dans la
                 // devise de sa propre annonce — rien à convertir.
-                null, null, null
+                null, null, null,
+                TripRescheduleRules.remaining(saved)
         );
     }
 

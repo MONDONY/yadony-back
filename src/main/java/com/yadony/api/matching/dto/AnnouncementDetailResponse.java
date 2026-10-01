@@ -67,7 +67,11 @@ public record AnnouncementDetailResponse(
         /** Équivalent ESTIMÉ de {@code pricePerKgDisplay} (brut expéditeur), servi à tous. */
         BigDecimal pricePerKgDisplayConverted,
         /** Devise cible des équivalents convertis : celle du lecteur. */
-        String convertedCurrency
+        String convertedCurrency,
+        /** Reports encore possibles pour ce trajet (vol annulé, voyage repoussé), sur
+         *  {@link com.yadony.api.matching.TripRescheduleRules#MAX_RESCHEDULES}. Servi au seul
+         *  voyageur propriétaire ; null (donc absent du JSON) pour tout autre lecteur. */
+        Integer remainingReschedules
 ) {
     /** Copie enrichie des équivalents convertis — même pattern que le fil de recherche. */
     public AnnouncementDetailResponse withConvertedPrices(BigDecimal convertedPricePerKg,
@@ -81,6 +85,7 @@ public record AnnouncementDetailResponse(
                 acceptedContentTypes, refusedTypes, acceptedPaymentMethods, capacityUnit, cashAccepted,
                 createdAt, updatedAt, pricingMode, convertedGridItems, reservedKg, surplusEligible,
                 surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,
-                availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency);
+                availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
+                remainingReschedules);
     }
 }
