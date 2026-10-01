@@ -247,6 +247,43 @@ class ReceptionControllerIntegrationTest {
                 .andExpect(jsonPath("$[?(@.recipientAppStatus == 'CONFIRMED')]", hasSize(1)));
     }
 
+    // Sentry FLUTTER-6J : le destinataire inscrit qui masque son numéro n'est
+    // joignable que par la messagerie de l'app, pas par téléphone.
+    @Test
+    void bidResponse_recipientHidesPhone_travelerGetsNoPhone_senderKeepsIt() throws Exception {
+        recipient.setHidePhoneNumber(true);
+        userRepository.save(recipient);
+        BidEntity confirmed = persistBid(BidStatus.ACCEPTED);
+        BidEntity pending = persistBid(BidStatus.ACCEPTED);
+        link(confirmed, ReceptionLinkStatus.CONFIRMED);
+        link(pending, ReceptionLinkStatus.PENDING);
+
+        mockMvc.perform(get("/bids/{id}", confirmed.getId()).with(authentication(as(traveler))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recipientPhone").doesNotExist())
+                .andExpect(jsonPath("$.recipientPhoneHidden").value(true));
+        mockMvc.perform(get("/bids/{id}", confirmed.getId()).with(authentication(as(sender))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recipientPhone").value(confirmed.getRecipientPhone()))
+                .andExpect(jsonPath("$.recipientPhoneHidden").value(false));
+        // Pas encore confirmé : pas de messagerie destinataire, le téléphone reste.
+        mockMvc.perform(get("/bids/{id}", pending.getId()).with(authentication(as(traveler))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recipientPhone").value(pending.getRecipientPhone()))
+                .andExpect(jsonPath("$.recipientPhoneHidden").value(false));
+    }
+
+    @Test
+    void bidResponse_recipientKeepsPhoneVisible_travelerGetsPhone() throws Exception {
+        BidEntity confirmed = persistBid(BidStatus.ACCEPTED);
+        link(confirmed, ReceptionLinkStatus.CONFIRMED);
+
+        mockMvc.perform(get("/bids/{id}", confirmed.getId()).with(authentication(as(traveler))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recipientPhone").value(confirmed.getRecipientPhone()))
+                .andExpect(jsonPath("$.recipientPhoneHidden").value(false));
+    }
+
     // ── Requête de rattrapage (H2 mode PostgreSQL) ──────────────────────────
 
     @Test
