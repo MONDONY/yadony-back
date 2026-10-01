@@ -68,6 +68,10 @@ public class TripRecurrenceEntity extends BaseEntity {
     @Column(name = "arrival_time")
     private LocalTime arrivalTime;
 
+    /** Jour d'arrivée relatif au départ (0 = même jour, 1 = vol de nuit). Plafond 3, comme l'annonce. */
+    @Column(name = "arrival_day_offset", nullable = false)
+    private int arrivalDayOffset = 0;
+
     @Column(name = "cash_accepted", nullable = false)
     private boolean cashAccepted = false;
 
@@ -177,6 +181,8 @@ public class TripRecurrenceEntity extends BaseEntity {
     public void setPublicationLeadDays(Integer publicationLeadDays) { this.publicationLeadDays = publicationLeadDays; }
     public Integer getHandoverLeadDays() { return handoverLeadDays; }
     public void setHandoverLeadDays(Integer handoverLeadDays) { this.handoverLeadDays = handoverLeadDays; }
+    public int getArrivalDayOffset() { return arrivalDayOffset; }
+    public void setArrivalDayOffset(int arrivalDayOffset) { this.arrivalDayOffset = arrivalDayOffset; }
     public PricingMode getPricingMode() { return pricingMode; }
     public void setPricingMode(PricingMode pricingMode) { this.pricingMode = pricingMode; }
     public boolean isNegotiable() { return negotiable; }

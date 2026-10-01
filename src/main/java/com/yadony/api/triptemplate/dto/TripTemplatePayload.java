@@ -39,4 +39,6 @@ public interface TripTemplatePayload {
     Integer handoverLeadDays();
     String departureCountryCode();
     String arrivalCountryCode();
+    /** Nul pour un client ancien : traité comme 0 (même jour). */
+    Integer arrivalDayOffset();
 }

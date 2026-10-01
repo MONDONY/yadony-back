@@ -36,6 +36,7 @@ public record TripRecurrenceDto(
         Integer publicationLeadDays,
         Integer handoverLeadDays,
         boolean active,
+        int arrivalDayOffset,
         LocalDate lastGeneratedDate,
         String lastPublicationErrorCode,
         String lastPublicationErrorMessage,

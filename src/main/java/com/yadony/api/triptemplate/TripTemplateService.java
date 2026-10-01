@@ -124,6 +124,7 @@ public class TripTemplateService {
         entity.setAcceptedCategories(joinCategories(ContentCategoryNormalizer.normalizeList(r.acceptedCategories())));
         entity.setRefusedTypes(joinCategories(ContentCategoryNormalizer.normalizeList(r.refusedTypes())));
         entity.setArrivalTime(r.arrivalTime());
+        entity.setArrivalDayOffset(r.arrivalDayOffset() == null ? 0 : r.arrivalDayOffset());
         entity.setCurrency(r.currency() == null || r.currency().isBlank()
                 ? null : r.currency().trim().toUpperCase(Locale.ROOT));
         entity.setPricingMode(pricingMode);
@@ -305,7 +306,7 @@ public class TripTemplateService {
                 addressOrNull(e.getPickupAddressLabel(), e.getPickupLat(), e.getPickupLng()),
                 addressOrNull(e.getDeliveryAddressLabel(), e.getDeliveryLat(), e.getDeliveryLng()),
                 e.getDepartureTime(), e.getHandoverLeadDays(),
-                e.getDepartureCountryCode(), e.getArrivalCountryCode(),
+                e.getDepartureCountryCode(), e.getArrivalCountryCode(), e.getArrivalDayOffset(),
                 e.getCreatedAt(), e.getUpdatedAt());
     }
 }
