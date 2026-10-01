@@ -18,5 +18,21 @@ public record ProfilePublicResponse(
         String contactMode,
         Integer responseDelayHours,
         String bio,
-        List<String> languages
-) {}
+        List<String> languages,
+        /** Numéro de téléphone rattaché au compte (jamais le numéro lui-même). */
+        boolean phoneVerified,
+        /** E-mail rattaché au compte, toujours vérifié par code ou fournisseur. */
+        boolean emailVerified,
+        /** Code ISO2, seulement si l'utilisateur a choisi de l'afficher ; sinon null. */
+        String residenceCountry
+) {
+    public ProfilePublicResponse(String userId, String displayName, String avatarUrl,
+                                 boolean kycVerified, boolean isProAccount, boolean isKiloPro,
+                                 int completedBidsCount, BigDecimal averageRating, int ratingCount,
+                                 String memberSince, List<String> badges, String contactMode,
+                                 Integer responseDelayHours, String bio, List<String> languages) {
+        this(userId, displayName, avatarUrl, kycVerified, isProAccount, isKiloPro,
+                completedBidsCount, averageRating, ratingCount, memberSince, badges, contactMode,
+                responseDelayHours, bio, languages, false, false, null);
+    }
+}

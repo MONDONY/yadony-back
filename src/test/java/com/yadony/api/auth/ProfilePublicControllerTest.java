@@ -122,7 +122,8 @@ class ProfilePublicControllerTest {
                 .andReturn();
 
         String responseBody = result.getResponse().getContentAsString();
-        assertThat(responseBody).doesNotContain("phone");
+        // « phoneVerified » (booléen) est attendu ; jamais le numéro lui-même.
         assertThat(responseBody).doesNotContain("phoneNumber");
+        assertThat(responseBody).doesNotContainPattern("\\+\\d{6,}");
     }
 }

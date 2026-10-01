@@ -29,19 +29,22 @@ public class ProfilePublicService {
     private final StorageService storageService;
     private final BlockVisibility blockVisibility;
     private final MessagesResolver messagesResolver;
+    private final FirebaseContactService firebaseContact;
 
     public ProfilePublicService(UserRepository userRepository,
                                 RatingService ratingService,
                                 UserBusinessPrefsRepository userBusinessPrefsRepository,
                                 StorageService storageService,
                                 BlockVisibility blockVisibility,
-                                MessagesResolver messagesResolver) {
+                                MessagesResolver messagesResolver,
+                                FirebaseContactService firebaseContact) {
         this.userRepository = userRepository;
         this.ratingService = ratingService;
         this.userBusinessPrefsRepository = userBusinessPrefsRepository;
         this.storageService = storageService;
         this.blockVisibility = blockVisibility;
         this.messagesResolver = messagesResolver;
+        this.firebaseContact = firebaseContact;
     }
 
     /**
@@ -71,6 +74,14 @@ public class ProfilePublicService {
         String contactMode = prefs != null ? prefs.getContactMode() : null;
         Integer responseDelayHours = prefs != null ? prefs.getResponseDelayHours() : null;
 
+        // Vérifications (FLUTTER-4H) : seuls des booléens sortent d'ici, jamais le
+        // numéro ni l'e-mail. Firebase indisponible → Contact vide → « non vérifié ».
+        FirebaseContactService.Contact contact = firebaseContact.getContact(user.getFirebaseUid());
+        boolean phoneVerified = contact.phoneNumber() != null && !contact.phoneNumber().isBlank();
+        boolean emailVerified = contact.email() != null && !contact.email().isBlank();
+        // Filtré ici, jamais côté app : sans consentement, le pays ne part pas.
+        String residenceCountry = user.isShowResidenceCountry() ? user.getCountry() : null;
+
         return new ProfilePublicResponse(
                 userId.toString(),
                 displayName,
@@ -86,7 +97,10 @@ public class ProfilePublicService {
                 contactMode,
                 responseDelayHours,
                 user.getBio(),
-                new ArrayList<>(user.getLanguages())
+                new ArrayList<>(user.getLanguages()),
+                phoneVerified,
+                emailVerified,
+                residenceCountry
         );
     }
 

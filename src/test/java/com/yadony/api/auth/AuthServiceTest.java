@@ -579,32 +579,21 @@ class AuthServiceTest {
             assertThat(user.getFirstName()).isEqualTo("Original");
         }
 
+        // FLUTTER-4H : PATCH /auth/me écrivait le numéro sans code SMS ; le profil
+        // public affiche désormais « téléphone vérifié » d'après ce numéro. Le champ
+        // est ignoré, le changement passe par /auth/sms-otp/attach.
         @Test
-        @DisplayName("ajout numéro de téléphone → sauvegardé en base")
-        void updateProfile_addPhoneNumber_saved() {
-            UserEntity user = buildUser(); // phone = PHONE = "+33612345678"
+        @DisplayName("phoneNumber dans PATCH /auth/me → ignoré, jamais écrit dans Firebase")
+        void updateProfile_phoneNumber_ignored() {
+            UserEntity user = buildUser();
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
             when(userRepository.save(any())).thenReturn(user);
 
             authService.updateProfile(FIREBASE_UID,
                     new UpdateProfileRequest(null, null, null, null, "+33699000001", null, null));
 
-            verify(firebaseContact).updatePhone(FIREBASE_UID, "+33699000001");
-        }
-
-        @Test
-        @DisplayName("numéro déjà pris → 409 CONFLICT")
-        void updateProfile_phoneAlreadyTaken_throws409() {
-            UserEntity user = buildUser();
-            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
-            when(firebaseContact.isPhoneTakenByAnother("+33699999999", FIREBASE_UID))
-                    .thenReturn(true);
-
-            assertThatThrownBy(() -> authService.updateProfile(FIREBASE_UID,
-                    new UpdateProfileRequest(null, null, null, null, "+33699999999", null, null)))
-                    .isInstanceOf(YadonyBusinessException.class)
-                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getStatus())
-                            .isEqualTo(HttpStatus.CONFLICT));
+            verify(firebaseContact, never()).updatePhone(any(), any());
+            verify(firebaseContact, never()).isPhoneTakenByAnother(any(), any());
         }
 
         @Test
@@ -864,6 +853,21 @@ class AuthServiceTest {
     @Nested
     @DisplayName("privacySettings()")
     class PrivacySettingsTests {
+
+        @Test
+        @DisplayName("afficher le pays de résidence : enregistré et journalisé ; null = inchangé (FLUTTER-4H)")
+        void updatePrivacySettings_showResidenceCountry_persistsAndAudits() {
+            UserEntity user = buildUser();
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+
+            authService.updatePrivacySettings(FIREBASE_UID, true, null, true);
+            assertThat(user.isShowResidenceCountry()).isTrue();
+            verify(auditService).log(eq("USER"), eq(user.getId()), eq("RESIDENCE_COUNTRY_VISIBILITY_UPDATED"),
+                    eq(user.getId()), argThat(p -> Boolean.TRUE.equals(p.get("showResidenceCountry"))));
+
+            authService.updatePrivacySettings(FIREBASE_UID, true, null, null);
+            assertThat(user.isShowResidenceCountry()).isTrue();
+        }
 
         @Test
         @DisplayName("le masquage du numéro est enregistré et journalisé")
