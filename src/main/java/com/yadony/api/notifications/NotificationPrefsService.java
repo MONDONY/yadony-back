@@ -47,6 +47,7 @@ public class NotificationPrefsService {
             Map.entry("RETURN_DEADLINE_EXPIRED",      "pushActivityBids"),
             // Suivi du colis par son destinataire (lot 2) et réponses relayées à l'expéditeur.
             Map.entry("RECIPIENT_PARCEL_INCOMING",    "pushActivityBids"),
+            Map.entry("RECIPIENT_PARCEL_ANNOUNCED",   "pushActivityBids"),
             Map.entry("RECIPIENT_PARCEL_DEPARTED",    "pushActivityBids"),
             Map.entry("RECIPIENT_PARCEL_ARRIVED",     "pushActivityBids"),
             Map.entry("RECIPIENT_PARCEL_DELIVERED",   "pushActivityBids"),
@@ -58,6 +59,9 @@ public class NotificationPrefsService {
             // Changement de destinataire (lot 3A) : ancien destinataire et voyageur.
             Map.entry("RECIPIENT_PARCEL_REASSIGNED",  "pushActivityBids"),
             Map.entry("RECIPIENT_CHANGED",            "pushActivityBids"),
+            // Invitations au carnet de destinataires (lot 4).
+            Map.entry("RECIPIENT_INVITATION",         "pushActivityBids"),
+            Map.entry("RECIPIENT_INVITATION_ACCEPTED", "pushActivityBids"),
             Map.entry("NEW_MESSAGE",                  "pushMessages"),
             // Le support vit dans l'onglet Messages (« Yadony Support ») : même interrupteur.
             // Seul le push est coupé, l'entrée du centre de notifications reste.

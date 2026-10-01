@@ -1,5 +1,6 @@
 package com.yadony.api.addressbook.recipient;
 
+import com.yadony.api.addressbook.invitation.RecipientInvitationRepository;
 import com.yadony.api.addressbook.recipient.dto.CreateRecipientRequest;
 import com.yadony.api.addressbook.recipient.dto.RecipientDto;
 import com.yadony.api.addressbook.recipient.dto.UpdateRecipientRequest;
@@ -31,13 +32,16 @@ class RecipientServiceTest {
     @Mock
     private AuditService auditService;
 
+    @Mock
+    private RecipientInvitationRepository invitationRepository;
+
     private RecipientService service;
 
     private UUID userId;
 
     @BeforeEach
     void setUp() {
-        service = new RecipientService(repository, auditService);
+        service = new RecipientService(repository, auditService, invitationRepository);
         userId = UUID.randomUUID();
     }
 
@@ -205,5 +209,34 @@ class RecipientServiceTest {
 
         verify(repository, never()).save(any());
         verify(auditService, never()).log(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void findAll_flagsEntriesLinkedByAcceptedInvitation() {
+        RecipientEntity linked = buildEntity(userId);
+        RecipientEntity plain = buildEntity(userId);
+        UUID linkedId = UUID.randomUUID();
+        org.springframework.test.util.ReflectionTestUtils.setField(linked, "id", linkedId);
+        org.springframework.test.util.ReflectionTestUtils.setField(plain, "id", UUID.randomUUID());
+        when(repository.findByUserIdOrderByUpdatedAtDesc(userId)).thenReturn(List.of(linked, plain));
+        when(invitationRepository.findLinkedRecipientIds(userId)).thenReturn(java.util.Set.of(linkedId));
+
+        List<RecipientDto> result = service.findAll(userId);
+
+        assertThat(result.get(0).linkedOnYadony()).isTrue();
+        assertThat(result.get(1).linkedOnYadony()).isFalse();
+    }
+
+    @Test
+    void update_linkedEntry_keepsLinkedFlag() {
+        UUID id = UUID.randomUUID();
+        RecipientEntity entity = buildEntity(userId);
+        when(repository.findByUserIdAndId(userId, id)).thenReturn(Optional.of(entity));
+        when(invitationRepository.findLinkedRecipientIds(userId)).thenReturn(java.util.Set.of(id));
+
+        RecipientDto dto = service.update(userId, id, new UpdateRecipientRequest(
+                "Awa Diakité", null, "+221771234567", null, null, "Dakar", "SN", null, false));
+
+        assertThat(dto.linkedOnYadony()).isTrue();
     }
 }

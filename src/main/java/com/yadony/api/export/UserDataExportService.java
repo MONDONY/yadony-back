@@ -118,7 +118,8 @@ public class UserDataExportService {
                 e.getNotes(),
                 e.getCreatedAt(),
                 e.getUpdatedAt(),
-                e.isDefault()
+                e.isDefault(),
+                false
         );
     }
 
