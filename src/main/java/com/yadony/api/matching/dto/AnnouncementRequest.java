@@ -85,9 +85,32 @@ public record AnnouncementRequest(
         // service retombe sur ActiveCurrencyResolver.resolve(travelerId) (portefeuille,
         // sinon pays). Validée contre SupportedCurrency dans AnnouncementService,
         // jamais ici (422 currency-unsupported, pas une 400 Bean Validation).
-        // Doit rester en DERNIER (record construit positionnellement dans les tests).
-        String currency
+        // Construit positionnellement dans les tests : voir le constructeur compatible.
+        String currency,
+        // Date d'arrivée si elle diffère du départ (vol de nuit) ; absente = même jour.
+        // Validée par ArrivalRules (FLUTTER-4E).
+        LocalDate arrivalDate
 ) {
+    /** Arité historique (sans date d'arrivée), conservée pour les appels existants. */
+    public AnnouncementRequest(String departureCity, String arrivalCity, LocalDate departureDate,
+                               LocalTime departureTime, LocalTime arrivalTime,
+                               AddressDto pickupAddress, AddressDto deliveryAddress,
+                               BigDecimal availableKg, BigDecimal pricePerKg,
+                               com.yadony.api.matching.TransportMode transportMode, String description,
+                               List<String> acceptedContentTypes, List<String> refusedTypes,
+                               Set<PaymentMethod> acceptedPaymentMethods,
+                               com.yadony.api.matching.CapacityUnit capacityUnit,
+                               com.yadony.api.matching.PricingMode pricingMode,
+                               String departureCountryCode, String arrivalCountryCode,
+                               LocalDateTime handoverDeadline, Boolean saveAsDraft,
+                               Boolean negotiable, String currency) {
+        this(departureCity, arrivalCity, departureDate, departureTime, arrivalTime, pickupAddress,
+                deliveryAddress, availableKg, pricePerKg, transportMode, description,
+                acceptedContentTypes, refusedTypes, acceptedPaymentMethods, capacityUnit, pricingMode,
+                departureCountryCode, arrivalCountryCode, handoverDeadline, saveAsDraft, negotiable,
+                currency, null);
+    }
+
     public boolean isDraft() {
         return Boolean.TRUE.equals(saveAsDraft);
     }

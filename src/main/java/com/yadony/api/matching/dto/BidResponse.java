@@ -39,6 +39,8 @@ public record BidResponse(
         LocalDate departureDate,
         LocalTime departureTime,
         LocalTime arrivalTime,
+        /** Date d'arrivée du trajet si différente du départ ; null = même jour. */
+        java.time.LocalDate arrivalDate,
         BigDecimal pricePerKg,
         /** Tarif/kg BRUT affiché à l'expéditeur (net + commission). L'expéditeur
          * ne reçoit jamais le tarif net {@code pricePerKg}. */

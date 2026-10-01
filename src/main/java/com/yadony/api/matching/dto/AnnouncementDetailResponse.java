@@ -18,6 +18,8 @@ public record AnnouncementDetailResponse(
         LocalDate departureDate,
         @JsonFormat(pattern = "HH:mm") LocalTime departureTime,
         @JsonFormat(pattern = "HH:mm") LocalTime arrivalTime,
+        /** Date d'arrivée si différente du départ (vol de nuit) ; null = même jour. */
+        LocalDate arrivalDate,
         AddressDto pickupAddress,
         AddressDto deliveryAddress,
         BigDecimal availableKg,
@@ -73,7 +75,7 @@ public record AnnouncementDetailResponse(
                                                           String convertedCurrency,
                                                           List<AnnouncementPriceGridItemResponse> convertedGridItems) {
         return new AnnouncementDetailResponse(
-                id, travelerId, departureCity, arrivalCity, departureDate, departureTime, arrivalTime,
+                id, travelerId, departureCity, arrivalCity, departureDate, departureTime, arrivalTime, arrivalDate,
                 pickupAddress, deliveryAddress, availableKg, totalKg, pricePerKg, pricePerKgDisplay,
                 transportMode, status, bidsCount, confirmedParcelCount, traveler, description,
                 acceptedContentTypes, refusedTypes, acceptedPaymentMethods, capacityUnit, cashAccepted,

@@ -67,6 +67,13 @@ public class AnnouncementEntity extends BaseEntity {
     @Column(name = "arrival_time")
     private LocalTime arrivalTime;
 
+    /**
+     * Date d'arrivée si le voyage arrive après le jour du départ (vol de nuit,
+     * escale) ; null = même jour que le départ (FLUTTER-4E).
+     */
+    @Column(name = "arrival_date")
+    private LocalDate arrivalDate;
+
     @Column(name = "handover_deadline")
     private LocalDateTime handoverDeadline;
 
@@ -352,6 +359,8 @@ public class AnnouncementEntity extends BaseEntity {
     public void setDepartureAt(OffsetDateTime departureAt) { this.departureAt = departureAt; }
 
     public LocalTime getArrivalTime() { return arrivalTime; }
+    public LocalDate getArrivalDate() { return arrivalDate; }
+    public void setArrivalDate(LocalDate arrivalDate) { this.arrivalDate = arrivalDate; }
     public void setArrivalTime(LocalTime arrivalTime) { this.arrivalTime = arrivalTime; }
 
     public TransportMode getTransportMode() { return transportMode; }

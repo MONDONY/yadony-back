@@ -522,6 +522,7 @@ public class AnnouncementService {
         announcement.setDepartureDate(request.departureDate());
         announcement.setDepartureTime(request.departureTime());
         announcement.setArrivalTime(request.arrivalTime());
+        announcement.setArrivalDate(request.arrivalDate());
         announcement.setDepartureAt(deriveDepartureAt(
                 request.departureDate(), request.departureTime(), announcement.getTimezone()));
         announcement.setPickupAddressLabel(request.pickupAddress().label());
@@ -569,6 +570,8 @@ public class AnnouncementService {
 
         validateHandoverDeadline(request.handoverDeadline(),
                 request.departureDate(), request.departureTime());
+        ArrivalRules.validate(request.departureDate(), request.departureTime(),
+                request.arrivalDate(), request.arrivalTime());
         announcement.setHandoverDeadline(request.handoverDeadline());
         // Absent = prix ferme : un client pas encore à jour ne doit jamais ouvrir
         // un trajet à la négociation sans que le voyageur l'ait demandé.
@@ -835,6 +838,7 @@ public class AnnouncementService {
                 announcement.getDepartureDate(),
                 announcement.getDepartureTime(),
                 announcement.getArrivalTime(),
+                announcement.getArrivalDate(),
                 new com.yadony.api.matching.dto.AddressDto(announcement.getPickupAddressLabel(), announcement.getPickupLat().doubleValue(), announcement.getPickupLng().doubleValue()),
                 new com.yadony.api.matching.dto.AddressDto(announcement.getDeliveryAddressLabel(), announcement.getDeliveryLat().doubleValue(), announcement.getDeliveryLng().doubleValue()),
                 announcement.getAvailableKg(),
@@ -973,6 +977,8 @@ public class AnnouncementService {
 
         validateHandoverDeadline(request.handoverDeadline(),
                 request.departureDate(), request.departureTime());
+        ArrivalRules.validate(request.departureDate(), request.departureTime(),
+                request.arrivalDate(), request.arrivalTime());
 
         announcement.setDepartureCity(request.departureCity());
         announcement.setArrivalCity(request.arrivalCity());
@@ -981,6 +987,7 @@ public class AnnouncementService {
         announcement.setDepartureDate(request.departureDate());
         announcement.setDepartureTime(request.departureTime());
         announcement.setArrivalTime(request.arrivalTime());
+        announcement.setArrivalDate(request.arrivalDate());
         announcement.setDepartureAt(deriveDepartureAt(
                 request.departureDate(), request.departureTime(), announcement.getTimezone()));
         announcement.setHandoverDeadline(request.handoverDeadline());
@@ -1061,6 +1068,7 @@ public class AnnouncementService {
                 saved.getDepartureDate(),
                 saved.getDepartureTime(),
                 saved.getArrivalTime(),
+                saved.getArrivalDate(),
                 new com.yadony.api.matching.dto.AddressDto(saved.getPickupAddressLabel(), saved.getPickupLat().doubleValue(), saved.getPickupLng().doubleValue()),
                 new com.yadony.api.matching.dto.AddressDto(saved.getDeliveryAddressLabel(), saved.getDeliveryLat().doubleValue(), saved.getDeliveryLng().doubleValue()),
                 saved.getAvailableKg(),
@@ -1715,6 +1723,7 @@ public class AnnouncementService {
                 entity.getDepartureDate(),
                 entity.getDepartureTime(),
                 entity.getArrivalTime(),
+                entity.getArrivalDate(),
                 new com.yadony.api.matching.dto.AddressDto(entity.getPickupAddressLabel(), entity.getPickupLat().doubleValue(), entity.getPickupLng().doubleValue()),
                 new com.yadony.api.matching.dto.AddressDto(entity.getDeliveryAddressLabel(), entity.getDeliveryLat().doubleValue(), entity.getDeliveryLng().doubleValue()),
                 entity.getAvailableKg(),

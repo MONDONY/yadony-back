@@ -188,7 +188,7 @@ class GuestDataExposureIT {
 
             // ── AnnouncementSearchResponse + AnnouncementDetailResponse ───────
             "id", "travelerId", "departureCity", "arrivalCity", "departureDate",
-            "departureTime", "arrivalTime", "pickupAddress", "deliveryAddress",
+            "departureTime", "arrivalTime", "arrivalDate", "pickupAddress", "deliveryAddress",
             "availableKg", "totalKg",
             // Seul le BRUT est servi a un invite : c'est ce que paierait l'expediteur, donc la
             // seule information qui lui soit utile. Les trois vecteurs du net (pricePerKg,

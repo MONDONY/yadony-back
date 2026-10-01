@@ -49,13 +49,26 @@ public record NegotiationCreateDedicatedTripRequest(
 
         // CASH uniquement : si true, le voyageur consent à payer la commission sur
         // sa carte quand son wallet est insuffisant. Absent du JSON → false.
-        boolean useCardForCommission
+        boolean useCardForCommission,
+
+        // Date d'arrivée si différente du départ (vol de nuit) ; absente = même jour
+        // (FLUTTER-4E).
+        LocalDate arrivalDate
 ) {
     public NegotiationCreateDedicatedTripRequest(
             LocalDate departureDate, LocalTime departureTime, LocalTime arrivalTime,
             AddressDto pickupAddress, AddressDto deliveryAddress, String description,
             List<String> acceptedContentTypes, List<String> refusedTypes) {
         this(departureDate, departureTime, arrivalTime, pickupAddress, deliveryAddress,
-             description, acceptedContentTypes, refusedTypes, false);
+             description, acceptedContentTypes, refusedTypes, false, null);
+    }
+
+    public NegotiationCreateDedicatedTripRequest(
+            LocalDate departureDate, LocalTime departureTime, LocalTime arrivalTime,
+            AddressDto pickupAddress, AddressDto deliveryAddress, String description,
+            List<String> acceptedContentTypes, List<String> refusedTypes,
+            boolean useCardForCommission) {
+        this(departureDate, departureTime, arrivalTime, pickupAddress, deliveryAddress,
+             description, acceptedContentTypes, refusedTypes, useCardForCommission, null);
     }
 }

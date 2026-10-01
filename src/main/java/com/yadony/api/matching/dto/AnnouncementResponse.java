@@ -18,6 +18,8 @@ public record AnnouncementResponse(
         LocalDate departureDate,
         @JsonFormat(pattern = "HH:mm") LocalTime departureTime,
         @JsonFormat(pattern = "HH:mm") LocalTime arrivalTime,
+        /** Date d'arrivée si différente du départ (vol de nuit) ; null = même jour. */
+        LocalDate arrivalDate,
         AddressDto pickupAddress,
         AddressDto deliveryAddress,
         BigDecimal availableKg,
