@@ -73,7 +73,11 @@ public record AnnouncementSearchResponse(
          * <p>{@code null} quand {@code pricePerKgDisplay} l'est (mode MIXED sans prix au kilo)
          * ou que le contexte de mapping n'a pas de lecteur identifié (ex. favoris).
          */
-        BigDecimal pricePerKgDisplayConverted
+        BigDecimal pricePerKgDisplayConverted,
+        /** Personnes qui ont vu ce trajet. Renseigné pour son seul voyageur : {@code null} pour
+         *  tout autre lecteur, qui ne doit jamais connaître l'audience d'un trajet tiers. Voir
+         *  {@link #withUniqueViewerCount}. */
+        Long uniqueViewerCount
 ) {
     /**
      * Copie enrichie des prix convertis dans la devise du lecteur. Utilisé par
@@ -89,6 +93,20 @@ public record AnnouncementSearchResponse(
                 transportMode, status, bidsCount, traveler, description, acceptedContentTypes, refusedTypes,
                 acceptedPaymentMethods, capacityUnit, createdAt, updatedAt, pricingMode, priceGridItems,
                 handoverDeadline, isFavorite, urgent, currency, negotiable, availablePaymentMethods,
-                convertedPricePerKg, convertedCurrency, pricePerKgDisplayConverted);
+                convertedPricePerKg, convertedCurrency, pricePerKgDisplayConverted, uniqueViewerCount);
+    }
+
+    /**
+     * Copie portant l'audience du trajet, posée par {@code AnnouncementService.searchAnnouncements}
+     * sur les seuls trajets du lecteur.
+     */
+    public AnnouncementSearchResponse withUniqueViewerCount(Long uniqueViewerCount) {
+        return new AnnouncementSearchResponse(
+                id, travelerId, departureCity, arrivalCity, departureDate, departureTime, arrivalTime, arrivalDate,
+                pickupAddress, deliveryAddress, availableKg, totalKg, pricePerKg, pricePerKgDisplay,
+                transportMode, status, bidsCount, traveler, description, acceptedContentTypes, refusedTypes,
+                acceptedPaymentMethods, capacityUnit, createdAt, updatedAt, pricingMode, priceGridItems,
+                handoverDeadline, isFavorite, urgent, currency, negotiable, availablePaymentMethods,
+                convertedPricePerKg, convertedCurrency, pricePerKgDisplayConverted, uniqueViewerCount);
     }
 }

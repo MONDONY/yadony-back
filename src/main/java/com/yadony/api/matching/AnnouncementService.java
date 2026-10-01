@@ -132,6 +132,7 @@ public class AnnouncementService {
     private final NotificationDispatcher notificationDispatcher;
     /** Masquage mutuel des comptes bloqués, cf. {@link BlockVisibility}. */
     private final BlockVisibility blockVisibility;
+    private final AnnouncementViewService announcementViewService;
 
     @Value("${yadony.kyc.enforce:true}")
     private boolean enforceKyc;
@@ -157,7 +158,8 @@ public class AnnouncementService {
             PackageRequestRepository packageRequestRepository,
             NegotiationThreadRepository negotiationThreadRepository,
             NotificationDispatcher notificationDispatcher,
-            BlockVisibility blockVisibility
+            BlockVisibility blockVisibility,
+            AnnouncementViewService announcementViewService
     ) {
         this.announcementRepository = announcementRepository;
         this.bidRepository = bidRepository;
@@ -177,6 +179,7 @@ public class AnnouncementService {
         this.negotiationThreadRepository = negotiationThreadRepository;
         this.notificationDispatcher = notificationDispatcher;
         this.blockVisibility = blockVisibility;
+        this.announcementViewService = announcementViewService;
     }
 
     // La clé porte la taille de page en plus du numéro : l'app compte les résultats
@@ -291,7 +294,7 @@ public class AnnouncementService {
         Sort sort = buildSort(sortBy, sortDir);
         Pageable sortedPageable = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), sort);
         Page<AnnouncementEntity> page = announcementRepository.findAll(spec, sortedPageable);
-        List<AnnouncementSearchResponse> content = mapAnnouncements(page.getContent(), favIds, viewerCurrency);
+        List<AnnouncementSearchResponse> content = mapAnnouncements(page.getContent(), favIds, viewerCurrency, viewerId);
 
         return new org.springframework.data.domain.PageImpl<>(content, pageable, page.getTotalElements());
     }
@@ -303,7 +306,8 @@ public class AnnouncementService {
      * branches of {@link #searchAnnouncements} (tri par prix en mémoire vs. tri en base).
      */
     private List<AnnouncementSearchResponse> mapAnnouncements(List<AnnouncementEntity> entities,
-                                                                Set<UUID> favIds, String viewerCurrency) {
+                                                                Set<UUID> favIds, String viewerCurrency,
+                                                                UUID viewerId) {
         List<UUID> announcementIds = entities.stream().map(AnnouncementEntity::getId).toList();
         List<UUID> travelerIds = entities.stream().map(AnnouncementEntity::getTravelerId).distinct().toList();
 
@@ -327,6 +331,9 @@ public class AnnouncementService {
             }
         }
 
+        // Audience : seulement les trajets du lecteur, les autres restent à null.
+        Map<UUID, Long> ownViewCounts = announcementViewService.ownerViewCounts(viewerId, entities);
+
         List<AnnouncementSearchResponse> result = new java.util.ArrayList<>(entities.size());
         for (AnnouncementEntity a : entities) {
             AnnouncementSearchResponse base = announcementSearchMapper.toSearchResponse(
@@ -334,7 +341,8 @@ public class AnnouncementService {
             result.add(base.withConvertedPrice(
                     convertedPricePerKgForResponse(a, viewerCurrency),
                     viewerCurrency,
-                    pricePerKgDisplayConverted(base.pricePerKgDisplay(), a.getCurrency(), viewerCurrency)));
+                    pricePerKgDisplayConverted(base.pricePerKgDisplay(), a.getCurrency(), viewerCurrency))
+                    .withUniqueViewerCount(ownViewCounts.get(a.getId())));
         }
         return result;
     }

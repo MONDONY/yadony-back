@@ -62,7 +62,11 @@ public record PackageRequestSearchResponse(
      */
     BigDecimal convertedDisplayPrice,
     /** Devise cible de {@code convertedDisplayPrice} : celle du lecteur. */
-    String convertedCurrency
+    String convertedCurrency,
+    /** Personnes qui ont vu cette demande. Renseigné pour son seul expéditeur : {@code null}
+     *  pour tout autre lecteur, qui ne doit jamais connaître l'audience d'une demande tierce.
+     *  Voir {@link #withUniqueViewerCount}. */
+    Long uniqueViewerCount
 ) {
     public record SenderPublicProfile(UUID id, String displayName, double averageRating, int totalRatings, boolean kycVerified, String avatarUrl) {}
 
@@ -78,7 +82,8 @@ public record PackageRequestSearchResponse(
                 pickupNeighborhood, deliveryNeighborhood,
                 sender, acceptedPaymentMethods, photos, isFavorite, urgent,
                 matchScore, matchedTripId, matchedTripDepartureDate, currency,
-                availablePaymentMethods, grossPriceEur, convertedDisplayPrice, convertedCurrency);
+                availablePaymentMethods, grossPriceEur, convertedDisplayPrice, convertedCurrency,
+                uniqueViewerCount);
     }
 
     /** Copie enrichie des informations de match. Utilisé uniquement quand matchingMyTrips est actif. */
@@ -92,6 +97,22 @@ public record PackageRequestSearchResponse(
                 pickupNeighborhood, deliveryNeighborhood,
                 sender, acceptedPaymentMethods, photos, isFavorite, urgent,
                 info.matchScore(), info.tripId(), info.tripDepartureDate(), currency,
-                availablePaymentMethods, grossPriceEur, convertedDisplayPrice, convertedCurrency);
+                availablePaymentMethods, grossPriceEur, convertedDisplayPrice, convertedCurrency,
+                uniqueViewerCount);
+    }
+
+    /** Copie portant l'audience, posée par {@code PackageRequestService} sur les seules demandes du lecteur. */
+    public PackageRequestSearchResponse withUniqueViewerCount(Long uniqueViewerCount) {
+        return new PackageRequestSearchResponse(
+                id, departureCity, arrivalCity,
+                departureLat, departureLng, arrivalLat, arrivalLng,
+                desiredDate, dateToleranceDays,
+                weightKg, parcelSize, transportMode, contentCategory,
+                targetPriceEur, negotiable, photoUrl,
+                pickupNeighborhood, deliveryNeighborhood,
+                sender, acceptedPaymentMethods, photos, isFavorite, urgent,
+                matchScore, matchedTripId, matchedTripDepartureDate, currency,
+                availablePaymentMethods, grossPriceEur, convertedDisplayPrice, convertedCurrency,
+                uniqueViewerCount);
     }
 }

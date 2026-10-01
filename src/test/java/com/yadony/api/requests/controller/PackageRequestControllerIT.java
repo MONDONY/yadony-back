@@ -186,7 +186,7 @@ class PackageRequestControllerIT {
             java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.STRIPE)
         , List.of(), false, false, null, null, null, "EUR",
             java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.CASH),
-            new BigDecimal("28.00"), null, null);
+            new BigDecimal("28.00"), null, null, null);
         var pageable = org.springframework.data.domain.PageRequest.of(0, 20);
         when(service.search(any(), any(), any())).thenReturn(new PageImpl<>(List.of(searchResp), pageable, 1));
 
@@ -216,7 +216,7 @@ class PackageRequestControllerIT {
             java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.STRIPE)
         , List.of(), false, false, null, null, null, "EUR",
             java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.CASH),
-            new BigDecimal("28.00"), null, null);
+            new BigDecimal("28.00"), null, null, null);
         var pageable = org.springframework.data.domain.PageRequest.of(0, 20);
         when(service.search(any(), any(), any())).thenReturn(new PageImpl<>(List.of(searchResp), pageable, 1));
 
@@ -458,7 +458,7 @@ class PackageRequestControllerIT {
             java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.STRIPE)
         , List.of(), false, true, null, null, null, "EUR",
             java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.CASH),
-            new BigDecimal("28.00"), null, null);
+            new BigDecimal("28.00"), null, null, null);
         var pageable = org.springframework.data.domain.PageRequest.of(0, 20);
         when(service.search(any(), any(), any())).thenReturn(new PageImpl<>(List.of(searchResp), pageable, 1));
 

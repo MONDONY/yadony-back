@@ -424,4 +424,37 @@ class PackageRequestInsightServiceTest {
                         e -> assertThat(e.getReason()).isEqualTo("invitation/limit-reached"));
         verify(invitationRepository, never()).save(any());
     }
+
+    // ─── ownerViewCounts (fil de recherche) ─────────────────────────────────
+
+    private PackageRequestEntity requestOf(UUID id, UUID owner) {
+        PackageRequestEntity e = mock(PackageRequestEntity.class, withSettings().strictness(org.mockito.quality.Strictness.LENIENT));
+        when(e.getId()).thenReturn(id);
+        when(e.getSenderId()).thenReturn(owner);
+        return e;
+    }
+
+    @Test
+    void ownerViewCounts_onlyTheCallersOwnRequests_withZeroWhenNobodyLooked() {
+        UUID mine = UUID.randomUUID();
+        UUID mineUnseen = UUID.randomUUID();
+        UUID someoneElses = UUID.randomUUID();
+        List<PackageRequestEntity> page = List.of(
+                requestOf(mine, senderId), requestOf(mineUnseen, senderId), requestOf(someoneElses, travelerId));
+        when(requestViewRepository.countByPackageRequestIds(anyCollection()))
+                .thenReturn(List.<Object[]>of(new Object[]{mine, 5L}));
+
+        Map<UUID, Long> counts = service.ownerViewCounts(senderId, page);
+
+        assertThat(counts).containsOnly(Map.entry(mine, 5L), Map.entry(mineUnseen, 0L));
+    }
+
+    @Test
+    void ownerViewCounts_noOwnRequestInThePage_orAnonymous_queriesNothing() {
+        List<PackageRequestEntity> page = List.of(requestOf(UUID.randomUUID(), travelerId));
+
+        assertThat(service.ownerViewCounts(senderId, page)).isEmpty();
+        assertThat(service.ownerViewCounts(null, page)).isEmpty();
+        verify(requestViewRepository, never()).countByPackageRequestIds(anyCollection());
+    }
 }

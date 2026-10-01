@@ -7,6 +7,10 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -59,6 +63,30 @@ public class AnnouncementViewService {
         return new AnnouncementInsightsResponse(
                 viewRepository.countByAnnouncementId(announcementId),
                 announcement.getShareViewCount());
+    }
+
+    /**
+     * Personnes qui ont vu chacun des trajets du lecteur parmi {@code page}, pour le fil de
+     * recherche. Les trajets des autres n'y figurent jamais : seul le voyageur voit son
+     * audience. Un trajet du lecteur jamais vu vaut 0.
+     */
+    public Map<UUID, Long> ownerViewCounts(UUID viewerId, Collection<AnnouncementEntity> page) {
+        if (viewerId == null) {
+            return Map.of();
+        }
+        List<UUID> own = page.stream()
+                .filter(a -> viewerId.equals(a.getTravelerId()))
+                .map(AnnouncementEntity::getId)
+                .toList();
+        if (own.isEmpty()) {
+            return Map.of();
+        }
+        Map<UUID, Long> counts = new HashMap<>();
+        own.forEach(id -> counts.put(id, 0L));
+        for (Object[] row : viewRepository.countByAnnouncementIds(own)) {
+            counts.put((UUID) row[0], (Long) row[1]);
+        }
+        return counts;
     }
 
     private AnnouncementEntity requireAnnouncement(UUID announcementId) {

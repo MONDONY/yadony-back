@@ -82,7 +82,7 @@ class AnnouncementDetailBlockVisibilityTest {
                 mock(PackageRequestRepository.class),
                 mock(NegotiationThreadRepository.class),
                 mock(NotificationDispatcher.class),
-                blockVisibility);
+                blockVisibility, mock(AnnouncementViewService.class));
     }
 
     private AnnouncementEntity activeAnnouncement() {

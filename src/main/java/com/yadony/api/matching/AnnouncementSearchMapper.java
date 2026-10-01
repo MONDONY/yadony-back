@@ -130,7 +130,9 @@ public class AnnouncementSearchMapper {
                 // Prix convertis : dependants du lecteur, donc poses par
                 // AnnouncementService.mapAnnouncements. Restent nuls sur les surfaces sans
                 // lecteur identifie (favoris), comme documente sur le DTO.
-                null, null, null
+                null, null, null,
+                // Audience : posée par AnnouncementService pour les seuls trajets du lecteur.
+                null
         );
     }
 
@@ -196,7 +198,9 @@ public class AnnouncementSearchMapper {
                 // Prix convertis : dependants du lecteur, donc poses par
                 // AnnouncementService.mapAnnouncements. Restent nuls sur les surfaces sans
                 // lecteur identifie (favoris), comme documente sur le DTO.
-                null, null, null
+                null, null, null,
+                // Audience : posée par AnnouncementService pour les seuls trajets du lecteur.
+                null
         );
     }
 

@@ -95,7 +95,8 @@ class AnnouncementProPriorityTest {
                 priceGridService, flagService,
                 storageService, favoriteRepository, activeCurrencyResolver, exchangeRateService, realMapper,
                 packageRequestRepository, negotiationThreadRepository, notificationDispatcher,
-                org.mockito.Mockito.mock(com.yadony.api.common.BlockVisibility.class));
+                org.mockito.Mockito.mock(com.yadony.api.common.BlockVisibility.class),
+                org.mockito.Mockito.mock(AnnouncementViewService.class));
     }
 
     private static void setId(Object entity, UUID id) {

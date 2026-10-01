@@ -91,7 +91,8 @@ class AnnouncementInProgressTransitionTest {
                 mock(com.yadony.api.requests.repository.PackageRequestRepository.class),
                 mock(com.yadony.api.requests.repository.NegotiationThreadRepository.class),
                 mock(com.yadony.api.notifications.NotificationDispatcher.class),
-                mock(com.yadony.api.common.BlockVisibility.class));
+                mock(com.yadony.api.common.BlockVisibility.class),
+                mock(AnnouncementViewService.class));
     }
 
     private static void setId(Object entity, UUID id) {

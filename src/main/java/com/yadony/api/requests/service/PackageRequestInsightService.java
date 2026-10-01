@@ -27,6 +27,9 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDate;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -101,6 +104,30 @@ public class PackageRequestInsightService {
         } catch (RuntimeException e) {
             log.warn("Personne non comptée pour la demande {}", requestId, e);
         }
+    }
+
+    /**
+     * Personnes qui ont vu chacune des demandes de l'appelant parmi {@code page}, pour le fil
+     * de recherche. Les demandes des autres n'y figurent jamais : seul l'expéditeur voit son
+     * audience. Une demande de l'appelant jamais vue vaut 0.
+     */
+    public Map<UUID, Long> ownerViewCounts(UUID callerId, Collection<PackageRequestEntity> page) {
+        if (callerId == null) {
+            return Map.of();
+        }
+        List<UUID> own = page.stream()
+                .filter(r -> callerId.equals(r.getSenderId()))
+                .map(PackageRequestEntity::getId)
+                .toList();
+        if (own.isEmpty()) {
+            return Map.of();
+        }
+        Map<UUID, Long> counts = new HashMap<>();
+        own.forEach(id -> counts.put(id, 0L));
+        for (Object[] row : requestViewRepository.countByPackageRequestIds(own)) {
+            counts.put((UUID) row[0], (Long) row[1]);
+        }
+        return counts;
     }
 
     @Transactional(readOnly = true)
