@@ -3,6 +3,7 @@ package com.yadony.api.matching.reception;
 import com.yadony.api.cancellation.events.CancellationConfirmedEvent;
 import com.yadony.api.cancellation.events.TripCancelledEvent;
 import com.yadony.api.matching.AnnouncementRepository;
+import com.yadony.api.matching.events.BidRecipientChangedEvent;
 import com.yadony.api.matching.events.BidRejectedEvent;
 import com.yadony.api.matching.events.TripArrivedEvent;
 import com.yadony.api.matching.events.TripRescheduledEvent;
@@ -126,6 +127,38 @@ public class ReceptionNotificationListener {
         for (TripRescheduledEvent.Target target : event.targets()) {
             notifyConfirmedRecipient(target.bidId(), ReceptionNotifications.RESCHEDULED,
                     m -> NotificationTexts.recipientParcelRescheduled(m));
+        }
+    }
+
+    /**
+     * L'expéditeur a changé de destinataire : l'ancien titulaire du lien (PENDING ou
+     * CONFIRMED) apprend que le colis n'est plus pour lui, le voyageur qu'il doit
+     * remettre le colis à quelqu'un d'autre. Chaque envoi est indépendant.
+     */
+    @Async
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    public void onBidRecipientChanged(BidRecipientChangedEvent event) {
+        UUID bidId = event.bidId();
+        if (bidId == null) {
+            return;
+        }
+        send(event.previousRecipientUserId(), bidId, ReceptionNotifications.REASSIGNED,
+                NotificationTexts::recipientParcelReassigned);
+        send(event.travelerId(), bidId, ReceptionNotifications.RECIPIENT_CHANGED,
+                NotificationTexts::recipientChanged);
+    }
+
+    private void send(UUID userId, UUID bidId, String type,
+                      Function<com.yadony.api.common.i18n.Messages, NotificationText> text) {
+        if (userId == null) {
+            return;
+        }
+        try {
+            NotificationText t = text.apply(notificationDispatcher.messagesFor(userId));
+            notificationDispatcher.notifyUser(userId, t.title(), t.body(),
+                    Map.of("type", type, "bidId", bidId.toString()));
+        } catch (Exception e) {
+            log.warn("Notification {} du colis {} impossible : {}", type, bidId, e.toString());
         }
     }
 

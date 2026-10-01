@@ -6,6 +6,7 @@ import com.yadony.api.cancellation.events.TripCancelledEvent;
 import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
+import com.yadony.api.matching.events.BidRecipientChangedEvent;
 import com.yadony.api.matching.events.BidRejectedEvent;
 import com.yadony.api.matching.events.TripArrivedEvent;
 import com.yadony.api.matching.events.TripRescheduledEvent;
@@ -57,6 +58,51 @@ class ReceptionNotificationListenerTest {
             l.respond(status, null);
         }
         return l;
+    }
+
+    // ── Changement de destinataire (lot 3A) ─────────────────────────────────
+
+    @Test
+    void recipientChanged_previousRecipientAndTravelerAreNotified() {
+        UUID travelerId = UUID.randomUUID();
+
+        listener.onBidRecipientChanged(new BidRecipientChangedEvent(bidId, recipientId, travelerId));
+
+        verify(notificationDispatcher).notifyUser(eq(recipientId), eq("Colis réattribué"),
+                eq("L'expéditeur a changé de destinataire : ce colis n'est plus pour vous."),
+                eq(Map.of("type", "RECIPIENT_PARCEL_REASSIGNED", "bidId", bidId.toString())));
+        verify(notificationDispatcher).notifyUser(eq(travelerId), eq("Destinataire modifié"),
+                eq("L'expéditeur a changé le destinataire d'un colis. Voyez le détail."),
+                eq(Map.of("type", "RECIPIENT_CHANGED", "bidId", bidId.toString())));
+    }
+
+    @Test
+    void recipientChanged_withoutPreviousRecipient_onlyTravelerIsNotified() {
+        UUID travelerId = UUID.randomUUID();
+
+        listener.onBidRecipientChanged(new BidRecipientChangedEvent(bidId, null, travelerId));
+
+        verify(notificationDispatcher).notifyUser(eq(travelerId), anyString(), anyString(),
+                eq(Map.of("type", "RECIPIENT_CHANGED", "bidId", bidId.toString())));
+        verify(notificationDispatcher, never()).notifyUser(any(), anyString(), anyString(),
+                eq(Map.of("type", "RECIPIENT_PARCEL_REASSIGNED", "bidId", bidId.toString())));
+    }
+
+    @Test
+    void recipientChanged_failureForOne_stillNotifiesTheOther() {
+        UUID travelerId = UUID.randomUUID();
+        when(notificationDispatcher.messagesFor(recipientId)).thenThrow(new IllegalStateException("boom"));
+
+        assertThatCode(() -> listener.onBidRecipientChanged(
+                new BidRecipientChangedEvent(bidId, recipientId, travelerId))).doesNotThrowAnyException();
+
+        verify(notificationDispatcher).notifyUser(eq(travelerId), anyString(), anyString(), any());
+    }
+
+    @Test
+    void recipientChanged_nullBid_noop() {
+        listener.onBidRecipientChanged(new BidRecipientChangedEvent(null, recipientId, UUID.randomUUID()));
+        verify(notificationDispatcher, never()).notifyUser(any(), anyString(), anyString(), any());
     }
 
     @Test

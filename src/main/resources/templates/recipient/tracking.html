@@ -249,8 +249,14 @@
 
   <section th:if="${invalid}" class="panel invalid">
     <span class="label">Lien de suivi</span>
-    <h1>Lien invalide ou expiré</h1>
-    <p>Ce lien de suivi est invalide ou a expiré. Vérifiez le lien reçu ou contactez l'expéditeur.</p>
+    <th:block th:if="${recipientChanged}">
+      <h1>Le destinataire de ce colis a changé.</h1>
+      <p>Ce lien de suivi n'est plus valide.</p>
+    </th:block>
+    <th:block th:unless="${recipientChanged}">
+      <h1>Lien invalide ou expiré</h1>
+      <p>Ce lien de suivi est invalide ou a expiré. Vérifiez le lien reçu ou contactez l'expéditeur.</p>
+    </th:block>
   </section>
 
   <th:block th:unless="${invalid}">

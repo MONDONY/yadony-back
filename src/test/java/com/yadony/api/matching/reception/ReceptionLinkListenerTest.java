@@ -2,6 +2,7 @@ package com.yadony.api.matching.reception;
 
 import com.yadony.api.matching.events.BidAcceptedEvent;
 import com.yadony.api.matching.events.BidMaterializedEvent;
+import com.yadony.api.matching.events.BidRecipientChangedEvent;
 import com.yadony.api.payments.events.MobileMoneyPaymentConfirmedEvent;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -50,6 +51,12 @@ class ReceptionLinkListenerTest {
     @Test
     void bidMaterialized_links() {
         listener.onBidMaterialized(new BidMaterializedEvent(UUID.randomUUID(), bidId));
+        verify(linker).linkIfPossible(bidId);
+    }
+
+    @Test
+    void recipientChanged_linksTheNewNumber() {
+        listener.onBidRecipientChanged(new BidRecipientChangedEvent(bidId, null, travelerId));
         verify(linker).linkIfPossible(bidId);
     }
 

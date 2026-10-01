@@ -173,6 +173,8 @@ class NotificationTextsTest {
         map.put("recipientDeclined", NotificationTexts.recipientDeclined(m));
         map.put("recipientParcelCancelled", NotificationTexts.recipientParcelCancelled(m));
         map.put("recipientParcelRescheduled", NotificationTexts.recipientParcelRescheduled(m));
+        map.put("recipientParcelReassigned", NotificationTexts.recipientParcelReassigned(m));
+        map.put("recipientChanged", NotificationTexts.recipientChanged(m));
         return map;
     }
 
@@ -324,6 +326,15 @@ class NotificationTextsTest {
         assertThat(NotificationTexts.recipientParcelRescheduled(fr).title()).isEqualTo("Nouvelles dates");
         assertThat(NotificationTexts.recipientParcelRescheduled(en).body())
                 .isEqualTo("Your parcel's trip has new dates. See the details.");
+        assertThat(NotificationTexts.recipientParcelReassigned(fr).title()).isEqualTo("Colis réattribué");
+        assertThat(NotificationTexts.recipientParcelReassigned(fr).body())
+                .isEqualTo("L'expéditeur a changé de destinataire : ce colis n'est plus pour vous.");
+        assertThat(NotificationTexts.recipientParcelReassigned(en).title()).isEqualTo("Parcel reassigned");
+        assertThat(NotificationTexts.recipientChanged(fr).title()).isEqualTo("Destinataire modifié");
+        assertThat(NotificationTexts.recipientChanged(fr).body())
+                .isEqualTo("L'expéditeur a changé le destinataire d'un colis. Voyez le détail.");
+        assertThat(NotificationTexts.recipientChanged(en).body())
+                .isEqualTo("The sender changed the recipient of a parcel. See the details.");
     }
 
     @Test

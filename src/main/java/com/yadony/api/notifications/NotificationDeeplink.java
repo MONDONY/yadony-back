@@ -58,13 +58,15 @@ public final class NotificationDeeplink {
                  "MM_PAYMENT_EXPIRED", "TRIP_ARRIVED",
                  "PARCEL_RETURNED", "RETURN_DEADLINE_WARNING", "RETURN_DEADLINE_EXPIRED", "automation_last_minute",
                  "TRIP_RESCHEDULED", "TRIP_RESCHEDULE_KEPT", "TRIP_RESCHEDULE_WITHDRAWN",
-                 "RECIPIENT_CONFIRMED", "RECIPIENT_DECLINED" ->
+                 "RECIPIENT_CONFIRMED", "RECIPIENT_DECLINED", "RECIPIENT_CHANGED" ->
                     bidId.map(id -> "bids/" + id);
 
             // Le destinataire n'est pas partie au colis : il le suit depuis ses réceptions.
             case "RECIPIENT_PARCEL_INCOMING", "RECIPIENT_PARCEL_DEPARTED", "RECIPIENT_PARCEL_ARRIVED",
                  "RECIPIENT_PARCEL_DELIVERED", "RECIPIENT_PARCEL_CANCELLED",
                  "RECIPIENT_PARCEL_RESCHEDULED" -> bidId.map(id -> "receptions/" + id);
+            // L'ancien destinataire n'a plus accès au colis : il retombe sur son onglet Suivi.
+            case "RECIPIENT_PARCEL_REASSIGNED" -> Optional.of("tracking");
 
             case "KYC_VERIFIED" -> Optional.of("kyc/status");
             case "KYC_ACTION_REQUIRED" -> Optional.of("kyc/verify");

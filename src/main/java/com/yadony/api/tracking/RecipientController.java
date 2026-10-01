@@ -6,6 +6,7 @@ import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
+import com.yadony.api.matching.RevokedTrackingTokenRepository;
 import com.google.zxing.BarcodeFormat;
 import com.google.zxing.EncodeHintType;
 import com.google.zxing.client.j2se.MatrixToImageWriter;
@@ -13,6 +14,8 @@ import com.google.zxing.common.BitMatrix;
 import com.google.zxing.qrcode.QRCodeWriter;
 import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
@@ -22,6 +25,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseBody;
 
 import java.io.ByteArrayOutputStream;
+import java.net.URI;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -43,6 +47,7 @@ public class RecipientController {
     private final AnnouncementRepository announcementRepository;
     private final TrackingEventRepository trackingEventRepository;
     private final StorageService storageService;
+    private final RevokedTrackingTokenRepository revokedTokenRepository;
 
     @Value("${app.base-url}")
     private String appBaseUrl;
@@ -50,11 +55,13 @@ public class RecipientController {
     public RecipientController(BidRepository bidRepository,
                                AnnouncementRepository announcementRepository,
                                TrackingEventRepository trackingEventRepository,
-                               StorageService storageService) {
+                               StorageService storageService,
+                               RevokedTrackingTokenRepository revokedTokenRepository) {
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.trackingEventRepository = trackingEventRepository;
         this.storageService = storageService;
+        this.revokedTokenRepository = revokedTokenRepository;
     }
 
     @GetMapping("/{trackingToken}")
@@ -64,9 +71,12 @@ public class RecipientController {
 
     @GetMapping("/{trackingToken}/status")
     @ResponseBody
-    public ResponseEntity<Map<String, Object>> trackingStatus(@PathVariable String trackingToken) {
+    public ResponseEntity<?> trackingStatus(@PathVariable String trackingToken) {
         Optional<BidEntity> bidOpt = bidRepository.findByTrackingToken(trackingToken);
         if (bidOpt.isEmpty()) {
+            if (revokedTokenRepository.existsByToken(trackingToken)) {
+                return linkRevoked();
+            }
             return ResponseEntity.notFound().build();
         }
         BidEntity bid = bidOpt.get();
@@ -93,6 +103,18 @@ public class RecipientController {
         ));
     }
 
+    /** Lien remplacé après un changement de destinataire : 410, sans rien dire du colis. */
+    private static ResponseEntity<ProblemDetail> linkRevoked() {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.GONE,
+                "Le destinataire de ce colis a changé. Ce lien de suivi n'est plus valide.");
+        problem.setType(URI.create("https://yadony.app/errors/tracking-link-revoked"));
+        problem.setTitle("Tracking Link Revoked");
+        problem.setProperty("code", "tracking-link-revoked");
+        return ResponseEntity.status(HttpStatus.GONE)
+                .contentType(org.springframework.http.MediaType.APPLICATION_PROBLEM_JSON)
+                .body(problem);
+    }
+
     private static String arrivalInstructionsOrEmpty(Optional<AnnouncementEntity> announcementOpt) {
         return announcementOpt.map(AnnouncementEntity::getArrivalInstructions)
                 .filter(s -> s != null)
@@ -104,6 +126,7 @@ public class RecipientController {
 
         if (bidOpt.isEmpty()) {
             model.addAttribute("invalid", true);
+            model.addAttribute("recipientChanged", revokedTokenRepository.existsByToken(trackingToken));
             return "recipient/tracking";
         }
 

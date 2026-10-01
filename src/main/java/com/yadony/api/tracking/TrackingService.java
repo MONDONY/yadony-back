@@ -39,7 +39,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.io.ByteArrayOutputStream;
-import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -66,7 +65,6 @@ public class TrackingService {
     private final MessagesResolver messagesResolver;
     private final BidRecipientLinkRepository recipientLinkRepository;
 
-    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
     private static final int MAX_CODE_ATTEMPTS = 3;
     private static final int MAX_CODE_REFRESHES_PER_DAY = 5;
 
@@ -319,7 +317,7 @@ public class TrackingService {
         if (request.eventType() == TrackingEventType.DEPART && bid.getStatus() == BidStatus.ACCEPTED) {
             bid.setStatus(BidStatus.HANDED_OVER);
             if (bid.getConfirmationCode() == null) {
-                String code = String.format("%06d", SECURE_RANDOM.nextInt(1_000_000));
+                String code = com.yadony.api.matching.PickupCodes.newCode();
                 bid.setConfirmationCode(code);
                 bid.setConfirmationCodeAttempts(0);
                 bid.setConfirmationCodeExpiry(computeCodeExpiry(announcement));
@@ -573,7 +571,7 @@ public class TrackingService {
                         HttpStatus.NOT_FOUND, "announcement-not-found", "Announcement Not Found",
                         "Annonce introuvable"));
 
-        String newCode = String.format("%06d", SECURE_RANDOM.nextInt(1_000_000));
+        String newCode = com.yadony.api.matching.PickupCodes.newCode();
         LocalDateTime newExpiry = computeCodeExpiry(announcement);
         bid.setConfirmationCode(newCode);
         bid.setConfirmationCodeAttempts(0);
