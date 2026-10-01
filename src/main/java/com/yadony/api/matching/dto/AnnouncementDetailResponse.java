@@ -69,8 +69,9 @@ public record AnnouncementDetailResponse(
         /** Devise cible des équivalents convertis : celle du lecteur. */
         String convertedCurrency,
         /** Reports encore possibles pour ce trajet (vol annulé, voyage repoussé), sur
-         *  {@link com.yadony.api.matching.TripRescheduleRules#MAX_RESCHEDULES}. */
-        int remainingReschedules
+         *  {@link com.yadony.api.matching.TripRescheduleRules#MAX_RESCHEDULES}. Servi au seul
+         *  voyageur propriétaire ; null (donc absent du JSON) pour tout autre lecteur. */
+        Integer remainingReschedules
 ) {
     /** Copie enrichie des équivalents convertis — même pattern que le fil de recherche. */
     public AnnouncementDetailResponse withConvertedPrices(BigDecimal convertedPricePerKg,

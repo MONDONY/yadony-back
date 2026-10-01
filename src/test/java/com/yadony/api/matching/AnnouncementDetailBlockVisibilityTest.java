@@ -144,8 +144,8 @@ class AnnouncementDetailBlockVisibilityTest {
 
         assertThat(result.departureCity()).isEqualTo("Paris");
         assertThat(result.status()).isEqualTo("ACTIVE");
-        // Jamais reporté : les deux reports restent possibles.
-        assertThat(result.remainingReschedules()).isEqualTo(2);
+        // Compteur de reports réservé au propriétaire du trajet.
+        assertThat(result.remainingReschedules()).isNull();
     }
 
     @Test
@@ -175,5 +175,20 @@ class AnnouncementDetailBlockVisibilityTest {
 
         assertThat(result.status()).isEqualTo("ACTIVE");
         verify(blockVisibility).isHidden(null, TRAVELER_ID);
+    }
+
+    @Test
+    @DisplayName("propriétaire du trajet → reports restants servis")
+    void owner_seesRemainingReschedules() {
+        AnnouncementEntity trip = activeAnnouncement();
+        trip.setRescheduleCount(1);
+        when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(trip));
+        UserEntity owner = new UserEntity();
+        org.springframework.test.util.ReflectionTestUtils.setField(owner, "id", TRAVELER_ID);
+        when(userRepository.findByFirebaseUid("uid-owner")).thenReturn(Optional.of(owner));
+
+        AnnouncementDetailResponse result = announcementService.getAnnouncementDetail(ANNOUNCEMENT_ID, "uid-owner");
+
+        assertThat(result.remainingReschedules()).isEqualTo(1);
     }
 }

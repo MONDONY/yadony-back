@@ -873,7 +873,8 @@ public class AnnouncementService {
                         traveler != null && traveler.hasActiveMobileMoney()),
                 // Convertis joints juste en dessous (withConvertedPrices).
                 null, null, null,
-                TripRescheduleRules.remaining(announcement)
+                viewerId != null && viewerId.equals(announcement.getTravelerId())
+                        ? TripRescheduleRules.remaining(announcement) : null
         );
 
         // Même repère de lecture que le fil (Tâche 10) : équivalents « environ » dans
