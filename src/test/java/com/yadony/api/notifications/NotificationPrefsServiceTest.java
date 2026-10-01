@@ -108,7 +108,8 @@ class NotificationPrefsServiceTest {
         assertThat(service.isAllowed(USER_ID, "BID_ACCEPTED")).isFalse();
         assertThat(service.isAllowed(USER_ID, "TRIP_CANCELLED")).isFalse();
         for (String type : new String[]{"RECIPIENT_PARCEL_INCOMING", "RECIPIENT_PARCEL_DEPARTED",
-                "RECIPIENT_PARCEL_ARRIVED", "RECIPIENT_PARCEL_DELIVERED", "RECIPIENT_CONFIRMED", "RECIPIENT_DECLINED"}) {
+                "RECIPIENT_PARCEL_ARRIVED", "RECIPIENT_PARCEL_DELIVERED", "RECIPIENT_CONFIRMED", "RECIPIENT_DECLINED",
+                "RECIPIENT_PARCEL_CANCELLED", "RECIPIENT_PARCEL_RESCHEDULED"}) {
             assertThat(service.isAllowed(USER_ID, type)).as(type).isFalse();
         }
     }

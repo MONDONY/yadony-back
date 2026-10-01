@@ -63,7 +63,8 @@ public final class NotificationDeeplink {
 
             // Le destinataire n'est pas partie au colis : il le suit depuis ses réceptions.
             case "RECIPIENT_PARCEL_INCOMING", "RECIPIENT_PARCEL_DEPARTED", "RECIPIENT_PARCEL_ARRIVED",
-                 "RECIPIENT_PARCEL_DELIVERED" -> bidId.map(id -> "receptions/" + id);
+                 "RECIPIENT_PARCEL_DELIVERED", "RECIPIENT_PARCEL_CANCELLED",
+                 "RECIPIENT_PARCEL_RESCHEDULED" -> bidId.map(id -> "receptions/" + id);
 
             case "KYC_VERIFIED" -> Optional.of("kyc/status");
             case "KYC_ACTION_REQUIRED" -> Optional.of("kyc/verify");

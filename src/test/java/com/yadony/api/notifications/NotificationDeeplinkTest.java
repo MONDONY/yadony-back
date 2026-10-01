@@ -47,7 +47,9 @@ class NotificationDeeplinkTest {
     @Test
     void recipientTypesOpenTheReception() {
         for (String type : new String[]{"RECIPIENT_PARCEL_INCOMING", "RECIPIENT_PARCEL_DEPARTED",
-                "RECIPIENT_PARCEL_ARRIVED", "RECIPIENT_PARCEL_DELIVERED"}) {
+                "RECIPIENT_PARCEL_ARRIVED", "RECIPIENT_PARCEL_DELIVERED", "RECIPIENT_PARCEL_CANCELLED",
+                "RECIPIENT_PARCEL_RESCHEDULED"}) {
+            assertThat(NotificationCategory.fromType(type)).as(type).isEqualTo(NotificationCategory.COLIS);
             assertThat(NotificationDeeplink.of(type, Map.of("bidId", bidId)))
                     .as(type).contains("yadony://receptions/" + bidId);
         }
