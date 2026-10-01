@@ -59,11 +59,12 @@ class PackageRequestInsightControllerIT {
     void getInsights_returnsCountAndInvitedIds() throws Exception {
         UUID id = UUID.randomUUID();
         UUID trip = UUID.randomUUID();
-        when(service.getInsights(SENDER_UUID, id)).thenReturn(new PackageRequestInsightsResponse(14, List.of(trip)));
+        when(service.getInsights(SENDER_UUID, id)).thenReturn(new PackageRequestInsightsResponse(14, 5, List.of(trip)));
 
         mockMvc.perform(get("/package-requests/" + id + "/insights").with(authentication(authAs("uid-sender", "SENDER"))))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.viewCount").value(14))
+            .andExpect(jsonPath("$.uniqueViewerCount").value(5))
             .andExpect(jsonPath("$.invitedAnnouncementIds[0]").value(trip.toString()));
     }
 
