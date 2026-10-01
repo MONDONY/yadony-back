@@ -9,6 +9,7 @@ import com.yadony.api.common.YadonyNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -19,6 +20,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -97,6 +99,11 @@ class RecipientServiceTest {
 
         assertThat(previous.isDefault()).isFalse();
         assertThat(dto.isDefault()).isTrue();
+        // L'ancien défaut doit être écrit en base AVANT l'insertion du nouveau :
+        // sinon l'index unique partiel lève une violation (YADONY-BACK-STAGING-E).
+        InOrder order = inOrder(repository);
+        order.verify(repository).saveAndFlush(previous);
+        order.verify(repository).save(any(RecipientEntity.class));
     }
 
     @Test
@@ -163,6 +170,9 @@ class RecipientServiceTest {
 
         assertThat(previous.isDefault()).isFalse();
         assertThat(dto.isDefault()).isTrue();
+        InOrder order = inOrder(repository);
+        order.verify(repository).saveAndFlush(previous);
+        order.verify(repository).save(entity);
     }
 
     @Test
