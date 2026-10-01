@@ -211,18 +211,12 @@ public class AuthService {
             String v = request.city().trim();
             user.setCity(v.isEmpty() ? null : v);
         }
+        // phoneNumber est ignoré : il écrivait le numéro dans Firebase sans code SMS,
+        // et le profil public affiche désormais « téléphone vérifié » d'après ce numéro
+        // (FLUTTER-4H). Le changement de numéro passe par /auth/sms-otp/attach, qui
+        // exige le code. Le champ reste accepté pour ne pas casser d'ancien client.
         if (request.phoneNumber() != null) {
-            String v = request.phoneNumber().trim();
-            // Lu ici seulement : une mise à jour qui ne touche pas au numéro n'a
-            // aucune raison d'interroger Firebase.
-            String currentPhone = firebaseContact.getContact(firebaseUid).phoneNumber();
-            if (!v.isEmpty() && !v.equals(currentPhone)) {
-                if (firebaseContact.isPhoneTakenByAnother(v, firebaseUid)) {
-                    throw new YadonyBusinessException(HttpStatus.CONFLICT, "phone-already-exists",
-                            "Phone Number Already Registered", "Ce numéro est déjà associé à un compte");
-                }
-                firebaseContact.updatePhone(firebaseUid, v);
-            }
+            log.warn("PATCH /auth/me : phoneNumber ignoré (passer par /auth/sms-otp/attach)");
         }
         if (request.bio() != null) {
             String v = request.bio().trim();
@@ -279,16 +273,25 @@ public class AuthService {
                         "Utilisateur introuvable"
                 ));
         return new com.yadony.api.auth.dto.PrivacySettingsResponse(
-                user.isContactKycOnly(), user.isHidePhoneNumber());
+                user.isContactKycOnly(), user.isHidePhoneNumber(), user.isShowResidenceCountry());
     }
 
     /**
      * @param hidePhoneNumber {@code null} = préférence laissée inchangée (client
      *        antérieur à ce champ), et non « remettre à false ».
      */
-    @Transactional
     public void updatePrivacySettings(String firebaseUid, boolean contactKycOnly,
                                       Boolean hidePhoneNumber) {
+        updatePrivacySettings(firebaseUid, contactKycOnly, hidePhoneNumber, null);
+    }
+
+    /**
+     * @param showResidenceCountry {@code null} = inchangé ; afficher ou non le pays de
+     *        résidence sur le profil public (FLUTTER-4H).
+     */
+    @Transactional
+    public void updatePrivacySettings(String firebaseUid, boolean contactKycOnly,
+                                      Boolean hidePhoneNumber, Boolean showResidenceCountry) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND,
@@ -302,7 +305,16 @@ public class AuthService {
         if (hidePhoneNumber != null) {
             user.setHidePhoneNumber(hidePhoneNumber);
         }
+        boolean countryChanged = showResidenceCountry != null
+                && showResidenceCountry != user.isShowResidenceCountry();
+        if (showResidenceCountry != null) {
+            user.setShowResidenceCountry(showResidenceCountry);
+        }
         userRepository.save(user);
+        if (countryChanged) {
+            auditService.log("USER", user.getId(), "RESIDENCE_COUNTRY_VISIBILITY_UPDATED", user.getId(),
+                    Map.of("showResidenceCountry", showResidenceCountry));
+        }
 
         // Masquer son numéro retire un canal de contact à la contrepartie d'un deal
         // en cours : on garde une trace datée de la décision, comme pour le

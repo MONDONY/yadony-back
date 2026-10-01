@@ -11,4 +11,11 @@ import jakarta.validation.constraints.NotNull;
  */
 public record PrivacySettingsRequest(
         @NotNull Boolean contactKycOnly,
-        Boolean hidePhoneNumber) {}
+        Boolean hidePhoneNumber,
+        /** Afficher mon pays de résidence sur mon profil public ; null = inchangé. */
+        Boolean showResidenceCountry) {
+
+    public PrivacySettingsRequest(Boolean contactKycOnly, Boolean hidePhoneNumber) {
+        this(contactKycOnly, hidePhoneNumber, null);
+    }
+}

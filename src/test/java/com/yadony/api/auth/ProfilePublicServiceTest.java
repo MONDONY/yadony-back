@@ -46,6 +46,7 @@ class ProfilePublicServiceTest {
     @Mock private UserBusinessPrefsRepository userBusinessPrefsRepository;
     @Mock private StorageService storageService;
     @Mock private BlockVisibility blockVisibility;
+    @Mock private FirebaseContactService firebaseContact;
 
     private ProfilePublicService profilePublicService;
 
@@ -62,7 +63,10 @@ class ProfilePublicServiceTest {
     @BeforeEach
     void setUp() throws Exception {
         profilePublicService = new ProfilePublicService(userRepository, ratingService,
-                userBusinessPrefsRepository, storageService, blockVisibility, TestMessages.resolver());
+                userBusinessPrefsRepository, storageService, blockVisibility, TestMessages.resolver(),
+                firebaseContact);
+        org.mockito.Mockito.lenient().when(firebaseContact.getContact(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new FirebaseContactService.Contact(null, null));
         user = new UserEntity();
         setId(user, USER_ID);
         setField(user, "username", "user1785153600");
@@ -128,6 +132,48 @@ class ProfilePublicServiceTest {
 
         // Le masquage coupe avant toute lecture : rien du profil n'est chargé.
         verifyNoInteractions(userRepository, ratingService);
+    }
+
+    // FLUTTER-4H : vérifications en booléens, pays seulement sur consentement.
+    @Test
+    @DisplayName("profil public → vérifications téléphone/e-mail, jamais le numéro ni l'e-mail")
+    void getProfilePublic_exposesVerificationFlagsOnly() {
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(3), eq(VIEWER_ID)))
+                .thenReturn(stubRatingSummary());
+        setFieldQuiet(user, "firebaseUid", "uid-1");
+        when(firebaseContact.getContact("uid-1"))
+                .thenReturn(new FirebaseContactService.Contact("+33600000000", "a@b.fr"));
+
+        var response = profilePublicService.getProfilePublic(USER_ID, VIEWER_ID);
+
+        assertThat(response.phoneVerified()).isTrue();
+        assertThat(response.emailVerified()).isTrue();
+        assertThat(response.toString()).doesNotContain("+33600000000").doesNotContain("a@b.fr");
+    }
+
+    @Test
+    @DisplayName("pays de résidence : null sans consentement, code ISO2 avec")
+    void getProfilePublic_residenceCountryOnlyWhenShown() {
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(3), eq(VIEWER_ID)))
+                .thenReturn(stubRatingSummary());
+        user.setCountry("FR");
+
+        assertThat(profilePublicService.getProfilePublic(USER_ID, VIEWER_ID).residenceCountry()).isNull();
+
+        user.setShowResidenceCountry(true);
+        assertThat(profilePublicService.getProfilePublic(USER_ID, VIEWER_ID).residenceCountry()).isEqualTo("FR");
+    }
+
+    private static void setFieldQuiet(Object target, String name, Object value) {
+        try {
+            var f = UserEntity.class.getDeclaredField(name);
+            f.setAccessible(true);
+            f.set(target, value);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     @Test

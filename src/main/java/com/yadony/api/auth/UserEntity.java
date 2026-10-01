@@ -109,6 +109,15 @@ public class UserEntity extends BaseEntity {
     private boolean hidePhoneNumber = false;
 
     /**
+     * L'utilisateur accepte que son pays de résidence ({@link #country}, choisi à
+     * l'onboarding) apparaisse sur son profil public (FLUTTER-4H). Opt-in explicite :
+     * false pour tous les comptes ; le serveur n'envoie jamais le pays sinon.
+     */
+    @org.hibernate.annotations.ColumnDefault("false")
+    @Column(name = "show_residence_country", nullable = false)
+    private boolean showResidenceCountry = false;
+
+    /**
      * Langue dans laquelle le serveur rédige ce qu'il envoie hors de la requête de
      * l'utilisateur (notifications, SMS de secours). Colonne brute en {@code String}
      * (V264) ; {@link #getPreferredLanguage()} l'expose en {@link AppLanguage}, FR si
@@ -375,6 +384,9 @@ public class UserEntity extends BaseEntity {
 
     public boolean isHidePhoneNumber() { return hidePhoneNumber; }
     public void setHidePhoneNumber(boolean hidePhoneNumber) { this.hidePhoneNumber = hidePhoneNumber; }
+
+    public boolean isShowResidenceCountry() { return showResidenceCountry; }
+    public void setShowResidenceCountry(boolean showResidenceCountry) { this.showResidenceCountry = showResidenceCountry; }
 
     /** FR si la colonne est vide ou porte un code hors catalogue (fr/en). */
     public AppLanguage getPreferredLanguage() { return AppLanguage.fromCode(preferredLanguage).orElse(AppLanguage.FR); }
