@@ -17,21 +17,30 @@ public record AdminConversationResponse(
         String lastMessageAt,
         int messageCount,
         boolean flagged,
-        LocalDateTime createdAt
+        LocalDateTime createdAt,
+        /**
+         * "SENDER_TRAVELER" (participantA = expéditeur) ou "RECIPIENT_TRAVELER"
+         * (participantA = destinataire du colis, lot 3C).
+         */
+        String kind,
+        /** Conversation destinataire fermée après un changement de destinataire. */
+        LocalDateTime closedAt
 ) {
     public static AdminConversationResponse from(ConversationEntity e,
-                                                 String senderName,
+                                                 String participantAName,
                                                  String travelerName,
                                                  String lastMessageAt) {
         return new AdminConversationResponse(
                 e.getFirestoreConversationId(),
                 e.getBidId(),
-                senderName,
+                participantAName,
                 travelerName,
                 lastMessageAt,
                 0,
                 false,
-                e.getCreatedAt()
+                e.getCreatedAt(),
+                e.getKind() != null ? e.getKind().name() : null,
+                e.getClosedAt()
         );
     }
 }

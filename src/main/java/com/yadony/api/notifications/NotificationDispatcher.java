@@ -639,7 +639,11 @@ public class NotificationDispatcher {
     // n'a pas pu déterminer le destinataire elle-même : la base est la source de
     // vérité des participants, le document Firestore n'en est qu'un reflet, et il
     // peut manquer.
-    public String sendMessageNotification(UUID senderId, UUID travelerId,
+    //
+    // participantAId : colonne conversations.sender_id, soit l'expéditeur du colis
+    // (SENDER_TRAVELER), soit son destinataire (RECIPIENT_TRAVELER, lot 3C). Seul
+    // « l'autre participant » en est déduit ; le texte (« Message de … ») ne nomme aucun rôle.
+    public String sendMessageNotification(UUID participantAId, UUID travelerId,
                                           String senderFirebaseUid, String preview,
                                           String conversationId) {
         // Message posté par la plateforme (FirestoreService.addSystemMessage) : aucune push
@@ -667,7 +671,7 @@ public class NotificationDispatcher {
         // publicDisplayName() : « Un utilisateur » ne permettait pas de savoir qui écrit
         // quand l'expéditeur du message n'a pas renseigné de prénom.
         String senderName = senderUser.publicDisplayName();
-        UUID recipientId = senderUser.getId().equals(senderId) ? travelerId : senderId;
+        UUID recipientId = senderUser.getId().equals(participantAId) ? travelerId : participantAId;
 
         // Fil masqué : ni push, ni UID renvoyé. La Cloud Function se sert de cet UID pour
         // créditer le compteur de non-lus ; le renvoyer ferait apparaître un badge pour un

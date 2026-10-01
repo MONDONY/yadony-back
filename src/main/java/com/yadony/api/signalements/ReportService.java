@@ -248,7 +248,7 @@ public class ReportService {
         ConversationEntity conversation = conversationRepository.findById(conversationId)
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "target-not-found",
                         "Not Found", "La cible du signalement est introuvable"));
-        if (!reporterId.equals(conversation.getSenderId()) && !reporterId.equals(conversation.getTravelerId())) {
+        if (!reporterId.equals(conversation.participantAId()) && !reporterId.equals(conversation.getTravelerId())) {
             throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "not-conversation-participant",
                     "Forbidden", "Vous ne participez pas à cette conversation");
         }

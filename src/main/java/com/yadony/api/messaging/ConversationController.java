@@ -5,6 +5,7 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.BlockVisibility;
 import com.yadony.api.common.PageResponse;
 import com.yadony.api.common.StorageService;
+import com.yadony.api.common.YadonyBusinessException;
 import java.util.List;
 import com.yadony.api.messaging.dto.ConversationResponse;
 import com.yadony.api.messaging.dto.ImageUploadResponse;
@@ -102,8 +103,16 @@ public class ConversationController {
         UserEntity currentUser = resolveCurrentUser();
         ConversationEntity conv = conversationRepository
                 .findByIdAndParticipant(id, currentUser.getId())
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN,
-                        "Conversation not found or access denied"));
+                .orElseThrow(() -> {
+                    // Ancien destinataire d'une conversation fermée (lot 3C) : elle n'existe
+                    // plus pour lui, comme elle a disparu de sa liste.
+                    if (conversationRepository.existsRevokedForRecipient(id, currentUser.getId())) {
+                        return new YadonyBusinessException(HttpStatus.NOT_FOUND, "conversation-not-found",
+                                "Not Found", "Conversation introuvable");
+                    }
+                    return new ResponseStatusException(HttpStatus.FORBIDDEN,
+                            "Conversation not found or access denied");
+                });
 
         // Ouvrir directement un fil masqué doit échouer comme il a disparu de la liste.
         conversationService.assertMessagingAllowed(conv, currentUser.getId());

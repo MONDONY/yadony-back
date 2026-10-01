@@ -57,6 +57,12 @@ public class MessagingNotifyController {
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
                         "conversation-not-found", "Not Found", "Conversation introuvable"));
 
+        // Conversation destinataire fermée (changement de destinataire) : plus aucune
+        // notification ni crédit de non-lus, l'ancien destinataire n'y a plus accès.
+        if (conv.isClosed()) {
+            return ResponseEntity.ok(new NotifyMessageResponse(null));
+        }
+
         // Répare au passage le document Firestore s'il manque. Les conversations
         // créées pendant que le bean Firestore était nul n'ont que leur
         // sous-collection `messages` : la Cloud Function ne peut alors pas y lire
@@ -74,8 +80,10 @@ public class MessagingNotifyController {
         }
 
         String preview = request.messagePreview() != null ? request.messagePreview() : "[Image]";
+        // participantAId() : expéditeur ou destinataire selon le type. Le dispatcher ne fait
+        // que choisir « l'autre » participant, et son texte (« Message de … ») est neutre.
         String recipientFirebaseUid = notificationDispatcher.sendMessageNotification(
-                conv.getSenderId(), conv.getTravelerId(),
+                conv.participantAId(), conv.getTravelerId(),
                 request.senderFirebaseUid(), preview, conv.getFirestoreConversationId());
 
         return ResponseEntity.ok(new NotifyMessageResponse(recipientFirebaseUid));

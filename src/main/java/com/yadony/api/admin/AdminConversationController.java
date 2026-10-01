@@ -74,7 +74,8 @@ public class AdminConversationController {
         // Batch : noms des participants + lastMessageAt Firestore (un seul getAll).
         Set<UUID> userIds = new HashSet<>();
         for (ConversationEntity c : conversations.getContent()) {
-            if (c.getSenderId() != null) userIds.add(c.getSenderId());
+            // participantAId : expéditeur ou destinataire selon le type (cf. ConversationEntity).
+            if (c.participantAId() != null) userIds.add(c.participantAId());
             if (c.getTravelerId() != null) userIds.add(c.getTravelerId());
         }
         Map<UUID, UserEntity> usersById = userRepository.findAllById(userIds).stream()
@@ -88,7 +89,7 @@ public class AdminConversationController {
 
         Page<AdminConversationResponse> result = conversations.map(c -> AdminConversationResponse.from(
                 c,
-                userName(c.getSenderId(), usersById),
+                userName(c.participantAId(), usersById),
                 userName(c.getTravelerId(), usersById),
                 lastMessageAt(meta.get(c.getFirestoreConversationId()))));
         return ResponseEntity.ok(result);

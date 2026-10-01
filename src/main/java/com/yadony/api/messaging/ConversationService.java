@@ -192,7 +192,7 @@ public class ConversationService {
                 return;
             }
 
-            UserEntity sender   = userRepository.findById(conv.getSenderId()).orElse(null);
+            UserEntity sender   = userRepository.findById(conv.participantAId()).orElse(null);
             UserEntity traveler = userRepository.findById(conv.getTravelerId()).orElse(null);
             if (sender == null || traveler == null) {
                 log.warn("Firestore document repair skipped for {} — participant missing", firestoreId);
@@ -200,8 +200,18 @@ public class ConversationService {
             }
 
             Map<String, Object> data = new java.util.HashMap<>();
-            data.put("senderId",   sender.getFirebaseUid());
+            // Conversation destinataire fermée : le destinataire révoqué ne doit pas
+            // retrouver son accès Firestore par une réparation (cf. revoke).
+            if (conv.isRecipientConversation() && conv.isClosed()) {
+                data.put("senderId", null);
+                data.put("revokedRecipientId", sender.getFirebaseUid());
+            } else {
+                data.put("senderId", sender.getFirebaseUid());
+            }
             data.put("travelerId", traveler.getFirebaseUid());
+            if (conv.isRecipientConversation()) {
+                data.put("kind", ConversationKind.RECIPIENT_TRAVELER.name());
+            }
             data.put("senderName",   fullName(sender));
             data.put("travelerName", fullName(traveler));
             data.put("createdAt", conv.getCreatedAt() != null ? conv.getCreatedAt().toString() : Instant.now().toString());
@@ -337,7 +347,7 @@ public class ConversationService {
 
     /** Interlocuteur de la conversation, déduit de l'entité sans requête. */
     private static UUID otherUserId(ConversationEntity conv, UUID currentUserId) {
-        return conv.getSenderId().equals(currentUserId) ? conv.getTravelerId() : conv.getSenderId();
+        return conv.participantAId().equals(currentUserId) ? conv.getTravelerId() : conv.participantAId();
     }
 
     private ConversationResponse buildResponse(ConversationEntity conv, UUID currentUserId,
@@ -345,7 +355,9 @@ public class ConversationService {
         UUID otherUserId = otherUserId(conv, currentUserId);
 
         UserEntity other = userRepository.findById(otherUserId).orElse(null);
-        String role = otherUserId.equals(conv.getTravelerId()) ? "Voyageur" : "Expéditeur";
+        // Participant A = expéditeur ou destinataire selon le type (cf. ConversationEntity).
+        String role = otherUserId.equals(conv.getTravelerId()) ? "Voyageur"
+                : conv.isRecipientConversation() ? "Destinataire" : "Expéditeur";
 
         String tripOrigin      = null;
         String tripDestination = null;
@@ -362,7 +374,10 @@ public class ConversationService {
             // Téléphone révélé seulement quand le deal est actif (même règle que
             // BidService), et jamais si l'intéressé a masqué son numéro dans ses
             // réglages de confidentialité — le chat reste alors son seul canal.
-            revealPhone  = BidStatus.PHONE_VISIBLE_STATUSES.contains(bid.getStatus())
+            // Conversation destinataire : jamais de téléphone (le contact passe par le chat
+            // et par les canaux du lot 3B, qui ont leurs propres règles).
+            revealPhone  = !conv.isRecipientConversation()
+                    && BidStatus.PHONE_VISIBLE_STATUSES.contains(bid.getStatus())
                     && other != null && !other.isHidePhoneNumber();
 
             Optional<AnnouncementEntity> annOpt = announcementRepository.findById(bid.getAnnouncementId());
@@ -392,7 +407,10 @@ public class ConversationService {
             tripWeightKg,
             bidStatus,
             conv.isReadOnlyFor(currentUserId),
-            conv.isDeletedByUser(currentUserId)
+            conv.isDeletedByUser(currentUserId),
+            conv.getKind() != null ? conv.getKind().name() : ConversationKind.SENDER_TRAVELER.name(),
+            !conv.isRecipientConversation() ? null
+                    : currentUserId.equals(conv.getTravelerId()) ? "TRAVELER" : "RECIPIENT"
         );
     }
 
