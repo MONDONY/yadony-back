@@ -23,6 +23,9 @@ import com.yadony.api.tracking.dto.TrackingEventResponse;
 import com.yadony.api.tracking.dto.TrackingSearchResponse;
 import com.yadony.api.tracking.dto.TripScanHistoryEntryDto;
 import com.yadony.api.tracking.events.DeliveryConfirmedEvent;
+import com.yadony.api.tracking.events.ParcelDepartedEvent;
+import com.yadony.api.matching.reception.BidRecipientLinkRepository;
+import com.yadony.api.matching.reception.ReceptionLinkStatus;
 import com.google.zxing.BarcodeFormat;
 import com.google.zxing.EncodeHintType;
 import com.google.zxing.client.j2se.MatrixToImageWriter;
@@ -61,6 +64,7 @@ public class TrackingService {
     private final com.yadony.api.common.StorageService storageService;
     private final NotificationDispatcher notificationDispatcher;
     private final MessagesResolver messagesResolver;
+    private final BidRecipientLinkRepository recipientLinkRepository;
 
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
     private static final int MAX_CODE_ATTEMPTS = 3;
@@ -78,7 +82,8 @@ public class TrackingService {
                            ApplicationEventPublisher eventPublisher,
                            com.yadony.api.common.StorageService storageService,
                            NotificationDispatcher notificationDispatcher,
-                           MessagesResolver messagesResolver) {
+                           MessagesResolver messagesResolver,
+                           BidRecipientLinkRepository recipientLinkRepository) {
         this.bidRepository = bidRepository;
         this.paymentRepository = paymentRepository;
         this.userRepository = userRepository;
@@ -89,6 +94,7 @@ public class TrackingService {
         this.storageService = storageService;
         this.notificationDispatcher = notificationDispatcher;
         this.messagesResolver = messagesResolver;
+        this.recipientLinkRepository = recipientLinkRepository;
     }
 
     public QrCodeResponse getQrCode(UUID bidId, String firebaseUid) {
@@ -326,6 +332,8 @@ public class TrackingService {
                         Map.of("type", "CONFIRMATION_CODE_READY", "bidId", bid.getId().toString()));
                 auditService.log("TRACKING_CONFIRMATION_CODE", bid.getId(), "CODE_GENERATED",
                         traveler.getId(), Map.of("bidId", bid.getId().toString()));
+                // Le destinataire qui suit le colis dans l'app voit désormais son code.
+                eventPublisher.publishEvent(new ParcelDepartedEvent(bid.getId()));
             }
             bidRepository.save(bid);
         }
@@ -357,7 +365,11 @@ public class TrackingService {
 
         boolean isSender = currentUser.getId().equals(bid.getSenderId());
         boolean isTraveler = currentUser.getId().equals(announcement.getTravelerId());
-        if (!isSender && !isTraveler) {
+        // Le destinataire qui a confirmé le colis dans l'app suit aussi ses étapes (lecture seule).
+        boolean isConfirmedRecipient = !isSender && !isTraveler
+                && recipientLinkRepository.existsByBidIdAndRecipientUserIdAndStatus(
+                        bidId, currentUser.getId(), ReceptionLinkStatus.CONFIRMED);
+        if (!isSender && !isTraveler && !isConfirmedRecipient) {
             throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
                     "Accès interdit à ces événements de tracking");
         }

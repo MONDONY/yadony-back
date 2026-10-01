@@ -688,4 +688,51 @@ public final class NotificationTexts {
         return new NotificationText(m.get("notification.trip-reschedule-withdrawn.title"),
                 m.get("notification.trip-reschedule-withdrawn.body"));
     }
+
+    // ── Destinataire qui suit son colis dans l'app (lot 2) ───────────────────
+
+    /** Colis rattaché au compte du destinataire. Prénom de l'expéditeur seulement. */
+    public static NotificationText recipientParcelIncoming(Messages m, String senderFirstName,
+                                                           String departureCity, String arrivalCity) {
+        String who = senderFirstName == null || senderFirstName.isBlank()
+                ? m.get("notification.fallback.sender")
+                : shortDisplayName(senderFirstName);
+        String body = departureCity == null || arrivalCity == null
+                ? m.get("notification.recipient-incoming.no-route.body", who)
+                : m.get("notification.recipient-incoming.body", who, departureCity, arrivalCity);
+        return new NotificationText(m.get("notification.recipient-incoming.title"), body);
+    }
+
+    public static NotificationText recipientParcelDeparted(Messages m) {
+        return new NotificationText(m.get("notification.recipient-departed.title"),
+                m.get("notification.recipient-departed.body"));
+    }
+
+    /** La ville descend dans le corps : jamais de ville dans un titre. */
+    public static NotificationText recipientParcelArrived(Messages m, String arrivalCity) {
+        String body = arrivalCity == null || arrivalCity.isBlank()
+                ? m.get("notification.recipient-arrived.no-city.body")
+                : m.get("notification.recipient-arrived.body", arrivalCity);
+        return new NotificationText(m.get("notification.recipient-arrived.title"), body);
+    }
+
+    public static NotificationText recipientParcelDelivered(Messages m) {
+        return new NotificationText(m.get("notification.recipient-delivered.title"),
+                m.get("notification.recipient-delivered.body"));
+    }
+
+    /** À l'expéditeur : le destinataire a confirmé, il suit le colis dans l'app. */
+    public static NotificationText recipientConfirmed(Messages m, String recipientFirstName) {
+        String who = recipientFirstName == null || recipientFirstName.isBlank()
+                ? m.get("notification.fallback.recipient")
+                : shortDisplayName(recipientFirstName);
+        return new NotificationText(m.get("notification.recipient-confirmed.title"),
+                m.get("notification.recipient-confirmed.body", who));
+    }
+
+    /** À l'expéditeur : le titulaire du numéro dit que le colis n'est pas pour lui. */
+    public static NotificationText recipientDeclined(Messages m) {
+        return new NotificationText(m.get("notification.recipient-declined.title"),
+                m.get("notification.recipient-declined.body"));
+    }
 }
