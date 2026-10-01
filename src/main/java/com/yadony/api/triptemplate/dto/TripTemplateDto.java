@@ -39,6 +39,7 @@ public record TripTemplateDto(
     Integer handoverLeadDays,
     String departureCountryCode,
     String arrivalCountryCode,
+    int arrivalDayOffset,
     LocalDateTime createdAt,
     LocalDateTime updatedAt
 ) {}

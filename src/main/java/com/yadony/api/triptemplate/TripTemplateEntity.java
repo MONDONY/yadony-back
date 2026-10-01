@@ -62,6 +62,10 @@ public class TripTemplateEntity extends BaseEntity {
     @Column(name = "arrival_time")
     private LocalTime arrivalTime;
 
+    /** Jour d'arrivée relatif au départ (0 = même jour, 1 = vol de nuit). Plafond 3, comme l'annonce. */
+    @Column(name = "arrival_day_offset", nullable = false)
+    private int arrivalDayOffset = 0;
+
     /** Devise du modèle (ISO 4217). Nul pour un modèle antérieur à V257 : devise active à l'application. */
     @Column(name = "currency", length = 3)
     private String currency;
@@ -174,6 +178,8 @@ public class TripTemplateEntity extends BaseEntity {
     public void setDepartureTime(LocalTime departureTime) { this.departureTime = departureTime; }
     public Integer getHandoverLeadDays() { return handoverLeadDays; }
     public void setHandoverLeadDays(Integer handoverLeadDays) { this.handoverLeadDays = handoverLeadDays; }
+    public int getArrivalDayOffset() { return arrivalDayOffset; }
+    public void setArrivalDayOffset(int arrivalDayOffset) { this.arrivalDayOffset = arrivalDayOffset; }
     public String getDepartureCountryCode() { return departureCountryCode; }
     public void setDepartureCountryCode(String departureCountryCode) { this.departureCountryCode = departureCountryCode; }
     public String getArrivalCountryCode() { return arrivalCountryCode; }

@@ -84,6 +84,21 @@ class TripTemplateServiceTest {
 
     // C2 : normalisation à l'écriture — un client pas à jour envoie un libellé/code
     // legacy, le modèle doit être persisté avec le libellé canonique.
+    // FLUTTER-4E : un modèle de vol de nuit mémorise son jour d'arrivée, un client
+    // ancien qui n'envoie rien garde le comportement « même jour ».
+    @Test
+    void create_storesArrivalDayOffset_andLegacyClientDefaultsToSameDay() {
+        var base = createRequest(null);
+        var overnight = new CreateTripTemplateRequest(base.label(), base.emoji(), base.departureCity(),
+                base.departureLat(), base.departureLng(), base.arrivalCity(), base.arrivalLat(),
+                base.arrivalLng(), base.transportMode(), base.capacityUnit(), base.availableKg(),
+                base.pricePerKg(), base.acceptedCategories(), false, LocalTime.of(6, 30), null, null,
+                null, null, null, null, null, null, LocalTime.of(22, 0), null, null, null, 1);
+
+        assertThat(service.create(userId, overnight).arrivalDayOffset()).isEqualTo(1);
+        assertThat(service.create(userId, base).arrivalDayOffset()).isZero();
+    }
+
     @Test
     void create_legacyCategoryCode_isNormalizedOnWrite() {
         var dto = service.create(userId, createRequest(List.of("Hi-fi", "Téléphone")));
