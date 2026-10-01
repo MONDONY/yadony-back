@@ -952,6 +952,26 @@ class TrackingServiceTest {
         assertThat(resp.expiresAt()).isEqualTo(expected);
     }
 
+    /** FLUTTER-4E : un vol de nuit arrive le lendemain ; le code expirait à l'atterrissage. */
+    @Test
+    void refreshCode_overnightTrip_expiryFromArrivalDay() {
+        BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");
+        bid.setConfirmationCode("333333");
+        LocalDate departureDate = LocalDate.now(ZoneOffset.UTC).plusDays(1);
+        LocalTime arrivalTime = LocalTime.of(6, 30);
+        AnnouncementEntity ann = buildAnnouncementWithArrivalTime(arrivalTime);
+        ann.setDepartureDate(departureDate);
+        ann.setArrivalDate(departureDate.plusDays(1));
+        UserEntity sender = buildUser(senderId, "uid-sender");
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+
+        ConfirmCodeResponse resp = service.refreshConfirmationCode(bidId, "uid-sender");
+
+        assertThat(resp.expiresAt()).isEqualTo(departureDate.plusDays(1).atTime(arrivalTime).plusDays(1));
+    }
+
     @Test
     void refreshCode_withoutArrivalTime_expiryIsDepartureDatePlusThreeDays() {
         BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");

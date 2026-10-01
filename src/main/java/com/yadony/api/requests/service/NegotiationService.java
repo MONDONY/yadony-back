@@ -855,6 +855,9 @@ public class NegotiationService {
         ann.setDepartureDate(req.departureDate());
         ann.setDepartureTime(req.departureTime());
         ann.setArrivalTime(req.arrivalTime());
+        com.yadony.api.matching.ArrivalRules.validate(req.departureDate(), req.departureTime(),
+                req.arrivalDate(), req.arrivalTime());
+        ann.setArrivalDate(req.arrivalDate());
         java.time.LocalTime handoverEnd =
             req.departureTime() != null ? req.departureTime() : java.time.LocalTime.of(23, 59);
         ann.setHandoverDeadline(java.time.LocalDateTime.of(req.departureDate(), handoverEnd));

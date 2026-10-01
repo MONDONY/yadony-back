@@ -68,7 +68,7 @@ class AnnouncementArrivalControllerTest {
 
     private static AnnouncementDetailResponse detailWithInstructions(UUID id, String arrivalInstructions) {
         return new AnnouncementDetailResponse(
-                id, UUID.randomUUID(), "Paris", "Dakar", null, null, null,
+                id, UUID.randomUUID(), "Paris", "Dakar", null, null, null, null,
                 null, null, null, null, null, null, null,
                 "ACTIVE", 0L, 0L, null, null,
                 List.of(), List.of(), List.of(), null, false,

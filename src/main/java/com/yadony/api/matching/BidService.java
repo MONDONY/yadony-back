@@ -1375,6 +1375,7 @@ public class BidService {
         java.time.LocalDate departureDate = announcement != null ? announcement.getDepartureDate() : null;
         java.time.LocalTime departureTime = announcement != null ? announcement.getDepartureTime() : null;
         java.time.LocalTime arrivalTime = announcement != null ? announcement.getArrivalTime() : null;
+        java.time.LocalDate arrivalDate = announcement != null ? announcement.getArrivalDate() : null;
         java.time.OffsetDateTime departureAt = announcement != null ? announcement.getDepartureAt() : null;
         java.math.BigDecimal pricePerKg = announcement != null ? announcement.getPricePerKg() : null;
         // Bid issu d'une négociation : prix au kilo (et donc net) figés sur le prix
@@ -1576,6 +1577,7 @@ public class BidService {
                 departureDate,
                 departureTime,
                 arrivalTime,
+                arrivalDate,
                 pricePerKg,
                 pricePerKgSenderEur,
                 transportMode,
