@@ -52,6 +52,7 @@ public class NotificationPrefsService {
             Map.entry("RECIPIENT_PARCEL_DELIVERED",   "pushActivityBids"),
             Map.entry("RECIPIENT_PARCEL_CANCELLED",   "pushActivityBids"),
             Map.entry("RECIPIENT_PARCEL_RESCHEDULED", "pushActivityBids"),
+            Map.entry("RECIPIENT_PICKUP_UPDATED",     "pushActivityBids"),
             Map.entry("RECIPIENT_CONFIRMED",          "pushActivityBids"),
             Map.entry("RECIPIENT_DECLINED",           "pushActivityBids"),
             // Changement de destinataire (lot 3A) : ancien destinataire et voyageur.

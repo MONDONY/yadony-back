@@ -1627,14 +1627,21 @@ public class BidService {
                 bid.getCurrency(),
                 arrivalInstructions,
                 rescheduleInfo(bid, announcement),
-                callerIsSender ? recipientAppStatus(bid) : null
+                recipientAppStatus(bid, callerIsSender)
         );
     }
 
-    /** Réponse du destinataire rattaché au colis, null s'il n'a pas de compte lié. */
-    private String recipientAppStatus(BidEntity bid) {
+    /**
+     * Réponse du destinataire rattaché au colis, null s'il n'a pas de compte lié.
+     * L'expéditeur voit PENDING/CONFIRMED/DECLINED ; le voyageur sait seulement que le
+     * destinataire suit le colis dans l'app (CONFIRMED), jamais une attente ou un refus.
+     */
+    private String recipientAppStatus(BidEntity bid, boolean callerIsSender) {
         return recipientLinkRepository.findByBidId(bid.getId())
-                .map(link -> link.getStatus().name())
+                .map(com.yadony.api.matching.reception.BidRecipientLinkEntity::getStatus)
+                .filter(status -> callerIsSender
+                        || status == com.yadony.api.matching.reception.ReceptionLinkStatus.CONFIRMED)
+                .map(Enum::name)
                 .orElse(null);
     }
 

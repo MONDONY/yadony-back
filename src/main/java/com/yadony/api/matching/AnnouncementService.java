@@ -25,6 +25,7 @@ import com.yadony.api.matching.dto.AnnouncementResponse;
 import com.yadony.api.matching.dto.AnnouncementSearchResponse;
 import com.yadony.api.matching.dto.TravelerProfileDto;
 import com.yadony.api.matching.events.AnnouncementDeletedEvent;
+import com.yadony.api.matching.events.ArrivalInstructionsUpdatedEvent;
 import com.yadony.api.matching.events.AnnouncementInProgressEvent;
 import com.yadony.api.matching.events.BidExpiredOnDepartureEvent;
 import com.yadony.api.matching.events.BidRejectedEvent;
@@ -1368,10 +1369,28 @@ public class AnnouncementService {
                     "Marquez d'abord le trajet comme arrivé avant de modifier les instructions de retrait");
         }
 
+        boolean changed = !java.util.Objects.equals(
+                normalizeInstructions(announcement.getArrivalInstructions()),
+                normalizeInstructions(arrivalInstructions));
         announcement.setArrivalInstructions(arrivalInstructions);
         AnnouncementEntity saved = announcementRepository.save(announcement);
 
+        // Les destinataires qui attendent leur colis (ARRIVED) sont prévenus du nouveau
+        // point de retrait ; un enregistrement à l'identique ne dérange personne.
+        List<UUID> waitingBidIds = activeBids.stream()
+                .filter(b -> b.getStatus() == BidStatus.ARRIVED)
+                .map(BidEntity::getId)
+                .toList();
+        if (changed && !waitingBidIds.isEmpty()) {
+            eventPublisher.publishEvent(new ArrivalInstructionsUpdatedEvent(saved.getId(), waitingBidIds));
+        }
+
         return getAnnouncementDetail(saved.getId(), firebaseUid);
+    }
+
+    /** Espaces de bord et texte vide ne comptent pas comme un changement d'instructions. */
+    private static String normalizeInstructions(String instructions) {
+        return instructions == null || instructions.isBlank() ? null : instructions.strip();
     }
 
     /**

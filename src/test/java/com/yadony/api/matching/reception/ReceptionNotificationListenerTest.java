@@ -6,6 +6,7 @@ import com.yadony.api.cancellation.events.TripCancelledEvent;
 import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
+import com.yadony.api.matching.events.ArrivalInstructionsUpdatedEvent;
 import com.yadony.api.matching.events.BidRecipientChangedEvent;
 import com.yadony.api.matching.events.BidRejectedEvent;
 import com.yadony.api.matching.events.TripArrivedEvent;
@@ -309,5 +310,64 @@ class ReceptionNotificationListenerTest {
     void tripRescheduled_failure_isSwallowed() {
         when(linkRepository.findByBidId(bidId)).thenThrow(new IllegalStateException("db down"));
         assertThatCode(() -> listener.onTripRescheduled(rescheduled(bidId))).doesNotThrowAnyException();
+    }
+
+    // ── Lot 3B : arrivée et instructions de retrait ─────────────────────────
+
+    @Test
+    void tripArrived_pendingRecipient_isNotifiedToConfirm() {
+        UUID annId = UUID.randomUUID();
+        when(announcementRepository.findById(annId)).thenReturn(Optional.empty());
+        when(linkRepository.findByBidId(bidId)).thenReturn(Optional.of(link(ReceptionLinkStatus.PENDING)));
+
+        listener.onTripArrived(new TripArrivedEvent(annId, List.of(new TripArrivedEvent.BidTarget(bidId, UUID.randomUUID()))));
+
+        verify(notificationDispatcher).notifyUser(eq(recipientId), eq("Votre colis est arrivé"), anyString(),
+                eq(Map.of("type", "RECIPIENT_PARCEL_ARRIVED", "bidId", bidId.toString())));
+    }
+
+    @Test
+    void tripArrived_declinedRecipient_getsNothing() {
+        UUID annId = UUID.randomUUID();
+        when(announcementRepository.findById(annId)).thenReturn(Optional.empty());
+        when(linkRepository.findByBidId(bidId)).thenReturn(Optional.of(link(ReceptionLinkStatus.DECLINED)));
+
+        listener.onTripArrived(new TripArrivedEvent(annId, List.of(new TripArrivedEvent.BidTarget(bidId, UUID.randomUUID()))));
+
+        verify(notificationDispatcher, never()).notifyUser(any(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void arrivalInstructionsUpdated_confirmedRecipient_isNotified() {
+        UUID otherBid = UUID.randomUUID();
+        when(linkRepository.findByBidId(bidId)).thenReturn(Optional.of(link(ReceptionLinkStatus.CONFIRMED)));
+        when(linkRepository.findByBidId(otherBid)).thenReturn(Optional.empty());
+
+        listener.onArrivalInstructionsUpdated(
+                new ArrivalInstructionsUpdatedEvent(UUID.randomUUID(), List.of(bidId, otherBid)));
+
+        verify(notificationDispatcher).notifyUser(eq(recipientId), eq("Retrait mis à jour"),
+                eq("Le voyageur a modifié les instructions de retrait de votre colis."),
+                eq(Map.of("type", "RECIPIENT_PICKUP_UPDATED", "bidId", bidId.toString())));
+    }
+
+    @Test
+    void arrivalInstructionsUpdated_pendingOrDeclinedRecipient_getsNothing() {
+        UUID declinedBid = UUID.randomUUID();
+        when(linkRepository.findByBidId(bidId)).thenReturn(Optional.of(link(ReceptionLinkStatus.PENDING)));
+        BidRecipientLinkEntity declined = new BidRecipientLinkEntity(declinedBid, recipientId);
+        declined.respond(ReceptionLinkStatus.DECLINED, null);
+        when(linkRepository.findByBidId(declinedBid)).thenReturn(Optional.of(declined));
+
+        listener.onArrivalInstructionsUpdated(
+                new ArrivalInstructionsUpdatedEvent(UUID.randomUUID(), List.of(bidId, declinedBid)));
+
+        verify(notificationDispatcher, never()).notifyUser(any(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void arrivalInstructionsUpdated_nullBidIds_isIgnored() {
+        listener.onArrivalInstructionsUpdated(new ArrivalInstructionsUpdatedEvent(UUID.randomUUID(), null));
+        verify(notificationDispatcher, never()).notifyUser(any(), anyString(), anyString(), any());
     }
 }

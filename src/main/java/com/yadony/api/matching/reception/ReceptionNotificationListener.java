@@ -3,6 +3,7 @@ package com.yadony.api.matching.reception;
 import com.yadony.api.cancellation.events.CancellationConfirmedEvent;
 import com.yadony.api.cancellation.events.TripCancelledEvent;
 import com.yadony.api.matching.AnnouncementRepository;
+import com.yadony.api.matching.events.ArrivalInstructionsUpdatedEvent;
 import com.yadony.api.matching.events.BidRecipientChangedEvent;
 import com.yadony.api.matching.events.BidRejectedEvent;
 import com.yadony.api.matching.events.TripArrivedEvent;
@@ -41,6 +42,10 @@ public class ReceptionNotificationListener {
     private static final Set<ReceptionLinkStatus> CANCELLATION_AUDIENCE =
             EnumSet.of(ReceptionLinkStatus.PENDING, ReceptionLinkStatus.CONFIRMED);
 
+    /** À l'arrivée, le lien PENDING est prévenu aussi : au tap, l'app lui fait confirmer. */
+    private static final Set<ReceptionLinkStatus> ARRIVAL_AUDIENCE =
+            EnumSet.of(ReceptionLinkStatus.PENDING, ReceptionLinkStatus.CONFIRMED);
+
     private final BidRecipientLinkRepository linkRepository;
     private final AnnouncementRepository announcementRepository;
     private final NotificationDispatcher notificationDispatcher;
@@ -67,8 +72,21 @@ public class ReceptionNotificationListener {
                 .map(a -> a.getArrivalCity())
                 .orElse(null);
         for (TripArrivedEvent.BidTarget target : event.getTargets()) {
-            notifyConfirmedRecipient(target.bidId(), ReceptionNotifications.ARRIVED,
+            notifyRecipient(target.bidId(), ReceptionNotifications.ARRIVED, ARRIVAL_AUDIENCE,
                     m -> NotificationTexts.recipientParcelArrived(m, arrivalCity));
+        }
+    }
+
+    /** Instructions de retrait modifiées après l'arrivée : seul le lien CONFIRMED les lit. */
+    @Async
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    public void onArrivalInstructionsUpdated(ArrivalInstructionsUpdatedEvent event) {
+        if (event.bidIds() == null) {
+            return;
+        }
+        for (UUID bidId : event.bidIds()) {
+            notifyConfirmedRecipient(bidId, ReceptionNotifications.PICKUP_UPDATED,
+                    m -> NotificationTexts.recipientPickupUpdated(m));
         }
     }
 
