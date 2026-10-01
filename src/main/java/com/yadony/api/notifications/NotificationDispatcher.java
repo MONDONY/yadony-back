@@ -440,7 +440,7 @@ public class NotificationDispatcher {
     public void onTripRescheduled(TripRescheduledEvent event) {
         for (TripRescheduledEvent.Target target : event.targets()) {
             Messages m = messagesFor(target.senderId());
-            var text = NotificationTexts.tripRescheduled(m, event.newDepartureDate(), event.reason(),
+            var text = NotificationTexts.tripRescheduled(m, event.newDepartureDate(),
                     target.decisionRequired());
             Map<String, String> data = Map.of("type", "TRIP_RESCHEDULED", "bidId", target.bidId().toString(),
                     "announcementId", event.announcementId().toString());

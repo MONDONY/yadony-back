@@ -61,6 +61,12 @@ class NotificationTextsTest {
         map.put("tripCancelledRefund", NotificationTexts.tripCancelledRefund(m));
         map.put("tripCancelledWithRematch", NotificationTexts.tripCancelledWithRematch(m, 12));
         map.put("tripCancelledNoTraveler", NotificationTexts.tripCancelledNoTraveler(m));
+        // Septembre a l'abréviation la plus longue (« sept. ») et mercredi le jour le plus long.
+        java.time.LocalDate longestDate = java.time.LocalDate.of(2026, 9, 30);
+        map.put("tripRescheduled", NotificationTexts.tripRescheduled(m, longestDate, true));
+        map.put("tripRescheduled info", NotificationTexts.tripRescheduled(m, longestDate, false));
+        map.put("tripRescheduleKept", NotificationTexts.tripRescheduleKept(m));
+        map.put("tripRescheduleWithdrawn", NotificationTexts.tripRescheduleWithdrawn(m));
         map.put("travelerNoShow", NotificationTexts.travelerNoShow(m));
         map.put("tripArrived", NotificationTexts.tripArrived(m));
         map.put("tripInProgress", NotificationTexts.tripInProgress(m));

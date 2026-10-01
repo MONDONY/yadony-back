@@ -668,15 +668,15 @@ public final class NotificationTexts {
     }
 
     /** Report du trajet, vu par l'expéditeur : nouvelle date et motif, puis ce qu'il peut faire. */
-    public static NotificationText tripRescheduled(Messages m, java.time.LocalDate newDate, String reason,
+    // Le motif n'entre pas dans les 72 caractères du corps : il est dans la conversation et l'app.
+    public static NotificationText tripRescheduled(Messages m, java.time.LocalDate newDate,
                                                    boolean decisionRequired) {
         String date = newDate.format(java.time.format.DateTimeFormatter.ofPattern(
                 m.get("notification.trip-rescheduled.date-pattern"), m.locale()));
-        String reasonLabel = m.get("trip-reschedule.reason." + reason);
         return new NotificationText(m.get("notification.trip-rescheduled.title"),
                 m.get(decisionRequired
                         ? "notification.trip-rescheduled-decision.body"
-                        : "notification.trip-rescheduled-info.body", date, reasonLabel));
+                        : "notification.trip-rescheduled-info.body", date));
     }
 
     public static NotificationText tripRescheduleKept(Messages m) {

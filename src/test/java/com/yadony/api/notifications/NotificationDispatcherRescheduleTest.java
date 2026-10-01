@@ -81,11 +81,10 @@ class NotificationDispatcherRescheduleTest {
         dispatcher.onTripRescheduled(event());
 
         verify(notificationService).persist(eq(senderId), eq("TRIP_RESCHEDULED"), eq("Trajet reporté"),
-                eq("Le voyageur a reporté son trajet au mardi 13 octobre (vol annulé). "
-                        + "Gardez votre colis sur la nouvelle date ou annulez sans frais."),
+                eq("Trajet reporté au 13 oct. : gardez votre colis ou annulez sans frais."),
                 anyMap(), eq(true));
         verify(notificationService).persist(eq(otherSenderId), eq("TRIP_RESCHEDULED"), eq("Trajet reporté"),
-                eq("Le voyageur a reporté son trajet au mardi 13 octobre (vol annulé). Votre demande reste valable."),
+                eq("Trajet reporté au 13 oct. : votre demande reste valable."),
                 anyMap(), eq(false));
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, String>> data = ArgumentCaptor.forClass(Map.class);
@@ -98,8 +97,7 @@ class NotificationDispatcherRescheduleTest {
         dispatcherIn(AppLanguage.EN).onTripRescheduled(event());
 
         verify(fcmService).sendToUser(eq(senderId), eq("Trip rescheduled"),
-                eq("The traveler moved their trip to Tuesday, October 13 (flight canceled). "
-                        + "Keep your parcel on the new date or cancel at no cost."), anyMap());
+                eq("Trip moved to Oct 13: keep your parcel or cancel at no cost."), anyMap());
     }
 
     @Test
@@ -112,7 +110,7 @@ class NotificationDispatcherRescheduleTest {
         verify(notificationService).persist(eq(travelerId), eq("TRIP_RESCHEDULE_KEPT"), eq("Colis maintenu"),
                 eq("L'expéditeur garde son colis sur la nouvelle date de votre trajet."), anyMap(), eq(false));
         verify(notificationService).persist(eq(travelerId), eq("TRIP_RESCHEDULE_WITHDRAWN"), eq("Colis retiré"),
-                eq("L'expéditeur a retiré son colis après le report de votre trajet. Il est remboursé."),
+                eq("L'expéditeur a retiré son colis après le report. Il est remboursé."),
                 anyMap(), eq(false));
     }
 

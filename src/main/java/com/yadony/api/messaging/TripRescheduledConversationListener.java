@@ -51,7 +51,7 @@ public class TripRescheduledConversationListener {
 
     static String body(Messages m, TripRescheduledEvent event, TripRescheduledEvent.Target target) {
         String date = event.newDepartureDate().format(DateTimeFormatter.ofPattern(
-                m.get("notification.trip-rescheduled.date-pattern"), m.locale()));
+                m.get("conversation.trip-rescheduled.date-pattern"), m.locale()));
         String reason = m.get("trip-reschedule.reason." + event.reason());
         return m.get(target.decisionRequired() ? "conversation.trip-rescheduled-decision"
                 : "conversation.trip-rescheduled", date, reason);
