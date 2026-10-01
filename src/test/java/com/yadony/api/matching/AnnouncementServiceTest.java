@@ -3370,6 +3370,66 @@ class AnnouncementServiceTest {
             assertThat(announcement.getArrivalInstructions()).isEqualTo("Nouveau point de RDV");
         }
 
+        /** Lot 3B : les destinataires des colis ARRIVED sont prévenus d'un nouveau point de retrait. */
+        private AnnouncementEntity stubArrivedTrip(String previousInstructions, List<BidEntity> activeBids) {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement(traveler);
+            announcement.setArrivalInstructions(previousInstructions);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            lenient().when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+            when(announcementRepository.findByIdForUpdate(announcement.getId())).thenReturn(Optional.of(announcement));
+            lenient().when(announcementRepository.findById(announcement.getId())).thenReturn(Optional.of(announcement));
+            when(bidRepository.findByAnnouncementIdAndStatusNotIn(eq(announcement.getId()), anyCollection()))
+                    .thenReturn(activeBids);
+            lenient().when(bidRepository.countVisibleByAnnouncementId(announcement.getId())).thenReturn(1L);
+            lenient().when(bidRepository.countByAnnouncementIdAndStatusIn(eq(announcement.getId()), anyList())).thenReturn(0L);
+            when(bidRepository.existsByAnnouncementIdAndStatusIn(
+                    announcement.getId(), List.of(BidStatus.ARRIVED, BidStatus.COMPLETED)))
+                    .thenReturn(true);
+            when(announcementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            return announcement;
+        }
+
+        @Test
+        @DisplayName("updateArrivalInstructions — texte modifié : événement avec les seuls colis ARRIVED")
+        void updateArrivalInstructions_changed_publishesEventWithArrivedBidsOnly() {
+            BidEntity arrived = buildBid(BidStatus.ARRIVED, ANNOUNCEMENT_ID);
+            BidEntity inTransit = buildBid(BidStatus.IN_TRANSIT, ANNOUNCEMENT_ID);
+            AnnouncementEntity announcement = stubArrivedTrip("Hall A", List.of(arrived, inTransit));
+
+            announcementService.updateArrivalInstructions(announcement.getId(), FIREBASE_UID, "Hall B");
+
+            ArgumentCaptor<com.yadony.api.matching.events.ArrivalInstructionsUpdatedEvent> captor =
+                    ArgumentCaptor.forClass(com.yadony.api.matching.events.ArrivalInstructionsUpdatedEvent.class);
+            verify(eventPublisher).publishEvent(captor.capture());
+            assertThat(captor.getValue().announcementId()).isEqualTo(announcement.getId());
+            assertThat(captor.getValue().bidIds()).containsExactly(arrived.getId());
+        }
+
+        @Test
+        @DisplayName("updateArrivalInstructions — texte identique (aux espaces près) : aucun événement")
+        void updateArrivalInstructions_unchanged_publishesNothing() {
+            BidEntity arrived = buildBid(BidStatus.ARRIVED, ANNOUNCEMENT_ID);
+            AnnouncementEntity announcement = stubArrivedTrip("Hall A", List.of(arrived));
+
+            announcementService.updateArrivalInstructions(announcement.getId(), FIREBASE_UID, "  Hall A ");
+
+            verify(eventPublisher, never()).publishEvent(
+                    any(com.yadony.api.matching.events.ArrivalInstructionsUpdatedEvent.class));
+        }
+
+        @Test
+        @DisplayName("updateArrivalInstructions — plus aucun colis ARRIVED : aucun événement")
+        void updateArrivalInstructions_noArrivedBid_publishesNothing() {
+            BidEntity inTransit = buildBid(BidStatus.IN_TRANSIT, ANNOUNCEMENT_ID);
+            AnnouncementEntity announcement = stubArrivedTrip(null, List.of(inTransit));
+
+            announcementService.updateArrivalInstructions(announcement.getId(), FIREBASE_UID, "Hall B");
+
+            verify(eventPublisher, never()).publishEvent(
+                    any(com.yadony.api.matching.events.ArrivalInstructionsUpdatedEvent.class));
+        }
+
         /** Régression I5 : la seule garde était « au moins un colis actif », donc un
          *  voyageur pouvait publier des instructions de retrait à ses expéditeurs alors
          *  que les colis sont encore ACCEPTED/IN_TRANSIT — trajet pas encore arrivé. */

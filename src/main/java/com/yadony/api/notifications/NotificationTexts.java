@@ -745,6 +745,12 @@ public final class NotificationTexts {
                 m.get("notification.recipient-rescheduled.body"));
     }
 
+    /** Au destinataire : le voyageur a modifié les instructions de retrait après l'arrivée. */
+    public static NotificationText recipientPickupUpdated(Messages m) {
+        return new NotificationText(m.get("notification.recipient-pickup-updated.title"),
+                m.get("notification.recipient-pickup-updated.body"));
+    }
+
     /** À l'expéditeur : le destinataire a confirmé, il suit le colis dans l'app. */
     public static NotificationText recipientConfirmed(Messages m, String recipientFirstName) {
         String who = recipientFirstName == null || recipientFirstName.isBlank()

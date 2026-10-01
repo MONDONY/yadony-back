@@ -31,6 +31,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.endsWith;
+import static org.hamcrest.Matchers.hasSize;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -197,16 +198,53 @@ class ReceptionControllerIntegrationTest {
     }
 
     @Test
-    void bidResponse_recipientAppStatus_visibleToSenderOnly() throws Exception {
-        BidEntity bid = persistBid(BidStatus.ACCEPTED);
-        link(bid, ReceptionLinkStatus.CONFIRMED);
+    void bidResponse_recipientAppStatus_senderSeesEveryAnswer() throws Exception {
+        BidEntity pending = persistBid(BidStatus.ACCEPTED);
+        BidEntity confirmed = persistBid(BidStatus.ACCEPTED);
+        BidEntity declined = persistBid(BidStatus.ACCEPTED);
+        BidEntity unlinked = persistBid(BidStatus.ACCEPTED);
+        link(pending, ReceptionLinkStatus.PENDING);
+        link(confirmed, ReceptionLinkStatus.CONFIRMED);
+        link(declined, ReceptionLinkStatus.DECLINED);
 
-        mockMvc.perform(get("/bids/{id}", bid.getId()).with(authentication(as(sender))))
-                .andExpect(status().isOk())
+        mockMvc.perform(get("/bids/{id}", pending.getId()).with(authentication(as(sender))))
+                .andExpect(jsonPath("$.recipientAppStatus").value("PENDING"));
+        mockMvc.perform(get("/bids/{id}", confirmed.getId()).with(authentication(as(sender))))
                 .andExpect(jsonPath("$.recipientAppStatus").value("CONFIRMED"));
-        mockMvc.perform(get("/bids/{id}", bid.getId()).with(authentication(as(traveler))))
+        mockMvc.perform(get("/bids/{id}", declined.getId()).with(authentication(as(sender))))
+                .andExpect(jsonPath("$.recipientAppStatus").value("DECLINED"));
+        mockMvc.perform(get("/bids/{id}", unlinked.getId()).with(authentication(as(sender))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.recipientAppStatus").doesNotExist());
+    }
+
+    /** Lot 3B : le voyageur sait qui suit le colis dans l'app, jamais une attente ou un refus. */
+    @Test
+    void bidResponse_recipientAppStatus_travelerSeesConfirmedOnly() throws Exception {
+        BidEntity pending = persistBid(BidStatus.ACCEPTED);
+        BidEntity confirmed = persistBid(BidStatus.ACCEPTED);
+        BidEntity declined = persistBid(BidStatus.ACCEPTED);
+        BidEntity unlinked = persistBid(BidStatus.ACCEPTED);
+        link(pending, ReceptionLinkStatus.PENDING);
+        link(confirmed, ReceptionLinkStatus.CONFIRMED);
+        link(declined, ReceptionLinkStatus.DECLINED);
+
+        mockMvc.perform(get("/bids/{id}", confirmed.getId()).with(authentication(as(traveler))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recipientAppStatus").value("CONFIRMED"));
+        for (BidEntity hidden : List.of(pending, declined, unlinked)) {
+            mockMvc.perform(get("/bids/{id}", hidden.getId()).with(authentication(as(traveler))))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.recipientAppStatus").doesNotExist());
+        }
+
+        mockMvc.perform(get("/announcements/{id}/bids", announcement.getId()).with(authentication(as(traveler))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.id == '" + confirmed.getId() + "')].recipientAppStatus")
+                        .value("CONFIRMED"))
+                .andExpect(jsonPath("$[?(@.recipientAppStatus == 'PENDING')]").isEmpty())
+                .andExpect(jsonPath("$[?(@.recipientAppStatus == 'DECLINED')]").isEmpty())
+                .andExpect(jsonPath("$[?(@.recipientAppStatus == 'CONFIRMED')]", hasSize(1)));
     }
 
     // ── Requête de rattrapage (H2 mode PostgreSQL) ──────────────────────────
