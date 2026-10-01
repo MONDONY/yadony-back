@@ -5,6 +5,7 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.BlockVisibility;
+import com.yadony.api.common.RecipientTrust;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
@@ -18,6 +19,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -44,6 +47,7 @@ public class ReceptionLinker {
     private final BlockVisibility blockVisibility;
     private final NotificationDispatcher notificationDispatcher;
     private final AuditService auditService;
+    private final RecipientTrust recipientTrust;
 
     public ReceptionLinker(BidRepository bidRepository,
                            AnnouncementRepository announcementRepository,
@@ -52,7 +56,8 @@ public class ReceptionLinker {
                            FirebaseContactService firebaseContact,
                            BlockVisibility blockVisibility,
                            NotificationDispatcher notificationDispatcher,
-                           AuditService auditService) {
+                           AuditService auditService,
+                           RecipientTrust recipientTrust) {
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.userRepository = userRepository;
@@ -61,12 +66,16 @@ public class ReceptionLinker {
         this.blockVisibility = blockVisibility;
         this.notificationDispatcher = notificationDispatcher;
         this.auditService = auditService;
+        this.recipientTrust = recipientTrust;
     }
 
     /**
      * Crée le lien PENDING et prévient le destinataire, si le colis est accepté, que son
      * numéro est international et qu'il appartient à un compte tiers non bloqué par
      * l'expéditeur. Idempotent : un colis déjà rattaché est laissé tel quel.
+     *
+     * <p>Destinataire de confiance (invitation de l'expéditeur acceptée, lot 4) : le lien
+     * naît CONFIRMED, sans « c'est pour moi », et le push est une simple annonce.
      *
      * @return le lien créé, vide si aucun rattachement n'a eu lieu
      */
@@ -94,6 +103,11 @@ public class ReceptionLinker {
             return Optional.empty();
         }
 
+        if (recipientTrust.isTrusted(bid.getSenderId(), recipientId)) {
+            BidRecipientLinkEntity link = saveConfirmed(bid, recipientId, "LINKED_TRUSTED_ON_ACCEPT");
+            notifyAnnounced(bid, recipientId);
+            return Optional.of(link);
+        }
         BidRecipientLinkEntity link = save(bid, recipientId, "LINKED_ON_ACCEPT");
         notifyIncoming(bid, announcement, recipientId);
         return Optional.of(link);
@@ -122,17 +136,44 @@ public class ReceptionLinker {
                     || blockVisibility.isHidden(bid.getSenderId(), user.getId())) {
                 continue;
             }
-            save(bid, user.getId(), "LINKED_ON_CATCH_UP");
+            if (recipientTrust.isTrusted(bid.getSenderId(), user.getId())) {
+                saveConfirmed(bid, user.getId(), "LINKED_TRUSTED_ON_CATCH_UP");
+            } else {
+                save(bid, user.getId(), "LINKED_ON_CATCH_UP");
+            }
             created++;
         }
         return created;
     }
 
     private BidRecipientLinkEntity save(BidEntity bid, UUID recipientId, String action) {
-        BidRecipientLinkEntity link = linkRepository.save(new BidRecipientLinkEntity(bid.getId(), recipientId));
+        return persist(bid, new BidRecipientLinkEntity(bid.getId(), recipientId), action);
+    }
+
+    /** Lien d'emblée confirmé : le destinataire a déjà accepté l'invitation de l'expéditeur. */
+    private BidRecipientLinkEntity saveConfirmed(BidEntity bid, UUID recipientId, String action) {
+        BidRecipientLinkEntity link = new BidRecipientLinkEntity(bid.getId(), recipientId);
+        link.respond(ReceptionLinkStatus.CONFIRMED, OffsetDateTime.now(ZoneOffset.UTC));
+        return persist(bid, link, action);
+    }
+
+    private BidRecipientLinkEntity persist(BidEntity bid, BidRecipientLinkEntity toSave, String action) {
+        BidRecipientLinkEntity link = linkRepository.save(toSave);
+        UUID recipientId = toSave.getRecipientUserId();
         auditService.log("BID_RECIPIENT_LINK", link.getId(), action, null,
                 Map.of("bidId", bid.getId().toString(), "recipientUserId", recipientId.toString()));
         return link;
+    }
+
+    private void notifyAnnounced(BidEntity bid, UUID recipientId) {
+        String senderFirstName = userRepository.findById(bid.getSenderId())
+                .map(UserEntity::getFirstName)
+                .orElse(null);
+        var text = NotificationTexts.recipientParcelAnnounced(
+                notificationDispatcher.messagesFor(recipientId), senderFirstName);
+        notificationDispatcher.notifyUser(recipientId, text.title(), text.body(),
+                Map.of("type", ReceptionNotifications.ANNOUNCED, "bidId", bid.getId().toString()));
+        log.info("Colis {} rattaché d'emblée à son destinataire de confiance {}", bid.getId(), recipientId);
     }
 
     private void notifyIncoming(BidEntity bid, AnnouncementEntity announcement, UUID recipientId) {

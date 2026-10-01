@@ -1,5 +1,6 @@
 package com.yadony.api.addressbook.recipient;
 
+import com.yadony.api.addressbook.invitation.RecipientInvitationRepository;
 import com.yadony.api.addressbook.recipient.dto.CreateRecipientRequest;
 import com.yadony.api.addressbook.recipient.dto.RecipientDto;
 import com.yadony.api.addressbook.recipient.dto.UpdateRecipientRequest;
@@ -12,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -22,16 +24,20 @@ public class RecipientService {
 
     private final RecipientRepository repository;
     private final AuditService auditService;
+    private final RecipientInvitationRepository invitationRepository;
 
-    public RecipientService(RecipientRepository repository, AuditService auditService) {
+    public RecipientService(RecipientRepository repository, AuditService auditService,
+                            RecipientInvitationRepository invitationRepository) {
         this.repository = repository;
         this.auditService = auditService;
+        this.invitationRepository = invitationRepository;
     }
 
     public List<RecipientDto> findAll(UUID userId) {
+        Set<UUID> linked = invitationRepository.findLinkedRecipientIds(userId);
         return repository.findByUserIdOrderByUpdatedAtDesc(userId)
                 .stream()
-                .map(this::toDto)
+                .map(e -> toDto(e, linked.contains(e.getId())))
                 .collect(Collectors.toList());
     }
 
@@ -59,7 +65,7 @@ public class RecipientService {
                 Map.of("fullName", request.fullName(), "country", request.country()));
 
         log.info("Recipient created: id={} userId={}", entity.getId(), userId);
-        return toDto(entity);
+        return toDto(entity, false);
     }
 
     @Transactional
@@ -87,7 +93,7 @@ public class RecipientService {
                 Map.of("fullName", request.fullName()));
 
         log.info("Recipient updated: id={} userId={}", id, userId);
-        return toDto(entity);
+        return toDto(entity, invitationRepository.findLinkedRecipientIds(userId).contains(id));
     }
 
     @Transactional
@@ -111,7 +117,7 @@ public class RecipientService {
         });
     }
 
-    private RecipientDto toDto(RecipientEntity e) {
+    private RecipientDto toDto(RecipientEntity e, boolean linkedOnYadony) {
         return new RecipientDto(
                 e.getId(),
                 e.getFullName(),
@@ -124,7 +130,8 @@ public class RecipientService {
                 e.getNotes(),
                 e.getCreatedAt(),
                 e.getUpdatedAt(),
-                e.isDefault()
+                e.isDefault(),
+                linkedOnYadony
         );
     }
 }

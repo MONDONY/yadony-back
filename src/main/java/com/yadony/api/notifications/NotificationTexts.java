@@ -703,6 +703,31 @@ public final class NotificationTexts {
         return new NotificationText(m.get("notification.recipient-incoming.title"), body);
     }
 
+    /** Au destinataire de confiance (invitation acceptée) : colis rattaché d'emblée, simple annonce. */
+    public static NotificationText recipientParcelAnnounced(Messages m, String senderFirstName) {
+        return new NotificationText(m.get("notification.recipient-announced.title"),
+                m.get("notification.recipient-announced.body", who(m, senderFirstName, "notification.fallback.sender")));
+    }
+
+    // ── Invitations au carnet de destinataires (lot 4) ───────────────────────
+
+    /** À l'invité : un expéditeur veut l'ajouter à ses destinataires. */
+    public static NotificationText recipientInvitation(Messages m, String inviterFirstName) {
+        return new NotificationText(m.get("notification.recipient-invitation.title"),
+                m.get("notification.recipient-invitation.body", who(m, inviterFirstName, "notification.fallback.sender")));
+    }
+
+    /** À l'inviteur : l'invité a accepté, ses colis lui seront rattachés directement. */
+    public static NotificationText recipientInvitationAccepted(Messages m, String inviteeFirstName) {
+        return new NotificationText(m.get("notification.recipient-invitation-accepted.title"),
+                m.get("notification.recipient-invitation-accepted.body",
+                        who(m, inviteeFirstName, "notification.fallback.recipient")));
+    }
+
+    private static String who(Messages m, String firstName, String fallbackKey) {
+        return firstName == null || firstName.isBlank() ? m.get(fallbackKey) : shortDisplayName(firstName);
+    }
+
     public static NotificationText recipientParcelDeparted(Messages m) {
         return new NotificationText(m.get("notification.recipient-departed.title"),
                 m.get("notification.recipient-departed.body"));

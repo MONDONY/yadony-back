@@ -51,6 +51,9 @@ class PublicDisplayNameCallersTest {
             "com/yadony/api/payments/StripeV2AccountProvisioner",
             "com/yadony/api/kyc/provider/stripe/StripeIdentityProvider",
             "com/yadony/api/referral/ReferralService",
+            // Invitation acceptée (lot 4) : l'invité consent à ce que l'inviteur voie son nom ;
+            // l'entrée du carnet porte le nom complet du destinataire, comme une saisie manuelle.
+            "com/yadony/api/addressbook/invitation/RecipientInvitationService",
             "com/yadony/api/common/MatchingTextUtil",
             "com/yadony/api/auth/UserEntity",
             "com/yadony/api/auth/AuthService"

@@ -15,5 +15,7 @@ public record RecipientDto(
         String notes,
         LocalDateTime createdAt,
         LocalDateTime updatedAt,
-        boolean isDefault
+        boolean isDefault,
+        /** Vrai si une invitation acceptée lie cette entrée à un compte Yadony (lot 4). */
+        boolean linkedOnYadony
 ) {}

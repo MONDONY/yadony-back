@@ -46,7 +46,8 @@ class NotificationDeeplinkTest {
     /** Le destinataire suit son colis depuis ses réceptions ; l'expéditeur reste sur le bid. */
     @Test
     void recipientTypesOpenTheReception() {
-        for (String type : new String[]{"RECIPIENT_PARCEL_INCOMING", "RECIPIENT_PARCEL_DEPARTED",
+        for (String type : new String[]{"RECIPIENT_PARCEL_INCOMING", "RECIPIENT_PARCEL_ANNOUNCED",
+                "RECIPIENT_PARCEL_DEPARTED",
                 "RECIPIENT_PARCEL_ARRIVED", "RECIPIENT_PARCEL_DELIVERED", "RECIPIENT_PARCEL_CANCELLED",
                 "RECIPIENT_PARCEL_RESCHEDULED", "RECIPIENT_PICKUP_UPDATED"}) {
             assertThat(NotificationCategory.fromType(type)).as(type).isEqualTo(NotificationCategory.COLIS);
@@ -71,6 +72,17 @@ class NotificationDeeplinkTest {
                 .contains("yadony://bids/" + bidId);
         assertThat(NotificationCategory.fromType("RECIPIENT_PARCEL_REASSIGNED")).isEqualTo(NotificationCategory.COLIS);
         assertThat(NotificationCategory.fromType("RECIPIENT_CHANGED")).isEqualTo(NotificationCategory.COLIS);
+    }
+
+    /** Invitations au carnet (lot 4) : l'invité ouvre ses demandes, l'inviteur son carnet. */
+    @Test
+    void recipientInvitationTypes() {
+        assertThat(NotificationDeeplink.of("RECIPIENT_INVITATION", Map.of()))
+                .contains("yadony://recipient-invitations");
+        assertThat(NotificationDeeplink.of("RECIPIENT_INVITATION_ACCEPTED", Map.of()))
+                .contains("yadony://recipients");
+        assertThat(NotificationCategory.fromType("RECIPIENT_INVITATION")).isEqualTo(NotificationCategory.COLIS);
+        assertThat(NotificationCategory.fromType("RECIPIENT_INVITATION_ACCEPTED")).isEqualTo(NotificationCategory.COLIS);
     }
 
     @Test

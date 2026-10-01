@@ -176,6 +176,12 @@ class NotificationTextsTest {
         map.put("recipientParcelReassigned", NotificationTexts.recipientParcelReassigned(m));
         map.put("recipientChanged", NotificationTexts.recipientChanged(m));
         map.put("recipientPickupUpdated", NotificationTexts.recipientPickupUpdated(m));
+        map.put("recipientParcelAnnounced", NotificationTexts.recipientParcelAnnounced(m, NOM));
+        map.put("recipientParcelAnnounced sans prénom", NotificationTexts.recipientParcelAnnounced(m, null));
+        map.put("recipientInvitation", NotificationTexts.recipientInvitation(m, NOM));
+        map.put("recipientInvitation sans prénom", NotificationTexts.recipientInvitation(m, " "));
+        map.put("recipientInvitationAccepted", NotificationTexts.recipientInvitationAccepted(m, NOM));
+        map.put("recipientInvitationAccepted sans prénom", NotificationTexts.recipientInvitationAccepted(m, null));
         return map;
     }
 
@@ -237,6 +243,22 @@ class NotificationTextsTest {
         var textEn = NotificationTexts.senderInvite(en, "Awa Koné", "Divo", "Annemasse");
         assertThat(textEn.title()).isEqualTo("A sender invites you");
         assertThat(textEn.body()).isEqualTo("Awa K.: parcel from Divo to Annemasse.");
+    }
+
+    @Test
+    void recipientInvitationTexts_bothLanguages() {
+        var fr = TestMessages.fr();
+        var en = TestMessages.en();
+        assertThat(NotificationTexts.recipientInvitation(fr, "Awa")).isEqualTo(new NotificationText(
+                "Nouvelle demande", "Awa veut vous ajouter à ses destinataires Yadony."));
+        assertThat(NotificationTexts.recipientInvitationAccepted(fr, "Fatou")).isEqualTo(new NotificationText(
+                "Destinataire ajouté", "Fatou a accepté : ses colis lui seront rattachés."));
+        assertThat(NotificationTexts.recipientParcelAnnounced(fr, "Awa")).isEqualTo(new NotificationText(
+                "Un colis arrive", "Awa vous envoie un colis. Suivez-le dans l'app."));
+        assertThat(NotificationTexts.recipientInvitation(en, null).body())
+                .isEqualTo("A sender wants to add you to their Yadony recipients.");
+        assertThat(NotificationTexts.recipientInvitationAccepted(en, null).body()).startsWith("The recipient accepted");
+        assertThat(NotificationTexts.recipientParcelAnnounced(en, "Awa").title()).isEqualTo("A parcel is coming");
     }
 
     @Test

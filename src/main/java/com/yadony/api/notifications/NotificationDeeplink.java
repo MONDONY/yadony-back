@@ -62,11 +62,15 @@ public final class NotificationDeeplink {
                     bidId.map(id -> "bids/" + id);
 
             // Le destinataire n'est pas partie au colis : il le suit depuis ses réceptions.
-            case "RECIPIENT_PARCEL_INCOMING", "RECIPIENT_PARCEL_DEPARTED", "RECIPIENT_PARCEL_ARRIVED",
+            case "RECIPIENT_PARCEL_INCOMING", "RECIPIENT_PARCEL_ANNOUNCED", "RECIPIENT_PARCEL_DEPARTED", "RECIPIENT_PARCEL_ARRIVED",
                  "RECIPIENT_PARCEL_DELIVERED", "RECIPIENT_PARCEL_CANCELLED",
                  "RECIPIENT_PARCEL_RESCHEDULED", "RECIPIENT_PICKUP_UPDATED" -> bidId.map(id -> "receptions/" + id);
             // L'ancien destinataire n'a plus accès au colis : il retombe sur son onglet Suivi.
             case "RECIPIENT_PARCEL_REASSIGNED" -> Optional.of("tracking");
+            // Invitations au carnet (lot 4) : l'invité répond depuis ses demandes, l'inviteur
+            // retrouve le destinataire ajouté dans son carnet.
+            case "RECIPIENT_INVITATION" -> Optional.of("recipient-invitations");
+            case "RECIPIENT_INVITATION_ACCEPTED" -> Optional.of("recipients");
 
             case "KYC_VERIFIED" -> Optional.of("kyc/status");
             case "KYC_ACTION_REQUIRED" -> Optional.of("kyc/verify");

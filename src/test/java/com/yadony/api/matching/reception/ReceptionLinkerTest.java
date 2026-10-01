@@ -5,6 +5,7 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.BlockVisibility;
+import com.yadony.api.common.RecipientTrust;
 import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
@@ -48,6 +49,7 @@ class ReceptionLinkerTest {
     @Mock BlockVisibility blockVisibility;
     @Mock NotificationDispatcher notificationDispatcher;
     @Mock AuditService auditService;
+    @Mock RecipientTrust recipientTrust;
     @InjectMocks ReceptionLinker linker;
 
     private final UUID bidId = UUID.randomUUID();
@@ -205,6 +207,54 @@ class ReceptionLinkerTest {
         assertThat(linker.linkIfPossible(bidId)).isPresent();
         verify(notificationDispatcher).notifyUser(eq(recipientId), any(),
                 eq("Un expéditeur vous envoie un colis. Confirmez qu'il est pour vous."), any());
+    }
+
+    // ── Destinataire de confiance (lot 4) ───────────────────────────────────
+
+    @Test
+    void linkIfPossible_trustedRecipient_confirmsDirectlyAndAnnounces() {
+        recipientFound(recipientId);
+        when(recipientTrust.isTrusted(senderId, recipientId)).thenReturn(true);
+        when(userRepository.findById(senderId)).thenReturn(Optional.of(user(senderId, "uid-s", "Awa")));
+
+        Optional<BidRecipientLinkEntity> link = linker.linkIfPossible(bidId);
+
+        assertThat(link).isPresent();
+        assertThat(link.get().getStatus()).isEqualTo(ReceptionLinkStatus.CONFIRMED);
+        assertThat(link.get().getRespondedAt()).isNotNull();
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, String>> data = ArgumentCaptor.forClass(Map.class);
+        verify(notificationDispatcher).notifyUser(eq(recipientId), eq("Un colis arrive"),
+                eq("Awa vous envoie un colis. Suivez-le dans l'app."), data.capture());
+        assertThat(data.getValue()).containsEntry("type", "RECIPIENT_PARCEL_ANNOUNCED")
+                .containsEntry("bidId", bidId.toString());
+        verify(notificationDispatcher, never()).notifyUser(any(), eq("Un colis pour vous ?"), any(), any());
+        verify(auditService).log(eq("BID_RECIPIENT_LINK"), any(), eq("LINKED_TRUSTED_ON_ACCEPT"), eq(null), any());
+    }
+
+    @Test
+    void linkIfPossible_trustedButBlocked_doesNothing() {
+        recipientFound(recipientId);
+        when(blockVisibility.isHidden(senderId, recipientId)).thenReturn(true);
+
+        assertThat(linker.linkIfPossible(bidId)).isEmpty();
+        verify(recipientTrust, never()).isTrusted(any(), any());
+    }
+
+    @Test
+    void catchUp_trustedSender_confirmsDirectlyWithoutPush() {
+        UserEntity me = user(recipientId, "uid-r", "Fatou");
+        when(firebaseContact.getContact("uid-r"))
+                .thenReturn(new FirebaseContactService.Contact("+221771234567", null));
+        when(linkRepository.findCatchUpCandidates(recipientId, BidStatus.IN_FLIGHT, "%7")).thenReturn(List.of(bid));
+        when(recipientTrust.isTrusted(senderId, recipientId)).thenReturn(true);
+
+        assertThat(linker.catchUp(me)).isEqualTo(1);
+        ArgumentCaptor<BidRecipientLinkEntity> saved = ArgumentCaptor.forClass(BidRecipientLinkEntity.class);
+        verify(linkRepository).save(saved.capture());
+        assertThat(saved.getValue().getStatus()).isEqualTo(ReceptionLinkStatus.CONFIRMED);
+        verify(notificationDispatcher, never()).notifyUser(any(), any(), any(), any());
+        verify(auditService).log(eq("BID_RECIPIENT_LINK"), any(), eq("LINKED_TRUSTED_ON_CATCH_UP"), eq(null), any());
     }
 
     // ── catchUp ─────────────────────────────────────────────────────────────
