@@ -53,11 +53,23 @@ class InvitationTargetsTest {
     }
 
     @Test
-    void countryOf_followsAppCorridorMapping() {
-        assertThat(InvitationTargets.countryOf("+221771234512")).isEqualTo("SN");
-        assertThat(InvitationTargets.countryOf("+2250701020304")).isEqualTo("CI");
-        assertThat(InvitationTargets.countryOf("+22376123456")).isEqualTo("ML");
-        assertThat(InvitationTargets.countryOf("+237612345678")).isEqualTo("CM");
-        assertThat(InvitationTargets.countryOf("+33612345678")).isEqualTo("SN");
+    void countryOf_coversCorridorsAndDiaspora() {
+        assertThat(InvitationTargets.countryOf("+221771234512")).contains("SN");
+        assertThat(InvitationTargets.countryOf("+2250701020304")).contains("CI");
+        assertThat(InvitationTargets.countryOf("+22376123456")).contains("ML");
+        assertThat(InvitationTargets.countryOf("+237612345678")).contains("CM");
+        assertThat(InvitationTargets.countryOf("+33612345678")).contains("FR");
+        assertThat(InvitationTargets.countryOf("+393331234567")).contains("IT");
+        assertThat(InvitationTargets.countryOf("+15145550123")).contains("US");
+        assertThat(InvitationTargets.countryOf("+243812345678")).contains("CD");
+        assertThat(InvitationTargets.countryOf("+212612345678")).contains("MA");
+        assertThat(InvitationTargets.countryOf("+4915112345678")).contains("DE");
+    }
+
+    @Test
+    void countryOf_unknownCallingCode_isEmpty() {
+        assertThat(InvitationTargets.countryOf("+81312345678")).isEmpty();
+        assertThat(InvitationTargets.countryOf("+79161234567")).isEmpty();
+        assertThat(InvitationTargets.countryOf("+260971234567")).isEmpty();
     }
 }

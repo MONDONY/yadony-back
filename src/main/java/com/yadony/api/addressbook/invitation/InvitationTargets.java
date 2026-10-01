@@ -5,6 +5,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -71,12 +72,27 @@ final class InvitationTargets {
         return email.charAt(0) + DOTS + DOTS + email.substring(at);
     }
 
-    /** Pays du carnet déduit de l'indicatif, aligné sur {@code countryFromPhone} de l'app. */
-    static String countryOf(String e164) {
-        if (e164.startsWith("+225")) return "CI";
-        if (e164.startsWith("+223")) return "ML";
-        if (e164.startsWith("+237")) return "CM";
-        return "SN";
+    /**
+     * Indicatif → pays ISO-2 : corridors Afrique et pays de la diaspora. Aucune table de ce
+     * type n'existe ailleurs dans le back (pas de libphonenumber).
+     */
+    private static final Map<String, String> COUNTRY_BY_CALLING_CODE = Map.ofEntries(
+            Map.entry("1", "US"), Map.entry("33", "FR"), Map.entry("32", "BE"), Map.entry("41", "CH"),
+            Map.entry("39", "IT"), Map.entry("34", "ES"), Map.entry("49", "DE"), Map.entry("44", "GB"),
+            Map.entry("31", "NL"), Map.entry("351", "PT"), Map.entry("352", "LU"),
+            Map.entry("221", "SN"), Map.entry("225", "CI"), Map.entry("223", "ML"), Map.entry("237", "CM"),
+            Map.entry("226", "BF"), Map.entry("224", "GN"), Map.entry("228", "TG"), Map.entry("229", "BJ"),
+            Map.entry("227", "NE"), Map.entry("241", "GA"), Map.entry("242", "CG"), Map.entry("243", "CD"),
+            Map.entry("222", "MR"), Map.entry("220", "GM"), Map.entry("245", "GW"), Map.entry("235", "TD"),
+            Map.entry("236", "CF"), Map.entry("212", "MA"), Map.entry("213", "DZ"), Map.entry("216", "TN"));
+
+    /**
+     * Pays du carnet déduit de l'indicatif, vide s'il est inconnu. {@code +1} couvre les
+     * États-Unis et le Canada : on retient US, faute de pouvoir distinguer sans l'indicatif régional.
+     */
+    static Optional<String> countryOf(String e164) {
+        String digits = e164.substring(1);
+        return Optional.ofNullable(COUNTRY_BY_CALLING_CODE.get(digits.substring(0, callingCodeLength(digits))));
     }
 
     static int callingCodeLength(String digits) {

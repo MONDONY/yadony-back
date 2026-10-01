@@ -345,6 +345,39 @@ class RecipientInvitationServiceTest {
         assertThat(entry.getValue().getFullName()).isEqualTo("Yadony");
     }
 
+    private RecipientEntity acceptWithPhone(String phone) {
+        RecipientInvitationEntity invitation = pendingFor(invitee.getId());
+        when(repository.findById(invitation.getId())).thenReturn(Optional.of(invitation));
+        when(firebaseContact.getContact("uid-invitee")).thenReturn(new FirebaseContactService.Contact(phone, null));
+        service.accept(invitation.getId(), "uid-invitee");
+        ArgumentCaptor<RecipientEntity> entry = ArgumentCaptor.forClass(RecipientEntity.class);
+        verify(recipientRepository).save(entry.capture());
+        return entry.getValue();
+    }
+
+    @Test
+    void accept_diasporaNumber_takesCountryFromCallingCode() {
+        assertThat(acceptWithPhone("+33612345678").getCountry()).isEqualTo("FR");
+    }
+
+    @Test
+    void accept_unknownCallingCode_fallsBackToInviterCountry() {
+        inviter.setCountry("BE");
+        invitee.setCountry("JP");
+        assertThat(acceptWithPhone("+81312345678").getCountry()).isEqualTo("BE");
+    }
+
+    @Test
+    void accept_unknownCallingCode_withoutInviterCountry_fallsBackToInviteeCountry() {
+        invitee.setCountry("JP");
+        assertThat(acceptWithPhone("+81312345678").getCountry()).isEqualTo("JP");
+    }
+
+    @Test
+    void accept_unknownCallingCode_noKnownCountry_lastResortSN() {
+        assertThat(acceptWithPhone("+81312345678").getCountry()).isEqualTo("SN");
+    }
+
     @Test
     void accept_withoutPhone_returns409() {
         RecipientInvitationEntity invitation = pendingFor(invitee.getId());

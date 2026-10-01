@@ -281,7 +281,7 @@ public class RecipientInvitationService {
         if (created) {
             entry = new RecipientEntity();
             entry.setUserId(inviterId);
-            entry.setCountry(InvitationTargets.countryOf(phone));
+            entry.setCountry(countryFor(phone, inviterId, invitee));
             entry.setDefault(false);
         }
         entry.setFullName(fullName(invitee));
@@ -292,6 +292,18 @@ public class RecipientInvitationService {
                     Map.of("source", "INVITATION", "country", entry.getCountry()));
         }
         return entry;
+    }
+
+    /**
+     * Pays de l'entrée : celui de l'indicatif ; inconnu, celui de l'inviteur puis celui de
+     * l'invité. {@code recipients.country} est NOT NULL : SN (corridor principal, repli de
+     * l'app) ne sert qu'en tout dernier recours, quand aucun pays n'est connu.
+     */
+    private String countryFor(String phone, UUID inviterId, UserEntity invitee) {
+        return InvitationTargets.countryOf(phone)
+                .or(() -> userRepository.findById(inviterId).map(UserEntity::getCountry).filter(c -> c != null && c.length() == 2))
+                .or(() -> Optional.ofNullable(invitee.getCountry()).filter(c -> c.length() == 2))
+                .orElse("SN");
     }
 
     private static String fullName(UserEntity user) {
