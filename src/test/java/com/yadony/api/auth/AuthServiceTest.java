@@ -417,6 +417,8 @@ class AuthServiceTest {
 
             UserResponse result = authService.getProfile(FIREBASE_UID);
 
+            // Ouverture de l'app : dernière connexion du profil public (FLUTTER-4H).
+            verify(eventPublisher).publishEvent(new com.yadony.api.auth.events.UserSeenEvent(user.getId()));
             assertThat(result.phoneNumber()).isEqualTo(PHONE);
             assertThat(result.email()).isEqualTo("test@yadony.app");
             assertThat(result.firstName()).isEqualTo("Amadou");
@@ -867,6 +869,19 @@ class AuthServiceTest {
 
             authService.updatePrivacySettings(FIREBASE_UID, true, null, null);
             assertThat(user.isShowResidenceCountry()).isTrue();
+        }
+
+        @Test
+        void updatePrivacySettings_showLastSeen_persistsAndAudits() {
+            UserEntity user = buildUser();
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+
+            authService.updatePrivacySettings(FIREBASE_UID, true, null, null, false);
+
+            assertThat(user.isShowLastSeen()).isFalse();
+            verify(auditService).log(eq("USER"), eq(user.getId()), eq("LAST_SEEN_VISIBILITY_UPDATED"),
+                    eq(user.getId()), eq(java.util.Map.of("showLastSeen", false)));
+            assertThat(authService.getPrivacySettings(FIREBASE_UID).showLastSeen()).isFalse();
         }
 
         @Test

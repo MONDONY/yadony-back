@@ -377,4 +377,42 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
     List<UserEntity> findStaleConnectOnboardings(
             @Param("firstDueBefore") Instant firstDueBefore,
             @Param("secondDueBefore") Instant secondDueBefore);
+
+    /** Dernière ouverture de l'app, sans passer par l'entité (verrou optimiste {@code version}). */
+    @Modifying
+    @Query(value = "UPDATE users SET last_seen_at = :now WHERE id = :id", nativeQuery = true)
+    int touchLastSeen(@Param("id") UUID id, @Param("now") java.time.LocalDateTime now);
+
+    /** Requête de {@link #travelerDecisionDelay}, exposée pour son test sur PostgreSQL réel. */
+    String TRAVELER_DECISION_DELAY_SQL = """
+            SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY
+                       EXTRACT(EPOCH FROM (al.created_at
+                           - COALESCE(b.pending_since, b.created_at))) / 60.0)
+                       AS "medianMinutes",
+                   COUNT(*) AS "decisions"
+            FROM audit_log al
+            JOIN bids b ON b.id = al.entity_id
+            JOIN announcements a ON a.id = b.announcement_id
+            WHERE al.entity_type = 'BID'
+              AND al.action IN ('BID_ACCEPTED', 'BID_REJECTED')
+              AND al.actor_id = :travelerId
+              AND a.traveler_id = :travelerId
+              AND al.created_at >= :since
+            """;
+
+    /** Délai médian (minutes) entre l'arrivée d'une demande et la décision du voyageur. */
+    interface DecisionDelayStats {
+        Double getMedianMinutes();
+        Long getDecisions();
+    }
+
+    /**
+     * Temps de réponse mesuré d'un voyageur (FLUTTER-4H) : décisions explicites
+     * (acceptation, refus) qu'il a prises sur les demandes de ses trajets depuis
+     * {@code since}, horodatées par audit_log. Départ du chrono : l'entrée dans sa
+     * file ({@code pending_since}, sinon la création de la demande).
+     */
+    @Query(value = TRAVELER_DECISION_DELAY_SQL, nativeQuery = true)
+    DecisionDelayStats travelerDecisionDelay(@Param("travelerId") UUID travelerId,
+                                              @Param("since") java.time.OffsetDateTime since);
 }

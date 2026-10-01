@@ -132,7 +132,7 @@ public class AuthController {
     public ResponseEntity<Void> updatePrivacySettings(
             @Valid @RequestBody com.yadony.api.auth.dto.PrivacySettingsRequest request) {
         authService.updatePrivacySettings(requireFirebaseUid(), request.contactKycOnly(),
-                request.hidePhoneNumber(), request.showResidenceCountry());
+                request.hidePhoneNumber(), request.showResidenceCountry(), request.showLastSeen());
         return ResponseEntity.noContent().build();
     }
 
