@@ -56,4 +56,14 @@ class TripRescheduleRulesTest {
         assertThat(TripRescheduleRules.decisionOpen(bid(BidStatus.HANDED_OVER, UUID.randomUUID()),
                 trip(LocalDate.now().minusDays(1), LocalTime.NOON))).isFalse();
     }
+
+    @Test
+    void remaining_countsDownToZeroAndNeverBelow() {
+        AnnouncementEntity trip = trip(LocalDate.now().plusDays(3), LocalTime.NOON);
+        assertThat(TripRescheduleRules.remaining(trip)).isEqualTo(2);
+        trip.setRescheduleCount(1);
+        assertThat(TripRescheduleRules.remaining(trip)).isEqualTo(1);
+        trip.setRescheduleCount(2);
+        assertThat(TripRescheduleRules.remaining(trip)).isZero();
+    }
 }

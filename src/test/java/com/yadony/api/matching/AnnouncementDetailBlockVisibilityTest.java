@@ -144,6 +144,8 @@ class AnnouncementDetailBlockVisibilityTest {
 
         assertThat(result.departureCity()).isEqualTo("Paris");
         assertThat(result.status()).isEqualTo("ACTIVE");
+        // Jamais reporté : les deux reports restent possibles.
+        assertThat(result.remainingReschedules()).isEqualTo(2);
     }
 
     @Test
