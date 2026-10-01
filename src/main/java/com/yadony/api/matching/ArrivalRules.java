@@ -51,4 +51,18 @@ public final class ArrivalRules {
                 ? announcement.getArrivalDate()
                 : announcement.getDepartureDate();
     }
+
+    /**
+     * Expiration du code de retrait : jour d'arrivée réel + heure d'arrivée + 24 h, sinon
+     * 72 h après le début du jour d'arrivée. Un vol de nuit arrive le lendemain : partir du
+     * jour du départ faisait expirer le code à l'atterrissage (FLUTTER-4E). Recalculée
+     * quand le trajet est reporté.
+     */
+    public static java.time.LocalDateTime pickupCodeExpiry(AnnouncementEntity announcement) {
+        LocalDate arrivalDay = effectiveArrivalDate(announcement);
+        if (announcement.getArrivalTime() != null) {
+            return arrivalDay.atTime(announcement.getArrivalTime()).plusDays(1);
+        }
+        return arrivalDay.atStartOfDay().plusDays(3);
+    }
 }

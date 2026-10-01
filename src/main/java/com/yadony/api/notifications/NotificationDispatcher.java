@@ -5,6 +5,9 @@ import com.yadony.api.auth.events.UserSuspendedEvent;
 import com.yadony.api.cancellation.events.BidLostRematchPreparedEvent;
 import com.yadony.api.cancellation.events.DeliveryNoShowReportedEvent;
 import com.yadony.api.cancellation.events.TripCancelledEvent;
+import com.yadony.api.cancellation.events.TripRescheduleDecidedEvent;
+import com.yadony.api.cancellation.CancellationReason;
+import com.yadony.api.cancellation.RescheduleDecision;
 import com.yadony.api.cancellation.events.ParcelReturnedEvent;
 import com.yadony.api.cancellation.events.ReturnDeadlineExpiredEvent;
 import com.yadony.api.cancellation.events.ReturnDeadlineWarningEvent;
@@ -27,6 +30,7 @@ import com.yadony.api.matching.events.BidRejectedEvent;
 import com.yadony.api.matching.events.HandoverAlertEvent;
 import com.yadony.api.matching.events.ParcelRefusedEvent;
 import com.yadony.api.matching.events.TripArrivedEvent;
+import com.yadony.api.matching.events.TripRescheduledEvent;
 import com.yadony.api.messaging.SystemMessages;
 import com.yadony.api.matching.events.VoyageurNoShowEvent;
 import com.yadony.api.payments.events.MobileMoneyDepositFailedEvent;
@@ -406,6 +410,9 @@ public class NotificationDispatcher {
     @Async
     public void onTripCancelled(TripCancelledEvent event) {
         if (event.getAffectedSenderIds() == null) return;
+        // Retrait de l'expéditeur après un report : c'est lui qui a agi, le trajet n'est
+        // pas annulé. Le voyageur est prévenu par onTripRescheduleDecided.
+        if (CancellationReason.TRIP_RESCHEDULE_WITHDRAWN.name().equals(event.getReason())) return;
         for (UUID senderId : event.getAffectedSenderIds()) {
             TripCancelledEvent.RematchBySenderInfo info = event.getRematchBySender().get(senderId);
             if (info == null) {
@@ -421,6 +428,40 @@ public class NotificationDispatcher {
                 notifyUser(senderId, text.title(), text.body(), Map.of("type", "TRIP_CANCELLED"));
             }
         }
+    }
+
+    /**
+     * Report du trajet. Colis accepté ou remis : notification critique (SMS de repli sans
+     * ACK), l'expéditeur doit choisir entre garder son colis et se retirer. Demande pas
+     * encore acceptée : simple information.
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
+    public void onTripRescheduled(TripRescheduledEvent event) {
+        for (TripRescheduledEvent.Target target : event.targets()) {
+            Messages m = messagesFor(target.senderId());
+            var text = NotificationTexts.tripRescheduled(m, event.newDepartureDate(), event.reason(),
+                    target.decisionRequired());
+            Map<String, String> data = Map.of("type", "TRIP_RESCHEDULED", "bidId", target.bidId().toString(),
+                    "announcementId", event.announcementId().toString());
+            if (target.decisionRequired()) {
+                notifyCritical(target.senderId(), text.title(), text.body(), data);
+            } else {
+                notifyUser(target.senderId(), text.title(), text.body(), data);
+            }
+        }
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
+    public void onTripRescheduleDecided(TripRescheduleDecidedEvent event) {
+        if (event.travelerId() == null) return;
+        Messages m = messagesFor(event.travelerId());
+        boolean kept = event.decision() == RescheduleDecision.KEEP;
+        var text = kept ? NotificationTexts.tripRescheduleKept(m) : NotificationTexts.tripRescheduleWithdrawn(m);
+        notifyUser(event.travelerId(), text.title(), text.body(),
+                Map.of("type", kept ? "TRIP_RESCHEDULE_KEPT" : "TRIP_RESCHEDULE_WITHDRAWN",
+                       "bidId", event.bidId().toString()));
     }
 
     @EventListener @Async

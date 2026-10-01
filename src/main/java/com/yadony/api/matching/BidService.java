@@ -92,6 +92,8 @@ public class BidService {
     private final PawapayProperties pawapayProperties;
     private final MessagesResolver messagesResolver;
 
+    private final TripRescheduleRepository rescheduleRepository;
+
     public BidService(BidRepository bidRepository, AnnouncementRepository announcementRepository,
                       UserRepository userRepository, AuditService auditService,
                       ApplicationEventPublisher eventPublisher, RatingRepository ratingRepository,
@@ -107,7 +109,8 @@ public class BidService {
                       FirebaseContactService firebaseContact,
                       PawapayProperties pawapayProperties,
                       PaymentService paymentService,
-                      MessagesResolver messagesResolver) {
+                      MessagesResolver messagesResolver,
+                      TripRescheduleRepository rescheduleRepository) {
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.userRepository = userRepository;
@@ -127,6 +130,7 @@ public class BidService {
         this.pawapayProperties = pawapayProperties;
         this.paymentService = paymentService;
         this.messagesResolver = messagesResolver;
+        this.rescheduleRepository = rescheduleRepository;
     }
 
     /**
@@ -1331,7 +1335,9 @@ public class BidService {
      * rematch : cf. {@code BidLostRematchListener}. */
     private static final java.util.Set<String> REMATCH_BID_REASONS = java.util.Set.of(
             CancellationReason.BID_CANCELLED_BY_TRAVELER.name(),
-            CancellationReason.BID_REJECTED_AFTER_PAYMENT.name());
+            CancellationReason.BID_REJECTED_AFTER_PAYMENT.name(),
+            // L'expéditeur s'est retiré après le report du trajet : autres trajets proposés.
+            CancellationReason.TRIP_RESCHEDULE_WITHDRAWN.name());
 
     /** Numéro révélé en clair seulement si l'offre est acceptée ou au-delà, sinon null. */
     static String phoneForStatus(String phone, BidStatus status) {
@@ -1616,7 +1622,28 @@ public class BidService {
                 tripCancellationId,
                 tripCancellationRematchStatus,
                 bid.getCurrency(),
-                arrivalInstructions
+                arrivalInstructions,
+                rescheduleInfo(bid, announcement)
         );
+    }
+
+    /**
+     * Dernier report du trajet, pour qu'expéditeur et voyageur voient ce qui a changé.
+     * Aucune requête tant que le trajet n'a jamais été reporté (cas courant des listes).
+     */
+    private com.yadony.api.matching.dto.TripRescheduleInfo rescheduleInfo(BidEntity bid, AnnouncementEntity announcement) {
+        if (announcement == null || announcement.getRescheduleCount() == 0) {
+            return null;
+        }
+        return rescheduleRepository.findFirstByAnnouncementIdOrderByCreatedAtDesc(announcement.getId())
+                .map(r -> {
+                    boolean pending = TripRescheduleRules.decisionOpen(bid, announcement);
+                    return new com.yadony.api.matching.dto.TripRescheduleInfo(
+                            r.getId(), r.getReason().name(), r.getNote(),
+                            r.getPreviousDepartureDate(), r.getPreviousDepartureTime(),
+                            r.getNewDepartureDate(), r.getNewDepartureTime(), r.getCreatedAt(),
+                            pending, pending ? TripRescheduleRules.decisionDeadline(bid, announcement) : null);
+                })
+                .orElse(null);
     }
 }
