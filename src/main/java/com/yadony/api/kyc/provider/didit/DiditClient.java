@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
 import org.springframework.boot.http.client.ClientHttpRequestFactorySettings;
+import org.springframework.http.client.BufferingClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
@@ -59,13 +60,22 @@ public class DiditClient {
      * <p>{@code ClientHttpRequestFactoryBuilder.detect()} choisit la meilleure implementation
      * disponible au classpath (Apache HttpClient, sinon le client JDK) : toutes reemettent
      * correctement le corps d'un POST redirige.
+     *
+     * <p>Corps BUFFERISE obligatoire. {@code httpclient5} est au classpath (via firebase-admin),
+     * donc {@code detect()} prend Apache HttpClient, qui envoyait le JSON en flux :
+     * {@code Transfer-Encoding: chunked}, sans {@code Content-Length}. Didit lisait alors par
+     * moments un corps vide et repondait le meme {@code 400 workflow_id required} : du 28/09
+     * au 01/10 en staging, le premier essai de verification echouait et le suivant passait.
+     * {@link BufferingClientHttpRequestFactory} serialise d'abord, pose le
+     * {@code Content-Length} et rend le corps rejouable sur une redirection.
      */
     private static RestClient withTimeouts() {
         return RestClient.builder()
-                .requestFactory(ClientHttpRequestFactoryBuilder.detect()
-                        .build(ClientHttpRequestFactorySettings.defaults()
-                                .withConnectTimeout(Duration.ofSeconds(5))
-                                .withReadTimeout(Duration.ofSeconds(10))))
+                .requestFactory(new BufferingClientHttpRequestFactory(
+                        ClientHttpRequestFactoryBuilder.detect()
+                                .build(ClientHttpRequestFactorySettings.defaults()
+                                        .withConnectTimeout(Duration.ofSeconds(5))
+                                        .withReadTimeout(Duration.ofSeconds(10)))))
                 .build();
     }
 
