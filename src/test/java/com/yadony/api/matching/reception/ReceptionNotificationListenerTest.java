@@ -1,9 +1,14 @@
 package com.yadony.api.matching.reception;
 
+import com.yadony.api.cancellation.CancellationReason;
+import com.yadony.api.cancellation.events.CancellationConfirmedEvent;
+import com.yadony.api.cancellation.events.TripCancelledEvent;
 import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
+import com.yadony.api.matching.events.BidRejectedEvent;
 import com.yadony.api.matching.events.TripArrivedEvent;
+import com.yadony.api.matching.events.TripRescheduledEvent;
 import com.yadony.api.notifications.NotificationDispatcher;
 import com.yadony.api.tracking.events.DeliveryConfirmedEvent;
 import com.yadony.api.tracking.events.ParcelDepartedEvent;
@@ -15,6 +20,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -132,5 +138,130 @@ class ReceptionNotificationListenerTest {
     void failure_isSwallowed() {
         when(linkRepository.findByBidId(bidId)).thenThrow(new IllegalStateException("db down"));
         assertThatCode(() -> listener.onParcelDeparted(new ParcelDepartedEvent(bidId))).doesNotThrowAnyException();
+    }
+
+    // ── Annulation ──────────────────────────────────────────────────────────
+
+    private TripCancelledEvent tripCancelled(UUID... bidIds) {
+        return new TripCancelledEvent(UUID.randomUUID(), UUID.randomUUID(), List.of(UUID.randomUUID()),
+                "TRAVELER_CANCELLED", List.of(bidIds));
+    }
+
+    private void verifyCancelledPush() {
+        verify(notificationDispatcher).notifyUser(eq(recipientId), eq("Envoi annulé"),
+                eq("Le transport prévu pour votre colis a été annulé."),
+                eq(Map.of("type", "RECIPIENT_PARCEL_CANCELLED", "bidId", bidId.toString())));
+    }
+
+    @Test
+    void tripCancelled_confirmedRecipient_isNotified() {
+        when(linkRepository.findByBidId(bidId)).thenReturn(Optional.of(link(ReceptionLinkStatus.CONFIRMED)));
+        listener.onTripCancelled(tripCancelled(bidId));
+        verifyCancelledPush();
+    }
+
+    @Test
+    void tripCancelled_pendingRecipient_isNotifiedToo() {
+        when(linkRepository.findByBidId(bidId)).thenReturn(Optional.of(link(ReceptionLinkStatus.PENDING)));
+        listener.onTripCancelled(tripCancelled(bidId));
+        verifyCancelledPush();
+    }
+
+    @Test
+    void tripCancelled_declinedOrNoLink_getsNothing() {
+        UUID otherBid = UUID.randomUUID();
+        when(linkRepository.findByBidId(bidId)).thenReturn(Optional.of(link(ReceptionLinkStatus.DECLINED)));
+        when(linkRepository.findByBidId(otherBid)).thenReturn(Optional.empty());
+        listener.onTripCancelled(tripCancelled(bidId, otherBid));
+        verify(notificationDispatcher, never()).notifyUser(any(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void tripCancelled_nullBidList_isIgnored() {
+        listener.onTripCancelled(new TripCancelledEvent(UUID.randomUUID(), UUID.randomUUID(), List.of(),
+                "X", null));
+        verify(linkRepository, never()).findByBidId(any());
+    }
+
+    @Test
+    void tripCancelled_failureOnOneBid_doesNotStopTheOthers() {
+        UUID otherBid = UUID.randomUUID();
+        when(linkRepository.findByBidId(otherBid)).thenThrow(new IllegalStateException("db down"));
+        when(linkRepository.findByBidId(bidId)).thenReturn(Optional.of(link(ReceptionLinkStatus.CONFIRMED)));
+        assertThatCode(() -> listener.onTripCancelled(tripCancelled(otherBid, bidId))).doesNotThrowAnyException();
+        verifyCancelledPush();
+    }
+
+    @Test
+    void bidRejected_linkedParcel_notifiesRecipient() {
+        when(linkRepository.findByBidId(bidId)).thenReturn(Optional.of(link(ReceptionLinkStatus.PENDING)));
+        listener.onBidRejected(new BidRejectedEvent(bidId, UUID.randomUUID(), "CANCELLED_BY_SENDER"));
+        verifyCancelledPush();
+    }
+
+    @Test
+    void bidRejected_noLink_getsNothing() {
+        when(linkRepository.findByBidId(bidId)).thenReturn(Optional.empty());
+        listener.onBidRejected(new BidRejectedEvent(bidId, UUID.randomUUID(), "TRAVELER_NO_RESPONSE"));
+        verify(notificationDispatcher, never()).notifyUser(any(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void senderNoShowConfirmed_notifiesConfirmedRecipient() {
+        when(linkRepository.findByBidId(bidId)).thenReturn(Optional.of(link(ReceptionLinkStatus.CONFIRMED)));
+        listener.onCancellationConfirmed(new CancellationConfirmedEvent(bidId, UUID.randomUUID(),
+                CancellationReason.SENDER_NO_SHOW));
+        verifyCancelledPush();
+    }
+
+    @Test
+    void senderNoShowConfirmed_declinedRecipient_getsNothing() {
+        when(linkRepository.findByBidId(bidId)).thenReturn(Optional.of(link(ReceptionLinkStatus.DECLINED)));
+        listener.onCancellationConfirmed(new CancellationConfirmedEvent(bidId, UUID.randomUUID(),
+                CancellationReason.SENDER_NO_SHOW));
+        verify(notificationDispatcher, never()).notifyUser(any(), anyString(), anyString(), any());
+    }
+
+    // ── Report ──────────────────────────────────────────────────────────────
+
+    private TripRescheduledEvent rescheduled(UUID... bidIds) {
+        List<TripRescheduledEvent.Target> targets = java.util.Arrays.stream(bidIds)
+                .map(id -> new TripRescheduledEvent.Target(id, UUID.randomUUID(), true))
+                .toList();
+        return new TripRescheduledEvent(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "WEATHER",
+                LocalDate.of(2026, 10, 10), LocalDate.of(2026, 10, 14), null, targets);
+    }
+
+    @Test
+    void tripRescheduled_confirmedRecipient_isNotified() {
+        UUID otherBid = UUID.randomUUID();
+        when(linkRepository.findByBidId(bidId)).thenReturn(Optional.of(link(ReceptionLinkStatus.CONFIRMED)));
+        when(linkRepository.findByBidId(otherBid)).thenReturn(Optional.empty());
+
+        listener.onTripRescheduled(rescheduled(bidId, otherBid));
+
+        verify(notificationDispatcher).notifyUser(eq(recipientId), eq("Nouvelles dates"),
+                eq("Le trajet de votre colis a changé de date. Voyez le détail."),
+                eq(Map.of("type", "RECIPIENT_PARCEL_RESCHEDULED", "bidId", bidId.toString())));
+    }
+
+    @Test
+    void tripRescheduled_pendingRecipient_getsNothing() {
+        when(linkRepository.findByBidId(bidId)).thenReturn(Optional.of(link(ReceptionLinkStatus.PENDING)));
+        listener.onTripRescheduled(rescheduled(bidId));
+        verify(notificationDispatcher, never()).notifyUser(any(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void tripRescheduled_declinedRecipient_getsNothing() {
+        when(linkRepository.findByBidId(bidId)).thenReturn(Optional.of(link(ReceptionLinkStatus.DECLINED)));
+        listener.onTripRescheduled(rescheduled(bidId));
+        verify(notificationDispatcher, never()).notifyUser(any(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void tripRescheduled_failure_isSwallowed() {
+        when(linkRepository.findByBidId(bidId)).thenThrow(new IllegalStateException("db down"));
+        assertThatCode(() -> listener.onTripRescheduled(rescheduled(bidId))).doesNotThrowAnyException();
     }
 }

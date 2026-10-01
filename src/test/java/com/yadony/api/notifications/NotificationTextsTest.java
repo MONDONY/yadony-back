@@ -171,6 +171,8 @@ class NotificationTextsTest {
         map.put("recipientConfirmed", NotificationTexts.recipientConfirmed(m, NOM));
         map.put("recipientConfirmed sans prénom", NotificationTexts.recipientConfirmed(m, null));
         map.put("recipientDeclined", NotificationTexts.recipientDeclined(m));
+        map.put("recipientParcelCancelled", NotificationTexts.recipientParcelCancelled(m));
+        map.put("recipientParcelRescheduled", NotificationTexts.recipientParcelRescheduled(m));
         return map;
     }
 
@@ -316,6 +318,12 @@ class NotificationTextsTest {
         assertThat(NotificationTexts.recipientConfirmed(fr, null).body()).startsWith("Le destinataire suit");
         assertThat(NotificationTexts.recipientConfirmed(en, "Fatou").body()).startsWith("Fatou tracks");
         assertThat(NotificationTexts.recipientDeclined(en).title()).isEqualTo("Check the recipient");
+        assertThat(NotificationTexts.recipientParcelCancelled(fr).title()).isEqualTo("Envoi annulé");
+        assertThat(NotificationTexts.recipientParcelCancelled(en).body())
+                .isEqualTo("The planned transport of your parcel has been cancelled.");
+        assertThat(NotificationTexts.recipientParcelRescheduled(fr).title()).isEqualTo("Nouvelles dates");
+        assertThat(NotificationTexts.recipientParcelRescheduled(en).body())
+                .isEqualTo("Your parcel's trip has new dates. See the details.");
     }
 
     @Test

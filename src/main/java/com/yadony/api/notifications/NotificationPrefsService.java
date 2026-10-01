@@ -50,6 +50,8 @@ public class NotificationPrefsService {
             Map.entry("RECIPIENT_PARCEL_DEPARTED",    "pushActivityBids"),
             Map.entry("RECIPIENT_PARCEL_ARRIVED",     "pushActivityBids"),
             Map.entry("RECIPIENT_PARCEL_DELIVERED",   "pushActivityBids"),
+            Map.entry("RECIPIENT_PARCEL_CANCELLED",   "pushActivityBids"),
+            Map.entry("RECIPIENT_PARCEL_RESCHEDULED", "pushActivityBids"),
             Map.entry("RECIPIENT_CONFIRMED",          "pushActivityBids"),
             Map.entry("RECIPIENT_DECLINED",           "pushActivityBids"),
             Map.entry("NEW_MESSAGE",                  "pushMessages"),

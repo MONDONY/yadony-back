@@ -721,6 +721,18 @@ public final class NotificationTexts {
                 m.get("notification.recipient-delivered.body"));
     }
 
+    /** Au destinataire : le transport de son colis est annulé (trajet, expéditeur, absence…). */
+    public static NotificationText recipientParcelCancelled(Messages m) {
+        return new NotificationText(m.get("notification.recipient-cancelled.title"),
+                m.get("notification.recipient-cancelled.body"));
+    }
+
+    /** Au destinataire : le voyageur a reporté le trajet de son colis. */
+    public static NotificationText recipientParcelRescheduled(Messages m) {
+        return new NotificationText(m.get("notification.recipient-rescheduled.title"),
+                m.get("notification.recipient-rescheduled.body"));
+    }
+
     /** À l'expéditeur : le destinataire a confirmé, il suit le colis dans l'app. */
     public static NotificationText recipientConfirmed(Messages m, String recipientFirstName) {
         String who = recipientFirstName == null || recipientFirstName.isBlank()
