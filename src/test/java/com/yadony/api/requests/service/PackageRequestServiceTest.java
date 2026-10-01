@@ -76,6 +76,7 @@ class PackageRequestServiceTest {
     @Mock private com.yadony.api.common.CommissionRateResolver commissionRateResolver;
     /** Masquage mutuel : par défaut le mock ne masque rien (assertVisible ne lève pas). */
     @Mock private com.yadony.api.common.BlockVisibility blockVisibility;
+    @Mock private PackageRequestInsightService insightService;
     /** Real record (not mocked) — threshold-days=3 mirrors application-test.yml (yadony.urgency.threshold-days). */
     private final YadonyConfigProperties yadonyConfig =
             new YadonyConfigProperties(null, null, new YadonyConfigProperties.Urgency(3), null);
@@ -144,7 +145,7 @@ class PackageRequestServiceTest {
                 exchangeRateService, mapper, matchingService,
                 yadonyConfig, announcementRepository, commissionRateResolver,
                 com.yadony.api.config.PlatformSettingsTestFactory.withProEnabled(proEnabled),
-                blockVisibility, TestMessages.resolver());
+                blockVisibility, TestMessages.resolver(), insightService);
     }
 
     // ========== Task 12: create() tests ==========
@@ -1442,6 +1443,32 @@ class PackageRequestServiceTest {
             assertThat(sp.kycVerified()).isTrue();
             // negotiable is propagated from the entity (default true)
             assertThat(result.getContent().get(0).negotiable()).isTrue();
+        }
+
+        @Test @DisplayName("search() — l'expéditeur voit le nombre de personnes sur SES demandes, null sur celles des autres")
+        void search_ownerSeesUniqueViewersOnOwnRequestsOnly() {
+            UserEntity otherSender = new UserEntity();
+            UUID otherSenderId = UUID.randomUUID();
+            setId(otherSender, otherSenderId);
+            when(userRepository.findAllById(any())).thenReturn(List.of(sender, otherSender));
+            PackageRequestEntity mine = buildEntity(SENDER_ID, PackageRequestStatus.OPEN);
+            PackageRequestEntity theirs = buildEntity(otherSenderId, PackageRequestStatus.OPEN);
+            when(repository.findAll(any(org.springframework.data.jpa.domain.Specification.class),
+                                    any(org.springframework.data.domain.Pageable.class)))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(mine, theirs)));
+            when(favoriteRepository.findTargetIds(any(), any())).thenReturn(List.of());
+            when(insightService.ownerViewCounts(eq(SENDER_ID), anyCollection()))
+                .thenReturn(java.util.Map.of(mine.getId(), 5L));
+
+            var result = service.search(
+                org.springframework.data.jpa.domain.Specification.where(null),
+                org.springframework.data.domain.PageRequest.of(0, 20),
+                SENDER_ID
+            );
+
+            assertThat(result.getContent())
+                .extracting(r -> r.id(), r -> r.uniqueViewerCount())
+                .containsExactlyInAnyOrder(tuple(mine.getId(), 5L), tuple(theirs.getId(), null));
         }
 
         @Test @DisplayName("negotiable=false (demande à prix ferme) est propagé dans le SearchResponse")

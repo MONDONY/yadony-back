@@ -142,7 +142,9 @@ public class PackageRequestSearchMapper {
                 availablePaymentMethods,
                 grossPriceEur(entity.getTargetPriceEur()),
                 // Converti joint par le service (withViewerConversion), qui connaît le lecteur.
-                null, null
+                null, null,
+                // Audience : posée par le service pour les seules demandes du lecteur.
+                null
         );
     }
 

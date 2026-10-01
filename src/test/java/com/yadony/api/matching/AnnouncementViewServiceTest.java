@@ -12,12 +12,15 @@ import org.mockito.quality.Strictness;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -134,5 +137,41 @@ class AnnouncementViewServiceTest {
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(e -> assertThat(((YadonyBusinessException) e).getStatus()).isEqualTo(HttpStatus.NOT_FOUND));
         verify(viewRepository, never()).countByAnnouncementId(any());
+    }
+
+    // ─── ownerViewCounts (fil de recherche) ─────────────────────────────────
+
+    private AnnouncementEntity tripOf(UUID id, UUID owner) {
+        AnnouncementEntity a = mock(AnnouncementEntity.class, withSettings().strictness(Strictness.LENIENT));
+        when(a.getId()).thenReturn(id);
+        when(a.getTravelerId()).thenReturn(owner);
+        return a;
+    }
+
+    @Test
+    void ownerViewCounts_onlyTheViewersOwnTrips_withZeroWhenNobodyLooked() {
+        UUID mine = UUID.randomUUID();
+        UUID mineUnseen = UUID.randomUUID();
+        UUID someoneElses = UUID.randomUUID();
+        List<AnnouncementEntity> page = List.of(
+                tripOf(mine, travelerId), tripOf(mineUnseen, travelerId), tripOf(someoneElses, senderId));
+        when(viewRepository.countByAnnouncementIds(anyCollection()))
+                .thenReturn(List.<Object[]>of(new Object[]{mine, 12L}));
+
+        Map<UUID, Long> counts = service.ownerViewCounts(travelerId, page);
+
+        assertThat(counts).containsOnly(Map.entry(mine, 12L), Map.entry(mineUnseen, 0L));
+        verify(viewRepository).countByAnnouncementIds(
+                org.mockito.ArgumentMatchers.argThat(ids -> ids.size() == 2
+                        && ids.containsAll(List.of(mine, mineUnseen))));
+    }
+
+    @Test
+    void ownerViewCounts_noOwnTripInThePage_orAnonymous_queriesNothing() {
+        List<AnnouncementEntity> page = List.of(tripOf(UUID.randomUUID(), senderId));
+
+        assertThat(service.ownerViewCounts(travelerId, page)).isEmpty();
+        assertThat(service.ownerViewCounts(null, page)).isEmpty();
+        verify(viewRepository, never()).countByAnnouncementIds(anyCollection());
     }
 }

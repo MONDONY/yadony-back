@@ -91,6 +91,7 @@ class AnnouncementServiceTest {
     @Mock private com.yadony.api.requests.repository.NegotiationThreadRepository negotiationThreadRepository;
     @Mock private com.yadony.api.notifications.NotificationDispatcher notificationDispatcher;
     @Mock private com.yadony.api.common.BlockVisibility blockVisibility;
+    @Mock private AnnouncementViewService announcementViewService;
 
     private AnnouncementService announcementService;
 
@@ -110,7 +111,7 @@ class AnnouncementServiceTest {
                 com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3),
                 priceGridService, flagService,
                 storageService, favoriteRepository, activeCurrencyResolver, exchangeRateService, realMapper, packageRequestRepository,
-                negotiationThreadRepository, notificationDispatcher, blockVisibility);
+                negotiationThreadRepository, notificationDispatcher, blockVisibility, announcementViewService);
     }
 
     private static final String FIREBASE_UID = "uid-traveler-001";
@@ -2138,6 +2139,36 @@ class AnnouncementServiceTest {
          * faute d'appelant, en même temps que ce filtre).
          */
         @Test
+        @DisplayName("voyageur connecté → nombre de personnes sur SES trajets, null sur ceux des autres")
+        void searchAnnouncements_ownerSeesUniqueViewersOnOwnTripsOnly() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity mine = buildAnnouncement(traveler);
+            UserEntity otherTraveler = buildTraveler();
+            setId(otherTraveler, UUID.randomUUID());
+            otherTraveler.setFirebaseUid("uid-other-traveler");
+            AnnouncementEntity theirs = buildAnnouncement(otherTraveler);
+            UUID theirsId = UUID.randomUUID();
+            setId(theirs, theirsId);
+
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(activeCurrencyResolver.resolveDisplay(USER_ID)).thenReturn("EUR");
+            when(announcementRepository.findAll(ArgumentMatchers.<Specification<AnnouncementEntity>>any(), any(Pageable.class)))
+                    .thenReturn(new PageImpl<>(List.of(mine, theirs)));
+            when(userRepository.findAllById(anyCollection())).thenReturn(List.of(traveler, otherTraveler));
+            when(bidRepository.countVisibleByAnnouncementIds(anyCollection())).thenReturn(List.of());
+            when(announcementViewService.ownerViewCounts(eq(USER_ID), anyCollection()))
+                    .thenReturn(Map.of(ANNOUNCEMENT_ID, 12L));
+
+            Page<AnnouncementSearchResponse> result = announcementService.searchAnnouncements(
+                    null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+                    "date", "asc", PageRequest.of(0, 10), FIREBASE_UID, null);
+
+            assertThat(result.getContent())
+                    .extracting(AnnouncementSearchResponse::id, AnnouncementSearchResponse::uniqueViewerCount)
+                    .containsExactlyInAnyOrder(tuple(ANNOUNCEMENT_ID, 12L), tuple(theirsId, null));
+        }
+
+        @Test
         @DisplayName("lecteur en EUR → voit aussi les annonces publiées en XOF (plus de filtre devise)")
         void searchAnnouncements_readerInEur_seesAnnouncementsInXof() {
             UserEntity traveler = buildTraveler();
@@ -2458,7 +2489,7 @@ class AnnouncementServiceTest {
                     com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3),
                     priceGridService, flagService,
                     storageService, favoriteRepository, activeCurrencyResolver, exchangeRateService, mapperWithLimits, packageRequestRepository,
-                    negotiationThreadRepository, notificationDispatcher, blockVisibility);
+                    negotiationThreadRepository, notificationDispatcher, blockVisibility, announcementViewService);
 
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
             // le nouveau count (hors DRAFT) renvoie 1 => sous la limite (2) => création OK
@@ -2793,7 +2824,7 @@ class AnnouncementServiceTest {
                     com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3),
                     priceGridService, flagService,
                     storageService, favoriteRepository, activeCurrencyResolver, exchangeRateService, mapperWithLimits, packageRequestRepository,
-                    negotiationThreadRepository, notificationDispatcher, blockVisibility);
+                    negotiationThreadRepository, notificationDispatcher, blockVisibility, announcementViewService);
 
             AnnouncementEntity draft = draftEntityOwnedBy(user);
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
@@ -3006,7 +3037,7 @@ class AnnouncementServiceTest {
                     com.yadony.api.config.PlatformSettingsTestFactory.withProEnabled(false),
                     priceGridService, flagService,
                     storageService, favoriteRepository, activeCurrencyResolver, exchangeRateService, mapper,
-                    packageRequestRepository, negotiationThreadRepository, notificationDispatcher, blockVisibility);
+                    packageRequestRepository, negotiationThreadRepository, notificationDispatcher, blockVisibility, announcementViewService);
         }
 
         @Test

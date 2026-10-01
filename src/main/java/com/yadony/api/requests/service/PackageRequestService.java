@@ -78,6 +78,7 @@ public class PackageRequestService {
     private final PlatformSettingsService platformSettings;
     private final BlockVisibility blockVisibility;
     private final MessagesResolver messagesResolver;
+    private final PackageRequestInsightService insightService;
 
     public PackageRequestService(PackageRequestRepository repository,
                                   UserRepository userRepository,
@@ -99,7 +100,8 @@ public class PackageRequestService {
                                   CommissionRateResolver commissionRateResolver,
                                   PlatformSettingsService platformSettings,
                                   BlockVisibility blockVisibility,
-                                  MessagesResolver messagesResolver) {
+                                  MessagesResolver messagesResolver,
+                                  PackageRequestInsightService insightService) {
         this.repository = repository;
         this.userRepository = userRepository;
         this.eventPublisher = eventPublisher;
@@ -121,6 +123,7 @@ public class PackageRequestService {
         this.platformSettings = platformSettings;
         this.blockVisibility = blockVisibility;
         this.messagesResolver = messagesResolver;
+        this.insightService = insightService;
     }
 
     /**
@@ -825,9 +828,11 @@ public class PackageRequestService {
         Page<PackageRequestEntity> page = repository.findAll(visibleTo(spec, callerId), pageable);
         BatchMaps batch = buildBatchMaps(page.getContent());
         String viewerCurrency = activeCurrencyResolver.resolveDisplay(callerId);
+        // Audience : seulement les demandes de l'appelant, les autres restent à null.
+        Map<UUID, Long> ownViews = insightService.ownerViewCounts(callerId, page.getContent());
         return page.map(e -> withViewerConversion(packageRequestSearchMapper.toSearchResponse(
                 e, favIds.contains(e.getId()), viewer, batch.userMap, batch.cityMap, batch.photoMap),
-                viewerCurrency));
+                viewerCurrency).withUniqueViewerCount(ownViews.get(e.getId())));
     }
 
     /**
@@ -895,11 +900,13 @@ public class PackageRequestService {
         ViewerPaymentCapabilities viewer = resolveViewerCapabilities(callerId);
         BatchMaps batch = buildBatchMaps(pageEntities);
         String viewerCurrency = activeCurrencyResolver.resolveDisplay(callerId);
+        Map<UUID, Long> ownViews = insightService.ownerViewCounts(callerId, pageEntities);
         List<PackageRequestSearchResponse> content = pageEntities.stream()
                 .map(e -> packageRequestSearchMapper.toSearchResponse(
                         e, favIds.contains(e.getId()), viewer, batch.userMap, batch.cityMap, batch.photoMap))
                 .map(r -> r.withMatch(matches.get(r.id())))
                 .map(r -> withViewerConversion(r, viewerCurrency))
+                .map(r -> r.withUniqueViewerCount(ownViews.get(r.id())))
                 .toList();
 
         return new org.springframework.data.domain.PageImpl<>(content, pageable, sorted.size());
@@ -951,10 +958,11 @@ public class PackageRequestService {
         Page<PackageRequestEntity> rawPage = repository.findAll(visibleTo(spec, callerId), pageable);
         BatchMaps batch = buildBatchMaps(rawPage.getContent());
         String viewerCurrency = activeCurrencyResolver.resolveDisplay(callerId);
+        Map<UUID, Long> ownViews = insightService.ownerViewCounts(callerId, rawPage.getContent());
         Page<PackageRequestSearchResponse> mapped = rawPage.map(e -> withViewerConversion(
                 packageRequestSearchMapper.toSearchResponse(
                         e, favIds.contains(e.getId()), viewer, batch.userMap, batch.cityMap, batch.photoMap),
-                viewerCurrency));
+                viewerCurrency).withUniqueViewerCount(ownViews.get(e.getId())));
         double latD = lat.doubleValue();
         double lngD = lng.doubleValue();
         List<PackageRequestSearchResponse> filtered = mapped.getContent().stream()
