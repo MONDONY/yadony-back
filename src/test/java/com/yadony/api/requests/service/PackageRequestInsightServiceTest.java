@@ -10,9 +10,11 @@ import com.yadony.api.requests.dto.PackageRequestResponse;
 import com.yadony.api.requests.entity.PackageRequestEntity;
 import com.yadony.api.requests.entity.PackageRequestInvitationEntity;
 import com.yadony.api.requests.entity.PackageRequestStatus;
+import com.yadony.api.requests.entity.PackageRequestViewEntity;
 import com.yadony.api.requests.event.PackageRequestInvitationSentEvent;
 import com.yadony.api.requests.repository.PackageRequestInvitationRepository;
 import com.yadony.api.requests.repository.PackageRequestRepository;
+import com.yadony.api.requests.repository.PackageRequestViewRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -20,6 +22,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -43,6 +46,7 @@ class PackageRequestInsightServiceTest {
     @Mock private UserRepository userRepository;
     @Mock private AuditService auditService;
     @Mock private ApplicationEventPublisher eventPublisher;
+    @Mock private PackageRequestViewRepository requestViewRepository;
 
     private PackageRequestInsightService service;
 
@@ -55,7 +59,7 @@ class PackageRequestInsightServiceTest {
     @BeforeEach
     void setUp() {
         service = new PackageRequestInsightService(requestRepository, invitationRepository,
-                announcementRepository, userRepository, auditService, eventPublisher);
+                announcementRepository, userRepository, auditService, eventPublisher, requestViewRepository);
     }
 
     private PackageRequestEntity request(PackageRequestStatus status) {
@@ -115,7 +119,36 @@ class PackageRequestInsightServiceTest {
         service.recordView(senderId, viewed(senderId, PackageRequestStatus.OPEN));
         service.recordView(null, viewed(senderId, PackageRequestStatus.OPEN));
         service.recordView(travelerId, viewed(senderId, PackageRequestStatus.ACCEPTED));
-        verifyNoInteractions(requestRepository);
+        verifyNoInteractions(requestRepository, requestViewRepository);
+    }
+
+    @Test
+    void recordView_firstOpeningByATraveler_countsOnePerson() {
+        service.recordView(travelerId, viewed(senderId, PackageRequestStatus.OPEN));
+
+        ArgumentCaptor<PackageRequestViewEntity> saved = ArgumentCaptor.forClass(PackageRequestViewEntity.class);
+        verify(requestViewRepository).save(saved.capture());
+        assertThat(saved.getValue().getPackageRequestId()).isEqualTo(requestId);
+        assertThat(saved.getValue().getViewerId()).isEqualTo(travelerId);
+    }
+
+    @Test
+    void recordView_sameTravelerAgain_countsTheOpeningButNotASecondPerson() {
+        when(requestViewRepository.existsByPackageRequestIdAndViewerId(requestId, travelerId)).thenReturn(true);
+
+        service.recordView(travelerId, viewed(senderId, PackageRequestStatus.OPEN));
+
+        verify(requestRepository).incrementViewCount(requestId);
+        verify(requestViewRepository, never()).save(any());
+    }
+
+    @Test
+    void recordView_concurrentDuplicatePerson_isSwallowed() {
+        when(requestViewRepository.save(any())).thenThrow(new DataIntegrityViolationException("uq_package_request_views"));
+
+        service.recordView(travelerId, viewed(senderId, PackageRequestStatus.OPEN));
+
+        verify(requestRepository).incrementViewCount(requestId);
     }
 
     @Test
@@ -123,6 +156,17 @@ class PackageRequestInsightServiceTest {
         when(requestRepository.incrementViewCount(requestId)).thenThrow(new RuntimeException("db down"));
         service.recordView(travelerId, viewed(senderId, PackageRequestStatus.OPEN));
         verify(requestRepository).incrementViewCount(requestId);
+    }
+
+    @Test
+    void recordView_viewerTableUnavailable_neverBreaksTheRead() {
+        when(requestViewRepository.existsByPackageRequestIdAndViewerId(requestId, travelerId))
+                .thenThrow(new RuntimeException("db down"));
+
+        service.recordView(travelerId, viewed(senderId, PackageRequestStatus.OPEN));
+
+        verify(requestRepository).incrementViewCount(requestId);
+        verify(requestViewRepository, never()).save(any());
     }
 
     // ─── getInsights ─────────────────────────────────────────────────────────
@@ -134,9 +178,12 @@ class PackageRequestInsightServiceTest {
         when(invitationRepository.findByPackageRequestIdOrderByCreatedAtAsc(requestId))
                 .thenReturn(List.of(new PackageRequestInvitationEntity(requestId, announcementId, travelerId, senderId)));
 
+        when(requestViewRepository.countByPackageRequestId(requestId)).thenReturn(5L);
+
         var insights = service.getInsights(senderId, requestId);
 
         assertThat(insights.viewCount()).isEqualTo(14L);
+        assertThat(insights.uniqueViewerCount()).isEqualTo(5L);
         assertThat(insights.invitedAnnouncementIds()).containsExactly(announcementId);
     }
 

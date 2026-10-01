@@ -12,12 +12,15 @@ import com.yadony.api.requests.dto.PackageRequestResponse;
 import com.yadony.api.requests.entity.PackageRequestEntity;
 import com.yadony.api.requests.entity.PackageRequestInvitationEntity;
 import com.yadony.api.requests.entity.PackageRequestStatus;
+import com.yadony.api.requests.entity.PackageRequestViewEntity;
 import com.yadony.api.requests.event.PackageRequestInvitationSentEvent;
 import com.yadony.api.requests.repository.PackageRequestInvitationRepository;
 import com.yadony.api.requests.repository.PackageRequestRepository;
+import com.yadony.api.requests.repository.PackageRequestViewRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -46,27 +49,32 @@ public class PackageRequestInsightService {
     private final UserRepository userRepository;
     private final AuditService auditService;
     private final ApplicationEventPublisher eventPublisher;
+    private final PackageRequestViewRepository requestViewRepository;
 
     public PackageRequestInsightService(PackageRequestRepository requestRepository,
                                         PackageRequestInvitationRepository invitationRepository,
                                         AnnouncementRepository announcementRepository,
                                         UserRepository userRepository,
                                         AuditService auditService,
-                                        ApplicationEventPublisher eventPublisher) {
+                                        ApplicationEventPublisher eventPublisher,
+                                        PackageRequestViewRepository requestViewRepository) {
         this.requestRepository = requestRepository;
         this.invitationRepository = invitationRepository;
         this.announcementRepository = announcementRepository;
         this.userRepository = userRepository;
         this.auditService = auditService;
         this.eventPublisher = eventPublisher;
+        this.requestViewRepository = requestViewRepository;
     }
 
     public record InvitationResult(PackageRequestInvitationResponse invitation, boolean created) {}
 
     /**
      * Compte une consultation : appelant connecté, autre que l'expéditeur, sur une
-     * demande encore en circulation. Hors transaction de lecture ({@code getById} est
-     * readOnly, Postgres y refuserait l'UPDATE) et sans jamais faire échouer la lecture.
+     * demande encore en circulation. Deux mesures : chaque ouverture ({@code view_count})
+     * et chaque personne, une seule fois ({@code package_request_views}). Hors
+     * transaction de lecture ({@code getById} est readOnly, Postgres y refuserait
+     * l'écriture) et sans jamais faire échouer la lecture.
      */
     public void recordView(UUID viewerId, PackageRequestResponse viewed) {
         if (viewerId == null || viewerId.equals(viewed.senderId())) {
@@ -80,6 +88,19 @@ public class PackageRequestInsightService {
         } catch (RuntimeException e) {
             log.warn("Compteur de vues non incrémenté pour la demande {}", viewed.id(), e);
         }
+        recordViewer(viewerId, viewed.id());
+    }
+
+    private void recordViewer(UUID viewerId, UUID requestId) {
+        try {
+            if (!requestViewRepository.existsByPackageRequestIdAndViewerId(requestId, viewerId)) {
+                requestViewRepository.save(new PackageRequestViewEntity(requestId, viewerId));
+            }
+        } catch (DataIntegrityViolationException alreadyCounted) {
+            // Une ouverture simultanée a inséré la même ligne : la personne est comptée.
+        } catch (RuntimeException e) {
+            log.warn("Personne non comptée pour la demande {}", requestId, e);
+        }
     }
 
     @Transactional(readOnly = true)
@@ -88,7 +109,8 @@ public class PackageRequestInsightService {
         var invited = invitationRepository.findByPackageRequestIdOrderByCreatedAtAsc(requestId).stream()
             .map(PackageRequestInvitationEntity::getAnnouncementId)
             .toList();
-        return new PackageRequestInsightsResponse(request.getViewCount(), invited);
+        return new PackageRequestInsightsResponse(request.getViewCount(),
+                requestViewRepository.countByPackageRequestId(requestId), invited);
     }
 
     /**
