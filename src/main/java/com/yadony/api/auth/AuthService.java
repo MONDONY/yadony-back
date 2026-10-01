@@ -183,6 +183,9 @@ public class AuthService {
                         "User Not Found",
                         "Utilisateur introuvable"
                 ));
+        // L'app lit son profil à l'ouverture : c'est la « dernière connexion » du
+        // profil public (FLUTTER-4H), écrite hors de cette transaction en lecture.
+        eventPublisher.publishEvent(new com.yadony.api.auth.events.UserSeenEvent(user.getId()));
         return toResponse(user);
     }
 
@@ -273,7 +276,8 @@ public class AuthService {
                         "Utilisateur introuvable"
                 ));
         return new com.yadony.api.auth.dto.PrivacySettingsResponse(
-                user.isContactKycOnly(), user.isHidePhoneNumber(), user.isShowResidenceCountry());
+                user.isContactKycOnly(), user.isHidePhoneNumber(), user.isShowResidenceCountry(),
+                user.isShowLastSeen());
     }
 
     /**
@@ -289,9 +293,19 @@ public class AuthService {
      * @param showResidenceCountry {@code null} = inchangé ; afficher ou non le pays de
      *        résidence sur le profil public (FLUTTER-4H).
      */
-    @Transactional
     public void updatePrivacySettings(String firebaseUid, boolean contactKycOnly,
                                       Boolean hidePhoneNumber, Boolean showResidenceCountry) {
+        updatePrivacySettings(firebaseUid, contactKycOnly, hidePhoneNumber, showResidenceCountry, null);
+    }
+
+    /**
+     * @param showLastSeen {@code null} = inchangé ; afficher ou non la dernière
+     *        connexion sur le profil public (FLUTTER-4H).
+     */
+    @Transactional
+    public void updatePrivacySettings(String firebaseUid, boolean contactKycOnly,
+                                      Boolean hidePhoneNumber, Boolean showResidenceCountry,
+                                      Boolean showLastSeen) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND,
@@ -310,7 +324,15 @@ public class AuthService {
         if (showResidenceCountry != null) {
             user.setShowResidenceCountry(showResidenceCountry);
         }
+        boolean lastSeenChanged = showLastSeen != null && showLastSeen != user.isShowLastSeen();
+        if (showLastSeen != null) {
+            user.setShowLastSeen(showLastSeen);
+        }
         userRepository.save(user);
+        if (lastSeenChanged) {
+            auditService.log("USER", user.getId(), "LAST_SEEN_VISIBILITY_UPDATED", user.getId(),
+                    Map.of("showLastSeen", showLastSeen));
+        }
         if (countryChanged) {
             auditService.log("USER", user.getId(), "RESIDENCE_COUNTRY_VISIBILITY_UPDATED", user.getId(),
                     Map.of("showResidenceCountry", showResidenceCountry));

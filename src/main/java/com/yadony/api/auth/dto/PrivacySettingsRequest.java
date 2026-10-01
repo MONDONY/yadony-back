@@ -13,9 +13,16 @@ public record PrivacySettingsRequest(
         @NotNull Boolean contactKycOnly,
         Boolean hidePhoneNumber,
         /** Afficher mon pays de résidence sur mon profil public ; null = inchangé. */
-        Boolean showResidenceCountry) {
+        Boolean showResidenceCountry,
+        /** Afficher ma dernière connexion sur mon profil public ; null = inchangé. */
+        Boolean showLastSeen) {
 
     public PrivacySettingsRequest(Boolean contactKycOnly, Boolean hidePhoneNumber) {
-        this(contactKycOnly, hidePhoneNumber, null);
+        this(contactKycOnly, hidePhoneNumber, null, null);
+    }
+
+    public PrivacySettingsRequest(Boolean contactKycOnly, Boolean hidePhoneNumber,
+                                  Boolean showResidenceCountry) {
+        this(contactKycOnly, hidePhoneNumber, showResidenceCountry, null);
     }
 }

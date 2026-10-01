@@ -166,6 +166,57 @@ class ProfilePublicServiceTest {
         assertThat(profilePublicService.getProfilePublic(USER_ID, VIEWER_ID).residenceCountry()).isEqualTo("FR");
     }
 
+    private static UserRepository.DecisionDelayStats delay(Double median, Long decisions) {
+        return new UserRepository.DecisionDelayStats() {
+            @Override public Double getMedianMinutes() { return median; }
+            @Override public Long getDecisions() { return decisions; }
+        };
+    }
+
+    @Test
+    @DisplayName("temps de réponse mesuré : médiane arrondie à la minute supérieure")
+    void getProfilePublic_measuredResponseTime() {
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(3), eq(VIEWER_ID)))
+                .thenReturn(stubRatingSummary());
+        when(userRepository.travelerDecisionDelay(eq(USER_ID), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(delay(42.2, 5L));
+
+        assertThat(profilePublicService.getProfilePublic(USER_ID, VIEWER_ID).measuredResponseMinutes())
+                .isEqualTo(43);
+    }
+
+    @Test
+    @DisplayName("temps de réponse : rien sous 3 décisions, ni si le calcul échoue")
+    void getProfilePublic_measuredResponseTime_needsThreeDecisions() {
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(3), eq(VIEWER_ID)))
+                .thenReturn(stubRatingSummary());
+        when(userRepository.travelerDecisionDelay(eq(USER_ID), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(delay(10.0, 2L))
+                .thenThrow(new IllegalStateException("percentile_cont indisponible"));
+
+        assertThat(profilePublicService.getProfilePublic(USER_ID, VIEWER_ID).measuredResponseMinutes()).isNull();
+        assertThat(profilePublicService.getProfilePublic(USER_ID, VIEWER_ID).measuredResponseMinutes()).isNull();
+    }
+
+    @Test
+    @DisplayName("dernière connexion : au jour près, masquée si l'utilisateur le choisit")
+    void getProfilePublic_lastSeenDaysAgo() {
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(3), eq(VIEWER_ID)))
+                .thenReturn(stubRatingSummary());
+
+        assertThat(profilePublicService.getProfilePublic(USER_ID, VIEWER_ID).lastSeenDaysAgo())
+                .as("jamais vu").isNull();
+
+        setFieldQuiet(user, "lastSeenAt", java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusDays(3));
+        assertThat(profilePublicService.getProfilePublic(USER_ID, VIEWER_ID).lastSeenDaysAgo()).isEqualTo(3);
+
+        user.setShowLastSeen(false);
+        assertThat(profilePublicService.getProfilePublic(USER_ID, VIEWER_ID).lastSeenDaysAgo()).isNull();
+    }
+
     private static void setFieldQuiet(Object target, String name, Object value) {
         try {
             var f = UserEntity.class.getDeclaredField(name);

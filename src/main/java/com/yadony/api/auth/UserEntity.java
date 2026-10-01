@@ -118,6 +118,19 @@ public class UserEntity extends BaseEntity {
     private boolean showResidenceCountry = false;
 
     /**
+     * Dernière ouverture de l'app (FLUTTER-4H). Écrite par une requête native
+     * ({@link UserRepository#touchLastSeen}), jamais par un {@code save} : en lecture
+     * seule ici, sinon une entité chargée plus tôt réécrirait une valeur périmée.
+     */
+    @Column(name = "last_seen_at", insertable = false, updatable = false)
+    private java.time.LocalDateTime lastSeenAt;
+
+    /** Afficher ma dernière connexion sur mon profil public. Visible par défaut. */
+    @org.hibernate.annotations.ColumnDefault("true")
+    @Column(name = "show_last_seen", nullable = false)
+    private boolean showLastSeen = true;
+
+    /**
      * Langue dans laquelle le serveur rédige ce qu'il envoie hors de la requête de
      * l'utilisateur (notifications, SMS de secours). Colonne brute en {@code String}
      * (V264) ; {@link #getPreferredLanguage()} l'expose en {@link AppLanguage}, FR si
@@ -387,6 +400,9 @@ public class UserEntity extends BaseEntity {
 
     public boolean isShowResidenceCountry() { return showResidenceCountry; }
     public void setShowResidenceCountry(boolean showResidenceCountry) { this.showResidenceCountry = showResidenceCountry; }
+    public java.time.LocalDateTime getLastSeenAt() { return lastSeenAt; }
+    public boolean isShowLastSeen() { return showLastSeen; }
+    public void setShowLastSeen(boolean showLastSeen) { this.showLastSeen = showLastSeen; }
 
     /** FR si la colonne est vide ou porte un code hors catalogue (fr/en). */
     public AppLanguage getPreferredLanguage() { return AppLanguage.fromCode(preferredLanguage).orElse(AppLanguage.FR); }

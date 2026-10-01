@@ -52,7 +52,7 @@ class PrivacySettingsControllerTest {
 
     @Test
     void PUT_privacySettings_retourne204_etAppelleService() throws Exception {
-        doNothing().when(authService).updatePrivacySettings(FIREBASE_UID, false, true, null);
+        doNothing().when(authService).updatePrivacySettings(FIREBASE_UID, false, true, null, null);
 
         mvc.perform(put("/auth/me/privacy-settings")
                         .with(authentication(auth()))
@@ -62,7 +62,7 @@ class PrivacySettingsControllerTest {
                                 """))
                 .andExpect(status().isNoContent());
 
-        verify(authService).updatePrivacySettings(FIREBASE_UID, false, true, null);
+        verify(authService).updatePrivacySettings(FIREBASE_UID, false, true, null, null);
     }
 
     /**
@@ -72,7 +72,7 @@ class PrivacySettingsControllerTest {
      */
     @Test
     void PUT_privacySettings_sansHidePhoneNumber_passeNullAuService() throws Exception {
-        doNothing().when(authService).updatePrivacySettings(FIREBASE_UID, false, null, null);
+        doNothing().when(authService).updatePrivacySettings(FIREBASE_UID, false, null, null, null);
 
         mvc.perform(put("/auth/me/privacy-settings")
                         .with(authentication(auth()))
@@ -82,7 +82,7 @@ class PrivacySettingsControllerTest {
                                 """))
                 .andExpect(status().isNoContent());
 
-        verify(authService).updatePrivacySettings(FIREBASE_UID, false, null, null);
+        verify(authService).updatePrivacySettings(FIREBASE_UID, false, null, null, null);
     }
 
     @Test
