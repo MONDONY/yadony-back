@@ -677,15 +677,7 @@ public class TrackingService {
     }
 
     private LocalDateTime computeCodeExpiry(AnnouncementEntity announcement) {
-        // Jour d'arrivée réel : un vol de nuit arrive le lendemain. Partir du jour du
-        // départ faisait expirer le code à l'atterrissage (FLUTTER-4E).
-        java.time.LocalDate arrivalDay = com.yadony.api.matching.ArrivalRules.effectiveArrivalDate(announcement);
-        if (announcement.getArrivalTime() != null) {
-            // Heure d'arrivée connue → jour d'arrivée + 24h de marge
-            return arrivalDay.atTime(announcement.getArrivalTime()).plusDays(1);
-        }
-        // Pas d'heure d'arrivée → 72h après le début du jour d'arrivée (couvre J+1 + buffer)
-        return arrivalDay.atStartOfDay().plusDays(3);
+        return com.yadony.api.matching.ArrivalRules.pickupCodeExpiry(announcement);
     }
 
     private String generateQrBase64(String content) {

@@ -1828,7 +1828,7 @@ public class AnnouncementService {
      * Il n'y a plus de borne basse : le trajet accepte les colis dès sa
      * publication, et jusqu'à cette date limite.
      */
-    private void validateHandoverDeadline(LocalDateTime deadline,
+    static void validateHandoverDeadline(LocalDateTime deadline,
                                           LocalDate departureDate,
                                           LocalTime departureTime) {
         if (deadline == null) {

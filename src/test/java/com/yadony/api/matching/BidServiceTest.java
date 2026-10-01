@@ -69,6 +69,7 @@ class BidServiceTest {
     @Mock private com.yadony.api.auth.FirebaseContactService firebaseContact;
     @Mock private com.yadony.api.payments.pawapay.PawapayProperties pawapayProperties;
     @Mock private com.yadony.api.payments.PaymentService paymentService;
+    @Mock private TripRescheduleRepository rescheduleRepository;
     @Mock private HttpServletRequest httpRequest;
 
     @InjectMocks private BidService bidService;
@@ -3368,6 +3369,48 @@ class BidServiceTest {
 
             assertThat(resp.tripCancellationId()).isNull();
             assertThat(resp.tripCancellationRematchStatus()).isNull();
+        }
+
+        @Test
+        @DisplayName("trajet reporté : dernier report et réponse attendue de l'expéditeur")
+        void toResponse_rescheduledTrip_exposesTheLatestRescheduleAndPendingDecision() {
+            BidEntity bid = buildBid();
+            bid.setStatus(BidStatus.ACCEPTED);
+            bid.setHandoverDeadline(java.time.LocalDateTime.now().plusDays(3));
+            UUID rescheduleId = UUID.randomUUID();
+            bid.setPendingRescheduleId(rescheduleId);
+            AnnouncementEntity trip = new AnnouncementEntity();
+            org.springframework.test.util.ReflectionTestUtils.setField(trip, "id", bid.getAnnouncementId());
+            trip.setTravelerId(UUID.randomUUID());
+            trip.setDepartureDate(java.time.LocalDate.now().plusDays(4));
+            trip.setRescheduleCount(1);
+            TripRescheduleEntity reschedule = new TripRescheduleEntity();
+            org.springframework.test.util.ReflectionTestUtils.setField(reschedule, "id", rescheduleId);
+            reschedule.setReason(TripRescheduleReason.FLIGHT_CANCELLED);
+            reschedule.setPreviousDepartureDate(java.time.LocalDate.now().plusDays(1));
+            reschedule.setNewDepartureDate(trip.getDepartureDate());
+            when(announcementRepository.findById(bid.getAnnouncementId())).thenReturn(Optional.of(trip));
+            when(rescheduleRepository.findFirstByAnnouncementIdOrderByCreatedAtDesc(trip.getId()))
+                    .thenReturn(Optional.of(reschedule));
+
+            BidResponse resp = bidService.toResponse(bid, buildSender());
+
+            assertThat(resp.reschedule()).isNotNull();
+            assertThat(resp.reschedule().reason()).isEqualTo("FLIGHT_CANCELLED");
+            assertThat(resp.reschedule().previousDepartureDate()).isEqualTo(java.time.LocalDate.now().plusDays(1));
+            assertThat(resp.reschedule().decisionPending()).isTrue();
+            assertThat(resp.reschedule().decisionDeadline()).isEqualTo(bid.getHandoverDeadline());
+        }
+
+        @Test
+        @DisplayName("trajet jamais reporté : aucune requête, pas de report")
+        void toResponse_neverRescheduled_skipsTheLookup() {
+            BidEntity bid = buildBid();
+
+            BidResponse resp = bidService.toResponse(bid, buildSender());
+
+            assertThat(resp.reschedule()).isNull();
+            verifyNoInteractions(rescheduleRepository);
         }
 
         @Test

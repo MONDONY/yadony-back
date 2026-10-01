@@ -22,7 +22,7 @@ public final class NotificationTypes {
 
     public static final Set<String> CRITICAL = Set.of(
             "PAYMENT_RELEASED", "DELIVERY_CONFIRMED", "DISPUTE_OPENED",
-            "HANDOVER_REMINDER_H2"
+            "HANDOVER_REMINDER_H2", "TRIP_RESCHEDULED"
     );
 
     public static boolean isCritical(String type) {

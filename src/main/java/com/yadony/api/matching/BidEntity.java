@@ -241,6 +241,13 @@ public class BidEntity extends BaseEntity {
     @Column(name = "pricing_mode", nullable = false, length = 10)
     private BidPricingMode pricingMode = BidPricingMode.KG;
 
+    /** Report du trajet auquel l'expéditeur n'a pas encore répondu (V278). Nul : rien à décider. */
+    @Column(name = "pending_reschedule_id")
+    private UUID pendingRescheduleId;
+
+    public UUID getPendingRescheduleId() { return pendingRescheduleId; }
+    public void setPendingRescheduleId(UUID pendingRescheduleId) { this.pendingRescheduleId = pendingRescheduleId; }
+
     public UUID getAnnouncementId() { return announcementId; }
     public void setAnnouncementId(UUID announcementId) { this.announcementId = announcementId; }
 

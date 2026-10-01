@@ -20,6 +20,8 @@ public class NotificationPrefsService {
             Map.entry("PARCEL_REFUSED",               "pushActivityBids"),
             Map.entry("BID_EXPIRED",                  "pushActivityBids"),
             Map.entry("TRIP_CANCELLED",               "pushActivityBids"),
+            Map.entry("TRIP_RESCHEDULE_KEPT",         "pushActivityBids"),
+            Map.entry("TRIP_RESCHEDULE_WITHDRAWN",    "pushActivityBids"),
             Map.entry("negotiation_started",          "pushActivityNegotiations"),
             Map.entry("negotiation_counter",          "pushActivityNegotiations"),
             Map.entry("negotiation_awaiting_trip",    "pushActivityNegotiations"),

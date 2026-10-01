@@ -74,6 +74,10 @@ public class AnnouncementEntity extends BaseEntity {
     @Column(name = "arrival_date")
     private LocalDate arrivalDate;
 
+    /** Nombre de reports déjà faits (V278, plafond {@link TripRescheduleRules#MAX_RESCHEDULES}). */
+    @Column(name = "reschedule_count", nullable = false)
+    private int rescheduleCount = 0;
+
     @Column(name = "handover_deadline")
     private LocalDateTime handoverDeadline;
 
@@ -361,6 +365,8 @@ public class AnnouncementEntity extends BaseEntity {
     public LocalTime getArrivalTime() { return arrivalTime; }
     public LocalDate getArrivalDate() { return arrivalDate; }
     public void setArrivalDate(LocalDate arrivalDate) { this.arrivalDate = arrivalDate; }
+    public int getRescheduleCount() { return rescheduleCount; }
+    public void setRescheduleCount(int rescheduleCount) { this.rescheduleCount = rescheduleCount; }
     public void setArrivalTime(LocalTime arrivalTime) { this.arrivalTime = arrivalTime; }
 
     public TransportMode getTransportMode() { return transportMode; }

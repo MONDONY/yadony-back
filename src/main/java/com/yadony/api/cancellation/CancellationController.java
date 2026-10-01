@@ -29,13 +29,26 @@ public class CancellationController {
     private final CancellationService cancellationService;
     private final UserRepository userRepository;
     private final NoShowArbitrationService noShowArbitrationService;
+    private final RescheduleDecisionService rescheduleDecisionService;
 
     public CancellationController(CancellationService cancellationService,
                                    UserRepository userRepository,
-                                   NoShowArbitrationService noShowArbitrationService) {
+                                   NoShowArbitrationService noShowArbitrationService,
+                                   RescheduleDecisionService rescheduleDecisionService) {
         this.cancellationService = cancellationService;
         this.userRepository = userRepository;
         this.noShowArbitrationService = noShowArbitrationService;
+        this.rescheduleDecisionService = rescheduleDecisionService;
+    }
+
+    /** L'expéditeur garde son colis sur le trajet reporté, ou se retire sans frais. */
+    @PostMapping("/bids/{bidId}/reschedule-decision")
+    public ResponseEntity<Void> decideReschedule(
+            @PathVariable UUID bidId,
+            @Valid @RequestBody com.yadony.api.cancellation.dto.RescheduleDecisionRequest request
+    ) {
+        rescheduleDecisionService.decide(requireFirebaseUid(), bidId, request.decision());
+        return ResponseEntity.noContent().build();
     }
 
     @PostMapping

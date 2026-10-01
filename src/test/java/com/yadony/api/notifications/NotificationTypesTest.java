@@ -18,7 +18,7 @@ class NotificationTypesTest {
         assertThat(NotificationTypes.CRITICAL)
                 .containsExactlyInAnyOrder(
                         "PAYMENT_RELEASED", "DELIVERY_CONFIRMED", "DISPUTE_OPENED",
-                        "HANDOVER_REMINDER_H2");
+                        "HANDOVER_REMINDER_H2", "TRIP_RESCHEDULED");
     }
 
     @Test

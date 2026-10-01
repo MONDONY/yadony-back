@@ -56,7 +56,8 @@ public final class NotificationDeeplink {
                  "BID_EXPIRED", "CONFIRMATION_CODE_READY", "DELIVERY_NOSHOW_REPORTED", "MM_PAYMENT_PENDING",
                  "HANDOVER_REMINDER_H2", "MOBILE_MONEY_PAYMENT_CONFIRMED", "SENDER_NOSHOW_REPORTED", "NOSHOW_DECISION", "MOBILE_MONEY_PAYMENT_FAILED",
                  "MM_PAYMENT_EXPIRED", "TRIP_ARRIVED",
-                 "PARCEL_RETURNED", "RETURN_DEADLINE_WARNING", "RETURN_DEADLINE_EXPIRED", "automation_last_minute" ->
+                 "PARCEL_RETURNED", "RETURN_DEADLINE_WARNING", "RETURN_DEADLINE_EXPIRED", "automation_last_minute",
+                 "TRIP_RESCHEDULED", "TRIP_RESCHEDULE_KEPT", "TRIP_RESCHEDULE_WITHDRAWN" ->
                     bidId.map(id -> "bids/" + id);
 
             case "KYC_VERIFIED" -> Optional.of("kyc/status");

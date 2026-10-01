@@ -13,5 +13,8 @@ public enum CancellationReason {
     BID_REJECTED_AFTER_PAYMENT,
     /** Système : le voyageur a supprimé son compte (hard-delete immédiat ou finalisation
      *  RGPD J+30) — cf. {@code cancellation.AccountDeletionCancellationListener}. */
-    TRAVELER_ACCOUNT_DELETED
+    TRAVELER_ACCOUNT_DELETED,
+    /** L'expéditeur se retire après le report du trajet par le voyageur : remboursement
+     *  intégral, rematch, et une annulation comptée au voyageur. */
+    TRIP_RESCHEDULE_WITHDRAWN
 }

@@ -666,4 +666,26 @@ public final class NotificationTexts {
         String flat = subject.trim().replaceAll("\\s+", " ");
         return new NotificationText(title, m.get("notification.support-started.body", truncateAtWord(flat, room)));
     }
+
+    /** Report du trajet, vu par l'expéditeur : nouvelle date et motif, puis ce qu'il peut faire. */
+    // Le motif n'entre pas dans les 72 caractères du corps : il est dans la conversation et l'app.
+    public static NotificationText tripRescheduled(Messages m, java.time.LocalDate newDate,
+                                                   boolean decisionRequired) {
+        String date = newDate.format(java.time.format.DateTimeFormatter.ofPattern(
+                m.get("notification.trip-rescheduled.date-pattern"), m.locale()));
+        return new NotificationText(m.get("notification.trip-rescheduled.title"),
+                m.get(decisionRequired
+                        ? "notification.trip-rescheduled-decision.body"
+                        : "notification.trip-rescheduled-info.body", date));
+    }
+
+    public static NotificationText tripRescheduleKept(Messages m) {
+        return new NotificationText(m.get("notification.trip-reschedule-kept.title"),
+                m.get("notification.trip-reschedule-kept.body"));
+    }
+
+    public static NotificationText tripRescheduleWithdrawn(Messages m) {
+        return new NotificationText(m.get("notification.trip-reschedule-withdrawn.title"),
+                m.get("notification.trip-reschedule-withdrawn.body"));
+    }
 }

@@ -89,5 +89,8 @@ public record BidResponse(
          * cancellation ouvrant droit au rematch pour ce bid. */
         String tripCancellationRematchStatus,
         String currency,
-        String arrivalInstructions
+        String arrivalInstructions,
+        /** Dernier report du trajet (vol annulé, voyage repoussé) et la réponse attendue de
+         * l'expéditeur. Null si le trajet n'a jamais été reporté. */
+        TripRescheduleInfo reschedule
 ) {}
