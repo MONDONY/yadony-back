@@ -1406,6 +1406,7 @@ public class BidService {
         // Le voyageur ne le reçoit qu'une fois le colis pris en charge ; le jeton du
         // lien de suivi public reste à l'expéditeur seul.
         boolean callerIsSender = callerId != null && callerId.equals(bid.getSenderId());
+        boolean recipientPhoneHidden = !callerIsSender && recipientPhoneHiddenFromTraveler(bid);
         String trackingNumber = (callerIsSender
                 || TRACKING_NUMBER_VISIBLE_TO_TRAVELER_STATUSES.contains(bid.getStatus()))
                 ? bid.getTrackingNumber() : null;
@@ -1572,7 +1573,9 @@ public class BidService {
                 // toujours. Le voyageur ne le reçoit qu'une fois la demande acceptée.
                 callerIsSender
                         ? bid.getRecipientPhone()
-                        : phoneForStatus(bid.getRecipientPhone(), bid.getStatus()),
+                        : recipientPhoneHidden
+                                ? null
+                                : phoneForStatus(bid.getRecipientPhone(), bid.getStatus()),
                 bid.getStatus().name(),
                 bid.getRejectionReason(),
                 bid.getHandoverLocation(),
@@ -1627,8 +1630,31 @@ public class BidService {
                 bid.getCurrency(),
                 arrivalInstructions,
                 rescheduleInfo(bid, announcement),
-                recipientAppStatus(bid, callerIsSender)
+                recipientAppStatus(bid, callerIsSender),
+                recipientPhoneHidden
         );
+    }
+
+    /**
+     * Le destinataire, inscrit sur Yadony et ayant confirmé que le colis est pour lui,
+     * a masqué son numéro dans ses réglages de confidentialité : le voyageur ne reçoit
+     * pas son téléphone et le joint par la conversation destinataire de l'app (Sentry
+     * FLUTTER-6J). Même règle que pour l'expéditeur et le voyageur
+     * ({@link #phoneAvailableForStatus}). Seul le lien CONFIRMED compte : tant que le
+     * titulaire du numéro n'a pas confirmé, la messagerie destinataire n'existe pas et
+     * le téléphone reste le seul moyen de le joindre.
+     */
+    private boolean recipientPhoneHiddenFromTraveler(BidEntity bid) {
+        if (bid.getRecipientPhone() == null
+                || !BidStatus.PHONE_VISIBLE_STATUSES.contains(bid.getStatus())) {
+            return false;
+        }
+        return recipientLinkRepository.findByBidId(bid.getId())
+                .filter(link -> link.getStatus()
+                        == com.yadony.api.matching.reception.ReceptionLinkStatus.CONFIRMED)
+                .flatMap(link -> userRepository.findById(link.getRecipientUserId()))
+                .map(UserEntity::isHidePhoneNumber)
+                .orElse(false);
     }
 
     /**

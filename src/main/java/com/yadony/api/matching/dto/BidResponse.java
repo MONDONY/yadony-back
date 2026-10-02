@@ -96,5 +96,9 @@ public record BidResponse(
         /** Réponse du destinataire dont le compte est rattaché au colis : PENDING,
          * CONFIRMED ou DECLINED. Servie à l'expéditeur seul ; null sans lien ou pour
          * le voyageur. */
-        String recipientAppStatus
+        String recipientAppStatus,
+        /** Vue voyageur : le destinataire a masqué son numéro ({@code recipientPhone} est
+         * alors null) et se joint par la messagerie de l'app. Toujours false pour
+         * l'expéditeur. */
+        boolean recipientPhoneHidden
 ) {}
