@@ -39,6 +39,7 @@ class ConversationServiceRecipientKindTest {
     @Mock AnnouncementRepository announcementRepository;
     @Mock StorageService storageService;
     @Mock BlockVisibility blockVisibility;
+    @Mock com.yadony.api.common.CallAvailability callAvailability;
 
     ConversationService service;
 
@@ -49,7 +50,7 @@ class ConversationServiceRecipientKindTest {
     @BeforeEach
     void setUp() {
         service = new ConversationService(conversationRepository, firestoreService, userRepository, auditService,
-                bidRepository, announcementRepository, storageService, blockVisibility);
+                bidRepository, announcementRepository, storageService, blockVisibility, callAvailability);
         UserEntity recipient = user("uid-recipient", "Fatou D.");
         UserEntity traveler = user("uid-traveler", "Moussa K.");
         lenient().when(userRepository.findById(recipientId)).thenReturn(Optional.of(recipient));

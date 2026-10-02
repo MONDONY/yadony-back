@@ -196,6 +196,10 @@ public class BidEntity extends BaseEntity {
     @Column(name = "pending_since")
     private LocalDateTime pendingSince;
 
+    /** Confirmation de livraison (V285). Borne la fenêtre d'appel audio : J+3. */
+    @Column(name = "delivered_at")
+    private LocalDateTime deliveredAt;
+
     @Column(name = "shipment_counted", nullable = false)
     private boolean shipmentCounted = false;
 
@@ -393,6 +397,13 @@ public class BidEntity extends BaseEntity {
 
     public LocalDateTime getPendingSince() { return pendingSince; }
     public void setPendingSince(LocalDateTime pendingSince) { this.pendingSince = pendingSince; }
+
+    public LocalDateTime getDeliveredAt() { return deliveredAt; }
+
+    /** Première confirmation seulement : une relivraison ne repousse pas la fenêtre. */
+    public void markDelivered(LocalDateTime at) {
+        if (this.deliveredAt == null) this.deliveredAt = at;
+    }
 
     public boolean isShipmentCounted() { return shipmentCounted; }
     public void setShipmentCounted(boolean shipmentCounted) { this.shipmentCounted = shipmentCounted; }

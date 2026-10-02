@@ -250,6 +250,14 @@ yadony:
     console-url:
       stripe: ${KYC_CONSOLE_URL_STRIPE:}
       didit: ${KYC_CONSOLE_URL_DIDIT:}
+  # Appels audio in-app (Stream Video). Coupés par défaut : CALLS_ENABLED=true + clés pour activer.
+  calls:
+    enabled: ${CALLS_ENABLED:false}
+    base-url: ${STREAM_BASE_URL:https://video.stream-io-api.com}
+    api-key: ${STREAM_API_KEY:}
+    api-secret: ${STREAM_API_SECRET:}
+    call-type: audio_call
+    delivery-grace-days: 3
   didit:
     base-url: ${DIDIT_BASE_URL:https://verification.didit.me}
     api-key: ${DIDIT_API_KEY:}

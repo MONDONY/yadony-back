@@ -201,7 +201,10 @@ public class SecurityConfig {
                     "/admin/bootstrap",
                     // Sentry webhook: no Firebase token (server-to-server call). Security is
                     // enforced via HMAC signature verification in AdminSentryWebhookController.
-                    "/admin/sentry-webhook"
+                    "/admin/sentry-webhook",
+                    // Webhook Stream Video (appels audio) : appel serveur à serveur, sans jeton
+                    // Firebase. Authentifié par signature HMAC dans StreamWebhookController.
+                    "/calls/webhook"
                 ).permitAll()
                 // ── Invités (session Firebase anonyme) ──────────────────────────────
                 // Modèle FERMÉ PAR DÉFAUT : on énumère ce qu'un invité peut faire, et
