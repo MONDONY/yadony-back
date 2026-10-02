@@ -53,6 +53,42 @@ class StreamWebhookControllerIntegrationTest {
     }
 
     @Test
+    void webhookCompresseGzipSigneSurLeJsonEstAccepte() throws Exception {
+        // Ce qu'envoie Stream (vu en staging) : corps gzip, Content-Encoding: gzip,
+        // signature HMAC calculée sur le JSON décompressé.
+        CallEntity call = persistCall();
+        byte[] json = """
+                {"type":"call.missed","call_cid":"audio_call:%s"}""".formatted(call.getStreamCallId())
+                .getBytes(StandardCharsets.UTF_8);
+
+        mockMvc.perform(post("/calls/webhook").contentType(MediaType.APPLICATION_JSON).content(gzip(json))
+                        .header("Content-Encoding", "gzip")
+                        .header("X-Signature", StreamWebhookVerifierTest.sign(json))
+                        .header("X-Api-Key", "key"))
+                .andExpect(status().isOk());
+
+        assertThat(callRepository.findByStreamCallId(call.getStreamCallId()).orElseThrow().getStatus())
+                .isEqualTo(CallStatus.MISSED);
+    }
+
+    private static byte[] gzip(byte[] raw) throws java.io.IOException {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        try (java.util.zip.GZIPOutputStream gz = new java.util.zip.GZIPOutputStream(out)) {
+            gz.write(raw);
+        }
+        return out.toByteArray();
+    }
+
+    @Test
+    void gzipIllisibleEn401() throws Exception {
+        byte[] notGzip = {0x1f, (byte) 0x8b, 1, 2, 3};
+        mockMvc.perform(post("/calls/webhook").contentType(MediaType.APPLICATION_JSON).content(notGzip)
+                        .header("Content-Encoding", "gzip")
+                        .header("X-Signature", StreamWebhookVerifierTest.sign(notGzip)))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
     void signatureFausseEn401() throws Exception {
         mockMvc.perform(post("/calls/webhook").contentType(MediaType.APPLICATION_JSON).content("{}")
                         .header("X-Signature", "00"))

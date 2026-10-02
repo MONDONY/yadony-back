@@ -54,8 +54,14 @@ public class CallWebhookService {
                     transitions.answer(call, at);
                 }
             }
-            case "call.missed" -> transitions.finish(call, CallStatus.MISSED, at, null);
+            // Après le décroché, un « manqué » ou une annulation de sonnerie (Stream
+            // peut en émettre pour l'appelant) ne conclut pas l'appel : la fin de
+            // session le termine en ENDED.
+            case "call.missed" -> {
+                if (call.getStatus() != CallStatus.ANSWERED) transitions.finish(call, CallStatus.MISSED, at, null);
+            }
             case "call.rejected" -> {
+                if (call.getStatus() == CallStatus.ANSWERED) return;
                 // L'appelant qui annule, ou la sonnerie qui expire, émet aussi call.rejected.
                 boolean declinedByCallee = callee.equals(event.path("user").path("id").asText(""))
                         && !NOT_A_DECLINE.contains(event.path("reason").asText(""));
