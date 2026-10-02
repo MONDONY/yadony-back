@@ -165,7 +165,8 @@ class ReceptionServiceTest {
         assertThat(r.confirmationCode()).isNull();
         assertThat(r.updatedAt()).isEqualTo(NOW_LDT.toInstant(ZoneOffset.UTC));
         assertThat(r.travelerId()).isNull();
-        assertThat(r.travelerAvatarUrl()).isNull();
+        assertThat(r.travelerAvatarUrl()).isNull();        // FLUTTER-7P : l'expéditeur s'ouvre depuis « Colis à recevoir », dès PENDING.
+        assertThat(r.senderId()).isEqualTo(senderId);
     }
 
     @ParameterizedTest

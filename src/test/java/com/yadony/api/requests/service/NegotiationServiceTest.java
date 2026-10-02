@@ -5358,6 +5358,8 @@ class NegotiationServiceTest {
             var response = service.getById(SENDER_ID, THREAD_ID);
 
             assertThat(response.senderPhotoUrl()).isEqualTo("https://cdn.example.com/sender.jpg");
+            // FLUTTER-7K/7M : le voyageur ouvre le profil de l'expéditeur depuis l'en-tête
+            assertThat(response.senderId()).isEqualTo(SENDER_ID);
         }
 
         @Test

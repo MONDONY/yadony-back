@@ -92,6 +92,7 @@ public class RecipientInvitationService {
     public InvitationSentResponse send(String firebaseUid, CreateRecipientInvitationRequest request) {
         UserEntity inviter = currentUser(firebaseUid);
         Target target = parse(request);
+        String label = label(request.name());
 
         LocalDateTime since = LocalDateTime.now(ZoneOffset.UTC).minusHours(24);
         if (repository.countByInviterUserIdAndCreatedAtAfter(inviter.getId(), since) >= DAILY_QUOTA) {
@@ -123,6 +124,7 @@ public class RecipientInvitationService {
 
         RecipientInvitationEntity invitation = new RecipientInvitationEntity(
                 inviter.getId(), inviteeId, target.channel(), hash, target.masked());
+        invitation.setLabel(label);
         try {
             invitation = repository.saveAndFlush(invitation);
         } catch (DataIntegrityViolationException race) {
@@ -146,7 +148,7 @@ public class RecipientInvitationService {
                 .stream()
                 .map(i -> new SentInvitationDto(i.getId(), i.getChannel().name(), i.getMaskedTarget(),
                         i.getStatus() == InvitationStatus.ACCEPTED ? "ACCEPTED" : "PENDING",
-                        i.getCreatedAt()))
+                        i.getCreatedAt(), i.getLabel()))
                 .toList();
     }
 
@@ -215,7 +217,7 @@ public class RecipientInvitationService {
                         "recipient-invitation-phone-required", "Recipient Invitation Phone Required",
                         "Ajoutez un numéro de téléphone à votre profil pour accepter cette invitation."));
 
-        RecipientEntity entry = upsertAddressBookEntry(invitation.getInviterUserId(), me, phone);
+        RecipientEntity entry = upsertAddressBookEntry(invitation, me, phone);
         invitation.setRecipientId(entry.getId());
         invitation.respond(InvitationStatus.ACCEPTED, OffsetDateTime.now(ZoneOffset.UTC));
         repository.save(invitation);
@@ -271,11 +273,28 @@ public class RecipientInvitationService {
 
     // ── Interne ─────────────────────────────────────────────────────────────
 
-    private RecipientEntity upsertAddressBookEntry(UUID inviterId, UserEntity invitee, String phone) {
+    /**
+     * Entrée du carnet à lier : d'abord celle qui porte le numéro INVITÉ (l'inviteur l'a
+     * peut-être enregistré avant d'inviter), puis celle du numéro du compte de l'invité.
+     * Sinon on en crée une. Sans le premier critère, une entrée existante restait non liée
+     * et une seconde était créée (FLUTTER-7T).
+     */
+    private RecipientEntity upsertAddressBookEntry(RecipientInvitationEntity invitation, UserEntity invitee,
+                                                   String phone) {
+        UUID inviterId = invitation.getInviterUserId();
         String digits = phone.substring(1);
-        RecipientEntity entry = recipientRepository.findByUserIdOrderByUpdatedAtDesc(inviterId).stream()
-                .filter(r -> r.getPhoneE164() != null && digits.equals(r.getPhoneE164().replaceAll("\\D", "")))
+        List<RecipientEntity> book = recipientRepository.findByUserIdOrderByUpdatedAtDesc(inviterId);
+        RecipientEntity entry = book.stream()
+                .filter(r -> invitation.getChannel() == InvitationChannel.PHONE
+                        && InvitationTargets.phone(r.getPhoneE164())
+                                .map(InvitationTargets::hash)
+                                .filter(invitation.getTargetHash()::equals)
+                                .isPresent())
                 .findFirst()
+                .or(() -> book.stream()
+                        .filter(r -> r.getPhoneE164() != null
+                                && digits.equals(r.getPhoneE164().replaceAll("\\D", "")))
+                        .findFirst())
                 .orElse(null);
         boolean created = entry == null;
         if (created) {
@@ -284,7 +303,7 @@ public class RecipientInvitationService {
             entry.setCountry(countryFor(phone, inviterId, invitee));
             entry.setDefault(false);
         }
-        entry.setFullName(fullName(invitee));
+        entry.setFullName(invitation.getLabel() != null ? invitation.getLabel() : fullName(invitee));
         entry.setPhoneE164(phone);
         entry = recipientRepository.save(entry);
         if (created) {
@@ -319,6 +338,19 @@ public class RecipientInvitationService {
                 .filter(i -> me.getId().equals(i.getInviteeUserId()))
                 .filter(i -> !blockVisibility.isHidden(me.getId(), i.getInviterUserId()))
                 .orElseThrow(() -> notFound(invitationId));
+    }
+
+    /** Nom facultatif saisi par l'inviteur : vide → absent, 100 caractères au plus. */
+    private static String label(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        String trimmed = raw.trim();
+        if (trimmed.length() > 100) {
+            throw new YadonyBusinessException(HttpStatus.BAD_REQUEST, "recipient-invitation-name-too-long",
+                    "Recipient Invitation Name Too Long", "Le nom ne peut pas dépasser 100 caractères.");
+        }
+        return trimmed;
     }
 
     private static void requirePending(RecipientInvitationEntity invitation) {

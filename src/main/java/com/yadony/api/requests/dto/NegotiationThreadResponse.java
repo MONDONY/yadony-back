@@ -72,8 +72,35 @@ public record NegotiationThreadResponse(
     // Les cas résiduels où la colonne reste renseignée hors AWAITING_DEPOSIT sont CANCELLED
     // (négociation terminée pendant le dépôt) et AUTO_REJECTED (accord concurrent) : elle ne
     // doit alors plus être affichée, d'où le filtre appliqué à la construction de la réponse.
-    LocalDateTime depositExpiresAt
+    LocalDateTime depositExpiresAt,
+    // Expéditeur : ouvre son profil public depuis l'en-tête du fil, côté voyageur
+    // (FLUTTER-7K/7M). Additif, absent des anciens clients.
+    UUID senderId
 ) {
+    /** Constructeur de compatibilité (sans senderId). */
+    public NegotiationThreadResponse(
+            UUID id, UUID packageRequestId, UUID travelerId, UUID travelerAnnouncementId,
+            LocalDate travelerTravelDate, BigDecimal travelerAvailableKg, String travelerCapacityUnit,
+            NegotiationThreadStatus status, BigDecimal currentPriceEur, int roundsCount,
+            LocalDateTime lastActivityAt, LocalDateTime createdAt, List<NegotiationMessageResponse> messages,
+            String paymentIntentClientSecret, String travelerName, BigDecimal travelerRating,
+            Integer travelerTripsCount, String travelerPhotoUrl, String departureCity, String arrivalCity,
+            BigDecimal weightKg, String senderName, String senderPhotoUrl, boolean isMyTurn,
+            boolean canAccept, boolean canCounter, int roundsRemaining, LinkedTripSummary linkedTrip,
+            BigDecimal grossPriceEur, PaymentMethod paymentMethod, UUID materializedBidId,
+            boolean cashCommissionAvailable, Set<PaymentMethod> availablePaymentMethods, boolean canNudge,
+            boolean hasUnread, String promoCode, BigDecimal commissionRate, String currency,
+            String commissionStatus, LocalDateTime commissionDeadline, LocalDateTime depositExpiresAt) {
+        this(id, packageRequestId, travelerId, travelerAnnouncementId, travelerTravelDate,
+                travelerAvailableKg, travelerCapacityUnit, status, currentPriceEur, roundsCount,
+                lastActivityAt, createdAt, messages, paymentIntentClientSecret, travelerName, travelerRating,
+                travelerTripsCount, travelerPhotoUrl, departureCity, arrivalCity, weightKg, senderName,
+                senderPhotoUrl, isMyTurn, canAccept, canCounter, roundsRemaining, linkedTrip, grossPriceEur,
+                paymentMethod, materializedBidId, cashCommissionAvailable, availablePaymentMethods, canNudge,
+                hasUnread, promoCode, commissionRate, currency, commissionStatus, commissionDeadline,
+                depositExpiresAt, null);
+    }
+
     /** Constructeur de compatibilité (sans commissionStatus/commissionDeadline/depositExpiresAt) — contrat Task 7 round 1. */
     public NegotiationThreadResponse(
             UUID id, UUID packageRequestId, UUID travelerId,

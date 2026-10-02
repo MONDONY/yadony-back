@@ -184,8 +184,12 @@ class PaymentSheetSupportTest {
 
             PaymentIntentCreateParams params = captor.getValue();
             assertThat(params.getCustomer()).isEqualTo("cus_existing");
-            assertThat(params.getSetupFutureUsage())
-                    .isEqualTo(PaymentIntentCreateParams.SetupFutureUsage.OFF_SESSION);
+            // Carte seule : à la racine, PayPal refuserait la confirmation (FLUTTER-7S)
+            assertThat(params.getSetupFutureUsage()).isNull();
+            assertThat(((PaymentIntentCreateParams.PaymentMethodOptions.Card)
+                    params.getPaymentMethodOptions().getCard()).getSetupFutureUsage())
+                    .isEqualTo(PaymentIntentCreateParams.PaymentMethodOptions.Card.SetupFutureUsage.OFF_SESSION);
+            assertThat(params.getPaymentMethodOptions().getPaypal()).isNull();
             // Customer existant → jamais re-créé
             verify(userRepository, never()).save(any());
         }
@@ -246,6 +250,7 @@ class PaymentSheetSupportTest {
 
             assertThat(captor.getValue().getCustomer()).isEqualTo("cus_existing");
             assertThat(captor.getValue().getSetupFutureUsage()).isNull();
+            assertThat(captor.getValue().getPaymentMethodOptions()).isNull();
         }
     }
 
@@ -329,9 +334,10 @@ class PaymentSheetSupportTest {
 
             service.updateSavePaymentMethod("pi_1", false, "uid-sender");
 
-            // save=false → setup_future_usage vidé (chaîne vide = clear côté Stripe)
+            // save=false → setup_future_usage de la carte vidé (chaîne vide = clear côté Stripe)
             assertThat(updateCaptor.getValue().getExtraParams())
-                    .containsEntry("setup_future_usage", "");
+                    .containsEntry("payment_method_options",
+                            java.util.Map.of("card", java.util.Map.of("setup_future_usage", "")));
         }
     }
 
@@ -349,8 +355,10 @@ class PaymentSheetSupportTest {
 
             service.updateSavePaymentMethod("pi_1", true, "uid-sender");
 
-            assertThat(updateCaptor.getValue().getSetupFutureUsage())
-                    .isEqualTo(PaymentIntentUpdateParams.SetupFutureUsage.OFF_SESSION);
+            assertThat(updateCaptor.getValue().getSetupFutureUsage()).isNull();
+            assertThat(((PaymentIntentUpdateParams.PaymentMethodOptions.Card)
+                    updateCaptor.getValue().getPaymentMethodOptions().getCard()).getSetupFutureUsage())
+                    .isEqualTo(PaymentIntentUpdateParams.PaymentMethodOptions.Card.SetupFutureUsage.OFF_SESSION);
         }
     }
 
