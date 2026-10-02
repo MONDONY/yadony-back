@@ -159,4 +159,16 @@ class CallWebhookServiceTest {
         verify(calls, never()).finishIfLive(any(), any(), any(), any(), any());
         verifyNoInteractions(events);
     }
+
+    @Test
+    void unManqueRecuApresLeDecrocheNeTransformePasLAppelEnManque() throws Exception {
+        // Stream peut signaler l'appelant comme « manqué » ou l'annulation de la
+        // sonnerie après le décroché : seule la fin de session conclut l'appel.
+        ReflectionTestUtils.setField(call, "status", CallStatus.ANSWERED);
+        send("""
+             {"type":"call.missed","call_cid":"audio_call:c1"}""");
+        send("""
+             {"type":"call.rejected","call_cid":"audio_call:c1","user":{"id":"%s"},"reason":"cancel"}""".formatted(caller));
+        verify(calls, never()).finishIfLive(any(), any(), any(), any(), any());
+    }
 }
