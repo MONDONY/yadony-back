@@ -42,6 +42,10 @@ public class ConversationService {
     private final BlockVisibility blockVisibility;
     private final CallAvailability callAvailability;
 
+    /** Statuts où un appel peut être permis ; la fenêtre exacte (J+3 après livraison) reste à calls/. */
+    private static final java.util.Set<BidStatus> CALL_CANDIDATE_STATUSES = java.util.EnumSet.of(
+            BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED, BidStatus.COMPLETED);
+
     public ConversationService(ConversationRepository conversationRepository,
                                 FirestoreService firestoreService,
                                 UserRepository userRepository,
@@ -415,12 +419,18 @@ public class ConversationService {
             conv.getKind() != null ? conv.getKind().name() : ConversationKind.SENDER_TRAVELER.name(),
             !conv.isRecipientConversation() ? null
                     : currentUserId.equals(conv.getTravelerId()) ? "TRAVELER" : "RECIPIENT",
-            callAvailable(conv, currentUserId)
+            callAvailable(conv, currentUserId, bidOpt.map(BidEntity::getStatus).orElse(null))
         );
     }
 
     /** Le bouton d'appel ne doit jamais casser l'affichage d'une conversation : en cas d'échec, pas de bouton. */
-    private boolean callAvailable(ConversationEntity conv, UUID currentUserId) {
+    private boolean callAvailable(ConversationEntity conv, UUID currentUserId, BidStatus bidStatus) {
+        // Filtre sans requête : la règle complète (plusieurs lectures) ne tourne que pour une commande
+        // en cours dans une conversation active, soit une poignée de fils par liste.
+        if (bidStatus == null || !CALL_CANDIDATE_STATUSES.contains(bidStatus) || conv.isClosed()
+                || conv.isDeletedByUser(currentUserId) || conv.isArchivedByUser(currentUserId)) {
+            return false;
+        }
         try {
             return callAvailability.canCall(currentUserId, conv.getId());
         } catch (Exception e) {
