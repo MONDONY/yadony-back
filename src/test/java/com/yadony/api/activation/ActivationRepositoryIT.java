@@ -2,6 +2,7 @@ package com.yadony.api.activation;
 
 import com.yadony.api.alerts.CorridorAlertRepository;
 import com.yadony.api.auth.KycStatus;
+import com.yadony.api.auth.UserBlockJpaRepository;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.city.CityRepository;
 import com.yadony.api.matching.AnnouncementRepository;
@@ -37,12 +38,14 @@ class ActivationRepositoryIT {
     @Autowired CorridorAlertRepository corridorAlertRepository;
     @Autowired NegotiationThreadRepository negotiationThreadRepository;
     @Autowired CityRepository cityRepository;
+    @Autowired UserBlockJpaRepository userBlockRepository;
     ActivationTestData data;
 
     @BeforeEach
     void setUp() {
         data = new ActivationTestData(userRepository, announcementRepository, packageRequestRepository,
-                bidRepository, corridorAlertRepository, negotiationThreadRepository, cityRepository);
+                bidRepository, corridorAlertRepository, negotiationThreadRepository, cityRepository)
+                .withBlocks(userBlockRepository);
     }
 
     private UUID verifiedUser() {
@@ -144,13 +147,15 @@ class ActivationRepositoryIT {
         UUID due1 = data.user(KycStatus.VERIFIED, now.minus(30, ChronoUnit.HOURS), 0);
         UUID notYet = data.user(KycStatus.VERIFIED, now.minus(10, ChronoUnit.HOURS), 0);
         UUID due2 = data.user(KycStatus.VERIFIED, now.minus(80, ChronoUnit.HOURS), 1);
+        data.reminded(due2, 1, now.minus(56, ChronoUnit.HOURS));
         UUID secondTooEarly = data.user(KycStatus.VERIFIED, now.minus(50, ChronoUnit.HOURS), 1);
+        data.reminded(secondTooEarly, 1, now.minus(26, ChronoUnit.HOURS));
         UUID done = data.user(KycStatus.VERIFIED, now.minus(100, ChronoUnit.HOURS), 2);
         UUID notVerified = data.user(KycStatus.PENDING, now.minus(100, ChronoUnit.HOURS), 0);
         UUID noDate = data.user(KycStatus.VERIFIED, null, 0);
 
         var ids = repository.findFirstActionReminderCandidates(now.minus(24, ChronoUnit.HOURS),
-                now.minus(72, ChronoUnit.HOURS));
+                now.minus(72, ChronoUnit.HOURS), now.minus(48, ChronoUnit.HOURS));
 
         assertThat(ids).contains(due1, due2).doesNotContain(notYet, secondTooEarly, done, notVerified, noDate);
     }
@@ -161,7 +166,43 @@ class ActivationRepositoryIT {
         UUID acted = data.user(KycStatus.VERIFIED, now.minus(30, ChronoUnit.HOURS), 0);
         data.corridorAlert(acted);
         var ids = repository.findFirstActionReminderCandidates(now.minus(24, ChronoUnit.HOURS),
-                now.minus(72, ChronoUnit.HOURS));
+                now.minus(72, ChronoUnit.HOURS), now.minus(48, ChronoUnit.HOURS));
         assertThat(ids).doesNotContain(acted);
+    }
+
+    @Test
+    void candidates_secondReminderWaits48hAfterTheFirst_evenForOldKyc() {
+        Instant now = Instant.now();
+        UUID justReminded = data.user(KycStatus.VERIFIED, now.minus(10, ChronoUnit.DAYS), 0);
+        data.reminded(justReminded, 1, now.minus(1, ChronoUnit.HOURS));
+        UUID remindedLongAgo = data.user(KycStatus.VERIFIED, now.minus(10, ChronoUnit.DAYS), 0);
+        data.reminded(remindedLongAgo, 1, now.minus(49, ChronoUnit.HOURS));
+
+        var ids = repository.findFirstActionReminderCandidates(now.minus(24, ChronoUnit.HOURS),
+                now.minus(72, ChronoUnit.HOURS), now.minus(48, ChronoUnit.HOURS));
+
+        assertThat(ids).contains(remindedLongAgo).doesNotContain(justReminded);
+    }
+
+    @Test
+    void opportunities_excludeBlockedUsers_bothWays() {
+        UUID me = verifiedUser();
+        UUID iBlocked = verifiedUser();
+        UUID blockedMe = verifiedUser();
+        UUID neutral = verifiedUser();
+        data.block(me, iBlocked);
+        data.block(blockedMe, me);
+        data.city("Kaolack-test", "SN");
+        for (UUID owner : new UUID[] {iBlocked, blockedMe, neutral}) {
+            data.announcement(owner, "Paris", "Dakar", "SN", LocalDate.now().plusDays(3), AnnouncementStatus.ACTIVE);
+            data.packageRequest(owner, "Paris", "Kaolack-test", LocalDate.now().plusDays(3), PackageRequestStatus.OPEN);
+        }
+        LocalDate from = LocalDate.now();
+        LocalDate to = from.plusDays(15);
+
+        assertThat(repository.countTripsTowards("SN", from, to, me)).isEqualTo(1);
+        assertThat(repository.findTripsTowards("SN", from, to, me, 3)).hasSize(1);
+        assertThat(repository.countPackagesTowards("SN", from, to, me)).isEqualTo(1);
+        assertThat(repository.findPackagesTowards("SN", from, to, me, 3)).hasSize(1);
     }
 }

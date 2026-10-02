@@ -5,6 +5,8 @@ import com.yadony.api.alerts.AlertNotifyMode;
 import com.yadony.api.alerts.CorridorAlertEntity;
 import com.yadony.api.alerts.CorridorAlertRepository;
 import com.yadony.api.auth.KycStatus;
+import com.yadony.api.auth.UserBlockEntity;
+import com.yadony.api.auth.UserBlockJpaRepository;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.city.CityEntity;
@@ -45,6 +47,7 @@ final class ActivationTestData {
     private final CorridorAlertRepository alerts;
     private final NegotiationThreadRepository threads;
     private final CityRepository cities;
+    private UserBlockJpaRepository blocks;
 
     ActivationTestData(UserRepository users, AnnouncementRepository announcements,
                        PackageRequestRepository packageRequests, BidRepository bids,
@@ -145,6 +148,26 @@ final class ActivationTestData {
         t.setRoundsCount((short) 1);
         t.setLastActivityAt(LocalDateTime.now());
         threads.saveAndFlush(t);
+    }
+
+    ActivationTestData withBlocks(UserBlockJpaRepository blocks) {
+        this.blocks = blocks;
+        return this;
+    }
+
+    void block(UUID blocker, UUID blocked) {
+        UserBlockEntity b = new UserBlockEntity();
+        b.setBlockerId(blocker);
+        b.setBlockedId(blocked);
+        b.setCreatedAt(java.time.OffsetDateTime.now());
+        blocks.saveAndFlush(b);
+    }
+
+    void reminded(UUID userId, int count, Instant lastAt) {
+        UserEntity u = users.findById(userId).orElseThrow();
+        u.setFirstActionReminderCount(count);
+        u.setFirstActionReminderLastAt(lastAt);
+        users.saveAndFlush(u);
     }
 
     void city(String name, String countryCode) {

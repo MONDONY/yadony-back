@@ -20,7 +20,9 @@ public class ActivationKycListener {
         this.userRepository = userRepository;
     }
 
-    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    // fallbackExecution : le webhook Didit (et Stripe) publie l'événement hors transaction ;
+    // sans repli, Spring ignorerait l'écouteur et aucune relance ne partirait.
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onKycVerified(UserKycVerifiedEvent event) {
         userRepository.findById(event.getUserId()).ifPresent(user -> {

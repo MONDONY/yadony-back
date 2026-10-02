@@ -25,6 +25,8 @@ public interface ActivationRepository extends Repository<UserEntity, UUID> {
             + " WHERE a.deleted_at IS NULL AND a.status = 'ACTIVE'"
             + " AND a.departure_date BETWEEN :from AND :to"
             + " AND a.traveler_id <> :excluded"
+            + " AND NOT EXISTS (SELECT 1 FROM user_blocks ub WHERE (ub.blocker_id = :excluded AND ub.blocked_id = a.traveler_id)"
+            + "      OR (ub.blocker_id = a.traveler_id AND ub.blocked_id = :excluded))"
             + " AND (UPPER(a.arrival_country_code) = :destination"
             + "      OR (a.arrival_country_code IS NULL AND EXISTS (SELECT 1 FROM cities ci"
             + "          WHERE LOWER(ci.name) = LOWER(a.arrival_city) AND UPPER(ci.country_code) = :destination)))";
@@ -33,6 +35,8 @@ public interface ActivationRepository extends Repository<UserEntity, UUID> {
             + " WHERE p.deleted_at IS NULL AND p.status IN ('OPEN', 'NEGOTIATING')"
             + " AND p.desired_date BETWEEN :from AND :to"
             + " AND p.sender_id <> :excluded"
+            + " AND NOT EXISTS (SELECT 1 FROM user_blocks ub WHERE (ub.blocker_id = :excluded AND ub.blocked_id = p.sender_id)"
+            + "      OR (ub.blocker_id = p.sender_id AND ub.blocked_id = :excluded))"
             + " AND EXISTS (SELECT 1 FROM cities ci"
             + "     WHERE LOWER(ci.name) = LOWER(p.arrival_city) AND UPPER(ci.country_code) = :destination)";
 
@@ -68,16 +72,23 @@ public interface ActivationRepository extends Repository<UserEntity, UUID> {
             + " WHERE u.deleted_at IS NULL AND u.status = 'ACTIVE' AND u.kyc_status = 'VERIFIED'"
             + " AND u.kyc_verified_at IS NOT NULL"
             + " AND ((u.first_action_reminder_count = 0 AND u.kyc_verified_at <= :firstDueBefore)"
-            + "   OR (u.first_action_reminder_count = 1 AND u.kyc_verified_at <= :secondDueBefore))"
+            + "   OR (u.first_action_reminder_count = 1 AND u.kyc_verified_at <= :secondDueBefore"
+            + "       AND u.first_action_reminder_last_at <= :secondGapBefore))"
             + " AND NOT " + HAS_FIRST_ACTION
             + " ORDER BY u.kyc_verified_at ASC LIMIT 500",
            nativeQuery = true)
     List<CandidateRow> findFirstActionReminderCandidateRows(@Param("firstDueBefore") Instant firstDueBefore,
-                                                            @Param("secondDueBefore") Instant secondDueBefore);
+                                                            @Param("secondDueBefore") Instant secondDueBefore,
+                                                            @Param("secondGapBefore") Instant secondGapBefore);
 
-    /** Comptes à relancer. Les ids natifs sont lus en VARCHAR (H2 les rend en byte[]), comme AnnouncementRepository. */
-    default List<UUID> findFirstActionReminderCandidates(Instant firstDueBefore, Instant secondDueBefore) {
-        return findFirstActionReminderCandidateRows(firstDueBefore, secondDueBefore).stream()
+    /**
+     * Comptes à relancer : 1re relance à firstDueBefore, 2e à secondDueBefore ET au moins
+     * secondGapBefore après la 1re (un KYC ancien ne doit pas recevoir les deux dans l'heure).
+     * Les ids natifs sont lus en VARCHAR (H2 les rend en byte[]), comme AnnouncementRepository.
+     */
+    default List<UUID> findFirstActionReminderCandidates(Instant firstDueBefore, Instant secondDueBefore,
+                                                         Instant secondGapBefore) {
+        return findFirstActionReminderCandidateRows(firstDueBefore, secondDueBefore, secondGapBefore).stream()
                 .map(row -> UUID.fromString(row.getId()))
                 .toList();
     }
