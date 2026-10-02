@@ -204,6 +204,23 @@ class TrackingServiceTest {
         assertThat(resp.qrCodeBase64()).isNotBlank();
     }
 
+    @Test
+    void getQrCode_confirmedRecipient_returnsQrResponse() {
+        // FLUTTER-7Y : le destinataire confirmé montre le QR du colis au voyageur
+        BidEntity bid = buildBid(BidStatus.HANDED_OVER, "qr-token-abc");
+        UUID recipientId = UUID.randomUUID();
+        UserEntity recipient = buildUser(recipientId, "uid-recipient");
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(userRepository.findByFirebaseUid("uid-recipient")).thenReturn(Optional.of(recipient));
+        when(recipientLinkRepository.existsByBidIdAndRecipientUserIdAndStatus(bidId, recipientId,
+                com.yadony.api.matching.reception.ReceptionLinkStatus.CONFIRMED)).thenReturn(true);
+
+        var resp = service.getQrCode(bidId, "uid-recipient");
+
+        assertThat(resp.bidId()).isEqualTo(bidId);
+        assertThat(resp.qrCodeBase64()).isNotBlank();
+    }
+
     // ── searchByTrackingNumber ────────────────────────────────────────────────
 
     @Test
