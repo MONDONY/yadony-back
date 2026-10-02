@@ -3,6 +3,7 @@ package com.yadony.api.matching.reception;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
+import com.yadony.api.common.StorageService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
@@ -53,6 +54,7 @@ public class ReceptionService {
     private final ReceptionLinker linker;
     private final NotificationDispatcher notificationDispatcher;
     private final AuditService auditService;
+    private final StorageService storageService;
     private final Clock clock;
 
     @Autowired
@@ -62,9 +64,10 @@ public class ReceptionService {
                             UserRepository userRepository,
                             ReceptionLinker linker,
                             NotificationDispatcher notificationDispatcher,
-                            AuditService auditService) {
+                            AuditService auditService,
+                            StorageService storageService) {
         this(linkRepository, bidRepository, announcementRepository, userRepository, linker,
-                notificationDispatcher, auditService, Clock.systemUTC());
+                notificationDispatcher, auditService, storageService, Clock.systemUTC());
     }
 
     ReceptionService(BidRecipientLinkRepository linkRepository,
@@ -74,6 +77,7 @@ public class ReceptionService {
                      ReceptionLinker linker,
                      NotificationDispatcher notificationDispatcher,
                      AuditService auditService,
+                     StorageService storageService,
                      Clock clock) {
         this.linkRepository = linkRepository;
         this.bidRepository = bidRepository;
@@ -82,6 +86,7 @@ public class ReceptionService {
         this.linker = linker;
         this.notificationDispatcher = notificationDispatcher;
         this.auditService = auditService;
+        this.storageService = storageService;
         this.clock = clock;
     }
 
@@ -180,7 +185,12 @@ public class ReceptionService {
         boolean confirmed = link.getStatus() == ReceptionLinkStatus.CONFIRMED;
         AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId()).orElse(null);
         String senderFirstName = firstName(bid.getSenderId());
-        String travelerFirstName = confirmed && announcement != null ? firstName(announcement.getTravelerId()) : null;
+        // Voyageur : seulement une fois le colis confirmé, comme son prénom. Son id ouvre
+        // son profil public et son avatar s'affiche (Sentry FLUTTER-6F/6G/6H).
+        UserEntity traveler = confirmed && announcement != null && announcement.getTravelerId() != null
+                ? userRepository.findById(announcement.getTravelerId()).orElse(null)
+                : null;
+        String travelerFirstName = traveler != null ? traveler.getFirstName() : null;
         String code = confirmed && BidStatus.EN_ROUTE.contains(bid.getStatus()) ? bid.getConfirmationCode() : null;
         return new ReceptionResponse(
                 bid.getId(),
@@ -197,7 +207,9 @@ public class ReceptionService {
                 confirmed && announcement != null ? announcement.getArrivalInstructions() : null,
                 confirmed ? bid.getWeightKg() : null,
                 code,
-                latest(bid.getUpdatedAt(), link.getUpdatedAt()));
+                latest(bid.getUpdatedAt(), link.getUpdatedAt()),
+                traveler != null ? traveler.getId() : null,
+                traveler != null ? storageService.avatarUrl(traveler.getAvatarUrl()) : null);
     }
 
     /** Dernière modification visible : le colis avance, ou le destinataire a répondu. */
