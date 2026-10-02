@@ -27,5 +27,9 @@ public record ReceptionResponse(
         String arrivalInstructions,
         BigDecimal weightKg,
         String confirmationCode,
-        Instant updatedAt
+        Instant updatedAt,
+        /** Voyageur, une fois le colis confirmé : ouvre son profil public. Null sinon. */
+        UUID travelerId,
+        /** Avatar du voyageur (URL servie), une fois le colis confirmé. Null sinon. */
+        String travelerAvatarUrl
 ) {}

@@ -3,6 +3,7 @@ package com.yadony.api.matching.reception;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
+import com.yadony.api.common.StorageService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.matching.AnnouncementEntity;
@@ -60,6 +61,7 @@ class ReceptionServiceTest {
     @Mock ReceptionLinker linker;
     @Mock NotificationDispatcher notificationDispatcher;
     @Mock AuditService auditService;
+    @Mock StorageService storageService;
 
     ReceptionService service;
 
@@ -72,12 +74,16 @@ class ReceptionServiceTest {
     @BeforeEach
     void setUp() {
         service = new ReceptionService(linkRepository, bidRepository, announcementRepository, userRepository,
-                linker, notificationDispatcher, auditService, Clock.fixed(NOW, ZoneOffset.UTC));
+                linker, notificationDispatcher, auditService, storageService, Clock.fixed(NOW, ZoneOffset.UTC));
         me = user(meId, "Fatou");
         me.setFirebaseUid("uid-me");
         lenient().when(userRepository.findByFirebaseUid("uid-me")).thenReturn(Optional.of(me));
         lenient().when(userRepository.findById(senderId)).thenReturn(Optional.of(user(senderId, "Awa")));
-        lenient().when(userRepository.findById(travelerId)).thenReturn(Optional.of(user(travelerId, "Moussa")));
+        UserEntity moussa = user(travelerId, "Moussa");
+        moussa.setAvatarUrl("avatars/moussa.jpg");
+        lenient().when(userRepository.findById(travelerId)).thenReturn(Optional.of(moussa));
+        lenient().when(storageService.avatarUrl("avatars/moussa.jpg"))
+                .thenReturn("https://cdn.test/avatar-moussa.jpg");
         lenient().when(announcementRepository.findById(annId)).thenReturn(Optional.of(announcement()));
         lenient().when(notificationDispatcher.messagesFor(any())).thenReturn(TestMessages.fr());
     }
@@ -158,6 +164,8 @@ class ReceptionServiceTest {
         assertThat(r.weightKg()).isNull();
         assertThat(r.confirmationCode()).isNull();
         assertThat(r.updatedAt()).isEqualTo(NOW_LDT.toInstant(ZoneOffset.UTC));
+        assertThat(r.travelerId()).isNull();
+        assertThat(r.travelerAvatarUrl()).isNull();
     }
 
     @ParameterizedTest
@@ -171,6 +179,9 @@ class ReceptionServiceTest {
         assertThat(r.travelerFirstName()).isEqualTo("Moussa");
         assertThat(r.arrivalInstructions()).isEqualTo("Marché Sandaga");
         assertThat(r.weightKg()).isEqualByComparingTo("3");
+        // FLUTTER-6G/6H : de quoi ouvrir le profil du voyageur et afficher sa photo.
+        assertThat(r.travelerId()).isEqualTo(travelerId);
+        assertThat(r.travelerAvatarUrl()).isEqualTo("https://cdn.test/avatar-moussa.jpg");
     }
 
     @ParameterizedTest
