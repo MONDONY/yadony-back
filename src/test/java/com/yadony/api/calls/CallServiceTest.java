@@ -33,6 +33,8 @@ class CallServiceTest {
     @Mock CallRepository calls;
     @Mock UserRepository users;
     @Mock AuditService audit;
+    @Mock CallExpiryService expiry;
+    @Mock org.springframework.transaction.PlatformTransactionManager txManager;
 
     CallService service;
     UserEntity caller;
@@ -42,7 +44,8 @@ class CallServiceTest {
     @BeforeEach
     void setUp() {
         service = new CallService(eligibility, stream, tokens, calls, users, audit,
-                new StreamProperties(true, "u", "key", "s", "audio_call", 3));
+                new StreamProperties(true, "u", "key", "s", "audio_call", 3), expiry,
+                new org.springframework.transaction.support.TransactionTemplate(txManager));
         caller = new UserEntity();
         ReflectionTestUtils.setField(caller, "id", UUID.randomUUID());
         caller.setFirstName("Awa");
@@ -54,7 +57,11 @@ class CallServiceTest {
         lenient().when(users.findById(calleeId)).thenReturn(Optional.of(callee));
         conv = new ConversationEntity(UUID.randomUUID(), caller.getId(), calleeId, "fs");
         ReflectionTestUtils.setField(conv, "id", UUID.randomUUID());
-        lenient().when(calls.save(any())).thenAnswer(i -> i.getArgument(0));
+        lenient().when(calls.saveAndFlush(any())).thenAnswer(i -> {
+            CallEntity c = i.getArgument(0);
+            ReflectionTestUtils.setField(c, "id", UUID.randomUUID());
+            return c;
+        });
     }
 
     private void allowed() {
@@ -78,7 +85,10 @@ class CallServiceTest {
                 && l.get(1).name().equals("Moussa")));
         verify(stream).createRingingCall(eq(res.callId()), eq(caller.getId()), eq(List.of(caller.getId(), calleeId)));
         ArgumentCaptor<CallEntity> saved = ArgumentCaptor.forClass(CallEntity.class);
-        verify(calls).save(saved.capture());
+        var order = inOrder(expiry, calls, stream);
+        order.verify(expiry).expireStale(conv.getId());
+        order.verify(calls).saveAndFlush(saved.capture());
+        order.verify(stream).createRingingCall(any(), any(), any());
         assertThat(saved.getValue().getStreamCallId()).isEqualTo(res.callId());
         assertThat(saved.getValue().getBidId()).isEqualTo(conv.getBidId());
         verify(audit).log(eq("CALL"), any(), eq("CALL_STARTED"), eq(caller.getId()), anyMap());
@@ -140,7 +150,20 @@ class CallServiceTest {
                     assertThat(e.getStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
                     assertThat(e.getErrorCode()).isEqualTo("call-provider-unavailable");
                 });
-        verify(calls, never()).save(any());
+        verify(calls).discard(any(), any());
+        verify(audit, never()).log(any(), any(), eq("CALL_STARTED"), any(), anyMap());
+    }
+
+    @Test
+    void appelsSimultanesLeSecondRecoit409() {
+        allowed();
+        doThrow(new org.springframework.dao.DataIntegrityViolationException("uq")).when(calls).saveAndFlush(any());
+        assertThatThrownBy(() -> service.start("uid", conv.getId()))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(e.getErrorCode()).isEqualTo("call-already-in-progress");
+                });
+        verifyNoInteractions(stream);
     }
 
     @Test
@@ -162,7 +185,8 @@ class CallServiceTest {
     @Test
     void jetonRefuseSiNonConfigure() {
         service = new CallService(eligibility, stream, tokens, calls, users, audit,
-                new StreamProperties(false, "u", "key", "s", "audio_call", 3));
+                new StreamProperties(false, "u", "key", "s", "audio_call", 3), expiry,
+                new org.springframework.transaction.support.TransactionTemplate(txManager));
         assertThatThrownBy(() -> service.token("uid"))
                 .isInstanceOfSatisfying(YadonyBusinessException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo("calls-disabled"));

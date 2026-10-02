@@ -25,3 +25,6 @@ CREATE TABLE calls (
 );
 CREATE INDEX idx_calls_conversation ON calls (conversation_id);
 CREATE INDEX idx_calls_bid ON calls (bid_id);
+-- Un seul appel en cours par conversation : deux « Appeler » simultanés, le second reçoit 409.
+CREATE UNIQUE INDEX uq_calls_live_per_conversation ON calls (conversation_id)
+    WHERE status IN ('RINGING', 'ANSWERED') AND deleted_at IS NULL;
