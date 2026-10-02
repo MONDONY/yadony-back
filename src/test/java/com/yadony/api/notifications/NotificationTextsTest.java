@@ -178,6 +178,8 @@ class NotificationTextsTest {
         map.put("recipientPickupUpdated", NotificationTexts.recipientPickupUpdated(m));
         map.put("recipientParcelAnnounced", NotificationTexts.recipientParcelAnnounced(m, NOM));
         map.put("recipientParcelAnnounced sans prénom", NotificationTexts.recipientParcelAnnounced(m, null));
+        map.put("callMissed", NotificationTexts.callMissed(m, NOM));
+        map.put("callMissed sans prénom", NotificationTexts.callMissed(m, null));
         map.put("recipientInvitation", NotificationTexts.recipientInvitation(m, NOM));
         map.put("recipientInvitation sans prénom", NotificationTexts.recipientInvitation(m, " "));
         map.put("recipientInvitationAccepted", NotificationTexts.recipientInvitationAccepted(m, NOM));
@@ -376,6 +378,14 @@ class NotificationTextsTest {
         assertThat(NotificationTexts.recipientPickupUpdated(en).title()).isEqualTo("Pickup updated");
         assertThat(NotificationTexts.recipientPickupUpdated(en).body())
                 .isEqualTo("The traveler has updated the pickup instructions for your parcel.");
+    }
+
+    @Test
+    void callMissedTexts_bothLanguages() {
+        assertThat(NotificationTexts.callMissed(TestMessages.fr(), "Awa")).isEqualTo(new NotificationText(
+                "Appel manqué", "Awa a essayé de vous appeler."));
+        assertThat(NotificationTexts.callMissed(TestMessages.en(), "Awa")).isEqualTo(new NotificationText(
+                "Missed call", "Awa tried to call you."));
     }
 
     @Test

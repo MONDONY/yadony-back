@@ -76,12 +76,11 @@ public class CallService {
         return new StartCallResponse(callId, properties.callType());
     }
 
-    /** Nom affiché sur l'écran d'appel de l'autre : prénom + initiale du nom, jamais le nom complet. */
+    /** Nom affiché sur l'écran d'appel de l'autre : le nom public (prénom + initiale), jamais le nom complet. */
     private static StreamClient.StreamUser streamUser(UserEntity u) {
-        String last = u.getLastName();
-        String name = (u.getFirstName() == null ? "" : u.getFirstName())
-                + (last == null || last.isBlank() ? "" : " " + last.charAt(0) + ".");
-        return new StreamClient.StreamUser(u.getId(), name.isBlank() ? "Yadony" : name.trim(), u.getAvatarUrl());
+        String name = u.publicDisplayName();
+        return new StreamClient.StreamUser(u.getId(), name == null || name.isBlank() ? "Yadony" : name,
+                u.getAvatarUrl());
     }
 
     private RuntimeException refusal(CallEligibilityService.Reason reason, UUID conversationId) {
