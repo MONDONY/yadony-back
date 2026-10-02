@@ -589,6 +589,19 @@ public final class NotificationTexts {
         return new NotificationText(m.get("notification.kyc-reset.title"), m.get("notification.kyc-reset.body"));
     }
 
+    /**
+     * Relance « première action » après KYC. variant : sender-trips, sender-none, traveler-packages,
+     * traveler-none, unknown. Les variantes avec offres comptent les trajets ou colis (pluriel .one/.other).
+     */
+    public static NotificationText firstActionReminder(Messages m, String variant, long count) {
+        String prefix = "notification.first-action." + variant;
+        boolean counted = "sender-trips".equals(variant) || "traveler-packages".equals(variant);
+        String body = counted
+                ? m.plural(prefix + ".body", count, String.valueOf(count))
+                : m.get(prefix + ".body");
+        return new NotificationText(m.get(prefix + ".title"), body);
+    }
+
     public static NotificationText stripeOnboardingIncomplete(Messages m) {
         return new NotificationText(m.get("notification.stripe-onboarding-incomplete.title"),
                 m.get("notification.stripe-onboarding-incomplete.body"));
