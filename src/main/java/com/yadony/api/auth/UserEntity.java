@@ -231,6 +231,28 @@ public class UserEntity extends BaseEntity {
     @Column(name = "stripe_onboarding_last_reminder_at")
     private Instant stripeOnboardingLastReminderAt;
 
+    @Column(name = "intent", length = 16)
+    private String intent;
+
+    @Column(name = "intent_destination_country", length = 2)
+    private String intentDestinationCountry;
+
+    @Column(name = "intent_source", length = 16)
+    private String intentSource;
+
+    @Column(name = "intent_declared_at")
+    private Instant intentDeclaredAt;
+
+    @Column(name = "kyc_verified_at")
+    private Instant kycVerifiedAt;
+
+    @org.hibernate.annotations.ColumnDefault("0")
+    @Column(name = "first_action_reminder_count", nullable = false)
+    private int firstActionReminderCount;
+
+    @Column(name = "first_action_reminder_last_at")
+    private Instant firstActionReminderLastAt;
+
     @Column(name = "is_pro_account", nullable = false)
     private boolean isProAccount = false;
 
@@ -511,6 +533,20 @@ public class UserEntity extends BaseEntity {
 
     public Instant getStripeOnboardingLastReminderAt() { return stripeOnboardingLastReminderAt; }
     public void setStripeOnboardingLastReminderAt(Instant stripeOnboardingLastReminderAt) { this.stripeOnboardingLastReminderAt = stripeOnboardingLastReminderAt; }
+    public String getIntent() { return intent; }
+    public void setIntent(String intent) { this.intent = intent; }
+    public String getIntentDestinationCountry() { return intentDestinationCountry; }
+    public void setIntentDestinationCountry(String intentDestinationCountry) { this.intentDestinationCountry = intentDestinationCountry; }
+    public String getIntentSource() { return intentSource; }
+    public void setIntentSource(String intentSource) { this.intentSource = intentSource; }
+    public Instant getIntentDeclaredAt() { return intentDeclaredAt; }
+    public void setIntentDeclaredAt(Instant intentDeclaredAt) { this.intentDeclaredAt = intentDeclaredAt; }
+    public Instant getKycVerifiedAt() { return kycVerifiedAt; }
+    public void setKycVerifiedAt(Instant kycVerifiedAt) { this.kycVerifiedAt = kycVerifiedAt; }
+    public int getFirstActionReminderCount() { return firstActionReminderCount; }
+    public void setFirstActionReminderCount(int firstActionReminderCount) { this.firstActionReminderCount = firstActionReminderCount; }
+    public Instant getFirstActionReminderLastAt() { return firstActionReminderLastAt; }
+    public void setFirstActionReminderLastAt(Instant firstActionReminderLastAt) { this.firstActionReminderLastAt = firstActionReminderLastAt; }
 
     public boolean isProAccount() { return isProAccount; }
     public void setProAccount(boolean proAccount) { isProAccount = proAccount; }
