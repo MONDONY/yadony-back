@@ -52,6 +52,9 @@ stripe:
     billing-secret: whsec_test_billing
 
 yadony:
+  activation:
+    first-action-reminders:
+      cron: "-"
   notifications:
     caps:
       # Un libellé qui dépasse les caps (titre 28, corps 72) doit échouer au
