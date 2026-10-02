@@ -36,6 +36,9 @@ spring:
 # Ces endpoints backend (StripeOnboardingRedirectController) redirigent en 302
 # vers le deep link yadony:// pour revenir dans l'app.
 yadony:
+  activation:
+    first-action-reminders:
+      enabled: ${YADONY_ACTIVATION_FIRST_ACTION_REMINDERS_ENABLED:true}
   stripe:
     connect:
       return-url: "https://api-staging.yadony.com/api/v1/payments/onboarding/return"

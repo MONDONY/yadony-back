@@ -99,6 +99,7 @@ public final class NotificationDeeplink {
 
             case "ACCOUNT_SUSPENDED" -> Optional.of("account/disabled");
             case "STRIPE_ONBOARDING_INCOMPLETE" -> Optional.of("connect/onboarding/intro");
+            case "FIRST_ACTION_REMINDER" -> Optional.of("first-steps");
             case "CARD_EXPIRING" -> Optional.of("payments/commission-method");
 
             default -> Optional.empty();

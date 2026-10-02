@@ -181,4 +181,10 @@ class NotificationDeeplinkTest {
         assertThat(NotificationDeeplink.of("BID_ACCEPTED", Map.of("bidId", "../admin"))).isEmpty();
         assertThat(NotificationDeeplink.of("BID_CREATED", Map.of("announcementId", "42"))).isEmpty();
     }
+
+    @Test
+    void firstActionReminderOpensFirstSteps() {
+        assertThat(NotificationDeeplink.of("FIRST_ACTION_REMINDER", Map.of("type", "FIRST_ACTION_REMINDER")))
+                .contains("yadony://first-steps");
+    }
 }

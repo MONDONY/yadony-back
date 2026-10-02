@@ -46,6 +46,13 @@ class NotificationTextsTest {
         map.put("newBid", NotificationTexts.newBid(m, NOM, POIDS, DEPART + " → " + ARRIVEE));
         map.put("newBid sans poids", NotificationTexts.newBid(m, NOM, null, DEPART + " → " + ARRIVEE));
         map.put("bidAccepted", NotificationTexts.bidAccepted(m, NOM));
+        for (String variant : new String[] {"sender-trips", "traveler-packages"}) {
+            map.put("firstActionReminder 99 " + variant, NotificationTexts.firstActionReminder(m, variant, 99));
+            map.put("firstActionReminder 1 " + variant, NotificationTexts.firstActionReminder(m, variant, 1));
+        }
+        for (String variant : new String[] {"sender-none", "traveler-none", "unknown"}) {
+            map.put("firstActionReminder " + variant, NotificationTexts.firstActionReminder(m, variant, 0));
+        }
         map.put("bidAcceptedPayNow", NotificationTexts.bidAcceptedPayNow(m));
         map.put("bidRejected", NotificationTexts.bidRejected(m));
         map.put("bidRejectedTripWithdrawn", NotificationTexts.bidRejectedTripWithdrawn(m));
@@ -401,5 +408,14 @@ class NotificationTextsTest {
         Set<String> couverts = new java.util.HashSet<>();
         for (String k : pireCas(TestMessages.fr()).keySet()) couverts.add(k.split(" ")[0]);
         assertThat(couverts).containsAll(declared);
+    }
+
+    @Test
+    void firstActionReminder_pluralizesCount() {
+        Messages m = TestMessages.fr();
+        assertThat(NotificationTexts.firstActionReminder(m, "sender-trips", 1).body()).startsWith("1 trajet part ");
+        assertThat(NotificationTexts.firstActionReminder(m, "sender-trips", 3).body()).startsWith("3 trajets partent ");
+        assertThat(NotificationTexts.firstActionReminder(m, "traveler-packages", 2).body()).startsWith("2 colis attendent ");
+        assertThat(NotificationTexts.firstActionReminder(m, "sender-none", 0).title()).isEqualTo("Soyez prévenu en premier");
     }
 }
