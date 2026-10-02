@@ -230,6 +230,18 @@ class NotificationTextsTest {
                 .isEqualTo("Karim T., 12 kg, Paris to Dakar.");
     }
 
+    // Sentry FLUTTER-5S : envoyé dès la récupération du colis, l'ancien texte
+    // (« prêt à remettre votre colis ») faisait croire à une arrivée.
+    @Test
+    void confirmationCodeReady_saysParcelPickedUpNotReadyToDeliver() {
+        var fr = NotificationTexts.confirmationCodeReady(TestMessages.fr());
+        var en = NotificationTexts.confirmationCodeReady(TestMessages.en());
+        assertThat(fr.title()).isEqualTo("Colis récupéré");
+        assertThat(fr.body()).contains("en route").doesNotContain("prêt à remettre");
+        assertThat(en.title()).isEqualTo("Parcel picked up");
+        assertThat(en.body()).contains("on its way").doesNotContain("ready to hand over");
+    }
+
     @Test
     void senderInvite_namesSenderAndCorridor() {
         var fr = TestMessages.fr();
