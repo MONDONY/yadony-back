@@ -175,6 +175,11 @@ jobs:
           DIDIT_API_KEY=${{ secrets.DIDIT_API_KEY }}
           DIDIT_WORKFLOW_ID=${{ secrets.DIDIT_WORKFLOW_ID }}
           DIDIT_WEBHOOK_SECRET=${{ secrets.DIDIT_WEBHOOK_SECRET }}
+          # Stream Video — appels audio in-app. Clé publique en variable, secret en secret ;
+          # CALLS_ENABLED=true active les appels (vide = coupés, valeur par défaut du back).
+          STREAM_API_KEY=${{ vars.STREAM_API_KEY }}
+          STREAM_API_SECRET=${{ secrets.STREAM_API_SECRET }}
+          CALLS_ENABLED=${{ vars.CALLS_ENABLED }}
           # Rail mobile money pawaPay : token API du dashboard SANDBOX (staging ne parle
           # jamais à la production pawaPay, PAWAPAY_BASE_URL garde son défaut sandbox).
           # Secret d environnement staging. Le rail reste fermé tant que PAWAPAY_ENABLED
