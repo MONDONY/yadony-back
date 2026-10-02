@@ -1,45 +1,38 @@
 package com.yadony.api.calls;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.yadony.api.calls.events.CallEndedEvent;
-import com.yadony.api.common.AuditService;
-import com.yadony.api.messaging.ConversationEntity;
-import com.yadony.api.messaging.ConversationRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.Set;
 
-/** Applique les événements Stream à la table calls. Idempotent : un appel terminé ne bouge plus. */
+/** Applique les événements Stream aux appels, via CallTransitions (idempotent et sûr en concurrence). */
 @Service
 public class CallWebhookService {
 
+    private static final Logger log = LoggerFactory.getLogger(CallWebhookService.class);
     private static final String CID_PREFIX = "audio_call:";
+    /** Raisons Stream d'un call.rejected qui ne sont pas un refus de l'appelé. */
+    private static final Set<String> NOT_A_DECLINE = Set.of("cancel", "timeout");
 
     private final CallRepository calls;
-    private final ConversationRepository conversations;
-    private final AuditService audit;
-    private final ApplicationEventPublisher events;
+    private final CallTransitions transitions;
     private final Clock clock;
 
     @Autowired
-    public CallWebhookService(CallRepository calls, ConversationRepository conversations, AuditService audit,
-                              ApplicationEventPublisher events) {
-        this(calls, conversations, audit, events, Clock.systemUTC());
+    public CallWebhookService(CallRepository calls, CallTransitions transitions) {
+        this(calls, transitions, Clock.systemUTC());
     }
 
-    CallWebhookService(CallRepository calls, ConversationRepository conversations, AuditService audit,
-                       ApplicationEventPublisher events, Clock clock) {
+    CallWebhookService(CallRepository calls, CallTransitions transitions, Clock clock) {
         this.calls = calls;
-        this.conversations = conversations;
-        this.audit = audit;
-        this.events = events;
+        this.transitions = transitions;
         this.clock = clock;
     }
 
@@ -48,42 +41,50 @@ public class CallWebhookService {
         String cid = event.path("call_cid").asText("");
         if (!cid.startsWith(CID_PREFIX)) return;
         CallEntity call = calls.findByStreamCallId(cid.substring(CID_PREFIX.length())).orElse(null);
-        if (call == null) return;
-        OffsetDateTime at = timestamp(event);
+        if (call == null) {
+            log.info("Webhook Stream {} pour un appel inconnu {}", event.path("type").asText(""), cid);
+            return;
+        }
+        OffsetDateTime at = parse(event.path("created_at").asText(null));
+        String callee = call.getCalleeId().toString();
 
         switch (event.path("type").asText("")) {
             case "call.session_participant_joined" -> {
-                String userId = event.path("participant").path("user").path("id").asText("");
-                if (call.getCalleeId().toString().equals(userId)) call.answer(at);
+                if (callee.equals(event.path("participant").path("user").path("id").asText(""))) {
+                    transitions.answer(call, at);
+                }
             }
-            case "call.missed" -> finish(call, CallStatus.MISSED, at);
-            case "call.rejected" -> finish(call, CallStatus.REJECTED, at);
-            // Fin de session sans que l'appelé ait décroché (l'appelant a raccroché) : appel manqué.
-            case "call.session_ended", "call.ended" -> finish(call,
-                    call.getStatus() == CallStatus.ANSWERED ? CallStatus.ENDED : CallStatus.MISSED, at);
+            case "call.missed" -> transitions.finish(call, CallStatus.MISSED, at, null);
+            case "call.rejected" -> {
+                // L'appelant qui annule, ou la sonnerie qui expire, émet aussi call.rejected.
+                boolean declinedByCallee = callee.equals(event.path("user").path("id").asText(""))
+                        && !NOT_A_DECLINE.contains(event.path("reason").asText(""));
+                transitions.finish(call, declinedByCallee ? CallStatus.REJECTED : CallStatus.MISSED, at, null);
+            }
+            case "call.session_ended", "call.ended" -> {
+                JsonNode session = event.path("call").path("session");
+                // accepted_by rend la décision indépendante de l'ordre d'arrivée des webhooks.
+                OffsetDateTime acceptedAt = parseOrNull(session.path("accepted_by").path(callee).asText(null));
+                OffsetDateTime endedAt = parseOrNull(session.path("ended_at").asText(null));
+                boolean answered = acceptedAt != null || call.getStatus() == CallStatus.ANSWERED;
+                transitions.finish(call, answered ? CallStatus.ENDED : CallStatus.MISSED,
+                        endedAt != null ? endedAt : at, acceptedAt);
+            }
             default -> { }
         }
-        calls.save(call);
     }
 
-    private void finish(CallEntity call, CallStatus status, OffsetDateTime at) {
-        if (!call.finish(status, at)) return;
-        Map<String, Object> payload = new HashMap<>();
-        payload.put("status", status.name());
-        if (call.getDurationSeconds() != null) payload.put("durationSeconds", call.getDurationSeconds());
-        audit.log("CALL", call.getId(), "CALL_ENDED", null, payload);
-        String fsId = conversations.findById(call.getConversationId())
-                .map(ConversationEntity::getFirestoreConversationId).orElse(null);
-        events.publishEvent(new CallEndedEvent(call.getId(), call.getConversationId(), fsId,
-                call.getCallerId(), call.getCalleeId(), status, call.getDurationSeconds()));
+    private OffsetDateTime parse(String raw) {
+        OffsetDateTime parsed = parseOrNull(raw);
+        return parsed != null ? parsed : OffsetDateTime.now(clock.withZone(ZoneOffset.UTC));
     }
 
-    private OffsetDateTime timestamp(JsonNode event) {
-        String raw = event.path("created_at").asText(null);
+    private static OffsetDateTime parseOrNull(String raw) {
+        if (raw == null || raw.isBlank()) return null;
         try {
-            return raw == null ? OffsetDateTime.now(clock.withZone(ZoneOffset.UTC)) : OffsetDateTime.parse(raw);
+            return OffsetDateTime.parse(raw);
         } catch (Exception e) {
-            return OffsetDateTime.now(clock.withZone(ZoneOffset.UTC));
+            return null;
         }
     }
 }

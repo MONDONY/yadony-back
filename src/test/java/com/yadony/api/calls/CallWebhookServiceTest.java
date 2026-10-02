@@ -16,6 +16,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Optional;
 import java.util.UUID;
@@ -41,75 +42,110 @@ class CallWebhookServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new CallWebhookService(calls, conversations, audit, events, Clock.fixed(now, ZoneOffset.UTC));
+        CallTransitions transitions = new CallTransitions(calls, conversations, audit, events);
+        service = new CallWebhookService(calls, transitions, Clock.fixed(now, ZoneOffset.UTC));
         UUID convId = UUID.randomUUID();
         call = new CallEntity(convId, UUID.randomUUID(), caller, callee, "c1");
         ReflectionTestUtils.setField(call, "id", UUID.randomUUID());
         ConversationEntity conv = new ConversationEntity(UUID.randomUUID(), caller, callee, "fs-1");
         lenient().when(calls.findByStreamCallId("c1")).thenReturn(Optional.of(call));
         lenient().when(conversations.findById(convId)).thenReturn(Optional.of(conv));
+        lenient().when(calls.finishIfLive(any(), any(), any(), any(), any())).thenReturn(1);
+        lenient().when(calls.markAnswered(any(), any())).thenReturn(1);
     }
 
     private void send(String body) throws Exception { service.handle(json.readTree(body)); }
 
+    private CallEndedEvent publishedEvent() {
+        ArgumentCaptor<CallEndedEvent> ev = ArgumentCaptor.forClass(CallEndedEvent.class);
+        verify(events).publishEvent(ev.capture());
+        return ev.getValue();
+    }
+
     @Test
-    void decrochePuisFinEnregistreLaDuree() throws Exception {
+    void lAppeleDecrocheEnregistreLeDebut() throws Exception {
         send("""
              {"type":"call.session_participant_joined","call_cid":"audio_call:c1","created_at":"2026-10-02T10:00:00Z",
               "participant":{"user":{"id":"%s"}}}""".formatted(callee));
+        verify(calls).markAnswered(call.getId(), OffsetDateTime.parse("2026-10-02T10:00:00Z"));
+    }
+
+    @Test
+    void lAppelantQuiRejointNeDecrochePas() throws Exception {
         send("""
-             {"type":"call.session_ended","call_cid":"audio_call:c1","created_at":"2026-10-02T10:04:05Z"}""");
-        assertThat(call.getStatus()).isEqualTo(CallStatus.ENDED);
-        assertThat(call.getDurationSeconds()).isEqualTo(245);
-        ArgumentCaptor<CallEndedEvent> ev = ArgumentCaptor.forClass(CallEndedEvent.class);
-        verify(events).publishEvent(ev.capture());
-        assertThat(ev.getValue().firestoreConversationId()).isEqualTo("fs-1");
-        assertThat(ev.getValue().status()).isEqualTo(CallStatus.ENDED);
-        assertThat(ev.getValue().durationSeconds()).isEqualTo(245);
+             {"type":"call.session_participant_joined","call_cid":"audio_call:c1","participant":{"user":{"id":"%s"}}}""".formatted(caller));
+        verify(calls, never()).markAnswered(any(), any());
+    }
+
+    @Test
+    void finDeSessionAvecAcceptedByEstUnAppelTermineMemeSansJoinRecu() throws Exception {
+        send("""
+             {"type":"call.session_ended","call_cid":"audio_call:c1","created_at":"2026-10-02T10:04:10Z",
+              "call":{"session":{"accepted_by":{"%s":"2026-10-02T10:00:00Z"},"ended_at":"2026-10-02T10:04:05Z"}}}""".formatted(callee));
+        verify(calls).finishIfLive(call.getId(), CallStatus.ENDED, OffsetDateTime.parse("2026-10-02T10:04:05Z"),
+                OffsetDateTime.parse("2026-10-02T10:00:00Z"), 245);
+        assertThat(publishedEvent().durationSeconds()).isEqualTo(245);
+    }
+
+    @Test
+    void finDeSessionApresDecrocheEnregistreEstUnAppelTermine() throws Exception {
+        call.answer(OffsetDateTime.parse("2026-10-02T10:00:00Z"));
+        send("""
+             {"type":"call.session_ended","call_cid":"audio_call:c1","created_at":"2026-10-02T10:01:00Z"}""");
+        verify(calls).finishIfLive(eq(call.getId()), eq(CallStatus.ENDED), any(), any(), eq(60));
+        assertThat(publishedEvent().firestoreConversationId()).isEqualTo("fs-1");
     }
 
     @Test
     void appelantQuiRaccrocheAvantDecrocheEstUnAppelManque() throws Exception {
         send("""
-             {"type":"call.session_participant_joined","call_cid":"audio_call:c1","participant":{"user":{"id":"%s"}}}""".formatted(caller));
-        send("""
-             {"type":"call.session_ended","call_cid":"audio_call:c1"}""");
-        assertThat(call.getStatus()).isEqualTo(CallStatus.MISSED);
-        assertThat(call.getDurationSeconds()).isNull();
+             {"type":"call.session_ended","call_cid":"audio_call:c1","call":{"session":{"accepted_by":{}}}}""");
+        verify(calls).finishIfLive(eq(call.getId()), eq(CallStatus.MISSED), any(), isNull(), isNull());
     }
 
     @Test
     void manque() throws Exception {
         send("""
              {"type":"call.missed","call_cid":"audio_call:c1"}""");
-        assertThat(call.getStatus()).isEqualTo(CallStatus.MISSED);
+        verify(calls).finishIfLive(eq(call.getId()), eq(CallStatus.MISSED), any(), isNull(), isNull());
         verify(audit).log(eq("CALL"), eq(call.getId()), eq("CALL_ENDED"), isNull(), anyMap());
     }
 
     @Test
-    void refuse() throws Exception {
+    void lAppeleRefuse() throws Exception {
         send("""
-             {"type":"call.rejected","call_cid":"audio_call:c1","user":{"id":"%s"}}""".formatted(callee));
-        assertThat(call.getStatus()).isEqualTo(CallStatus.REJECTED);
+             {"type":"call.rejected","call_cid":"audio_call:c1","user":{"id":"%s"},"reason":"decline"}""".formatted(callee));
+        verify(calls).finishIfLive(eq(call.getId()), eq(CallStatus.REJECTED), any(), isNull(), isNull());
     }
 
     @Test
-    void webhookRejoueNePublieQuUneFois() throws Exception {
+    void lAppelantAnnuleCEstUnAppelManquePasUnRefus() throws Exception {
+        send("""
+             {"type":"call.rejected","call_cid":"audio_call:c1","user":{"id":"%s"},"reason":"cancel"}""".formatted(caller));
+        verify(calls).finishIfLive(eq(call.getId()), eq(CallStatus.MISSED), any(), isNull(), isNull());
+    }
+
+    @Test
+    void sonnerieExpireeCoteAppeleEstUnAppelManque() throws Exception {
+        send("""
+             {"type":"call.rejected","call_cid":"audio_call:c1","user":{"id":"%s"},"reason":"timeout"}""".formatted(callee));
+        verify(calls).finishIfLive(eq(call.getId()), eq(CallStatus.MISSED), any(), isNull(), isNull());
+    }
+
+    @Test
+    void finDejaPriseParUnAutreWebhookNePubliePas() throws Exception {
+        when(calls.finishIfLive(any(), any(), any(), any(), any())).thenReturn(0);
         send("""
              {"type":"call.missed","call_cid":"audio_call:c1"}""");
-        send("""
-             {"type":"call.missed","call_cid":"audio_call:c1"}""");
-        send("""
-             {"type":"call.session_ended","call_cid":"audio_call:c1"}""");
-        verify(events, times(1)).publishEvent(any(CallEndedEvent.class));
-        assertThat(call.getStatus()).isEqualTo(CallStatus.MISSED);
+        verifyNoInteractions(events);
+        verifyNoInteractions(audit);
     }
 
     @Test
     void dateIllisibleRemplaceeParMaintenant() throws Exception {
         send("""
              {"type":"call.missed","call_cid":"audio_call:c1","created_at":"pas-une-date"}""");
-        assertThat(call.getEndedAt().toInstant()).isEqualTo(now);
+        verify(calls).finishIfLive(eq(call.getId()), eq(CallStatus.MISSED), eq(OffsetDateTime.ofInstant(now, ZoneOffset.UTC)), any(), any());
     }
 
     @Test
@@ -120,7 +156,7 @@ class CallWebhookServiceTest {
              {"type":"call.missed","call_cid":"audio_call:zzz"}""");
         send("""
              {"type":"call.created","call_cid":"audio_call:c1"}""");
-        assertThat(call.getStatus()).isEqualTo(CallStatus.RINGING);
+        verify(calls, never()).finishIfLive(any(), any(), any(), any(), any());
         verifyNoInteractions(events);
     }
 }
