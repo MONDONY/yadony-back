@@ -27,8 +27,22 @@ public record ConversationResponse(
         // Rôle de l'appelant dans une conversation RECIPIENT_TRAVELER : "TRAVELER" ou
         // "RECIPIENT" ; null pour SENDER_TRAVELER. Code stable, contrairement au libellé
         // localisé de otherParticipant.role.
-        String viewerRole
+        String viewerRole,
+        // Appel audio in-app possible maintenant (règle d'éligibilité de calls/). Absent chez
+        // un ancien back : l'app masque le bouton.
+        boolean callAvailable
 ) {
+    public ConversationResponse(UUID id, UUID bidId, String firestoreConversationId,
+                                ParticipantDTO otherParticipant, String lastMessagePreview,
+                                LocalDateTime lastMessageAt, boolean hasUnread, String tripOrigin,
+                                String tripDestination, String tripDate, Double tripWeightKg,
+                                String bidStatus, boolean readOnly, boolean deletedBySelf,
+                                String kind, String viewerRole) {
+        this(id, bidId, firestoreConversationId, otherParticipant, lastMessagePreview, lastMessageAt,
+                hasUnread, tripOrigin, tripDestination, tripDate, tripWeightKg, bidStatus, readOnly,
+                deletedBySelf, kind, viewerRole, false);
+    }
+
     /** Conversation expéditeur ↔ voyageur : forme d'avant le lot 3C. */
     public ConversationResponse(UUID id, UUID bidId, String firestoreConversationId,
                                 ParticipantDTO otherParticipant, String lastMessagePreview,

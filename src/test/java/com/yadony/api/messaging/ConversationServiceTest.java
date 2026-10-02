@@ -38,6 +38,7 @@ class ConversationServiceTest {
     @Mock AnnouncementRepository announcementRepository;
     @Mock StorageService storageService;
     @Mock BlockVisibility blockVisibility;
+    @Mock com.yadony.api.common.CallAvailability callAvailability;
 
     ConversationService service;
 
@@ -49,7 +50,7 @@ class ConversationServiceTest {
     void setUp() {
         lenient().when(storageService.avatarUrl(any())).thenAnswer(inv -> inv.getArgument(0));
         service = new ConversationService(conversationRepository, firestoreService, userRepository, auditService,
-                bidRepository, announcementRepository, storageService, blockVisibility);
+                bidRepository, announcementRepository, storageService, blockVisibility, callAvailability);
 
         UserEntity sender   = mockUser(senderId,   "Alice", "Martin", "uid-sender");
         UserEntity traveler = mockUser(travelerId, "Bob",   "Dupont", "uid-traveler");
