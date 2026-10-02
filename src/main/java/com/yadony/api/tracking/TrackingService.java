@@ -106,7 +106,12 @@ public class TrackingService {
                         HttpStatus.UNAUTHORIZED, "user-not-found", "User Not Found",
                         "Utilisateur introuvable"));
 
-        if (!currentUser.getId().equals(bid.getSenderId())) {
+        // Le destinataire qui a confirmé le colis peut aussi le montrer au voyageur
+        // (FLUTTER-7Y). Le QR n'identifie que le colis : la remise exige toujours
+        // le code à 6 chiffres.
+        boolean isSender = currentUser.getId().equals(bid.getSenderId());
+        if (!isSender && !recipientLinkRepository.existsByBidIdAndRecipientUserIdAndStatus(
+                bidId, currentUser.getId(), ReceptionLinkStatus.CONFIRMED)) {
             throw new YadonyBusinessException(
                     HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
                     "Accès interdit à ce QR code");
