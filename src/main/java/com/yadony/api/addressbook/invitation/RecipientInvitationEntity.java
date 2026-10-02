@@ -51,7 +51,7 @@ public class RecipientInvitationEntity extends BaseEntity {
     @Column(name = "recipient_id")
     private UUID recipientId;
 
-    /** Nom donné par l'inviteur à la personne invitée, facultatif (V285). */
+    /** Nom donné par l'inviteur à la personne invitée, facultatif (V286). */
     @Convert(converter = EncryptedStringConverter.class)
     @Column(name = "label")
     private String label;
