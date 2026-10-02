@@ -1233,7 +1233,7 @@ class TrackingServiceTest {
         QrScanRequest req = new QrScanRequest(bidId, TrackingEventType.DEPART, null, null, null, null, null);
         service.processScan(req, "uid-traveler");
 
-        verify(notificationDispatcher).notifyUser(eq(senderId), contains("livraison"), any(), argThat(d -> "CONFIRMATION_CODE_READY".equals(d.get("type"))));
+        verify(notificationDispatcher).notifyUser(eq(senderId), contains("récupéré"), any(), argThat(d -> "CONFIRMATION_CODE_READY".equals(d.get("type"))));
         // Le destinataire qui suit le colis dans l'app est prévenu par événement.
         verify(eventPublisher).publishEvent(new com.yadony.api.tracking.events.ParcelDepartedEvent(bidId));
     }
