@@ -110,10 +110,16 @@ public class RecipientService {
         log.info("Recipient soft-deleted: id={} userId={}", id, userId);
     }
 
+    // saveAndFlush, pas save : au flush, Hibernate exécute les INSERT avant les
+    // UPDATE. Le nouveau destinataire par défaut partait donc en base avant que
+    // l'ancien ne perde le drapeau, et l'index unique partiel
+    // idx_recipients_user_default (V168) levait une violation → 500 sur
+    // POST /addressbook/recipients (Sentry YADONY-BACK-STAGING-E). H2, sans
+    // index partiel, ne le voit pas : la garde est vérifiée par l'ordre des appels.
     private void clearCurrentDefault(UUID userId) {
         repository.findByUserIdAndIsDefaultTrue(userId).ifPresent(current -> {
             current.setDefault(false);
-            repository.save(current);
+            repository.saveAndFlush(current);
         });
     }
 
