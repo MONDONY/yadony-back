@@ -712,6 +712,11 @@ public final class NotificationTexts {
     // ── Invitations au carnet de destinataires (lot 4) ───────────────────────
 
     /** À l'invité : un expéditeur veut l'ajouter à ses destinataires. */
+    public static NotificationText callMissed(Messages m, String callerFirstName) {
+        return new NotificationText(m.get("notification.call-missed.title"),
+                m.get("notification.call-missed.body", who(m, callerFirstName, "notification.fallback.sender")));
+    }
+
     public static NotificationText recipientInvitation(Messages m, String inviterFirstName) {
         return new NotificationText(m.get("notification.recipient-invitation.title"),
                 m.get("notification.recipient-invitation.body", who(m, inviterFirstName, "notification.fallback.sender")));
