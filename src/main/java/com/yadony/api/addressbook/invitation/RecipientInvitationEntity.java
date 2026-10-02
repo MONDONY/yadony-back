@@ -1,7 +1,9 @@
 package com.yadony.api.addressbook.invitation;
 
 import com.yadony.api.common.BaseEntity;
+import com.yadony.api.common.EncryptedStringConverter;
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -49,6 +51,11 @@ public class RecipientInvitationEntity extends BaseEntity {
     @Column(name = "recipient_id")
     private UUID recipientId;
 
+    /** Nom donné par l'inviteur à la personne invitée, facultatif (V285). */
+    @Convert(converter = EncryptedStringConverter.class)
+    @Column(name = "label")
+    private String label;
+
     protected RecipientInvitationEntity() {}
 
     public RecipientInvitationEntity(UUID inviterUserId, UUID inviteeUserId, InvitationChannel channel,
@@ -80,6 +87,10 @@ public class RecipientInvitationEntity extends BaseEntity {
     public UUID getRecipientId() { return recipientId; }
 
     public void setRecipientId(UUID recipientId) { this.recipientId = recipientId; }
+
+    public String getLabel() { return label; }
+
+    public void setLabel(String label) { this.label = label; }
 
     /** Change le statut et horodate la réponse. */
     public void respond(InvitationStatus answer, OffsetDateTime at) {

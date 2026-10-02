@@ -69,6 +69,28 @@ class RecipientServiceTest {
     }
 
     @Test
+    void create_mergesIntoExistingEntry_whenSamePhoneDigits() {
+        // FLUTTER-7T : deux « Adama » identiques dans le carnet
+        RecipientEntity existing = buildEntity(userId);
+        existing.setPhoneE164("+33751101245");
+        org.springframework.test.util.ReflectionTestUtils.setField(existing, "id", UUID.randomUUID());
+        when(repository.findByUserIdOrderByUpdatedAtDesc(userId)).thenReturn(List.of(existing));
+        when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(invitationRepository.findLinkedRecipientIds(userId)).thenReturn(java.util.Set.of());
+
+        CreateRecipientRequest request = new CreateRecipientRequest(
+                "Adama", null, "+33 7 51 10 12 45", null,
+                null, "Dakar", "SN", null, false);
+
+        RecipientDto result = service.create(userId, request);
+
+        assertThat(result.fullName()).isEqualTo("Adama");
+        verify(repository).save(existing);
+        verify(repository, org.mockito.Mockito.times(1)).save(any());
+        assertThat(existing.getFullName()).isEqualTo("Adama");
+    }
+
+    @Test
     void create_persistsAndReturnsDto() {
         when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 

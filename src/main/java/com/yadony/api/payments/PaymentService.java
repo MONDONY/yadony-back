@@ -650,8 +650,16 @@ public class PaymentService {
 
             // Défaut aligné sur le toggle « Enregistrer cette carte » (ON) de la sheet.
             // Décochable ensuite via PATCH /payments/intents/{id}/save-payment-method.
+            // Posé sur la carte seule : au niveau racine il s'applique aussi à PayPal,
+            // que Stripe refuse sans paiements récurrents PayPal activés (FLUTTER-7S).
             if (!Boolean.FALSE.equals(request.getSavePaymentMethod())) {
-                paramsBuilder.setSetupFutureUsage(PaymentIntentCreateParams.SetupFutureUsage.OFF_SESSION);
+                paramsBuilder.setPaymentMethodOptions(
+                        PaymentIntentCreateParams.PaymentMethodOptions.builder()
+                                .setCard(PaymentIntentCreateParams.PaymentMethodOptions.Card.builder()
+                                        .setSetupFutureUsage(PaymentIntentCreateParams.PaymentMethodOptions
+                                                .Card.SetupFutureUsage.OFF_SESSION)
+                                        .build())
+                                .build());
             }
 
             PaymentIntent pi = stripeGateway.createPaymentIntent(paramsBuilder.build());
@@ -803,11 +811,18 @@ public class PaymentService {
 
         try {
             PaymentIntentUpdateParams.Builder update = PaymentIntentUpdateParams.builder();
+            // Sur la carte seule, comme à la création (PayPal refuse setup_future_usage).
             if (save) {
-                update.setSetupFutureUsage(PaymentIntentUpdateParams.SetupFutureUsage.OFF_SESSION);
+                update.setPaymentMethodOptions(PaymentIntentUpdateParams.PaymentMethodOptions.builder()
+                        .setCard(PaymentIntentUpdateParams.PaymentMethodOptions.Card.builder()
+                                .setSetupFutureUsage(PaymentIntentUpdateParams.PaymentMethodOptions
+                                        .Card.SetupFutureUsage.OFF_SESSION)
+                                .build())
+                        .build());
             } else {
                 // Chaîne vide = clear du champ côté API Stripe (le setter n'accepte pas null).
-                update.putExtraParam("setup_future_usage", "");
+                update.putExtraParam("payment_method_options",
+                        Map.of("card", Map.of("setup_future_usage", "")));
             }
             pi.update(update.build());
         } catch (StripeException e) {

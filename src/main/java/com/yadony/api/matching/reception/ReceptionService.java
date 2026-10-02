@@ -184,7 +184,10 @@ public class ReceptionService {
     ReceptionResponse toResponse(BidRecipientLinkEntity link, BidEntity bid) {
         boolean confirmed = link.getStatus() == ReceptionLinkStatus.CONFIRMED;
         AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId()).orElse(null);
-        String senderFirstName = firstName(bid.getSenderId());
+        UserEntity sender = bid.getSenderId() != null
+                ? userRepository.findById(bid.getSenderId()).orElse(null)
+                : null;
+        String senderFirstName = sender != null ? sender.getFirstName() : null;
         // Voyageur : seulement une fois le colis confirmé, comme son prénom. Son id ouvre
         // son profil public et son avatar s'affiche (Sentry FLUTTER-6F/6G/6H).
         UserEntity traveler = confirmed && announcement != null && announcement.getTravelerId() != null
@@ -209,7 +212,9 @@ public class ReceptionService {
                 code,
                 latest(bid.getUpdatedAt(), link.getUpdatedAt()),
                 traveler != null ? traveler.getId() : null,
-                traveler != null ? storageService.avatarUrl(traveler.getAvatarUrl()) : null);
+                traveler != null ? storageService.avatarUrl(traveler.getAvatarUrl()) : null,
+                sender != null ? sender.getId() : null,
+                sender != null ? storageService.avatarUrl(sender.getAvatarUrl()) : null);
     }
 
     /** Dernière modification visible : le colis avance, ou le destinataire a répondu. */
@@ -219,10 +224,6 @@ public class ReceptionService {
                 .max(Comparator.naturalOrder())
                 .orElse(null);
         return latest != null ? latest.toInstant(ZoneOffset.UTC) : null;
-    }
-
-    private String firstName(UUID userId) {
-        return userId == null ? null : userRepository.findById(userId).map(UserEntity::getFirstName).orElse(null);
     }
 
     /** Lien PENDING ou CONFIRMED de l'utilisateur ; un lien refusé n'existe plus pour lui. */

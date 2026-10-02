@@ -70,7 +70,7 @@ public final class NotificationDeeplink {
             // Invitations au carnet (lot 4) : l'invité répond depuis ses demandes, l'inviteur
             // retrouve le destinataire ajouté dans son carnet.
             case "RECIPIENT_INVITATION" -> Optional.of("recipient-invitations");
-            case "RECIPIENT_INVITATION_ACCEPTED" -> Optional.of("recipients");
+            case "RECIPIENT_INVITATION_ACCEPTED" -> Optional.of("profile/recipients");
 
             case "KYC_VERIFIED" -> Optional.of("kyc/status");
             case "KYC_ACTION_REQUIRED" -> Optional.of("kyc/verify");

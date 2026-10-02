@@ -232,6 +232,44 @@ class RecipientInvitationServiceTest {
         assertThat(sent.get(0).channel()).isEqualTo("PHONE");
     }
 
+    @Test
+    void sent_returnsInviterChosenName() {
+        // FLUTTER-7V : la liste n'affichait qu'un numéro masqué
+        RecipientInvitationEntity named = pendingFor(invitee.getId());
+        named.setLabel("Adama");
+        RecipientInvitationEntity legacy = pendingFor(null);
+        when(repository.findByInviterUserIdAndStatusInOrderByCreatedAtDesc(eq(inviter.getId()), anyCollection()))
+                .thenReturn(List.of(named, legacy));
+
+        var sent = service.sent("uid-inviter");
+
+        assertThat(sent).extracting("name").containsExactly("Adama", null);
+    }
+
+    @Test
+    void send_storesTrimmedName_andIgnoresBlankName() {
+        when(firebaseContact.findUidByPhone(PHONE)).thenReturn(Optional.empty());
+        var captor = org.mockito.ArgumentCaptor.forClass(RecipientInvitationEntity.class);
+
+        service.send("uid-inviter", new CreateRecipientInvitationRequest(PHONE, null, "  Adama  "));
+        verify(repository).saveAndFlush(captor.capture());
+        assertThat(captor.getValue().getLabel()).isEqualTo("Adama");
+
+        org.mockito.Mockito.clearInvocations(repository);
+        service.send("uid-inviter", new CreateRecipientInvitationRequest(null, "adama@gmail.com", "   "));
+        verify(repository).saveAndFlush(captor.capture());
+        assertThat(captor.getValue().getLabel()).isNull();
+    }
+
+    @Test
+    void send_nameTooLong_returns400() {
+        assertThatThrownBy(() -> service.send("uid-inviter",
+                new CreateRecipientInvitationRequest(PHONE, null, "x".repeat(101))))
+                .isInstanceOf(YadonyBusinessException.class)
+                .hasMessageContaining("100");
+        verify(repository, never()).saveAndFlush(any());
+    }
+
     // ── incoming + rattrapage ───────────────────────────────────────────────
 
     @Test
@@ -328,6 +366,30 @@ class RecipientInvitationServiceTest {
         assertThat(existing.isDefault()).isTrue();
         assertThat(invitation.getRecipientId()).isEqualTo(existing.getId());
         verify(auditService, never()).log(eq("RECIPIENT"), any(), any(), any(), any());
+    }
+
+    @Test
+    void accept_linksEntryHoldingInvitedNumber_evenWhenAccountNumberDiffers() {
+        // FLUTTER-7T : l'entrée « Adama » enregistrée avant l'invitation restait non liée
+        // et une seconde entrée était créée avec le numéro du compte de l'invité.
+        RecipientInvitationEntity invitation = pendingFor(invitee.getId());
+        invitation.setLabel("Adama");
+        when(repository.findById(invitation.getId())).thenReturn(Optional.of(invitation));
+        when(firebaseContact.getContact("uid-invitee"))
+                .thenReturn(new FirebaseContactService.Contact("+33751101299", null));
+        RecipientEntity saved = new RecipientEntity();
+        ReflectionTestUtils.setField(saved, "id", UUID.randomUUID());
+        saved.setUserId(inviter.getId());
+        saved.setFullName("Adama D.");
+        saved.setPhoneE164(PHONE);
+        saved.setCountry("SN");
+        when(recipientRepository.findByUserIdOrderByUpdatedAtDesc(inviter.getId())).thenReturn(List.of(saved));
+
+        service.accept(invitation.getId(), "uid-invitee");
+
+        assertThat(invitation.getRecipientId()).isEqualTo(saved.getId());
+        assertThat(saved.getFullName()).isEqualTo("Adama");
+        verify(recipientRepository, org.mockito.Mockito.times(1)).save(any());
     }
 
     @Test

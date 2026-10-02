@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -45,6 +46,21 @@ public class RecipientService {
     public RecipientDto create(UUID userId, CreateRecipientRequest request) {
         if (request.isDefault()) {
             clearCurrentDefault(userId);
+        }
+
+        // Même numéro déjà dans le carnet : on met l'entrée à jour au lieu d'en
+        // créer une seconde (FLUTTER-7T, deux « Adama » identiques). Pas de
+        // contrainte d'unicité possible en base : phone_e164 est chiffré.
+        Optional<RecipientEntity> samePhone = findByPhone(userId, request.phoneE164());
+        if (samePhone.isPresent()) {
+            RecipientEntity existing = samePhone.get();
+            applyRequest(existing, request);
+            repository.save(existing);
+            auditService.log("RECIPIENT", existing.getId(), "RECIPIENT_UPDATED", userId,
+                    Map.of("fullName", request.fullName(), "reason", "duplicate-phone"));
+            log.info("Recipient create merged into existing: id={} userId={}", existing.getId(), userId);
+            return toDto(existing,
+                    invitationRepository.findLinkedRecipientIds(userId).contains(existing.getId()));
         }
 
         RecipientEntity entity = new RecipientEntity();
@@ -121,6 +137,32 @@ public class RecipientService {
             current.setDefault(false);
             repository.saveAndFlush(current);
         });
+    }
+
+    private Optional<RecipientEntity> findByPhone(UUID userId, String phoneE164) {
+        String digits = digitsOf(phoneE164);
+        if (digits.isEmpty()) {
+            return Optional.empty();
+        }
+        return repository.findByUserIdOrderByUpdatedAtDesc(userId).stream()
+                .filter(e -> digits.equals(digitsOf(e.getPhoneE164())))
+                .findFirst();
+    }
+
+    private static String digitsOf(String phone) {
+        return phone == null ? "" : phone.replaceAll("\\D", "");
+    }
+
+    private static void applyRequest(RecipientEntity entity, CreateRecipientRequest request) {
+        entity.setFullName(request.fullName());
+        entity.setRelationship(request.relationship());
+        entity.setPhoneE164(request.phoneE164());
+        entity.setWhatsappE164(request.whatsappE164());
+        entity.setStreet(request.street());
+        entity.setCity(request.city());
+        entity.setCountry(request.country());
+        entity.setNotes(request.notes());
+        entity.setDefault(request.isDefault());
     }
 
     private RecipientDto toDto(RecipientEntity e, boolean linkedOnYadony) {
