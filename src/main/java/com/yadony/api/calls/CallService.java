@@ -71,12 +71,12 @@ public class CallService {
         String callId = UUID.randomUUID().toString();
         CallEntity call;
         try {
-            call = tx.execute(status -> {
+            call = java.util.Objects.requireNonNull(tx.execute(status -> {
                 expiry.expireStale(conversationId);
                 if (calls.existsByConversationIdAndStatusIn(conversationId, LIVE)) throw alreadyInProgress();
                 return calls.saveAndFlush(new CallEntity(conversationId, e.conversation().getBidId(),
                         caller.getId(), callee.getId(), callId));
-            });
+            }), "La création de l'appel n'a renvoyé aucune ligne");
         } catch (DataIntegrityViolationException ex) {
             throw alreadyInProgress();
         }
