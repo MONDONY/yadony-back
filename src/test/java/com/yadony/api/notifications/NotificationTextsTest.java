@@ -56,6 +56,10 @@ class NotificationTextsTest {
         map.put("bidAcceptedPayNow", NotificationTexts.bidAcceptedPayNow(m));
         map.put("bidRejected", NotificationTexts.bidRejected(m));
         map.put("bidRejectedTripWithdrawn", NotificationTexts.bidRejectedTripWithdrawn(m));
+        for (com.yadony.api.matching.BidRejectionReason r : com.yadony.api.matching.BidRejectionReason.values()) {
+            map.put("bidRejectedWithReason " + r, NotificationTexts.bidRejectedWithReason(m, r.name(), false));
+            map.put("bidRejectedWithReason refund " + r, NotificationTexts.bidRejectedWithReason(m, r.name(), true));
+        }
         for (NotificationTexts.BidLoss loss : NotificationTexts.BidLoss.values()) {
             map.put("bidLostWithRematch " + loss, NotificationTexts.bidLostWithRematch(m, loss, 12));
             map.put("bidLostWithRematch 1 " + loss, NotificationTexts.bidLostWithRematch(m, loss, 1));
@@ -394,6 +398,14 @@ class NotificationTextsTest {
         assertThat(NotificationTexts.recipientPickupUpdated(en).title()).isEqualTo("Pickup updated");
         assertThat(NotificationTexts.recipientPickupUpdated(en).body())
                 .isEqualTo("The traveler has updated the pickup instructions for your parcel.");
+    }
+
+    @Test
+    void bidRejectedWithReason_unknownReason_returnsNull() {
+        assertThat(NotificationTexts.bidRejectedWithReason(TestMessages.fr(), null, false)).isNull();
+        assertThat(NotificationTexts.bidRejectedWithReason(TestMessages.fr(), "Trop lourd", true)).isNull();
+        assertThat(NotificationTexts.bidRejectedWithReason(TestMessages.en(), "NO_CAPACITY", true).body())
+                .isEqualTo("The traveler declined: not enough room. Refund in progress.");
     }
 
     @Test

@@ -1,6 +1,7 @@
 package com.yadony.api.notifications;
 
 import com.yadony.api.common.i18n.Messages;
+import com.yadony.api.matching.BidRejectionReason;
 import com.yadony.api.payments.wallet.WalletAmountText;
 
 import java.math.BigDecimal;
@@ -114,6 +115,20 @@ public final class NotificationTexts {
 
     public static NotificationText bidRejected(Messages m) {
         return new NotificationText(m.get("notification.bid-rejected.title"), m.get("notification.bid-rejected.body"));
+    }
+
+    /**
+     * Refus avec le motif choisi par le voyageur (FLUTTER-AF), {@code null} quand le motif
+     * n'est pas dans la liste fermée (refus automatique, ancienne version de l'app) : le
+     * libellé sans motif s'applique alors. {@code refund} ajoute « Remboursement en cours »
+     * pour une demande déjà payée.
+     */
+    public static NotificationText bidRejectedWithReason(Messages m, String reason, boolean refund) {
+        BidRejectionReason code = BidRejectionReason.parse(reason);
+        if (code == null) return null;
+        String body = m.get("notification.bid-rejected.reason", m.get("bid-rejection-reason." + code.name()));
+        if (refund) body = body + " " + m.get("notification.refund-in-progress");
+        return new NotificationText(m.get("notification.bid-rejected.title"), body);
     }
 
     public static NotificationText bidRejectedTripWithdrawn(Messages m) {

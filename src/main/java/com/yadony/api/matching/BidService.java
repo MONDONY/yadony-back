@@ -954,7 +954,15 @@ public class BidService {
 
         bid.setStatus(BidStatus.REJECTED);
         if (request != null) {
-            bid.setRejectionReason(request.reason());
+            // Un refus manuel ne garde qu'un motif de la liste fermée (FLUTTER-AF) : le texte
+            // libre des anciennes versions de l'app n'était jamais montré à l'expéditeur.
+            // Les refus automatiques gardent leur motif interne.
+            if (systemInitiated) {
+                bid.setRejectionReason(request.reason());
+            } else {
+                BidRejectionReason code = BidRejectionReason.parse(request.reason());
+                bid.setRejectionReason(code == null ? null : code.name());
+            }
         }
         bidRepository.save(bid);
 

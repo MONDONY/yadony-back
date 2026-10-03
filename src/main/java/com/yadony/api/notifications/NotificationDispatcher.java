@@ -362,7 +362,9 @@ public class NotificationDispatcher {
                     Map.of("type", "BID_REJECTED", "bidId", event.getBidId().toString()));
             return;
         }
-        var rejected = NotificationTexts.bidRejected(messagesFor(event.getSenderId()));
+        Messages messages = messagesFor(event.getSenderId());
+        var withReason = NotificationTexts.bidRejectedWithReason(messages, event.getReason(), false);
+        var rejected = withReason != null ? withReason : NotificationTexts.bidRejected(messages);
         notifyUser(event.getSenderId(), rejected.title(), rejected.body(),
                 Map.of("type", "BID_REJECTED", "bidId", event.getBidId().toString()));
     }
@@ -389,14 +391,19 @@ public class NotificationDispatcher {
         // Défense : count > 0 avec cancellationId null ne devrait pas arriver (contrat X2 garantit
         // cancellationId non-null dès que suggestionCount > 0), mais si ça survient on retombe
         // sur le corps "remboursement en cours" sans deep link plutôt que de risquer un NPE.
+        Messages messages = messagesFor(event.senderId());
         if (n > 0 && event.cancellationId() != null) {
-            var text = NotificationTexts.bidLostWithRematch(messagesFor(event.senderId()), loss, n);
+            // Avec des alternatives, le push garde le nombre de voyageurs proposés : le motif
+            // du refus reste lisible sur le détail de la demande (72 caractères au plus).
+            var text = NotificationTexts.bidLostWithRematch(messages, loss, n);
             notifyUser(event.senderId(), text.title(), text.body(),
                     Map.of("type", "BID_REJECTED",
                            "bidId", event.bidId().toString(),
                            "cancellationId", event.cancellationId().toString()));
         } else {
-            var text = NotificationTexts.bidLostRefund(messagesFor(event.senderId()), loss);
+            var withReason = loss == NotificationTexts.BidLoss.REFUSED
+                    ? NotificationTexts.bidRejectedWithReason(messages, event.reason(), true) : null;
+            var text = withReason != null ? withReason : NotificationTexts.bidLostRefund(messages, loss);
             notifyUser(event.senderId(), text.title(), text.body(),
                     Map.of("type", "BID_REJECTED", "bidId", event.bidId().toString()));
         }
