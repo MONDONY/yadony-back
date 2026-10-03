@@ -179,6 +179,27 @@ class BidLostRematchListenerTest {
         assertThat(preparedCaptor.getValue().cancelledByTraveler()).isFalse();
     }
 
+    @Test
+    @DisplayName("refus payé sans motif (reason null) → pas de NPE, traité comme un refus")
+    void onBidRejected_eligibleRejectWithoutReason_doesNotThrow() {
+        BidEntity bid = buildBid();
+        AnnouncementEntity announcement = buildAnnouncement();
+        BidRejectedEvent event = new BidRejectedEvent(BID_ID, SENDER_ID, null, ANNOUNCEMENT_ID, true);
+
+        when(cancellationRepository.findByBidId(BID_ID)).thenReturn(Optional.empty());
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+        when(cancellationRepository.save(any(CancellationEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(rematchService.generateForCancellations(any(), any(), any())).thenReturn(Map.of());
+
+        listener.onBidRejected(event);
+
+        ArgumentCaptor<BidLostRematchPreparedEvent> preparedCaptor =
+                ArgumentCaptor.forClass(BidLostRematchPreparedEvent.class);
+        verify(eventPublisher).publishEvent(preparedCaptor.capture());
+        assertThat(preparedCaptor.getValue().cancelledByTraveler()).isFalse();
+    }
+
     // Lot B (revue round 3) : ANNOUNCEMENT_DELETED (removeByAdmin rematchEligible=false ne
     // passe jamais ici — seul deleteAnnouncement, rematchEligible=true, l'atteint) rejoint
     // désormais l'ensemble « motifs initiés par le voyageur » — même traitement rematch que
