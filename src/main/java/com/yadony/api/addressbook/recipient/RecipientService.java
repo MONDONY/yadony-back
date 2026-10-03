@@ -1,6 +1,7 @@
 package com.yadony.api.addressbook.recipient;
 
 import com.yadony.api.addressbook.invitation.InvitationStatus;
+import com.yadony.api.addressbook.invitation.RecipientInvitationRemovedEvent;
 import com.yadony.api.addressbook.invitation.RecipientInvitationRepository;
 import com.yadony.api.addressbook.recipient.dto.CreateRecipientRequest;
 import com.yadony.api.addressbook.recipient.dto.RecipientDto;
@@ -9,6 +10,7 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,12 +31,15 @@ public class RecipientService {
     private final RecipientRepository repository;
     private final AuditService auditService;
     private final RecipientInvitationRepository invitationRepository;
+    private final ApplicationEventPublisher eventPublisher;
 
     public RecipientService(RecipientRepository repository, AuditService auditService,
-                            RecipientInvitationRepository invitationRepository) {
+                            RecipientInvitationRepository invitationRepository,
+                            ApplicationEventPublisher eventPublisher) {
         this.repository = repository;
         this.auditService = auditService;
         this.invitationRepository = invitationRepository;
+        this.eventPublisher = eventPublisher;
     }
 
     public List<RecipientDto> findAll(UUID userId) {
@@ -135,7 +140,8 @@ public class RecipientService {
      * Retirer un destinataire Yadony du carnet retire aussi son autorisation : sans ça,
      * l'expéditeur restait dans les « expéditeurs autorisés » de l'invité, et une nouvelle
      * invitation vers la même personne était absorbée sans rien envoyer, l'invitation
-     * acceptée existant toujours (FLUTTER-8Z). Même effet qu'un « Annuler » de l'inviteur.
+     * acceptée existant toujours (FLUTTER-8Z). Même effet qu'un « Annuler » de l'inviteur,
+     * et l'invité est prévenu : il voit l'expéditeur quitter sa liste sans autre explication.
      */
     private void revokeLinkedInvitations(UUID userId, UUID recipientId) {
         var linked = invitationRepository.findByInviterUserIdAndRecipientIdAndStatus(
@@ -145,6 +151,10 @@ public class RecipientService {
             invitationRepository.save(invitation);
             auditService.log("RECIPIENT_INVITATION", invitation.getId(), "RECIPIENT_INVITATION_REVOKED", userId,
                     Map.of("side", "INVITER", "reason", "recipient-deleted"));
+            if (invitation.getInviteeUserId() != null) {
+                eventPublisher.publishEvent(new RecipientInvitationRemovedEvent(
+                        invitation.getId(), userId, invitation.getInviteeUserId()));
+            }
         }
     }
 

@@ -3,6 +3,7 @@ package com.yadony.api.addressbook.recipient;
 import com.yadony.api.addressbook.invitation.InvitationChannel;
 import com.yadony.api.addressbook.invitation.InvitationStatus;
 import com.yadony.api.addressbook.invitation.RecipientInvitationEntity;
+import com.yadony.api.addressbook.invitation.RecipientInvitationRemovedEvent;
 import com.yadony.api.addressbook.invitation.RecipientInvitationRepository;
 import com.yadony.api.addressbook.recipient.dto.CreateRecipientRequest;
 import com.yadony.api.addressbook.recipient.dto.RecipientDto;
@@ -15,6 +16,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -42,13 +44,16 @@ class RecipientServiceTest {
     @Mock
     private RecipientInvitationRepository invitationRepository;
 
+    @Mock
+    private ApplicationEventPublisher eventPublisher;
+
     private RecipientService service;
 
     private UUID userId;
 
     @BeforeEach
     void setUp() {
-        service = new RecipientService(repository, auditService, invitationRepository);
+        service = new RecipientService(repository, auditService, invitationRepository, eventPublisher);
         userId = UUID.randomUUID();
     }
 
@@ -241,8 +246,9 @@ class RecipientServiceTest {
         // une nouvelle invitation vers la même personne n'était jamais envoyée.
         UUID id = UUID.randomUUID();
         RecipientEntity entity = buildEntity(userId);
+        UUID inviteeId = UUID.randomUUID();
         RecipientInvitationEntity accepted = new RecipientInvitationEntity(
-                userId, UUID.randomUUID(), InvitationChannel.PHONE, "hash", "+221 •• •• 67");
+                userId, inviteeId, InvitationChannel.PHONE, "hash", "+221 •• •• 67");
         accepted.respond(InvitationStatus.ACCEPTED, OffsetDateTime.now());
         accepted.setRecipientId(id);
 
@@ -258,6 +264,8 @@ class RecipientServiceTest {
         verify(auditService).log(eq("RECIPIENT_INVITATION"), any(),
                 eq("RECIPIENT_INVITATION_REVOKED"),
                 eq(userId), any());
+        // L'invité est prévenu, après commit, par RecipientInvitationNotificationListener.
+        verify(eventPublisher).publishEvent(new RecipientInvitationRemovedEvent(accepted.getId(), userId, inviteeId));
     }
 
     @Test
@@ -271,6 +279,7 @@ class RecipientServiceTest {
         service.delete(userId, id);
 
         verify(invitationRepository, never()).save(any());
+        verify(eventPublisher, never()).publishEvent(any());
     }
 
     @Test

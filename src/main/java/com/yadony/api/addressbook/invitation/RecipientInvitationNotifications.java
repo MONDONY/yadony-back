@@ -9,4 +9,6 @@ public final class RecipientInvitationNotifications {
     public static final String INVITATION = "RECIPIENT_INVITATION";
     /** À l'inviteur : son invitation est acceptée. */
     public static final String ACCEPTED = "RECIPIENT_INVITATION_ACCEPTED";
+    /** À l'invité : l'inviteur l'a retiré de ses destinataires (FLUTTER-8Z). */
+    public static final String REMOVED = "RECIPIENT_INVITATION_REMOVED";
 }
