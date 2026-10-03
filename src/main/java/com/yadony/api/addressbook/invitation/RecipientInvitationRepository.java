@@ -29,6 +29,9 @@ public interface RecipientInvitationRepository extends JpaRepository<RecipientIn
     List<RecipientInvitationEntity> findByInviterUserIdAndStatusInOrderByCreatedAtDesc(
             UUID inviterUserId, Collection<InvitationStatus> statuses);
 
+    List<RecipientInvitationEntity> findByInviterUserIdAndRecipientIdAndStatus(
+            UUID inviterUserId, UUID recipientId, InvitationStatus status);
+
     /** Entrées du carnet de {@code inviterUserId} liées à un compte Yadony par une invitation acceptée. */
     @Query("select i.recipientId from RecipientInvitationEntity i where i.inviterUserId = :inviterUserId "
             + "and i.status = com.yadony.api.addressbook.invitation.InvitationStatus.ACCEPTED "

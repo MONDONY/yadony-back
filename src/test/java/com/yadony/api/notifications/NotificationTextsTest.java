@@ -191,6 +191,8 @@ class NotificationTextsTest {
         map.put("recipientInvitation sans prénom", NotificationTexts.recipientInvitation(m, " "));
         map.put("recipientInvitationAccepted", NotificationTexts.recipientInvitationAccepted(m, NOM));
         map.put("recipientInvitationAccepted sans prénom", NotificationTexts.recipientInvitationAccepted(m, null));
+        map.put("recipientInvitationRemoved", NotificationTexts.recipientInvitationRemoved(m, NOM));
+        map.put("recipientInvitationRemoved sans prénom", NotificationTexts.recipientInvitationRemoved(m, null));
         return map;
     }
 
@@ -280,6 +282,10 @@ class NotificationTextsTest {
                 .isEqualTo("A sender wants to add you to their Yadony recipients.");
         assertThat(NotificationTexts.recipientInvitationAccepted(en, null).body()).startsWith("The recipient accepted");
         assertThat(NotificationTexts.recipientParcelAnnounced(en, "Awa").title()).isEqualTo("A parcel is coming");
+        assertThat(NotificationTexts.recipientInvitationRemoved(fr, "Awa")).isEqualTo(new NotificationText(
+                "Destinataires Yadony", "Awa ne vous compte plus parmi ses destinataires Yadony."));
+        assertThat(NotificationTexts.recipientInvitationRemoved(en, null).body())
+                .isEqualTo("A sender removed you from their Yadony recipients.");
     }
 
     @Test

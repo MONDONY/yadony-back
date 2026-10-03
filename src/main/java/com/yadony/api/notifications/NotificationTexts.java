@@ -742,6 +742,13 @@ public final class NotificationTexts {
                         who(m, inviteeFirstName, "notification.fallback.recipient")));
     }
 
+    /** À l'invité : l'inviteur l'a retiré de ses destinataires, ses colis ne lui sont plus rattachés. */
+    public static NotificationText recipientInvitationRemoved(Messages m, String inviterFirstName) {
+        return new NotificationText(m.get("notification.recipient-invitation-removed.title"),
+                m.get("notification.recipient-invitation-removed.body",
+                        who(m, inviterFirstName, "notification.fallback.sender")));
+    }
+
     private static String who(Messages m, String firstName, String fallbackKey) {
         return firstName == null || firstName.isBlank() ? m.get(fallbackKey) : shortDisplayName(firstName);
     }

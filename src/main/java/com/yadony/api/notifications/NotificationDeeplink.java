@@ -69,7 +69,8 @@ public final class NotificationDeeplink {
             case "RECIPIENT_PARCEL_REASSIGNED" -> Optional.of("tracking");
             // Invitations au carnet (lot 4) : l'invité répond depuis ses demandes, l'inviteur
             // retrouve le destinataire ajouté dans son carnet.
-            case "RECIPIENT_INVITATION" -> Optional.of("recipient-invitations");
+            // Retiré du carnet : il retrouve ses expéditeurs autorisés, à jour.
+            case "RECIPIENT_INVITATION", "RECIPIENT_INVITATION_REMOVED" -> Optional.of("recipient-invitations");
             case "RECIPIENT_INVITATION_ACCEPTED" -> Optional.of("profile/recipients");
 
             case "KYC_VERIFIED" -> Optional.of("kyc/status");

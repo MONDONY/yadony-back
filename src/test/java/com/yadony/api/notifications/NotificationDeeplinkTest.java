@@ -83,6 +83,9 @@ class NotificationDeeplinkTest {
                 .contains("yadony://profile/recipients");
         assertThat(NotificationCategory.fromType("RECIPIENT_INVITATION")).isEqualTo(NotificationCategory.COLIS);
         assertThat(NotificationCategory.fromType("RECIPIENT_INVITATION_ACCEPTED")).isEqualTo(NotificationCategory.COLIS);
+        assertThat(NotificationDeeplink.of("RECIPIENT_INVITATION_REMOVED", Map.of()))
+                .contains("yadony://recipient-invitations");
+        assertThat(NotificationCategory.fromType("RECIPIENT_INVITATION_REMOVED")).isEqualTo(NotificationCategory.COLIS);
     }
 
     @Test

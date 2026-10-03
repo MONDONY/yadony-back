@@ -1,5 +1,9 @@
 package com.yadony.api.addressbook.recipient;
 
+import com.yadony.api.addressbook.invitation.InvitationChannel;
+import com.yadony.api.addressbook.invitation.InvitationStatus;
+import com.yadony.api.addressbook.invitation.RecipientInvitationEntity;
+import com.yadony.api.addressbook.invitation.RecipientInvitationRemovedEvent;
 import com.yadony.api.addressbook.invitation.RecipientInvitationRepository;
 import com.yadony.api.addressbook.recipient.dto.CreateRecipientRequest;
 import com.yadony.api.addressbook.recipient.dto.RecipientDto;
@@ -12,7 +16,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -20,6 +26,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -37,13 +44,16 @@ class RecipientServiceTest {
     @Mock
     private RecipientInvitationRepository invitationRepository;
 
+    @Mock
+    private ApplicationEventPublisher eventPublisher;
+
     private RecipientService service;
 
     private UUID userId;
 
     @BeforeEach
     void setUp() {
-        service = new RecipientService(repository, auditService, invitationRepository);
+        service = new RecipientService(repository, auditService, invitationRepository, eventPublisher);
         userId = UUID.randomUUID();
     }
 
@@ -228,6 +238,48 @@ class RecipientServiceTest {
 
         assertThat(entity.getDeletedAt()).isNotNull();
         verify(auditService).log(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void delete_revokesTheAcceptedInvitationLinkedToTheEntry() {
+        // FLUTTER-8Z : sans révocation, l'expéditeur restait autorisé chez l'invité et
+        // une nouvelle invitation vers la même personne n'était jamais envoyée.
+        UUID id = UUID.randomUUID();
+        RecipientEntity entity = buildEntity(userId);
+        UUID inviteeId = UUID.randomUUID();
+        RecipientInvitationEntity accepted = new RecipientInvitationEntity(
+                userId, inviteeId, InvitationChannel.PHONE, "hash", "+221 •• •• 67");
+        accepted.respond(InvitationStatus.ACCEPTED, OffsetDateTime.now());
+        accepted.setRecipientId(id);
+
+        when(repository.findByUserIdAndId(userId, id)).thenReturn(Optional.of(entity));
+        when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(invitationRepository.findByInviterUserIdAndRecipientIdAndStatus(
+                userId, id, InvitationStatus.ACCEPTED)).thenReturn(List.of(accepted));
+
+        service.delete(userId, id);
+
+        assertThat(accepted.getStatus()).isEqualTo(InvitationStatus.REVOKED);
+        verify(invitationRepository).save(accepted);
+        verify(auditService).log(eq("RECIPIENT_INVITATION"), any(),
+                eq("RECIPIENT_INVITATION_REVOKED"),
+                eq(userId), any());
+        // L'invité est prévenu, après commit, par RecipientInvitationNotificationListener.
+        verify(eventPublisher).publishEvent(new RecipientInvitationRemovedEvent(accepted.getId(), userId, inviteeId));
+    }
+
+    @Test
+    void delete_withoutLinkedInvitation_touchesNoInvitation() {
+        UUID id = UUID.randomUUID();
+        when(repository.findByUserIdAndId(userId, id)).thenReturn(Optional.of(buildEntity(userId)));
+        when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(invitationRepository.findByInviterUserIdAndRecipientIdAndStatus(
+                userId, id, InvitationStatus.ACCEPTED)).thenReturn(List.of());
+
+        service.delete(userId, id);
+
+        verify(invitationRepository, never()).save(any());
+        verify(eventPublisher, never()).publishEvent(any());
     }
 
     @Test

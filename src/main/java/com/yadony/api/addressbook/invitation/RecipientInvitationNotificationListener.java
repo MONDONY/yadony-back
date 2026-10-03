@@ -15,7 +15,8 @@ import java.util.Map;
 
 /**
  * Prévient l'invité, en asynchrone : l'envoi d'une invitation doit répondre dans le même
- * temps qu'un compte existe ou non, le push ne pèse donc jamais sur la réponse HTTP.
+ * temps qu'un compte existe ou non, le push ne pèse donc jamais sur la réponse HTTP. Même
+ * voie pour le retrait du carnet, qui ne doit pas non plus attendre FCM.
  */
 @Component
 public class RecipientInvitationNotificationListener {
@@ -45,6 +46,24 @@ public class RecipientInvitationNotificationListener {
                             "invitationId", event.invitationId().toString()));
         } catch (Exception e) {
             log.warn("Notification d'invitation {} impossible : {}", event.invitationId(), e.toString());
+        }
+    }
+
+    /** Prévient l'invité que l'inviteur l'a retiré de ses destinataires. */
+    @Async
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    public void onInvitationRemoved(RecipientInvitationRemovedEvent event) {
+        try {
+            String inviterFirstName = userRepository.findById(event.inviterUserId())
+                    .map(UserEntity::getFirstName)
+                    .orElse(null);
+            var text = NotificationTexts.recipientInvitationRemoved(
+                    notificationDispatcher.messagesFor(event.inviteeUserId()), inviterFirstName);
+            notificationDispatcher.notifyUser(event.inviteeUserId(), text.title(), text.body(),
+                    Map.of("type", RecipientInvitationNotifications.REMOVED,
+                            "invitationId", event.invitationId().toString()));
+        } catch (Exception e) {
+            log.warn("Notification de retrait {} impossible : {}", event.invitationId(), e.toString());
         }
     }
 }
