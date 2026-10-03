@@ -24,6 +24,7 @@ import com.yadony.api.tracking.dto.TrackingSearchResponse;
 import com.yadony.api.tracking.dto.TripScanHistoryEntryDto;
 import com.yadony.api.tracking.events.DeliveryConfirmedEvent;
 import com.yadony.api.tracking.events.ParcelDepartedEvent;
+import com.yadony.api.tracking.events.ParcelInTransitEvent;
 import com.yadony.api.matching.reception.BidRecipientLinkRepository;
 import com.yadony.api.matching.reception.ReceptionLinkStatus;
 import com.google.zxing.BarcodeFormat;
@@ -344,6 +345,8 @@ public class TrackingService {
         if (request.eventType() == TrackingEventType.TRANSIT && bid.getStatus() == BidStatus.HANDED_OVER) {
             bid.setStatus(BidStatus.IN_TRANSIT);
             bidRepository.save(bid);
+            // Le trajet est parti : plus aucune nouvelle demande (FLUTTER-AE).
+            eventPublisher.publishEvent(new ParcelInTransitEvent(bid.getId(), bid.getAnnouncementId()));
         }
 
         return toEventResponse(event, null);

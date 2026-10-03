@@ -89,7 +89,8 @@ public class BidLostRematchListener {
             return;
         }
 
-        boolean cancelledByTraveler = TRAVELER_INITIATED_REASONS.contains(event.getReason());
+        boolean cancelledByTraveler = event.getReason() != null
+                && TRAVELER_INITIATED_REASONS.contains(event.getReason());
 
         if (cancellationRepository.findByBidId(event.getBidId()).isPresent()) {
             log.warn("BidLostRematchListener: cancellation HANDOVER déjà existante pour bid {}, "

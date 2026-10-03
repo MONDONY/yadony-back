@@ -3232,6 +3232,37 @@ class AnnouncementServiceTest {
         }
 
         @Test
+        @DisplayName("markArrived — le trajet quitte le marché : IN_PROGRESS, demandes en attente expirées (FLUTTER-AE)")
+        void markArrived_activeTrip_leavesMarket() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement(traveler);
+            announcement.setStatus(AnnouncementStatus.ACTIVE);
+            BidEntity bidInTransit = buildBid(BidStatus.IN_TRANSIT, announcement.getId());
+            BidEntity pending = buildBid(BidStatus.PENDING, announcement.getId());
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+            when(announcementRepository.findByIdForUpdate(announcement.getId())).thenReturn(Optional.of(announcement));
+            when(announcementRepository.findById(announcement.getId())).thenReturn(Optional.of(announcement));
+            when(bidRepository.findByAnnouncementIdAndStatusNotIn(eq(announcement.getId()), anyCollection()))
+                    .thenReturn(List.of(bidInTransit));
+            when(bidRepository.existsByAnnouncementIdAndStatusIn(eq(announcement.getId()), anyList()))
+                    .thenReturn(true);
+            when(bidRepository.findByAnnouncementIdAndStatusIn(eq(announcement.getId()),
+                    eq(List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.NEGOTIATING))))
+                    .thenReturn(List.of(pending));
+            when(bidRepository.countVisibleByAnnouncementId(announcement.getId())).thenReturn(1L);
+            when(bidRepository.countByAnnouncementIdAndStatusIn(eq(announcement.getId()), anyList())).thenReturn(0L);
+            when(announcementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            announcementService.markArrived(announcement.getId(), FIREBASE_UID, null);
+
+            assertThat(announcement.getStatus()).isEqualTo(AnnouncementStatus.IN_PROGRESS);
+            assertThat(pending.getStatus()).isEqualTo(BidStatus.EXPIRED);
+            verify(auditService).log(eq("ANNOUNCEMENT"), eq(traveler.getId()), eq("ANNOUNCEMENT_IN_PROGRESS"),
+                    eq(announcement.getId()), eq(Map.of("previousStatus", "ACTIVE", "trigger", "TRIP_ARRIVED")));
+        }
+
+        @Test
         @DisplayName("markArrived — refuse si aucun colis actif n'a été récupéré")
         void markArrived_noParcelDeparted_throws() {
             UserEntity traveler = buildTraveler();

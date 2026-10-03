@@ -466,6 +466,17 @@ class NotificationDispatcherTest {
     }
 
     @Test
+    void onBidRejected_withTravelerReason_showsReasonToSender() {
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onBidRejected(new BidRejectedEvent(bidId, senderId, "NO_CAPACITY", annId, false));
+
+        verify(fcmService).sendToUser(eq(senderId), eq("Demande refusée"),
+                eq("Le voyageur a refusé : plus assez de place."),
+                any());
+    }
+
+    @Test
     void onBidRejected_rematchEligible_skipsGenericNotification() {
         BidRejectedEvent event = new BidRejectedEvent(bidId, senderId, "cancelled by traveler", annId, true);
 
@@ -540,6 +551,29 @@ class NotificationDispatcherTest {
         assertThat(dataCaptor.getValue()).containsEntry("type", "BID_REJECTED");
         assertThat(dataCaptor.getValue()).containsEntry("bidId", bidId.toString());
         assertThat(dataCaptor.getValue()).doesNotContainKey("cancellationId");
+    }
+
+    @Test
+    void onBidLostRematchPrepared_rejectWithReason_appendsReason() {
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onBidLostRematchPrepared(
+                new BidLostRematchPreparedEvent(senderId, bidId, null, 0, false, "TRIP_CHANGED"));
+
+        verify(fcmService).sendToUser(eq(senderId), eq("Demande refusée"),
+                eq("Le voyageur a refusé : son voyage a changé. Remboursement en cours."),
+                any());
+    }
+
+    @Test
+    void onBidLostRematchPrepared_cancelledByTraveler_ignoresReasonCode() {
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onBidLostRematchPrepared(
+                new BidLostRematchPreparedEvent(senderId, bidId, null, 0, true, "OTHER"));
+
+        verify(fcmService).sendToUser(eq(senderId), eq("Transport annulé"),
+                argThat((String body) -> !body.contains("voyage a changé") && !body.contains(":")), any());
     }
 
     @Test
@@ -1160,6 +1194,18 @@ class NotificationDispatcherTest {
      * déclenché l'événement. Résolveur de test qui rend EN pour le voyageur, FR pour
      * l'expéditeur.
      */
+    @Test
+    void onBidRejected_withReason_recipientInEnglish() {
+        NotificationDispatcher englishDispatcher = new NotificationDispatcher(fcmService, smsService, userRepository,
+                notificationService, blockVisibility, pawapayProperties, TestMessages.resolver(AppLanguage.EN));
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        englishDispatcher.onBidRejected(new BidRejectedEvent(bidId, senderId, "CONTENT_NOT_ACCEPTED", annId, false));
+
+        verify(fcmService).sendToUser(eq(senderId), eq("Request declined"),
+                eq("The traveler declined: contents not accepted."), any());
+    }
+
     @Test
     void onParcelReturned_eachPartyGetsOwnLanguage() {
         MessagesResolver mixed = new MessagesResolver(TestMessages.source(), userId ->

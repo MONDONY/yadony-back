@@ -1823,14 +1823,33 @@ class BidServiceTest {
             when(userRepository.findById(SENDER_ID)).thenReturn(Optional.empty());
             when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
 
-            bidService.rejectBid(BID_ID, TRAVELER_UID, new BidRejectRequest("Trop lourd"));
+            bidService.rejectBid(BID_ID, TRAVELER_UID, new BidRejectRequest("NO_CAPACITY"));
 
             assertThat(bid.getStatus()).isEqualTo(BidStatus.REJECTED);
-            assertThat(bid.getRejectionReason()).isEqualTo("Trop lourd");
+            assertThat(bid.getRejectionReason()).isEqualTo("NO_CAPACITY");
 
             ArgumentCaptor<BidRejectedEvent> captor = ArgumentCaptor.forClass(BidRejectedEvent.class);
             verify(eventPublisher).publishEvent(captor.capture());
             assertThat(captor.getValue().getBidId()).isEqualTo(BID_ID);
+        }
+
+        @Test
+        @DisplayName("motif libre (ancienne app) → non conservé : seule la liste fermée est montrée à l'expéditeur")
+        void rejectBid_freeTextReason_isDropped() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement();
+            BidEntity bid = buildBid();
+
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+            when(bidRepository.save(any())).thenReturn(bid);
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.empty());
+
+            bidService.rejectBid(BID_ID, TRAVELER_UID, new BidRejectRequest("appelle-moi au 06 12 34 56 78"));
+
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.REJECTED);
+            assertThat(bid.getRejectionReason()).isNull();
         }
 
         @Test
