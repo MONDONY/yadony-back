@@ -283,4 +283,30 @@ class RecipientInvitationControllerIntegrationTest {
         mockMvc.perform(invite("{\"phone\":\"" + INVITEE_PHONE + "\"}")).andExpect(status().isAccepted());
         assertThat(invitationRepository.findAll()).hasSize(2);
     }
+    @Test
+    void inviterDeletesTheLinkedEntry_revokesTheInvitation_andANewInvitationIsSent() throws Exception {
+        // FLUTTER-8Z : supprimer l'entrée laissait l'invitation ACCEPTED vivante. L'inviteur
+        // restait autorisé chez l'invité, et réinviter la même personne n'envoyait rien.
+        mockMvc.perform(invite("{\"phone\":\"" + INVITEE_PHONE + "\"}")).andExpect(status().isAccepted());
+        UUID id = onlyInvitation().getId();
+        mockMvc.perform(post("/recipient-invitations/{id}/accept", id).with(authentication(as(INVITEE_UID))))
+                .andExpect(status().isOk());
+        UUID entryId = onlyInvitation().getRecipientId();
+
+        mockMvc.perform(delete("/addressbook/recipients/{id}", entryId).with(authentication(as(INVITER_UID))))
+                .andExpect(status().isNoContent());
+
+        assertThat(onlyInvitation().getStatus()).isEqualTo(InvitationStatus.REVOKED);
+        assertThat(recipientTrust.isTrusted(inviter.getId(), invitee.getId())).isFalse();
+        mockMvc.perform(get("/recipient-invitations/incoming").with(authentication(as(INVITEE_UID))))
+                .andExpect(jsonPath("$.length()").value(0));
+
+        mockMvc.perform(invite("{\"phone\":\"" + INVITEE_PHONE + "\"}")).andExpect(status().isAccepted());
+        assertThat(invitationRepository.findAll())
+                .extracting(RecipientInvitationEntity::getStatus)
+                .containsExactlyInAnyOrder(InvitationStatus.REVOKED, InvitationStatus.PENDING);
+        mockMvc.perform(get("/recipient-invitations/incoming").with(authentication(as(INVITEE_UID))))
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].status").value("PENDING"));
+    }
 }

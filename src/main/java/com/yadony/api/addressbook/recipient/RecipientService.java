@@ -1,5 +1,6 @@
 package com.yadony.api.addressbook.recipient;
 
+import com.yadony.api.addressbook.invitation.InvitationStatus;
 import com.yadony.api.addressbook.invitation.RecipientInvitationRepository;
 import com.yadony.api.addressbook.recipient.dto.CreateRecipientRequest;
 import com.yadony.api.addressbook.recipient.dto.RecipientDto;
@@ -11,6 +12,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -123,7 +126,26 @@ public class RecipientService {
         auditService.log("RECIPIENT", entity.getId(), "RECIPIENT_DELETED", userId,
                 Map.of("id", id.toString()));
 
+        revokeLinkedInvitations(userId, id);
+
         log.info("Recipient soft-deleted: id={} userId={}", id, userId);
+    }
+
+    /**
+     * Retirer un destinataire Yadony du carnet retire aussi son autorisation : sans ça,
+     * l'expéditeur restait dans les « expéditeurs autorisés » de l'invité, et une nouvelle
+     * invitation vers la même personne était absorbée sans rien envoyer, l'invitation
+     * acceptée existant toujours (FLUTTER-8Z). Même effet qu'un « Annuler » de l'inviteur.
+     */
+    private void revokeLinkedInvitations(UUID userId, UUID recipientId) {
+        var linked = invitationRepository.findByInviterUserIdAndRecipientIdAndStatus(
+                userId, recipientId, InvitationStatus.ACCEPTED);
+        for (var invitation : linked) {
+            invitation.respond(InvitationStatus.REVOKED, OffsetDateTime.now(ZoneOffset.UTC));
+            invitationRepository.save(invitation);
+            auditService.log("RECIPIENT_INVITATION", invitation.getId(), "RECIPIENT_INVITATION_REVOKED", userId,
+                    Map.of("side", "INVITER", "reason", "recipient-deleted"));
+        }
     }
 
     // saveAndFlush, pas save : au flush, Hibernate exécute les INSERT avant les
