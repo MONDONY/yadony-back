@@ -17,6 +17,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -177,6 +178,18 @@ public class SupportController {
         String key = attachmentService.uploadForUser(user.getId(), file);
         return Map.of("key", key,
                 "url", storageService.generatePresignedUrl(key, Duration.ofHours(1)));
+    }
+
+    /**
+     * Retire un ticket resolu de la boite support de l'utilisateur
+     * (FLUTTER-9W). 409 {@code support-ticket-not-resolved} pour un ticket en
+     * cours ; le ticket reste visible du back-office.
+     */
+    @DeleteMapping("/tickets/{ticketId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void hideTicket(@AuthenticationPrincipal String firebaseUid,
+                           @PathVariable UUID ticketId) {
+        supportTicketService.hideForUser(requireUser(firebaseUid), ticketId);
     }
 
     @PostMapping("/tickets/{ticketId}/read")

@@ -489,10 +489,11 @@ class SupportTicketServiceTest {
     }
 
     @Test
-    void listUserTickets_isScopedToTheOwner() {
+    void listUserTickets_isScopedToTheOwner_withoutHiddenTickets() {
         Pageable pageable = PageRequest.of(0, 20);
         Page<SupportTicketEntity> expected = Page.empty(pageable);
-        when(ticketRepository.findByUserIdOrderByLastMessageAtDesc(USER_ID, pageable)).thenReturn(expected);
+        when(ticketRepository.findByUserIdAndHiddenByUserAtIsNullOrderByLastMessageAtDesc(USER_ID, pageable))
+                .thenReturn(expected);
 
         assertThat(service.listUserTickets(USER_ID, pageable)).isSameAs(expected);
     }
@@ -701,6 +702,67 @@ class SupportTicketServiceTest {
         when(ticketRepository.findById(TICKET_ID)).thenReturn(Optional.empty());
 
         assertThat(service.findTicketForAdmin(TICKET_ID)).isEmpty();
+    }
+
+    // ------------------------------------------------ masquer un ticket (FLUTTER-9W)
+
+    @Test
+    void hideForUser_hidesAResolvedTicket_marksItRead_andAudits() {
+        SupportTicketEntity ticket = ticketWith(SupportTicketStatus.RESOLVED, ADMIN_ID);
+        when(ticketRepository.findById(TICKET_ID)).thenReturn(Optional.of(ticket));
+
+        service.hideForUser(user(USER_ID), TICKET_ID);
+
+        assertThat(ticket.getHiddenByUserAt()).isNotNull();
+        assertThat(ticket.getUserLastReadAt()).isEqualTo(ticket.getHiddenByUserAt());
+        verify(ticketRepository).save(ticket);
+        verify(auditService).log(eq("support_ticket"), eq(TICKET_ID),
+                eq("SUPPORT_TICKET_HIDDEN_BY_USER"), eq(USER_ID), any());
+    }
+
+    @Test
+    void hideForUser_refusesAnOpenTicket() {
+        SupportTicketEntity ticket = ticketWith(SupportTicketStatus.WAITING_USER, ADMIN_ID);
+        when(ticketRepository.findById(TICKET_ID)).thenReturn(Optional.of(ticket));
+
+        assertThatThrownBy(() -> service.hideForUser(user(USER_ID), TICKET_ID))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("support-ticket-not-resolved"));
+        assertThat(ticket.getHiddenByUserAt()).isNull();
+        verify(ticketRepository, never()).save(any());
+    }
+
+    @Test
+    void hideForUser_returns404ForSomeoneElsesTicket() {
+        SupportTicketEntity ticket = ticketWith(SupportTicketStatus.RESOLVED, ADMIN_ID);
+        when(ticketRepository.findById(TICKET_ID)).thenReturn(Optional.of(ticket));
+
+        assertThatThrownBy(() -> service.hideForUser(user(OTHER_USER_ID), TICKET_ID))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("support-ticket-not-found"));
+    }
+
+    @Test
+    void hideForUser_isIdempotent() {
+        SupportTicketEntity ticket = ticketWith(SupportTicketStatus.RESOLVED, ADMIN_ID);
+        java.time.LocalDateTime first = java.time.LocalDateTime.of(2026, 10, 1, 12, 0);
+        ticket.setHiddenByUserAt(first);
+        when(ticketRepository.findById(TICKET_ID)).thenReturn(Optional.of(ticket));
+
+        service.hideForUser(user(USER_ID), TICKET_ID);
+
+        assertThat(ticket.getHiddenByUserAt()).isEqualTo(first);
+        verify(ticketRepository, never()).save(any());
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    void userListsAndUnreadCountIgnoreHiddenTickets() {
+        when(ticketRepository.findByUserIdAndHiddenByUserAtIsNull(USER_ID)).thenReturn(List.of());
+
+        assertThat(service.listAllUserTickets(USER_ID)).isEmpty();
+        assertThat(service.totalUnread(USER_ID)).isZero();
+        verify(ticketRepository, never()).findByUserId(USER_ID);
     }
 
     private static SupportTicketEntity ticketWith(SupportTicketStatus status, UUID assignedAdminId) {
