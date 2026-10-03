@@ -148,7 +148,13 @@ public class ReceptionService {
         return toResponse(link, bid);
     }
 
-    /** « Ce n'est pas pour moi » : refusé une fois le colis confirmé. */
+    /**
+     * « Ce n'est pas pour moi » avant confirmation, ou « Me retirer de ce
+     * colis » après (FLUTTER-9F) : le destinataire de confiance, rattaché
+     * d'office, ou celui qui a confirmé, peut se retirer tant que le colis
+     * n'est pas livré. L'expéditeur est invité à désigner quelqu'un d'autre et
+     * le voyageur est prévenu.
+     */
     @Transactional
     public void decline(UUID bidId, String firebaseUid) {
         UserEntity user = currentUser(firebaseUid);
@@ -159,8 +165,8 @@ public class ReceptionService {
             return;
         }
         if (link.getStatus() == ReceptionLinkStatus.CONFIRMED) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "reception-already-confirmed",
-                    "Reception Already Confirmed", "Vous avez déjà confirmé que ce colis est pour vous");
+            withdraw(link, bid, user);
+            return;
         }
         link.respond(ReceptionLinkStatus.DECLINED, OffsetDateTime.now(clock));
         linkRepository.save(link);
@@ -169,6 +175,28 @@ public class ReceptionService {
         var text = NotificationTexts.recipientDeclined(notificationDispatcher.messagesFor(bid.getSenderId()));
         notificationDispatcher.notifyUser(bid.getSenderId(), text.title(), text.body(),
                 Map.of("type", ReceptionNotifications.DECLINED, "bidId", bidId.toString()));
+    }
+
+    private void withdraw(BidRecipientLinkEntity link, BidEntity bid, UserEntity user) {
+        if (!BidStatus.IN_FLIGHT.contains(bid.getStatus())) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "reception-not-withdrawable",
+                    "Reception Not Withdrawable", "Ce colis est déjà livré ou n'est plus en cours");
+        }
+        link.respond(ReceptionLinkStatus.DECLINED, OffsetDateTime.now(clock));
+        linkRepository.save(link);
+        auditService.log("BID_RECIPIENT_LINK", link.getId(), "RECEPTION_WITHDRAWN", user.getId(),
+                Map.of("bidId", bid.getId().toString(), "bidStatus", bid.getStatus().name()));
+        Map<String, String> data = Map.of("type", ReceptionNotifications.WITHDRAWN, "bidId", bid.getId().toString());
+        var toSender = NotificationTexts.recipientWithdrawnToSender(
+                notificationDispatcher.messagesFor(bid.getSenderId()), user.getFirstName());
+        notificationDispatcher.notifyUser(bid.getSenderId(), toSender.title(), toSender.body(), data);
+        announcementRepository.findById(bid.getAnnouncementId())
+                .map(AnnouncementEntity::getTravelerId)
+                .ifPresent(travelerId -> {
+                    var toTraveler = NotificationTexts.recipientWithdrawnToTraveler(
+                            notificationDispatcher.messagesFor(travelerId), user.getFirstName());
+                    notificationDispatcher.notifyUser(travelerId, toTraveler.title(), toTraveler.body(), data);
+                });
     }
 
     private static boolean isListed(BidRecipientLinkEntity link, BidEntity bid, LocalDateTime completedCutoff) {

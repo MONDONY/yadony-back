@@ -815,4 +815,18 @@ public final class NotificationTexts {
         return new NotificationText(m.get("notification.recipient-declined.title"),
                 m.get("notification.recipient-declined.body"));
     }
+
+    /** À l'expéditeur : le destinataire confirmé s'est retiré du colis (FLUTTER-9F). */
+    public static NotificationText recipientWithdrawnToSender(Messages m, String recipientFirstName) {
+        return new NotificationText(m.get("notification.recipient-withdrawn.title"),
+                m.get("notification.recipient-withdrawn.sender-body",
+                        who(m, recipientFirstName, "notification.fallback.recipient")));
+    }
+
+    /** Au voyageur : le destinataire confirmé s'est retiré du colis (FLUTTER-9F). */
+    public static NotificationText recipientWithdrawnToTraveler(Messages m, String recipientFirstName) {
+        return new NotificationText(m.get("notification.recipient-withdrawn.title"),
+                m.get("notification.recipient-withdrawn.traveler-body",
+                        who(m, recipientFirstName, "notification.fallback.recipient")));
+    }
 }

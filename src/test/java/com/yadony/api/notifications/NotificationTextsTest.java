@@ -178,6 +178,9 @@ class NotificationTextsTest {
         map.put("recipientConfirmed", NotificationTexts.recipientConfirmed(m, NOM));
         map.put("recipientConfirmed sans prénom", NotificationTexts.recipientConfirmed(m, null));
         map.put("recipientDeclined", NotificationTexts.recipientDeclined(m));
+        map.put("recipientWithdrawnToSender", NotificationTexts.recipientWithdrawnToSender(m, NOM));
+        map.put("recipientWithdrawnToSender sans prénom", NotificationTexts.recipientWithdrawnToSender(m, null));
+        map.put("recipientWithdrawnToTraveler", NotificationTexts.recipientWithdrawnToTraveler(m, NOM));
         map.put("recipientParcelCancelled", NotificationTexts.recipientParcelCancelled(m));
         map.put("recipientParcelRescheduled", NotificationTexts.recipientParcelRescheduled(m));
         map.put("recipientParcelReassigned", NotificationTexts.recipientParcelReassigned(m));
