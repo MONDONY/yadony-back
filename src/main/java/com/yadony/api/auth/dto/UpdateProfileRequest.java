@@ -1,5 +1,6 @@
 package com.yadony.api.auth.dto;
 
+import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Past;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
@@ -21,5 +22,8 @@ public record UpdateProfileRequest(
     @Pattern(regexp = "^\\+[1-9]\\d{1,14}$", message = "{validation.phone.e164-required}")
     String phoneNumber,
     @Size(max = 280) String bio,
-    Set<String> languages
+    // Langues parlées : l'app propose une liste et « Autre langue » en saisie
+    // libre (FLUTTER-9Z). Chaque valeur tient dans user_languages.language
+    // (VARCHAR 32) : sans cette borne, une saisie trop longue finissait en 500.
+    @Size(max = 30) Set<@NotBlank @Size(max = 32) String> languages
 ) {}
