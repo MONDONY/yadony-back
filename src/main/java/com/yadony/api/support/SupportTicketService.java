@@ -79,7 +79,7 @@ public class SupportTicketService {
 
     @Transactional(readOnly = true)
     public Page<SupportTicketEntity> listUserTickets(UUID userId, Pageable pageable) {
-        return ticketRepository.findByUserIdOrderByLastMessageAtDesc(userId, pageable);
+        return ticketRepository.findByUserIdAndHiddenByUserAtIsNullOrderByLastMessageAtDesc(userId, pageable);
     }
 
     @Transactional(readOnly = true)
@@ -128,10 +128,10 @@ public class SupportTicketService {
         return messageRepository.findFirstByTicketIdOrderByCreatedAtDesc(ticketId);
     }
 
-    /** Tous les tickets d'un utilisateur, pour le resume de sa boite support. */
+    /** Tickets visibles d'un utilisateur, pour le resume de sa boite support. */
     @Transactional(readOnly = true)
     public List<SupportTicketEntity> listAllUserTickets(UUID userId) {
-        return ticketRepository.findByUserId(userId);
+        return ticketRepository.findByUserIdAndHiddenByUserAtIsNull(userId);
     }
 
     @Transactional(readOnly = true)
@@ -162,7 +162,7 @@ public class SupportTicketService {
 
     @Transactional(readOnly = true)
     public long totalUnread(UUID userId) {
-        return ticketRepository.findByUserId(userId).stream()
+        return ticketRepository.findByUserIdAndHiddenByUserAtIsNull(userId).stream()
                 .mapToLong(this::unreadCount)
                 .sum();
     }
@@ -174,6 +174,30 @@ public class SupportTicketService {
         SupportTicketEntity ticket = requireOwnedTicket(user, ticketId);
         ticket.setUserLastReadAt(now());
         ticketRepository.save(ticket);
+    }
+
+    /**
+     * L'utilisateur retire un ancien ticket de sa boite support (FLUTTER-9W).
+     * Seul un ticket resolu se masque : un echange en cours disparaitrait
+     * alors que le support attend encore une reponse. Le ticket n'est jamais
+     * supprime (back-office, export RGPD) et compte comme lu. Idempotent.
+     */
+    public void hideForUser(UserEntity user, UUID ticketId) {
+        SupportTicketEntity ticket = requireOwnedTicket(user, ticketId);
+        if (!ticket.isResolved()) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT,
+                    "support-ticket-not-resolved", "Ticket en cours",
+                    "Seul un ticket resolu peut etre retire de la liste.");
+        }
+        if (ticket.getHiddenByUserAt() != null) {
+            return;
+        }
+        LocalDateTime at = now();
+        ticket.setHiddenByUserAt(at);
+        ticket.setUserLastReadAt(at);
+        ticketRepository.save(ticket);
+        auditService.log(AUDIT_ENTITY, ticket.getId(), "SUPPORT_TICKET_HIDDEN_BY_USER", user.getId(),
+                payload("status", ticket.getStatus().name()));
     }
 
     public SupportTicketEntity createTicket(UserEntity user, String category, String subject,

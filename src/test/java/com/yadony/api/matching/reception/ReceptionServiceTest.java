@@ -41,6 +41,7 @@ import static org.assertj.core.api.Assertions.catchThrowableOfType;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
@@ -67,6 +68,7 @@ class ReceptionServiceTest {
 
     private final UUID meId = UUID.randomUUID();
     private final UUID senderId = UUID.randomUUID();
+    private final UUID travelerIdForWithdraw = UUID.randomUUID();
     private final UUID travelerId = UUID.randomUUID();
     private final UUID annId = UUID.randomUUID();
     private UserEntity me;
@@ -311,16 +313,40 @@ class ReceptionServiceTest {
                 eq(Map.of("type", "RECIPIENT_DECLINED", "bidId", b.getId().toString())));
     }
 
+    // ── se retirer d'un colis confirmé (FLUTTER-9F) ─────────────────────────
+
     @Test
-    void decline_confirmed_is409() {
-        BidEntity b = bid(BidStatus.ACCEPTED, NOW_LDT);
+    void decline_confirmed_withdrawsAuditsAndNotifiesSenderAndTraveler() {
+        BidEntity b = bid(BidStatus.IN_TRANSIT, NOW_LDT);
+        BidRecipientLinkEntity l = link(b, ReceptionLinkStatus.CONFIRMED);
+        when(linkRepository.findByBidIdAndRecipientUserId(b.getId(), meId)).thenReturn(Optional.of(l));
+        when(bidRepository.findById(b.getId())).thenReturn(Optional.of(b));
+        AnnouncementEntity trip = new AnnouncementEntity();
+        trip.setTravelerId(travelerIdForWithdraw);
+        when(announcementRepository.findById(b.getAnnouncementId())).thenReturn(Optional.of(trip));
+
+        service.decline(b.getId(), "uid-me");
+
+        assertThat(l.getStatus()).isEqualTo(ReceptionLinkStatus.DECLINED);
+        verify(auditService).log(eq("BID_RECIPIENT_LINK"), any(), eq("RECEPTION_WITHDRAWN"), eq(meId), any());
+        Map<String, String> data = Map.of("type", "RECIPIENT_WITHDRAWN", "bidId", b.getId().toString());
+        verify(notificationDispatcher).notifyUser(eq(senderId), eq("Destinataire retiré"),
+                contains("Désignez un autre destinataire"), eq(data));
+        verify(notificationDispatcher).notifyUser(eq(travelerIdForWithdraw), eq("Destinataire retiré"),
+                contains("L'expéditeur est prévenu"), eq(data));
+    }
+
+    @Test
+    void decline_confirmed_afterDelivery_is409() {
+        BidEntity b = bid(BidStatus.COMPLETED, NOW_LDT);
         when(linkRepository.findByBidIdAndRecipientUserId(b.getId(), meId))
                 .thenReturn(Optional.of(link(b, ReceptionLinkStatus.CONFIRMED)));
         when(bidRepository.findById(b.getId())).thenReturn(Optional.of(b));
 
         var ex = catchThrowableOfType(() -> service.decline(b.getId(), "uid-me"), YadonyBusinessException.class);
         assertThat(ex.getStatus()).isEqualTo(HttpStatus.CONFLICT);
-        assertThat(ex.getErrorCode()).isEqualTo("reception-already-confirmed");
+        assertThat(ex.getErrorCode()).isEqualTo("reception-not-withdrawable");
+        verify(notificationDispatcher, never()).notifyUser(any(), anyString(), anyString(), any());
     }
 
     @Test

@@ -59,6 +59,14 @@ public class SupportTicketEntity extends BaseEntity {
     @Column(name = "user_last_read_at")
     private LocalDateTime userLastReadAt;
 
+    /**
+     * Masqué par l'utilisateur de sa liste (FLUTTER-9W). Ce n'est pas une
+     * suppression : le ticket reste entier pour le back-office et l'export
+     * de données, seule la boîte support de l'utilisateur ne le montre plus.
+     */
+    @Column(name = "hidden_by_user_at")
+    private LocalDateTime hiddenByUserAt;
+
     public UUID getUserId() { return userId; }
 
     public void setUserId(UUID userId) { this.userId = userId; }
@@ -94,6 +102,10 @@ public class SupportTicketEntity extends BaseEntity {
     public LocalDateTime getUserLastReadAt() { return userLastReadAt; }
 
     public void setUserLastReadAt(LocalDateTime userLastReadAt) { this.userLastReadAt = userLastReadAt; }
+
+    public LocalDateTime getHiddenByUserAt() { return hiddenByUserAt; }
+
+    public void setHiddenByUserAt(LocalDateTime hiddenByUserAt) { this.hiddenByUserAt = hiddenByUserAt; }
 
     public boolean isResolved() { return status == SupportTicketStatus.RESOLVED; }
 }

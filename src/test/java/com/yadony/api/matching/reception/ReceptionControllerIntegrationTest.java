@@ -160,15 +160,28 @@ class ReceptionControllerIntegrationTest {
                 .andExpect(status().isNotFound());
     }
 
+    /** FLUTTER-9F : un destinataire confirmé se retire tant que le colis est en cours. */
     @Test
-    void decline_confirmed_returns409ProblemDetail() throws Exception {
+    void decline_confirmed_withdrawsWhileInFlight() throws Exception {
         BidEntity bid = persistBid(BidStatus.ACCEPTED);
+        link(bid, ReceptionLinkStatus.CONFIRMED);
+
+        mockMvc.perform(post("/receptions/{id}/decline", bid.getId()).with(authentication(as(recipient))))
+                .andExpect(status().isNoContent());
+
+        assertThat(linkRepository.findByBidId(bid.getId()).orElseThrow().getStatus())
+                .isEqualTo(ReceptionLinkStatus.DECLINED);
+    }
+
+    @Test
+    void decline_confirmed_afterDelivery_returns409ProblemDetail() throws Exception {
+        BidEntity bid = persistBid(BidStatus.COMPLETED);
         link(bid, ReceptionLinkStatus.CONFIRMED);
 
         mockMvc.perform(post("/receptions/{id}/decline", bid.getId()).with(authentication(as(recipient))))
                 .andExpect(status().isConflict())
                 .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
-                .andExpect(jsonPath("$.type").value(endsWith("reception-already-confirmed")));
+                .andExpect(jsonPath("$.type").value(endsWith("reception-not-withdrawable")));
     }
 
     @Test

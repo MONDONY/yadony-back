@@ -26,6 +26,7 @@ import java.util.Set;
 import java.util.UUID;
 
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -144,6 +145,47 @@ class SupportControllerIntegrationTest {
         SupportTicketEntity foreign = persistTicket(intruder, SupportTicketStatus.NEW);
 
         mockMvc.perform(get("/support/tickets/" + foreign.getId())
+                        .with(authentication(asUser(OWNER_UID))))
+                .andExpect(status().isNotFound());
+    }
+
+    // ------------------------------------------------ masquer un ticket (FLUTTER-9W)
+
+    @Test
+    void deleteTicket_hidesAResolvedTicketFromTheUsersInboxOnly() throws Exception {
+        SupportTicketEntity resolved = persistTicket(owner, SupportTicketStatus.RESOLVED);
+        SupportTicketEntity open = persistTicket(owner, SupportTicketStatus.WAITING_USER);
+
+        mockMvc.perform(delete("/support/tickets/" + resolved.getId())
+                        .with(authentication(asUser(OWNER_UID))))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(get("/support/tickets").with(authentication(asUser(OWNER_UID))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].id").value(open.getId().toString()));
+        // Jamais supprimé : le ticket reste en base pour le back-office.
+        org.assertj.core.api.Assertions.assertThat(ticketRepository.findById(resolved.getId()))
+                .get()
+                .extracting(SupportTicketEntity::getHiddenByUserAt)
+                .isNotNull();
+    }
+
+    @Test
+    void deleteTicket_refusesATicketStillInProgress() throws Exception {
+        SupportTicketEntity open = persistTicket(owner, SupportTicketStatus.WAITING_SUPPORT);
+
+        mockMvc.perform(delete("/support/tickets/" + open.getId())
+                        .with(authentication(asUser(OWNER_UID))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("support-ticket-not-resolved"));
+    }
+
+    @Test
+    void deleteTicket_returns404ForSomeoneElsesTicket() throws Exception {
+        SupportTicketEntity foreign = persistTicket(intruder, SupportTicketStatus.RESOLVED);
+
+        mockMvc.perform(delete("/support/tickets/" + foreign.getId())
                         .with(authentication(asUser(OWNER_UID))))
                 .andExpect(status().isNotFound());
     }

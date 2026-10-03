@@ -11,6 +11,12 @@ public interface SupportTicketRepository extends JpaRepository<SupportTicketEnti
 
     Page<SupportTicketEntity> findByUserIdOrderByLastMessageAtDesc(UUID userId, Pageable pageable);
 
+    /** Boîte support de l'utilisateur : sans les tickets qu'il a masqués. */
+    Page<SupportTicketEntity> findByUserIdAndHiddenByUserAtIsNullOrderByLastMessageAtDesc(
+            UUID userId, Pageable pageable);
+
+    List<SupportTicketEntity> findByUserIdAndHiddenByUserAtIsNull(UUID userId);
+
     Page<SupportTicketEntity> findByUserIdAndStatusOrderByLastMessageAtDesc(
             UUID userId, SupportTicketStatus status, Pageable pageable);
 
