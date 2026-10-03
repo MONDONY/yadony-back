@@ -738,7 +738,30 @@ public class AnnouncementService {
         }
     }
 
+    /**
+     * Retire du marché un trajet effectivement parti avant son heure de départ
+     * prévue : un colis est passé en transit, ou le voyageur a marqué l'arrivée
+     * (FLUTTER-AE). Même bascule que le départ horaire
+     * ({@link #triggerInProgressTransitions}) : IN_PROGRESS, et les demandes
+     * encore en attente expirent avec remboursement. Idempotent : un trajet déjà
+     * IN_PROGRESS, terminé ou annulé n'est pas touché.
+     */
+    @Transactional
+    public void markUnderway(UUID announcementId, String trigger) {
+        announcementRepository.findByIdForUpdate(announcementId).ifPresent(announcement -> {
+            if (announcement.getStatus() != AnnouncementStatus.ACTIVE
+                    && announcement.getStatus() != AnnouncementStatus.FULL) {
+                return;
+            }
+            applyInProgressTransition(announcement, trigger);
+        });
+    }
+
     private void applyInProgressTransition(AnnouncementEntity announcement) {
+        applyInProgressTransition(announcement, "DEPARTURE_TIME");
+    }
+
+    private void applyInProgressTransition(AnnouncementEntity announcement, String trigger) {
         AnnouncementStatus previous = announcement.getStatus();
         boolean hasAcceptedBids = bidRepository.existsByAnnouncementIdAndStatusIn(
                 announcement.getId(), List.copyOf(BidStatus.IN_FLIGHT));
@@ -755,7 +778,7 @@ public class AnnouncementService {
             announcementRepository.save(announcement);
             auditService.log("ANNOUNCEMENT", announcement.getTravelerId(),
                     "ANNOUNCEMENT_IN_PROGRESS", announcement.getId(),
-                    Map.of("previousStatus", previous.name()));
+                    Map.of("previousStatus", previous.name(), "trigger", trigger));
             eventPublisher.publishEvent(
                     new AnnouncementInProgressEvent(announcement.getId(), announcement.getTravelerId()));
             log.info("Announcement {} → IN_PROGRESS", announcement.getId());
@@ -1336,6 +1359,11 @@ public class AnnouncementService {
                 .map(b -> new TripArrivedEvent.BidTarget(b.getId(), b.getSenderId()))
                 .toList();
         eventPublisher.publishEvent(new TripArrivedEvent(saved.getId(), targets));
+
+        // Arrivé à destination : le trajet n'accepte plus de colis (FLUTTER-AE).
+        if (saved.getStatus() == AnnouncementStatus.ACTIVE || saved.getStatus() == AnnouncementStatus.FULL) {
+            applyInProgressTransition(saved, "TRIP_ARRIVED");
+        }
 
         return getAnnouncementDetail(saved.getId(), firebaseUid);
     }

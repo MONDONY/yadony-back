@@ -531,6 +531,9 @@ class TrackingServiceTest {
         assertThat(resp.eventType()).isEqualTo("TRANSIT");
         assertThat(bid.getStatus()).isEqualTo(BidStatus.IN_TRANSIT);
         verify(bidRepository).save(bid);
+        // FLUTTER-AE : le trajet quitte le marché dès qu'un colis est en route.
+        verify(eventPublisher).publishEvent(
+                new com.yadony.api.tracking.events.ParcelInTransitEvent(bidId, bid.getAnnouncementId()));
     }
 
     /**

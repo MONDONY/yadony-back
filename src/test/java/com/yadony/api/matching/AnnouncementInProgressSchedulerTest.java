@@ -217,6 +217,58 @@ class AnnouncementInProgressTransitionTest {
         verify(announcementRepository).save(ann2);
     }
 
+    // ─── markUnderway (FLUTTER-AE) ─────────────────────────────────────────────
+
+    @Test
+    @DisplayName("markUnderway — trajet ACTIVE parti avant l'heure → IN_PROGRESS, demandes en attente expirées")
+    void markUnderway_activeTrip_leavesMarket() {
+        AnnouncementEntity ann = activeAnnouncement();
+        ann.setDepartureDate(LocalDate.now().plusDays(3));
+        BidEntity pending = pendingBid();
+        when(announcementRepository.findByIdForUpdate(announcementId)).thenReturn(java.util.Optional.of(ann));
+        when(bidRepository.existsByAnnouncementIdAndStatusIn(announcementId,
+                List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED)))
+                .thenReturn(true);
+        when(bidRepository.findByAnnouncementIdAndStatusIn(announcementId,
+                List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.NEGOTIATING)))
+                .thenReturn(List.of(pending));
+
+        service.markUnderway(announcementId, "PARCEL_IN_TRANSIT");
+
+        assertThat(ann.getStatus()).isEqualTo(AnnouncementStatus.IN_PROGRESS);
+        assertThat(pending.getStatus()).isEqualTo(BidStatus.EXPIRED);
+        verify(eventPublisher).publishEvent(any(BidExpiredOnDepartureEvent.class));
+        verify(auditService).log(eq("ANNOUNCEMENT"), eq(travelerId), eq("ANNOUNCEMENT_IN_PROGRESS"),
+                eq(announcementId), eq(java.util.Map.of("previousStatus", "ACTIVE", "trigger", "PARCEL_IN_TRANSIT")));
+    }
+
+    @Test
+    @DisplayName("markUnderway — trajet déjà IN_PROGRESS ou annulé : rien ne change (idempotent)")
+    void markUnderway_alreadyOutOfMarket_noop() {
+        for (AnnouncementStatus status : List.of(AnnouncementStatus.IN_PROGRESS,
+                AnnouncementStatus.COMPLETED, AnnouncementStatus.CANCELLED)) {
+            AnnouncementEntity ann = activeAnnouncement();
+            ann.setStatus(status);
+            when(announcementRepository.findByIdForUpdate(announcementId)).thenReturn(java.util.Optional.of(ann));
+
+            service.markUnderway(announcementId, "PARCEL_IN_TRANSIT");
+
+            assertThat(ann.getStatus()).isEqualTo(status);
+        }
+        verify(announcementRepository, never()).save(any());
+        verify(eventPublisher, never()).publishEvent(any());
+    }
+
+    @Test
+    @DisplayName("markUnderway — annonce introuvable : rien")
+    void markUnderway_missing_noop() {
+        when(announcementRepository.findByIdForUpdate(announcementId)).thenReturn(java.util.Optional.empty());
+
+        service.markUnderway(announcementId, "PARCEL_IN_TRANSIT");
+
+        verify(announcementRepository, never()).save(any());
+    }
+
     @Test
     @DisplayName("hasDeparted : évalué dans le fuseau du trajet (Dakar), pas Europe/Paris")
     void hasDeparted_usesTripTimezoneNotServerParis() {
