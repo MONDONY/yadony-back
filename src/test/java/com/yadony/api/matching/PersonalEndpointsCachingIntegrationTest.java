@@ -104,6 +104,28 @@ class PersonalEndpointsCachingIntegrationTest {
         assertThat(secondCall.getContent()).hasSize(1);
     }
 
+    @Test
+    void rejectBid_evictsTravelerBidsCache_soTheReloadedListIsNotStale() {
+        UserEntity sender = persistUser("uid-cache-sender3-" + UUID.randomUUID());
+        UserEntity traveler = persistUser("uid-cache-traveler3-" + UUID.randomUUID());
+        AnnouncementEntity announcement = persistAnnouncement(traveler.getId());
+        BidEntity bid = persistBid(announcement.getId(), sender.getId());
+        bid.setStatus(BidStatus.PAYMENT_ESCROWED);
+        bidRepository.save(bid);
+
+        Page<BidResponse> before =
+                bidService.getTravelerBids(traveler.getFirebaseUid(), null, null, null, 0, 20);
+        assertThat(before.getContent()).extracting(BidResponse::status).containsExactly("PAYMENT_ESCROWED");
+
+        bidService.rejectBid(bid.getId(), traveler.getFirebaseUid(), null);
+
+        // FLUTTER-B9 : dans les 8 s du premier chargement, l'app rechargeait la liste et
+        // recevait encore la demande « en attente », bouton Accepter compris.
+        Page<BidResponse> after =
+                bidService.getTravelerBids(traveler.getFirebaseUid(), null, null, null, 0, 20);
+        assertThat(after.getContent()).extracting(BidResponse::status).doesNotContain("PAYMENT_ESCROWED");
+    }
+
     private UserEntity persistUser(String firebaseUid) {
         UserEntity u = new UserEntity();
         u.setFirebaseUid(firebaseUid);

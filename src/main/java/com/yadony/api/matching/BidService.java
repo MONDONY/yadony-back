@@ -789,8 +789,11 @@ public class BidService {
                 .toList();
     }
 
-    // Même rationale que getMyBids ci-dessus (données bilatérales, TTL courte
-    // sans éviction manuelle).
+    // Même rationale que getMyBids ci-dessus (données bilatérales, TTL courte).
+    // Exception : accepter, refuser ou annuler une demande vide ces deux listes
+    // (« /me »). Sans cela, la liste rechargée juste après l'action revenait
+    // dans son ancien état (8 s), et la demande acceptée gardait son bouton
+    // « Accepter » (FLUTTER-B9). L'autre partie, elle, attend au plus 8 s.
     @Transactional(readOnly = true)
     @Cacheable(value = "traveler-bids-me")
     public Page<BidResponse> getTravelerBids(String firebaseUid, String status, UUID announcementId, String q, int page, int size) {
@@ -809,7 +812,7 @@ public class BidService {
     }
 
     @Transactional
-    @CacheEvict(value = "announcements-search", allEntries = true)
+    @CacheEvict(value = {"announcements-search", "traveler-bids-me", "bids-me"}, allEntries = true)
     public BidResponse acceptBid(UUID bidId, String firebaseUid) {
         BidEntity bid = bidRepository.findByIdForUpdate(bidId)
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
@@ -908,7 +911,7 @@ public class BidService {
     }
 
     @Transactional
-    @CacheEvict(value = "announcements-search", allEntries = true)
+    @CacheEvict(value = {"announcements-search", "traveler-bids-me", "bids-me"}, allEntries = true)
     public BidResponse rejectBid(UUID bidId, String firebaseUid, BidRejectRequest request) {
         BidEntity bid = findBid(bidId);
         AnnouncementEntity announcement = findAnnouncement(bid.getAnnouncementId());
@@ -1002,7 +1005,7 @@ public class BidService {
     }
 
     @Transactional
-    @CacheEvict(value = "announcements-search", allEntries = true)
+    @CacheEvict(value = {"announcements-search", "traveler-bids-me", "bids-me"}, allEntries = true)
     public BidResponse cancelBid(UUID bidId, String firebaseUid) {
         BidEntity bid = findBid(bidId);
         UserEntity caller = findUserByFirebaseUid(firebaseUid);
