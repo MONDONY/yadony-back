@@ -17,7 +17,7 @@ import java.util.stream.Collectors;
  *
  * Task 4 — AdminAuthService (authorities + cache)
  *
- * Cache: "adminAuthz" (TTL 30 s, max 200 entries — see CacheConfig).
+ * Cache: "adminAuthz" (TTL 30 s, max 10 000 entries — see CacheConfig).
  * Cache key is the firebaseUid string.
  * Eviction is triggered on any account mutation via evict(UUID adminId).
  */
@@ -42,9 +42,11 @@ public class AdminAuthService {
      * - Always: ROLE_ADMIN
      * - If SUPER_ADMIN: additionally ROLE_SUPER_ADMIN
      *
-     * Result is cached under "adminAuthz" with 30-second TTL.
+     * Result is cached under "adminAuthz" with 30-second TTL, Optional.empty() included:
+     * the auth filter calls this on every request, mostly for mobile users who are not
+     * admins. Creating or reactivating an admin evicts the entry (evictByFirebaseUid).
      */
-    @Cacheable(value = "adminAuthz", key = "#firebaseUid", unless = "#result == null")
+    @Cacheable(value = "adminAuthz", key = "#firebaseUid")
     public Optional<AdminAuthorities> resolve(String firebaseUid) {
         Optional<AdminUserEntity> entityOpt = adminUserRepository.findByFirebaseUid(firebaseUid);
 

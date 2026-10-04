@@ -3,6 +3,7 @@ package com.yadony.api.auth;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
@@ -16,6 +17,11 @@ import java.util.UUID;
 
 public interface UserRepository extends JpaRepository<UserEntity, UUID> {
 
+    /**
+     * Appelée sur chaque requête authentifiée : rôles et langues sont joints dans le même
+     * SELECT plutôt que relus par deux requêtes séparées.
+     */
+    @EntityGraph(attributePaths = {"roles", "languages"})
     Optional<UserEntity> findByFirebaseUid(String firebaseUid);
 
     /**

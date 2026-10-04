@@ -20,6 +20,10 @@ spring:
         dialect: org.hibernate.dialect.PostgreSQLDialect
         jdbc:
           time_zone: UTC
+        # Charge les collections et proxys paresseux par lots (IN (...)) au lieu d'un
+        # SELECT par entité : user_roles et user_languages (EAGER) étaient lus deux
+        # fois par utilisateur de chaque liste.
+        default_batch_fetch_size: 50
 
   # Flyway
   flyway:

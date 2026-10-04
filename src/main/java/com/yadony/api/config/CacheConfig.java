@@ -30,10 +30,11 @@ public class CacheConfig {
                 .recordStats());
 
         // Per-cache overrides
-        // adminAuthz: short-lived (30 s), small (200 entries) — auth hot path
+        // adminAuthz: short-lived (30 s) — auth hot path. Holds one entry per active
+        // user, admin or not (the "not admin" answer is cached too), hence the size.
         manager.registerCustomCache("adminAuthz",
                 Caffeine.newBuilder()
-                        .maximumSize(200)
+                        .maximumSize(10_000)
                         .expireAfterWrite(30, TimeUnit.SECONDS)
                         .recordStats()
                         .build());
