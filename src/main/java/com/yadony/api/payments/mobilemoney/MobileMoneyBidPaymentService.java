@@ -156,7 +156,7 @@ public class MobileMoneyBidPaymentService {
     // ── Acceptation ─────────────────────────────────────────────────────────
 
     @Transactional
-    @CacheEvict(value = "announcements-search", allEntries = true)
+    @CacheEvict(value = {"announcements-search", "traveler-bids-me", "bids-me"}, allEntries = true)
     public MobileMoneyPaymentStatusResponse acceptBid(UUID bidId, UUID travelerId) {
         // Interrupteur d'urgence, vérifié aussi à la création du bid (BidService) : un
         // exploitant qui coupe yadony.pawapay.enabled après incident/fraude constatée doit

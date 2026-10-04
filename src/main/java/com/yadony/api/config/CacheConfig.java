@@ -39,7 +39,8 @@ public class CacheConfig {
                         .build());
 
         // bids-me / traveler-bids-me / negotiations-me: TTL très courte (8 s),
-        // sans éviction manuelle. Ces endpoints "/me" sont tirés en rafale par
+        // sans éviction manuelle exhaustive (seuls accepter, refuser et annuler une
+        // demande vident bids-me et traveler-bids-me, cf. BidService, FLUTTER-B9). Ces endpoints "/me" sont tirés en rafale par
         // l'app (tab switch, cold start) et se sont révélés être la première
         // cause de saturation du rate-limit nginx en usage réel. La donnée est
         // bilatérale (expéditeur + voyageur) et mutée par une dizaine de points

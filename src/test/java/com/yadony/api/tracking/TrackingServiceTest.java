@@ -485,6 +485,78 @@ class TrackingServiceTest {
         verify(bidRepository).save(bid);
     }
 
+    private void stubDepartScan(BidEntity bid) {
+        AnnouncementEntity ann = buildAnnouncement();
+        UserEntity traveler = buildUser(travelerId, "uid-traveler");
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+        when(userRepository.findByFirebaseUid("uid-traveler")).thenReturn(Optional.of(traveler));
+        lenient().when(trackingEventRepository.save(any())).thenAnswer(inv -> {
+            TrackingEventEntity e = inv.getArgument(0);
+            setId(e, UUID.randomUUID());
+            return e;
+        });
+    }
+
+    private QrScanRequest departWithNumber(String number) {
+        return new QrScanRequest(bidId, TrackingEventType.DEPART, null, null, null, null, null, null, number);
+    }
+
+    @Test
+    void processScan_departWithTheRightTrackingNumber_isAcceptedWhateverTheCase() {
+        BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");
+        bid.setTrackingNumber("DON-AB23CD45");
+        stubDepartScan(bid);
+
+        TrackingEventResponse resp = service.processScan(departWithNumber("  don-ab23cd45 "), "uid-traveler");
+
+        assertThat(resp.eventType()).isEqualTo("DEPART");
+    }
+
+    @Test
+    void processScan_departWithAWrongTrackingNumber_isRefused_beforeAnyInsert() {
+        BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");
+        bid.setTrackingNumber("DON-AB23CD45");
+        stubDepartScan(bid);
+
+        assertYadonyError(() -> service.processScan(departWithNumber("DON-ZZZZZZZZ"), "uid-traveler"),
+                "tracking-number-mismatch");
+        verify(trackingEventRepository, never()).save(any());
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.ACCEPTED);
+    }
+
+    @Test
+    void processScan_departWithoutNumber_staysAcceptedForInstalledApps() {
+        BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");
+        bid.setTrackingNumber("DON-AB23CD45");
+        stubDepartScan(bid);
+
+        assertThat(service.processScan(departWithNumber(null), "uid-traveler").eventType()).isEqualTo("DEPART");
+    }
+
+    @Test
+    void processScan_departWithoutNumber_isRefusedOnceTheNumberIsRequired() {
+        BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");
+        bid.setTrackingNumber("DON-AB23CD45");
+        stubDepartScan(bid);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "requireNumberOnDepart", true);
+
+        assertYadonyError(() -> service.processScan(departWithNumber(" "), "uid-traveler"),
+                "tracking-number-required");
+    }
+
+    @Test
+    void processScan_transitIgnoresTheTrackingNumber() {
+        BidEntity bid = buildBid(BidStatus.HANDED_OVER, "qt");
+        bid.setTrackingNumber("DON-AB23CD45");
+        stubDepartScan(bid);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "requireNumberOnDepart", true);
+
+        QrScanRequest transit = new QrScanRequest(bidId, TrackingEventType.TRANSIT, null, null, null, null, null);
+
+        assertThat(service.processScan(transit, "uid-traveler").eventType()).isEqualTo("TRANSIT");
+    }
+
     @Test
     void processScan_departAlreadyScanned_throwsConflict_withoutInsert() {
         // Sentry YADONY-BACK-STAGING-8 : un second scan DEPART sur un colis déjà remis passait

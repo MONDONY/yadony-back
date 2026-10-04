@@ -19,6 +19,10 @@ import java.util.UUID;
  *
  * <p>{@code scanMethod} est facultatif : les apps déjà installées ne l'envoient pas, l'étape
  * est alors enregistrée avec une provenance inconnue (null).
+ *
+ * <p>{@code trackingNumber} : numéro de suivi (« DON-… ») que seul l'expéditeur possède, saisi par
+ * le voyageur à la remise du colis (étape DEPART) pour prouver qu'il l'a bien en main. Il n'est
+ * demandé qu'au DEPART : les étapes suivantes l'ignorent.
  */
 public record QrScanRequest(
         @NotNull UUID bidId,
@@ -28,11 +32,19 @@ public record QrScanRequest(
         @Size(max = 255) String gpsLabel,
         @Size(max = 500) String photoUrl,
         LocalDateTime offlineTimestamp,
-        ScanMethod scanMethod
+        ScanMethod scanMethod,
+        @Size(max = 12) String trackingNumber
 ) {
     /** Contrat antérieur à la provenance QR / numéro. */
     public QrScanRequest(UUID bidId, TrackingEventType eventType, BigDecimal gpsLat, BigDecimal gpsLon,
                          String gpsLabel, String photoUrl, LocalDateTime offlineTimestamp) {
-        this(bidId, eventType, gpsLat, gpsLon, gpsLabel, photoUrl, offlineTimestamp, null);
+        this(bidId, eventType, gpsLat, gpsLon, gpsLabel, photoUrl, offlineTimestamp, null, null);
+    }
+
+    /** Contrat antérieur au numéro de suivi exigé à la remise. */
+    public QrScanRequest(UUID bidId, TrackingEventType eventType, BigDecimal gpsLat, BigDecimal gpsLon,
+                         String gpsLabel, String photoUrl, LocalDateTime offlineTimestamp,
+                         ScanMethod scanMethod) {
+        this(bidId, eventType, gpsLat, gpsLon, gpsLabel, photoUrl, offlineTimestamp, scanMethod, null);
     }
 }
