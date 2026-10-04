@@ -89,6 +89,14 @@ management:
     metrics:
       export:
         enabled: true
+  metrics:
+    distribution:
+      # Quelques bornes fixes plutot que l'histogramme complet (~70 buckets par serie) :
+      # assez pour les p50/p95/p99 des dashboards Grafana (histogram_quantile), vides
+      # jusqu'ici faute de series _bucket, sans multiplier les series Prometheus.
+      slo:
+        "[http.server.requests]": 25ms,50ms,100ms,250ms,500ms,1s,2500ms,5s,10s
+        "[hikaricp.connections.acquire]": 1ms,5ms,25ms,100ms,500ms,1s,5s
   server:
     port: 8080
 

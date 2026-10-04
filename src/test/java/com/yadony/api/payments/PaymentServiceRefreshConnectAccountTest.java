@@ -192,4 +192,66 @@ class PaymentServiceRefreshConnectAccountTest {
             verify(userRepository, never()).save(any());
         }
     }
+
+    private Account completeAccount() {
+        Account account = mock(Account.class);
+        when(account.getId()).thenReturn(ACCT_ID);
+        when(account.getChargesEnabled()).thenReturn(true);
+        when(account.getPayoutsEnabled()).thenReturn(true);
+        return account;
+    }
+
+    @Test
+    void compte_complet_verifie_n_est_pas_redemande_a_stripe_dans_l_heure() {
+        UserEntity user = buildUser(ACCT_ID, true);
+        when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+        Account account = completeAccount();
+
+        try (MockedStatic<Account> mocked = mockStatic(Account.class)) {
+            mocked.when(() -> Account.retrieve(ACCT_ID)).thenReturn(account);
+
+            service.refreshConnectAccount(FIREBASE_UID);
+            ConnectAccountResponse second = service.refreshConnectAccount(FIREBASE_UID);
+
+            assertThat(second.stripeAccountId()).isEqualTo(ACCT_ID);
+            assertThat(second.stripeAccountStatus()).isEqualTo(StripeAccountStatus.ONBOARDING_COMPLETE);
+            mocked.verify(() -> Account.retrieve(ACCT_ID), times(1));
+        }
+    }
+
+    @Test
+    void compte_en_cours_d_onboarding_est_toujours_redemande_a_stripe() {
+        UserEntity user = buildUser(ACCT_ID, false);
+        when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+        Account account = mock(Account.class);
+        when(account.getId()).thenReturn(ACCT_ID);
+        when(account.getChargesEnabled()).thenReturn(false);
+
+        try (MockedStatic<Account> mocked = mockStatic(Account.class)) {
+            mocked.when(() -> Account.retrieve(ACCT_ID)).thenReturn(account);
+
+            service.refreshConnectAccount(FIREBASE_UID);
+            service.refreshConnectAccount(FIREBASE_UID);
+
+            mocked.verify(() -> Account.retrieve(ACCT_ID), times(2));
+        }
+    }
+
+    @Test
+    void compte_repasse_en_attente_par_webhook_est_revérifié_malgre_une_verification_recente() {
+        UserEntity user = buildUser(ACCT_ID, true);
+        when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+        Account account = completeAccount();
+
+        try (MockedStatic<Account> mocked = mockStatic(Account.class)) {
+            mocked.when(() -> Account.retrieve(ACCT_ID)).thenReturn(account);
+            service.refreshConnectAccount(FIREBASE_UID);
+
+            // account.updated a retiré l'agrément entre-temps
+            user.setStripeAccountStatus(StripeAccountStatus.PENDING_ONBOARDING);
+            service.refreshConnectAccount(FIREBASE_UID);
+
+            mocked.verify(() -> Account.retrieve(ACCT_ID), times(2));
+        }
+    }
 }
