@@ -580,7 +580,7 @@ public class TrackingService {
                         "Annonce introuvable"));
 
         String newCode = com.yadony.api.matching.PickupCodes.newCode();
-        LocalDateTime newExpiry = computeCodeExpiry(announcement);
+        LocalDateTime newExpiry = com.yadony.api.matching.ArrivalRules.renewedPickupCodeExpiry(announcement);
         bid.setConfirmationCode(newCode);
         bid.setConfirmationCodeAttempts(0);
         bid.setConfirmationCodeExpiry(newExpiry);
@@ -593,7 +593,11 @@ public class TrackingService {
         return new ConfirmCodeResponse(newCode, newExpiry, bid.isConfirmationCodePublicEnabled());
     }
 
-    @Transactional
+    // Un refus (code expiré, faux, trop d'essais) enregistre le compteur d'essais ou efface
+    // le code avant de lever l'erreur : sans noRollbackFor, ces écritures étaient annulées
+    // avec la transaction, la limite de trois essais ne s'appliquait jamais et un code
+    // expiré n'était jamais effacé (FLUTTER-BA).
+    @Transactional(noRollbackFor = YadonyBusinessException.class)
     public TrackingEventResponse confirmDelivery(UUID bidId, ConfirmDeliveryRequest request,
                                                  String firebaseUid) {
         BidEntity bid = bidRepository.findById(bidId)

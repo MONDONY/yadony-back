@@ -849,6 +849,38 @@ class TrackingServiceTest {
     }
 
     @Test
+    void refreshCode_afterThePlannedArrivalWindow_givesACodeStillValid() {
+        // FLUTTER-BA : remise plus de 24 h après l'arrivée prévue. Le code régénéré
+        // héritait de l'expiration du trajet, déjà passée : chaque essai du voyageur
+        // finissait en code-expired, le colis n'était plus jamais confirmable.
+        BidEntity bid = buildBid(BidStatus.ARRIVED, "qt");
+        bid.setConfirmationCode(null);
+        AnnouncementEntity ann = buildAnnouncement();
+        ann.setDepartureDate(LocalDate.now(ZoneOffset.UTC).minusDays(10));
+        ann.setArrivalDate(LocalDate.now(ZoneOffset.UTC).minusDays(9));
+        UserEntity sender = buildUser(senderId, "uid-sender");
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+
+        ConfirmCodeResponse resp = service.refreshConfirmationCode(bidId, "uid-sender");
+
+        assertThat(resp.expiresAt()).isAfter(LocalDateTime.now(ZoneOffset.UTC).plusHours(23));
+        assertThat(bid.getConfirmationCodeExpiry()).isEqualTo(resp.expiresAt());
+    }
+
+    @Test
+    void confirmDelivery_refusalsAreKeptWhenTheTransactionEnds() throws NoSuchMethodException {
+        // FLUTTER-BA : le compteur d'essais et l'effacement d'un code expiré sont écrits
+        // juste avant l'erreur. Annulés avec la transaction, la limite de trois essais ne
+        // s'appliquait jamais.
+        org.springframework.transaction.annotation.Transactional tx = TrackingService.class
+                .getMethod("confirmDelivery", UUID.class, ConfirmDeliveryRequest.class, String.class)
+                .getAnnotation(org.springframework.transaction.annotation.Transactional.class);
+        assertThat(tx.noRollbackFor()).contains(YadonyBusinessException.class);
+    }
+
+    @Test
     void refreshCode_bidNotAccepted_throwsUnprocessable() {
         BidEntity bid = buildBid(BidStatus.COMPLETED, "qt");
         bid.setConfirmationCode("123456");

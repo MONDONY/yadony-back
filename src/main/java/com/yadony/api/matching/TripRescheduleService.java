@@ -139,7 +139,7 @@ public class TripRescheduleService {
                     "Seul un trajet publié et pas encore terminé peut être reporté");
         }
         if (bidRepository.existsByAnnouncementIdAndStatusIn(announcement.getId(),
-                List.of(BidStatus.IN_TRANSIT, BidStatus.ARRIVED))) {
+                List.copyOf(TripRescheduleRules.BLOCKING_STATUSES))) {
             throw new YadonyBusinessException(HttpStatus.CONFLICT, "reschedule-in-transit",
                     "Reschedule Impossible",
                     "Un colis est déjà en route : le trajet ne peut plus être reporté");

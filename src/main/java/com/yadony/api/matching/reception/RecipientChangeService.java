@@ -152,7 +152,7 @@ public class RecipientChangeService {
                             "Annonce introuvable"));
             bid.setConfirmationCode(PickupCodes.newCode());
             bid.setConfirmationCodeAttempts(0);
-            bid.setConfirmationCodeExpiry(ArrivalRules.pickupCodeExpiry(announcement));
+            bid.setConfirmationCodeExpiry(ArrivalRules.renewedPickupCodeExpiry(announcement));
         }
         bid.setConfirmationCodePublicEnabled(false);
 

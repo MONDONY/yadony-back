@@ -25,6 +25,13 @@ public final class TripRescheduleRules {
     public static final Set<BidStatus> INFORMED_STATUSES =
             EnumSet.of(BidStatus.AWAITING_PAYMENT, BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED);
 
+    /**
+     * Colis qui interdisent tout report : en route, arrivé à destination ou déjà livré.
+     * Le voyage a eu lieu, le reporter n'aurait plus de sens (FLUTTER-BD).
+     */
+    public static final Set<BidStatus> BLOCKING_STATUSES =
+            EnumSet.of(BidStatus.IN_TRANSIT, BidStatus.ARRIVED, BidStatus.COMPLETED);
+
     private TripRescheduleRules() {}
 
     /** Reports encore possibles, affichés au voyageur avant qu'il n'essaie. */
