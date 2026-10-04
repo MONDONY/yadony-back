@@ -72,6 +72,13 @@ public class TrackingService {
     @Value("${app.base-url}")
     private String appBaseUrl;
 
+    /**
+     * Numéro de suivi obligatoire à la remise du colis (DEPART). Éteint par défaut : les apps
+     * déjà installées ne l'envoient pas. À allumer quand la nouvelle version est déployée.
+     */
+    @Value("${yadony.tracking.require-number-on-depart:false}")
+    private boolean requireNumberOnDepart;
+
     public TrackingService(BidRepository bidRepository,
                            PaymentRepository paymentRepository,
                            UserRepository userRepository,
@@ -286,6 +293,10 @@ public class TrackingService {
                     traveler.getId(), Map.of("offlineTimestamp", request.offlineTimestamp().toString()));
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-timestamp",
                     "Invalid Timestamp", "Le timestamp du scan ne peut pas être dans le futur");
+        }
+
+        if (request.eventType() == TrackingEventType.DEPART) {
+            assertTrackingNumberOnDepart(bid, request.trackingNumber());
         }
 
         String photoKey = validatedPhotoKey(bid, request.photoUrl());
@@ -696,6 +707,29 @@ public class TrackingService {
                 traveler.getId(), Map.of("bidId", bid.getId().toString()));
 
         return toEventResponse(event, null);
+    }
+
+    /**
+     * À la remise du colis (DEPART), le voyageur saisit le numéro de suivi que seul l'expéditeur
+     * possède : il prouve ainsi qu'il tient le bon colis, avant la photo. Les étapes suivantes ne
+     * le demandent plus. Absent, il n'est exigé que si {@code yadony.tracking.require-number-on-depart}
+     * est vrai : les apps déjà installées ne l'envoient pas (FLUTTER-BC).
+     */
+    private void assertTrackingNumberOnDepart(BidEntity bid, String provided) {
+        if (provided == null || provided.isBlank()) {
+            if (requireNumberOnDepart) {
+                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "tracking-number-required",
+                        "Tracking Number Required",
+                        "Saisissez le numéro de suivi du colis, donné par l'expéditeur");
+            }
+            return;
+        }
+        String expected = bid.getTrackingNumber();
+        if (expected == null || !expected.equalsIgnoreCase(provided.trim())) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "tracking-number-mismatch",
+                    "Tracking Number Mismatch",
+                    "Ce numéro de suivi ne correspond pas à ce colis");
+        }
     }
 
     private LocalDateTime computeCodeExpiry(AnnouncementEntity announcement) {

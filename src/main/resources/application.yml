@@ -146,6 +146,10 @@ sentry:
 # Toutes les valeurs métier sont surchargeables par variable d'environnement
 # (${VAR:défaut}) — provisioning prod sans rebuild.
 yadony:
+  # Numéro de suivi saisi par le voyageur à la remise du colis (DEPART, FLUTTER-BC). Vérifié dès
+  # qu'il est envoyé ; exigé seulement si ce réglage est vrai (allumer une fois l'app à jour).
+  tracking:
+    require-number-on-depart: ${TRACKING_REQUIRE_NUMBER_ON_DEPART:false}
   # Relance J+1/J+3 des comptes au KYC vérifié sans première action (activation/).
   # Coupée par défaut ; activée en staging (application-staging.yml), prod à la décision du propriétaire.
   activation:
