@@ -1,14 +1,10 @@
 package com.yadony.api.payments.currency;
 
-import com.yadony.api.common.YadonyBusinessException;
-import org.springframework.cache.annotation.Cacheable;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.Locale;
-import java.util.Map;
 
 /**
  * Convertit un montant d'une devise vers une autre au taux administrable stocke dans
@@ -25,27 +21,21 @@ public class ExchangeRateService {
     /** Code d'erreur levé par {@link #rateOf(String)} quand la devise n'a pas de taux. */
     public static final String RATE_MISSING_CODE = "exchange-rate-missing";
 
-    private final ExchangeRateRepository repository;
+    private final ExchangeRateLookup lookup;
 
-    public ExchangeRateService(ExchangeRateRepository repository) {
-        this.repository = repository;
+    public ExchangeRateService(ExchangeRateLookup lookup) {
+        this.lookup = lookup;
     }
 
     /**
      * Nombre d'unites de {@code currency} pour un euro, lu dans la table {@code exchange_rates}.
      *
-     * <p>Mis en cache Caffeine ({@code exchange-rates}) : evince explicitement par le service
-     * d'administration a chaque modification de taux (tache 11), pas de TTL courte ici car la
-     * donnee ne change que par action admin.
+     * <p>Mis en cache Caffeine ({@code exchange-rates}) par {@link ExchangeRateLookup} : evince
+     * explicitement par le service d'administration a chaque modification de taux (tache 11),
+     * pas de TTL courte ici car la donnee ne change que par action admin.
      */
-    @Cacheable(cacheNames = "exchange-rates", key = "#currency")
     public BigDecimal rateOf(String currency) {
-        return repository.findByCurrency(currency)
-                .map(ExchangeRateEntity::getUnitsPerEur)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                        RATE_MISSING_CODE, "Exchange Rate Missing",
-                        "Aucun taux de change n'est configure pour la devise " + currency,
-                        Map.of("currency", currency)));
+        return lookup.unitsPerEur(currency);
     }
 
     /**

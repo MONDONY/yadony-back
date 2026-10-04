@@ -27,7 +27,7 @@ class ExchangeRateServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new ExchangeRateService(repository);
+        service = new ExchangeRateService(new ExchangeRateLookup(repository));
     }
 
     @Test

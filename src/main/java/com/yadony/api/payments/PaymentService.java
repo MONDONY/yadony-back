@@ -1,5 +1,7 @@
 package com.yadony.api.payments;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import com.yadony.api.auth.FirebaseContactService;
 import com.yadony.api.auth.KycStatus;
 import com.yadony.api.auth.StripeAccountStatus;
@@ -64,11 +66,24 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
+
 @Service
 @Transactional
 public class PaymentService {
 
     private static final Logger log = LoggerFactory.getLogger(PaymentService.class);
+
+    /**
+     * Comptes Connect vus complets chez Stripe depuis moins d'une heure. L'app appelle
+     * {@link #refreshConnectAccount} à chaque retour au premier plan (≈ 400 ms d'appel Stripe,
+     * 14 % du temps serveur sur staging) : un compte déjà complet n'est revérifié qu'une fois
+     * par heure. Un retrait d'agrément reçu par webhook ({@code account.updated}) change le
+     * statut local, ce qui fait repasser par Stripe au prochain appel.
+     */
+    private final Cache<UUID, Boolean> recentlyVerifiedComplete = Caffeine.newBuilder()
+            .expireAfterWrite(java.time.Duration.ofHours(1))
+            .maximumSize(10_000)
+            .build();
 
     private final UserRepository userRepository;
     private final BidRepository bidRepository;
@@ -311,10 +326,21 @@ public class PaymentService {
                     "Aucun compte Stripe à rafraîchir — créez-en un d'abord");
         }
 
+        if (user.getStripeAccountStatus() == StripeAccountStatus.ONBOARDING_COMPLETE
+                && recentlyVerifiedComplete.getIfPresent(user.getId()) != null) {
+            return new ConnectAccountResponse(user.getStripeAccountId(), user.getStripeAccountStatus(),
+                    connectAvailableFor(user));
+        }
+
         try {
             Account account = stripeGateway.retrieveAccount(user.getStripeAccountId());
             boolean chargesEnabled = Boolean.TRUE.equals(account.getChargesEnabled());
             StripeAccountStatus newStatus = deriveStripeAccountStatus(account);
+            if (newStatus == StripeAccountStatus.ONBOARDING_COMPLETE) {
+                recentlyVerifiedComplete.put(user.getId(), Boolean.TRUE);
+            } else {
+                recentlyVerifiedComplete.invalidate(user.getId());
+            }
 
             if (newStatus != user.getStripeAccountStatus()) {
                 user.setStripeAccountStatus(newStatus);

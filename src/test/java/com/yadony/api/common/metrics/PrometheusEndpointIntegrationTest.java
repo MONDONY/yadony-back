@@ -31,4 +31,18 @@ class PrometheusEndpointIntegrationTest {
             .andExpect(status().isOk())
             .andExpect(content().string(org.hamcrest.Matchers.containsString("# HELP")));
     }
+
+    @Test
+    void latenceHttp_exposeDesBucketsPourLesPercentilesGrafana() throws Exception {
+        // Les dashboards Grafana calculent p95/p99 par histogram_quantile sur
+        // http_server_requests_seconds_bucket : sans bornes configurées, ces panneaux
+        // restaient vides.
+        mockMvc.perform(get("/actuator/health"));
+
+        mockMvc.perform(get("/actuator/prometheus"))
+            .andExpect(status().isOk())
+            .andExpect(content().string(org.hamcrest.Matchers.containsString(
+                    "http_server_requests_seconds_bucket")))
+            .andExpect(content().string(org.hamcrest.Matchers.containsString("le=\"0.1\"")));
+    }
 }

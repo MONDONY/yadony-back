@@ -19,6 +19,8 @@ import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 
 @Service
 public class AdminAlertService {
@@ -60,9 +62,10 @@ public class AdminAlertService {
     private final String telegramBotToken;
     private final String telegramChatId;
     private final String environment;
+    private final Executor telegramExecutor;
 
     public AdminAlertService() {
-        this(withTimeouts(), null, null, "");
+        this(withTimeouts(), null, null, "", telegramThread());
     }
 
     @Autowired
@@ -70,7 +73,20 @@ public class AdminAlertService {
             @Value("${yadony.telegram.bot-token:}") String telegramBotToken,
             @Value("${yadony.telegram.chat-id:}") String telegramChatId,
             @Value("${spring.profiles.active:}") String environment) {
-        this(withTimeouts(), telegramBotToken, telegramChatId, environment);
+        this(withTimeouts(), telegramBotToken, telegramChatId, environment, telegramThread());
+    }
+
+    /**
+     * L'envoi Telegram part sur un thread dédié : la requête qui lève l'alerte (webhook
+     * Sentry, Stripe, ticket support…) n'attend plus api.telegram.org. Un seul thread
+     * garde l'ordre des messages ; démon, il ne retient pas l'arrêt de la JVM.
+     */
+    private static Executor telegramThread() {
+        return Executors.newSingleThreadExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "admin-alert-telegram");
+            thread.setDaemon(true);
+            return thread;
+        });
     }
 
     // Timeouts durs : RestClient.create() n'en a AUCUN (défauts JDK infinis) — une
@@ -86,11 +102,18 @@ public class AdminAlertService {
                 .build();
     }
 
+    /** Envoi Telegram synchrone : pour les tests qui vérifient le message envoyé. */
     AdminAlertService(RestClient restClient, String telegramBotToken, String telegramChatId, String environment) {
+        this(restClient, telegramBotToken, telegramChatId, environment, Runnable::run);
+    }
+
+    AdminAlertService(RestClient restClient, String telegramBotToken, String telegramChatId, String environment,
+                      Executor telegramExecutor) {
         this.restClient = restClient;
         this.telegramBotToken = telegramBotToken;
         this.telegramChatId = telegramChatId;
         this.environment = (environment == null || environment.isBlank()) ? "local" : environment;
+        this.telegramExecutor = telegramExecutor;
     }
 
     public void raise(String code, String detail, Map<String, Object> context) {
@@ -133,21 +156,24 @@ public class AdminAlertService {
                 || telegramChatId == null || telegramChatId.isBlank()) {
             return;
         }
-        try {
-            Map<String, Object> corps = new LinkedHashMap<>();
-            corps.put("chat_id", telegramChatId);
-            corps.put("text", buildMessage(code, detail, context));
-            // Un évènement métier ne réveille personne ; un incident, si.
-            corps.put("disable_notification", gravite == Gravite.INFO);
-            restClient.post()
-                    .uri("https://api.telegram.org/bot{token}/sendMessage", telegramBotToken)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(corps)
-                    .retrieve()
-                    .toBodilessEntity();
-        } catch (RestClientException e) {
-            log.warn("Telegram alert failed for {}: {}", code, e.getMessage());
-        }
+        // Message construit tout de suite : horodatage de l'évènement, pas de l'envoi.
+        Map<String, Object> corps = new LinkedHashMap<>();
+        corps.put("chat_id", telegramChatId);
+        corps.put("text", buildMessage(code, detail, context));
+        // Un évènement métier ne réveille personne ; un incident, si.
+        corps.put("disable_notification", gravite == Gravite.INFO);
+        telegramExecutor.execute(() -> {
+            try {
+                restClient.post()
+                        .uri("https://api.telegram.org/bot{token}/sendMessage", telegramBotToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(corps)
+                        .retrieve()
+                        .toBodilessEntity();
+            } catch (RestClientException e) {
+                log.warn("Telegram alert failed for {}: {}", code, e.getMessage());
+            }
+        });
     }
 
     private String buildMessage(String code, String detail, Map<String, Object> context) {
