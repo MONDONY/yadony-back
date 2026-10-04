@@ -296,7 +296,7 @@ public class TrackingService {
         }
 
         if (request.eventType() == TrackingEventType.DEPART) {
-            assertTrackingNumberOnDepart(bid, request.trackingNumber());
+            assertTrackingNumberOnDepart(bid, request.trackingNumber(), request.scanMethod());
         }
 
         String photoKey = validatedPhotoKey(bid, request.photoUrl());
@@ -710,14 +710,15 @@ public class TrackingService {
     }
 
     /**
-     * À la remise du colis (DEPART), le voyageur saisit le numéro de suivi que seul l'expéditeur
-     * possède : il prouve ainsi qu'il tient le bon colis, avant la photo. Les étapes suivantes ne
-     * le demandent plus. Absent, il n'est exigé que si {@code yadony.tracking.require-number-on-depart}
-     * est vrai : les apps déjà installées ne l'envoient pas (FLUTTER-BC).
+     * À la remise du colis (DEPART), le voyageur prouve qu'il tient le bon colis : il scanne le QR
+     * de l'expéditeur OU saisit le numéro de suivi, que seul l'expéditeur possède. Les étapes
+     * suivantes ne le demandent plus. Un numéro envoyé est toujours vérifié. Absent, il n'est exigé
+     * que si {@code yadony.tracking.require-number-on-depart} est vrai, et seulement hors scan QR :
+     * les apps déjà installées ne l'envoient pas (FLUTTER-BC).
      */
-    private void assertTrackingNumberOnDepart(BidEntity bid, String provided) {
+    private void assertTrackingNumberOnDepart(BidEntity bid, String provided, ScanMethod scanMethod) {
         if (provided == null || provided.isBlank()) {
-            if (requireNumberOnDepart) {
+            if (requireNumberOnDepart && scanMethod != ScanMethod.QR) {
                 throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "tracking-number-required",
                         "Tracking Number Required",
                         "Saisissez le numéro de suivi du colis, donné par l'expéditeur");
