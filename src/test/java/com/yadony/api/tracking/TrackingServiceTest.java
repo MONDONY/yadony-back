@@ -539,10 +539,34 @@ class TrackingServiceTest {
         BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");
         bid.setTrackingNumber("DON-AB23CD45");
         stubDepartScan(bid);
-        org.springframework.test.util.ReflectionTestUtils.setField(service, "requireNumberOnDepart", true);
+        ReflectionTestUtils.setField(service, "requireNumberOnDepart", true);
 
         assertYadonyError(() -> service.processScan(departWithNumber(" "), "uid-traveler"),
                 "tracking-number-required");
+    }
+
+    @Test
+    void processScan_departScannedByQr_needsNoNumberEvenWhenItIsRequired() {
+        BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");
+        bid.setTrackingNumber("DON-AB23CD45");
+        stubDepartScan(bid);
+        ReflectionTestUtils.setField(service, "requireNumberOnDepart", true);
+        QrScanRequest byQr = new QrScanRequest(bidId, TrackingEventType.DEPART, null, null, null, null, null,
+                ScanMethod.QR, null);
+
+        assertThat(service.processScan(byQr, "uid-traveler").eventType()).isEqualTo("DEPART");
+    }
+
+    @Test
+    void processScan_departByRowButtonWithoutNumber_isRefusedOnceRequired() {
+        BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");
+        bid.setTrackingNumber("DON-AB23CD45");
+        stubDepartScan(bid);
+        ReflectionTestUtils.setField(service, "requireNumberOnDepart", true);
+        QrScanRequest manual = new QrScanRequest(bidId, TrackingEventType.DEPART, null, null, null, null, null,
+                ScanMethod.MANUAL, null);
+
+        assertYadonyError(() -> service.processScan(manual, "uid-traveler"), "tracking-number-required");
     }
 
     @Test
@@ -550,7 +574,7 @@ class TrackingServiceTest {
         BidEntity bid = buildBid(BidStatus.HANDED_OVER, "qt");
         bid.setTrackingNumber("DON-AB23CD45");
         stubDepartScan(bid);
-        org.springframework.test.util.ReflectionTestUtils.setField(service, "requireNumberOnDepart", true);
+        ReflectionTestUtils.setField(service, "requireNumberOnDepart", true);
 
         QrScanRequest transit = new QrScanRequest(bidId, TrackingEventType.TRANSIT, null, null, null, null, null);
 
