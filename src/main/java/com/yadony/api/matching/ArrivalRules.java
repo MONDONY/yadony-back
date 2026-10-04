@@ -65,4 +65,20 @@ public final class ArrivalRules {
         }
         return arrivalDay.atStartOfDay().plusDays(3);
     }
+
+    /** Fenêtre minimale d'un code de retrait régénéré. */
+    static final java.time.Duration RENEWED_CODE_MIN_VALIDITY = java.time.Duration.ofHours(24);
+
+    /**
+     * Expiration d'un code de retrait régénéré (nouveau code demandé par l'expéditeur, ou
+     * changement de destinataire). Remis plus de 24 h après l'arrivée prévue, le colis
+     * recevait un code déjà expiré : la livraison ne pouvait plus jamais être confirmée
+     * (FLUTTER-BA). Le nouveau code vaut donc au moins 24 h à partir de maintenant.
+     */
+    public static java.time.LocalDateTime renewedPickupCodeExpiry(AnnouncementEntity announcement) {
+        java.time.LocalDateTime planned = pickupCodeExpiry(announcement);
+        java.time.LocalDateTime floor = java.time.LocalDateTime.now(java.time.ZoneOffset.UTC)
+                .plus(RENEWED_CODE_MIN_VALIDITY);
+        return planned.isAfter(floor) ? planned : floor;
+    }
 }

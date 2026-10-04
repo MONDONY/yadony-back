@@ -68,4 +68,25 @@ class ArrivalRulesTest {
         a.setArrivalDate(DEP.plusDays(1));
         assertThat(ArrivalRules.effectiveArrivalDate(a)).isEqualTo(DEP.plusDays(1));
     }
+
+    @Test
+    @DisplayName("code régénéré après la fenêtre prévue : valable encore 24 h (FLUTTER-BA)")
+    void renewedCode_afterPlannedWindow_validForAnotherDay() {
+        AnnouncementEntity a = new AnnouncementEntity();
+        a.setDepartureDate(LocalDate.now(java.time.ZoneOffset.UTC).minusDays(10));
+        a.setArrivalDate(LocalDate.now(java.time.ZoneOffset.UTC).minusDays(9));
+
+        assertThat(ArrivalRules.renewedPickupCodeExpiry(a))
+                .isAfter(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).plusHours(23));
+    }
+
+    @Test
+    @DisplayName("code régénéré avant l'arrivée : garde l'expiration prévue du trajet")
+    void renewedCode_beforeArrival_keepsPlannedExpiry() {
+        AnnouncementEntity a = new AnnouncementEntity();
+        a.setDepartureDate(LocalDate.now(java.time.ZoneOffset.UTC).plusDays(5));
+        a.setArrivalDate(LocalDate.now(java.time.ZoneOffset.UTC).plusDays(5));
+
+        assertThat(ArrivalRules.renewedPickupCodeExpiry(a)).isEqualTo(ArrivalRules.pickupCodeExpiry(a));
+    }
 }

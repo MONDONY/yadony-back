@@ -28,6 +28,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -185,6 +186,19 @@ class TripRescheduleServiceTest {
     @Test
     void reschedule_withParcelAlreadyInTransit_isRefused() {
         when(bidRepository.existsByAnnouncementIdAndStatusIn(eq(announcementId), anyList())).thenReturn(true);
+
+        assertThatThrownBy(() -> service.reschedule(announcementId, "uid-traveler", request(newDate, LocalTime.of(23, 0))))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("reschedule-in-transit"));
+    }
+
+    @Test
+    void reschedule_isRefusedOnceAParcelIsOnItsWayArrivedOrDelivered() {
+        when(bidRepository.existsByAnnouncementIdAndStatusIn(eq(announcementId),
+                argThat((List<BidStatus> statuses) -> statuses.containsAll(
+                        List.of(BidStatus.IN_TRANSIT, BidStatus.ARRIVED, BidStatus.COMPLETED))
+                        && !statuses.contains(BidStatus.HANDED_OVER))))
+                .thenReturn(true);
 
         assertThatThrownBy(() -> service.reschedule(announcementId, "uid-traveler", request(newDate, LocalTime.of(23, 0))))
                 .isInstanceOfSatisfying(YadonyBusinessException.class,
