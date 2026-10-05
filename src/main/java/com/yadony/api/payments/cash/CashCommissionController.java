@@ -66,9 +66,10 @@ public class CashCommissionController {
     @PostMapping("/bids/{bidId}/accept-with-commission")
     public ResponseEntity<AcceptBidResponse> acceptCashBid(
             @PathVariable UUID bidId,
-            @RequestParam(defaultValue = "WALLET_FIRST") CommissionSource commissionSource) {
+            @RequestParam(defaultValue = "WALLET_FIRST") CommissionSource commissionSource,
+            @RequestParam(required = false) String fundingCurrency) {
         UUID userId = resolveUserId();
-        AcceptBidResponse resp = cashCommissionService.acceptCashBid(bidId, userId, commissionSource);
+        AcceptBidResponse resp = cashCommissionService.acceptCashBid(bidId, userId, commissionSource, fundingCurrency);
         return switch (resp.status()) {
             case ACCEPTED -> ResponseEntity.ok(resp);
             case REQUIRES_3DS -> ResponseEntity.accepted().body(resp);

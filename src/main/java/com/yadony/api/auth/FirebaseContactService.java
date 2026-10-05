@@ -88,6 +88,19 @@ public class FirebaseContactService {
     }
 
     /**
+     * Comme {@link #getContact}, mais relu dans Firebase en ignorant le cache. Pour les
+     * gardes qui bloquent l'utilisateur sur une coordonnée manquante (email requis par
+     * Stripe) : l'email ajouté juste avant, par un autre chemin ou sur une autre instance,
+     * doit être vu tout de suite, pas cinq minutes plus tard (FLUTTER-BX).
+     */
+    public Contact getFreshContact(String firebaseUid) {
+        if (!unavailable() && firebaseUid != null && !firebaseUid.isBlank()) {
+            cache.invalidate(firebaseUid);
+        }
+        return getContact(firebaseUid);
+    }
+
+    /**
      * Coordonnées de plusieurs utilisateurs en un aller-retour (listes admin, exports).
      * Firebase plafonne à 100 identifiants par appel, d'où le découpage.
      *

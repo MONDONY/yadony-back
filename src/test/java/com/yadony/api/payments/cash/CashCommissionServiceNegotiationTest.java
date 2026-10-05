@@ -211,6 +211,34 @@ class CashCommissionServiceNegotiationTest {
         assertThat(thread.getCommissionChargedVia()).isEqualTo("WALLET");
     }
 
+    // FLUTTER-CG : devise active EUR, le voyageur choisit son portefeuille XOF (recharge
+    // mobile money) comme complément, au taux du jour.
+    @Test
+    void settleNegotiationCommission_fundingCurrencyChosen_debitsThatWallet() {
+        UUID travelerId = UUID.randomUUID();
+        UUID senderId = UUID.randomUUID();
+        UUID threadId = UUID.randomUUID();
+        NegotiationThreadEntity thread = threadWithId(threadId);
+
+        when(negotiationThreadRepository.findById(threadId)).thenReturn(Optional.of(thread));
+        when(commissionRateResolver.resolve(eq(travelerId), eq(senderId), isNull(), isNull(), any()))
+                .thenReturn(new BigDecimal("0.05"));
+        when(walletService.getBalanceForUpdate(travelerId, "EUR")).thenReturn(BigDecimal.ZERO);
+        when(exchangeRateService.convert(new BigDecimal("5.00"), "EUR", "XOF"))
+                .thenReturn(new BigDecimal("3279"));
+        when(walletService.getBalanceForUpdate(travelerId, "XOF")).thenReturn(new BigDecimal("5000.00"));
+
+        AcceptBidResponse response = service.settleNegotiationCommission(
+                travelerId, senderId, threadId, new BigDecimal("100.00"), CommissionSource.WALLET_FIRST, "XOF");
+
+        assertThat(response.status()).isEqualTo(AcceptanceStatusDto.ACCEPTED);
+        verify(walletService).debit(eq(travelerId), eq("XOF"), eq(new BigDecimal("3279")),
+                eq(WalletTransactionType.COMMISSION_DEDUCTED), eq(threadId.toString()),
+                eq("nego_commission_wallet_" + threadId + "_active"),
+                eq("EUR"), eq(new BigDecimal("5.00")), any());
+        verify(activeCurrencyResolver, never()).resolve(travelerId);
+    }
+
     @Test
     void settleNegotiationCommission_threadEurWalletXof_insufficientAfterConversion_returnsInsufficientInTravelerCurrency() {
         UUID travelerId = UUID.randomUUID();

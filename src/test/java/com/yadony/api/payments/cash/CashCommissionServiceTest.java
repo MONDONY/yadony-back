@@ -1068,6 +1068,59 @@ class CashCommissionServiceTest {
         }
 
         @Test
+        void walletFirstPath_fundingCurrencyChosen_debitsThatWalletInsteadOfActive() {
+            // FLUTTER-CG : devise active EUR vide, recharge mobile money en XOF. Le voyageur
+            // désigne XOF : le complément part du portefeuille XOF au taux du jour.
+            when(exchangeRateService.convert(new BigDecimal("12.00"), "EUR", "XOF"))
+                    .thenReturn(new BigDecimal("7869"));
+            when(walletService.getBalanceForUpdate(travelerId, "XOF")).thenReturn(new BigDecimal("8000.00"));
+            when(walletTransactionRepository.existsByUserIdAndBidIdAndType(eq(travelerId), any(), any()))
+                    .thenReturn(false);
+
+            AcceptBidResponse resp = service.acceptCashBid(
+                    bid.getId(), travelerId, com.yadony.api.payments.cash.CommissionSource.WALLET_FIRST, "xof");
+
+            assertThat(resp.status()).isEqualTo(AcceptanceStatusDto.ACCEPTED);
+            verify(walletService).debit(eq(travelerId), eq("XOF"), eq(new BigDecimal("7869")),
+                    eq(com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED), eq(bid.getId()),
+                    eq("EUR"), eq(new BigDecimal("12.00")), any());
+            verify(activeCurrencyResolver, never()).resolve(travelerId);
+        }
+
+        @Test
+        void walletFirstPath_insufficient_listsBidCurrencyAndAlternatives() {
+            // Devise active EUR vide, mais un portefeuille XOF suffisant : la réponse rappelle
+            // la devise du trajet et propose XOF au taux du jour, sans rien prélever.
+            com.yadony.api.payments.wallet.WalletAccountEntity xof = new com.yadony.api.payments.wallet.WalletAccountEntity();
+            xof.setCurrency("XOF");
+            xof.setBalance(new BigDecimal("8000"));
+            when(walletService.getAllBalances(travelerId)).thenReturn(java.util.List.of(xof));
+            when(walletService.getBalance(travelerId, "EUR")).thenReturn(BigDecimal.ZERO);
+            when(exchangeRateService.convert(new BigDecimal("12.00"), "EUR", "XOF"))
+                    .thenReturn(new BigDecimal("7869"));
+
+            AcceptBidResponse resp = service.acceptCashBid(
+                    bid.getId(), travelerId, com.yadony.api.payments.cash.CommissionSource.WALLET_FIRST);
+
+            assertThat(resp.status()).isEqualTo(AcceptanceStatusDto.INSUFFICIENT_WALLET);
+            assertThat(resp.bidCurrency()).isEqualTo("EUR");
+            assertThat(resp.alternatives()).hasSize(1);
+            assertThat(resp.alternatives().get(0).currency()).isEqualTo("XOF");
+            assertThat(resp.alternatives().get(0).required()).isEqualByComparingTo("7869");
+            verify(walletService, never()).debit(any(), any(), any(), any(), any());
+        }
+
+        @Test
+        void walletFirstPath_unknownFundingCurrency_returns422WithoutDebit() {
+            assertThatThrownBy(() -> service.acceptCashBid(
+                    bid.getId(), travelerId, com.yadony.api.payments.cash.CommissionSource.WALLET_FIRST, "ZZZ"))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getStatus())
+                            .isEqualTo(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY));
+            verify(walletService, never()).debit(any(), any(), any(), any(), any());
+        }
+
+        @Test
         void gridOnlyBid_nullWeight_acceptsWithoutNpe_commissionFromGrid() {
             // Bid grille pure : weightKg null. La commission doit venir de la grille
             // (et non du poids), sans NPE, et la capacité kilo ne doit pas être touchée.

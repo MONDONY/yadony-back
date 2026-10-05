@@ -37,15 +37,15 @@ class CashGateAdapterTest {
         UUID sender = UUID.randomUUID();
         UUID thread = UUID.randomUUID();
         when(cashCommissionService.settleNegotiationCommission(
-                traveler, sender, thread, new BigDecimal("100.00"), CommissionSource.WALLET_FIRST))
+                traveler, sender, thread, new BigDecimal("100.00"), CommissionSource.WALLET_FIRST, "USD"))
             .thenReturn(AcceptBidResponse.accepted());
 
         AcceptBidResponse resp = adapter.settleNegotiationCommission(
-                traveler, sender, thread, new BigDecimal("100.00"), CommissionSource.WALLET_FIRST);
+                traveler, sender, thread, new BigDecimal("100.00"), CommissionSource.WALLET_FIRST, "USD");
 
         assertThat(resp.status()).isEqualTo(AcceptanceStatusDto.ACCEPTED);
         verify(cashCommissionService).settleNegotiationCommission(
-                traveler, sender, thread, new BigDecimal("100.00"), CommissionSource.WALLET_FIRST);
+                traveler, sender, thread, new BigDecimal("100.00"), CommissionSource.WALLET_FIRST, "USD");
     }
 
     @Test
@@ -54,11 +54,11 @@ class CashGateAdapterTest {
         UUID sender = UUID.randomUUID();
         UUID thread = UUID.randomUUID();
         when(cashCommissionService.settleNegotiationCommission(
-                traveler, sender, thread, new BigDecimal("50.00"), CommissionSource.CARD))
+                traveler, sender, thread, new BigDecimal("50.00"), CommissionSource.CARD, null))
             .thenReturn(AcceptBidResponse.failed("card-declined"));
 
         AcceptBidResponse resp = adapter.settleNegotiationCommission(
-                traveler, sender, thread, new BigDecimal("50.00"), CommissionSource.CARD);
+                traveler, sender, thread, new BigDecimal("50.00"), CommissionSource.CARD, null);
 
         assertThat(resp.status()).isEqualTo(AcceptanceStatusDto.FAILED);
         assertThat(resp.error()).isEqualTo("card-declined");

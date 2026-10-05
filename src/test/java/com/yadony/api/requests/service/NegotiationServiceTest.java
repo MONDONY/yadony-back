@@ -3966,7 +3966,7 @@ class NegotiationServiceTest {
         void settleCommission_locksRequestViaFindByIdForUpdate() {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
             when(requestRepo.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(request));
-            when(cashGatePort.settleNegotiationCommission(any(), any(), any(), any(), any()))
+            when(cashGatePort.settleNegotiationCommission(any(), any(), any(), any(), any(), any()))
                 .thenReturn(AcceptBidResponse.insufficientWallet(
                     new BigDecimal("1.00"), new BigDecimal("5.00"), true, "EUR"));
 
@@ -3999,7 +3999,7 @@ class NegotiationServiceTest {
             when(requestRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
             when(cashGatePort.settleNegotiationCommission(
                     eq(TRAVELER_ID), eq(SENDER_ID), eq(THREAD_ID), eq(new BigDecimal("40")),
-                    eq(CommissionSource.WALLET_FIRST)))
+                    eq(CommissionSource.WALLET_FIRST), isNull()))
                 .thenAnswer(inv -> {
                     // Même transaction en production : CashCommissionService mute la MÊME
                     // entité thread (persistence context partagé) — on le simule ici.
@@ -4025,7 +4025,7 @@ class NegotiationServiceTest {
             when(requestRepo.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(request));
             when(cashGatePort.settleNegotiationCommission(
                     eq(TRAVELER_ID), eq(SENDER_ID), eq(THREAD_ID), eq(new BigDecimal("40")),
-                    eq(CommissionSource.WALLET_FIRST)))
+                    eq(CommissionSource.WALLET_FIRST), isNull()))
                 .thenReturn(AcceptBidResponse.insufficientWallet(
                     new BigDecimal("1.00"), new BigDecimal("5.00"), true, "EUR"));
 

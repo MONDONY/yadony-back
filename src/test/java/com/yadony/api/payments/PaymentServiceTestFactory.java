@@ -30,6 +30,8 @@ class PaymentServiceTestFactory {
         var svc = mock(com.yadony.api.auth.FirebaseContactService.class);
         lenient().when(svc.getContact(any())).thenReturn(
                 new com.yadony.api.auth.FirebaseContactService.Contact("+33600000000", "test@yadony.app"));
+        lenient().when(svc.getFreshContact(any())).thenReturn(
+                new com.yadony.api.auth.FirebaseContactService.Contact("+33600000000", "test@yadony.app"));
         return svc;
     }
 

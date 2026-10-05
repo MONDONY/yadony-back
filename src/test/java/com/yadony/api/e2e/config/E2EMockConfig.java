@@ -69,6 +69,8 @@ public class E2EMockConfig {
         FirebaseContactService.Contact contact =
                 new FirebaseContactService.Contact("+33600000000", "e2e@yadony.app");
         Mockito.lenient().when(mock.getContact(Mockito.any())).thenReturn(contact);
+        // Lecture hors cache de la garde contact-email-required (StripeV2AccountProvisioner).
+        Mockito.lenient().when(mock.getFreshContact(Mockito.any())).thenReturn(contact);
         // Le contrat des methodes rendant un objet est reproduit explicitement : un mock nu
         // rendrait `null` la ou le vrai service garantit une map par UID demande et un
         // Optional vide, ce qui ferait tomber en NPE les scenarios qui les traversent.

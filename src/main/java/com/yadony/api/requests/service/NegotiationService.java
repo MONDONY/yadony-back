@@ -1583,6 +1583,17 @@ public class NegotiationService {
      */
     @Transactional
     public AcceptBidResponse settleCommission(UUID callerId, UUID threadId, CommissionSource source) {
+        return settleCommission(callerId, threadId, source, null);
+    }
+
+    /**
+     * Variante où le voyageur désigne le portefeuille de complément
+     * ({@code fundingCurrency}, {@code null} = devise active), après une réponse
+     * {@code INSUFFICIENT_WALLET} qui lui a proposé des {@code alternatives}.
+     */
+    @Transactional
+    public AcceptBidResponse settleCommission(UUID callerId, UUID threadId, CommissionSource source,
+                                              String fundingCurrency) {
         LockedCommissionThread locked = lockAwaitingCommissionThread(callerId, threadId);
         NegotiationThreadEntity thread = locked.thread();
         PackageRequestEntity request = locked.request();
@@ -1606,7 +1617,8 @@ public class NegotiationService {
         assertTravelerAnnouncementActive(thread.getTravelerAnnouncementId());
 
         AcceptBidResponse resp = cashGatePort.settleNegotiationCommission(
-            thread.getTravelerId(), request.getSenderId(), threadId, thread.getCurrentPriceEur(), source);
+            thread.getTravelerId(), request.getSenderId(), threadId, thread.getCurrentPriceEur(), source,
+            fundingCurrency);
 
         if (resp.status() == AcceptanceStatusDto.ACCEPTED) {
             sealAcceptedThread(thread, request, callerId, null);

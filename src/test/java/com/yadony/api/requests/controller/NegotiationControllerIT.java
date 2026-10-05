@@ -339,7 +339,7 @@ class NegotiationControllerIT {
     void post_settleCommission_accepted_returns200() throws Exception {
         UUID threadId = UUID.randomUUID();
         when(service.settleCommission(eq(TRAVELER_UUID), eq(threadId),
-                eq(com.yadony.api.payments.cash.CommissionSource.WALLET_FIRST)))
+                eq(com.yadony.api.payments.cash.CommissionSource.WALLET_FIRST), any()))
             .thenReturn(com.yadony.api.payments.cash.dto.AcceptBidResponse.accepted());
 
         mockMvc.perform(post("/negotiations/{id}/settle-commission", threadId)
@@ -352,7 +352,7 @@ class NegotiationControllerIT {
     void post_settleCommission_withCardSource_delegatesCommissionSource() throws Exception {
         UUID threadId = UUID.randomUUID();
         when(service.settleCommission(eq(TRAVELER_UUID), eq(threadId),
-                eq(com.yadony.api.payments.cash.CommissionSource.CARD)))
+                eq(com.yadony.api.payments.cash.CommissionSource.CARD), any()))
             .thenReturn(com.yadony.api.payments.cash.dto.AcceptBidResponse.accepted());
 
         mockMvc.perform(post("/negotiations/{id}/settle-commission", threadId)
@@ -361,7 +361,22 @@ class NegotiationControllerIT {
             .andExpect(status().isOk());
 
         verify(service).settleCommission(eq(TRAVELER_UUID), eq(threadId),
-            eq(com.yadony.api.payments.cash.CommissionSource.CARD));
+            eq(com.yadony.api.payments.cash.CommissionSource.CARD), any());
+    }
+
+    @Test
+    void post_settleCommission_withFundingCurrency_delegatesIt() throws Exception {
+        UUID threadId = UUID.randomUUID();
+        when(service.settleCommission(eq(TRAVELER_UUID), eq(threadId), any(), eq("USD")))
+            .thenReturn(com.yadony.api.payments.cash.dto.AcceptBidResponse.accepted());
+
+        mockMvc.perform(post("/negotiations/{id}/settle-commission", threadId)
+                .param("fundingCurrency", "USD")
+                .with(authentication(authAs("uid-traveler", "TRAVELER"))))
+            .andExpect(status().isOk());
+
+        verify(service).settleCommission(eq(TRAVELER_UUID), eq(threadId),
+            eq(com.yadony.api.payments.cash.CommissionSource.WALLET_FIRST), eq("USD"));
     }
 
     @Test
@@ -376,7 +391,7 @@ class NegotiationControllerIT {
     @Test
     void post_settleCommission_requires3ds_returns202() throws Exception {
         UUID threadId = UUID.randomUUID();
-        when(service.settleCommission(eq(TRAVELER_UUID), eq(threadId), any()))
+        when(service.settleCommission(eq(TRAVELER_UUID), eq(threadId), any(), any()))
             .thenReturn(com.yadony.api.payments.cash.dto.AcceptBidResponse
                 .requires3ds("pi_secret", "pi_id"));
 
@@ -389,7 +404,7 @@ class NegotiationControllerIT {
     @Test
     void post_settleCommission_failed_returns422() throws Exception {
         UUID threadId = UUID.randomUUID();
-        when(service.settleCommission(eq(TRAVELER_UUID), eq(threadId), any()))
+        when(service.settleCommission(eq(TRAVELER_UUID), eq(threadId), any(), any()))
             .thenReturn(com.yadony.api.payments.cash.dto.AcceptBidResponse.failed("card-declined"));
 
         mockMvc.perform(post("/negotiations/{id}/settle-commission", threadId)
@@ -400,7 +415,7 @@ class NegotiationControllerIT {
     @Test
     void post_settleCommission_insufficientWallet_returns409WithAmounts() throws Exception {
         UUID threadId = UUID.randomUUID();
-        when(service.settleCommission(eq(TRAVELER_UUID), eq(threadId), any()))
+        when(service.settleCommission(eq(TRAVELER_UUID), eq(threadId), any(), any()))
             .thenReturn(com.yadony.api.payments.cash.dto.AcceptBidResponse.insufficientWallet(
                 new BigDecimal("1.00"), new BigDecimal("5.00"), true, "EUR"));
 
@@ -415,7 +430,7 @@ class NegotiationControllerIT {
     @Test
     void post_settleCommission_threadNotAwaitingCommission_returnsProblemDetail() throws Exception {
         UUID threadId = UUID.randomUUID();
-        when(service.settleCommission(eq(TRAVELER_UUID), eq(threadId), any()))
+        when(service.settleCommission(eq(TRAVELER_UUID), eq(threadId), any(), any()))
             .thenThrow(new ResponseStatusException(CONFLICT, "thread/not-awaiting-commission"));
 
         mockMvc.perform(post("/negotiations/{id}/settle-commission", threadId)

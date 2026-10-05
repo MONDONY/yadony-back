@@ -264,4 +264,53 @@ class WalletCommissionCollectorTest {
         assertThat(s.activeCurrency()).isEqualTo("EUR");
         assertThat(s.covered()).isTrue();
     }
+
+    private static com.yadony.api.payments.wallet.WalletAccountEntity wallet(String currency, String balance) {
+        var w = new com.yadony.api.payments.wallet.WalletAccountEntity();
+        w.setCurrency(currency);
+        w.setBalance(new BigDecimal(balance));
+        return w;
+    }
+
+    @Test
+    void alternatives_listsOtherWalletsCoveringTheRemainder_atTodaysRate() {
+        // Colis XOF 1050, portefeuille XOF 600 → reste 450 XOF. EUR (complément) exclu ;
+        // USD 5.00 couvre 0.75, GBP 0.10 ne couvre pas 0.60, CAD gelé, XAF vide.
+        when(walletService.getBalance(traveler, "XOF")).thenReturn(new BigDecimal("600"));
+        when(walletService.isFrozen(traveler, "CAD")).thenReturn(true);
+        when(walletService.getAllBalances(traveler)).thenReturn(java.util.List.of(
+                wallet("XOF", "600"), wallet("EUR", "0.10"), wallet("USD", "5.00"),
+                wallet("GBP", "0.10"), wallet("CAD", "50.00"), wallet("XAF", "0")));
+        when(exchangeRateService.convert(new BigDecimal("450"), "XOF", "USD")).thenReturn(new BigDecimal("0.7512"));
+        when(exchangeRateService.convert(new BigDecimal("450"), "XOF", "GBP")).thenReturn(new BigDecimal("0.60"));
+
+        var result = collector.alternatives(traveler, "XOF", "EUR", new BigDecimal("1050"));
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).currency()).isEqualTo("USD");
+        assertThat(result.get(0).balance()).isEqualByComparingTo("5.00");
+        assertThat(result.get(0).required()).isEqualByComparingTo("0.75");
+        verify(walletService, never()).getBalanceForUpdate(any(), any());
+    }
+
+    @Test
+    void alternatives_emptyWhenBidWalletAloneCovers() {
+        when(walletService.getBalance(traveler, "EUR")).thenReturn(new BigDecimal("20.00"));
+
+        assertThat(collector.alternatives(traveler, "EUR", "XOF", new BigDecimal("12.00"))).isEmpty();
+        verify(walletService, never()).getAllBalances(any());
+    }
+
+    @Test
+    void alternatives_frozenBidWallet_countsAsZero() {
+        when(walletService.isFrozen(traveler, "EUR")).thenReturn(true);
+        when(walletService.getAllBalances(traveler)).thenReturn(java.util.List.of(wallet("USD", "30.00")));
+        when(exchangeRateService.convert(new BigDecimal("12.00"), "EUR", "USD")).thenReturn(new BigDecimal("13.00"));
+
+        var result = collector.alternatives(traveler, "EUR", "XOF", new BigDecimal("12.00"));
+
+        assertThat(result).extracting(com.yadony.api.payments.cash.dto.FundingAlternativeDto::currency)
+                .containsExactly("USD");
+        verify(walletService, never()).getBalance(traveler, "EUR");
+    }
 }
