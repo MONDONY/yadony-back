@@ -84,6 +84,10 @@ import java.util.UUID;
 @PreAuthorize("hasRole('ADMIN')")
 public class AdminPaymentController {
 
+    /** Fins de colis où l'escrow est remboursé à l'expéditeur : jamais versé au voyageur. */
+    private static final java.util.Set<BidStatus> SENDER_REFUND_STATUSES = java.util.EnumSet.of(
+            BidStatus.REJECTED, BidStatus.EXPIRED, BidStatus.NO_SHOW, BidStatus.PARCEL_REFUSED);
+
     /** Manual-capture PaymentIntent state where the card is authorized and funds are held. */
     private static final String STATUS_REQUIRES_CAPTURE = "requires_capture";
     /** PaymentIntent state après annulation d'un hold (autorisation levée). */
@@ -242,6 +246,23 @@ public class AdminPaymentController {
                     HttpStatus.UNPROCESSABLE_ENTITY, "bid-cancelled",
                     "Bid Cancelled",
                     "Le colis est annulé — l'escrow doit être remboursé à l'expéditeur, pas transféré au voyageur");
+        }
+        // Même règle pour les autres fins de colis où l'argent revient à l'expéditeur : refusé
+        // par le voyageur, expiré, voyageur absent (NoShowService), colis refusé à la remise.
+        if (bid != null && SENDER_REFUND_STATUSES.contains(bid.getStatus())) {
+            throw new YadonyBusinessException(
+                    HttpStatus.UNPROCESSABLE_ENTITY, "bid-not-releasable",
+                    "Bid Not Releasable",
+                    "Le colis est " + bid.getStatus() + " — l'escrow revient à l'expéditeur, pas au voyageur");
+        }
+        // Remboursement partiel déjà passé : le net ci-dessous part du montant TOTAL et
+        // verserait au voyageur la part rendue à l'expéditeur. Montant à trancher à la main.
+        if (payment.getRefundedAmount() != null && payment.getRefundedAmount().signum() > 0) {
+            throw new YadonyBusinessException(
+                    HttpStatus.UNPROCESSABLE_ENTITY, "payment-partially-refunded",
+                    "Payment Partially Refunded",
+                    "Ce paiement a déjà été partiellement remboursé (" + payment.getRefundedAmount().toPlainString()
+                            + " " + payment.getCurrency() + ") — la libération forcée verserait le montant total");
         }
 
         AnnouncementEntity announcement = (bid != null)

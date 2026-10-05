@@ -164,7 +164,11 @@ public class WalletService {
         }
 
         String code = normalize(currency);
-        WalletAccountEntity wallet = getOrCreate(userId, code);
+        // Ligne verrouillée, comme pour les débits : sans verrou, un crédit concurrent
+        // d'un débit (ou d'un autre crédit) repartait d'un solde déjà périmé et écrasait
+        // l'autre écriture. Le ledger restait juste, le solde devenait faux.
+        WalletAccountEntity wallet = walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, code)
+                .orElseGet(() -> getOrCreate(userId, code));
         BigDecimal newBalance = wallet.getBalance().add(amount);
         wallet.setBalance(newBalance);
         walletAccountRepository.save(wallet);

@@ -131,6 +131,30 @@ class WalletServiceTest {
     }
 
     @Test
+    void credit_partDuSoldeVerrouilleEtNonDUneLecturePerimee() {
+        // Un débit concurrent a déjà fait passer le solde de 0 à 50 et validé :
+        // la lecture simple (sans verrou) renvoie encore 0, la ligne verrouillée 50.
+        // Le crédit doit partir de la ligne verrouillée, sinon il écrase le débit
+        // (mise à jour perdue : ledger juste, solde faux).
+        UUID userId = UUID.randomUUID();
+        WalletAccountEntity stale = wallet(userId, "EUR", new BigDecimal("0.00"));
+        WalletAccountEntity locked = wallet(userId, "EUR", new BigDecimal("50.00"));
+        lenient().when(walletAccountRepository.findByUserIdAndCurrency(userId, "EUR")).thenReturn(Optional.of(stale));
+        when(walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, "EUR")).thenReturn(Optional.of(locked));
+        when(walletAccountRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(walletTransactionRepository.findByIdempotencyKey(anyString())).thenReturn(Optional.empty());
+        when(walletTransactionRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        walletService.credit(userId, "EUR", new BigDecimal("10.00"),
+                WalletTransactionType.TOP_UP, "pi_lock", "idem-lock");
+
+        ArgumentCaptor<WalletTransactionEntity> transaction = ArgumentCaptor.forClass(WalletTransactionEntity.class);
+        verify(walletTransactionRepository).save(transaction.capture());
+        assertThat(transaction.getValue().getBalanceAfter()).isEqualByComparingTo(new BigDecimal("60.00"));
+        assertThat(locked.getBalance()).isEqualByComparingTo(new BigDecimal("60.00"));
+    }
+
+    @Test
     void credit_increasesBalanceAndLogsCurrencyOnTransaction() {
         UUID userId = UUID.randomUUID();
         WalletAccountEntity wallet = wallet(userId, "EUR", new BigDecimal("10.00"));
