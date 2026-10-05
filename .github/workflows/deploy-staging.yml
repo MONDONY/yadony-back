@@ -1,30 +1,43 @@
 name: Deploy Staging
 
-# Déploiement staging sur liste blanche : seules les branches préfixées
-# `staging/` partent sur le VPS. L'ancien filtre était `branches-ignore: [main]`,
-# c'est-à-dire « tout sauf main » : n'importe quelle branche de travail qui
-# passait la CI déployait son image ET appliquait ses migrations Flyway à la base
-# staging. Le 2026-08-15, V207 (renommage + DROP COLUMN) est ainsi partie depuis
-# une branche feature ; un déploiement ultérieur a remis l'image de `main`, dont
-# le code cherchait encore l'ancienne colonne → Schema-validation en échec,
-# crash-loop et 502 pendant une heure.
+# Déploiement staging MANUEL uniquement (Actions → Deploy Staging → Run workflow).
+# Depuis le 2026-10-05, aucun push ni aucune fusion ne déploie la recette : on
+# choisit quand le code (et ses migrations Flyway) part sur la base staging.
 #
-# Pour tester une branche en staging, la nommer `staging/<sujet>` (ou pousser un
-# alias : `git push origin ma-branche:staging/ma-branche`). Le déploiement
-# redevient ainsi un acte volontaire, migrations comprises.
+# Historique : jusqu'au 2026-08-15 tout push hors main déployait ; V207 (renommage
+# + DROP COLUMN) est ainsi partie depuis une branche feature, puis l'image de
+# `main` a crash-loopé sur la colonne disparue (502 pendant une heure). Le
+# déploiement est ensuite passé par les branches `staging/**` (workflow_run sur
+# la CI), puis par ce lancement manuel.
+#
+# Deux usages :
+#   - `ref` seul (défaut `main`) : build de l'image depuis cette branche ou ce
+#     commit, push sur GHCR (tags `sha-<court>` + `staging`), puis déploiement de
+#     l'image `sha-<court>` exacte.
+#   - `image_tag` renseigné : pas de build, redéploiement d'une image existante
+#     (retour arrière, remise en service après incident). `ref` ne fournit plus
+#     alors que compose, nginx et monitoring envoyés au VPS.
+#
+# La CI n'est pas rejouée ici : `main` est protégé (PR + checks verts requis),
+# une autre branche a été testée par sa PR. Déployer autre chose que `main`
+# applique ses migrations à la base staging : à réserver aux tests ciblés.
 on:
-  workflow_run:
-    workflows: ["CI"]
-    types: [completed]
-    branches: ['staging/**']
-  # Déclenchement manuel : redéployer sans repasser par un push, revenir à
-  # une image antérieure, ou remettre en service après un incident.
   workflow_dispatch:
     inputs:
-      image_tag:
-        description: "Tag de l'image à déployer (ex: staging ou sha-abc1234)"
+      ref:
+        description: "Branche ou commit à builder puis déployer (avec image_tag : source de compose/nginx seulement)"
         required: true
-        default: staging
+        default: main
+      image_tag:
+        description: "Image existante à redéployer sans build (ex: staging ou sha-abc1234). Vide = build depuis ref"
+        required: false
+        default: ""
+
+# Un seul déploiement staging à la fois : un second lancement attend la fin du
+# premier au lieu de se croiser avec lui sur le VPS (compose up concurrents).
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
 
 env:
   REGISTRY: ghcr.io
@@ -32,39 +45,25 @@ env:
 
 jobs:
 
-  check-ci:
-    name: Vérification CI
-    runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_run'
-    outputs:
-      branch: ${{ steps.extract.outputs.branch }}
-    steps:
-      - name: Extraire la branche
-        id: extract
-        run: |
-          BRANCH="${{ github.event.workflow_run.head_branch }}"
-          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
-          echo "🔍 Workflow CI sur la branche: $BRANCH"
-      - name: La CI a-t-elle réussi ?
-        run: |
-          if [ "${{ github.event.workflow_run.conclusion }}" != "success" ]; then
-            echo "❌ CI échouée — déploiement bloqué"
-            exit 1
-          fi
-          echo "✅ CI validée — déploiement autorisé"
-
   build-push:
     name: Build & Push image
     runs-on: ubuntu-latest
-    needs: check-ci
-    if: github.event_name == 'workflow_run'
+    if: inputs.image_tag == ''
     permissions:
       contents: read
       packages: write
+    outputs:
+      tag: ${{ steps.sha.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ inputs.ref }}
+      - name: Commit construit
+        id: sha
+        run: |
+          SHORT=$(git rev-parse --short=7 HEAD)
+          echo "tag=sha-$SHORT" >> "$GITHUB_OUTPUT"
+          echo "🔨 Build de ${{ inputs.ref }} → $(git log -1 --oneline)"
       - name: Connexion à ghcr.io
         uses: docker/login-action@v3
         with:
@@ -77,7 +76,7 @@ jobs:
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
-            type=sha,prefix=sha-,format=short,enable=true
+            type=raw,value=${{ steps.sha.outputs.tag }}
             type=raw,value=staging
       - name: Build & Push vers GHCR
         uses: docker/build-push-action@v6
@@ -90,11 +89,17 @@ jobs:
   deploy:
     name: Déploiement Staging
     runs-on: ubuntu-latest
-    needs: [check-ci, build-push]
+    needs: build-push
+    # build-push est sauté quand image_tag est renseigné : always() laisse alors
+    # partir le déploiement, !failure() le bloque si le build a échoué.
     if: always() && !failure() && !cancelled()
     environment: staging
     steps:
+      # Même ref que l'image : compose, nginx et monitoring envoyés au VPS
+      # correspondent au code déployé.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
 
       - name: Valider les secrets critiques
         run: |
@@ -131,7 +136,7 @@ jobs:
       - name: Créer .env.staging depuis les secrets et variables
         run: |
           cat > .env.staging << 'EOF'
-          YADONY_IMAGE_TAG=${{ github.event_name == 'workflow_dispatch' && inputs.image_tag || 'staging' }}
+          YADONY_IMAGE_TAG=${{ inputs.image_tag || needs.build-push.outputs.tag }}
           DB_USERNAME=${{ secrets.DB_USERNAME }}
           DB_PASSWORD=${{ secrets.DB_PASSWORD }}
           ENCRYPTION_KEY=${{ secrets.ENCRYPTION_KEY }}
