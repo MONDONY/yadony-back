@@ -447,6 +447,50 @@ class AdminPaymentControllerTest {
         verify(paymentRepository, never()).markReleasedIfEscrow(any(), any());
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.EnumSource(value = BidStatus.class,
+            names = {"REJECTED", "EXPIRED", "NO_SHOW", "PARCEL_REFUSED"})
+    void colis_dont_l_argent_revient_a_l_expediteur_refuse_la_liberation(BidStatus status) {
+        // Refusé, expiré, voyageur absent, colis refusé : chacun de ces parcours rembourse
+        // l'expéditeur. Le versement forcé au voyageur était pourtant permis (seul CANCELLED
+        // était bloqué) — vu sur staging le 28/09 sur des colis annulés et « absents ».
+        PaymentEntity p = threadPayment(PaymentStatus.ESCROW, false, "ch_x");
+        when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(p));
+        BidEntity bid = mock(BidEntity.class);
+        when(bid.getStatus()).thenReturn(status);
+        when(bidRepository.findByLinkedNegotiationThreadId(threadId)).thenReturn(Optional.of(bid));
+
+        try (MockedStatic<Transfer> trStatic = mockStatic(Transfer.class)) {
+            assertThatThrownBy(() -> controller.forceRelease(paymentId, null))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .extracting(e -> ((YadonyBusinessException) e).getErrorCode())
+                    .isEqualTo("bid-not-releasable");
+            trStatic.verifyNoInteractions();
+        }
+        verify(paymentRepository, never()).markReleasedIfEscrow(any(), any());
+    }
+
+    @Test
+    void paiement_partiellement_rembourse_refuse_la_liberation() {
+        // Le net forcé part du montant TOTAL : libérer verserait au voyageur la part déjà
+        // rendue à l'expéditeur. À trancher hors de ce bouton.
+        PaymentEntity p = threadPayment(PaymentStatus.ESCROW, false, "ch_x");
+        p.setRefundedAmount(new BigDecimal("30.00"));
+        when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(p));
+        BidEntity bid = mock(BidEntity.class);
+        when(bid.getStatus()).thenReturn(BidStatus.COMPLETED);
+        when(bidRepository.findByLinkedNegotiationThreadId(threadId)).thenReturn(Optional.of(bid));
+
+        try (MockedStatic<Transfer> trStatic = mockStatic(Transfer.class)) {
+            assertThatThrownBy(() -> controller.forceRelease(paymentId, null))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .extracting(e -> ((YadonyBusinessException) e).getErrorCode())
+                    .isEqualTo("payment-partially-refunded");
+            trStatic.verifyNoInteractions();
+        }
+        verify(paymentRepository, never()).markReleasedIfEscrow(any(), any());
+    }
+
     @Test
     void stripe_transfer_error_throws_500() throws StripeException {
         PaymentEntity p = threadPayment(PaymentStatus.ESCROW, false, "ch_x");

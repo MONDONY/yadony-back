@@ -46,7 +46,6 @@ class WalletControllerIT {
 
     @Autowired MockMvc mockMvc;
     @Autowired ObjectMapper objectMapper;
-    @Autowired WalletService walletService;
     @Autowired WalletTransactionRepository walletTransactionRepository;
     @Autowired WalletRefundRequestItemRepository walletRefundRequestItemRepository;
     @Autowired WalletRefundRequestRepository walletRefundRequestRepository;
@@ -61,6 +60,35 @@ class WalletControllerIT {
 
     private static final UUID USER_UUID = UUID.randomUUID();
     private static final String FIREBASE_UID = "uid-test-wallet";
+
+    /**
+     * Pose un solde comme {@link WalletService#credit} (solde incrémenté + ligne au grand
+     * livre avec son solde après), sans passer par son verrou de ligne : le crédit lit le wallet
+     * en {@code FOR NO KEY UPDATE}, syntaxe PostgreSQL que H2 refuse. Ce test vérifie le
+     * contrôleur ; le crédit verrouillé est couvert par WalletServiceTest et les IT Postgres.
+     */
+    private void seedCredit(UUID userId, String currency, BigDecimal amount, WalletTransactionType type,
+                            String paymentRef, String idempotencyKey) {
+        WalletAccountEntity wallet = walletAccountRepository.findByUserIdAndCurrency(userId, currency)
+                .orElseGet(() -> {
+                    WalletAccountEntity created = new WalletAccountEntity();
+                    created.setUserId(userId);
+                    created.setCurrency(currency);
+                    return created;
+                });
+        BigDecimal newBalance = wallet.getBalance().add(amount);
+        wallet.setBalance(newBalance);
+        walletAccountRepository.save(wallet);
+        WalletTransactionEntity tx = new WalletTransactionEntity();
+        tx.setUserId(userId);
+        tx.setCurrency(currency);
+        tx.setType(type);
+        tx.setAmount(amount);
+        tx.setBalanceAfter(newBalance);
+        tx.setPaymentRef(paymentRef);
+        tx.setIdempotencyKey(idempotencyKey);
+        walletTransactionRepository.save(tx);
+    }
 
     private void seedRate(String currency, String unitsPerEur) {
         exchangeRateRepository.save(new com.yadony.api.payments.currency.ExchangeRateEntity(
@@ -211,7 +239,7 @@ class WalletControllerIT {
 
     @Test
     void getBalance_exposesRefundEligibleTrueWhenPureTopUp() throws Exception {
-        walletService.credit(USER_UUID, "EUR", new BigDecimal("40.00"),
+        seedCredit(USER_UUID, "EUR", new BigDecimal("40.00"),
             WalletTransactionType.TOP_UP, "pi_refund_eligible", "idem-refund-eligible");
 
         mockMvc.perform(get("/wallet/balance")
@@ -238,7 +266,7 @@ class WalletControllerIT {
 
     @Test
     void getBalance_includesLockedNonActiveCurrencyBalances() throws Exception {
-        walletService.credit(USER_UUID, "CAD", new BigDecimal("15.00"),
+        seedCredit(USER_UUID, "CAD", new BigDecimal("15.00"),
             WalletTransactionType.TOP_UP, "ref-cad", null);
 
         mockMvc.perform(get("/wallet/balance")
@@ -251,9 +279,9 @@ class WalletControllerIT {
     @Test
     void getBalance_estimatesTotalAcrossCurrenciesInActiveCurrency() throws Exception {
         seedRate("XOF", "655.957");
-        walletService.credit(USER_UUID, "EUR", new BigDecimal("1.33"),
+        seedCredit(USER_UUID, "EUR", new BigDecimal("1.33"),
             WalletTransactionType.TOP_UP, "pi_est_eur", "idem-est-eur");
-        walletService.credit(USER_UUID, "XOF", new BigDecimal("10000"),
+        seedCredit(USER_UUID, "XOF", new BigDecimal("10000"),
             WalletTransactionType.TOP_UP, "pawapay:11111111-1111-1111-1111-111111111111", "idem-est-xof");
 
         mockMvc.perform(get("/wallet/balance")
@@ -278,9 +306,9 @@ class WalletControllerIT {
             cache.evict("GBP");
         }
         try {
-            walletService.credit(USER_UUID, "EUR", new BigDecimal("1.33"),
+            seedCredit(USER_UUID, "EUR", new BigDecimal("1.33"),
                 WalletTransactionType.TOP_UP, "pi_est_eur2", "idem-est-eur2");
-            walletService.credit(USER_UUID, "GBP", new BigDecimal("20.00"),
+            seedCredit(USER_UUID, "GBP", new BigDecimal("20.00"),
                 WalletTransactionType.TOP_UP, "pi_est_gbp", "idem-est-gbp");
 
             mockMvc.perform(get("/wallet/balance")
@@ -298,7 +326,7 @@ class WalletControllerIT {
 
     @Test
     void getBalance_singleActiveCurrencyEstimateEqualsBalance() throws Exception {
-        walletService.credit(USER_UUID, "EUR", new BigDecimal("40.00"),
+        seedCredit(USER_UUID, "EUR", new BigDecimal("40.00"),
             WalletTransactionType.TOP_UP, "pi_est_single", "idem-est-single");
 
         mockMvc.perform(get("/wallet/balance")
@@ -311,7 +339,7 @@ class WalletControllerIT {
 
     @Test
     void getBalance_marksTopupAsRefundProcessingWhenItemInProgress() throws Exception {
-        walletService.credit(USER_UUID, "EUR", new BigDecimal("10.00"),
+        seedCredit(USER_UUID, "EUR", new BigDecimal("10.00"),
             WalletTransactionType.TOP_UP, "pi_refund_processing", "idem-refund-processing");
         WalletTransactionEntity topup = walletTransactionRepository
             .findByIdempotencyKey("idem-refund-processing").orElseThrow();
@@ -345,9 +373,9 @@ class WalletControllerIT {
 
     @Test
     void balance_exposeRemboursableEtNonRemboursableParDevise() throws Exception {
-        walletService.credit(USER_UUID, "EUR", new BigDecimal("40.00"),
+        seedCredit(USER_UUID, "EUR", new BigDecimal("40.00"),
             WalletTransactionType.TOP_UP, "pi_it_1", "k-it-1");
-        walletService.credit(USER_UUID, "EUR", new BigDecimal("5.00"),
+        seedCredit(USER_UUID, "EUR", new BigDecimal("5.00"),
             WalletTransactionType.REFERRAL_REWARD, null, "k-it-2");
         debitDirect(USER_UUID, "EUR", new BigDecimal("10.00"),
             WalletTransactionType.BID_PAYMENT, UUID.randomUUID());
@@ -366,7 +394,7 @@ class WalletControllerIT {
 
     @Test
     void balance_netNulApresFrais_nonEligible() throws Exception {
-        walletService.credit(USER_UUID, "EUR", new BigDecimal("0.50"),
+        seedCredit(USER_UUID, "EUR", new BigDecimal("0.50"),
             WalletTransactionType.TOP_UP, "pi_it_fee", "k-it-fee");
         // Frais Stripe au moins égal au montant : rien ne repartirait vers l'utilisateur.
         when(stripeFeeSource.fee(any(), any())).thenReturn(new BigDecimal("0.50"));
@@ -387,7 +415,7 @@ class WalletControllerIT {
      */
     @Test
     void balance_xof_netPositifSeulementAvantArrondi_nonEligible() throws Exception {
-        walletService.credit(USER_UUID, "XOF", new BigDecimal("200.40"),
+        seedCredit(USER_UUID, "XOF", new BigDecimal("200.40"),
             WalletTransactionType.TOP_UP, "pi_it_xof", "k-it-xof");
         when(stripeFeeSource.fee(any(), any())).thenReturn(new BigDecimal("200"));
 
@@ -399,7 +427,7 @@ class WalletControllerIT {
 
     @Test
     void refundEligibleTopups_renvoieLeRestantEtLeMontantDOrigine() throws Exception {
-        walletService.credit(USER_UUID, "EUR", new BigDecimal("40.00"),
+        seedCredit(USER_UUID, "EUR", new BigDecimal("40.00"),
             WalletTransactionType.TOP_UP, "pi_it_2", "k-it-3");
         debitDirect(USER_UUID, "EUR", new BigDecimal("5.00"),
             WalletTransactionType.BID_PAYMENT, UUID.randomUUID());
@@ -456,7 +484,7 @@ class WalletControllerIT {
 
     @Test
     void refundRequest_sansCorps_accepte() throws Exception {
-        walletService.credit(USER_UUID, "EUR", new BigDecimal("40.00"),
+        seedCredit(USER_UUID, "EUR", new BigDecimal("40.00"),
             WalletTransactionType.TOP_UP, "pi_it_3", "k-it-4");
 
         // Refund.create part au commit de la demande (WalletRefundIssueListener) : mockStatic

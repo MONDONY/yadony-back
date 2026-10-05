@@ -153,6 +153,26 @@ public class DeliveryEventListener {
             return;
         }
 
+        // Remboursement partiel déjà passé (charge.refunded non total : le paiement reste ESCROW).
+        // Le net versé plus bas part du montant TOTAL : libérer verserait au voyageur la part
+        // déjà rendue à l'expéditeur, payée par la plateforme. Même modèle que la garde litige :
+        // rien ne part, le paiement reste en séquestre, un admin tranche (alerte persistée).
+        if (payment.getRefundedAmount() != null && payment.getRefundedAmount().signum() > 0) {
+            log.warn("Payment {} for bid {} was partially refunded ({}) — blocking release",
+                    payment.getId(), event.getBidId(), payment.getRefundedAmount());
+            auditService.log("PAYMENT", payment.getId(), "DELIVERY_TRANSFER_BLOCKED_PARTIAL_REFUND",
+                    event.getBidId(), Map.of("bidId", event.getBidId().toString(),
+                            "refundedAmount", payment.getRefundedAmount().toPlainString()));
+            alertEscalator.raiseOnce("PARTIAL_REFUND_HOLD_" + payment.getId(),
+                    "Versement bloqué : le paiement " + payment.getId() + " a déjà été partiellement remboursé ("
+                            + payment.getRefundedAmount().toPlainString() + " " + payment.getCurrency()
+                            + " sur " + payment.getAmount().toPlainString() + "), montant à verser à décider",
+                    Map.of("paymentId", payment.getId().toString(), "bidId", event.getBidId().toString(),
+                            "refundedAmount", payment.getRefundedAmount().toPlainString(),
+                            "amount", payment.getAmount().toPlainString()));
+            return;
+        }
+
         // Bénéficiaire gelé (banni ou vérification d'identité retirée) : même modèle que la garde
         // litige ci-dessus — AVANT le claim, le paiement reste ESCROW et rien ne part, sur les
         // trois rails (carte V2, carte legacy, mobile money). Seul un geste admin explicite
