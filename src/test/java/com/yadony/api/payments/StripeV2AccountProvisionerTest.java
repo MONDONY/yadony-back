@@ -43,7 +43,7 @@ class StripeV2AccountProvisionerTest {
         StripeConnectProperties props = PaymentServiceTestFactory.defaultConnectProperties();
         provisioner = new StripeV2AccountProvisioner(
                 stripeGateway, props, firebaseContact, verifiedIdentity);
-        org.mockito.Mockito.lenient().when(firebaseContact.getContact(any()))
+        org.mockito.Mockito.lenient().when(firebaseContact.getFreshContact(any()))
                 .thenReturn(new FirebaseContactService.Contact("+33600000000", "test@yadony.app"));
         // Par defaut, pas de snapshot : chaque test du prefill pose le sien.
         org.mockito.Mockito.lenient().when(verifiedIdentity.forUser(any()))
@@ -123,7 +123,7 @@ class StripeV2AccountProvisionerTest {
     @Test
     @DisplayName("Sans email de contact (compte Firebase telephone), aucun compte Connect n'est cree")
     void refusesToProvisionWithoutContactEmail() throws Exception {
-        when(firebaseContact.getContact(any()))
+        when(firebaseContact.getFreshContact(any()))
                 .thenReturn(new FirebaseContactService.Contact("+33600000000", null));
         UserEntity user = buildUser(false, "FR");
 
@@ -141,7 +141,7 @@ class StripeV2AccountProvisionerTest {
     @Test
     @DisplayName("Email de contact vide (chaine vide), aucun compte Connect n'est cree")
     void refusesToProvisionWithBlankContactEmail() throws Exception {
-        when(firebaseContact.getContact(any()))
+        when(firebaseContact.getFreshContact(any()))
                 .thenReturn(new FirebaseContactService.Contact("+33600000000", "   "));
         UserEntity user = buildUser(false, "FR");
 
@@ -156,7 +156,7 @@ class StripeV2AccountProvisionerTest {
     @Test
     @DisplayName("La garde precede le branchement merchant : aucun token US sans email de contact")
     void refusesMerchantCountryWithoutContactEmail() throws Exception {
-        when(firebaseContact.getContact(any()))
+        when(firebaseContact.getFreshContact(any()))
                 .thenReturn(new FirebaseContactService.Contact("+15550000000", null));
         UserEntity user = buildUser(false, "US");
 

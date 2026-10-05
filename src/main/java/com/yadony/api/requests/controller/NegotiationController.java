@@ -158,8 +158,9 @@ public class NegotiationController {
     @PreAuthorize("hasRole('TRAVELER')")
     public ResponseEntity<AcceptBidResponse> settleCommission(
             @PathVariable UUID id,
-            @RequestParam(defaultValue = "WALLET_FIRST") CommissionSource commissionSource) {
-        AcceptBidResponse resp = service.settleCommission(requireUserId(), id, commissionSource);
+            @RequestParam(defaultValue = "WALLET_FIRST") CommissionSource commissionSource,
+            @RequestParam(required = false) String fundingCurrency) {
+        AcceptBidResponse resp = service.settleCommission(requireUserId(), id, commissionSource, fundingCurrency);
         return switch (resp.status()) {
             case ACCEPTED -> ResponseEntity.ok(resp);
             case REQUIRES_3DS -> ResponseEntity.accepted().body(resp);

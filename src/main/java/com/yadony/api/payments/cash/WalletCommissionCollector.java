@@ -1,5 +1,6 @@
 package com.yadony.api.payments.cash;
 
+import com.yadony.api.payments.cash.dto.FundingAlternativeDto;
 import com.yadony.api.payments.currency.ExchangeRateService;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.wallet.WalletService;
@@ -10,6 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -20,8 +22,8 @@ import java.util.UUID;
 /**
  * Règle de prélèvement d'une commission espèces sur les portefeuilles du voyageur :
  * portefeuille de la devise du colis d'abord (sans conversion), puis complément sur la devise
- * active (converti au taux courant, taux snapshoté sur la ligne), tout ou rien. Aucun autre
- * portefeuille n'est touché. Les débits partent dans la transaction de l'appelant.
+ * active ou celle choisie par le voyageur (converti au taux courant, taux snapshoté sur la
+ * ligne), tout ou rien. Aucun autre portefeuille n'est touché. Les débits partent dans la transaction de l'appelant.
  *
  * <p>{@link #plan} lit les soldes SOUS VERROU ({@link WalletService#getBalanceForUpdate}) et
  * exige donc une transaction ouverte ({@code MANDATORY}) : les {@code execute*} qui suivent
@@ -92,6 +94,44 @@ public class WalletCommissionCollector {
         boolean covered = activeBalance.compareTo(remainingActive) >= 0;
         return new CommissionSplit(bid, commission, fromBid, remainingBid, active, remainingActive, appliedRate,
                 bidBalance, activeBalance, covered, commissionInActive);
+    }
+
+    /**
+     * Portefeuilles autres que celui du colis et que {@code complementCurrency} qui couvriraient,
+     * seuls, ce qui reste après le portefeuille du colis : proposés au voyageur sur un « solde
+     * insuffisant » (FLUTTER-CG : recharge mobile money en XOF, trajet et devise active en EUR).
+     * Lecture SANS verrou, pour affichage : le débit, s'il est choisi, repasse par {@link #plan}
+     * avec cette devise en complément. Un portefeuille gelé est ignoré, comme dans {@link #plan}.
+     */
+    public List<FundingAlternativeDto> alternatives(UUID travelerId, String bidCurrency,
+                                                    String complementCurrency, BigDecimal commission) {
+        String bid = normalize(bidCurrency);
+        String complement = normalize(complementCurrency);
+        BigDecimal bidBalance = walletService.isFrozen(travelerId, bid)
+                ? BigDecimal.ZERO : walletService.getBalance(travelerId, bid);
+        if (bidBalance == null) {
+            bidBalance = BigDecimal.ZERO;
+        }
+        BigDecimal remainingBid = commission.subtract(commission.min(bidBalance).max(BigDecimal.ZERO));
+        List<FundingAlternativeDto> result = new ArrayList<>();
+        if (remainingBid.signum() <= 0) {
+            return result;
+        }
+        for (var wallet : walletService.getAllBalances(travelerId)) {
+            String code = normalize(wallet.getCurrency());
+            if (code.equals(bid) || code.equals(complement) || SupportedCurrency.fromCode(code) == null
+                    || wallet.getBalance() == null || wallet.getBalance().signum() <= 0
+                    || walletService.isFrozen(travelerId, code)) {
+                continue;
+            }
+            int decimals = SupportedCurrency.fromCodeOrDefault(code).minorUnit();
+            BigDecimal required = exchangeRateService.convert(remainingBid, bid, code)
+                    .setScale(decimals, RoundingMode.HALF_UP);
+            if (wallet.getBalance().compareTo(required) >= 0) {
+                result.add(new FundingAlternativeDto(code, wallet.getBalance(), required));
+            }
+        }
+        return result;
     }
 
     public void executeForBid(CommissionSplit s, UUID travelerId, UUID bidId) {

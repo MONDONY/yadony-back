@@ -28,10 +28,12 @@ public interface CashGatePort {
      * Règle la commission Yadony d'un thread de négociation CASH à la demande du
      * voyageur. Le montant dérive du net négocié passé en paramètre. Ne lève jamais
      * sur un refus normal : le statut de la réponse porte l'issue.
+     * {@code fundingCurrency} désigne le portefeuille de complément choisi par le
+     * voyageur ({@code null} = sa devise active).
      */
     AcceptBidResponse settleNegotiationCommission(
             UUID travelerId, UUID senderId, UUID threadId,
-            BigDecimal netAmount, CommissionSource source);
+            BigDecimal netAmount, CommissionSource source, String fundingCurrency);
 
     /**
      * Relit auprès de Stripe le PaymentIntent de commission d'un thread après

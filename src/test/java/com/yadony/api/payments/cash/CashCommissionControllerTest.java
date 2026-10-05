@@ -148,7 +148,7 @@ class CashCommissionControllerTest {
 
     @Test
     void acceptCashBid_accepted_returns200() throws Exception {
-        when(cashCommissionService.acceptCashBid(any(), any(), any()))
+        when(cashCommissionService.acceptCashBid(any(), any(), any(), any()))
                 .thenReturn(AcceptBidResponse.accepted());
 
         mockMvc.perform(post("/bids/{bidId}/accept-with-commission", BID_ID)
@@ -158,7 +158,7 @@ class CashCommissionControllerTest {
 
     @Test
     void acceptCashBid_requires3ds_returns202() throws Exception {
-        when(cashCommissionService.acceptCashBid(any(), any(), any()))
+        when(cashCommissionService.acceptCashBid(any(), any(), any(), any()))
                 .thenReturn(AcceptBidResponse.requires3ds("pi_secret", "pi_id"));
 
         mockMvc.perform(post("/bids/{bidId}/accept-with-commission", BID_ID)
@@ -168,7 +168,7 @@ class CashCommissionControllerTest {
 
     @Test
     void acceptCashBid_failed_returns422() throws Exception {
-        when(cashCommissionService.acceptCashBid(any(), any(), any()))
+        when(cashCommissionService.acceptCashBid(any(), any(), any(), any()))
                 .thenReturn(AcceptBidResponse.failed("card_declined"));
 
         mockMvc.perform(post("/bids/{bidId}/accept-with-commission", BID_ID)
@@ -178,7 +178,7 @@ class CashCommissionControllerTest {
 
     @Test
     void acceptCashBid_insufficientWallet_returns409WithDetails() throws Exception {
-        when(cashCommissionService.acceptCashBid(any(), any(), any()))
+        when(cashCommissionService.acceptCashBid(any(), any(), any(), any()))
                 .thenReturn(AcceptBidResponse.insufficientWallet(
                         new java.math.BigDecimal("3.00"), new java.math.BigDecimal("12.00"), true, "EUR"));
 
@@ -192,7 +192,7 @@ class CashCommissionControllerTest {
 
     @Test
     void acceptCashBid_insufficientWallet_sameCurrency_omitsBreakdown() throws Exception {
-        when(cashCommissionService.acceptCashBid(any(), any(), any()))
+        when(cashCommissionService.acceptCashBid(any(), any(), any(), any()))
                 .thenReturn(AcceptBidResponse.insufficientWallet(
                         new java.math.BigDecimal("3.00"), new java.math.BigDecimal("12.00"), true, "EUR"));
 
@@ -208,7 +208,7 @@ class CashCommissionControllerTest {
                 "XOF", new java.math.BigDecimal("1050"), new java.math.BigDecimal("600"),
                 new java.math.BigDecimal("450"), new java.math.BigDecimal("0.69"), "EUR",
                 new java.math.BigDecimal("0.10"));
-        when(cashCommissionService.acceptCashBid(any(), any(), any()))
+        when(cashCommissionService.acceptCashBid(any(), any(), any(), any()))
                 .thenReturn(AcceptBidResponse.insufficientWallet(
                         new java.math.BigDecimal("0.10"), new java.math.BigDecimal("1.60"), false, "EUR", breakdown));
 
@@ -241,7 +241,7 @@ class CashCommissionControllerTest {
     @Test
     void acceptCashBid_commissionSourceCard_isPassedToService() throws Exception {
         when(cashCommissionService.acceptCashBid(any(), any(),
-                org.mockito.ArgumentMatchers.eq(CommissionSource.CARD)))
+                org.mockito.ArgumentMatchers.eq(CommissionSource.CARD), any()))
                 .thenReturn(AcceptBidResponse.accepted());
 
         mockMvc.perform(post("/bids/{bidId}/accept-with-commission", BID_ID)
@@ -250,7 +250,40 @@ class CashCommissionControllerTest {
                 .andExpect(status().isOk());
 
         org.mockito.Mockito.verify(cashCommissionService).acceptCashBid(any(), any(),
-                org.mockito.ArgumentMatchers.eq(CommissionSource.CARD));
+                org.mockito.ArgumentMatchers.eq(CommissionSource.CARD), any());
+    }
+
+    @Test
+    void acceptCashBid_fundingCurrency_isPassedToService() throws Exception {
+        when(cashCommissionService.acceptCashBid(any(), any(), any(),
+                org.mockito.ArgumentMatchers.eq("USD")))
+                .thenReturn(AcceptBidResponse.accepted());
+
+        mockMvc.perform(post("/bids/{bidId}/accept-with-commission", BID_ID)
+                .param("fundingCurrency", "USD")
+                .with(authentication(asTraveler())))
+                .andExpect(status().isOk());
+
+        org.mockito.Mockito.verify(cashCommissionService).acceptCashBid(any(), any(),
+                org.mockito.ArgumentMatchers.eq(CommissionSource.WALLET_FIRST),
+                org.mockito.ArgumentMatchers.eq("USD"));
+    }
+
+    @Test
+    void acceptCashBid_insufficientWallet_exposesBidCurrencyAndAlternatives() throws Exception {
+        when(cashCommissionService.acceptCashBid(any(), any(), any(), any()))
+                .thenReturn(AcceptBidResponse.insufficientWallet(
+                        new java.math.BigDecimal("0.10"), new java.math.BigDecimal("1.60"), false, "EUR", null,
+                        "XOF", List.of(new com.yadony.api.payments.cash.dto.FundingAlternativeDto(
+                                "USD", new java.math.BigDecimal("20.00"), new java.math.BigDecimal("1.75")))));
+
+        mockMvc.perform(post("/bids/{bidId}/accept-with-commission", BID_ID)
+                .with(authentication(asTraveler())))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.bidCurrency").value("XOF"))
+                .andExpect(jsonPath("$.alternatives[0].currency").value("USD"))
+                .andExpect(jsonPath("$.alternatives[0].balance").value(20.00))
+                .andExpect(jsonPath("$.alternatives[0].required").value(1.75));
     }
 
     // ── POST /bids/{bidId}/confirm-acceptance ────────────────────────────────────

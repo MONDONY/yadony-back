@@ -96,8 +96,9 @@ public class StripeV2AccountProvisioner implements ConnectAccountProvisioner {
         //
         // L'email est lu ICI, une seule fois, et transmis aux deux chemins : relire plus bas
         // rouvrirait la fenetre que cette garde ferme, le cache de FirebaseContactService
-        // pouvant expirer entre les deux lectures.
-        String contactEmail = firebaseContact.getContact(user.getFirebaseUid()).email();
+        // pouvant expirer entre les deux lectures. Lecture FRAICHE (hors cache) : un email
+        // ajoute juste apres ce refus doit debloquer le reessai immediatement (FLUTTER-BX).
+        String contactEmail = firebaseContact.getFreshContact(user.getFirebaseUid()).email();
         if (contactEmail == null || contactEmail.isBlank()) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "contact-email-required", "Contact Email Required",

@@ -433,6 +433,17 @@ public class CashCommissionService {
      */
     @Transactional
     public void chargeCommissionFromWallet(BidEntity bid, UUID travelerId, BigDecimal commission) {
+        chargeCommissionFromWallet(bid, travelerId, commission, null);
+    }
+
+    /**
+     * Variante où le voyageur a choisi lui-même le portefeuille de complément
+     * ({@code fundingCurrency}, validé par {@link #resolveComplementCurrency}) ; {@code null}
+     * retombe sur sa devise active.
+     */
+    @Transactional
+    public void chargeCommissionFromWallet(BidEntity bid, UUID travelerId, BigDecimal commission,
+                                           String fundingCurrency) {
         if (walletTransactionRepository.existsByUserIdAndBidIdAndType(
                 travelerId, bid.getId(), WalletTransactionType.COMMISSION_DEDUCTED)) {
             log.info("Commission wallet déjà prélevée pour bid {}, idempotent skip", bid.getId());
@@ -442,7 +453,7 @@ public class CashCommissionService {
         BigDecimal effectiveCommission = applyTravelerVoucher(travelerId, bid.getId(), commission);
 
         String bidCurrency = normalizeCurrency(bid.getCurrency());
-        String travelerCurrency = normalizeCurrency(activeCurrencyResolver.resolve(travelerId));
+        String travelerCurrency = resolveComplementCurrency(travelerId, fundingCurrency);
         CommissionSplit split = commissionCollector.plan(travelerId, bidCurrency, travelerCurrency, effectiveCommission);
         if (!split.covered()) {
             throw new InsufficientWalletBalanceException(split.activeBalance(), split.commissionInActive());
@@ -528,6 +539,18 @@ public class CashCommissionService {
     @Transactional
     public AcceptBidResponse settleNegotiationCommission(
             UUID travelerId, UUID senderId, UUID threadId, BigDecimal net, CommissionSource source) {
+        return settleNegotiationCommission(travelerId, senderId, threadId, net, source, null);
+    }
+
+    /**
+     * Variante avec portefeuille de complément choisi par le voyageur
+     * ({@code fundingCurrency}, {@code null} = devise active). Voir
+     * {@link #acceptCashBid(UUID, UUID, CommissionSource, String)}.
+     */
+    @Transactional
+    public AcceptBidResponse settleNegotiationCommission(
+            UUID travelerId, UUID senderId, UUID threadId, BigDecimal net, CommissionSource source,
+            String fundingCurrency) {
         com.yadony.api.requests.entity.NegotiationThreadEntity thread =
                 negotiationThreadRepository.findById(threadId).orElseThrow();
 
@@ -550,7 +573,7 @@ public class CashCommissionService {
             // « solde insuffisant » reste exprimée dans la devise active, le détail de la
             // répartition est exposé via breakdown quand les devises diffèrent.
             String threadCurrency = normalizeCurrency(thread.getCurrency());
-            String travelerCurrency = normalizeCurrency(activeCurrencyResolver.resolve(travelerId));
+            String travelerCurrency = resolveComplementCurrency(travelerId, fundingCurrency);
             CommissionSplit split = commissionCollector.plan(travelerId, threadCurrency, travelerCurrency, commission);
             if (split.covered()) {
                 try {
@@ -574,7 +597,8 @@ public class CashCommissionService {
             return AcceptBidResponse.insufficientWallet(
                     split.activeBalance(), split.commissionInActive(),
                     traveler.getCommissionPaymentMethodId() != null,
-                    travelerCurrency, CommissionShortfallDto.from(split));
+                    travelerCurrency, CommissionShortfallDto.from(split), threadCurrency,
+                    commissionCollector.alternatives(travelerId, threadCurrency, travelerCurrency, commission));
         }
 
         // CommissionSource.CARD : le voyageur a explicitement choisi sa carte.
@@ -857,10 +881,44 @@ public class CashCommissionService {
                 .orElse(false);
     }
 
+    /**
+     * Devise du portefeuille de complément : celle choisie par le voyageur si elle est
+     * fournie (code ISO supporté, sinon 422 {@code funding-currency-invalid}), sa devise
+     * active sinon. Le complément est converti au taux du jour, snapshoté sur la
+     * transaction.
+     */
+    private String resolveComplementCurrency(UUID travelerId, String fundingCurrency) {
+        if (fundingCurrency == null || fundingCurrency.isBlank()) {
+            return normalizeCurrency(activeCurrencyResolver.resolve(travelerId));
+        }
+        String code = normalizeCurrency(fundingCurrency);
+        if (SupportedCurrency.fromCode(code) == null) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "funding-currency-invalid", "Invalid Funding Currency",
+                    "Devise de prélèvement inconnue");
+        }
+        return code;
+    }
+
     // --- Cash bid acceptance ---
 
     @Transactional
     public AcceptBidResponse acceptCashBid(UUID bidId, UUID travelerId, CommissionSource commissionSource) {
+        return acceptCashBid(bidId, travelerId, commissionSource, null);
+    }
+
+    /**
+     * Acceptation espèces avec portefeuille de complément choisi par le voyageur.
+     *
+     * <p>Sans {@code fundingCurrency}, le reste (après le portefeuille de la devise du bid) est
+     * pris sur la devise active. Sur un solde insuffisant, la réponse liste les autres
+     * portefeuilles qui couvriraient seuls ce reste au taux du jour ({@code alternatives}) :
+     * le voyageur peut alors recharger dans la devise du trajet, ou relancer en désignant
+     * l'un d'eux. Le prélèvement ne part jamais dans une devise qu'il n'a pas choisie.
+     */
+    @Transactional
+    public AcceptBidResponse acceptCashBid(UUID bidId, UUID travelerId, CommissionSource commissionSource,
+                                           String fundingCurrency) {
         BidEntity bid = bidRepo.findByIdForUpdate(bidId)
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
                         "bid-not-found", "Bid Not Found", "Demande introuvable"));
@@ -918,11 +976,11 @@ public class CashCommissionService {
             // active (cf. WalletCommissionCollector), tout ou rien. Le débit réel (avec
             // bons et audit) reste dans chargeCommissionFromWallet, qui replanifie.
             String bidCurrency = normalizeCurrency(bid.getCurrency());
-            String travelerCurrency = normalizeCurrency(activeCurrencyResolver.resolve(travelerId));
+            String travelerCurrency = resolveComplementCurrency(travelerId, fundingCurrency);
             CommissionSplit split = commissionCollector.plan(travelerId, bidCurrency, travelerCurrency, commission);
             if (split.covered()) {
                 try {
-                    chargeCommissionFromWallet(bid, travelerId, commission);
+                    chargeCommissionFromWallet(bid, travelerId, commission, travelerCurrency);
                     finalizeBidAcceptance(bid, announcement, travelerId);
                     return AcceptBidResponse.accepted();
                 } catch (InsufficientWalletBalanceException e) {
@@ -943,7 +1001,8 @@ public class CashCommissionService {
             boolean hasCard = traveler.getCommissionPaymentMethodId() != null;
             return AcceptBidResponse.insufficientWallet(
                     split.activeBalance(), split.commissionInActive(), hasCard, travelerCurrency,
-                    CommissionShortfallDto.from(split));
+                    CommissionShortfallDto.from(split), bidCurrency,
+                    commissionCollector.alternatives(travelerId, bidCurrency, travelerCurrency, commission));
         }
 
         // commissionSource == CARD → comportement carte existant

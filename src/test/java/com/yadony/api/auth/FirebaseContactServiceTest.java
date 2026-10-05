@@ -54,6 +54,20 @@ class FirebaseContactServiceTest {
     }
 
     @Test
+    @DisplayName("getFreshContact → ignore le cache : un email ajouté entre-temps est vu tout de suite")
+    void getFreshContact_bypassesStaleCache() throws Exception {
+        UserRecord before = mock(UserRecord.class);
+        UserRecord after = mock(UserRecord.class);
+        when(after.getEmail()).thenReturn("awa@example.com");
+        when(firebaseAuth.getUser("uid-1")).thenReturn(before, after);
+
+        assertThat(service.getContact("uid-1").email()).isNull();
+        assertThat(service.getFreshContact("uid-1").email()).isEqualTo("awa@example.com");
+        assertThat(service.getContact("uid-1").email()).isEqualTo("awa@example.com");
+        verify(firebaseAuth, times(2)).getUser("uid-1");
+    }
+
+    @Test
     @DisplayName("getContact → EMPTY (dégradation gracieuse) si Firebase échoue")
     void getContact_gracefulOnFailure() throws Exception {
         when(firebaseAuth.getUser("uid-x")).thenThrow(mock(FirebaseAuthException.class));
