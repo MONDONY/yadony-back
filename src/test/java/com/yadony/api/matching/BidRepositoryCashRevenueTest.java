@@ -1,6 +1,7 @@
 package com.yadony.api.matching;
 
 import com.yadony.api.matching.dto.AnnouncementRevenueRow;
+import com.yadony.api.matching.dto.CashLineRow;
 import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.payments.dto.CurrencyAmountRow;
 import org.junit.jupiter.api.Test;
@@ -20,8 +21,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Le revenu des deals réglés en espèces ne passe par aucun PaymentEntity : il se
- * reconstitue depuis le bid livré ({@code negotiatedNetEur}), filtré CASH pour ne
- * pas doubler les deals carte.
+ * reconstitue depuis le bid livré ({@code negotiatedNetEur}, sinon poids × prix/kg
+ * + grille pour une offre directe), filtré CASH pour ne pas doubler les deals carte.
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
@@ -69,6 +70,28 @@ class BidRepositoryCashRevenueTest {
         b.setNegotiatedNetEur(net == null ? null : new BigDecimal(net));
         b.setCurrency(currency);
         em.persistAndFlush(b);
+    }
+
+    /** Offre directe en espèces : pas de prix négocié, le net vient du poids et de la grille. */
+    private UUID newDirectCashBid(UUID announcementId, String weightKg) {
+        BidEntity b = new BidEntity();
+        b.setAnnouncementId(announcementId);
+        b.setSenderId(UUID.randomUUID());
+        b.setStatus(BidStatus.COMPLETED);
+        b.setPaymentMethod(PaymentMethod.CASH);
+        b.setWeightKg(weightKg == null ? null : new BigDecimal(weightKg));
+        b.setCurrency("EUR");
+        return em.persistAndFlush(b).getId();
+    }
+
+    private void newGridItem(UUID bidId, String unitNet, int quantity) {
+        BidGridItemEntity g = new BidGridItemEntity();
+        g.setBidId(bidId);
+        g.setAnnouncementGridItemId(UUID.randomUUID());
+        g.setLabelSnapshot("Valise");
+        g.setUnitPriceNetSnapshot(new BigDecimal(unitNet));
+        g.setQuantity(quantity);
+        em.persistAndFlush(g);
     }
 
     /** Total réduit d'une ventilation par devise — zéro quand elle est vide. */
@@ -199,5 +222,79 @@ class BidRepositoryCashRevenueTest {
                 traveler, BidStatus.COMPLETED, PaymentMethod.CASH, FROM, TO);
 
         assertThat(rows).isEmpty();
+    }
+
+    // ── Offre directe (sans prix négocié) — Sentry FLUTTER-BS ────────────────
+
+    @Test
+    void directCashBid_isCountedFromWeightAndGrid_notZero() {
+        UUID traveler = UUID.randomUUID();
+        UUID ann = newAnnouncement(traveler); // 8 €/kg
+        UUID bid = newDirectCashBid(ann, "5.00"); // 40 €
+        newGridItem(bid, "15.00", 2); // + 30 €
+
+        BigDecimal revenue = sumOf(bidRepository.sumCashNetRevenueForTravelerByCurrency(
+                traveler, BidStatus.COMPLETED, PaymentMethod.CASH, FROM, TO));
+
+        assertThat(revenue).isEqualByComparingTo("70.00");
+    }
+
+    @Test
+    void directCashBid_withoutWeight_countsGridOnly() {
+        UUID traveler = UUID.randomUUID();
+        UUID ann = newAnnouncement(traveler);
+        UUID bid = newDirectCashBid(ann, null);
+        newGridItem(bid, "25.00", 1);
+
+        BigDecimal revenue = sumOf(bidRepository.sumCashNetRevenueForTravelerByCurrency(
+                traveler, BidStatus.COMPLETED, PaymentMethod.CASH, FROM, TO));
+
+        assertThat(revenue).isEqualByComparingTo("25.00");
+    }
+
+    @Test
+    void negotiatedCashBid_keepsNegotiatedNet_gridNotAddedTwice() {
+        UUID traveler = UUID.randomUUID();
+        UUID ann = newAnnouncement(traveler);
+        BidEntity b = new BidEntity();
+        b.setAnnouncementId(ann);
+        b.setSenderId(UUID.randomUUID());
+        b.setStatus(BidStatus.COMPLETED);
+        b.setPaymentMethod(PaymentMethod.CASH);
+        b.setWeightKg(new BigDecimal("5.00"));
+        b.setNegotiatedNetEur(new BigDecimal("55.00"));
+        b.setCurrency("EUR");
+        UUID bid = em.persistAndFlush(b).getId();
+        newGridItem(bid, "15.00", 2);
+
+        BigDecimal revenue = sumOf(bidRepository.sumCashNetRevenueForTravelerByCurrency(
+                traveler, BidStatus.COMPLETED, PaymentMethod.CASH, FROM, TO));
+
+        assertThat(revenue).isEqualByComparingTo("55.00");
+    }
+
+    @Test
+    void directCashBid_lines_totalAndByAnnouncement_reconcile() {
+        UUID traveler = UUID.randomUUID();
+        UUID ann = newAnnouncement(traveler);
+        UUID bid = newDirectCashBid(ann, "5.00");
+        newGridItem(bid, "15.00", 2);
+        newBid(ann, BidStatus.COMPLETED, PaymentMethod.CASH, "100.00");
+
+        List<CashLineRow> lines = bidRepository.findCashLinesForTraveler(
+                traveler, BidStatus.COMPLETED, PaymentMethod.CASH, FROM, TO);
+        assertThat(lines).extracting(CashLineRow::amount)
+                .usingComparatorForType(BigDecimal::compareTo, BigDecimal.class)
+                .containsExactlyInAnyOrder(new BigDecimal("70.00"), new BigDecimal("100.00"));
+
+        assertThat(sumOf(bidRepository.sumTotalCashNetRevenueForTravelerByCurrency(
+                traveler, BidStatus.COMPLETED, PaymentMethod.CASH)))
+                .isEqualByComparingTo("170.00");
+
+        List<AnnouncementRevenueRow> rows = bidRepository.findCashRevenueByAnnouncement(
+                traveler, BidStatus.COMPLETED, PaymentMethod.CASH, FROM, TO);
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0).gross()).isEqualByComparingTo("170.00");
+        assertThat(rows.get(0).commission()).isEqualByComparingTo("0");
     }
 }

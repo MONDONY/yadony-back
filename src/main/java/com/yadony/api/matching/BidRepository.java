@@ -106,8 +106,12 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
      * Revenu net des deals réglés en ESPÈCES sur la période. Le cash ne crée
      * aucun PaymentEntity (argent de la main à la main, Yadony ne prélève que sa
      * commission à part) : le revenu carte, payment-based, l'ignore donc. On le
-     * reconstitue depuis le bid livré = {@code negotiatedNetEur} (net voyageur
-     * figé au trip-linking, Modèle B : l'expéditeur paie gross = net×(1+taux)).
+     * reconstitue depuis le bid livré : {@code negotiatedNetEur} (net voyageur
+     * figé au trip-linking, Modèle B : l'expéditeur paie gross = net×(1+taux))
+     * pour un deal négocié, sinon poids × prix/kg de l'annonce + articles de
+     * grille snapshotés, comme {@code BidService} pour le total affiché. Une
+     * offre directe n'a pas de {@code negotiatedNetEur} : la lire seule comptait
+     * chaque livraison en espèces à 0 (Sentry FLUTTER-BS).
      * Filtré {@code paymentMethod = CASH} pour ne pas doubler les deals carte
      * déjà comptés par {@code PaymentRepository.sumCapturedRevenueForTraveler}.
      * Même fenêtre que {@link #sumDeliveredKgForTraveler} ({@code b.createdAt}).
@@ -117,7 +121,10 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
     // b.currency. Sommer à plat mélangeait EUR et XOF.
     @Query("""
         SELECT new com.yadony.api.payments.dto.CurrencyAmountRow(
-            UPPER(b.currency), SUM(b.negotiatedNetEur))
+            UPPER(b.currency), SUM(COALESCE(b.negotiatedNetEur,
+                COALESCE(b.weightKg * a.pricePerKg, 0)
+                + (SELECT COALESCE(SUM(g.unitPriceNetSnapshot * g.quantity), 0)
+                   FROM BidGridItemEntity g WHERE g.bidId = b.id))))
         FROM BidEntity b
         JOIN AnnouncementEntity a ON b.announcementId = a.id
         WHERE a.travelerId = :travelerId AND b.status = :status
@@ -140,7 +147,11 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
     @Query("""
         SELECT new com.yadony.api.matching.dto.CashLineRow(
             a.id, a.departureCity, a.arrivalCity, a.departureDate,
-            b.weightKg, UPPER(b.currency), COALESCE(b.negotiatedNetEur, 0))
+            b.weightKg, UPPER(b.currency),
+            COALESCE(b.negotiatedNetEur,
+                COALESCE(b.weightKg * a.pricePerKg, 0)
+                + (SELECT COALESCE(SUM(g.unitPriceNetSnapshot * g.quantity), 0)
+                   FROM BidGridItemEntity g WHERE g.bidId = b.id)))
         FROM BidEntity b
         JOIN AnnouncementEntity a ON b.announcementId = a.id
         WHERE a.travelerId = :travelerId AND b.status = :status
@@ -179,7 +190,10 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
     /** Total tous temps du revenu net cash, par devise — voir {@link #sumCashNetRevenueForTravelerByCurrency}. */
     @Query("""
         SELECT new com.yadony.api.payments.dto.CurrencyAmountRow(
-            UPPER(b.currency), SUM(b.negotiatedNetEur))
+            UPPER(b.currency), SUM(COALESCE(b.negotiatedNetEur,
+                COALESCE(b.weightKg * a.pricePerKg, 0)
+                + (SELECT COALESCE(SUM(g.unitPriceNetSnapshot * g.quantity), 0)
+                   FROM BidGridItemEntity g WHERE g.bidId = b.id))))
         FROM BidEntity b
         JOIN AnnouncementEntity a ON b.announcementId = a.id
         WHERE a.travelerId = :travelerId AND b.status = :status
@@ -194,15 +208,20 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
     /**
      * Revenu cash agrégé par annonce, pour la ventilation « transactions » du
      * cockpit pro. Miroir de {@code PaymentRepository.findReleasedRevenueByAnnouncement}
-     * côté espèces : gross = net = {@code negotiatedNetEur} (le voyageur encaisse
-     * le net en cash), commission = 0 (la commission Yadony du cash est prélevée à
+     * côté espèces : gross = net, même calcul que
+     * {@link #sumCashNetRevenueForTravelerByCurrency} (le voyageur encaisse le net
+     * en cash), commission = 0 (la commission Yadony du cash est prélevée à
      * part et son montant n'est pas figé sur le bid). Ainsi la somme des colonnes
      * Net (carte + cash) se réconcilie exactement avec le KPI « Revenus ».
      */
     @Query("""
         SELECT new com.yadony.api.matching.dto.AnnouncementRevenueRow(
             a.id, a.departureCity, a.arrivalCity, a.departureDate, UPPER(a.currency),
-            COUNT(b), COALESCE(SUM(b.negotiatedNetEur), 0), COALESCE(SUM(b.negotiatedNetEur * 0), 0))
+            COUNT(b), COALESCE(SUM(COALESCE(b.negotiatedNetEur,
+                COALESCE(b.weightKg * a.pricePerKg, 0)
+                + (SELECT COALESCE(SUM(g.unitPriceNetSnapshot * g.quantity), 0)
+                   FROM BidGridItemEntity g WHERE g.bidId = b.id))), 0),
+            CAST(0 AS BigDecimal))
         FROM BidEntity b
         JOIN AnnouncementEntity a ON b.announcementId = a.id
         WHERE a.travelerId = :travelerId AND b.status = :status
