@@ -52,6 +52,9 @@ stripe:
     billing-secret: whsec_test_billing
 
 yadony:
+  # H2 ne connaît ni LATERAL ni FILTER : la sonde ne tourne que sur Postgres (MoneyIntegrityMonitorIT l'appelle directement).
+  money-integrity:
+    enabled: false
   activation:
     first-action-reminders:
       cron: "-"
