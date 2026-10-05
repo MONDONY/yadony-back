@@ -81,7 +81,7 @@ Même mécanique, pointée sur `https://api-staging.yadony.com` et sur le dashbo
 2. API Security : « Sign all callbacks » activé. **Ne pas** ajouter de clé publique dans « Your Public Keys » : cette section sert à vérifier des requêtes signées par le marchand, or le backend authentifie ses appels par le bearer token seul.
 3. Create API Token : le token sandbox va dans le secret GitHub `PAWAPAY_API_TOKEN` de l'environnement `staging` (Settings > Environments > staging > Secrets).
 4. `PAWAPAY_ENABLED=true` et `PAWAPAY_CALLBACK_SIGNATURES=true` dans le même environnement, en variable ou en secret : les deux formes sont lues, la variable prime (posés en secrets le 2026-09-06). Seuils `PAWAPAY_BALANCE_MIN_XOF`/`_XAF` optionnels, en variables. `PAWAPAY_BASE_URL` garde son défaut sandbox ; `PAWAPAY_RETURN_BASE_URL` est fixé à `https://api-staging.yadony.com` dans `docker-compose.staging.yml`.
-5. Déployer la branche : `git push origin <branche>:staging/<branche>`. La CI tourne sur `staging/**`, le workflow de déploiement staging part quand elle est verte (`workflow_run`), jamais sur un push direct de la branche de travail.
+5. Déployer la branche : `gh workflow run deploy-staging.yml -f ref=<branche>` (ou Actions → Deploy Staging → Run workflow). Le déploiement staging est manuel, aucun push ne le déclenche.
 6. Le premier callback signé reçu valide le vérifieur : dérouler les points 1 à 4 de la section « Avant d'activer le rail » sur les logs de `PawapayCallbackController`.
 
 ### Recette pas à pas du rail sur staging (par l'API)

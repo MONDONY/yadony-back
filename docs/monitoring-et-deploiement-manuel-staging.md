@@ -75,17 +75,21 @@ VPS staging : `141.95.41.96` · utilisateur `debian` · dossier projet `~/yadony
 
 ## 3. Déploiement normal (CI/CD GitHub)
 
-Flux automatique quand GitHub Actions fonctionne :
+Le déploiement staging est **manuel** (depuis le 2026-10-05) : aucune fusion ni aucun push
+ne touche la recette.
 
-1. Push sur une branche `staging/**` (en général `git push origin origin/main:refs/heads/staging/main`)
-   → workflow **CI** (`.github/workflows/ci.yml`). Les branches de travail n'ont de CI que par leur PR.
-2. À la réussite de cette CI → workflow **Deploy Staging** (`.github/workflows/deploy-staging.yml`).
-3. Le déploiement : build + push de l'image vers GHCR, transfert du compose + `monitoring/`
-   sur le VPS, puis `docker compose up -d` de **tous** les services.
+1. Lancer le workflow **Deploy Staging** (`.github/workflows/deploy-staging.yml`) : Actions →
+   Deploy Staging → Run workflow, ou `gh workflow run deploy-staging.yml -f ref=main`.
+   - `ref` (défaut `main`) : branche ou commit à builder puis déployer. Une branche autre que
+     `main` applique ses migrations Flyway à la base staging.
+   - `image_tag` (facultatif) : redéploie une image existante sans build (`sha-abc1234`,
+     `staging`) pour un retour arrière.
+2. Le déploiement : build + push de l'image vers GHCR (`sha-<court>` + `staging`), transfert du
+   compose + `monitoring/` du même `ref` sur le VPS, puis `docker compose up -d` de **tous** les
+   services. Deux lancements ne se croisent pas : le second attend la fin du premier.
 
-> ⚠️ Pour un trigger `workflow_run`, GitHub exécute toujours le `deploy-staging.yml` de la
-> **branche par défaut (`main`)**. Un correctif du workflow ne prend effet qu'une fois mergé
-> sur `main`.
+> La CI n'est pas rejouée au déploiement : `main` est protégé (PR + checks verts requis), une
+> autre branche a été testée par sa PR.
 
 ---
 
