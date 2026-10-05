@@ -13,6 +13,7 @@ import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.common.i18n.MessagesResolver;
 import com.yadony.api.config.ContentCategoryNormalizer;
+import com.yadony.api.matching.dto.AddressDto;
 import com.yadony.api.matching.dto.BidGridItemRequest;
 import com.yadony.api.matching.dto.BidQuoteRequest;
 import com.yadony.api.matching.dto.BidQuoteResponse;
@@ -1642,8 +1643,34 @@ public class BidService {
                 arrivalInstructions,
                 rescheduleInfo(bid, announcement),
                 recipientAppStatus(bid, callerIsSender),
-                recipientPhoneHidden
+                recipientPhoneHidden,
+                handoverAddress(announcement),
+                ARRIVAL_INSTRUCTIONS_VISIBLE_STATUSES.contains(bid.getStatus())
+                        ? deliveryAddress(announcement)
+                        : null
         );
+    }
+
+    /** Adresse de remise du colis au voyageur, prise sur le trajet. */
+    private static AddressDto handoverAddress(AnnouncementEntity announcement) {
+        if (announcement == null || announcement.getPickupLat() == null
+                || announcement.getPickupLng() == null) {
+            return null;
+        }
+        return new AddressDto(announcement.getPickupAddressLabel(),
+                announcement.getPickupLat().doubleValue(),
+                announcement.getPickupLng().doubleValue());
+    }
+
+    /** Adresse où le destinataire récupère le colis, prise sur le trajet. */
+    private static AddressDto deliveryAddress(AnnouncementEntity announcement) {
+        if (announcement == null || announcement.getDeliveryLat() == null
+                || announcement.getDeliveryLng() == null) {
+            return null;
+        }
+        return new AddressDto(announcement.getDeliveryAddressLabel(),
+                announcement.getDeliveryLat().doubleValue(),
+                announcement.getDeliveryLng().doubleValue());
     }
 
     /**

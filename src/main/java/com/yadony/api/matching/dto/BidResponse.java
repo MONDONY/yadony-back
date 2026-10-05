@@ -100,5 +100,13 @@ public record BidResponse(
         /** Vue voyageur : le destinataire a masqué son numéro ({@code recipientPhone} est
          * alors null) et se joint par la messagerie de l'app. Toujours false pour
          * l'expéditeur. */
-        boolean recipientPhoneHidden
+        boolean recipientPhoneHidden,
+        /** Lieu de remise du colis au voyageur (adresse de départ du trajet), avec
+         * ses coordonnées pour l'ouvrir dans l'app de cartes. Null si le trajet est
+         * introuvable. */
+        AddressDto handoverAddress,
+        /** Lieu où le destinataire récupère le colis à l'arrivée (adresse d'arrivée
+         * du trajet). Même visibilité que {@code arrivalInstructions} : null pour une
+         * demande sortie de la course. */
+        AddressDto deliveryAddress
 ) {}
