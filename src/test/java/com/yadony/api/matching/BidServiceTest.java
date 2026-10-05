@@ -3527,6 +3527,70 @@ class BidServiceTest {
             assertThat(resp.arrivalInstructions()).isEqualTo("Devant la gare, portail nord");
         }
 
+        private void withAddresses(AnnouncementEntity a) {
+            a.setPickupAddressLabel("22 Rue du Séminaire, 94550 Chevilly-Larue, France");
+            a.setPickupLat(new BigDecimal("48.766700"));
+            a.setPickupLng(new BigDecimal("2.350800"));
+            a.setDeliveryAddressLabel("ACI 2000, Bamako, Mali");
+            a.setDeliveryLat(new BigDecimal("12.636200"));
+            a.setDeliveryLng(new BigDecimal("-8.012100"));
+        }
+
+        @Test
+        @DisplayName("handoverAddress et deliveryAddress servis avec leurs coordonnées depuis le trajet")
+        void toResponse_exposesHandoverAndDeliveryAddresses() {
+            UserEntity sender = buildSender();
+            AnnouncementEntity announcement = buildAnnouncement();
+            withAddresses(announcement);
+            BidEntity bid = buildBid();
+            bid.setStatus(BidStatus.HANDED_OVER);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+
+            BidResponse resp = bidService.toResponse(bid, sender);
+
+            assertThat(resp.handoverAddress().label())
+                    .isEqualTo("22 Rue du Séminaire, 94550 Chevilly-Larue, France");
+            assertThat(resp.handoverAddress().lat()).isEqualTo(48.7667);
+            assertThat(resp.handoverAddress().lng()).isEqualTo(2.3508);
+            assertThat(resp.deliveryAddress().label()).isEqualTo("ACI 2000, Bamako, Mali");
+            assertThat(resp.deliveryAddress().lat()).isEqualTo(12.6362);
+            assertThat(resp.deliveryAddress().lng()).isEqualTo(-8.0121);
+        }
+
+        /** L'adresse de récupération suit la règle du point de retrait : une demande sortie
+         *  de la course ne la reçoit plus. Le lieu de remise, lui, reste servi comme
+         *  {@code handoverLocation}. */
+        @Test
+        @DisplayName("deliveryAddress masquée pour un bid REJECTED/CANCELLED/EXPIRED/PARCEL_REFUSED")
+        void toResponse_hidesDeliveryAddressForDeadBidStatuses() {
+            UserEntity sender = buildSender();
+            AnnouncementEntity announcement = buildAnnouncement();
+            withAddresses(announcement);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+
+            for (BidStatus dead : List.of(BidStatus.REJECTED, BidStatus.CANCELLED,
+                    BidStatus.PARCEL_REFUSED, BidStatus.EXPIRED)) {
+                BidEntity bid = buildBid();
+                bid.setStatus(dead);
+
+                BidResponse resp = bidService.toResponse(bid, sender);
+
+                assertThat(resp.deliveryAddress())
+                        .as("deliveryAddress doit être masquée pour un bid %s", dead)
+                        .isNull();
+                assertThat(resp.handoverAddress()).isNotNull();
+            }
+        }
+
+        @Test
+        @DisplayName("adresses nulles quand le trajet est introuvable")
+        void toResponse_addressesNullWithoutAnnouncement() {
+            BidResponse resp = bidService.toResponse(buildBid(), buildSender());
+
+            assertThat(resp.handoverAddress()).isNull();
+            assertThat(resp.deliveryAddress()).isNull();
+        }
+
         /** Régression I4 : le point de retrait était servi quel que soit le statut du bid.
          *  Un expéditeur dont l'offre a été refusée / annulée / expirée n'a plus de raison
          *  légitime de connaître l'adresse d'arrivée du voyageur. */
