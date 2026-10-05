@@ -46,7 +46,6 @@ class WalletControllerIT {
 
     @Autowired MockMvc mockMvc;
     @Autowired ObjectMapper objectMapper;
-    @Autowired WalletService walletService;
     @Autowired WalletTransactionRepository walletTransactionRepository;
     @Autowired WalletRefundRequestItemRepository walletRefundRequestItemRepository;
     @Autowired WalletRefundRequestRepository walletRefundRequestRepository;
