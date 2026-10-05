@@ -1838,6 +1838,54 @@ public class AnnouncementService {
             .toList();
     }
 
+    /**
+     * Ajoute la carte aux trajets ouverts d'un voyageur qui vient de finir son onboarding
+     * Stripe Connect (listener {@link StripeOnboardingAnnouncementListener}).
+     *
+     * <p>Avant l'onboarding, la carte ne pouvait pas être choisie : {@code resolvePaymentMethods}
+     * et {@code assertStripeCapability} imposaient les espèces. Ces trajets n'étaient donc pas
+     * « espèces par choix », et restaient pourtant fermés à la carte une fois Stripe activé :
+     * rien ne les mettait à jour, et l'écran du trajet renvoyait vers un onboarding déjà fait
+     * (Sentry FLUTTER-DH, recette du 2026-10-05).
+     *
+     * <p>Seuls les trajets ACTIVE ou FULL dont la devise accepte la carte sont touchés. Rejoué
+     * (webhook puis rafraîchissement manuel), il ne change plus rien : idempotent.
+     *
+     * @return le nombre de trajets mis à jour
+     */
+    @Transactional
+    @CacheEvict(value = "announcements-search", allEntries = true)
+    public int enableCardOnOpenAnnouncements(UUID travelerId) {
+        UserEntity traveler = userRepository.findById(travelerId).orElse(null);
+        if (traveler == null || !traveler.hasActiveStripeConnect()) {
+            return 0;
+        }
+        int updated = 0;
+        for (AnnouncementEntity announcement : announcementRepository.findActiveByTravelerId(travelerId)) {
+            Set<PaymentMethod> current = announcement.getAcceptedPaymentMethods();
+            if (current.contains(PaymentMethod.STRIPE)) {
+                continue;
+            }
+            Set<PaymentMethod> withCard = EnumSet.of(PaymentMethod.STRIPE);
+            withCard.addAll(current);
+            Set<PaymentMethod> allowed = com.yadony.api.payments.currency.AnnouncementPaymentRails
+                    .restrictToCurrency(withCard, announcement.getCurrency());
+            if (!allowed.contains(PaymentMethod.STRIPE)) {
+                continue;
+            }
+            announcement.setAcceptedPaymentMethods(allowed);
+            announcementRepository.save(announcement);
+            auditService.log("ANNOUNCEMENT", announcement.getId(), "ANNOUNCEMENT_CARD_ENABLED_AFTER_ONBOARDING",
+                    travelerId, Map.of("acceptedPaymentMethods", allowed.stream().map(Enum::name).sorted().toList()));
+            updated++;
+        }
+        if (updated > 0) {
+            log.info("Stripe onboarding complete for user {} — card enabled on {} open announcements",
+                    travelerId, updated);
+        }
+        return updated;
+    }
+
     @EventListener
     @Transactional
     public void onUserProStatusChanged(UserProStatusChangedEvent event) {

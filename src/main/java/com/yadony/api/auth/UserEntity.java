@@ -494,6 +494,16 @@ public class UserEntity extends BaseEntity {
         return hasActiveMobileMoney() && mobileMoneyCurrency != null && mobileMoneyCurrency.equalsIgnoreCase(currency);
     }
 
+    /**
+     * Numéro de son compte mobile money à utiliser pour PAYER dans cette devise, ou null.
+     * Le compte a été vérifié auprès de l'opérateur à son activation : c'est le numéro le
+     * plus sûr pour un dépôt, avant le numéro saisi à la demande ou le téléphone du compte
+     * (souvent étranger, par exemple +33, et refusé par pawaPay — Sentry FLUTTER-DE).
+     */
+    public String mobileMoneyPayerMsisdn(String currency) {
+        return canReceiveMobileMoney(currency) ? mobileMoneyMsisdn : null;
+    }
+
     public MobileMoneyPayoutStatus getMobileMoneyStatus() { return mobileMoneyStatus; }
     public void setMobileMoneyStatus(MobileMoneyPayoutStatus mobileMoneyStatus) { this.mobileMoneyStatus = mobileMoneyStatus; }
     public String getMobileMoneyMsisdn() { return mobileMoneyMsisdn; }

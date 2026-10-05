@@ -349,6 +349,12 @@ public class PaymentService {
                     user.setStripeOnboardingCompletedAt(java.time.Instant.now());
                 }
                 userRepository.save(user);
+                // Même événement que le webhook account.updated : quand le retour dans l'app
+                // devance le webhook, c'est ce chemin qui termine l'onboarding, et les trajets
+                // déjà publiés doivent s'ouvrir à la carte aussi (Sentry FLUTTER-DH).
+                if (newStatus == StripeAccountStatus.ONBOARDING_COMPLETE) {
+                    eventPublisher.publishEvent(new StripeOnboardingCompletedEvent(user.getId()));
+                }
                 String action = chargesEnabled ? "STRIPE_ONBOARDING_COMPLETE" : "STRIPE_ONBOARDING_REVOKED";
                 auditService.log("USER", user.getId(), action, user.getId(),
                         Map.of("stripeAccountId", account.getId(),

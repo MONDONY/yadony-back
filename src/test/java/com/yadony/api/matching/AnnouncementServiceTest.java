@@ -3712,4 +3712,88 @@ class AnnouncementServiceTest {
             assertThat(result.get(0).negotiable()).isTrue();
         }
     }
+
+    // Sentry FLUTTER-DH : trajet publié en espèces avant la fin de l'onboarding Stripe.
+    @Nested
+    @DisplayName("enableCardOnOpenAnnouncements")
+    class EnableCardAfterOnboarding {
+
+        private UserEntity onboardedTraveler() {
+            UserEntity traveler = buildTraveler();
+            traveler.setStripeAccountStatus(StripeAccountStatus.ONBOARDING_COMPLETE);
+            return traveler;
+        }
+
+        private AnnouncementEntity trip(UserEntity traveler, String currency, PaymentMethod... methods) {
+            AnnouncementEntity a = buildAnnouncement(traveler);
+            setId(a, UUID.randomUUID());
+            a.setCurrency(currency);
+            a.setAcceptedPaymentMethods(java.util.EnumSet.copyOf(List.of(methods)));
+            return a;
+        }
+
+        @Test
+        @DisplayName("trajet EUR en espèces seulement : la carte est ajoutée et tracée dans l'audit")
+        void ajouteLaCarteAuxTrajetsEnEspeces() {
+            UserEntity traveler = onboardedTraveler();
+            AnnouncementEntity cashOnly = trip(traveler, "EUR", PaymentMethod.CASH);
+            when(userRepository.findById(USER_ID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.findActiveByTravelerId(USER_ID)).thenReturn(List.of(cashOnly));
+
+            int updated = announcementService.enableCardOnOpenAnnouncements(USER_ID);
+
+            assertThat(updated).isEqualTo(1);
+            assertThat(cashOnly.getAcceptedPaymentMethods())
+                    .containsExactlyInAnyOrder(PaymentMethod.STRIPE, PaymentMethod.CASH);
+            verify(announcementRepository).save(cashOnly);
+            verify(auditService).log(eq("ANNOUNCEMENT"), eq(cashOnly.getId()),
+                    eq("ANNOUNCEMENT_CARD_ENABLED_AFTER_ONBOARDING"), eq(USER_ID), any());
+        }
+
+        @Test
+        @DisplayName("trajet XOF : la carte n'existe pas en zone CFA, rien ne change")
+        void ignoreLesDevisesSansCarte() {
+            UserEntity traveler = onboardedTraveler();
+            AnnouncementEntity xof = trip(traveler, "XOF", PaymentMethod.CASH, PaymentMethod.MOBILE_MONEY);
+            when(userRepository.findById(USER_ID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.findActiveByTravelerId(USER_ID)).thenReturn(List.of(xof));
+
+            assertThat(announcementService.enableCardOnOpenAnnouncements(USER_ID)).isZero();
+            assertThat(xof.getAcceptedPaymentMethods())
+                    .containsExactlyInAnyOrder(PaymentMethod.CASH, PaymentMethod.MOBILE_MONEY);
+            verify(announcementRepository, never()).save(any());
+            verifyNoInteractions(auditService);
+        }
+
+        @Test
+        @DisplayName("trajet acceptant déjà la carte : idempotent, aucune écriture")
+        void idempotentSurUnTrajetDejaOuvert() {
+            UserEntity traveler = onboardedTraveler();
+            AnnouncementEntity withCard = trip(traveler, "EUR", PaymentMethod.STRIPE, PaymentMethod.CASH);
+            when(userRepository.findById(USER_ID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.findActiveByTravelerId(USER_ID)).thenReturn(List.of(withCard));
+
+            assertThat(announcementService.enableCardOnOpenAnnouncements(USER_ID)).isZero();
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("compte Stripe pas (ou plus) complet : aucun trajet n'est lu")
+        void rienSansCompteStripeComplet() {
+            UserEntity traveler = buildTraveler();
+            traveler.setStripeAccountStatus(StripeAccountStatus.PENDING_ONBOARDING);
+            when(userRepository.findById(USER_ID)).thenReturn(Optional.of(traveler));
+
+            assertThat(announcementService.enableCardOnOpenAnnouncements(USER_ID)).isZero();
+            verify(announcementRepository, never()).findActiveByTravelerId(any());
+        }
+
+        @Test
+        @DisplayName("utilisateur introuvable : zéro, sans erreur")
+        void rienPourUnUtilisateurInconnu() {
+            when(userRepository.findById(USER_ID)).thenReturn(Optional.empty());
+
+            assertThat(announcementService.enableCardOnOpenAnnouncements(USER_ID)).isZero();
+        }
+    }
 }
