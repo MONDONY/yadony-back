@@ -13,6 +13,8 @@ import com.yadony.api.matching.BidStatus;
 import com.yadony.api.matching.reception.dto.ReceptionResponse;
 import com.yadony.api.notifications.NotificationDispatcher;
 import com.yadony.api.notifications.NotificationTexts;
+import com.yadony.api.ratings.RatingEntity;
+import com.yadony.api.ratings.RatingRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -55,6 +57,7 @@ public class ReceptionService {
     private final NotificationDispatcher notificationDispatcher;
     private final AuditService auditService;
     private final StorageService storageService;
+    private final RatingRepository ratingRepository;
     private final Clock clock;
 
     @Autowired
@@ -65,9 +68,10 @@ public class ReceptionService {
                             ReceptionLinker linker,
                             NotificationDispatcher notificationDispatcher,
                             AuditService auditService,
-                            StorageService storageService) {
+                            StorageService storageService,
+                            RatingRepository ratingRepository) {
         this(linkRepository, bidRepository, announcementRepository, userRepository, linker,
-                notificationDispatcher, auditService, storageService, Clock.systemUTC());
+                notificationDispatcher, auditService, storageService, ratingRepository, Clock.systemUTC());
     }
 
     ReceptionService(BidRecipientLinkRepository linkRepository,
@@ -78,6 +82,7 @@ public class ReceptionService {
                      NotificationDispatcher notificationDispatcher,
                      AuditService auditService,
                      StorageService storageService,
+                     RatingRepository ratingRepository,
                      Clock clock) {
         this.linkRepository = linkRepository;
         this.bidRepository = bidRepository;
@@ -87,6 +92,7 @@ public class ReceptionService {
         this.notificationDispatcher = notificationDispatcher;
         this.auditService = auditService;
         this.storageService = storageService;
+        this.ratingRepository = ratingRepository;
         this.clock = clock;
     }
 
@@ -223,6 +229,14 @@ public class ReceptionService {
                 : null;
         String travelerFirstName = traveler != null ? traveler.getFirstName() : null;
         String code = confirmed && BidStatus.EN_ROUTE.contains(bid.getStatus()) ? bid.getConfirmationCode() : null;
+        // Note du voyageur (FLUTTER-CA) : lue seulement pour un colis livré et confirmé.
+        boolean rateable = confirmed && bid.getStatus() == BidStatus.COMPLETED;
+        Integer myRating = rateable
+                ? ratingRepository.findByBidIdAndRaterId(bid.getId(), link.getRecipientUserId())
+                        .map(RatingEntity::getStars).orElse(null)
+                : null;
+        boolean canRate = rateable && myRating == null
+                && !ratingRepository.recipientHasRated(bid.getId(), link.getRecipientUserId(), bid.getTrackingToken());
         return new ReceptionResponse(
                 bid.getId(),
                 link.getStatus().name(),
@@ -242,7 +256,9 @@ public class ReceptionService {
                 traveler != null ? traveler.getId() : null,
                 traveler != null ? storageService.avatarUrl(traveler.getAvatarUrl()) : null,
                 sender != null ? sender.getId() : null,
-                sender != null ? storageService.avatarUrl(sender.getAvatarUrl()) : null);
+                sender != null ? storageService.avatarUrl(sender.getAvatarUrl()) : null,
+                canRate,
+                myRating);
     }
 
     /** Dernière modification visible : le colis avance, ou le destinataire a répondu. */
