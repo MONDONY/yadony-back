@@ -788,7 +788,8 @@ public class AuthService {
                 user.getResidenceLine2(),
                 user.getResidencePostalCode(),
                 user.getOnboardingSeenAt() == null ? null : user.getOnboardingSeenAt().toString(),
-                user.getPreferredLanguage().code()
+                user.getPreferredLanguage().code(),
+                user.isMessagingMuted(Instant.now()) ? user.getMessagingMutedUntil().toString() : null
         );
     }
 }
