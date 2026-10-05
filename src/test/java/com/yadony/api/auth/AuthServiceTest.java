@@ -446,6 +446,31 @@ class AuthServiceTest {
         }
 
         @Test
+        @DisplayName("messagerie coupée par un admin → fin de la coupure exposée (FLUTTER-CT)")
+        void getProfile_messagingMuted_exposesMutedUntil() {
+            UserEntity user = buildUser();
+            Instant until = Instant.now().plusSeconds(3600);
+            user.setMessagingMutedUntil(until);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+
+            UserResponse result = authService.getProfile(FIREBASE_UID);
+
+            assertThat(result.messagingMutedUntil()).isEqualTo(until.toString());
+        }
+
+        @Test
+        @DisplayName("coupure de messagerie échue ou absente → null")
+        void getProfile_messagingMuteExpiredOrAbsent_returnsNull() {
+            UserEntity user = buildUser();
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+
+            assertThat(authService.getProfile(FIREBASE_UID).messagingMutedUntil()).isNull();
+
+            user.setMessagingMutedUntil(Instant.now().minusSeconds(60));
+            assertThat(authService.getProfile(FIREBASE_UID).messagingMutedUntil()).isNull();
+        }
+
+        @Test
         @DisplayName("onboardingSeenAt avec fraction de seconde → sérialisé sans troncature")
         void getProfile_onboardingSeenAtWithFraction_returnsExactFractionalValue() {
             UserEntity user = buildUser();
