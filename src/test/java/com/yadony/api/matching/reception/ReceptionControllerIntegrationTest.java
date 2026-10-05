@@ -12,6 +12,9 @@ import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
 import com.yadony.api.matching.TransportMode;
+import com.yadony.api.ratings.RatingEntity;
+import com.yadony.api.ratings.RatingRepository;
+import org.springframework.http.MediaType;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -49,6 +52,7 @@ class ReceptionControllerIntegrationTest {
     @Autowired AnnouncementRepository announcementRepository;
     @Autowired BidRepository bidRepository;
     @Autowired BidRecipientLinkRepository linkRepository;
+    @Autowired RatingRepository ratingRepository;
 
     private UserEntity sender;
     private UserEntity traveler;
@@ -190,6 +194,111 @@ class ReceptionControllerIntegrationTest {
 
         mockMvc.perform(post("/receptions/{id}/decline", bid.getId()).with(authentication(as(recipient))))
                 .andExpect(status().isNotFound());
+    }
+
+    // ── POST /receptions/{bidId}/rating (FLUTTER-CA) ────────────────────────
+
+    @Test
+    void rating_confirmedRecipient_delivered_creates201_countsInAverage_thenReflectedOnDetail() throws Exception {
+        BidEntity bid = persistBid(BidStatus.COMPLETED);
+        link(bid, ReceptionLinkStatus.CONFIRMED);
+
+        mockMvc.perform(get("/receptions/{id}", bid.getId()).with(authentication(as(recipient))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.canRate").value(true))
+                .andExpect(jsonPath("$.myRating").doesNotExist());
+
+        mockMvc.perform(post("/receptions/{id}/rating", bid.getId()).with(authentication(as(recipient)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"stars\":4,\"comment\":\"Colis bien reçu\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").exists())
+                .andExpect(jsonPath("$.ratedUserId").value(traveler.getId().toString()))
+                .andExpect(jsonPath("$.bidId").value(bid.getId().toString()))
+                .andExpect(jsonPath("$.stars").value(4))
+                .andExpect(jsonPath("$.comment").value("Colis bien reçu"));
+
+        RatingEntity saved = ratingRepository.findByBidIdAndRaterId(bid.getId(), recipient.getId()).orElseThrow();
+        assertThat(saved.getTrackingToken()).isEqualTo(bid.getTrackingToken());
+        UserEntity reloaded = userRepository.findById(traveler.getId()).orElseThrow();
+        assertThat(reloaded.getRatingCount()).isEqualTo(1);
+        assertThat(reloaded.getAverageRating()).isEqualByComparingTo("4.00");
+
+        mockMvc.perform(get("/receptions/{id}", bid.getId()).with(authentication(as(recipient))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.canRate").value(false))
+                .andExpect(jsonPath("$.myRating").value(4));
+
+        // Deuxième note : refusée, et le lien de suivi public ne permet pas de doubler.
+        mockMvc.perform(post("/receptions/{id}/rating", bid.getId()).with(authentication(as(recipient)))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"stars\":1}"))
+                .andExpect(status().isConflict())
+                .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
+                .andExpect(jsonPath("$.type").value(endsWith("reception-already-rated")));
+        mockMvc.perform(post("/ratings/recipient")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"trackingToken\":\"" + bid.getTrackingToken() + "\",\"stars\":1}"))
+                .andExpect(status().isConflict());
+        assertThat(userRepository.findById(traveler.getId()).orElseThrow().getRatingCount()).isEqualTo(1);
+    }
+
+    @Test
+    void rating_afterAnonymousTrackingLinkRating_is409_andCannotRate() throws Exception {
+        BidEntity bid = persistBid(BidStatus.COMPLETED);
+        link(bid, ReceptionLinkStatus.CONFIRMED);
+        mockMvc.perform(post("/ratings/recipient")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"trackingToken\":\"" + bid.getTrackingToken() + "\",\"stars\":5}"))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(get("/receptions/{id}", bid.getId()).with(authentication(as(recipient))))
+                .andExpect(jsonPath("$.canRate").value(false))
+                .andExpect(jsonPath("$.myRating").doesNotExist());
+        mockMvc.perform(post("/receptions/{id}/rating", bid.getId()).with(authentication(as(recipient)))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"stars\":3}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.type").value(endsWith("reception-already-rated")));
+    }
+
+    @Test
+    void rating_notConfirmedRecipient_is403() throws Exception {
+        BidEntity pending = persistBid(BidStatus.COMPLETED);
+        link(pending, ReceptionLinkStatus.PENDING);
+
+        mockMvc.perform(post("/receptions/{id}/rating", pending.getId()).with(authentication(as(recipient)))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"stars\":5}"))
+                .andExpect(status().isForbidden())
+                .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
+                .andExpect(jsonPath("$.type").value(endsWith("reception-not-recipient")));
+        // Ni l'expéditeur, ni le voyageur ne passent par cette porte.
+        mockMvc.perform(post("/receptions/{id}/rating", pending.getId()).with(authentication(as(sender)))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"stars\":5}"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/receptions/{id}", pending.getId()).with(authentication(as(recipient))))
+                .andExpect(jsonPath("$.canRate").value(false));
+    }
+
+    @Test
+    void rating_notDelivered_is409NotAllowed() throws Exception {
+        BidEntity bid = persistBid(BidStatus.IN_TRANSIT);
+        link(bid, ReceptionLinkStatus.CONFIRMED);
+
+        mockMvc.perform(get("/receptions/{id}", bid.getId()).with(authentication(as(recipient))))
+                .andExpect(jsonPath("$.canRate").value(false));
+        mockMvc.perform(post("/receptions/{id}/rating", bid.getId()).with(authentication(as(recipient)))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"stars\":5}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.type").value(endsWith("reception-rating-not-allowed")));
+    }
+
+    @Test
+    void rating_invalidStars_is422() throws Exception {
+        BidEntity bid = persistBid(BidStatus.COMPLETED);
+        link(bid, ReceptionLinkStatus.CONFIRMED);
+
+        mockMvc.perform(post("/receptions/{id}/rating", bid.getId()).with(authentication(as(recipient)))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"stars\":6}"))
+                .andExpect(status().isUnprocessableEntity());
     }
 
     // ── Timeline et BidResponse ─────────────────────────────────────────────

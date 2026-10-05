@@ -13,6 +13,8 @@ import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
 import com.yadony.api.matching.reception.dto.ReceptionResponse;
 import com.yadony.api.notifications.NotificationDispatcher;
+import com.yadony.api.ratings.RatingEntity;
+import com.yadony.api.ratings.RatingRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -63,6 +65,7 @@ class ReceptionServiceTest {
     @Mock NotificationDispatcher notificationDispatcher;
     @Mock AuditService auditService;
     @Mock StorageService storageService;
+    @Mock RatingRepository ratingRepository;
 
     ReceptionService service;
 
@@ -76,7 +79,8 @@ class ReceptionServiceTest {
     @BeforeEach
     void setUp() {
         service = new ReceptionService(linkRepository, bidRepository, announcementRepository, userRepository,
-                linker, notificationDispatcher, auditService, storageService, Clock.fixed(NOW, ZoneOffset.UTC));
+                linker, notificationDispatcher, auditService, storageService, ratingRepository,
+                Clock.fixed(NOW, ZoneOffset.UTC));
         me = user(meId, "Fatou");
         me.setFirebaseUid("uid-me");
         lenient().when(userRepository.findByFirebaseUid("uid-me")).thenReturn(Optional.of(me));
@@ -222,6 +226,72 @@ class ReceptionServiceTest {
         when(bidRepository.findById(b.getId())).thenReturn(Optional.of(b));
 
         assertThat(service.get(b.getId(), "uid-me").bidId()).isEqualTo(b.getId());
+    }
+
+    // ── Note du voyageur (FLUTTER-CA) ───────────────────────────────────────
+
+    @Test
+    void get_confirmedAndDelivered_notRatedYet_canRate() {
+        BidEntity b = bid(BidStatus.COMPLETED, NOW_LDT);
+        b.setTrackingToken("tok-1");
+        when(linkRepository.findByBidIdAndRecipientUserId(b.getId(), meId))
+                .thenReturn(Optional.of(link(b, ReceptionLinkStatus.CONFIRMED)));
+        when(bidRepository.findById(b.getId())).thenReturn(Optional.of(b));
+        when(ratingRepository.findByBidIdAndRaterId(b.getId(), meId)).thenReturn(Optional.empty());
+        when(ratingRepository.recipientHasRated(b.getId(), meId, "tok-1")).thenReturn(false);
+
+        ReceptionResponse r = service.get(b.getId(), "uid-me");
+
+        assertThat(r.canRate()).isTrue();
+        assertThat(r.myRating()).isNull();
+    }
+
+    @Test
+    void get_alreadyRatedFromAccount_exposesMyRating() {
+        BidEntity b = bid(BidStatus.COMPLETED, NOW_LDT);
+        when(linkRepository.findByBidIdAndRecipientUserId(b.getId(), meId))
+                .thenReturn(Optional.of(link(b, ReceptionLinkStatus.CONFIRMED)));
+        when(bidRepository.findById(b.getId())).thenReturn(Optional.of(b));
+        RatingEntity mine = new RatingEntity();
+        mine.setStars(4);
+        when(ratingRepository.findByBidIdAndRaterId(b.getId(), meId)).thenReturn(Optional.of(mine));
+
+        ReceptionResponse r = service.get(b.getId(), "uid-me");
+
+        assertThat(r.canRate()).isFalse();
+        assertThat(r.myRating()).isEqualTo(4);
+    }
+
+    @Test
+    void get_alreadyRatedAnonymouslyByTrackingLink_cannotRate() {
+        BidEntity b = bid(BidStatus.COMPLETED, NOW_LDT);
+        b.setTrackingToken("tok-1");
+        when(linkRepository.findByBidIdAndRecipientUserId(b.getId(), meId))
+                .thenReturn(Optional.of(link(b, ReceptionLinkStatus.CONFIRMED)));
+        when(bidRepository.findById(b.getId())).thenReturn(Optional.of(b));
+        when(ratingRepository.findByBidIdAndRaterId(b.getId(), meId)).thenReturn(Optional.empty());
+        when(ratingRepository.recipientHasRated(b.getId(), meId, "tok-1")).thenReturn(true);
+
+        ReceptionResponse r = service.get(b.getId(), "uid-me");
+
+        assertThat(r.canRate()).isFalse();
+        assertThat(r.myRating()).isNull();
+    }
+
+    @Test
+    void get_notDeliveredOrPending_cannotRate_withoutReadingRatings() {
+        BidEntity inFlight = bid(BidStatus.IN_TRANSIT, NOW_LDT);
+        when(linkRepository.findByBidIdAndRecipientUserId(inFlight.getId(), meId))
+                .thenReturn(Optional.of(link(inFlight, ReceptionLinkStatus.CONFIRMED)));
+        when(bidRepository.findById(inFlight.getId())).thenReturn(Optional.of(inFlight));
+        BidEntity delivered = bid(BidStatus.COMPLETED, NOW_LDT);
+        when(linkRepository.findByBidIdAndRecipientUserId(delivered.getId(), meId))
+                .thenReturn(Optional.of(link(delivered, ReceptionLinkStatus.PENDING)));
+        when(bidRepository.findById(delivered.getId())).thenReturn(Optional.of(delivered));
+
+        assertThat(service.get(inFlight.getId(), "uid-me").canRate()).isFalse();
+        assertThat(service.get(delivered.getId(), "uid-me").canRate()).isFalse();
+        verify(ratingRepository, never()).findByBidIdAndRaterId(any(), any());
     }
 
     @Test

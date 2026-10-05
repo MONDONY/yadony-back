@@ -38,6 +38,20 @@ public interface RatingRepository extends JpaRepository<RatingEntity, UUID> {
 
     boolean existsByBidIdAndTrackingToken(UUID bidId, String trackingToken);
 
+    /**
+     * Le destinataire de ce colis a-t-il déjà noté le voyageur (FLUTTER-CA) ?
+     *
+     * <p>Une seule note destinataire par colis, quel que soit le chemin : anonyme par le
+     * lien de suivi ({@code tracking_token} seul), ou depuis le compte du destinataire
+     * confirmé ({@code rater_id} et {@code tracking_token} renseignés). Les deux portent le
+     * jeton du colis : l'index unique {@code idx_ratings_bid_tracking_token} (V27) empêche
+     * donc la double note, et la moyenne du voyageur ne compte le destinataire qu'une fois.
+     */
+    default boolean recipientHasRated(UUID bidId, UUID recipientUserId, String trackingToken) {
+        return existsByBidIdAndRaterId(bidId, recipientUserId)
+                || (trackingToken != null && existsByBidIdAndTrackingToken(bidId, trackingToken));
+    }
+
     /** Notes émises par ce compte — celles qui resteront affichées chez les autres. */
     long countByRaterId(UUID raterId);
 

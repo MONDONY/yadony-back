@@ -38,5 +38,12 @@ public record ReceptionResponse(
          */
         UUID senderId,
         /** Avatar de l'expéditeur (URL servie). Null s'il n'en a pas. */
-        String senderAvatarUrl
+        String senderAvatarUrl,
+        /**
+         * Le destinataire peut noter le voyageur (FLUTTER-CA) : lien confirmé, colis livré,
+         * et aucune note destinataire sur ce colis (depuis le compte ou le lien de suivi).
+         */
+        boolean canRate,
+        /** Étoiles de la note laissée depuis ce compte, null s'il n'a pas noté. */
+        Integer myRating
 ) {}
