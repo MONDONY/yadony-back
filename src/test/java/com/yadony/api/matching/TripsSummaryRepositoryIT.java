@@ -189,7 +189,7 @@ class TripsSummaryRepositoryIT {
     }
 
     @Test
-    void findCashLinesForTraveler_defaults_amount_to_zero_when_negotiated_net_eur_is_null() {
+    void findCashLinesForTraveler_computes_direct_bid_amount_when_negotiated_net_eur_is_null() {
         UUID travelerId = persistTraveler().getId();
         AnnouncementEntity ann = persistAnnouncement(travelerId, AnnouncementStatus.COMPLETED);
         BidEntity bid = new BidEntity();
@@ -201,6 +201,8 @@ class TripsSummaryRepositoryIT {
         bid.setCurrency("EUR");
         // negotiatedNetEur volontairement non renseigné : bid CASH direct (BidService,
         // annonce acceptant les espèces), jamais passé par une négociation qui l'aurait figé.
+        // Le net se recompose alors depuis poids × prix/kg de l'annonce : le compter à 0
+        // affichait « 0 » dans les revenus espèces (Sentry FLUTTER-BS).
         bidRepository.save(bid);
 
         List<CashLineRow> lines = bidRepository.findCashLinesForTraveler(
@@ -208,7 +210,9 @@ class TripsSummaryRepositoryIT {
                 LocalDateTime.now().minusDays(1), LocalDateTime.now().plusDays(1));
 
         assertThat(lines).hasSize(1);
-        assertThat(lines.get(0).amount()).isEqualByComparingTo("0");
+        assertThat(lines.get(0).amount()).isEqualByComparingTo(
+                new BigDecimal("2.00").multiply(ann.getPricePerKg()));
+        assertThat(lines.get(0).amount()).isPositive();
     }
 
     /**

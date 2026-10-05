@@ -125,7 +125,10 @@ public class TravelerStatsService {
 
     private List<TravelerStatsDto.CurrencyRevenue> toBreakdown(java.util.Map<String, BigDecimal> byCurrency) {
         return byCurrency.entrySet().stream()
-                .map(e -> new TravelerStatsDto.CurrencyRevenue(e.getKey(), e.getValue()))
+                // Ramené à 2 décimales, la précision des montants stockés : le net cash
+                // d'une offre directe (poids × prix/kg) sort de la requête avec 4.
+                .map(e -> new TravelerStatsDto.CurrencyRevenue(
+                        e.getKey(), e.getValue().setScale(2, RoundingMode.HALF_UP)))
                 .toList();
     }
 }
