@@ -23,6 +23,7 @@ class AdminAlertControllerTest {
 
     @Mock AdminAlertRepository alertRepo;
     @Mock com.yadony.api.common.AuditService auditService;
+    @Mock com.yadony.api.payments.integrity.MoneyIntegrityMonitor moneyIntegrityMonitor;
 
     private static final UUID ADMIN_ID = UUID.randomUUID();
 
@@ -34,7 +35,7 @@ class AdminAlertControllerTest {
     }
 
     private AdminAlertController controller() {
-        return new AdminAlertController(alertRepo, auditService);
+        return new AdminAlertController(alertRepo, auditService, moneyIntegrityMonitor);
     }
 
     @Test
@@ -104,5 +105,75 @@ class AdminAlertControllerTest {
 
         verify(auditService).log(eq("ADMIN_ALERT"), eq(id), eq("ADMIN_ALERT_RESOLVED"), eq(ADMIN_ID),
                 eq(java.util.Map.of("alertType", "X", "severity", "INFO", "note", "")));
+    }
+
+    @Test
+    void list_exposesTheReadableDetail() {
+        AdminAlertEntity entity = new AdminAlertEntity();
+        entity.setType("PAWAPAY_BALANCE_LOW_XOF");
+        entity.setDetail("Solde pawaPay XOF sous le seuil : 1000");
+        when(alertRepo.findFiltered(isNull(), isNull(), isNull(), any())).thenReturn(new PageImpl<>(List.of(entity)));
+
+        ResponseEntity<Page<AdminAlertResponse>> resp = controller().list(null, null, null, 0, 20);
+
+        assertThat(resp.getBody().getContent().get(0).detail()).isEqualTo("Solde pawaPay XOF sous le seuil : 1000");
+    }
+
+    @Test
+    void violations_reRunsTheMoneyInvariantOfTheAlert() {
+        UUID id = UUID.randomUUID();
+        AdminAlertEntity entity = new AdminAlertEntity();
+        entity.setType("MONEY_INVARIANT_INV-05");
+        when(alertRepo.findById(id)).thenReturn(Optional.of(entity));
+        var inspection = new com.yadony.api.payments.integrity.MoneyIntegrityMonitor.Inspection(
+                "INV-05", "Argent versé au voyageur seulement si le colis est livré", "CRITIQUE", 7,
+                List.of(java.util.Map.of("payment_id", "p-1")));
+        when(moneyIntegrityMonitor.inspect("INV-05", 20)).thenReturn(Optional.of(inspection));
+
+        var resp = controller().violations(id, 20);
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(resp.getBody().invariant()).isEqualTo("INV-05");
+        assertThat(resp.getBody().total()).isEqualTo(7);
+        assertThat(resp.getBody().rows()).containsExactly(java.util.Map.of("payment_id", "p-1"));
+    }
+
+    @Test
+    void violations_onAnotherAlertType_is422() {
+        UUID id = UUID.randomUUID();
+        AdminAlertEntity entity = new AdminAlertEntity();
+        entity.setType("ESCROW_J48_TIMEOUT");
+        when(alertRepo.findById(id)).thenReturn(Optional.of(entity));
+
+        var ex = org.junit.jupiter.api.Assertions.assertThrows(
+                com.yadony.api.common.YadonyBusinessException.class, () -> controller().violations(id, 50));
+
+        assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+        verifyNoInteractions(moneyIntegrityMonitor);
+    }
+
+    @Test
+    void violations_unknownInvariant_is404() {
+        UUID id = UUID.randomUUID();
+        AdminAlertEntity entity = new AdminAlertEntity();
+        entity.setType("MONEY_INVARIANT_INV-99");
+        when(alertRepo.findById(id)).thenReturn(Optional.of(entity));
+        when(moneyIntegrityMonitor.inspect("INV-99", 50)).thenReturn(Optional.empty());
+
+        var ex = org.junit.jupiter.api.Assertions.assertThrows(
+                com.yadony.api.common.YadonyBusinessException.class, () -> controller().violations(id, 50));
+
+        assertThat(ex.getStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void violations_alertNotFound_is404() {
+        UUID id = UUID.randomUUID();
+        when(alertRepo.findById(id)).thenReturn(Optional.empty());
+
+        var ex = org.junit.jupiter.api.Assertions.assertThrows(
+                com.yadony.api.common.YadonyBusinessException.class, () -> controller().violations(id, 50));
+
+        assertThat(ex.getStatus()).isEqualTo(HttpStatus.NOT_FOUND);
     }
 }

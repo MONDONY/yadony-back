@@ -90,7 +90,7 @@ class MoneyIntegrityMonitorIT {
         assertThat(counts).hasSize(MoneyInvariants.ALL.size());
         assertThat(MoneyInvariants.ALL).hasSize(17);
         assertThat(counts.values()).allSatisfy(n -> assertThat(n).isZero());
-        verify(alertEscalator, never()).raiseOnce(anyString(), anyString(), anyMap());
+        verify(alertEscalator, never()).raiseOnce(anyString(), anyString(), anyString(), anyMap());
     }
 
     @Test
@@ -109,9 +109,32 @@ class MoneyIntegrityMonitorIT {
         assertThat(first).containsEntry("INV-01", 1L);
         assertThat(second).containsEntry("INV-01", 1L);
         // Une seule alerte : le compte n'a pas augmenté entre les deux passages.
-        verify(alertEscalator, times(1)).raiseOnce(eq("MONEY_INVARIANT_INV-01"), anyString(), anyMap());
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<Map<String, Object>> context = org.mockito.ArgumentCaptor.forClass(Map.class);
+        verify(alertEscalator, times(1)).raiseOnce(eq("MONEY_INVARIANT_INV-01"), eq("CRITICAL"), anyString(),
+                context.capture());
+        // L'alerte embarque la ligne fautive : l'admin sait quel wallet corriger.
+        assertThat(context.getValue().get("exemples")).asString().contains(wallet.getId().toString());
         assertThat(meterRegistry.get("yadony.money.invariant.violations")
                 .tag("invariant", "INV-01").gauge().value()).isEqualTo(1.0);
+    }
+
+    @Test
+    void inspectReExecuteLaRegleEtRendLesLignesEnFaute() {
+        UUID userId = persistUser();
+        WalletAccountEntity wallet = new WalletAccountEntity();
+        wallet.setUserId(userId);
+        wallet.setCurrency("EUR");
+        wallet.setBalance(new BigDecimal("10.00"));
+        walletAccountRepository.saveAndFlush(wallet);
+
+        MoneyIntegrityMonitor.Inspection inspection = monitor.inspect("INV-01", 50).orElseThrow();
+
+        assertThat(inspection.total()).isEqualTo(1L);
+        assertThat(inspection.severity()).isEqualTo("CRITIQUE");
+        assertThat(inspection.rows()).hasSize(1);
+        assertThat(inspection.rows().get(0)).containsEntry("wallet_id", wallet.getId().toString());
+        assertThat(monitor.inspect("INV-99", 50)).isEmpty();
     }
 
     private UUID persistUser() {

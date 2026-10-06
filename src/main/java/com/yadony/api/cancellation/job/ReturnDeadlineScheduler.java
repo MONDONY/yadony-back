@@ -84,6 +84,9 @@ public class ReturnDeadlineScheduler {
             alert.setPayload(String.format(
                     "{\"bidId\":\"%s\",\"senderId\":\"%s\",\"returnDeadline\":\"%s\"}",
                     bid.getId(), bid.getSenderId(), bid.getReturnDeadline()));
+            alert.setSeverity("WARN");
+            alert.setDetail("Colis " + bidIdStr + " annulé après remise : le voyageur ne l'a pas rendu à "
+                    + "l'expéditeur avant l'échéance du " + bid.getReturnDeadline());
             alert.setResolved(false);
             adminAlertRepository.save(alert);
 

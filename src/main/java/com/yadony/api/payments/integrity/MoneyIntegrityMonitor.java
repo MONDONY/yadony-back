@@ -13,7 +13,9 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -29,7 +31,10 @@ import java.util.concurrent.atomic.AtomicLong;
  *       envoyée sur Telegram) quand le nombre augmente par rapport au passage précédent. Le
  *       premier passage après un démarrage part de zéro : une anomalie déjà connue est
  *       resignalée, sauf si son alerte n'a pas encore été résolue (déduplication de
- *       {@link AdminAlertEscalator#raiseOnce}).</li>
+ *       {@link AdminAlertEscalator#raiseOnce}). L'alerte porte la sévérité de la règle et un
+ *       extrait des lignes en faute ({@code exemples}) ;</li>
+ *   <li>ré-exécute une règle à la demande ({@link #inspect}) pour l'écran Alertes du
+ *       back-office, qui montre ce qui reste en faute.</li>
  * </ul>
  */
 @Component
@@ -38,6 +43,10 @@ public class MoneyIntegrityMonitor {
     private static final Logger log = LoggerFactory.getLogger(MoneyIntegrityMonitor.class);
     private static final String ALERT_PREFIX = "MONEY_INVARIANT_";
     private static final int QUERY_TIMEOUT_SECONDS = 30;
+    /** Lignes en faute recopiées dans l'alerte : l'admin voit QUOI corriger, même si la ligne bouge ensuite. */
+    static final int ALERT_SAMPLE_SIZE = 3;
+    /** Plafond de lignes renvoyées à l'écran Alertes par {@link #inspect}. */
+    public static final int MAX_INSPECT_ROWS = 100;
 
     private final JdbcTemplate jdbcTemplate;
     private final TransactionTemplate readOnlyTransaction;
@@ -110,9 +119,79 @@ public class MoneyIntegrityMonitor {
         context.put("gravite", invariant.severity().name());
         context.put("lignesEnFaute", violations);
         context.put("passagePrecedent", previous);
-        alertEscalator.raiseOnce(ALERT_PREFIX + invariant.code(),
+        List<Map<String, Object>> sample = sampleRows(invariant, ALERT_SAMPLE_SIZE);
+        if (!sample.isEmpty()) {
+            context.put("exemples", sample);
+        }
+        alertEscalator.raiseOnce(ALERT_PREFIX + invariant.code(), severityOf(invariant),
                 "Incohérence d'argent " + invariant.code() + " (" + invariant.severity() + ") : "
                         + invariant.title() + " — " + violations + " ligne(s) en faute",
                 context);
+    }
+
+    /** Sévérité back-office ({@code admin_alerts.severity}) d'une règle. */
+    static String severityOf(MoneyInvariant invariant) {
+        return invariant.severity() == MoneyInvariant.Severity.CRITIQUE ? "CRITICAL" : "WARN";
+    }
+
+    /**
+     * Ré-exécute la règle {@code code} maintenant et renvoie ses lignes en faute (au plus
+     * {@code limit}, plafonné à {@link #MAX_INSPECT_ROWS}), pour que l'écran Alertes montre ce
+     * qui reste à corriger. Vide si le code ne désigne aucune règle.
+     *
+     * @throws org.springframework.dao.DataAccessException si la requête échoue
+     */
+    public Optional<Inspection> inspect(String code, int limit) {
+        int bounded = Math.max(1, Math.min(limit, MAX_INSPECT_ROWS));
+        return MoneyInvariants.ALL.stream()
+                .filter(invariant -> invariant.code().equals(code))
+                .findFirst()
+                .map(invariant -> {
+                    Long count = readOnlyTransaction.execute(status -> jdbcTemplate.queryForObject(
+                            "SELECT count(*) FROM (" + invariant.sql() + ") q", Long.class));
+                    return new Inspection(invariant.code(), invariant.title(), invariant.severity().name(),
+                            count == null ? 0 : count, queryRows(invariant, bounded));
+                });
+    }
+
+    /** Résultat de {@link #inspect} : la règle, son nombre total de lignes en faute, un extrait. */
+    public record Inspection(String code, String title, String severity, long total,
+                             List<Map<String, Object>> rows) {
+    }
+
+    private List<Map<String, Object>> sampleRows(MoneyInvariant invariant, int limit) {
+        try {
+            return queryRows(invariant, limit);
+        } catch (RuntimeException e) {
+            // L'alerte part quand même : l'extrait n'est qu'une aide.
+            log.warn("Extrait de la règle {} indisponible : {}", invariant.code(), e.getMessage());
+            return List.of();
+        }
+    }
+
+    private List<Map<String, Object>> queryRows(MoneyInvariant invariant, int limit) {
+        List<Map<String, Object>> rows = readOnlyTransaction.execute(status -> jdbcTemplate.queryForList(
+                "SELECT * FROM (" + invariant.sql() + ") q LIMIT " + limit));
+        if (rows == null) {
+            return List.of();
+        }
+        return rows.stream().map(MoneyIntegrityMonitor::toJsonFriendly).toList();
+    }
+
+    /**
+     * Les colonnes JDBC (Timestamp, PGInterval, UUID…) sont ramenées à des nombres, booléens et
+     * textes : le résultat est sérialisé dans le payload JSONB et dans la réponse HTTP.
+     */
+    static Map<String, Object> toJsonFriendly(Map<String, Object> row) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        row.forEach((key, value) -> out.put(key, toJsonFriendly(value)));
+        return out;
+    }
+
+    private static Object toJsonFriendly(Object value) {
+        if (value == null || value instanceof Number || value instanceof Boolean || value instanceof String) {
+            return value;
+        }
+        return String.valueOf(value);
     }
 }

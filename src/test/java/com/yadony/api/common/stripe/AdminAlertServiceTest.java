@@ -380,4 +380,12 @@ class AdminAlertServiceTest {
                     .contains("Alerte système");
         }
     }
+
+    @Test
+    void severityOf_alignsTheBackOfficeSeverityOnTheAlertGravity() {
+        assertThat(AdminAlertService.severityOf("SUPPORT_TICKET_CREATED")).isEqualTo("INFO");
+        assertThat(AdminAlertService.severityOf("KYC_IDENTITY_REJECTED")).isEqualTo("WARN");
+        assertThat(AdminAlertService.severityOf("PAYOUT_HELD_00000000-0000-0000-0000-000000000000")).isEqualTo("CRITICAL");
+        assertThat(AdminAlertService.severityOf(null)).isEqualTo("CRITICAL");
+    }
 }

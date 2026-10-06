@@ -134,4 +134,30 @@ class AdminAlertEscalatorTest {
                 .hasMessageContaining("admin_alerts.type");
         verifyNoInteractions(repository, alerts);
     }
+
+    @Test
+    void raiseOnce_persistsTheReadableDetailAndTheIncidentSeverity() {
+        String type = "PAWAPAY_BALANCE_LOW_XOF";
+        when(repository.findByTypeAndResolved(type, false)).thenReturn(List.of());
+
+        escalator.raiseOnce(type, "Solde pawaPay XOF sous le seuil : 1000", Map.of("currency", "XOF"));
+
+        ArgumentCaptor<AdminAlertEntity> saved = ArgumentCaptor.forClass(AdminAlertEntity.class);
+        verify(repository).save(saved.capture());
+        assertThat(saved.getValue().getDetail()).isEqualTo("Solde pawaPay XOF sous le seuil : 1000");
+        assertThat(saved.getValue().getSeverity()).isEqualTo("CRITICAL");
+    }
+
+    @Test
+    void raiseOnce_withAnExplicitSeverity_persistsIt() {
+        String type = "MONEY_INVARIANT_INV-14";
+        when(repository.findByTypeAndResolved(type, false)).thenReturn(List.of());
+
+        escalator.raiseOnce(type, "WARN", "Remboursement wallet bloqué", Map.of("invariant", "INV-14"));
+
+        ArgumentCaptor<AdminAlertEntity> saved = ArgumentCaptor.forClass(AdminAlertEntity.class);
+        verify(repository).save(saved.capture());
+        assertThat(saved.getValue().getSeverity()).isEqualTo("WARN");
+        verify(alerts).raise(eq(type), eq("Remboursement wallet bloqué"), any());
+    }
 }

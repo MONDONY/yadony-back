@@ -57,6 +57,8 @@ class ReturnDeadlineSchedulerTest {
         ArgumentCaptor<AdminAlertEntity> alertCap = ArgumentCaptor.forClass(AdminAlertEntity.class);
         verify(adminAlertRepository).save(alertCap.capture());
         assertThat(alertCap.getValue().getPayload()).contains(bidId.toString());
+        assertThat(alertCap.getValue().getSeverity()).isEqualTo("WARN");
+        assertThat(alertCap.getValue().getDetail()).contains(bidId.toString()).contains("pas rendu");
 
         ArgumentCaptor<ReturnDeadlineExpiredEvent> evCap =
                 ArgumentCaptor.forClass(ReturnDeadlineExpiredEvent.class);

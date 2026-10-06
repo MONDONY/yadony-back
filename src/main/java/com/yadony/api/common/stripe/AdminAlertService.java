@@ -136,6 +136,19 @@ public class AdminAlertService {
         sendTelegram(code, detail, context, gravite);
     }
 
+    /**
+     * Sévérité affichée dans le back-office ({@code admin_alerts.severity}) pour un code
+     * d'alerte : {@code INFO}, {@code WARN} ou {@code CRITICAL}, alignée sur la gravité qui
+     * décide déjà du niveau de log et de la notification Telegram.
+     */
+    public static String severityOf(String code) {
+        return switch (graviteDe(code)) {
+            case INFO -> "INFO";
+            case AVERTISSEMENT -> "WARN";
+            case INCIDENT -> "CRITICAL";
+        };
+    }
+
     static Gravite graviteDe(String code) {
         if (code == null) return Gravite.INCIDENT;
         if (CODES_INFO.contains(code)) return Gravite.INFO;

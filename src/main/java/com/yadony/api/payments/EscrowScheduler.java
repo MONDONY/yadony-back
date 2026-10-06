@@ -72,6 +72,9 @@ public class EscrowScheduler {
             AdminAlertEntity alert = new AdminAlertEntity();
             alert.setType(ALERT_TYPE);
             alert.setPayload(buildPayload(payment));
+            alert.setSeverity("WARN");
+            alert.setDetail("Paiement " + paymentIdStr + " en séquestre depuis plus de "
+                    + ESCROW_TIMEOUT_HOURS + " h sans versement au voyageur (bid " + payment.getBidId() + ")");
             alert.setResolved(false);
             adminAlertRepository.save(alert);
 
