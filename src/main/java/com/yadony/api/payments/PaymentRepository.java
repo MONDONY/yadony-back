@@ -1,7 +1,5 @@
 package com.yadony.api.payments;
 
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -297,43 +295,6 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
             @Param("travelerId") UUID travelerId,
             @Param("from") LocalDateTime from,
             @Param("to") LocalDateTime to);
-
-    /**
-     * {@code rail} (STRIPE/PAWAPAY) filtre réellement la
-     * requête — avant cette ronde, le contrôleur admin traduisait tout {@code method != STRIPE}
-     * en page vide, un raccourci devenu faux depuis que les paiements mobile money
-     * créent aussi une ligne {@code payments}.
-     */
-    @Query(value = """
-            SELECT p.* FROM payments p
-            WHERE p.deleted_at IS NULL
-              AND (CAST(:status AS VARCHAR) IS NULL OR p.status = :status)
-              AND (CAST(:from AS TIMESTAMP) IS NULL OR p.created_at >= CAST(:from AS TIMESTAMP))
-              AND (CAST(:to AS TIMESTAMP) IS NULL OR p.created_at <= CAST(:to AS TIMESTAMP))
-              AND (CAST(:rail AS VARCHAR) IS NULL OR p.rail = :rail)
-              AND (CAST(:currency AS VARCHAR) IS NULL OR UPPER(p.currency) = :currency)
-              AND (:held = FALSE OR (p.status = 'ESCROW' AND p.payout_held_at IS NOT NULL))
-            ORDER BY p.created_at DESC
-            """,
-           countQuery = """
-            SELECT COUNT(*) FROM payments p
-            WHERE p.deleted_at IS NULL
-              AND (CAST(:status AS VARCHAR) IS NULL OR p.status = :status)
-              AND (CAST(:from AS TIMESTAMP) IS NULL OR p.created_at >= CAST(:from AS TIMESTAMP))
-              AND (CAST(:to AS TIMESTAMP) IS NULL OR p.created_at <= CAST(:to AS TIMESTAMP))
-              AND (CAST(:rail AS VARCHAR) IS NULL OR p.rail = :rail)
-              AND (CAST(:currency AS VARCHAR) IS NULL OR UPPER(p.currency) = :currency)
-              AND (:held = FALSE OR (p.status = 'ESCROW' AND p.payout_held_at IS NOT NULL))
-            """,
-           nativeQuery = true)
-    Page<PaymentEntity> findAdminFiltered(
-            @Param("status") String status,
-            @Param("from") java.time.LocalDateTime from,
-            @Param("to") java.time.LocalDateTime to,
-            @Param("rail") String rail,
-            @Param("currency") String currency,
-            @Param("held") boolean held,
-            Pageable pageable);
 
     /**
      * Voyageur beneficiaire de chaque paiement : {@code [paymentId, travelerId]}, en texte (H2 rend
