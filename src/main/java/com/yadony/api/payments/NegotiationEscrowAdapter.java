@@ -67,7 +67,14 @@ public class NegotiationEscrowAdapter implements NegotiationEscrowPort {
                 .multiply(java.math.BigDecimal.valueOf(100))
                 .setScale(0, java.math.RoundingMode.HALF_UP)
                 .longValueExact();
-            return pi.getAmount() == expectedCents;
+            if (pi.getAmount() != expectedCents) {
+                return false;
+            }
+            // Autorisation confirmée par Stripe : le paiement est en séquestre dès maintenant, sans
+            // attendre un webhook qui n'arrive pas toujours (aucun reçu en staging). Sinon il restait
+            // PENDING, la livraison ne le libérait pas et le voyageur n'était jamais payé.
+            paymentService.promoteNegotiationEscrowIfPending(threadId, paymentIntentId, pi.getLatestCharge());
+            return true;
         } catch (StripeException e) {
             log.warn("Negotiation escrow verify failed (thread={}, pi={}): {}",
                 threadId, paymentIntentId, e.getMessage());
