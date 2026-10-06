@@ -420,13 +420,19 @@ public class TrackingService {
         Map<UUID, BidEntity> bidsById = bids.stream()
                 .collect(Collectors.toMap(BidEntity::getId, bid -> bid));
         List<UUID> bidIds = new java.util.ArrayList<>(bidsById.keySet());
+        // Destinataire qui a refusé le colis ou s'en est retiré : son nom n'est plus montré
+        // au voyageur, comme dans le détail du colis (BidService.toResponse).
+        java.util.Set<UUID> recipientHidden = recipientLinkRepository.findByBidIdIn(bidIds).stream()
+                .filter(l -> l.getStatus().hidesRecipientFromTraveler())
+                .map(com.yadony.api.matching.reception.BidRecipientLinkEntity::getBidId)
+                .collect(Collectors.toSet());
 
         return trackingEventRepository.findByBidIdInOrderByScannedAtDesc(bidIds).stream()
                 .map(event -> {
                     BidEntity bid = bidsById.get(event.getBidId());
                     return new TripScanHistoryEntryDto(
                             bid != null ? bid.getTrackingNumber() : null,
-                            bid != null ? bid.getRecipientName() : null,
+                            bid != null && !recipientHidden.contains(bid.getId()) ? bid.getRecipientName() : null,
                             event.getEventType().name(),
                             event.getScannedAt(),
                             scanMethodName(event));

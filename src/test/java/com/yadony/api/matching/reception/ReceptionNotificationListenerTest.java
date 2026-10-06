@@ -8,6 +8,7 @@ import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.events.ArrivalInstructionsUpdatedEvent;
 import com.yadony.api.matching.events.BidRecipientChangedEvent;
+import com.yadony.api.matching.events.RecipientReplacementRequestedEvent;
 import com.yadony.api.matching.events.BidRejectedEvent;
 import com.yadony.api.matching.events.TripArrivedEvent;
 import com.yadony.api.matching.events.TripRescheduledEvent;
@@ -98,6 +99,31 @@ class ReceptionNotificationListenerTest {
                 new BidRecipientChangedEvent(bidId, recipientId, travelerId))).doesNotThrowAnyException();
 
         verify(notificationDispatcher).notifyUser(eq(travelerId), anyString(), anyString(), any());
+    }
+
+    @Test
+    void replacementRequested_notifiesTheSender() {
+        UUID senderId = UUID.randomUUID();
+
+        listener.onRecipientReplacementRequested(new RecipientReplacementRequestedEvent(bidId, senderId));
+
+        verify(notificationDispatcher).notifyUser(eq(senderId), eq("Destinataire à remplacer"),
+                eq("Destinataire refusé. Le voyageur vous demande d'en désigner un autre."),
+                eq(Map.of("type", "RECIPIENT_REPLACEMENT_REQUESTED", "bidId", bidId.toString())));
+    }
+
+    @Test
+    void replacementRequested_nullBid_noop() {
+        listener.onRecipientReplacementRequested(new RecipientReplacementRequestedEvent(null, UUID.randomUUID()));
+        verify(notificationDispatcher, never()).notifyUser(any(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void replacementRequested_dispatchFailure_isSwallowed() {
+        UUID senderId = UUID.randomUUID();
+        when(notificationDispatcher.messagesFor(senderId)).thenThrow(new IllegalStateException("boom"));
+        assertThatCode(() -> listener.onRecipientReplacementRequested(
+                new RecipientReplacementRequestedEvent(bidId, senderId))).doesNotThrowAnyException();
     }
 
     @Test

@@ -383,6 +383,24 @@ class ReceptionServiceTest {
                 eq(Map.of("type", "RECIPIENT_DECLINED", "bidId", b.getId().toString())));
     }
 
+    @Test
+    void decline_pending_alsoNotifiesTheTraveler_withoutTheRecipientName() {
+        BidEntity b = bid(BidStatus.ACCEPTED, NOW_LDT);
+        BidRecipientLinkEntity l = link(b, ReceptionLinkStatus.PENDING);
+        when(linkRepository.findByBidIdAndRecipientUserId(b.getId(), meId)).thenReturn(Optional.of(l));
+        when(bidRepository.findById(b.getId())).thenReturn(Optional.of(b));
+        AnnouncementEntity trip = new AnnouncementEntity();
+        trip.setTravelerId(travelerIdForWithdraw);
+        when(announcementRepository.findById(b.getAnnouncementId())).thenReturn(Optional.of(trip));
+
+        service.decline(b.getId(), "uid-me");
+
+        Map<String, String> data = Map.of("type", "RECIPIENT_DECLINED", "bidId", b.getId().toString());
+        verify(notificationDispatcher).notifyUser(eq(senderId), eq("Destinataire à vérifier"), anyString(), eq(data));
+        verify(notificationDispatcher).notifyUser(eq(travelerIdForWithdraw), eq("Refus du destinataire"),
+                eq("Le destinataire a refusé ce colis. L'expéditeur est prévenu."), eq(data));
+    }
+
     // ── se retirer d'un colis confirmé (FLUTTER-9F) ─────────────────────────
 
     @Test

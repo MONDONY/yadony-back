@@ -7,21 +7,28 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.UUID;
 
-/** L'expéditeur change le destinataire de son colis, jusqu'à la remise (lot 3A). */
+/**
+ * L'expéditeur change le destinataire de son colis, jusqu'à la remise (lot 3A). Le
+ * voyageur, lui, peut lui demander d'en désigner un autre quand le destinataire a refusé.
+ */
 @RestController
 @PreAuthorize("isAuthenticated()")
 public class RecipientChangeController {
 
     private final RecipientChangeService service;
+    private final RecipientReplacementService replacementService;
 
-    public RecipientChangeController(RecipientChangeService service) {
+    public RecipientChangeController(RecipientChangeService service,
+                                     RecipientReplacementService replacementService) {
         this.service = service;
+        this.replacementService = replacementService;
     }
 
     @PutMapping("/bids/{bidId}/recipient")
@@ -29,5 +36,11 @@ public class RecipientChangeController {
                                                        @PathVariable UUID bidId,
                                                        @Valid @RequestBody ChangeRecipientRequest request) {
         return ResponseEntity.ok(service.changeRecipient(bidId, firebaseUid, request));
+    }
+
+    @PostMapping("/bids/{bidId}/recipient/replacement-request")
+    public ResponseEntity<BidResponse> requestReplacement(@AuthenticationPrincipal String firebaseUid,
+                                                          @PathVariable UUID bidId) {
+        return ResponseEntity.ok(replacementService.requestReplacement(bidId, firebaseUid));
     }
 }

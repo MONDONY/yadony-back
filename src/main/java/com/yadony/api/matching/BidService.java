@@ -1418,7 +1418,13 @@ public class BidService {
         // Le voyageur ne le reçoit qu'une fois le colis pris en charge ; le jeton du
         // lien de suivi public reste à l'expéditeur seul.
         boolean callerIsSender = callerId != null && callerId.equals(bid.getSenderId());
-        boolean recipientPhoneHidden = !callerIsSender && recipientPhoneHiddenFromTraveler(bid);
+        com.yadony.api.matching.reception.BidRecipientLinkEntity recipientLink =
+                recipientLinkRepository.findByBidId(bid.getId()).orElse(null);
+        // Destinataire qui a refusé le colis ou s'en est retiré : le voyageur ne voit plus
+        // ni son nom ni son numéro (règle unique : ReceptionLinkStatus#hidesRecipientFromTraveler).
+        boolean recipientDeclined = !callerIsSender && recipientLink != null
+                && recipientLink.getStatus().hidesRecipientFromTraveler();
+        boolean recipientPhoneHidden = !callerIsSender && recipientPhoneHiddenFromTraveler(bid, recipientLink);
         String trackingNumber = (callerIsSender
                 || TRACKING_NUMBER_VISIBLE_TO_TRAVELER_STATUSES.contains(bid.getStatus()))
                 ? bid.getTrackingNumber() : null;
@@ -1576,7 +1582,7 @@ public class BidService {
                 bid.getWeightKg(),
                 bid.getDescription(),
                 bid.getContentCategory(),
-                bid.getRecipientName(),
+                recipientDeclined ? null : bid.getRecipientName(),
                 // Même masquage que sender/traveler : le téléphone du destinataire
                 // (tiers non consentant) n'est révélé qu'à partir de l'acceptation,
                 // sinon un voyageur pourrait moissonner des numéros via des offres
@@ -1585,7 +1591,7 @@ public class BidService {
                 // toujours. Le voyageur ne le reçoit qu'une fois la demande acceptée.
                 callerIsSender
                         ? bid.getRecipientPhone()
-                        : recipientPhoneHidden
+                        : recipientPhoneHidden || recipientDeclined
                                 ? null
                                 : phoneForStatus(bid.getRecipientPhone(), bid.getStatus()),
                 bid.getStatus().name(),
@@ -1642,12 +1648,14 @@ public class BidService {
                 bid.getCurrency(),
                 arrivalInstructions,
                 rescheduleInfo(bid, announcement),
-                recipientAppStatus(bid, callerIsSender),
+                recipientAppStatus(recipientLink, callerIsSender),
                 recipientPhoneHidden,
                 handoverAddress(announcement),
                 ARRIVAL_INSTRUCTIONS_VISIBLE_STATUSES.contains(bid.getStatus())
                         ? deliveryAddress(announcement)
-                        : null
+                        : null,
+                recipientDeclined,
+                replacementRequestedAt(recipientLink)
         );
     }
 
@@ -1682,30 +1690,47 @@ public class BidService {
      * titulaire du numéro n'a pas confirmé, la messagerie destinataire n'existe pas et
      * le téléphone reste le seul moyen de le joindre.
      */
-    private boolean recipientPhoneHiddenFromTraveler(BidEntity bid) {
-        if (bid.getRecipientPhone() == null
-                || !BidStatus.PHONE_VISIBLE_STATUSES.contains(bid.getStatus())) {
+    private boolean recipientPhoneHiddenFromTraveler(BidEntity bid,
+                                                     com.yadony.api.matching.reception.BidRecipientLinkEntity link) {
+        if (link == null || bid.getRecipientPhone() == null
+                || !BidStatus.PHONE_VISIBLE_STATUSES.contains(bid.getStatus())
+                || link.getStatus() != com.yadony.api.matching.reception.ReceptionLinkStatus.CONFIRMED) {
             return false;
         }
-        return recipientLinkRepository.findByBidId(bid.getId())
-                .filter(link -> link.getStatus()
-                        == com.yadony.api.matching.reception.ReceptionLinkStatus.CONFIRMED)
-                .flatMap(link -> userRepository.findById(link.getRecipientUserId()))
+        return userRepository.findById(link.getRecipientUserId())
                 .map(UserEntity::isHidePhoneNumber)
                 .orElse(false);
     }
 
     /**
      * Réponse du destinataire rattaché au colis, null s'il n'a pas de compte lié.
-     * L'expéditeur voit PENDING/CONFIRMED/DECLINED ; le voyageur sait seulement que le
-     * destinataire suit le colis dans l'app (CONFIRMED), jamais une attente ou un refus.
+     * L'expéditeur voit PENDING/CONFIRMED/DECLINED ; ici, le voyageur sait seulement que
+     * le destinataire suit le colis dans l'app (CONFIRMED), jamais une attente. Un refus
+     * ou un retrait lui est signalé à part, par {@code BidResponse.recipientDeclined},
+     * avec le nom et le numéro du destinataire masqués : la valeur reste null pour lui,
+     * l'app teste {@code == 'CONFIRMED'}.
      */
-    private String recipientAppStatus(BidEntity bid, boolean callerIsSender) {
-        return recipientLinkRepository.findByBidId(bid.getId())
+    private static String recipientAppStatus(com.yadony.api.matching.reception.BidRecipientLinkEntity link,
+                                             boolean callerIsSender) {
+        return java.util.Optional.ofNullable(link)
                 .map(com.yadony.api.matching.reception.BidRecipientLinkEntity::getStatus)
                 .filter(status -> callerIsSender
                         || status == com.yadony.api.matching.reception.ReceptionLinkStatus.CONFIRMED)
                 .map(Enum::name)
+                .orElse(null);
+    }
+
+    /**
+     * Dernière demande de remplacement du destinataire faite par le voyageur depuis le
+     * refus courant, pour griser son bouton pendant 12 h. Aucune requête hors refus.
+     */
+    private java.time.OffsetDateTime replacementRequestedAt(
+            com.yadony.api.matching.reception.BidRecipientLinkEntity link) {
+        if (link == null || !link.getStatus().hidesRecipientFromTraveler()) {
+            return null;
+        }
+        return recipientLinkRepository.lastReplacementRequestAt(link)
+                .map(at -> at.atOffset(java.time.ZoneOffset.UTC))
                 .orElse(null);
     }
 

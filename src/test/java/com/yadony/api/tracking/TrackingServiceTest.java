@@ -1515,6 +1515,34 @@ class TrackingServiceTest {
         assertThat(result.get(0).eventType()).isEqualTo("DEPART");
     }
 
+    @Test
+    void getTripScanHistory_declinedRecipient_nameHiddenFromTraveler() {
+        AnnouncementEntity ann = buildAnnouncement();
+        UserEntity traveler = buildUser(travelerId, "uid-traveler");
+        BidEntity bid = buildBid(BidStatus.HANDED_OVER, "qt");
+        bid.setRecipientName("Awa Ndiaye");
+        TrackingEventEntity event = new TrackingEventEntity();
+        setId(event, UUID.randomUUID());
+        event.setBidId(bidId);
+        event.setEventType(TrackingEventType.DEPART);
+        event.setScannedAt(LocalDateTime.now(ZoneOffset.UTC));
+        var declined = new com.yadony.api.matching.reception.BidRecipientLinkEntity(bidId, UUID.randomUUID());
+        declined.respond(com.yadony.api.matching.reception.ReceptionLinkStatus.DECLINED, java.time.OffsetDateTime.now(ZoneOffset.UTC));
+
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+        when(userRepository.findByFirebaseUid("uid-traveler")).thenReturn(Optional.of(traveler));
+        when(bidRepository.findByAnnouncementId(annId)).thenReturn(List.of(bid));
+        when(recipientLinkRepository.findByBidIdIn(List.of(bidId))).thenReturn(List.of(declined));
+        when(trackingEventRepository.findByBidIdInOrderByScannedAtDesc(List.of(bidId)))
+                .thenReturn(List.of(event));
+
+        List<TripScanHistoryEntryDto> result = service.getTripScanHistory(annId, "uid-traveler");
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).donNumber()).isEqualTo("TRK000001");
+        assertThat(result.get(0).recipientName()).isNull();
+    }
+
     // ── Provenance QR / numéro (scanMethod) ───────────────────────────────────
 
     private void stubTransitScanContext() {

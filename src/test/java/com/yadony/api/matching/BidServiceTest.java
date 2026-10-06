@@ -3686,6 +3686,91 @@ class BidServiceTest {
 
             assertThat(resp.recipientPhone()).isEqualTo("+221701234567");
         }
+
+        private com.yadony.api.matching.reception.BidRecipientLinkEntity recipientLink(
+                com.yadony.api.matching.reception.ReceptionLinkStatus status) {
+            var link = new com.yadony.api.matching.reception.BidRecipientLinkEntity(BID_ID, UUID.randomUUID());
+            if (status != com.yadony.api.matching.reception.ReceptionLinkStatus.PENDING) {
+                link.respond(status, java.time.OffsetDateTime.parse("2026-10-05T08:00:00Z"));
+            }
+            return link;
+        }
+
+        @Test
+        @DisplayName("destinataire DECLINED, vue voyageur → nom et numéro masqués, recipientDeclined")
+        void toResponse_declinedRecipient_travelerView_hidesNameAndPhone() {
+            UserEntity sender = buildSender();
+            BidEntity bid = buildBid();
+            bid.setStatus(BidStatus.IN_TRANSIT);
+            var link = recipientLink(com.yadony.api.matching.reception.ReceptionLinkStatus.DECLINED);
+            when(recipientLinkRepository.findByBidId(BID_ID)).thenReturn(Optional.of(link));
+            when(recipientLinkRepository.lastReplacementRequestAt(link))
+                    .thenReturn(Optional.of(java.time.LocalDateTime.parse("2026-10-05T09:30:00")));
+
+            BidResponse resp = bidService.toResponse(bid, sender, TRAVELER_ID);
+
+            assertThat(resp.recipientName()).isNull();
+            assertThat(resp.recipientPhone()).isNull();
+            assertThat(resp.recipientDeclined()).isTrue();
+            assertThat(resp.recipientPhoneHidden()).isFalse();
+            assertThat(resp.recipientAppStatus()).isNull();
+            assertThat(resp.recipientReplacementRequestedAt())
+                    .isEqualTo(java.time.OffsetDateTime.parse("2026-10-05T09:30:00Z"));
+        }
+
+        @Test
+        @DisplayName("destinataire DECLINED, vue expéditeur → tout reste visible")
+        void toResponse_declinedRecipient_senderView_seesEverything() {
+            UserEntity sender = buildSender();
+            BidEntity bid = buildBid();
+            bid.setStatus(BidStatus.IN_TRANSIT);
+            var link = recipientLink(com.yadony.api.matching.reception.ReceptionLinkStatus.DECLINED);
+            when(recipientLinkRepository.findByBidId(BID_ID)).thenReturn(Optional.of(link));
+
+            BidResponse resp = bidService.toResponse(bid, sender, SENDER_ID);
+
+            assertThat(resp.recipientName()).isEqualTo(bid.getRecipientName()).isNotNull();
+            assertThat(resp.recipientPhone()).isEqualTo("+221701234567");
+            assertThat(resp.recipientDeclined()).isFalse();
+            assertThat(resp.recipientAppStatus()).isEqualTo("DECLINED");
+            assertThat(resp.recipientReplacementRequestedAt()).isNull();
+        }
+
+        @Test
+        @DisplayName("destinataire CONFIRMED, vue voyageur → inchangé, aucune lecture d'audit")
+        void toResponse_confirmedRecipient_travelerView_unchanged() {
+            UserEntity sender = buildSender();
+            BidEntity bid = buildBid();
+            bid.setStatus(BidStatus.IN_TRANSIT);
+            var link = recipientLink(com.yadony.api.matching.reception.ReceptionLinkStatus.CONFIRMED);
+            when(recipientLinkRepository.findByBidId(BID_ID)).thenReturn(Optional.of(link));
+
+            BidResponse resp = bidService.toResponse(bid, sender, TRAVELER_ID);
+
+            assertThat(resp.recipientName()).isEqualTo(bid.getRecipientName()).isNotNull();
+            assertThat(resp.recipientPhone()).isEqualTo("+221701234567");
+            assertThat(resp.recipientDeclined()).isFalse();
+            assertThat(resp.recipientAppStatus()).isEqualTo("CONFIRMED");
+            assertThat(resp.recipientReplacementRequestedAt()).isNull();
+            verify(recipientLinkRepository, never()).lastReplacementRequestAt(any());
+        }
+
+        @Test
+        @DisplayName("destinataire PENDING, vue voyageur → nom et numéro visibles, statut masqué")
+        void toResponse_pendingRecipient_travelerView_keepsNameAndPhone() {
+            UserEntity sender = buildSender();
+            BidEntity bid = buildBid();
+            bid.setStatus(BidStatus.ACCEPTED);
+            when(recipientLinkRepository.findByBidId(BID_ID)).thenReturn(Optional.of(
+                    recipientLink(com.yadony.api.matching.reception.ReceptionLinkStatus.PENDING)));
+
+            BidResponse resp = bidService.toResponse(bid, sender, TRAVELER_ID);
+
+            assertThat(resp.recipientName()).isNotNull();
+            assertThat(resp.recipientPhone()).isEqualTo("+221701234567");
+            assertThat(resp.recipientDeclined()).isFalse();
+            assertThat(resp.recipientAppStatus()).isNull();
+        }
     }
 
     @Nested
