@@ -18,6 +18,8 @@ public final class ReceptionNotifications {
     public static final String DECLINED = "RECIPIENT_DECLINED";
     /** À l'expéditeur et au voyageur : le destinataire confirmé s'est retiré du colis. */
     public static final String WITHDRAWN = "RECIPIENT_WITHDRAWN";
+    /** À l'expéditeur : le destinataire a refusé, le voyageur demande d'en désigner un autre. */
+    public static final String REPLACEMENT_REQUESTED = "RECIPIENT_REPLACEMENT_REQUESTED";
     /** À l'ancien destinataire : l'expéditeur a changé de destinataire. */
     public static final String REASSIGNED = "RECIPIENT_PARCEL_REASSIGNED";
     /** Au voyageur : le colis a un nouveau destinataire. */

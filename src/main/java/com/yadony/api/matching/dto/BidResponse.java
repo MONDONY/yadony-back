@@ -94,8 +94,9 @@ public record BidResponse(
          * l'expéditeur. Null si le trajet n'a jamais été reporté. */
         TripRescheduleInfo reschedule,
         /** Réponse du destinataire dont le compte est rattaché au colis : PENDING,
-         * CONFIRMED ou DECLINED. Servie à l'expéditeur seul ; null sans lien ou pour
-         * le voyageur. */
+         * CONFIRMED ou DECLINED. L'expéditeur la reçoit toujours ; le voyageur ne reçoit
+         * que CONFIRMED (null sinon) : un refus lui est signalé par
+         * {@code recipientDeclined}. */
         String recipientAppStatus,
         /** Vue voyageur : le destinataire a masqué son numéro ({@code recipientPhone} est
          * alors null) et se joint par la messagerie de l'app. Toujours false pour
@@ -108,5 +109,15 @@ public record BidResponse(
         /** Lieu où le destinataire récupère le colis à l'arrivée (adresse d'arrivée
          * du trajet). Même visibilité que {@code arrivalInstructions} : null pour une
          * demande sortie de la course. */
-        AddressDto deliveryAddress
+        AddressDto deliveryAddress,
+        /** Vue voyageur : le destinataire a refusé le colis ou s'en est retiré (lien
+         * DECLINED). {@code recipientName} et {@code recipientPhone} sont alors null ; le
+         * voyageur peut demander à l'expéditeur d'en désigner un autre
+         * ({@code POST /bids/{id}/recipient/replacement-request}). Toujours false pour
+         * l'expéditeur, qui lit {@code recipientAppStatus}. */
+        boolean recipientDeclined,
+        /** Dernière demande de remplacement faite par le voyageur depuis le refus courant
+         * (UTC), null sinon. Une nouvelle demande est possible 12 h après. Servie à
+         * l'expéditeur et au voyageur tant que le lien est DECLINED. */
+        java.time.OffsetDateTime recipientReplacementRequestedAt
 ) {}

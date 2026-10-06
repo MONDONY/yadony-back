@@ -6,6 +6,8 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -20,6 +22,8 @@ public interface BidRecipientLinkRepository extends JpaRepository<BidRecipientLi
     Optional<BidRecipientLinkEntity> findByBidIdAndRecipientUserId(UUID bidId, UUID recipientUserId);
 
     boolean existsByBidIdAndRecipientUserIdAndStatus(UUID bidId, UUID recipientUserId, ReceptionLinkStatus status);
+
+    List<BidRecipientLinkEntity> findByBidIdIn(Collection<UUID> bidIds);
 
     List<BidRecipientLinkEntity> findByRecipientUserIdAndStatusIn(UUID recipientUserId,
                                                                   Collection<ReceptionLinkStatus> statuses);
@@ -44,4 +48,30 @@ public interface BidRecipientLinkRepository extends JpaRepository<BidRecipientLi
     List<BidEntity> findCatchUpCandidates(@Param("userId") UUID userId,
                                           @Param("statuses") Collection<BidStatus> statuses,
                                           @Param("suffix") String suffix);
+
+    /**
+     * Dernière demande de remplacement du destinataire faite par le voyageur depuis
+     * {@code since}. Lue dans {@code audit_log}, qui fait foi : pas de colonne à tenir à
+     * jour en double.
+     */
+    @Query("""
+            SELECT MAX(a.createdAt) FROM AuditLogEntity a
+            WHERE a.entityType = 'BID'
+              AND a.entityId = :bidId
+              AND a.action = 'RECIPIENT_REPLACEMENT_REQUESTED'
+              AND a.createdAt >= :since
+            """)
+    Optional<LocalDateTime> findLastReplacementRequestAt(@Param("bidId") UUID bidId,
+                                                         @Param("since") LocalDateTime since);
+
+    /**
+     * Dernière demande de remplacement visant le refus courant (UTC) : seules comptent
+     * celles faites après la réponse du destinataire, un nouveau refus repart de zéro.
+     */
+    default Optional<LocalDateTime> lastReplacementRequestAt(BidRecipientLinkEntity link) {
+        LocalDateTime since = link.getRespondedAt() != null
+                ? link.getRespondedAt().withOffsetSameInstant(ZoneOffset.UTC).toLocalDateTime()
+                : LocalDateTime.of(1970, 1, 1, 0, 0);
+        return findLastReplacementRequestAt(link.getBidId(), since);
+    }
 }

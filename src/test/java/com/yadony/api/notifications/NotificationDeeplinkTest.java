@@ -60,6 +60,9 @@ class NotificationDeeplinkTest {
                 .contains("yadony://bids/" + bidId);
         assertThat(NotificationDeeplink.of("RECIPIENT_WITHDRAWN", Map.of("bidId", bidId)))
                 .contains("yadony://bids/" + bidId);
+        assertThat(NotificationDeeplink.of("RECIPIENT_REPLACEMENT_REQUESTED", Map.of("bidId", bidId)))
+                .contains("yadony://bids/" + bidId);
+        assertThat(NotificationCategory.fromType("RECIPIENT_REPLACEMENT_REQUESTED")).isEqualTo(NotificationCategory.COLIS);
         assertThat(NotificationCategory.fromType("RECIPIENT_PARCEL_INCOMING")).isEqualTo(NotificationCategory.COLIS);
     }
 

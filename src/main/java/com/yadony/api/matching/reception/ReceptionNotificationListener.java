@@ -5,6 +5,7 @@ import com.yadony.api.cancellation.events.TripCancelledEvent;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.events.ArrivalInstructionsUpdatedEvent;
 import com.yadony.api.matching.events.BidRecipientChangedEvent;
+import com.yadony.api.matching.events.RecipientReplacementRequestedEvent;
 import com.yadony.api.matching.events.BidRejectedEvent;
 import com.yadony.api.matching.events.TripArrivedEvent;
 import com.yadony.api.matching.events.TripRescheduledEvent;
@@ -164,6 +165,17 @@ public class ReceptionNotificationListener {
                 NotificationTexts::recipientParcelReassigned);
         send(event.travelerId(), bidId, ReceptionNotifications.RECIPIENT_CHANGED,
                 NotificationTexts::recipientChanged);
+    }
+
+    /** Le voyageur demande à l'expéditeur de désigner un autre destinataire. */
+    @Async
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    public void onRecipientReplacementRequested(RecipientReplacementRequestedEvent event) {
+        if (event.bidId() == null) {
+            return;
+        }
+        send(event.senderId(), event.bidId(), ReceptionNotifications.REPLACEMENT_REQUESTED,
+                NotificationTexts::recipientReplacementRequested);
     }
 
     private void send(UUID userId, UUID bidId, String type,

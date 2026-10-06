@@ -158,8 +158,8 @@ public class ReceptionService {
      * « Ce n'est pas pour moi » avant confirmation, ou « Me retirer de ce
      * colis » après (FLUTTER-9F) : le destinataire de confiance, rattaché
      * d'office, ou celui qui a confirmé, peut se retirer tant que le colis
-     * n'est pas livré. L'expéditeur est invité à désigner quelqu'un d'autre et
-     * le voyageur est prévenu.
+     * n'est pas livré. Dans les deux cas, l'expéditeur est invité à désigner
+     * quelqu'un d'autre et le voyageur est prévenu.
      */
     @Transactional
     public void decline(UUID bidId, String firebaseUid) {
@@ -178,9 +178,17 @@ public class ReceptionService {
         linkRepository.save(link);
         auditService.log("BID_RECIPIENT_LINK", link.getId(), "RECEPTION_DECLINED", user.getId(),
                 Map.of("bidId", bidId.toString()));
+        Map<String, String> data = Map.of("type", ReceptionNotifications.DECLINED, "bidId", bidId.toString());
         var text = NotificationTexts.recipientDeclined(notificationDispatcher.messagesFor(bid.getSenderId()));
-        notificationDispatcher.notifyUser(bid.getSenderId(), text.title(), text.body(),
-                Map.of("type", ReceptionNotifications.DECLINED, "bidId", bidId.toString()));
+        notificationDispatcher.notifyUser(bid.getSenderId(), text.title(), text.body(), data);
+        // Le voyageur l'apprend aussi, sans le nom du destinataire, qui ne lui est plus montré.
+        announcementRepository.findById(bid.getAnnouncementId())
+                .map(AnnouncementEntity::getTravelerId)
+                .ifPresent(travelerId -> {
+                    var toTraveler = NotificationTexts.recipientDeclinedToTraveler(
+                            notificationDispatcher.messagesFor(travelerId));
+                    notificationDispatcher.notifyUser(travelerId, toTraveler.title(), toTraveler.body(), data);
+                });
     }
 
     private void withdraw(BidRecipientLinkEntity link, BidEntity bid, UserEntity user) {

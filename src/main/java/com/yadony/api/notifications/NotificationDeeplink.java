@@ -59,7 +59,7 @@ public final class NotificationDeeplink {
                  "PARCEL_RETURNED", "RETURN_DEADLINE_WARNING", "RETURN_DEADLINE_EXPIRED", "automation_last_minute",
                  "TRIP_RESCHEDULED", "TRIP_RESCHEDULE_KEPT", "TRIP_RESCHEDULE_WITHDRAWN",
                  "RECIPIENT_CONFIRMED", "RECIPIENT_DECLINED", "RECIPIENT_CHANGED",
-                 "RECIPIENT_WITHDRAWN" ->
+                 "RECIPIENT_WITHDRAWN", "RECIPIENT_REPLACEMENT_REQUESTED" ->
                     bidId.map(id -> "bids/" + id);
 
             // Le destinataire n'est pas partie au colis : il le suit depuis ses réceptions.

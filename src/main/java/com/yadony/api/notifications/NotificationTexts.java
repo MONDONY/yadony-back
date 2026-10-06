@@ -831,6 +831,18 @@ public final class NotificationTexts {
                 m.get("notification.recipient-declined.body"));
     }
 
+    /** Au voyageur : le titulaire du numéro a refusé le colis avant de le confirmer. */
+    public static NotificationText recipientDeclinedToTraveler(Messages m) {
+        return new NotificationText(m.get("notification.recipient-declined.traveler-title"),
+                m.get("notification.recipient-declined.traveler-body"));
+    }
+
+    /** À l'expéditeur : le destinataire a refusé, le voyageur demande d'en désigner un autre. */
+    public static NotificationText recipientReplacementRequested(Messages m) {
+        return new NotificationText(m.get("notification.recipient-replacement-requested.title"),
+                m.get("notification.recipient-replacement-requested.body"));
+    }
+
     /** À l'expéditeur : le destinataire confirmé s'est retiré du colis (FLUTTER-9F). */
     public static NotificationText recipientWithdrawnToSender(Messages m, String recipientFirstName) {
         return new NotificationText(m.get("notification.recipient-withdrawn.title"),
