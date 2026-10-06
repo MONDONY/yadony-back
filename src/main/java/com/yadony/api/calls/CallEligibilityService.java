@@ -6,7 +6,7 @@ import com.yadony.api.common.BlockVisibility;
 import com.yadony.api.common.CallAvailability;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
-import com.yadony.api.matching.BidStatus;
+import com.yadony.api.matching.ContactWindow;
 import com.yadony.api.messaging.ConversationEntity;
 import com.yadony.api.messaging.ConversationRepository;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -16,7 +16,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
-import java.util.Set;
 import java.util.UUID;
 
 /** Règle unique : qui peut appeler qui, et quand (de l'acceptation jusqu'à J+3 après livraison). */
@@ -29,9 +28,6 @@ public class CallEligibilityService implements CallAvailability {
         public boolean allowed() { return reason == null; }
         static Eligibility denied(Reason r) { return new Eligibility(r, null, null); }
     }
-
-    private static final Set<BidStatus> OPEN = Set.of(
-            BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED);
 
     private final ConversationRepository conversations;
     private final BidRepository bids;
@@ -93,10 +89,9 @@ public class CallEligibilityService implements CallAvailability {
         return new Eligibility(null, conv, calleeId);
     }
 
+    /** Règle partagée avec le bouton téléphone de la fiche colis ({@link ContactWindow}). */
     private boolean inWindow(BidEntity bid) {
-        if (OPEN.contains(bid.getStatus())) return true;
-        if (bid.getStatus() != BidStatus.COMPLETED || bid.getDeliveredAt() == null) return false;
-        LocalDateTime limit = bid.getDeliveredAt().plusDays(properties.deliveryGraceDays());
-        return LocalDateTime.now(clock.withZone(ZoneOffset.UTC)).isBefore(limit);
+        return ContactWindow.isOpen(bid.getStatus(), bid.getDeliveredAt(), properties.deliveryGraceDays(),
+                LocalDateTime.now(clock.withZone(ZoneOffset.UTC)));
     }
 }

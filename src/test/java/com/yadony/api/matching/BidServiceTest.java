@@ -40,6 +40,7 @@ import java.time.OffsetDateTime;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -2686,6 +2687,55 @@ class BidServiceTest {
 
         bid.setStatus(BidStatus.ACCEPTED);
         assertThat(bidService.getBidById(BID_ID, TRAVELER_UID).recipientPhone()).isEqualTo("+221700000000");
+    }
+
+    // ─── contactWindowOpen (FLUTTER-DK) ────────────────────────────────────────
+
+    private void stubGetBid(BidEntity bid) {
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(buildAnnouncement()));
+        lenient().when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(buildSender()));
+        lenient().when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(buildTraveler()));
+        lenient().when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(buildSender()));
+        lenient().when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(buildTraveler()));
+    }
+
+    @Test
+    @DisplayName("contactWindowOpen : ouvert en transit, pour le voyageur comme pour l'expéditeur")
+    void getBidById_contactWindowOpen_inTransit_bothSides() {
+        BidEntity bid = buildBid();
+        bid.setStatus(BidStatus.IN_TRANSIT);
+        stubGetBid(bid);
+
+        assertThat(bidService.getBidById(BID_ID, TRAVELER_UID).contactWindowOpen()).isTrue();
+        assertThat(bidService.getBidById(BID_ID, SENDER_UID).contactWindowOpen()).isTrue();
+    }
+
+    @Test
+    @DisplayName("contactWindowOpen : livré il y a 2 jours → ouvert ; il y a 3 jours → fermé")
+    void getBidById_contactWindowOpen_afterDelivery() {
+        BidEntity bid = buildBid();
+        bid.setStatus(BidStatus.COMPLETED);
+        bid.markDelivered(LocalDateTime.now(ZoneOffset.UTC).minusDays(2));
+        stubGetBid(bid);
+        assertThat(bidService.getBidById(BID_ID, TRAVELER_UID).contactWindowOpen()).isTrue();
+        assertThat(bidService.getBidById(BID_ID, SENDER_UID).contactWindowOpen()).isTrue();
+
+        BidEntity old = buildBid();
+        old.setStatus(BidStatus.COMPLETED);
+        old.markDelivered(LocalDateTime.now(ZoneOffset.UTC).minusDays(3));
+        stubGetBid(old);
+        assertThat(bidService.getBidById(BID_ID, TRAVELER_UID).contactWindowOpen()).isFalse();
+        assertThat(bidService.getBidById(BID_ID, SENDER_UID).contactWindowOpen()).isFalse();
+    }
+
+    @Test
+    @DisplayName("contactWindowOpen : annulé → fermé")
+    void getBidById_contactWindowOpen_cancelled() {
+        BidEntity bid = buildBid();
+        bid.setStatus(BidStatus.CANCELLED);
+        stubGetBid(bid);
+        assertThat(bidService.getBidById(BID_ID, SENDER_UID).contactWindowOpen()).isFalse();
     }
 
     // ─── getBidById ────────────────────────────────────────────────────────────

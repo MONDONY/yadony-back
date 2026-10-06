@@ -96,6 +96,10 @@ public class BidService {
     private final TripRescheduleRepository rescheduleRepository;
     private final com.yadony.api.matching.reception.BidRecipientLinkRepository recipientLinkRepository;
 
+    /** Jours de contact après livraison : même clé que la fenêtre d'appel in-app (calls/). */
+    @org.springframework.beans.factory.annotation.Value("${yadony.calls.delivery-grace-days:3}")
+    private int contactGraceDays = 3;
+
     public BidService(BidRepository bidRepository, AnnouncementRepository announcementRepository,
                       UserRepository userRepository, AuditService auditService,
                       ApplicationEventPublisher eventPublisher, RatingRepository ratingRepository,
@@ -1655,7 +1659,9 @@ public class BidService {
                         ? deliveryAddress(announcement)
                         : null,
                 recipientDeclined,
-                replacementRequestedAt(recipientLink)
+                replacementRequestedAt(recipientLink),
+                ContactWindow.isOpen(bid.getStatus(), bid.getDeliveredAt(), contactGraceDays,
+                        LocalDateTime.now(ZoneOffset.UTC))
         );
     }
 
