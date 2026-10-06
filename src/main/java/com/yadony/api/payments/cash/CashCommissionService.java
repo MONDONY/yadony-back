@@ -34,6 +34,8 @@ import com.yadony.api.payments.wallet.InsufficientWalletBalanceException;
 import com.yadony.api.payments.wallet.WalletService;
 import com.yadony.api.payments.wallet.WalletTransactionRepository;
 import com.yadony.api.payments.wallet.WalletTransactionType;
+import com.yadony.api.promo.PromoRedemptionEntity;
+import com.yadony.api.promo.PromoService;
 import com.stripe.exception.CardException;
 import com.stripe.exception.StripeException;
 import com.stripe.model.Customer;
@@ -101,6 +103,7 @@ public class CashCommissionService {
     private final ActiveCurrencyResolver activeCurrencyResolver;
     private final WalletCommissionCollector commissionCollector;
     private final MessagesResolver messagesResolver;
+    private final PromoService promoService;
     private Clock clock = Clock.systemUTC();
 
     public CashCommissionService(CommissionProperties props,
@@ -119,7 +122,8 @@ public class CashCommissionService {
                                  com.yadony.api.voucher.CommissionVoucherService voucherService,
                                  ActiveCurrencyResolver activeCurrencyResolver,
                                  WalletCommissionCollector commissionCollector,
-                                 MessagesResolver messagesResolver) {
+                                 MessagesResolver messagesResolver,
+                                 PromoService promoService) {
         this.props = props;
         this.userRepo = userRepo;
         this.bidRepo = bidRepo;
@@ -137,6 +141,7 @@ public class CashCommissionService {
         this.activeCurrencyResolver = activeCurrencyResolver;
         this.commissionCollector = commissionCollector;
         this.messagesResolver = messagesResolver;
+        this.promoService = promoService;
     }
 
     /** Normalise un code devise (comparaison insensible à la casse, jamais null). */
@@ -198,22 +203,43 @@ public class CashCommissionService {
      * Le fil de demande d'envoi, lui, ne fige que le net et garde donc le calcul au taux.
      */
     public BigDecimal computeBidCommission(BidEntity bid, AnnouncementEntity announcement) {
+        return quoteBidCommission(bid, announcement).commission();
+    }
+
+    /**
+     * Commission d'un bid espèces et code promo réellement pris dans son taux.
+     *
+     * @param promoApplied {@code true} seulement si {@code bids.promo_code} a été validé et
+     *                     retranché du taux figé. {@code false} sans code, sur un code invalide
+     *                     (repli au taux plein) et sur un bid négocié (taux figé au fil).
+     *                     Sur le modèle de {@code MobileMoneyBidPricing.Quote}.
+     */
+    public record BidCommissionQuote(BigDecimal commission, boolean promoApplied) {}
+
+    /**
+     * Même calcul que {@link #computeBidCommission}, en disant si le code promo du bid a été
+     * appliqué : c'est la condition de son rachat ({@code PromoService}) à l'acceptation.
+     */
+    public BidCommissionQuote quoteBidCommission(BidEntity bid, AnnouncementEntity announcement) {
         // Devise du trajet : celle dans laquelle le brut est remis en main propre et
         // dans laquelle la commission est prélevée (le bid est réaligné dessus).
         SupportedCurrency currency = SupportedCurrency.fromCodeOrDefault(announcement.getCurrency());
         if (bid.getNegotiatedNetEur() != null && bid.getNegotiatedGrossEur() != null) {
-            return bid.getNegotiatedGrossEur().subtract(bid.getNegotiatedNetEur())
-                    .setScale(currency.minorUnit(), RoundingMode.HALF_UP);
+            return new BidCommissionQuote(bid.getNegotiatedGrossEur().subtract(bid.getNegotiatedNetEur())
+                    .setScale(currency.minorUnit(), RoundingMode.HALF_UP), false);
         }
         if (bid.getNegotiatedNetEur() != null && bid.getCommissionRate() != null) {
-            return computeCommission(bid.getNegotiatedNetEur(), bid.getCommissionRate(), currency);
+            return new BidCommissionQuote(
+                    computeCommission(bid.getNegotiatedNetEur(), bid.getCommissionRate(), currency), false);
         }
         BigDecimal rate;
+        boolean promoApplied = false;
         if (bid.getPromoCode() != null) {
             try {
                 rate = commissionRateResolver.resolve(
                         announcement.getTravelerId(), bid.getSenderId(), bid.getPromoCode(),
                         bid.getSenderId(), bid.getId());
+                promoApplied = true;
             } catch (com.yadony.api.common.YadonyBusinessException e) {
                 log.warn("Promo {} invalid for cash bid {} — fallback", bid.getPromoCode(), bid.getId());
                 rate = commissionRateResolver.resolve(
@@ -234,7 +260,7 @@ public class CashCommissionService {
                 .map(i -> i.getUnitPriceNetSnapshot().multiply(BigDecimal.valueOf(i.getQuantity())))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal cashAmount = kgNet.add(gridNet);
-        return computeCommission(cashAmount, rate, currency);
+        return new BidCommissionQuote(computeCommission(cashAmount, rate, currency), promoApplied);
     }
 
     // --- Card registration ---
@@ -969,7 +995,9 @@ public class CashCommissionService {
                     "Capacité insuffisante pour accepter cette demande");
         }
 
-        BigDecimal commission = computeBidCommission(bid, announcement);
+        BidCommissionQuote quote = quoteBidCommission(bid, announcement);
+        BigDecimal commission = quote.commission();
+        bindAppliedPromo(bid, quote);
 
         if (commissionSource == CommissionSource.WALLET_FIRST) {
             // Portefeuille de la devise du bid d'abord, complément converti sur la devise
@@ -1136,8 +1164,56 @@ public class CashCommissionService {
 
     // --- Private helpers ---
 
+    /**
+     * Rattache au bid le code promo pris dans le taux qu'on vient de figer, AVANT tout
+     * prélèvement — {@code bids.promo_code_id} suit ainsi {@code bids.commission_rate} (même
+     * transaction, cf. V119). Le rachat lui-même n'a lieu qu'une fois la commission prélevée
+     * ({@link #redeemAppliedPromo}, depuis {@link #finalizeBidAcceptance}) : carte refusée,
+     * portefeuille insuffisant ou 3DS en attente n'en enregistrent aucun.
+     *
+     * <p>Le contrôle des limites se fait ICI, sous le verrou de {@code promo_codes} gardé
+     * jusqu'à la fin de la transaction : {@code validateAndGetRate} les a lues sans verrou, un
+     * rachat concurrent du même code a pu passer entre-temps. Un dépassement fait échouer
+     * l'acceptation en {@code promo-limit-reached} (422) tant qu'aucun argent n'a bougé, plutôt
+     * que d'accorder une remise qu'on ne pourrait pas enregistrer. Un nouvel essai retombe
+     * alors au taux plein (le code ne valide plus).
+     *
+     * <p>Un bid déjà débité (commission CHARGED, finalisation rejouée) garde le rattachement
+     * de son prélèvement : on ne refuse jamais après coup un argent déjà pris.
+     */
+    private void bindAppliedPromo(BidEntity bid, BidCommissionQuote quote) {
+        if (bid.getCommissionStatus() == CommissionStatus.CHARGED) return;
+        if (quote.promoApplied()) {
+            bid.setPromoCodeId(promoService.lockForRedemption(
+                    bid.getPromoCode(), bid.getSenderId(), bid.getId()));
+        } else {
+            bid.setPromoCodeId(null);
+        }
+    }
+
+    /**
+     * Rachète le code promo pris dans la commission que l'on vient de prélever. Les limites
+     * ont été contrôlées sous verrou avant le prélèvement ({@link #bindAppliedPromo}) ; à ce
+     * stade l'argent est pris (le PaymentIntent 3DS confirmé ne s'annule pas avec la
+     * transaction), donc le rachat est enregistré sans jamais lever sur une limite.
+     * Idempotent par (code, bid). Rien sur un bid négocié : son taux est figé au fil.
+     */
+    private void redeemAppliedPromo(BidEntity bid) {
+        if (bid.getPromoCodeId() == null || bid.getPromoCode() == null
+                || bid.getNegotiatedNetEur() != null) {
+            return;
+        }
+        PromoRedemptionEntity redemption = promoService.recordGrantedRedemption(
+                bid.getPromoCode(), bid.getSenderId(), bid.getId(), bid.getCommissionRate());
+        if (redemption != null) {
+            bid.setPromoCodeId(redemption.getPromoCodeId());
+        }
+    }
+
     private void finalizeBidAcceptance(BidEntity bid, AnnouncementEntity announcement, UUID travelerId) {
         if (bid.getStatus() == BidStatus.ACCEPTED) return;
+
+        redeemAppliedPromo(bid);
 
         bid.setStatus(BidStatus.ACCEPTED);
         if (bid.getQrToken() == null) bid.setQrToken(UUID.randomUUID().toString());

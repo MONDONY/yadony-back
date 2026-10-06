@@ -88,6 +88,7 @@ class CashCommissionServiceTest {
     @Mock private com.yadony.api.voucher.CommissionVoucherService voucherService;
     @Mock private com.yadony.api.payments.currency.ActiveCurrencyResolver activeCurrencyResolver;
     @Mock private com.yadony.api.payments.currency.ExchangeRateService exchangeRateService;
+    @Mock private com.yadony.api.promo.PromoService promoService;
 
     private final CommissionProperties props =
             new CommissionProperties(new BigDecimal("0.12"), new BigDecimal("1.00"), 24);
@@ -110,7 +111,8 @@ class CashCommissionServiceTest {
                 walletService, walletTransactionRepository, auditService, commissionRateResolver,
                 negotiationThreadRepository, new StripeCashGatewayImpl(), bidGridItemRepository,
                 stubbedContacts(), voucherService, activeCurrencyResolver,
-                new WalletCommissionCollector(walletService, exchangeRateService), TestMessages.resolver());
+                new WalletCommissionCollector(walletService, exchangeRateService), TestMessages.resolver(),
+                promoService);
         service.setClock(Clock.fixed(Instant.parse("2026-06-01T00:00:00Z"), ZoneOffset.UTC));
     }
 
@@ -2189,4 +2191,259 @@ class CashCommissionServiceTest {
         }
     }
 
+    // ===================== Code promo espèces =====================
+
+    /**
+     * Rachat du code promo d'un bid espèces : le taux réduit n'est accordé qu'avec un
+     * enregistrement dans {@code promo_redemptions}, et seulement une fois la commission
+     * réellement prélevée (portefeuille, carte, ou 3DS confirmé).
+     */
+    @Nested
+    class PromoRedemption {
+
+        private static final String CODE = "WELCOME05";
+        private final UUID promoId = UUID.randomUUID();
+        private UUID travelerId;
+        private UserEntity traveler;
+        private BidEntity bid;
+        private AnnouncementEntity announcement;
+
+        @BeforeEach
+        void setup() {
+            travelerId = UUID.randomUUID();
+            UUID announcementId = UUID.randomUUID();
+            traveler = userWithCard("visa", "4242", 12, 2028);
+            ReflectionTestUtils.setField(traveler, "id", travelerId);
+            lenient().when(userRepo.findById(travelerId)).thenReturn(Optional.of(traveler));
+            lenient().when(walletService.getBalanceForUpdate(travelerId, "EUR")).thenReturn(BigDecimal.ZERO);
+
+            bid = new BidEntity();
+            ReflectionTestUtils.setField(bid, "id", UUID.randomUUID());
+            bid.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.CASH);
+            bid.setWeightKg(new BigDecimal("5"));
+            bid.setSenderId(UUID.randomUUID());
+            bid.setAnnouncementId(announcementId);
+            bid.setStatus(BidStatus.PENDING);
+            bid.setPromoCode(CODE);
+            lenient().when(bidRepo.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
+            lenient().when(bidRepo.findById(bid.getId())).thenReturn(Optional.of(bid));
+
+            announcement = new AnnouncementEntity();
+            ReflectionTestUtils.setField(announcement, "id", announcementId);
+            announcement.setTravelerId(travelerId);
+            announcement.setAvailableKg(new BigDecimal("20"));
+            announcement.setPricePerKg(new BigDecimal("20.00"));
+            announcement.setAcceptedPaymentMethods(java.util.EnumSet.of(com.yadony.api.payments.cash.PaymentMethod.CASH));
+            lenient().when(announcementRepo.findByIdForUpdate(announcementId)).thenReturn(Optional.of(announcement));
+            lenient().when(announcementRepo.findById(announcementId)).thenReturn(Optional.of(announcement));
+
+            // Taux promo : 12 % − 5 points = 7 % → 5 kg × 20 € × 7 % = 7,00 €.
+            lenient().when(commissionRateResolver.resolve(any(), any(), eq(CODE), any(), any()))
+                    .thenReturn(new BigDecimal("0.07"));
+            lenient().when(promoService.lockForRedemption(CODE, bid.getSenderId(), bid.getId())).thenReturn(promoId);
+            lenient().when(promoService.recordGrantedRedemption(any(), any(), any(), any()))
+                    .thenAnswer(inv -> {
+                        com.yadony.api.promo.PromoRedemptionEntity r = new com.yadony.api.promo.PromoRedemptionEntity();
+                        r.setPromoCodeId(promoId);
+                        r.setBidId(inv.getArgument(2));
+                        return r;
+                    });
+        }
+
+        private void walletCovers() {
+            when(walletService.getBalanceForUpdate(travelerId, "EUR")).thenReturn(new BigDecimal("100"));
+            lenient().when(walletTransactionRepository.existsByUserIdAndBidIdAndType(eq(travelerId), any(), any()))
+                    .thenReturn(false);
+        }
+
+        private PaymentIntent pi(String id, String status) {
+            PaymentIntent p = new PaymentIntent();
+            p.setId(id);
+            p.setStatus(status);
+            p.setClientSecret(id + "_secret");
+            return p;
+        }
+
+        @Test
+        void quote_reportsPromoApplied_onlyWhenTheCodeValidated() {
+            CashCommissionService.BidCommissionQuote q = service.quoteBidCommission(bid, announcement);
+            assertThat(q.promoApplied()).isTrue();
+            assertThat(q.commission()).isEqualByComparingTo("7.00");
+            assertThat(bid.getCommissionRate()).isEqualByComparingTo("0.07");
+        }
+
+        @Test
+        void wallet_withPromo_redeemsOnce_andStampsPromoCodeId() {
+            walletCovers();
+
+            AcceptBidResponse resp = service.acceptCashBid(bid.getId(), travelerId, CommissionSource.WALLET_FIRST);
+
+            assertThat(resp.status()).isEqualTo(AcceptanceStatusDto.ACCEPTED);
+            verify(walletService).debit(eq(travelerId), eq("EUR"), argThat(a -> a.compareTo(new BigDecimal("7.00")) == 0),
+                    eq(com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED), any());
+            verify(promoService).lockForRedemption(CODE, bid.getSenderId(), bid.getId());
+            verify(promoService, times(1)).recordGrantedRedemption(
+                    eq(CODE), eq(bid.getSenderId()), eq(bid.getId()), argThat(r -> r.compareTo(new BigDecimal("0.07")) == 0));
+            assertThat(bid.getPromoCodeId()).isEqualTo(promoId);
+        }
+
+        @Test
+        void card_succeeded_redeemsOnce() {
+            try (MockedStatic<PaymentIntent> p = mockStatic(PaymentIntent.class)) {
+                p.when(() -> PaymentIntent.create(any(PaymentIntentCreateParams.class), any(RequestOptions.class)))
+                        .thenReturn(pi("pi_promo_ok", "succeeded"));
+
+                AcceptBidResponse resp = service.acceptCashBid(bid.getId(), travelerId, CommissionSource.CARD);
+
+                assertThat(resp.status()).isEqualTo(AcceptanceStatusDto.ACCEPTED);
+            }
+            verify(promoService, times(1)).recordGrantedRedemption(eq(CODE), eq(bid.getSenderId()), eq(bid.getId()), any());
+            assertThat(bid.getPromoCodeId()).isEqualTo(promoId);
+        }
+
+        @Test
+        void card_requires3ds_noRedeemBeforeConfirmation_oneAfter() {
+            try (MockedStatic<PaymentIntent> p = mockStatic(PaymentIntent.class)) {
+                p.when(() -> PaymentIntent.create(any(PaymentIntentCreateParams.class), any(RequestOptions.class)))
+                        .thenReturn(pi("pi_promo_3ds", "requires_action"));
+                p.when(() -> PaymentIntent.retrieve("pi_promo_3ds")).thenReturn(pi("pi_promo_3ds", "succeeded"));
+
+                AcceptBidResponse resp = service.acceptCashBid(bid.getId(), travelerId, CommissionSource.CARD);
+                assertThat(resp.status()).isEqualTo(AcceptanceStatusDto.REQUIRES_3DS);
+                verify(promoService, never()).recordGrantedRedemption(any(), any(), any(), any());
+                // Le rattachement suit le taux figé, pour que la confirmation sache quoi racheter.
+                assertThat(bid.getPromoCodeId()).isEqualTo(promoId);
+
+                ConfirmAcceptanceResponse confirm = service.confirmCommissionAcceptance(bid.getId(), travelerId);
+                assertThat(confirm.accepted()).isTrue();
+            }
+            verify(promoService, times(1)).recordGrantedRedemption(
+                    eq(CODE), eq(bid.getSenderId()), eq(bid.getId()), argThat(r -> r.compareTo(new BigDecimal("0.07")) == 0));
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.ACCEPTED);
+        }
+
+        @Test
+        void card_3dsConfirmationFails_neverRedeems() {
+            try (MockedStatic<PaymentIntent> p = mockStatic(PaymentIntent.class)) {
+                p.when(() -> PaymentIntent.create(any(PaymentIntentCreateParams.class), any(RequestOptions.class)))
+                        .thenReturn(pi("pi_promo_3ds_ko", "requires_action"));
+                p.when(() -> PaymentIntent.retrieve("pi_promo_3ds_ko"))
+                        .thenReturn(pi("pi_promo_3ds_ko", "requires_payment_method"));
+
+                service.acceptCashBid(bid.getId(), travelerId, CommissionSource.CARD);
+                ConfirmAcceptanceResponse confirm = service.confirmCommissionAcceptance(bid.getId(), travelerId);
+                assertThat(confirm.accepted()).isFalse();
+            }
+            verify(promoService, never()).recordGrantedRedemption(any(), any(), any(), any());
+        }
+
+        @Test
+        void wallet_insufficient_neverRedeems() {
+            AcceptBidResponse resp = service.acceptCashBid(bid.getId(), travelerId, CommissionSource.WALLET_FIRST);
+
+            assertThat(resp.status()).isEqualTo(AcceptanceStatusDto.INSUFFICIENT_WALLET);
+            verify(promoService, never()).recordGrantedRedemption(any(), any(), any(), any());
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.PENDING);
+        }
+
+        @Test
+        void card_declined_failed_neverRedeems() {
+            try (MockedStatic<PaymentIntent> p = mockStatic(PaymentIntent.class)) {
+                p.when(() -> PaymentIntent.create(any(PaymentIntentCreateParams.class), any(RequestOptions.class)))
+                        .thenThrow(new CardException("declined", null, null, "card_declined", null, null, null, null));
+
+                AcceptBidResponse resp = service.acceptCashBid(bid.getId(), travelerId, CommissionSource.CARD);
+
+                assertThat(resp.status()).isEqualTo(AcceptanceStatusDto.FAILED);
+            }
+            assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.FAILED);
+            verify(promoService, never()).recordGrantedRedemption(any(), any(), any(), any());
+        }
+
+        @Test
+        void invalidPromo_fallsBackToFullRate_andNeverRedeems() {
+            when(commissionRateResolver.resolve(any(), any(), eq(CODE), any(), any()))
+                    .thenThrow(new YadonyBusinessException(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY,
+                            "promo-limit-reached", "Promo Limit Reached", "limite"));
+            walletCovers();
+
+            AcceptBidResponse resp = service.acceptCashBid(bid.getId(), travelerId, CommissionSource.WALLET_FIRST);
+
+            assertThat(resp.status()).isEqualTo(AcceptanceStatusDto.ACCEPTED);
+            assertThat(bid.getCommissionRate()).isEqualByComparingTo("0.12");
+            verify(walletService).debit(eq(travelerId), eq("EUR"), argThat(a -> a.compareTo(new BigDecimal("12.00")) == 0),
+                    any(), any());
+            verify(promoService, never()).lockForRedemption(any(), any(), any());
+            verify(promoService, never()).recordGrantedRedemption(any(), any(), any(), any());
+            assertThat(bid.getPromoCodeId()).isNull();
+        }
+
+        @Test
+        void doubleAcceptance_redeemsOnlyOnce() {
+            walletCovers();
+
+            service.acceptCashBid(bid.getId(), travelerId, CommissionSource.WALLET_FIRST);
+            AcceptBidResponse again = service.acceptCashBid(bid.getId(), travelerId, CommissionSource.WALLET_FIRST);
+
+            assertThat(again.status()).isEqualTo(AcceptanceStatusDto.ACCEPTED);
+            verify(promoService, times(1)).recordGrantedRedemption(any(), any(), any(), any());
+            verify(walletService, times(1)).debit(any(), any(), any(), any(), any());
+        }
+
+        @Test
+        void negotiatedBid_frozenRate_neverRedeems() {
+            bid.setNegotiatedNetEur(new BigDecimal("45.00"));
+            bid.setCommissionRate(new BigDecimal("0.10"));
+            walletCovers();
+
+            AcceptBidResponse resp = service.acceptCashBid(bid.getId(), travelerId, CommissionSource.WALLET_FIRST);
+
+            assertThat(resp.status()).isEqualTo(AcceptanceStatusDto.ACCEPTED);
+            assertThat(service.quoteBidCommission(bid, announcement).promoApplied()).isFalse();
+            verify(promoService, never()).lockForRedemption(any(), any(), any());
+            verify(promoService, never()).recordGrantedRedemption(any(), any(), any(), any());
+        }
+
+        @Test
+        void limitReachedUnderLock_failsBeforeAnyDebit_withRfc7807Code() {
+            when(promoService.lockForRedemption(CODE, bid.getSenderId(), bid.getId()))
+                    .thenThrow(new YadonyBusinessException(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY,
+                            "promo-limit-reached", "Promo Limit Reached", "limite"));
+
+            assertThatThrownBy(() -> service.acceptCashBid(bid.getId(), travelerId, CommissionSource.WALLET_FIRST))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                            .isEqualTo("promo-limit-reached"));
+
+            verify(walletService, never()).debit(any(), any(), any(), any(), any());
+            verify(promoService, never()).recordGrantedRedemption(any(), any(), any(), any());
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.PENDING);
+        }
+
+        @Test
+        void alreadyChargedBid_keepsItsPromoBinding_withoutRecheckingLimits() {
+            // Finalisation rejouée sur une commission déjà prise (webhook avant la
+            // confirmation) : on n'oppose jamais une limite à un argent déjà prélevé.
+            bid.setCommissionStatus(CommissionStatus.CHARGED);
+            bid.setCommissionChargedVia(CommissionChargedVia.CARD);
+            bid.setPromoCodeId(promoId);
+
+            AcceptBidResponse resp = service.acceptCashBid(bid.getId(), travelerId, CommissionSource.CARD);
+
+            assertThat(resp.status()).isEqualTo(AcceptanceStatusDto.ACCEPTED);
+            verify(promoService, never()).lockForRedemption(any(), any(), any());
+            verify(promoService, times(1)).recordGrantedRedemption(eq(CODE), eq(bid.getSenderId()), eq(bid.getId()), any());
+        }
+
+        @Test
+        void redemptionLost_promoDeleted_keepsAcceptance() {
+            walletCovers();
+            when(promoService.recordGrantedRedemption(any(), any(), any(), any())).thenReturn(null);
+
+            AcceptBidResponse resp = service.acceptCashBid(bid.getId(), travelerId, CommissionSource.WALLET_FIRST);
+
+            assertThat(resp.status()).isEqualTo(AcceptanceStatusDto.ACCEPTED);
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.ACCEPTED);
+        }
+    }
 }

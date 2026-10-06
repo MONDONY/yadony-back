@@ -122,7 +122,7 @@ class ThreadAcceptedBidListenerTest {
             listener.onPackageRequestAccepted(
                     buildEvent(com.yadony.api.payments.cash.PaymentMethod.STRIPE, null, "WELCOME6", new BigDecimal("0.06")));
 
-            verify(promoService).redeem("WELCOME6", SENDER_ID, bidId, new BigDecimal("0.06"));
+            verify(promoService).recordGrantedRedemption("WELCOME6", SENDER_ID, bidId, new BigDecimal("0.06"));
             ArgumentCaptor<BidEntity> captor = ArgumentCaptor.forClass(BidEntity.class);
             verify(bidRepository, times(2)).save(captor.capture());
             assertThat(captor.getValue().getCommissionRate()).isEqualByComparingTo("0.06");
@@ -133,7 +133,7 @@ class ThreadAcceptedBidListenerTest {
         void noPromoCode_neverRedeems() {
             listener.onPackageRequestAccepted(buildEvent());
 
-            verify(promoService, never()).redeem(any(), any(), any(), any());
+            verify(promoService, never()).recordGrantedRedemption(any(), any(), any(), any());
         }
 
         @Test
@@ -146,7 +146,7 @@ class ThreadAcceptedBidListenerTest {
             listener.onPackageRequestAccepted(
                     buildEvent(com.yadony.api.payments.cash.PaymentMethod.STRIPE, null, "WELCOME6", null));
 
-            verify(promoService, never()).redeem(any(), any(), any(), any());
+            verify(promoService, never()).recordGrantedRedemption(any(), any(), any(), any());
             // Un seul save : pas de re-save pour stamper un commissionRate absent.
             verify(bidRepository, times(1)).save(any());
         }
@@ -156,7 +156,7 @@ class ThreadAcceptedBidListenerTest {
         void redeemFailure_doesNotBreakMaterialization() {
             UUID bidId = UUID.randomUUID();
             saveSetsId(bidId);
-            when(promoService.redeem(any(), any(), any(), any()))
+            when(promoService.recordGrantedRedemption(any(), any(), any(), any()))
                     .thenThrow(new RuntimeException("boom"));
 
             listener.onPackageRequestAccepted(
