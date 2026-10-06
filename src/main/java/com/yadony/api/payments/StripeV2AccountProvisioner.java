@@ -9,6 +9,8 @@ import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.config.StripeConnectProperties;
 import com.yadony.api.kyc.KycVerifiedIdentityService;
 import com.yadony.api.kyc.VerifiedIdentitySnapshot;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
@@ -44,6 +46,8 @@ import org.springframework.stereotype.Component;
 @Component
 public class StripeV2AccountProvisioner implements ConnectAccountProvisioner {
 
+    private static final Logger log = LoggerFactory.getLogger(StripeV2AccountProvisioner.class);
+
     private final StripeGateway stripeGateway;
     private final StripeConnectProperties stripeConnectProperties;
     private final FirebaseContactService firebaseContact;
@@ -76,6 +80,12 @@ public class StripeV2AccountProvisioner implements ConnectAccountProvisioner {
         // Sans cette garde, Stripe repond une erreur generique remontee en 500 : le
         // voyageur ne comprend pas qu'il doit simplement rester en especes.
         if (!StripeConnectCountries.isSupported(country)) {
+            // WARN, pas ERROR : refus metier attendu, pas un bug. WARN part dans Sentry
+            // Logs (sentry.logging.minimum-level: warn) sans creer d'issue
+            // (minimum-event-level: error), ce qui rend le refus retrouvable par pays ou
+            // par utilisateur (FLUTTER-DM, voyageur CI). Ni telephone, ni email, ni nom.
+            log.warn("Compte Connect refusé : code=country-not-supported-by-stripe pays={} userId={}",
+                    country, user.getId());
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "country-not-supported-by-stripe", "Country Not Supported",
                     "Le paiement par carte n'est pas encore disponible dans votre pays. "
