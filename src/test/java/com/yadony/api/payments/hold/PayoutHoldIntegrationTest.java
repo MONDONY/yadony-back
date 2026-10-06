@@ -55,6 +55,7 @@ class PayoutHoldIntegrationTest {
     @Autowired AnnouncementRepository announcementRepository;
     @Autowired BidRepository bidRepository;
     @Autowired PaymentRepository paymentRepository;
+    @Autowired com.yadony.api.admin.AdminPaymentInsights adminPaymentInsights;
     @Autowired PayoutHoldService holds;
     @Autowired ApplicationEventPublisher events;
     @Autowired JdbcTemplate jdbc;
@@ -180,7 +181,7 @@ class PayoutHoldIntegrationTest {
 
         assertThat(paymentRepository.countHeldEscrowForTraveler(traveler.getId())).isEqualTo(2);
         assertThat(paymentRepository.countHeldEscrowForTraveler(UUID.randomUUID())).isZero();
-        assertThat(paymentRepository.findAdminFiltered(null, null, null, null, null, true, PageRequest.of(0, 20))
+        assertThat(adminPaymentInsights.search(com.yadony.api.admin.AdminPaymentFilter.of(null, null, null, null, null, true, null, null), PageRequest.of(0, 20))
                 .getContent()).extracting(PaymentEntity::getId).contains(classic.getId(), thread.getId());
         List<Object[]> beneficiaries = paymentRepository.findBeneficiaries(List.of(classic.getId(), thread.getId()));
         assertThat(beneficiaries).hasSize(2)
@@ -209,7 +210,7 @@ class PayoutHoldIntegrationTest {
         entityManager.clear();
 
         assertThat(paymentRepository.countHeldEscrowForTraveler(traveler.getId())).isZero();
-        assertThat(paymentRepository.findAdminFiltered(null, null, null, null, null, true, PageRequest.of(0, 20))
+        assertThat(adminPaymentInsights.search(com.yadony.api.admin.AdminPaymentFilter.of(null, null, null, null, null, true, null, null), PageRequest.of(0, 20))
                 .getContent()).extracting(PaymentEntity::getId).doesNotContain(p.getId());
     }
 }

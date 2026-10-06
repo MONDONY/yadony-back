@@ -2,6 +2,7 @@ package com.yadony.api.admin;
 
 import com.yadony.api.admin.dto.AdminChargebackResponse;
 import com.yadony.api.admin.dto.AdminPaymentDetailResponse;
+import com.yadony.api.admin.dto.AdminPaymentInsight;
 import com.yadony.api.admin.dto.AdminPaymentListItemResponse;
 import com.yadony.api.admin.dto.PayoutReleaseRequest;
 import com.yadony.api.auth.StripeAccountStatus;
@@ -129,6 +130,10 @@ public class AdminPaymentController {
     /** Gel des versements du beneficiaire (banni ou KYC retire), lu avant tout versement. */
     private final PayoutHoldPolicy holdPolicy;
 
+    /** Recherche, totaux, export et contexte (parties, colis, liens Stripe) des paiements. */
+    private final AdminPaymentInsights insights;
+    private final AdminPaymentTimeline timeline;
+
     public AdminPaymentController(PaymentRepository paymentRepository,
                                   AdminAlertRepository adminAlertRepository,
                                   AuditService auditService,
@@ -143,8 +148,12 @@ public class AdminPaymentController {
                                   RefundProcessor refundProcessor,
                                   EntityManager entityManager,
                                   PlatformTransactionManager transactionManager,
-                                  PayoutHoldPolicy holdPolicy) {
+                                  PayoutHoldPolicy holdPolicy,
+                                  AdminPaymentInsights insights,
+                                  AdminPaymentTimeline timeline) {
         this.holdPolicy = holdPolicy;
+        this.insights = insights;
+        this.timeline = timeline;
         this.paymentRepository = paymentRepository;
         this.adminAlertRepository = adminAlertRepository;
         this.auditService = auditService;
@@ -171,26 +180,87 @@ public class AdminPaymentController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime dateTo,
             @RequestParam(required = false) String currency,
             @RequestParam(required = false) Boolean held,
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) Boolean hideAbandoned,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
-        // method filtre réellement par rail (STRIPE/PAWAPAY) — l'ancien raccourci
-        // « method != STRIPE → page vide » rendait la liste incohérente avec le détail, qui rend
-        // PAWAPAY pour les paiements mobile money.
-        String rail = (method != null && !method.isBlank()) ? method.toUpperCase(Locale.ROOT) : null;
-        // currency sépare les devises : un tableau qui mêle des EUR et des XOF n'est lisible
-        // qu'à condition de pouvoir n'en garder qu'une.
-        String cur = (currency != null && !currency.isBlank()) ? currency.toUpperCase(Locale.ROOT) : null;
-        Page<PaymentEntity> raw = paymentRepository.findAdminFiltered(status, dateFrom, dateTo, rail, cur,
-                Boolean.TRUE.equals(held), PageRequest.of(page, size));
+        // method filtre réellement par rail (STRIPE/PAWAPAY) ; currency sépare les devises : un
+        // tableau qui mêle des EUR et des XOF n'est lisible qu'à condition de pouvoir n'en garder
+        // qu'une. Le même filtre sert aux totaux et à l'export.
+        AdminPaymentFilter filter = AdminPaymentFilter.of(status, dateFrom, dateTo, method, currency, held, q,
+                hideAbandoned);
+        Page<PaymentEntity> raw = insights.search(filter, PageRequest.of(page, size));
         Map<UUID, UUID> beneficiaries = beneficiariesOf(raw.getContent());
         Map<UUID, PayoutHoldStatus> holds = beneficiaries.isEmpty()
                 ? Map.of()
                 : holdPolicy.statusesOf(List.copyOf(new java.util.LinkedHashSet<>(beneficiaries.values())));
+        Map<UUID, AdminPaymentInsight> context = insights.insightsOf(raw.getContent());
         return ResponseEntity.ok(raw.map(p -> {
             UUID travelerId = p.getId() == null ? null : beneficiaries.get(p.getId());
             PayoutHoldStatus hold = (travelerId == null || holds == null) ? null : holds.get(travelerId);
-            return AdminPaymentListItemResponse.from(p, travelerId, holdOrNone(hold));
+            return AdminPaymentListItemResponse.from(p, travelerId, holdOrNone(hold))
+                    .withInsight(p.getId() == null ? null : context.get(p.getId()));
         }));
+    }
+
+    /** Totaux par devise du périmètre filtré (mêmes filtres que la liste). */
+    @PreAuthorize("hasAuthority('PAYMENT_VIEW')")
+    @GetMapping("/summary")
+    public ResponseEntity<List<AdminPaymentInsights.CurrencyTotals>> summary(
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String method,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime dateFrom,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime dateTo,
+            @RequestParam(required = false) String currency,
+            @RequestParam(required = false) Boolean held,
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) Boolean hideAbandoned) {
+        return ResponseEntity.ok(insights.totals(
+                AdminPaymentFilter.of(status, dateFrom, dateTo, method, currency, held, q, hideAbandoned)));
+    }
+
+    /**
+     * Export CSV de la liste filtrée (au plus {@link AdminPaymentInsights#EXPORT_MAX_ROWS} lignes),
+     * audité comme les autres exports ({@code EXPORT_RUN}).
+     */
+    @PreAuthorize("hasAuthority('PAYMENT_VIEW') and hasAuthority('EXPORT_RUN')")
+    @GetMapping("/export")
+    public ResponseEntity<byte[]> export(
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String method,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime dateFrom,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime dateTo,
+            @RequestParam(required = false) String currency,
+            @RequestParam(required = false) Boolean held,
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) Boolean hideAbandoned,
+            Authentication authentication) {
+        UUID adminId = AdminPrincipal.requireAdminId(authentication);
+        AdminPaymentFilter filter = AdminPaymentFilter.of(status, dateFrom, dateTo, method, currency, held, q,
+                hideAbandoned);
+        List<PaymentEntity> rows = insights.exportRows(filter);
+        byte[] csv = AdminPaymentCsv.write(rows, insights.insightsOf(rows));
+        auditService.log("EXPORT", null, "EXPORT_RUN", adminId, Map.of(
+                "type", "payments",
+                "rows", rows.size(),
+                "filters", filter.toString()));
+        return ResponseEntity.ok()
+                .contentType(new org.springframework.http.MediaType("text", "csv", java.nio.charset.StandardCharsets.UTF_8))
+                .header(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION,
+                        org.springframework.http.ContentDisposition.attachment()
+                                .filename("paiements_" + java.time.LocalDate.now(java.time.ZoneOffset.UTC) + ".csv")
+                                .build().toString())
+                .body(csv);
+    }
+
+    /** Chronologie du paiement : dates du paiement et journal d'audit, auteurs résolus. */
+    @PreAuthorize("hasAuthority('PAYMENT_VIEW')")
+    @GetMapping("/{id}/timeline")
+    public ResponseEntity<List<AdminPaymentTimeline.Entry>> timeline(@PathVariable UUID id) {
+        PaymentEntity p = paymentRepository.findById(id)
+                .orElseThrow(() -> new YadonyBusinessException(
+                        HttpStatus.NOT_FOUND, "payment-not-found", "Not Found", "Paiement introuvable"));
+        return ResponseEntity.ok(timeline.of(p));
     }
 
     @PreAuthorize("hasAuthority('PAYMENT_VIEW')")
@@ -658,14 +728,15 @@ public class AdminPaymentController {
     private AdminPaymentDetailResponse detail(PaymentEntity payment) {
         UUID travelerId = beneficiaryOf(payment);
         PayoutHoldStatus hold = holdOf(travelerId);
+        AdminPaymentInsight insight = payment.getId() == null ? null : insights.insightOf(payment);
         if (payment.getRail() != PaymentRail.PAWAPAY) {
-            return AdminPaymentDetailResponse.from(payment, null, null, null, travelerId, hold);
+            return AdminPaymentDetailResponse.from(payment, null, null, null, travelerId, hold).withInsight(insight);
         }
         return AdminPaymentDetailResponse.from(payment,
                 latestOperationId(payment.getId(), PawapayOperationKind.DEPOSIT),
                 latestOperationId(payment.getId(), PawapayOperationKind.PAYOUT),
                 latestOperationId(payment.getId(), PawapayOperationKind.REFUND),
-                travelerId, hold);
+                travelerId, hold).withInsight(insight);
     }
 
     // ── Gel du bénéficiaire, litige, dérogation ────────────────────────────────

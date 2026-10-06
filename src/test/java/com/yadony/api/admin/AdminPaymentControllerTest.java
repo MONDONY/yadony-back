@@ -65,6 +65,8 @@ class AdminPaymentControllerTest {
     @Mock private jakarta.persistence.EntityManager entityManager;
     @Mock private org.springframework.transaction.PlatformTransactionManager transactionManager;
     @Mock private com.yadony.api.payments.hold.PayoutHoldPolicy holdPolicy;
+    @Mock private AdminPaymentInsights insights;
+    @Mock private AdminPaymentTimeline timeline;
 
     private AdminPaymentController controller;
 
@@ -80,7 +82,7 @@ class AdminPaymentControllerTest {
         controller = new AdminPaymentController(paymentRepository, adminAlertRepository, auditService,
                 bidRepository, announcementRepository, userRepository, eventPublisher, chargebackRepository,
                 payoutInitiator, pawapayOperations, pawapaySubmission, refundProcessor, entityManager,
-                transactionManager, holdPolicy);
+                transactionManager, holdPolicy, insights, timeline);
     }
 
     /**
@@ -99,10 +101,10 @@ class AdminPaymentControllerTest {
         xof.setStripePaymentIntentId("mm_" + bidId);
         xof.setAmount(new BigDecimal("6600.00"));
         xof.setCommissionAmount(new BigDecimal("600.00"));
-        when(paymentRepository.findAdminFiltered(isNull(), isNull(), isNull(), eq("PAWAPAY"), eq("XOF"), eq(false), any()))
+        when(insights.search(org.mockito.ArgumentMatchers.argThat(f -> f != null && "PAWAPAY".equals(f.rail()) && "XOF".equals(f.currency())), any()))
                 .thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of(xof)));
 
-        var body = controller.list(null, "pawapay", null, null, "xof", null, 0, 20).getBody();
+        var body = controller.list(null, "pawapay", null, null, "xof", null, null, null, 0, 20).getBody();
 
         assertThat(body).isNotNull();
         assertThat(body.getContent()).hasSize(1);
@@ -115,12 +117,12 @@ class AdminPaymentControllerTest {
 
     @Test
     void list_sansFiltreDevise_passeNullAuDepot() {
-        when(paymentRepository.findAdminFiltered(isNull(), isNull(), isNull(), isNull(), isNull(), eq(false), any()))
+        when(insights.search(any(), any()))
                 .thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of()));
 
-        controller.list(null, " ", null, null, "", null, 0, 20);
+        controller.list(null, " ", null, null, "", null, null, null, 0, 20);
 
-        verify(paymentRepository).findAdminFiltered(isNull(), isNull(), isNull(), isNull(), isNull(), eq(false), any());
+        verify(insights).search(org.mockito.ArgumentMatchers.argThat(f -> f.rail() == null && f.currency() == null && !f.held()), any());
     }
 
     private PaymentEntity threadPayment(PaymentStatus status, boolean legacy, String chargeId) {
@@ -512,5 +514,103 @@ class AdminPaymentControllerTest {
                     .isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
         }
         verify(eventPublisher, never()).publishEvent(any());
+    }
+
+    // ── Transactions : recherche, totaux, export, chronologie ──────────────────────────────
+
+    private static org.springframework.security.core.Authentication adminAuth(UUID adminId) {
+        return new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                new com.yadony.api.admin.account.AdminPrincipal(adminId, "admin@yadony.test",
+                        com.yadony.api.admin.account.AdminRole.ADMIN, false, "uid-admin"),
+                null, java.util.List.of());
+    }
+
+    private static com.yadony.api.admin.dto.AdminPaymentInsight insight(UUID bid) {
+        return new com.yadony.api.admin.dto.AdminPaymentInsight("NEGOTIATION", bid, UUID.randomUUID(),
+                new com.yadony.api.admin.dto.AdminPaymentInsight.Party(UUID.randomUUID(), "=Awa D."),
+                null, "Lyon", "Abidjan", "ACCEPTED", false, 1905L, null, null, null, null);
+    }
+
+    @Test
+    void list_passeRechercheEtMasquageDesAbandonnesEtJointLeContexte() {
+        PaymentEntity p = threadPayment(PaymentStatus.PENDING, false, null);
+        org.springframework.test.util.ReflectionTestUtils.setField(p, "id", paymentId);
+        p.setRail(com.yadony.api.payments.PaymentRail.STRIPE);
+        p.setCurrency("EUR");
+        when(insights.search(any(), any())).thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of(p)));
+        when(insights.insightsOf(java.util.List.of(p))).thenReturn(java.util.Map.of(paymentId, insight(bidId)));
+
+        var item = controller.list(null, null, null, null, null, null, "  awa ", true, 0, 20)
+                .getBody().getContent().get(0);
+
+        verify(insights).search(org.mockito.ArgumentMatchers.argThat(f -> "awa".equals(f.query()) && f.hideAbandoned()), any());
+        assertThat(item.insight().kind()).isEqualTo("NEGOTIATION");
+        assertThat(item.insight().bidId()).isEqualTo(bidId);
+    }
+
+    @Test
+    void summary_delegueAvecLeMemeFiltreQueLaListe() {
+        var totals = java.util.List.of(new AdminPaymentInsights.CurrencyTotals("EUR", 3, 100, 200, 0, 30, 1));
+        when(insights.totals(any())).thenReturn(totals);
+
+        var body = controller.summary("escrow", "stripe", null, null, "eur", null, "pi_x", false).getBody();
+
+        assertThat(body).isEqualTo(totals);
+        verify(insights).totals(new AdminPaymentFilter("ESCROW", null, null, "STRIPE", "EUR", false, "pi_x", false));
+    }
+
+    @Test
+    void export_rendUnCsvNeutraliseEtAudite() {
+        PaymentEntity p = threadPayment(PaymentStatus.ESCROW, false, null);
+        org.springframework.test.util.ReflectionTestUtils.setField(p, "id", paymentId);
+        p.setCurrency("EUR");
+        p.setAmount(new BigDecimal("20.00"));
+        p.setCommissionAmount(new BigDecimal("0.95"));
+        when(insights.exportRows(any())).thenReturn(java.util.List.of(p));
+        when(insights.insightsOf(java.util.List.of(p))).thenReturn(java.util.Map.of(paymentId, insight(bidId)));
+        UUID adminId = UUID.randomUUID();
+
+        ResponseEntity<byte[]> resp = controller.export(null, null, null, null, null, null, null, true, adminAuth(adminId));
+
+        String csv = new String(resp.getBody(), java.nio.charset.StandardCharsets.UTF_8);
+        assertThat(csv).startsWith("\uFEFF" + AdminPaymentCsv.HEADER);
+        assertThat(csv).contains(paymentId + ",NEGOTIATION," + bidId)
+                .contains(",20.00,0.95,19.05,")
+                .contains(",'=Awa D.,,Lyon → Abidjan,");
+        assertThat(resp.getHeaders().getContentDisposition().getFilename()).startsWith("paiements_");
+        verify(auditService).log(eq("EXPORT"), isNull(), eq("EXPORT_RUN"), eq(adminId),
+                org.mockito.ArgumentMatchers.argThat(m -> "payments".equals(m.get("type")) && Integer.valueOf(1).equals(m.get("rows"))));
+    }
+
+    @Test
+    void timeline_paiementInconnu_404() {
+        when(paymentRepository.findById(paymentId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> controller.timeline(paymentId))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void timeline_delegue() {
+        PaymentEntity p = threadPayment(PaymentStatus.ESCROW, false, null);
+        when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(p));
+        var entries = java.util.List.of(new AdminPaymentTimeline.Entry(java.time.LocalDateTime.now(), "PAYMENT_CREATED",
+                "PAYMENT", null, null, null, java.util.Map.of()));
+        when(timeline.of(p)).thenReturn(entries);
+
+        assertThat(controller.timeline(paymentId).getBody()).isEqualTo(entries);
+    }
+
+    @Test
+    void detail_jointLeContexte() {
+        PaymentEntity p = threadPayment(PaymentStatus.ESCROW, false, null);
+        org.springframework.test.util.ReflectionTestUtils.setField(p, "id", paymentId);
+        p.setRail(com.yadony.api.payments.PaymentRail.STRIPE);
+        p.setCurrency("EUR");
+        when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(p));
+        when(insights.insightOf(p)).thenReturn(insight(bidId));
+
+        assertThat(controller.getById(paymentId).getBody().insight().arrivalCity()).isEqualTo("Abidjan");
     }
 }

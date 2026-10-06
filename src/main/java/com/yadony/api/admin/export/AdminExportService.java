@@ -11,7 +11,6 @@ import com.yadony.api.payments.PaymentRepository;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
-import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
@@ -50,9 +49,9 @@ public class AdminExportService {
         // Chaque ligne porte sa devise et son rail : les colonnes « montantEur » mêlaient des
         // XOF, des USD et des EUR sous un même nom, et un paiement mobile money n'a pas de
         // PaymentIntent Stripe.
-        StringBuilder sb = header("id,bidId,statut,rail,devise,montant,commission,rembourse,stripePaymentIntentId,creeLe,escrowLibereLe");
+        CsvWriter sb = new CsvWriter("id,bidId,statut,rail,devise,montant,commission,rembourse,stripePaymentIntentId,creeLe,escrowLibereLe");
         for (PaymentEntity p : payments) {
-            row(sb,
+            sb.row(
                 str(p.getId()),
                 str(p.getBidId()),
                 p.getStatus().name(),
@@ -65,7 +64,7 @@ public class AdminExportService {
                 str(p.getCreatedAt()),
                 str(p.getEscrowReleasedAt()));
         }
-        return bytes(sb);
+        return sb.bytes();
     }
 
     public byte[] exportUsers(LocalDate from, LocalDate to) {
@@ -75,11 +74,11 @@ public class AdminExportService {
         // qu'un appel par ligne exportée.
         var contacts = firebaseContact.getContacts(
                 users.stream().map(UserEntity::getFirebaseUid).toList());
-        StringBuilder sb = header("id,prenom,nom,telephone,email,roles,statut,kyc,pro,ville,creeLe");
+        CsvWriter sb = new CsvWriter("id,prenom,nom,telephone,email,roles,statut,kyc,pro,ville,creeLe");
         for (UserEntity u : users) {
             var contact = contacts.getOrDefault(
                     u.getFirebaseUid(), FirebaseContactService.Contact.EMPTY);
-            row(sb,
+            sb.row(
                 str(u.getId()),
                 u.getFirstName(),
                 u.getLastName(),
@@ -92,15 +91,15 @@ public class AdminExportService {
                 u.getCity(),
                 str(u.getCreatedAt()));
         }
-        return bytes(sb);
+        return sb.bytes();
     }
 
     public byte[] exportDisputes(LocalDate from, LocalDate to) {
         List<DisputeEntity> disputes = disputeRepository
                 .findAllByCreatedAtBetweenOrderByCreatedAtAsc(lower(from), upper(to));
-        StringBuilder sb = header("id,bidId,type,statut,resolution,noteResolution,creeLe,resoluLe");
+        CsvWriter sb = new CsvWriter("id,bidId,type,statut,resolution,noteResolution,creeLe,resoluLe");
         for (DisputeEntity d : disputes) {
-            row(sb,
+            sb.row(
                 str(d.getId()),
                 str(d.getBidId()),
                 d.getType(),
@@ -110,7 +109,7 @@ public class AdminExportService {
                 str(d.getCreatedAt()),
                 str(d.getResolvedAt()));
         }
-        return bytes(sb);
+        return sb.bytes();
     }
 
     /** Versements du fonds de garantie = litiges résolus en GUARANTEE_PAID sur la période. */
@@ -118,9 +117,9 @@ public class AdminExportService {
         List<DisputeEntity> payouts = disputeRepository
                 .findAllByResolutionTypeAndResolvedAtBetweenOrderByResolvedAtAsc(
                         "GUARANTEE_PAID", lowerOffset(from), upperOffset(to));
-        StringBuilder sb = header("disputeId,bidId,beneficiaireUserId,montantCents,motif,verseLe");
+        CsvWriter sb = new CsvWriter("disputeId,bidId,beneficiaireUserId,montantCents,motif,verseLe");
         for (DisputeEntity d : payouts) {
-            row(sb,
+            sb.row(
                 str(d.getId()),
                 str(d.getBidId()),
                 str(d.getBeneficiaryUserId()),
@@ -128,7 +127,7 @@ public class AdminExportService {
                 d.getResolutionNote(),
                 str(d.getResolvedAt()));
         }
-        return bytes(sb);
+        return sb.bytes();
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -147,30 +146,6 @@ public class AdminExportService {
 
     private static OffsetDateTime upperOffset(LocalDate to) {
         return upper(to).atOffset(ZoneOffset.UTC);
-    }
-
-    private static StringBuilder header(String columns) {
-        // BOM UTF-8 pour qu'Excel ouvre les accents correctement.
-        return new StringBuilder("\uFEFF").append(columns).append('\n');
-    }
-
-    private static byte[] bytes(StringBuilder sb) {
-        return sb.toString().getBytes(StandardCharsets.UTF_8);
-    }
-
-    private static void row(StringBuilder sb, String... cells) {
-        for (int i = 0; i < cells.length; i++) {
-            if (i > 0) sb.append(',');
-            sb.append(csv(cells[i]));
-        }
-        sb.append('\n');
-    }
-
-    private static String csv(String value) {
-        if (value == null) return "";
-        return value.contains(",") || value.contains("\"") || value.contains("\n")
-                ? "\"" + value.replace("\"", "\"\"") + "\""
-                : value;
     }
 
     private static String str(Object value) {

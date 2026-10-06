@@ -27,7 +27,9 @@ public record AdminPaymentListItemResponse(
         /** Le voyageur beneficiaire est actuellement gele (banni ou KYC retire). */
         boolean beneficiaryHeld,
         /** Motif principal du gel : {@code BANNED} ou {@code KYC_REVOKED} ; {@code null} si non gele. */
-        String beneficiaryHoldReason
+        String beneficiaryHoldReason,
+        /** Contexte (colis ou négociation, parties, trajet, liens Stripe) ; {@code null} hors back-office. */
+        AdminPaymentInsight insight
 ) {
     public static AdminPaymentListItemResponse from(PaymentEntity p) {
         return from(p, null, PayoutHoldStatus.NONE);
@@ -47,7 +49,13 @@ public record AdminPaymentListItemResponse(
                 travelerId,
                 p.getPayoutHeldAt(),
                 h.held(),
-                h.primaryReason() != null ? h.primaryReason().name() : null
+                h.primaryReason() != null ? h.primaryReason().name() : null,
+                null
         );
+    }
+
+    public AdminPaymentListItemResponse withInsight(AdminPaymentInsight value) {
+        return new AdminPaymentListItemResponse(id, bidId, status, method, amountCents, commissionCents, currency,
+                createdAt, travelerId, payoutHeldAt, beneficiaryHeld, beneficiaryHoldReason, value);
     }
 }
