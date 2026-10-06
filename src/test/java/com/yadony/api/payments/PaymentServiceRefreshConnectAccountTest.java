@@ -110,6 +110,10 @@ class PaymentServiceRefreshConnectAccountTest {
             verify(userRepository).save(user);
             verify(auditService).log(eq("USER"), eq(userId),
                     eq("STRIPE_ONBOARDING_COMPLETE"), eq(userId), any());
+            // Sentry FLUTTER-DH : le retour dans l'app devance souvent le webhook. Sans cet
+            // événement, les trajets déjà publiés restaient fermés à la carte.
+            verify(eventPublisher).publishEvent(
+                    new com.yadony.api.payments.events.StripeOnboardingCompletedEvent(userId));
         }
     }
 
@@ -153,6 +157,7 @@ class PaymentServiceRefreshConnectAccountTest {
             verify(userRepository).save(user);
             verify(auditService).log(eq("USER"), eq(userId),
                     eq("STRIPE_ONBOARDING_REVOKED"), eq(userId), any());
+            verify(eventPublisher, never()).publishEvent(any());
         }
     }
 

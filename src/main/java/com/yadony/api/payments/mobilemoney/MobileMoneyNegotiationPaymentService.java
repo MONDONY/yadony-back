@@ -1,6 +1,7 @@
 package com.yadony.api.payments.mobilemoney;
 
 import com.yadony.api.auth.FirebaseContactService;
+import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.Msisdn;
@@ -180,7 +181,7 @@ public class MobileMoneyNegotiationPaymentService {
         if (!props.enabled()) {
             throw PawapayErrors.disabled();
         }
-        String msisdn = resolvePayerMsisdn(senderId, phoneOverride);
+        String msisdn = resolvePayerMsisdn(senderId, phoneOverride, payment.getCurrency());
         PawapayProviderResolver.Resolved resolved;
         try {
             resolved = providers.resolve(msisdn, PawapayOperationKind.DEPOSIT, payment.getCurrency(),
@@ -219,7 +220,7 @@ public class MobileMoneyNegotiationPaymentService {
         return status(threadId, deadline, Optional.of(payment), Optional.of(op));
     }
 
-    private String resolvePayerMsisdn(UUID senderId, String phoneOverride) {
+    private String resolvePayerMsisdn(UUID senderId, String phoneOverride, String currency) {
         if (phoneOverride != null && !phoneOverride.isBlank()) {
             try {
                 return Msisdn.normalize(phoneOverride);
@@ -227,7 +228,14 @@ public class MobileMoneyNegotiationPaymentService {
                 throw payerUnsupported("Numéro de téléphone invalide.");
             }
         }
-        String firebasePhone = userRepository.findById(senderId)
+        Optional<UserEntity> sender = userRepository.findById(senderId);
+        // Même ordre que MobileMoneyBidPaymentService : compte mobile money vérifié d'abord,
+        // le téléphone du compte est souvent étranger (Sentry FLUTTER-DE).
+        String accountMsisdn = sender.map(u -> u.mobileMoneyPayerMsisdn(currency)).orElse(null);
+        if (accountMsisdn != null) {
+            return accountMsisdn;
+        }
+        String firebasePhone = sender
                 .map(u -> firebaseContact.getContact(u.getFirebaseUid()).phoneNumber()).orElse(null);
         if (firebasePhone == null || firebasePhone.isBlank()) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-phone-required",

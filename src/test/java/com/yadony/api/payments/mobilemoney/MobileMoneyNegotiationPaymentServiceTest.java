@@ -526,6 +526,29 @@ class MobileMoneyNegotiationPaymentServiceTest {
         verify(submission, never()).submitDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
+    // Sentry FLUTTER-DE : sans numéro saisi, le compte mobile money vérifié de l'expéditeur
+    // passe avant le téléphone du compte (souvent étranger).
+    @Test
+    void initiateDeposit_withoutTypedNumber_usesTheSendersActiveMobileMoneyAccount() {
+        MobileMoneyNegotiationPaymentService svc = serviceWithRealResolver();
+        PaymentEntity p = payment(PaymentStatus.PENDING);
+        when(paymentRepository.findByNegotiationThreadIdForUpdate(threadId)).thenReturn(Optional.of(p));
+        when(operations.findLive(p.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.empty());
+        UserEntity sender = new UserEntity();
+        sender.setMobileMoneyStatus(com.yadony.api.auth.MobileMoneyPayoutStatus.ACTIVE);
+        sender.setMobileMoneyCurrency("XOF");
+        sender.setMobileMoneyMsisdn("221770000099");
+        when(userRepository.findById(senderId)).thenReturn(Optional.of(sender));
+        when(client.predictProvider("221770000099")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> svc.initiateDeposit(threadId, senderId, null, LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20)))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                        .isEqualTo("mobile-money-payer-unsupported"));
+        verify(client).predictProvider("221770000099");
+        verifyNoInteractions(firebaseContact);
+    }
+
     @Test
     void initiateDeposit_providerClosedForDeposits_is422_namingTheProvider() {
         MobileMoneyNegotiationPaymentService svc = serviceWithRealResolver();

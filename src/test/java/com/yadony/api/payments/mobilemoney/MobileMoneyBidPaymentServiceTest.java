@@ -977,6 +977,54 @@ class MobileMoneyBidPaymentServiceTest {
         verifyNoInteractions(client);
     }
 
+    // Sentry FLUTTER-DE : le numéro pré-rempli à la demande était le téléphone du compte
+    // (français), refusé par pawaPay, alors que l'expéditrice avait un compte mobile money vérifié.
+    @Test
+    void providersForPayer_prefersTheSendersActiveMobileMoneyAccount_overTheBidNumber() {
+        awaitingPayment();
+        sender.setMobileMoneyStatus(MobileMoneyPayoutStatus.ACTIVE);
+        sender.setMobileMoneyCurrency("XOF");
+        sender.setMobileMoneyMsisdn("221770000099");
+        bid.setMobileMoneyPhone("33612345678");
+        when(userRepository.findById(sender.getId())).thenReturn(Optional.of(sender));
+        when(client.predictProvider("221770000099"))
+                .thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "221770000099")));
+        when(client.activeConfiguration()).thenReturn(configuration(ORANGE_SEN, WAVE_SEN, FREE_SEN));
+
+        MobileMoneyPayerProvidersResponse r = service.providersForPayer(bid.getId(), sender.getId(), null);
+
+        assertThat(r.msisdnMasked()).isEqualTo("+221 •••• 99");
+        verify(client, never()).predictProvider("33612345678");
+    }
+
+    @Test
+    void providersForPayer_ignoresAMobileMoneyAccountInAnotherCurrency() {
+        awaitingPayment();
+        sender.setMobileMoneyStatus(MobileMoneyPayoutStatus.ACTIVE);
+        sender.setMobileMoneyCurrency("XAF");
+        sender.setMobileMoneyMsisdn("237670000099");
+        when(userRepository.findById(sender.getId())).thenReturn(Optional.of(sender));
+        senegalPayerPredicts("ORANGE_SEN");
+
+        MobileMoneyPayerProvidersResponse r = service.providersForPayer(bid.getId(), sender.getId(), null);
+
+        assertThat(r.msisdnMasked()).isEqualTo("+221 •••• 67");
+    }
+
+    @Test
+    void providersForPayer_aNumberTypedOnThePaymentScreen_stillWinsOverTheAccount() {
+        awaitingPayment();
+        sender.setMobileMoneyStatus(MobileMoneyPayoutStatus.ACTIVE);
+        sender.setMobileMoneyCurrency("XOF");
+        sender.setMobileMoneyMsisdn("221770000099");
+        senegalPayerPredicts("ORANGE_SEN");
+
+        MobileMoneyPayerProvidersResponse r = service.providersForPayer(bid.getId(), sender.getId(), "+221771234567");
+
+        assertThat(r.msisdnMasked()).isEqualTo("+221 •••• 67");
+        verify(client, never()).predictProvider("221770000099");
+    }
+
     // ── providersForPayer ───────────────────────────────────────────────────
 
     @Test

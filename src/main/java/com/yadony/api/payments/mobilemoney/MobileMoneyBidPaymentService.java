@@ -295,7 +295,7 @@ public class MobileMoneyBidPaymentService {
             throw PawapayErrors.disabled();
         }
 
-        String msisdn = resolvePayerMsisdn(bid, phoneOverride);
+        String msisdn = resolvePayerMsisdn(bid, phoneOverride, payment.getCurrency());
         // Une panne pawaPay remonte en 502 normalisé du rail : en 500 générique, le verrou
         // PESSIMISTIC_WRITE pris sur `payments` par findByBidIdForUpdate resterait posé pendant
         // tout le timeout HTTP, bloquant toute initiation concurrente. Un numéro reconnu mais
@@ -355,7 +355,7 @@ public class MobileMoneyBidPaymentService {
         return status(bid, null, Optional.of(payment), Optional.of(op));
     }
 
-    private String resolvePayerMsisdn(BidEntity bid, String phoneOverride) {
+    private String resolvePayerMsisdn(BidEntity bid, String phoneOverride, String currency) {
         if (phoneOverride != null && !phoneOverride.isBlank()) {
             try {
                 return Msisdn.normalize(phoneOverride);
@@ -363,10 +363,18 @@ public class MobileMoneyBidPaymentService {
                 throw payerUnsupported("Numéro de téléphone invalide.");
             }
         }
+        Optional<UserEntity> sender = userRepository.findById(bid.getSenderId());
+        // Le compte mobile money vérifié de l'expéditeur passe avant le numéro pré-rempli à la
+        // demande : ce dernier est souvent le téléphone du compte, étranger, et pawaPay le refuse
+        // (Sentry FLUTTER-DE). Un numéro saisi sur l'écran de paiement reste prioritaire.
+        String accountMsisdn = sender.map(u -> u.mobileMoneyPayerMsisdn(currency)).orElse(null);
+        if (accountMsisdn != null) {
+            return accountMsisdn;
+        }
         if (bid.getMobileMoneyPhone() != null) {
             return bid.getMobileMoneyPhone();
         }
-        String firebasePhone = userRepository.findById(bid.getSenderId())
+        String firebasePhone = sender
                 .map(u -> firebaseContact.getContact(u.getFirebaseUid()).phoneNumber()).orElse(null);
         if (firebasePhone == null || firebasePhone.isBlank()) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-phone-required",
@@ -423,7 +431,7 @@ public class MobileMoneyBidPaymentService {
 
     /**
      * Réseaux avec lesquels l'expéditeur peut payer : catalogue DEPOSIT de son numéro (fourni, sinon
-     * celui du bid, sinon Firebase), dans la devise du colis, restreint aux marques acceptées par
+     * son compte mobile money actif dans la devise, sinon celui du bid, sinon Firebase), dans la devise du colis, restreint aux marques acceptées par
      * le voyageur. Lecture seule : le numéro examiné n'est pas écrit sur le bid, seule l'initiation
      * le fait. Liste vide = aucun réseau commun (200, l'app l'explique).
      */
@@ -438,7 +446,7 @@ public class MobileMoneyBidPaymentService {
             throw PawapayErrors.disabled();
         }
         UserEntity traveler = travelerOf(bid);
-        String msisdn = resolvePayerMsisdn(bid, phoneOverride);
+        String msisdn = resolvePayerMsisdn(bid, phoneOverride, payment.getCurrency());
         PawapayProviderResolver.Catalogue catalogue;
         try {
             catalogue = providers.catalogue(msisdn, PawapayOperationKind.DEPOSIT, payment.getCurrency(),
