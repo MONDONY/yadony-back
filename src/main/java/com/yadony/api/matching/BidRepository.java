@@ -379,13 +379,24 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
     List<BidEntity> findBidsNeedingH2Alert(@Param("now") LocalDateTime now,
                                             @Param("threshold") LocalDateTime threshold);
 
-    // No-show detection: ACCEPTED bids with handoverDeadline > 1h ago, no DEPART scan, not yet marked NO_SHOW
+    // No-show detection: ACCEPTED bids with handoverDeadline > 1h ago, no DEPART scan, not yet marked NO_SHOW.
+    // Exclut les bids où le voyageur a déclaré l'expéditeur absent (remise) : tant que
+    // l'expéditeur a ses 24 h pour confirmer/contester, ou qu'un litige est ouvert, le bid
+    // reste ACCEPTED et ce flux suit son propre cours. Sans cette exclusion, l'expéditeur
+    // absent faisait pénaliser le voyageur et se faisait rembourser intégralement.
+    // RESOLVED (déclaration rejetée par l'admin) n'est pas exclu : le bid reprend son cours.
     @Query("SELECT b FROM BidEntity b WHERE b.status = 'ACCEPTED' " +
            "AND b.handoverDeadline IS NOT NULL " +
            "AND b.handoverDeadline < :cutoff " +
            "AND b.noShowAt IS NULL " +
            "AND b.deletedAt IS NULL " +
-           "AND NOT EXISTS (SELECT t FROM TrackingEventEntity t WHERE t.bidId = b.id AND t.eventType = 'DEPART')")
+           "AND NOT EXISTS (SELECT t FROM TrackingEventEntity t WHERE t.bidId = b.id AND t.eventType = 'DEPART') " +
+           "AND NOT EXISTS (SELECT c FROM CancellationEntity c WHERE c.bidId = b.id " +
+           "AND c.scope = com.yadony.api.cancellation.CancellationScope.HANDOVER " +
+           "AND c.reason = 'SENDER_NO_SHOW' " +
+           "AND c.noShowStatus IN (com.yadony.api.cancellation.CancellationStatus.PENDING_CONFIRMATION, " +
+           "com.yadony.api.cancellation.CancellationStatus.CONTESTED, " +
+           "com.yadony.api.cancellation.CancellationStatus.CONFIRMED))")
     List<BidEntity> findNoShowBids(@Param("cutoff") LocalDateTime cutoff);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
