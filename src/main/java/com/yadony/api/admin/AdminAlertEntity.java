@@ -45,6 +45,13 @@ public class AdminAlertEntity {
     @Column(name = "payload", columnDefinition = "jsonb")
     private String payload;
 
+    /**
+     * Phrase lisible décrivant l'incident (ce qui a été envoyé sur Telegram), affichée telle
+     * quelle dans le back-office. Nulle sur les alertes antérieures à V290.
+     */
+    @Column(name = "detail", columnDefinition = "TEXT")
+    private String detail;
+
     @Column(name = "resolved", nullable = false)
     private boolean resolved = false;
 
@@ -71,6 +78,9 @@ public class AdminAlertEntity {
 
     public String getPayload() { return payload; }
     public void setPayload(String payload) { this.payload = payload; }
+
+    public String getDetail() { return detail; }
+    public void setDetail(String detail) { this.detail = detail; }
 
     public boolean isResolved() { return resolved; }
     public void setResolved(boolean resolved) { this.resolved = resolved; }

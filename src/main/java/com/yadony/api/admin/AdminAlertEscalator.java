@@ -57,6 +57,14 @@ public class AdminAlertEscalator {
      * @throws IllegalArgumentException si {@code type} dépasse {@link #TYPE_MAX_LENGTH}
      */
     public boolean raiseOnce(String type, String detail, Map<String, Object> context) {
+        return raiseOnce(type, AdminAlertService.severityOf(type), detail, context);
+    }
+
+    /**
+     * Comme {@link #raiseOnce(String, String, Map)}, avec une sévérité back-office explicite
+     * ({@code INFO}, {@code WARN} ou {@code CRITICAL}) au lieu de celle déduite du type.
+     */
+    public boolean raiseOnce(String type, String severity, String detail, Map<String, Object> context) {
         if (type.length() > TYPE_MAX_LENGTH) {
             throw new IllegalArgumentException("Type d'alerte trop long pour admin_alerts.type (" + type.length()
                     + " > " + TYPE_MAX_LENGTH + ") : " + type);
@@ -68,6 +76,8 @@ public class AdminAlertEscalator {
             AdminAlertEntity alert = new AdminAlertEntity();
             alert.setType(type);
             alert.setPayload(toJson(context));
+            alert.setDetail(detail);
+            alert.setSeverity(severity);
             alert.setResolved(false);
             repository.save(alert);
             return true;
