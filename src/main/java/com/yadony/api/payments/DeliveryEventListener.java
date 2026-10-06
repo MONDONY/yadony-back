@@ -139,6 +139,19 @@ public class DeliveryEventListener {
         if (payment.getStatus() != PaymentStatus.ESCROW) {
             log.info("Payment {} for bid {} has status {} — skipping escrow release",
                     payment.getId(), event.getBidId(), payment.getStatus());
+            // Un colis livré dont le paiement n'a jamais atteint le séquestre (PENDING) n'est pas un
+            // cas normal : contrairement à un paiement déjà remboursé ou versé, rien ne l'a réglé, et
+            // l'autorisation carte expire à J+7 sans que le voyageur soit payé. Il était ignoré en
+            // silence (sonde INV-08, paiement 500391e5) : un admin doit trancher.
+            if (payment.getStatus() == PaymentStatus.PENDING) {
+                auditService.log("PAYMENT", payment.getId(), "DELIVERY_PAYMENT_NOT_IN_ESCROW",
+                        event.getBidId(), Map.of("bidId", event.getBidId().toString()));
+                alertEscalator.raiseOnce("DELIVERY_PAYMENT_NOT_IN_ESCROW_" + payment.getId(),
+                        "Colis livré mais paiement " + payment.getId() + " jamais passé en séquestre (PENDING) : "
+                                + "le voyageur ne sera pas payé, l'autorisation carte expire à J+7",
+                        Map.of("paymentId", payment.getId().toString(), "bidId", event.getBidId().toString(),
+                                "amount", String.valueOf(payment.getAmount())));
+            }
             return;
         }
 

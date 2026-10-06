@@ -10,6 +10,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 class NegotiationEscrowAdapterTest {
@@ -38,9 +39,14 @@ class NegotiationEscrowAdapterTest {
             PaymentIntent pi = mock(PaymentIntent.class);
             when(pi.getStatus()).thenReturn("requires_capture");
             when(pi.getAmount()).thenReturn(3500L);
+            when(pi.getLatestCharge()).thenReturn("ch_real");
             mocked.when(() -> PaymentIntent.retrieve("pi_real")).thenReturn(pi);
 
             assertThat(adapter.verifyNegotiationEscrow(THREAD, "pi_real")).isTrue();
+
+            // Sentry/INV-08 : le paiement passe en séquestre tout de suite, sans attendre un
+            // webhook qui n'arrive pas toujours (aucun reçu en staging).
+            verify(paymentService).promoteNegotiationEscrowIfPending(THREAD, "pi_real", "ch_real");
         }
     }
 
@@ -56,6 +62,7 @@ class NegotiationEscrowAdapterTest {
             mocked.when(() -> PaymentIntent.retrieve("pi_cheap")).thenReturn(pi);
 
             assertThat(adapter.verifyNegotiationEscrow(THREAD, "pi_cheap")).isFalse();
+            verify(paymentService, never()).promoteNegotiationEscrowIfPending(any(), any(), any());
         }
     }
 
@@ -67,6 +74,7 @@ class NegotiationEscrowAdapterTest {
         try (MockedStatic<PaymentIntent> mocked = mockStatic(PaymentIntent.class)) {
             assertThat(adapter.verifyNegotiationEscrow(THREAD, "x")).isFalse();
             mocked.verifyNoInteractions();
+            verify(paymentService, never()).promoteNegotiationEscrowIfPending(any(), any(), any());
         }
     }
 
@@ -88,6 +96,7 @@ class NegotiationEscrowAdapterTest {
             mocked.when(() -> PaymentIntent.retrieve("pi_pending")).thenReturn(pi);
 
             assertThat(adapter.verifyNegotiationEscrow(THREAD, "pi_pending")).isFalse();
+            verify(paymentService, never()).promoteNegotiationEscrowIfPending(any(), any(), any());
         }
     }
 

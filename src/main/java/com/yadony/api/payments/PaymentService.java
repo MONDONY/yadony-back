@@ -948,6 +948,53 @@ public class PaymentService {
         }
     }
 
+    /**
+     * Fait passer en séquestre (PENDING → ESCROW) le paiement carte d'un fil de négociation,
+     * dès que le {@code /checkout} synchrone a vu Stripe confirmer l'autorisation
+     * ({@code requires_capture}). Filet jumeau de {@link #confirmBidPayment}, qui ne couvre
+     * que les paiements rattachés à un colis ({@code bid_id}) : un paiement de négociation
+     * n'a pas de colis au moment du paiement, ce filet ne le retrouvait jamais.
+     *
+     * <p>Sans lui, le paiement ne dépendait que du webhook
+     * {@code payment_intent.amount_capturable_updated}. Staging ne l'a JAMAIS reçu (aucune
+     * ligne dans {@code stripe_event_inbox} depuis le 3 août) : 6 paiements de négociation y
+     * sont restés PENDING, dont 3 livrés. {@code DeliveryEventListener} ignorait alors la
+     * libération, l'autorisation expirait à J+7 et le voyageur n'était pas payé (sonde
+     * INV-08, 500391e5).
+     *
+     * <p>Idempotent : un webhook tardif, ou un second appel, ne change rien. Le fil est
+     * verrouillé le temps de la lecture pour qu'un seul des deux promeuve. Un paiement déjà
+     * CANCELLED, REFUNDED ou RELEASED n'est jamais ressuscité.
+     *
+     * @return vrai si ce paiement vient de passer en ESCROW
+     */
+    @Transactional
+    public boolean promoteNegotiationEscrowIfPending(UUID threadId, String paymentIntentId, String chargeId) {
+        PaymentEntity payment = paymentRepository.findByNegotiationThreadIdForUpdate(threadId).orElse(null);
+        if (payment == null || paymentIntentId == null
+                || !paymentIntentId.equals(payment.getStripePaymentIntentId())) {
+            return false;
+        }
+        boolean changed = false;
+        if (chargeId != null && payment.getStripeChargeId() == null) {
+            payment.setStripeChargeId(chargeId);
+            changed = true;
+        }
+        boolean promoted = false;
+        if (payment.getStatus() == PaymentStatus.PENDING) {
+            payment.setStatus(PaymentStatus.ESCROW);
+            changed = true;
+            promoted = true;
+            auditService.log("PAYMENT", payment.getId(), "PAYMENT_ESCROW_ACTIVE", threadId,
+                    Map.of("piId", paymentIntentId, "source", "negotiationCheckout"));
+            log.info("Negotiation payment {} set to ESCROW via checkout (PI={})", payment.getId(), paymentIntentId);
+        }
+        if (changed) {
+            paymentRepository.save(payment);
+        }
+        return promoted;
+    }
+
     void handlePaymentEscrowActive(Event event) {
         PaymentIntent pi;
         Optional<com.stripe.model.StripeObject> objOpt = event.getDataObjectDeserializer().getObject();
