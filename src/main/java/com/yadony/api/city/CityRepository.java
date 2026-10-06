@@ -10,16 +10,33 @@ import java.util.Map;
 
 public interface CityRepository extends JpaRepository<CityEntity, Long> {
 
+    /**
+     * Villes dont le nom, ou le nom du pays, correspond à la saisie.
+     *
+     * <p>Le pays compte aussi : « Niger » ne renvoyait que Wernigerode, Annigeri et
+     * Ennigerloh, jamais Niamey (Sentry FLUTTER-D3/D7). Ordre : nom qui commence par la
+     * saisie, puis pays dont le nom est exactement la saisie, puis nom qui la contient,
+     * puis pays dont le nom commence par elle ; population à rang égal. Le pays exact
+     * passe avant le simple préfixe pour que « Niger » donne Niamey avant Lagos
+     * (Nigeria, plus peuplée).
+     */
     @Query(value = """
         SELECT * FROM cities
         WHERE name ILIKE :prefix
            OR name ILIKE :anywhere
+           OR country_name ILIKE :prefix
         ORDER BY
-            CASE WHEN name ILIKE :prefix THEN 0 ELSE 1 END,
+            CASE
+                WHEN name ILIKE :prefix THEN 0
+                WHEN LOWER(country_name) = LOWER(:exact) THEN 1
+                WHEN name ILIKE :anywhere THEN 2
+                ELSE 3
+            END,
             population DESC
         LIMIT :limit
         """, nativeQuery = true)
     List<CityEntity> searchByName(
+        @Param("exact")    String exact,
         @Param("prefix")   String prefix,
         @Param("anywhere") String anywhere,
         @Param("limit")    int limit
@@ -27,7 +44,7 @@ public interface CityRepository extends JpaRepository<CityEntity, Long> {
 
     default List<CityEntity> searchByName(String query, int limit) {
         String q = query.trim();
-        return searchByName(q + "%", "%" + q + "%", limit);
+        return searchByName(q, q + "%", "%" + q + "%", limit);
     }
 
     /**
