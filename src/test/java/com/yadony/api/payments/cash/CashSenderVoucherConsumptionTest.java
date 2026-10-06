@@ -124,7 +124,7 @@ class CashSenderVoucherConsumptionTest {
                 new StripeCashGatewayImpl(), bidGridItemRepository,
                 org.mockito.Mockito.mock(com.yadony.api.auth.FirebaseContactService.class),
                 voucherService, activeCurrencyResolver,
-                new WalletCommissionCollector(walletService, exchangeRateService), null);
+                new WalletCommissionCollector(walletService, exchangeRateService), null, promoService);
 
         lenient().when(bidGridItemRepository.findByBidId(any())).thenReturn(List.of());
         lenient().when(walletTransactionRepository.existsByUserIdAndBidIdAndType(any(), any(), any()))

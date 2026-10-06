@@ -193,5 +193,175 @@ class PromoServiceTest {
             verify(promoCodeRepository, never()).findByIdForUpdate(any());
             verify(redemptionRepository, never()).save(any());
         }
+
+        private PromoCodeEntity lockedPromo(int perUserLimit, Integer maxRedemptions) {
+            PromoCodeEntity p = activePromo(new BigDecimal("0.05"));
+            p.setPerUserLimit(perUserLimit);
+            p.setMaxRedemptions(maxRedemptions);
+            UUID promoId = p.getId();
+            when(promoCodeRepository.findByCode("WELCOME10")).thenReturn(Optional.of(p));
+            when(redemptionRepository.existsByPromoCodeIdAndBidId(promoId, bidId)).thenReturn(false);
+            when(promoCodeRepository.findByIdForUpdate(promoId)).thenReturn(Optional.of(p));
+            return p;
+        }
+
+        @Test
+        void per_user_limit_rechecked_under_lock_throws_and_writes_nothing() {
+            PromoCodeEntity p = lockedPromo(1, null);
+            when(redemptionRepository.countByPromoCodeIdAndUserId(p.getId(), userId)).thenReturn(1L);
+
+            assertThatThrownBy(() -> service.redeem("WELCOME10", userId, bidId, new BigDecimal("0.05")))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> {
+                        YadonyBusinessException y = (YadonyBusinessException) e;
+                        assertThat(y.getErrorCode()).isEqualTo("promo-limit-reached");
+                        assertThat(y.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                    });
+
+            verify(promoCodeRepository).findByIdForUpdate(p.getId());
+            verify(promoCodeRepository, never()).save(any());
+            verify(redemptionRepository, never()).save(any());
+            verifyNoInteractions(auditService);
+        }
+
+        @Test
+        void max_redemptions_rechecked_under_lock_with_fresh_count_not_stale_entity() {
+            // L'entité gérée (chargée avant le verrou) dit 3 ; la base, relue sous verrou, dit 10.
+            PromoCodeEntity p = lockedPromo(5, 10);
+            p.setRedeemedCount(3);
+            when(promoCodeRepository.findRedeemedCountById(p.getId())).thenReturn(10);
+
+            assertThatThrownBy(() -> service.redeem("WELCOME10", userId, bidId, new BigDecimal("0.05")))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                            .isEqualTo("promo-limit-reached"));
+
+            verify(redemptionRepository, never()).save(any());
+        }
+
+        @Test
+        void counter_incremented_from_fresh_count_read_under_lock() {
+            PromoCodeEntity p = lockedPromo(5, 100);
+            p.setRedeemedCount(3);
+            when(promoCodeRepository.findRedeemedCountById(p.getId())).thenReturn(7);
+            when(redemptionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            service.redeem("WELCOME10", userId, bidId, new BigDecimal("0.05"));
+
+            assertThat(p.getRedeemedCount()).isEqualTo(8);
+        }
+
+        @Test
+        void concurrent_redemption_of_same_bid_seen_after_lock_is_idempotent() {
+            PromoCodeEntity p = lockedPromo(1, null);
+            PromoRedemptionEntity concurrent = new PromoRedemptionEntity();
+            when(redemptionRepository.findByPromoCodeIdAndBidId(p.getId(), bidId)).thenReturn(Optional.of(concurrent));
+
+            PromoRedemptionEntity result = service.redeem("WELCOME10", userId, bidId, new BigDecimal("0.05"));
+
+            assertThat(result).isSameAs(concurrent);
+            verify(redemptionRepository, never()).save(any());
+            verify(promoCodeRepository, never()).save(any());
+        }
+    }
+
+    @Nested
+    @DisplayName("recordGrantedRedemption()")
+    class RecordGrantedTests {
+
+        @Test
+        void over_limit_is_recorded_and_audited_instead_of_thrown() {
+            PromoCodeEntity p = activePromo(new BigDecimal("0.05"));
+            when(promoCodeRepository.findByCode("WELCOME10")).thenReturn(Optional.of(p));
+            when(redemptionRepository.existsByPromoCodeIdAndBidId(p.getId(), bidId)).thenReturn(false);
+            when(promoCodeRepository.findByIdForUpdate(p.getId())).thenReturn(Optional.of(p));
+            when(redemptionRepository.countByPromoCodeIdAndUserId(p.getId(), userId)).thenReturn(1L);
+            when(promoCodeRepository.findRedeemedCountById(p.getId())).thenReturn(1);
+            when(redemptionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            PromoRedemptionEntity saved = service.recordGrantedRedemption("WELCOME10", userId, bidId, new BigDecimal("0.07"));
+
+            assertThat(saved).isNotNull();
+            assertThat(saved.getBidId()).isEqualTo(bidId);
+            assertThat(p.getRedeemedCount()).isEqualTo(2);
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<java.util.Map<String, Object>> details = ArgumentCaptor.forClass(java.util.Map.class);
+            verify(auditService).log(eq("PROMO"), eq(p.getId()), eq("PROMO_CODE_REDEEMED"), eq(userId), details.capture());
+            assertThat(details.getValue()).containsEntry("overLimit", "per_user_limit");
+        }
+
+        @Test
+        void unknown_code_returns_null_without_throwing() {
+            when(promoCodeRepository.findByCode("GONE")).thenReturn(Optional.empty());
+
+            assertThat(service.recordGrantedRedemption("gone", userId, bidId, new BigDecimal("0.07"))).isNull();
+            verify(redemptionRepository, never()).save(any());
+        }
+    }
+
+    @Nested
+    @DisplayName("lockForRedemption()")
+    class LockForRedemptionTests {
+
+        @Test
+        void within_limits_locks_and_returns_id_without_writing() {
+            PromoCodeEntity p = activePromo(new BigDecimal("0.05"));
+            when(promoCodeRepository.findByCode("WELCOME10")).thenReturn(Optional.of(p));
+            when(promoCodeRepository.findByIdForUpdate(p.getId())).thenReturn(Optional.of(p));
+
+            assertThat(service.lockForRedemption("welcome10", userId, bidId)).isEqualTo(p.getId());
+
+            verify(promoCodeRepository).findByIdForUpdate(p.getId());
+            verify(promoCodeRepository, never()).save(any());
+            verify(redemptionRepository, never()).save(any());
+        }
+
+        @Test
+        void per_user_limit_reached_throws() {
+            PromoCodeEntity p = activePromo(new BigDecimal("0.05"));
+            when(promoCodeRepository.findByCode("WELCOME10")).thenReturn(Optional.of(p));
+            when(promoCodeRepository.findByIdForUpdate(p.getId())).thenReturn(Optional.of(p));
+            when(redemptionRepository.countByPromoCodeIdAndUserId(p.getId(), userId)).thenReturn(1L);
+
+            assertThatThrownBy(() -> service.lockForRedemption("WELCOME10", userId, bidId))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                            .isEqualTo("promo-limit-reached"));
+        }
+
+        @Test
+        void global_limit_reached_throws() {
+            PromoCodeEntity p = activePromo(new BigDecimal("0.05"));
+            p.setMaxRedemptions(2);
+            when(promoCodeRepository.findByCode("WELCOME10")).thenReturn(Optional.of(p));
+            when(promoCodeRepository.findByIdForUpdate(p.getId())).thenReturn(Optional.of(p));
+            when(promoCodeRepository.findRedeemedCountById(p.getId())).thenReturn(2);
+
+            assertThatThrownBy(() -> service.lockForRedemption("WELCOME10", userId, bidId))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(e.getMessage())
+                            .contains("nombre maximum d'utilisations"));
+        }
+
+        @Test
+        void already_redeemed_for_this_bid_skips_limit_check() {
+            PromoCodeEntity p = activePromo(new BigDecimal("0.05"));
+            when(promoCodeRepository.findByCode("WELCOME10")).thenReturn(Optional.of(p));
+            when(promoCodeRepository.findByIdForUpdate(p.getId())).thenReturn(Optional.of(p));
+            when(redemptionRepository.existsByPromoCodeIdAndBidId(p.getId(), bidId)).thenReturn(true);
+
+            assertThat(service.lockForRedemption("WELCOME10", userId, bidId)).isEqualTo(p.getId());
+            verify(redemptionRepository, never()).countByPromoCodeIdAndUserId(any(), any());
+        }
+
+        @Test
+        void unknown_code_throws_promo_not_found() {
+            when(promoCodeRepository.findByCode("NOPE")).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> service.lockForRedemption("nope", userId, bidId))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                            .isEqualTo("promo-not-found"));
+        }
     }
 }

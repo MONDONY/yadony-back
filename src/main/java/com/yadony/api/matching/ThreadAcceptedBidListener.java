@@ -159,12 +159,15 @@ public class ThreadAcceptedBidListener {
         // d'être créé, c'est le SEUL point où promo_redemptions (UNIQUE(promo_code_id, bid_id))
         // peut être écrit pour un thread de négociation (aucun bid n'existait avant). Best-effort :
         // un échec ne doit pas casser la matérialisation, l'argent a déjà été correctement
-        // débité au taux promo par PaymentService.createNegotiationEscrow.
+        // débité au taux promo par PaymentService.createNegotiationEscrow. D'où
+        // recordGrantedRedemption et non redeem : la remise est déjà accordée, une limite
+        // atteinte entre-temps est journalisée au lieu d'être levée — une exception levée par
+        // un bean @Transactional marquerait cette transaction rollback-only malgré le catch.
         if (e.promoCode() != null && e.commissionRate() != null) {
             saved.setCommissionRate(e.commissionRate());
             bidRepository.save(saved);
             try {
-                promoService.redeem(e.promoCode(), e.senderId(), saved.getId(), e.commissionRate());
+                promoService.recordGrantedRedemption(e.promoCode(), e.senderId(), saved.getId(), e.commissionRate());
             } catch (Exception ex) {
                 log.error("Échec rachat promo {} pour bid {} (thread {}): {}",
                     e.promoCode(), saved.getId(), e.threadId(), ex.toString());

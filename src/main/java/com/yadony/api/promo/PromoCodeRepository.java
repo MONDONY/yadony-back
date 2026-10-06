@@ -16,4 +16,12 @@ public interface PromoCodeRepository extends JpaRepository<PromoCodeEntity, UUID
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT p FROM PromoCodeEntity p WHERE p.id = :id")
     Optional<PromoCodeEntity> findByIdForUpdate(UUID id);
+
+    /**
+     * Compteur lu directement en base. À appeler sous {@link #findByIdForUpdate} : l'entité
+     * gérée renvoyée par ce verrou peut être celle déjà chargée dans le contexte de
+     * persistance avant le verrou, et Hibernate ne rafraîchit pas son état.
+     */
+    @Query("SELECT p.redeemedCount FROM PromoCodeEntity p WHERE p.id = :id")
+    int findRedeemedCountById(UUID id);
 }

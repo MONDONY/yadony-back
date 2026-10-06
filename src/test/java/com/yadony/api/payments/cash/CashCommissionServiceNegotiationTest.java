@@ -92,7 +92,8 @@ class CashCommissionServiceNegotiationTest {
                 walletService, walletTransactionRepository, auditService, commissionRateResolver,
                 negotiationThreadRepository, stripeCashGateway, bidGridItemRepository, stubbedContacts(),
                 voucherService, activeCurrencyResolver,
-                new WalletCommissionCollector(walletService, exchangeRateService), null);
+                new WalletCommissionCollector(walletService, exchangeRateService), null,
+                org.mockito.Mockito.mock(com.yadony.api.promo.PromoService.class));
     }
 
     // --- helpers ---
