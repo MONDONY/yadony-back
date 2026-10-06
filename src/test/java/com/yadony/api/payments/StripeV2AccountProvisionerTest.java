@@ -121,6 +121,41 @@ class StripeV2AccountProvisionerTest {
     }
 
     @Test
+    @DisplayName("Pays non couvert par Stripe : le refus est journalise en WARN (Sentry Logs, sans issue), 422 inchange")
+    void logsCountryNotCoveredByStripeAsWarn() {
+        UserEntity user = buildUser(false, "CI");
+        ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(StripeV2AccountProvisioner.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            assertThatThrownBy(() -> provisioner.provision(user))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> {
+                        YadonyBusinessException ex = (YadonyBusinessException) e;
+                        assertThat(ex.getErrorCode()).isEqualTo("country-not-supported-by-stripe");
+                        assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                        assertThat(ex.getTitle()).isEqualTo("Country Not Supported");
+                    });
+
+            assertThat(appender.list).hasSize(1);
+            ch.qos.logback.classic.spi.ILoggingEvent event = appender.list.get(0);
+            assertThat(event.getLevel()).isEqualTo(ch.qos.logback.classic.Level.WARN);
+            assertThat(event.getFormattedMessage())
+                    .contains("code=country-not-supported-by-stripe")
+                    .contains("pays=CI")
+                    .contains("userId=" + user.getId())
+                    .doesNotContain("+33600000000")
+                    .doesNotContain("test@yadony.app");
+        } finally {
+            logger.detachAppender(appender);
+        }
+        verify(firebaseContact, never()).getFreshContact(any());
+    }
+
+    @Test
     @DisplayName("Sans email de contact (compte Firebase telephone), aucun compte Connect n'est cree")
     void refusesToProvisionWithoutContactEmail() throws Exception {
         when(firebaseContact.getFreshContact(any()))
