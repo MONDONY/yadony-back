@@ -84,6 +84,7 @@ class AdminPaymentControllerMobileMoneyIT {
     @Autowired MockMvc mockMvc;
     @Autowired JdbcTemplate jdbc;
     @MockitoBean PaymentRepository paymentRepository;
+    @MockitoBean com.yadony.api.admin.AdminPaymentInsights adminPaymentInsights;
     @MockitoBean BidRepository bidRepository;
     @MockitoBean AnnouncementRepository announcementRepository;
     @MockitoBean UserRepository userRepository;
@@ -444,7 +445,7 @@ class AdminPaymentControllerMobileMoneyIT {
      */
     @Test
     void list_method_pawapay_filtersAndReportsCorrectly() throws Exception {
-        when(paymentRepository.findAdminFiltered(any(), any(), any(), eq("PAWAPAY"), any(), eq(false), any(Pageable.class)))
+        when(adminPaymentInsights.search(org.mockito.ArgumentMatchers.argThat(f -> f != null && "PAWAPAY".equals(f.rail()) && !f.held()), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(payment), PageRequest.of(0, 20), 1));
 
         mockMvc.perform(get("/admin/payments").param("method", "PAWAPAY").with(authentication(viewAdmin())))
@@ -452,7 +453,7 @@ class AdminPaymentControllerMobileMoneyIT {
                 .andExpect(jsonPath("$.content.length()").value(1))
                 .andExpect(jsonPath("$.content[0].method").value("PAWAPAY"));
 
-        verify(paymentRepository).findAdminFiltered(any(), any(), any(), eq("PAWAPAY"), any(), eq(false), any(Pageable.class));
+        verify(adminPaymentInsights).search(org.mockito.ArgumentMatchers.argThat(f -> "PAWAPAY".equals(f.rail())), any(Pageable.class));
     }
 
     // ── Autorité : PAYMENT_RELEASE obligatoire sur les trois endroits qui déplacent de l'argent ──

@@ -44,7 +44,9 @@ public record AdminPaymentDetailResponse(
         /** Le voyageur beneficiaire est actuellement gele (banni ou KYC retire). */
         boolean beneficiaryHeld,
         /** Motif principal du gel : {@code BANNED} ou {@code KYC_REVOKED} ; {@code null} si non gele. */
-        String beneficiaryHoldReason
+        String beneficiaryHoldReason,
+        /** Contexte (colis ou négociation, parties, trajet, liens Stripe) ; {@code null} hors back-office. */
+        AdminPaymentInsight insight
 ) {
     /** Paiement sans opération pawaPay (rail STRIPE). */
     public static AdminPaymentDetailResponse from(PaymentEntity p) {
@@ -79,7 +81,15 @@ public record AdminPaymentDetailResponse(
                 travelerId,
                 p.getPayoutHeldAt(),
                 h.held(),
-                h.primaryReason() != null ? h.primaryReason().name() : null
+                h.primaryReason() != null ? h.primaryReason().name() : null,
+                null
         );
+    }
+
+    public AdminPaymentDetailResponse withInsight(AdminPaymentInsight value) {
+        return new AdminPaymentDetailResponse(id, bidId, status, method, amountCents, commissionCents, currency,
+                createdAt, refundedCents, stripePaymentIntentId, escrowReleasedAt, disputed, rail, pawapayDepositId,
+                pawapayPayoutId, pawapayRefundId, travelerId, payoutHeldAt, beneficiaryHeld, beneficiaryHoldReason,
+                value);
     }
 }

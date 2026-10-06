@@ -56,4 +56,7 @@ public interface AuditLogRepository extends JpaRepository<AuditLogEntity, Long> 
      */
     List<AuditLogEntity> findByEntityTypeAndActionAndEntityIdInOrderByCreatedAtDescIdDesc(
             String entityType, String action, Collection<UUID> entityIds);
+
+    /** Historique d'une entité, du plus ancien au plus récent (chronologie d'un paiement). */
+    List<AuditLogEntity> findTop200ByEntityTypeAndEntityIdOrderByCreatedAtAscIdAsc(String entityType, UUID entityId);
 }

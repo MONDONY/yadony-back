@@ -69,6 +69,7 @@ class AdminPaymentHoldIT {
 
     @Autowired MockMvc mockMvc;
     @MockitoBean PaymentRepository paymentRepository;
+    @MockitoBean com.yadony.api.admin.AdminPaymentInsights adminPaymentInsights;
     @MockitoBean BidRepository bidRepository;
     @MockitoBean AnnouncementRepository announcementRepository;
     @MockitoBean UserRepository userRepository;
@@ -182,7 +183,7 @@ class AdminPaymentHoldIT {
     @Test
     void liste_heldTrue_exposeLesChampsDuGel() throws Exception {
         payment.setPayoutHeldAt(LocalDateTime.of(2026, 9, 27, 10, 0));
-        when(paymentRepository.findAdminFiltered(any(), any(), any(), any(), any(), eq(true), any(Pageable.class)))
+        when(adminPaymentInsights.search(org.mockito.ArgumentMatchers.argThat(f -> f != null && f.held()), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(payment), PageRequest.of(0, 20), 1));
         when(paymentRepository.findBeneficiaries(anyCollection()))
                 .thenReturn(List.<Object[]>of(new Object[]{payment.getId().toString(), travelerId.toString()}));
