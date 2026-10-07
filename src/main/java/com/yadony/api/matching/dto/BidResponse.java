@@ -119,5 +119,11 @@ public record BidResponse(
         /** Dernière demande de remplacement faite par le voyageur depuis le refus courant
          * (UTC), null sinon. Une nouvelle demande est possible 12 h après. Servie à
          * l'expéditeur et au voyageur tant que le lien est DECLINED. */
-        java.time.OffsetDateTime recipientReplacementRequestedAt
+        java.time.OffsetDateTime recipientReplacementRequestedAt,
+        /** Expéditeur et voyageur peuvent encore se joindre directement (bouton téléphone de
+         * la fiche colis) : même règle que l'appel in-app — de l'acceptation à l'arrivée, puis
+         * {@code yadony.calls.delivery-grace-days} jours après la livraison confirmée
+         * ({@link com.yadony.api.matching.ContactWindow}). Identique pour les deux parties. Ne
+         * dit rien du numéro : sa révélation garde sa propre règle ({@code *PhoneAvailable}). */
+        boolean contactWindowOpen
 ) {}
