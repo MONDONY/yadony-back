@@ -25,13 +25,14 @@ class AwaitingPaymentCleanupSchedulerMobileMoneyTest {
 
     @Mock BidRepository bidRepository;
     @Mock PaymentService paymentService;
+    @Mock org.springframework.context.ApplicationEventPublisher eventPublisher;
 
     @Test
     void mobileMoneyBids_areExcludedByTheQuery_notInJava() throws Exception {
         when(bidRepository.findByStatusAndPaymentMethodNotAndAwaitingPaymentExpiresAtBefore(
                 eq(BidStatus.AWAITING_PAYMENT), eq(PaymentMethod.MOBILE_MONEY), any())).thenReturn(List.of());
 
-        new AwaitingPaymentCleanupScheduler(bidRepository, paymentService).cleanupUnpaidBids();
+        new AwaitingPaymentCleanupScheduler(bidRepository, paymentService, eventPublisher).cleanupUnpaidBids();
 
         verify(bidRepository).findByStatusAndPaymentMethodNotAndAwaitingPaymentExpiresAtBefore(
                 eq(BidStatus.AWAITING_PAYMENT), eq(PaymentMethod.MOBILE_MONEY), any());

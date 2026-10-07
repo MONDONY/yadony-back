@@ -1,11 +1,13 @@
 package com.yadony.api.matching;
 
+import com.yadony.api.matching.events.BidAwaitingPaymentAbandonedEvent;
 import com.yadony.api.payments.PaymentService;
 import com.yadony.api.payments.cash.PaymentMethod;
 import com.stripe.exception.StripeException;
 import com.stripe.model.PaymentIntent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,11 +32,14 @@ public class AwaitingPaymentCleanupScheduler {
 
     private final BidRepository bidRepository;
     private final PaymentService paymentService;
+    private final ApplicationEventPublisher eventPublisher;
 
     public AwaitingPaymentCleanupScheduler(BidRepository bidRepository,
-                                           PaymentService paymentService) {
+                                           PaymentService paymentService,
+                                           ApplicationEventPublisher eventPublisher) {
         this.bidRepository = bidRepository;
         this.paymentService = paymentService;
+        this.eventPublisher = eventPublisher;
     }
 
     @Scheduled(fixedRate = 5 * 60 * 1000)
@@ -51,8 +56,7 @@ public class AwaitingPaymentCleanupScheduler {
             String piId = bid.getPaymentIntentId();
             try {
                 paymentService.cancelPaymentIntent(piId);
-                bid.softDelete();
-                bidRepository.save(bid);
+                abandon(bid);
                 log.info("Bid {} (PI={}) soft-deleted (unpaid timeout)", bid.getId(), piId);
             } catch (StripeException e) {
                 if ("payment_intent_unexpected_state".equals(e.getCode())) {
@@ -79,8 +83,7 @@ public class AwaitingPaymentCleanupScheduler {
                 paymentService.promoteBidOnPaymentAuthorized(piId);
             } else if ("canceled".equals(status) || "failed".equals(status)) {
                 // Payment was cancelled or failed — soft-delete the bid
-                bid.softDelete();
-                bidRepository.save(bid);
+                abandon(bid);
                 log.info("Bid {} (PI={}) soft-deleted (PI status: {})", bid.getId(), piId, status);
             } else {
                 // Unknown state — log and retry
@@ -93,4 +96,14 @@ public class AwaitingPaymentCleanupScheduler {
         }
     }
 
+
+    /**
+     * Soft-delete du bid abandonné et publication de {@link BidAwaitingPaymentAbandonedEvent}
+     * (reçu après commit : le code promo racheté à la création du PaymentIntent est rendu).
+     */
+    private void abandon(BidEntity bid) {
+        bid.softDelete();
+        bidRepository.save(bid);
+        eventPublisher.publishEvent(new BidAwaitingPaymentAbandonedEvent(bid.getId(), bid.getSenderId()));
+    }
 }

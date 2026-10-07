@@ -22,6 +22,7 @@ import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.PaymentStatus;
 import com.yadony.api.payments.RefundProcessor;
 import com.yadony.api.payments.chargeback.ChargebackRepository;
+import com.yadony.api.payments.events.AdminPaymentRefundedEvent;
 import com.yadony.api.payments.events.PaymentReleasedEvent;
 import com.yadony.api.payments.hold.PayoutHoldPolicy;
 import com.yadony.api.payments.hold.PayoutHoldStatus;
@@ -557,6 +558,7 @@ public class AdminPaymentController {
             // relit la ligne réelle (voir le commentaire équivalent de forceRelease ci-dessus).
             entityManager.refresh(payment);
             resolveRelatedAlerts(id);
+            publishRefunded(payment);
             log.info("Admin refunded mobile money escrow for payment {}", id);
             return ResponseEntity.ok(detail(payment));
         }
@@ -603,6 +605,7 @@ public class AdminPaymentController {
         payment.setStatus(PaymentStatus.REFUNDED);
 
         resolveRelatedAlerts(id);
+        publishRefunded(payment);
 
         auditService.log(
                 "PAYMENT",
@@ -713,7 +716,17 @@ public class AdminPaymentController {
             throw refundFailed("Remboursement refusé : " + refund.getFailureCode());
         }
         auditMobileMoneyAction(id, "MM_REFUND_RETRIED", Map.of("operationId", refund.getId().toString()));
+        publishRefunded(payment);
         return ResponseEntity.ok(detail(payment));
+    }
+
+    /**
+     * Remboursement manuel effectivement lancé : publie {@link AdminPaymentRefundedEvent}, reçu
+     * après commit (le code promo de l'expéditeur lui est rendu, {@code promo/PromoReleaseListener}).
+     */
+    private void publishRefunded(PaymentEntity payment) {
+        eventPublisher.publishEvent(new AdminPaymentRefundedEvent(
+                payment.getId(), payment.getBidId(), payment.getNegotiationThreadId(), currentAdminIdOrNull()));
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -931,6 +944,13 @@ public class AdminPaymentController {
      * immuable : désigner la CIBLE (bidId) ou rien comme acteur rendrait l'administrateur
      * responsable d'un versement ou d'un remboursement introuvable pour toujours.
      */
+    /** Administrateur courant, ou null hors contexte admin (trace seulement, jamais un contrôle). */
+    private static UUID currentAdminIdOrNull() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        return authentication != null && authentication.getPrincipal() instanceof AdminPrincipal principal
+                ? principal.adminId() : null;
+    }
+
     private UUID currentAdminId() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication != null && authentication.getPrincipal() instanceof AdminPrincipal principal) {
