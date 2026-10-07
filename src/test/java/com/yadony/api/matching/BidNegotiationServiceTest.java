@@ -1086,5 +1086,32 @@ class BidNegotiationServiceTest {
             assertThat(row.myTurn()).isTrue();
             assertThat(row.hasUnread()).isTrue();
         }
+
+        /**
+         * FLUTTER-EA : un fil conclu dont le dernier message (ACCEPT) vient de l'autre partie
+         * n'attend plus personne — même règle que le détail ({@code open && isMyTurn}).
+         */
+        @org.junit.jupiter.params.ParameterizedTest(name = "statut {0} → myTurn=false")
+        @org.junit.jupiter.params.provider.EnumSource(value = BidStatus.class,
+                names = {"PENDING", "AWAITING_PAYMENT"})
+        void myNegotiations_concludedThread_isNeverMyTurn(BidStatus status) {
+            BidEntity bid = buildNegotiatingBid();
+            bid.setStatus(status);
+            when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(buildSender()));
+            when(bidRepository.findNegotiationsForUser(SENDER_ID)).thenReturn(List.of(bid));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID))
+                    .thenReturn(Optional.of(buildAnnouncement()));
+            BidNegotiationMessageEntity accept = BidNegotiationMessageEntity.create(
+                    BID_ID, TRAVELER_ID, BidNegotiationMessageKind.ACCEPT, new BigDecimal("40.00"), null);
+            setId(accept, UUID.randomUUID());
+            when(messageRepository.findFirstByBidIdOrderByCreatedAtDesc(BID_ID))
+                    .thenReturn(Optional.of(accept));
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(buildTraveler()));
+
+            BidNegotiationSummaryResponse row = service.myNegotiations(SENDER_UID).get(0);
+
+            assertThat(row.status()).isEqualTo(status.name());
+            assertThat(row.myTurn()).isFalse();
+        }
     }
 }

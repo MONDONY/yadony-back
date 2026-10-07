@@ -67,6 +67,14 @@ public class AdminSentryWebhookController {
             String permalink = issue.path("permalink").asText("");
             String project = issue.path("project").path("slug").asText("");
 
+            // Issue née d'une alerte admin (captureMessage de AdminAlertService.raise) :
+            // l'alerte d'origine est déjà partie sur Telegram, l'écho SENTRY_ISSUE_*
+            // la doublerait.
+            if (title.stripLeading().startsWith(AdminAlertService.PREFIXE_ALERTE.strip())) {
+                log.info("Sentry webhook ignored: issue {} comes from an admin alert", shortId);
+                return ResponseEntity.ok().build();
+            }
+
             String code = "SENTRY_ISSUE_" + action.toUpperCase(Locale.ROOT);
             String detail = culprit.isBlank() ? title : title + " — " + culprit;
 

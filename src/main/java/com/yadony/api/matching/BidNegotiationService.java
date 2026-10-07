@@ -420,7 +420,10 @@ public class BidNegotiationService {
                     announcement.getId(),
                     bid.getStatus().name(),
                     bid.getNegotiationRound(),
-                    isMyTurn(last, user.getId()),
+                    // Même règle que le détail : un fil conclu (PENDING, AWAITING_PAYMENT…)
+                    // n'attend plus personne, même si son dernier message vient de l'autre
+                    // partie (FLUTTER-EA, compteur « offre en attente » faux).
+                    bid.getStatus() == BidStatus.NEGOTIATING && isMyTurn(last, user.getId()),
                     hasUnread(last, user.getId(), lastReadAt),
                     currentGross(bid, last),
                     bid.getCurrency(),

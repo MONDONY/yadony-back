@@ -5,6 +5,7 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import io.sentry.IScope;
 import io.sentry.Sentry;
+import io.sentry.SentryLevel;
 import io.sentry.ScopeCallback;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -63,11 +64,11 @@ class AdminAlertServiceTest {
                 callback.run(mockScope);
                 return null;
             });
-            sentryMock.when(() -> Sentry.captureMessage(anyString())).thenReturn(null);
+            sentryMock.when(() -> Sentry.captureMessage(anyString(), any(SentryLevel.class))).thenReturn(null);
 
             service.raise("STRIPE_CHARGEBACK_OPENED", "Litige dp_001", Map.of("disputeId", "dp_001"));
 
-            sentryMock.verify(() -> Sentry.captureMessage(contains("STRIPE_CHARGEBACK_OPENED")));
+            sentryMock.verify(() -> Sentry.captureMessage(contains("STRIPE_CHARGEBACK_OPENED"), any(SentryLevel.class)));
         }
     }
 
@@ -387,5 +388,79 @@ class AdminAlertServiceTest {
         assertThat(AdminAlertService.severityOf("KYC_IDENTITY_REJECTED")).isEqualTo("WARN");
         assertThat(AdminAlertService.severityOf("PAYOUT_HELD_00000000-0000-0000-0000-000000000000")).isEqualTo("CRITICAL");
         assertThat(AdminAlertService.severityOf(null)).isEqualTo("CRITICAL");
+    }
+
+    // --- Une issue Sentry par alerte (YADONY-BACK-STAGING-J/K) : captureMessage au bon
+    // niveau, empreinte par code, tag qui la distingue de l'événement du log.error. ---
+
+    private static IScope stubScope(MockedStatic<Sentry> sentryMock) {
+        IScope scope = mock(IScope.class);
+        sentryMock.when(() -> Sentry.withScope(any(ScopeCallback.class))).thenAnswer(inv -> {
+            inv.getArgument(0, ScopeCallback.class).run(scope);
+            return null;
+        });
+        sentryMock.when(() -> Sentry.captureMessage(anyString(), any(SentryLevel.class))).thenReturn(null);
+        return scope;
+    }
+
+    @Test
+    void raise_incident_captureUneFoisEnErrorAvecEmpreinteParCode_etGardeLeLogError() {
+        ListAppender<ILoggingEvent> appender = brancherAppender();
+        try (MockedStatic<Sentry> sentryMock = mockStatic(Sentry.class)) {
+            IScope scope = stubScope(sentryMock);
+
+            new AdminAlertService(mock(RestClient.class), "", "", "prod")
+                    .raise("MONEY_INVARIANT", "Solde incohérent", Map.of("walletId", "w-1"));
+
+            sentryMock.verify(() -> Sentry.captureMessage(
+                    "[ADMIN ALERT] MONEY_INVARIANT — Solde incohérent", SentryLevel.ERROR), times(1));
+            sentryMock.verify(() -> Sentry.captureMessage(anyString()), never());
+            verify(scope).setFingerprint(List.of("admin-alert", "MONEY_INVARIANT"));
+            verify(scope).setTag(AdminAlertSentryFilter.TAG_ADMIN_ALERT, "MONEY_INVARIANT");
+            verify(scope).setExtra("walletId", "w-1");
+            // Le log.error reste : métrique Grafana logback_events_total{level="error"}.
+            assertThat(appender.list).hasSize(1);
+            assertThat(appender.list.get(0).getLevel()).isEqualTo(Level.ERROR);
+            assertThat(appender.list.get(0).getFormattedMessage()).startsWith("[ADMIN ALERT] MONEY_INVARIANT");
+        } finally {
+            debrancherAppender(appender);
+        }
+    }
+
+    @Test
+    void raise_avertissement_captureEnWarning() {
+        try (MockedStatic<Sentry> sentryMock = mockStatic(Sentry.class)) {
+            IScope scope = stubScope(sentryMock);
+
+            new AdminAlertService(mock(RestClient.class), "", "", "prod")
+                    .raise("KYC_IDENTITY_REJECTED", "Échec KYC", Map.of());
+
+            sentryMock.verify(() -> Sentry.captureMessage(contains("KYC_IDENTITY_REJECTED"), eq(SentryLevel.WARNING)),
+                    times(1));
+            verify(scope).setFingerprint(List.of("admin-alert", "KYC_IDENTITY_REJECTED"));
+        }
+    }
+
+    @Test
+    void raise_alertesSentryIssue_neCapturentJamais() {
+        try (MockedStatic<Sentry> sentryMock = mockStatic(Sentry.class)) {
+            stubScope(sentryMock);
+
+            AdminAlertService sansTelegram = new AdminAlertService(mock(RestClient.class), "", "", "prod");
+            sansTelegram.raise("SENTRY_ISSUE_CREATED", "NPE", Map.of());
+            sansTelegram.raise("SENTRY_ISSUE_UNRESOLVED", "NPE", Map.of());
+
+            sentryMock.verify(() -> Sentry.captureMessage(anyString(), any(SentryLevel.class)), never());
+            sentryMock.verify(() -> Sentry.captureMessage(anyString()), never());
+        }
+    }
+
+    @Test
+    void niveauSentry_suitLaGravite() {
+        assertThat(AdminAlertService.niveauSentry(AdminAlertService.Gravite.INFO)).isEqualTo(SentryLevel.INFO);
+        assertThat(AdminAlertService.niveauSentry(AdminAlertService.Gravite.AVERTISSEMENT))
+                .isEqualTo(SentryLevel.WARNING);
+        assertThat(AdminAlertService.niveauSentry(AdminAlertService.Gravite.INCIDENT))
+                .isEqualTo(SentryLevel.ERROR);
     }
 }

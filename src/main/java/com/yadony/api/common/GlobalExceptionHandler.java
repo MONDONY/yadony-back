@@ -332,6 +332,76 @@ public class GlobalExceptionHandler {
         log.debug("Client disconnected before the response was written: {}", ex.getMessage());
     }
 
+    /** SQLState PostgreSQL d'une violation de contrainte CHECK. */
+    private static final String SQLSTATE_CHECK_VIOLATION = "23514";
+
+    /**
+     * Filet pour une contrainte CHECK de la base plus stricte que la validation de l'API
+     * (STAGING-M : {@code chk_pkg_req_weight} à 30 kg quand le DTO acceptait 32). Le client
+     * reçoit un 422 lisible au lieu d'un 500, sans le SQL ni le nom de la contrainte ; l'écart
+     * reste un bug serveur, donc journalisé en ERROR et capturé dans Sentry comme le 500.
+     *
+     * <p>Les autres violations d'intégrité (unique 23505, clé étrangère…) sont traitées au cas
+     * par cas par les services ; celles qui remontent jusqu'ici gardent le 500 de
+     * {@link #handleGeneric} pour ne masquer aucun bug.
+     */
+    @ExceptionHandler(org.springframework.dao.DataIntegrityViolationException.class)
+    public ResponseEntity<ProblemDetail> handleDataIntegrity(
+            org.springframework.dao.DataIntegrityViolationException ex) {
+        String constraint = checkConstraintName(ex);
+        if (constraint == null) {
+            return handleGeneric(ex);
+        }
+        String requestId = MDC.get(RequestCorrelationFilter.MDC_KEY);
+        log.error("Check constraint violated constraint={} requestId={}", constraint, requestId, ex);
+        Sentry.withScope(scope -> {
+            scope.setTag("db_constraint", constraint);
+            if (requestId != null) {
+                scope.setTag("request_id", requestId);
+            }
+            Sentry.captureException(ex);
+        });
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.UNPROCESSABLE_ENTITY,
+                messagesResolver.forRequest().get("problem.constraint-violation.detail"));
+        problem.setType(URI.create(BASE_TYPE + "constraint-violation"));
+        problem.setTitle("Constraint Violation");
+        problem.setProperty("code", "constraint-violation");
+        if (requestId != null) {
+            problem.setProperty("requestId", requestId);
+        }
+        return ResponseEntity.unprocessableEntity().body(problem);
+    }
+
+    /**
+     * Nom de la contrainte CHECK violée (ou {@code "check"} si seul le SQLState 23514 la
+     * révèle), {@code null} si la violation n'est pas une contrainte CHECK.
+     */
+    static String checkConstraintName(Throwable ex) {
+        boolean checkState = false;
+        String name = null;
+        for (Throwable current = ex; current != null; current = current.getCause()) {
+            if (current instanceof org.hibernate.exception.ConstraintViolationException hibernate
+                    && hibernate.getConstraintName() != null) {
+                name = hibernate.getConstraintName();
+            }
+            if (current instanceof java.sql.SQLException sql
+                    && SQLSTATE_CHECK_VIOLATION.equals(sql.getSQLState())) {
+                checkState = true;
+            }
+            if (current.getCause() == current) {
+                break;
+            }
+        }
+        if (name != null && name.startsWith("chk_")) {
+            return name;
+        }
+        if (checkState) {
+            return name != null ? name : "check";
+        }
+        return null;
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ProblemDetail> handleGeneric(Exception ex) {
         // L'identifiant de corrélation (RequestCorrelationFilter) relie la ligne de log,
