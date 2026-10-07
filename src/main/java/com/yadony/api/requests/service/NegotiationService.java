@@ -854,6 +854,12 @@ public class NegotiationService {
         ann.setTravelerIsPro(traveler.isProAccount());
         ann.setDepartureCity(request.getDepartureCity());
         ann.setArrivalCity(request.getArrivalCity());
+        // La demande de colis ne porte pas de code pays : déduit du référentiel des villes,
+        // sans quoi tout trajet dédié naissait sans pays (FLUTTER-EH : 32/32 en staging).
+        ann.setDepartureCountryCode(com.yadony.api.matching.TripCountryCodes.resolve(
+                null, request.getDepartureCity(), announcementRepo::findCountryCodeByCityName));
+        ann.setArrivalCountryCode(com.yadony.api.matching.TripCountryCodes.resolve(
+                null, request.getArrivalCity(), announcementRepo::findCountryCodeByCityName));
         ann.setDepartureDate(req.departureDate());
         ann.setDepartureTime(req.departureTime());
         ann.setArrivalTime(req.arrivalTime());

@@ -526,8 +526,14 @@ public class AnnouncementService {
         announcement.setTravelerIsPro(user.isProAccount());
         announcement.setDepartureCity(request.departureCity());
         announcement.setArrivalCity(request.arrivalCity());
-        announcement.setDepartureCountryCode(request.departureCountryCode());
-        announcement.setArrivalCountryCode(request.arrivalCountryCode());
+        // Code absent (modèle de trajet appliqué, trajet récurrent, ancien client) : déduit
+        // du référentiel des villes plutôt que laissé NULL (FLUTTER-EH).
+        announcement.setDepartureCountryCode(TripCountryCodes.resolve(
+                request.departureCountryCode(), request.departureCity(),
+                announcementRepository::findCountryCodeByCityName));
+        announcement.setArrivalCountryCode(TripCountryCodes.resolve(
+                request.arrivalCountryCode(), request.arrivalCity(),
+                announcementRepository::findCountryCodeByCityName));
         announcement.setDepartureDate(request.departureDate());
         announcement.setDepartureTime(request.departureTime());
         announcement.setArrivalTime(request.arrivalTime());
@@ -882,7 +888,9 @@ public class AnnouncementService {
                 // Convertis joints juste en dessous (withConvertedPrices).
                 null, null, null,
                 viewerId != null && viewerId.equals(announcement.getTravelerId())
-                        ? TripRescheduleRules.remaining(announcement) : null
+                        ? TripRescheduleRules.remaining(announcement) : null,
+                announcement.getDepartureCountryCode(),
+                announcement.getArrivalCountryCode()
         );
 
         // Même repère de lecture que le fil (Tâche 10) : équivalents « environ » dans
@@ -990,10 +998,21 @@ public class AnnouncementService {
         ArrivalRules.validate(request.departureDate(), request.departureTime(),
                 request.arrivalDate(), request.arrivalTime());
 
+        // Calculés AVANT d'écraser les villes : une modification qui omet le code pays
+        // (l'édition ne le recevait pas du détail) le conserve si la ville n'a pas changé,
+        // au lieu de l'effacer comme avant (FLUTTER-EH : 19 trajets vidés en staging).
+        String departureCountryCode = TripCountryCodes.resolveOnUpdate(
+                request.departureCountryCode(), request.departureCity(),
+                announcement.getDepartureCity(), announcement.getDepartureCountryCode(),
+                announcementRepository::findCountryCodeByCityName);
+        String arrivalCountryCode = TripCountryCodes.resolveOnUpdate(
+                request.arrivalCountryCode(), request.arrivalCity(),
+                announcement.getArrivalCity(), announcement.getArrivalCountryCode(),
+                announcementRepository::findCountryCodeByCityName);
         announcement.setDepartureCity(request.departureCity());
         announcement.setArrivalCity(request.arrivalCity());
-        announcement.setDepartureCountryCode(request.departureCountryCode());
-        announcement.setArrivalCountryCode(request.arrivalCountryCode());
+        announcement.setDepartureCountryCode(departureCountryCode);
+        announcement.setArrivalCountryCode(arrivalCountryCode);
         announcement.setDepartureDate(request.departureDate());
         announcement.setDepartureTime(request.departureTime());
         announcement.setArrivalTime(request.arrivalTime());
@@ -1114,7 +1133,9 @@ public class AnnouncementService {
                 // Retour d'écriture : le lecteur est le propriétaire, qui lit dans la
                 // devise de sa propre annonce — rien à convertir.
                 null, null, null,
-                TripRescheduleRules.remaining(saved)
+                TripRescheduleRules.remaining(saved),
+                saved.getDepartureCountryCode(),
+                saved.getArrivalCountryCode()
         );
     }
 

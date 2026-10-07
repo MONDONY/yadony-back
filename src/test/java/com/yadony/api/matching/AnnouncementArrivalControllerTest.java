@@ -76,7 +76,7 @@ class AnnouncementArrivalControllerTest {
                 false, false, null, "EUR", arrivalInstructions, false,
                 java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.CASH)
         ,
-                null, null, null, 2);
+                null, null, null, 2, "FR", "SN");
     }
 
     @Test

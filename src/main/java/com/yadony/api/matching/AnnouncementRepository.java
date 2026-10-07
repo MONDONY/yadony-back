@@ -264,4 +264,19 @@ public interface AnnouncementRepository extends JpaRepository<AnnouncementEntity
             @Param("lat") double lat,
             @Param("lng") double lng,
             @Param("radiusKm") int radiusKm);
+
+    /**
+     * Code pays ISO-2 de la ville la plus peuplée portant ce nom (référentiel GeoNames
+     * de la table {@code cities}, même règle que {@code CityRepository#findTopByNamesIgnoreCase}).
+     * Filet de sécurité des trajets créés sans code pays (FLUTTER-EH) : lu ici, sur le
+     * repository déjà injecté partout où un trajet naît, plutôt qu'en injectant le
+     * package {@code city} (règle projet : pas d'injection entre packages).
+     */
+    @Query(value = """
+            SELECT country_code FROM cities
+            WHERE LOWER(name) = LOWER(TRIM(:name))
+            ORDER BY population DESC
+            LIMIT 1
+            """, nativeQuery = true)
+    Optional<String> findCountryCodeByCityName(@Param("name") String name);
 }

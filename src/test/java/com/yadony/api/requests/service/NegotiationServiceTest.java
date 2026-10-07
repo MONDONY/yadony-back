@@ -671,11 +671,20 @@ class NegotiationServiceTest {
                 new BigDecimal("5"), null, null, true, dedicatedTripPayload(request.getDesiredDate())
             );
 
+            when(announcementRepo.findCountryCodeByCityName("Paris")).thenReturn(Optional.of("FR"));
+            when(announcementRepo.findCountryCodeByCityName("Dakar")).thenReturn(Optional.of("SN"));
+
             NegotiationThreadResponse response = service.start(TRAVELER_ID, req);
 
             assertThat(response.status()).isEqualTo(NegotiationThreadStatus.OPEN);
             assertThat(response.travelerAnnouncementId()).isEqualTo(newAnnId);
-            verify(announcementRepo).save(any());
+            ArgumentCaptor<com.yadony.api.matching.AnnouncementEntity> annCaptor =
+                ArgumentCaptor.forClass(com.yadony.api.matching.AnnouncementEntity.class);
+            verify(announcementRepo).save(annCaptor.capture());
+            // FLUTTER-EH : la demande de colis ne porte pas de code pays, le trajet dédié
+            // le tient du référentiel des villes au lieu de naître sans pays.
+            assertThat(annCaptor.getValue().getDepartureCountryCode()).isEqualTo("FR");
+            assertThat(annCaptor.getValue().getArrivalCountryCode()).isEqualTo("SN");
             ArgumentCaptor<NegotiationThreadEntity> threadCaptor = ArgumentCaptor.forClass(NegotiationThreadEntity.class);
             verify(threadRepo).save(threadCaptor.capture());
             assertThat(threadCaptor.getValue().getTravelerAnnouncementId()).isEqualTo(newAnnId);
