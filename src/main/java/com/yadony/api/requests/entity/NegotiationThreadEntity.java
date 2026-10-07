@@ -142,6 +142,29 @@ public class NegotiationThreadEntity extends BaseEntity {
     @Column(name = "deposit_expires_at")
     private LocalDateTime depositExpiresAt;
 
+    /*
+     * Rangement et retrait du fil, côté de chaque participant (FLUTTER-EJ, V293) —
+     * même modèle que ConversationEntity (sender/traveler_archived_at). L'expéditeur
+     * est celui de la demande liée : l'entité ne le connaît pas, d'où le booléen
+     * asSender des accesseurs ci-dessous.
+     *
+     * Jamais écrites par un save() : seules les mises à jour ciblées de
+     * NegotiationThreadRepository les posent. Un flux concurrent (remboursement de
+     * commission, expiration) qui sauvegarde un fil chargé avant l'archivage
+     * réécrirait sinon NULL par-dessus, et la discussion ressurgirait.
+     */
+    @Column(name = "sender_archived_at", insertable = false, updatable = false)
+    private LocalDateTime senderArchivedAt;
+
+    @Column(name = "traveler_archived_at", insertable = false, updatable = false)
+    private LocalDateTime travelerArchivedAt;
+
+    @Column(name = "sender_hidden_at", insertable = false, updatable = false)
+    private LocalDateTime senderHiddenAt;
+
+    @Column(name = "traveler_hidden_at", insertable = false, updatable = false)
+    private LocalDateTime travelerHiddenAt;
+
     // === NO-ARG CONSTRUCTOR (required by JPA) ===
 
     public NegotiationThreadEntity() { /* JPA */ }
@@ -196,6 +219,24 @@ public class NegotiationThreadEntity extends BaseEntity {
 
     public LocalDateTime getDepositExpiresAt() { return depositExpiresAt; }
 
+    public LocalDateTime getSenderArchivedAt() { return senderArchivedAt; }
+
+    public LocalDateTime getTravelerArchivedAt() { return travelerArchivedAt; }
+
+    public LocalDateTime getSenderHiddenAt() { return senderHiddenAt; }
+
+    public LocalDateTime getTravelerHiddenAt() { return travelerHiddenAt; }
+
+    /** Le participant ({@code asSender} : expéditeur de la demande, sinon voyageur) a rangé le fil. */
+    public boolean isArchivedBy(boolean asSender) {
+        return (asSender ? senderArchivedAt : travelerArchivedAt) != null;
+    }
+
+    /** Le participant a retiré le fil de sa liste. */
+    public boolean isHiddenBy(boolean asSender) {
+        return (asSender ? senderHiddenAt : travelerHiddenAt) != null;
+    }
+
     // === SETTERS ===
 
     public void setPackageRequestId(UUID packageRequestId) { this.packageRequestId = packageRequestId; }
@@ -245,4 +286,14 @@ public class NegotiationThreadEntity extends BaseEntity {
     public void setMaterializedBidId(UUID materializedBidId) { this.materializedBidId = materializedBidId; }
 
     public void setDepositExpiresAt(LocalDateTime depositExpiresAt) { this.depositExpiresAt = depositExpiresAt; }
+
+    // Rangement / retrait : ces setters ne touchent que l'objet en mémoire (colonnes
+    // non modifiables par save()). La base s'écrit par NegotiationThreadRepository.
+    public void setSenderArchivedAt(LocalDateTime at) { this.senderArchivedAt = at; }
+
+    public void setTravelerArchivedAt(LocalDateTime at) { this.travelerArchivedAt = at; }
+
+    public void setSenderHiddenAt(LocalDateTime at) { this.senderHiddenAt = at; }
+
+    public void setTravelerHiddenAt(LocalDateTime at) { this.travelerHiddenAt = at; }
 }

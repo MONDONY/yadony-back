@@ -213,4 +213,94 @@ class BidNegotiationRepositoryTest {
 
         assertThat(bidRepository.findNegotiationsForUser(senderId)).isEmpty();
     }
+
+    // ─── Rangement / retrait par participant (FLUTTER-EJ, V293) ────────────────
+
+    @Test
+    @DisplayName("une discussion rangée par l'expéditeur quitte SA liste, pas celle du voyageur")
+    void archivedBySender_leavesOnlyHisList() {
+        UUID travelerId = UUID.randomUUID();
+        UUID senderId = UUID.randomUUID();
+        UUID announcementId = newAnnouncement(travelerId, LocalDate.now().plusDays(10));
+        UUID bidId = newNegotiatingBid(announcementId, senderId);
+
+        assertThat(bidRepository.updateNegotiationSenderArchivedAt(bidId, LocalDateTime.now(ZoneOffset.UTC)))
+                .isEqualTo(1);
+
+        assertThat(bidRepository.findNegotiationsForUser(senderId)).isEmpty();
+        assertThat(bidRepository.findNegotiationsForUser(travelerId))
+                .extracting(BidEntity::getId).containsExactly(bidId);
+        assertThat(bidRepository.findArchivedNegotiationsForUser(senderId))
+                .extracting(BidEntity::getId).containsExactly(bidId);
+        assertThat(bidRepository.findArchivedNegotiationsForUser(travelerId)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("le filtre « Archivées » montre les discussions closes et les accords réglés, jamais une offre ferme")
+    void archivedList_coversClosedAndSettledNegotiations() {
+        UUID travelerId = UUID.randomUUID();
+        UUID senderId = UUID.randomUUID();
+        UUID announcementId = newAnnouncement(travelerId, LocalDate.now().plusDays(10));
+        UUID closed = newBid(announcementId, senderId, BidStatus.NEGOTIATION_CLOSED, false);
+        UUID settled = newBid(announcementId, senderId, BidStatus.COMPLETED, true);
+        UUID firm = newBid(announcementId, senderId, BidStatus.COMPLETED, false);
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        bidRepository.updateNegotiationTravelerArchivedAt(closed, now);
+        bidRepository.updateNegotiationTravelerArchivedAt(settled, now);
+        bidRepository.updateNegotiationTravelerArchivedAt(firm, now);
+
+        assertThat(bidRepository.findArchivedNegotiationsForUser(travelerId))
+                .extracting(BidEntity::getId).containsExactlyInAnyOrder(closed, settled);
+    }
+
+    @Test
+    @DisplayName("une discussion retirée disparaît des deux listes de l'appelant, sans DELETE ni soft delete")
+    void hiddenNegotiation_leavesBothListsOfCallerOnly() {
+        UUID travelerId = UUID.randomUUID();
+        UUID senderId = UUID.randomUUID();
+        UUID announcementId = newAnnouncement(travelerId, LocalDate.now().plusDays(10));
+        UUID bidId = newNegotiatingBid(announcementId, senderId);
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        bidRepository.updateNegotiationTravelerArchivedAt(bidId, now);
+        bidRepository.updateNegotiationTravelerHiddenAt(bidId, now);
+
+        assertThat(bidRepository.findNegotiationsForUser(travelerId)).isEmpty();
+        assertThat(bidRepository.findArchivedNegotiationsForUser(travelerId)).isEmpty();
+        assertThat(bidRepository.findNegotiationsForUser(senderId))
+                .extracting(BidEntity::getId).containsExactly(bidId);
+
+        BidEntity stored = bidRepository.findById(bidId).orElseThrow();
+        assertThat(stored.getDeletedAt()).isNull();
+        assertThat(stored.isNegotiationHiddenBy(true)).isTrue();
+        assertThat(stored.isNegotiationHiddenBy(false)).isFalse();
+        assertThat(stored.isNegotiationArchivedBy(true)).isTrue();
+    }
+
+    @Test
+    @DisplayName("ranger puis désarchiver ne touche pas updated_at, et un save() périmé n'écrase rien")
+    void archiveUpdates_leaveUpdatedAtAndSurviveStaleSave() {
+        UUID travelerId = UUID.randomUUID();
+        UUID senderId = UUID.randomUUID();
+        UUID announcementId = newAnnouncement(travelerId, LocalDate.now().plusDays(10));
+        UUID bidId = newBid(announcementId, senderId, BidStatus.NEGOTIATION_CLOSED, false);
+        em.clear();
+        BidEntity stale = bidRepository.findById(bidId).orElseThrow();
+        LocalDateTime updatedBefore = stale.getUpdatedAt();
+        em.detach(stale);
+
+        bidRepository.updateNegotiationSenderArchivedAt(bidId, LocalDateTime.now(ZoneOffset.UTC));
+        BidEntity archived = bidRepository.findById(bidId).orElseThrow();
+        assertThat(archived.getUpdatedAt()).isEqualTo(updatedBefore);
+        assertThat(archived.isNegotiationArchivedBy(false)).isTrue();
+        em.detach(archived);
+
+        stale.setDescription("copie périmée sauvegardée par un autre flux");
+        bidRepository.saveAndFlush(stale);
+        em.clear();
+
+        assertThat(bidRepository.findById(bidId).orElseThrow().isNegotiationArchivedBy(false)).isTrue();
+
+        bidRepository.updateNegotiationSenderArchivedAt(bidId, null);
+        assertThat(bidRepository.findById(bidId).orElseThrow().isNegotiationArchivedBy(false)).isFalse();
+    }
 }

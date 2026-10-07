@@ -67,7 +67,7 @@ class NegotiationServiceCachingIntegrationTest {
         PackageRequestEntity request = persistPackageRequest(sender.getId());
         persistThread(request.getId(), traveler.getId());
 
-        List<NegotiationThreadResponse> firstCall = negotiationService.listMine(traveler.getId());
+        List<NegotiationThreadResponse> firstCall = negotiationService.listMine(traveler.getId(), false);
         assertThat(firstCall).hasSize(1);
 
         // Supprime en base DIRECTEMENT, en contournant le service : si le
@@ -75,7 +75,7 @@ class NegotiationServiceCachingIntegrationTest {
         // 1er malgré la suppression.
         threadRepository.deleteAll();
 
-        List<NegotiationThreadResponse> secondCall = negotiationService.listMine(traveler.getId());
+        List<NegotiationThreadResponse> secondCall = negotiationService.listMine(traveler.getId(), false);
         assertThat(secondCall).hasSize(1);
     }
 
@@ -87,8 +87,8 @@ class NegotiationServiceCachingIntegrationTest {
         PackageRequestEntity request = persistPackageRequest(sender.getId());
         persistThread(request.getId(), traveler.getId());
 
-        List<NegotiationThreadResponse> forTraveler = negotiationService.listMine(traveler.getId());
-        List<NegotiationThreadResponse> forOutsider = negotiationService.listMine(uninvolved.getId());
+        List<NegotiationThreadResponse> forTraveler = negotiationService.listMine(traveler.getId(), false);
+        List<NegotiationThreadResponse> forOutsider = negotiationService.listMine(uninvolved.getId(), false);
 
         // La clé de cache est #userId : un utilisateur non impliqué dans le
         // thread ne doit jamais voir les négociations d'un autre.

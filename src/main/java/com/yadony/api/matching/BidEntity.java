@@ -52,6 +52,25 @@ public class BidEntity extends BaseEntity {
     @Column(name = "traveler_last_read_at")
     private LocalDateTime travelerLastReadAt;
 
+    /*
+     * Rangement et retrait de la discussion de prix, côté de chaque participant
+     * (FLUTTER-EJ, V293) — même modèle que ConversationEntity. Jamais écrites par un
+     * save() : seules les mises à jour ciblées de BidRepository les posent. Le bid
+     * vit bien après sa discussion (paiement, remise, livraison) : un flux qui le
+     * sauvegarde après l'avoir chargé avant l'archivage réécrirait sinon NULL.
+     */
+    @Column(name = "negotiation_sender_archived_at", insertable = false, updatable = false)
+    private LocalDateTime negotiationSenderArchivedAt;
+
+    @Column(name = "negotiation_traveler_archived_at", insertable = false, updatable = false)
+    private LocalDateTime negotiationTravelerArchivedAt;
+
+    @Column(name = "negotiation_sender_hidden_at", insertable = false, updatable = false)
+    private LocalDateTime negotiationSenderHiddenAt;
+
+    @Column(name = "negotiation_traveler_hidden_at", insertable = false, updatable = false)
+    private LocalDateTime negotiationTravelerHiddenAt;
+
     /**
      * If non-null, this bid was created from the package_request marketplace
      * flow (NegotiationThread → ACCEPTED) rather than the classic announce-bid flow.
@@ -271,6 +290,27 @@ public class BidEntity extends BaseEntity {
     public void setSenderLastReadAt(LocalDateTime senderLastReadAt) { this.senderLastReadAt = senderLastReadAt; }
     public LocalDateTime getTravelerLastReadAt() { return travelerLastReadAt; }
     public void setTravelerLastReadAt(LocalDateTime travelerLastReadAt) { this.travelerLastReadAt = travelerLastReadAt; }
+
+    // Rangement / retrait de la discussion : les setters ne touchent que l'objet en
+    // mémoire (colonnes non modifiables par save()), la base s'écrit par BidRepository.
+    public LocalDateTime getNegotiationSenderArchivedAt() { return negotiationSenderArchivedAt; }
+    public void setNegotiationSenderArchivedAt(LocalDateTime at) { this.negotiationSenderArchivedAt = at; }
+    public LocalDateTime getNegotiationTravelerArchivedAt() { return negotiationTravelerArchivedAt; }
+    public void setNegotiationTravelerArchivedAt(LocalDateTime at) { this.negotiationTravelerArchivedAt = at; }
+    public LocalDateTime getNegotiationSenderHiddenAt() { return negotiationSenderHiddenAt; }
+    public void setNegotiationSenderHiddenAt(LocalDateTime at) { this.negotiationSenderHiddenAt = at; }
+    public LocalDateTime getNegotiationTravelerHiddenAt() { return negotiationTravelerHiddenAt; }
+    public void setNegotiationTravelerHiddenAt(LocalDateTime at) { this.negotiationTravelerHiddenAt = at; }
+
+    /** Discussion rangée par le participant ({@code asTraveler} : voyageur du trajet, sinon expéditeur). */
+    public boolean isNegotiationArchivedBy(boolean asTraveler) {
+        return (asTraveler ? negotiationTravelerArchivedAt : negotiationSenderArchivedAt) != null;
+    }
+
+    /** Discussion retirée de la liste du participant. */
+    public boolean isNegotiationHiddenBy(boolean asTraveler) {
+        return (asTraveler ? negotiationTravelerHiddenAt : negotiationSenderHiddenAt) != null;
+    }
 
     public UUID getLinkedNegotiationThreadId() { return linkedNegotiationThreadId; }
     public void setLinkedNegotiationThreadId(UUID id) { this.linkedNegotiationThreadId = id; }

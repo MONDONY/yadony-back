@@ -1076,7 +1076,7 @@ class BidNegotiationServiceTest {
                     .thenReturn(Optional.of(lastMessageFrom(TRAVELER_ID, "40.00")));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(buildTraveler()));
 
-            List<BidNegotiationSummaryResponse> list = service.myNegotiations(SENDER_UID);
+            List<BidNegotiationSummaryResponse> list = service.myNegotiations(SENDER_UID, false);
 
             assertThat(list).hasSize(1);
             BidNegotiationSummaryResponse row = list.get(0);
@@ -1108,7 +1108,7 @@ class BidNegotiationServiceTest {
                     .thenReturn(Optional.of(accept));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(buildTraveler()));
 
-            BidNegotiationSummaryResponse row = service.myNegotiations(SENDER_UID).get(0);
+            BidNegotiationSummaryResponse row = service.myNegotiations(SENDER_UID, false).get(0);
 
             assertThat(row.status()).isEqualTo(status.name());
             assertThat(row.myTurn()).isFalse();

@@ -27,7 +27,9 @@ import com.yadony.api.requests.dto.*;
 import com.yadony.api.requests.entity.*;
 import com.yadony.api.requests.event.*;
 import com.yadony.api.requests.repository.*;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
+import org.springframework.cache.annotation.Caching;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -2089,10 +2091,16 @@ public class NegotiationService {
     // méthodes le mutent (accept/counter/reject/cancel/submitTrip/...) — les
     // évincer toutes pour les DEUX participants à chaque fois serait fragile.
     // L'expiration courte suffit, le client tolère déjà ce délai.
+    //
+    // Clé « userId:archived » : la liste courante et le filtre « Archivées » sont deux
+    // entrées distinctes, toutes deux évincées par archive/unarchive/hide de l'appelant
+    // (la vue de l'autre participant n'en dépend pas, son entrée reste juste).
     @Transactional(readOnly = true)
-    @Cacheable(value = "negotiations-me", key = "#userId")
-    public List<NegotiationThreadResponse> listMine(UUID userId) {
-        List<NegotiationThreadEntity> threads = threadRepo.findByParticipant(userId);
+    @Cacheable(value = "negotiations-me", key = "#userId + ':' + #archived")
+    public List<NegotiationThreadResponse> listMine(UUID userId, boolean archived) {
+        List<NegotiationThreadEntity> threads = archived
+            ? threadRepo.findArchivedByParticipant(userId)
+            : threadRepo.findVisibleByParticipant(userId);
 
         // Batch-load announcements to avoid N+1
         List<UUID> announcementIds = threads.stream()
@@ -2123,6 +2131,114 @@ public class NegotiationService {
                 return java.util.stream.Stream.of(toResponse(t, messages, null, travelerOpt.get(), requestOpt.get(), userId, senderName, linkedAnn, true));
             })
             .toList();
+    }
+
+    // ─── Rangement / retrait par un participant (FLUTTER-EJ) ─────────────────────
+    //
+    // Même modèle que les conversations (ConversationService#archiveConversation /
+    // #deleteConversation) : seule la vue de l'appelant change, l'autre participant
+    // garde le fil intact. Deux écarts voulus : seul un fil TERMINÉ se range ou se
+    // retire (409 negotiation-still-open sinon), et le retrait n'est jamais une purge
+    // physique — le fil reste pour l'autre partie, le back-office et l'audit.
+
+    @Transactional
+    @Caching(evict = {
+        @CacheEvict(value = "negotiations-me", key = "#callerId + ':false'"),
+        @CacheEvict(value = "negotiations-me", key = "#callerId + ':true'")
+    })
+    public void archiveForUser(UUID callerId, UUID threadId) {
+        ThreadViewer v = loadVisibleThread(callerId, threadId);
+        assertTerminal(v.thread());
+        if (v.thread().isArchivedBy(v.asSender())) {
+            return;
+        }
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        if (v.asSender()) {
+            threadRepo.updateSenderArchivedAt(threadId, now);
+        } else {
+            threadRepo.updateTravelerArchivedAt(threadId, now);
+        }
+        auditService.log("NEGOTIATION_THREAD", threadId, "ARCHIVED_BY_USER", callerId, v.auditPayload());
+    }
+
+    @Transactional
+    @Caching(evict = {
+        @CacheEvict(value = "negotiations-me", key = "#callerId + ':false'"),
+        @CacheEvict(value = "negotiations-me", key = "#callerId + ':true'")
+    })
+    public void unarchiveForUser(UUID callerId, UUID threadId) {
+        ThreadViewer v = loadVisibleThread(callerId, threadId);
+        if (!v.thread().isArchivedBy(v.asSender())) {
+            return;
+        }
+        if (v.asSender()) {
+            threadRepo.updateSenderArchivedAt(threadId, null);
+        } else {
+            threadRepo.updateTravelerArchivedAt(threadId, null);
+        }
+        auditService.log("NEGOTIATION_THREAD", threadId, "UNARCHIVED_BY_USER", callerId, v.auditPayload());
+    }
+
+    @Transactional
+    @Caching(evict = {
+        @CacheEvict(value = "negotiations-me", key = "#callerId + ':false'"),
+        @CacheEvict(value = "negotiations-me", key = "#callerId + ':true'")
+    })
+    public void hideForUser(UUID callerId, UUID threadId) {
+        ThreadViewer v = loadParticipantThread(callerId, threadId);
+        if (v.thread().isHiddenBy(v.asSender())) {
+            return;
+        }
+        assertTerminal(v.thread());
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        if (v.asSender()) {
+            threadRepo.updateSenderHiddenAt(threadId, now);
+        } else {
+            threadRepo.updateTravelerHiddenAt(threadId, now);
+        }
+        auditService.log("NEGOTIATION_THREAD", threadId, "HIDDEN_BY_USER", callerId, v.auditPayload());
+    }
+
+    /** Fil vu par un participant, avec son côté (expéditeur de la demande ou voyageur). */
+    private record ThreadViewer(NegotiationThreadEntity thread, boolean asSender) {
+        Map<String, Object> auditPayload() {
+            return Map.of("role", asSender ? "SENDER" : "TRAVELER",
+                          "status", thread.getStatus().name());
+        }
+    }
+
+    private ThreadViewer loadParticipantThread(UUID callerId, UUID threadId) {
+        NegotiationThreadEntity thread = threadRepo.findById(threadId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "thread/not-found"));
+        PackageRequestEntity request = requestRepo.findById(thread.getPackageRequestId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found"));
+        boolean asSender = callerId.equals(request.getSenderId());
+        if (!asSender && !callerId.equals(thread.getTravelerId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "negotiation/not-thread-participant");
+        }
+        return new ThreadViewer(thread, asSender);
+    }
+
+    /** Un fil retiré par l'appelant n'existe plus pour lui : ni rangement ni sortie des archives. */
+    private ThreadViewer loadVisibleThread(UUID callerId, UUID threadId) {
+        ThreadViewer v = loadParticipantThread(callerId, threadId);
+        if (v.thread().isHiddenBy(v.asSender())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "thread/not-found");
+        }
+        return v;
+    }
+
+    /**
+     * Terminé = n'attend plus rien de personne : ACCEPTED, REJECTED, CANCELLED,
+     * AUTO_REJECTED, EXPIRED. Source unique : {@link NegotiationThreadStatus#isActive()}.
+     */
+    private static void assertTerminal(NegotiationThreadEntity thread) {
+        if (thread.getStatus().isActive()) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "negotiation-still-open",
+                "Negotiation Still Open",
+                "Seule une discussion de prix terminée peut être archivée ou supprimée.",
+                Map.of("negotiationStatus", thread.getStatus().name()));
+        }
     }
 
     /**
@@ -2290,6 +2406,11 @@ public class NegotiationService {
             ? t.getDepositExpiresAt()
             : null;
 
+        // Rangement propre au demandeur : l'autre participant a sa propre colonne.
+        boolean archived = callerId != null && (callerId.equals(request.getSenderId())
+            ? t.isArchivedBy(true)
+            : callerId.equals(t.getTravelerId()) && t.isArchivedBy(false));
+
         return new NegotiationThreadResponse(
             t.getId(), t.getPackageRequestId(), t.getTravelerId(),
             t.getTravelerAnnouncementId(), t.getTravelerTravelDate(), t.getTravelerAvailableKg(),
@@ -2317,7 +2438,8 @@ public class NegotiationService {
             t.getCommissionStatus(),
             commissionDeadline,
             depositExpiresAt,
-            request.getSenderId()
+            request.getSenderId(),
+            archived
         );
     }
 

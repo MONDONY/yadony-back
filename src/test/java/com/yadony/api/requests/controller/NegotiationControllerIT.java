@@ -285,7 +285,7 @@ class NegotiationControllerIT {
     @Test
     void get_findMine_returnsThreadList() throws Exception {
         UUID threadId = UUID.randomUUID();
-        when(service.listMine(eq(SENDER_UUID)))
+        when(service.listMine(eq(SENDER_UUID), eq(false)))
             .thenReturn(List.of(fakeThread(threadId, NegotiationThreadStatus.OPEN, null)));
 
         mockMvc.perform(get("/negotiations/me")
@@ -901,7 +901,7 @@ class NegotiationControllerIT {
     @Test
     void get_listForRequest_returns200_viaNegotiationEndpoint() throws Exception {
         UUID threadId = UUID.randomUUID();
-        when(service.listMine(eq(TRAVELER_UUID)))
+        when(service.listMine(eq(TRAVELER_UUID), eq(false)))
             .thenReturn(java.util.List.of(fakeThread(threadId, NegotiationThreadStatus.OPEN, null)));
 
         mockMvc.perform(get("/negotiations/me")
@@ -1047,5 +1047,108 @@ class NegotiationControllerIT {
             .andExpect(status().isConflict())
             .andExpect(content().contentType("application/problem+json"))
             .andExpect(jsonPath("$.type").value(org.hamcrest.Matchers.endsWith("surplus/already-open")));
+    }
+
+    // ─── Rangement / retrait d'une discussion (FLUTTER-EJ) ──────────────────────
+
+    @Test
+    void get_findMine_archivedFilter_returnsArchivedThreads() throws Exception {
+        UUID threadId = UUID.randomUUID();
+        NegotiationThreadResponse base = fakeThread(threadId, NegotiationThreadStatus.REJECTED, null);
+        NegotiationThreadResponse archived = new NegotiationThreadResponse(
+            base.id(), base.packageRequestId(), base.travelerId(), base.travelerAnnouncementId(),
+            base.travelerTravelDate(), base.travelerAvailableKg(), base.travelerCapacityUnit(),
+            base.status(), base.currentPriceEur(), base.roundsCount(), base.lastActivityAt(),
+            base.createdAt(), base.messages(), base.paymentIntentClientSecret(), base.travelerName(),
+            base.travelerRating(), base.travelerTripsCount(), base.travelerPhotoUrl(),
+            base.departureCity(), base.arrivalCity(), base.weightKg(), base.senderName(),
+            base.senderPhotoUrl(), base.isMyTurn(), base.canAccept(), base.canCounter(),
+            base.roundsRemaining(), base.linkedTrip(), base.grossPriceEur(), base.paymentMethod(),
+            base.materializedBidId(), base.cashCommissionAvailable(), base.availablePaymentMethods(),
+            base.canNudge(), base.hasUnread(), base.promoCode(), base.commissionRate(), base.currency(),
+            base.commissionStatus(), base.commissionDeadline(), base.depositExpiresAt(),
+            SENDER_UUID, true);
+        when(service.listMine(eq(SENDER_UUID), eq(true))).thenReturn(List.of(archived));
+
+        mockMvc.perform(get("/negotiations/me").param("archived", "true")
+                .with(authentication(authAs("uid-sender", "SENDER"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$[0].id").value(threadId.toString()))
+            .andExpect(jsonPath("$[0].archived").value(true));
+    }
+
+    @Test
+    void get_findMine_exposesArchivedFalseByDefault() throws Exception {
+        when(service.listMine(eq(TRAVELER_UUID), eq(false)))
+            .thenReturn(List.of(fakeThread(UUID.randomUUID(), NegotiationThreadStatus.OPEN, null)));
+
+        mockMvc.perform(get("/negotiations/me")
+                .with(authentication(authAs("uid-traveler", "TRAVELER"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$[0].archived").value(false));
+    }
+
+    @Test
+    void post_archive_returns204() throws Exception {
+        UUID threadId = UUID.randomUUID();
+        mockMvc.perform(post("/negotiations/" + threadId + "/archive")
+                .with(authentication(authAs("uid-sender", "SENDER"))))
+            .andExpect(status().isNoContent());
+        verify(service).archiveForUser(SENDER_UUID, threadId);
+    }
+
+    @Test
+    void post_unarchive_returns204() throws Exception {
+        UUID threadId = UUID.randomUUID();
+        mockMvc.perform(post("/negotiations/" + threadId + "/unarchive")
+                .with(authentication(authAs("uid-traveler", "TRAVELER"))))
+            .andExpect(status().isNoContent());
+        verify(service).unarchiveForUser(TRAVELER_UUID, threadId);
+    }
+
+    @Test
+    void delete_thread_hidesForCaller_returns204() throws Exception {
+        UUID threadId = UUID.randomUUID();
+        mockMvc.perform(delete("/negotiations/" + threadId)
+                .with(authentication(authAs("uid-traveler", "TRAVELER"))))
+            .andExpect(status().isNoContent());
+        verify(service).hideForUser(TRAVELER_UUID, threadId);
+    }
+
+    @Test
+    void post_archive_openThread_returns409ProblemJson() throws Exception {
+        UUID threadId = UUID.randomUUID();
+        org.mockito.Mockito.doThrow(new com.yadony.api.common.YadonyBusinessException(
+                CONFLICT, "negotiation-still-open", "Negotiation Still Open",
+                "Seule une discussion de prix terminée peut être archivée ou supprimée.",
+                java.util.Map.of("negotiationStatus", "OPEN")))
+            .when(service).archiveForUser(SENDER_UUID, threadId);
+
+        mockMvc.perform(post("/negotiations/" + threadId + "/archive")
+                .with(authentication(authAs("uid-sender", "SENDER"))))
+            .andExpect(status().isConflict())
+            .andExpect(content().contentType("application/problem+json"))
+            .andExpect(jsonPath("$.code").value("negotiation-still-open"))
+            .andExpect(jsonPath("$.status").value(409))
+            .andExpect(jsonPath("$.negotiationStatus").value("OPEN"));
+    }
+
+    @Test
+    void delete_thread_nonParticipant_returns403() throws Exception {
+        UUID threadId = UUID.randomUUID();
+        org.mockito.Mockito.doThrow(new ResponseStatusException(
+                org.springframework.http.HttpStatus.FORBIDDEN, "negotiation/not-thread-participant"))
+            .when(service).hideForUser(SENDER_UUID, threadId);
+
+        mockMvc.perform(delete("/negotiations/" + threadId)
+                .with(authentication(authAs("uid-sender", "SENDER"))))
+            .andExpect(status().isForbidden())
+            .andExpect(content().contentType("application/problem+json"));
+    }
+
+    @Test
+    void post_archive_withoutAuth_returns401() throws Exception {
+        mockMvc.perform(post("/negotiations/" + UUID.randomUUID() + "/archive"))
+            .andExpect(status().isUnauthorized());
     }
 }
