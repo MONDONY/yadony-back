@@ -4,12 +4,35 @@ import io.cucumber.java.fr.Alors;
 import io.cucumber.java.fr.Etantdonné;
 import io.cucumber.java.fr.Quand;
 import org.assertj.core.api.Assertions;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.time.ZoneOffset;
 
 public class TrackingSteps extends AbstractSteps {
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
+    // ── Given ─────────────────────────────────────────────────────────────────
+
+    /**
+     * La livraison n'est confirmable qu'après le départ du trajet (FLUTTER-CB). Les annonces
+     * de test partent dans 30 jours : on recule le départ à avant-hier 06:00 (Europe/Paris).
+     */
+    @Etantdonné("le trajet de l'annonce {string} est parti")
+    public void givenTripDeparted(String announcementAlias) {
+        jdbcTemplate.update(
+                "UPDATE announcements SET departure_date = ?, departure_time = ?, departure_at = NULL, "
+                        + "timezone = 'Europe/Paris' WHERE id = ?",
+                LocalDate.now(ZoneOffset.UTC).minusDays(2), LocalTime.of(6, 0),
+                ctx.getId(announcementAlias));
+    }
 
     // ── When ──────────────────────────────────────────────────────────────────
 

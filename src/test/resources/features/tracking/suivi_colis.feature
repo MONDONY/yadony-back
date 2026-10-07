@@ -57,9 +57,30 @@ Fonctionnalité: Suivi de colis
     Etant donné l'utilisateur "sender-track-003" est authentifié en tant qu'EXPÉDITEUR
     Et l'expéditeur récupère le code de confirmation de l'offre "offre-track-3"
     Etant donné l'utilisateur "traveler-track-003" est authentifié en tant que VOYAGEUR
+    Et le trajet de l'annonce "annonce-track-3" est parti
     Quand le voyageur confirme la livraison de l'offre "offre-track-3" avec le code sauvegardé
     Alors la réponse HTTP est 200
     Et la réponse contient le type d'événement "ARRIVEE"
+
+  # FLUTTER-CB : le code existe dès la remise (DEPART), souvent la veille. Le saisir
+  # avant le départ terminait le colis et libérait le séquestre carte au voyageur.
+  @error-case @critical
+  Scénario: Confirmation de livraison avant le départ du trajet — refusée
+    Etant donné un utilisateur VOYAGEUR enregistré avec l'uid "traveler-track-009" et le téléphone "+33688000017"
+    Et il existe une annonce de "Paris" à "Dakar" avec 20 kg disponibles à 5.0 €/kg sauvegardée sous "annonce-track-9"
+    Etant donné un utilisateur EXPÉDITEUR enregistré avec l'uid "sender-track-009" et le téléphone "+33688000018"
+    Et je dépose une offre de 5.0 kg à 50.0 € sur l'annonce "annonce-track-9"
+    Et l'offre "offre-track-9" est sauvegardée
+    Etant donné l'utilisateur "traveler-track-009" est authentifié en tant que VOYAGEUR
+    Et le paiement de l'offre "offre-track-9" est validé
+    Et j'accepte l'offre "offre-track-9"
+    Et je scanne un événement "DEPART" sur l'offre "offre-track-9"
+    Etant donné l'utilisateur "sender-track-009" est authentifié en tant qu'EXPÉDITEUR
+    Et l'expéditeur récupère le code de confirmation de l'offre "offre-track-9"
+    Etant donné l'utilisateur "traveler-track-009" est authentifié en tant que VOYAGEUR
+    Quand le voyageur confirme la livraison de l'offre "offre-track-9" avec le code sauvegardé
+    Alors la réponse HTTP est 422
+    Et le code d'erreur de la réponse est "trip-not-departed"
 
   @error-case
   Scénario: Transit scanné avant le départ — refusé
@@ -100,6 +121,7 @@ Fonctionnalité: Suivi de colis
     Et le paiement de l'offre "offre-track-5" est validé
     Et j'accepte l'offre "offre-track-5"
     Et je scanne un événement "DEPART" sur l'offre "offre-track-5"
+    Et le trajet de l'annonce "annonce-track-5" est parti
     Quand le voyageur confirme la livraison de l'offre "offre-track-5" avec le code "000000"
     Alors la réponse HTTP est 422
     Et le code d'erreur de la réponse est "code-incorrect"

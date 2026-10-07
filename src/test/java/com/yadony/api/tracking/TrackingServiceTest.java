@@ -131,6 +131,14 @@ class TrackingServiceTest {
         return a;
     }
 
+    /** Trajet parti avant-hier : la livraison peut être confirmée (FLUTTER-CB). */
+    private AnnouncementEntity buildDepartedAnnouncement() {
+        AnnouncementEntity a = buildAnnouncement();
+        a.setDepartureDate(LocalDate.now(ZoneOffset.UTC).minusDays(2));
+        a.setDepartureTime(LocalTime.of(6, 0));
+        return a;
+    }
+
     private AnnouncementEntity buildAnnouncementWithArrivalTime(LocalTime arrivalTime) {
         AnnouncementEntity a = buildAnnouncement();
         a.setArrivalTime(arrivalTime);
@@ -658,7 +666,7 @@ class TrackingServiceTest {
     @Test
     void confirmDelivery_codeNotGenerated_throwsUnprocessable() {
         BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");
-        AnnouncementEntity ann = buildAnnouncement();
+        AnnouncementEntity ann = buildDepartedAnnouncement();
         UserEntity traveler = buildUser(travelerId, "uid-traveler");
         when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
         when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
@@ -673,7 +681,7 @@ class TrackingServiceTest {
         BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");
         bid.setConfirmationCode("654321");
         bid.setConfirmationCodeAttempts(0);
-        AnnouncementEntity ann = buildAnnouncement();
+        AnnouncementEntity ann = buildDepartedAnnouncement();
         UserEntity traveler = buildUser(travelerId, "uid-traveler");
         when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
         when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
@@ -689,7 +697,7 @@ class TrackingServiceTest {
         BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");
         bid.setConfirmationCode("654321");
         bid.setConfirmationCodeAttempts(3); // already at max
-        AnnouncementEntity ann = buildAnnouncement();
+        AnnouncementEntity ann = buildDepartedAnnouncement();
         UserEntity traveler = buildUser(travelerId, "uid-traveler");
         when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
         when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
@@ -705,7 +713,7 @@ class TrackingServiceTest {
         BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");
         bid.setConfirmationCode("123456");
         bid.setConfirmationCodeAttempts(0);
-        AnnouncementEntity ann = buildAnnouncement();
+        AnnouncementEntity ann = buildDepartedAnnouncement();
         UserEntity traveler = buildUser(travelerId, "uid-traveler");
         when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
         when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
@@ -733,7 +741,7 @@ class TrackingServiceTest {
         bid.setConfirmationCode("123456");
         bid.setConfirmationCodeAttempts(0);
         when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
-        when(announcementRepository.findById(annId)).thenReturn(Optional.of(buildAnnouncement()));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(buildDepartedAnnouncement()));
         when(userRepository.findByFirebaseUid("uid-traveler"))
                 .thenReturn(Optional.of(buildUser(travelerId, "uid-traveler")));
         when(trackingEventRepository.save(any())).thenAnswer(inv -> {
@@ -759,7 +767,7 @@ class TrackingServiceTest {
         bid.setConfirmationCode("123456");
         bid.setConfirmationCodeExpiry(LocalDateTime.now(ZoneOffset.UTC).plusHours(1));
         bid.setConfirmationCodeAttempts(0);
-        AnnouncementEntity announcement = buildAnnouncement();
+        AnnouncementEntity announcement = buildDepartedAnnouncement();
         UserEntity traveler = buildUser(travelerId, "uid-traveler");
         when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
         when(announcementRepository.findById(annId)).thenReturn(Optional.of(announcement));
@@ -782,7 +790,7 @@ class TrackingServiceTest {
         BidEntity bid = buildBid(BidStatus.IN_TRANSIT, "qt");
         bid.setConfirmationCode("123456");
         bid.setConfirmationCodeAttempts(0);
-        AnnouncementEntity ann = buildAnnouncement();
+        AnnouncementEntity ann = buildDepartedAnnouncement();
         UserEntity traveler = buildUser(travelerId, "uid-traveler");
         when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
         when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
@@ -810,7 +818,7 @@ class TrackingServiceTest {
         BidEntity bid = buildBid(BidStatus.IN_TRANSIT, "qt");
         bid.setConfirmationCode("123456");
         bid.setConfirmationCodeAttempts(0);
-        AnnouncementEntity ann = buildAnnouncement();
+        AnnouncementEntity ann = buildDepartedAnnouncement();
         UserEntity traveler = buildUser(travelerId, "uid-traveler");
         when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
         when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
@@ -823,6 +831,174 @@ class TrackingServiceTest {
         assertThat(bid.getStatus()).isEqualTo(BidStatus.IN_TRANSIT);
         assertThat(bid.getConfirmationCode()).isEqualTo("123456");
         verify(trackingEventRepository, never()).save(any());
+    }
+
+    // ── confirmDelivery avant le départ (FLUTTER-CB) ────────────────────────
+
+    /** Trajet dont le départ (heure murale dans {@code zone}) est {@code fromNow} après maintenant. */
+    private AnnouncementEntity buildAnnouncementDepartingIn(java.time.Duration fromNow, String zone) {
+        AnnouncementEntity a = buildAnnouncement();
+        java.time.ZonedDateTime departure = java.time.ZonedDateTime.now(java.time.ZoneId.of(zone)).plus(fromNow);
+        a.setTimezone(zone);
+        a.setDepartureDate(departure.toLocalDate());
+        a.setDepartureTime(departure.toLocalTime());
+        return a;
+    }
+
+    private BidEntity stubConfirmDelivery(BidStatus status, AnnouncementEntity ann) {
+        BidEntity bid = buildBid(status, "qt");
+        bid.setConfirmationCode("123456");
+        bid.setConfirmationCodeAttempts(0);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+        when(userRepository.findByFirebaseUid("uid-traveler"))
+                .thenReturn(Optional.of(buildUser(travelerId, "uid-traveler")));
+        return bid;
+    }
+
+    private void assertRefusedBeforeDeparture(BidEntity bid, BidStatus statusBefore) {
+        assertYadonyError(() -> service.confirmDelivery(bidId, new ConfirmDeliveryRequest("123456"), "uid-traveler"),
+                "trip-not-departed");
+        assertThat(bid.getStatus()).isEqualTo(statusBefore);
+        assertThat(bid.getConfirmationCode()).isEqualTo("123456");
+        assertThat(bid.getConfirmationCodeAttempts()).isZero();
+        verify(eventPublisher, never()).publishEvent(any());
+        verify(trackingEventRepository, never()).save(any());
+        verify(bidRepository, never()).save(any());
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.EnumSource(value = BidStatus.class,
+            names = {"ACCEPTED", "HANDED_OVER", "IN_TRANSIT", "ARRIVED"})
+    void confirmDelivery_laVeilleDuDepart_refuseQuelQueSoitLeStatut(BidStatus status) {
+        // Recette FLUTTER-CB : trajet du 06/10 06:00, code saisi le 05/10 06:36.
+        BidEntity bid = stubConfirmDelivery(status,
+                buildAnnouncementDepartingIn(java.time.Duration.ofHours(23).plusMinutes(24), "Africa/Dakar"));
+
+        assertRefusedBeforeDeparture(bid, status);
+    }
+
+    @Test
+    void confirmDelivery_avantLeDepart_codeFauxNeConsommePasDEssai() {
+        BidEntity bid = stubConfirmDelivery(BidStatus.HANDED_OVER,
+                buildAnnouncementDepartingIn(java.time.Duration.ofHours(2), "Europe/Paris"));
+
+        assertYadonyError(() -> service.confirmDelivery(bidId, new ConfirmDeliveryRequest("000000"), "uid-traveler"),
+                "trip-not-departed");
+        assertThat(bid.getConfirmationCodeAttempts()).isZero();
+    }
+
+    @Test
+    void confirmDelivery_avantLeDepart_refusJournalise_sansDonneePersonnelle() {
+        stubConfirmDelivery(BidStatus.HANDED_OVER,
+                buildAnnouncementDepartingIn(java.time.Duration.ofMinutes(5), "Europe/Paris"));
+
+        catchThrowable(() -> service.confirmDelivery(bidId, new ConfirmDeliveryRequest("123456"), "uid-traveler"));
+
+        verify(auditService).log("TRACKING_EVENT", bidId, "DELIVERY_REFUSED_TRIP_NOT_DEPARTED", travelerId,
+                java.util.Map.of("bidId", bidId.toString(), "bidStatus", "HANDED_OVER"));
+    }
+
+    @Test
+    void confirmDelivery_avantLeDepart_erreur422_messageFrancais() {
+        stubConfirmDelivery(BidStatus.HANDED_OVER,
+                buildAnnouncementDepartingIn(java.time.Duration.ofHours(1), "Europe/Paris"));
+
+        Throwable thrown = catchThrowable(() ->
+                service.confirmDelivery(bidId, new ConfirmDeliveryRequest("123456"), "uid-traveler"));
+
+        YadonyBusinessException ex = (YadonyBusinessException) thrown;
+        assertThat(ex.getStatus()).isEqualTo(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY);
+        assertThat(ex.getErrorCode()).isEqualTo(TrackingService.TRIP_NOT_DEPARTED);
+        assertThat(ex.getMessage()).isEqualTo(
+                "La livraison ne peut être confirmée qu'après le départ du trajet. Réessayez après le trajet.");
+    }
+
+    @Test
+    void confirmDelivery_avantLeDepart_messageAnglais() {
+        TestMessages.requestWithAcceptLanguage("en");
+        stubConfirmDelivery(BidStatus.HANDED_OVER,
+                buildAnnouncementDepartingIn(java.time.Duration.ofHours(1), "Europe/Paris"));
+
+        Throwable thrown = catchThrowable(() ->
+                service.confirmDelivery(bidId, new ConfirmDeliveryRequest("123456"), "uid-traveler"));
+
+        assertThat(thrown).hasMessage(
+                "Delivery can only be confirmed once the trip has departed. Please try again after the trip.");
+    }
+
+    @Test
+    void confirmDelivery_uneMinuteApresLeDepart_confirme() {
+        BidEntity bid = stubConfirmDelivery(BidStatus.HANDED_OVER,
+                buildAnnouncementDepartingIn(java.time.Duration.ofMinutes(-1), "Africa/Dakar"));
+        when(trackingEventRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.confirmDelivery(bidId, new ConfirmDeliveryRequest("123456"), "uid-traveler");
+
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.COMPLETED);
+        verify(eventPublisher).publishEvent(any(DeliveryConfirmedEvent.class));
+    }
+
+    @Test
+    void confirmDelivery_heureDeDepartLueDansLeFuseauDuTrajet_dejaPartiAKiritimati() {
+        // 1 h passée à Kiritimati (UTC+14) : lue à Paris, cette heure murale serait ~12 h
+        // dans le futur et la livraison serait refusée à tort.
+        BidEntity bid = stubConfirmDelivery(BidStatus.IN_TRANSIT,
+                buildAnnouncementDepartingIn(java.time.Duration.ofHours(-1), "Pacific/Kiritimati"));
+        when(trackingEventRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.confirmDelivery(bidId, new ConfirmDeliveryRequest("123456"), "uid-traveler");
+
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.COMPLETED);
+    }
+
+    @Test
+    void confirmDelivery_heureDeDepartLueDansLeFuseauDuTrajet_pasEncorePartiALosAngeles() {
+        // Dans 1 h à Los Angeles (UTC-7/-8) : lue à Paris, cette heure murale serait déjà
+        // passée de plusieurs heures et la livraison serait acceptée à tort.
+        BidEntity bid = stubConfirmDelivery(BidStatus.IN_TRANSIT,
+                buildAnnouncementDepartingIn(java.time.Duration.ofHours(1), "America/Los_Angeles"));
+
+        assertRefusedBeforeDeparture(bid, BidStatus.IN_TRANSIT);
+    }
+
+    @Test
+    void confirmDelivery_sansHeureDeDepart_refuseLeJourMemeDuDepart() {
+        AnnouncementEntity ann = buildAnnouncement();
+        ann.setTimezone("Africa/Dakar");
+        ann.setDepartureDate(LocalDate.now(java.time.ZoneId.of("Africa/Dakar")));
+        ann.setDepartureTime(null);
+        BidEntity bid = stubConfirmDelivery(BidStatus.HANDED_OVER, ann);
+
+        assertRefusedBeforeDeparture(bid, BidStatus.HANDED_OVER);
+    }
+
+    @Test
+    void confirmDelivery_sansHeureDeDepart_accepteLeLendemainDuDepart() {
+        AnnouncementEntity ann = buildAnnouncement();
+        ann.setTimezone("Africa/Dakar");
+        ann.setDepartureDate(LocalDate.now(java.time.ZoneId.of("Africa/Dakar")).minusDays(1));
+        ann.setDepartureTime(null);
+        BidEntity bid = stubConfirmDelivery(BidStatus.HANDED_OVER, ann);
+        when(trackingEventRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.confirmDelivery(bidId, new ConfirmDeliveryRequest("123456"), "uid-traveler");
+
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.COMPLETED);
+    }
+
+    @Test
+    void confirmDelivery_avantLeDepart_lesControlesDeProprieteRestentPrioritaires() {
+        // Un tiers ne doit pas apprendre la date de départ du trajet : 403 d'abord.
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(buildBid(BidStatus.HANDED_OVER, "qt")));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(
+                buildAnnouncementDepartingIn(java.time.Duration.ofHours(5), "Europe/Paris")));
+        when(userRepository.findByFirebaseUid("uid-other"))
+                .thenReturn(Optional.of(buildUser(UUID.randomUUID(), "uid-other")));
+
+        assertYadonyError(() -> service.confirmDelivery(bidId, new ConfirmDeliveryRequest("123456"), "uid-other"),
+                "forbidden");
+        verify(auditService, never()).log(anyString(), any(), anyString(), any(), anyMap());
     }
 
     // ── getConfirmationCode ───────────────────────────────────────────────────
@@ -1605,7 +1781,7 @@ class TrackingServiceTest {
         bid.setConfirmationCode("123456");
         bid.setConfirmationCodeAttempts(0);
         when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
-        when(announcementRepository.findById(annId)).thenReturn(Optional.of(buildAnnouncement()));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(buildDepartedAnnouncement()));
         when(userRepository.findByFirebaseUid("uid-traveler"))
                 .thenReturn(Optional.of(buildUser(travelerId, "uid-traveler")));
         when(trackingEventRepository.save(any())).thenAnswer(inv -> {
@@ -1629,7 +1805,7 @@ class TrackingServiceTest {
         bid.setConfirmationCode("123456");
         bid.setConfirmationCodeAttempts(0);
         when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
-        when(announcementRepository.findById(annId)).thenReturn(Optional.of(buildAnnouncement()));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(buildDepartedAnnouncement()));
         when(userRepository.findByFirebaseUid("uid-traveler"))
                 .thenReturn(Optional.of(buildUser(travelerId, "uid-traveler")));
         when(trackingEventRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));

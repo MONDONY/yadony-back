@@ -33,6 +33,8 @@ import com.google.zxing.client.j2se.MatrixToImageWriter;
 import com.google.zxing.common.BitMatrix;
 import com.google.zxing.qrcode.QRCodeWriter;
 import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
@@ -41,6 +43,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.io.ByteArrayOutputStream;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Base64;
@@ -53,6 +56,11 @@ import java.util.stream.Collectors;
 @Service
 @Transactional(readOnly = true)
 public class TrackingService {
+
+    private static final Logger log = LoggerFactory.getLogger(TrackingService.class);
+
+    /** Livraison confirmée avant le départ du trajet (FLUTTER-CB). */
+    static final String TRIP_NOT_DEPARTED = "trip-not-departed";
 
     private final BidRepository bidRepository;
     private final PaymentRepository paymentRepository;
@@ -645,6 +653,10 @@ public class TrackingService {
                     "Bid Not Accepted", "Ce colis ne peut pas être confirmé dans son état actuel");
         }
 
+        // Avant toute lecture du code : un essai avant le départ ne consomme aucune
+        // des trois tentatives et ne révèle pas si le code est juste.
+        assertTripDeparted(bid, announcement, traveler);
+
         if (bid.getConfirmationCode() == null) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "code-not-generated",
                     "Code Not Generated",
@@ -713,6 +725,29 @@ public class TrackingService {
                 traveler.getId(), Map.of("bidId", bid.getId().toString()));
 
         return toEventResponse(event, null);
+    }
+
+    /**
+     * Le colis ne peut être livré qu'une fois le trajet parti (FLUTTER-CB). Le code de
+     * retrait existe dès la remise (scan DEPART), souvent la veille : le saisir avant le
+     * départ terminait le colis et, pour un paiement carte, libérait le séquestre au
+     * voyageur avant le transport. Règle de départ unique : {@code DepartureRules}
+     * (date + heure dans le fuseau du trajet ; sans heure, le lendemain du jour de départ).
+     * Les statuts IN_TRANSIT et ARRIVED ne suffisent pas : le voyageur les pose lui-même,
+     * sans contrôle de date.
+     */
+    private void assertTripDeparted(BidEntity bid, AnnouncementEntity announcement, UserEntity traveler) {
+        if (com.yadony.api.matching.DepartureRules.hasDeparted(announcement, Instant.now())) {
+            return;
+        }
+        log.warn("Livraison refusée avant le départ du trajet : bidId={}", bid.getId());
+        auditService.log("TRACKING_EVENT", bid.getId(), "DELIVERY_REFUSED_TRIP_NOT_DEPARTED",
+                traveler.getId(), Map.of(
+                        "bidId", bid.getId().toString(),
+                        "bidStatus", bid.getStatus().name()));
+        throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, TRIP_NOT_DEPARTED,
+                "Trip Not Departed",
+                messagesResolver.forRequest().get("problem.trip-not-departed"));
     }
 
     /**
