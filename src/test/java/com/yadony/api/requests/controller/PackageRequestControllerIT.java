@@ -287,6 +287,67 @@ class PackageRequestControllerIT {
         verify(insightService).recordView(TRAVELER_UUID, response);
     }
 
+    private PackageRequestCreateRequest requestWithWeight(String weightKg) {
+        return new PackageRequestCreateRequest(
+            "Paris", "Dakar",
+            LocalDate.now().plusDays(7), 2,
+            new BigDecimal(weightKg), "vetements",
+            "Cadeau", new BigDecimal("28.00"), null,
+            "10e", "Plateau",
+            true, java.util.EnumSet.of(com.yadony.api.payments.cash.PaymentMethod.STRIPE)
+        , List.of(), null);
+    }
+
+    /** STAGING-M : 32 kg est la borne haute commune DTO / app / base (V291). */
+    @Test
+    void post_create_weight32_returns201() throws Exception {
+        UUID newId = UUID.randomUUID();
+        when(service.create(eq(SENDER_UUID), any())).thenReturn(fakeResponse(newId));
+
+        mockMvc.perform(post("/package-requests")
+                .with(authentication(authAs("uid-sender", "SENDER")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(requestWithWeight("32.0"))))
+            .andExpect(status().isCreated());
+        verify(service).create(eq(SENDER_UUID), argThat(r -> r.weightKg().compareTo(new BigDecimal("32")) == 0));
+    }
+
+    /** Au-delà de 32 kg : refus Bean Validation (422 du projet), le service n'est pas appelé. */
+    @Test
+    void post_create_weightAbove32_rejectedByValidation() throws Exception {
+        mockMvc.perform(post("/package-requests")
+                .with(authentication(authAs("uid-sender", "SENDER")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(requestWithWeight("32.01"))))
+            .andExpect(status().isUnprocessableEntity())
+            .andExpect(jsonPath("$.violations.weightKg").exists());
+        verify(service, org.mockito.Mockito.never()).create(any(), any());
+    }
+
+    @Test
+    void put_update_weight32_returns200() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(service.update(eq(SENDER_UUID), eq(id), any())).thenReturn(fakeResponse(id));
+
+        mockMvc.perform(put("/package-requests/" + id)
+                .with(authentication(authAs("uid-sender", "SENDER")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(requestWithWeight("32.0"))))
+            .andExpect(status().isOk());
+    }
+
+    @Test
+    void put_update_weightAbove32_rejectedByValidation() throws Exception {
+        UUID id = UUID.randomUUID();
+        mockMvc.perform(put("/package-requests/" + id)
+                .with(authentication(authAs("uid-sender", "SENDER")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(requestWithWeight("32.01"))))
+            .andExpect(status().isUnprocessableEntity())
+            .andExpect(jsonPath("$.violations.weightKg").exists());
+        verify(service, org.mockito.Mockito.never()).update(any(), any(), any());
+    }
+
     @Test
     void put_update_returns200() throws Exception {
         UUID id = UUID.randomUUID();

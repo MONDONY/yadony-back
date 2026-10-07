@@ -1,6 +1,7 @@
 package com.yadony.api.common.stripe;
 
 import io.sentry.Sentry;
+import io.sentry.SentryLevel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,6 +18,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executor;
@@ -54,6 +56,9 @@ public class AdminAlertService {
             "SENTRY_ISSUE_UNRESOLVED",
             "KYC_IDENTITY_REJECTED",
             "EXCHANGE_RATE_SYNC_REJECTED");
+
+    /** Préfixe du message (log et issue Sentry) de toute alerte admin. */
+    public static final String PREFIXE_ALERTE = "[ADMIN ALERT] ";
 
     /** Préfixe des alertes nées d'un webhook Sentry. Voir {@link #raise}. */
     private static final String PREFIXE_SENTRY = "SENTRY_ISSUE_";
@@ -127,9 +132,16 @@ public class AdminAlertService {
         // rien ne dédoublonne la boucle.
         boolean remonteVersSentry = gravite != Gravite.INFO && !code.startsWith(PREFIXE_SENTRY);
         if (remonteVersSentry) {
+            // Une seule issue Sentry par alerte : celle-ci. Le log.error de journaliser()
+            // reste (métrique Grafana, Sentry Logs) mais son ÉVÉNEMENT est écarté par
+            // AdminAlertSentryFilter, qui reconnaît la capture à son tag admin_alert.
+            // L'empreinte par code sépare les issues (un MONEY_INVARIANT ne se mêle plus
+            // aux autres) sans que le détail variable n'en crée une par occurrence.
             Sentry.withScope(scope -> {
                 context.forEach((k, v) -> scope.setExtra(k, String.valueOf(v)));
-                Sentry.captureMessage("[ADMIN ALERT] " + code + " — " + detail);
+                scope.setTag(AdminAlertSentryFilter.TAG_ADMIN_ALERT, code);
+                scope.setFingerprint(List.of("admin-alert", code));
+                Sentry.captureMessage(PREFIXE_ALERTE + code + " — " + detail, niveauSentry(gravite));
             });
         }
 
@@ -154,6 +166,15 @@ public class AdminAlertService {
         if (CODES_INFO.contains(code)) return Gravite.INFO;
         if (CODES_AVERTISSEMENT.contains(code)) return Gravite.AVERTISSEMENT;
         return Gravite.INCIDENT;
+    }
+
+    /** Niveau de l'issue Sentry : celui du log de la même alerte. */
+    static SentryLevel niveauSentry(Gravite gravite) {
+        return switch (gravite) {
+            case INFO -> SentryLevel.INFO;
+            case AVERTISSEMENT -> SentryLevel.WARNING;
+            case INCIDENT -> SentryLevel.ERROR;
+        };
     }
 
     private void journaliser(Gravite gravite, String code, String detail, Map<String, Object> context) {

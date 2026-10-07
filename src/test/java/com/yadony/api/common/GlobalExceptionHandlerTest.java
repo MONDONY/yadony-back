@@ -519,4 +519,99 @@ class GlobalExceptionHandlerTest {
             assertThat(response.getBody().getType().toString()).contains("bad-multipart");
         }
     }
+
+    @Nested
+    @DisplayName("handleDataIntegrity()")
+    class DataIntegrityTests {
+
+        private final IScope scope = mock(IScope.class);
+
+        private void stubSentry(MockedStatic<Sentry> sentryMock) {
+            sentryMock.when(() -> Sentry.withScope(any(ScopeCallback.class))).thenAnswer(inv -> {
+                inv.getArgument(0, ScopeCallback.class).run(scope);
+                return null;
+            });
+            sentryMock.when(() -> Sentry.captureException(any())).thenAnswer(inv -> null);
+        }
+
+        private org.springframework.dao.DataIntegrityViolationException violation(
+                String sqlState, String constraintName) {
+            java.sql.SQLException sql = new java.sql.SQLException(
+                    "ERROR: new row for relation \"package_requests\" violates check constraint", sqlState);
+            org.hibernate.exception.ConstraintViolationException hibernate =
+                    new org.hibernate.exception.ConstraintViolationException(
+                            "could not execute statement", sql, "insert into package_requests ...", constraintName);
+            return new org.springframework.dao.DataIntegrityViolationException(
+                    "could not execute statement [insert into package_requests ...]", hibernate);
+        }
+
+        @Test
+        @DisplayName("contrainte CHECK chk_ → 422 RFC 7807 sans SQL + capture Sentry")
+        void checkConstraint_returns422WithoutSql() {
+            var ex = violation("23514", "chk_pkg_req_weight");
+            try (MockedStatic<Sentry> sentryMock = mockStatic(Sentry.class)) {
+                stubSentry(sentryMock);
+
+                ResponseEntity<ProblemDetail> response = handler.handleDataIntegrity(ex);
+
+                assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                ProblemDetail body = response.getBody();
+                assertThat(body.getType().toString()).endsWith("/constraint-violation");
+                assertThat(body.getTitle()).isEqualTo("Constraint Violation");
+                assertThat(body.getProperties()).containsEntry("code", "constraint-violation");
+                assertThat(body.getDetail()).isNotBlank()
+                        .doesNotContain("insert").doesNotContain("chk_").doesNotContain("package_requests");
+                sentryMock.verify(() -> Sentry.captureException(ex));
+                verify(scope).setTag("db_constraint", "chk_pkg_req_weight");
+            }
+        }
+
+        @Test
+        @DisplayName("SQLState 23514 sans nom de contrainte → 422")
+        void checkSqlStateOnly_returns422() {
+            var ex = new org.springframework.dao.DataIntegrityViolationException("x",
+                    new java.sql.SQLException("check violated", "23514"));
+            try (MockedStatic<Sentry> sentryMock = mockStatic(Sentry.class)) {
+                stubSentry(sentryMock);
+                assertThat(handler.handleDataIntegrity(ex).getStatusCode())
+                        .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                verify(scope).setTag("db_constraint", "check");
+            }
+        }
+
+        @Test
+        @DisplayName("violation d'unicité 23505 → 500 inchangé")
+        void uniqueViolation_keeps500() {
+            var ex = violation("23505", "uq_users_phone");
+            try (MockedStatic<Sentry> sentryMock = mockStatic(Sentry.class)) {
+                stubSentry(sentryMock);
+
+                ResponseEntity<ProblemDetail> response = handler.handleDataIntegrity(ex);
+
+                assertThat(response.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+                assertThat(response.getBody().getType().toString()).contains("internal-error");
+                sentryMock.verify(() -> Sentry.captureException(ex));
+            }
+        }
+
+        @Test
+        @DisplayName("violation sans cause SQL → 500 inchangé")
+        void noSqlCause_keeps500() {
+            var ex = new org.springframework.dao.DataIntegrityViolationException("x");
+            try (MockedStatic<Sentry> sentryMock = mockStatic(Sentry.class)) {
+                stubSentry(sentryMock);
+                assertThat(handler.handleDataIntegrity(ex).getStatusCode())
+                        .isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+            }
+        }
+
+        @Test
+        @DisplayName("nom chk_ sans SQLState → reconnu comme CHECK")
+        void checkConstraintName_byPrefix() {
+            assertThat(GlobalExceptionHandler.checkConstraintName(violation(null, "chk_bids_weight_kg")))
+                    .isEqualTo("chk_bids_weight_kg");
+            assertThat(GlobalExceptionHandler.checkConstraintName(violation("23503", "fk_bids_user")))
+                    .isNull();
+        }
+    }
 }

@@ -113,4 +113,37 @@ class AdminSentryWebhookControllerTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         verifyNoInteractions(adminAlert);
     }
+
+    @Test
+    void handle_issueNeeDUneAlerteAdmin_neReleveRien() throws Exception {
+        // L'alerte d'origine est déjà partie sur Telegram : pas d'écho SENTRY_ISSUE_CREATED.
+        String body = "{\"action\":\"created\",\"data\":{\"issue\":{"
+                + "\"title\":\"[ADMIN ALERT] MONEY_INVARIANT — Solde incohérent\","
+                + "\"shortId\":\"YADONY-BACK-STAGING-K\"}}}";
+
+        ResponseEntity<Void> response = controller.handle(body, sign(body));
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        verifyNoInteractions(adminAlert);
+    }
+
+    @Test
+    void handle_issueNeeDUneAlerteAdmin_regression_neReleveRienNonPlus() throws Exception {
+        String body = "{\"action\":\"unresolved\",\"data\":{\"issue\":{"
+                + "\"title\":\"  [ADMIN ALERT] STRIPE_PAYOUT_FAILED — Virement refusé\"}}}";
+
+        controller.handle(body, sign(body));
+
+        verifyNoInteractions(adminAlert);
+    }
+
+    @Test
+    void handle_issueQuiCiteAdminAlertSansLeCommencer_releveToujours() throws Exception {
+        String body = "{\"action\":\"created\",\"data\":{\"issue\":{"
+                + "\"title\":\"NPE near [ADMIN ALERT] parsing\"}}}";
+
+        controller.handle(body, sign(body));
+
+        verify(adminAlert).raise(eq("SENTRY_ISSUE_CREATED"), anyString(), anyMap());
+    }
 }
