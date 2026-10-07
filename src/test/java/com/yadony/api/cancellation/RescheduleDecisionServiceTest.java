@@ -71,6 +71,7 @@ class RescheduleDecisionServiceTest {
                 cancellationRepository, rematchService, auditService, eventPublisher);
         UserEntity sender = new UserEntity();
         ReflectionTestUtils.setField(sender, "id", senderId);
+        sender.setFirstName("Awa");
         lenient().when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
         traveler = new UserEntity();
         ReflectionTestUtils.setField(traveler, "id", travelerId);
@@ -110,7 +111,7 @@ class RescheduleDecisionServiceTest {
         assertThat(bid.getPendingRescheduleId()).isNull();
         assertThat(bid.getStatus()).isEqualTo(BidStatus.ACCEPTED);
         verify(eventPublisher).publishEvent(new TripRescheduleDecidedEvent(
-                bidId, senderId, travelerId, RescheduleDecision.KEEP));
+                bidId, senderId, travelerId, RescheduleDecision.KEEP, "Awa"));
         verify(auditService).log(eq("BID"), eq(bidId), eq("TRIP_RESCHEDULE_KEPT"), eq(senderId), any());
         verify(cancellationRepository, never()).save(any());
     }
@@ -143,7 +144,7 @@ class RescheduleDecisionServiceTest {
         assertThat(refund.getBidPaymentMethods()).containsEntry(bidId, "STRIPE");
         assertThat(refund.getRematchBySender().get(senderId).suggestionCount()).isEqualTo(2);
         assertThat(events.getAllValues().get(1)).isEqualTo(new TripRescheduleDecidedEvent(
-                bidId, senderId, travelerId, RescheduleDecision.WITHDRAW));
+                bidId, senderId, travelerId, RescheduleDecision.WITHDRAW, "Awa"));
     }
 
     @Test

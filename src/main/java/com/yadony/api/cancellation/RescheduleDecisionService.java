@@ -99,7 +99,7 @@ public class RescheduleDecisionService {
             withdraw(bid, announcement, sender, rescheduleId);
         }
         eventPublisher.publishEvent(new TripRescheduleDecidedEvent(
-                bidId, sender.getId(), announcement.getTravelerId(), decision));
+                bidId, sender.getId(), announcement.getTravelerId(), decision, sender.getFirstName()));
     }
 
     private void withdraw(BidEntity bid, AnnouncementEntity announcement, UserEntity sender, UUID rescheduleId) {

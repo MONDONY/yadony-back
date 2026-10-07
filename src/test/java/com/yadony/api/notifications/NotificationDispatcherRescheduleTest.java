@@ -103,12 +103,12 @@ class NotificationDispatcherRescheduleTest {
     @Test
     void onTripRescheduleDecided_tellsTheTraveler() {
         dispatcher.onTripRescheduleDecided(new TripRescheduleDecidedEvent(bidId, senderId, travelerId,
-                RescheduleDecision.KEEP));
+                RescheduleDecision.KEEP, "Awa"));
         dispatcher.onTripRescheduleDecided(new TripRescheduleDecidedEvent(otherBidId, senderId, travelerId,
                 RescheduleDecision.WITHDRAW));
 
-        verify(notificationService).persist(eq(travelerId), eq("TRIP_RESCHEDULE_KEPT"), eq("Colis maintenu"),
-                eq("L'expéditeur garde son colis sur la nouvelle date de votre trajet."), anyMap(), eq(false));
+        verify(notificationService).persist(eq(travelerId), eq("TRIP_RESCHEDULE_KEPT"), eq("Report accepté"),
+                eq("Awa garde son colis sur la nouvelle date."), anyMap(), eq(false));
         verify(notificationService).persist(eq(travelerId), eq("TRIP_RESCHEDULE_WITHDRAWN"), eq("Colis retiré"),
                 eq("L'expéditeur a retiré son colis après le report. Il est remboursé."),
                 anyMap(), eq(false));

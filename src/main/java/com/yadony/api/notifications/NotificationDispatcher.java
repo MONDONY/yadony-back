@@ -465,7 +465,7 @@ public class NotificationDispatcher {
         if (event.travelerId() == null) return;
         Messages m = messagesFor(event.travelerId());
         boolean kept = event.decision() == RescheduleDecision.KEEP;
-        var text = kept ? NotificationTexts.tripRescheduleKept(m) : NotificationTexts.tripRescheduleWithdrawn(m);
+        var text = kept ? NotificationTexts.tripRescheduleKept(m, event.senderFirstName()) : NotificationTexts.tripRescheduleWithdrawn(m);
         notifyUser(event.travelerId(), text.title(), text.body(),
                 Map.of("type", kept ? "TRIP_RESCHEDULE_KEPT" : "TRIP_RESCHEDULE_WITHDRAWN",
                        "bidId", event.bidId().toString()));

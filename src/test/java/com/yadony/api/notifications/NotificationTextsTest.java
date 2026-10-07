@@ -76,7 +76,8 @@ class NotificationTextsTest {
         java.time.LocalDate longestDate = java.time.LocalDate.of(2026, 9, 30);
         map.put("tripRescheduled", NotificationTexts.tripRescheduled(m, longestDate, true));
         map.put("tripRescheduled info", NotificationTexts.tripRescheduled(m, longestDate, false));
-        map.put("tripRescheduleKept", NotificationTexts.tripRescheduleKept(m));
+        map.put("tripRescheduleKept", NotificationTexts.tripRescheduleKept(m, NOM));
+        map.put("tripRescheduleKept sans prénom", NotificationTexts.tripRescheduleKept(m, null));
         map.put("tripRescheduleWithdrawn", NotificationTexts.tripRescheduleWithdrawn(m));
         map.put("travelerNoShow", NotificationTexts.travelerNoShow(m));
         map.put("tripArrived", NotificationTexts.tripArrived(m));
@@ -362,6 +363,23 @@ class NotificationTextsTest {
         var two = NotificationTexts.corridorAlertDigest(en, true, 2, "Paris", "Dakar");
         assertThat(two.title()).isEqualTo("2 trips for your alert");
         assertThat(two.body()).isEqualTo("Paris to Dakar: 2 trips match.");
+    }
+
+    @Test
+    @DisplayName("FLUTTER-EK : report accepté, prénom de l'expéditeur, repli générique")
+    void tripRescheduleKept_bothLanguages() {
+        var fr = TestMessages.fr();
+        var en = TestMessages.en();
+        assertThat(NotificationTexts.tripRescheduleKept(fr, "Awa").title()).isEqualTo("Report accepté");
+        assertThat(NotificationTexts.tripRescheduleKept(fr, "Awa").body())
+                .isEqualTo("Awa garde son colis sur la nouvelle date.");
+        assertThat(NotificationTexts.tripRescheduleKept(fr, " ").body())
+                .isEqualTo("Un expéditeur garde son colis sur la nouvelle date.");
+        assertThat(NotificationTexts.tripRescheduleKept(en, "Awa").title()).isEqualTo("Reschedule accepted");
+        assertThat(NotificationTexts.tripRescheduleKept(en, "Awa").body())
+                .isEqualTo("Awa is keeping their parcel on the new date.");
+        assertThat(NotificationTexts.tripRescheduleKept(en, null).body())
+                .isEqualTo("A sender is keeping their parcel on the new date.");
     }
 
     @Test

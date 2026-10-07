@@ -589,7 +589,7 @@ public class AnnouncementService {
         AnnouncementEntity saved = announcementRepository.save(announcement);
 
         if (pricingMode == PricingMode.MIXED) {
-            priceGridService.snapshotToAnnouncement(user.getId(), saved.getId());
+            priceGridService.snapshotToAnnouncement(user.getId(), saved.getId(), saved.getCurrency());
         }
 
         auditService.log(
