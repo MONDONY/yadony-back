@@ -707,35 +707,11 @@ public class AnnouncementService {
     }
 
     /**
-     * Un trajet est « parti » quand son instant de départ — (date + heure)
-     * interprétées dans le fuseau PROPRE du trajet — est atteint ou dépassé par
-     * {@code now}. Sans heure de départ, il est parti une fois sa date locale
-     * entièrement passée. Statique + paramètre {@code now} → testable de façon
-     * déterministe, indépendamment de l'horloge et du fuseau du serveur.
+     * Un trajet est « parti » : règle de {@link DepartureRules#hasDeparted}, partagée
+     * avec la confirmation de livraison (FLUTTER-CB).
      */
     static boolean hasDeparted(AnnouncementEntity a, Instant now) {
-        LocalDate depDate = a.getDepartureDate();
-        if (depDate == null) {
-            return false;
-        }
-        ZoneId zone = resolveZoneOrDefault(a.getTimezone());
-        LocalTime depTime = a.getDepartureTime();
-        if (depTime != null) {
-            Instant departureAt = depDate.atTime(depTime).atZone(zone).toInstant();
-            return !departureAt.isAfter(now);
-        }
-        return depDate.isBefore(now.atZone(zone).toLocalDate());
-    }
-
-    private static ZoneId resolveZoneOrDefault(String zone) {
-        if (zone == null || zone.isBlank()) {
-            return DEFAULT_ZONE;
-        }
-        try {
-            return ZoneId.of(zone);
-        } catch (Exception e) {
-            return DEFAULT_ZONE;
-        }
+        return DepartureRules.hasDeparted(a, now);
     }
 
     /**
