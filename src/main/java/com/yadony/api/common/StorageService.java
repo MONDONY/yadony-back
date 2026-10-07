@@ -143,6 +143,63 @@ public class StorageService {
         return new UploadedRequestPhoto(mainKey, thumbKey);
     }
 
+    /** Clés d'une photo de messagerie : image redimensionnée et miniature carrée. */
+    public record StoredImage(String mainKey, String thumbnailKey) {}
+
+    /**
+     * Valide une photo envoyée (non vide, 10 Mo, JPEG/PNG/WebP, octets d'en-tête cohérents
+     * avec le type déclaré) sans la stocker. Mêmes règles et mêmes erreurs que
+     * {@link #uploadFile}.
+     */
+    public void validateImageUpload(MultipartFile file) {
+        validateFile(file);
+    }
+
+    /**
+     * Photo de messagerie (FLUTTER-B4) : même traitement que {@link #uploadRequestPhoto}
+     * (bord long ≤ 1280 px, miniature 400×400, JPEG 80 %, EXIF supprimées par le
+     * ré-encodage), stockée sous {@code {prefix}{baseName}_full.jpg} et
+     * {@code {prefix}{baseName}_thumb.jpg}.
+     */
+    public StoredImage storeMessagingImage(String prefix, String baseName, byte[] bytes, String contentType) {
+        validatePrefix(prefix);
+        ImageProcessingService.ProcessedImage processed = imageProcessingService.process(bytes, contentType);
+        String mainKey  = prefix + baseName + "_full.jpg";
+        String thumbKey = prefix + baseName + "_thumb.jpg";
+        putBytes(mainKey, processed.main(), "image/jpeg");
+        try {
+            putBytes(thumbKey, processed.thumbnail(), "image/jpeg");
+        } catch (RuntimeException e) {
+            deleteQuietly(mainKey);
+            throw e;
+        }
+        return new StoredImage(mainKey, thumbKey);
+    }
+
+    /**
+     * Octets d'un objet, vide s'il n'existe pas (purgé entre-temps). Toute autre erreur
+     * remonte : une panne R2 ne doit pas passer pour une photo expirée.
+     */
+    public java.util.Optional<byte[]> downloadBytes(String objectKey) {
+        try {
+            return java.util.Optional.of(s3Client.getObjectAsBytes(GetObjectRequest.builder()
+                    .bucket(bucket)
+                    .key(objectKey)
+                    .build()).asByteArray());
+        } catch (software.amazon.awssdk.services.s3.model.NoSuchKeyException e) {
+            return java.util.Optional.empty();
+        }
+    }
+
+    /** Suppression sans exception (nettoyage après un échec), l'erreur est seulement journalisée. */
+    public void deleteQuietly(String objectKey) {
+        try {
+            deleteFile(objectKey);
+        } catch (RuntimeException e) {
+            log.warn("deleteQuietly FAILED key={}: {}", objectKey, e.toString());
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Private S3 helpers
     // -----------------------------------------------------------------------
