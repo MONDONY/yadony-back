@@ -53,6 +53,19 @@ class SearchCityRepositoryIT {
     @Autowired
     private SearchCityRepository repository;
 
+    @Autowired
+    private com.yadony.api.matching.AnnouncementRepository announcementRepository;
+
+    /** FLUTTER-EH : filet de sécurité ville → pays des trajets, sur le vrai GeoNames. */
+    @Test
+    void countryCodeByCityName_picksMostPopulatedHomonym() {
+        assertThat(announcementRepository.findCountryCodeByCityName("Cotonou")).contains("BJ");
+        assertThat(announcementRepository.findCountryCodeByCityName(" abidjan ")).contains("CI");
+        // Houston (Écosse, 6 k hab.) existe aussi : la plus peuplée l'emporte.
+        assertThat(announcementRepository.findCountryCodeByCityName("Houston")).contains("US");
+        assertThat(announcementRepository.findCountryCodeByCityName("Zzzqqqxxx")).isEmpty();
+    }
+
     @Test
     void exactMatchAgainstRealData_scoresOneAndSortsFirst() {
         List<SearchCityRepository.CityMatch> matches = repository.findSimilar("bamako", 0.4, 5);

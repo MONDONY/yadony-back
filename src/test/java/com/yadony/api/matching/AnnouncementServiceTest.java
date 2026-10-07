@@ -575,6 +575,28 @@ class AnnouncementServiceTest {
         }
 
         @Test
+        @DisplayName("FLUTTER-EH — codes pays absents → déduits du référentiel des villes")
+        void create_withoutCountryCodes_derivesCodesFromCities() {
+            UserEntity traveler = buildTraveler();
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            ArgumentCaptor<AnnouncementEntity> captor = ArgumentCaptor.forClass(AnnouncementEntity.class);
+            when(announcementRepository.save(captor.capture())).thenAnswer(inv -> {
+                AnnouncementEntity a = inv.getArgument(0);
+                setId(a, ANNOUNCEMENT_ID);
+                return a;
+            });
+            when(announcementRepository.findCountryCodeByCityName("Paris")).thenReturn(Optional.of("FR"));
+            when(announcementRepository.findCountryCodeByCityName("Dakar")).thenReturn(Optional.of("SN"));
+
+            AnnouncementResponse result = announcementService.createAnnouncement(FIREBASE_UID, buildRequest());
+
+            assertThat(captor.getValue().getDepartureCountryCode()).isEqualTo("FR");
+            assertThat(captor.getValue().getArrivalCountryCode()).isEqualTo("SN");
+            assertThat(result.departureCountryCode()).isEqualTo("FR");
+            assertThat(result.arrivalCountryCode()).isEqualTo("SN");
+        }
+
+        @Test
         @DisplayName("utilisateur sans rôle TRAVELER → rôle ajouté automatiquement")
         void create_userWithoutTravelerRole_addsTravelerRole() {
             UserEntity user = new UserEntity();
@@ -1429,6 +1451,71 @@ class AnnouncementServiceTest {
             assertThat(result.departureCity()).isEqualTo("Lyon");
             assertThat(result.arrivalCity()).isEqualTo("Abidjan");
             verify(auditService).log(eq("USER"), any(), eq("ANNOUNCEMENT_UPDATED"), any(), any());
+        }
+
+        private AnnouncementRequest updateRequest(String dep, String arr, String depCode, String arrCode) {
+            return new AnnouncementRequest(
+                    dep, arr, LocalDate.now().plusDays(15),
+                    null, null,
+                    new AddressDto("Départ", 45.760, 4.860),
+                    new AddressDto("Arrivée", 5.261, -3.927),
+                    BigDecimal.valueOf(25), BigDecimal.valueOf(6),
+                    TransportMode.PLANE,
+                    null, null, null, null, null, null,
+                    depCode, arrCode,
+                    LocalDate.now().plusDays(15).atTime(18, 0),
+                    null,
+                    null,
+                null);
+        }
+
+        private AnnouncementEntity stubUpdatable(String depCode, String arrCode) {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity a = buildAnnouncement(traveler);
+            a.setDepartureCountryCode(depCode);
+            a.setArrivalCountryCode(arrCode);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            return a;
+        }
+
+        @Test
+        @DisplayName("FLUTTER-EH — modification sans code pays, villes inchangées → codes conservés et servis au détail")
+        void update_withoutCodes_sameCities_keepsExistingCodes() {
+            stubUpdatable("FR", "SN");
+
+            AnnouncementDetailResponse result = announcementService.updateAnnouncement(
+                    ANNOUNCEMENT_ID, FIREBASE_UID, updateRequest("Paris", "Dakar", null, null));
+
+            assertThat(result.departureCountryCode()).isEqualTo("FR");
+            assertThat(result.arrivalCountryCode()).isEqualTo("SN");
+            verify(announcementRepository, never()).findCountryCodeByCityName(any());
+        }
+
+        @Test
+        @DisplayName("FLUTTER-EH — modification sans code pays, ville changée → code déduit de la nouvelle ville")
+        void update_withoutCodes_changedCity_derivesFromNewCity() {
+            stubUpdatable("FR", "SN");
+            when(announcementRepository.findCountryCodeByCityName("Abidjan")).thenReturn(Optional.of("CI"));
+
+            AnnouncementDetailResponse result = announcementService.updateAnnouncement(
+                    ANNOUNCEMENT_ID, FIREBASE_UID, updateRequest("Paris", "Abidjan", null, null));
+
+            assertThat(result.departureCountryCode()).isEqualTo("FR");
+            assertThat(result.arrivalCountryCode()).isEqualTo("CI");
+        }
+
+        @Test
+        @DisplayName("FLUTTER-EH — modification avec codes fournis → codes du client retenus (normalisés)")
+        void update_withCodes_usesProvidedCodes() {
+            stubUpdatable(null, null);
+
+            AnnouncementDetailResponse result = announcementService.updateAnnouncement(
+                    ANNOUNCEMENT_ID, FIREBASE_UID, updateRequest("Cotonou", "Abidjan", "bj", "CI"));
+
+            assertThat(result.departureCountryCode()).isEqualTo("BJ");
+            assertThat(result.arrivalCountryCode()).isEqualTo("CI");
         }
 
         /** Régression I3 : même trou côté modification — un trajet dont un colis est
