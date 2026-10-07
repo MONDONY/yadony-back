@@ -202,6 +202,84 @@ class ReportTargetResolverTest {
         assertThat(t.author().getId()).isEqualTo(author);
     }
 
+    private ReportEntity messageReport(UUID convId, String messageId) {
+        ReportEntity r = report(ReportTargetType.MESSAGE, convId, UUID.randomUUID());
+        r.setTargetMessageId(messageId);
+        return r;
+    }
+
+    private static UserEntity userWithUid(String firebaseUid) {
+        UserEntity u = user(UUID.randomUUID());
+        u.setFirebaseUid(firebaseUid);
+        return u;
+    }
+
+    @Test
+    void message_senderIdUidFirebase_auteurRetrouveParUid() {
+        UUID convId = UUID.randomUUID();
+        UserEntity author = userWithUid("fbUidAuteur123");
+        when(conversationRepo.findAllById(anyCollection())).thenReturn(List.of(conversation(convId, "conv_fs")));
+        when(firestoreService.findMessage("conv_fs", "msg_1"))
+                .thenReturn(Optional.of(new FirestoreService.MessageSnapshot("fbUidAuteur123", false)));
+        when(userRepo.findAllByFirebaseUidIn(anyCollection())).thenReturn(List.of(author));
+
+        ResolvedReportTarget t = resolver().resolve(messageReport(convId, "msg_1"));
+
+        assertThat(t.messageResolved()).isTrue();
+        assertThat(t.author()).isSameAs(author);
+        verify(userRepo).findAllByFirebaseUidIn(org.mockito.ArgumentMatchers.argThat(
+                (java.util.Collection<String> uids) -> uids.equals(java.util.Set.of("fbUidAuteur123"))));
+        verify(userRepo, never()).findAllById(any());
+    }
+
+    @Test
+    void message_uidFirebaseInconnuOuSupprime_auteurNulMaisMessageRetrouve() {
+        UUID convId = UUID.randomUUID();
+        when(conversationRepo.findAllById(anyCollection())).thenReturn(List.of(conversation(convId, "conv_fs")));
+        when(firestoreService.findMessage("conv_fs", "msg_1"))
+                .thenReturn(Optional.of(new FirestoreService.MessageSnapshot("fbUidSupprime", false)));
+        when(userRepo.findAllByFirebaseUidIn(anyCollection())).thenReturn(List.of());
+
+        ResolvedReportTarget t = resolver().resolve(messageReport(convId, "msg_1"));
+
+        assertThat(t.messageResolved()).isTrue();
+        assertThat(t.author()).isNull();
+    }
+
+    @Test
+    void message_senderIdNul_pasDAuteurNiRequeteUtilisateur() {
+        UUID convId = UUID.randomUUID();
+        when(conversationRepo.findAllById(anyCollection())).thenReturn(List.of(conversation(convId, "conv_fs")));
+        when(firestoreService.findMessage("conv_fs", "msg_1"))
+                .thenReturn(Optional.of(new FirestoreService.MessageSnapshot(null, true)));
+
+        ResolvedReportTarget t = resolver().resolve(messageReport(convId, "msg_1"));
+
+        assertThat(t.messageResolved()).isTrue();
+        assertThat(t.author()).isNull();
+        verifyNoInteractions(userRepo);
+    }
+
+    @Test
+    void lot_messages_uneSeuleRequeteParUid() {
+        UUID c1 = UUID.randomUUID(), c2 = UUID.randomUUID();
+        UserEntity a = userWithUid("uidA"), b = userWithUid("uidB");
+        when(conversationRepo.findAllById(anyCollection()))
+                .thenReturn(List.of(conversation(c1, "fs_1"), conversation(c2, "fs_2")));
+        when(firestoreService.findMessage("fs_1", "m1"))
+                .thenReturn(Optional.of(new FirestoreService.MessageSnapshot("uidA", false)));
+        when(firestoreService.findMessage("fs_2", "m2"))
+                .thenReturn(Optional.of(new FirestoreService.MessageSnapshot("uidB", false)));
+        when(userRepo.findAllByFirebaseUidIn(anyCollection())).thenReturn(List.of(a, b));
+
+        ReportEntity r1 = messageReport(c1, "m1"), r2 = messageReport(c2, "m2");
+        var map = resolver().resolve(List.of(r1, r2));
+
+        assertThat(map.get(r1).author()).isSameAs(a);
+        assertThat(map.get(r2).author()).isSameAs(b);
+        verify(userRepo, org.mockito.Mockito.times(1)).findAllByFirebaseUidIn(anyCollection());
+    }
+
     @Test
     void message_systeme_pasDAuteur() {
         UUID convId = UUID.randomUUID();

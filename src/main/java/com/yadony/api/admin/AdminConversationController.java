@@ -103,14 +103,12 @@ public class AdminConversationController {
 
         List<Map<String, Object>> raw = firestoreService.listMessages(conversationId);
 
-        // Resolution des noms d'expediteur en un batch (senderId = UUID ou "SYSTEM").
-        Set<UUID> senderIds = raw.stream()
-                .map(m -> parseUuid((String) m.get("senderId")))
+        // Noms d'expéditeur en lot : senderId = UID Firebase (UUID accepté, "SYSTEM" = plateforme).
+        Set<String> senderIds = raw.stream()
+                .map(m -> (String) m.get("senderId"))
                 .filter(Objects::nonNull)
                 .collect(Collectors.toSet());
-        Map<UUID, UserEntity> usersById = userRepository.findAllById(senderIds).stream()
-                .filter(u -> u.getId() != null)
-                .collect(Collectors.toMap(UserEntity::getId, Function.identity(), (a, b) -> a));
+        Map<String, UserEntity> senders = MessageSenders.resolve(userRepository, senderIds);
 
         List<AdminMessageResponse> messages = raw.stream()
                 .map(m -> {
@@ -118,7 +116,7 @@ public class AdminConversationController {
                     return new AdminMessageResponse(
                             (String) m.get("id"),
                             conversationId,
-                            senderName((String) m.get("senderId"), usersById),
+                            senderName((String) m.get("senderId"), senders),
                             (String) m.getOrDefault("body", ""),
                             false,
                             deletedAt != null,
@@ -190,22 +188,12 @@ public class AdminConversationController {
         return u != null ? MatchingTextUtil.buildName(u) : null;
     }
 
-    private static String senderName(String senderId, Map<UUID, UserEntity> users) {
+    /** Nom de l'expéditeur ; {@code null} si son compte est introuvable ou supprimé. */
+    private static String senderName(String senderId, Map<String, UserEntity> senders) {
         if (senderId == null) return null;
         if (SystemMessages.isSystemSender(senderId)) return "Systeme";
-        UUID id = parseUuid(senderId);
-        if (id == null) return senderId;
-        UserEntity u = users.get(id);
+        UserEntity u = senders.get(senderId);
         return u != null ? MatchingTextUtil.buildName(u) : null;
-    }
-
-    private static UUID parseUuid(String value) {
-        if (value == null || "SYSTEM".equals(value)) return null;
-        try {
-            return UUID.fromString(value);
-        } catch (IllegalArgumentException e) {
-            return null;
-        }
     }
 
     private static String lastMessageAt(Map<String, Object> meta) {

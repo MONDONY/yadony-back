@@ -197,4 +197,60 @@ class AdminConversationControllerTest {
         org.assertj.core.api.Assertions.assertThat(resp.getBody().getTotalElements()).isZero();
         verifyNoInteractions(firestoreService);
     }
+
+    // ---- senderId Firestore = UID Firebase (l'app et le back y écrivent users.firebase_uid) ----
+
+    private static UserEntity userWithUid(UUID id, String uid, String first, String last) {
+        UserEntity u = new UserEntity();
+        org.springframework.test.util.ReflectionTestUtils.setField(u, "id", id);
+        u.setFirebaseUid(uid);
+        u.setFirstName(first);
+        u.setLastName(last);
+        return u;
+    }
+
+    private static java.util.Map<String, Object> msg(String id, String senderId) {
+        java.util.Map<String, Object> m = new java.util.HashMap<>();
+        m.put("id", id);
+        m.put("senderId", senderId);
+        m.put("body", "bonjour");
+        m.put("sentAt", "2026-10-07T10:00:00Z");
+        return m;
+    }
+
+    @Test
+    void getMessages_nommeLExpediteurParUidFirebase_uuidEtSysteme_enLot() {
+        UUID legacyId = UUID.randomUUID();
+        when(repo.findByFirestoreConversationId("conv_fs")).thenReturn(Optional.of(
+                new ConversationEntity(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "conv_fs")));
+        when(firestoreService.listMessages("conv_fs")).thenReturn(java.util.List.of(
+                msg("m1", "fbUidAwa"),
+                msg("m2", "fbUidAwa"),
+                msg("m3", legacyId.toString()),
+                msg("m4", "SYSTEM"),
+                msg("m5", "fbUidSupprime"),
+                msg("m6", null)));
+        when(userRepository.findAllByFirebaseUidIn(any()))
+                .thenReturn(java.util.List.of(userWithUid(UUID.randomUUID(), "fbUidAwa", "Awa", "Diallo")));
+        when(userRepository.findAllById(any()))
+                .thenReturn(java.util.List.of(userWithUid(legacyId, "uidLegacy", "Moussa", "Traoré")));
+
+        var messages = controller.getMessages("conv_fs").getBody();
+
+        org.assertj.core.api.Assertions.assertThat(messages)
+                .extracting(com.yadony.api.admin.dto.AdminMessageResponse::senderName)
+                .containsExactly("Awa Diallo", "Awa Diallo", "Moussa Traoré", "Systeme", null, null);
+        verify(userRepository, times(1)).findAllByFirebaseUidIn(any());
+        verify(userRepository, times(1)).findAllById(any());
+    }
+
+    @Test
+    void getMessages_sansMessage_aucuneRequeteUtilisateur() {
+        when(repo.findByFirestoreConversationId("conv_fs")).thenReturn(Optional.of(
+                new ConversationEntity(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "conv_fs")));
+        when(firestoreService.listMessages("conv_fs")).thenReturn(java.util.List.of());
+
+        org.assertj.core.api.Assertions.assertThat(controller.getMessages("conv_fs").getBody()).isEmpty();
+        verifyNoInteractions(userRepository);
+    }
 }
