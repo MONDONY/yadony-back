@@ -3,6 +3,7 @@ package com.yadony.api.notifications;
 import com.yadony.api.auth.FirebaseContactService;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
+import com.yadony.api.config.PlatformSettingsService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -19,6 +20,10 @@ import java.util.stream.Collectors;
 /**
  * Runs every 30 seconds. Finds critical notifications older than 60s with no ACK
  * and sends an SMS fallback. Idempotent: smsSentAt is set to prevent double-sends.
+ *
+ * <p>Chaque envoi est facture (Twilio/Africa's Talking) : le repli est entierement
+ * desactivable via {@link PlatformSettingsService#criticalSmsFallbackEnabled()}, sans
+ * toucher aux pushs critiques eux-memes ni aux codes OTP de connexion (reglage distinct).
  */
 @Component
 public class SmsFallbackScheduler {
@@ -29,15 +34,18 @@ public class SmsFallbackScheduler {
     private final UserRepository userRepository;
     private final SmsService smsService;
     private final FirebaseContactService firebaseContact;
+    private final PlatformSettingsService settings;
 
     public SmsFallbackScheduler(NotificationRepository notificationRepository,
                                 UserRepository userRepository,
                                 SmsService smsService,
-                                FirebaseContactService firebaseContact) {
+                                FirebaseContactService firebaseContact,
+                                PlatformSettingsService settings) {
         this.notificationRepository = notificationRepository;
         this.userRepository = userRepository;
         this.smsService = smsService;
         this.firebaseContact = firebaseContact;
+        this.settings = settings;
     }
 
     @Scheduled(fixedDelay = 30_000)
@@ -47,6 +55,17 @@ public class SmsFallbackScheduler {
         var pending = notificationRepository.findPendingSmsFallbacks(cutoff);
 
         if (pending.isEmpty()) return;
+
+        // Flag eteint : on marque tout « traite » SANS appeler Firebase ni Twilio/AT, pour
+        // ne facturer aucun SMS et pour ne pas accumuler un lot qui partirait d'un coup à
+        // la réactivation du flag (des notifications parfois vieilles de plusieurs heures).
+        if (!settings.criticalSmsFallbackEnabled()) {
+            LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+            pending.forEach(n -> n.markSmsSent(now));
+            log.debug("[SmsFallback] Disabled via feature flag, skipped {} pending fallback(s)",
+                    pending.size());
+            return;
+        }
 
         log.debug("[SmsFallback] Processing {} pending fallback(s)", pending.size());
 
