@@ -31,14 +31,16 @@ import java.util.stream.Collectors;
 
 /**
  * Retrouve la cible d'un signalement et l'auteur du contenu signalé, en une requête par table
- * pour toute une page de signalements (plus une lecture Firestore par message signalé).
+ * pour toute une page de signalements (plus une lecture Firestore par message signalé et une
+ * requête sur les UID Firebase des expéditeurs de messages).
  *
  * <p>Auteur selon la cible :
  * <ul>
  *   <li>USER : le compte signalé ;</li>
  *   <li>ANNOUNCEMENT : le voyageur ; PACKAGE_REQUEST : l'expéditeur ;</li>
  *   <li>RATING : le notant ({@code rater_id}) ; un avis anonyme du destinataire n'a pas d'auteur ;</li>
- *   <li>MESSAGE : l'expéditeur du message dans Firestore ({@code SYSTEM} : pas d'auteur) ;</li>
+ *   <li>MESSAGE : l'expéditeur du message dans Firestore, dont le {@code senderId} est l'UID
+ *       Firebase du compte (un UUID reste accepté ; {@code SYSTEM} : pas d'auteur) ;</li>
  *   <li>BID : la partie adverse du signalant. Une offre lie un expéditeur ({@code bids.sender_id})
  *       et un voyageur (le {@code traveler_id} de l'annonce). Signalée par l'expéditeur, l'auteur
  *       est le voyageur ; par le voyageur, l'expéditeur. Signalée par un tiers (ou un signalant
@@ -102,14 +104,20 @@ public class ReportTargetResolver {
             partials.put(r, partial(r, bids, announcements, packageRequests, ratings, conversations));
         }
 
-        // Seconde passe : les auteurs, en une requête.
+        // Seconde passe : les auteurs, en une requête par identifiant (compte, puis UID Firebase
+        // des expéditeurs de messages).
         Set<UUID> authorIds = partials.values().stream()
                 .map(Partial::authorId).filter(Objects::nonNull).collect(Collectors.toSet());
         Map<UUID, UserEntity> users = load(userRepo, authorIds, UserEntity::getId);
+        Set<String> authorUids = partials.values().stream()
+                .map(Partial::authorUid).filter(Objects::nonNull).collect(Collectors.toSet());
+        Map<String, UserEntity> usersByUid = authorUids.isEmpty() ? Map.of()
+                : MessageSenders.resolve(userRepo, authorUids);
 
         Map<ReportEntity, ResolvedReportTarget> result = new IdentityHashMap<>();
         partials.forEach((r, p) -> {
-            UserEntity author = p.authorId() != null ? users.get(p.authorId()) : null;
+            UserEntity author = p.authorId() != null ? users.get(p.authorId())
+                    : p.authorUid() != null ? usersByUid.get(p.authorUid()) : null;
             boolean found = r.getTargetType() == ReportTargetType.USER ? author != null : p.found();
             result.put(r, found || author != null
                     ? new ResolvedReportTarget(found, p.alreadyModerated(), author, p.conversation(), p.messageId())
@@ -118,9 +126,18 @@ public class ReportTargetResolver {
         return result;
     }
 
-    private record Partial(boolean found, boolean alreadyModerated, UUID authorId,
+    /**
+     * {@code authorUid} : UID Firebase de l'expéditeur d'un message, quand Firestore ne porte pas
+     * l'identifiant du compte ({@code senderId} = UID Firebase, cf. {@link MessageSenders}).
+     */
+    private record Partial(boolean found, boolean alreadyModerated, UUID authorId, String authorUid,
                            ConversationEntity conversation, String messageId) {
         static final Partial NONE = new Partial(false, false, null, null, null);
+
+        Partial(boolean found, boolean alreadyModerated, UUID authorId,
+                ConversationEntity conversation, String messageId) {
+            this(found, alreadyModerated, authorId, null, conversation, messageId);
+        }
     }
 
     private Partial partial(ReportEntity r,
@@ -173,17 +190,10 @@ public class ReportTargetResolver {
             return Partial.NONE;
         }
         return firestoreService.findMessage(conversation.getFirestoreConversationId(), r.getTargetMessageId())
-                .map(m -> new Partial(true, m.deleted(), parseUuid(m.senderId()), conversation, r.getTargetMessageId()))
+                // senderId = UID Firebase (app et back) ; UUID accepté ; SYSTEM : pas d'auteur.
+                .map(m -> new Partial(true, m.deleted(), MessageSenders.asUserId(m.senderId()),
+                        MessageSenders.asFirebaseUid(m.senderId()), conversation, r.getTargetMessageId()))
                 .orElse(Partial.NONE);
-    }
-
-    private static UUID parseUuid(String value) {
-        if (value == null) return null;
-        try {
-            return UUID.fromString(value);
-        } catch (IllegalArgumentException e) {
-            return null; // SYSTEM ou identifiant non UUID
-        }
     }
 
     private static Set<UUID> targetIds(Collection<ReportEntity> reports, ReportTargetType type) {

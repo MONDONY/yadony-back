@@ -2,6 +2,11 @@ package com.yadony.api.admin;
 
 import com.yadony.api.admin.account.AdminPrincipal;
 import com.yadony.api.admin.account.AdminRole;
+import com.yadony.api.auth.KycStatus;
+import com.yadony.api.auth.Role;
+import com.yadony.api.auth.UserEntity;
+import com.yadony.api.auth.UserRepository;
+import com.yadony.api.auth.UserStatus;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.messaging.ConversationEntity;
 import com.yadony.api.messaging.ConversationRepository;
@@ -18,7 +23,10 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -28,6 +36,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.mockito.Mockito.never;
@@ -53,6 +62,7 @@ class AdminConversationControllerIT {
     @MockitoBean ConversationRepository conversationRepository;
     @MockitoBean FirestoreService firestoreService;
     @MockitoBean AuditService auditService;
+    @Autowired UserRepository userRepository;
 
     static UsernamePasswordAuthenticationToken auth(AdminRole role) {
         var principal = new AdminPrincipal(ADMIN_ID, "admin@yadony.com", role, false, "uid");
@@ -64,6 +74,32 @@ class AdminConversationControllerIT {
 
     private ConversationEntity conversation() {
         return new ConversationEntity(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), CONV);
+    }
+
+    @Test
+    @DisplayName("GET messages — senderId Firestore = UID Firebase : le nom de l'expediteur est resolu")
+    void getMessages_senderIdUidFirebase_resolvesSenderName() throws Exception {
+        String uid = "fbUid-" + UUID.randomUUID();
+        UserEntity u = new UserEntity();
+        u.setFirebaseUid(uid);
+        u.setUsername("awa" + UUID.randomUUID().toString().substring(0, 8));
+        u.setFirstName("Awa");
+        u.setLastName("Diallo");
+        u.setStatus(UserStatus.ACTIVE);
+        u.setKycStatus(KycStatus.PENDING);
+        u.setRoles(new HashSet<>(Set.of(Role.SENDER)));
+        u.setTotalTrips(0);
+        userRepository.save(u);
+        when(conversationRepository.findByFirestoreConversationId(CONV)).thenReturn(Optional.of(conversation()));
+        when(firestoreService.listMessages(CONV)).thenReturn(List.of(
+                Map.of("id", "m1", "senderId", uid, "body", "bonjour", "sentAt", "2026-10-07T10:00:00Z"),
+                Map.of("id", "m2", "senderId", "SYSTEM", "body", "info", "sentAt", "2026-10-07T10:01:00Z")));
+
+        mockMvc.perform(get("/admin/conversations/{c}/messages", CONV)
+                        .with(authentication(auth(AdminRole.SUPPORT))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].senderName").value("Awa Diallo"))
+                .andExpect(jsonPath("$[1].senderName").value("Systeme"));
     }
 
     @Test

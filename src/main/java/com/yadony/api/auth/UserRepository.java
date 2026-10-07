@@ -41,6 +41,12 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
     boolean existsByFirebaseUid(String firebaseUid);
 
     /**
+     * Comptes actifs (non supprimés) de ces UID Firebase, en une requête. Sert à nommer
+     * l'expéditeur des messages Firestore, dont le {@code senderId} est l'UID Firebase.
+     */
+    List<UserEntity> findAllByFirebaseUidIn(java.util.Collection<String> firebaseUids);
+
+    /**
      * Le username est-il déjà pris, y compris par un compte supprimé ?
      *
      * <p>Requête native délibérée : une méthode dérivée subirait le {@code @Where(deleted_at IS
