@@ -34,7 +34,7 @@ class PlatformSettingsBooleanPropertyTest {
     private PlatformSettingsService service(String valeurBrute) {
         when(cache.all()).thenReturn(Map.of());
         return new PlatformSettingsService(repository, cache, auditService, config,
-                false, false, valeurBrute);
+                false, false, valeurBrute, false);
     }
 
     @Test
@@ -74,7 +74,7 @@ class PlatformSettingsBooleanPropertyTest {
     void laLigneEnBaseFaitAutorite() {
         when(cache.all()).thenReturn(Map.of(PlatformSettingKey.KYC_DIDIT_ENABLED.key(), "true"));
         PlatformSettingsService avecLigne = new PlatformSettingsService(
-                repository, cache, auditService, config, false, false, "");
+                repository, cache, auditService, config, false, false, "", false);
 
         assertThat(avecLigne.kycDiditEnabled()).isTrue();
     }

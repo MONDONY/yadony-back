@@ -41,6 +41,7 @@ public class PlatformSettingsService {
     private final boolean smsEnabledProperty;
     private final boolean proEnabledProperty;
     private final boolean kycDiditEnabledProperty;
+    private final boolean criticalSmsFallbackEnabledProperty;
 
     public PlatformSettingsService(PlatformSettingRepository repository,
                                    PlatformSettingsCache cache,
@@ -48,7 +49,9 @@ public class PlatformSettingsService {
                                    YadonyConfigProperties config,
                                    @Value("${app.sms.enabled:false}") boolean smsEnabledProperty,
                                    @Value("${yadony.pro.enabled:false}") boolean proEnabledProperty,
-                                   @Value("${yadony.kyc.didit.enabled:}") String kycDiditEnabledProperty) {
+                                   @Value("${yadony.kyc.didit.enabled:}") String kycDiditEnabledProperty,
+                                   @Value("${app.sms.critical-fallback.enabled:false}")
+                                   boolean criticalSmsFallbackEnabledProperty) {
         this.repository = repository;
         this.cache = cache;
         this.auditService = auditService;
@@ -56,6 +59,7 @@ public class PlatformSettingsService {
         this.smsEnabledProperty = smsEnabledProperty;
         this.proEnabledProperty = proEnabledProperty;
         this.kycDiditEnabledProperty = parseBooleanOrFalse(kycDiditEnabledProperty);
+        this.criticalSmsFallbackEnabledProperty = criticalSmsFallbackEnabledProperty;
     }
 
     /**
@@ -109,6 +113,18 @@ public class PlatformSettingsService {
     public boolean kycDiditEnabled() {
         String raw = cache.all().get(PlatformSettingKey.KYC_DIDIT_ENABLED.key());
         return raw == null ? kycDiditEnabledProperty : Boolean.parseBoolean(raw);
+    }
+
+    /**
+     * Vrai : {@code SmsFallbackScheduler} peut envoyer un SMS de repli pour une
+     * notification critique sans accuse de reception. Faux : le repli est purement
+     * saute (les pushs critiques partent toujours), aucun SMS n'est facture pour ce motif.
+     * N'affecte PAS les codes OTP de connexion, geres par {@link #smsEnabled()}. Voir
+     * {@link PlatformSettingKey#CRITICAL_SMS_FALLBACK_ENABLED}.
+     */
+    public boolean criticalSmsFallbackEnabled() {
+        String raw = cache.all().get(PlatformSettingKey.CRITICAL_SMS_FALLBACK_ENABLED.key());
+        return raw == null ? criticalSmsFallbackEnabledProperty : Boolean.parseBoolean(raw);
     }
 
     /**
@@ -173,6 +189,7 @@ public class PlatformSettingsService {
             case SMS_ENABLED -> String.valueOf(smsEnabled());
             case PRO_ENABLED -> String.valueOf(proEnabled());
             case KYC_DIDIT_ENABLED -> String.valueOf(kycDiditEnabled());
+            case CRITICAL_SMS_FALLBACK_ENABLED -> String.valueOf(criticalSmsFallbackEnabled());
         };
     }
 
@@ -286,6 +303,12 @@ public class PlatformSettingsService {
             case KYC_DIDIT_ENABLED -> {
                 if (!"true".equalsIgnoreCase(value) && !"false".equalsIgnoreCase(value)) {
                     throw invalid("L'activation de Didit attend true ou false");
+                }
+                yield String.valueOf(Boolean.parseBoolean(value));
+            }
+            case CRITICAL_SMS_FALLBACK_ENABLED -> {
+                if (!"true".equalsIgnoreCase(value) && !"false".equalsIgnoreCase(value)) {
+                    throw invalid("L'activation du SMS de repli attend true ou false");
                 }
                 yield String.valueOf(Boolean.parseBoolean(value));
             }

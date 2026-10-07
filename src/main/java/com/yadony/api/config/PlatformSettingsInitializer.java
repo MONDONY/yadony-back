@@ -30,12 +30,15 @@ public class PlatformSettingsInitializer {
     private final boolean smsEnabledProperty;
     private final boolean proEnabledProperty;
     private final boolean kycDiditEnabledProperty;
+    private final boolean criticalSmsFallbackEnabledProperty;
 
     public PlatformSettingsInitializer(PlatformSettingRepository repository,
                                        YadonyConfigProperties config,
                                        @Value("${app.sms.enabled:false}") boolean smsEnabledProperty,
                                        @Value("${yadony.pro.enabled:false}") boolean proEnabledProperty,
-                                       @Value("${yadony.kyc.didit.enabled:}") String kycDiditEnabledProperty) {
+                                       @Value("${yadony.kyc.didit.enabled:}") String kycDiditEnabledProperty,
+                                       @Value("${app.sms.critical-fallback.enabled:false}")
+                                       boolean criticalSmsFallbackEnabledProperty) {
         this.repository = repository;
         this.config = config;
         this.smsEnabledProperty = smsEnabledProperty;
@@ -45,6 +48,7 @@ public class PlatformSettingsInitializer {
         this.kycDiditEnabledProperty = kycDiditEnabledProperty != null
                 && !kycDiditEnabledProperty.isBlank()
                 && Boolean.parseBoolean(kycDiditEnabledProperty.trim());
+        this.criticalSmsFallbackEnabledProperty = criticalSmsFallbackEnabledProperty;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -71,6 +75,8 @@ public class PlatformSettingsInitializer {
                 String.valueOf(proEnabledProperty));
         defaults.put(PlatformSettingKey.KYC_DIDIT_ENABLED,
                 String.valueOf(kycDiditEnabledProperty));
+        defaults.put(PlatformSettingKey.CRITICAL_SMS_FALLBACK_ENABLED,
+                String.valueOf(criticalSmsFallbackEnabledProperty));
 
         int inserted = 0;
         for (Map.Entry<PlatformSettingKey, String> entry : defaults.entrySet()) {

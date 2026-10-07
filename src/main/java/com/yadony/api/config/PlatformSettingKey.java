@@ -22,6 +22,13 @@ import java.util.Arrays;
  * faux, Stripe Identity ; vrai, Didit. Les sessions deja ouvertes continuent d'etre relues
  * chez le fournisseur qui les a produites, quel que soit ce reglage. Cle temporaire, a
  * supprimer avec l'implementation Stripe une fois Didit eprouve.
+ *
+ * <p>{@code CRITICAL_SMS_FALLBACK_ENABLED} controle UNIQUEMENT le SMS de repli envoye par
+ * {@code SmsFallbackScheduler} quand une notification push critique (remise a J-2,
+ * livraison confirmee, versement libere, litige ouvert, trajet reporte) reste sans accuse
+ * de reception 60 secondes — chaque envoi est facture. Distinct de {@code SMS_ENABLED}, qui
+ * coupe en plus les codes OTP de connexion : desactiver celui-ci coupe UNIQUEMENT ce repli,
+ * jamais l'authentification. Faux par defaut : a activer depuis le back-office au besoin.
  */
 public enum PlatformSettingKey {
 
@@ -30,7 +37,8 @@ public enum PlatformSettingKey {
     REIMBURSEMENT_CAP_EUR("reimbursement_cap_eur", PlatformSettingType.DECIMAL),
     SMS_ENABLED("sms_enabled", PlatformSettingType.BOOLEAN),
     PRO_ENABLED("pro_enabled", PlatformSettingType.BOOLEAN),
-    KYC_DIDIT_ENABLED("kyc_didit_enabled", PlatformSettingType.BOOLEAN);
+    KYC_DIDIT_ENABLED("kyc_didit_enabled", PlatformSettingType.BOOLEAN),
+    CRITICAL_SMS_FALLBACK_ENABLED("critical_sms_fallback_enabled", PlatformSettingType.BOOLEAN);
 
     private final String key;
     private final PlatformSettingType type;

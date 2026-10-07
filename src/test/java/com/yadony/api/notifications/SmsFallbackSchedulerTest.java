@@ -2,6 +2,7 @@ package com.yadony.api.notifications;
 
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
+import com.yadony.api.config.PlatformSettingsService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -26,13 +27,18 @@ class SmsFallbackSchedulerTest {
     @Mock UserRepository userRepository;
     @Mock SmsService smsService;
     @Mock com.yadony.api.auth.FirebaseContactService firebaseContact;
+    @Mock PlatformSettingsService settings;
 
     SmsFallbackScheduler scheduler;
 
     @BeforeEach
     void setUp() {
+        // Flag activé par défaut dans ces tests : le comportement historique (repli
+        // envoyé) reste couvert sans toucher chaque test existant. Les tests dédiés au
+        // flag ci-dessous le redéfinissent explicitement.
+        lenient().when(settings.criticalSmsFallbackEnabled()).thenReturn(true);
         scheduler = new SmsFallbackScheduler(
-                notificationRepository, userRepository, smsService, firebaseContact);
+                notificationRepository, userRepository, smsService, firebaseContact, settings);
     }
 
     private UserEntity user(UUID userId, String uid) {
@@ -169,6 +175,47 @@ class SmsFallbackSchedulerTest {
 
         // Must not throw
         scheduler.processPendingFallbacks();
+    }
+
+    // ── feature flag ─────────────────────────────────────────────────────────
+
+    @Test
+    void flagDisabled_skipsSmsButMarksHandled_noFirebaseOrTwilioCall() {
+        when(settings.criticalSmsFallbackEnabled()).thenReturn(false);
+        UUID userId = UUID.randomUUID();
+        var notification = criticalNotification(userId);
+        when(notificationRepository.findPendingSmsFallbacks(any())).thenReturn(List.of(notification));
+
+        scheduler.processPendingFallbacks();
+
+        verifyNoInteractions(smsService, userRepository, firebaseContact);
+        assertThat(notification.getSmsSentAt()).isNotNull();
+    }
+
+    @Test
+    void flagDisabled_processesEveryPendingNotification() {
+        when(settings.criticalSmsFallbackEnabled()).thenReturn(false);
+        var n1 = criticalNotification(UUID.randomUUID());
+        var n2 = criticalNotification(UUID.randomUUID());
+        when(notificationRepository.findPendingSmsFallbacks(any())).thenReturn(List.of(n1, n2));
+
+        scheduler.processPendingFallbacks();
+
+        assertThat(n1.getSmsSentAt()).isNotNull();
+        assertThat(n2.getSmsSentAt()).isNotNull();
+    }
+
+    @Test
+    void flagEnabled_sendsAsBefore() {
+        when(settings.criticalSmsFallbackEnabled()).thenReturn(true);
+        UUID userId = UUID.randomUUID();
+        var notification = criticalNotification(userId);
+        when(notificationRepository.findPendingSmsFallbacks(any())).thenReturn(List.of(notification));
+        stubBatch(List.of(user(userId, "uid-1")), Map.of("uid-1", phone("+221701234567")));
+
+        scheduler.processPendingFallbacks();
+
+        verify(smsService).send(eq("+221701234567"), contains("[Yadony]"));
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────
