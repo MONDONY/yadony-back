@@ -22,5 +22,11 @@ public record AlertTripMatchDto(
         String photoUrl,
         String currency,
         /** Publication du trajet : sert à séparer « nouveaux » et « déjà vus » côté app. */
-        LocalDateTime publishedAt
+        LocalDateTime publishedAt,
+        /**
+         * Statut du trajet (ACTIVE, FULL) : un trajet public complet reste dans les
+         * correspondances, l'app l'affiche « Complet ». Ajouté en dernier, lu en
+         * optionnel côté app.
+         */
+        String status
 ) {}

@@ -274,7 +274,7 @@ class AlertControllerTest {
                 UUID.randomUUID(), "Paris", "Dakar", LocalDate.of(2026, 8, 10),
                 UUID.randomUUID(), "Mamadou D", "MD", 4.8,
                 BigDecimal.valueOf(15), BigDecimal.valueOf(8), TransportMode.PLANE, null, "EUR",
-                java.time.LocalDateTime.of(2026, 8, 1, 10, 0));
+                java.time.LocalDateTime.of(2026, 8, 1, 10, 0), "FULL");
         doReturn(List.of(tripDto)).when(alertService).getMatchesForDirection(FIREBASE_UID, id);
 
         mockMvc.perform(get("/me/corridor-alerts/{id}/matches", id)
@@ -282,7 +282,8 @@ class AlertControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].availableKg").value(15))
                 .andExpect(jsonPath("$[0].travelerName").value("Mamadou D"))
-                .andExpect(jsonPath("$[0].publishedAt").exists());
+                .andExpect(jsonPath("$[0].publishedAt").exists())
+                .andExpect(jsonPath("$[0].status").value("FULL"));
     }
 
     // ── GET /{id} et POST /{id}/seen ────────────────────────────────────────

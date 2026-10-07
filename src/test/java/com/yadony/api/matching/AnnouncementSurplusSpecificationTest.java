@@ -94,4 +94,49 @@ class AnnouncementSurplusSpecificationTest {
 
         assertThat(results).extracting(AnnouncementEntity::getId).doesNotContain(fullyBooked.getId());
     }
+
+    /**
+     * Cohérence : {@link AnnouncementEntity#isPubliclyVisible()} (alertes corridor,
+     * page publique) est le pendant en mémoire EXACT de la spécification de la
+     * recherche. Pour chaque combinaison (public/dédié × surplus ouvert/fermé ×
+     * kg > 0 / = 0), la méthode et la requête doivent rendre la même décision.
+     */
+    @Test
+    void isPubliclyVisible_agreesWithPublicOrOpenSurplus_onEveryCombination() {
+        List<AnnouncementEntity> all = new java.util.ArrayList<>();
+        for (boolean dedicatedTrip : new boolean[] {false, true}) {
+            for (boolean surplusPublished : new boolean[] {false, true}) {
+                for (BigDecimal kg : new BigDecimal[] {BigDecimal.ZERO, new BigDecimal("7")}) {
+                    all.add(persist(dedicatedTrip ? UUID.randomUUID() : null,
+                            surplusPublished, kg, new BigDecimal("5")));
+                }
+            }
+        }
+
+        java.util.Set<UUID> visibleInSearch = repository
+                .findAll(AnnouncementSpecification.publicOrOpenSurplus()).stream()
+                .map(AnnouncementEntity::getId)
+                .collect(java.util.stream.Collectors.toSet());
+
+        for (AnnouncementEntity a : all) {
+            assertThat(a.isPubliclyVisible())
+                    .as("linked=%s surplusPublished=%s availableKg=%s",
+                            a.getLinkedPackageRequestId() != null, a.isSurplusPublished(),
+                            a.getAvailableKg())
+                    .isEqualTo(visibleInSearch.contains(a.getId()));
+        }
+        // Garde-fou : la matrice couvre bien les deux issues.
+        assertThat(all).filteredOn(AnnouncementEntity::isPubliclyVisible).hasSize(5);
+    }
+
+    @Test
+    void isPubliclyListable_requiresActiveStatusOnTopOfVisibility() {
+        AnnouncementEntity openNoKg = persist(UUID.randomUUID(), true, BigDecimal.ZERO, new BigDecimal("5"));
+        AnnouncementEntity publicFull = persist(null, false, BigDecimal.ZERO, BigDecimal.ZERO);
+        publicFull.setStatus(AnnouncementStatus.FULL);
+
+        assertThat(openNoKg.isPubliclyListable()).isFalse();
+        assertThat(publicFull.isPubliclyVisible()).isTrue();
+        assertThat(publicFull.isPubliclyListable()).isFalse();
+    }
 }

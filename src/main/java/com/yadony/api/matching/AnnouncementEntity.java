@@ -292,7 +292,32 @@ public class AnnouncementEntity extends BaseEntity {
      * appel à l'action que le backend refusera.
      */
     public boolean isPubliclyListable() {
-        return status == AnnouncementStatus.ACTIVE && !isClosedToThirdPartyBids();
+        return status == AnnouncementStatus.ACTIVE && isPubliclyVisible();
+    }
+
+    /**
+     * Règle de visibilité publique d'un trajet, indépendante du statut : un trajet
+     * public ({@code linkedPackageRequestId == null}) est toujours visible ; un
+     * trajet dédié (créé depuis une négociation, capacité réservée à
+     * l'expéditeur négociant) ne l'est que si son surplus est ouvert
+     * ({@code surplusPublished}) ET qu'il reste de la place ({@code availableKg > 0}).
+     *
+     * <p><b>Pendant en mémoire EXACT de
+     * {@link AnnouncementSpecification#publicOrOpenSurplus()}</b> — les deux
+     * doivent évoluer ensemble (test de cohérence :
+     * {@code AnnouncementSurplusSpecificationTest}). Un {@code availableKg} null
+     * vaut « pas de place », comme {@code NULL > 0} en SQL.
+     *
+     * <p>À appliquer à toute surface qui montre un trajet à un tiers à partir
+     * d'une entité déjà chargée ou d'une requête sans Specification : alertes
+     * corridor (correspondances, push instantané, digest — FLUTTER-EW), page
+     * publique de partage (via {@link #isPubliclyListable()}).
+     */
+    public boolean isPubliclyVisible() {
+        return linkedPackageRequestId == null
+                || (surplusPublished
+                    && availableKg != null
+                    && availableKg.compareTo(BigDecimal.ZERO) > 0);
     }
 
     /**

@@ -453,4 +453,124 @@ class AlertServiceTripMatchesTest {
         assertThat(service.findSenderAlertsMatchingTrip(trip)).isEmpty();
         verifyNoInteractions(alertRepository);
     }
+
+    // ── Visibilité publique : trajets dédiés (FLUTTER-EW) ────────────────────
+
+    /** Trajet dédié créé depuis une négociation (cas staging 091221eb). */
+    private AnnouncementEntity dedicated(boolean surplusPublished, BigDecimal availableKg) {
+        AnnouncementEntity a = trip(UUID.randomUUID(), LocalDate.of(2026, 7, 10),
+                availableKg, new BigDecimal("8.00"));
+        a.setLinkedPackageRequestId(UUID.randomUUID());
+        a.setReservedKg(new BigDecimal("20"));
+        a.setSurplusPublished(surplusPublished);
+        a.setStatus(AnnouncementStatus.ACTIVE);
+        return a;
+    }
+
+    private List<AlertTripMatchDto> matchesFor(AnnouncementEntity... trips) {
+        when(alertRepository.findById(alertId)).thenReturn(Optional.of(senderAlert()));
+        when(announcementRepository.findActiveByCorridor("Paris", "Bamako"))
+                .thenReturn(List.of(trips));
+        lenient().when(userRepository.findAllById(anyCollection())).thenAnswer(inv -> {
+            List<UserEntity> users = new java.util.ArrayList<>();
+            for (Object id : (Iterable<?>) inv.getArgument(0)) {
+                users.add(traveler((UUID) id, "Awa", "Traore", new BigDecimal("4.5")));
+            }
+            return users;
+        });
+        return service.getTripMatches(uid, alertId);
+    }
+
+    @Test
+    void getTripMatches_dedicatedTripWithoutOpenSurplus_excluded() {
+        // Reproduction staging : ACTIVE, reserved 20, available 0, surplus non publié.
+        AnnouncementEntity closed = dedicated(false, BigDecimal.ZERO);
+        // Même fermé, des kg restants ne le rendent pas public.
+        AnnouncementEntity closedWithKg = dedicated(false, new BigDecimal("5"));
+
+        assertThat(matchesFor(closed, closedWithKg)).isEmpty();
+    }
+
+    @Test
+    void getTripMatches_dedicatedTripWithOpenSurplusAndKg_included() {
+        AnnouncementEntity open = dedicated(true, new BigDecimal("6"));
+
+        List<AlertTripMatchDto> matches = matchesFor(open);
+
+        assertThat(matches).extracting(AlertTripMatchDto::announcementId)
+                .containsExactly(open.getId());
+        assertThat(matches.get(0).status()).isEqualTo("ACTIVE");
+    }
+
+    @Test
+    void getTripMatches_dedicatedTripWithOpenSurplusButZeroKg_excluded() {
+        AnnouncementEntity openButEmpty = dedicated(true, BigDecimal.ZERO);
+        openButEmpty.setStatus(AnnouncementStatus.FULL);
+
+        assertThat(matchesFor(openButEmpty)).isEmpty();
+    }
+
+    @Test
+    void getTripMatches_publicFullTrip_includedWithFullStatus() {
+        // Comportement voulu : un trajet public complet reste proposé, l'app
+        // l'affiche « Complet » grâce au statut exposé.
+        AnnouncementEntity full = trip(UUID.randomUUID(), LocalDate.of(2026, 7, 10),
+                BigDecimal.ZERO, new BigDecimal("8.00"));
+        full.setStatus(AnnouncementStatus.FULL);
+
+        List<AlertTripMatchDto> matches = matchesFor(full);
+
+        assertThat(matches).hasSize(1);
+        assertThat(matches.get(0).status()).isEqualTo("FULL");
+    }
+
+    @Test
+    void findRecentTripMatches_dedicatedTripWithoutOpenSurplus_excludedFromDigest() {
+        // Le digest passe par findRecentTripMatches → findMatchingTrips.
+        AnnouncementEntity closed = dedicated(false, BigDecimal.ZERO);
+        AnnouncementEntity publicTrip = trip(UUID.randomUUID(), LocalDate.of(2026, 7, 10),
+                new BigDecimal("10"), new BigDecimal("8.00"));
+        java.time.LocalDateTime created = java.time.LocalDateTime.of(2026, 7, 15, 8, 0);
+        setCreatedAt(closed, created);
+        setCreatedAt(publicTrip, created);
+        when(announcementRepository.findActiveByCorridor("Paris", "Bamako"))
+                .thenReturn(List.of(closed, publicTrip));
+
+        List<AnnouncementEntity> recent = service.findRecentTripMatches(
+                senderAlert(), java.time.LocalDateTime.of(2026, 7, 14, 9, 0));
+
+        assertThat(recent).containsExactly(publicTrip);
+    }
+
+    @Test
+    void findSenderAlertsMatchingTrip_dedicatedTripWithoutOpenSurplus_noThirdPartyAlert() {
+        AnnouncementEntity trip = tripAt("Paris", "Bamako", LocalDate.of(2026, 7, 10),
+                BigDecimal.ONE, BigDecimal.ONE, AnnouncementStatus.ACTIVE);
+        trip.setLinkedPackageRequestId(UUID.randomUUID());
+        trip.setAvailableKg(BigDecimal.ZERO);
+
+        assertThat(service.findSenderAlertsMatchingTrip(trip)).isEmpty();
+        verifyNoInteractions(alertRepository);
+    }
+
+    @Test
+    void findSenderAlertsMatchingTrip_dedicatedTripWithOpenSurplus_matches() {
+        when(alertRepository.findAllByActiveTrueAndDirection(AlertDirection.SENDER_WANTS_TRIPS))
+                .thenReturn(List.of(senderAlert()));
+        AnnouncementEntity trip = tripAt("Paris", "Bamako", LocalDate.of(2026, 7, 10),
+                BigDecimal.ONE, BigDecimal.ONE, AnnouncementStatus.ACTIVE);
+        trip.setLinkedPackageRequestId(UUID.randomUUID());
+        trip.setSurplusPublished(true);
+        trip.setAvailableKg(new BigDecimal("4"));
+
+        assertThat(service.findSenderAlertsMatchingTrip(trip)).hasSize(1);
+    }
+
+    private static void setCreatedAt(Object target, java.time.LocalDateTime at) {
+        try {
+            var f = com.yadony.api.common.BaseEntity.class.getDeclaredField("createdAt");
+            f.setAccessible(true);
+            f.set(target, at);
+        } catch (Exception e) { throw new RuntimeException(e); }
+    }
 }
