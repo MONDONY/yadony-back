@@ -494,4 +494,85 @@ class ConversationServiceTest {
         return (last == null || last.isBlank()) ? first : first + " " + last.charAt(0) + ".";
     }
 
+    // ── Sourdine (FLUTTER-CM) ────────────────────────────────────────────────
+
+    @Test
+    void muteNotifications_mutesForCallerOnly_andAudits() {
+        UUID convId = UUID.randomUUID();
+        ConversationEntity conv = new ConversationEntity(bidId, senderId, travelerId, "conv_" + bidId);
+        when(conversationRepository.findByIdAndParticipantIgnoreArchived(convId, senderId)).thenReturn(Optional.of(conv));
+
+        service.muteNotifications(convId, senderId);
+
+        assertThat(conv.isNotificationsMutedBy(senderId)).isTrue();
+        assertThat(conv.isNotificationsMutedBy(travelerId)).isFalse();
+        verify(conversationRepository).save(conv);
+        verify(auditService).log("conversation", convId, "CONVERSATION_NOTIFICATIONS_MUTED", senderId, Map.of());
+    }
+
+    @Test
+    void muteNotifications_alreadyMuted_isNoOp() {
+        UUID convId = UUID.randomUUID();
+        ConversationEntity conv = new ConversationEntity(bidId, senderId, travelerId, "conv_" + bidId);
+        conv.muteNotificationsForUser(travelerId);
+        when(conversationRepository.findByIdAndParticipantIgnoreArchived(convId, travelerId)).thenReturn(Optional.of(conv));
+
+        service.muteNotifications(convId, travelerId);
+
+        verify(conversationRepository, never()).save(any());
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    void unmuteNotifications_unmutes_andAudits() {
+        UUID convId = UUID.randomUUID();
+        ConversationEntity conv = new ConversationEntity(bidId, senderId, travelerId, "conv_" + bidId);
+        conv.muteNotificationsForUser(travelerId);
+        when(conversationRepository.findByIdAndParticipantIgnoreArchived(convId, travelerId)).thenReturn(Optional.of(conv));
+
+        service.unmuteNotifications(convId, travelerId);
+
+        assertThat(conv.isNotificationsMutedBy(travelerId)).isFalse();
+        verify(conversationRepository).save(conv);
+        verify(auditService).log("conversation", convId, "CONVERSATION_NOTIFICATIONS_UNMUTED", travelerId, Map.of());
+    }
+
+    @Test
+    void unmuteNotifications_notMuted_isNoOp() {
+        UUID convId = UUID.randomUUID();
+        ConversationEntity conv = new ConversationEntity(bidId, senderId, travelerId, "conv_" + bidId);
+        when(conversationRepository.findByIdAndParticipantIgnoreArchived(convId, senderId)).thenReturn(Optional.of(conv));
+
+        service.unmuteNotifications(convId, senderId);
+
+        verify(conversationRepository, never()).save(any());
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    void muteAndUnmute_nonParticipant_get403_withoutSideEffects() {
+        UUID convId = UUID.randomUUID();
+        UUID stranger = UUID.randomUUID();
+        when(conversationRepository.findByIdAndParticipantIgnoreArchived(convId, stranger)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.muteNotifications(convId, stranger))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                .extracting(e -> ((org.springframework.web.server.ResponseStatusException) e).getStatusCode().value())
+                .isEqualTo(403);
+        assertThatThrownBy(() -> service.unmuteNotifications(convId, stranger))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+        verify(conversationRepository, never()).save(any());
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    void toResponse_exposesOnlyTheCallersOwnMute() {
+        ConversationEntity conv = new ConversationEntity(bidId, senderId, travelerId, "conv_" + bidId);
+        conv.muteNotificationsForUser(senderId);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.empty());
+        lenient().when(firestoreService.getConversationMeta(any())).thenReturn(Map.of());
+
+        assertThat(service.toResponse(conv, senderId).notificationsMuted()).isTrue();
+        assertThat(service.toResponse(conv, travelerId).notificationsMuted()).isFalse();
+    }
 }

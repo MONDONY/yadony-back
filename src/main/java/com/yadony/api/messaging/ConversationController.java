@@ -187,6 +187,23 @@ public class ConversationController {
         return ResponseEntity.noContent().build();
     }
 
+    // POST /conversations/{id}/mute — sourdine (FLUTTER-CM) : plus de push pour les nouveaux
+    // messages de ce fil, pour l'appelant seul. Non-lus et appels inchangés. Idempotent.
+    @PostMapping("/{id}/mute")
+    public ResponseEntity<Void> muteConversation(@PathVariable UUID id) {
+        UserEntity currentUser = resolveCurrentUser();
+        conversationService.muteNotifications(id, currentUser.getId());
+        return ResponseEntity.noContent().build();
+    }
+
+    // POST /conversations/{id}/unmute — réactive les push de ce fil. Idempotent.
+    @PostMapping("/{id}/unmute")
+    public ResponseEntity<Void> unmuteConversation(@PathVariable UUID id) {
+        UserEntity currentUser = resolveCurrentUser();
+        conversationService.unmuteNotifications(id, currentUser.getId());
+        return ResponseEntity.noContent().build();
+    }
+
     // POST /conversations/{id}/restore — restore the requesting user's deleted copy
     @PostMapping("/{id}/restore")
     public ResponseEntity<ConversationResponse> restoreConversation(@PathVariable UUID id) {

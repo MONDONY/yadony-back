@@ -293,6 +293,40 @@ public class ConversationService {
     }
 
     /**
+     * Sourdine (FLUTTER-CM) : coupe les push des nouveaux messages de ce fil pour l'appelant
+     * seul. Idempotent : un second appel ne réécrit rien et ne journalise rien. Participant
+     * uniquement, archivé compris (on peut mettre en sourdine un fil archivé), sinon 403.
+     */
+    @Transactional
+    public void muteNotifications(UUID conversationId, UUID requestingUserId) {
+        ConversationEntity conv = conversationRepository
+            .findByIdAndParticipantIgnoreArchived(conversationId, requestingUserId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN,
+                "Conversation not found or access denied"));
+        if (conv.isNotificationsMutedBy(requestingUserId)) {
+            return;
+        }
+        conv.muteNotificationsForUser(requestingUserId);
+        conversationRepository.save(conv);
+        auditService.log("conversation", conversationId, "CONVERSATION_NOTIFICATIONS_MUTED", requestingUserId, Map.of());
+    }
+
+    /** Réactive les push de ce fil pour l'appelant. Idempotent, participant uniquement. */
+    @Transactional
+    public void unmuteNotifications(UUID conversationId, UUID requestingUserId) {
+        ConversationEntity conv = conversationRepository
+            .findByIdAndParticipantIgnoreArchived(conversationId, requestingUserId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN,
+                "Conversation not found or access denied"));
+        if (!conv.isNotificationsMutedBy(requestingUserId)) {
+            return;
+        }
+        conv.unmuteNotificationsForUser(requestingUserId);
+        conversationRepository.save(conv);
+        auditService.log("conversation", conversationId, "CONVERSATION_NOTIFICATIONS_UNMUTED", requestingUserId, Map.of());
+    }
+
+    /**
      * Garde d'envoi d'un message : lève un 404 si la contrepartie du fil est masquée
      * pour {@code actorId}.
      *
@@ -419,7 +453,8 @@ public class ConversationService {
             conv.getKind() != null ? conv.getKind().name() : ConversationKind.SENDER_TRAVELER.name(),
             !conv.isRecipientConversation() ? null
                     : currentUserId.equals(conv.getTravelerId()) ? "TRAVELER" : "RECIPIENT",
-            callAvailable(conv, currentUserId, bidOpt.map(BidEntity::getStatus).orElse(null))
+            callAvailable(conv, currentUserId, bidOpt.map(BidEntity::getStatus).orElse(null)),
+            conv.isNotificationsMutedBy(currentUserId)
         );
     }
 

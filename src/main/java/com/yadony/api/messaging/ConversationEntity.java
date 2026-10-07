@@ -51,6 +51,18 @@ public class ConversationEntity extends BaseEntity {
     @Column(name = "traveler_archived_at")
     private LocalDateTime travelerArchivedAt;
 
+    /**
+     * Sourdine (FLUTTER-CM, V294) : non nul quand ce participant a coupé les push des nouveaux
+     * messages de ce fil. Propre à chaque participant, invisible pour l'autre. Ne touche ni au
+     * compteur de non-lus ni aux appels. Distinct du mute de modération
+     * ({@code UserEntity#isMessagingMuted}), qui empêche d'ÉCRIRE.
+     */
+    @Column(name = "sender_notifications_muted_at")
+    private LocalDateTime senderNotificationsMutedAt;
+
+    @Column(name = "traveler_notifications_muted_at")
+    private LocalDateTime travelerNotificationsMutedAt;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "kind", nullable = false, length = 20)
     private ConversationKind kind = ConversationKind.SENDER_TRAVELER;
@@ -146,6 +158,35 @@ public class ConversationEntity extends BaseEntity {
         return false;
     }
 
+    /** Met les notifications de ce fil en sourdine pour {@code userId} (idempotent : garde la date d'origine). */
+    public void muteNotificationsForUser(UUID userId) {
+        if (userId.equals(senderId)) {
+            if (senderNotificationsMutedAt == null) {
+                this.senderNotificationsMutedAt = LocalDateTime.now(ZoneOffset.UTC);
+            }
+        } else if (userId.equals(travelerId)) {
+            if (travelerNotificationsMutedAt == null) {
+                this.travelerNotificationsMutedAt = LocalDateTime.now(ZoneOffset.UTC);
+            }
+        }
+    }
+
+    public void unmuteNotificationsForUser(UUID userId) {
+        if (userId.equals(senderId)) {
+            this.senderNotificationsMutedAt = null;
+        } else if (userId.equals(travelerId)) {
+            this.travelerNotificationsMutedAt = null;
+        }
+    }
+
+    /** Vrai si {@code userId} est participant et a mis ce fil en sourdine ; faux pour un tiers ou un id nul. */
+    public boolean isNotificationsMutedBy(UUID userId) {
+        if (userId == null) return false;
+        if (userId.equals(senderId)) return senderNotificationsMutedAt != null;
+        if (userId.equals(travelerId)) return travelerNotificationsMutedAt != null;
+        return false;
+    }
+
     public boolean isReadOnlyFor(UUID userId) {
         // Conversation destinataire fermée : plus personne n'y écrit.
         if (closedAt != null && (userId.equals(senderId) || userId.equals(travelerId))) return true;
@@ -167,6 +208,8 @@ public class ConversationEntity extends BaseEntity {
     public LocalDateTime getTravelerDeletedAt() { return travelerDeletedAt; }
     public LocalDateTime getSenderArchivedAt() { return senderArchivedAt; }
     public LocalDateTime getTravelerArchivedAt() { return travelerArchivedAt; }
+    public LocalDateTime getSenderNotificationsMutedAt() { return senderNotificationsMutedAt; }
+    public LocalDateTime getTravelerNotificationsMutedAt() { return travelerNotificationsMutedAt; }
     public ConversationKind getKind() { return kind; }
     public LocalDateTime getClosedAt() { return closedAt; }
 }

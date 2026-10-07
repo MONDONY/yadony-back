@@ -70,7 +70,7 @@ class MessagingNotifyControllerTest {
             new NotifyMessageRequest("conv_bid1", "uid-sender", "Hello!"));
 
         verify(notificationDispatcher).sendMessageNotification(
-            eq(senderId), eq(travelerId), eq("uid-sender"), eq("Hello!"), eq("conv_bid1"));
+            eq(senderId), eq(travelerId), eq("uid-sender"), eq("Hello!"), eq("conv_bid1"), eq(false));
     }
 
     @Test
@@ -79,7 +79,7 @@ class MessagingNotifyControllerTest {
         UUID travelerId = UUID.randomUUID();
         var conv = new ConversationEntity(UUID.randomUUID(), senderId, travelerId, "conv_bid1");
         when(conversationRepository.findByFirestoreConversationId("conv_bid1")).thenReturn(Optional.of(conv));
-        when(notificationDispatcher.sendMessageNotification(any(), any(), any(), any(), any()))
+        when(notificationDispatcher.sendMessageNotification(any(), any(), any(), any(), any(), anyBoolean()))
             .thenReturn("uid-recipient");
 
         var response = controller.notify("test-secret",
@@ -124,7 +124,7 @@ class MessagingNotifyControllerTest {
                 new NotifyMessageRequest("conv_bid1", "uid-sender", "Hello!"));
 
         assert response.getStatusCode().value() == 200;
-        verify(notificationDispatcher, never()).sendMessageNotification(any(), any(), any(), any(), any());
+        verify(notificationDispatcher, never()).sendMessageNotification(any(), any(), any(), any(), any(), anyBoolean());
     }
 
     @Test
@@ -142,7 +142,7 @@ class MessagingNotifyControllerTest {
                 new NotifyMessageRequest("conv_bid1", "uid-sender", "Hello!"));
 
         verify(notificationDispatcher).sendMessageNotification(
-                eq(senderId), eq(travelerId), eq("uid-sender"), eq("Hello!"), eq("conv_bid1"));
+                eq(senderId), eq(travelerId), eq("uid-sender"), eq("Hello!"), eq("conv_bid1"), eq(false));
     }
 
     private static void setField(Object target, String name, Object value) throws Exception {
@@ -163,7 +163,7 @@ class MessagingNotifyControllerTest {
         controller.notify("test-secret", new NotifyMessageRequest("rconv_bid1", "uid-traveler", "Bonjour"));
 
         verify(notificationDispatcher).sendMessageNotification(
-            eq(recipientId), eq(travelerId), eq("uid-traveler"), eq("Bonjour"), eq("rconv_bid1"));
+            eq(recipientId), eq(travelerId), eq("uid-traveler"), eq("Bonjour"), eq("rconv_bid1"), eq(false));
     }
 
     @Test
@@ -178,5 +178,66 @@ class MessagingNotifyControllerTest {
         assert response.getBody().recipientFirebaseUid() == null;
         verifyNoInteractions(notificationDispatcher);
         verify(conversationService, never()).ensureFirestoreDocument(any());
+    }
+
+    // ── FLUTTER-CM : sourdine par participant ───────────────────────────────
+
+    private static UserEntity userWithId(UUID id) throws Exception {
+        UserEntity u = new UserEntity();
+        Field f = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+        f.setAccessible(true);
+        f.set(u, id);
+        return u;
+    }
+
+    @Test
+    void notify_recipientMuted_dispatchesWithPushMuted_andStillReturnsRecipientUid() throws Exception {
+        UUID senderId = UUID.randomUUID();
+        UUID travelerId = UUID.randomUUID();
+        var conv = new ConversationEntity(UUID.randomUUID(), senderId, travelerId, "conv_bid1");
+        conv.muteNotificationsForUser(travelerId);
+        when(conversationRepository.findByFirestoreConversationId("conv_bid1")).thenReturn(Optional.of(conv));
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(userWithId(senderId)));
+        when(notificationDispatcher.sendMessageNotification(any(), any(), any(), any(), any(), anyBoolean()))
+            .thenReturn("uid-traveler");
+
+        var response = controller.notify("test-secret",
+            new NotifyMessageRequest("conv_bid1", "uid-sender", "Hello!"));
+
+        verify(notificationDispatcher).sendMessageNotification(
+            eq(senderId), eq(travelerId), eq("uid-sender"), eq("Hello!"), eq("conv_bid1"), eq(true));
+        // L'UID reste renvoyé : la Cloud Function crédite toujours les non-lus.
+        assert "uid-traveler".equals(response.getBody().recipientFirebaseUid());
+    }
+
+    @Test
+    void notify_senderMutedOwnCopy_doesNotAffectPushToTheOtherParticipant() throws Exception {
+        UUID senderId = UUID.randomUUID();
+        UUID travelerId = UUID.randomUUID();
+        var conv = new ConversationEntity(UUID.randomUUID(), senderId, travelerId, "conv_bid1");
+        // C'est l'auteur du message qui a mis le fil en sourdine, pas le destinataire.
+        conv.muteNotificationsForUser(senderId);
+        when(conversationRepository.findByFirestoreConversationId("conv_bid1")).thenReturn(Optional.of(conv));
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(userWithId(senderId)));
+
+        controller.notify("test-secret", new NotifyMessageRequest("conv_bid1", "uid-sender", "Hello!"));
+
+        verify(notificationDispatcher).sendMessageNotification(
+            eq(senderId), eq(travelerId), eq("uid-sender"), eq("Hello!"), eq("conv_bid1"), eq(false));
+    }
+
+    @Test
+    void notify_travelerWritesToMutedRecipientConversation_pushMutedForParticipantA() throws Exception {
+        UUID recipientId = UUID.randomUUID();
+        UUID travelerId = UUID.randomUUID();
+        var conv = ConversationEntity.forRecipient(UUID.randomUUID(), recipientId, travelerId, "rconv_bid1");
+        conv.muteNotificationsForUser(recipientId);
+        when(conversationRepository.findByFirestoreConversationId("rconv_bid1")).thenReturn(Optional.of(conv));
+        when(userRepository.findByFirebaseUid("uid-traveler")).thenReturn(Optional.of(userWithId(travelerId)));
+
+        controller.notify("test-secret", new NotifyMessageRequest("rconv_bid1", "uid-traveler", "Bonjour"));
+
+        verify(notificationDispatcher).sendMessageNotification(
+            eq(recipientId), eq(travelerId), eq("uid-traveler"), eq("Bonjour"), eq("rconv_bid1"), eq(true));
     }
 }

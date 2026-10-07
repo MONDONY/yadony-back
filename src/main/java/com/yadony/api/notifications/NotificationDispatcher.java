@@ -653,6 +653,16 @@ public class NotificationDispatcher {
     public String sendMessageNotification(UUID participantAId, UUID travelerId,
                                           String senderFirebaseUid, String preview,
                                           String conversationId) {
+        return sendMessageNotification(participantAId, travelerId, senderFirebaseUid, preview,
+                conversationId, false);
+    }
+
+    // pushMuted : le destinataire a mis ce fil en sourdine (FLUTTER-CM). Seul le push est
+    // sauté ; toutes les autres gardes restent, et l'UID du destinataire est quand même
+    // renvoyé pour que la Cloud Function crédite ses non-lus (la sourdine ne cache rien).
+    public String sendMessageNotification(UUID participantAId, UUID travelerId,
+                                          String senderFirebaseUid, String preview,
+                                          String conversationId, boolean pushMuted) {
         // Message posté par la plateforme (FirestoreService.addSystemMessage) : aucune push
         // ici, volontairement. Chaque message système double un push déjà envoyé sur le même
         // fait — « Votre voyageur est arrivé » suit onTripArrived, « Connexion établie » suit
@@ -688,6 +698,11 @@ public class NotificationDispatcher {
             return null;
         }
 
+        if (pushMuted) {
+            log.debug("Push supprimé : conversation {} en sourdine pour {}", conversationId, recipientId);
+            return firebaseUidOf(recipientId);
+        }
+
         // Push seul, rien en base : la messagerie porte déjà son badge et sa liste,
         // une ligne de plus dans le feed ferait deux endroits à vider pour un même
         // message (refonte du sheet, 2026-09). L'aperçu est coupé au mot, jamais
@@ -704,7 +719,11 @@ public class NotificationDispatcher {
         fcmService.sendToUser(recipientId, title, truncated,
                 Map.of("type", "NEW_MESSAGE", "conversationId", conversationId));
 
-        return userRepository.findById(recipientId)
+        return firebaseUidOf(recipientId);
+    }
+
+    private String firebaseUidOf(UUID userId) {
+        return userRepository.findById(userId)
                 .map(com.yadony.api.auth.UserEntity::getFirebaseUid)
                 .orElse(null);
     }
