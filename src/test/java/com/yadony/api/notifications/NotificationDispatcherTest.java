@@ -1072,6 +1072,52 @@ class NotificationDispatcherTest {
         verifyNoInteractions(notificationService);
     }
 
+    // ── sendMessageNotification — sourdine (FLUTTER-CM) ───────────────────────
+
+    @Test
+    void sendMessageNotification_pushMuted_skipsPushButStillReturnsRecipientUid() {
+        UserEntity messageSender = new UserEntity();
+        setUserId(messageSender, senderId);
+        messageSender.setFirstName("Mariama");
+        UserEntity recipient = new UserEntity();
+        recipient.setFirebaseUid("uid-traveler");
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(messageSender));
+        when(userRepository.findById(travelerId)).thenReturn(Optional.of(recipient));
+        when(blockVisibility.isHidden(travelerId, senderId)).thenReturn(false);
+
+        String recipientUid = dispatcher.sendMessageNotification(
+                senderId, travelerId, "uid-sender", "Bonjour", "conv_1", true);
+
+        // Non-lus toujours crédités par la Cloud Function grâce à l'UID ; aucun push.
+        assertThat(recipientUid).isEqualTo("uid-traveler");
+        verifyNoInteractions(fcmService);
+        verifyNoInteractions(notificationService);
+    }
+
+    @Test
+    void sendMessageNotification_pushMuted_hiddenSenderStillWins_noUidReturned() {
+        UserEntity messageSender = new UserEntity();
+        setUserId(messageSender, senderId);
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(messageSender));
+        when(blockVisibility.isHidden(travelerId, senderId)).thenReturn(true);
+
+        String recipientUid = dispatcher.sendMessageNotification(
+                senderId, travelerId, "uid-sender", "Bonjour", "conv_1", true);
+
+        assertThat(recipientUid).isNull();
+        verifyNoInteractions(fcmService);
+        verify(userRepository, never()).findById(travelerId);
+    }
+
+    @Test
+    void sendMessageNotification_pushMuted_systemSender_stillReturnsNull() {
+        String recipientUid = dispatcher.sendMessageNotification(
+                senderId, travelerId, SystemMessages.SENDER_ID, "Connexion établie", "conv_1", true);
+
+        assertThat(recipientUid).isNull();
+        verifyNoInteractions(fcmService);
+    }
+
     @Test
     void sendMessageNotification_shortensSenderNameAndCutsPreviewAtWord() {
         UserEntity messageSender = new UserEntity();

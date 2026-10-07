@@ -501,4 +501,31 @@ class ConversationControllerTest {
                 .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
                         .isEqualTo(HttpStatus.FORBIDDEN));
     }
+
+    // ── Sourdine (FLUTTER-CM) ────────────────────────────────────────────────
+
+    @Test
+    void muteConversation_returns204_andDelegatesForCurrentUser() {
+        ResponseEntity<Void> response = controller.muteConversation(conversationId);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+        verify(conversationService).muteNotifications(conversationId, currentUserId);
+    }
+
+    @Test
+    void unmuteConversation_returns204_andDelegatesForCurrentUser() {
+        ResponseEntity<Void> response = controller.unmuteConversation(conversationId);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+        verify(conversationService).unmuteNotifications(conversationId, currentUserId);
+    }
+
+    @Test
+    void muteConversation_nonParticipant_propagates403() {
+        doThrow(new ResponseStatusException(HttpStatus.FORBIDDEN, "Conversation not found or access denied"))
+                .when(conversationService).muteNotifications(conversationId, currentUserId);
+
+        assertThatThrownBy(() -> controller.muteConversation(conversationId))
+                .isInstanceOf(ResponseStatusException.class);
+    }
 }

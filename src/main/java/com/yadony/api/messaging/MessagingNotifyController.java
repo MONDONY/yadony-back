@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.*;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Instant;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/internal/messaging")
@@ -80,11 +81,22 @@ public class MessagingNotifyController {
         }
 
         String preview = request.messagePreview() != null ? request.messagePreview() : "[Image]";
+
+        // Sourdine (FLUTTER-CM) : seule celle du DESTINATAIRE compte, celle de l'expéditeur
+        // ne concerne que les messages qu'il reçoit. Expéditeur inconnu (ou message système) :
+        // le dispatcher n'envoie rien de toute façon, false suffit.
+        boolean pushMuted = false;
+        if (sender != null) {
+            UUID recipientId = conv.participantAId().equals(sender.getId())
+                    ? conv.getTravelerId() : conv.participantAId();
+            pushMuted = conv.isNotificationsMutedBy(recipientId);
+        }
+
         // participantAId() : expéditeur ou destinataire selon le type. Le dispatcher ne fait
         // que choisir « l'autre » participant, et son texte (« Message de … ») est neutre.
         String recipientFirebaseUid = notificationDispatcher.sendMessageNotification(
                 conv.participantAId(), conv.getTravelerId(),
-                request.senderFirebaseUid(), preview, conv.getFirestoreConversationId());
+                request.senderFirebaseUid(), preview, conv.getFirestoreConversationId(), pushMuted);
 
         return ResponseEntity.ok(new NotifyMessageResponse(recipientFirebaseUid));
     }

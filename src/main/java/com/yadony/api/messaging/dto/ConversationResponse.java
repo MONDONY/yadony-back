@@ -30,8 +30,24 @@ public record ConversationResponse(
         String viewerRole,
         // Appel audio in-app possible maintenant (règle d'éligibilité de calls/). Absent chez
         // un ancien back : l'app masque le bouton.
-        boolean callAvailable
+        boolean callAvailable,
+        // Sourdine propre à l'appelant (FLUTTER-CM) : plus de push pour ce fil, non-lus
+        // toujours comptés. Jamais exposé à l'autre participant. Absent chez un ancien back :
+        // l'app retombe sur false.
+        boolean notificationsMuted
 ) {
+    /** Forme d'avant la sourdine (FLUTTER-CM) : non mise en sourdine. */
+    public ConversationResponse(UUID id, UUID bidId, String firestoreConversationId,
+                                ParticipantDTO otherParticipant, String lastMessagePreview,
+                                LocalDateTime lastMessageAt, boolean hasUnread, String tripOrigin,
+                                String tripDestination, String tripDate, Double tripWeightKg,
+                                String bidStatus, boolean readOnly, boolean deletedBySelf,
+                                String kind, String viewerRole, boolean callAvailable) {
+        this(id, bidId, firestoreConversationId, otherParticipant, lastMessagePreview, lastMessageAt,
+                hasUnread, tripOrigin, tripDestination, tripDate, tripWeightKg, bidStatus, readOnly,
+                deletedBySelf, kind, viewerRole, callAvailable, false);
+    }
+
     public ConversationResponse(UUID id, UUID bidId, String firestoreConversationId,
                                 ParticipantDTO otherParticipant, String lastMessagePreview,
                                 LocalDateTime lastMessageAt, boolean hasUnread, String tripOrigin,
