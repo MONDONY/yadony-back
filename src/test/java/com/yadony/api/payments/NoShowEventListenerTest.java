@@ -43,7 +43,7 @@ class NoShowEventListenerTest {
         PaymentEntity p = spy(new PaymentEntity());
         p.setBidId(bidId);
         when(p.getId()).thenReturn(paymentId);
-        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.of(p));
+        when(paymentRepository.findForBid(bidId)).thenReturn(Optional.of(p));
 
         listener.onVoyageurNoShow(
                 new VoyageurNoShowEvent(bidId, travelerId, UUID.randomUUID(), 1));
@@ -55,7 +55,7 @@ class NoShowEventListenerTest {
     @Test
     void no_payment_no_processor_call() {
         UUID bidId = UUID.randomUUID();
-        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.empty());
+        when(paymentRepository.findForBid(bidId)).thenReturn(Optional.empty());
 
         listener.onVoyageurNoShow(
                 new VoyageurNoShowEvent(bidId, UUID.randomUUID(), UUID.randomUUID(), 1));

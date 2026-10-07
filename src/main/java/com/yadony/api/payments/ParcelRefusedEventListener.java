@@ -32,7 +32,7 @@ public class ParcelRefusedEventListener {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
     public void onParcelRefused(ParcelRefusedEvent event) {
-        paymentRepository.findByBidId(event.getBidId()).ifPresentOrElse(
+        paymentRepository.findForBid(event.getBidId()).ifPresentOrElse(
                 payment -> refundProcessor.processRefund(
                         payment.getId(),
                         "PAYMENT_REFUNDED_PARCEL_REFUSED",

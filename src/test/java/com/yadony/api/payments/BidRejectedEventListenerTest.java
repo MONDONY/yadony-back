@@ -43,7 +43,7 @@ class BidRejectedEventListenerTest {
         PaymentEntity p = spy(new PaymentEntity());
         p.setBidId(bidId);
         when(p.getId()).thenReturn(paymentId);
-        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.of(p));
+        when(paymentRepository.findForBid(bidId)).thenReturn(Optional.of(p));
 
         listener.handleBidRejected(new BidRejectedEvent(bidId, UUID.randomUUID(), "raison"));
 
@@ -54,10 +54,26 @@ class BidRejectedEventListenerTest {
     @Test
     void no_payment_no_processor_call() {
         UUID bidId = UUID.randomUUID();
-        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.empty());
+        when(paymentRepository.findForBid(bidId)).thenReturn(Optional.empty());
 
         listener.handleBidRejected(new BidRejectedEvent(bidId, UUID.randomUUID(), "x"));
 
         verifyNoInteractions(refundProcessor);
+    }
+
+    @Test
+    void negotiated_thread_payment_is_refunded_with_bid_as_actor() {
+        // Paiement de fil : bid_id NULL. L'acteur d'audit reste le bid de l'événement.
+        UUID bidId = UUID.randomUUID();
+        UUID paymentId = UUID.randomUUID();
+        PaymentEntity p = spy(new PaymentEntity());
+        p.setNegotiationThreadId(UUID.randomUUID());
+        when(p.getId()).thenReturn(paymentId);
+        when(paymentRepository.findForBid(bidId)).thenReturn(Optional.of(p));
+
+        listener.handleBidRejected(new BidRejectedEvent(bidId, UUID.randomUUID(), "CANCELLED_BY_SENDER"));
+
+        verify(refundProcessor).processRefund(eq(paymentId),
+                eq("PAYMENT_REFUNDED_BID_REJECTED"), eq(bidId), any(Map.class));
     }
 }

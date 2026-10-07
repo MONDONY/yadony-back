@@ -32,7 +32,7 @@ public class NoShowEventListener {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
     public void onVoyageurNoShow(VoyageurNoShowEvent event) {
-        paymentRepository.findByBidId(event.getBidId()).ifPresentOrElse(
+        paymentRepository.findForBid(event.getBidId()).ifPresentOrElse(
                 payment -> refundProcessor.processRefund(
                         payment.getId(),
                         "PAYMENT_REFUNDED_NO_SHOW",

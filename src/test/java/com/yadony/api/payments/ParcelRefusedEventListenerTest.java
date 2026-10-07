@@ -43,7 +43,7 @@ class ParcelRefusedEventListenerTest {
         PaymentEntity p = spy(new PaymentEntity());
         p.setBidId(bidId);
         when(p.getId()).thenReturn(paymentId);
-        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.of(p));
+        when(paymentRepository.findForBid(bidId)).thenReturn(Optional.of(p));
 
         listener.onParcelRefused(
                 new ParcelRefusedEvent(bidId, travelerId, UUID.randomUUID(), "colis abîmé"));
@@ -55,7 +55,7 @@ class ParcelRefusedEventListenerTest {
     @Test
     void no_payment_no_processor_call() {
         UUID bidId = UUID.randomUUID();
-        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.empty());
+        when(paymentRepository.findForBid(bidId)).thenReturn(Optional.empty());
 
         listener.onParcelRefused(
                 new ParcelRefusedEvent(bidId, UUID.randomUUID(), UUID.randomUUID(), "x"));

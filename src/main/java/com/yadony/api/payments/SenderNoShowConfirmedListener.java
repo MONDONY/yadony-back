@@ -40,7 +40,7 @@ public class SenderNoShowConfirmedListener {
         if (event.reason() != CancellationReason.SENDER_NO_SHOW) {
             return;
         }
-        paymentRepository.findByBidId(event.bidId()).ifPresentOrElse(
+        paymentRepository.findForBid(event.bidId()).ifPresentOrElse(
                 payment -> refundProcessor.processRefund(payment.getId(),
                         "PAYMENT_REFUNDED_SENDER_NO_SHOW", event.bidId(),
                         Map.of("bidId", event.bidId().toString(), "reason", "sender_no_show")),
