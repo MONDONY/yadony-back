@@ -626,11 +626,53 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
                OR (b.status IN (com.yadony.api.matching.BidStatus.AWAITING_PAYMENT,
                                 com.yadony.api.matching.BidStatus.PENDING)
                    AND b.negotiatedGrossEur IS NOT NULL))
-          AND (b.senderId = :userId OR a.travelerId = :userId)
+          AND ((b.senderId = :userId
+                AND b.negotiationSenderHiddenAt IS NULL AND b.negotiationSenderArchivedAt IS NULL)
+               OR (a.travelerId = :userId
+                AND b.negotiationTravelerHiddenAt IS NULL AND b.negotiationTravelerArchivedAt IS NULL))
           AND b.deletedAt IS NULL
         ORDER BY b.updatedAt DESC
     """)
     List<BidEntity> findNegotiationsForUser(@Param("userId") UUID userId);
+
+    /**
+     * Filtre « Archivées » des discussions de prix : rangées par l'utilisateur, pas
+     * retirées. Une discussion se reconnaît à son statut (NEGOTIATING /
+     * NEGOTIATION_CLOSED) ou à son prix d'accord, posé seulement par la négociation.
+     */
+    @Query("""
+        SELECT b FROM BidEntity b
+        JOIN AnnouncementEntity a ON b.announcementId = a.id
+        WHERE (b.status IN (com.yadony.api.matching.BidStatus.NEGOTIATING,
+                            com.yadony.api.matching.BidStatus.NEGOTIATION_CLOSED)
+               OR b.negotiatedGrossEur IS NOT NULL)
+          AND ((b.senderId = :userId
+                AND b.negotiationSenderHiddenAt IS NULL AND b.negotiationSenderArchivedAt IS NOT NULL)
+               OR (a.travelerId = :userId
+                AND b.negotiationTravelerHiddenAt IS NULL AND b.negotiationTravelerArchivedAt IS NOT NULL))
+          AND b.deletedAt IS NULL
+        ORDER BY b.updatedAt DESC
+    """)
+    List<BidEntity> findArchivedNegotiationsForUser(@Param("userId") UUID userId);
+
+    // Rangement / retrait d'une discussion par un participant (V293). Mises à jour
+    // ciblées : updated_at du bid ne bouge pas (il ordonne d'autres listes de colis).
+
+    @org.springframework.data.jpa.repository.Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("UPDATE BidEntity b SET b.negotiationSenderArchivedAt = :at WHERE b.id = :id")
+    int updateNegotiationSenderArchivedAt(@Param("id") UUID id, @Param("at") LocalDateTime at);
+
+    @org.springframework.data.jpa.repository.Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("UPDATE BidEntity b SET b.negotiationTravelerArchivedAt = :at WHERE b.id = :id")
+    int updateNegotiationTravelerArchivedAt(@Param("id") UUID id, @Param("at") LocalDateTime at);
+
+    @org.springframework.data.jpa.repository.Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("UPDATE BidEntity b SET b.negotiationSenderHiddenAt = :at WHERE b.id = :id")
+    int updateNegotiationSenderHiddenAt(@Param("id") UUID id, @Param("at") LocalDateTime at);
+
+    @org.springframework.data.jpa.repository.Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("UPDATE BidEntity b SET b.negotiationTravelerHiddenAt = :at WHERE b.id = :id")
+    int updateNegotiationTravelerHiddenAt(@Param("id") UUID id, @Param("at") LocalDateTime at);
 
     /**
      * Fils inactifs depuis le seuil : plus aucun message échangé.
