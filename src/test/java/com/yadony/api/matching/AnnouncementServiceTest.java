@@ -954,9 +954,45 @@ class AnnouncementServiceTest {
 
             AnnouncementResponse result = announcementService.createAnnouncement(FIREBASE_UID, req);
 
-            verify(priceGridService).snapshotToAnnouncement(USER_ID, ANNOUNCEMENT_ID);
+            verify(priceGridService).snapshotToAnnouncement(USER_ID, ANNOUNCEMENT_ID, "EUR");
             assertThat(captor.getValue().getPricingMode()).isEqualTo(PricingMode.MIXED);
             assertThat(result.pricingMode()).isEqualTo(PricingMode.MIXED);
+        }
+
+        @Test
+        @DisplayName("FLUTTER-ER : MIXED publié en XOF → la grille est figée dans la devise de l'annonce")
+        void createAnnouncement_MIXED_passes_announcement_currency_to_snapshot() {
+            UserEntity traveler = buildTraveler();
+            traveler.setKycStatus(KycStatus.VERIFIED);
+            traveler.setStripeAccountStatus(StripeAccountStatus.ONBOARDING_COMPLETE);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.save(any())).thenAnswer(inv -> {
+                AnnouncementEntity a = inv.getArgument(0);
+                setId(a, ANNOUNCEMENT_ID);
+                return a;
+            });
+            when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
+            when(bidRepository.countByAnnouncementIdAndStatusIn(any(), any())).thenReturn(0L);
+
+            AnnouncementRequest req = new AnnouncementRequest(
+                    "Paris", "Dakar", LocalDate.now().plusDays(10),
+                    LocalTime.of(10, 0), LocalTime.of(22, 0),
+                    new AddressDto("CDG Terminal 2E", 49.009, 2.547),
+                    new AddressDto("Aéroport LSS", 14.739, -17.490),
+                    BigDecimal.valueOf(20), BigDecimal.valueOf(5),
+                    TransportMode.PLANE,
+                    null, null, null,
+                    java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.CASH),
+                    null, PricingMode.MIXED,
+                    null, null,
+                    LocalDate.now().plusDays(10).atTime(9, 0),
+                    null,
+                    null,
+                    "xof");
+
+            announcementService.createAnnouncement(FIREBASE_UID, req);
+
+            verify(priceGridService).snapshotToAnnouncement(USER_ID, ANNOUNCEMENT_ID, "XOF");
         }
 
         @Test
@@ -974,7 +1010,7 @@ class AnnouncementServiceTest {
             doThrow(new org.springframework.web.server.ResponseStatusException(
                     org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY,
                     "price-grid-empty: au moins 1 article requis pour le mode MIXED"))
-                    .when(priceGridService).snapshotToAnnouncement(any(), any());
+                    .when(priceGridService).snapshotToAnnouncement(any(), any(), any());
 
             AnnouncementRequest req = new AnnouncementRequest(
                     "Paris", "Dakar", LocalDate.now().plusDays(10),

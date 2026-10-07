@@ -707,9 +707,13 @@ public final class NotificationTexts {
                         : "notification.trip-rescheduled-info.body", date));
     }
 
-    public static NotificationText tripRescheduleKept(Messages m) {
+    /** Report accepté par l'expéditeur, vu par le voyageur. Prénom seul, générique s'il manque. */
+    public static NotificationText tripRescheduleKept(Messages m, String senderFirstName) {
+        String who = senderFirstName == null || senderFirstName.isBlank()
+                ? m.get("notification.fallback.sender")
+                : shortDisplayName(senderFirstName);
         return new NotificationText(m.get("notification.trip-reschedule-kept.title"),
-                m.get("notification.trip-reschedule-kept.body"));
+                m.get("notification.trip-reschedule-kept.body", who));
     }
 
     public static NotificationText tripRescheduleWithdrawn(Messages m) {

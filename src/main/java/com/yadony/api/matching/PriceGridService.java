@@ -5,6 +5,9 @@ import com.yadony.api.common.CommissionRateResolver;
 import com.yadony.api.matching.dto.AnnouncementPriceGridItemResponse;
 import com.yadony.api.matching.dto.PriceGridItemRequest;
 import com.yadony.api.matching.dto.PriceGridItemResponse;
+import com.yadony.api.payments.currency.ActiveCurrencyResolver;
+import com.yadony.api.payments.currency.ExchangeRateService;
+import com.yadony.api.payments.currency.SupportedCurrency;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -13,6 +16,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
@@ -25,15 +29,21 @@ public class PriceGridService {
     private final AnnouncementPriceGridItemRepository annGridRepo;
     private final AuditService auditService;
     private final CommissionRateResolver commissionRateResolver;
+    private final ActiveCurrencyResolver activeCurrencyResolver;
+    private final ExchangeRateService exchangeRateService;
 
     public PriceGridService(PriceGridItemRepository gridRepo,
                             AnnouncementPriceGridItemRepository annGridRepo,
                             AuditService auditService,
-                            CommissionRateResolver commissionRateResolver) {
+                            CommissionRateResolver commissionRateResolver,
+                            ActiveCurrencyResolver activeCurrencyResolver,
+                            ExchangeRateService exchangeRateService) {
         this.gridRepo = gridRepo;
         this.annGridRepo = annGridRepo;
         this.auditService = auditService;
         this.commissionRateResolver = commissionRateResolver;
+        this.activeCurrencyResolver = activeCurrencyResolver;
+        this.exchangeRateService = exchangeRateService;
     }
 
     public List<PriceGridItemResponse> getItems(UUID travelerId) {
@@ -102,18 +112,36 @@ public class PriceGridService {
         );
     }
 
+    /**
+     * Fige la grille du profil voyageur sur une annonce, dans la devise DE L'ANNONCE.
+     *
+     * <p>La grille du profil ne porte pas de devise : ses nets sont saisis et affichés dans la
+     * devise active du voyageur ({@link ActiveCurrencyResolver#resolve}, celle de
+     * {@code formatPriceActive} côté app). Une annonce peut pourtant être publiée dans une autre
+     * devise (choix explicite à la création, récurrence) : copier les nets tels quels publiait
+     * 10 € comme 10 F CFA (FLUTTER-ER). Chaque net est donc converti au taux administrable
+     * ({@link ExchangeRateService#convert}, arrondi au nombre de décimales de la devise cible,
+     * HALF_UP) ; même devise, le montant est recopié inchangé.
+     *
+     * <p>Un net converti ne tombe jamais à zéro (1 F CFA → 0,00 €) : il est relevé à la plus
+     * petite unité de la devise cible, un article gratuit n'ayant pas de sens.
+     */
     @Transactional
-    public void snapshotToAnnouncement(UUID travelerId, UUID announcementId) {
+    public void snapshotToAnnouncement(UUID travelerId, UUID announcementId, String announcementCurrency) {
         List<PriceGridItemEntity> items = gridRepo.findByTravelerIdOrderByPositionAsc(travelerId);
         if (items.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
                 "price-grid-empty: au moins 1 article requis pour le mode MIXED");
         }
+        String gridCurrency = activeCurrencyResolver.resolve(travelerId);
+        String targetCurrency = announcementCurrency == null || announcementCurrency.isBlank()
+                ? gridCurrency
+                : announcementCurrency.trim().toUpperCase(Locale.ROOT);
         List<AnnouncementPriceGridItemEntity> snapshots = items.stream().map(item -> {
             AnnouncementPriceGridItemEntity snap = new AnnouncementPriceGridItemEntity();
             snap.setAnnouncementId(announcementId);
             snap.setLabel(item.getLabel());
-            snap.setUnitPriceNet(item.getUnitPriceNet());
+            snap.setUnitPriceNet(convertNet(item.getUnitPriceNet(), gridCurrency, targetCurrency));
             snap.setPosition(item.getPosition());
             return snap;
         }).toList();
@@ -124,8 +152,22 @@ public class PriceGridService {
             announcementId,
             "ANNOUNCEMENT_PRICE_GRID_SNAPSHOTTED",
             travelerId,
-            java.util.Map.<String, Object>of("itemCount", String.valueOf(items.size()))
+            Map.<String, Object>of(
+                "itemCount", String.valueOf(items.size()),
+                "gridCurrency", gridCurrency,
+                "announcementCurrency", targetCurrency)
         );
+    }
+
+    private BigDecimal convertNet(BigDecimal net, String from, String to) {
+        if (from.equalsIgnoreCase(to)) {
+            return net;
+        }
+        BigDecimal converted = exchangeRateService.convert(net, from, to);
+        if (converted.signum() > 0) {
+            return converted;
+        }
+        return BigDecimal.ONE.movePointLeft(SupportedCurrency.fromCodeOrDefault(to).minorUnit());
     }
 
     @Transactional
