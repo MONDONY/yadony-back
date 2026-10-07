@@ -136,13 +136,13 @@ class CashCommissionPromoRedemptionIT {
         assertThat(firstAfter.getCommissionRate())
                 .isEqualByComparingTo(fullRate.subtract(PROMO_RATE).max(BigDecimal.ZERO));
         assertThat(firstAfter.getPromoCodeId()).isEqualTo(promoId);
-        assertThat(redemptionRepository.existsByPromoCodeIdAndBidId(promoId, firstBid)).isTrue();
+        assertThat(redemptionRepository.existsByPromoCodeIdAndBidIdAndReleasedAtIsNull(promoId, firstBid)).isTrue();
         // 2e colis : limite par utilisateur atteinte → repli au taux plein, aucun rachat.
         assertThat(secondAfter.getCommissionRate()).isEqualByComparingTo(fullRate);
         assertThat(secondAfter.getPromoCodeId()).isNull();
-        assertThat(redemptionRepository.existsByPromoCodeIdAndBidId(promoId, secondBid)).isFalse();
+        assertThat(redemptionRepository.existsByPromoCodeIdAndBidIdAndReleasedAtIsNull(promoId, secondBid)).isFalse();
 
-        assertThat(redemptionRepository.countByPromoCodeIdAndUserId(promoId, senderId)).isEqualTo(1);
+        assertThat(redemptionRepository.countByPromoCodeIdAndUserIdAndReleasedAtIsNull(promoId, senderId)).isEqualTo(1);
         assertThat(promoCodeRepository.findById(promoId).orElseThrow().getRedeemedCount()).isEqualTo(1);
     }
 
@@ -159,7 +159,7 @@ class CashCommissionPromoRedemptionIT {
         entityManager.clear();
 
         assertThat(replay.status()).isEqualTo(AcceptanceStatusDto.ACCEPTED);
-        assertThat(redemptionRepository.countByPromoCodeIdAndUserId(promoId, senderId)).isEqualTo(1);
+        assertThat(redemptionRepository.countByPromoCodeIdAndUserIdAndReleasedAtIsNull(promoId, senderId)).isEqualTo(1);
         assertThat(promoCodeRepository.findById(promoId).orElseThrow().getRedeemedCount()).isEqualTo(1);
     }
 

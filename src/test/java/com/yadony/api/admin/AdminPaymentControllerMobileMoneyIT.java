@@ -79,9 +79,11 @@ import org.springframework.test.web.servlet.MockMvc;
 @SpringBootTest
 @ActiveProfiles("test")
 @AutoConfigureMockMvc
+@org.springframework.test.context.event.RecordApplicationEvents
 class AdminPaymentControllerMobileMoneyIT {
 
     @Autowired MockMvc mockMvc;
+    @Autowired org.springframework.test.context.event.ApplicationEvents applicationEvents;
     @Autowired JdbcTemplate jdbc;
     @MockitoBean PaymentRepository paymentRepository;
     @MockitoBean com.yadony.api.admin.AdminPaymentInsights adminPaymentInsights;
@@ -298,6 +300,13 @@ class AdminPaymentControllerMobileMoneyIT {
         mockMvc.perform(post("/admin/payments/{id}/mobile-money/retry-refund", payment.getId()).with(authentication(releaseAdmin())))
                 .andExpect(status().isOk());
 
+        // Remboursement manuel relancé : le code promo de l'expéditeur lui est rendu.
+        assertThat(applicationEvents.stream(com.yadony.api.payments.events.AdminPaymentRefundedEvent.class))
+                .singleElement()
+                .satisfies(e -> {
+                    assertThat(e.paymentId()).isEqualTo(payment.getId());
+                    assertThat(e.bidId()).isEqualTo(payment.getBidId());
+                });
     }
 
     /**
@@ -413,6 +422,9 @@ class AdminPaymentControllerMobileMoneyIT {
         // démontré à la tâche 17 (transaction ambiante bloquée sur son propre verrou de ligne).
         verify(paymentRepository, never()).markRefundedIfEscrow(any());
         verify(entityManager).refresh(payment);
+        assertThat(applicationEvents.stream(com.yadony.api.payments.events.AdminPaymentRefundedEvent.class))
+                .singleElement()
+                .satisfies(e -> assertThat(e.paymentId()).isEqualTo(payment.getId()));
     }
 
     @Test
@@ -424,6 +436,7 @@ class AdminPaymentControllerMobileMoneyIT {
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.code").value("payment-not-in-escrow"));
         verify(entityManager, never()).refresh(any());
+        assertThat(applicationEvents.stream(com.yadony.api.payments.events.AdminPaymentRefundedEvent.class)).isEmpty();
     }
 
     @Test

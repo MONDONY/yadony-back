@@ -6,10 +6,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Map;
 import java.util.UUID;
@@ -80,7 +82,8 @@ public class PromoService {
                     "Ce code promo n'est pas disponible pour votre profil");
         }
 
-        long userRedemptions = redemptionRepository.countByPromoCodeIdAndUserId(promo.getId(), userId);
+        long userRedemptions = redemptionRepository.countByPromoCodeIdAndUserIdAndReleasedAtIsNull(
+                promo.getId(), userId);
         if (userRedemptions >= promo.getPerUserLimit()) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "promo-limit-reached", "Promo Limit Reached",
@@ -137,7 +140,7 @@ public class PromoService {
     public UUID lockForRedemption(String code, UUID userId, UUID bidId) {
         PromoCodeEntity promo = findOrThrow(code);
         PromoCodeEntity locked = promoCodeRepository.findByIdForUpdate(promo.getId()).orElseThrow();
-        if (!redemptionRepository.existsByPromoCodeIdAndBidId(locked.getId(), bidId)) {
+        if (!redemptionRepository.existsByPromoCodeIdAndBidIdAndReleasedAtIsNull(locked.getId(), bidId)) {
             String exceeded = exceededLimit(locked, userId);
             if (exceeded != null) {
                 throw limitReached(exceeded);
@@ -160,7 +163,7 @@ public class PromoService {
             }
         }
 
-        if (redemptionRepository.existsByPromoCodeIdAndBidId(promo.getId(), bidId)) {
+        if (redemptionRepository.existsByPromoCodeIdAndBidIdAndReleasedAtIsNull(promo.getId(), bidId)) {
             log.info("Promo code {} already redeemed for bid {} (idempotent skip)", code, bidId);
             return redemptionRepository.findByPromoCodeIdAndBidId(promo.getId(), bidId).orElseThrow();
         }
@@ -169,10 +172,10 @@ public class PromoService {
         // base sous ce verrou (READ COMMITTED : chaque requête voit ce qui a été validé avant).
         PromoCodeEntity locked = promoCodeRepository.findByIdForUpdate(promo.getId()).orElseThrow();
         // Double acceptation concurrente du même bid : la première a pu valider entre-temps.
-        var concurrent = redemptionRepository.findByPromoCodeIdAndBidId(locked.getId(), bidId);
-        if (concurrent.isPresent()) {
+        // Lu en base (requête scalaire) : une ligne libérée chargée avant le verrou serait périmée.
+        if (redemptionRepository.existsByPromoCodeIdAndBidIdAndReleasedAtIsNull(locked.getId(), bidId)) {
             log.info("Promo code {} redeemed concurrently for bid {} (idempotent skip)", code, bidId);
-            return concurrent.get();
+            return redemptionRepository.findByPromoCodeIdAndBidId(locked.getId(), bidId).orElseThrow();
         }
 
         String exceeded = exceededLimit(locked, userId);
@@ -190,12 +193,18 @@ public class PromoService {
         locked.setRedeemedCount(freshCount + 1);
         promoCodeRepository.save(locked);
 
-        PromoRedemptionEntity redemption = new PromoRedemptionEntity();
+        // Une ligne libérée pour ce bid est réactivée : UNIQUE(promo_code_id, bid_id) interdit
+        // d'en créer une seconde, et la ligne d'origine garde son identifiant.
+        PromoRedemptionEntity released = redemptionRepository
+                .findByPromoCodeIdAndBidId(locked.getId(), bidId).orElse(null);
+        PromoRedemptionEntity redemption = released != null ? released : new PromoRedemptionEntity();
         redemption.setPromoCodeId(promo.getId());
         redemption.setUserId(userId);
         redemption.setBidId(bidId);
         redemption.setAppliedRate(appliedRate);
         redemption.setRedeemedAt(LocalDateTime.now(ZoneOffset.UTC));
+        redemption.setReleasedAt(null);
+        redemption.setReleaseReason(null);
         PromoRedemptionEntity saved = redemptionRepository.save(redemption);
 
         Map<String, Object> details = new java.util.LinkedHashMap<>();
@@ -205,9 +214,65 @@ public class PromoService {
         if (exceeded != null) {
             details.put("overLimit", exceeded);
         }
+        if (released != null) {
+            details.put("reactivated", true);
+        }
         auditService.log("PROMO", promo.getId(), "PROMO_CODE_REDEEMED", userId, details);
 
         return saved;
+    }
+
+    /**
+     * Rend le(s) code(s) promo utilisé(s) pour {@code bidId} : l'envoi s'est terminé sans
+     * livraison et Yadony ne conserve pas la commission remisée (la décision appartient à
+     * l'appelant, {@link PromoReleaseListener}). Chaque rachat actif du bid est marqué libéré,
+     * ne compte plus dans {@code per_user_limit}, et {@code redeemed_count} est décrémenté
+     * (plancher 0) sous le même verrou pessimiste que {@link #redeem}.
+     *
+     * <p>Idempotent : la libération passe par une mise à jour conditionnelle
+     * ({@code released_at IS NULL}) ; un événement rejoué ou concurrent ne décrémente pas deux
+     * fois. Sans rachat actif (bid sans code, jamais racheté, déjà libéré) : no-op.
+     *
+     * <p>{@code REQUIRES_NEW} : appelé depuis un écouteur {@code AFTER_COMMIT}, où une
+     * transaction {@code REQUIRED} rejoindrait celle, déjà validée, de l'émetteur et
+     * n'écrirait rien.
+     *
+     * @return le nombre de rachats libérés par CET appel.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public int releaseForBid(UUID bidId, String reason) {
+        int releasedCount = 0;
+        for (PromoRedemptionEntity redemption : redemptionRepository.findByBidIdAndReleasedAtIsNull(bidId)) {
+            PromoCodeEntity locked = promoCodeRepository.findByIdForUpdate(redemption.getPromoCodeId())
+                    .orElse(null);
+            if (locked == null) {
+                // Code supprimé (soft delete) entre-temps : plus de limite à rendre.
+                log.warn("Promo code {} introuvable : rachat du bid {} non libéré",
+                        redemption.getPromoCodeId(), bidId);
+                continue;
+            }
+            if (redemptionRepository.markReleasedIfActive(redemption.getId(),
+                    OffsetDateTime.now(ZoneOffset.UTC), reason) == 0) {
+                log.info("Rachat promo {} du bid {} déjà libéré (idempotent skip)", redemption.getId(), bidId);
+                continue;
+            }
+            int freshCount = promoCodeRepository.findRedeemedCountById(locked.getId());
+            locked.setRedeemedCount(Math.max(0, freshCount - 1));
+            promoCodeRepository.save(locked);
+
+            Map<String, Object> details = new java.util.LinkedHashMap<>();
+            details.put("code", locked.getCode());
+            details.put("bidId", bidId.toString());
+            details.put("redemptionId", redemption.getId().toString());
+            details.put("reason", reason);
+            if (freshCount <= 0) {
+                details.put("counterFloor", true);
+            }
+            auditService.log("PROMO", locked.getId(), "PROMO_CODE_RELEASED", redemption.getUserId(), details);
+            log.info("Promo code {} libéré pour le bid {} ({})", locked.getCode(), bidId, reason);
+            releasedCount++;
+        }
+        return releasedCount;
     }
 
     /**
@@ -220,7 +285,8 @@ public class PromoService {
                 && promoCodeRepository.findRedeemedCountById(locked.getId()) >= locked.getMaxRedemptions()) {
             return "max_redemptions";
         }
-        if (redemptionRepository.countByPromoCodeIdAndUserId(locked.getId(), userId) >= locked.getPerUserLimit()) {
+        if (redemptionRepository.countByPromoCodeIdAndUserIdAndReleasedAtIsNull(locked.getId(), userId)
+                >= locked.getPerUserLimit()) {
             return "per_user_limit";
         }
         return null;

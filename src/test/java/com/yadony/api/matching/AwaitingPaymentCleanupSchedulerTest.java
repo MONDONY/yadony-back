@@ -28,12 +28,13 @@ class AwaitingPaymentCleanupSchedulerTest {
 
     @Mock private BidRepository bidRepository;
     @Mock private PaymentService paymentService;
+    @Mock private org.springframework.context.ApplicationEventPublisher eventPublisher;
 
     private AwaitingPaymentCleanupScheduler scheduler;
 
     @BeforeEach
     void setUp() {
-        scheduler = new AwaitingPaymentCleanupScheduler(bidRepository, paymentService);
+        scheduler = new AwaitingPaymentCleanupScheduler(bidRepository, paymentService, eventPublisher);
     }
 
     private BidEntity expired(String piId) {
@@ -57,6 +58,8 @@ class AwaitingPaymentCleanupSchedulerTest {
         assertThat(bid.getDeletedAt()).isNotNull();
         verify(bidRepository).save(bid);
         verify(paymentService, never()).promoteBidOnPaymentAuthorized(any());
+        verify(eventPublisher).publishEvent(
+                new com.yadony.api.matching.events.BidAwaitingPaymentAbandonedEvent(bid.getId(), bid.getSenderId()));
     }
 
     @Test
@@ -80,6 +83,7 @@ class AwaitingPaymentCleanupSchedulerTest {
 
         verify(paymentService).promoteBidOnPaymentAuthorized("pi_race");
         assertThat(bid.getDeletedAt()).isNull();
+        verifyNoInteractions(eventPublisher);
     }
 
     @Test
@@ -96,6 +100,7 @@ class AwaitingPaymentCleanupSchedulerTest {
 
         assertThat(bid.getDeletedAt()).isNull();
         verify(paymentService, never()).promoteBidOnPaymentAuthorized(any());
+        verifyNoInteractions(eventPublisher);
     }
 
     @Test
@@ -119,6 +124,8 @@ class AwaitingPaymentCleanupSchedulerTest {
         // Soft-delete the bid since payment is already canceled
         assertThat(bid.getDeletedAt()).isNotNull();
         verify(bidRepository).save(bid);
+        verify(eventPublisher).publishEvent(
+                new com.yadony.api.matching.events.BidAwaitingPaymentAbandonedEvent(bid.getId(), bid.getSenderId()));
         verify(paymentService, never()).promoteBidOnPaymentAuthorized(any());
     }
 
@@ -142,6 +149,7 @@ class AwaitingPaymentCleanupSchedulerTest {
 
         // Should not soft-delete or promote when status is unknown (retry next time)
         assertThat(bid.getDeletedAt()).isNull();
+        verifyNoInteractions(eventPublisher);
         verify(paymentService, never()).promoteBidOnPaymentAuthorized(any());
     }
 

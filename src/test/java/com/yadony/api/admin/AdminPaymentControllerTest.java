@@ -321,6 +321,29 @@ class AdminPaymentControllerTest {
         }
         assertThat(p.getStatus()).isEqualTo(PaymentStatus.REFUNDED);
         verify(auditService).log(eq("PAYMENT"), any(), eq("ESCROW_FORCE_REFUNDED"), any(), any());
+        // Remboursement manuel effectif → événement pour rendre le code promo (fil : bidId nul).
+        verify(eventPublisher).publishEvent(new com.yadony.api.payments.events.AdminPaymentRefundedEvent(
+                p.getId(), null, threadId, null));
+    }
+
+    @Test
+    void refund_classicBidPayment_publishesRefundedEventWithBidId() throws StripeException {
+        PaymentEntity p = threadPayment(PaymentStatus.ESCROW, false, "ch_x");
+        p.setNegotiationThreadId(null);
+        p.setBidId(bidId);
+        when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(p));
+        when(paymentRepository.markRefundedIfEscrow(paymentId)).thenReturn(1);
+
+        try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class)) {
+            PaymentIntent pi = mock(PaymentIntent.class);
+            when(pi.getStatus()).thenReturn("requires_capture");
+            piStatic.when(() -> PaymentIntent.retrieve("pi_xxx")).thenReturn(pi);
+
+            controller.refund(paymentId);
+        }
+
+        verify(eventPublisher).publishEvent(new com.yadony.api.payments.events.AdminPaymentRefundedEvent(
+                p.getId(), bidId, null, null));
     }
 
     @Test
@@ -427,6 +450,7 @@ class AdminPaymentControllerTest {
                     .extracting(e -> ((YadonyBusinessException) e).getStatus())
                     .isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
         }
+        verify(eventPublisher, never()).publishEvent(any(com.yadony.api.payments.events.AdminPaymentRefundedEvent.class));
     }
 
     @Test
