@@ -164,6 +164,11 @@ public class AnnouncementSpecification {
      * Public search visibility: regular public trips PLUS dedicated trips that
      * have opened their surplus capacity to the public (surplusPublished &&
      * availableKg > 0). Dedicated trips without an open surplus stay hidden.
+     *
+     * <p>Pendant SQL EXACT de {@link AnnouncementEntity#isPubliclyVisible()} (utilisé
+     * en mémoire par les alertes corridor et la page publique) : toute modification
+     * de l'un doit être reportée dans l'autre ({@code AnnouncementSurplusSpecificationTest}
+     * vérifie l'accord des deux).
      */
     public static Specification<AnnouncementEntity> publicOrOpenSurplus() {
         return (root, query, cb) -> cb.or(

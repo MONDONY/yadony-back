@@ -371,6 +371,11 @@ public class AlertService {
                         alert.getDepartureCity(), alert.getArrivalCity());
         Set<UUID> hidden = blockVisibility.hiddenUserIdsFor(alert.getOwnerId());
         return candidates.stream()
+                // Même visibilité que la recherche (publicOrOpenSurplus) : un trajet
+                // dédié à une négociation reste caché tant que son surplus n'est pas
+                // ouvert avec de la place (FLUTTER-EW). Couvre correspondances,
+                // compteurs et digest, qui passent tous par ici.
+                .filter(AnnouncementEntity::isPubliclyVisible)
                 .filter(a -> !alert.getOwnerId().equals(a.getTravelerId()))
                 .filter(a -> !hidden.contains(a.getTravelerId()))
                 .filter(a -> fitsAlertDate(a.getDepartureDate(), alert))
@@ -415,6 +420,10 @@ public class AlertService {
     public List<CorridorAlertEntity> findSenderAlertsMatchingTrip(AnnouncementEntity trip) {
         if (trip.getStatus() != AnnouncementStatus.ACTIVE
                 && trip.getStatus() != AnnouncementStatus.FULL) {
+            return List.of();
+        }
+        // Trajet dédié non ouvert au public : aucune alerte de tiers (FLUTTER-EW).
+        if (!trip.isPubliclyVisible()) {
             return List.of();
         }
         LocalDate today = today();
@@ -497,7 +506,8 @@ public class AlertService {
                     traveler.getId(), MatchingTextUtil.buildPublicName(traveler),
                     MatchingTextUtil.buildInitials(traveler), rating,
                     a.getAvailableKg(), a.getPricePerKg(), a.getTransportMode(), null, a.getCurrency(),
-                    a.getCreatedAt()));
+                    a.getCreatedAt(),
+                    a.getStatus() != null ? a.getStatus().name() : null));
         }
         return result;
     }
