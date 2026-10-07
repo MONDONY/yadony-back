@@ -168,17 +168,51 @@ public interface NegotiationThreadRepository extends JpaRepository<NegotiationTh
     List<NegotiationThreadEntity> findUnrefundedChargedCommissions(@Param("since") LocalDateTime since);
 
     /**
-     * All threads where the user is participant — either traveler directly,
-     * or sender via the linked package_request.
-     * Used by GET /negotiations/me to power the inbox view.
+     * Fils de la liste « Discussions de prix » (GET /negotiations/me) : ceux où
+     * l'utilisateur est voyageur, ou expéditeur via la demande liée — ni retirés ni
+     * rangés de SON côté. La vue de l'autre participant n'en dépend jamais.
      */
     @Query("""
         SELECT t FROM NegotiationThreadEntity t
-        WHERE t.travelerId = :userId
-           OR t.packageRequestId IN (
-                SELECT p.id FROM PackageRequestEntity p WHERE p.senderId = :userId
-           )
+        WHERE (t.travelerId = :userId
+               AND t.travelerHiddenAt IS NULL AND t.travelerArchivedAt IS NULL)
+           OR (t.packageRequestId IN (
+                   SELECT p.id FROM PackageRequestEntity p WHERE p.senderId = :userId)
+               AND t.senderHiddenAt IS NULL AND t.senderArchivedAt IS NULL)
         ORDER BY t.lastActivityAt DESC
     """)
-    List<NegotiationThreadEntity> findByParticipant(@Param("userId") UUID userId);
+    List<NegotiationThreadEntity> findVisibleByParticipant(@Param("userId") UUID userId);
+
+    /** Filtre « Archivées » : rangés par l'utilisateur, mais pas retirés. */
+    @Query("""
+        SELECT t FROM NegotiationThreadEntity t
+        WHERE (t.travelerId = :userId
+               AND t.travelerHiddenAt IS NULL AND t.travelerArchivedAt IS NOT NULL)
+           OR (t.packageRequestId IN (
+                   SELECT p.id FROM PackageRequestEntity p WHERE p.senderId = :userId)
+               AND t.senderHiddenAt IS NULL AND t.senderArchivedAt IS NOT NULL)
+        ORDER BY t.lastActivityAt DESC
+    """)
+    List<NegotiationThreadEntity> findArchivedByParticipant(@Param("userId") UUID userId);
+
+    // Rangement / retrait d'un fil par un participant (V293). Mises à jour ciblées,
+    // sans passer par save() : ni la version optimiste ni les autres colonnes du fil
+    // ne bougent, et aucun flux concurrent ne peut écraser ces dates (colonnes non
+    // modifiables côté entité).
+
+    @org.springframework.data.jpa.repository.Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("UPDATE NegotiationThreadEntity t SET t.senderArchivedAt = :at WHERE t.id = :id")
+    int updateSenderArchivedAt(@Param("id") UUID id, @Param("at") LocalDateTime at);
+
+    @org.springframework.data.jpa.repository.Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("UPDATE NegotiationThreadEntity t SET t.travelerArchivedAt = :at WHERE t.id = :id")
+    int updateTravelerArchivedAt(@Param("id") UUID id, @Param("at") LocalDateTime at);
+
+    @org.springframework.data.jpa.repository.Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("UPDATE NegotiationThreadEntity t SET t.senderHiddenAt = :at WHERE t.id = :id")
+    int updateSenderHiddenAt(@Param("id") UUID id, @Param("at") LocalDateTime at);
+
+    @org.springframework.data.jpa.repository.Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("UPDATE NegotiationThreadEntity t SET t.travelerHiddenAt = :at WHERE t.id = :id")
+    int updateTravelerHiddenAt(@Param("id") UUID id, @Param("at") LocalDateTime at);
 }

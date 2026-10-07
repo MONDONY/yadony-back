@@ -28,9 +28,11 @@ import java.util.UUID;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -182,7 +184,7 @@ class BidNegotiationControllerIntegrationTest {
     @Test
     @DisplayName("GET /bids/negotiations/me → 200")
     void myNegotiations_returns200() throws Exception {
-        when(negotiationService.myNegotiations(anyString())).thenReturn(List.of(
+        when(negotiationService.myNegotiations(anyString(), eq(false))).thenReturn(List.of(
                 new BidNegotiationSummaryResponse(BID_ID, ANNOUNCEMENT_ID, "NEGOTIATING", 1,
                         true, true, new BigDecimal("45.00"), "EUR", "Moussa D.", "Paris", "Dakar",
                         LocalDate.now().plusDays(10), LocalDateTime.now(), "SENDER")));
@@ -192,6 +194,100 @@ class BidNegotiationControllerIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].bidId").value(BID_ID.toString()))
                 .andExpect(jsonPath("$[0].role").value("SENDER"));
+    }
+
+    // ── rangement / retrait d'une discussion (FLUTTER-EJ) ───────────────────────
+
+    @Test
+    @DisplayName("GET /bids/negotiations/me?archived=true → filtre « Archivées », champ archived")
+    void myNegotiations_archivedFilter() throws Exception {
+        when(negotiationService.myNegotiations(anyString(), eq(true))).thenReturn(List.of(
+                new BidNegotiationSummaryResponse(BID_ID, ANNOUNCEMENT_ID, "NEGOTIATION_CLOSED", 2,
+                        false, false, new BigDecimal("45.00"), "EUR", "Moussa D.", "Paris", "Dakar",
+                        LocalDate.now().plusDays(10), LocalDateTime.now(), "SENDER", true)));
+
+        mockMvc.perform(get("/bids/negotiations/me").param("archived", "true")
+                        .with(authentication(authenticatedAs("uid-sender", "ROLE_SENDER"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].archived").value(true));
+    }
+
+    @Test
+    @DisplayName("GET /bids/negotiations/me sans filtre → archived=false par ligne")
+    void myNegotiations_defaultsToNotArchived() throws Exception {
+        when(negotiationService.myNegotiations(anyString(), eq(false))).thenReturn(List.of(
+                new BidNegotiationSummaryResponse(BID_ID, ANNOUNCEMENT_ID, "NEGOTIATING", 1,
+                        true, true, new BigDecimal("45.00"), "EUR", "Moussa D.", "Paris", "Dakar",
+                        LocalDate.now().plusDays(10), LocalDateTime.now(), "TRAVELER")));
+
+        mockMvc.perform(get("/bids/negotiations/me")
+                        .with(authentication(authenticatedAs("uid-traveler", "ROLE_TRAVELER"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].archived").value(false));
+    }
+
+    @Test
+    @DisplayName("POST /bids/{id}/negotiation/archive → 204")
+    void archive_returns204() throws Exception {
+        mockMvc.perform(post("/bids/" + BID_ID + "/negotiation/archive")
+                        .with(authentication(authenticatedAs("uid-sender", "ROLE_SENDER"))))
+                .andExpect(status().isNoContent());
+        verify(negotiationService).archive(BID_ID, "uid-sender");
+    }
+
+    @Test
+    @DisplayName("POST /bids/{id}/negotiation/unarchive → 204")
+    void unarchive_returns204() throws Exception {
+        mockMvc.perform(post("/bids/" + BID_ID + "/negotiation/unarchive")
+                        .with(authentication(authenticatedAs("uid-traveler", "ROLE_TRAVELER"))))
+                .andExpect(status().isNoContent());
+        verify(negotiationService).unarchive(BID_ID, "uid-traveler");
+    }
+
+    @Test
+    @DisplayName("DELETE /bids/{id}/negotiation → 204 (retrait de la liste de l'appelant)")
+    void hide_returns204() throws Exception {
+        mockMvc.perform(delete("/bids/" + BID_ID + "/negotiation")
+                        .with(authentication(authenticatedAs("uid-sender", "ROLE_SENDER"))))
+                .andExpect(status().isNoContent());
+        verify(negotiationService).hide(BID_ID, "uid-sender");
+    }
+
+    @Test
+    @DisplayName("archiver une discussion en cours → 409 problem+json negotiation-still-open")
+    void archive_openNegotiation_is409() throws Exception {
+        doThrow(new YadonyBusinessException(HttpStatus.CONFLICT, "negotiation-still-open",
+                "Negotiation Still Open", "Seule une discussion de prix terminée peut être archivée ou supprimée.",
+                java.util.Map.of("negotiationStatus", "NEGOTIATING")))
+                .when(negotiationService).archive(eq(BID_ID), anyString());
+
+        mockMvc.perform(post("/bids/" + BID_ID + "/negotiation/archive")
+                        .with(authentication(authenticatedAs("uid-sender", "ROLE_SENDER"))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("negotiation-still-open"))
+                .andExpect(jsonPath("$.status").value(409))
+                .andExpect(jsonPath("$.negotiationStatus").value("NEGOTIATING"))
+                .andExpect(jsonPath("$.type").value(org.hamcrest.Matchers.endsWith("negotiation-still-open")));
+    }
+
+    @Test
+    @DisplayName("supprimer la discussion d'un autre → 403")
+    void hide_nonParticipant_is403() throws Exception {
+        doThrow(new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
+                "Vous ne participez pas à cette discussion"))
+                .when(negotiationService).hide(eq(BID_ID), anyString());
+
+        mockMvc.perform(delete("/bids/" + BID_ID + "/negotiation")
+                        .with(authentication(authenticatedAs("uid-third", "ROLE_SENDER"))))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("forbidden"));
+    }
+
+    @Test
+    @DisplayName("archiver exige une authentification")
+    void archive_withoutAuth_is4xx() throws Exception {
+        mockMvc.perform(post("/bids/" + BID_ID + "/negotiation/archive"))
+                .andExpect(status().is4xxClientError());
     }
 
     @Test

@@ -13,10 +13,12 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -108,10 +110,42 @@ public class BidNegotiationController {
         return ResponseEntity.ok(negotiationService.thread(bidId, firebaseUid));
     }
 
+    /**
+     * « Discussions de prix » du demandeur : sans paramètre, les fils ni rangés ni
+     * retirés de son côté ; {@code archived=true}, le filtre « Archivées ».
+     */
     @GetMapping("/bids/negotiations/me")
-    public ResponseEntity<List<BidNegotiationSummaryResponse>> myNegotiations() {
+    public ResponseEntity<List<BidNegotiationSummaryResponse>> myNegotiations(
+            @RequestParam(defaultValue = "false") boolean archived) {
         String firebaseUid = requireFirebaseUid();
-        return ResponseEntity.ok(negotiationService.myNegotiations(firebaseUid));
+        return ResponseEntity.ok(negotiationService.myNegotiations(firebaseUid, archived));
+    }
+
+    /**
+     * Range une discussion TERMINÉE dans les « Archivées » du seul appelant (même modèle
+     * que POST /conversations/{id}/archive). 409 negotiation-still-open sinon.
+     */
+    @PostMapping("/bids/{bidId}/negotiation/archive")
+    public ResponseEntity<Void> archive(@PathVariable UUID bidId) {
+        negotiationService.archive(bidId, requireFirebaseUid());
+        return ResponseEntity.noContent().build();
+    }
+
+    /** Sort la discussion des « Archivées » de l'appelant. Idempotent. */
+    @PostMapping("/bids/{bidId}/negotiation/unarchive")
+    public ResponseEntity<Void> unarchive(@PathVariable UUID bidId) {
+        negotiationService.unarchive(bidId, requireFirebaseUid());
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Retire définitivement une discussion TERMINÉE de la liste de l'appelant (même verbe
+     * que DELETE /conversations/{id}). Jamais une suppression : le bid reste entier.
+     */
+    @DeleteMapping("/bids/{bidId}/negotiation")
+    public ResponseEntity<Void> hide(@PathVariable UUID bidId) {
+        negotiationService.hide(bidId, requireFirebaseUid());
+        return ResponseEntity.noContent().build();
     }
 
     private String requireFirebaseUid() {

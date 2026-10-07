@@ -44,9 +44,42 @@ public class NegotiationController {
         return ResponseEntity.status(HttpStatus.CREATED).body(service.start(requireUserId(), req));
     }
 
+    /**
+     * « Discussions de prix » du demandeur : sans paramètre, les fils ni rangés ni
+     * retirés de son côté ; {@code archived=true}, le filtre « Archivées ».
+     */
     @GetMapping("/me")
-    public List<NegotiationThreadResponse> findMine() {
-        return service.listMine(requireUserId());
+    public List<NegotiationThreadResponse> findMine(
+            @RequestParam(defaultValue = "false") boolean archived) {
+        return service.listMine(requireUserId(), archived);
+    }
+
+    /**
+     * Range un fil TERMINÉ dans les « Archivées » du seul appelant (même modèle que
+     * POST /conversations/{id}/archive). 409 negotiation-still-open si le fil est en cours.
+     */
+    @PostMapping("/{id}/archive")
+    public ResponseEntity<Void> archive(@PathVariable UUID id) {
+        service.archiveForUser(requireUserId(), id);
+        return ResponseEntity.noContent().build();
+    }
+
+    /** Sort le fil des « Archivées » de l'appelant. Idempotent. */
+    @PostMapping("/{id}/unarchive")
+    public ResponseEntity<Void> unarchive(@PathVariable UUID id) {
+        service.unarchiveForUser(requireUserId(), id);
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Retire définitivement un fil TERMINÉ de la liste de l'appelant (même verbe que
+     * DELETE /conversations/{id} et DELETE /support/tickets/{id}). Jamais une
+     * suppression : l'autre participant, le back-office et l'audit gardent le fil.
+     */
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> hide(@PathVariable UUID id) {
+        service.hideForUser(requireUserId(), id);
+        return ResponseEntity.noContent().build();
     }
 
     @GetMapping("/{id}")

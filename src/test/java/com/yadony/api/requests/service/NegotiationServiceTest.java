@@ -4736,14 +4736,14 @@ class NegotiationServiceTest {
             request.setArrivalCity("Dakar");
             request.setWeightKg(new BigDecimal("5"));
 
-            when(threadRepo.findByParticipant(TRAVELER_ID)).thenReturn(List.of(thread));
+            when(threadRepo.findVisibleByParticipant(TRAVELER_ID)).thenReturn(List.of(thread));
             when(announcementRepo.findAllById(any())).thenReturn(List.of());
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(threadId)).thenReturn(List.of());
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
             lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler)); // reuse as sender
 
-            List<com.yadony.api.requests.dto.NegotiationThreadResponse> result = service.listMine(TRAVELER_ID);
+            List<com.yadony.api.requests.dto.NegotiationThreadResponse> result = service.listMine(TRAVELER_ID, false);
 
             assertThat(result).hasSize(1);
             assertThat(result.get(0).currentPriceEur()).isEqualByComparingTo("30");
@@ -4766,12 +4766,12 @@ class NegotiationServiceTest {
                 idField.set(thread, threadId);
             } catch (Exception e) { throw new RuntimeException(e); }
 
-            when(threadRepo.findByParticipant(TRAVELER_ID)).thenReturn(List.of(thread));
+            when(threadRepo.findVisibleByParticipant(TRAVELER_ID)).thenReturn(List.of(thread));
             when(announcementRepo.findAllById(any())).thenReturn(List.of());
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(threadId)).thenReturn(List.of());
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.empty()); // orphaned
 
-            List<com.yadony.api.requests.dto.NegotiationThreadResponse> result = service.listMine(TRAVELER_ID);
+            List<com.yadony.api.requests.dto.NegotiationThreadResponse> result = service.listMine(TRAVELER_ID, false);
 
             assertThat(result).isEmpty();
         }

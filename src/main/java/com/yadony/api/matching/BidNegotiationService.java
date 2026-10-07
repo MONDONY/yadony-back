@@ -400,11 +400,18 @@ public class BidNegotiationService {
         bidRepository.save(ctx.bid());
     }
 
+    /**
+     * « Discussions de prix » du demandeur : sans {@code archived}, les fils ni rangés
+     * ni retirés de son côté ; avec, le filtre « Archivées ».
+     */
     @Transactional(readOnly = true)
-    public List<BidNegotiationSummaryResponse> myNegotiations(String firebaseUid) {
+    public List<BidNegotiationSummaryResponse> myNegotiations(String firebaseUid, boolean archived) {
         UserEntity user = findUser(firebaseUid);
         List<BidNegotiationSummaryResponse> rows = new ArrayList<>();
-        for (BidEntity bid : bidRepository.findNegotiationsForUser(user.getId())) {
+        List<BidEntity> bids = archived
+                ? bidRepository.findArchivedNegotiationsForUser(user.getId())
+                : bidRepository.findNegotiationsForUser(user.getId());
+        for (BidEntity bid : bids) {
             AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
                     .orElse(null);
             if (announcement == null) {
@@ -432,9 +439,115 @@ public class BidNegotiationService {
                     announcement.getArrivalCity(),
                     announcement.getDepartureDate(),
                     bid.getUpdatedAt(),
-                    viewerIsTraveler ? "TRAVELER" : "SENDER"));
+                    viewerIsTraveler ? "TRAVELER" : "SENDER",
+                    bid.isNegotiationArchivedBy(viewerIsTraveler)));
         }
         return rows;
+    }
+
+    // ── Rangement / retrait par un participant (FLUTTER-EJ) ─────────────────
+    //
+    // Même modèle que les conversations (ConversationService#archiveConversation /
+    // #deleteConversation) : seule la vue de l'appelant change, l'autre participant
+    // garde la discussion intacte. Seule une discussion TERMINÉE se range ou se retire,
+    // et le retrait n'est jamais une purge : le bid reste pour l'autre partie, le
+    // back-office et l'audit.
+
+    @Transactional
+    public void archive(UUID bidId, String firebaseUid) {
+        Participant ctx = loadVisibleNegotiation(bidId, firebaseUid);
+        assertNegotiationTerminal(ctx);
+        if (ctx.bid().isNegotiationArchivedBy(ctx.viewerIsTraveler())) {
+            return;
+        }
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        if (ctx.viewerIsTraveler()) {
+            bidRepository.updateNegotiationTravelerArchivedAt(bidId, now);
+        } else {
+            bidRepository.updateNegotiationSenderArchivedAt(bidId, now);
+        }
+        auditService.log("BID", bidId, "BID_NEGOTIATION_ARCHIVED", ctx.userId(), visibilityAudit(ctx));
+    }
+
+    @Transactional
+    public void unarchive(UUID bidId, String firebaseUid) {
+        Participant ctx = loadVisibleNegotiation(bidId, firebaseUid);
+        if (!ctx.bid().isNegotiationArchivedBy(ctx.viewerIsTraveler())) {
+            return;
+        }
+        if (ctx.viewerIsTraveler()) {
+            bidRepository.updateNegotiationTravelerArchivedAt(bidId, null);
+        } else {
+            bidRepository.updateNegotiationSenderArchivedAt(bidId, null);
+        }
+        auditService.log("BID", bidId, "BID_NEGOTIATION_UNARCHIVED", ctx.userId(), visibilityAudit(ctx));
+    }
+
+    @Transactional
+    public void hide(UUID bidId, String firebaseUid) {
+        Participant ctx = loadNegotiation(bidId, firebaseUid);
+        if (ctx.bid().isNegotiationHiddenBy(ctx.viewerIsTraveler())) {
+            return;
+        }
+        assertNegotiationTerminal(ctx);
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        if (ctx.viewerIsTraveler()) {
+            bidRepository.updateNegotiationTravelerHiddenAt(bidId, now);
+        } else {
+            bidRepository.updateNegotiationSenderHiddenAt(bidId, now);
+        }
+        auditService.log("BID", bidId, "BID_NEGOTIATION_HIDDEN", ctx.userId(), visibilityAudit(ctx));
+    }
+
+    /** Participant d'un bid qui EST une discussion de prix ; une offre ferme répond 404. */
+    private Participant loadNegotiation(UUID bidId, String firebaseUid) {
+        Participant ctx = loadParticipant(bidId, firebaseUid);
+        BidEntity bid = ctx.bid();
+        boolean isNegotiation = BidStatus.NEGOTIATION_STATUSES.contains(bid.getStatus())
+                || bid.getNegotiatedGrossEur() != null;
+        if (!isNegotiation) {
+            throw negotiationNotFound();
+        }
+        return ctx;
+    }
+
+    /** Une discussion retirée par l'appelant n'existe plus pour lui. */
+    private Participant loadVisibleNegotiation(UUID bidId, String firebaseUid) {
+        Participant ctx = loadNegotiation(bidId, firebaseUid);
+        if (ctx.bid().isNegotiationHiddenBy(ctx.viewerIsTraveler())) {
+            throw negotiationNotFound();
+        }
+        return ctx;
+    }
+
+    private static YadonyBusinessException negotiationNotFound() {
+        return new YadonyBusinessException(HttpStatus.NOT_FOUND, "negotiation-not-found",
+                "Negotiation Not Found", "Discussion de prix introuvable");
+    }
+
+    /**
+     * Terminée = n'attend plus rien de personne. Les seuls états ouverts sont ceux que
+     * la liste « Discussions de prix » affiche comme tels (cf. findNegotiationsForUser) :
+     * NEGOTIATING, et l'accord conclu en attente de règlement (AWAITING_PAYMENT carte ou
+     * mobile money, PENDING espèces). Tout le reste est terminé : NEGOTIATION_CLOSED
+     * (refus, retrait, péremption) et tout statut atteint après le règlement.
+     */
+    private static void assertNegotiationTerminal(Participant ctx) {
+        BidStatus status = ctx.bid().getStatus();
+        if (OPEN_NEGOTIATION_STATUSES.contains(status)) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "negotiation-still-open",
+                    "Negotiation Still Open",
+                    "Seule une discussion de prix terminée peut être archivée ou supprimée.",
+                    Map.of("negotiationStatus", status.name()));
+        }
+    }
+
+    private static final java.util.Set<BidStatus> OPEN_NEGOTIATION_STATUSES = java.util.EnumSet.of(
+            BidStatus.NEGOTIATING, BidStatus.AWAITING_PAYMENT, BidStatus.PENDING);
+
+    private static Map<String, Object> visibilityAudit(Participant ctx) {
+        return Map.of("role", ctx.viewerIsTraveler() ? "TRAVELER" : "SENDER",
+                "status", ctx.bid().getStatus().name());
     }
 
     // ── Gardes et helpers ────────────────────────────────────────────────────
