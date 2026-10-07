@@ -1,7 +1,5 @@
 package com.yadony.api.payments;
 
-import com.yadony.api.matching.BidEntity;
-import com.yadony.api.matching.BidRepository;
 import com.yadony.api.cancellation.events.TripCancelledEvent;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -25,14 +23,13 @@ import static org.mockito.Mockito.*;
 class TripCancelledEventListenerTest {
 
     @Mock private PaymentRepository paymentRepository;
-    @Mock private BidRepository bidRepository;
     @Mock private RefundProcessor refundProcessor;
 
     private TripCancelledEventListener listener;
 
     @BeforeEach
     void setUp() {
-        listener = new TripCancelledEventListener(paymentRepository, bidRepository, refundProcessor);
+        listener = new TripCancelledEventListener(paymentRepository, refundProcessor);
     }
 
     private PaymentEntity payment(UUID id) {
@@ -51,7 +48,7 @@ class TripCancelledEventListenerTest {
         UUID bidId = UUID.randomUUID();
         UUID paymentId = UUID.randomUUID();
         PaymentEntity p = payment(paymentId);
-        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.of(p));
+        when(paymentRepository.findForBid(bidId)).thenReturn(Optional.of(p));
 
         listener.handleTripCancelled(event(bidId));
 
@@ -66,18 +63,14 @@ class TripCancelledEventListenerTest {
     @Test
     void negotiation_thread_payment_refunded_via_thread_fallback() {
         // Regression: a cancelled negotiation/dedicated trip keys its escrow on the thread
-        // (bid_id NULL). findByBidId returns empty → fallback resolves the thread payment.
+        // (bid_id NULL). findForBid resolves the thread payment (requête testée sur H2 dans
+        // NegotiatedBidRefundResolutionIT).
         UUID bidId = UUID.randomUUID();
-        UUID threadId = UUID.randomUUID();
         UUID paymentId = UUID.randomUUID();
 
-        BidEntity bid = new BidEntity();
-        bid.setLinkedNegotiationThreadId(threadId);
-        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
-
         PaymentEntity p = payment(paymentId);
-        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.empty());
-        when(paymentRepository.findByNegotiationThreadId(threadId)).thenReturn(Optional.of(p));
+        p.setNegotiationThreadId(UUID.randomUUID());
+        when(paymentRepository.findForBid(bidId)).thenReturn(Optional.of(p));
 
         listener.handleTripCancelled(event(bidId));
 
@@ -87,8 +80,7 @@ class TripCancelledEventListenerTest {
     @Test
     void no_payment_anywhere_is_a_no_op() {
         UUID bidId = UUID.randomUUID();
-        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.empty());
-        when(bidRepository.findById(bidId)).thenReturn(Optional.empty());
+        when(paymentRepository.findForBid(bidId)).thenReturn(Optional.empty());
 
         assertThatNoException().isThrownBy(() -> listener.handleTripCancelled(event(bidId)));
         verifyNoInteractions(refundProcessor);
@@ -101,7 +93,7 @@ class TripCancelledEventListenerTest {
 
         listener.handleTripCancelled(emptyEvent);
 
-        verifyNoInteractions(paymentRepository, bidRepository, refundProcessor);
+        verifyNoInteractions(paymentRepository, refundProcessor);
     }
 
     @Test
@@ -110,8 +102,8 @@ class TripCancelledEventListenerTest {
         UUID pid1 = UUID.randomUUID(), pid2 = UUID.randomUUID();
         PaymentEntity p1 = payment(pid1);
         PaymentEntity p2 = payment(pid2);
-        when(paymentRepository.findByBidId(bid1)).thenReturn(Optional.of(p1));
-        when(paymentRepository.findByBidId(bid2)).thenReturn(Optional.of(p2));
+        when(paymentRepository.findForBid(bid1)).thenReturn(Optional.of(p1));
+        when(paymentRepository.findForBid(bid2)).thenReturn(Optional.of(p2));
         when(refundProcessor.processRefund(eq(pid1), any(), any(), any()))
                 .thenThrow(new IllegalStateException("stripe down"));
 

@@ -32,5 +32,13 @@ public interface WalletTransactionRepository extends JpaRepository<WalletTransac
 
     List<WalletTransactionEntity> findAllByUserIdAndBidIdAndType(UUID userId, UUID bidId, WalletTransactionType type);
 
+    /**
+     * Lignes d'un débit rattaché à une référence de paiement plutôt qu'à un bid — la
+     * commission espèces d'un fil de négociation est débitée avec {@code payment_ref} =
+     * id du fil et {@code bid_id} NULL ({@code WalletCommissionCollector#executeForNegotiation}).
+     */
+    List<WalletTransactionEntity> findAllByUserIdAndPaymentRefAndType(UUID userId, String paymentRef,
+                                                                     WalletTransactionType type);
+
     List<WalletTransactionEntity> findByUserIdAndCurrencyOrderByCreatedAtAsc(UUID userId, String currency);
 }

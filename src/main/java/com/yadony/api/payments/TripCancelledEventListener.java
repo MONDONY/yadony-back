@@ -1,7 +1,6 @@
 package com.yadony.api.payments;
 
 import com.yadony.api.cancellation.events.TripCancelledEvent;
-import com.yadony.api.matching.BidEntity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Async;
@@ -11,7 +10,6 @@ import org.springframework.transaction.event.TransactionPhase;
 
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -30,14 +28,11 @@ public class TripCancelledEventListener {
     private static final Logger log = LoggerFactory.getLogger(TripCancelledEventListener.class);
 
     private final PaymentRepository paymentRepository;
-    private final com.yadony.api.matching.BidRepository bidRepository;
     private final RefundProcessor refundProcessor;
 
     public TripCancelledEventListener(PaymentRepository paymentRepository,
-                                      com.yadony.api.matching.BidRepository bidRepository,
                                       RefundProcessor refundProcessor) {
         this.paymentRepository = paymentRepository;
-        this.bidRepository = bidRepository;
         this.refundProcessor = refundProcessor;
     }
 
@@ -54,16 +49,9 @@ public class TripCancelledEventListener {
 
         for (UUID bidId : bidIds) {
             try {
-                Optional<PaymentEntity> paymentOpt = paymentRepository.findByBidId(bidId);
-
-                // Négociation / trajet dédié : l'escrow est keyé sur le thread (bid_id NULL).
-                // Fallback sur le paiement du thread pour rembourser aussi l'expéditeur.
-                if (paymentOpt.isEmpty()) {
-                    paymentOpt = bidRepository.findById(bidId)
-                            .map(BidEntity::getLinkedNegotiationThreadId)
-                            .filter(Objects::nonNull)
-                            .flatMap(paymentRepository::findByNegotiationThreadId);
-                }
+                // Négociation / trajet dédié : l'escrow est keyé sur le thread (bid_id NULL) ;
+                // findForBid se rabat sur le paiement du fil lié.
+                Optional<PaymentEntity> paymentOpt = paymentRepository.findForBid(bidId);
 
                 if (paymentOpt.isEmpty()) {
                     log.debug("Pas de paiement pour bid {} — skip", bidId);

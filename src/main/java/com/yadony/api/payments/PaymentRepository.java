@@ -26,6 +26,31 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
 
     Optional<PaymentEntity> findByNegotiationThreadId(UUID negotiationThreadId);
 
+    /**
+     * Paiement du fil de négociation dont le bid a été matérialisé : ce paiement est
+     * rattaché au fil ({@code bid_id} NULL), le bid étant créé APRÈS le paiement
+     * ({@code ThreadAcceptedBidListener}). Vide pour un bid classique (pas de fil lié).
+     * Préférer {@link #findForBid}.
+     */
+    @Query("""
+            SELECT p FROM PaymentEntity p
+            WHERE p.bidId IS NULL
+              AND p.negotiationThreadId = (SELECT b.linkedNegotiationThreadId
+                                           FROM com.yadony.api.matching.BidEntity b
+                                           WHERE b.id = :bidId)
+            """)
+    Optional<PaymentEntity> findLinkedNegotiationPaymentOfBid(@Param("bidId") UUID bidId);
+
+    /**
+     * Résolution unique du paiement d'un bid : celui rattaché au bid, sinon celui du fil de
+     * négociation lié (bid matérialisé). Tout chemin qui rembourse, libère ou affiche le
+     * paiement d'un bid doit passer par ici — un {@code findByBidId} seul ignore les bids
+     * négociés et laisse l'expéditeur sans remboursement.
+     */
+    default Optional<PaymentEntity> findForBid(UUID bidId) {
+        return findByBidId(bidId).or(() -> findLinkedNegotiationPaymentOfBid(bidId));
+    }
+
     Optional<PaymentEntity> findByStripePaymentIntentId(String stripePaymentIntentId);
 
     Optional<PaymentEntity> findByStripeChargeId(String chargeId);

@@ -42,12 +42,12 @@ class BidExpiredOnDepartureEventListenerTest {
         PaymentEntity p = spy(new PaymentEntity());
         p.setBidId(bidId);
         when(p.getId()).thenReturn(paymentId);
-        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.of(p));
+        when(paymentRepository.findForBid(bidId)).thenReturn(Optional.of(p));
 
         listener.handleBidExpired(new BidExpiredOnDepartureEvent(
                 bidId, UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID()));
 
-        // L'actor pour ce listener est payment.getBidId().
+        // L'acteur d'audit est le bid de l'événement (jamais payment.getBidId(), NULL pour un fil).
         verify(refundProcessor).processRefund(eq(paymentId),
                 eq("PAYMENT_REFUNDED_BID_EXPIRED"), eq(bidId), any(Map.class));
     }
@@ -55,11 +55,28 @@ class BidExpiredOnDepartureEventListenerTest {
     @Test
     void no_payment_no_processor_call() {
         UUID bidId = UUID.randomUUID();
-        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.empty());
+        when(paymentRepository.findForBid(bidId)).thenReturn(Optional.empty());
 
         listener.handleBidExpired(new BidExpiredOnDepartureEvent(
                 bidId, UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID()));
 
         verifyNoInteractions(refundProcessor);
+    }
+
+    @Test
+    void negotiated_thread_payment_is_refunded_with_bid_as_actor() {
+        // Paiement de fil : bid_id NULL. L'acteur d'audit reste le bid de l'événement.
+        UUID bidId = UUID.randomUUID();
+        UUID paymentId = UUID.randomUUID();
+        PaymentEntity p = spy(new PaymentEntity());
+        p.setNegotiationThreadId(UUID.randomUUID());
+        when(p.getId()).thenReturn(paymentId);
+        when(paymentRepository.findForBid(bidId)).thenReturn(Optional.of(p));
+
+        listener.handleBidExpired(new BidExpiredOnDepartureEvent(
+                bidId, UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID()));
+
+        verify(refundProcessor).processRefund(eq(paymentId),
+                eq("PAYMENT_REFUNDED_BID_EXPIRED"), eq(bidId), any(Map.class));
     }
 }

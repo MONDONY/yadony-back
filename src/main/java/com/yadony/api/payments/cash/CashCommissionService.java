@@ -1116,6 +1116,15 @@ public class CashCommissionService {
         List<com.yadony.api.payments.wallet.WalletTransactionEntity> lines =
                 walletTransactionRepository.findAllByUserIdAndBidIdAndType(
                         travelerId, bid.getId(), WalletTransactionType.COMMISSION_DEDUCTED);
+        // Bid matérialisé depuis un fil de négociation : la commission a été débitée sur le
+        // FIL (payment_ref = id du fil, bid_id NULL), jamais sur le bid.
+        com.yadony.api.requests.entity.NegotiationThreadEntity thread = null;
+        if (lines.isEmpty() && bid.getLinkedNegotiationThreadId() != null) {
+            lines = walletTransactionRepository.findAllByUserIdAndPaymentRefAndType(
+                    travelerId, bid.getLinkedNegotiationThreadId().toString(),
+                    WalletTransactionType.COMMISSION_DEDUCTED);
+            thread = negotiationThreadRepository.findById(bid.getLinkedNegotiationThreadId()).orElse(null);
+        }
         if (lines.isEmpty()) {
             log.warn("refundCommissionToWallet: aucune tx COMMISSION_DEDUCTED pour bid {} traveler {}", bid.getId(), travelerId);
             return;
@@ -1134,6 +1143,7 @@ public class CashCommissionService {
         }
         bid.setCommissionStatus(CommissionStatus.REFUNDED);
         bidRepo.save(bid);
+        markNegotiationCommissionRefunded(thread);
         audit.put("idempotencyKey", idempotencyKey);
         auditService.log("payment", bid.getId(), "COMMISSION_REFUNDED_TO_WALLET", travelerId, audit);
     }
@@ -1145,9 +1155,17 @@ public class CashCommissionService {
             log.warn("refundCommission called on bid {} with status {}", bid.getId(), bid.getCommissionStatus());
             return;
         }
+        // Bid matérialisé depuis un fil de négociation : le PaymentIntent de commission est
+        // porté par le FIL (settleNegotiationCommission), jamais copié sur le bid.
+        String paymentIntentId = bid.getCommissionPaymentIntentId();
+        com.yadony.api.requests.entity.NegotiationThreadEntity thread = null;
+        if (paymentIntentId == null && bid.getLinkedNegotiationThreadId() != null) {
+            thread = negotiationThreadRepository.findById(bid.getLinkedNegotiationThreadId()).orElse(null);
+            paymentIntentId = thread != null ? thread.getCommissionPaymentIntentId() : null;
+        }
         try {
             RefundCreateParams params = RefundCreateParams.builder()
-                    .setPaymentIntent(bid.getCommissionPaymentIntentId())
+                    .setPaymentIntent(paymentIntentId)
                     .build();
             RequestOptions opts = RequestOptions.builder()
                     .setIdempotencyKey("bid_refund_" + bid.getId())
@@ -1155,6 +1173,7 @@ public class CashCommissionService {
             stripeCashGateway.createRefund(params, opts);
             bid.setCommissionStatus(CommissionStatus.REFUNDED);
             bidRepo.save(bid);
+            markNegotiationCommissionRefunded(thread);
         } catch (StripeException e) {
             bid.setCommissionStatus(CommissionStatus.REFUND_FAILED);
             bidRepo.save(bid);
@@ -1163,6 +1182,20 @@ public class CashCommissionService {
     }
 
     // --- Private helpers ---
+
+    /**
+     * Reporte sur le fil le remboursement de sa commission fait via le bid matérialisé :
+     * {@link #refundNegotiationCommissionIfCharged} voit alors {@code REFUNDED} et ne
+     * rembourse jamais une seconde fois. No-op pour un bid classique ({@code thread} null).
+     */
+    private void markNegotiationCommissionRefunded(
+            com.yadony.api.requests.entity.NegotiationThreadEntity thread) {
+        if (thread == null) {
+            return;
+        }
+        thread.setCommissionStatus(NEGO_COMMISSION_REFUNDED);
+        negotiationThreadRepository.save(thread);
+    }
 
     /**
      * Rattache au bid le code promo pris dans le taux qu'on vient de figer, AVANT tout

@@ -1559,6 +1559,44 @@ class CashCommissionServiceTest {
                 verify(bidRepo).save(bid);
             }
         }
+
+        @Test
+        void negotiatedBid_refundsTheThreadCommissionPaymentIntent_andMarksThreadRefunded() throws StripeException {
+            // Bid matérialisé depuis un fil CASH : le PI de commission vit sur le FIL,
+            // jamais copié sur le bid (ThreadAcceptedBidListener).
+            UUID threadId = UUID.randomUUID();
+            bid.setCommissionPaymentIntentId(null);
+            bid.setLinkedNegotiationThreadId(threadId);
+            var thread = new com.yadony.api.requests.entity.NegotiationThreadEntity();
+            ReflectionTestUtils.setField(thread, "id", threadId);
+            thread.setCommissionPaymentIntentId("pi_thread_commission");
+            thread.setCommissionStatus(CommissionStatus.CHARGED.name());
+            when(negotiationThreadRepository.findById(threadId)).thenReturn(Optional.of(thread));
+
+            try (MockedStatic<Refund> refund = mockStatic(Refund.class)) {
+                refund.when(() -> Refund.create(any(RefundCreateParams.class), any(RequestOptions.class)))
+                        .thenReturn(new Refund());
+
+                service.refundCommission(bid);
+
+                ArgumentCaptor<RefundCreateParams> params = ArgumentCaptor.forClass(RefundCreateParams.class);
+                refund.verify(() -> Refund.create(params.capture(), any(RequestOptions.class)));
+                assertThat(params.getValue().getPaymentIntent()).isEqualTo("pi_thread_commission");
+            }
+            assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.REFUNDED);
+            assertThat(thread.getCommissionStatus()).isEqualTo(CommissionStatus.REFUNDED.name());
+            verify(negotiationThreadRepository).save(thread);
+        }
+
+        @Test
+        void classicBid_neverLooksAtNegotiationThreads() throws StripeException {
+            try (MockedStatic<Refund> refund = mockStatic(Refund.class)) {
+                refund.when(() -> Refund.create(any(RefundCreateParams.class), any(RequestOptions.class)))
+                        .thenReturn(new Refund());
+                service.refundCommission(bid);
+            }
+            verifyNoInteractions(negotiationThreadRepository);
+        }
     }
 
     // ===================== chargeCommissionFromWallet =====================
@@ -2010,6 +2048,48 @@ class CashCommissionServiceTest {
 
             verify(walletService, never()).credit(any(), anyString(), any(), any(), any(), any());
             assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.CHARGED); // inchangé
+            // Bid classique : jamais de repli sur un fil de négociation.
+            verify(walletTransactionRepository, never()).findAllByUserIdAndPaymentRefAndType(any(), any(), any());
+            verifyNoInteractions(negotiationThreadRepository);
+        }
+
+        @Test
+        void negotiatedBid_recreditsTheThreadCommissionLines_andMarksThreadRefunded() {
+            // Bid matérialisé depuis un fil CASH : la commission a été débitée sur le FIL
+            // (payment_ref = id du fil, bid_id NULL — WalletCommissionCollector#executeForNegotiation).
+            UUID threadId = UUID.randomUUID();
+            bid.setLinkedNegotiationThreadId(threadId);
+            var thread = new com.yadony.api.requests.entity.NegotiationThreadEntity();
+            ReflectionTestUtils.setField(thread, "id", threadId);
+            thread.setCommissionStatus(CommissionStatus.CHARGED.name());
+            when(negotiationThreadRepository.findById(threadId)).thenReturn(Optional.of(thread));
+            String key = "wallet-refund-cancel-" + bid.getId();
+            when(walletTransactionRepository.findAllByUserIdAndBidIdAndType(
+                    travelerId, bid.getId(), com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED))
+                    .thenReturn(java.util.List.of());
+            when(walletTransactionRepository.findAllByUserIdAndPaymentRefAndType(
+                    travelerId, threadId.toString(), com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED))
+                    .thenReturn(java.util.List.of(commissionTx(new BigDecimal("2945"), "XOF")));
+
+            service.refundCommissionToWallet(bid, travelerId, key);
+
+            verify(walletService).credit(travelerId, "XOF", new BigDecimal("2945"),
+                    com.yadony.api.payments.wallet.WalletTransactionType.REFUND,
+                    "refund-" + bid.getId(), key);
+            assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.REFUNDED);
+            assertThat(thread.getCommissionStatus()).isEqualTo(CommissionStatus.REFUNDED.name());
+            verify(negotiationThreadRepository).save(thread);
+        }
+
+        @Test
+        void negotiatedBid_alreadyRefunded_recreditsNothing() {
+            bid.setLinkedNegotiationThreadId(UUID.randomUUID());
+            bid.setCommissionStatus(CommissionStatus.REFUNDED);
+
+            service.refundCommissionToWallet(bid, travelerId, "k");
+
+            verify(walletService, never()).credit(any(), anyString(), any(), any(), any(), any());
+            verifyNoInteractions(walletTransactionRepository, negotiationThreadRepository);
         }
     }
 

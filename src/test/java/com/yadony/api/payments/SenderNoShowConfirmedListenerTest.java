@@ -44,7 +44,7 @@ class SenderNoShowConfirmedListenerTest {
         PaymentEntity p = spy(new PaymentEntity());
         p.setBidId(bidId);
         when(p.getId()).thenReturn(paymentId);
-        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.of(p));
+        when(paymentRepository.findForBid(bidId)).thenReturn(Optional.of(p));
 
         listener.onCancellationConfirmed(
                 new CancellationConfirmedEvent(bidId, UUID.randomUUID(), CancellationReason.SENDER_NO_SHOW));
@@ -66,7 +66,7 @@ class SenderNoShowConfirmedListenerTest {
     @Test
     void no_payment_for_bid_does_not_delegate() {
         UUID bidId = UUID.randomUUID();
-        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.empty());
+        when(paymentRepository.findForBid(bidId)).thenReturn(Optional.empty());
 
         listener.onCancellationConfirmed(
                 new CancellationConfirmedEvent(bidId, UUID.randomUUID(), CancellationReason.SENDER_NO_SHOW));
