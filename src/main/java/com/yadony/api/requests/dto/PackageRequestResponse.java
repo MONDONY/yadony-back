@@ -56,8 +56,45 @@ public record PackageRequestResponse(
      * alors {@code CANCELLED} : l'app plante sur un statut inconnu, REMOVED_BY_ADMIN n'est
      * jamais exposé tel quel côté mobile.
      */
-    boolean moderationRemoved
+    boolean moderationRemoved,
+    /**
+     * Fiabilité de l'expéditeur pour le voyageur qui consulte la demande (FLUTTER-E0/E6) :
+     * annulations après acceptation et absences au rendez-vous de remise confirmées.
+     * {@code null} pour le propriétaire lui-même.
+     */
+    Integer senderIncidentCount
 ) {
+    /** Constructeur de compatibilité, sans {@code senderIncidentCount} (null). */
+    public PackageRequestResponse(
+            UUID id, UUID senderId,
+            String departureCity, String arrivalCity,
+            LocalDate desiredDate, int dateToleranceDays,
+            BigDecimal weightKg, ParcelSize parcelSize,
+            TransportMode transportMode,
+            String contentCategory,
+            String description, BigDecimal targetPriceEur, String photoUrl,
+            String pickupNeighborhood, String deliveryNeighborhood,
+            PackageRequestStatus status,
+            LocalDateTime createdAt,
+            boolean negotiable,
+            Set<PaymentMethod> acceptedPaymentMethods,
+            BigDecimal grossPriceEur,
+            List<PackageRequestPhotoResponse> photos,
+            UUID viewerThreadId,
+            String viewerThreadStatus,
+            String promoCode,
+            String currency,
+            Set<PaymentMethod> availablePaymentMethods,
+            BigDecimal convertedDisplayPrice,
+            String convertedCurrency,
+            boolean moderationRemoved) {
+        this(id, senderId, departureCity, arrivalCity, desiredDate, dateToleranceDays, weightKg, parcelSize,
+            transportMode, contentCategory, description, targetPriceEur, photoUrl, pickupNeighborhood,
+            deliveryNeighborhood, status, createdAt, negotiable, acceptedPaymentMethods, grossPriceEur, photos,
+            viewerThreadId, viewerThreadStatus, promoCode, currency, availablePaymentMethods,
+            convertedDisplayPrice, convertedCurrency, moderationRemoved, null);
+    }
+
     /** Constructeur de compatibilité, sans {@code moderationRemoved} (faux). */
     public PackageRequestResponse(
             UUID id, UUID senderId,
@@ -120,6 +157,6 @@ public record PackageRequestResponse(
             transportMode, contentCategory, description, targetPriceEur, photoUrl, pickupNeighborhood,
             deliveryNeighborhood, status, createdAt, negotiable, acceptedPaymentMethods, grossPriceEur, photos,
             viewerThreadId, viewerThreadStatus, promoCode, currency, availablePaymentMethods,
-            convertedDisplayPrice, convertedCurrency, moderationRemoved);
+            convertedDisplayPrice, convertedCurrency, moderationRemoved, senderIncidentCount);
     }
 }

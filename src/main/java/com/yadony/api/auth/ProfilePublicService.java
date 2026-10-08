@@ -112,7 +112,8 @@ public class ProfilePublicService {
                 emailVerified,
                 residenceCountry,
                 measuredResponseMinutes,
-                lastSeenDaysAgo
+                lastSeenDaysAgo,
+                user.senderReliabilityIncidentCount()
         );
     }
 

@@ -125,5 +125,9 @@ public record BidResponse(
          * {@code yadony.calls.delivery-grace-days} jours après la livraison confirmée
          * ({@link com.yadony.api.matching.ContactWindow}). Identique pour les deux parties. Ne
          * dit rien du numéro : sa révélation garde sa propre règle ({@code *PhoneAvailable}). */
-        boolean contactWindowOpen
+        boolean contactWindowOpen,
+        /** Fiabilité de l'expéditeur, vue par le voyageur qui juge la demande (FLUTTER-E0/E6) :
+         * annulations après acceptation et absences au rendez-vous de remise confirmées.
+         * Null si l'expéditeur est introuvable. */
+        Integer senderIncidentCount
 ) {}

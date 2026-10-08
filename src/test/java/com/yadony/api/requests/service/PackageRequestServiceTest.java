@@ -688,6 +688,20 @@ class PackageRequestServiceTest {
             assertThat(resp.viewerThreadStatus()).isEqualTo("OPEN");
         }
 
+        @Test @DisplayName("voyageur → fiabilité de l'expéditeur jointe ; propriétaire → null (FLUTTER-E0/E6)")
+        void getById_senderIncidentCount_onlyForOtherViewers() {
+            PackageRequestEntity entity = buildEntity(SENDER_ID, PackageRequestStatus.OPEN);
+            when(repository.findById(entity.getId())).thenReturn(Optional.of(entity));
+            com.yadony.api.auth.UserEntity owner = new com.yadony.api.auth.UserEntity();
+            owner.setSenderCancellationCount(1);
+            owner.setSenderHandoverIncidentCount(1);
+            // lenient : getById relit aussi le lecteur (capacités de paiement).
+            org.mockito.Mockito.lenient().when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(owner));
+
+            assertThat(service.getById(UUID.randomUUID(), entity.getId()).senderIncidentCount()).isEqualTo(2);
+            assertThat(service.getById(SENDER_ID, entity.getId()).senderIncidentCount()).isNull();
+        }
+
         @Test @DisplayName("propriétaire → pas de viewerThreadId")
         void getById_owner_noViewerThread() {
             PackageRequestEntity entity = buildEntity(SENDER_ID, PackageRequestStatus.OPEN);
@@ -2064,6 +2078,24 @@ class PackageRequestServiceTest {
 
             var result = page.getContent().get(0);
             assertThat(result.sender().avatarUrl()).isEqualTo("https://cdn.example.com/sender.jpg");
+        }
+
+        @Test @DisplayName("fiabilité de l'expéditeur exposée dans SenderPublicProfile (FLUTTER-E0/E6)")
+        void search_senderIncidentCount_isMapped() {
+            sender.setSenderCancellationCount(2);
+            sender.setSenderHandoverIncidentCount(1);
+            PackageRequestEntity entity = buildEntity();
+
+            when(repository.findAll(
+                    org.mockito.ArgumentMatchers.<org.springframework.data.jpa.domain.Specification<PackageRequestEntity>>any(),
+                    org.mockito.ArgumentMatchers.<org.springframework.data.domain.Pageable>any()))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(entity)));
+            when(userRepository.findAllById(any())).thenReturn(List.of(sender));
+            when(favoriteRepository.findTargetIds(any(), any())).thenReturn(List.of());
+
+            var page = service.search(null, org.springframework.data.domain.PageRequest.of(0, 10), SENDER_ID);
+
+            assertThat(page.getContent().get(0).sender().incidentCount()).isEqualTo(3);
         }
 
         @Test @DisplayName("sender sans avatarUrl → SenderPublicProfile.avatarUrl null")

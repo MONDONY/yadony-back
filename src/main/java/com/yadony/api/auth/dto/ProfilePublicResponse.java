@@ -28,7 +28,10 @@ public record ProfilePublicResponse(
         /** Temps de réponse mesuré (médiane, minutes) sur 90 jours ; null sous 3 décisions. */
         Integer measuredResponseMinutes,
         /** Jours depuis la dernière ouverture de l'app (0 = aujourd'hui) ; null si masquée ou inconnue. */
-        Integer lastSeenDaysAgo
+        Integer lastSeenDaysAgo,
+        /** Fiabilité en tant qu'expéditeur (FLUTTER-E0/E6) : annulations après acceptation
+         *  d'un voyageur et absences au rendez-vous de remise confirmées. */
+        int senderIncidentCount
 ) {
     public ProfilePublicResponse(String userId, String displayName, String avatarUrl,
                                  boolean kycVerified, boolean isProAccount, boolean isKiloPro,
@@ -37,6 +40,6 @@ public record ProfilePublicResponse(
                                  Integer responseDelayHours, String bio, List<String> languages) {
         this(userId, displayName, avatarUrl, kycVerified, isProAccount, isKiloPro,
                 completedBidsCount, averageRating, ratingCount, memberSince, badges, contactMode,
-                responseDelayHours, bio, languages, false, false, null, null, null);
+                responseDelayHours, bio, languages, false, false, null, null, null, 0);
     }
 }

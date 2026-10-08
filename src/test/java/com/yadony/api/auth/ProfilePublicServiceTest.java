@@ -217,6 +217,19 @@ class ProfilePublicServiceTest {
         assertThat(profilePublicService.getProfilePublic(USER_ID, VIEWER_ID).lastSeenDaysAgo()).isNull();
     }
 
+    @Test
+    @DisplayName("fiabilité expéditeur : annulations après acceptation + incidents de remise (FLUTTER-E0/E6)")
+    void getProfilePublic_senderIncidentCount() {
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(3), eq(VIEWER_ID)))
+                .thenReturn(stubRatingSummary());
+        assertThat(profilePublicService.getProfilePublic(USER_ID, VIEWER_ID).senderIncidentCount()).isZero();
+
+        user.setSenderCancellationCount(2);
+        user.setSenderHandoverIncidentCount(1);
+        assertThat(profilePublicService.getProfilePublic(USER_ID, VIEWER_ID).senderIncidentCount()).isEqualTo(3);
+    }
+
     private static void setFieldQuiet(Object target, String name, Object value) {
         try {
             var f = UserEntity.class.getDeclaredField(name);

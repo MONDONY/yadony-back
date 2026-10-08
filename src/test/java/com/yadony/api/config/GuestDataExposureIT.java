@@ -229,6 +229,9 @@ class GuestDataExposureIT {
             // avant accord.
             "pickupNeighborhood", "deliveryNeighborhood",
             "sender", "totalRatings",
+            // Fiabilité expéditeur (FLUTTER-E0/E6) : un compteur de réputation de même nature que la
+            // note moyenne déjà servie ici (aucune donnée personnelle, aucun détail des annulations).
+            "incidentCount", "senderIncidentCount",
             "photos", "objectKey", "url",
             "matchScore", "matchedTripId", "matchedTripDepartureDate",
             // Portee au lecteur : null pour un invite, qui n'a aucun fil.

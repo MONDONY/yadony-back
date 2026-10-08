@@ -1,5 +1,6 @@
 package com.yadony.api.payments.cash;
 
+import com.yadony.api.common.AuditService;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
@@ -12,6 +13,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -25,6 +27,7 @@ class BidCancelledCommissionRefundListenerTest {
     @Mock private CashCommissionService cashCommissionService;
     @Mock private BidRepository bidRepository;
     @Mock private AnnouncementRepository announcementRepository;
+    @Mock private AuditService auditService;
 
     private BidCancelledCommissionRefundListener listener;
 
@@ -36,11 +39,67 @@ class BidCancelledCommissionRefundListenerTest {
     @BeforeEach
     void setUp() {
         listener = new BidCancelledCommissionRefundListener(
-                cashCommissionService, bidRepository, announcementRepository);
+                cashCommissionService, bidRepository, announcementRepository, auditService);
     }
 
+    /** Annulation par l'expéditeur : la commission du voyageur lui est rendue. */
     private BidRejectedEvent event() {
+        return new BidRejectedEvent(bidId, senderId, "CANCELLED_BY_SENDER");
+    }
+
+    private BidRejectedEvent travelerCancelEvent() {
         return new BidRejectedEvent(bidId, senderId, "CANCELLED_BY_TRAVELER");
+    }
+
+    // --- FLUTTER-E4 : le voyageur qui annule ne récupère pas sa commission ---
+
+    @Test
+    void retainsWalletCommissionWhenTravelerCancels() {
+        BidEntity bid = cashBid(CommissionChargedVia.WALLET);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(announcement()));
+
+        listener.onBidRejected(travelerCancelEvent());
+
+        verify(cashCommissionService, never()).refundCommissionToWallet(any(), any(), any());
+        verify(cashCommissionService, never()).refundCommission(any());
+        verify(auditService).log("payment", bidId, "COMMISSION_RETAINED_TRAVELER_CANCEL", travelerId,
+                Map.of("reason", "CANCELLED_BY_TRAVELER", "commissionChargedVia", "WALLET"));
+    }
+
+    @Test
+    void retainsCardCommissionWhenTravelerCancels() {
+        BidEntity bid = cashBid(CommissionChargedVia.CARD);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(announcementId)).thenReturn(Optional.empty());
+
+        listener.onBidRejected(travelerCancelEvent());
+
+        verify(cashCommissionService, never()).refundCommission(any());
+        verify(auditService).log(eq("payment"), eq(bidId), eq("COMMISSION_RETAINED_TRAVELER_CANCEL"),
+                eq(null), any());
+    }
+
+    @Test
+    void travelerCancelOnUnchargedCommissionWritesNoAudit() {
+        BidEntity bid = cashBid(CommissionChargedVia.WALLET);
+        bid.setCommissionStatus(CommissionStatus.REFUNDED);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+
+        listener.onBidRejected(travelerCancelEvent());
+
+        verifyNoInteractions(auditService, cashCommissionService);
+    }
+
+    @Test
+    void refundsOnOtherReasonsLikeSenderAccountDeletion() {
+        BidEntity bid = cashBid(CommissionChargedVia.CARD);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+
+        listener.onBidRejected(new BidRejectedEvent(bidId, senderId, "SENDER_ACCOUNT_DELETED"));
+
+        verify(cashCommissionService).refundCommission(bid);
+        verifyNoInteractions(auditService);
     }
 
     @Test

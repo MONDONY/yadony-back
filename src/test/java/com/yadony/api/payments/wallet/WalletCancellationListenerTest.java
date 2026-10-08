@@ -1,6 +1,8 @@
 package com.yadony.api.payments.wallet;
 
 import com.yadony.api.cancellation.events.TripCancelledEvent;
+import com.yadony.api.common.AuditService;
+import com.yadony.api.payments.cash.CommissionStatus;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.payments.cash.CashCommissionService;
@@ -37,11 +39,49 @@ class WalletCancellationListenerTest {
     @Mock
     private BidRepository bidRepository;
 
+    @Mock
+    private AuditService auditService;
+
     private WalletCancellationListener listener;
 
     @BeforeEach
     void setUp() {
-        listener = new WalletCancellationListener(cashCommissionService, bidRepository);
+        listener = new WalletCancellationListener(cashCommissionService, bidRepository, auditService);
+    }
+
+    // --- FLUTTER-E4 : trajet annulé par le voyageur → commission conservée ---
+
+    private TripCancelledEvent travelerEvent(UUID travelerId, UUID bidId) {
+        return new TripCancelledEvent(
+                UUID.randomUUID(), travelerId, List.of(), "TRAVELER_CANCEL_AFTER_HANDOVER",
+                List.of(bidId), Map.of(bidId, "CASH"), Map.of(bidId, "WALLET"), Map.of(), true);
+    }
+
+    @Test
+    void onTripCancelled_travelerInitiated_retainsChargedCommission() {
+        UUID bidId = UUID.randomUUID();
+        UUID travelerId = UUID.randomUUID();
+        BidEntity bid = bidWithId(bidId);
+        bid.setCommissionStatus(CommissionStatus.CHARGED);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+
+        listener.onTripCancelled(travelerEvent(travelerId, bidId));
+
+        verify(cashCommissionService, never()).refundCommissionToWallet(any(), any(), any());
+        verify(auditService).log("payment", bidId, "COMMISSION_RETAINED_TRAVELER_CANCEL", travelerId,
+                Map.of("reason", "TRAVELER_CANCEL_AFTER_HANDOVER", "commissionChargedVia", "WALLET"));
+    }
+
+    @Test
+    void onTripCancelled_travelerInitiated_uncharged_noAudit() {
+        UUID bidId = UUID.randomUUID();
+        BidEntity bid = bidWithId(bidId);
+        bid.setCommissionStatus(CommissionStatus.REFUNDED);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+
+        listener.onTripCancelled(travelerEvent(UUID.randomUUID(), bidId));
+
+        verifyNoInteractions(cashCommissionService, auditService);
     }
 
     // --- Helper builders ---

@@ -68,7 +68,17 @@ public record PackageRequestSearchResponse(
      *  Voir {@link #withUniqueViewerCount}. */
     Long uniqueViewerCount
 ) {
-    public record SenderPublicProfile(UUID id, String displayName, double averageRating, int totalRatings, boolean kycVerified, String avatarUrl) {}
+    /**
+     * @param incidentCount fiabilité de l'expéditeur (FLUTTER-E0/E6) : annulations après
+     *                      acceptation et absences au rendez-vous de remise confirmées
+     */
+    public record SenderPublicProfile(UUID id, String displayName, double averageRating, int totalRatings,
+                                      boolean kycVerified, String avatarUrl, int incidentCount) {
+        public SenderPublicProfile(UUID id, String displayName, double averageRating, int totalRatings,
+                                   boolean kycVerified, String avatarUrl) {
+            this(id, displayName, averageRating, totalRatings, kycVerified, avatarUrl, 0);
+        }
+    }
 
     /** Copie enrichie de l'équivalent converti — même pattern que {@code AnnouncementSearchResponse}. */
     public PackageRequestSearchResponse withConvertedPrice(BigDecimal convertedDisplayPrice,
