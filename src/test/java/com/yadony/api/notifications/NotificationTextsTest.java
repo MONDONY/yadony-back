@@ -86,6 +86,7 @@ class NotificationTextsTest {
                 "Aéroport Roissy Charles-de-Gaulle, terminal 2E, porte 12, devant le comptoir"));
         map.put("handoverReminder sans lieu", NotificationTexts.handoverReminder(m, " "));
         map.put("confirmationCodeReady", NotificationTexts.confirmationCodeReady(m));
+        map.put("confirmationCodeBlocked", NotificationTexts.confirmationCodeBlocked(m));
         map.put("deliveryConfirmed", NotificationTexts.deliveryConfirmed(m));
         map.put("deliveryNoShowForSender", NotificationTexts.deliveryNoShowForSender(m));
         map.put("deliveryNoShowForTraveler", NotificationTexts.deliveryNoShowForTraveler(m));
@@ -266,6 +267,18 @@ class NotificationTextsTest {
         assertThat(fr.body()).contains("en route").doesNotContain("prêt à remettre");
         assertThat(en.title()).isEqualTo("Parcel picked up");
         assertThat(en.body()).contains("on its way").doesNotContain("ready to hand over");
+    }
+
+    // FLUTTER-G1 : le code bloqué après trop d'essais ne se débloque qu'avec un nouveau
+    // code, que seul l'expéditeur génère. Le texte doit le dire, pas inviter à patienter.
+    @Test
+    void confirmationCodeBlocked_tellsSenderToGenerateANewCode() {
+        var fr = NotificationTexts.confirmationCodeBlocked(TestMessages.fr());
+        var en = NotificationTexts.confirmationCodeBlocked(TestMessages.en());
+        assertThat(fr.title()).isEqualTo("Code de retrait bloqué");
+        assertThat(fr.body()).contains("Trop d'essais").contains("nouveau code");
+        assertThat(en.title()).isEqualTo("Pickup code blocked");
+        assertThat(en.body()).contains("new code");
     }
 
     @Test

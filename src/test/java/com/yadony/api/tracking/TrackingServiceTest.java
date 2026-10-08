@@ -21,6 +21,7 @@ import com.yadony.api.tracking.dto.QrScanRequest;
 import com.yadony.api.tracking.dto.TrackingEventResponse;
 import com.yadony.api.tracking.dto.TrackingSearchResponse;
 import com.yadony.api.tracking.dto.TripScanHistoryEntryDto;
+import com.yadony.api.tracking.events.ConfirmationCodeBlockedEvent;
 import com.yadony.api.tracking.events.DeliveryConfirmedEvent;
 import org.assertj.core.api.ThrowableAssert;
 import org.junit.jupiter.api.AfterEach;
@@ -704,8 +705,78 @@ class TrackingServiceTest {
         when(userRepository.findByFirebaseUid("uid-traveler")).thenReturn(Optional.of(traveler));
 
         ConfirmDeliveryRequest req = new ConfirmDeliveryRequest("000000");
-        assertYadonyError(() -> service.confirmDelivery(bidId, req, "uid-traveler"), "too-many-attempts");
+        assertYadonyError(() -> service.confirmDelivery(bidId, req, "uid-traveler"), "code-blocked");
         assertThat(bid.getConfirmationCode()).isNull(); // code reset
+        verify(auditService).log(eq("TRACKING_CONFIRMATION_CODE"), eq(bidId), eq("CODE_ATTEMPTS_EXCEEDED"),
+                eq(travelerId), any());
+        verify(eventPublisher).publishEvent(new ConfirmationCodeBlockedEvent(bidId, senderId));
+    }
+
+    // FLUTTER-G1 : le troisième essai faux bloque le code tout de suite, trace l'action
+    // et prévient l'expéditeur — avant, le code n'était effacé qu'au quatrième essai,
+    // sans que personne ne sache qu'il fallait en générer un nouveau.
+    @Test
+    void confirmDelivery_thirdWrongAttempt_blocksCodeAuditsAndNotifiesSender() {
+        BidEntity bid = buildBid(BidStatus.IN_TRANSIT, "qt");
+        bid.setConfirmationCode("654321");
+        bid.setConfirmationCodeAttempts(2);
+        bid.setConfirmationCodePublicEnabled(true);
+        AnnouncementEntity ann = buildDepartedAnnouncement();
+        UserEntity traveler = buildUser(travelerId, "uid-traveler");
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+        when(userRepository.findByFirebaseUid("uid-traveler")).thenReturn(Optional.of(traveler));
+
+        Throwable thrown = catchThrowable(() ->
+                service.confirmDelivery(bidId, new ConfirmDeliveryRequest("000000"), "uid-traveler"));
+
+        assertThat(((YadonyBusinessException) thrown).getErrorCode()).isEqualTo("code-blocked");
+        assertThat(thrown.getMessage()).contains("expéditeur").contains("nouveau");
+        assertThat(bid.getConfirmationCode()).isNull();
+        assertThat(bid.getConfirmationCodeAttempts()).isZero();
+        assertThat(bid.isConfirmationCodePublicEnabled()).isFalse();
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.IN_TRANSIT);
+        verify(bidRepository).save(bid);
+        verify(auditService).log(eq("TRACKING_CONFIRMATION_CODE"), eq(bidId), eq("CODE_ATTEMPTS_EXCEEDED"),
+                eq(travelerId), argThat(p -> "3".equals(p.get("attempts"))));
+        verify(eventPublisher).publishEvent(new ConfirmationCodeBlockedEvent(bidId, senderId));
+    }
+
+    @Test
+    void confirmDelivery_secondWrongAttempt_keepsCodeAndPublishesNothing() {
+        BidEntity bid = buildBid(BidStatus.IN_TRANSIT, "qt");
+        bid.setConfirmationCode("654321");
+        bid.setConfirmationCodeAttempts(1);
+        AnnouncementEntity ann = buildDepartedAnnouncement();
+        UserEntity traveler = buildUser(travelerId, "uid-traveler");
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+        when(userRepository.findByFirebaseUid("uid-traveler")).thenReturn(Optional.of(traveler));
+
+        assertYadonyError(() -> service.confirmDelivery(bidId, new ConfirmDeliveryRequest("000000"), "uid-traveler"),
+                "code-incorrect");
+        assertThat(bid.getConfirmationCode()).isEqualTo("654321");
+        assertThat(bid.getConfirmationCodeAttempts()).isEqualTo(2);
+        verify(eventPublisher, never()).publishEvent(any(ConfirmationCodeBlockedEvent.class));
+    }
+
+    // FLUTTER-G1 : sans code sur un colis déjà remis, le voyageur était renvoyé au scan
+    // DEPART, déjà fait. Il doit savoir que seul l'expéditeur peut débloquer la situation.
+    @Test
+    void confirmDelivery_codeClearedAfterHandover_saysAskSenderForNewCode() {
+        BidEntity bid = buildBid(BidStatus.ARRIVED, "qt");
+        AnnouncementEntity ann = buildDepartedAnnouncement();
+        UserEntity traveler = buildUser(travelerId, "uid-traveler");
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+        when(userRepository.findByFirebaseUid("uid-traveler")).thenReturn(Optional.of(traveler));
+
+        Throwable thrown = catchThrowable(() ->
+                service.confirmDelivery(bidId, new ConfirmDeliveryRequest("123456"), "uid-traveler"));
+
+        assertThat(((YadonyBusinessException) thrown).getErrorCode()).isEqualTo("code-blocked");
+        assertThat(thrown.getMessage()).contains("expéditeur").doesNotContain("scannez");
+        verify(eventPublisher, never()).publishEvent(any(ConfirmationCodeBlockedEvent.class));
     }
 
     @Test

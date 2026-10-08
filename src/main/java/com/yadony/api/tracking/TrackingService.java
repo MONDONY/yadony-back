@@ -22,6 +22,7 @@ import com.yadony.api.tracking.dto.QrScanRequest;
 import com.yadony.api.tracking.dto.TrackingEventResponse;
 import com.yadony.api.tracking.dto.TrackingSearchResponse;
 import com.yadony.api.tracking.dto.TripScanHistoryEntryDto;
+import com.yadony.api.tracking.events.ConfirmationCodeBlockedEvent;
 import com.yadony.api.tracking.events.DeliveryConfirmedEvent;
 import com.yadony.api.tracking.events.ParcelDepartedEvent;
 import com.yadony.api.tracking.events.ParcelInTransitEvent;
@@ -555,6 +556,32 @@ public class TrackingService {
                 bid.isConfirmationCodePublicEnabled());
     }
 
+    /**
+     * Efface le code de retrait après trop d'essais faux, trace l'action et prévient
+     * l'expéditeur, seul à pouvoir en générer un nouveau (FLUTTER-G1). Sans la
+     * notification, le colis restait bloqué sans que personne ne sache quoi faire.
+     */
+    private void blockCodeAfterTooManyAttempts(BidEntity bid, UUID travelerId) {
+        int attempts = bid.getConfirmationCodeAttempts();
+        bid.setConfirmationCode(null);
+        bid.setConfirmationCodeAttempts(0);
+        bid.setConfirmationCodePublicEnabled(false);
+        bidRepository.save(bid);
+        auditService.log("TRACKING_CONFIRMATION_CODE", bid.getId(), "CODE_ATTEMPTS_EXCEEDED",
+                travelerId, Map.of("bidId", bid.getId().toString(),
+                        "attempts", String.valueOf(attempts)));
+        eventPublisher.publishEvent(new ConfirmationCodeBlockedEvent(bid.getId(), bid.getSenderId()));
+    }
+
+    private static YadonyBusinessException tooManyAttempts() {
+        // « code-blocked » et non « too-many-attempts » : ce dernier est partagé avec les
+        // OTP, dont le texte app (« patientez quelques minutes ») ne s'applique pas ici —
+        // attendre ne débloque rien, seul un nouveau code de l'expéditeur le fait.
+        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "code-blocked",
+                "Code Blocked",
+                "Trop d'essais incorrects : ce code est bloqué. Demandez à l'expéditeur d'en générer un nouveau dans l'app");
+    }
+
     @Transactional
     public ConfirmCodeResponse refreshConfirmationCode(UUID bidId, String firebaseUid) {
         BidEntity bid = bidRepository.findById(bidId)
@@ -666,6 +693,14 @@ public class TrackingService {
         assertTripDeparted(bid, announcement, traveler);
 
         if (bid.getConfirmationCode() == null) {
+            // Colis déjà remis sans code : il a été bloqué (trop d'essais) ou a expiré.
+            // Renvoyer le voyageur vers le scan DEPART, déjà fait, le laissait sans issue
+            // (FLUTTER-G1) : seul l'expéditeur peut en générer un nouveau.
+            if (bid.getStatus() != BidStatus.ACCEPTED) {
+                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "code-blocked",
+                        "Code Blocked",
+                        "Aucun code de retrait valide : demandez à l'expéditeur d'en générer un nouveau dans l'app");
+            }
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "code-not-generated",
                     "Code Not Generated",
                     "Le code de confirmation n'est pas encore disponible — scannez d'abord le départ du colis");
@@ -683,25 +718,26 @@ public class TrackingService {
                     "Le code de confirmation a expiré — demandez à l'expéditeur de vous partager un nouveau code");
         }
 
+        // Ligne héritée : compteur déjà au maximum avec un code encore présent (avant
+        // FLUTTER-G1, le code n'était effacé qu'au quatrième essai).
         if (bid.getConfirmationCodeAttempts() >= MAX_CODE_ATTEMPTS) {
-            bid.setConfirmationCode(null);
-            bid.setConfirmationCodeAttempts(0);
-            bid.setConfirmationCodePublicEnabled(false);
-            bidRepository.save(bid);
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "too-many-attempts",
-                    "Too Many Attempts",
-                    "Trop de tentatives incorrectes — contactez l'expéditeur pour obtenir le code");
+            blockCodeAfterTooManyAttempts(bid, traveler.getId());
+            throw tooManyAttempts();
         }
 
         if (!bid.getConfirmationCode().equals(request.confirmationCode())) {
             bid.setConfirmationCodeAttempts(bid.getConfirmationCodeAttempts() + 1);
-            bidRepository.save(bid);
             int remaining = MAX_CODE_ATTEMPTS - bid.getConfirmationCodeAttempts();
+            if (remaining <= 0) {
+                // Le troisième essai faux bloque le code tout de suite : l'expéditeur voit
+                // aussitôt « Générer un nouveau code » au lieu d'un code mort.
+                blockCodeAfterTooManyAttempts(bid, traveler.getId());
+                throw tooManyAttempts();
+            }
+            bidRepository.save(bid);
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "code-incorrect",
                     "Code Incorrect",
-                    remaining > 0
-                            ? "Code incorrect — " + remaining + " tentative(s) restante(s)"
-                            : "Trop de tentatives — contactez l'expéditeur pour obtenir le code");
+                    "Code incorrect — " + remaining + " tentative(s) restante(s)");
         }
 
         // Validée avant de consommer le code : une clé rejetée ne doit pas

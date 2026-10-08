@@ -165,6 +165,7 @@ class NotificationPrefsServiceTest {
         when(repository.findById(USER_ID)).thenReturn(Optional.of(buildEntity(false, true, true, true, false)));
         assertThat(service.isAllowed(USER_ID, "TRAVELER_INVITE")).isFalse();
         assertThat(service.isAllowed(USER_ID, "CONFIRMATION_CODE_READY")).isFalse();
+        assertThat(service.isAllowed(USER_ID, "CONFIRMATION_CODE_BLOCKED")).isFalse();
         assertThat(service.isAllowed(USER_ID, "DELIVERY_NOSHOW_REPORTED")).isFalse();
         assertThat(service.isAllowed(USER_ID, "MM_PAYMENT_PENDING")).isFalse();
         assertThat(service.isAllowed(USER_ID, "MM_PAYMENT_EXPIRED")).isFalse();

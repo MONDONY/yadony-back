@@ -38,6 +38,7 @@ class FavoriteServiceTest {
     @Mock PackageRequestSearchMapper packageRequestSearchMapper;
     @Mock GuestUserProvisioner guestUserProvisioner;
     @Mock BlockVisibility blockVisibility;
+    @Mock com.yadony.api.common.AuditService auditService;
 
     FavoriteService service;
 
@@ -51,7 +52,7 @@ class FavoriteServiceTest {
         service = new FavoriteService(favoriteRepository, userRepository,
                 announcementRepository, packageRequestRepository,
                 announcementSearchMapper, packageRequestSearchMapper,
-                guestUserProvisioner, blockVisibility);
+                guestUserProvisioner, blockVisibility, auditService);
         userId = UUID.randomUUID();
         tripId = UUID.randomUUID();
 
@@ -177,6 +178,51 @@ class FavoriteServiceTest {
         assertThatCode(() -> service.removeFavorite(userId, FavoriteTargetType.TRIP, tripId))
                 .doesNotThrowAnyException();
         verify(favoriteRepository, never()).save(any());
+    }
+
+    // --- Audit (FLUTTER-FG) : seuls les changements réels sont tracés ---
+
+    @Test
+    void addTrip_rowInserted_writesFavoriteAddedAudit() {
+        when(announcementRepository.findById(tripId))
+                .thenReturn(Optional.of(tripOwnedBy(UUID.randomUUID())));
+        when(favoriteRepository.insertIfAbsent(any(UUID.class), eq(userId), eq("TRIP"), eq(tripId)))
+                .thenReturn(1);
+
+        service.addFavorite(UID, FavoriteTargetType.TRIP, tripId);
+
+        verify(auditService).log(eq("FAVORITE"), eq(tripId), eq("FAVORITE_ADDED"), eq(userId),
+                argThat(p -> "TRIP".equals(p.get("targetType")) && "false".equals(p.get("guest"))));
+    }
+
+    @Test
+    void addTrip_noRowInserted_writesNoAudit() {
+        when(announcementRepository.findById(tripId))
+                .thenReturn(Optional.of(tripOwnedBy(UUID.randomUUID())));
+        when(favoriteRepository.insertIfAbsent(any(UUID.class), eq(userId), eq("TRIP"), eq(tripId)))
+                .thenReturn(0);
+
+        service.addFavorite(UID, FavoriteTargetType.TRIP, tripId);
+
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    void removeTrip_rowDeleted_writesFavoriteRemovedAudit() {
+        when(favoriteRepository.deleteActive(userId, "TRIP", tripId)).thenReturn(1);
+
+        service.removeFavorite(userId, FavoriteTargetType.TRIP, tripId);
+
+        verify(auditService).log(eq("FAVORITE"), eq(tripId), eq("FAVORITE_REMOVED"), eq(userId), any());
+    }
+
+    @Test
+    void removeTrip_nothingDeleted_writesNoAudit() {
+        when(favoriteRepository.deleteActive(userId, "TRIP", tripId)).thenReturn(0);
+
+        service.removeFavorite(userId, FavoriteTargetType.TRIP, tripId);
+
+        verifyNoInteractions(auditService);
     }
 
     // --- getFavoriteIds tests ---

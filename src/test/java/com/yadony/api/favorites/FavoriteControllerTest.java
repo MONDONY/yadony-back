@@ -60,6 +60,8 @@ class FavoriteControllerTest {
     private static final String MISSING_ROW_UID = "uid-sans-ligne-test";
     private static final UUID SENDER_ID = UUID.randomUUID();
     private static final UUID TRAVELER_ID = UUID.randomUUID();
+    private static final String GUEST_WITH_ROW_UID = "uid-invite-avec-ligne-test";
+    private static final UUID GUEST_ID = UUID.randomUUID();
     private static final UUID TARGET_ID = UUID.fromString("00000000-0000-0000-0000-000000000001");
 
     /**
@@ -80,6 +82,7 @@ class FavoriteControllerTest {
         when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
 
         when(userRepository.findByFirebaseUid(MISSING_ROW_UID)).thenReturn(Optional.empty());
+        when(userRepository.findByFirebaseUid(GUEST_UID)).thenReturn(Optional.empty());
     }
 
     // ── Auth helpers (same pattern as PriceGridControllerTest) ────────────────
@@ -185,9 +188,9 @@ class FavoriteControllerTest {
     // ── Ronde de correction 1, constat 4 : tolérance scopée aux invités ──────
 
     /**
-     * Un invité (ROLE_GUEST) n'a jamais de ligne {@code users} avant son premier favori :
-     * le contrôleur doit passer {@code null} au service (jamais provisionner sur un
-     * chemin de suppression/lecture), et la requête doit tout de même réussir.
+     * Un invité (ROLE_GUEST) n'a pas de ligne {@code users} avant son premier favori :
+     * le contrôleur passe alors {@code null} au service (jamais de provisionnement sur un
+     * chemin de suppression/lecture), et la requête réussit tout de même.
      */
     @Test
     void deleteTrip_asGuest_passesNullCallerId_returns204() throws Exception {
@@ -199,7 +202,47 @@ class FavoriteControllerTest {
                 .andExpect(status().isNoContent());
 
         verify(favoriteService).removeFavorite(isNull(), eq(FavoriteTargetType.TRIP), eq(TARGET_ID));
-        verify(userRepository, never()).findByFirebaseUid(GUEST_UID);
+    }
+
+    private static UsernamePasswordAuthenticationToken asGuestWithRow() {
+        return new UsernamePasswordAuthenticationToken(
+                GUEST_WITH_ROW_UID, null,
+                List.of(new SimpleGrantedAuthority("ROLE_GUEST")));
+    }
+
+    /**
+     * FLUTTER-G3 : l'ajout d'un invité provisionne sa ligne {@code users}
+     * ({@code resolveOrProvision}). Les lectures et le retrait doivent ensuite la LIRE :
+     * renvoyer {@code null} à tout invité laissait ses favoris invisibles (ids, trajets,
+     * demandes vides) et son retrait sans effet. Parcours complet : ajoute → lit → retire.
+     */
+    @Test
+    void guestWithProvisionedRow_addThenReadThenRemove_usesHisOwnId() throws Exception {
+        UserEntity guest = new UserEntity();
+        org.springframework.test.util.ReflectionTestUtils.setField(guest, "id", GUEST_ID);
+        when(userRepository.findByFirebaseUid(GUEST_WITH_ROW_UID)).thenReturn(Optional.of(guest));
+        when(favoriteService.getFavoriteIds(GUEST_ID))
+                .thenReturn(new FavoriteIdsResponse(Set.of(TARGET_ID), Set.of()));
+        when(favoriteService.getFavoriteTrips(GUEST_ID)).thenReturn(List.of());
+        when(favoriteService.getFavoritePackageRequests(GUEST_ID)).thenReturn(List.of());
+
+        mockMvc.perform(put("/favorites/trip/" + TARGET_ID).with(authentication(asGuestWithRow())))
+                .andExpect(status().isOk());
+        verify(favoriteService).addFavorite(GUEST_WITH_ROW_UID, FavoriteTargetType.TRIP, TARGET_ID);
+
+        mockMvc.perform(get("/favorites/ids").with(authentication(asGuestWithRow())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.trips[0]").value(TARGET_ID.toString()));
+        mockMvc.perform(get("/favorites/trips").with(authentication(asGuestWithRow())))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/favorites/package-requests").with(authentication(asGuestWithRow())))
+                .andExpect(status().isOk());
+        verify(favoriteService).getFavoriteTrips(GUEST_ID);
+        verify(favoriteService).getFavoritePackageRequests(GUEST_ID);
+
+        mockMvc.perform(delete("/favorites/trip/" + TARGET_ID).with(authentication(asGuestWithRow())))
+                .andExpect(status().isNoContent());
+        verify(favoriteService).removeFavorite(GUEST_ID, FavoriteTargetType.TRIP, TARGET_ID);
     }
 
     /**
@@ -261,7 +304,6 @@ class FavoriteControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$").isArray());
 
-        verify(userRepository, never()).findByFirebaseUid(GUEST_UID);
     }
 
     @Test
@@ -342,7 +384,6 @@ class FavoriteControllerTest {
                 .andExpect(jsonPath("$.trips").isArray())
                 .andExpect(jsonPath("$.packageRequests").isArray());
 
-        verify(userRepository, never()).findByFirebaseUid(GUEST_UID);
     }
 
     @Test

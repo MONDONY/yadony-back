@@ -28,6 +28,7 @@ import com.yadony.api.payments.events.MobileMoneyDepositFailedEvent;
 import com.yadony.api.payments.events.MobileMoneyPaymentConfirmedEvent;
 import com.yadony.api.payments.events.MobileMoneyPaymentExpiredEvent;
 import com.yadony.api.payments.events.PaymentReleasedEvent;
+import com.yadony.api.tracking.events.ConfirmationCodeBlockedEvent;
 import com.yadony.api.tracking.events.DeliveryConfirmedEvent;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -836,6 +837,24 @@ class NotificationDispatcherTest {
     }
 
     // ── TripArrivedEvent ──────────────────────────────────────────────────────
+
+    // FLUTTER-G1 : code bloqué après trop d'essais → l'expéditeur est prévenu, non
+    // critique (pas de SMS de repli), le push ouvre le colis (bids/{id}).
+    @Test
+    void onConfirmationCodeBlocked_notifiesSenderWithBidDeeplink() {
+        UUID sender = UUID.randomUUID();
+        UUID bid = UUID.randomUUID();
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onConfirmationCodeBlocked(new ConfirmationCodeBlockedEvent(bid, sender));
+
+        var dataCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(fcmService).sendToUser(eq(sender), eq("Code de retrait bloqué"), any(), dataCaptor.capture());
+        assertThat(dataCaptor.getValue())
+                .containsEntry("type", "CONFIRMATION_CODE_BLOCKED")
+                .containsEntry("bidId", bid.toString());
+        verify(notificationService).persist(eq(sender), eq("CONFIRMATION_CODE_BLOCKED"), any(), any(), any(), eq(false));
+    }
 
     @Test
     void onTripArrived_notifiesEachSender() {

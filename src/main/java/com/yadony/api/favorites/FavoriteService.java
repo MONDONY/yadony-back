@@ -2,7 +2,9 @@ package com.yadony.api.favorites;
 
 import com.yadony.api.auth.GuestUserProvisioner;
 import com.yadony.api.auth.UserRepository;
+import com.yadony.api.common.AuditService;
 import com.yadony.api.common.BlockVisibility;
+import com.yadony.api.common.GuestSession;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.YadonyNotFoundException;
 import com.yadony.api.favorites.dto.FavoriteIdsResponse;
@@ -39,6 +41,7 @@ public class FavoriteService {
     private final PackageRequestSearchMapper packageRequestSearchMapper;
     private final GuestUserProvisioner guestUserProvisioner;
     private final BlockVisibility blockVisibility;
+    private final AuditService auditService;
 
     public FavoriteService(FavoriteRepository favoriteRepository,
                            UserRepository userRepository,
@@ -47,7 +50,8 @@ public class FavoriteService {
                            AnnouncementSearchMapper announcementSearchMapper,
                            PackageRequestSearchMapper packageRequestSearchMapper,
                            GuestUserProvisioner guestUserProvisioner,
-                           BlockVisibility blockVisibility) {
+                           BlockVisibility blockVisibility,
+                           AuditService auditService) {
         this.favoriteRepository = favoriteRepository;
         this.userRepository = userRepository;
         this.announcementRepository = announcementRepository;
@@ -56,6 +60,7 @@ public class FavoriteService {
         this.packageRequestSearchMapper = packageRequestSearchMapper;
         this.guestUserProvisioner = guestUserProvisioner;
         this.blockVisibility = blockVisibility;
+        this.auditService = auditService;
     }
 
     /**
@@ -75,7 +80,10 @@ public class FavoriteService {
         }
         // INSERT atomique : un ajout concurrent du même favori devient un no-op au lieu
         // d'une violation d'unicité au commit (voir FavoriteRepository#insertIfAbsent).
-        favoriteRepository.insertIfAbsent(UUID.randomUUID(), userId, type.name(), targetId);
+        int inserted = favoriteRepository.insertIfAbsent(UUID.randomUUID(), userId, type.name(), targetId);
+        if (inserted > 0) {
+            auditFavorite("FAVORITE_ADDED", userId, type, targetId);
+        }
     }
 
     /**
@@ -93,7 +101,24 @@ public class FavoriteService {
         if (callerId == null) return;
         // DELETE direct : deux retraits simultanés du même favori (double appui) ne se
         // marchent plus dessus (voir FavoriteRepository#deleteActive).
-        favoriteRepository.deleteActive(callerId, type.name(), targetId);
+        int deleted = favoriteRepository.deleteActive(callerId, type.name(), targetId);
+        if (deleted > 0) {
+            auditFavorite("FAVORITE_REMOVED", callerId, type, targetId);
+        }
+    }
+
+    /**
+     * Trace un favori réellement ajouté ou retiré (FLUTTER-FG) : un signet affiché sans
+     * entrée dans la liste ne se diagnostiquait qu'en devinant. Les no-op (déjà présent,
+     * rien à retirer) ne sont pas tracés, pour ne pas noyer la table sous les doubles appuis.
+     * {@code guest} distingue les comptes invités, dont les favoris ont déjà été perdus
+     * une fois (FLUTTER-G3).
+     */
+    private void auditFavorite(String action, UUID userId, FavoriteTargetType type, UUID targetId) {
+        auditService.log("FAVORITE", targetId, action, userId, java.util.Map.of(
+                "targetType", type.name(),
+                "targetId", targetId.toString(),
+                "guest", String.valueOf(GuestSession.isGuest())));
     }
 
     /**

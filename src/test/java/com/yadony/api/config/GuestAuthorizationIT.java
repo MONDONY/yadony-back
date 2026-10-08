@@ -216,6 +216,55 @@ class GuestAuthorizationIT {
         assertThat(created.getRoles()).isEmpty();
     }
 
+    /**
+     * FLUTTER-G3 : apres l'ajout (qui provisionne la ligne), l'invite doit relire ses
+     * favoris et pouvoir les retirer. Le controleur renvoyait {@code null} a tout invite :
+     * ids et listes vides, DELETE sans effet, alors que la ligne favorite existait.
+     */
+    @Test
+    @DisplayName("un invite relit puis retire le favori qu'il vient de poser")
+    void guestAddsReadsThenRemovesFavorite() throws Exception {
+        AnnouncementEntity trip = new AnnouncementEntity();
+        trip.setTravelerId(UUID.randomUUID());
+        trip.setDepartureCity("Paris");
+        trip.setArrivalCity("Dakar");
+        trip.setDepartureDate(LocalDate.now().plusDays(3));
+        trip.setTransportMode(TransportMode.PLANE);
+        trip.setPickupAddressLabel("Gare du Nord, Paris");
+        trip.setPickupLat(new BigDecimal("48.880756"));
+        trip.setPickupLng(new BigDecimal("2.354987"));
+        trip.setDeliveryAddressLabel("Aeroport Blaise Diagne, Dakar");
+        trip.setDeliveryLat(new BigDecimal("14.740"));
+        trip.setDeliveryLng(new BigDecimal("-17.490"));
+        trip.setAvailableKg(new BigDecimal("20.00"));
+        trip.setTotalKg(new BigDecimal("23.00"));
+        trip.setPricePerKg(new BigDecimal("8.00"));
+        trip.setTimezone("Europe/Paris");
+        trip.setStatus(AnnouncementStatus.ACTIVE);
+        trip = announcementRepository.saveAndFlush(trip);
+        String tripId = trip.getId().toString();
+
+        UsernamePasswordAuthenticationToken realGuest = new UsernamePasswordAuthenticationToken(
+                "uid-invite-aller-retour-001", null, List.of(new SimpleGrantedAuthority("ROLE_GUEST")));
+
+        mockMvc.perform(put("/favorites/trip/" + tripId).with(authentication(realGuest)))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/favorites/ids").with(authentication(realGuest)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.trips[0]").value(tripId));
+        mockMvc.perform(get("/favorites/trips").with(authentication(realGuest)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].id").value(tripId));
+
+        mockMvc.perform(delete("/favorites/trip/" + tripId).with(authentication(realGuest)))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(get("/favorites/ids").with(authentication(realGuest)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.trips").isEmpty());
+    }
+
     // ── Ce qu'un invite ne peut PAS atteindre ─────────────────────────────────
 
     @Test
