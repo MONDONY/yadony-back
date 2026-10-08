@@ -22,6 +22,8 @@ class AdminConversationControllerTest {
     @Mock FirestoreService firestoreService;
     @Mock AuditService auditService;
     @Mock com.yadony.api.auth.UserRepository userRepository;
+    @Mock MessagingImageRepository imageRepository;
+    @Mock com.yadony.api.common.StorageService storageService;
 
     AdminConversationController controller;
 
@@ -37,7 +39,8 @@ class AdminConversationControllerTest {
     @BeforeEach
     void setUp() {
         controller = new AdminConversationController(repo, firestoreService, auditService, userRepository,
-                new com.yadony.api.admin.AdminMessageModerationService(firestoreService, auditService));
+                new com.yadony.api.admin.AdminMessageModerationService(firestoreService, auditService),
+                imageRepository, storageService);
     }
 
     @Test
@@ -197,4 +200,141 @@ class AdminConversationControllerTest {
         org.assertj.core.api.Assertions.assertThat(resp.getBody().getTotalElements()).isZero();
         verifyNoInteractions(firestoreService);
     }
+
+    // ---- senderId Firestore = UID Firebase (l'app et le back y écrivent users.firebase_uid) ----
+
+    private static UserEntity userWithUid(UUID id, String uid, String first, String last) {
+        UserEntity u = new UserEntity();
+        org.springframework.test.util.ReflectionTestUtils.setField(u, "id", id);
+        u.setFirebaseUid(uid);
+        u.setFirstName(first);
+        u.setLastName(last);
+        return u;
+    }
+
+    private static java.util.Map<String, Object> msg(String id, String senderId) {
+        java.util.Map<String, Object> m = new java.util.HashMap<>();
+        m.put("id", id);
+        m.put("senderId", senderId);
+        m.put("body", "bonjour");
+        m.put("sentAt", "2026-10-07T10:00:00Z");
+        return m;
+    }
+
+    @Test
+    void getMessages_nommeLExpediteurParUidFirebase_uuidEtSysteme_enLot() {
+        UUID legacyId = UUID.randomUUID();
+        when(repo.findByFirestoreConversationId("conv_fs")).thenReturn(Optional.of(
+                new ConversationEntity(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "conv_fs")));
+        when(firestoreService.listMessages("conv_fs")).thenReturn(java.util.List.of(
+                msg("m1", "fbUidAwa"),
+                msg("m2", "fbUidAwa"),
+                msg("m3", legacyId.toString()),
+                msg("m4", "SYSTEM"),
+                msg("m5", "fbUidSupprime"),
+                msg("m6", null)));
+        when(userRepository.findAllByFirebaseUidIn(any()))
+                .thenReturn(java.util.List.of(userWithUid(UUID.randomUUID(), "fbUidAwa", "Awa", "Diallo")));
+        when(userRepository.findAllById(any()))
+                .thenReturn(java.util.List.of(userWithUid(legacyId, "uidLegacy", "Moussa", "Traoré")));
+
+        var messages = controller.getMessages("conv_fs").getBody();
+
+        org.assertj.core.api.Assertions.assertThat(messages)
+                .extracting(com.yadony.api.admin.dto.AdminMessageResponse::senderName)
+                .containsExactly("Awa Diallo", "Awa Diallo", "Moussa Traoré", "Systeme", null, null);
+        verify(userRepository, times(1)).findAllByFirebaseUidIn(any());
+        verify(userRepository, times(1)).findAllById(any());
+    }
+
+    @Test
+    void getMessages_sansMessage_aucuneRequeteUtilisateur() {
+        when(repo.findByFirestoreConversationId("conv_fs")).thenReturn(Optional.of(
+                new ConversationEntity(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "conv_fs")));
+        when(firestoreService.listMessages("conv_fs")).thenReturn(java.util.List.of());
+
+        org.assertj.core.api.Assertions.assertThat(controller.getMessages("conv_fs").getBody()).isEmpty();
+        verifyNoInteractions(userRepository);
+    }
+
+    // ── FLUTTER-B4 : photos vues par l'admin ────────────────────────────────────
+
+    @Test
+    void getMessages_exposesTypeAndShortSignedUrls_forLivePhotos_evenDeletedOnes() throws Exception {
+        var conv = ConversationMediaPolicyTest.withId(
+                new ConversationEntity(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "conv_img"));
+        when(repo.findByFirestoreConversationId("conv_img")).thenReturn(Optional.of(conv));
+
+        var live = new MessagingImageEntity(conv.getId(), conv.getBidId(), "img1", UUID.randomUUID(),
+                "messaging/conv_img/img1_full.jpg", "messaging/conv_img/img1_thumb.jpg");
+        var purged = new MessagingImageEntity(conv.getId(), conv.getBidId(), "img2", UUID.randomUUID(),
+                "messaging/conv_img/img2_full.jpg", "messaging/conv_img/img2_thumb.jpg");
+        purged.markPurged(java.time.LocalDateTime.now());
+        when(imageRepository.findByConversationId(conv.getId())).thenReturn(java.util.List.of(live, purged));
+        when(storageService.generatePresignedUrl("messaging/conv_img/img1_full.jpg", AdminConversationController_TTL))
+                .thenReturn("https://r2/full?sig");
+        when(storageService.generatePresignedUrl("messaging/conv_img/img1_thumb.jpg", AdminConversationController_TTL))
+                .thenReturn("https://r2/thumb?sig");
+
+        java.util.Map<String, Object> m1 = new java.util.HashMap<>();
+        m1.put("id", "img1");
+        m1.put("senderId", "fbUid");
+        m1.put("body", null);
+        m1.put("type", "IMAGE");
+        m1.put("sentAt", "2026-10-07T10:00:00Z");
+        m1.put("deletedAt", "2026-10-07T11:00:00Z");
+        java.util.Map<String, Object> m2 = new java.util.HashMap<>(m1);
+        m2.put("id", "img2");
+        m2.remove("deletedAt");
+        java.util.Map<String, Object> m3 = new java.util.HashMap<>();
+        m3.put("id", "txt");
+        m3.put("senderId", "fbUid");
+        m3.put("body", "Bonjour");
+        m3.put("sentAt", "2026-10-07T12:00:00Z");
+        when(firestoreService.listMessages("conv_img")).thenReturn(java.util.List.of(m1, m2, m3));
+
+        var body = controller.getMessages("conv_img").getBody();
+
+        org.assertj.core.api.Assertions.assertThat(body).hasSize(3);
+        var a = body.get(0);
+        org.assertj.core.api.Assertions.assertThat(a.type()).isEqualTo("IMAGE");
+        org.assertj.core.api.Assertions.assertThat(a.deleted()).isTrue();
+        org.assertj.core.api.Assertions.assertThat(a.imageUrl()).isEqualTo("https://r2/full?sig");
+        org.assertj.core.api.Assertions.assertThat(a.thumbUrl()).isEqualTo("https://r2/thumb?sig");
+        var b = body.get(1);
+        org.assertj.core.api.Assertions.assertThat(b.type()).isEqualTo("IMAGE");
+        org.assertj.core.api.Assertions.assertThat(b.imageUrl()).isNull();
+        org.assertj.core.api.Assertions.assertThat(b.thumbUrl()).isNull();
+        var c = body.get(2);
+        org.assertj.core.api.Assertions.assertThat(c.type()).isEqualTo("TEXT");
+        org.assertj.core.api.Assertions.assertThat(c.imageUrl()).isNull();
+    }
+
+    @Test
+    void getMessages_signingFailure_leavesUrlsNull() throws Exception {
+        var conv = ConversationMediaPolicyTest.withId(
+                new ConversationEntity(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "conv_sig"));
+        when(repo.findByFirestoreConversationId("conv_sig")).thenReturn(Optional.of(conv));
+        when(imageRepository.findByConversationId(conv.getId())).thenReturn(java.util.List.of(
+                new MessagingImageEntity(conv.getId(), conv.getBidId(), "img1", UUID.randomUUID(), "k1", "k2")));
+        when(storageService.generatePresignedUrl(any(), any())).thenThrow(new RuntimeException("no creds"));
+        java.util.Map<String, Object> m1 = new java.util.HashMap<>();
+        m1.put("id", "img1");
+        m1.put("type", "IMAGE");
+        m1.put("senderId", "SYSTEM");
+        when(firestoreService.listMessages("conv_sig")).thenReturn(java.util.List.of(m1));
+
+        var only = controller.getMessages("conv_sig").getBody().get(0);
+        org.assertj.core.api.Assertions.assertThat(only.imageUrl()).isNull();
+        org.assertj.core.api.Assertions.assertThat(only.thumbUrl()).isNull();
+    }
+
+    @Test
+    void adminMessageResponse_legacyConstructor_isText() {
+        var r = new com.yadony.api.admin.dto.AdminMessageResponse("i", "c", "n", "b", false, false, "t", null, false);
+        org.assertj.core.api.Assertions.assertThat(r.type()).isEqualTo("TEXT");
+        org.assertj.core.api.Assertions.assertThat(r.imageUrl()).isNull();
+    }
+
+    private static final java.time.Duration AdminConversationController_TTL = java.time.Duration.ofMinutes(15);
 }

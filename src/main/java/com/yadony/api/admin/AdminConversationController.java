@@ -15,6 +15,9 @@ import com.yadony.api.messaging.SystemMessages;
 import com.yadony.api.messaging.ConversationEntity;
 import com.yadony.api.messaging.ConversationRepository;
 import com.yadony.api.messaging.FirestoreService;
+import com.yadony.api.messaging.MessagingImageEntity;
+import com.yadony.api.messaging.MessagingImageRepository;
+import com.yadony.api.common.StorageService;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -43,17 +46,26 @@ public class AdminConversationController {
     private final AuditService auditService;
     private final UserRepository userRepository;
     private final AdminMessageModerationService messageModeration;
+    private final MessagingImageRepository imageRepository;
+    private final StorageService storageService;
+
+    /** Durée de vie des URL signées des photos vues par l'admin (FLUTTER-B4). */
+    static final java.time.Duration IMAGE_URL_TTL = java.time.Duration.ofMinutes(15);
 
     public AdminConversationController(ConversationRepository conversationRepository,
                                        FirestoreService firestoreService,
                                        AuditService auditService,
                                        UserRepository userRepository,
-                                       AdminMessageModerationService messageModeration) {
+                                       AdminMessageModerationService messageModeration,
+                                       MessagingImageRepository imageRepository,
+                                       StorageService storageService) {
         this.conversationRepository = conversationRepository;
         this.firestoreService = firestoreService;
         this.auditService = auditService;
         this.userRepository = userRepository;
         this.messageModeration = messageModeration;
+        this.imageRepository = imageRepository;
+        this.storageService = storageService;
     }
 
     @PreAuthorize("hasAuthority('MODERATION_VIEW')")
@@ -98,34 +110,44 @@ public class AdminConversationController {
     @PreAuthorize("hasAuthority('MODERATION_VIEW')")
     @GetMapping("/{conversationId}/messages")
     public ResponseEntity<List<AdminMessageResponse>> getMessages(@PathVariable String conversationId) {
-        conversationRepository.findByFirestoreConversationId(conversationId)
+        ConversationEntity conv = conversationRepository.findByFirestoreConversationId(conversationId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Conversation not found"));
+
+        // Clés des photos lues en base, jamais dans le document Firestore (modifiable par un client).
+        Map<String, MessagingImageEntity> imagesByMessageId = imageRepository.findByConversationId(conv.getId())
+                .stream()
+                .collect(Collectors.toMap(MessagingImageEntity::getFirestoreMessageId, Function.identity(),
+                        (a, b) -> a));
 
         List<Map<String, Object>> raw = firestoreService.listMessages(conversationId);
 
-        // Resolution des noms d'expediteur en un batch (senderId = UUID ou "SYSTEM").
-        Set<UUID> senderIds = raw.stream()
-                .map(m -> parseUuid((String) m.get("senderId")))
+        // Noms d'expéditeur en lot : senderId = UID Firebase (UUID accepté, "SYSTEM" = plateforme).
+        Set<String> senderIds = raw.stream()
+                .map(m -> (String) m.get("senderId"))
                 .filter(Objects::nonNull)
                 .collect(Collectors.toSet());
-        Map<UUID, UserEntity> usersById = userRepository.findAllById(senderIds).stream()
-                .filter(u -> u.getId() != null)
-                .collect(Collectors.toMap(UserEntity::getId, Function.identity(), (a, b) -> a));
+        Map<String, UserEntity> senders = MessageSenders.resolve(userRepository, senderIds);
 
         List<AdminMessageResponse> messages = raw.stream()
                 .map(m -> {
                     String deletedAt = m.get("deletedAt") != null ? m.get("deletedAt").toString() : null;
+                    String type = m.get("type") != null ? m.get("type").toString() : "TEXT";
+                    MessagingImageEntity image = imagesByMessageId.get((String) m.get("id"));
+                    boolean liveImage = image != null && !image.isPurged();
                     return new AdminMessageResponse(
                             (String) m.get("id"),
                             conversationId,
-                            senderName((String) m.get("senderId"), usersById),
+                            senderName((String) m.get("senderId"), senders),
                             (String) m.getOrDefault("body", ""),
                             false,
                             deletedAt != null,
                             (String) m.get("sentAt"),
                             deletedAt,
                             // Seul le serveur écrit deletedAt sur un message (règles Firestore).
-                            deletedAt != null);
+                            deletedAt != null,
+                            type,
+                            liveImage ? signedUrl(image.getImageKey()) : null,
+                            liveImage ? signedUrl(image.getThumbKey()) : null);
                 })
                 .toList();
         return ResponseEntity.ok(messages);
@@ -184,28 +206,27 @@ public class AdminConversationController {
 
     // ---- Helpers -------------------------------------------------------------
 
+    /** URL signée courte ; un échec de signature ne casse pas la lecture de la conversation. */
+    private String signedUrl(String key) {
+        try {
+            return storageService.generatePresignedUrl(key, IMAGE_URL_TTL);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
     private static String userName(UUID userId, Map<UUID, UserEntity> users) {
         if (userId == null) return null;
         UserEntity u = users.get(userId);
         return u != null ? MatchingTextUtil.buildName(u) : null;
     }
 
-    private static String senderName(String senderId, Map<UUID, UserEntity> users) {
+    /** Nom de l'expéditeur ; {@code null} si son compte est introuvable ou supprimé. */
+    private static String senderName(String senderId, Map<String, UserEntity> senders) {
         if (senderId == null) return null;
         if (SystemMessages.isSystemSender(senderId)) return "Systeme";
-        UUID id = parseUuid(senderId);
-        if (id == null) return senderId;
-        UserEntity u = users.get(id);
+        UserEntity u = senders.get(senderId);
         return u != null ? MatchingTextUtil.buildName(u) : null;
-    }
-
-    private static UUID parseUuid(String value) {
-        if (value == null || "SYSTEM".equals(value)) return null;
-        try {
-            return UUID.fromString(value);
-        } catch (IllegalArgumentException e) {
-            return null;
-        }
     }
 
     private static String lastMessageAt(Map<String, Object> meta) {

@@ -47,6 +47,9 @@ public interface ConversationRepository extends JpaRepository<ConversationEntity
 
     Optional<ConversationEntity> findByFirestoreConversationId(String firestoreConversationId);
 
+    /** Toutes les conversations d'un bid, tous types et fermées comprises (rétention des photos). */
+    java.util.List<ConversationEntity> findAllByBidId(UUID bidId);
+
     // Active conversations: not deleted AND not archived by the requesting user
     @Query("SELECT c FROM ConversationEntity c WHERE " +
            "(c.senderId = :userId AND c.closedAt IS NULL AND c.senderDeletedAt IS NULL AND c.senderArchivedAt IS NULL) OR " +

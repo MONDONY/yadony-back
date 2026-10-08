@@ -75,7 +75,7 @@ public class MessagingSteps extends AbstractSteps {
     }
 
     /**
-     * Intruder tries to upload an image to the conversation linked to the given
+     * Intruder tries to send a photo (POST /images, FLUTTER-B4) to the conversation linked to the given
      * announcement alias.
      */
     @Quand("l'intrus tente d'uploader une image dans la conversation de l'annonce {string}")
@@ -89,7 +89,7 @@ public class MessagingSteps extends AbstractSteps {
                 .header("X-Test-UID", ctx.getCurrentUid())
                 .header("X-Test-Roles", ctx.getCurrentRoles())
                 .multiPart("file", "photo.jpg", fakeImageBytes, "image/jpeg")
-                .post("/conversations/{id}/upload", convId);
+                .post("/conversations/{id}/images", convId);
         store(resp);
     }
 

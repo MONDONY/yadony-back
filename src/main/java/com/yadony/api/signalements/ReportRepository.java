@@ -91,6 +91,13 @@ public interface ReportRepository extends JpaRepository<ReportEntity, UUID> {
     List<ReportEntity> findByStatusAndTargetTypeAndTargetId(
             ReportStatus status, ReportTargetType targetType, UUID targetId);
 
+    /** Existe-t-il un signalement de ce statut sur cette cible ? (rétention des photos, FLUTTER-B4) */
+    boolean existsByStatusAndTargetTypeAndTargetId(ReportStatus status, ReportTargetType targetType, UUID targetId);
+
+    /** Même question pour plusieurs cibles (les conversations d'un bid). */
+    boolean existsByStatusAndTargetTypeAndTargetIdIn(ReportStatus status, ReportTargetType targetType,
+                                                     java.util.Collection<UUID> targetIds);
+
     /** Signalements écrits par ce compte, pour un statut donné. */
     List<ReportEntity> findByStatusAndReporterId(ReportStatus status, UUID reporterId);
 

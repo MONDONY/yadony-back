@@ -4,11 +4,9 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.BlockVisibility;
 import com.yadony.api.common.PageResponse;
-import com.yadony.api.common.StorageService;
 import com.yadony.api.common.YadonyBusinessException;
 import java.util.List;
 import com.yadony.api.messaging.dto.ConversationResponse;
-import com.yadony.api.messaging.dto.ImageUploadResponse;
 import com.yadony.api.messaging.dto.LastMessageRequest;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
@@ -21,11 +19,8 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.io.IOException;
-import java.time.Duration;
 import java.util.UUID;
 
 @RestController
@@ -33,23 +28,18 @@ import java.util.UUID;
 @PreAuthorize("hasAnyRole('SENDER', 'TRAVELER')")
 public class ConversationController {
 
-    private static final long MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5 MB
-
     private final ConversationRepository conversationRepository;
     private final ConversationService conversationService;
     private final UserRepository userRepository;
-    private final StorageService storageService;
     private final BlockVisibility blockVisibility;
 
     public ConversationController(ConversationRepository conversationRepository,
                                    ConversationService conversationService,
                                    UserRepository userRepository,
-                                   StorageService storageService,
                                    BlockVisibility blockVisibility) {
         this.conversationRepository = conversationRepository;
         this.conversationService = conversationService;
         this.userRepository = userRepository;
-        this.storageService = storageService;
         this.blockVisibility = blockVisibility;
     }
 
@@ -212,44 +202,9 @@ public class ConversationController {
         return ResponseEntity.ok(conversationService.toResponse(conv, currentUser.getId()));
     }
 
-    // POST /conversations/{id}/upload — upload image to S3
-    @PostMapping("/{id}/upload")
-    public ResponseEntity<ImageUploadResponse> uploadImage(
-            @PathVariable UUID id,
-            @RequestParam("file") MultipartFile file) {
-
-        UserEntity currentUser = resolveCurrentUser();
-        ConversationEntity conv = conversationRepository
-                .findByIdAndParticipant(id, currentUser.getId())
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN,
-                        "Conversation not found or access denied"));
-
-        // Une image est un message : même garde que l'aperçu du dernier message.
-        conversationService.assertMessagingAllowed(conv, currentUser.getId());
-
-        if (file.getSize() > MAX_IMAGE_SIZE) {
-            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "File exceeds 5MB limit");
-        }
-
-        String contentType = file.getContentType();
-        if (contentType == null || !contentType.startsWith("image/")) {
-            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "Only image files are allowed");
-        }
-
-        String prefix = "messaging/" + conv.getFirestoreConversationId() + "/";
-        String key;
-        try {
-            key = storageService.uploadFile(file, prefix);
-        } catch (IOException e) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
-                    "Failed to upload file");
-        }
-
-        String presignedUrl = storageService.generatePresignedUrl(key, Duration.ofDays(7));
-        return ResponseEntity.ok(new ImageUploadResponse(presignedUrl, key));
-    }
+    // L'ancien POST /conversations/{id}/upload (URL présignée 7 j que le client écrivait
+    // lui-même dans Firestore) est retiré : aucun appelant, et il contournait la politique de
+    // médias. Les photos passent par ConversationMediaController (FLUTTER-B4).
 
     private UserEntity resolveCurrentUser() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();

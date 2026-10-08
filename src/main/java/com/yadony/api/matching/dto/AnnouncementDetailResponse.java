@@ -71,7 +71,12 @@ public record AnnouncementDetailResponse(
         /** Reports encore possibles pour ce trajet (vol annulé, voyage repoussé), sur
          *  {@link com.yadony.api.matching.TripRescheduleRules#MAX_RESCHEDULES}. Servi au seul
          *  voyageur propriétaire ; null (donc absent du JSON) pour tout autre lecteur. */
-        Integer remainingReschedules
+        Integer remainingReschedules,
+        /** Code pays ISO-2 du départ, lu par l'édition du trajet pour le renvoyer tel quel
+         *  (FLUTTER-EH : sans lui, chaque modification effaçait le pays en base). */
+        String departureCountryCode,
+        /** Code pays ISO-2 de l'arrivée, même usage que {@link #departureCountryCode}. */
+        String arrivalCountryCode
 ) {
     /** Copie enrichie des équivalents convertis — même pattern que le fil de recherche. */
     public AnnouncementDetailResponse withConvertedPrices(BigDecimal convertedPricePerKg,
@@ -86,6 +91,6 @@ public record AnnouncementDetailResponse(
                 createdAt, updatedAt, pricingMode, convertedGridItems, reservedKg, surplusEligible,
                 surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,
                 availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
-                remainingReschedules);
+                remainingReschedules, departureCountryCode, arrivalCountryCode);
     }
 }

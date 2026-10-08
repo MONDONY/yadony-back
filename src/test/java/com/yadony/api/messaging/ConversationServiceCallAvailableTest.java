@@ -48,7 +48,9 @@ class ConversationServiceCallAvailableTest {
     @BeforeEach
     void setUp() {
         service = new ConversationService(conversationRepository, firestoreService, userRepository, auditService,
-                bidRepository, announcementRepository, storageService, blockVisibility, callAvailability);
+                bidRepository, announcementRepository, storageService, blockVisibility, callAvailability,
+                org.mockito.Mockito.mock(ConversationMediaPolicy.class),
+                org.mockito.Mockito.mock(MessagingImageRetentionService.class));
         conv = new ConversationEntity(UUID.randomUUID(), senderId, UUID.randomUUID(), "fs");
         ReflectionTestUtils.setField(conv, "id", UUID.randomUUID());
         withBid(BidStatus.IN_TRANSIT);
