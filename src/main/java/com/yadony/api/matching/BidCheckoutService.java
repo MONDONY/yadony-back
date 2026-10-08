@@ -89,6 +89,10 @@ public class BidCheckoutService {
                 "Cette annonce n'est plus disponible");
         }
 
+        // FLUTTER-GA : même garde que la création d'une demande (BidService.assertCanBidOn),
+        // absente du paiement carte direct — reprise d'un paiement en attente comprise.
+        HandoverDeadlineRules.assertNotPassed(announcement);
+
         // Recette du 2026-09-09 : une annonce XOF acceptait la carte ; le bid naissait avec la
         // devise par défaut de l'entité (EUR) et Stripe recevait 6 600 « euros » pour
         // 6 600 XOF. Le rail carte n'existe pas dans cette devise : refus avant tout effet,
@@ -363,6 +367,8 @@ public class BidCheckoutService {
                 "announcement-not-active", "Announcement Not Active",
                 "Cette annonce n'est plus disponible");
         }
+        // FLUTTER-GA : un accord négocié ne se paie plus après la date limite de dépôt.
+        HandoverDeadlineRules.assertNotPassed(announcement);
 
         CreatePaymentRequest paymentReq = new CreatePaymentRequest();
         paymentReq.setBidId(bid.getId());

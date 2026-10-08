@@ -773,6 +773,28 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
     List<BidEntity> findNegotiationsOnDepartedTrips(@Param("today") java.time.LocalDate today);
 
     /**
+     * Candidats à l'expiration « date limite de dépôt passée » (FLUTTER-GA) : identifiants
+     * des demandes encore non engagées dont le trajet a une date limite au plus tard à
+     * {@code upperBound}.
+     *
+     * <p>Filtre large : la date limite est une heure murale du fuseau du trajet, comparée ici à
+     * une borne UTC élargie du plus grand décalage en avance ({@code now + 14 h}). Le tri exact
+     * se fait ensuite trajet par trajet, via {@link AnnouncementEntity#isHandoverDeadlinePassed}.
+     * Un trajet sans date limite n'est jamais candidat.
+     */
+    @Query("""
+        SELECT b.id FROM BidEntity b
+        JOIN AnnouncementEntity a ON b.announcementId = a.id
+        WHERE b.status IN :statuses
+          AND b.deletedAt IS NULL
+          AND a.handoverDeadline IS NOT NULL
+          AND a.handoverDeadline <= :upperBound
+    """)
+    List<UUID> findIdsForHandoverDeadlineExpiry(
+            @Param("statuses") Collection<BidStatus> statuses,
+            @Param("upperBound") LocalDateTime upperBound);
+
+    /**
      * L'autre partie d'une offre, sans charger l'entité.
      *
      * <p>Le voyageur n'est pas sur le bid mais sur l'annonce : sans jointure il faudrait une

@@ -231,6 +231,25 @@ class PaymentServiceTest {
         assertYadonyError(() -> service.createEscrow(request, "uid-sender"), "announcement-not-active");
     }
 
+    // FLUTTER-GA : POST /payments ne doit pas engager une demande après la date limite de dépôt.
+    @Test
+    void createEscrow_handoverDeadlinePassed_throwsConflict() {
+        UserEntity sender = buildUser(senderId, "uid-sender");
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
+        BidEntity bid = buildBid(BidStatus.AWAITING_PAYMENT);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.empty());
+        AnnouncementEntity ann = buildAnnouncement();
+        ann.setTimezone("Europe/Paris");
+        ann.setHandoverDeadline(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(3));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+
+        var request = mock(com.yadony.api.payments.dto.CreatePaymentRequest.class);
+        when(request.getBidId()).thenReturn(bidId);
+
+        assertYadonyError(() -> service.createEscrow(request, "uid-sender"), "handover-deadline-passed");
+    }
+
     // FULL ne doit PAS être bloqué ici — preuve apportée côté BidCheckoutServiceTest
     // (negotiationCheckout_announcementFull_isNotBlocked), où PaymentService est mocké :
     // laisser ce test-ci dépasser la garde appellerait le vrai StripeGatewayImpl (aucune

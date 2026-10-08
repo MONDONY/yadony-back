@@ -11,7 +11,8 @@ import org.springframework.transaction.event.TransactionalEventListener;
 import java.util.Map;
 
 /**
- * Bid expiré au départ du voyageur : annule (PENDING) ou rembourse (ESCROW) le paiement.
+ * Bid expiré au départ du voyageur, ou à la date limite de dépôt (FLUTTER-GA) : annule
+ * (PENDING) ou rembourse intégralement (ESCROW) le paiement.
  * Toute la mécanique transactionnelle/idempotence vit dans {@link RefundProcessor}
  * (REQUIRES_NEW par paiement) — pas de @Transactional ici.
  */
@@ -37,7 +38,9 @@ public class BidExpiredOnDepartureEventListener {
                         payment.getId(),
                         "PAYMENT_REFUNDED_BID_EXPIRED",
                         event.getBidId(),
-                        Map.of("reason", "bid_expired_traveler_departed")),
+                        Map.of("reason", event.isTripDeparted()
+                                ? "bid_expired_traveler_departed"
+                                : "bid_expired_handover_deadline")),
                 () -> log.debug("Aucun paiement pour bid expiré {} — rien à rembourser",
                         event.getBidId()));
     }

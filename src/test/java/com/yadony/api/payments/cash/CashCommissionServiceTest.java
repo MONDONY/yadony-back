@@ -948,6 +948,27 @@ class CashCommissionServiceTest {
         }
 
         @Test
+        // FLUTTER-GA : passé la date limite de dépôt, aucune acceptation, aucun débit.
+        void handoverDeadlinePassed_rejectsBeforeAnyDebit() {
+            announcement.setStatus(AnnouncementStatus.ACTIVE);
+            announcement.setTimezone("Europe/Paris");
+            announcement.setHandoverDeadline(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(2));
+
+            assertThatThrownBy(() -> service.acceptCashBid(
+                    bid.getId(), travelerId, com.yadony.api.payments.cash.CommissionSource.WALLET_FIRST))
+                    .isInstanceOf(com.yadony.api.common.YadonyBusinessException.class)
+                    .satisfies(e -> {
+                        var y = (com.yadony.api.common.YadonyBusinessException) e;
+                        assertThat(y.getStatus()).isEqualTo(org.springframework.http.HttpStatus.CONFLICT);
+                        assertThat(y.getErrorCode()).isEqualTo("handover-deadline-passed");
+                    });
+
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.PENDING);
+            verify(walletService, never()).debit(any(), any(), any(), any(), any());
+            verify(bidRepo, never()).save(any());
+        }
+
+        @Test
         // Lot C : la garde ne visait que REMOVED_BY_ADMIN. Un trajet annulé par son
         // voyageur n'accepte pas davantage un nouvel engagement d'argent.
         void announcementCancelled_rejectsBeforeAnyDebit() {

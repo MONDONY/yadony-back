@@ -1566,6 +1566,30 @@ class BidServiceTest {
         }
 
         @Test
+        @DisplayName("date limite de dépôt passée → acceptation refusée en 409 handover-deadline-passed (FLUTTER-GA)")
+        void acceptBid_handoverDeadlinePassed_throwsConflict() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement();
+            announcement.setTimezone("Africa/Abidjan");
+            announcement.setHandoverDeadline(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusMinutes(5));
+            BidEntity bid = buildBid(); // status = PAYMENT_ESCROWED
+
+            when(bidRepository.findByIdForUpdate(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findByIdForUpdate(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+
+            assertThatThrownBy(() -> bidService.acceptBid(BID_ID, TRAVELER_UID))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> {
+                        YadonyBusinessException ex = (YadonyBusinessException) e;
+                        assertThat(ex.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                        assertThat(ex.getErrorCode()).isEqualTo("handover-deadline-passed");
+                    });
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.PAYMENT_ESCROWED);
+            verify(bidRepository, never()).save(any());
+        }
+
+        @Test
         @DisplayName("annonce REMOVED_BY_ADMIN → un bid escrowé ne peut plus être accepté → 409 CONFLICT")
         void acceptBid_announcementRemovedByAdmin_throwsConflict() {
             UserEntity traveler = buildTraveler();

@@ -52,6 +52,7 @@ class MyBidsPaginationIntegrationTest {
     private BidEntity completed;
     private BidEntity cancelled;
     private BidEntity onOtherTrip;
+    private BidEntity negotiating;
 
     @BeforeEach
     void seed() {
@@ -66,7 +67,7 @@ class MyBidsPaginationIntegrationTest {
         onOtherTrip = persistBid(otherTrip, sender, BidStatus.IN_TRANSIT, false);
         accepted = persistBid(trip, sender, BidStatus.ACCEPTED, false);
         // Jamais listés : discussions de prix, colis retiré par l'expéditeur, colis d'un autre.
-        persistBid(trip, sender, BidStatus.NEGOTIATING, false);
+        negotiating = persistBid(trip, sender, BidStatus.NEGOTIATING, false);
         persistBid(trip, sender, BidStatus.NEGOTIATION_CLOSED, false);
         persistBid(otherTrip, sender, BidStatus.REJECTED, true);
         persistBid(trip, persistUser("Tiers"), BidStatus.ACCEPTED, false);
@@ -117,6 +118,28 @@ class MyBidsPaginationIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.content.length()").value(0))
                 .andExpect(jsonPath("$.totalElements").value(0));
+    }
+
+    @Test
+    void includeNegotiating_ajouteLesOffresOuvertes_pasLesFilsClos() throws Exception {
+        // FLUTTER-GC : l'accueil demande les colis en cours ET les offres envoyées.
+        mockMvc.perform(get("/bids/me").param("page", "0").param("status", "ACCEPTED")
+                        .param("includeNegotiating", "true")
+                        .with(authentication(as(sender))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[*].id").value(containsInAnyOrder(ids(accepted, negotiating))))
+                .andExpect(jsonPath("$.content[?(@.status == 'NEGOTIATING')].announcementId")
+                        .value(containsInAnyOrder(trip.getId().toString())))
+                .andExpect(jsonPath("$.totalElements").value(2));
+    }
+
+    @Test
+    void sansIncludeNegotiating_contratInchange() throws Exception {
+        mockMvc.perform(get("/bids/me").param("page", "0").param("status", "ACCEPTED")
+                        .param("includeNegotiating", "false")
+                        .with(authentication(as(sender))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[*].id").value(containsInAnyOrder(ids(accepted))));
     }
 
     @Test
