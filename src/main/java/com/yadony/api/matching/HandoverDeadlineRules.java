@@ -4,6 +4,7 @@ import com.yadony.api.common.YadonyBusinessException;
 import org.springframework.http.HttpStatus;
 
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.EnumSet;
 import java.util.Set;
 
@@ -50,6 +51,15 @@ public final class HandoverDeadlineRules {
     static final long MAX_ZONE_AHEAD_HOURS = 14;
 
     private HandoverDeadlineRules() {}
+
+    /**
+     * Instant réel d'une date limite de dépôt : heure murale du fuseau du trajet
+     * ({@link TripTimezones#zoneOf}, Europe/Paris si absent ou invalide), jamais de l'UTC.
+     * Même règle que {@link AnnouncementEntity#isHandoverDeadlinePassed}.
+     */
+    public static Instant deadlineInstant(LocalDateTime wallClockDeadline, String timezone) {
+        return wallClockDeadline.atZone(TripTimezones.zoneOf(timezone)).toInstant();
+    }
 
     public static void assertNotPassed(AnnouncementEntity announcement) {
         assertNotPassed(announcement, Instant.now());
