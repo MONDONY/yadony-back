@@ -20,8 +20,14 @@ spring:
     password: ${DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
     hikari:
-      maximum-pool-size: 10
+      # Aligné sur la staging (#434), validé au test de charge k6 du 08/10 : avec 10
+      # connexions et le timeout par défaut de 30 s, le pool saturait (187 requêtes en
+      # attente) et les requêtes échouaient en 500 après 30 s. 20 connexions restent loin
+      # du max_connections=100 de Postgres ; un timeout de 5 s échoue vite en 503
+      # service-busy (GlobalExceptionHandler) au lieu de bloquer un thread 30 s.
+      maximum-pool-size: 20
       minimum-idle: 2
+      connection-timeout: 5000
 
 stripe:
   secret-key: ${STRIPE_SECRET_KEY}
