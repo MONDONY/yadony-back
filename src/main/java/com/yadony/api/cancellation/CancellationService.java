@@ -25,6 +25,8 @@ import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
 import com.yadony.api.matching.CapacityUnit;
 import com.yadony.api.payments.cash.CommissionProperties;
+import com.yadony.api.requests.entity.NegotiationThreadStatus;
+import com.yadony.api.requests.repository.NegotiationThreadRepository;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -55,6 +57,10 @@ public class CancellationService {
     private final RematchService rematchService;
     private final StorageService storageService;
     private final DeliveryNoShowProcedureService deliveryNoShowProcedure;
+    private final NegotiationThreadRepository negotiationThreadRepository;
+
+    /** Même code que le retrait d'offre et la suppression du trajet (FLUTTER-F9, PR #445). */
+    static final String OFFER_ACCEPTED_AWAITING_PAYMENT = "offer-accepted-awaiting-payment";
 
     private static final int MAX_RETURN_CODE_ATTEMPTS = 3;
 
@@ -68,7 +74,8 @@ public class CancellationService {
                                 CommissionProperties commissionProperties,
                                 RematchService rematchService,
                                 StorageService storageService,
-                                DeliveryNoShowProcedureService deliveryNoShowProcedure) {
+                                DeliveryNoShowProcedureService deliveryNoShowProcedure,
+                                NegotiationThreadRepository negotiationThreadRepository) {
         this.cancellationRepository = cancellationRepository;
         this.rematchSuggestionRepository = rematchSuggestionRepository;
         this.bidRepository = bidRepository;
@@ -80,6 +87,7 @@ public class CancellationService {
         this.rematchService = rematchService;
         this.storageService = storageService;
         this.deliveryNoShowProcedure = deliveryNoShowProcedure;
+        this.negotiationThreadRepository = negotiationThreadRepository;
     }
 
     @Transactional
@@ -102,6 +110,21 @@ public class CancellationService {
         if (announcement.getStatus() != AnnouncementStatus.ACTIVE) {
             throw new YadonyBusinessException(HttpStatus.CONFLICT, "invalid-status", "Invalid Status",
                     "Seul un trajet ACTIVE peut être annulé");
+        }
+
+        // FLUTTER-F9 : un expéditeur a accepté l'offre liée à ce trajet et paie. Annuler le
+        // trajet retirerait l'offre sous ses pieds (paiement sur un trajet annulé). Même garde
+        // que le retrait d'offre et la suppression du trajet (#445), avant toute écriture :
+        // ni modification, ni événement, ni audit. L'expiration du délai de paiement et le
+        // retrait de l'expéditeur restent possibles et libèrent le trajet.
+        List<NegotiationThreadStatus> awaitingPayment = negotiationThreadRepository
+                .findAwaitingPaymentStatusesByTravelerAnnouncementId(announcement.getId());
+        if (!awaitingPayment.isEmpty()) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, OFFER_ACCEPTED_AWAITING_PAYMENT,
+                    "Offer Accepted Awaiting Payment",
+                    "Un expéditeur a accepté votre offre sur ce trajet et procède au paiement : "
+                            + "vous ne pouvez pas l'annuler pendant le délai de paiement.",
+                    Map.of("negotiationStatus", awaitingPayment.get(0).name()));
         }
 
         // Cancel the announcement

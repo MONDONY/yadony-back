@@ -70,7 +70,8 @@ class CancellationServiceNoShowTest {
         service = new CancellationService(
                 cancellationRepository, rematchSuggestionRepository,
                 bidRepository, announcementRepository,
-                userRepository, auditService, eventPublisher, commissionProps, rematchService, storageService, deliveryNoShowProcedure);
+                userRepository, auditService, eventPublisher, commissionProps, rematchService, storageService, deliveryNoShowProcedure,
+                org.mockito.Mockito.mock(com.yadony.api.requests.repository.NegotiationThreadRepository.class));
     }
 
     private BidEntity bid(BidStatus status, PaymentMethod pm, LocalDateTime handoverEnd) {

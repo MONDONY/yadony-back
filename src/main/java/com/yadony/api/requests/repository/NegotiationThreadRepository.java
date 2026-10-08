@@ -91,6 +91,22 @@ public interface NegotiationThreadRepository extends JpaRepository<NegotiationTh
     """)
     boolean existsAwaitingPaymentByTravelerAnnouncementId(@Param("announcementId") UUID announcementId);
 
+    /**
+     * Statuts des fils liés à ce trajet qui attendent le paiement de l'expéditeur
+     * (AWAITING_PAYMENT, AWAITING_DEPOSIT). Vide si aucun. Sert à refuser l'annulation du
+     * trajet entier pendant le délai de paiement, en disant au voyageur lequel (FLUTTER-F9).
+     */
+    @Query("""
+        SELECT t.status FROM NegotiationThreadEntity t
+        WHERE t.travelerAnnouncementId = :announcementId
+          AND t.status IN (
+              com.yadony.api.requests.entity.NegotiationThreadStatus.AWAITING_PAYMENT,
+              com.yadony.api.requests.entity.NegotiationThreadStatus.AWAITING_DEPOSIT
+          )
+    """)
+    List<NegotiationThreadStatus> findAwaitingPaymentStatusesByTravelerAnnouncementId(
+            @Param("announcementId") UUID announcementId);
+
     long countByTravelerIdAndStatus(UUID travelerId, NegotiationThreadStatus status);
 
     @Query("""

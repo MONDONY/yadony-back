@@ -90,4 +90,24 @@ class CancellationControllerTest {
         mockMvc.perform(post("/cancellations/bids/{bidId}/report-noshow", BID_ID))
                 .andExpect(status().isUnauthorized());
     }
+    /** FLUTTER-F9 : l'annulation du trajet refusée pendant le paiement sort en problem+json. */
+    @Test
+    void cancelTrip_offerAwaitingPayment_returns409ProblemJson() throws Exception {
+        when(cancellationService.cancelTrip(any(), any())).thenThrow(new com.yadony.api.common.YadonyBusinessException(
+                org.springframework.http.HttpStatus.CONFLICT, "offer-accepted-awaiting-payment",
+                "Offer Accepted Awaiting Payment", "Paiement en cours",
+                java.util.Map.of("negotiationStatus", "AWAITING_PAYMENT")));
+
+        mockMvc.perform(post("/cancellations")
+                .with(authentication(asRole("TRAVELER")))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"announcementId\":\"" + UUID.randomUUID() + "\",\"reason\":\"Imprévu\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content()
+                        .contentTypeCompatibleWith(org.springframework.http.MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
+                        .jsonPath("$.code").value("offer-accepted-awaiting-payment"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
+                        .jsonPath("$.negotiationStatus").value("AWAITING_PAYMENT"));
+    }
 }

@@ -51,6 +51,7 @@ class CancellationServiceTest {
     @Mock private ApplicationEventPublisher eventPublisher;
     @Mock private RematchService rematchService;
     @Mock private com.yadony.api.common.StorageService storageService;
+    @Mock private com.yadony.api.requests.repository.NegotiationThreadRepository negotiationThreadRepository;
 
     @InjectMocks private CancellationService cancellationService;
 
@@ -613,6 +614,65 @@ class CancellationServiceTest {
                     .doesNotThrowAnyException();
 
             verify(eventPublisher, never()).publishEvent(any());
+        }
+    }
+
+    // ─── cancelTrip : offre acceptée en attente de paiement (FLUTTER-F9) ───────
+
+    @Nested
+    @DisplayName("cancelTrip() — offre acceptée en attente de paiement")
+    class CancelTripAwaitingPaymentTests {
+
+        @org.junit.jupiter.params.ParameterizedTest
+        @org.junit.jupiter.params.provider.EnumSource(value =
+                com.yadony.api.requests.entity.NegotiationThreadStatus.class,
+                names = {"AWAITING_PAYMENT", "AWAITING_DEPOSIT"})
+        @DisplayName("fil lié en attente de paiement → 409 offer-accepted-awaiting-payment, rien n'est écrit")
+        void cancelTrip_offerAwaitingPayment_conflictWithoutSideEffects(
+                com.yadony.api.requests.entity.NegotiationThreadStatus status) {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement(TRAVELER_ID);
+            CancellationRequest req = new CancellationRequest(ANNOUNCEMENT_ID, "Changement de plan");
+
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(negotiationThreadRepository.findAwaitingPaymentStatusesByTravelerAnnouncementId(ANNOUNCEMENT_ID))
+                    .thenReturn(List.of(status));
+
+            assertThatThrownBy(() -> cancellationService.cancelTrip(TRAVELER_UID, req))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                        assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                        assertThat(e.getErrorCode()).isEqualTo("offer-accepted-awaiting-payment");
+                        assertThat(e.getProperties()).containsEntry("negotiationStatus", status.name());
+                    });
+
+            assertThat(announcement.getStatus()).isEqualTo(AnnouncementStatus.ACTIVE);
+            assertThat(traveler.getCancellationCount()).isZero();
+            verify(announcementRepository, never()).save(any());
+            verifyNoInteractions(bidRepository, cancellationRepository, auditService,
+                    eventPublisher, rematchService);
+            verify(userRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("aucun fil en attente de paiement → l'annulation suit son cours")
+        void cancelTrip_noOfferAwaitingPayment_cancels() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement(TRAVELER_ID);
+            CancellationRequest req = new CancellationRequest(ANNOUNCEMENT_ID, "Changement de plan");
+
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(negotiationThreadRepository.findAwaitingPaymentStatusesByTravelerAnnouncementId(ANNOUNCEMENT_ID))
+                    .thenReturn(List.of());
+            when(bidRepository.findByAnnouncementIdAndStatusIn(eq(ANNOUNCEMENT_ID), anyList()))
+                    .thenReturn(List.of());
+            when(userRepository.save(any())).thenReturn(traveler);
+
+            cancellationService.cancelTrip(TRAVELER_UID, req);
+
+            assertThat(announcement.getStatus()).isEqualTo(AnnouncementStatus.CANCELLED);
+            verify(eventPublisher).publishEvent(any(TripCancelledEvent.class));
         }
     }
 
