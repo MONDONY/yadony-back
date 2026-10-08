@@ -787,6 +787,32 @@ class NotificationDispatcherTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void onParcelReturnToSenderRequested_notifiesTheTravelerTowardsTheParcel() {
+        // PR #447 : l'expéditeur annule un colis déjà remis, le voyageur doit le rendre.
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onParcelReturnToSenderRequested(new com.yadony.api.cancellation.events
+                .ParcelReturnToSenderRequestedEvent(bidId, travelerId, senderId, java.time.LocalDate.of(2026, 10, 11)));
+
+        ArgumentCaptor<Map<String, String>> data = ArgumentCaptor.forClass(Map.class);
+        verify(fcmService).sendToUser(eq(travelerId), eq("L'expéditeur a annulé"),
+                eq("Rendez-lui le colis avant le 11 oct. et saisissez son code de retour."),
+                data.capture());
+        assertThat(data.getValue()).containsEntry("type", "PARCEL_RETURN_TO_SENDER")
+                .containsEntry("bidId", bidId.toString());
+        verify(fcmService, never()).sendToUser(eq(senderId), any(), any(), any());
+    }
+
+    @Test
+    void onParcelReturnToSenderRequested_withoutTraveler_sendsNothing() {
+        dispatcher.onParcelReturnToSenderRequested(new com.yadony.api.cancellation.events
+                .ParcelReturnToSenderRequestedEvent(bidId, null, senderId, java.time.LocalDate.of(2026, 10, 11)));
+
+        verifyNoInteractions(fcmService);
+    }
+
+    @Test
     void onTripCancelled_rescheduleWithdrawn_isNotRelayed() {
         TripCancelledEvent event = new TripCancelledEvent(
                 annId, travelerId, List.of(senderId), "TRIP_RESCHEDULE_WITHDRAWN", List.of(bidId));

@@ -11,6 +11,7 @@ import com.yadony.api.cancellation.events.SenderNoShowReportedEvent;
 import com.yadony.api.disputes.events.DisputeOpenedEvent;
 import com.yadony.api.cancellation.dto.ReturnCodeResponse;
 import com.yadony.api.cancellation.events.ParcelReturnedEvent;
+import com.yadony.api.cancellation.events.ParcelReturnToSenderRequestedEvent;
 import com.yadony.api.cancellation.events.TripCancelledEvent;
 import com.yadony.api.cancellation.events.TravelerHighCancellationEvent;
 import com.yadony.api.cancellation.events.TravelerNoShowReportedEvent;
@@ -734,6 +735,16 @@ public class CancellationService {
                 List.of(bid.getSenderId()), reason.name(),
                 List.of(bidId), bidPaymentMethods, bidCommissionChargedVia, Map.of(),
                 java.util.Set.of(bidId)));
+
+        // L'expéditeur annule : le voyageur, qui a le colis en main, doit le rendre avant le
+        // délai et saisir le code que l'expéditeur lui donnera (PR #447). Quand c'est le
+        // voyageur qui annule, l'expéditeur est prévenu par PARCEL_RETURN_REQUIRED ci-dessus.
+        if (actor == CancellationActor.SENDER && announcement != null
+                && announcement.getTravelerId() != null) {
+            eventPublisher.publishEvent(new ParcelReturnToSenderRequestedEvent(
+                    bidId, announcement.getTravelerId(), bid.getSenderId(),
+                    bid.getReturnDeadline().toLocalDate()));
+        }
     }
 
     /**

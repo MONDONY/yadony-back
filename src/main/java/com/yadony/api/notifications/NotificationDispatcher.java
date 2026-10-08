@@ -9,6 +9,7 @@ import com.yadony.api.cancellation.events.TripRescheduleDecidedEvent;
 import com.yadony.api.cancellation.CancellationReason;
 import com.yadony.api.cancellation.RescheduleDecision;
 import com.yadony.api.cancellation.events.ParcelReturnedEvent;
+import com.yadony.api.cancellation.events.ParcelReturnToSenderRequestedEvent;
 import com.yadony.api.cancellation.events.ReturnDeadlineExpiredEvent;
 import com.yadony.api.cancellation.events.ReturnDeadlineWarningEvent;
 import com.yadony.api.common.BlockVisibility;
@@ -229,6 +230,19 @@ public class NotificationDispatcher {
         var forTraveler = NotificationTexts.parcelReturnedForTraveler(messagesFor(event.travelerId()));
         notifyUser(event.senderId(), forSender.title(), forSender.body(), data);
         notifyUser(event.travelerId(), forTraveler.title(), forTraveler.body(), data);
+    }
+
+    /**
+     * L'expéditeur a annulé un colis déjà remis : le voyageur doit le lui rendre avant le
+     * délai, contre le code de retour (PR #447). Vers le colis, préférence « activité colis ».
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
+    public void onParcelReturnToSenderRequested(ParcelReturnToSenderRequestedEvent event) {
+        if (event.travelerId() == null) return;
+        var text = NotificationTexts.parcelReturnToSender(messagesFor(event.travelerId()), event.returnDeadline());
+        notifyUser(event.travelerId(), text.title(), text.body(),
+                Map.of("type", "PARCEL_RETURN_TO_SENDER", "bidId", event.bidId().toString()));
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)

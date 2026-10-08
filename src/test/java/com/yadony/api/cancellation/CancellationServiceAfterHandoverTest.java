@@ -129,6 +129,10 @@ class CancellationServiceAfterHandoverTest {
         verify(eventPublisher).publishEvent(eCap.capture());
         assertThat(eCap.getValue().getReturnRequiredBidIds()).containsExactly(BID_ID);
         assertThat(eCap.getValue().getAffectedBidIds()).containsExactly(BID_ID);
+        // Le voyageur a lui-même annulé : pas de notification « colis à rendre » pour lui.
+        verify(eventPublisher, org.mockito.Mockito.never()).publishEvent(
+                org.mockito.ArgumentMatchers.any(
+                        com.yadony.api.cancellation.events.ParcelReturnToSenderRequestedEvent.class));
     }
 
     @Test
@@ -147,6 +151,18 @@ class CancellationServiceAfterHandoverTest {
         verify(userRepository).save(uCap.capture());
         assertThat(uCap.getValue().getSenderHandoverIncidentCount()).isEqualTo(1);
         assertThat(uCap.getValue().getCancellationCount()).isZero();
+
+        // PR #447 : le voyageur, qui a le colis, est prévenu qu'il doit le rendre avant le délai.
+        ArgumentCaptor<BidEntity> bidCap = ArgumentCaptor.forClass(BidEntity.class);
+        verify(bidRepository).save(bidCap.capture());
+        ArgumentCaptor<com.yadony.api.cancellation.events.ParcelReturnToSenderRequestedEvent> rCap =
+                ArgumentCaptor.forClass(com.yadony.api.cancellation.events.ParcelReturnToSenderRequestedEvent.class);
+        verify(eventPublisher).publishEvent(rCap.capture());
+        assertThat(rCap.getValue().bidId()).isEqualTo(BID_ID);
+        assertThat(rCap.getValue().travelerId()).isEqualTo(TRAVELER_ID);
+        assertThat(rCap.getValue().senderId()).isEqualTo(SENDER_ID);
+        assertThat(rCap.getValue().returnDeadline())
+                .isEqualTo(bidCap.getValue().getReturnDeadline().toLocalDate());
     }
 
     @Test
