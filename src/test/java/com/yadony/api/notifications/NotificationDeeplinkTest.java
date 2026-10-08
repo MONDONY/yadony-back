@@ -37,7 +37,8 @@ class NotificationDeeplinkTest {
                 "PARCEL_REFUSED", "BID_EXPIRED", "CONFIRMATION_CODE_READY", "DELIVERY_NOSHOW_REPORTED",
                 "MM_PAYMENT_PENDING", "HANDOVER_REMINDER_H2", "MOBILE_MONEY_PAYMENT_CONFIRMED",
                 "MOBILE_MONEY_PAYMENT_FAILED", "MM_PAYMENT_EXPIRED", "TRIP_ARRIVED", "PARCEL_RETURNED",
-                "PARCEL_RETURN_REQUIRED", "RETURN_DEADLINE_WARNING", "RETURN_DEADLINE_EXPIRED", "automation_last_minute"}) {
+                "PARCEL_RETURN_REQUIRED", "PARCEL_RETURN_TO_SENDER", "RETURN_DEADLINE_WARNING", "RETURN_DEADLINE_EXPIRED",
+                "automation_last_minute"}) {
             assertThat(NotificationDeeplink.of(type, Map.of("bidId", bidId)))
                     .as(type).contains("yadony://bids/" + bidId);
         }

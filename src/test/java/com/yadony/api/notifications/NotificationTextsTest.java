@@ -97,6 +97,7 @@ class NotificationTextsTest {
         map.put("returnDeadlineWarningForSender", NotificationTexts.returnDeadlineWarningForSender(m));
         map.put("returnDeadlineWarningForTraveler", NotificationTexts.returnDeadlineWarningForTraveler(m));
         map.put("parcelReturnRequired", NotificationTexts.parcelReturnRequired(m));
+        map.put("parcelReturnToSender", NotificationTexts.parcelReturnToSender(m, java.time.LocalDate.of(2026, 9, 30)));
         map.put("returnDeadlineExpired", NotificationTexts.returnDeadlineExpired(m));
         map.put("disputeOpenedForSender", NotificationTexts.disputeOpenedForSender(m));
         map.put("disputeOpenedForTraveler", NotificationTexts.disputeOpenedForTraveler(m));
@@ -430,6 +431,17 @@ class NotificationTextsTest {
         assertThat(NotificationTexts.bidRejectedWithReason(TestMessages.fr(), "Trop lourd", true)).isNull();
         assertThat(NotificationTexts.bidRejectedWithReason(TestMessages.en(), "NO_CAPACITY", true).body())
                 .isEqualTo("The traveler declined: not enough room. Refund in progress.");
+    }
+
+    @Test
+    void parcelReturnToSender_bothLanguages() {
+        java.time.LocalDate deadline = java.time.LocalDate.of(2026, 10, 11);
+        assertThat(NotificationTexts.parcelReturnToSender(TestMessages.fr(), deadline)).isEqualTo(new NotificationText(
+                "L'expéditeur a annulé",
+                "Rendez-lui le colis avant le 11 oct. et saisissez son code de retour."));
+        assertThat(NotificationTexts.parcelReturnToSender(TestMessages.en(), deadline)).isEqualTo(new NotificationText(
+                "The sender cancelled",
+                "Return the parcel to them by Oct 11 and enter their return code."));
     }
 
     @Test

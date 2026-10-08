@@ -60,7 +60,8 @@ class CancellationNoShowTest {
         service = new CancellationService(
                 cancellationRepository, rematchSuggestionRepository,
                 bidRepository, announcementRepository,
-                userRepository, auditService, eventPublisher, commissionProps, rematchService, storageService, deliveryNoShowProcedure);
+                userRepository, auditService, eventPublisher, commissionProps, rematchService, storageService, deliveryNoShowProcedure,
+                org.mockito.Mockito.mock(com.yadony.api.requests.repository.NegotiationThreadRepository.class));
     }
 
     private static final UUID ANNOUNCEMENT_ID = UUID.randomUUID();

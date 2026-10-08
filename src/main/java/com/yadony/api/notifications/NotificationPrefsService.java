@@ -46,6 +46,7 @@ public class NotificationPrefsService {
             Map.entry("MOBILE_MONEY_PAYMENT_FAILED",  "pushActivityBids"),
             Map.entry("PARCEL_RETURNED",              "pushActivityBids"),
             Map.entry("PARCEL_RETURN_REQUIRED",       "pushActivityBids"),
+            Map.entry("PARCEL_RETURN_TO_SENDER",      "pushActivityBids"),
             Map.entry("RETURN_DEADLINE_WARNING",      "pushActivityBids"),
             Map.entry("RETURN_DEADLINE_EXPIRED",      "pushActivityBids"),
             // Suivi du colis par son destinataire (lot 2) et réponses relayées à l'expéditeur.

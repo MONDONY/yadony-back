@@ -309,6 +309,17 @@ public final class NotificationTexts {
                 m.get("notification.parcel-return-required.body"));
     }
 
+    /**
+     * L'expéditeur a annulé un colis déjà remis, vu par le voyageur : il le lui rend avant le
+     * délai et saisit le code de retour que l'expéditeur détient (PR #447).
+     */
+    public static NotificationText parcelReturnToSender(Messages m, java.time.LocalDate deadline) {
+        String date = deadline.format(java.time.format.DateTimeFormatter.ofPattern(
+                m.get("notification.parcel-return-to-sender.date-pattern"), m.locale()));
+        return new NotificationText(m.get("notification.parcel-return-to-sender.title"),
+                m.get("notification.parcel-return-to-sender.body", date));
+    }
+
     public static NotificationText returnDeadlineExpired(Messages m) {
         return new NotificationText(m.get("notification.return-deadline-expired.title"),
                 m.get("notification.return-deadline-expired.body"));
