@@ -810,16 +810,26 @@ public class BidService {
      * restent exclues même si le client les demande (elles vivent dans
      * {@code /bids/negotiations/me}). {@code announcementId} restreint au trajet,
      * pour le contrôle « déjà une demande sur ce trajet ».
+     *
+     * <p>{@code includeNegotiating} ajoute, en plus du filtre, les fils de négociation
+     * encore OUVERTS (NEGOTIATING, jamais NEGOTIATION_CLOSED) : l'accueil signale ainsi
+     * qu'une offre de prix est déjà envoyée sur un trajet (FLUTTER-GC). Opt-in, pour que
+     * les autres lectures (Suivi, hub, compteurs) restent sans aucun fil.
      */
     @Transactional(readOnly = true)
     @Cacheable(value = "bids-me",
-            key = "'page:' + #firebaseUid + ':' + #statuses + ':' + #announcementId + ':' + #page + ':' + #size")
+            key = "'page:' + #firebaseUid + ':' + #statuses + ':' + #announcementId + ':' + #page + ':' + #size"
+                    + " + ':' + #includeNegotiating")
     public PageResponse<BidResponse> getMyBidsPage(String firebaseUid, Set<BidStatus> statuses,
-                                                   UUID announcementId, int page, int size) {
+                                                   UUID announcementId, int page, int size,
+                                                   boolean includeNegotiating) {
         UserEntity user = findUserByFirebaseUid(firebaseUid);
         EnumSet<BidStatus> allowed = EnumSet.complementOf(EnumSet.copyOf(BidStatus.NEGOTIATION_STATUSES));
         if (statuses != null && !statuses.isEmpty()) {
             allowed.retainAll(statuses);
+        }
+        if (includeNegotiating) {
+            allowed.addAll(BidStatus.NEGOTIATION_ACTIVE);
         }
         PageRequest pageable = PageRequest.of(Math.max(page, 0),
                 Math.min(Math.max(size, 1), MY_BIDS_MAX_PAGE_SIZE));
