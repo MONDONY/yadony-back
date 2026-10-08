@@ -430,7 +430,9 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
     List<BidEntity> findBidsNeedingH2Alert(@Param("now") LocalDateTime now,
                                             @Param("threshold") LocalDateTime threshold);
 
-    // No-show detection: ACCEPTED bids with handoverDeadline > 1h ago, no DEPART scan, not yet marked NO_SHOW.
+    // No-show detection: ACCEPTED bids with handoverDeadline before :cutoff, no DEPART scan, not yet marked NO_SHOW.
+    // handoverDeadline est une heure murale du fuseau du trajet : :cutoff est une borne LARGE
+    // (now - 1 h + 14 h) et NoShowScheduler tranche ensuite dans le fuseau exact.
     // Exclut les bids où le voyageur a déclaré l'expéditeur absent (remise) : tant que
     // l'expéditeur a ses 24 h pour confirmer/contester, ou qu'un litige est ouvert, le bid
     // reste ACCEPTED et ce flux suit son propre cours. Sans cette exclusion, l'expéditeur
