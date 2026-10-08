@@ -448,7 +448,7 @@ public class ConversationService {
 
         String lastMessagePreview = meta != null ? (String) meta.get("lastMessagePreview") : null;
 
-        return new ConversationResponse(
+        ConversationResponse response = new ConversationResponse(
             conv.getId(),
             conv.getBidId(),
             conv.getFirestoreConversationId(),
@@ -470,6 +470,19 @@ public class ConversationService {
             conv.isNotificationsMutedBy(currentUserId),
             mediaAllowed(conv, currentUserId, bidOpt.orElse(null))
         );
+        // État du colis pour le badge de la liste (FLUTTER-EZ) : lu sur le bid déjà chargé
+        // ci-dessus, aucune requête de plus par conversation.
+        return response.withParcelState(
+            bidOpt.map(BidEntity::getStatus).map(BidStatus::name).orElse(null),
+            bidOpt.map(ConversationService::isReturnPending).orElse(false));
+    }
+
+    /**
+     * Retour à l'expéditeur en cours : une annulation après remise a posé un délai de retour
+     * et le voyageur n'a pas encore rendu le colis (code de retour non saisi).
+     */
+    static boolean isReturnPending(BidEntity bid) {
+        return bid.getReturnDeadline() != null && bid.getReturnedAt() == null;
     }
 
     /**

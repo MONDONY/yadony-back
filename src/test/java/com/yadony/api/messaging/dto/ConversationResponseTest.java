@@ -39,4 +39,21 @@ class ConversationResponseTest {
         String json = new ObjectMapper().registerModule(new JavaTimeModule()).writeValueAsString(r);
         assertThat(json).contains("\"notificationsMuted\":true");
     }
+
+    @Test
+    void nineteenArgConstructor_hasNoParcelState_andWitherKeepsEveryOtherField() throws Exception {
+        var base = new ConversationResponse(id, bidId, "conv_1", null, "Salut", null, false,
+                "Paris", "Dakar", "2026-10-20", 3.0, "IN_TRANSIT", false, false,
+                "SENDER_TRAVELER", null, true, true, true);
+        assertThat(base.parcelStatus()).isNull();
+        assertThat(base.returnPending()).isFalse();
+
+        var withState = base.withParcelState("HANDED_OVER", true);
+        assertThat(withState.parcelStatus()).isEqualTo("HANDED_OVER");
+        assertThat(withState.returnPending()).isTrue();
+        assertThat(withState.withParcelState(null, false)).isEqualTo(base);
+
+        String json = new ObjectMapper().registerModule(new JavaTimeModule()).writeValueAsString(withState);
+        assertThat(json).contains("\"parcelStatus\":\"HANDED_OVER\"").contains("\"returnPending\":true");
+    }
 }
