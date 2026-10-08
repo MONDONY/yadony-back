@@ -171,6 +171,18 @@ public final class NotificationTexts {
         return new NotificationText(m.get("notification.bid-expired.title"), m.get("notification.bid-expired.body"));
     }
 
+    /** Date limite de dépôt passée (FLUTTER-GA), demande annulée sans argent engagé. */
+    public static NotificationText handoverDeadlinePassed(Messages m) {
+        return new NotificationText(m.get("notification.handover-deadline-passed.title"),
+                m.get("notification.handover-deadline-passed.body"));
+    }
+
+    /** Variante expéditeur quand un paiement en séquestre lui est rendu intégralement. */
+    public static NotificationText handoverDeadlinePassedRefunded(Messages m) {
+        return new NotificationText(m.get("notification.handover-deadline-passed.title"),
+                m.get("notification.handover-deadline-passed.refunded-body"));
+    }
+
     public static NotificationText parcelRefused(Messages m, String reason) {
         String motif = reason == null || reason.isBlank()
                 ? m.get("notification.parcel-refused.default-reason")

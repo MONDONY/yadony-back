@@ -53,6 +53,22 @@ class BidExpiredOnDepartureEventListenerTest {
     }
 
     @Test
+    void handover_deadline_expiry_refunds_in_full_with_its_own_audit_reason() {
+        // FLUTTER-GA : même remboursement intégral qu'au départ, motif d'audit distinct.
+        UUID bidId = UUID.randomUUID();
+        UUID paymentId = UUID.randomUUID();
+        PaymentEntity p = spy(new PaymentEntity());
+        when(p.getId()).thenReturn(paymentId);
+        when(paymentRepository.findForBid(bidId)).thenReturn(Optional.of(p));
+
+        listener.handleBidExpired(new BidExpiredOnDepartureEvent(
+                bidId, UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "HANDOVER_DEADLINE_PASSED"));
+
+        verify(refundProcessor).processRefund(eq(paymentId), eq("PAYMENT_REFUNDED_BID_EXPIRED"), eq(bidId),
+                eq(Map.of("reason", "bid_expired_handover_deadline")));
+    }
+
+    @Test
     void no_payment_no_processor_call() {
         UUID bidId = UUID.randomUUID();
         when(paymentRepository.findForBid(bidId)).thenReturn(Optional.empty());

@@ -548,6 +548,34 @@ class BidCheckoutServiceTest {
         verify(paymentService, never()).createEscrow(any(), anyString());
     }
 
+    // FLUTTER-GA : le paiement carte direct ne vérifiait pas la date limite de dépôt.
+    @Test
+    void checkout_afterHandoverDeadline_isRejectedBeforeAnyBidOrEscrow() {
+        announcement.setTimezone("Europe/Paris");
+        announcement.setHandoverDeadline(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusDays(1));
+
+        assertThatThrownBy(() -> service.checkout("uid-sender", req, httpRequest))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                        .isEqualTo("handover-deadline-passed"));
+        verify(bidRepository, never()).save(any());
+        verify(paymentService, never()).createEscrow(any(), anyString());
+    }
+
+    @Test
+    void negotiationCheckout_afterHandoverDeadline_isRejectedBeforeAnyEscrow() {
+        BidEntity bid = negotiatedBid();
+        announcement.setTimezone("Europe/Paris");
+        announcement.setHandoverDeadline(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1));
+        when(bidRepository.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
+
+        assertThatThrownBy(() -> service.negotiationCheckout("uid-sender", bid.getId()))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                        .isEqualTo("handover-deadline-passed"));
+        verify(paymentService, never()).createEscrow(any(), anyString());
+    }
+
     @Test
     void negotiationCheckout_announcementCancelled_isRejected() {
         BidEntity bid = negotiatedBid();

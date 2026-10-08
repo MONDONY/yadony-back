@@ -55,6 +55,8 @@ class NotificationTextsTest {
         }
         map.put("bidAcceptedPayNow", NotificationTexts.bidAcceptedPayNow(m));
         map.put("bidRejected", NotificationTexts.bidRejected(m));
+        map.put("handoverDeadlinePassed", NotificationTexts.handoverDeadlinePassed(m));
+        map.put("handoverDeadlinePassedRefunded", NotificationTexts.handoverDeadlinePassedRefunded(m));
         map.put("bidRejectedTripWithdrawn", NotificationTexts.bidRejectedTripWithdrawn(m));
         for (com.yadony.api.matching.BidRejectionReason r : com.yadony.api.matching.BidRejectionReason.values()) {
             map.put("bidRejectedWithReason " + r, NotificationTexts.bidRejectedWithReason(m, r.name(), false));
@@ -452,6 +454,18 @@ class NotificationTextsTest {
         assertThat(NotificationTexts.parcelReturnRequired(TestMessages.en())).isEqualTo(new NotificationText(
                 "Parcel to be returned",
                 "Refund in progress. Your return code is in the parcel tracking."));
+    }
+
+    @Test
+    void handoverDeadlinePassed_bothLanguages() {
+        assertThat(NotificationTexts.handoverDeadlinePassed(TestMessages.fr())).isEqualTo(new NotificationText(
+                "Date limite de dépôt passée", "La date limite de dépôt est passée : demande annulée."));
+        assertThat(NotificationTexts.handoverDeadlinePassedRefunded(TestMessages.fr()).body())
+                .isEqualTo("La date limite de dépôt est passée : demande annulée et remboursée.");
+        assertThat(NotificationTexts.handoverDeadlinePassed(TestMessages.en())).isEqualTo(new NotificationText(
+                "Drop-off deadline passed", "The drop-off deadline has passed: request cancelled."));
+        assertThat(NotificationTexts.handoverDeadlinePassedRefunded(TestMessages.en()).body())
+                .isEqualTo("The drop-off deadline has passed: request cancelled and refunded.");
     }
 
     @Test

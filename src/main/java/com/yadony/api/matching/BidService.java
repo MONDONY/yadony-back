@@ -53,7 +53,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
-import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.EnumSet;
@@ -386,11 +385,7 @@ public class BidService {
         // Date limite de remise atteinte : le voyageur n'attend plus de colis. Sans cette
         // garde, la demande naissait déjà « fenêtre dépassée » et l'expéditeur n'avait
         // plus que le signalement d'absence du voyageur comme issue (FLUTTER-46/47).
-        if (announcement.isHandoverDeadlinePassed(Instant.now())) {
-            throw new YadonyBusinessException(
-                    HttpStatus.CONFLICT, "handover-deadline-passed", "Handover Deadline Passed",
-                    "La date limite de remise des colis pour ce trajet est passée");
-        }
+        HandoverDeadlineRules.assertNotPassed(announcement);
 
         if (!sender.getRoles().contains(Role.SENDER)) {
             sender.getRoles().add(Role.SENDER);
@@ -909,6 +904,12 @@ public class BidService {
         }
 
         requireBidStatus(bid, BidStatus.PAYMENT_ESCROWED);
+
+        // FLUTTER-GA : la date limite de dépôt n'était vérifiée qu'à la création de la
+        // demande. Acceptée après coup, la demande devenait un colis à remettre à un
+        // voyageur qui n'en attendait plus. HandoverDeadlineExpiryScheduler l'éteindra
+        // (remboursement intégral) ; d'ici là, l'acceptation est refusée.
+        HandoverDeadlineRules.assertNotPassed(announcement);
 
         if (announcement.getStatus() == AnnouncementStatus.IN_PROGRESS
                 || announcement.getStatus() == AnnouncementStatus.COMPLETED

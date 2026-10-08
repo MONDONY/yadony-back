@@ -593,6 +593,43 @@ class BidNegotiationServiceTest {
         }
 
         @Test
+        @DisplayName("date limite de dépôt passée → plus de contre-offre, 409 handover-deadline-passed (FLUTTER-GA)")
+        void counter_afterHandoverDeadline_throws409() {
+            AnnouncementEntity announcement = buildAnnouncement();
+            announcement.setTimezone("Europe/Paris");
+            announcement.setHandoverDeadline(LocalDateTime.now(ZoneOffset.UTC).minusDays(1));
+
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(buildTraveler()));
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(buildNegotiatingBid()));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+
+            assertThatThrownBy(() -> service.counter(BID_ID, TRAVELER_UID,
+                    new BidNegotiationCounterRequest(new BigDecimal("40.00"), null)))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                            .isEqualTo("handover-deadline-passed"));
+            verify(bidRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("date limite de dépôt passée → plus d'accord, 409 handover-deadline-passed (FLUTTER-GA)")
+        void accept_afterHandoverDeadline_throws409() {
+            AnnouncementEntity announcement = buildAnnouncement();
+            announcement.setTimezone("Europe/Paris");
+            announcement.setHandoverDeadline(LocalDateTime.now(ZoneOffset.UTC).minusDays(1));
+
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(buildTraveler()));
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(buildNegotiatingBid()));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+
+            assertThatThrownBy(() -> service.accept(BID_ID, TRAVELER_UID))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                            .isEqualTo("handover-deadline-passed"));
+            verify(bidRepository, never()).save(any());
+        }
+
+        @Test
         @DisplayName("un tiers ne peut pas contre-offrir → 403")
         void counter_byThirdParty_throws403() {
             when(userRepository.findByFirebaseUid(THIRD_UID)).thenReturn(Optional.of(buildThirdParty()));

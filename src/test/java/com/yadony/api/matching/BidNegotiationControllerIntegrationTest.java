@@ -304,6 +304,24 @@ class BidNegotiationControllerIntegrationTest {
     }
 
     @Test
+    @DisplayName("contre-offre après la date limite de dépôt → 409 problem+json handover-deadline-passed (FLUTTER-GA)")
+    void counter_afterHandoverDeadline_is409() throws Exception {
+        when(negotiationService.counter(eq(BID_ID), anyString(), any()))
+                .thenThrow(new YadonyBusinessException(HttpStatus.CONFLICT, "handover-deadline-passed",
+                        "Handover Deadline Passed", "La date limite de remise des colis pour ce trajet est passée"));
+
+        mockMvc.perform(post("/bids/" + BID_ID + "/negotiation/counter")
+                        .with(authentication(authenticatedAs("uid-traveler", "ROLE_TRAVELER")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new BidNegotiationCounterRequest(new BigDecimal("40.00"), "ok"))))
+                .andExpect(status().isConflict())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content()
+                        .contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("handover-deadline-passed"));
+    }
+
+    @Test
     @DisplayName("un 422 métier ressort en problem+json avec sa propriété code")
     void businessUnprocessable_isRfc7807() throws Exception {
         when(negotiationService.propose(eq(ANNOUNCEMENT_ID), anyString(), any(), any()))

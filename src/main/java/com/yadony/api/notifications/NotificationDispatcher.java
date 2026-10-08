@@ -690,6 +690,9 @@ public class NotificationDispatcher {
     // Bid expiré au départ — notif expéditeur "Demande expirée"
     @EventListener @Async
     public void onBidExpiredOnDeparture(BidExpiredOnDepartureEvent event) {
+        // Date limite de dépôt passée (FLUTTER-GA) : texte dédié, aux deux parties, porté par
+        // BidHandoverDeadlinePassedEvent. « Le voyageur est parti » serait faux ici.
+        if (!event.isTripDeparted()) return;
         var text = NotificationTexts.bidExpired(messagesFor(event.getSenderId()));
         notifyUser(event.getSenderId(), text.title(), text.body(),
                 Map.of("type", "BID_EXPIRED",

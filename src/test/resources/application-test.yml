@@ -77,6 +77,8 @@ yadony:
       inactivity-hours: 1
       awaiting-payment-hours: 24
       expire-check-cron: "-"
+    handover-deadline:
+      expire-check-cron: "-"
   kyc:
     enforce: false
   stripe:

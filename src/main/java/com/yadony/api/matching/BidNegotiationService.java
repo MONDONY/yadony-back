@@ -208,6 +208,10 @@ public class BidNegotiationService {
                                           BidNegotiationCounterRequest request) {
         Participant ctx = loadParticipant(bidId, firebaseUid);
         assertThreadOpen(ctx);
+        // FLUTTER-GA : passé la date limite de dépôt, plus de contre-offre ni d'accord —
+        // le colis ne pourrait plus être remis. Le refus et le retrait restent possibles,
+        // et HandoverDeadlineExpiryScheduler éteint le fil.
+        HandoverDeadlineRules.assertNotPassed(ctx.announcement());
 
         BidNegotiationMessageEntity last = lastMessage(bidId);
         assertMyTurn(last, ctx.userId());
@@ -238,6 +242,10 @@ public class BidNegotiationService {
     public BidNegotiationResponse accept(UUID bidId, String firebaseUid) {
         Participant ctx = loadParticipant(bidId, firebaseUid);
         assertThreadOpen(ctx);
+        // FLUTTER-GA : passé la date limite de dépôt, plus de contre-offre ni d'accord —
+        // le colis ne pourrait plus être remis. Le refus et le retrait restent possibles,
+        // et HandoverDeadlineExpiryScheduler éteint le fil.
+        HandoverDeadlineRules.assertNotPassed(ctx.announcement());
 
         BidNegotiationMessageEntity last = lastMessage(bidId);
         assertMyTurn(last, ctx.userId());
