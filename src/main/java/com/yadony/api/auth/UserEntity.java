@@ -109,7 +109,7 @@ public class UserEntity extends BaseEntity {
     private boolean hidePhoneNumber = false;
 
     /**
-     * Compte testeur du mode recette (FLUTTER-FA/FB, V304). Sans effet tant que
+     * Compte testeur du mode recette (FLUTTER-FA/FB, V303). Sans effet tant que
      * {@code yadony.recette.enabled} est faux, et toujours sous le profil prod : voir
      * {@link com.yadony.api.common.RecetteMode}. Modifiable par un administrateur seulement.
      */
