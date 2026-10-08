@@ -186,6 +186,40 @@ class BidContactRevealTest {
     }
 
     @Test
+    @DisplayName("FLUTTER-FM : retour en cours d'un colis annulé → l'expéditeur obtient le numéro du voyageur")
+    void getCounterpartyPhone_returnInProgress_revealed() {
+        BidEntity cancelled = bid(BidStatus.CANCELLED);
+        cancelled.setReturnDeadline(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).plusDays(2));
+        when(bidRepository.findById(cancelled.getId())).thenReturn(Optional.of(cancelled));
+        when(announcementRepository.findById(announcement.getId())).thenReturn(Optional.of(announcement));
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
+        when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+        when(firebaseContact.getContact("uid-traveler"))
+                .thenReturn(new FirebaseContactService.Contact("+221701234567", null));
+
+        assertThat(bidService.getCounterpartyPhone(cancelled.getId(), "uid-sender").phoneNumber())
+                .isEqualTo("+221701234567");
+    }
+
+    @Test
+    @DisplayName("FLUTTER-FM : colis restitué → 403, plus de numéro")
+    void getCounterpartyPhone_afterReturn_forbidden() {
+        BidEntity cancelled = bid(BidStatus.CANCELLED);
+        java.time.LocalDateTime now = java.time.LocalDateTime.now(java.time.ZoneOffset.UTC);
+        cancelled.setReturnDeadline(now.plusDays(2));
+        cancelled.setReturnedAt(now.minusHours(1));
+        when(bidRepository.findById(cancelled.getId())).thenReturn(Optional.of(cancelled));
+        when(announcementRepository.findById(announcement.getId())).thenReturn(Optional.of(announcement));
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
+
+        assertThatThrownBy(() -> bidService.getCounterpartyPhone(cancelled.getId(), "uid-sender"))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                        .isEqualTo("phone-not-revealable"));
+        verifyNoInteractions(firebaseContact);
+    }
+
+    @Test
     @DisplayName("un tiers au colis → 403, et rien n'est journalisé")
     void getCounterpartyPhone_thirdParty_forbidden() {
         BidEntity accepted = bid(BidStatus.ACCEPTED);

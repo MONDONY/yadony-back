@@ -96,6 +96,7 @@ class NotificationTextsTest {
         map.put("parcelReturnedForTraveler", NotificationTexts.parcelReturnedForTraveler(m));
         map.put("returnDeadlineWarningForSender", NotificationTexts.returnDeadlineWarningForSender(m));
         map.put("returnDeadlineWarningForTraveler", NotificationTexts.returnDeadlineWarningForTraveler(m));
+        map.put("parcelReturnRequired", NotificationTexts.parcelReturnRequired(m));
         map.put("returnDeadlineExpired", NotificationTexts.returnDeadlineExpired(m));
         map.put("disputeOpenedForSender", NotificationTexts.disputeOpenedForSender(m));
         map.put("disputeOpenedForTraveler", NotificationTexts.disputeOpenedForTraveler(m));
@@ -429,6 +430,16 @@ class NotificationTextsTest {
         assertThat(NotificationTexts.bidRejectedWithReason(TestMessages.fr(), "Trop lourd", true)).isNull();
         assertThat(NotificationTexts.bidRejectedWithReason(TestMessages.en(), "NO_CAPACITY", true).body())
                 .isEqualTo("The traveler declined: not enough room. Refund in progress.");
+    }
+
+    @Test
+    void parcelReturnRequired_bothLanguages() {
+        assertThat(NotificationTexts.parcelReturnRequired(TestMessages.fr())).isEqualTo(new NotificationText(
+                "Colis à vous restituer",
+                "Remboursement en cours. Le code de retour est dans le suivi du colis."));
+        assertThat(NotificationTexts.parcelReturnRequired(TestMessages.en())).isEqualTo(new NotificationText(
+                "Parcel to be returned",
+                "Refund in progress. Your return code is in the parcel tracking."));
     }
 
     @Test

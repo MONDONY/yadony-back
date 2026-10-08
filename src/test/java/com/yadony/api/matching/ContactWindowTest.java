@@ -47,4 +47,65 @@ class ContactWindowTest {
     void statutInconnuFermee() {
         assertThat(ContactWindow.isOpen(null, null, 3, NOW)).isFalse();
     }
+
+    // ── Retour d'un colis annulé après remise (FLUTTER-FM) ──────────────────
+
+    private static BidEntity cancelledWithReturn(LocalDateTime deadline, LocalDateTime returnedAt) {
+        BidEntity bid = new BidEntity();
+        bid.setStatus(BidStatus.CANCELLED);
+        bid.setReturnDeadline(deadline);
+        bid.setReturnedAt(returnedAt);
+        return bid;
+    }
+
+    @Test
+    void retourEnCours_ouvreLaFenetreEtLeNumero() {
+        BidEntity bid = cancelledWithReturn(NOW.plusDays(2), null);
+        assertThat(ContactWindow.isReturnInProgress(bid, NOW)).isTrue();
+        assertThat(ContactWindow.isOpen(bid, 3, NOW)).isTrue();
+        assertThat(ContactWindow.phoneVisible(bid, NOW)).isTrue();
+    }
+
+    @Test
+    void colisRestitue_fermeLaFenetre() {
+        BidEntity bid = cancelledWithReturn(NOW.plusDays(2), NOW.minusHours(1));
+        assertThat(ContactWindow.isReturnInProgress(bid, NOW)).isFalse();
+        assertThat(ContactWindow.isOpen(bid, 3, NOW)).isFalse();
+        assertThat(ContactWindow.phoneVisible(bid, NOW)).isFalse();
+    }
+
+    @Test
+    void delaiDeRetourEcoule_fermeLaFenetre() {
+        assertThat(ContactWindow.isOpen(cancelledWithReturn(NOW, null), 3, NOW)).isFalse();
+        assertThat(ContactWindow.isOpen(cancelledWithReturn(NOW.minusMinutes(1), null), 3, NOW)).isFalse();
+    }
+
+    @Test
+    void annuleSansRetour_resteFerme() {
+        assertThat(ContactWindow.isOpen(cancelledWithReturn(null, null), 3, NOW)).isFalse();
+        assertThat(ContactWindow.phoneVisible(cancelledWithReturn(null, null), NOW)).isFalse();
+    }
+
+    @Test
+    void delaiPoseSurUnAutreStatut_neCompteQueParLeStatut() {
+        BidEntity refused = cancelledWithReturn(NOW.plusDays(2), null);
+        refused.setStatus(BidStatus.PARCEL_REFUSED);
+        assertThat(ContactWindow.isReturnInProgress(refused, NOW)).isFalse();
+        assertThat(ContactWindow.isOpen(refused, 3, NOW)).isFalse();
+    }
+
+    @Test
+    void bidNul_ferme() {
+        assertThat(ContactWindow.isOpen((BidEntity) null, 3, NOW)).isFalse();
+        assertThat(ContactWindow.isReturnInProgress(null, NOW)).isFalse();
+        assertThat(ContactWindow.phoneVisible(null, NOW)).isFalse();
+    }
+
+    @Test
+    void bidActif_suitLeStatut() {
+        BidEntity accepted = new BidEntity();
+        accepted.setStatus(BidStatus.ACCEPTED);
+        assertThat(ContactWindow.isOpen(accepted, 3, NOW)).isTrue();
+        assertThat(ContactWindow.phoneVisible(accepted, NOW)).isTrue();
+    }
 }

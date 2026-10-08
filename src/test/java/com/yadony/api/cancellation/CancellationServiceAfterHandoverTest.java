@@ -123,7 +123,11 @@ class CancellationServiceAfterHandoverTest {
         assertThat(uCap.getValue().getCancellationCount()).isEqualTo(1);
         assertThat(uCap.getValue().getSenderHandoverIncidentCount()).isZero();
 
-        verify(eventPublisher).publishEvent(any(TripCancelledEvent.class));
+        // FLUTTER-FK : le colis est à restituer, l'expéditeur reçoit la notification de retour.
+        ArgumentCaptor<TripCancelledEvent> eCap = ArgumentCaptor.forClass(TripCancelledEvent.class);
+        verify(eventPublisher).publishEvent(eCap.capture());
+        assertThat(eCap.getValue().getReturnRequiredBidIds()).containsExactly(BID_ID);
+        assertThat(eCap.getValue().getAffectedBidIds()).containsExactly(BID_ID);
     }
 
     @Test

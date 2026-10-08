@@ -66,10 +66,10 @@ class ConversationServiceMediaTest {
 
     @Test
     void mediaAllowed_followsThePolicy() {
-        when(mediaPolicy.check(conv, senderId, BidStatus.ACCEPTED, null, null)).thenReturn(Optional.empty());
+        when(mediaPolicy.check(conv, senderId, bid, null)).thenReturn(Optional.empty());
         assertThat(service.toResponse(conv, senderId, Map.of()).mediaAllowed()).isTrue();
 
-        when(mediaPolicy.check(conv, senderId, BidStatus.ACCEPTED, null, null))
+        when(mediaPolicy.check(conv, senderId, bid, null))
                 .thenReturn(Optional.of(ConversationMediaPolicy.Denial.MESSAGING_MUTED));
         assertThat(service.toResponse(conv, senderId, Map.of()).mediaAllowed()).isFalse();
     }
@@ -78,7 +78,22 @@ class ConversationServiceMediaTest {
     void mediaAllowed_falseWithoutAskingThePolicy_outsideCandidateStatuses() {
         bid.setStatus(BidStatus.AWAITING_PAYMENT);
         assertThat(service.toResponse(conv, senderId, Map.of()).mediaAllowed()).isFalse();
-        verify(mediaPolicy, never()).check(any(), any(), any(), any(), any());
+        verify(mediaPolicy, never()).check(any(), any(), any(BidEntity.class), any());
+    }
+
+    @Test
+    void mediaAllowed_asksThePolicy_duringTheReturnOfACancelledParcel() {
+        bid.setStatus(BidStatus.CANCELLED);
+        bid.setReturnDeadline(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).plusDays(2));
+        when(mediaPolicy.check(conv, senderId, bid, null)).thenReturn(Optional.empty());
+        assertThat(service.toResponse(conv, senderId, Map.of()).mediaAllowed()).isTrue();
+    }
+
+    @Test
+    void mediaAllowed_falseWithoutAskingThePolicy_cancelledWithoutReturn() {
+        bid.setStatus(BidStatus.CANCELLED);
+        assertThat(service.toResponse(conv, senderId, Map.of()).mediaAllowed()).isFalse();
+        verify(mediaPolicy, never()).check(any(), any(), any(BidEntity.class), any());
     }
 
     @Test
@@ -87,7 +102,7 @@ class ConversationServiceMediaTest {
         assertThat(service.toResponse(conv, senderId, Map.of()).mediaAllowed()).isFalse();
 
         when(bidRepository.findById(conv.getBidId())).thenReturn(Optional.of(bid));
-        when(mediaPolicy.check(any(), any(), any(), any(), any())).thenThrow(new RuntimeException("db"));
+        when(mediaPolicy.check(any(), any(), any(BidEntity.class), any())).thenThrow(new RuntimeException("db"));
         assertThat(service.toResponse(conv, senderId, Map.of()).mediaAllowed()).isFalse();
     }
 

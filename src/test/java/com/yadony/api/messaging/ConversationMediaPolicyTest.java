@@ -209,4 +209,37 @@ class ConversationMediaPolicyTest {
         bid.setStatus(BidStatus.ARRIVED);
         assertThatCode(() -> policy.assertAllowed(conv, senderUser)).doesNotThrowAnyException();
     }
+
+    // ── Retour d'un colis annulé après remise (FLUTTER-FM) ──────────────────
+
+    private BidEntity cancelledBid(LocalDateTime deadline, LocalDateTime returnedAt) {
+        BidEntity bid = new BidEntity();
+        bid.setStatus(BidStatus.CANCELLED);
+        bid.setReturnDeadline(deadline);
+        bid.setReturnedAt(returnedAt);
+        return bid;
+    }
+
+    @Test
+    void returnInProgress_allowsMedia_untilReturnedOrDeadline() {
+        LocalDateTime now = LocalDateTime.ofInstant(NOW, ZoneOffset.UTC);
+        assertThat(policy.check(conv, sender, cancelledBid(now.plusDays(1), null), null)).isEmpty();
+        assertThat(policy.check(conv, sender, cancelledBid(now.plusDays(1), now.minusHours(1)), null))
+                .contains(ConversationMediaPolicy.Denial.OUT_OF_WINDOW);
+        assertThat(policy.check(conv, sender, cancelledBid(now.minusMinutes(1), null), null))
+                .contains(ConversationMediaPolicy.Denial.OUT_OF_WINDOW);
+        assertThat(policy.check(conv, sender, (BidEntity) null, null))
+                .contains(ConversationMediaPolicy.Denial.OUT_OF_WINDOW);
+    }
+
+    @Test
+    void returnInProgress_doesNotOpenTheRecipientConversation() throws Exception {
+        LocalDateTime now = LocalDateTime.ofInstant(NOW, ZoneOffset.UTC);
+        ConversationEntity recipientConv = withId(ConversationEntity.forRecipient(bidId, sender, traveler, "r_" + bidId));
+        assertThat(policy.check(recipientConv, sender, cancelledBid(now.plusDays(1), null), null))
+                .contains(ConversationMediaPolicy.Denial.OUT_OF_WINDOW);
+        BidEntity accepted = new BidEntity();
+        accepted.setStatus(BidStatus.ACCEPTED);
+        assertThat(policy.check(recipientConv, sender, accepted, null)).isEmpty();
+    }
 }
