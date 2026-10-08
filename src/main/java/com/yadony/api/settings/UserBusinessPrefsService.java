@@ -92,9 +92,8 @@ public class UserBusinessPrefsService {
         if (countryChanges && countryLockService.isLocked(userId)) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "country-locked", "Country Locked",
-                    "Impossible de changer de pays : un envoi est en cours, le "
-                            + "portefeuille n'est pas vide, ou votre compte de "
-                            + "paiement est deja cree.");
+                    "Impossible de changer de pays : votre compte de paiement "
+                            + "est déjà créé dans ce pays et ne peut plus en changer.");
         }
         if (countryChanges) {
             user.setCountry(requestedCountry.toUpperCase(Locale.ROOT));
