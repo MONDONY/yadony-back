@@ -638,7 +638,10 @@ class GlobalExceptionHandlerTest {
                 assertThat(response.getBody()).isNotNull();
                 assertThat(response.getBody().getType().toString()).endsWith("service-busy");
                 assertThat(response.getBody().getProperties()).containsEntry("code", "service-busy");
-                sentry.verifyNoInteractions();
+                // L'appender logback de Sentry peut lire Sentry.getOptions() pour le WARN :
+                // seule compte l'absence d'événement capturé.
+                sentry.verify(() -> Sentry.withScope(any(ScopeCallback.class)), never());
+                sentry.verify(() -> Sentry.captureException(any(Throwable.class)), never());
             }
         }
 
