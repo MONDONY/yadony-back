@@ -158,6 +158,10 @@ sentry:
 # Toutes les valeurs métier sont surchargeables par variable d'environnement
 # (${VAR:défaut}) — provisioning prod sans rebuild.
 yadony:
+  # Mode recette des comptes testeurs (FLUTTER-FA/FB) : fermé partout sauf en staging
+  # (application-staging.yml). Toujours fermé sous le profil prod, quelle que soit la valeur.
+  recette:
+    enabled: false
   # Sonde de cohérence de l'argent (MoneyIntegrityMonitor) : 17 règles SQL en lecture seule,
   # jauge yadony_money_invariant_violations, alerte MONEY_INVARIANT_<règle> si le compte monte.
   money-integrity:

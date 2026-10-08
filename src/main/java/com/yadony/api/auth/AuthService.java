@@ -789,7 +789,16 @@ public class AuthService {
                 user.getResidencePostalCode(),
                 user.getOnboardingSeenAt() == null ? null : user.getOnboardingSeenAt().toString(),
                 user.getPreferredLanguage().code(),
-                user.isMessagingMuted(Instant.now()) ? user.getMessagingMutedUntil().toString() : null
+                user.isMessagingMuted(Instant.now()) ? user.getMessagingMutedUntil().toString() : null,
+                recetteMode.appliesTo(user)
         );
+    }
+
+    /** Mode recette (FLUTTER-FA/FB), exposé dans /auth/me ; fermé tant que Spring ne l'a pas injecté. */
+    private com.yadony.api.common.RecetteMode recetteMode = com.yadony.api.common.RecetteMode.disabled();
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setRecetteMode(com.yadony.api.common.RecetteMode recetteMode) {
+        this.recetteMode = recetteMode;
     }
 }

@@ -184,6 +184,91 @@ class ReceptionLinkerTest {
         verify(linkRepository, never()).save(any());
     }
 
+    // ── Mode recette (FLUTTER-FB) : l'expéditeur testeur est son propre destinataire ──
+
+    private com.yadony.api.common.RecetteMode recette(boolean enabled, String... profiles) {
+        org.springframework.mock.env.MockEnvironment env = new org.springframework.mock.env.MockEnvironment();
+        env.setActiveProfiles(profiles);
+        return new com.yadony.api.common.RecetteMode(enabled, env, auditService);
+    }
+
+    private UserEntity testerSenderFound() {
+        UserEntity me = user(senderId, "uid-s", "Awa");
+        me.setRecetteTester(true);
+        when(firebaseContact.findUidByPhone("+221771234567")).thenReturn(Optional.of("uid-s"));
+        when(userRepository.findByFirebaseUid("uid-s")).thenReturn(Optional.of(me));
+        return me;
+    }
+
+    @Test
+    void linkIfPossible_recetteTesteur_seRattacheASonPropreColis_etTraceLeContournement() {
+        linker.setRecetteMode(recette(true, "staging"));
+        UserEntity me = testerSenderFound();
+        when(userRepository.findById(senderId)).thenReturn(Optional.of(me));
+
+        Optional<BidRecipientLinkEntity> link = linker.linkIfPossible(bidId);
+
+        assertThat(link).isPresent();
+        assertThat(link.get().getRecipientUserId()).isEqualTo(senderId);
+        assertThat(link.get().getStatus()).isEqualTo(ReceptionLinkStatus.PENDING);
+        verify(auditService).log(eq("BID_RECIPIENT_LINK"), any(), eq("LINKED_SELF_RECETTE"), eq(null), any());
+        verify(auditService).log(eq("RECETTE"), eq(bidId), eq("RECETTE_SELF_RECIPIENT_LINKED"), eq(senderId), any());
+        verify(notificationDispatcher).notifyUser(eq(senderId), any(), any(), any());
+    }
+
+    @Test
+    void linkIfPossible_recetteProfilProd_testeurSoumisALaRegleNormale() {
+        linker.setRecetteMode(recette(true, "prod"));
+        testerSenderFound();
+
+        assertThat(linker.linkIfPossible(bidId)).isEmpty();
+        verify(linkRepository, never()).save(any());
+        verify(auditService, never()).log(eq("RECETTE"), any(), any(), any(), any());
+    }
+
+    @Test
+    void linkIfPossible_recetteActive_expediteurNonTesteur_refuse() {
+        linker.setRecetteMode(recette(true, "staging"));
+        recipientFound(senderId);
+
+        assertThat(linker.linkIfPossible(bidId)).isEmpty();
+        verify(linkRepository, never()).save(any());
+    }
+
+    @Test
+    void catchUp_recetteTesteur_rattacheSesPropresColis() {
+        linker.setRecetteMode(recette(true, "staging"));
+        UserEntity me = user(senderId, "uid-s", "Awa");
+        me.setRecetteTester(true);
+        when(firebaseContact.getContact("uid-s"))
+                .thenReturn(new FirebaseContactService.Contact("+221771234567", null));
+        BidEntity otherNumber = new BidEntity();
+        ReflectionTestUtils.setField(otherNumber, "id", UUID.randomUUID());
+        otherNumber.setSenderId(senderId);
+        otherNumber.setTrackingToken("t2");
+        otherNumber.setRecipientPhone("+221 70 000 00 07");
+        when(linkRepository.findOwnCatchUpCandidates(senderId, BidStatus.IN_FLIGHT, "%7"))
+                .thenReturn(List.of(bid, otherNumber));
+        when(linkRepository.findCatchUpCandidates(senderId, BidStatus.IN_FLIGHT, "%7")).thenReturn(List.of());
+
+        assertThat(linker.catchUp(me)).isEqualTo(1);
+        verify(auditService).log(eq("RECETTE"), eq(bidId), eq("RECETTE_SELF_RECIPIENT_LINKED"), eq(senderId), any());
+        verify(notificationDispatcher, never()).notifyUser(any(), any(), any(), any());
+    }
+
+    @Test
+    void catchUp_horsRecette_neChercheJamaisSesPropresColis() {
+        linker.setRecetteMode(recette(true, "prod"));
+        UserEntity me = user(senderId, "uid-s", "Awa");
+        me.setRecetteTester(true);
+        when(firebaseContact.getContact("uid-s"))
+                .thenReturn(new FirebaseContactService.Contact("+221771234567", null));
+        when(linkRepository.findCatchUpCandidates(senderId, BidStatus.IN_FLIGHT, "%7")).thenReturn(List.of());
+
+        assertThat(linker.catchUp(me)).isZero();
+        verify(linkRepository, never()).findOwnCatchUpCandidates(any(), any(), any());
+    }
+
     @Test
     void linkIfPossible_recipientIsTraveler_doesNothing() {
         recipientFound(travelerId);

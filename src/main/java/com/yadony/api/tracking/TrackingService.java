@@ -111,6 +111,14 @@ public class TrackingService {
         this.recipientLinkRepository = recipientLinkRepository;
     }
 
+    /** Mode recette (FLUTTER-FA) ; fermé tant que Spring ne l'a pas injecté. */
+    private com.yadony.api.common.RecetteMode recetteMode = com.yadony.api.common.RecetteMode.disabled();
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setRecetteMode(com.yadony.api.common.RecetteMode recetteMode) {
+        this.recetteMode = recetteMode;
+    }
+
     public QrCodeResponse getQrCode(UUID bidId, String firebaseUid) {
         BidEntity bid = bidRepository.findById(bidId)
                 .orElseThrow(() -> new YadonyBusinessException(
@@ -738,6 +746,17 @@ public class TrackingService {
      */
     private void assertTripDeparted(BidEntity bid, AnnouncementEntity announcement, UserEntity traveler) {
         if (com.yadony.api.matching.DepartureRules.hasDeparted(announcement, Instant.now())) {
+            return;
+        }
+        // Mode recette (FLUTTER-FA, staging seulement) : un voyageur testeur valide la
+        // livraison sans attendre le départ, pour dérouler la chaîne complète dans la journée.
+        if (recetteMode.appliesTo(traveler)) {
+            log.warn("Mode recette : livraison acceptée avant le départ du trajet, bidId={}", bid.getId());
+            recetteMode.recordBypass(com.yadony.api.common.RecetteMode.ACTION_DELIVERY_BEFORE_DEPARTURE,
+                    bid.getId(), traveler.getId(), Map.of(
+                            "bidId", bid.getId().toString(),
+                            "announcementId", announcement.getId().toString(),
+                            "bidStatus", bid.getStatus().name()));
             return;
         }
         log.warn("Livraison refusée avant le départ du trajet : bidId={}", bid.getId());

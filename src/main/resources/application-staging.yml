@@ -41,6 +41,12 @@ spring:
 # Ces endpoints backend (StripeOnboardingRedirectController) redirigent en 302
 # vers le deep link yadony:// pour revenir dans l'app.
 yadony:
+  # Mode recette (FLUTTER-FA/FB) : les comptes désignés testeurs par un administrateur
+  # (PUT /admin/users/{id}/recette-tester) valident une livraison avant le départ du trajet
+  # et peuvent être leur propre destinataire. Chaque contournement est tracé dans audit_log.
+  # Jamais en prod : RecetteMode ignore la propriété sous le profil prod.
+  recette:
+    enabled: ${YADONY_RECETTE_ENABLED:true}
   activation:
     first-action-reminders:
       enabled: ${YADONY_ACTIVATION_FIRST_ACTION_REMINDERS_ENABLED:true}
