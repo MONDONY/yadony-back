@@ -1354,8 +1354,12 @@ public class AnnouncementService {
         }
 
         announcement.setArrivalInstructions(arrivalInstructions);
+        // Heure de l'arrivée déclarée : point de départ du délai d'attente avant de pouvoir
+        // signaler un destinataire absent (CancellationService#reportDeliveryNoShow).
+        java.time.LocalDateTime arrivedAt = java.time.LocalDateTime.now(java.time.ZoneOffset.UTC);
         for (BidEntity bid : enRoute) {
             bid.setStatus(BidStatus.ARRIVED);
+            bid.setArrivedAt(arrivedAt);
         }
         bidRepository.saveAll(enRoute);
         AnnouncementEntity saved = announcementRepository.save(announcement);

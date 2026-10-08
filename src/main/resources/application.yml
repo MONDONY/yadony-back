@@ -196,6 +196,10 @@ yadony:
     rate: ${YADONY_COMMISSION_RATE:0.05}
     minimum-amount: ${YADONY_COMMISSION_MINIMUM_AMOUNT:1.00}
     no-show-contestation-hours: ${YADONY_COMMISSION_NO_SHOW_CONTESTATION_HOURS:24}
+  # Procédure « destinataire absent » (FLUTTER-E2, V300).
+  delivery-no-show:
+    min-wait-minutes: ${YADONY_DELIVERY_NO_SHOW_MIN_WAIT_MINUTES:120}
+    hold-days: ${YADONY_DELIVERY_NO_SHOW_HOLD_DAYS:7}
   urgency:
     threshold-days: ${YADONY_URGENCY_THRESHOLD_DAYS:3}
   exchange-rates:

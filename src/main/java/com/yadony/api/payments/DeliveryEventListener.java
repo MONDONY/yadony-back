@@ -112,6 +112,37 @@ public class DeliveryEventListener {
     @Async
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void handleDeliveryConfirmed(DeliveryConfirmedEvent event) {
+        release(new ReleaseTrigger(event.getBidId(), event.getSenderId(), event.getTravelerId(), SOURCE_DELIVERY));
+    }
+
+    /**
+     * Colis « non réclamé » au terme de la garde (FLUTTER-E2) : le voyageur, qui a fait le
+     * transport, reçoit le net par exactement le même chemin que la livraison — mêmes gardes
+     * (séquestre, chargeback, remboursement partiel, voyageur gelé, compte Stripe inutilisable),
+     * même claim atomique ESCROW → RELEASED, même clé d'idempotence Stripe {@code transfer-<id>}.
+     * Avec le force-release admin, c'est la seule libération autorisée sans
+     * {@link DeliveryConfirmedEvent} (décision produit FLUTTER-E2). Une livraison postérieure
+     * (retrait par une personne mandatée) ne verse plus rien : le paiement n'est plus ESCROW.
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void handleParcelUnclaimed(com.yadony.api.cancellation.events.ParcelUnclaimedEvent event) {
+        release(new ReleaseTrigger(event.bidId(), event.senderId(), event.travelerId(), SOURCE_UNCLAIMED));
+    }
+
+    static final String SOURCE_DELIVERY = "delivery";
+    static final String SOURCE_UNCLAIMED = "unclaimed";
+
+    /** Ce qui déclenche la libération : la livraison confirmée ou le colis « non réclamé ». */
+    record ReleaseTrigger(java.util.UUID bidId, java.util.UUID senderId, java.util.UUID travelerId, String source) {
+        java.util.UUID getBidId() { return bidId; }
+        java.util.UUID getSenderId() { return senderId; }
+        java.util.UUID getTravelerId() { return travelerId; }
+        boolean unclaimed() { return SOURCE_UNCLAIMED.equals(source); }
+    }
+
+    private void release(ReleaseTrigger event) {
         BidEntity bid = bidRepository.findById(event.getBidId()).orElse(null);
         if (bid != null && bid.getPaymentMethod() == PaymentMethod.CASH) {
             log.debug("CASH bid {} — no Stripe escrow to release", event.getBidId());
@@ -242,9 +273,11 @@ public class DeliveryEventListener {
                     "Stripe escrow release failed for payment " + payment.getId(), e);
         }
 
-        String action = payment.isLegacyDestinationCharge()
-                ? "ESCROW_RELEASED_LEGACY"
-                : "ESCROW_RELEASED_TRANSFER";
+        String action = event.unclaimed()
+                ? "ESCROW_RELEASED_UNCLAIMED"
+                : payment.isLegacyDestinationCharge()
+                        ? "ESCROW_RELEASED_LEGACY"
+                        : "ESCROW_RELEASED_TRANSFER";
         // Use event.getBidId() (the delivered bid) for the audit actor/payload: a
         // negotiation/thread payment has a NULL payment.getBidId(), which would both
         // lose the bid reference and NPE on toString().
@@ -257,7 +290,8 @@ public class DeliveryEventListener {
                         "bidId", event.getBidId().toString(),
                         "piId", payment.getStripePaymentIntentId(),
                         "amount", payment.getAmount().toPlainString(),
-                        "legacy", String.valueOf(payment.isLegacyDestinationCharge())
+                        "legacy", String.valueOf(payment.isLegacyDestinationCharge()),
+                        "source", event.source()
                 )
         );
 
@@ -275,7 +309,7 @@ public class DeliveryEventListener {
      * Versement retenu : trace, marque {@code payout_held_at} (le paiement reste ESCROW) et
      * alerte dédupliquée par paiement — un événement de livraison rejoué ne re-poste rien.
      */
-    private void holdPayout(PaymentEntity payment, DeliveryConfirmedEvent event) {
+    private void holdPayout(PaymentEntity payment, ReleaseTrigger event) {
         PayoutHoldStatus hold = holdPolicy.statusOf(event.getTravelerId());
         String reason = hold.primaryReason() != null ? hold.primaryReason().name() : "";
         String reasons = String.join(",", hold.reasons().stream().map(Enum::name).toList());
@@ -301,7 +335,7 @@ public class DeliveryEventListener {
      * ou dont le statut local n'a pas encore été rafraîchi, est laissé à l'arbitrage de Stripe :
      * un refus y annule le claim comme avant.
      */
-    private boolean stripeAccountUnusable(PaymentEntity payment, DeliveryConfirmedEvent event) {
+    private boolean stripeAccountUnusable(PaymentEntity payment, ReleaseTrigger event) {
         StripeAccountStatus status = userRepository.findById(event.getTravelerId())
                 .map(UserEntity::getStripeAccountStatus)
                 .orElse(null);
@@ -331,11 +365,11 @@ public class DeliveryEventListener {
      * lève une {@link IllegalStateException} qui remonte ici sans être interceptée, pour que
      * la transaction {@code REQUIRES_NEW} ambiante annule le claim posé juste au-dessus.
      */
-    private void releaseMobileMoney(PaymentEntity payment, DeliveryConfirmedEvent event) {
+    private void releaseMobileMoney(PaymentEntity payment, ReleaseTrigger event) {
         BigDecimal net = payment.getAmount().subtract(payment.getCommissionAmount());
         net = net.add(travelerVoucherTopUp(event.getTravelerId(), event.getBidId(), payment.getCommissionAmount()));
         net = com.yadony.api.payments.pawapay.PawapayAmounts.round(net, payment.getCurrency());
-        payoutInitiator.release(payment, event.getBidId(), event.getTravelerId(), net, "delivery");
+        payoutInitiator.release(payment, event.getBidId(), event.getTravelerId(), net, event.source());
         log.info("Escrow released (mobile money) for payment {} (bid={})", payment.getId(), event.getBidId());
     }
 
@@ -352,7 +386,7 @@ public class DeliveryEventListener {
                         .build());
     }
 
-    private void releaseV2(PaymentEntity payment, DeliveryConfirmedEvent event) throws StripeException {
+    private void releaseV2(PaymentEntity payment, ReleaseTrigger event) throws StripeException {
         // New separate-charges-and-transfers model: PI was already captured on the
         // platform balance at acceptation (BidAcceptedEventListener). Initiate a
         // Transfer to the traveler's Connect account.

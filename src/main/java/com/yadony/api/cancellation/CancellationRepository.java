@@ -49,6 +49,23 @@ public interface CancellationRepository extends JpaRepository<CancellationEntity
     List<CancellationEntity> findExpiredPendingByScope(@Param("scope") CancellationScope scope,
                                                         @Param("now") OffsetDateTime now);
 
+    /**
+     * Gardes échues de la procédure « destinataire absent » (FLUTTER-E2) : signalement
+     * RECIPIENT_NO_SHOW confirmé (non contesté dans le délai, ou confirmé par l'admin), garde
+     * terminée, colis pas encore passé « non réclamé ». Une déclaration contestée (CONTESTED),
+     * rejetée ou résolue par un litige (RESOLVED) n'est jamais sélectionnée.
+     */
+    @Query("SELECT c FROM CancellationEntity c WHERE c.scope = com.yadony.api.cancellation.CancellationScope.DELIVERY " +
+           "AND c.reason = 'RECIPIENT_NO_SHOW' AND c.noShowStatus = 'CONFIRMED' " +
+           "AND c.holdUntil IS NOT NULL AND c.holdUntil <= :now AND c.unclaimedAt IS NULL")
+    List<CancellationEntity> findDueUnclaimedHolds(@Param("now") OffsetDateTime now);
+
+    /** Claim atomique du passage « non réclamé » : 0 si déjà posé (instance concurrente, rejeu). */
+    @org.springframework.data.jpa.repository.Modifying(flushAutomatically = true)
+    @Query("UPDATE CancellationEntity c SET c.unclaimedAt = :at WHERE c.id = :id AND c.unclaimedAt IS NULL " +
+           "AND c.noShowStatus = 'CONFIRMED'")
+    int markUnclaimed(@Param("id") UUID id, @Param("at") OffsetDateTime at);
+
     /** File admin des no-shows (GET /admin/cancellations) : motifs, portées et statuts explicites. */
     @Query("SELECT c FROM CancellationEntity c WHERE c.reason IN :reasons " +
            "AND c.scope IN :scopes AND c.noShowStatus IN :statuses")

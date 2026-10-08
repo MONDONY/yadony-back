@@ -30,15 +30,18 @@ public class CancellationController {
     private final UserRepository userRepository;
     private final NoShowArbitrationService noShowArbitrationService;
     private final RescheduleDecisionService rescheduleDecisionService;
+    private final DeliveryNoShowProcedureService deliveryNoShowProcedure;
 
     public CancellationController(CancellationService cancellationService,
                                    UserRepository userRepository,
                                    NoShowArbitrationService noShowArbitrationService,
-                                   RescheduleDecisionService rescheduleDecisionService) {
+                                   RescheduleDecisionService rescheduleDecisionService,
+                                   DeliveryNoShowProcedureService deliveryNoShowProcedure) {
         this.cancellationService = cancellationService;
         this.userRepository = userRepository;
         this.noShowArbitrationService = noShowArbitrationService;
         this.rescheduleDecisionService = rescheduleDecisionService;
+        this.deliveryNoShowProcedure = deliveryNoShowProcedure;
     }
 
     /** L'expéditeur garde son colis sur le trajet reporté, ou se retire sans frais. */
@@ -111,12 +114,37 @@ public class CancellationController {
         return ResponseEntity.ok().build();
     }
 
+    /**
+     * Signalement « destinataire absent » (FLUTTER-E2). Corps facultatif pour la forme (une
+     * ancienne app n'en envoie pas) mais {@code contactConfirmed=true} est exigé : sans lui, 422
+     * {@code delivery-noshow-confirmation-required}.
+     */
     @PostMapping("/bids/{bidId}/report-delivery-noshow")
     @PreAuthorize("hasRole('TRAVELER')")
-    public ResponseEntity<Void> reportDeliveryNoShow(@PathVariable UUID bidId) {
+    public ResponseEntity<Void> reportDeliveryNoShow(
+            @PathVariable UUID bidId,
+            @RequestBody(required = false) com.yadony.api.cancellation.dto.ReportDeliveryNoShowRequest request) {
         UUID travelerId = resolveUserId();
-        cancellationService.reportDeliveryNoShow(bidId, travelerId);
+        cancellationService.reportDeliveryNoShow(bidId, travelerId, request != null && request.confirmed());
         return ResponseEntity.ok().build();
+    }
+
+    /** État de la procédure « destinataire absent » du colis, pour l'expéditeur ou le voyageur. */
+    @GetMapping("/bids/{bidId}/delivery-noshow")
+    @PreAuthorize("hasAnyRole('SENDER', 'TRAVELER')")
+    public ResponseEntity<com.yadony.api.cancellation.dto.DeliveryNoShowProcedureResponse> getDeliveryNoShowProcedure(
+            @PathVariable UUID bidId) {
+        return ResponseEntity.ok(deliveryNoShowProcedure.getProcedure(bidId, resolveUserId()));
+    }
+
+    /** L'expéditeur fixe un nouveau rendez-vous de livraison pendant la garde du colis. */
+    @PostMapping("/bids/{bidId}/delivery-noshow/retry-appointment")
+    @PreAuthorize("hasRole('SENDER')")
+    public ResponseEntity<com.yadony.api.cancellation.dto.DeliveryNoShowProcedureResponse> setRetryAppointment(
+            @PathVariable UUID bidId,
+            @Valid @RequestBody com.yadony.api.cancellation.dto.RetryAppointmentRequest request) {
+        return ResponseEntity.ok(deliveryNoShowProcedure.setRetryAppointment(
+                bidId, resolveUserId(), request.appointmentAt(), request.note()));
     }
 
     @PostMapping("/bids/{bidId}/report-traveler-delivery-noshow")

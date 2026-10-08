@@ -30,6 +30,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -44,6 +45,7 @@ class CancellationServiceDeliveryNoShowTest {
     @Mock ApplicationEventPublisher eventPublisher;
     @Mock RematchService rematchService;
     @Mock com.yadony.api.common.StorageService storageService;
+    @Mock DeliveryNoShowProcedureService deliveryNoShowProcedure;
 
     CancellationService service;
     static final UUID BID_ID = UUID.randomUUID();
@@ -56,7 +58,45 @@ class CancellationServiceDeliveryNoShowTest {
         CommissionProperties props = new CommissionProperties(BigDecimal.ZERO, BigDecimal.ZERO, 24);
         service = new CancellationService(cancellationRepository, rematchSuggestionRepository,
                 bidRepository, announcementRepository, userRepository, auditService, eventPublisher, props,
-                rematchService, storageService);
+                rematchService, storageService, deliveryNoShowProcedure);
+        OffsetDateTime now = OffsetDateTime.now();
+        lenient().when(deliveryNoShowProcedure.checkReportPreconditions(any(), any(), anyBoolean()))
+                .thenReturn(new DeliveryNoShowProcedureService.ReportPreconditions("CALL", now, now.plusDays(7)));
+    }
+
+    /** FLUTTER-E2 : la procédure (attente, preuve de contact) est vérifiée avant toute écriture. */
+    @Test
+    void reportDeliveryNoShow_procedureRefusee_rienNestEcrit() {
+        BidEntity bid = inTransitBid(null);
+        bid.setStatus(BidStatus.ARRIVED);
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(ANNOUNCEMENT_ID))
+                .thenReturn(Optional.of(announcement(java.time.LocalDate.now().minusDays(1))));
+        when(deliveryNoShowProcedure.checkReportPreconditions(any(), any(), anyBoolean()))
+                .thenThrow(new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "delivery-noshow-contact-required", "x", "x"));
+
+        assertThatThrownBy(() -> service.reportDeliveryNoShow(BID_ID, TRAVELER_ID, false))
+                .isInstanceOf(YadonyBusinessException.class);
+        verify(cancellationRepository, never()).save(any());
+        verify(eventPublisher, never()).publishEvent(any());
+    }
+
+    @Test
+    void reportDeliveryNoShow_poseLaGardeEtLaPreuve() {
+        BidEntity bid = inTransitBid(null);
+        bid.setStatus(BidStatus.ARRIVED);
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(ANNOUNCEMENT_ID))
+                .thenReturn(Optional.of(announcement(java.time.LocalDate.now().minusDays(1))));
+        when(cancellationRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        CancellationEntity result = service.reportDeliveryNoShow(BID_ID, TRAVELER_ID, true);
+
+        assertThat(result.getContactProof()).isEqualTo("CALL");
+        assertThat(result.getHoldUntil()).isAfter(OffsetDateTime.now().plusDays(6));
+        assertThat(result.getContactConfirmedAt()).isNotNull();
+        verify(deliveryNoShowProcedure).checkReportPreconditions(bid, TRAVELER_ID, true);
     }
 
     private BidEntity inTransitBid(LocalDateTime departureDate) {
@@ -82,7 +122,7 @@ class CancellationServiceDeliveryNoShowTest {
         bid.setStatus(BidStatus.ACCEPTED);
         when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
 
-        assertThatThrownBy(() -> service.reportDeliveryNoShow(BID_ID, TRAVELER_ID))
+        assertThatThrownBy(() -> service.reportDeliveryNoShow(BID_ID, TRAVELER_ID, true))
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(ex -> assertThat(((YadonyBusinessException) ex).getStatus())
                         .isEqualTo(HttpStatus.CONFLICT));
@@ -101,7 +141,7 @@ class CancellationServiceDeliveryNoShowTest {
                 .thenReturn(false);
         when(cancellationRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        CancellationEntity result = service.reportDeliveryNoShow(BID_ID, TRAVELER_ID);
+        CancellationEntity result = service.reportDeliveryNoShow(BID_ID, TRAVELER_ID, true);
 
         assertThat(result.getScope()).isEqualTo(CancellationScope.DELIVERY);
         verify(eventPublisher).publishEvent(any(DeliveryNoShowReportedEvent.class));
@@ -121,7 +161,7 @@ class CancellationServiceDeliveryNoShowTest {
                 .thenReturn(false);
         when(cancellationRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        CancellationEntity result = service.reportDeliveryNoShow(BID_ID, TRAVELER_ID);
+        CancellationEntity result = service.reportDeliveryNoShow(BID_ID, TRAVELER_ID, true);
 
         assertThat(result.getScope()).isEqualTo(CancellationScope.DELIVERY);
         assertThat(result.getNoShowStatus()).isEqualTo(CancellationStatus.PENDING_CONFIRMATION);
@@ -153,7 +193,7 @@ class CancellationServiceDeliveryNoShowTest {
         when(announcementRepository.findById(ANNOUNCEMENT_ID))
                 .thenReturn(Optional.of(announcement(java.time.LocalDate.now().plusDays(1))));
 
-        assertThatThrownBy(() -> service.reportDeliveryNoShow(BID_ID, TRAVELER_ID))
+        assertThatThrownBy(() -> service.reportDeliveryNoShow(BID_ID, TRAVELER_ID, true))
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(ex -> assertThat(((YadonyBusinessException) ex).getStatus())
                         .isEqualTo(HttpStatus.CONFLICT));
@@ -171,7 +211,7 @@ class CancellationServiceDeliveryNoShowTest {
         when(cancellationRepository.findByBidIdAndScope(BID_ID, CancellationScope.DELIVERY))
                 .thenReturn(Optional.of(rejected));
 
-        assertThatThrownBy(() -> service.reportDeliveryNoShow(BID_ID, TRAVELER_ID))
+        assertThatThrownBy(() -> service.reportDeliveryNoShow(BID_ID, TRAVELER_ID, true))
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(ex -> assertThat(((YadonyBusinessException) ex).getErrorCode())
                         .isEqualTo("delivery-noshow-already-decided"));
@@ -188,7 +228,7 @@ class CancellationServiceDeliveryNoShowTest {
                 List.of(CancellationStatus.PENDING_CONFIRMATION, CancellationStatus.CONTESTED)))
                 .thenReturn(true);
 
-        assertThatThrownBy(() -> service.reportDeliveryNoShow(BID_ID, TRAVELER_ID))
+        assertThatThrownBy(() -> service.reportDeliveryNoShow(BID_ID, TRAVELER_ID, true))
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(ex -> assertThat(((YadonyBusinessException) ex).getStatus())
                         .isEqualTo(HttpStatus.CONFLICT));
@@ -203,7 +243,7 @@ class CancellationServiceDeliveryNoShowTest {
                 .thenReturn(false);
         when(cancellationRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        CancellationEntity result = service.reportDeliveryNoShow(BID_ID, TRAVELER_ID);
+        CancellationEntity result = service.reportDeliveryNoShow(BID_ID, TRAVELER_ID, true);
 
         assertThat(result.getScope()).isEqualTo(CancellationScope.DELIVERY);
         assertThat(result.getNoShowStatus()).isEqualTo(CancellationStatus.PENDING_CONFIRMATION);
@@ -217,7 +257,7 @@ class CancellationServiceDeliveryNoShowTest {
         when(announcementRepository.findById(ANNOUNCEMENT_ID))
                 .thenReturn(Optional.of(announcement(java.time.LocalDate.now().minusDays(1))));
 
-        assertThatThrownBy(() -> service.reportDeliveryNoShow(BID_ID, UUID.randomUUID()))
+        assertThatThrownBy(() -> service.reportDeliveryNoShow(BID_ID, UUID.randomUUID(), true))
                 .isInstanceOf(com.yadony.api.common.YadonyBusinessException.class);
     }
 

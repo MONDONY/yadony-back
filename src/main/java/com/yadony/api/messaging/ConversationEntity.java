@@ -74,6 +74,14 @@ public class ConversationEntity extends BaseEntity {
     @Column(name = "closed_at")
     private LocalDateTime closedAt;
 
+    /**
+     * Dernier message envoyé par le voyageur (V300) : preuve de tentative de contact pour le
+     * signalement « destinataire absent ». Écrite uniquement par
+     * {@link ConversationRepository#markTravelerMessaged}, jamais par un flush d'entité.
+     */
+    @Column(name = "traveler_last_message_at", insertable = false, updatable = false)
+    private LocalDateTime travelerLastMessageAt;
+
     public ConversationEntity() {}
 
     public ConversationEntity(UUID bidId, UUID senderId, UUID travelerId, String firestoreConversationId) {
@@ -212,4 +220,6 @@ public class ConversationEntity extends BaseEntity {
     public LocalDateTime getTravelerNotificationsMutedAt() { return travelerNotificationsMutedAt; }
     public ConversationKind getKind() { return kind; }
     public LocalDateTime getClosedAt() { return closedAt; }
+
+    public LocalDateTime getTravelerLastMessageAt() { return travelerLastMessageAt; }
 }

@@ -55,6 +55,7 @@ public class CancellationService {
     private final CommissionProperties commissionProperties;
     private final RematchService rematchService;
     private final StorageService storageService;
+    private final DeliveryNoShowProcedureService deliveryNoShowProcedure;
 
     private static final SecureRandom RETURN_CODE_RANDOM = new SecureRandom();
     private static final int MAX_RETURN_CODE_ATTEMPTS = 3;
@@ -68,7 +69,8 @@ public class CancellationService {
                                 ApplicationEventPublisher eventPublisher,
                                 CommissionProperties commissionProperties,
                                 RematchService rematchService,
-                                StorageService storageService) {
+                                StorageService storageService,
+                                DeliveryNoShowProcedureService deliveryNoShowProcedure) {
         this.cancellationRepository = cancellationRepository;
         this.rematchSuggestionRepository = rematchSuggestionRepository;
         this.bidRepository = bidRepository;
@@ -79,6 +81,7 @@ public class CancellationService {
         this.commissionProperties = commissionProperties;
         this.rematchService = rematchService;
         this.storageService = storageService;
+        this.deliveryNoShowProcedure = deliveryNoShowProcedure;
     }
 
     @Transactional
@@ -390,9 +393,14 @@ public class CancellationService {
         eventPublisher.publishEvent(new TravelerNoShowReportedEvent(bidId, senderId));
     }
 
-    /** Le voyageur signale que le destinataire ne s'est pas présenté à la remise (arrivée). */
+    /**
+     * Le voyageur signale que le destinataire ne s'est pas présenté à la remise (arrivée).
+     * Procédure encadrée (FLUTTER-E2) : arrivée déclarée, délai d'attente écoulé, preuve de
+     * contact et confirmation du voyageur ({@link DeliveryNoShowProcedureService}). Le
+     * signalement ouvre une garde du colis de {@code holdDays} jours.
+     */
     @Transactional
-    public CancellationEntity reportDeliveryNoShow(UUID bidId, UUID travelerId) {
+    public CancellationEntity reportDeliveryNoShow(UUID bidId, UUID travelerId, boolean contactConfirmed) {
         BidEntity bid = bidRepository.findById(bidId)
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND, "bid-not-found", "Not Found", "Bid introuvable"));
@@ -402,6 +410,9 @@ public class CancellationService {
                     "Vous n'êtes pas le voyageur de ce bid.");
         }
 
+        DeliveryNoShowProcedureService.ReportPreconditions procedure =
+                deliveryNoShowProcedure.checkReportPreconditions(bid, travelerId, contactConfirmed);
+
         CancellationEntity c = new CancellationEntity();
         c.setBidId(bidId);
         c.setCancelledBy(travelerId);
@@ -410,10 +421,15 @@ public class CancellationService {
         c.setNoShowStatus(CancellationStatus.PENDING_CONFIRMATION);
         c.setContestationDeadline(
                 OffsetDateTime.now().plusHours(commissionProperties.noShowContestationHours()));
+        c.setContactProof(procedure.contactProof());
+        c.setContactConfirmedAt(procedure.confirmedAt());
+        c.setHoldUntil(procedure.holdUntil());
         CancellationEntity saved = cancellationRepository.save(c);
 
         auditService.log("BID", bidId, "DELIVERY_NOSHOW_REPORTED_BY_TRAVELER", travelerId,
-                Map.of("bidId", bidId.toString()));
+                Map.of("bidId", bidId.toString(),
+                        "contactProof", procedure.contactProof(),
+                        "holdUntil", procedure.holdUntil().toString()));
         eventPublisher.publishEvent(new DeliveryNoShowReportedEvent(
                 bidId, bid.getSenderId(), travelerId, true));
 
