@@ -6,3 +6,6 @@ reports/
 # Config staging (contient le token)
 staging.env
 staging-raw.json
+
+# Dépendances de l outil de mint
+tools/mint-token/node_modules/

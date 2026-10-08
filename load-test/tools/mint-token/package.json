@@ -1,0 +1,9 @@
+{
+  "name": "yadony-load-test-mint-token",
+  "private": true,
+  "description": "Mint d'un ID token Firebase STAGING pour k6 (voir load-test/STAGING.md)",
+  "type": "commonjs",
+  "dependencies": {
+    "firebase-admin": "^14.5.0"
+  }
+}

@@ -26,7 +26,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPORTS_DIR="${SCRIPT_DIR}/reports"
 mkdir -p "${REPORTS_DIR}"
 
-SCENARIOS=("read_endpoints" "favorites")
+SCENARIOS=("read_endpoints" "favorites" "bid_journey")
 
 for scenario in "${SCENARIOS[@]}"; do
   echo ""
@@ -37,6 +37,10 @@ for scenario in "${SCENARIOS[@]}"; do
     --env K6_TEST_EMAIL="${K6_TEST_EMAIL:-}" \
     --env K6_TEST_PASSWORD="${K6_TEST_PASSWORD:-}" \
     --env FAV_TRIP_ID="${FAV_TRIP_ID:-}" \
+    --env BID_SEARCH_DEPARTURE="${BID_SEARCH_DEPARTURE:-}" \
+    --env BID_SEARCH_ARRIVAL="${BID_SEARCH_ARRIVAL:-}" \
+    --env BID_WEIGHT_KG="${BID_WEIGHT_KG:-}" \
+    --env REPORTS_DIR="${REPORTS_DIR}" \
     --summary-export="${REPORTS_DIR}/${scenario}.json" \
     "${SCRIPT_DIR}/scenarios/${scenario}.js"
 done
