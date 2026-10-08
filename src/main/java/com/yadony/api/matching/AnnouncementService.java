@@ -289,6 +289,8 @@ public class AnnouncementService {
         Integer stopsBound = TripStops.searchBound(filters.maxStops());
         if (stopsBound != null)
             spec = spec.and(AnnouncementSpecification.maxStops(stopsBound));
+        if (!filters.paymentMethods().isEmpty())
+            spec = spec.and(AnnouncementSpecification.offersAnyPaymentMethod(filters.paymentMethods()));
 
         // Radius filter: only active when ALL 3 params provided
         if (userLat != null && userLng != null && radiusKm != null && radiusKm > 0) {
