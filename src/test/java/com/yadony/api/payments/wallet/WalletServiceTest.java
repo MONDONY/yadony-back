@@ -7,7 +7,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.dao.DataIntegrityViolationException;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -41,30 +40,29 @@ class WalletServiceTest {
     @Test
     void getOrCreate_createsWalletInRequestedCurrencyIfNotExists() {
         UUID userId = UUID.randomUUID();
-        when(walletAccountRepository.findByUserIdAndCurrency(userId, "CAD")).thenReturn(Optional.empty());
-        when(walletAccountRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        WalletAccountEntity created = wallet(userId, "CAD", BigDecimal.ZERO);
+        when(walletAccountRepository.findByUserIdAndCurrency(userId, "CAD"))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.of(created));
 
         WalletAccountEntity wallet = walletService.getOrCreate(userId, "CAD");
 
-        assertThat(wallet.getUserId()).isEqualTo(userId);
-        assertThat(wallet.getCurrency()).isEqualTo("CAD");
-        assertThat(wallet.getBalance()).isEqualByComparingTo(BigDecimal.ZERO);
-        verify(walletAccountRepository).save(wallet);
+        assertThat(wallet).isSameAs(created);
+        verify(walletAccountRepository).insertIfAbsent(any(UUID.class), eq(userId), eq("CAD"));
+        verify(walletAccountRepository, never()).save(any());
     }
 
     @Test
     void getOrCreate_reReadsWalletWhenConcurrentInsertWinsTheRace() {
-        // Course : le find initial rate, l'insert perd sur la contrainte
-        // UNIQUE(user_id, currency) — getOrCreate doit relire et renvoyer le
-        // wallet créé par l'autre requête au lieu de propager un 500.
+        // Course : le find initial rate, l'INSERT ... ON CONFLICT DO NOTHING ne touche
+        // aucune ligne (0) — getOrCreate relit et renvoie le wallet de l'autre requête.
         UUID userId = UUID.randomUUID();
         WalletAccountEntity winner = wallet(userId, "XOF", BigDecimal.ZERO);
         when(walletAccountRepository.findByUserIdAndCurrency(userId, "XOF"))
                 .thenReturn(Optional.empty())
                 .thenReturn(Optional.of(winner));
-        when(walletAccountRepository.save(any()))
-                .thenThrow(new DataIntegrityViolationException(
-                        "duplicate key value violates unique constraint \"wallet_accounts_user_id_currency_unique\""));
+        when(walletAccountRepository.insertIfAbsent(any(UUID.class), eq(userId), eq("XOF")))
+                .thenReturn(0);
 
         WalletAccountEntity result = walletService.getOrCreate(userId, "XOF");
 
@@ -73,18 +71,27 @@ class WalletServiceTest {
     }
 
     @Test
-    void getOrCreate_propagatesViolationWhenReReadStillFindsNothing() {
-        // Violation d'intégrité sans gagnant relisible (autre contrainte,
-        // wallet soft-deleted…) : on ne masque pas l'erreur d'origine.
+    void getOrCreate_failsLoudlyWhenReReadStillFindsNothing() {
+        // Conflit sans ligne relisible (wallet soft-deleted qui garde l'index) : on ne
+        // renvoie jamais un wallet fantôme.
         UUID userId = UUID.randomUUID();
         when(walletAccountRepository.findByUserIdAndCurrency(userId, "XOF"))
                 .thenReturn(Optional.empty());
-        DataIntegrityViolationException boom = new DataIntegrityViolationException("duplicate key");
-        when(walletAccountRepository.save(any())).thenThrow(boom);
 
         Throwable thrown = catchThrowable(() -> walletService.getOrCreate(userId, "XOF"));
 
-        assertThat(thrown).isSameAs(boom);
+        assertThat(thrown).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void getBalance_returnsZeroWithoutCreatingWhenWalletAbsent() {
+        UUID userId = UUID.randomUUID();
+        when(walletAccountRepository.findByUserIdAndCurrency(userId, "EUR"))
+                .thenReturn(Optional.empty());
+
+        assertThat(walletService.getBalance(userId, "eur")).isEqualByComparingTo(BigDecimal.ZERO);
+        verify(walletAccountRepository, never()).insertIfAbsent(any(), any(), any());
+        verify(walletAccountRepository, never()).save(any());
     }
 
     @Test
@@ -242,17 +249,16 @@ class WalletServiceTest {
     void debit_createsRequestedCurrencyWalletWhenMissing_thenThrowsInsufficient() {
         UUID userId = UUID.randomUUID();
         when(walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, "CAD")).thenReturn(Optional.empty());
-        when(walletAccountRepository.findByUserIdAndCurrency(userId, "CAD")).thenReturn(Optional.empty());
-        when(walletAccountRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(walletAccountRepository.findByUserIdAndCurrency(userId, "CAD"))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.of(wallet(userId, "CAD", BigDecimal.ZERO)));
 
         Throwable thrown = catchThrowable(() ->
                 walletService.debit(userId, "CAD", new BigDecimal("12.00"),
                         WalletTransactionType.COMMISSION_DEDUCTED, UUID.randomUUID()));
 
         assertThat(thrown).isInstanceOf(InsufficientWalletBalanceException.class);
-        ArgumentCaptor<WalletAccountEntity> account = ArgumentCaptor.forClass(WalletAccountEntity.class);
-        verify(walletAccountRepository).save(account.capture());
-        assertThat(account.getValue().getCurrency()).isEqualTo("CAD");
+        verify(walletAccountRepository).insertIfAbsent(any(UUID.class), eq(userId), eq("CAD"));
     }
 
     @Test
@@ -441,23 +447,27 @@ class WalletServiceTest {
     @Test
     void getOrCreate_normalizesCasingAndWhitespaceWhenCreating() {
         UUID userId = UUID.randomUUID();
-        when(walletAccountRepository.findByUserIdAndCurrency(userId, "XOF")).thenReturn(Optional.empty());
-        when(walletAccountRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(walletAccountRepository.findByUserIdAndCurrency(userId, "XOF"))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.of(wallet(userId, "XOF", BigDecimal.ZERO)));
 
         WalletAccountEntity wallet = walletService.getOrCreate(userId, "  xof ");
 
         assertThat(wallet.getCurrency()).isEqualTo("XOF");
+        verify(walletAccountRepository).insertIfAbsent(any(UUID.class), eq(userId), eq("XOF"));
     }
 
     @Test
     void getOrCreate_fallsBackToDefaultCurrencyWhenBlank() {
         UUID userId = UUID.randomUUID();
-        when(walletAccountRepository.findByUserIdAndCurrency(userId, "EUR")).thenReturn(Optional.empty());
-        when(walletAccountRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(walletAccountRepository.findByUserIdAndCurrency(userId, "EUR"))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.of(wallet(userId, "EUR", BigDecimal.ZERO)));
 
         WalletAccountEntity wallet = walletService.getOrCreate(userId, "   ");
 
         assertThat(wallet.getCurrency()).isEqualTo("EUR");
+        verify(walletAccountRepository).insertIfAbsent(any(UUID.class), eq(userId), eq("EUR"));
     }
 
     @Test

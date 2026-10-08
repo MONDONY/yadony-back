@@ -21,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -52,7 +53,7 @@ class GuestUserProvisionerTest {
     void provisionsNewRow() {
         when(userRepository.findByFirebaseUid("uid-2")).thenReturn(Optional.empty());
         when(usernameGenerator.generate()).thenReturn("visiteur-ab12cd");
-        when(userRepository.save(any(UserEntity.class))).thenAnswer(inv -> {
+        when(userRepository.saveAndFlush(any(UserEntity.class))).thenAnswer(inv -> {
             UserEntity saved = inv.getArgument(0);
             org.springframework.test.util.ReflectionTestUtils.setField(saved, "id", UUID.randomUUID());
             return saved;
@@ -64,7 +65,7 @@ class GuestUserProvisionerTest {
 
         org.mockito.ArgumentCaptor<UserEntity> captor =
                 org.mockito.ArgumentCaptor.forClass(UserEntity.class);
-        verify(userRepository).save(captor.capture());
+        verify(userRepository).saveAndFlush(captor.capture());
         UserEntity created = captor.getValue();
 
         assertThat(created.getFirebaseUid()).isEqualTo("uid-2");
@@ -185,25 +186,21 @@ class GuestUserProvisionerTest {
     }
 
     @Test
-    @DisplayName("course sur l'insertion -> relecture, jamais un 500")
-    void reReadsOnConcurrentInsertRace() {
+    @DisplayName("course sur l'insertion -> 409 explicite, jamais un 500 ni une relecture")
+    void conflictOnConcurrentInsertRace() {
+        // Dans la transaction de l'appelant, la violation d'unicité avorte la transaction
+        // Postgres : relire la ligne gagnante échouerait. saveAndFlush fait surgir l'erreur
+        // ici et le provisioner la traduit en 409, qui annule proprement la transaction.
+        when(userRepository.findByFirebaseUid("uid-4")).thenReturn(Optional.empty());
         when(userRepository.findByFirebaseUidIncludingDeleted("uid-4")).thenReturn(Optional.empty());
         when(usernameGenerator.generate()).thenReturn("visiteur-xy9z");
-        when(userRepository.save(any(UserEntity.class)))
+        when(userRepository.saveAndFlush(any(UserEntity.class)))
                 .thenThrow(new DataIntegrityViolationException("uq_users_firebase_uid"));
 
-        UUID concurrentId = UUID.randomUUID();
-        UserEntity concurrentlyInserted = new UserEntity();
-        concurrentlyInserted.setFirebaseUid("uid-4");
-        org.springframework.test.util.ReflectionTestUtils.setField(concurrentlyInserted, "id", concurrentId);
-        // 1er appel (résolution initiale) -> absente ; 2e appel (relecture après l'échec de
-        // l'insert, dans le catch) -> la ligne insérée par le concurrent entretemps.
-        when(userRepository.findByFirebaseUid("uid-4"))
-                .thenReturn(Optional.empty())
-                .thenReturn(Optional.of(concurrentlyInserted));
-
-        UUID id = provisioner.resolveOrProvision("uid-4");
-
-        assertThat(id).isEqualTo(concurrentId);
+        assertThatThrownBy(() -> provisioner.resolveOrProvision("uid-4"))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(ex -> assertThat(((YadonyBusinessException) ex).getStatus())
+                        .isEqualTo(HttpStatus.CONFLICT));
+        verify(userRepository, times(1)).findByFirebaseUid("uid-4");
     }
 }

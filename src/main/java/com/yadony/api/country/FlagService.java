@@ -1,6 +1,5 @@
 package com.yadony.api.country;
 
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -52,20 +51,11 @@ public class FlagService {
             return flag;
         }
 
-        // Ligne absente : on crée le pays avec son drapeau calculé.
+        // Ligne absente : on crée le pays avec son drapeau calculé. Si un autre appel l'a
+        // créé entre-temps, l'INSERT ne fait rien ; le drapeau, dérivé du seul code ISO,
+        // est le même.
         String flag = emojiFromIso(code);
-        CountryEntity entity = new CountryEntity();
-        entity.setCountryCode(code);
-        entity.setCountryName(countryName);
-        entity.setFlag(flag);
-        try {
-            countryRepository.save(entity);
-        } catch (DataIntegrityViolationException race) {
-            // Course sur l'insertion de la PK : un autre thread a déjà créé la ligne.
-            return countryRepository.findById(code)
-                    .map(CountryEntity::getFlag)
-                    .orElse(flag);
-        }
+        countryRepository.insertIfAbsent(code, countryName, flag);
         return flag;
     }
 

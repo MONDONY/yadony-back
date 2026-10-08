@@ -2,7 +2,6 @@ package com.yadony.api.country;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -26,53 +25,43 @@ class FlagServiceTest {
     @Test
     void getFlag_absent_computesPersistsAndReturns() {
         when(countryRepository.findById("US")).thenReturn(Optional.empty());
-        when(countryRepository.save(any(CountryEntity.class))).thenAnswer(i -> i.getArgument(0));
 
         String flag = service.getFlag("US");
 
         assertThat(flag).isEqualTo("🇺🇸"); // 🇺🇸
 
-        ArgumentCaptor<CountryEntity> captor = ArgumentCaptor.forClass(CountryEntity.class);
-        verify(countryRepository).save(captor.capture());
-        CountryEntity saved = captor.getValue();
-        assertThat(saved.getCountryCode()).isEqualTo("US");
-        assertThat(saved.getFlag()).isEqualTo("🇺🇸");
+        verify(countryRepository).insertIfAbsent("US", null, "🇺🇸");
+        verify(countryRepository, never()).save(any());
     }
 
     @Test
     void getFlag_lowercase_normalizesToUpper() {
         when(countryRepository.findById("US")).thenReturn(Optional.empty());
-        when(countryRepository.save(any(CountryEntity.class))).thenAnswer(i -> i.getArgument(0));
 
         String flag = service.getFlag("us");
 
         assertThat(flag).isEqualTo("🇺🇸"); // 🇺🇸
-        ArgumentCaptor<CountryEntity> captor = ArgumentCaptor.forClass(CountryEntity.class);
-        verify(countryRepository).save(captor.capture());
-        assertThat(captor.getValue().getCountryCode()).isEqualTo("US");
+        verify(countryRepository).insertIfAbsent("US", null, "🇺🇸");
     }
 
     @Test
     void getFlag_italy_returnsItalianFlag() {
         when(countryRepository.findById("IT")).thenReturn(Optional.empty());
-        when(countryRepository.save(any(CountryEntity.class))).thenAnswer(i -> i.getArgument(0));
 
         String flag = service.getFlag("IT");
 
         assertThat(flag).isEqualTo("🇮🇹"); // 🇮🇹
+        verify(countryRepository).insertIfAbsent("IT", null, "🇮🇹");
     }
 
     @Test
     void getFlag_france_withName_persistsName() {
         when(countryRepository.findById("FR")).thenReturn(Optional.empty());
-        when(countryRepository.save(any(CountryEntity.class))).thenAnswer(i -> i.getArgument(0));
 
         String flag = service.getFlag("FR", "France");
 
         assertThat(flag).isEqualTo("🇫🇷"); // 🇫🇷
-        ArgumentCaptor<CountryEntity> captor = ArgumentCaptor.forClass(CountryEntity.class);
-        verify(countryRepository).save(captor.capture());
-        assertThat(captor.getValue().getCountryName()).isEqualTo("France");
+        verify(countryRepository).insertIfAbsent("FR", "France", "🇫🇷");
     }
 
     @Test

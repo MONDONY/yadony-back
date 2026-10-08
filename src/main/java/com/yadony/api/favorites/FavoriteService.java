@@ -17,7 +17,6 @@ import com.yadony.api.requests.entity.PackageRequestStatus;
 import com.yadony.api.requests.repository.PackageRequestRepository;
 import com.yadony.api.requests.service.PackageRequestSearchMapper;
 import com.yadony.api.requests.service.ViewerPaymentCapabilities;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -61,9 +60,8 @@ public class FavoriteService {
 
     /**
      * Toggle-add: inserts a new favorite if absent. Idempotent if the row already
-     * exists — including under a concurrent double-insert, where the unique index
-     * {@code ux_favorites_active} rejects the second insert and the resulting
-     * {@link DataIntegrityViolationException} is swallowed.
+     * exists — including under a concurrent double-insert, absorbed by the
+     * {@code ON CONFLICT DO NOTHING} of {@link FavoriteRepository#insertIfAbsent}.
      *
      * @throws YadonyNotFoundException   if the target does not exist
      * @throws YadonyBusinessException   (422) if the caller owns the TRIP target
@@ -75,11 +73,9 @@ public class FavoriteService {
         if (favoriteRepository.existsByUserIdAndTargetTypeAndTargetId(userId, type, targetId)) {
             return;
         }
-        try {
-            favoriteRepository.save(new FavoriteEntity(userId, type, targetId));
-        } catch (DataIntegrityViolationException e) {
-            // course entre deux ajouts simultanés : la ligne existe déjà -> no-op
-        }
+        // INSERT atomique : un ajout concurrent du même favori devient un no-op au lieu
+        // d'une violation d'unicité au commit (voir FavoriteRepository#insertIfAbsent).
+        favoriteRepository.insertIfAbsent(UUID.randomUUID(), userId, type.name(), targetId);
     }
 
     /**
