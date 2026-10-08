@@ -70,7 +70,7 @@ class SmsServiceTest {
         when(restTemplate.postForEntity(contains("twilio.com"), any(HttpEntity.class), eq(String.class)))
                 .thenReturn(ResponseEntity.ok("{}"));
 
-        smsService.send("+33612345678", "Ton code Yadony est : 123456");
+        smsService.send("+33612345678", "Votre code Yadony est : 123456");
 
         verify(restTemplate, times(1)).postForEntity(anyString(), any(), eq(String.class));
         verify(restTemplate, never()).postForEntity(contains("africastalking"), any(), eq(String.class));
@@ -84,7 +84,7 @@ class SmsServiceTest {
         when(restTemplate.postForEntity(contains("twilio.com"), any(HttpEntity.class), eq(String.class)))
                 .thenReturn(ResponseEntity.ok("{}"));
 
-        smsService.send("+221701234567", "Ton code Yadony est : 123456");
+        smsService.send("+221701234567", "Votre code Yadony est : 123456");
 
         verify(restTemplate, times(1)).postForEntity(anyString(), any(), eq(String.class));
         verify(restTemplate, never()).postForEntity(contains("africastalking"), any(), eq(String.class));

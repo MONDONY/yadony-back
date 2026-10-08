@@ -109,8 +109,8 @@ class ResendEmailServiceTest {
         Map<String, Object> payload = (Map<String, Object>) payloadCaptor.getValue();
         assertThat(payload)
                 .containsEntry("from", "noreply@yadony.app")
-                .containsEntry("subject", "Ton code Yadony")
-                .containsEntry("text", "Ton code Yadony est : 123456. Valable 10 minutes.");
+                .containsEntry("subject", "Votre code Yadony")
+                .containsEntry("text", "Votre code Yadony est : 123456. Valable 10 minutes.");
         assertThat(payload.get("to")).isEqualTo(List.of("user@example.com"));
         assertThat((String) payload.get("html"))
                 .contains("https://yadony.com/logo.png")
