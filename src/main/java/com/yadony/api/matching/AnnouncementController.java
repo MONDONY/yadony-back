@@ -66,6 +66,8 @@ public class AnnouncementController {
             @RequestParam(required = false) String transportMode,
             @RequestParam(required = false) Boolean kycVerifiedOnly,
             @RequestParam(required = false) String contentType,
+            // FLUTTER-GD : 0 = direct uniquement, 1 = au plus une escale, absent = peu importe.
+            @RequestParam(required = false) Integer maxStops,
             @RequestParam(required = false) Double userLat,
             @RequestParam(required = false) Double userLng,
             @RequestParam(required = false) Double radiusKm,
@@ -78,7 +80,8 @@ public class AnnouncementController {
                 minAvailableKg, maxAvailableKg, maxPricePerKg, minRating, kiloProOnly, weekendOnly,
                 transportMode, kycVerifiedOnly, contentType,
                 userLat, userLng, radiusKm,
-                sortBy, sortDir, pageable, currentFirebaseUidOrNull(), urgent);
+                sortBy, sortDir, pageable, currentFirebaseUidOrNull(), urgent,
+                new AnnouncementSearchExtras(maxStops));
         return ResponseEntity.ok(PageResponse.from(page));
     }
 

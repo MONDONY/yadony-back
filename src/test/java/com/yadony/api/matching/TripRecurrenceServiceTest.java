@@ -396,6 +396,43 @@ class TripRecurrenceServiceTest {
         assertThat(service.create(userId, base).arrivalDayOffset()).isZero();
     }
 
+    // FLUTTER-GE : les escales saisies sur la récurrence suivent chaque occurrence.
+    @Test
+    void generate_copiesStopsCountOnEachOccurrence() {
+        mockUser();
+        TripRecurrenceEntity rec = entity("1111111", 0, null);
+        rec.setStopsCount(1);
+
+        service.generateForRecurrence(rec);
+
+        ArgumentCaptor<AnnouncementRequest> cap = ArgumentCaptor.forClass(AnnouncementRequest.class);
+        verify(announcementService).createRecurringAnnouncement(eq("firebase-uid"), cap.capture(), eq(rec.getId()));
+        assertThat(cap.getValue().stopsCount()).isEqualTo(1);
+    }
+
+    @Test
+    void create_storesStopsCount_onlyForPlane() {
+        var base = request("1111111", 0, false);
+        var req = new TripRecurrenceRequest(base.sourceTemplateId(), base.departureCity(), base.arrivalCity(),
+                "PLANE", base.capacityUnit(), base.availableKg(), base.pricePerKg(),
+                base.acceptedCategories(), base.refusedCategories(), base.description(), base.pickupAddress(),
+                base.deliveryAddress(), base.departureTime(), base.arrivalTime(), base.cashAccepted(),
+                base.weekdays(), base.horizonDays(), base.startDate(), base.endDate(), base.weekInterval(),
+                base.publicationLeadDays(), base.handoverLeadDays(), base.pricingMode(), base.negotiable(),
+                base.currency(), false, null, 0);
+        var car = new TripRecurrenceRequest(base.sourceTemplateId(), base.departureCity(), base.arrivalCity(),
+                "CAR", base.capacityUnit(), base.availableKg(), base.pricePerKg(),
+                base.acceptedCategories(), base.refusedCategories(), base.description(), base.pickupAddress(),
+                base.deliveryAddress(), base.departureTime(), base.arrivalTime(), base.cashAccepted(),
+                base.weekdays(), base.horizonDays(), base.startDate(), base.endDate(), base.weekInterval(),
+                base.publicationLeadDays(), base.handoverLeadDays(), base.pricingMode(), base.negotiable(),
+                base.currency(), false, null, 1);
+
+        assertThat(service.create(userId, req).stopsCount()).isZero();
+        assertThat(service.create(userId, car).stopsCount()).isNull();
+        assertThat(service.create(userId, base).stopsCount()).isNull();
+    }
+
     @Test
     void create_inactive_doesNotGenerate() {
         var req = request("1111111", 0, false);

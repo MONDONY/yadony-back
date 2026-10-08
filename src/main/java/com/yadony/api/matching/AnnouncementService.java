@@ -199,6 +199,26 @@ public class AnnouncementService {
             Double userLat, Double userLng, Double radiusKm,
             String sortBy, String sortDir, Pageable pageable,
             String viewerFirebaseUid, Boolean urgent) {
+        return searchAnnouncements(departureCity, arrivalCity, departureDateFrom, departureDateTo,
+                minAvailableKg, maxAvailableKg, maxPricePerKg, minRating, kiloProOnly, weekendOnly,
+                transportMode, kycVerifiedOnly, contentType, userLat, userLng, radiusKm,
+                sortBy, sortDir, pageable, viewerFirebaseUid, urgent, AnnouncementSearchExtras.NONE);
+    }
+
+    /** Recherche avec les filtres ajoutés depuis (escales FLUTTER-GD, moyens de paiement FLUTTER-G0). */
+    @Transactional(readOnly = true)
+    @Cacheable(value = "announcements-search", key = "#departureCity + '_' + #arrivalCity + '_' + #departureDateFrom + '_' + #departureDateTo + '_' + #minAvailableKg + '_' + #maxAvailableKg + '_' + #maxPricePerKg + '_' + #minRating + '_' + #kiloProOnly + '_' + #weekendOnly + '_' + #transportMode + '_' + #kycVerifiedOnly + '_' + #contentType + '_' + #userLat + '_' + #userLng + '_' + #radiusKm + '_' + #sortBy + '_' + #sortDir + '_' + #pageable.pageNumber + '_' + #pageable.pageSize + '_' + #viewerFirebaseUid + '_' + #urgent + '_' + #extras?.cacheKey()")
+    public Page<AnnouncementSearchResponse> searchAnnouncements(
+            String departureCity, String arrivalCity,
+            LocalDate departureDateFrom, LocalDate departureDateTo,
+            BigDecimal minAvailableKg, BigDecimal maxAvailableKg,
+            BigDecimal maxPricePerKg, BigDecimal minRating,
+            Boolean kiloProOnly, Boolean weekendOnly,
+            String transportMode, Boolean kycVerifiedOnly, String contentType,
+            Double userLat, Double userLng, Double radiusKm,
+            String sortBy, String sortDir, Pageable pageable,
+            String viewerFirebaseUid, Boolean urgent, AnnouncementSearchExtras extras) {
+        AnnouncementSearchExtras filters = extras != null ? extras : AnnouncementSearchExtras.NONE;
 
         // Confidentialité v2 — exclure (dans les deux sens) les voyageurs en relation
         // de blocage avec le viewer. Le firebaseUid est intégré à la clé de cache pour
@@ -266,6 +286,9 @@ public class AnnouncementService {
             spec = spec.and(AnnouncementSpecification.kycVerifiedOnly());
         if (contentType != null && !contentType.isBlank())
             spec = spec.and(AnnouncementSpecification.hasAcceptedContentType(contentType));
+        Integer stopsBound = TripStops.searchBound(filters.maxStops());
+        if (stopsBound != null)
+            spec = spec.and(AnnouncementSpecification.maxStops(stopsBound));
 
         // Radius filter: only active when ALL 3 params provided
         if (userLat != null && userLng != null && radiusKm != null && radiusKm > 0) {
@@ -583,6 +606,7 @@ public class AnnouncementService {
         announcement.setPricePerKgEur(
                 exchangeRateService.toEurPivot(request.pricePerKg(), announcement.getCurrency()));
         announcement.setTransportMode(request.transportMode());
+        announcement.setStopsCount(TripStops.normalize(request.stopsCount(), request.transportMode()));
         announcement.setStatus(isDraft ? AnnouncementStatus.DRAFT : AnnouncementStatus.ACTIVE);
         announcement.setDescription(request.description());
         // Normalisé à l'écriture (C2) — cf. ContentCategoryNormalizer javadoc.
@@ -924,6 +948,7 @@ public class AnnouncementService {
                 com.yadony.api.common.GuestSession.travelerNetOrNull(announcement.getPricePerKg()),
                 pricePerKgDisplay(announcement.getPricePerKg(), announcement.getTravelerId()),
                 announcement.getTransportMode(),
+                announcement.getStopsCount(),
                 announcement.getStatus().name(),
                 bidsCount,
                 confirmedParcelCount,
@@ -1103,6 +1128,8 @@ public class AnnouncementService {
         announcement.setPricePerKg(request.pricePerKg());
         announcement.setPricePerKgEur(
                 exchangeRateService.toEurPivot(request.pricePerKg(), announcement.getCurrency()));
+        announcement.setStopsCount(TripStops.normalizeOnUpdate(
+                request.stopsCount(), announcement.getStopsCount(), request.transportMode()));
         announcement.setTransportMode(request.transportMode());
         announcement.setDescription(request.description());
         // Normalisé à l'écriture (C2) — cf. ContentCategoryNormalizer javadoc.
@@ -1175,6 +1202,7 @@ public class AnnouncementService {
                 saved.getPricePerKg(),
                 pricePerKgDisplay(saved.getPricePerKg(), saved.getTravelerId()),
                 saved.getTransportMode(),
+                saved.getStopsCount(),
                 saved.getStatus().name(),
                 bidsCount,
                 confirmedParcelCount,
@@ -1958,6 +1986,7 @@ public class AnnouncementService {
                 entity.getPricePerKg(),
                 pricePerKgDisplay(entity.getPricePerKg(), entity.getTravelerId()),
                 entity.getTransportMode(),
+                entity.getStopsCount(),
                 entity.getStatus().name(),
                 pendingBidCount,
                 confirmedParcelCount,

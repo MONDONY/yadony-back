@@ -15,6 +15,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.model;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.view;
 
@@ -393,4 +394,28 @@ class PublicAnnouncementPageControllerIntegrationTest {
                         org.hamcrest.Matchers.containsString("Ouvrir dans l'application")));
     }
 
+
+    @Test
+    void stopsCount_isShownWhenDeclared_andAbsentOtherwise() throws Exception {
+        AnnouncementEntity direct = persistAnnouncement(AnnouncementStatus.ACTIVE);
+        direct.setStopsCount(0);
+        announcementRepository.saveAndFlush(direct);
+        mockMvc.perform(get("/public/annonce/" + direct.getId()).header("User-Agent", BROWSER_UA))
+                .andExpect(status().isOk())
+                .andExpect(model().attribute("stops", "Direct"));
+
+        AnnouncementEntity unknown = persistAnnouncement(AnnouncementStatus.ACTIVE);
+        mockMvc.perform(get("/public/annonce/" + unknown.getId()).header("User-Agent", BROWSER_UA))
+                .andExpect(status().isOk())
+                .andExpect(model().attribute("stops", org.hamcrest.Matchers.nullValue()));
+    }
+
+    @Test
+    void stopsLabel_coversEveryValue() {
+        assertThat(PublicAnnouncementPageController.stopsLabel(null)).isNull();
+        assertThat(PublicAnnouncementPageController.stopsLabel(0)).isEqualTo("Direct");
+        assertThat(PublicAnnouncementPageController.stopsLabel(1)).isEqualTo("1 escale");
+        assertThat(PublicAnnouncementPageController.stopsLabel(2))
+                .isEqualTo("2 escales ou plus");
+    }
 }

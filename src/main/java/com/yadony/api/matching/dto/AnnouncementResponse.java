@@ -27,6 +27,8 @@ public record AnnouncementResponse(
         BigDecimal pricePerKg,
         BigDecimal pricePerKgDisplay,
         com.yadony.api.matching.TransportMode transportMode,
+        /** Escales d'un trajet en avion (FLUTTER-GE) : 0 direct, 1, 2 = deux ou plus ; null = non renseigné. */
+        Integer stopsCount,
         String status,
         long pendingBidCount,
         long confirmedParcelCount,

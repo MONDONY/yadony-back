@@ -27,6 +27,8 @@ public record AnnouncementDetailResponse(
         BigDecimal pricePerKg,
         BigDecimal pricePerKgDisplay,
         com.yadony.api.matching.TransportMode transportMode,
+        /** Escales d'un trajet en avion (FLUTTER-GE) : 0 direct, 1, 2 = deux ou plus ; null = non renseigné. */
+        Integer stopsCount,
         String status,
         long bidsCount,
         long confirmedParcelCount,
@@ -86,7 +88,7 @@ public record AnnouncementDetailResponse(
         return new AnnouncementDetailResponse(
                 id, travelerId, departureCity, arrivalCity, departureDate, departureTime, arrivalTime, arrivalDate,
                 pickupAddress, deliveryAddress, availableKg, totalKg, pricePerKg, pricePerKgDisplay,
-                transportMode, status, bidsCount, confirmedParcelCount, traveler, description,
+                transportMode, stopsCount, status, bidsCount, confirmedParcelCount, traveler, description,
                 acceptedContentTypes, refusedTypes, acceptedPaymentMethods, capacityUnit, cashAccepted,
                 createdAt, updatedAt, pricingMode, convertedGridItems, reservedKg, surplusEligible,
                 surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,

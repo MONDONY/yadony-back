@@ -37,6 +37,8 @@ public record TripRecurrenceDto(
         Integer handoverLeadDays,
         boolean active,
         int arrivalDayOffset,
+        /** Escales (FLUTTER-GE) ; null = non renseigné. */
+        Integer stopsCount,
         LocalDate lastGeneratedDate,
         String lastPublicationErrorCode,
         String lastPublicationErrorMessage,

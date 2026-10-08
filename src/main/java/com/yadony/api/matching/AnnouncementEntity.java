@@ -92,6 +92,13 @@ public class AnnouncementEntity extends BaseEntity {
     @Column(name = "transport_mode", nullable = false, length = 20)
     private TransportMode transportMode;
 
+    /**
+     * Nombre d'escales d'un trajet en avion (FLUTTER-GE) : 0 direct, 1 une escale, 2 deux ou
+     * plus. Null = non renseigné, et toujours null hors avion ({@link TripStops#normalize}).
+     */
+    @Column(name = "stops_count")
+    private Short stopsCount;
+
     @Column(name = "pickup_address_label", nullable = false, length = 500)
     private String pickupAddressLabel;
 
@@ -406,6 +413,11 @@ public class AnnouncementEntity extends BaseEntity {
 
     public TransportMode getTransportMode() { return transportMode; }
     public void setTransportMode(TransportMode transportMode) { this.transportMode = transportMode; }
+
+    public Integer getStopsCount() { return stopsCount == null ? null : stopsCount.intValue(); }
+    public void setStopsCount(Integer stopsCount) {
+        this.stopsCount = stopsCount == null ? null : stopsCount.shortValue();
+    }
 
     public String getPickupAddressLabel() { return pickupAddressLabel; }
     public void setPickupAddressLabel(String v) { this.pickupAddressLabel = v; }

@@ -180,6 +180,7 @@ public class PublicAnnouncementPageController {
                 "Départ le " + departureDate + ". Réservez vos kilos sur Yadony.");
         model.addAttribute("handoverDeadline", formatDeadline(announcement));
         model.addAttribute("capacity", capacityLabel(announcement));
+        model.addAttribute("stops", stopsLabel(announcement.getStopsCount()));
         model.addAttribute("pricePerKg", formatDecimal(kgPrice(announcement)));
         model.addAttribute("cheapestGridPrice",
                 formatDecimal(cheapestGridPrice(announcement)));
@@ -363,6 +364,21 @@ public class PublicAnnouncementPageController {
                 .filter(Objects::nonNull)
                 .min(BigDecimal::compareTo)
                 .orElse(null);
+    }
+
+    /**
+     * Escales d'un vol (FLUTTER-GE), absentes de la page quand le voyageur ne les a pas
+     * renseignées. Page publique en français, comme le reste du gabarit.
+     */
+    static String stopsLabel(Integer stopsCount) {
+        if (stopsCount == null) {
+            return null;
+        }
+        return switch (stopsCount) {
+            case 0 -> "Direct";
+            case 1 -> "1 escale";
+            default -> "2 escales ou plus";
+        };
     }
 
     /**

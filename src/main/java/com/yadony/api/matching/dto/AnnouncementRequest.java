@@ -89,8 +89,32 @@ public record AnnouncementRequest(
         String currency,
         // Date d'arrivée si elle diffère du départ (vol de nuit) ; absente = même jour.
         // Validée par ArrivalRules (FLUTTER-4E).
-        LocalDate arrivalDate
+        LocalDate arrivalDate,
+        // Escales d'un trajet en avion (FLUTTER-GE) : 0 direct, 1, 2 = deux ou plus.
+        // Optionnel ; validé et ignoré hors avion par TripStops. Absent à la modification =
+        // valeur conservée (client antérieur).
+        Integer stopsCount
 ) {
+    /** Arité sans escales, conservée pour les appels existants. */
+    public AnnouncementRequest(String departureCity, String arrivalCity, LocalDate departureDate,
+                               LocalTime departureTime, LocalTime arrivalTime,
+                               AddressDto pickupAddress, AddressDto deliveryAddress,
+                               BigDecimal availableKg, BigDecimal pricePerKg,
+                               com.yadony.api.matching.TransportMode transportMode, String description,
+                               List<String> acceptedContentTypes, List<String> refusedTypes,
+                               Set<PaymentMethod> acceptedPaymentMethods,
+                               com.yadony.api.matching.CapacityUnit capacityUnit,
+                               com.yadony.api.matching.PricingMode pricingMode,
+                               String departureCountryCode, String arrivalCountryCode,
+                               LocalDateTime handoverDeadline, Boolean saveAsDraft,
+                               Boolean negotiable, String currency, LocalDate arrivalDate) {
+        this(departureCity, arrivalCity, departureDate, departureTime, arrivalTime, pickupAddress,
+                deliveryAddress, availableKg, pricePerKg, transportMode, description,
+                acceptedContentTypes, refusedTypes, acceptedPaymentMethods, capacityUnit, pricingMode,
+                departureCountryCode, arrivalCountryCode, handoverDeadline, saveAsDraft, negotiable,
+                currency, arrivalDate, null);
+    }
+
     /** Arité historique (sans date d'arrivée), conservée pour les appels existants. */
     public AnnouncementRequest(String departureCity, String arrivalCity, LocalDate departureDate,
                                LocalTime departureTime, LocalTime arrivalTime,
@@ -108,7 +132,7 @@ public record AnnouncementRequest(
                 deliveryAddress, availableKg, pricePerKg, transportMode, description,
                 acceptedContentTypes, refusedTypes, acceptedPaymentMethods, capacityUnit, pricingMode,
                 departureCountryCode, arrivalCountryCode, handoverDeadline, saveAsDraft, negotiable,
-                currency, null);
+                currency, null, null);
     }
 
     public boolean isDraft() {

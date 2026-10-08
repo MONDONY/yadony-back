@@ -27,6 +27,8 @@ public record AnnouncementSearchResponse(
         BigDecimal pricePerKg,
         BigDecimal pricePerKgDisplay,
         com.yadony.api.matching.TransportMode transportMode,
+        /** Escales d'un trajet en avion (FLUTTER-GE) : 0 direct, 1, 2 = deux ou plus ; null = non renseigné. */
+        Integer stopsCount,
         String status,
         long bidsCount,
         TravelerProfileDto traveler,
@@ -90,7 +92,7 @@ public record AnnouncementSearchResponse(
         return new AnnouncementSearchResponse(
                 id, travelerId, departureCity, arrivalCity, departureDate, departureTime, arrivalTime, arrivalDate,
                 pickupAddress, deliveryAddress, availableKg, totalKg, pricePerKg, pricePerKgDisplay,
-                transportMode, status, bidsCount, traveler, description, acceptedContentTypes, refusedTypes,
+                transportMode, stopsCount, status, bidsCount, traveler, description, acceptedContentTypes, refusedTypes,
                 acceptedPaymentMethods, capacityUnit, createdAt, updatedAt, pricingMode, priceGridItems,
                 handoverDeadline, isFavorite, urgent, currency, negotiable, availablePaymentMethods,
                 convertedPricePerKg, convertedCurrency, pricePerKgDisplayConverted, uniqueViewerCount);
@@ -104,7 +106,7 @@ public record AnnouncementSearchResponse(
         return new AnnouncementSearchResponse(
                 id, travelerId, departureCity, arrivalCity, departureDate, departureTime, arrivalTime, arrivalDate,
                 pickupAddress, deliveryAddress, availableKg, totalKg, pricePerKg, pricePerKgDisplay,
-                transportMode, status, bidsCount, traveler, description, acceptedContentTypes, refusedTypes,
+                transportMode, stopsCount, status, bidsCount, traveler, description, acceptedContentTypes, refusedTypes,
                 acceptedPaymentMethods, capacityUnit, createdAt, updatedAt, pricingMode, priceGridItems,
                 handoverDeadline, isFavorite, urgent, currency, negotiable, availablePaymentMethods,
                 convertedPricePerKg, convertedCurrency, pricePerKgDisplayConverted, uniqueViewerCount);

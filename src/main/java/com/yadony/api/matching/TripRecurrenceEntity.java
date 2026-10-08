@@ -72,6 +72,10 @@ public class TripRecurrenceEntity extends BaseEntity {
     @Column(name = "arrival_day_offset", nullable = false)
     private int arrivalDayOffset = 0;
 
+    /** Escales (FLUTTER-GE) recopiées sur chaque occurrence ; null = non renseigné. */
+    @Column(name = "stops_count")
+    private Short stopsCount;
+
     @Column(name = "cash_accepted", nullable = false)
     private boolean cashAccepted = false;
 
@@ -183,6 +187,11 @@ public class TripRecurrenceEntity extends BaseEntity {
     public void setHandoverLeadDays(Integer handoverLeadDays) { this.handoverLeadDays = handoverLeadDays; }
     public int getArrivalDayOffset() { return arrivalDayOffset; }
     public void setArrivalDayOffset(int arrivalDayOffset) { this.arrivalDayOffset = arrivalDayOffset; }
+
+    public Integer getStopsCount() { return stopsCount == null ? null : stopsCount.intValue(); }
+    public void setStopsCount(Integer stopsCount) {
+        this.stopsCount = stopsCount == null ? null : stopsCount.shortValue();
+    }
     public PricingMode getPricingMode() { return pricingMode; }
     public void setPricingMode(PricingMode pricingMode) { this.pricingMode = pricingMode; }
     public boolean isNegotiable() { return negotiable; }

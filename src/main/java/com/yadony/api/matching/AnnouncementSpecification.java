@@ -112,6 +112,30 @@ public class AnnouncementSpecification {
         };
     }
 
+    /**
+     * Filtre « escales » (FLUTTER-GD), borne lue par {@link TripStops#searchBound}.
+     *
+     * <p>Décision produit sur les trajets sans information (tous ceux publiés avant
+     * FLUTTER-GE, et tout trajet hors avion) :
+     * <ul>
+     *   <li>{@code maxStops = 0} (« Direct uniquement ») : exclus. L'expéditeur qui coche
+     *       « direct » veut une garantie, un trajet non renseigné ne la donne pas ;</li>
+     *   <li>{@code maxStops = 1} (« Max 1 escale ») : inclus, seul le « 2 escales ou plus »
+     *       déclaré est écarté ;</li>
+     *   <li>aucune borne (« Peu importe ») : pas de filtre, tout est inclus.</li>
+     * </ul>
+     */
+    public static Specification<AnnouncementEntity> maxStops(int maxStops) {
+        return (root, query, cb) -> {
+            Expression<Short> stops = root.get("stopsCount");
+            Short bound = (short) maxStops;
+            if (maxStops == 0) {
+                return cb.equal(stops, bound);
+            }
+            return cb.or(cb.isNull(stops), cb.lessThanOrEqualTo(stops, bound));
+        };
+    }
+
     public static Specification<AnnouncementEntity> hasTransportMode(TransportMode mode) {
         return (root, query, cb) -> cb.equal(root.get("transportMode"), mode);
     }
