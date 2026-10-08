@@ -596,6 +596,87 @@ class AnnouncementServiceTest {
             assertThat(result.arrivalCountryCode()).isEqualTo("SN");
         }
 
+        private AnnouncementRequest requestFrom(String dep, String arr, LocalTime departureTime) {
+            LocalDate departure = LocalDate.now().plusDays(10);
+            return new AnnouncementRequest(
+                    dep, arr,
+                    departure,
+                    departureTime, null,
+                    new AddressDto("Départ", 5.261, -3.927),
+                    new AddressDto("Arrivée", 49.009, 2.547),
+                    BigDecimal.valueOf(20), BigDecimal.valueOf(5),
+                    TransportMode.PLANE,
+                    null, null, null, null, null, null,
+                    null, null,
+                    departure.atTime(6, 0),
+                    null,
+                    null,
+                    null);
+        }
+
+        private ArgumentCaptor<AnnouncementEntity> stubCreatable() {
+            UserEntity traveler = buildTraveler();
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            ArgumentCaptor<AnnouncementEntity> captor = ArgumentCaptor.forClass(AnnouncementEntity.class);
+            when(announcementRepository.save(captor.capture())).thenAnswer(inv -> {
+                AnnouncementEntity a = inv.getArgument(0);
+                setId(a, ANNOUNCEMENT_ID);
+                return a;
+            });
+            return captor;
+        }
+
+        @Test
+        @DisplayName("fuseau — départ d'Abidjan → Africa/Abidjan, departureAt à l'heure d'Abidjan (et non de Paris)")
+        void create_abidjanDeparture_usesAbidjanTimezone() {
+            ArgumentCaptor<AnnouncementEntity> captor = stubCreatable();
+            when(announcementRepository.findCountryCodeByCityName("Abidjan")).thenReturn(Optional.of("CI"));
+            when(announcementRepository.findTimezoneByCityName("Abidjan", "CI"))
+                    .thenReturn(Optional.of("Africa/Abidjan"));
+            AnnouncementRequest request = requestFrom("Abidjan", "Paris", LocalTime.of(10, 0));
+
+            announcementService.createAnnouncement(FIREBASE_UID, request);
+
+            AnnouncementEntity saved = captor.getValue();
+            assertThat(saved.getTimezone()).isEqualTo("Africa/Abidjan");
+            assertThat(saved.getDepartureAt().toInstant()).isEqualTo(
+                    request.departureDate().atTime(10, 0).toInstant(java.time.ZoneOffset.UTC));
+        }
+
+        @Test
+        @DisplayName("fuseau — ville absente du référentiel mais pays connu → fuseau principal du pays")
+        void create_unknownCity_knownCountry_usesCountryMainTimezone() {
+            ArgumentCaptor<AnnouncementEntity> captor = stubCreatable();
+            when(announcementRepository.findMainTimezoneByCountryCode("BJ"))
+                    .thenReturn(Optional.of("Africa/Porto-Novo"));
+            AnnouncementRequest base = requestFrom("Akpakpa", "Paris", LocalTime.of(10, 0));
+            AnnouncementRequest request = new AnnouncementRequest(
+                    base.departureCity(), base.arrivalCity(), base.departureDate(),
+                    base.departureTime(), base.arrivalTime(), base.pickupAddress(),
+                    base.deliveryAddress(), base.availableKg(), base.pricePerKg(),
+                    base.transportMode(), null, null, null, null, null, null,
+                    "BJ", "FR", base.handoverDeadline(), null, null, null);
+
+            announcementService.createAnnouncement(FIREBASE_UID, request);
+
+            assertThat(captor.getValue().getTimezone()).isEqualTo("Africa/Porto-Novo");
+            assertThat(captor.getValue().getDepartureAt().toInstant()).isEqualTo(
+                    request.departureDate().atTime(9, 0).toInstant(java.time.ZoneOffset.UTC));
+        }
+
+        @Test
+        @DisplayName("fuseau — ville et pays inconnus → repli Europe/Paris")
+        void create_unknownCity_fallsBackToParis() {
+            ArgumentCaptor<AnnouncementEntity> captor = stubCreatable();
+            AnnouncementRequest request = requestFrom("Atlantide", "Paris", LocalTime.of(10, 0));
+
+            announcementService.createAnnouncement(FIREBASE_UID, request);
+
+            assertThat(captor.getValue().getTimezone()).isEqualTo("Europe/Paris");
+            assertThat(captor.getValue().getDepartureAt()).isEqualTo(request.departureDate()
+                    .atTime(10, 0).atZone(java.time.ZoneId.of("Europe/Paris")).toOffsetDateTime());
+        }
+
         @Test
         @DisplayName("utilisateur sans rôle TRAVELER → rôle ajouté automatiquement")
         void create_userWithoutTravelerRole_addsTravelerRole() {
@@ -1516,6 +1597,49 @@ class AnnouncementServiceTest {
 
             assertThat(result.departureCountryCode()).isEqualTo("BJ");
             assertThat(result.arrivalCountryCode()).isEqualTo("CI");
+        }
+
+        private AnnouncementRequest updateRequestAt(String dep, String arr, LocalTime departureTime) {
+            AnnouncementRequest base = updateRequest(dep, arr, null, null);
+            return new AnnouncementRequest(
+                    base.departureCity(), base.arrivalCity(), base.departureDate(),
+                    departureTime, null, base.pickupAddress(), base.deliveryAddress(),
+                    base.availableKg(), base.pricePerKg(), base.transportMode(),
+                    null, null, null, null, null, null,
+                    null, null, base.handoverDeadline(), null, null, null);
+        }
+
+        @Test
+        @DisplayName("fuseau — ville de départ changée → fuseau de la nouvelle ville, departureAt recalculé")
+        void update_changedDepartureCity_recomputesTimezoneAndDepartureAt() {
+            AnnouncementEntity a = stubUpdatable("FR", "SN");
+            when(announcementRepository.findCountryCodeByCityName("Toronto")).thenReturn(Optional.of("CA"));
+            when(announcementRepository.findTimezoneByCityName("Toronto", "CA"))
+                    .thenReturn(Optional.of("America/Toronto"));
+            AnnouncementRequest request = updateRequestAt("Toronto", "Dakar", LocalTime.of(20, 0));
+
+            announcementService.updateAnnouncement(ANNOUNCEMENT_ID, FIREBASE_UID, request);
+
+            assertThat(a.getTimezone()).isEqualTo("America/Toronto");
+            assertThat(a.getDepartureAt()).isEqualTo(request.departureDate().atTime(20, 0)
+                    .atZone(java.time.ZoneId.of("America/Toronto")).toOffsetDateTime());
+        }
+
+        @Test
+        @DisplayName("fuseau — ville de départ inchangée → fuseau conservé, sans nouvelle recherche")
+        void update_sameDepartureCity_keepsTimezone() {
+            AnnouncementEntity a = stubUpdatable("CI", "FR");
+            a.setDepartureCity("Abidjan");
+            a.setArrivalCity("Paris");
+            a.setTimezone("Africa/Abidjan");
+            AnnouncementRequest request = updateRequestAt("Abidjan", "Paris", LocalTime.of(20, 0));
+
+            announcementService.updateAnnouncement(ANNOUNCEMENT_ID, FIREBASE_UID, request);
+
+            assertThat(a.getTimezone()).isEqualTo("Africa/Abidjan");
+            assertThat(a.getDepartureAt().toInstant()).isEqualTo(
+                    request.departureDate().atTime(20, 0).toInstant(java.time.ZoneOffset.UTC));
+            verify(announcementRepository, never()).findTimezoneByCityName(any(), any());
         }
 
         /** Régression I3 : même trou côté modification — un trajet dont un colis est

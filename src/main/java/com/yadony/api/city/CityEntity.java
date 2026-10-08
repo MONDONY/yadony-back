@@ -31,6 +31,13 @@ public class CityEntity {
     @Column(nullable = false, precision = 9, scale = 6)
     private BigDecimal longitude;
 
+    /**
+     * Fuseau IANA GeoNames de la ville (V300). Sert à placer l'heure de départ d'un trajet
+     * dans le fuseau de sa ville de départ. Nul tant que le référentiel n'est pas rempli.
+     */
+    @Column(length = 40)
+    private String timezone;
+
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
     public String getName() { return name; }
@@ -45,4 +52,6 @@ public class CityEntity {
     public void setLatitude(BigDecimal latitude) { this.latitude = latitude; }
     public BigDecimal getLongitude() { return longitude; }
     public void setLongitude(BigDecimal longitude) { this.longitude = longitude; }
+    public String getTimezone() { return timezone; }
+    public void setTimezone(String timezone) { this.timezone = timezone; }
 }

@@ -70,4 +70,39 @@ class GeoNamesDataLoaderTest {
 
         verify(cityRepository, atLeastOnce()).saveAll(anyList());
     }
+
+    @Test
+    void timezoneOf_readsGeoNamesColumn18() {
+        String[] full = new String[19];
+        java.util.Arrays.fill(full, "");
+        full[17] = " Africa/Porto-Novo ";
+        org.assertj.core.api.Assertions.assertThat(GeoNamesDataLoader.timezoneOf(full))
+                .isEqualTo("Africa/Porto-Novo");
+
+        full[17] = "";
+        org.assertj.core.api.Assertions.assertThat(GeoNamesDataLoader.timezoneOf(full)).isNull();
+
+        full[17] = "x".repeat(41);
+        org.assertj.core.api.Assertions.assertThat(GeoNamesDataLoader.timezoneOf(full)).isNull();
+
+        org.assertj.core.api.Assertions.assertThat(GeoNamesDataLoader.timezoneOf(new String[15])).isNull();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void run_setsTimezoneOnImportedCities() throws Exception {
+        when(cityRepository.count()).thenReturn(0L);
+        java.util.List<CityEntity> imported = new java.util.ArrayList<>();
+        when(cityRepository.saveAll(anyList())).thenAnswer(inv -> {
+            imported.addAll((java.util.List<CityEntity>) inv.getArgument(0));
+            return java.util.List.of();
+        });
+
+        loader.run(null);
+
+        org.assertj.core.api.Assertions.assertThat(imported)
+                .filteredOn(c -> "Cotonou".equals(c.getName()))
+                .extracting(CityEntity::getTimezone)
+                .contains("Africa/Porto-Novo");
+    }
 }

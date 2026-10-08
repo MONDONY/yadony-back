@@ -145,6 +145,7 @@ public class GeoNamesDataLoader implements ApplicationRunner {
                     entity.setLatitude(lat);
                     entity.setLongitude(lng);
                     entity.setPopulation(population);
+                    entity.setTimezone(timezoneOf(cols));
                     batch.add(entity);
 
                     if (batch.size() == BATCH_SIZE) {
@@ -167,5 +168,18 @@ public class GeoNamesDataLoader implements ApplicationRunner {
         }
 
         log.info("[GeoNames] Import terminé : {} villes chargées, {} lignes ignorées.", total, skipped);
+    }
+
+    /**
+     * Fuseau IANA de la ligne GeoNames (colonne 18), ou {@code null} s'il manque ou dépasse
+     * la colonne {@code cities.timezone}. Il place l'heure de départ d'un trajet dans le
+     * fuseau de sa ville (V300).
+     */
+    static String timezoneOf(String[] cols) {
+        if (cols.length <= 17) {
+            return null;
+        }
+        String zone = cols[17].trim();
+        return zone.isEmpty() || zone.length() > 40 ? null : zone;
     }
 }
