@@ -28,8 +28,13 @@ spring:
     password: ${DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
     hikari:
-      maximum-pool-size: 10
+      # Test de charge k6 du 07/10 : pool de 10 saturé (187 requêtes en attente),
+      # attentes de 30 s (timeout Hikari par défaut) puis 500. 20 connexions restent
+      # loin du max_connections=100 de Postgres. Un timeout de 5 s échoue vite en 503
+      # (GlobalExceptionHandler) au lieu de bloquer un thread Tomcat 30 s.
+      maximum-pool-size: 20
       minimum-idle: 2
+      connection-timeout: 5000
 
 # Stripe Connect : Stripe exige des URLs HTTPS pour return/refresh.
 # Le défaut de application.yml (yadony://) est un deep link invalide côté Stripe.
