@@ -465,10 +465,36 @@ public class AnnouncementService {
         return createAnnouncement(firebaseUid, request, recurrenceId);
     }
 
+    /**
+     * Une étape d'un voyage à plusieurs étapes (FLUTTER-4D) : une annonce ordinaire, marquée
+     * de l'identifiant commun du voyage et de son rang. Appelée par {@link TripGroupService}
+     * dans sa propre transaction, que rejoint celle-ci : une étape refusée annule tout le voyage.
+     */
+    @Transactional
+    @CacheEvict(value = "announcements-search", allEntries = true)
+    public AnnouncementResponse createTripLeg(
+            String firebaseUid,
+            AnnouncementRequest request,
+            UUID tripGroupId,
+            int legIndex
+    ) {
+        return createAnnouncement(firebaseUid, request, null, tripGroupId, legIndex);
+    }
+
     private AnnouncementResponse createAnnouncement(
             String firebaseUid,
             AnnouncementRequest request,
             UUID recurrenceId
+    ) {
+        return createAnnouncement(firebaseUid, request, recurrenceId, null, null);
+    }
+
+    private AnnouncementResponse createAnnouncement(
+            String firebaseUid,
+            AnnouncementRequest request,
+            UUID recurrenceId,
+            UUID tripGroupId,
+            Integer tripLegIndex
     ) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
                 .orElseThrow(() -> new YadonyBusinessException(
@@ -596,6 +622,9 @@ public class AnnouncementService {
         // Absent = prix ferme : un client pas encore à jour ne doit jamais ouvrir
         // un trajet à la négociation sans que le voyageur l'ait demandé.
         announcement.setNegotiable(request.isNegotiable());
+        // Voyage à plusieurs étapes (FLUTTER-4D) : lien purement informatif entre étapes.
+        announcement.setTripGroupId(tripGroupId);
+        announcement.setTripLegIndex(tripGroupId != null ? tripLegIndex : null);
 
         AnnouncementEntity saved = announcementRepository.save(announcement);
 
@@ -1757,6 +1786,18 @@ public class AnnouncementService {
                         "rejectedBidsCount", String.valueOf(pendingBids.size())));
     }
 
+    /**
+     * Réponses « propriétaire » d'annonces données, dans l'ordre des identifiants. Sert au
+     * voyage à plusieurs étapes (FLUTTER-4D), relu une fois toutes ses étapes créées pour
+     * que chacune porte le bon nombre d'étapes.
+     */
+    @Transactional(readOnly = true)
+    public List<AnnouncementResponse> toResponses(List<UUID> ids) {
+        Map<UUID, AnnouncementEntity> byId = new java.util.HashMap<>();
+        announcementRepository.findAllById(ids).forEach(a -> byId.put(a.getId(), a));
+        return ids.stream().map(byId::get).filter(java.util.Objects::nonNull).map(this::toResponse).toList();
+    }
+
     private AnnouncementResponse toResponse(AnnouncementEntity entity) {
         UserEntity traveler = userRepository.findById(entity.getTravelerId()).orElse(null);
         boolean travelerHasConnect = traveler != null && traveler.hasActiveStripeConnect();
@@ -1822,7 +1863,12 @@ public class AnnouncementService {
                 entity.getCurrency(),
                 entity.isNegotiable(),
                 availablePaymentMethods,
-                reservedNetAmount != null ? reservedNetAmount : BigDecimal.ZERO
+                reservedNetAmount != null ? reservedNetAmount : BigDecimal.ZERO,
+                entity.getTripGroupId(),
+                entity.getTripLegIndex(),
+                entity.getTripGroupId() != null
+                        ? (int) announcementRepository.countByTripGroupId(entity.getTripGroupId())
+                        : null
         );
     }
 

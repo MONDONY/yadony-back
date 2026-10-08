@@ -110,6 +110,15 @@ public interface AnnouncementRepository extends JpaRepository<AnnouncementEntity
 
     long countByTravelerIdAndStatus(UUID travelerId, AnnouncementStatus status);
 
+    /** Étapes d'un voyage (FLUTTER-4D), dans l'ordre du voyage ; hors soft-delete. */
+    List<AnnouncementEntity> findByTripGroupIdOrderByTripLegIndexAsc(UUID tripGroupId);
+
+    /** Étapes encore présentes d'un voyage (FLUTTER-4D). */
+    long countByTripGroupId(UUID tripGroupId);
+
+    /** Étapes de plusieurs voyages en une requête (pages de « Mes trajets », back-office). */
+    List<AnnouncementEntity> findByTripGroupIdIn(java.util.Collection<UUID> tripGroupIds);
+
     long countByTravelerIdAndStatusIn(
             UUID travelerId, java.util.Collection<AnnouncementStatus> statuses);
 

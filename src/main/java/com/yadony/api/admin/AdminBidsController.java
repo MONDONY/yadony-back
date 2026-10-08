@@ -138,8 +138,18 @@ public class AdminBidsController {
                 .collect(Collectors.toSet());
         Map<UUID, String> userNames = loadUserNames(travelerIds);
 
+        // Voyages à plusieurs étapes (FLUTTER-4D) : nombre d'étapes par voyage, en une requête.
+        Set<UUID> groupIds = annPage.stream()
+                .map(AnnouncementEntity::getTripGroupId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<UUID, Integer> legCounts = groupIds.isEmpty() ? Map.of()
+                : announcementRepo.findByTripGroupIdIn(groupIds).stream()
+                        .collect(Collectors.groupingBy(AnnouncementEntity::getTripGroupId,
+                                Collectors.summingInt(x -> 1)));
+
         Page<AdminAnnouncementListItemResponse> result = annPage.map(a ->
-                toAnnouncementListItem(a, userNames));
+                toAnnouncementListItem(a, userNames, legCounts));
         return ResponseEntity.ok(result);
     }
 
@@ -204,13 +214,10 @@ public class AdminBidsController {
     }
 
     private AdminAnnouncementListItemResponse toAnnouncementListItem(AnnouncementEntity a,
-            Map<UUID, String> userNames) {
+            Map<UUID, String> userNames, Map<UUID, Integer> legCounts) {
         String travelerName = a.getTravelerId() != null ? userNames.get(a.getTravelerId()) : null;
-        String corridor = MatchingTextUtil.corridorLabel(a.getDepartureCity(), a.getArrivalCity());
-        return new AdminAnnouncementListItemResponse(
-                a.getId(), a.getStatus().name(), travelerName,
-                corridor, a.getDepartureDate(), a.getAvailableKg(), a.getPricePerKg(),
-                a.getCurrency() != null ? a.getCurrency().toUpperCase(java.util.Locale.ROOT) : null);
+        Integer legCount = a.getTripGroupId() != null ? legCounts.get(a.getTripGroupId()) : null;
+        return AdminAnnouncementListItemResponse.of(a, travelerName, legCount);
     }
 
     private Map<UUID, String> loadUserNames(Set<UUID> userIds) {

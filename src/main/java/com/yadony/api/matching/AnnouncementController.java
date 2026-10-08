@@ -7,6 +7,9 @@ import com.yadony.api.matching.dto.AnnouncementRequest;
 import com.yadony.api.matching.dto.AnnouncementResponse;
 import com.yadony.api.matching.dto.AnnouncementSearchResponse;
 import com.yadony.api.matching.dto.ArrivalInstructionsRequest;
+import com.yadony.api.matching.dto.TripLegsResponse;
+import com.yadony.api.matching.dto.TripRequest;
+import com.yadony.api.matching.dto.TripResponse;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -37,9 +40,12 @@ import java.util.UUID;
 public class AnnouncementController {
 
     private final AnnouncementService announcementService;
+    private final TripGroupService tripGroupService;
 
-    public AnnouncementController(AnnouncementService announcementService) {
+    public AnnouncementController(AnnouncementService announcementService,
+                                  TripGroupService tripGroupService) {
         this.announcementService = announcementService;
+        this.tripGroupService = tripGroupService;
     }
 
     @GetMapping
@@ -79,6 +85,24 @@ public class AnnouncementController {
         String firebaseUid = requireFirebaseUid();
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(announcementService.createAnnouncement(firebaseUid, request));
+    }
+
+    /**
+     * Voyage à plusieurs étapes (FLUTTER-4D) : publie 2 à 5 annonces chaînées en une seule
+     * transaction. Un trajet simple continue de passer par {@code POST /announcements}.
+     */
+    @PostMapping("/trips")
+    public ResponseEntity<TripResponse> createTrip(@Valid @RequestBody TripRequest request) {
+        String firebaseUid = requireFirebaseUid();
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(tripGroupService.createTrip(firebaseUid, request));
+    }
+
+    /** Étapes du voyage d'une annonce ; liste vide pour un trajet isolé (FLUTTER-4D). */
+    @GetMapping("/{id}/trip-legs")
+    public ResponseEntity<TripLegsResponse> getTripLegs(@PathVariable UUID id) {
+        String firebaseUid = requireFirebaseUid();
+        return ResponseEntity.ok(tripGroupService.getTripLegs(id, firebaseUid));
     }
 
     @GetMapping("/my/corridors")

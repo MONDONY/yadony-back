@@ -166,4 +166,30 @@ class AdminBidsControllerTest {
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(resp.getBody()).isNotNull();
     }
+
+    @Test
+    void listAnnouncements_exposesTripGroupAndLegCount() {
+        UUID group = UUID.randomUUID();
+        AnnouncementEntity leg1 = new AnnouncementEntity();
+        leg1.setStatus(AnnouncementStatus.ACTIVE);
+        leg1.setTripGroupId(group);
+        leg1.setTripLegIndex(1);
+        AnnouncementEntity leg2 = new AnnouncementEntity();
+        leg2.setStatus(AnnouncementStatus.ACTIVE);
+        leg2.setTripGroupId(group);
+        leg2.setTripLegIndex(2);
+        AnnouncementEntity single = new AnnouncementEntity();
+        single.setStatus(AnnouncementStatus.ACTIVE);
+        when(announcementRepo.findAll(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(leg1, single)));
+        when(announcementRepo.findByTripGroupIdIn(java.util.Set.of(group))).thenReturn(List.of(leg1, leg2));
+
+        var content = controller().listAnnouncements(0, 20).getBody().getContent();
+
+        assertThat(content.get(0).tripGroupId()).isEqualTo(group);
+        assertThat(content.get(0).tripLegIndex()).isEqualTo(1);
+        assertThat(content.get(0).tripLegCount()).isEqualTo(2);
+        assertThat(content.get(1).tripGroupId()).isNull();
+        assertThat(content.get(1).tripLegIndex()).isNull();
+        assertThat(content.get(1).tripLegCount()).isNull();
+    }
 }
