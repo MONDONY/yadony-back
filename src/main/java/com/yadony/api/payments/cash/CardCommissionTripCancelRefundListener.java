@@ -1,7 +1,6 @@
 package com.yadony.api.payments.cash;
 
 import com.yadony.api.cancellation.events.TripCancelledEvent;
-import com.yadony.api.common.AuditService;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import org.slf4j.Logger;
@@ -13,7 +12,6 @@ import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -23,9 +21,6 @@ import java.util.UUID;
  * Complète WalletCancellationListener (qui ne gère que via=WALLET), pour couvrir la matrice :
  *   | trip-cancel + via=CARD  → refund Stripe (ce listener)
  *   | trip-cancel + via=WALLET → crédit wallet (WalletCancellationListener)
- *
- * FLUTTER-E4 : annulation du fait du voyageur ({@link TripCancelledEvent#isTravelerInitiated()})
- * → aucun remboursement, la commission reste prélevée et l'audit trace la retenue.
  */
 @Component
 public class CardCommissionTripCancelRefundListener {
@@ -34,14 +29,11 @@ public class CardCommissionTripCancelRefundListener {
 
     private final CashCommissionService cashCommissionService;
     private final BidRepository bidRepository;
-    private final AuditService auditService;
 
     public CardCommissionTripCancelRefundListener(CashCommissionService cashCommissionService,
-                                                   BidRepository bidRepository,
-                                                   AuditService auditService) {
+                                                   BidRepository bidRepository) {
         this.cashCommissionService = cashCommissionService;
         this.bidRepository = bidRepository;
-        this.auditService = auditService;
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -68,14 +60,6 @@ public class CardCommissionTripCancelRefundListener {
             return;
         }
         if (bid.getCommissionStatus() != CommissionStatus.CHARGED) return;
-
-        if (event.isTravelerInitiated()) {
-            auditService.log("payment", bidId, CommissionRetention.AUDIT_ACTION, event.getTravelerId(),
-                    Map.of("reason", String.valueOf(event.getReason()),
-                           "commissionChargedVia", CommissionChargedVia.CARD.name()));
-            log.info("CardCommissionTripCancelRefundListener: commission conservée pour bid {} (annulation voyageur)", bidId);
-            return;
-        }
 
         cashCommissionService.refundCommission(bid);
         log.info("CardCommissionTripCancelRefundListener: refund Stripe effectué pour bid {} (trip-cancel)", bidId);

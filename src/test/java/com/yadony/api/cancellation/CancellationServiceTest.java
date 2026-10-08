@@ -297,8 +297,6 @@ class CancellationServiceTest {
                     .findFirst().orElseThrow();
             assertThat(evt.getAffectedBidIds())
                     .containsExactlyInAnyOrder(pendingBid.getId(), escrowedBid.getId());
-            // FLUTTER-E4 : trajet annulé par le voyageur → commission espèces conservée.
-            assertThat(evt.isTravelerInitiated()).isTrue();
             // Le paiement par bid est porté par l'event (les listeners refund en dépendent) :
             // cash explicite pour le PENDING, défaut "STRIPE" pour l'escrowed sans méthode.
             assertThat(evt.getBidPaymentMethods())
@@ -456,8 +454,6 @@ class CancellationServiceTest {
                     .map(e -> (TripCancelledEvent) e)
                     .findFirst().orElseThrow();
             assertThat(evt.getAnnouncementId()).isEqualTo(ANNOUNCEMENT_ID);
-            // Suppression de compte : comportement inchangé, la commission est rendue.
-            assertThat(evt.isTravelerInitiated()).isFalse();
         }
 
         @Test

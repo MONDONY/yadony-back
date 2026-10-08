@@ -58,6 +58,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * FLUTTER-E4/E0/E6, de bout en bout côté HTTP contre une vraie base PostgreSQL (migrations
  * Flyway jouées, dont V298) et avec de vrais commits : les écouteurs de fiabilité et de
  * commission sont {@code AFTER_COMMIT}.
+ *
+ * <p>La commission espèces du voyageur lui est toujours rendue, y compris quand c'est lui
+ * qui annule (décision du propriétaire, retour sur la retenue de FLUTTER-E4) : seuls ses
+ * compteurs de fiabilité en tiennent compte.
  */
 @SpringBootTest
 @ActiveProfiles("e2e")
@@ -99,7 +103,7 @@ class CancellationReliabilityIT {
     @Autowired private JdbcTemplate jdbc;
 
     @Test
-    void travelerCancelsAcceptedCashParcel_keepsNoCommission_andCountsOneCancellation() throws Exception {
+    void travelerCancelsAcceptedCashParcel_commissionRefunded_andCountsOneCancellation() throws Exception {
         UserEntity traveler = persistUser();
         UserEntity sender = persistUser();
         openWallet(traveler.getId());
@@ -110,8 +114,9 @@ class CancellationReliabilityIT {
 
         BidEntity bid = bidRepository.findById(bidId).orElseThrow();
         assertThat(bid.getStatus()).isEqualTo(BidStatus.CANCELLED);
-        assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.CHARGED);
-        assertThat(auditCount(bidId, "COMMISSION_RETAINED_TRAVELER_CANCEL")).isEqualTo(1);
+        assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.REFUNDED);
+        assertThat(walletBalance(traveler.getId())).isEqualByComparingTo("100");
+        assertThat(auditCount(bidId, "COMMISSION_RETAINED_TRAVELER_CANCEL")).isZero();
         assertThat(userRepository.findById(traveler.getId()).orElseThrow().getCancellationCount()).isEqualTo(1);
         assertThat(userRepository.findById(sender.getId()).orElseThrow().getSenderCancellationCount()).isZero();
     }
@@ -150,7 +155,7 @@ class CancellationReliabilityIT {
     }
 
     @Test
-    void travelerCancelsWholeTripWithTwoParcels_countsOnce_andKeepsBothCommissions() throws Exception {
+    void travelerCancelsWholeTripWithTwoParcels_countsOnce_andRefundsBothCommissions() throws Exception {
         UserEntity traveler = persistUser();
         openWallet(traveler.getId());
         UUID announcementId = persistAnnouncement(traveler.getId());
@@ -165,9 +170,30 @@ class CancellationReliabilityIT {
         assertThat(userRepository.findById(traveler.getId()).orElseThrow().getCancellationCount()).isEqualTo(1);
         for (UUID bidId : List.of(first, second)) {
             assertThat(bidRepository.findById(bidId).orElseThrow().getCommissionStatus())
-                    .isEqualTo(CommissionStatus.CHARGED);
-            assertThat(auditCount(bidId, "COMMISSION_RETAINED_TRAVELER_CANCEL")).isEqualTo(1);
+                    .isEqualTo(CommissionStatus.REFUNDED);
+            assertThat(auditCount(bidId, "COMMISSION_RETAINED_TRAVELER_CANCEL")).isZero();
         }
+        assertThat(walletBalance(traveler.getId())).isEqualByComparingTo("100");
+    }
+
+    @Test
+    void travelerCancelsAfterHandover_commissionRefunded_andCountsOneCancellation() throws Exception {
+        UserEntity traveler = persistUser();
+        UserEntity sender = persistUser();
+        openWallet(traveler.getId());
+        UUID bidId = acceptedCashBid(persistAnnouncement(traveler.getId()), sender.getId(), traveler.getId());
+        jdbc.update("UPDATE bids SET status = 'HANDED_OVER' WHERE id = ?", bidId);
+
+        mockMvc.perform(post("/bids/{id}/cancel-after-handover", bidId).with(authentication(as(traveler))))
+                .andExpect(status().isOk());
+
+        BidEntity bid = bidRepository.findById(bidId).orElseThrow();
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.CANCELLED);
+        assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.REFUNDED);
+        assertThat(walletBalance(traveler.getId())).isEqualByComparingTo("100");
+        assertThat(auditCount(bidId, "COMMISSION_RETAINED_TRAVELER_CANCEL")).isZero();
+        assertThat(userRepository.findById(traveler.getId()).orElseThrow().getCancellationCount()).isEqualTo(1);
+        assertThat(userRepository.findById(sender.getId()).orElseThrow().getSenderHandoverIncidentCount()).isZero();
     }
 
     /**
@@ -201,6 +227,10 @@ class CancellationReliabilityIT {
     private static UsernamePasswordAuthenticationToken as(UserEntity user) {
         return new UsernamePasswordAuthenticationToken(user.getFirebaseUid(), null,
                 List.of(new SimpleGrantedAuthority("ROLE_TRAVELER"), new SimpleGrantedAuthority("ROLE_SENDER")));
+    }
+
+    private BigDecimal walletBalance(UUID userId) {
+        return walletAccountRepository.findByUserIdAndCurrency(userId, "EUR").orElseThrow().getBalance();
     }
 
     private int auditCount(UUID entityId, String action) {

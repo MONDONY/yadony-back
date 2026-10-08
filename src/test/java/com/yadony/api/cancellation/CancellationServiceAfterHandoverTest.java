@@ -122,10 +122,7 @@ class CancellationServiceAfterHandoverTest {
         assertThat(uCap.getValue().getCancellationCount()).isEqualTo(1);
         assertThat(uCap.getValue().getSenderHandoverIncidentCount()).isZero();
 
-        // FLUTTER-E4 : annulation du fait du voyageur → sa commission espèces est conservée.
-        ArgumentCaptor<TripCancelledEvent> eCap = ArgumentCaptor.forClass(TripCancelledEvent.class);
-        verify(eventPublisher).publishEvent(eCap.capture());
-        assertThat(eCap.getValue().isTravelerInitiated()).isTrue();
+        verify(eventPublisher).publishEvent(any(TripCancelledEvent.class));
     }
 
     @Test
@@ -144,11 +141,6 @@ class CancellationServiceAfterHandoverTest {
         verify(userRepository).save(uCap.capture());
         assertThat(uCap.getValue().getSenderHandoverIncidentCount()).isEqualTo(1);
         assertThat(uCap.getValue().getCancellationCount()).isZero();
-
-        // Annulation de l'expéditeur : la commission du voyageur lui est rendue (inchangé).
-        ArgumentCaptor<TripCancelledEvent> eCap = ArgumentCaptor.forClass(TripCancelledEvent.class);
-        verify(eventPublisher).publishEvent(eCap.capture());
-        assertThat(eCap.getValue().isTravelerInitiated()).isFalse();
     }
 
     @Test

@@ -1,13 +1,10 @@
 package com.yadony.api.payments.wallet;
 
 import com.yadony.api.cancellation.events.TripCancelledEvent;
-import com.yadony.api.common.AuditService;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.payments.cash.CashCommissionService;
 import com.yadony.api.payments.cash.CommissionChargedVia;
-import com.yadony.api.payments.cash.CommissionRetention;
-import com.yadony.api.payments.cash.CommissionStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -17,7 +14,6 @@ import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -30,9 +26,6 @@ import java.util.UUID;
  *
  * Traite uniquement les bids CASH dont commissionChargedVia=WALLET.
  * Les bids CASH commissionChargedVia=CARD sont traités par CardCommissionTripCancelRefundListener.
- *
- * FLUTTER-E4 : annulation du fait du voyageur ({@link TripCancelledEvent#isTravelerInitiated()})
- * → la commission reste prélevée, l'audit trace la retenue.
  */
 @Component
 public class WalletCancellationListener {
@@ -41,14 +34,11 @@ public class WalletCancellationListener {
 
     private final CashCommissionService cashCommissionService;
     private final BidRepository bidRepository;
-    private final AuditService auditService;
 
     public WalletCancellationListener(CashCommissionService cashCommissionService,
-                                      BidRepository bidRepository,
-                                      AuditService auditService) {
+                                      BidRepository bidRepository) {
         this.cashCommissionService = cashCommissionService;
         this.bidRepository = bidRepository;
-        this.auditService = auditService;
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -79,16 +69,6 @@ public class WalletCancellationListener {
         BidEntity bid = bidRepository.findById(bidId).orElse(null);
         if (bid == null) {
             log.warn("WalletCancellationListener: bid {} introuvable — skip", bidId);
-            return;
-        }
-
-        if (event.isTravelerInitiated()) {
-            if (bid.getCommissionStatus() == CommissionStatus.CHARGED) {
-                auditService.log("payment", bidId, CommissionRetention.AUDIT_ACTION, travelerId,
-                        Map.of("reason", String.valueOf(event.getReason()),
-                               "commissionChargedVia", CommissionChargedVia.WALLET.name()));
-                log.info("WalletCancellationListener: commission conservée pour bid {} (annulation voyageur)", bidId);
-            }
             return;
         }
 
