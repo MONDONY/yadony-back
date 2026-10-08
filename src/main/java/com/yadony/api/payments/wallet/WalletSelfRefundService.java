@@ -24,6 +24,7 @@ import jakarta.persistence.EntityManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -167,23 +168,85 @@ public class WalletSelfRefundService {
     }
 
     /**
-     * Allocation pour l'écran portefeuille ({@code GET /wallet/balance}), sans connexion tenue
-     * pendant les appels Stripe.
+     * Données de l'écran portefeuille ({@code GET /wallet/balance}) : historique, statuts et
+     * frais de remboursement, et pour chaque devise son allocation et sa demande en cours. Une
+     * seule connexion pour toutes les lectures, aucune pendant les appels Stripe.
      *
-     * <p>Les données du rejeu (solde, ledger, demandes, opérations pawaPay) sont lues dans une
-     * transaction courte, donc cohérentes entre elles : un solde et un ledger lus dans deux
+     * <p>Les données des rejeux (soldes, ledgers, demandes, opérations pawaPay) sont lues dans
+     * une seule transaction courte, donc cohérentes entre elles : un solde et un ledger lus dans deux
      * transactions pourraient encadrer une recharge et lever une fausse alerte d'incohérence.
      * Le rejeu, qui peut interroger Stripe pour les frais réels des recharges carte, tourne
-     * ensuite hors transaction. Sous {@link #allocation}, ces appels (jusqu'à 80 s chacun sans
+     * ensuite hors transaction, devise par devise. Sous {@link #allocation}, ces appels (jusqu'à 80 s chacun sans
      * délai configuré) gardaient une connexion du pool pendant toute leur durée.
      *
      * <p>Frais Stripe lus par {@link StripeFeeSource#feeForDisplay} : délais courts, et repli
      * configuré quand Stripe vient d'échouer. Le remboursement réel ({@link #request}) passe
      * toujours par {@link #allocation}, qui garde la lecture stricte.
      */
-    public WalletRefundAllocation allocationForDisplay(UUID userId, String currency) {
-        LedgerSnapshot snapshot = readOnlyTransaction.execute(status -> snapshot(userId, currency));
-        return replay(userId, snapshot, displayFeeSources()).allocation();
+    public BalanceView balanceView(UUID userId, int page) {
+        BalanceReads reads = readOnlyTransaction.execute(status -> readBalance(userId, page));
+        List<CurrencyView> currencies = new ArrayList<>(reads.wallets().size());
+        for (int i = 0; i < reads.wallets().size(); i++) {
+            currencies.add(new CurrencyView(reads.wallets().get(i),
+                    displayAllocation(userId, reads.snapshots().get(i)),
+                    reads.pendingRefund().get(i)));
+        }
+        return new BalanceView(reads.transactions(), reads.refundStatusByTxId(), reads.feesByTxId(), currencies);
+    }
+
+    /** Taille d'une page de l'historique de l'écran portefeuille. */
+    static final int BALANCE_TRANSACTIONS_PAGE_SIZE = 50;
+
+    /** Une devise du portefeuille telle que l'affiche {@code GET /wallet/balance}. */
+    public record CurrencyView(WalletAccountEntity wallet, WalletRefundAllocation allocation,
+                               boolean refundPending) {}
+
+    /** Ce qu'affiche {@code GET /wallet/balance}, hors création du portefeuille de la devise active. */
+    public record BalanceView(List<WalletTransactionEntity> transactions, Map<UUID, String> refundStatusByTxId,
+                              Map<UUID, RefundFeeBreakdown> feesByTxId, List<CurrencyView> currencies) {}
+
+    /** Lectures de {@link #balanceView}, faites dans une seule transaction. */
+    private record BalanceReads(List<WalletTransactionEntity> transactions, Map<UUID, String> refundStatusByTxId,
+                                Map<UUID, RefundFeeBreakdown> feesByTxId, List<WalletAccountEntity> wallets,
+                                List<LedgerSnapshot> snapshots, List<Boolean> pendingRefund) {}
+
+    /**
+     * Toutes les lectures de l'écran portefeuille. Chaque service ouvrait sa propre transaction
+     * (environ 7 + 2 par devise) : sous charge, chacune refaisait la queue au pool de connexions
+     * (test de charge du 08/10/2026 : pool à 20/20, 147 requêtes en attente, p95 de 8 s sur
+     * cet écran). Les opérations pawaPay de l'utilisateur ne dépendent pas de la devise : lues
+     * une fois pour tous les portefeuilles.
+     */
+    private BalanceReads readBalance(UUID userId, int page) {
+        List<WalletTransactionEntity> transactions = walletTransactionRepository.findByUserIdOrderByCreatedAtDesc(
+                userId, PageRequest.of(page, BALANCE_TRANSACTIONS_PAGE_SIZE));
+        Map<UUID, String> statuses = refundStatusByTransactionId(
+                transactions.stream().map(WalletTransactionEntity::getId).toList());
+        Map<UUID, RefundFeeBreakdown> fees = refundFeesByTransactionId(userId, transactions);
+        List<WalletAccountEntity> wallets = walletAccountRepository.findAllByUserId(userId);
+        Map<String, String> providers = wallets.isEmpty() ? Map.of() : providerByPaymentRef(userId);
+        List<LedgerSnapshot> snapshots = new ArrayList<>(wallets.size());
+        List<Boolean> pending = new ArrayList<>(wallets.size());
+        for (WalletAccountEntity wallet : wallets) {
+            String code = normalize(wallet.getCurrency());
+            // Un portefeuille antérieur à V202 peut porter une casse mixte : la lecture par code
+            // normalisé ne le trouve pas, comme avant (allocation vide), sans fausse alerte.
+            snapshots.add(code.equals(wallet.getCurrency())
+                    ? snapshot(userId, code, wallet.getBalance(), providers)
+                    : snapshot(userId, code));
+            pending.add(refundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(userId, code,
+                    List.of(WalletRefundRequestStatus.PENDING, WalletRefundRequestStatus.PROCESSING)));
+        }
+        return new BalanceReads(transactions, statuses, fees, wallets, snapshots, pending);
+    }
+
+    /** Un ledger incohérent ne doit pas casser l'écran portefeuille : 0 remboursable (l'alerte part au rejeu). */
+    private WalletRefundAllocation displayAllocation(UUID userId, LedgerSnapshot snapshot) {
+        try {
+            return replay(userId, snapshot, displayFeeSources()).allocation();
+        } catch (WalletAllocationInvariantException e) {
+            return WalletRefundAllocation.empty();
+        }
     }
 
     /** Allocation et ledger qui l'a produite, pour n'en faire qu'une lecture par devise. */
@@ -214,6 +277,11 @@ public class WalletSelfRefundService {
         if (wallet == null) {
             return new LedgerSnapshot(code, null, List.of(), List.of(), Map.of());
         }
+        return snapshot(userId, code, wallet.getBalance(), providerByPaymentRef(userId));
+    }
+
+    private LedgerSnapshot snapshot(UUID userId, String code, BigDecimal balance,
+                                    Map<String, String> providerByPaymentRef) {
         List<WalletTransactionEntity> ledger =
                 walletTransactionRepository.findByUserIdAndCurrencyOrderByCreatedAtAsc(userId, code);
         List<UUID> topupIds = ledger.stream()
@@ -221,15 +289,20 @@ public class WalletSelfRefundService {
                 .map(WalletTransactionEntity::getId)
                 .toList();
         List<WalletRefundRequestItemEntity> items = refundRequestItemRepository.findByWalletTransactionIdIn(topupIds);
-        // Opérateur pawaPay de chaque recharge mobile money : le paymentRef d'un TOP_UP pawaPay
-        // vaut "pawapay:<id opération>" (cf. WalletMobileMoneyTopupService), retrouvé ici sans
-        // relire tout le ledger opération par opération.
-        Map<String, String> providerByPaymentRef = pawapayOperationRepository
+        return new LedgerSnapshot(code, balance, ledger, items, providerByPaymentRef);
+    }
+
+    /**
+     * Opérateur pawaPay de chaque recharge mobile money : le paymentRef d'un TOP_UP pawaPay
+     * vaut "pawapay:<id opération>" (cf. WalletMobileMoneyTopupService), retrouvé ici sans
+     * relire tout le ledger opération par opération.
+     */
+    private Map<String, String> providerByPaymentRef(UUID userId) {
+        return pawapayOperationRepository
                 .findByUserIdAndPurposeAndKind(userId, PawapayOperationPurpose.WALLET_TOPUP,
                         PawapayOperationKind.DEPOSIT)
                 .stream()
                 .collect(Collectors.toMap(op -> "pawapay:" + op.getId(), PawapayOperationEntity::getProvider));
-        return new LedgerSnapshot(code, wallet.getBalance(), ledger, items, providerByPaymentRef);
     }
 
     private WalletRefundFeeCalculator.FeeSources strictFeeSources() {
@@ -272,22 +345,6 @@ public class WalletSelfRefundService {
                     Map.of("userId", String.valueOf(userId), "currency", code, "error", e.getMessage()));
             throw e;
         }
-    }
-
-    /**
-     * Le bouton « Rembourser » est-il actif pour cette devise ? L'appelant fournit
-     * l'allocation qu'il tient déjà (cf. {@code WalletController#getBalance}) : elle vient
-     * du même rejeu de ledger que le reste de la réponse, et la surcharge sans allocation
-     * qui existait ici en rejouait un second pour rien (plus aucun appelant depuis que
-     * {@code getBalance} passe la sienne).
-     */
-    @Transactional(readOnly = true)
-    public boolean isEligible(UUID userId, String currency, WalletRefundAllocation allocation) {
-        if (refundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(userId, normalize(currency),
-                List.of(WalletRefundRequestStatus.PENDING, WalletRefundRequestStatus.PROCESSING))) {
-            return false;
-        }
-        return allocation.refundableTotal().signum() > 0;
     }
 
     /**

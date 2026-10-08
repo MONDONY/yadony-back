@@ -84,8 +84,7 @@ class WalletServiceIT {
                 .findByUserIdAndCurrency(userId, "CAD")
                 .orElseThrow();
         List<WalletTransactionEntity> transactions = walletTransactionRepository
-                .findByUserIdOrderByCreatedAtDesc(userId, PageRequest.of(0, 10))
-                .getContent();
+                .findByUserIdOrderByCreatedAtDesc(userId, PageRequest.of(0, 10));
 
         assertThat(eurWallet.getBalance()).isEqualByComparingTo("15.00");
         assertThat(cadWallet.getBalance()).isEqualByComparingTo("15.00");

@@ -231,19 +231,6 @@ class WalletServiceTest {
         assertThat(walletService.getBalance(userId, "CAD")).isEqualByComparingTo(new BigDecimal("33.50"));
     }
 
-    @Test
-    void getTransactions_returnsHistoryContent() {
-        UUID userId = UUID.randomUUID();
-        WalletTransactionEntity transaction = new WalletTransactionEntity();
-        transaction.setUserId(userId);
-        transaction.setCurrency("EUR");
-        transaction.setType(WalletTransactionType.REFUND);
-        transaction.setAmount(new BigDecimal("5.00"));
-        when(walletTransactionRepository.findByUserIdOrderByCreatedAtDesc(eq(userId), any()))
-                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(transaction)));
-
-        assertThat(walletService.getTransactions(userId, 0)).containsExactly(transaction);
-    }
 
     @Test
     void debit_createsRequestedCurrencyWalletWhenMissing_thenThrowsInsufficient() {

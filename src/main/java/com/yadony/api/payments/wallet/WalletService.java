@@ -145,12 +145,6 @@ public class WalletService {
         return walletAccountRepository.findAllByUserId(userId);
     }
 
-    public List<WalletTransactionEntity> getTransactions(UUID userId, int page) {
-        return walletTransactionRepository
-                .findByUserIdOrderByCreatedAtDesc(userId, PageRequest.of(page, 50))
-                .getContent();
-    }
-
     public void credit(UUID userId, String currency, BigDecimal amount, WalletTransactionType type,
                        String paymentRef, String idempotencyKey) {
         if (idempotencyKey != null) {
