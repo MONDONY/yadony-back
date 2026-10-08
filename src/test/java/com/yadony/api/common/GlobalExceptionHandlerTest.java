@@ -614,4 +614,58 @@ class GlobalExceptionHandlerTest {
                     .isNull();
         }
     }
+
+    @Nested
+    @DisplayName("handleDatabaseUnavailable()")
+    class DatabaseUnavailableTests {
+
+        private static java.sql.SQLTransientConnectionException poolTimeout() {
+            return new java.sql.SQLTransientConnectionException(
+                    "HikariPool-1 - Connection is not available, request timed out after 5000ms.");
+        }
+
+        @Test
+        @DisplayName("pool épuisé dans une transaction → 503 service-busy + Retry-After, sans Sentry")
+        void poolTimeoutInTransaction_returns503WithoutSentry() {
+            var ex = new org.springframework.transaction.CannotCreateTransactionException(
+                    "Could not open JPA EntityManager for transaction", poolTimeout());
+
+            try (MockedStatic<Sentry> sentry = mockStatic(Sentry.class)) {
+                ResponseEntity<ProblemDetail> response = handler.handleDatabaseUnavailable(ex);
+
+                assertThat(response.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+                assertThat(response.getHeaders().getFirst("Retry-After")).isEqualTo("2");
+                assertThat(response.getBody()).isNotNull();
+                assertThat(response.getBody().getType().toString()).endsWith("service-busy");
+                assertThat(response.getBody().getProperties()).containsEntry("code", "service-busy");
+                sentry.verifyNoInteractions();
+            }
+        }
+
+        @Test
+        @DisplayName("pool épuisé hors transaction (repository) → 503")
+        void poolTimeoutOutsideTransaction_returns503() {
+            var ex = new org.springframework.dao.DataAccessResourceFailureException(
+                    "Unable to acquire JDBC Connection",
+                    new RuntimeException("wrapper", poolTimeout()));
+
+            ResponseEntity<ProblemDetail> response = handler.handleDatabaseUnavailable(ex);
+
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+        }
+
+        @Test
+        @DisplayName("autre panne d'accès à la base → 500 générique, toujours remontée à Sentry")
+        void otherDatabaseFailure_keeps500() {
+            var ex = new org.springframework.transaction.CannotCreateTransactionException(
+                    "Could not open JPA EntityManager", new IllegalStateException("database down"));
+
+            try (MockedStatic<Sentry> sentry = mockStatic(Sentry.class)) {
+                ResponseEntity<ProblemDetail> response = handler.handleDatabaseUnavailable(ex);
+
+                assertThat(response.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+                sentry.verify(() -> Sentry.withScope(any(ScopeCallback.class)));
+            }
+        }
+    }
 }
