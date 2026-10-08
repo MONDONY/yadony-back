@@ -1207,7 +1207,7 @@ class NegotiationServiceTest {
         }
 
         @Test
-        @DisplayName("status AWAITING_PAYMENT → escrow NON libéré inline (releaseEscrow=true) + trajet dédié soft-deleted + CANCELLED")
+        @DisplayName("status AWAITING_PAYMENT, caller = sender → escrow NON libéré inline (releaseEscrow=true) + trajet dédié soft-deleted + CANCELLED")
         void cancel_awaitingPayment_defersEscrow_softDeletesDedicatedTrip_setsCancelled() {
             UUID announcementId = UUID.randomUUID();
             thread.setStatus(NegotiationThreadStatus.AWAITING_PAYMENT);
@@ -1223,10 +1223,10 @@ class NegotiationServiceTest {
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
             lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
-            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
             when(announcementRepo.findById(announcementId)).thenReturn(Optional.of(dedicatedAnn));
 
-            service.cancelNegotiation(TRAVELER_ID, THREAD_ID, null);
+            service.cancelNegotiation(SENDER_ID, THREAD_ID, null);
 
             assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.CANCELLED);
             // Le hold Stripe n'est PLUS annulé inline : cela se fait dans un listener
@@ -1237,10 +1237,39 @@ class NegotiationServiceTest {
             ArgumentCaptor<com.yadony.api.requests.event.NegotiationCancelledEvent> eventCaptor =
                 ArgumentCaptor.forClass(com.yadony.api.requests.event.NegotiationCancelledEvent.class);
             verify(eventPublisher).publishEvent(eventCaptor.capture());
-            assertThat(eventCaptor.getValue().toUserId()).isEqualTo(SENDER_ID);
-            assertThat(eventCaptor.getValue().byUserId()).isEqualTo(TRAVELER_ID);
+            assertThat(eventCaptor.getValue().toUserId()).isEqualTo(TRAVELER_ID);
+            assertThat(eventCaptor.getValue().byUserId()).isEqualTo(SENDER_ID);
             // L'event porte le drapeau qui déclenchera la libération de l'escrow après commit.
             assertThat(eventCaptor.getValue().releaseEscrow()).isTrue();
+        }
+
+        /**
+         * FLUTTER-F9 : l'expéditeur a accepté l'offre et paie. Le voyageur qui retirait son
+         * offre 18 s plus tard faisait échouer le paiement sur une 409 générique.
+         */
+        @ParameterizedTest
+        @EnumSource(value = NegotiationThreadStatus.class, names = {"AWAITING_PAYMENT", "AWAITING_DEPOSIT"})
+        @DisplayName("FLUTTER-F9 — voyageur pendant l'attente de paiement → 409 offer-accepted-awaiting-payment, rien ne bouge")
+        void cancel_travelerWhileAwaitingSenderPayment_throws409(NegotiationThreadStatus status) {
+            thread.setStatus(status);
+            thread.setTravelerAnnouncementId(UUID.randomUUID());
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+
+            assertThatThrownBy(() -> service.cancelNegotiation(TRAVELER_ID, THREAD_ID, "je retire"))
+                .isInstanceOf(com.yadony.api.common.YadonyBusinessException.class)
+                .satisfies(e -> {
+                    var ex = (com.yadony.api.common.YadonyBusinessException) e;
+                    assertThat(ex.getStatus()).isEqualTo(org.springframework.http.HttpStatus.CONFLICT);
+                    assertThat(ex.getErrorCode()).isEqualTo("offer-accepted-awaiting-payment");
+                    assertThat(ex.getProperties()).containsEntry("negotiationStatus", status.name());
+                });
+
+            assertThat(thread.getStatus()).isEqualTo(status);
+            verify(threadRepo, never()).save(any());
+            verify(announcementRepo, never()).findById(any());
+            verify(eventPublisher, never()).publishEvent(any());
+            verify(auditService, never()).log(any(), any(), any(), any(), any());
         }
 
         @Test

@@ -51,6 +51,8 @@ public class NegotiationService {
     private static final org.slf4j.Logger log =
         org.slf4j.LoggerFactory.getLogger(NegotiationService.class);
 
+    /** Code RFC 7807 : retrait d'une offre déjà acceptée, en attente de paiement (FLUTTER-F9). */
+    public static final String OFFER_ACCEPTED_AWAITING_PAYMENT = "offer-accepted-awaiting-payment";
 
     private final PackageRequestRepository requestRepo;
     private final NegotiationThreadRepository threadRepo;
@@ -457,6 +459,14 @@ public class NegotiationService {
         if (!st.isActive()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "negotiation/not-cancellable");
         }
+        // FLUTTER-F9 : une fois le prix accepté, l'expéditeur paie (AWAITING_PAYMENT) ou son
+        // dépôt mobile money est en vol (AWAITING_DEPOSIT). Le voyageur ne peut plus retirer
+        // son offre pendant ce délai : son retrait faisait échouer le paiement en cours sur
+        // une 409 générique. L'expéditeur garde la main, et l'expiration du délai de
+        // paiement (NegotiationExpiryRunner) libère toujours le voyageur.
+        if (isTraveler && !isSender && isAwaitingSenderPayment(st)) {
+            throw offerAcceptedAwaitingPayment(st);
+        }
 
         // Soft-delete du trajet DÉDIÉ orphelin (créé exclusivement pour cette
         // demande via createDedicatedTrip) — miroir exact de refuseTrip. C'est
@@ -485,6 +495,20 @@ public class NegotiationService {
             thread.getId(), request.getId(), callerId, otherParty, byName, st));
         auditService.log("NEGOTIATION_THREAD", threadId, "CANCELLED", callerId,
             Map.of("reason", reason == null ? "" : reason));
+    }
+
+    /** Accord conclu, paiement de l'expéditeur attendu ou en cours (FLUTTER-F9). */
+    private static boolean isAwaitingSenderPayment(NegotiationThreadStatus st) {
+        return st == NegotiationThreadStatus.AWAITING_PAYMENT
+            || st == NegotiationThreadStatus.AWAITING_DEPOSIT;
+    }
+
+    private static YadonyBusinessException offerAcceptedAwaitingPayment(NegotiationThreadStatus st) {
+        return new YadonyBusinessException(HttpStatus.CONFLICT, OFFER_ACCEPTED_AWAITING_PAYMENT,
+            "Offer Accepted Awaiting Payment",
+            "L'expéditeur a accepté votre offre et procède au paiement : "
+                + "vous ne pouvez plus la retirer pendant le délai de paiement.",
+            Map.of("negotiationStatus", st.name()));
     }
 
     private void reopenRequestWhenNoActiveNegotiation(PackageRequestEntity request) {

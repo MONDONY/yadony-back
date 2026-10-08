@@ -9,7 +9,10 @@ import org.springframework.test.context.ActiveProfiles;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -70,5 +73,46 @@ class BidRepositoryTest {
         newBid(announcementId, BidStatus.IN_TRANSIT);
         newBid(announcementId, BidStatus.CANCELLED);
         return announcementId;
+    }
+
+    // FLUTTER-F1 : la pop-up d'évaluation ne doit plus proposer un envoi hors fenêtre de notation.
+    @Test
+    void findPendingRatingForUser_excludesBidsOutsideRatingWindow() {
+        UUID traveler = UUID.randomUUID();
+        UUID announcementId = newAnnouncement(traveler);
+        BidEntity old = completedBid(announcementId);
+        em.getEntityManager()
+                .createNativeQuery("UPDATE bids SET updated_at = :ts WHERE id = :id")
+                .setParameter("ts", LocalDateTime.now(ZoneOffset.UTC).minusDays(8))
+                .setParameter("id", old.getId())
+                .executeUpdate();
+        em.clear();
+
+        LocalDateTime windowStart = LocalDateTime.now(ZoneOffset.UTC).minusDays(7);
+
+        assertThat(bidRepository.findPendingRatingForUser(old.getSenderId(), windowStart)).isEmpty();
+        assertThat(bidRepository.findPendingRatingForUser(traveler, windowStart)).isEmpty();
+    }
+
+    @Test
+    void findPendingRatingForUser_returnsBidInsideRatingWindow() {
+        UUID traveler = UUID.randomUUID();
+        UUID announcementId = newAnnouncement(traveler);
+        BidEntity recent = completedBid(announcementId);
+
+        LocalDateTime windowStart = LocalDateTime.now(ZoneOffset.UTC).minusDays(7);
+
+        Optional<BidEntity> forSender = bidRepository.findPendingRatingForUser(recent.getSenderId(), windowStart);
+        assertThat(forSender).map(BidEntity::getId).contains(recent.getId());
+        assertThat(bidRepository.findPendingRatingForUser(traveler, windowStart))
+                .map(BidEntity::getId).contains(recent.getId());
+    }
+
+    private BidEntity completedBid(UUID announcementId) {
+        BidEntity b = new BidEntity();
+        b.setAnnouncementId(announcementId);
+        b.setSenderId(UUID.randomUUID());
+        b.setStatus(BidStatus.COMPLETED);
+        return em.persistAndFlush(b);
     }
 }

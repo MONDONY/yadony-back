@@ -2,10 +2,12 @@ package com.yadony.api.matching;
 
 import com.yadony.api.common.AuditService;
 import com.yadony.api.matching.events.ParcelRefusedEvent;
+import com.yadony.api.matching.events.TripActivityChangedEvent;
 import com.yadony.api.matching.events.VoyageurNoShowEvent;
 import com.yadony.api.tracking.events.DeliveryConfirmedEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -40,13 +42,16 @@ public class AnnouncementCompletionListener {
     private final BidRepository bidRepository;
     private final AnnouncementRepository announcementRepository;
     private final AuditService auditService;
+    private final ApplicationEventPublisher eventPublisher;
 
     public AnnouncementCompletionListener(BidRepository bidRepository,
                                           AnnouncementRepository announcementRepository,
-                                          AuditService auditService) {
+                                          AuditService auditService,
+                                          ApplicationEventPublisher eventPublisher) {
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.auditService = auditService;
+        this.eventPublisher = eventPublisher;
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -119,6 +124,11 @@ public class AnnouncementCompletionListener {
         AnnouncementStatus previousStatus = announcement.getStatus();
         announcement.setStatus(AnnouncementStatus.COMPLETED);
         announcementRepository.save(announcement);
+        // FLUTTER-FC : le trajet quitte « Trajets actifs ». Publié dans la transaction
+        // REQUIRES_NEW, l'éviction suit son commit (l'éviction sur DeliveryConfirmedEvent
+        // peut passer avant ce passage en COMPLETED).
+        eventPublisher.publishEvent(
+                new TripActivityChangedEvent(announcement.getId(), announcement.getTravelerId()));
 
         auditService.log(
                 "ANNOUNCEMENT",

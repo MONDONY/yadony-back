@@ -76,6 +76,21 @@ public interface NegotiationThreadRepository extends JpaRepository<NegotiationTh
     """)
     boolean existsActiveByTravelerAnnouncementId(@Param("announcementId") UUID announcementId);
 
+    /**
+     * True si un fil lié à ce trajet a été accepté et attend le paiement de l'expéditeur
+     * (AWAITING_PAYMENT, ou dépôt mobile money en vol). Le voyageur ne peut plus supprimer
+     * ce trajet pendant ce délai (FLUTTER-F9).
+     */
+    @Query("""
+        SELECT COUNT(t) > 0 FROM NegotiationThreadEntity t
+        WHERE t.travelerAnnouncementId = :announcementId
+          AND t.status IN (
+              com.yadony.api.requests.entity.NegotiationThreadStatus.AWAITING_PAYMENT,
+              com.yadony.api.requests.entity.NegotiationThreadStatus.AWAITING_DEPOSIT
+          )
+    """)
+    boolean existsAwaitingPaymentByTravelerAnnouncementId(@Param("announcementId") UUID announcementId);
+
     long countByTravelerIdAndStatus(UUID travelerId, NegotiationThreadStatus status);
 
     @Query("""

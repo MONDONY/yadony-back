@@ -664,7 +664,7 @@ class RatingServiceTest {
         @DisplayName("bid en attente → retourne PendingRatingResponse avec isTravelerRating=false pour expéditeur")
         void getPendingRating_senderPending_returnsResponse() throws Exception {
             when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
-            when(bidRepository.findPendingRatingForUser(SENDER_ID)).thenReturn(Optional.of(bid));
+            when(bidRepository.findPendingRatingForUser(eq(SENDER_ID), any(LocalDateTime.class))).thenReturn(Optional.of(bid));
             when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
 
             UserEntity traveler = new UserEntity();
@@ -686,10 +686,25 @@ class RatingServiceTest {
         @DisplayName("aucun bid en attente → Optional.empty()")
         void getPendingRating_noPending_returnsEmpty() {
             when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
-            when(bidRepository.findPendingRatingForUser(SENDER_ID)).thenReturn(Optional.empty());
+            when(bidRepository.findPendingRatingForUser(eq(SENDER_ID), any(LocalDateTime.class))).thenReturn(Optional.empty());
 
             Optional<PendingRatingResponse> result = ratingService.getPendingRating(SENDER_UID);
             assertThat(result).isEmpty();
+        }
+
+        @Test
+        @DisplayName("FLUTTER-F1 — la recherche est bornée à la fenêtre de notation de 7 jours")
+        void getPendingRating_boundsQueryToRatingWindow() {
+            when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
+            ArgumentCaptor<LocalDateTime> since = ArgumentCaptor.forClass(LocalDateTime.class);
+            when(bidRepository.findPendingRatingForUser(eq(SENDER_ID), since.capture()))
+                    .thenReturn(Optional.empty());
+
+            LocalDateTime before = LocalDateTime.now(java.time.ZoneOffset.UTC).minusDays(7);
+            ratingService.getPendingRating(SENDER_UID);
+            LocalDateTime after = LocalDateTime.now(java.time.ZoneOffset.UTC).minusDays(7);
+
+            assertThat(since.getValue()).isBetween(before, after);
         }
     }
 

@@ -1151,4 +1151,23 @@ class NegotiationControllerIT {
         mockMvc.perform(post("/negotiations/" + UUID.randomUUID() + "/archive"))
             .andExpect(status().isUnauthorized());
     }
+
+    // FLUTTER-F9 : retrait de l'offre par le voyageur pendant l'attente de paiement.
+    @Test
+    void post_cancel_travelerWhileAwaitingPayment_returns409ProblemWithDedicatedCode() throws Exception {
+        UUID threadId = UUID.randomUUID();
+        org.mockito.Mockito.doThrow(new com.yadony.api.common.YadonyBusinessException(CONFLICT,
+                NegotiationService.OFFER_ACCEPTED_AWAITING_PAYMENT, "Offer Accepted Awaiting Payment",
+                "L'expéditeur a accepté votre offre et procède au paiement.",
+                java.util.Map.of("negotiationStatus", "AWAITING_PAYMENT")))
+            .when(service).cancelNegotiation(eq(TRAVELER_UUID), eq(threadId), any());
+
+        mockMvc.perform(post("/negotiations/{id}/cancel", threadId)
+                .with(authentication(authAs("uid-traveler", "TRAVELER"))))
+            .andExpect(status().isConflict())
+            .andExpect(content().contentType("application/problem+json"))
+            .andExpect(jsonPath("$.code").value("offer-accepted-awaiting-payment"))
+            .andExpect(jsonPath("$.type").value("https://yadony.app/errors/offer-accepted-awaiting-payment"))
+            .andExpect(jsonPath("$.negotiationStatus").value("AWAITING_PAYMENT"));
+    }
 }

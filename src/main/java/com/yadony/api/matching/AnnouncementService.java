@@ -25,6 +25,7 @@ import com.yadony.api.matching.dto.AnnouncementResponse;
 import com.yadony.api.matching.dto.AnnouncementSearchResponse;
 import com.yadony.api.matching.dto.TravelerProfileDto;
 import com.yadony.api.matching.events.AnnouncementDeletedEvent;
+import com.yadony.api.matching.events.TripActivityChangedEvent;
 import com.yadony.api.matching.events.ArrivalInstructionsUpdatedEvent;
 import com.yadony.api.matching.events.AnnouncementInProgressEvent;
 import com.yadony.api.matching.events.BidExpiredOnDepartureEvent;
@@ -788,6 +789,8 @@ public class AnnouncementService {
             auditService.log("ANNOUNCEMENT", announcement.getTravelerId(),
                     "ANNOUNCEMENT_COMPLETED", announcement.getId(),
                     Map.of("previousStatus", previous.name(), "trigger", "DEPARTURE_NO_ACCEPTED_BIDS"));
+            eventPublisher.publishEvent(
+                    new TripActivityChangedEvent(announcement.getId(), announcement.getTravelerId()));
             log.info("Announcement {} → COMPLETED (no ACCEPTED bids at departure)", announcement.getId());
         } else {
             announcement.setStatus(AnnouncementStatus.IN_PROGRESS);
@@ -1283,6 +1286,8 @@ public class AnnouncementService {
         announcement.setStatus(AnnouncementStatus.DRAFT);
         AnnouncementEntity saved = announcementRepository.save(announcement);
 
+        eventPublisher.publishEvent(new TripActivityChangedEvent(saved.getId(), saved.getTravelerId()));
+
         auditService.log("ANNOUNCEMENT", saved.getId(), "UNPUBLISHED", user.getId(),
                 Map.of("departureCity", saved.getDepartureCity(),
                         "arrivalCity", saved.getArrivalCity()));
@@ -1593,6 +1598,7 @@ public class AnnouncementService {
         }
         ann.setStatus(AnnouncementStatus.REMOVED_BY_ADMIN);
         AnnouncementEntity saved = announcementRepository.save(ann);
+        eventPublisher.publishEvent(new TripActivityChangedEvent(saved.getId(), saved.getTravelerId()));
 
         // Correction 1 (revue), élargie round 3 : liquider tous les bids encore ouverts et
         // sans livraison engagée — PENDING/PAYMENT_ESCROWED (round 1) + AWAITING_PAYMENT/
@@ -1668,6 +1674,7 @@ public class AnnouncementService {
         ann.setStatus(target);
         ann.setStatusBeforeRemoval(null);
         AnnouncementEntity saved = announcementRepository.save(ann);
+        eventPublisher.publishEvent(new TripActivityChangedEvent(saved.getId(), saved.getTravelerId()));
 
         auditService.log("ANNOUNCEMENT", announcementId, "ANNOUNCEMENT_RESTORED_BY_ADMIN", adminId,
                 Map.of("restoredStatus", target.name()));
@@ -1728,6 +1735,15 @@ public class AnnouncementService {
                     "Seuls les trajets actifs ou annulés peuvent être supprimés");
         }
 
+        // FLUTTER-F9 : un expéditeur a accepté l'offre liée à ce trajet et paie. Supprimer
+        // le trajet retirerait l'offre sous ses pieds (paiement sur un trajet disparu).
+        if (negotiationThreadRepository.existsAwaitingPaymentByTravelerAnnouncementId(id)) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "offer-accepted-awaiting-payment",
+                    "Offer Accepted Awaiting Payment",
+                    "Un expéditeur a accepté votre offre sur ce trajet et procède au paiement : "
+                            + "vous ne pouvez pas le supprimer pendant le délai de paiement.");
+        }
+
         // ARRIVED inclus : le colis est arrivé mais pas encore retiré, la
         // transaction n'est pas soldée — supprimer le trajet la ferait disparaître.
         if (bidRepository.existsByAnnouncementIdAndStatusIn(
@@ -1783,6 +1799,11 @@ public class AnnouncementService {
 
         announcement.softDelete();
         announcementRepository.save(announcement);
+
+        // FLUTTER-FC : sans cet événement, le cache trips-summary gardait le trajet supprimé
+        // dans « Trajets actifs » jusqu'au TTL. Il nettoie aussi les suggestions de rematch
+        // qui proposaient ce trajet, comme pour la branche CANCELLED.
+        eventPublisher.publishEvent(new AnnouncementDeletedEvent(id, user.getId()));
 
         auditService.log("ANNOUNCEMENT", user.getId(), "ANNOUNCEMENT_DELETED", id,
                 Map.of("departureCity", announcement.getDepartureCity(),

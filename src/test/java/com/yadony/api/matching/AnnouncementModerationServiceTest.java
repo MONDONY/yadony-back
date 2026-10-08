@@ -82,6 +82,9 @@ class AnnouncementModerationServiceTest {
         assertThat(payloadCaptor.getValue())
                 .containsEntry("publicReason", "SUSPECTED_FRAUD")
                 .containsEntry("internalNote", "signalé par Awa Ndiaye, ticket #4821");
+        // FLUTTER-FC : le trajet quitte « Trajets actifs » → cache trips-summary vidé.
+        verify(eventPublisher).publishEvent(
+                new com.yadony.api.matching.events.TripActivityChangedEvent(ANN_ID, OWNER_ID));
     }
 
     @Test
@@ -204,12 +207,11 @@ class AnnouncementModerationServiceTest {
 
         // BidRejectedEvent publié pour les deux — RefundProcessor no-op proprement pour
         // NEGOTIATING (aucun PaymentEntity encore créé), mais l'expéditeur est notifié.
-        ArgumentCaptor<BidRejectedEvent> eventCaptor = ArgumentCaptor.forClass(BidRejectedEvent.class);
-        verify(eventPublisher, times(2)).publishEvent(eventCaptor.capture());
-        assertThat(eventCaptor.getAllValues())
+        List<BidRejectedEvent> rejected = publishedBidRejectedEvents(3);
+        assertThat(rejected)
                 .extracting(BidRejectedEvent::getBidId)
                 .containsExactlyInAnyOrder(awaitingPaymentBidId, negotiatingBidId);
-        assertThat(eventCaptor.getAllValues())
+        assertThat(rejected)
                 .allSatisfy(e -> assertThat(e.isRematchEligible()).isFalse());
     }
 
@@ -234,9 +236,9 @@ class AnnouncementModerationServiceTest {
 
         service.removeByAdmin(ANN_ID, ADMIN_ID, AnnouncementRemovalReason.SUSPECTED_FRAUD, "note interne");
 
-        ArgumentCaptor<BidRejectedEvent> eventCaptor = ArgumentCaptor.forClass(BidRejectedEvent.class);
-        verify(eventPublisher).publishEvent(eventCaptor.capture());
-        BidRejectedEvent published = eventCaptor.getValue();
+        List<BidRejectedEvent> rejected = publishedBidRejectedEvents(2);
+        assertThat(rejected).hasSize(1);
+        BidRejectedEvent published = rejected.get(0);
         assertThat(published.getBidId()).isEqualTo(escrowedBidId);
         assertThat(published.getSenderId()).isEqualTo(escrowedSenderId);
         assertThat(published.getReason()).isEqualTo(BidEntity.REJECTION_ANNOUNCEMENT_DELETED);
@@ -275,6 +277,8 @@ class AnnouncementModerationServiceTest {
         assertThat(result.getStatus()).isEqualTo(AnnouncementStatus.ACTIVE);
         verify(auditService).log(eq("ANNOUNCEMENT"), eq(ANN_ID),
                 eq("ANNOUNCEMENT_RESTORED_BY_ADMIN"), eq(ADMIN_ID), anyMap());
+        verify(eventPublisher).publishEvent(
+                new com.yadony.api.matching.events.TripActivityChangedEvent(ANN_ID, OWNER_ID));
     }
 
     @Test
@@ -362,5 +366,15 @@ class AnnouncementModerationServiceTest {
         }
         f.setAccessible(true);
         f.set(obj, value);
+    }
+
+    /** BidRejectedEvent publiés, parmi {@code total} événements (dont TripActivityChangedEvent). */
+    private List<BidRejectedEvent> publishedBidRejectedEvents(int total) {
+        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
+        verify(eventPublisher, times(total)).publishEvent(captor.capture());
+        return captor.getAllValues().stream()
+                .filter(BidRejectedEvent.class::isInstance)
+                .map(BidRejectedEvent.class::cast)
+                .toList();
     }
 }

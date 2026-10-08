@@ -1843,6 +1843,27 @@ class AnnouncementServiceTest {
             assertThat(a.getDeletedAt()).isNotNull();
             verify(announcementRepository).save(a);
             verify(auditService).log(eq("ANNOUNCEMENT"), any(), eq("ANNOUNCEMENT_DELETED"), any(), any());
+            // FLUTTER-FC : vide le cache trips-summary (« Trajets actifs »).
+            verify(eventPublisher).publishEvent(
+                    new com.yadony.api.matching.events.AnnouncementDeletedEvent(ANNOUNCEMENT_ID, traveler.getId()));
+        }
+
+        @Test
+        @DisplayName("FLUTTER-F9 — offre acceptée en attente de paiement sur ce trajet → 409, rien supprimé")
+        void delete_activeWithOfferAwaitingPayment_throws409() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity a = buildAnnouncement(traveler);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(negotiationThreadRepository.existsAwaitingPaymentByTravelerAnnouncementId(ANNOUNCEMENT_ID))
+                    .thenReturn(true);
+
+            assertYadonyError(() -> announcementService.deleteAnnouncement(ANNOUNCEMENT_ID, FIREBASE_UID),
+                    "offer-accepted-awaiting-payment");
+
+            assertThat(a.getDeletedAt()).isNull();
+            verify(announcementRepository, never()).save(any());
+            verify(eventPublisher, never()).publishEvent(any());
         }
 
         @Test
@@ -1918,15 +1939,19 @@ class AnnouncementServiceTest {
             verify(bidRepository).save(negotiatingBid);
             assertThat(a.getDeletedAt()).isNotNull();
 
-            ArgumentCaptor<com.yadony.api.matching.events.BidRejectedEvent> captor =
-                    ArgumentCaptor.forClass(com.yadony.api.matching.events.BidRejectedEvent.class);
-            verify(eventPublisher, times(2)).publishEvent(captor.capture());
-            assertThat(captor.getAllValues())
+            // 2 BidRejectedEvent + 1 AnnouncementDeletedEvent (FLUTTER-FC, éviction du cache).
+            ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
+            verify(eventPublisher, times(3)).publishEvent(captor.capture());
+            List<com.yadony.api.matching.events.BidRejectedEvent> rejected = captor.getAllValues().stream()
+                    .filter(com.yadony.api.matching.events.BidRejectedEvent.class::isInstance)
+                    .map(com.yadony.api.matching.events.BidRejectedEvent.class::cast)
+                    .toList();
+            assertThat(rejected)
                     .extracting(com.yadony.api.matching.events.BidRejectedEvent::getBidId)
                     .containsExactlyInAnyOrder(awaitingPaymentBidId, negotiatingBidId);
             // rematchEligible=true ici (voyageur qui supprime son propre trajet), contrairement
             // à removeByAdmin (décision de modération).
-            assertThat(captor.getAllValues())
+            assertThat(rejected)
                     .allSatisfy(e -> assertThat(e.isRematchEligible()).isTrue());
         }
 
@@ -3138,6 +3163,9 @@ class AnnouncementServiceTest {
             verify(announcementRepository).findByIdForUpdate(active.getId());
             verify(auditService).log(eq("ANNOUNCEMENT"), eq(active.getId()),
                     eq("UNPUBLISHED"), eq(user.getId()), anyMap());
+            // FLUTTER-FC : le trajet quitte « Trajets actifs » → cache trips-summary vidé.
+            verify(eventPublisher).publishEvent(new com.yadony.api.matching.events.TripActivityChangedEvent(
+                    active.getId(), active.getTravelerId()));
         }
 
         @Test
@@ -3839,6 +3867,26 @@ class AnnouncementServiceTest {
                 a != null && a.getStatus() == AnnouncementStatus.COMPLETED));
         verify(bidRepository).existsByAnnouncementIdAndStatusIn(eq(ANNOUNCEMENT_ID),
                 argThat(statuses -> statuses.contains(BidStatus.ARRIVED)));
+    }
+
+    @Test
+    @DisplayName("FLUTTER-FC — départ sans colis → COMPLETED + événement d'éviction de trips-summary")
+    void triggerInProgressTransitions_noBids_completesAndPublishesActivityChange() {
+        UserEntity traveler = buildTraveler();
+        AnnouncementEntity announcement = buildAnnouncement(traveler);
+        announcement.setStatus(AnnouncementStatus.ACTIVE);
+        announcement.setDepartureDate(LocalDate.now().minusDays(1));
+
+        when(announcementRepository.findActiveOrFullDepartingOnOrBefore(any()))
+                .thenReturn(List.of(announcement));
+        when(bidRepository.existsByAnnouncementIdAndStatusIn(eq(ANNOUNCEMENT_ID), anyList()))
+                .thenReturn(false);
+
+        announcementService.triggerInProgressTransitions();
+
+        assertThat(announcement.getStatus()).isEqualTo(AnnouncementStatus.COMPLETED);
+        verify(eventPublisher).publishEvent(new com.yadony.api.matching.events.TripActivityChangedEvent(
+                ANNOUNCEMENT_ID, announcement.getTravelerId()));
     }
 
     // ─── Drapeau « négociable » (Task 8) ────────────────────────────────────
