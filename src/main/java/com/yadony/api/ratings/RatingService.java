@@ -318,7 +318,8 @@ public class RatingService {
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.UNAUTHORIZED, "unauthorized", "Unauthorized", "Utilisateur introuvable"));
 
-        Optional<BidEntity> maybeBid = bidRepository.findPendingRatingForUser(caller.getId());
+        Optional<BidEntity> maybeBid = bidRepository.findPendingRatingForUser(
+                caller.getId(), LocalDateTime.now(ZoneOffset.UTC).minusDays(RATING_WINDOW_DAYS));
         if (maybeBid.isEmpty()) return Optional.empty();
 
         BidEntity bid = maybeBid.get();

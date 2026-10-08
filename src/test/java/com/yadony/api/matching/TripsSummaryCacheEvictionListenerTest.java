@@ -1,6 +1,8 @@
 package com.yadony.api.matching;
 
+import com.yadony.api.cancellation.events.TripCancelledEvent;
 import com.yadony.api.matching.events.AnnouncementDeletedEvent;
+import com.yadony.api.matching.events.TripActivityChangedEvent;
 import com.yadony.api.payments.events.PaymentReleasedEvent;
 import com.yadony.api.tracking.events.DeliveryConfirmedEvent;
 import org.junit.jupiter.api.DisplayName;
@@ -10,6 +12,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.UUID;
 
 import static org.mockito.Mockito.verify;
@@ -66,6 +69,29 @@ class TripsSummaryCacheEvictionListenerTest {
 
         listener.onAnnouncementDeleted(
                 new AnnouncementDeletedEvent(UUID.randomUUID(), traveler));
+
+        verify(tripsSummaryService).evictSummary(traveler);
+    }
+
+    @Test
+    @DisplayName("FLUTTER-FC — trajet annulé → invalide le résumé du voyageur")
+    void tripCancelled_evictsTravelerSummary() {
+        var listener = new TripsSummaryCacheEvictionListener(tripsSummaryService);
+        UUID traveler = UUID.randomUUID();
+
+        listener.onTripCancelled(new TripCancelledEvent(
+                UUID.randomUUID(), traveler, List.of(), "TRAVELER_CANCEL", List.of()));
+
+        verify(tripsSummaryService).evictSummary(traveler);
+    }
+
+    @Test
+    @DisplayName("FLUTTER-FC — trajet qui entre ou sort des actifs → invalide le résumé")
+    void tripActivityChanged_evictsTravelerSummary() {
+        var listener = new TripsSummaryCacheEvictionListener(tripsSummaryService);
+        UUID traveler = UUID.randomUUID();
+
+        listener.onTripActivityChanged(new TripActivityChangedEvent(UUID.randomUUID(), traveler));
 
         verify(tripsSummaryService).evictSummary(traveler);
     }

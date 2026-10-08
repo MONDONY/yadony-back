@@ -463,12 +463,15 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
     );
 
     // Retourne le bid COMPLETED le plus récent pour lequel userId n'a pas encore noté
-    // (en tant qu'expéditeur OU voyageur via la jointure avec announcements)
+    // (en tant qu'expéditeur OU voyageur via la jointure avec announcements).
+    // windowStart : borne de la fenêtre de notation, sur la même référence (updated_at) que
+    // RatingService. Sans elle, la pop-up proposait un envoi déjà hors délai (FLUTTER-F1).
     @Query(nativeQuery = true, value = """
         SELECT b.* FROM bids b
         JOIN announcements a ON b.announcement_id = a.id
         WHERE b.status = 'COMPLETED'
           AND b.deleted_at IS NULL
+          AND b.updated_at >= :windowStart
           AND (b.sender_id = :userId OR a.traveler_id = :userId)
           AND NOT EXISTS (
               SELECT 1 FROM ratings r
@@ -479,7 +482,8 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
         ORDER BY b.updated_at DESC
         LIMIT 1
         """)
-    Optional<BidEntity> findPendingRatingForUser(@Param("userId") UUID userId);
+    Optional<BidEntity> findPendingRatingForUser(@Param("userId") UUID userId,
+                                                @Param("windowStart") LocalDateTime windowStart);
 
     /**
      * Counts completed deliveries for a given sender.

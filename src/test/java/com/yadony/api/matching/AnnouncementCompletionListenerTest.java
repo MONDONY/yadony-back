@@ -2,6 +2,7 @@ package com.yadony.api.matching;
 
 import com.yadony.api.common.AuditService;
 import com.yadony.api.matching.events.ParcelRefusedEvent;
+import com.yadony.api.matching.events.TripActivityChangedEvent;
 import com.yadony.api.matching.events.VoyageurNoShowEvent;
 import com.yadony.api.tracking.events.DeliveryConfirmedEvent;
 import org.junit.jupiter.api.BeforeEach;
@@ -11,6 +12,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 
 import java.lang.reflect.Field;
 import java.util.List;
@@ -33,6 +35,7 @@ class AnnouncementCompletionListenerTest {
     @Mock private BidRepository bidRepository;
     @Mock private AnnouncementRepository announcementRepository;
     @Mock private AuditService auditService;
+    @Mock private ApplicationEventPublisher eventPublisher;
 
     private AnnouncementCompletionListener listener;
 
@@ -43,7 +46,7 @@ class AnnouncementCompletionListenerTest {
     @BeforeEach
     void setUp() {
         listener = new AnnouncementCompletionListener(
-                bidRepository, announcementRepository, auditService);
+                bidRepository, announcementRepository, auditService, eventPublisher);
     }
 
     private static void setId(Object entity, UUID id) {
@@ -127,6 +130,8 @@ class AnnouncementCompletionListenerTest {
                 captor.capture());
         assertThat(captor.getValue()).containsEntry("previousStatus", "ACTIVE");
         assertThat(captor.getValue()).containsEntry("lastDeliveredBidId", bidId.toString());
+        // FLUTTER-FC : le trajet quitte « Trajets actifs » → cache trips-summary vidé.
+        verify(eventPublisher).publishEvent(new TripActivityChangedEvent(announcementId, travelerId));
     }
 
     @Test
@@ -201,6 +206,7 @@ class AnnouncementCompletionListenerTest {
         verify(announcementRepository, never()).save(any());
         verify(auditService, never()).log(any(), any(), any(), any(), any());
         verify(bidRepository, never()).existsByAnnouncementIdAndStatusIn(any(), any());
+        verify(eventPublisher, never()).publishEvent(any());
     }
 
     @Test

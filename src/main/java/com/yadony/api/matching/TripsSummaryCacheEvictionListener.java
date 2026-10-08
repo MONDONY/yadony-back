@@ -1,6 +1,8 @@
 package com.yadony.api.matching;
 
+import com.yadony.api.cancellation.events.TripCancelledEvent;
 import com.yadony.api.matching.events.AnnouncementDeletedEvent;
+import com.yadony.api.matching.events.TripActivityChangedEvent;
 import com.yadony.api.payments.events.PaymentReleasedEvent;
 import com.yadony.api.tracking.events.DeliveryConfirmedEvent;
 import org.springframework.stereotype.Component;
@@ -61,6 +63,25 @@ public class TripsSummaryCacheEvictionListener {
     /** Symétrique : un trajet supprimé fait baisser {@code activeTrips}. */
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onAnnouncementDeleted(AnnouncementDeletedEvent event) {
+        tripsSummaryService.evictSummary(event.travelerId());
+    }
+
+    /**
+     * Un trajet annulé quitte {@code activeTrips} (FLUTTER-FC) : sans cette éviction,
+     * « Trajets actifs » gardait le trajet annulé pendant tout le TTL du cache.
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void onTripCancelled(TripCancelledEvent event) {
+        tripsSummaryService.evictSummary(event.getTravelerId());
+    }
+
+    /**
+     * Dépublication, retrait / restauration par la modération, clôture automatique :
+     * autant de passages qui font varier {@code activeTrips} sans création, suppression
+     * ni annulation.
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void onTripActivityChanged(TripActivityChangedEvent event) {
         tripsSummaryService.evictSummary(event.travelerId());
     }
 }
