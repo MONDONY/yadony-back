@@ -44,6 +44,9 @@ class NotificationPrefsServiceTest {
         assertThat(result.pushMessages()).isTrue();
         assertThat(result.pushTripReminder()).isTrue();
         assertThat(result.pushPromo()).isFalse();
+        assertThat(result.pushMissedCalls()).isTrue();
+        assertThat(result.pushTravelerAutomations()).isTrue();
+        assertThat(result.pushRemindersTips()).isTrue();
     }
 
     @Test
@@ -136,10 +139,123 @@ class NotificationPrefsServiceTest {
         assertThat(service.isAllowed(USER_ID, "NEW_MESSAGE")).isFalse();
     }
 
+    /**
+     * FLUTTER-GB (d) : l'interrupteur de pushTripReminder a quitté l'application. Un
+     * utilisateur qui l'avait coupé ne doit plus être privé de « Bon voyage » sans recours.
+     */
     @Test
-    void isAllowed_tripReminder_withPrefDisabled_returnsFalse() {
+    void isAllowed_tripInProgress_ignoresTheHiddenTripReminderPref() {
         when(repository.findById(USER_ID)).thenReturn(Optional.of(buildEntity(true, true, true, false, false)));
+        assertThat(service.isAllowed(USER_ID, "TRIP_IN_PROGRESS")).isTrue();
+    }
+
+    @Test
+    void isAllowed_remindersTipsFamily_followsRemindersTipsPref() {
+        NotificationPrefsEntity e = buildEntity(true, true, true, true, false);
+        e.setPushRemindersTips(false);
+        when(repository.findById(USER_ID)).thenReturn(Optional.of(e));
         assertThat(service.isAllowed(USER_ID, "TRIP_IN_PROGRESS")).isFalse();
+        assertThat(service.isAllowed(USER_ID, "FIRST_ACTION_REMINDER")).isFalse();
+    }
+
+    @Test
+    void isAllowed_missedCall_followsMissedCallsPref() {
+        NotificationPrefsEntity e = buildEntity(true, true, true, true, false);
+        e.setPushMissedCalls(false);
+        when(repository.findById(USER_ID)).thenReturn(Optional.of(e));
+        assertThat(service.isAllowed(USER_ID, "CALL_MISSED")).isFalse();
+        assertThat(service.isAllowed(USER_ID, "NEW_MESSAGE")).isTrue();
+    }
+
+    @Test
+    void isAllowed_travelerAutomations_followAutomationsPref() {
+        NotificationPrefsEntity e = buildEntity(true, true, true, true, false);
+        e.setPushTravelerAutomations(false);
+        when(repository.findById(USER_ID)).thenReturn(Optional.of(e));
+        for (String type : new String[]{"automation_capacity_free", "automation_loyal_sender",
+                "automation_last_minute"}) {
+            assertThat(service.isAllowed(USER_ID, type)).as(type).isFalse();
+        }
+    }
+
+    @Test
+    void isAllowed_newFamilies_allowedWhenPrefsEnabled() {
+        when(repository.findById(USER_ID)).thenReturn(Optional.of(buildEntity(true, true, true, true, false)));
+        for (String type : new String[]{"CALL_MISSED", "automation_last_minute", "FIRST_ACTION_REMINDER"}) {
+            assertThat(service.isAllowed(USER_ID, type)).as(type).isTrue();
+        }
+    }
+
+    @Test
+    void isAllowed_remainingNegotiationTypes_followNegotiationsPref() {
+        when(repository.findById(USER_ID)).thenReturn(Optional.of(buildEntity(true, false, true, true, false)));
+        for (String type : new String[]{"negotiation_trip_changed", "negotiation_commission_pending",
+                "negotiation_commission_declined", "negotiation_commission_expired",
+                "negotiation_deposit_pending", "negotiation_deposit_reverted",
+                "bid_negotiation_message", "bid_negotiation_expired"}) {
+            assertThat(service.isAllowed(USER_ID, type)).as(type).isFalse();
+        }
+    }
+
+    @Test
+    void isAllowed_tripArrivedAndRemovals_followBidsPref() {
+        when(repository.findById(USER_ID)).thenReturn(Optional.of(buildEntity(false, true, true, true, false)));
+        for (String type : new String[]{"TRIP_ARRIVED", "PACKAGE_REQUEST_REMOVED",
+                "RECIPIENT_INVITATION_REMOVED"}) {
+            assertThat(service.isAllowed(USER_ID, type)).as(type).isFalse();
+        }
+    }
+
+    /** FLUTTER-GB (c) : argent, identité, litiges et modération ne se coupent pas. */
+    @Test
+    void isAllowed_alwaysOnTypes_ignoreEveryPref() {
+        for (String type : new String[]{"CARD_EXPIRING", "wallet_topup_confirmed", "WALLET_ADJUSTED",
+                "STRIPE_ONBOARDING_INCOMPLETE", "KYC_VERIFIED", "KYC_ACTION_REQUIRED", "KYC_RESET",
+                "DISPUTE_UPDATED", "DISPUTE_RESOLVED", "SENDER_NOSHOW_REPORTED", "NOSHOW_DECISION",
+                "ADMIN_BROADCAST", "SYSTEM", "ADMIN_WARNING", "MESSAGING_MUTED", "ACCOUNT_SUSPENDED",
+                "REPORT_RESOLVED", "ANNOUNCEMENT_REMOVED", "HANDOVER_REMINDER_H2", "TRIP_RESCHEDULED"}) {
+            assertThat(service.isAllowed(USER_ID, type)).as(type).isTrue();
+        }
+        verifyNoInteractions(repository);
+    }
+
+    /** Une application antérieure à V305 n'envoie pas les trois nouveaux champs : inchangés. */
+    @Test
+    void upsert_legacySixFieldPayload_keepsTheNewPrefsUntouched() {
+        NotificationPrefsEntity existing = buildEntity(true, true, true, true, false);
+        existing.setPushMissedCalls(false);
+        existing.setPushTravelerAutomations(false);
+        existing.setPushRemindersTips(false);
+        when(repository.findById(USER_ID)).thenReturn(Optional.of(existing));
+        service.upsert(FIREBASE_UID, new NotificationPrefsDto(true, true, true, true, false, true));
+        ArgumentCaptor<NotificationPrefsEntity> captor = ArgumentCaptor.forClass(NotificationPrefsEntity.class);
+        verify(repository).save(captor.capture());
+        assertThat(captor.getValue().isPushMissedCalls()).isFalse();
+        assertThat(captor.getValue().isPushTravelerAutomations()).isFalse();
+        assertThat(captor.getValue().isPushRemindersTips()).isFalse();
+    }
+
+    @Test
+    void upsert_newFields_areStored() {
+        when(repository.findById(USER_ID)).thenReturn(Optional.empty());
+        service.upsert(FIREBASE_UID,
+                new NotificationPrefsDto(true, true, true, true, false, true, false, false, false));
+        ArgumentCaptor<NotificationPrefsEntity> captor = ArgumentCaptor.forClass(NotificationPrefsEntity.class);
+        verify(repository).save(captor.capture());
+        assertThat(captor.getValue().isPushMissedCalls()).isFalse();
+        assertThat(captor.getValue().isPushTravelerAutomations()).isFalse();
+        assertThat(captor.getValue().isPushRemindersTips()).isFalse();
+    }
+
+    @Test
+    void getPrefs_returnsTheNewFields() {
+        NotificationPrefsEntity e = buildEntity(true, true, true, true, false);
+        e.setPushMissedCalls(false);
+        when(repository.findById(USER_ID)).thenReturn(Optional.of(e));
+        NotificationPrefsDto result = service.getPrefs(FIREBASE_UID);
+        assertThat(result.pushMissedCalls()).isFalse();
+        assertThat(result.pushTravelerAutomations()).isTrue();
+        assertThat(result.pushRemindersTips()).isTrue();
     }
 
     /**

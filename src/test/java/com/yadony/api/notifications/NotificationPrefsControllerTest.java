@@ -21,6 +21,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.verify;
@@ -69,7 +70,46 @@ class NotificationPrefsControllerTest {
                 .andExpect(jsonPath("$.pushActivityNegotiations").value(true))
                 .andExpect(jsonPath("$.pushMessages").value(true))
                 .andExpect(jsonPath("$.pushTripReminder").value(true))
-                .andExpect(jsonPath("$.pushPromo").value(false));
+                .andExpect(jsonPath("$.pushPromo").value(false))
+                .andExpect(jsonPath("$.pushMissedCalls").value(true))
+                .andExpect(jsonPath("$.pushTravelerAutomations").value(true))
+                .andExpect(jsonPath("$.pushRemindersTips").value(true));
+    }
+
+    /** Ancienne application : six champs seulement, les trois nouveaux arrivent à null. */
+    @Test
+    void updatePreferences_legacyPayload_deserializesNewFieldsAsNull() throws Exception {
+        String legacy = "{\"pushActivityBids\":true,\"pushActivityNegotiations\":true,"
+                + "\"pushMessages\":true,\"pushTripReminder\":false,\"pushPromo\":false,"
+                + "\"pushCorridorAlerts\":true}";
+        mockMvc.perform(put("/notifications/preferences")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(legacy)
+                        .with(authentication(asUser())))
+                .andExpect(status().isNoContent());
+
+        verify(notificationPrefsService).upsert(eq(FIREBASE_UID), argThat(dto ->
+                dto.pushMissedCalls() == null
+                        && dto.pushTravelerAutomations() == null
+                        && dto.pushRemindersTips() == null));
+    }
+
+    @Test
+    void updatePreferences_newFields_reachTheService() throws Exception {
+        String body = "{\"pushActivityBids\":true,\"pushActivityNegotiations\":true,"
+                + "\"pushMessages\":true,\"pushTripReminder\":true,\"pushPromo\":false,"
+                + "\"pushCorridorAlerts\":true,\"pushMissedCalls\":false,"
+                + "\"pushTravelerAutomations\":false,\"pushRemindersTips\":false}";
+        mockMvc.perform(put("/notifications/preferences")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body)
+                        .with(authentication(asUser())))
+                .andExpect(status().isNoContent());
+
+        verify(notificationPrefsService).upsert(eq(FIREBASE_UID), argThat(dto ->
+                Boolean.FALSE.equals(dto.pushMissedCalls())
+                        && Boolean.FALSE.equals(dto.pushTravelerAutomations())
+                        && Boolean.FALSE.equals(dto.pushRemindersTips())));
     }
 
     @Test
