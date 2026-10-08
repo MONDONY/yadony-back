@@ -54,7 +54,11 @@ stripe:
 
 app:
   encryption:
-    key: yadony-e2e-encryption-key-not-for-production-use-32-bytes
+    # Même clé que application-test.yml : le converter JPA lit l'EncryptionService
+    # dans un champ statique (EncryptionSupport) partagé par tous les contextes Spring
+    # d'un fork. Une clé différente ici faisait relire avec la mauvaise clé les lignes
+    # chiffrées laissées dans H2 par le profil test (CI instable, « Tag mismatch »).
+    key: yadony-test-encryption-key-not-for-production-use-32-bytes
   places:
     api-key: test-places-key
     allowed-countries: SN,CI,ML,CM
