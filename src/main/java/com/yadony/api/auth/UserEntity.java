@@ -113,6 +113,7 @@ public class UserEntity extends BaseEntity {
      * {@code yadony.recette.enabled} est faux, et toujours sous le profil prod : voir
      * {@link com.yadony.api.common.RecetteMode}. Modifiable par un administrateur seulement.
      */
+    @org.hibernate.annotations.ColumnDefault("false")
     @Column(name = "recette_tester", nullable = false)
     private boolean recetteTester = false;
 
