@@ -6,6 +6,7 @@ import com.stripe.exception.StripeException;
 import com.stripe.model.BalanceTransaction;
 import com.stripe.model.Charge;
 import com.stripe.model.PaymentIntent;
+import com.stripe.net.RequestOptions;
 import com.stripe.param.PaymentIntentRetrieveParams;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import org.slf4j.Logger;
@@ -39,9 +40,32 @@ public class StripeFeeSource {
 
     private static final Logger log = LoggerFactory.getLogger(StripeFeeSource.class);
 
+    /**
+     * Frais réels lus. Le frais d'une charge passée ne change plus : une heure de rétention
+     * relançait, chaque heure, un appel Stripe par recharge carte de l'historique à chaque
+     * affichage du portefeuille.
+     */
     private final Cache<String, BigDecimal> cache = Caffeine.newBuilder()
-            .expireAfterWrite(Duration.ofHours(1))
+            .expireAfterWrite(Duration.ofHours(24))
+            .maximumSize(20_000)
+            .build();
+
+    /**
+     * Échecs récents, pour l'affichage seulement ({@link #feeForDisplay}) : Stripe lent ou
+     * injoignable n'est pas réinterrogé recharge par recharge à chaque ouverture de l'écran.
+     */
+    private final Cache<String, Boolean> recentDisplayFailures = Caffeine.newBuilder()
+            .expireAfterWrite(Duration.ofMinutes(2))
             .maximumSize(5_000)
+            .build();
+
+    /**
+     * Délais de l'affichage : sans eux, le SDK attend jusqu'à 30 s pour se connecter et 80 s
+     * pour lire, et l'écran portefeuille avec lui. Le repli configuré prend le relais.
+     */
+    private static final RequestOptions DISPLAY_OPTIONS = RequestOptions.builder()
+            .setConnectTimeout(2_000)
+            .setReadTimeout(5_000)
             .build();
 
     private final BigDecimal fallbackPercent;
@@ -55,6 +79,27 @@ public class StripeFeeSource {
     }
 
     public BigDecimal fee(String paymentIntentId, String currency) {
+        return lookup(paymentIntentId, currency, null);
+    }
+
+    /**
+     * Variante de l'affichage du portefeuille : délais courts, et un échec récent n'est pas
+     * retenté pendant deux minutes (repli configuré à la place). Le chemin d'un remboursement
+     * réel ({@link #fee}) garde ses délais et retente à chaque fois.
+     */
+    public BigDecimal feeForDisplay(String paymentIntentId, String currency) {
+        String cacheKey = paymentIntentId + "|" + currency;
+        if (recentDisplayFailures.getIfPresent(cacheKey) != null) {
+            return cache.getIfPresent(cacheKey);
+        }
+        BigDecimal fee = lookup(paymentIntentId, currency, DISPLAY_OPTIONS);
+        if (fee == null) {
+            recentDisplayFailures.put(cacheKey, Boolean.TRUE);
+        }
+        return fee;
+    }
+
+    private BigDecimal lookup(String paymentIntentId, String currency, RequestOptions options) {
         String cacheKey = paymentIntentId + "|" + currency;
         BigDecimal cached = cache.getIfPresent(cacheKey);
         if (cached != null) {
@@ -64,7 +109,7 @@ public class StripeFeeSource {
         try {
             PaymentIntent pi = PaymentIntent.retrieve(paymentIntentId,
                     PaymentIntentRetrieveParams.builder().addExpand("latest_charge.balance_transaction").build(),
-                    null);
+                    options);
             Charge charge = pi.getLatestChargeObject();
             BalanceTransaction balanceTransaction = charge != null ? charge.getBalanceTransactionObject() : null;
             if (balanceTransaction != null && balanceTransaction.getFee() != null

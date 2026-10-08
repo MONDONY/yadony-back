@@ -68,6 +68,7 @@ class WalletSelfRefundServiceTest {
     @Mock PawapayFeeTable pawapayFeeTable;
     @Mock WalletRefundRailIssuer walletRefundRailIssuer;
     @Mock EntityManager entityManager;
+    @Mock org.springframework.transaction.PlatformTransactionManager transactionManager;
 
     WalletSelfRefundService service;
 
@@ -79,7 +80,7 @@ class WalletSelfRefundServiceTest {
                 refundRequestRepository, refundRequestItemRepository, walletService,
                 auditService, adminAlertService, adminAlertEscalator, new ObjectMapper(),
                 walletRefundRequestService, eventPublisher, pawapayOperationRepository,
-                stripeFeeSource, pawapayFeeTable, walletRefundRailIssuer, entityManager);
+                stripeFeeSource, pawapayFeeTable, walletRefundRailIssuer, entityManager, transactionManager);
         // Repli neutre : la plupart des scénarios ne testent pas le calcul de frais lui-même
         // (déjà couvert par WalletRefundAllocatorTest), seulement le branchement canal/montant
         // net. lenient() : tous les tests n'atteignent pas forcément une recharge intacte (la
@@ -178,6 +179,34 @@ class WalletSelfRefundServiceTest {
 
         assertThat(a.refundableTotal()).isEqualByComparingTo("35.00");
         assertThat(a.refundable().get(0).paymentIntentId()).isEqualTo("pi_1");
+    }
+
+    @Test
+    void allocationForDisplay_memeRejeu_fraisStripeLusEnModeAffichage_lectureEnTransactionReadOnly() {
+        WalletTransactionEntity topup = ledgerTx(WalletTransactionType.TOP_UP, "40.00", "pi_1");
+        stubLedger("35.00", topup, ledgerTx(WalletTransactionType.BID_PAYMENT, "-5.00", null));
+        lenient().when(stripeFeeSource.feeForDisplay(any(), any())).thenReturn(BigDecimal.ZERO);
+
+        WalletRefundAllocation a = service.allocationForDisplay(USER_ID, "EUR");
+
+        assertThat(a.refundableTotal()).isEqualByComparingTo("35.00");
+        assertThat(a.refundable().get(0).paymentIntentId()).isEqualTo("pi_1");
+        // Le rejeu de l'écran n'emprunte jamais le chemin strict du remboursement réel.
+        verify(stripeFeeSource, never()).fee(any(), any());
+        // Données lues dans une seule transaction en lecture seule, refermée avant le rejeu.
+        ArgumentCaptor<org.springframework.transaction.TransactionDefinition> definition =
+                ArgumentCaptor.forClass(org.springframework.transaction.TransactionDefinition.class);
+        verify(transactionManager).getTransaction(definition.capture());
+        assertThat(definition.getValue().isReadOnly()).isTrue();
+        verify(transactionManager).commit(any());
+    }
+
+    @Test
+    void allocationForDisplay_sansPortefeuille_allocationVide() {
+        when(walletAccountRepository.findByUserIdAndCurrency(USER_ID, "XOF")).thenReturn(Optional.empty());
+
+        assertThat(service.allocationForDisplay(USER_ID, "XOF").refundableTotal()).isEqualByComparingTo("0");
+        verifyNoInteractions(walletTransactionRepository);
     }
 
     @Test
