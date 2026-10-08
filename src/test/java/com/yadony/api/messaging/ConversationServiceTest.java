@@ -50,7 +50,9 @@ class ConversationServiceTest {
     void setUp() {
         lenient().when(storageService.avatarUrl(any())).thenAnswer(inv -> inv.getArgument(0));
         service = new ConversationService(conversationRepository, firestoreService, userRepository, auditService,
-                bidRepository, announcementRepository, storageService, blockVisibility, callAvailability);
+                bidRepository, announcementRepository, storageService, blockVisibility, callAvailability,
+                org.mockito.Mockito.mock(ConversationMediaPolicy.class),
+                org.mockito.Mockito.mock(MessagingImageRetentionService.class));
 
         UserEntity sender   = mockUser(senderId,   "Alice", "Martin", "uid-sender");
         UserEntity traveler = mockUser(travelerId, "Bob",   "Dupont", "uid-traveler");

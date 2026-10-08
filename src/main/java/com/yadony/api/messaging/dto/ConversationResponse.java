@@ -34,8 +34,25 @@ public record ConversationResponse(
         // Sourdine propre à l'appelant (FLUTTER-CM) : plus de push pour ce fil, non-lus
         // toujours comptés. Jamais exposé à l'autre participant. Absent chez un ancien back :
         // l'app retombe sur false.
-        boolean notificationsMuted
+        boolean notificationsMuted,
+        // Photos permises maintenant (FLUTTER-B4, ConversationMediaPolicy) : bid accepté et
+        // payé, jusqu'à livraison + 3 jours. Absent chez un ancien back : l'app retombe sur
+        // false (trombone masqué/grisé).
+        boolean mediaAllowed
 ) {
+    /** Forme d'avant les photos (FLUTTER-B4) : photos non permises. */
+    public ConversationResponse(UUID id, UUID bidId, String firestoreConversationId,
+                                ParticipantDTO otherParticipant, String lastMessagePreview,
+                                LocalDateTime lastMessageAt, boolean hasUnread, String tripOrigin,
+                                String tripDestination, String tripDate, Double tripWeightKg,
+                                String bidStatus, boolean readOnly, boolean deletedBySelf,
+                                String kind, String viewerRole, boolean callAvailable,
+                                boolean notificationsMuted) {
+        this(id, bidId, firestoreConversationId, otherParticipant, lastMessagePreview, lastMessageAt,
+                hasUnread, tripOrigin, tripDestination, tripDate, tripWeightKg, bidStatus, readOnly,
+                deletedBySelf, kind, viewerRole, callAvailable, notificationsMuted, false);
+    }
+
     /** Forme d'avant la sourdine (FLUTTER-CM) : non mise en sourdine. */
     public ConversationResponse(UUID id, UUID bidId, String firestoreConversationId,
                                 ParticipantDTO otherParticipant, String lastMessagePreview,

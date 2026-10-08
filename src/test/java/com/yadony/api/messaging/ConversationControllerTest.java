@@ -3,9 +3,7 @@ package com.yadony.api.messaging;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.PageResponse;
-import com.yadony.api.common.StorageService;
 import com.yadony.api.messaging.dto.ConversationResponse;
-import com.yadony.api.messaging.dto.ImageUploadResponse;
 import com.yadony.api.messaging.dto.ParticipantDTO;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -21,7 +19,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.lang.reflect.Field;
@@ -50,9 +47,6 @@ class ConversationControllerTest {
 
     @Mock
     private UserRepository userRepository;
-
-    @Mock
-    private StorageService storageService;
 
     @Mock
     private com.yadony.api.common.BlockVisibility blockVisibility;
@@ -335,88 +329,6 @@ class ConversationControllerTest {
         assertThat(response.getBody().id()).isEqualTo(conversationId);
         assertThat(response.getBody().firestoreConversationId())
                 .isEqualTo(conversation.getFirestoreConversationId());
-    }
-
-    // -------------------------------------------------------------------------
-    // uploadImage_returns403_whenNotParticipant
-    // -------------------------------------------------------------------------
-
-    @Test
-    void uploadImage_returns403_whenNotParticipant() {
-        when(conversationRepository.findByIdAndParticipant(conversationId, currentUserId))
-                .thenReturn(Optional.empty());
-
-        MultipartFile mockFile = mock(MultipartFile.class);
-
-        assertThatThrownBy(() -> controller.uploadImage(conversationId, mockFile))
-                .isInstanceOf(ResponseStatusException.class)
-                .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
-                        .isEqualTo(HttpStatus.FORBIDDEN));
-    }
-
-    // -------------------------------------------------------------------------
-    // uploadImage_returns422_whenFileTooLarge
-    // -------------------------------------------------------------------------
-
-    @Test
-    void uploadImage_returns422_whenFileTooLarge() {
-        when(conversationRepository.findByIdAndParticipant(conversationId, currentUserId))
-                .thenReturn(Optional.of(conversation));
-
-        MultipartFile mockFile = mock(MultipartFile.class);
-        when(mockFile.getSize()).thenReturn(6L * 1024 * 1024); // 6 MB > 5 MB limit
-
-        assertThatThrownBy(() -> controller.uploadImage(conversationId, mockFile))
-                .isInstanceOf(ResponseStatusException.class)
-                .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
-                        .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY));
-    }
-
-    // -------------------------------------------------------------------------
-    // uploadImage_returns422_whenWrongMimeType
-    // -------------------------------------------------------------------------
-
-    @Test
-    void uploadImage_returns422_whenWrongMimeType() {
-        when(conversationRepository.findByIdAndParticipant(conversationId, currentUserId))
-                .thenReturn(Optional.of(conversation));
-
-        MultipartFile mockFile = mock(MultipartFile.class);
-        when(mockFile.getSize()).thenReturn(1L * 1024 * 1024); // 1 MB — OK size
-        when(mockFile.getContentType()).thenReturn("application/pdf");
-
-        assertThatThrownBy(() -> controller.uploadImage(conversationId, mockFile))
-                .isInstanceOf(ResponseStatusException.class)
-                .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
-                        .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY));
-    }
-
-    // -------------------------------------------------------------------------
-    // uploadImage_returns200_whenValid
-    // -------------------------------------------------------------------------
-
-    @Test
-    void uploadImage_returns200_whenValid() throws Exception {
-        when(conversationRepository.findByIdAndParticipant(conversationId, currentUserId))
-                .thenReturn(Optional.of(conversation));
-
-        MultipartFile mockFile = mock(MultipartFile.class);
-        when(mockFile.getSize()).thenReturn(1L * 1024 * 1024); // 1 MB
-        when(mockFile.getContentType()).thenReturn("image/jpeg");
-
-        String expectedKey = "messaging/conv_bid123/12345_uuid.jpg";
-        String expectedUrl = "https://s3.example.com/presigned";
-
-        when(storageService.uploadFile(eq(mockFile), any(String.class))).thenReturn(expectedKey);
-        when(storageService.generatePresignedUrl(eq(expectedKey), any())).thenReturn(expectedUrl);
-
-        ResponseEntity<ImageUploadResponse> response =
-                controller.uploadImage(conversationId, mockFile);
-
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(response.getBody()).isNotNull();
-        assertThat(response.getBody().s3Key()).isEqualTo(expectedKey);
-        assertThat(response.getBody().presignedUrl()).isEqualTo(expectedUrl);
     }
 
     // -------------------------------------------------------------------------

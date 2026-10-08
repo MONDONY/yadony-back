@@ -78,6 +78,62 @@ public class FirestoreService {
         }
     }
 
+    /** Préfixe d'aperçu du dernier message pour une photo (liste des conversations). */
+    public static final String IMAGE_PREVIEW = "\uD83D\uDCF7 Photo";
+
+    /**
+     * Écrit un message photo (FLUTTER-B4). Seul le serveur écrit ce type : les règles
+     * Firestore l'interdisent aux clients. Mêmes champs qu'un message texte, plus les clés
+     * R2 ; {@code body} est nul (pas de légende). L'identifiant du document est fixé par
+     * l'appelant, qui l'a déjà utilisé pour nommer les objets R2.
+     *
+     * @throws IllegalStateException si Firestore est désactivé : une photo qui n'arriverait
+     *         jamais doit échouer, pas réussir en silence
+     */
+    public void addImageMessage(String conversationId, String messageId, String senderFirebaseUid,
+                                String imageKey, String thumbKey, String imageUrl,
+                                @Nullable String replyToId) {
+        if (firestore == null) {
+            throw new IllegalStateException("Firestore disabled — cannot add image message");
+        }
+        Map<String, Object> msg = new HashMap<>();
+        msg.put("senderId", senderFirebaseUid);
+        msg.put("body", null);
+        msg.put("type", "IMAGE");
+        msg.put("imageKey", imageKey);
+        msg.put("thumbKey", thumbKey);
+        msg.put("imageUrl", imageUrl);
+        msg.put("sentAt", Instant.now().toString());
+        msg.put("readAt", null);
+        if (replyToId != null) {
+            msg.put("replyToId", replyToId);
+        }
+        try {
+            firestore.collection("conversations").document(conversationId)
+                     .collection("messages").document(messageId).set(msg).get();
+        } catch (Exception e) {
+            throw new RuntimeException("Firestore addImageMessage failed", e);
+        }
+    }
+
+    /**
+     * Signale à l'app qu'une photo a été purgée ({@code imageExpired: true}) : elle affiche
+     * « Photo expirée » sans requête. Meilleur effort : l'endpoint de lecture répond 410 de
+     * toute façon.
+     */
+    public void markImageExpired(String conversationId, String messageId) {
+        if (firestore == null) {
+            return;
+        }
+        try {
+            firestore.collection("conversations").document(conversationId)
+                     .collection("messages").document(messageId)
+                     .update("imageExpired", true).get();
+        } catch (Exception e) {
+            log.warn("Firestore markImageExpired failed for {}/{}: {}", conversationId, messageId, e.getMessage());
+        }
+    }
+
     /** Messages d'une conversation, ordonnés par date d'envoi (lecture admin). */
     public java.util.List<Map<String, Object>> listMessages(String conversationId) {
         if (firestore == null) {

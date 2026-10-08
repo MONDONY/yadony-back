@@ -50,7 +50,9 @@ class ConversationServiceRecipientKindTest {
     @BeforeEach
     void setUp() {
         service = new ConversationService(conversationRepository, firestoreService, userRepository, auditService,
-                bidRepository, announcementRepository, storageService, blockVisibility, callAvailability);
+                bidRepository, announcementRepository, storageService, blockVisibility, callAvailability,
+                org.mockito.Mockito.mock(ConversationMediaPolicy.class),
+                org.mockito.Mockito.mock(MessagingImageRetentionService.class));
         UserEntity recipient = user("uid-recipient", "Fatou D.");
         UserEntity traveler = user("uid-traveler", "Moussa K.");
         lenient().when(userRepository.findById(recipientId)).thenReturn(Optional.of(recipient));

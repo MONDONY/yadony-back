@@ -41,6 +41,8 @@ public class ConversationService {
     private final StorageService storageService;
     private final BlockVisibility blockVisibility;
     private final CallAvailability callAvailability;
+    private final ConversationMediaPolicy mediaPolicy;
+    private final MessagingImageRetentionService imageRetention;
 
     /** Statuts où un appel peut être permis ; la fenêtre exacte (J+3 après livraison) reste à calls/. */
     private static final java.util.Set<BidStatus> CALL_CANDIDATE_STATUSES = java.util.EnumSet.of(
@@ -54,7 +56,9 @@ public class ConversationService {
                                 AnnouncementRepository announcementRepository,
                                 StorageService storageService,
                                 BlockVisibility blockVisibility,
-                                CallAvailability callAvailability) {
+                                CallAvailability callAvailability,
+                                ConversationMediaPolicy mediaPolicy,
+                                MessagingImageRetentionService imageRetention) {
         this.conversationRepository = conversationRepository;
         this.firestoreService = firestoreService;
         this.userRepository = userRepository;
@@ -64,6 +68,8 @@ public class ConversationService {
         this.storageService = storageService;
         this.blockVisibility = blockVisibility;
         this.callAvailability = callAvailability;
+        this.mediaPolicy = mediaPolicy;
+        this.imageRetention = imageRetention;
     }
 
     @Transactional
@@ -245,6 +251,13 @@ public class ConversationService {
 
         // Les deux parties ont supprimé → purge définitive
         if (conv.getSenderDeletedAt() != null && conv.getTravelerDeletedAt() != null) {
+            // Photos (FLUTTER-B4) : purge immédiate des objets R2, sauf litige ou
+            // signalement ouvert — elles suivent alors l'échéance normale.
+            try {
+                imageRetention.purgeConversation(conv, requestingUserId);
+            } catch (Exception e) {
+                log.warn("Purge des photos en échec pour {}: {}", conversationId, e.getMessage());
+            }
             conversationRepository.delete(conv);
             auditService.log("conversation", conversationId, "CONVERSATION_PURGED", requestingUserId,
                 Map.of("firestoreId", conv.getFirestoreConversationId()));
@@ -408,7 +421,7 @@ public class ConversationService {
         String bidStatus       = null;
         boolean revealPhone    = false;
 
-        Optional<BidEntity> bidOpt = bidRepository.findById(conv.getBidId());
+        Optional<BidEntity> bidOpt = conv.getBidId() == null ? Optional.empty() : bidRepository.findById(conv.getBidId());
         if (bidOpt.isPresent()) {
             BidEntity bid = bidOpt.get();
             tripWeightKg = bid.getWeightKg() != null ? bid.getWeightKg().doubleValue() : null;
@@ -454,8 +467,25 @@ public class ConversationService {
             !conv.isRecipientConversation() ? null
                     : currentUserId.equals(conv.getTravelerId()) ? "TRAVELER" : "RECIPIENT",
             callAvailable(conv, currentUserId, bidOpt.map(BidEntity::getStatus).orElse(null)),
-            conv.isNotificationsMutedBy(currentUserId)
+            conv.isNotificationsMutedBy(currentUserId),
+            mediaAllowed(conv, currentUserId, bidOpt.orElse(null))
         );
+    }
+
+    /**
+     * Photos permises maintenant (FLUTTER-B4, {@link ConversationMediaPolicy}). Comme
+     * l'appel : un échec de calcul masque la fonction, il ne casse jamais l'affichage.
+     */
+    private boolean mediaAllowed(ConversationEntity conv, UUID currentUserId, BidEntity bid) {
+        if (bid == null || !CALL_CANDIDATE_STATUSES.contains(bid.getStatus())) {
+            return false;
+        }
+        try {
+            return mediaPolicy.check(conv, currentUserId, bid.getStatus(), bid.getDeliveredAt(), null).isEmpty();
+        } catch (Exception e) {
+            log.warn("mediaAllowed indisponible pour {} : {}", conv.getId(), e.toString());
+            return false;
+        }
     }
 
     /** Le bouton d'appel ne doit jamais casser l'affichage d'une conversation : en cas d'échec, pas de bouton. */

@@ -253,4 +253,100 @@ class FirestoreServiceTest {
 
         assertThat(new FirestoreService(firestore).findMessage("conv_1", "msg_1")).isEmpty();
     }
+
+    // ── FLUTTER-B4 : message photo écrit par le serveur ─────────────────────────
+
+    @Test
+    void addImageMessage_throws_whenFirestoreIsNull() {
+        var service = new FirestoreService(null);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.addImageMessage(
+                "conv_1", "msg1", "uid", "k", "t", "u", null))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void addImageMessage_writesExactFields_underFixedDocumentId() {
+        Firestore firestore = mock(Firestore.class);
+        CollectionReference conversations = mock(CollectionReference.class);
+        DocumentReference conversation = mock(DocumentReference.class);
+        CollectionReference messages = mock(CollectionReference.class);
+        DocumentReference message = mock(DocumentReference.class);
+        when(firestore.collection("conversations")).thenReturn(conversations);
+        when(conversations.document("conv_1")).thenReturn(conversation);
+        when(conversation.collection("messages")).thenReturn(messages);
+        when(messages.document("Msg123")).thenReturn(message);
+        when(message.set(anyMap())).thenReturn(ApiFutures.immediateFuture(mock(WriteResult.class)));
+
+        new FirestoreService(firestore).addImageMessage("conv_1", "Msg123", "fbUid42",
+                "messaging/conv_1/Msg123_full.jpg", "messaging/conv_1/Msg123_thumb.jpg",
+                "https://api.example/api/v1/conversations/c/messages/Msg123/image", "Reply9");
+
+        ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+        verify(message).set(captor.capture());
+        Map<String, Object> written = captor.getValue();
+        assertThat(written).containsOnlyKeys("senderId", "body", "type", "imageKey", "thumbKey", "imageUrl",
+                "sentAt", "readAt", "replyToId");
+        assertThat(written.get("senderId")).isEqualTo("fbUid42");
+        assertThat(written.get("body")).isNull();
+        assertThat(written.get("type")).isEqualTo("IMAGE");
+        assertThat(written.get("imageKey")).isEqualTo("messaging/conv_1/Msg123_full.jpg");
+        assertThat(written.get("thumbKey")).isEqualTo("messaging/conv_1/Msg123_thumb.jpg");
+        assertThat(written.get("imageUrl"))
+                .isEqualTo("https://api.example/api/v1/conversations/c/messages/Msg123/image");
+        assertThat(written.get("readAt")).isNull();
+        assertThat(written.get("replyToId")).isEqualTo("Reply9");
+        assertThat(Instant.parse((String) written.get("sentAt"))).isNotNull();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void addImageMessage_omitsReplyToId_whenAbsent_andWrapsFailures() {
+        Firestore firestore = mock(Firestore.class);
+        CollectionReference conversations = mock(CollectionReference.class);
+        DocumentReference conversation = mock(DocumentReference.class);
+        CollectionReference messages = mock(CollectionReference.class);
+        DocumentReference message = mock(DocumentReference.class);
+        when(firestore.collection("conversations")).thenReturn(conversations);
+        when(conversations.document("conv_1")).thenReturn(conversation);
+        when(conversation.collection("messages")).thenReturn(messages);
+        when(messages.document("Msg123")).thenReturn(message);
+        when(message.set(anyMap()))
+                .thenReturn(ApiFutures.immediateFuture(mock(WriteResult.class)))
+                .thenReturn(ApiFutures.immediateFailedFuture(new RuntimeException("down")));
+        var service = new FirestoreService(firestore);
+
+        service.addImageMessage("conv_1", "Msg123", "uid", "k", "t", "u", null);
+        ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+        verify(message).set(captor.capture());
+        assertThat(captor.getValue()).doesNotContainKey("replyToId");
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                service.addImageMessage("conv_1", "Msg123", "uid", "k", "t", "u", null))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("addImageMessage");
+    }
+
+    @Test
+    void markImageExpired_setsFlag_andNeverThrows() {
+        Firestore firestore = mock(Firestore.class);
+        CollectionReference conversations = mock(CollectionReference.class);
+        DocumentReference conversation = mock(DocumentReference.class);
+        CollectionReference messages = mock(CollectionReference.class);
+        DocumentReference message = mock(DocumentReference.class);
+        when(firestore.collection("conversations")).thenReturn(conversations);
+        when(conversations.document("conv_1")).thenReturn(conversation);
+        when(conversation.collection("messages")).thenReturn(messages);
+        when(messages.document("Msg123")).thenReturn(message);
+        when(message.update("imageExpired", true))
+                .thenReturn(ApiFutures.immediateFuture(mock(WriteResult.class)))
+                .thenReturn(ApiFutures.immediateFailedFuture(new RuntimeException("no doc")));
+        var service = new FirestoreService(firestore);
+
+        service.markImageExpired("conv_1", "Msg123");
+        service.markImageExpired("conv_1", "Msg123");
+        new FirestoreService(null).markImageExpired("conv_1", "Msg123");
+
+        verify(message, org.mockito.Mockito.times(2)).update("imageExpired", true);
+    }
 }
