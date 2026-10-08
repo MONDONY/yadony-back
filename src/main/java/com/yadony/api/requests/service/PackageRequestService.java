@@ -1131,7 +1131,12 @@ public class PackageRequestService {
             availablePaymentMethods,
             // Converti joint par getById (withConvertedPrice), qui connaît le lecteur.
             null, null,
-            e.getStatus() == PackageRequestStatus.REMOVED_BY_ADMIN
+            e.getStatus() == PackageRequestStatus.REMOVED_BY_ADMIN,
+            // Fiabilité de l'expéditeur : servie au voyageur qui juge la demande, pas au
+            // propriétaire (sa liste « Mes demandes » n'en a pas l'usage).
+            isOwner ? null : userRepository.findById(e.getSenderId())
+                .map(com.yadony.api.auth.UserEntity::senderReliabilityIncidentCount)
+                .orElse(null)
         );
     }
 

@@ -158,6 +158,13 @@ public class UserEntity extends BaseEntity {
     @Column(name = "sender_handover_incident_count", nullable = false)
     private int senderHandoverIncidentCount = 0;
 
+    // Annulations d'un colis par l'expéditeur APRÈS acceptation du voyageur, avant remise
+    // (FLUTTER-E0/E6). Les annulations après remise et les absences confirmées restent
+    // dans senderHandoverIncidentCount ; le public voit la somme des deux.
+    @org.hibernate.annotations.ColumnDefault("0")
+    @Column(name = "sender_cancellation_count", nullable = false)
+    private int senderCancellationCount = 0;
+
     // Suspension de publication de trajets (D4) — décidée par l'admin, n'impacte
     // pas le login. Distincte de UserStatus.SUSPENDED.
     @org.hibernate.annotations.ColumnDefault("false")
@@ -441,6 +448,17 @@ public class UserEntity extends BaseEntity {
 
     public int getSenderHandoverIncidentCount() { return senderHandoverIncidentCount; }
     public void setSenderHandoverIncidentCount(int senderHandoverIncidentCount) { this.senderHandoverIncidentCount = senderHandoverIncidentCount; }
+
+    public int getSenderCancellationCount() { return senderCancellationCount; }
+    public void setSenderCancellationCount(int senderCancellationCount) { this.senderCancellationCount = senderCancellationCount; }
+
+    /**
+     * Fiabilité expéditeur montrée aux voyageurs : annulations après acceptation (avant
+     * ou après remise) et absences au rendez-vous de remise confirmées.
+     */
+    public int senderReliabilityIncidentCount() {
+        return senderCancellationCount + senderHandoverIncidentCount;
+    }
 
     public boolean isPublishingSuspended() { return publishingSuspended; }
     public void setPublishingSuspended(boolean publishingSuspended) { this.publishingSuspended = publishingSuspended; }

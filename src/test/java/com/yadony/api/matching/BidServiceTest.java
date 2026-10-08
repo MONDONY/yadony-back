@@ -2137,6 +2137,30 @@ class BidServiceTest {
         }
 
         @Test
+        @DisplayName("cancelBid publie BidCancelledByParticipantEvent avec le statut d'avant annulation (FLUTTER-E4)")
+        void cancelBid_publishesParticipantEvent_withPreviousStatus() {
+            UserEntity sender = buildSender();
+            BidEntity bid = buildBid();
+            bid.setStatus(BidStatus.ACCEPTED);
+
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
+            when(bidRepository.save(any())).thenReturn(bid);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(
+                    Optional.of(buildAnnouncement()));
+
+            bidService.cancelBid(BID_ID, SENDER_UID);
+
+            ArgumentCaptor<com.yadony.api.matching.events.BidCancelledByParticipantEvent> captor =
+                    ArgumentCaptor.forClass(com.yadony.api.matching.events.BidCancelledByParticipantEvent.class);
+            verify(eventPublisher).publishEvent(captor.capture());
+            assertThat(captor.getValue().bidId()).isEqualTo(BID_ID);
+            assertThat(captor.getValue().actorId()).isEqualTo(sender.getId());
+            assertThat(captor.getValue().byTraveler()).isFalse();
+            assertThat(captor.getValue().previousStatus()).isEqualTo(BidStatus.ACCEPTED);
+        }
+
+        @Test
         @DisplayName("bid ACCEPTED annulé → kg restitués à l'annonce")
         void cancelBid_acceptedBid_restoresKg() {
             UserEntity sender = buildSender();

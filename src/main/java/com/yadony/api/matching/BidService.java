@@ -26,6 +26,7 @@ import com.yadony.api.matching.events.BidAcceptedEvent;
 import com.yadony.api.matching.events.BidCreatedEvent;
 import com.yadony.api.matching.events.CashBidCreatedEvent;
 import com.yadony.api.matching.events.BidRejectedEvent;
+import com.yadony.api.matching.events.BidCancelledByParticipantEvent;
 import com.yadony.api.cancellation.CancellationEntity;
 import com.yadony.api.cancellation.CancellationReason;
 import com.yadony.api.cancellation.CancellationRepository;
@@ -1061,6 +1062,11 @@ public class BidService {
         eventPublisher.publishEvent(new BidRejectedEvent(
                 bid.getId(), bid.getSenderId(), reason,
                 bid.getAnnouncementId(), rematchEligible));
+        // Fiabilité (FLUTTER-E4/E0/E6) : décidée côté cancellation/, qui a besoin du statut
+        // d'avant l'annulation, connu de cette seule transaction.
+        eventPublisher.publishEvent(new BidCancelledByParticipantEvent(
+                bid.getId(), bid.getAnnouncementId(), caller.getId(), isTraveler,
+                statusBeforeCancel, bid.getPaymentMethod()));
 
         UserEntity senderUser = isSender
                 ? caller
@@ -1661,7 +1667,8 @@ public class BidService {
                 recipientDeclined,
                 replacementRequestedAt(recipientLink),
                 ContactWindow.isOpen(bid.getStatus(), bid.getDeliveredAt(), contactGraceDays,
-                        LocalDateTime.now(ZoneOffset.UTC))
+                        LocalDateTime.now(ZoneOffset.UTC)),
+                sender != null ? sender.senderReliabilityIncidentCount() : null
         );
     }
 
