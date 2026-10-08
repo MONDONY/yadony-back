@@ -108,7 +108,7 @@ public class CancellationService {
         announcementRepository.save(announcement);
 
         List<CancellationEntity> cancellations =
-                cancelOpenBidsAndPublish(announcement, traveler.getId(), request.reason(), true);
+                cancelOpenBidsAndPublish(announcement, traveler.getId(), request.reason());
 
         // Track cancellation count on traveler profile for reputation penalty
         traveler.setCancellationCount(traveler.getCancellationCount() + 1);
@@ -168,11 +168,8 @@ public class CancellationService {
         announcement.setStatus(AnnouncementStatus.CANCELLED);
         announcementRepository.save(announcement);
 
-        // travelerInitiated = false : comportement inchangé, la commission espèces est rendue
-        // (le compte est de toute façon fermé, le portefeuille soldé par la suppression).
         List<CancellationEntity> cancellations = cancelOpenBidsAndPublish(
-                announcement, announcement.getTravelerId(), CancellationReason.TRAVELER_ACCOUNT_DELETED.name(),
-                false);
+                announcement, announcement.getTravelerId(), CancellationReason.TRAVELER_ACCOUNT_DELETED.name());
 
         auditService.log("ANNOUNCEMENT", announcementId, "TRIP_CANCELLED", announcement.getTravelerId(),
                 Map.of("reason", CancellationReason.TRAVELER_ACCOUNT_DELETED.name(),
@@ -187,7 +184,7 @@ public class CancellationService {
      * basculée à CANCELLED par l'appelant.
      */
     private List<CancellationEntity> cancelOpenBidsAndPublish(
-            AnnouncementEntity announcement, UUID actorId, String reason, boolean travelerInitiated) {
+            AnnouncementEntity announcement, UUID actorId, String reason) {
         // Cancel ALL in-progress bids on this trip (not just ACCEPTED) so each
         // sender's bid reflects the cancelled trip — sinon un bid PENDING /
         // PAYMENT_ESCROWED gardait son statut partout. Set « actif » canonique
@@ -244,8 +241,7 @@ public class CancellationService {
 
         eventPublisher.publishEvent(new TripCancelledEvent(
                 announcement.getId(), announcement.getTravelerId(), affectedSenderIds, reason,
-                affectedBidIds, bidPaymentMethods, bidCommissionChargedVia, rematchInfo,
-                travelerInitiated));
+                affectedBidIds, bidPaymentMethods, bidCommissionChargedVia, rematchInfo));
 
         return cancellations;
     }
@@ -637,8 +633,7 @@ public class CancellationService {
                 bid.getAnnouncementId(),
                 announcement != null ? announcement.getTravelerId() : null,
                 List.of(bid.getSenderId()), reason.name(),
-                List.of(bidId), bidPaymentMethods, bidCommissionChargedVia, Map.of(),
-                actor == CancellationActor.TRAVELER));
+                List.of(bidId), bidPaymentMethods, bidCommissionChargedVia));
     }
 
     /**

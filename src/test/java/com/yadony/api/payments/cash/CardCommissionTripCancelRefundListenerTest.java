@@ -1,7 +1,6 @@
 package com.yadony.api.payments.cash;
 
 import com.yadony.api.cancellation.events.TripCancelledEvent;
-import com.yadony.api.common.AuditService;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -24,7 +23,6 @@ class CardCommissionTripCancelRefundListenerTest {
 
     @Mock private CashCommissionService cashCommissionService;
     @Mock private BidRepository bidRepository;
-    @Mock private AuditService auditService;
 
     private CardCommissionTripCancelRefundListener listener;
 
@@ -34,35 +32,7 @@ class CardCommissionTripCancelRefundListenerTest {
 
     @BeforeEach
     void setUp() {
-        listener = new CardCommissionTripCancelRefundListener(cashCommissionService, bidRepository, auditService);
-    }
-
-    private TripCancelledEvent travelerEvent() {
-        return new TripCancelledEvent(
-                announcementId, travelerId, List.of(), "Imprévu personnel",
-                List.of(bidId), Map.of(bidId, "CASH"), Map.of(bidId, "CARD"), Map.of(), true);
-    }
-
-    @Test
-    void retainsCommissionWhenTravelerCancels() {
-        when(bidRepository.findById(bidId)).thenReturn(Optional.of(chargedCashBid()));
-
-        listener.onTripCancelled(travelerEvent());
-
-        verify(cashCommissionService, never()).refundCommission(any());
-        verify(auditService).log("payment", bidId, "COMMISSION_RETAINED_TRAVELER_CANCEL", travelerId,
-                Map.of("reason", "Imprévu personnel", "commissionChargedVia", "CARD"));
-    }
-
-    @Test
-    void travelerCancelWithUnchargedCommissionDoesNothing() {
-        BidEntity bid = chargedCashBid();
-        bid.setCommissionStatus(CommissionStatus.REFUNDED);
-        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
-
-        listener.onTripCancelled(travelerEvent());
-
-        verifyNoInteractions(cashCommissionService, auditService);
+        listener = new CardCommissionTripCancelRefundListener(cashCommissionService, bidRepository);
     }
 
     private TripCancelledEvent event(String paymentMethod, String chargedVia) {
@@ -80,6 +50,18 @@ class CardCommissionTripCancelRefundListenerTest {
         bid.setCommissionStatus(CommissionStatus.CHARGED);
         bid.setCommissionChargedVia(CommissionChargedVia.CARD);
         return bid;
+    }
+
+    /** Annulation à l'initiative du voyageur (après remise) : sa commission lui est rendue. */
+    @Test
+    void refundsWhenTravelerCancelsAfterHandover() {
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(chargedCashBid()));
+
+        listener.onTripCancelled(new TripCancelledEvent(
+                announcementId, travelerId, List.of(), "TRAVELER_CANCEL_AFTER_HANDOVER",
+                List.of(bidId), Map.of(bidId, "CASH"), Map.of(bidId, "CARD")));
+
+        verify(cashCommissionService).refundCommission(any());
     }
 
     @Test

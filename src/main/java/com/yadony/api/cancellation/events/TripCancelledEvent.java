@@ -24,12 +24,6 @@ public class TripCancelledEvent {
     /** Suggestions rematch par expéditeur (Story 5.6). Clé = senderId. */
     public record RematchBySenderInfo(UUID cancellationId, int suggestionCount) {}
     private final Map<UUID, RematchBySenderInfo> rematchBySender;
-    /**
-     * L'annulation est le fait du voyageur (trajet annulé par lui, colis rendu après remise
-     * à son initiative). Sa commission espèces ne lui est alors pas rendue (FLUTTER-E4) ;
-     * le remboursement de l'expéditeur, lui, ne dépend jamais de ce drapeau.
-     */
-    private final boolean travelerInitiated;
 
     /** Full constructor. */
     public TripCancelledEvent(UUID announcementId, UUID travelerId,
@@ -37,8 +31,7 @@ public class TripCancelledEvent {
                                List<UUID> affectedBidIds,
                                Map<UUID, String> bidPaymentMethods,
                                Map<UUID, String> bidCommissionChargedVia,
-                               Map<UUID, RematchBySenderInfo> rematchBySender,
-                               boolean travelerInitiated) {
+                               Map<UUID, RematchBySenderInfo> rematchBySender) {
         this.announcementId = announcementId;
         this.travelerId = travelerId;
         this.affectedSenderIds = affectedSenderIds;
@@ -47,18 +40,6 @@ public class TripCancelledEvent {
         this.bidPaymentMethods = bidPaymentMethods != null ? bidPaymentMethods : Map.of();
         this.bidCommissionChargedVia = bidCommissionChargedVia != null ? bidCommissionChargedVia : Map.of();
         this.rematchBySender = rematchBySender != null ? rematchBySender : Map.of();
-        this.travelerInitiated = travelerInitiated;
-    }
-
-    /** Annulation qui n'est pas le fait du voyageur — travelerInitiated = false. */
-    public TripCancelledEvent(UUID announcementId, UUID travelerId,
-                               List<UUID> affectedSenderIds, String reason,
-                               List<UUID> affectedBidIds,
-                               Map<UUID, String> bidPaymentMethods,
-                               Map<UUID, String> bidCommissionChargedVia,
-                               Map<UUID, RematchBySenderInfo> rematchBySender) {
-        this(announcementId, travelerId, affectedSenderIds, reason, affectedBidIds, bidPaymentMethods,
-                bidCommissionChargedVia, rematchBySender, false);
     }
 
     /** Backward-compatible constructor — rematchBySender defaults to empty map. */
@@ -93,5 +74,4 @@ public class TripCancelledEvent {
     public Map<UUID, String> getBidPaymentMethods() { return bidPaymentMethods; }
     public Map<UUID, String> getBidCommissionChargedVia() { return bidCommissionChargedVia; }
     public Map<UUID, RematchBySenderInfo> getRematchBySender() { return rematchBySender; }
-    public boolean isTravelerInitiated() { return travelerInitiated; }
 }
