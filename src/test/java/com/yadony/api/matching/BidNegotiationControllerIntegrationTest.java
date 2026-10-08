@@ -52,6 +52,7 @@ class BidNegotiationControllerIntegrationTest {
 
     private static final UUID ANNOUNCEMENT_ID = UUID.randomUUID();
     private static final UUID BID_ID = UUID.randomUUID();
+    private static final UUID COUNTERPARTY_ID = UUID.randomUUID();
 
     private static UsernamePasswordAuthenticationToken authenticatedAs(String uid, String role) {
         return new UsernamePasswordAuthenticationToken(
@@ -65,7 +66,8 @@ class BidNegotiationControllerIntegrationTest {
                 new BigDecimal("45.00"), null, new BigDecimal("2.14"), new BigDecimal("26.25"),
                 new BigDecimal("5.0"), "Vêtements", "CLOTHING",
                 List.of(), List.of(), List.of(), "Moussa D.", "Paris", "Dakar",
-                LocalDate.now().plusDays(10), LocalDateTime.now().plusHours(72), List.of(), "CASH");
+                LocalDate.now().plusDays(10), LocalDateTime.now().plusHours(72), List.of(), "CASH",
+                COUNTERPARTY_ID);
     }
 
     private static BidNegotiationStartRequest startRequest(BigDecimal proposed) {
@@ -178,7 +180,8 @@ class BidNegotiationControllerIntegrationTest {
         mockMvc.perform(get("/bids/" + BID_ID + "/negotiation")
                         .with(authentication(authenticatedAs("uid-sender", "ROLE_SENDER"))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.announcementId").value(ANNOUNCEMENT_ID.toString()));
+                .andExpect(jsonPath("$.announcementId").value(ANNOUNCEMENT_ID.toString()))
+                .andExpect(jsonPath("$.counterpartyId").value(COUNTERPARTY_ID.toString()));
     }
 
     @Test

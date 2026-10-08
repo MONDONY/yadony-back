@@ -1036,6 +1036,10 @@ class BidNegotiationServiceTest {
 
             assertThat(travelerView.role()).isEqualTo("TRAVELER");
             assertThat(senderView.role()).isEqualTo("SENDER");
+
+            // FLUTTER-G8 : chacun reçoit l'identifiant de l'AUTRE, pour ouvrir son profil.
+            assertThat(travelerView.counterpartyId()).isEqualTo(SENDER_ID);
+            assertThat(senderView.counterpartyId()).isEqualTo(TRAVELER_ID);
         }
 
         /**

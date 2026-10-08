@@ -779,7 +779,8 @@ public class BidNegotiationService {
                 announcement.getDepartureDate(),
                 expiresAt(bid, last, open),
                 messages,
-                bid.getPaymentMethod() != null ? bid.getPaymentMethod().name() : null);
+                bid.getPaymentMethod() != null ? bid.getPaymentMethod().name() : null,
+                viewerIsTraveler ? bid.getSenderId() : announcement.getTravelerId());
     }
 
     /**
