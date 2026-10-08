@@ -617,6 +617,7 @@ public class AnnouncementService {
         if (request.refusedTypes() != null)
             announcement.setRefusedTypes(ContentCategoryNormalizer.normalizeList(request.refusedTypes()));
         announcement.setAcceptedPaymentMethods(paymentMethods);
+        announcement.setCardDeclined(declinesCard(request.acceptedPaymentMethods(), user, currency));
         announcement.setCapacityUnit(
             request.capacityUnit() != null ? request.capacityUnit() : CapacityUnit.SUITCASE_23KG
         );
@@ -1146,6 +1147,8 @@ public class AnnouncementService {
                 assertStripeCapability(user, updatedMethods);
             }
             announcement.setAcceptedPaymentMethods(updatedMethods);
+            announcement.setCardDeclined(declinesCard(
+                    request.acceptedPaymentMethods(), user, announcement.getCurrency()));
         }
         if (request.capacityUnit() != null) {
             announcement.setCapacityUnit(request.capacityUnit());
@@ -2069,7 +2072,9 @@ public class AnnouncementService {
         int updated = 0;
         for (AnnouncementEntity announcement : announcementRepository.findActiveByTravelerId(travelerId)) {
             Set<PaymentMethod> current = announcement.getAcceptedPaymentMethods();
-            if (current.contains(PaymentMethod.STRIPE)) {
+            // Carte décochée par le voyageur alors qu'il pouvait l'offrir (FLUTTER-FT) : un
+            // nouvel onboarding (compte restreint puis rétabli) ne la lui réimpose pas.
+            if (current.contains(PaymentMethod.STRIPE) || announcement.isCardDeclined()) {
                 continue;
             }
             Set<PaymentMethod> withCard = EnumSet.of(PaymentMethod.STRIPE);
@@ -2111,8 +2116,15 @@ public class AnnouncementService {
                     "Wave et Orange Money ne sont plus proposés. Le mobile money passe par le compte "
                     + "de versement du voyageur.");
         }
+        // Liste explicitement vide : au moins un moyen de paiement doit rester actif
+        // (FLUTTER-FT, la carte devient décochable). Absente (null) = défaut historique.
+        if (requested != null && requested.isEmpty()) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "payment-method-required", "Payment Method Required",
+                    "Choisissez au moins un moyen de paiement pour ce trajet.");
+        }
         Set<PaymentMethod> chosen;
-        if (requested == null || requested.isEmpty()) {
+        if (requested == null) {
             // Défaut aligné sur la capacité réelle : jamais STRIPE pour un
             // voyageur sans onboarding complet (le trajet serait invendable).
             chosen = traveler.hasActiveStripeConnect()
@@ -2130,6 +2142,17 @@ public class AnnouncementService {
         // 2026-09-09 : une annonce XOF acceptait la carte, et le séquestre Stripe partait en
         // euros pour un montant en francs CFA.
         return com.yadony.api.payments.currency.AnnouncementPaymentRails.restrictToCurrency(chosen, currency);
+    }
+
+    /**
+     * Refus explicite de la carte (FLUTTER-FT) : le voyageur pouvait l'offrir (Stripe Connect
+     * actif, devise qui l'autorise) et l'a décochée. Une liste absente n'est jamais un refus.
+     */
+    static boolean declinesCard(Set<PaymentMethod> requested, UserEntity traveler, String currency) {
+        return requested != null
+                && !requested.contains(PaymentMethod.STRIPE)
+                && traveler.hasActiveStripeConnect()
+                && com.yadony.api.payments.currency.CurrencyPaymentRails.allowsCode(currency, PaymentMethod.STRIPE);
     }
 
     /**

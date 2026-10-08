@@ -232,6 +232,14 @@ public class AnnouncementEntity extends BaseEntity {
     @Column(name = "accepted_payment_methods", nullable = false)
     private Set<PaymentMethod> acceptedPaymentMethods = EnumSet.of(PaymentMethod.STRIPE);
 
+    /**
+     * Le voyageur a explicitement décoché la carte alors qu'il pouvait l'offrir (FLUTTER-FT).
+     * La réouverture automatique à la carte après onboarding Stripe la respecte.
+     */
+    @Column(name = "card_declined", nullable = false)
+    @org.hibernate.annotations.ColumnDefault("false")
+    private boolean cardDeclined = false;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "capacity_unit", nullable = false, length = 20)
     private CapacityUnit capacityUnit = CapacityUnit.SUITCASE_23KG;
@@ -418,6 +426,9 @@ public class AnnouncementEntity extends BaseEntity {
     public void setStopsCount(Integer stopsCount) {
         this.stopsCount = stopsCount == null ? null : stopsCount.shortValue();
     }
+
+    public boolean isCardDeclined() { return cardDeclined; }
+    public void setCardDeclined(boolean cardDeclined) { this.cardDeclined = cardDeclined; }
 
     public String getPickupAddressLabel() { return pickupAddressLabel; }
     public void setPickupAddressLabel(String v) { this.pickupAddressLabel = v; }

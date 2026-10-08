@@ -844,6 +844,63 @@ class AnnouncementServiceTest {
         }
 
         @Test
+        @DisplayName("FLUTTER-FT : carte décochée avec Stripe Connect actif → espèces seules, refus mémorisé")
+        void createAnnouncement_cardUnchecked_isAcceptedAndRemembered() {
+            UserEntity traveler = buildTraveler();
+            traveler.setStripeAccountStatus(StripeAccountStatus.ONBOARDING_COMPLETE);
+            traveler.setKycStatus(KycStatus.VERIFIED);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            org.mockito.ArgumentCaptor<AnnouncementEntity> saved =
+                    org.mockito.ArgumentCaptor.forClass(AnnouncementEntity.class);
+            when(announcementRepository.save(saved.capture())).thenAnswer(inv -> {
+                AnnouncementEntity a = inv.getArgument(0);
+                setId(a, ANNOUNCEMENT_ID);
+                return a;
+            });
+            when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
+            when(bidRepository.countByAnnouncementIdAndStatusIn(any(), any())).thenReturn(0L);
+
+            AnnouncementResponse resp = announcementService.createAnnouncement(FIREBASE_UID,
+                    requestWithPaymentMethodsAndCurrency(java.util.EnumSet.of(PaymentMethod.CASH), "EUR"));
+
+            assertThat(resp.acceptedPaymentMethods()).containsExactly("CASH");
+            assertThat(resp.availablePaymentMethods()).containsExactly(PaymentMethod.CASH);
+            assertThat(saved.getValue().isCardDeclined()).isTrue();
+        }
+
+        @Test
+        @DisplayName("FLUTTER-FT : liste de moyens explicitement vide → 422 payment-method-required")
+        void createAnnouncement_emptyPaymentMethods_isRefused() {
+            UserEntity traveler = buildTraveler();
+            traveler.setStripeAccountStatus(StripeAccountStatus.ONBOARDING_COMPLETE);
+            traveler.setKycStatus(KycStatus.VERIFIED);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+
+            assertThatThrownBy(() -> announcementService.createAnnouncement(FIREBASE_UID,
+                    requestWithPaymentMethods(java.util.EnumSet.noneOf(PaymentMethod.class))))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .hasFieldOrPropertyWithValue("errorCode", "payment-method-required");
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("FLUTTER-FT : refus de carte seulement si le voyageur pouvait l'offrir")
+        void declinesCard_onlyWhenCardWasPossible() {
+            UserEntity connect = buildTraveler();
+            connect.setStripeAccountStatus(StripeAccountStatus.ONBOARDING_COMPLETE);
+            UserEntity noConnect = buildTraveler();
+            noConnect.setStripeAccountStatus(StripeAccountStatus.NOT_CREATED);
+            var cash = java.util.EnumSet.of(PaymentMethod.CASH);
+
+            assertThat(AnnouncementService.declinesCard(cash, connect, "EUR")).isTrue();
+            assertThat(AnnouncementService.declinesCard(
+                    java.util.EnumSet.of(PaymentMethod.STRIPE, PaymentMethod.CASH), connect, "EUR")).isFalse();
+            assertThat(AnnouncementService.declinesCard(null, connect, "EUR")).isFalse();
+            assertThat(AnnouncementService.declinesCard(cash, noConnect, "EUR")).isFalse();
+            assertThat(AnnouncementService.declinesCard(cash, connect, "XOF")).isFalse();
+        }
+
+        @Test
         @DisplayName("annonce déclarée avec Wave → 422 mobile-money-payment-retired, rien n'est enregistré")
         void resolvePaymentMethods_retiredRail_isRefusedExplicitly() {
             UserEntity traveler = buildTraveler();
@@ -4120,6 +4177,20 @@ class AnnouncementServiceTest {
                     .containsExactlyInAnyOrder(PaymentMethod.CASH, PaymentMethod.MOBILE_MONEY);
             verify(announcementRepository, never()).save(any());
             verifyNoInteractions(auditService);
+        }
+
+        @Test
+        @DisplayName("FLUTTER-FT : carte décochée par le voyageur, jamais réimposée")
+        void respecteLeRefusExpliciteDeLaCarte() {
+            UserEntity traveler = onboardedTraveler();
+            AnnouncementEntity declined = trip(traveler, "EUR", PaymentMethod.CASH);
+            declined.setCardDeclined(true);
+            when(userRepository.findById(USER_ID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.findActiveByTravelerId(USER_ID)).thenReturn(List.of(declined));
+
+            assertThat(announcementService.enableCardOnOpenAnnouncements(USER_ID)).isZero();
+            assertThat(declined.getAcceptedPaymentMethods()).containsExactly(PaymentMethod.CASH);
+            verify(announcementRepository, never()).save(any());
         }
 
         @Test
