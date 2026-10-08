@@ -16,6 +16,10 @@ import java.util.UUID;
  *        administrateur, {@code null} sans coupure en cours. Permet au client d'expliquer
  *        pourquoi l'envoi est refusé au lieu de laisser Firestore échouer en silence
  *        (FLUTTER-CT/CV). Le motif saisi par l'admin n'est jamais exposé.
+ * @param recetteMode le mode recette s'applique à ce compte (FLUTTER-FA/FB) : staging, propriété
+ *        {@code yadony.recette.enabled} vraie et compte désigné testeur par un administrateur.
+ *        L'app lève alors ses propres verrous d'affichage ; le serveur reste seul juge.
+ *        Toujours faux en production. Absent chez un ancien back : l'app retombe sur faux.
  */
 public record UserResponse(
     UUID id,
@@ -44,5 +48,21 @@ public record UserResponse(
     String residencePostalCode,
     String onboardingSeenAt,
     String preferredLanguage,
-    String messagingMutedUntil
-) {}
+    String messagingMutedUntil,
+    boolean recetteMode
+) {
+    /** Forme d'avant le mode recette (FLUTTER-FA/FB) : mode fermé. */
+    public UserResponse(UUID id, String username, String phoneNumber, String email, String firstName,
+                        String lastName, LocalDate birthDate, String city, Set<String> roles,
+                        String kycStatus, String status, int totalTrips, int totalShipments,
+                        Boolean isProAccount, StripeAccountStatus stripeAccountStatus, String country,
+                        String bio, Set<String> languages, String avatarUrl, Double averageRating,
+                        AdminInfo admin, String residenceStreet, String residenceLine2,
+                        String residencePostalCode, String onboardingSeenAt, String preferredLanguage,
+                        String messagingMutedUntil) {
+        this(id, username, phoneNumber, email, firstName, lastName, birthDate, city, roles, kycStatus,
+                status, totalTrips, totalShipments, isProAccount, stripeAccountStatus, country, bio,
+                languages, avatarUrl, averageRating, admin, residenceStreet, residenceLine2,
+                residencePostalCode, onboardingSeenAt, preferredLanguage, messagingMutedUntil, false);
+    }
+}

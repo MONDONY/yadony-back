@@ -5,6 +5,7 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.BlockVisibility;
+import com.yadony.api.common.RecetteMode;
 import com.yadony.api.common.RecipientTrust;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
@@ -69,6 +70,14 @@ public class ReceptionLinker {
         this.recipientTrust = recipientTrust;
     }
 
+    /** Mode recette (FLUTTER-FB) ; fermé tant que Spring ne l'a pas injecté. */
+    private RecetteMode recetteMode = RecetteMode.disabled();
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setRecetteMode(RecetteMode recetteMode) {
+        this.recetteMode = recetteMode;
+    }
+
     /**
      * Crée le lien PENDING et prévient le destinataire, si le colis est accepté, que son
      * numéro est international et qu'il appartient à un compte tiers non bloqué par
@@ -98,8 +107,18 @@ public class ReceptionLinker {
         UUID recipientId = recipient.get().getId();
         AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId()).orElse(null);
         UUID travelerId = announcement != null ? announcement.getTravelerId() : null;
-        if (recipientId.equals(bid.getSenderId()) || recipientId.equals(travelerId)
-                || blockVisibility.isHidden(bid.getSenderId(), recipientId)) {
+        boolean selfRecipient = recipientId.equals(bid.getSenderId());
+        if (selfRecipient) {
+            // Mode recette (FLUTTER-FB, staging seulement) : un expéditeur testeur peut être
+            // le destinataire de son propre colis, sans dépendre d'un second compte.
+            if (!recetteMode.appliesTo(recipient.get())) {
+                return Optional.empty();
+            }
+            BidRecipientLinkEntity link = saveSelf(bid, recipientId, "RECETTE_ON_ACCEPT");
+            notifyIncoming(bid, announcement, recipientId);
+            return Optional.of(link);
+        }
+        if (recipientId.equals(travelerId) || blockVisibility.isHidden(bid.getSenderId(), recipientId)) {
             return Optional.empty();
         }
 
@@ -130,6 +149,9 @@ public class ReceptionLinker {
         List<BidEntity> candidates = linkRepository.findCatchUpCandidates(
                 user.getId(), BidStatus.IN_FLIGHT, suffix);
         int created = 0;
+        if (recetteMode.appliesTo(user)) {
+            created += catchUpOwnParcels(user, key, suffix);
+        }
         for (BidEntity bid : candidates) {
             if (bid.getTrackingToken() == null
                     || !key.equals(ReceptionPhones.digitsKey(bid.getRecipientPhone()))
@@ -144,6 +166,32 @@ public class ReceptionLinker {
             created++;
         }
         return created;
+    }
+
+    /**
+     * Mode recette : colis actifs de {@code user} dont il a saisi son propre numéro comme
+     * destinataire, exclus du rattrapage normal ({@code findCatchUpCandidates}).
+     */
+    private int catchUpOwnParcels(UserEntity user, String key, String suffix) {
+        int created = 0;
+        for (BidEntity bid : linkRepository.findOwnCatchUpCandidates(user.getId(), BidStatus.IN_FLIGHT, suffix)) {
+            if (bid.getTrackingToken() == null || !key.equals(ReceptionPhones.digitsKey(bid.getRecipientPhone()))) {
+                continue;
+            }
+            saveSelf(bid, user.getId(), "RECETTE_ON_CATCH_UP");
+            created++;
+        }
+        return created;
+    }
+
+    /** Lien PENDING de l'expéditeur vers lui-même, tracé comme contournement de recette. */
+    private BidRecipientLinkEntity saveSelf(BidEntity bid, UUID senderId, String trigger) {
+        BidRecipientLinkEntity link = save(bid, senderId, "LINKED_SELF_RECETTE");
+        recetteMode.recordBypass(RecetteMode.ACTION_SELF_RECIPIENT_LINKED, bid.getId(), senderId,
+                Map.of("bidId", bid.getId().toString(), "linkId", link.getId().toString(),
+                        "trigger", trigger));
+        log.warn("Mode recette : colis {} rattaché à son propre expéditeur {}", bid.getId(), senderId);
+        return link;
     }
 
     private BidRecipientLinkEntity save(BidEntity bid, UUID recipientId, String action) {

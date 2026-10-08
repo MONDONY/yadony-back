@@ -50,6 +50,22 @@ public interface BidRecipientLinkRepository extends JpaRepository<BidRecipientLi
                                           @Param("suffix") String suffix);
 
     /**
+     * Mode recette (FLUTTER-FB) : colis actifs SANS lien dont {@code userId} est l'expéditeur.
+     * Pendant de {@link #findCatchUpCandidates}, qui les exclut ; même filtre de suffixe.
+     */
+    @Query("""
+            SELECT b FROM BidEntity b
+            WHERE b.status IN :statuses
+              AND b.recipientPhone IS NOT NULL
+              AND TRIM(b.recipientPhone) LIKE :suffix
+              AND b.senderId = :userId
+              AND NOT EXISTS (SELECT 1 FROM BidRecipientLinkEntity l WHERE l.bidId = b.id)
+            """)
+    List<BidEntity> findOwnCatchUpCandidates(@Param("userId") UUID userId,
+                                             @Param("statuses") Collection<BidStatus> statuses,
+                                             @Param("suffix") String suffix);
+
+    /**
      * Dernière demande de remplacement du destinataire faite par le voyageur depuis
      * {@code since}. Lue dans {@code audit_log}, qui fait foi : pas de colonne à tenir à
      * jour en double.

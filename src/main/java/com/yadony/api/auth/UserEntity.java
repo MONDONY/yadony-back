@@ -109,6 +109,15 @@ public class UserEntity extends BaseEntity {
     private boolean hidePhoneNumber = false;
 
     /**
+     * Compte testeur du mode recette (FLUTTER-FA/FB, V303). Sans effet tant que
+     * {@code yadony.recette.enabled} est faux, et toujours sous le profil prod : voir
+     * {@link com.yadony.api.common.RecetteMode}. Modifiable par un administrateur seulement.
+     */
+    @org.hibernate.annotations.ColumnDefault("false")
+    @Column(name = "recette_tester", nullable = false)
+    private boolean recetteTester = false;
+
+    /**
      * L'utilisateur accepte que son pays de résidence ({@link #country}, choisi à
      * l'onboarding) apparaisse sur son profil public (FLUTTER-4H). Opt-in explicite :
      * false pour tous les comptes ; le serveur n'envoie jamais le pays sinon.
@@ -426,6 +435,9 @@ public class UserEntity extends BaseEntity {
 
     public boolean isHidePhoneNumber() { return hidePhoneNumber; }
     public void setHidePhoneNumber(boolean hidePhoneNumber) { this.hidePhoneNumber = hidePhoneNumber; }
+
+    public boolean isRecetteTester() { return recetteTester; }
+    public void setRecetteTester(boolean recetteTester) { this.recetteTester = recetteTester; }
 
     public boolean isShowResidenceCountry() { return showResidenceCountry; }
     public void setShowResidenceCountry(boolean showResidenceCountry) { this.showResidenceCountry = showResidenceCountry; }

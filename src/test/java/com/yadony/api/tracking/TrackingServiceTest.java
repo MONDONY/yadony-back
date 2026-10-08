@@ -878,6 +878,73 @@ class TrackingServiceTest {
         assertRefusedBeforeDeparture(bid, status);
     }
 
+    // ── Mode recette (FLUTTER-FA) : testeur en staging ──────────────────────
+
+    private com.yadony.api.common.RecetteMode recette(boolean enabled, String... profiles) {
+        org.springframework.mock.env.MockEnvironment env = new org.springframework.mock.env.MockEnvironment();
+        env.setActiveProfiles(profiles);
+        return new com.yadony.api.common.RecetteMode(enabled, env, auditService);
+    }
+
+    private BidEntity stubConfirmDeliveryForTester(boolean tester) {
+        BidEntity bid = buildBid(BidStatus.HANDED_OVER, "qt");
+        bid.setConfirmationCode("123456");
+        bid.setConfirmationCodeAttempts(0);
+        UserEntity traveler = buildUser(travelerId, "uid-traveler");
+        traveler.setRecetteTester(tester);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(
+                buildAnnouncementDepartingIn(java.time.Duration.ofDays(5), "Europe/Paris")));
+        when(userRepository.findByFirebaseUid("uid-traveler")).thenReturn(Optional.of(traveler));
+        return bid;
+    }
+
+    @Test
+    void confirmDelivery_recetteTesteurEnStaging_livreAvantLeDepart_etTraceLeContournement() {
+        service.setRecetteMode(recette(true, "staging"));
+        BidEntity bid = stubConfirmDeliveryForTester(true);
+        when(trackingEventRepository.save(any())).thenAnswer(inv -> {
+            TrackingEventEntity e = inv.getArgument(0);
+            setId(e, UUID.randomUUID());
+            return e;
+        });
+
+        TrackingEventResponse resp = service.confirmDelivery(bidId, new ConfirmDeliveryRequest("123456"), "uid-traveler");
+
+        assertThat(resp.eventType()).isEqualTo("ARRIVEE");
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.COMPLETED);
+        verify(eventPublisher).publishEvent(any(DeliveryConfirmedEvent.class));
+        verify(auditService).log(eq("RECETTE"), eq(bidId), eq("RECETTE_DELIVERY_BEFORE_DEPARTURE"),
+                eq(travelerId), any());
+        verify(auditService, never()).log(any(), any(), eq("DELIVERY_REFUSED_TRIP_NOT_DEPARTED"), any(), any());
+    }
+
+    @Test
+    void confirmDelivery_recetteProfilProd_testeurSoumisALaRegleNormale() {
+        // Propriété allumée par erreur en production : le profil prod ferme le mode.
+        service.setRecetteMode(recette(true, "prod"));
+        BidEntity bid = stubConfirmDeliveryForTester(true);
+
+        assertRefusedBeforeDeparture(bid, BidStatus.HANDED_OVER);
+        verify(auditService, never()).log(eq("RECETTE"), any(), any(), any(), any());
+    }
+
+    @Test
+    void confirmDelivery_recetteActive_compteNonTesteur_refuse() {
+        service.setRecetteMode(recette(true, "staging"));
+        BidEntity bid = stubConfirmDeliveryForTester(false);
+
+        assertRefusedBeforeDeparture(bid, BidStatus.HANDED_OVER);
+    }
+
+    @Test
+    void confirmDelivery_recetteDesactivee_testeur_refuse() {
+        service.setRecetteMode(recette(false, "staging"));
+        BidEntity bid = stubConfirmDeliveryForTester(true);
+
+        assertRefusedBeforeDeparture(bid, BidStatus.HANDED_OVER);
+    }
+
     @Test
     void confirmDelivery_avantLeDepart_codeFauxNeConsommePasDEssai() {
         BidEntity bid = stubConfirmDelivery(BidStatus.HANDED_OVER,
