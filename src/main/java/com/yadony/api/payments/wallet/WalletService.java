@@ -5,7 +5,6 @@ import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -109,15 +108,10 @@ public class WalletService {
                 .orElse(BigDecimal.ZERO);
     }
 
-    // NOT_SUPPORTED : deux requêtes concurrentes peuvent toutes deux rater le
-    // find puis insérer — la contrainte UNIQUE(user_id, currency) fait échouer
-    // la seconde. Dans la transaction englobante du service, la violation ne
-    // surgissait qu'au commit (transaction Postgres avortée, relecture
-    // impossible) et remontait en 500 sur GET /wallet/balance. Hors
-    // transaction, le save du repository porte sa propre transaction courte :
-    // la violation est immédiate et la relecture repart sur une connexion
-    // saine. Les appels internes (credit/debit) restent dans leur transaction
-    // (self-invocation sans proxy) : wallet déjà créé dans ces parcours.
+    // NOT_SUPPORTED : appelé par le proxy (GET /wallet/balance), la création porte sa
+    // propre transaction courte. Les appels internes (credit/debit) restent dans la
+    // transaction de l'appelant (self-invocation sans proxy) : createOrReadExisting
+    // est atomique dans les deux cas.
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public WalletAccountEntity getOrCreate(UUID userId, String currency) {
         String code = normalize(currency);
@@ -125,21 +119,26 @@ public class WalletService {
                 .orElseGet(() -> createOrReadExisting(userId, code));
     }
 
+    // INSERT ... ON CONFLICT DO NOTHING puis relecture. Un save() suivi d'un catch de
+    // DataIntegrityViolationException ne tenait que hors transaction : dans celle d'un
+    // appelant (credit, debit), l'INSERT partait au commit, hors du try, et la relecture
+    // du catch tombait sur une transaction Postgres avortée.
     private WalletAccountEntity createOrReadExisting(UUID userId, String code) {
-        try {
-            WalletAccountEntity wallet = new WalletAccountEntity();
-            wallet.setUserId(userId);
-            wallet.setCurrency(code);
-            return walletAccountRepository.save(wallet);
-        } catch (DataIntegrityViolationException e) {
-            // Perdant de la course : l'autre requête vient d'insérer ce wallet.
-            return walletAccountRepository.findByUserIdAndCurrency(userId, code)
-                    .orElseThrow(() -> e);
-        }
+        walletAccountRepository.insertIfAbsent(UUID.randomUUID(), userId, code);
+        return walletAccountRepository.findByUserIdAndCurrency(userId, code)
+                .orElseThrow(() -> new IllegalStateException(
+                        "Wallet introuvable après création : user=" + userId + " currency=" + code));
     }
 
+    /**
+     * Solde du wallet dans la devise, zéro s'il n'existe pas encore. Lecture pure : ne crée
+     * jamais le wallet (le créer ici exposait les appelants transactionnels à la course sur
+     * l'index unique, et l'INSERT était perdu dans une transaction en lecture seule).
+     */
     public BigDecimal getBalance(UUID userId, String currency) {
-        return getOrCreate(userId, currency).getBalance();
+        return walletAccountRepository.findByUserIdAndCurrency(userId, normalize(currency))
+                .map(WalletAccountEntity::getBalance)
+                .orElse(BigDecimal.ZERO);
     }
 
     public List<WalletAccountEntity> getAllBalances(UUID userId) {

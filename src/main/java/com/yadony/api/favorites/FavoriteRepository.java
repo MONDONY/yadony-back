@@ -13,6 +13,28 @@ public interface FavoriteRepository extends JpaRepository<FavoriteEntity, UUID> 
 
     boolean existsByUserIdAndTargetTypeAndTargetId(UUID userId, FavoriteTargetType targetType, UUID targetId);
 
+    /**
+     * Ajoute le favori s'il n'existe pas déjà, de façon atomique.
+     *
+     * <p>{@code ON CONFLICT DO NOTHING} (sans cible) couvre l'index unique partiel
+     * {@code ux_favorites_active} (V152) : deux ajouts simultanés du même favori ne lèvent
+     * plus de violation d'unicité. Un {@code save()} suivi d'un catch ne suffisait pas : dans
+     * la transaction du service, l'INSERT partait au commit, hors du try, et la course
+     * finissait en 500 (test de charge k6 du 07/10 : 16 % de PUT en échec à 40 VUs).
+     *
+     * @return 1 si la ligne a été insérée, 0 si le favori existait déjà
+     */
+    @Modifying
+    @Query(value = """
+            INSERT INTO favorites (id, user_id, target_type, target_id, created_at, updated_at)
+            VALUES (:id, :userId, :targetType, :targetId, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT DO NOTHING
+            """, nativeQuery = true)
+    int insertIfAbsent(@Param("id") UUID id,
+                       @Param("userId") UUID userId,
+                       @Param("targetType") String targetType,
+                       @Param("targetId") UUID targetId);
+
     Optional<FavoriteEntity> findByUserIdAndTargetTypeAndTargetId(UUID userId, FavoriteTargetType targetType, UUID targetId);
 
     List<FavoriteEntity> findByUserIdAndTargetTypeOrderByCreatedAtDesc(UUID userId, FavoriteTargetType targetType);

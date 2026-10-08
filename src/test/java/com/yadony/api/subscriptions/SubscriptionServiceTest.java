@@ -50,7 +50,8 @@ class SubscriptionServiceTest {
 
         service.subscribe(uid, travelerId);
 
-        verify(repo).save(any(TravelerSubscriptionEntity.class));
+        verify(repo).insertIfAbsent(any(UUID.class), eq(senderId), eq(travelerId));
+        verify(repo, never()).save(any());
     }
 
     @Test

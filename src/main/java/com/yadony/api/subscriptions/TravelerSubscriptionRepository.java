@@ -11,6 +11,24 @@ import java.util.UUID;
 
 public interface TravelerSubscriptionRepository extends JpaRepository<TravelerSubscriptionEntity, UUID> {
 
+    /**
+     * Crée l'abonnement s'il n'existe pas, de façon atomique : un double appui simultané
+     * ne viole plus {@code uq_traveler_sub} (V102). Un {@code save()} suivi d'un catch ne
+     * protégeait rien, l'INSERT partant au commit de la transaction du service.
+     *
+     * @return 1 si la ligne a été insérée, 0 si elle existait déjà
+     */
+    @Modifying
+    @Query(value = """
+            INSERT INTO traveler_subscriptions
+                (id, sender_id, traveler_id, push_enabled, has_new, created_at, updated_at)
+            VALUES (:id, :senderId, :travelerId, false, false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT DO NOTHING
+            """, nativeQuery = true)
+    int insertIfAbsent(@Param("id") UUID id,
+                       @Param("senderId") UUID senderId,
+                       @Param("travelerId") UUID travelerId);
+
     boolean existsBySenderIdAndTravelerId(UUID senderId, UUID travelerId);
 
     Optional<TravelerSubscriptionEntity> findBySenderIdAndTravelerId(UUID senderId, UUID travelerId);
