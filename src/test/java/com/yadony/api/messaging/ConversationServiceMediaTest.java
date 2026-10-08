@@ -24,6 +24,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -66,10 +67,10 @@ class ConversationServiceMediaTest {
 
     @Test
     void mediaAllowed_followsThePolicy() {
-        when(mediaPolicy.check(conv, senderId, bid, null)).thenReturn(Optional.empty());
+        when(mediaPolicy.check(conv, senderId, bid, null, false)).thenReturn(Optional.empty());
         assertThat(service.toResponse(conv, senderId, Map.of()).mediaAllowed()).isTrue();
 
-        when(mediaPolicy.check(conv, senderId, bid, null))
+        when(mediaPolicy.check(conv, senderId, bid, null, false))
                 .thenReturn(Optional.of(ConversationMediaPolicy.Denial.MESSAGING_MUTED));
         assertThat(service.toResponse(conv, senderId, Map.of()).mediaAllowed()).isFalse();
     }
@@ -78,14 +79,14 @@ class ConversationServiceMediaTest {
     void mediaAllowed_falseWithoutAskingThePolicy_outsideCandidateStatuses() {
         bid.setStatus(BidStatus.AWAITING_PAYMENT);
         assertThat(service.toResponse(conv, senderId, Map.of()).mediaAllowed()).isFalse();
-        verify(mediaPolicy, never()).check(any(), any(), any(BidEntity.class), any());
+        verify(mediaPolicy, never()).check(any(), any(), any(BidEntity.class), any(), anyBoolean());
     }
 
     @Test
     void mediaAllowed_asksThePolicy_duringTheReturnOfACancelledParcel() {
         bid.setStatus(BidStatus.CANCELLED);
         bid.setReturnDeadline(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).plusDays(2));
-        when(mediaPolicy.check(conv, senderId, bid, null)).thenReturn(Optional.empty());
+        when(mediaPolicy.check(conv, senderId, bid, null, false)).thenReturn(Optional.empty());
         assertThat(service.toResponse(conv, senderId, Map.of()).mediaAllowed()).isTrue();
     }
 
@@ -93,7 +94,7 @@ class ConversationServiceMediaTest {
     void mediaAllowed_falseWithoutAskingThePolicy_cancelledWithoutReturn() {
         bid.setStatus(BidStatus.CANCELLED);
         assertThat(service.toResponse(conv, senderId, Map.of()).mediaAllowed()).isFalse();
-        verify(mediaPolicy, never()).check(any(), any(), any(BidEntity.class), any());
+        verify(mediaPolicy, never()).check(any(), any(), any(BidEntity.class), any(), anyBoolean());
     }
 
     @Test
@@ -102,7 +103,7 @@ class ConversationServiceMediaTest {
         assertThat(service.toResponse(conv, senderId, Map.of()).mediaAllowed()).isFalse();
 
         when(bidRepository.findById(conv.getBidId())).thenReturn(Optional.of(bid));
-        when(mediaPolicy.check(any(), any(), any(BidEntity.class), any())).thenThrow(new RuntimeException("db"));
+        when(mediaPolicy.check(any(), any(), any(BidEntity.class), any(), anyBoolean())).thenThrow(new RuntimeException("db"));
         assertThat(service.toResponse(conv, senderId, Map.of()).mediaAllowed()).isFalse();
     }
 

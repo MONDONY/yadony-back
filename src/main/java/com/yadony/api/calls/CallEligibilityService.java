@@ -61,8 +61,23 @@ public class CallEligibilityService implements CallAvailability {
         return check(callerId, conversationId).allowed();
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public boolean canCall(UUID callerId, UUID conversationId, boolean visibilityChecked) {
+        return check(callerId, conversationId, visibilityChecked).allowed();
+    }
+
     @Transactional(readOnly = true)
     public Eligibility check(UUID callerId, UUID conversationId) {
+        return check(callerId, conversationId, false);
+    }
+
+    /**
+     * @param visibilityChecked l'appelant a déjà écarté les contreparties masquées (liste des
+     *                          conversations filtrée par {@code hiddenUserIdsFor}) : la règle
+     *                          de blocage, symétrique, y est forcément négative.
+     */
+    private Eligibility check(UUID callerId, UUID conversationId, boolean visibilityChecked) {
         if (!properties.configured()) return Eligibility.denied(Reason.CALLS_DISABLED);
 
         ConversationEntity conv = conversations.findById(conversationId).orElse(null);
@@ -80,7 +95,8 @@ public class CallEligibilityService implements CallAvailability {
         BidEntity bid = bids.findById(conv.getBidId()).orElse(null);
         if (bid == null || !inWindow(bid, conv)) return Eligibility.denied(Reason.OUT_OF_WINDOW);
 
-        if (blocks.isHidden(callerId, calleeId) || blocks.isHidden(calleeId, callerId)) {
+        if (!visibilityChecked
+                && (blocks.isHidden(callerId, calleeId) || blocks.isHidden(calleeId, callerId))) {
             return Eligibility.denied(Reason.BLOCKED);
         }
 

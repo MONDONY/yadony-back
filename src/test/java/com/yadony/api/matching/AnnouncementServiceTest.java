@@ -1143,13 +1143,18 @@ class AnnouncementServiceTest {
     class GetMyTests {
 
         @Test
-        @DisplayName("voyageur avec annonces → page retournée")
+        @DisplayName("voyageur avec annonces → page retournée, compteurs lus par lot")
         void getMyAnnouncements_withAnnouncements_returnsPage() {
             UserEntity traveler = buildTraveler();
             AnnouncementEntity a = buildAnnouncement(traveler);
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
-            when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(2L);
-            when(bidRepository.countByAnnouncementIdAndStatusIn(any(), any())).thenReturn(1L);
+            when(bidRepository.countVisibleByAnnouncementIds(List.of(ANNOUNCEMENT_ID)))
+                    .thenReturn(rows(new Object[]{ANNOUNCEMENT_ID, 2L}));
+            when(bidRepository.countByAnnouncementIdsAndStatusIn(eq(List.of(ANNOUNCEMENT_ID)), any()))
+                    .thenReturn(rows(new Object[]{ANNOUNCEMENT_ID, 1L}));
+            // Requête native : l'identifiant peut revenir en texte selon le pilote.
+            when(bidRepository.sumReservedNetByAnnouncementIds(eq(List.of(ANNOUNCEMENT_ID)), any()))
+                    .thenReturn(rows(new Object[]{ANNOUNCEMENT_ID.toString(), new BigDecimal("42.50")}));
             when(announcementRepository.findByTravelerIdFiltered(
                     eq(USER_ID), isNull(), isNull(), isNull(), isNull(), isNull(), isNull(), isNull(), any()))
                     .thenReturn(new PageImpl<>(List.of(a)));
@@ -1158,7 +1163,66 @@ class AnnouncementServiceTest {
                     FIREBASE_UID, null, null, null, null, null, null, null, PageRequest.of(0, 10));
 
             assertThat(result.getContent()).hasSize(1);
-            assertThat(result.getContent().get(0).departureCity()).isEqualTo("Paris");
+            AnnouncementResponse r = result.getContent().get(0);
+            assertThat(r.departureCity()).isEqualTo("Paris");
+            assertThat(r.pendingBidCount()).isEqualTo(2L);
+            assertThat(r.confirmedParcelCount()).isEqualTo(1L);
+            assertThat(r.reservedNetAmount()).isEqualByComparingTo("42.50");
+            // Aucune requête par carte : la page entière est servie par les variantes par lot.
+            verify(bidRepository, never()).countVisibleByAnnouncementId(any());
+            verify(bidRepository, never()).countByAnnouncementIdAndStatusIn(any(), any());
+            verify(bidRepository, never()).sumReservedNetByAnnouncementId(any(), any());
+            // La lecture ne bascule plus aucun trajet (le contrôleur le fait avant, borné).
+            verify(announcementRepository, never()).findActiveOrFullDepartingOnOrBefore(any());
+        }
+
+        @Test
+        @DisplayName("trajet d'un voyage à étapes → nombre d'étapes lu par lot ; sans bid → compteurs à zéro")
+        void getMyAnnouncements_tripGroupLegCount_andZeroDefaults() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity a = buildAnnouncement(traveler);
+            UUID groupId = UUID.randomUUID();
+            a.setTripGroupId(groupId);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.countByTripGroupIds(List.of(groupId)))
+                    .thenReturn(rows(new Object[]{groupId, 3L}));
+            when(announcementRepository.findByTravelerIdFiltered(
+                    eq(USER_ID), isNull(), isNull(), isNull(), isNull(), isNull(), isNull(), isNull(), any()))
+                    .thenReturn(new PageImpl<>(List.of(a)));
+
+            AnnouncementResponse r = announcementService.getMyAnnouncements(
+                    FIREBASE_UID, null, null, null, null, null, null, null, PageRequest.of(0, 10))
+                    .getContent().get(0);
+
+            assertThat(r.tripLegCount()).isEqualTo(3);
+            assertThat(r.pendingBidCount()).isZero();
+            assertThat(r.confirmedParcelCount()).isZero();
+            assertThat(r.reservedNetAmount()).isEqualByComparingTo(BigDecimal.ZERO);
+            verify(announcementRepository, never()).countByTripGroupId(any());
+        }
+
+        @Test
+        @DisplayName("bascule « En cours » à l'ouverture → bornée aux trajets de l'appelant")
+        void triggerInProgressTransitionsForTraveler_onlyReadsCallerTrips() {
+            UserEntity traveler = buildTraveler();
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.findActiveOrFullDepartingOnOrBeforeForTraveler(any(), eq(USER_ID)))
+                    .thenReturn(List.of());
+
+            announcementService.triggerInProgressTransitionsForTraveler(FIREBASE_UID);
+
+            verify(announcementRepository).findActiveOrFullDepartingOnOrBeforeForTraveler(any(), eq(USER_ID));
+            verify(announcementRepository, never()).findActiveOrFullDepartingOnOrBefore(any());
+        }
+
+        @Test
+        @DisplayName("bascule « En cours » pour un uid inconnu → rien n'est lu")
+        void triggerInProgressTransitionsForTraveler_unknownUser_noop() {
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.empty());
+
+            announcementService.triggerInProgressTransitionsForTraveler(FIREBASE_UID);
+
+            verify(announcementRepository, never()).findActiveOrFullDepartingOnOrBeforeForTraveler(any(), any());
         }
 
         @Test
@@ -1170,8 +1234,6 @@ class AnnouncementServiceTest {
             a.setSurplusEligible(true);
             a.setSurplusPublished(true);
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
-            when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
-            when(bidRepository.countByAnnouncementIdAndStatusIn(any(), any())).thenReturn(0L);
             when(announcementRepository.findByTravelerIdFiltered(
                     eq(USER_ID), isNull(), isNull(), isNull(), isNull(), isNull(), isNull(), isNull(), any()))
                     .thenReturn(new PageImpl<>(List.of(a)));
@@ -4090,5 +4152,9 @@ class AnnouncementServiceTest {
 
             assertThat(announcementService.enableCardOnOpenAnnouncements(USER_ID)).isZero();
         }
+    }
+
+    private static List<Object[]> rows(Object[]... rows) {
+        return java.util.Arrays.asList(rows);
     }
 }

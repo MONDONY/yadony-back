@@ -683,7 +683,16 @@ public class AnnouncementService {
         ));
     }
 
-    @Transactional
+    /**
+     * Liste « Mes trajets », en lecture seule. Les compteurs de chaque carte (demandes en
+     * attente, colis confirmés, net réservé, étapes du voyage) sont lus par lot pour toute
+     * la page : un par trajet, ils coûtaient de 3 à 5 requêtes par carte (test k6 du
+     * 08/10/2026 : p95 3,3 s à 200 utilisateurs).
+     *
+     * <p>Le passage des trajets partis en « En cours » se fait avant, dans sa propre
+     * transaction ({@link #triggerInProgressTransitionsForTraveler}, appelé par le contrôleur).
+     */
+    @Transactional(readOnly = true)
     public Page<AnnouncementResponse> getMyAnnouncements(
             String firebaseUid, AnnouncementStatus statusFilter, String q,
             LocalDate date, LocalDate dateFrom, LocalDate dateTo,
@@ -691,18 +700,34 @@ public class AnnouncementService {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "user-not-found", "User Not Found", "Utilisateur introuvable"));
 
-        // Transition inline: before returning the list, check if any ACTIVE/FULL
-        // announcements have passed their departure time and update them immediately.
-        // This makes the "En cours" status appear as soon as the traveler opens the screen,
-        // without waiting for the hourly scheduler.
-        triggerInProgressTransitions();
-
         String qParam         = (q         != null && !q.isBlank())         ? q.trim()         : null;
         String departureParam = (departure != null && !departure.isBlank()) ? departure.trim() : null;
         String arrivalParam   = (arrival   != null && !arrival.isBlank())   ? arrival.trim()   : null;
         Page<AnnouncementEntity> page = announcementRepository.findByTravelerIdFiltered(
                 user.getId(), statusFilter, qParam, date, dateFrom, dateTo, departureParam, arrivalParam, pageable);
-        return page.map(this::toResponse);
+        CardCounts counts = loadCardCounts(page.getContent());
+        return page.map(a -> toResponse(a, counts));
+    }
+
+    /**
+     * Fait passer en « En cours » les trajets partis de ce voyageur, dès l'ouverture de
+     * « Mes trajets », sans attendre le scheduler horaire.
+     *
+     * <p>Bornée aux trajets de l'appelant : la version globale tournait à chaque ouverture
+     * de l'écran par n'importe qui, lisait tous les trajets partis de la plateforme et
+     * écrivait sur ceux des autres. Transaction séparée de la lecture : un échec ici ne doit
+     * pas empêcher l'affichage de la liste.
+     */
+    @Transactional
+    public void triggerInProgressTransitionsForTraveler(String firebaseUid) {
+        UserEntity user = userRepository.findByFirebaseUid(firebaseUid).orElse(null);
+        if (user == null) {
+            return;
+        }
+        Instant now = Instant.now();
+        LocalDate maxDate = now.atZone(DEFAULT_ZONE).toLocalDate().plusDays(1);
+        applyInProgressTransitions(
+                announcementRepository.findActiveOrFullDepartingOnOrBeforeForTraveler(maxDate, user.getId()), now);
     }
 
     public List<com.yadony.api.matching.dto.CorridorDto> getMyCorridors(String firebaseUid) {
@@ -718,7 +743,8 @@ public class AnnouncementService {
     /**
      * Checks all ACTIVE/FULL announcements whose departure time has passed and transitions
      * them to IN_PROGRESS (or directly COMPLETED if no ACCEPTED bids remain).
-     * Called inline on each "Mes trajets" load, and also by the hourly scheduler as a safety net.
+     * Appelée par le scheduler horaire ; l'ouverture de « Mes trajets » passe par
+     * {@link #triggerInProgressTransitionsForTraveler}, bornée aux trajets de l'appelant.
      *
      * @Transactional requis : BidExpiredOnDepartureEvent est écouté en
      * AFTER_COMMIT — publié hors transaction (chemin scheduler), l'event serait
@@ -731,9 +757,10 @@ public class AnnouncementService {
         // décalage horaire), puis décider trajet par trajet dans SON fuseau —
         // et non avec un « maintenant » Europe/Paris global pour tous.
         LocalDate maxDate = now.atZone(DEFAULT_ZONE).toLocalDate().plusDays(1);
-        List<AnnouncementEntity> candidates =
-                announcementRepository.findActiveOrFullDepartingOnOrBefore(maxDate);
+        applyInProgressTransitions(announcementRepository.findActiveOrFullDepartingOnOrBefore(maxDate), now);
+    }
 
+    private void applyInProgressTransitions(List<AnnouncementEntity> candidates, Instant now) {
         for (AnnouncementEntity announcement : candidates) {
             if (!hasDeparted(announcement, now)) {
                 continue;
@@ -1823,7 +1850,70 @@ public class AnnouncementService {
         return ids.stream().map(byId::get).filter(java.util.Objects::nonNull).map(this::toResponse).toList();
     }
 
+    /** Compteurs des cartes d'une page, lus par lot (cf. {@link #loadCardCounts}). */
+    private record CardCounts(Map<UUID, Long> pending, Map<UUID, Long> confirmed,
+                              Map<UUID, BigDecimal> reservedNet, Map<UUID, Long> tripLegs) {}
+
+    private static final List<BidStatus> CONFIRMED_STATUSES =
+            List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.COMPLETED);
+
+    private CardCounts loadCardCounts(List<AnnouncementEntity> announcements) {
+        if (announcements.isEmpty()) {
+            return new CardCounts(Map.of(), Map.of(), Map.of(), Map.of());
+        }
+        List<UUID> ids = announcements.stream().map(AnnouncementEntity::getId).toList();
+        List<UUID> groupIds = announcements.stream().map(AnnouncementEntity::getTripGroupId)
+                .filter(java.util.Objects::nonNull).distinct().toList();
+        return new CardCounts(
+                countsById(bidRepository.countVisibleByAnnouncementIds(ids)),
+                countsById(bidRepository.countByAnnouncementIdsAndStatusIn(ids, CONFIRMED_STATUSES)),
+                amountsById(bidRepository.sumReservedNetByAnnouncementIds(
+                        ids, CONFIRMED_STATUSES.stream().map(Enum::name).toList())),
+                groupIds.isEmpty() ? Map.of() : countsById(announcementRepository.countByTripGroupIds(groupIds)));
+    }
+
+    private static Map<UUID, Long> countsById(List<Object[]> rows) {
+        Map<UUID, Long> out = new java.util.HashMap<>();
+        for (Object[] row : rows) {
+            out.put(asUuid(row[0]), ((Number) row[1]).longValue());
+        }
+        return out;
+    }
+
+    private static Map<UUID, BigDecimal> amountsById(List<Object[]> rows) {
+        Map<UUID, BigDecimal> out = new java.util.HashMap<>();
+        for (Object[] row : rows) {
+            if (row[1] != null) {
+                out.put(asUuid(row[0]), row[1] instanceof BigDecimal b ? b : new BigDecimal(row[1].toString()));
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Requête native : selon le pilote, la colonne UUID revient en {@link UUID} (PostgreSQL),
+     * en 16 octets (H2) ou en texte.
+     */
+    private static UUID asUuid(Object raw) {
+        if (raw instanceof UUID u) {
+            return u;
+        }
+        if (raw instanceof byte[] bytes && bytes.length == 16) {
+            java.nio.ByteBuffer buffer = java.nio.ByteBuffer.wrap(bytes);
+            return new UUID(buffer.getLong(), buffer.getLong());
+        }
+        return UUID.fromString(raw.toString());
+    }
+
     private AnnouncementResponse toResponse(AnnouncementEntity entity) {
+        return toResponse(entity, null);
+    }
+
+    /**
+     * @param counts compteurs préchargés pour la page, ou {@code null} pour les lire ici
+     *               (une annonce seule).
+     */
+    private AnnouncementResponse toResponse(AnnouncementEntity entity, CardCounts counts) {
         UserEntity traveler = userRepository.findById(entity.getTravelerId()).orElse(null);
         boolean travelerHasConnect = traveler != null && traveler.hasActiveStripeConnect();
         boolean travelerHasMobileMoney = traveler != null && traveler.hasActiveMobileMoney();
@@ -1834,14 +1924,18 @@ public class AnnouncementService {
                 com.yadony.api.payments.currency.AnnouncementPaymentRails.offerable(
                         entity.getAcceptedPaymentMethods(), entity.getCurrency(),
                         travelerHasConnect, travelerHasMobileMoney);
-        long pendingBidCount = bidRepository.countVisibleByAnnouncementId(entity.getId());
-        List<BidStatus> confirmedStatuses =
-                List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.COMPLETED);
-        long confirmedParcelCount = bidRepository.countByAnnouncementIdAndStatusIn(entity.getId(), confirmedStatuses);
+        long pendingBidCount = counts != null
+                ? counts.pending().getOrDefault(entity.getId(), 0L)
+                : bidRepository.countVisibleByAnnouncementId(entity.getId());
+        long confirmedParcelCount = counts != null
+                ? counts.confirmed().getOrDefault(entity.getId(), 0L)
+                : bidRepository.countByAnnouncementIdAndStatusIn(entity.getId(), CONFIRMED_STATUSES);
         // Même périmètre que confirmedParcelCount : le net des colis confirmés, dans la
         // devise de l'annonce. Le portail l'affichait à zéro faute de valeur serveur.
-        BigDecimal reservedNetAmount = bidRepository.sumReservedNetByAnnouncementId(
-                entity.getId(), confirmedStatuses.stream().map(Enum::name).toList());
+        BigDecimal reservedNetAmount = counts != null
+                ? counts.reservedNet().getOrDefault(entity.getId(), BigDecimal.ZERO)
+                : bidRepository.sumReservedNetByAnnouncementId(
+                        entity.getId(), CONFIRMED_STATUSES.stream().map(Enum::name).toList());
         boolean cashAccepted = entity.getAcceptedPaymentMethods()
                 .contains(com.yadony.api.payments.cash.PaymentMethod.CASH);
         List<com.yadony.api.matching.dto.AnnouncementPriceGridItemResponse> gridItems =
@@ -1891,9 +1985,10 @@ public class AnnouncementService {
                 reservedNetAmount != null ? reservedNetAmount : BigDecimal.ZERO,
                 entity.getTripGroupId(),
                 entity.getTripLegIndex(),
-                entity.getTripGroupId() != null
-                        ? (int) announcementRepository.countByTripGroupId(entity.getTripGroupId())
-                        : null
+                entity.getTripGroupId() == null ? null
+                        : counts != null
+                        ? counts.tripLegs().getOrDefault(entity.getTripGroupId(), 0L).intValue()
+                        : (int) announcementRepository.countByTripGroupId(entity.getTripGroupId())
         );
     }
 

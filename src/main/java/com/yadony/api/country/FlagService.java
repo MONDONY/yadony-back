@@ -2,6 +2,7 @@ package com.yadony.api.country;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.Optional;
 
@@ -36,11 +37,17 @@ public class FlagService {
         }
 
         Optional<CountryEntity> existing = countryRepository.findById(code);
+        if (existing.isPresent() && existing.get().getFlag() != null) {
+            return existing.get().getFlag();
+        }
+        // Appelé depuis une lecture (liste « Mes trajets », en transaction readOnly) : Postgres
+        // y refuse tout INSERT et l'échec ferait tomber la liste entière. Le drapeau se déduit
+        // du seul code ISO : on le rend sans le persister, une écriture suivante le fera.
+        if (TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+            return emojiFromIso(code);
+        }
         if (existing.isPresent()) {
             CountryEntity entity = existing.get();
-            if (entity.getFlag() != null) {
-                return entity.getFlag();
-            }
             // Ligne présente mais drapeau manquant : on le calcule et on le persiste.
             String flag = emojiFromIso(code);
             entity.setFlag(flag);

@@ -152,7 +152,7 @@ class ConversationControllerTest {
 
         when(conversationRepository.findByParticipant(currentUserId, Pageable.unpaged())).thenReturn(page);
         when(conversationService.fetchConversationMeta(anyList())).thenReturn(Map.of());
-        when(conversationService.toResponse(eq(conversation), eq(currentUserId), anyMap())).thenReturn(fakeResponse);
+        when(conversationService.toResponses(eq(List.of(conversation)), eq(currentUserId), anyMap())).thenReturn(List.of(fakeResponse));
 
         ResponseEntity<PageResponse<ConversationResponse>> response =
                 controller.listConversations(pageable);
@@ -177,7 +177,7 @@ class ConversationControllerTest {
         when(conversationRepository.findByParticipant(currentUserId, Pageable.unpaged())).thenReturn(page);
         when(conversationService.fetchConversationMeta(List.of(conversation.getFirestoreConversationId())))
                 .thenReturn(Map.of());
-        when(conversationService.toResponse(eq(conversation), eq(currentUserId), anyMap())).thenReturn(fakeResponse);
+        when(conversationService.toResponses(eq(List.of(conversation)), eq(currentUserId), anyMap())).thenReturn(List.of(fakeResponse));
 
         controller.listConversations(pageable);
 
@@ -198,8 +198,13 @@ class ConversationControllerTest {
                 older.getFirestoreConversationId(), Map.of("lastMessageAt", "2026-09-01T10:00:00Z"),
                 newest.getFirestoreConversationId(), Map.of("lastMessageAt", "2026-09-29T10:00:00Z"),
                 middle.getFirestoreConversationId(), Map.of("lastMessageAt", "2026-09-15T10:00:00Z")));
-        when(conversationService.toResponse(any(ConversationEntity.class), eq(currentUserId), anyMap()))
-                .thenAnswer(inv -> responseFor(inv.getArgument(0)));
+        when(conversationService.toResponses(anyList(), eq(currentUserId), anyMap()))
+                .thenAnswer(inv -> {
+                    List<ConversationEntity> slice = inv.getArgument(0);
+                    List<ConversationResponse> out = new java.util.ArrayList<>();
+                    for (ConversationEntity c : slice) out.add(responseFor(c));
+                    return out;
+                });
 
         PageResponse<ConversationResponse> firstPage =
                 controller.listConversations(PageRequest.of(0, 2)).getBody();
@@ -216,7 +221,8 @@ class ConversationControllerTest {
                 .containsExactly(older.getId());
         assertThat(secondPage.last()).isTrue();
         // Les réponses, coûteuses, ne sont construites que pour la page demandée.
-        verify(conversationService, times(3)).toResponse(any(ConversationEntity.class), eq(currentUserId), anyMap());
+        verify(conversationService).toResponses(eq(List.of(newest, middle)), eq(currentUserId), anyMap());
+        verify(conversationService).toResponses(eq(List.of(older)), eq(currentUserId), anyMap());
     }
 
     @Test

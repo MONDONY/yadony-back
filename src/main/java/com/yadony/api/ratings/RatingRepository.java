@@ -24,6 +24,15 @@ public interface RatingRepository extends JpaRepository<RatingEntity, UUID> {
     @Query("SELECT r FROM RatingEntity r WHERE r.ratedUserId = :userId AND r.excludedFromAverage = false")
     List<RatingEntity> findIncludedRatingsByRatedUserId(@Param("userId") UUID userId);
 
+    /**
+     * Distribution des notes prises en compte (mêmes lignes que
+     * {@link #findIncludedRatingsByRatedUserId}) : une ligne {@code [stars, count]} par
+     * valeur présente. Évite de charger toutes les notes d'un profil pour les compter.
+     */
+    @Query("SELECT r.stars, COUNT(r) FROM RatingEntity r "
+            + "WHERE r.ratedUserId = :userId AND r.excludedFromAverage = false GROUP BY r.stars")
+    List<Object[]> countIncludedByStars(@Param("userId") UUID userId);
+
     // Last 5 non-excluded ratings ordered by creation date — used for Kilo Pro average check
     @Query("SELECT r FROM RatingEntity r WHERE r.ratedUserId = :userId AND r.excludedFromAverage = false ORDER BY r.createdAt DESC")
     List<RatingEntity> findRecentIncludedRatings(@Param("userId") UUID userId);

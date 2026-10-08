@@ -5,6 +5,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.Optional;
 
@@ -31,6 +32,26 @@ class FlagServiceTest {
         assertThat(flag).isEqualTo("🇺🇸"); // 🇺🇸
 
         verify(countryRepository).insertIfAbsent("US", null, "🇺🇸");
+        verify(countryRepository, never()).save(any());
+    }
+
+    @Test
+    void getFlag_inReadOnlyTransaction_computesWithoutWriting() {
+        // Liste « Mes trajets » en readOnly : Postgres refuserait l'INSERT et ferait
+        // tomber toute la liste. Le drapeau est rendu, la persistance attend une écriture.
+        CountryEntity withoutFlag = new CountryEntity();
+        withoutFlag.setCountryCode("SN");
+        when(countryRepository.findById("ML")).thenReturn(Optional.empty());
+        when(countryRepository.findById("SN")).thenReturn(Optional.of(withoutFlag));
+        TransactionSynchronizationManager.setCurrentTransactionReadOnly(true);
+        try {
+            assertThat(service.getFlag("ML")).isEqualTo("🇲🇱");
+            assertThat(service.getFlag("SN")).isEqualTo("🇸🇳");
+        } finally {
+            TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
+        }
+
+        verify(countryRepository, never()).insertIfAbsent(anyString(), any(), anyString());
         verify(countryRepository, never()).save(any());
     }
 

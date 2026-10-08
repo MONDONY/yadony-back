@@ -30,6 +30,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @DisplayName("ConversationMediaPolicy — photos permises (FLUTTER-B4)")
@@ -181,6 +182,15 @@ class ConversationMediaPolicyTest {
     }
 
     @Test
+    void visibilityAlreadyChecked_skipsBlockLookups_butKeepsOtherRules() {
+        // Liste des conversations, déjà filtrée des contreparties masquées.
+        assertThat(policy.check(conv, sender, bidWithStatus(BidStatus.ACCEPTED), null, true)).isEmpty();
+        assertThat(policy.check(conv, sender, bidWithStatus(BidStatus.AWAITING_PAYMENT), null, true))
+                .contains(ConversationMediaPolicy.Denial.OUT_OF_WINDOW);
+        verifyNoInteractions(blockVisibility);
+    }
+
+    @Test
     void mutedOrUnknownUser_denies() {
         senderUser.setMessagingMutedUntil(NOW.plusSeconds(3600));
         assertThat(policy.check(conv, sender, BidStatus.ACCEPTED, null, null))
@@ -211,6 +221,12 @@ class ConversationMediaPolicyTest {
     }
 
     // ── Retour d'un colis annulé après remise (FLUTTER-FM) ──────────────────
+
+    private static BidEntity bidWithStatus(BidStatus status) {
+        BidEntity bid = new BidEntity();
+        bid.setStatus(status);
+        return bid;
+    }
 
     private BidEntity cancelledBid(LocalDateTime deadline, LocalDateTime returnedAt) {
         BidEntity bid = new BidEntity();
