@@ -1,5 +1,6 @@
 package com.yadony.api.matching;
 
+import com.yadony.api.common.PageResponse;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.matching.dto.BidCheckoutRequest;
 import com.yadony.api.matching.dto.BidCheckoutResponse;
@@ -29,7 +30,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 @RestController
@@ -105,6 +108,25 @@ public class BidController {
     public ResponseEntity<List<BidResponse>> getMyBids() {
         String firebaseUid = requireFirebaseUid();
         return ResponseEntity.ok(bidService.getMyBids(firebaseUid));
+    }
+
+    /**
+     * Même liste, paginée : choisie dès que le client envoie {@code page}. Sans ce
+     * paramètre, {@link #getMyBids()} garde l'ancien contrat (liste complète) pour
+     * les versions de l'app déjà installées.
+     *
+     * <p>{@code status} se répète ({@code ?status=ACCEPTED&status=IN_TRANSIT}) ; absent,
+     * tous les statuts de colis.
+     */
+    @GetMapping(value = "/bids/me", params = "page")
+    public ResponseEntity<PageResponse<BidResponse>> getMyBidsPage(
+            @RequestParam int page,
+            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(required = false) Set<BidStatus> status,
+            @RequestParam(required = false) UUID announcementId) {
+        String firebaseUid = requireFirebaseUid();
+        return ResponseEntity.ok(bidService.getMyBidsPage(
+                firebaseUid, status == null ? Set.of() : EnumSet.copyOf(status), announcementId, page, size));
     }
 
     /**

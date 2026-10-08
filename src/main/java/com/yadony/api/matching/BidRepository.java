@@ -313,6 +313,27 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
 
     List<BidEntity> findBySenderId(UUID senderId);
 
+    /**
+     * Colis d'un expéditeur, paginés côté SQL, du plus récent au plus ancien.
+     *
+     * <p>{@code statuses} n'est jamais vide : l'appelant y met l'ensemble voulu, et
+     * à défaut tous les statuts de colis (discussions de prix exclues). Les colis
+     * que l'expéditeur a retirés de sa liste ({@code deletedBySender}) n'y sont pas.
+     */
+    @Query("""
+        SELECT b FROM BidEntity b
+        WHERE b.senderId = :senderId
+          AND b.deletedBySender = false
+          AND b.status IN :statuses
+          AND (:announcementId IS NULL OR b.announcementId = :announcementId)
+        ORDER BY b.createdAt DESC
+        """)
+    Page<BidEntity> findBySenderIdFiltered(
+            @Param("senderId") UUID senderId,
+            @Param("statuses") Collection<BidStatus> statuses,
+            @Param("announcementId") UUID announcementId,
+            Pageable pageable);
+
     List<BidEntity> findBySenderIdAndStatusIn(UUID senderId, List<BidStatus> statuses);
 
     boolean existsBySenderIdAndStatusIn(UUID senderId, List<BidStatus> statuses);
