@@ -9,6 +9,7 @@ import com.yadony.api.matching.dto.AnnouncementRequest;
 import com.yadony.api.matching.dto.TripRecurrenceRequest;
 import com.yadony.api.payments.cash.PaymentMethod;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.ApplicationEventPublisher;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
@@ -35,6 +36,7 @@ class TripRecurrenceServiceTest {
     @Mock AnnouncementRepository announcementRepository;
     @Mock UserRepository userRepository;
     @Mock AuditService auditService;
+    @Mock ApplicationEventPublisher eventPublisher;
     @InjectMocks TripRecurrenceService service;
 
     private final UUID userId = UUID.randomUUID();
@@ -308,15 +310,54 @@ class TripRecurrenceServiceTest {
     }
 
     @Test
-    void create_savesAndGeneratesWhenActive() {
-        mockUser();
+    void create_savesAndSchedulesGenerationAfterCommitWhenActive() {
         var req = request("1111111", 0, true);
 
         service.create(userId, req);
 
         verify(repository, atLeastOnce()).save(any(TripRecurrenceEntity.class));
-        verify(announcementService, times(1)).createRecurringAnnouncement(eq("firebase-uid"), any(), any());
+        // La génération ne tourne plus dans la transaction de create : une occurrence en
+        // échec la marquait rollback-only (500). Elle part après le commit.
+        verify(eventPublisher).publishEvent(any(TripRecurrenceSavedEvent.class));
+        verifyNoInteractions(announcementService);
         verify(auditService).log(eq("TRIP_RECURRENCE"), any(), eq("TRIP_RECURRENCE_CREATED"), eq(userId), anyMap());
+    }
+
+    @Test
+    void update_active_schedulesGenerationAfterCommit() {
+        UUID id = UUID.randomUUID();
+        TripRecurrenceEntity existing = entity("1111111", 0, null);
+        when(repository.findByUserIdAndId(userId, id)).thenReturn(Optional.of(existing));
+
+        service.update(userId, id, request("1111111", 0, true));
+
+        verify(eventPublisher).publishEvent(any(TripRecurrenceSavedEvent.class));
+        verifyNoInteractions(announcementService);
+    }
+
+    @Test
+    void generateForRecurrenceId_generatesForActiveRecurrence() {
+        mockUser();
+        TripRecurrenceEntity rec = entity("1111111", 0, null);
+        UUID id = UUID.randomUUID();
+        when(repository.findById(id)).thenReturn(Optional.of(rec));
+
+        assertThat(service.generateForRecurrenceId(id)).isEqualTo(1);
+        verify(announcementService).createRecurringAnnouncement(eq("firebase-uid"), any(), any());
+    }
+
+    @Test
+    void generateForRecurrenceId_skipsInactiveOrMissingRecurrence() {
+        TripRecurrenceEntity inactive = entity("1111111", 0, null);
+        inactive.setActive(false);
+        UUID inactiveId = UUID.randomUUID();
+        UUID missingId = UUID.randomUUID();
+        when(repository.findById(inactiveId)).thenReturn(Optional.of(inactive));
+        when(repository.findById(missingId)).thenReturn(Optional.empty());
+
+        assertThat(service.generateForRecurrenceId(inactiveId)).isZero();
+        assertThat(service.generateForRecurrenceId(missingId)).isZero();
+        verifyNoInteractions(announcementService);
     }
 
     // C2 : normalisation à l'écriture — un client pas à jour envoie des libellés/codes

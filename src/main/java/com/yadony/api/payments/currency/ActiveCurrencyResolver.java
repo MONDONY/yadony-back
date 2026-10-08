@@ -37,8 +37,8 @@ public class ActiveCurrencyResolver {
 
     /**
      * Devise active de l'utilisateur : celle choisie dans son portefeuille
-     * ({@code user_business_preferences.currency_code}), gardee par
-     * {@code CurrencyLockService} et modifiable tant que le solde est vide.
+     * ({@code user_business_preferences.currency_code}), modifiable a tout moment :
+     * elle designe la ligne de portefeuille courante, sans jamais convertir de solde.
      *
      * <p>Le pays ne sert plus qu'a fournir une valeur initiale, et seulement tant
      * qu'aucune ligne de portefeuille n'existe encore pour cet utilisateur (le cas

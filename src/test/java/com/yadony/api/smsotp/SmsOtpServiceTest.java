@@ -92,7 +92,7 @@ class SmsOtpServiceTest {
             verify(smsOtpRepository).save(argThat(e ->
                     PHONE.equals(e.getPhoneNumber()) && "$2a$10$hashed".equals(e.getCodeHash())));
             verify(smsService).send(eq(PHONE), argThat(msg ->
-                    msg.matches("Ton code Yadony est : \\d{6}\\. Valable 10 minutes\\.")));
+                    msg.matches("Votre code Yadony est : \\d{6}\\. Valable 10 minutes\\.")));
         }
 
         @Test
@@ -577,7 +577,7 @@ class SmsOtpServiceTest {
         void french_staysGsm7SingleSegment() {
             String text = TestMessages.fr().get("sms.otp", "123456");
 
-            assertThat(text).isEqualTo("Ton code Yadony est : 123456. Valable 10 minutes.");
+            assertThat(text).isEqualTo("Votre code Yadony est : 123456. Valable 10 minutes.");
             assertThat(isGsm7(text)).as("le texte français doit rester encodable en GSM-7").isTrue();
             assertThat(text.length()).as("longueur du SMS français").isLessThanOrEqualTo(160);
         }
@@ -792,7 +792,7 @@ class SmsOtpServiceTest {
             service.sendOtp(PHONE);
 
             verify(smsService).send(eq(PHONE), argThat(msg -> msg.matches(
-                    "Ton code Yadony est : \\d{6}\\. Valable 10 minutes\\.\n"
+                    "Votre code Yadony est : \\d{6}\\. Valable 10 minutes\\.\n"
                             + java.util.regex.Pattern.quote(PLAY_HASH + " " + DEBUG_HASH))));
         }
 
@@ -805,7 +805,7 @@ class SmsOtpServiceTest {
             service.sendOtp(PHONE);
 
             verify(smsService).send(eq(PHONE), argThat(msg ->
-                    msg.matches("Ton code Yadony est : \\d{6}\\. Valable 10 minutes\\.")));
+                    msg.matches("Votre code Yadony est : \\d{6}\\. Valable 10 minutes\\.")));
         }
 
         @Test

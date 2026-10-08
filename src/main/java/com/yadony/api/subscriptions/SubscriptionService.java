@@ -8,7 +8,6 @@ import com.yadony.api.common.StorageService;
 import com.yadony.api.subscriptions.dto.SubscriberResponse;
 import com.yadony.api.subscriptions.dto.SubscriptionItemResponse;
 import com.yadony.api.subscriptions.dto.SubscriptionStatusResponse;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -64,15 +63,9 @@ public class SubscriptionService {
             }
             return;
         }
-        TravelerSubscriptionEntity sub = new TravelerSubscriptionEntity();
-        sub.setSenderId(sid);
-        sub.setTravelerId(travelerId);
-        try {
-            subscriptionRepository.save(sub);
-        } catch (DataIntegrityViolationException e) {
-            // Double-tap concurrent : la contrainte UNIQUE(sender_id, traveler_id) a déjà
-            // créé la ligne — abonnement idempotent, on ignore.
-        }
+        // Double appui concurrent : l'INSERT ... ON CONFLICT DO NOTHING rend l'abonnement
+        // idempotent sans violation d'unicité au commit.
+        subscriptionRepository.insertIfAbsent(UUID.randomUUID(), sid, travelerId);
     }
 
     @Transactional

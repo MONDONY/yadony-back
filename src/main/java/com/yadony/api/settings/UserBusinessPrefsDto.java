@@ -7,18 +7,18 @@ import jakarta.validation.constraints.Pattern;
 
 public record UserBusinessPrefsDto(
     @NotNull @Pattern(regexp = "kg|lbs") String weightUnit,
-    // Champ d'ecriture : modifiable tant que CurrencyLockService.isLocked rend false
-    // (portefeuille vide). Omis dans la requete, la devise existante est conservee.
+    // Devise active (portefeuille courant, recharges, creations). Modifiable a tout
+    // moment, meme avec des soldes non nuls (FLUTTER-8F). Omise dans la requete, la
+    // devise existante est conservee.
     @Pattern(regexp = "EUR|USD|CAD|GBP|CHF|XOF|XAF") String currencyCode,
     @NotNull @Min(1) @Max(50) Integer pickupRadiusKm,
     @NotNull @Min(1) @Max(50) Integer defaultPackageWeightKg,
     @NotNull @Min(0) @Max(50) Integer minBidPriceEur,
     @Pattern(regexp = "call|message|both") String contactMode,
     @Min(1) Integer responseDelayHours,
-    // Lecture seule : renseigné par le serveur en réponse (GET/PUT) à partir de
-    // CurrencyLockService, ignoré s'il est envoyé dans une requête. Pas de
-    // contrainte @NotNull — un client qui l'omet dans son PUT ne doit jamais faire
-    // échouer la validation.
+    // Lecture seule, toujours false depuis FLUTTER-8F (la devise active ne se
+    // verrouille plus). Garde pour les apps deja installees, qui grisaient la devise
+    // quand il valait true. Ignore en requete, sans @NotNull.
     Boolean currencyLocked,
     // Pays ISO 3166-1 alpha-2, ou null tant qu'il n'est pas renseigne.
     @Pattern(regexp = "[A-Z]{2}") String country,

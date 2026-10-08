@@ -12,6 +12,7 @@ import com.yadony.api.matching.dto.TripRecurrenceRequest;
 import com.yadony.api.payments.cash.PaymentMethod;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -39,18 +40,21 @@ public class TripRecurrenceService {
     private final AnnouncementRepository announcementRepository;
     private final UserRepository userRepository;
     private final AuditService auditService;
+    private final ApplicationEventPublisher eventPublisher;
     private final TripRecurrenceCalendar calendar = new TripRecurrenceCalendar();
 
     public TripRecurrenceService(TripRecurrenceRepository repository,
                                  AnnouncementService announcementService,
                                  AnnouncementRepository announcementRepository,
                                  UserRepository userRepository,
-                                 AuditService auditService) {
+                                 AuditService auditService,
+                                 ApplicationEventPublisher eventPublisher) {
         this.repository = repository;
         this.announcementService = announcementService;
         this.announcementRepository = announcementRepository;
         this.userRepository = userRepository;
         this.auditService = auditService;
+        this.eventPublisher = eventPublisher;
     }
 
     public List<TripRecurrenceDto> findAll(UUID userId) {
@@ -68,9 +72,10 @@ public class TripRecurrenceService {
                 Map.of("corridor", request.departureCity() + "->" + request.arrivalCity(),
                         "weekdays", request.weekdays()));
         log.info("TripRecurrence created: id={} userId={}", entity.getId(), userId);
-        // Génère immédiatement les trajets dus pour ne pas attendre le scheduler.
+        // Génère les trajets dus sans attendre le scheduler, juste après le commit
+        // (voir TripRecurrenceGenerationListener).
         if (entity.isActive()) {
-            generateForRecurrence(entity);
+            eventPublisher.publishEvent(new TripRecurrenceSavedEvent(entity.getId()));
         }
         return toDto(entity);
     }
@@ -84,7 +89,7 @@ public class TripRecurrenceService {
         auditService.log("TRIP_RECURRENCE", entity.getId(), "TRIP_RECURRENCE_UPDATED", userId,
                 Map.of("active", String.valueOf(request.active())));
         if (entity.isActive()) {
-            generateForRecurrence(entity);
+            eventPublisher.publishEvent(new TripRecurrenceSavedEvent(entity.getId()));
         }
         return toDto(entity);
     }
@@ -97,6 +102,17 @@ public class TripRecurrenceService {
         repository.save(entity);
         auditService.log("TRIP_RECURRENCE", entity.getId(), "TRIP_RECURRENCE_DELETED", userId,
                 Map.of("id", id.toString()));
+    }
+
+    /**
+     * Génère les trajets dus d'une récurrence encore active. Appelé hors transaction, après
+     * le commit de sa création ou de sa modification.
+     */
+    int generateForRecurrenceId(UUID recurrenceId) {
+        return repository.findById(recurrenceId)
+                .filter(TripRecurrenceEntity::isActive)
+                .map(this::generateForRecurrence)
+                .orElse(0);
     }
 
     /** Appelé par le scheduler : génère les trajets dus pour toutes les récurrences actives. */
@@ -200,7 +216,11 @@ public class TripRecurrenceService {
         // Une limite déjà expirée à la publication (départ proche, délai de remise long)
         // ouvrirait le signalement de no-show dès l'acceptation du bid : repli sur l'heure
         // du départ, comportement historique d'avant l'introduction du délai de remise.
-        if (handoverDeadline.isBefore(LocalDateTime.now())) {
+        // Comparée à l'heure locale de la ville de départ : c'est dans ce fuseau que le trajet
+        // généré lira sa date limite (TripTimezones), pas dans celui du serveur.
+        java.time.ZoneId departureZone = TripTimezones.zoneOf(TripTimezones.resolve(
+                rec.getDepartureCity(), null, TripTimezones.Lookup.of(announcementRepository)));
+        if (handoverDeadline.isBefore(LocalDateTime.now(departureZone))) {
             handoverDeadline = departureDt;
         }
         return new AnnouncementRequest(

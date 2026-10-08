@@ -2,16 +2,19 @@ package com.yadony.api.settings;
 
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
+import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import com.yadony.api.payments.currency.CountryCatalog;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -22,19 +25,22 @@ public class UserBusinessPrefsService {
     private final UserBusinessPrefsRepository repository;
     private final UserRepository userRepository;
     private final CountryLockService countryLockService;
-    private final CurrencyLockService currencyLockService;
     private final ActiveCurrencyResolver activeCurrencyResolver;
+    private final AuditService auditService;
+    private final ApplicationEventPublisher eventPublisher;
 
     public UserBusinessPrefsService(UserBusinessPrefsRepository repository,
                                     UserRepository userRepository,
                                     CountryLockService countryLockService,
-                                    CurrencyLockService currencyLockService,
-                                    ActiveCurrencyResolver activeCurrencyResolver) {
+                                    ActiveCurrencyResolver activeCurrencyResolver,
+                                    AuditService auditService,
+                                    ApplicationEventPublisher eventPublisher) {
         this.repository = repository;
         this.userRepository = userRepository;
         this.countryLockService = countryLockService;
-        this.currencyLockService = currencyLockService;
         this.activeCurrencyResolver = activeCurrencyResolver;
+        this.auditService = auditService;
+        this.eventPublisher = eventPublisher;
     }
 
     @Transactional(readOnly = true)
@@ -97,12 +103,25 @@ public class UserBusinessPrefsService {
 
         e.setWeightUnit(dto.weightUnit());
 
-        // Devise : donnee propre, gardee uniquement par le solde du portefeuille (lot
-        // 3, CurrencyLockService) — independante du pays et de sa propre garde
-        // country-locked ci-dessus. Un client qui n'envoie pas de devise (champ omis,
-        // pas de contrainte @NotNull) laisse la devise existante intacte ; un compte
-        // tout juste cree sans devise fournie recoit la valeur initiale derivee du
-        // pays, exactement comme le fait getPrefs() pour une ligne encore inexistante.
+        // Devise active : celle du portefeuille courant, des recharges et des
+        // creations. Elle se change librement, meme avec des soldes non nuls
+        // (FLUTTER-8F) : il y a une ligne de portefeuille par devise, et changer de
+        // devise active ne fait que designer une autre ligne. Aucun solde n'est
+        // converti, aucun n'est detruit. Les engagements deja pris gardent leur
+        // propre devise, figee a la creation (annonce, demande, bid, fil de
+        // negociation, recharge en cours via la metadonnee wallet_currency).
+        //
+        // L'ancien verrou (CurrencyLockService, 422 currency-locked) protegeait un
+        // controle de PaymentService qui comparait la devise du bid a la devise
+        // active COURANTE de l'expediteur (P3 de l'etat des lieux multidevise du
+        // 2026-08-19). Ce controle a ete retire depuis : aucun paiement, sequestre,
+        // versement ou remboursement ne relit la devise active. Seule la commission en
+        // especes la consulte, au moment du prelevement, pour choisir le portefeuille
+        // de complement par defaut (taux du jour fige sur la transaction).
+        //
+        // Un client qui n'envoie pas de devise (champ omis) laisse la devise existante
+        // intacte ; un compte tout juste cree sans devise fournie recoit la valeur
+        // initiale derivee du pays, exactement comme le fait getPrefs().
         String requestedCurrency = dto.currencyCode();
         if (requestedCurrency != null) {
             SupportedCurrency validated = SupportedCurrency.fromCode(requestedCurrency);
@@ -112,19 +131,22 @@ public class UserBusinessPrefsService {
                         "Cette devise n'est pas prise en charge par yadony.");
             }
             String normalizedCurrency = validated.code().toUpperCase(Locale.ROOT);
-            boolean currencyChanges = !normalizedCurrency.equalsIgnoreCase(e.getCurrencyCode());
-            if (currencyChanges && currencyLockService.isLocked(userId)) {
-                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                        "currency-locked", "Currency Locked",
-                        "Impossible de changer de devise : le portefeuille n'est pas vide.");
-            }
+            // Sans ligne encore enregistree, la devise active effective etait celle
+            // derivee du pays : c'est elle que le changement quitte.
+            String previousCurrency = existing.isPresent()
+                    ? e.getCurrencyCode()
+                    : activeCurrencyResolver.resolve(userId);
             e.setCurrencyCode(normalizedCurrency);
+            if (previousCurrency != null && !normalizedCurrency.equalsIgnoreCase(previousCurrency)) {
+                recordActiveCurrencyChange(userId, previousCurrency.toUpperCase(Locale.ROOT),
+                        normalizedCurrency);
+            }
         } else if (existing.isEmpty()) {
             e.setCurrencyCode(activeCurrencyResolver.resolve(userId));
         }
 
         // Devise d'affichage (lot 8) : pure preference de lecture, volontairement
-        // exemptee de CurrencyLockService — elle ne touche ni portefeuille ni
+        // independante de la devise active — elle ne touche ni portefeuille ni
         // paiements. "AUTO" efface le choix (retour au suivi de la devise active) ;
         // omise (null), la valeur existante est conservee.
         String requestedDisplay = dto.displayCurrencyCode();
@@ -148,6 +170,20 @@ public class UserBusinessPrefsService {
         e.setContactMode(dto.contactMode());
         e.setResponseDelayHours(dto.responseDelayHours());
         return withLockStatus(toDto(repository.save(e)), user);
+    }
+
+    /**
+     * Trace le changement de devise active (audit_log, comme les autres choix du
+     * compte) puis le diffuse aux paquets qui stockent des montants sans devise et
+     * les lisent dans la devise active (grille tarifaire du voyageur, anciens modeles
+     * de trajet). Les ecouteurs tournent dans cette transaction : s'ils echouent (taux
+     * de change manquant par exemple), le changement de devise est annule avec eux.
+     */
+    private void recordActiveCurrencyChange(UUID userId, String previousCurrency, String newCurrency) {
+        auditService.log("USER", userId, "ACTIVE_CURRENCY_CHANGED", userId,
+                Map.of("previousCurrency", previousCurrency, "newCurrency", newCurrency));
+        eventPublisher.publishEvent(
+                new ActiveCurrencyChangedEvent(userId, previousCurrency, newCurrency));
     }
 
     private UUID resolveUserId(String firebaseUid) {
@@ -182,7 +218,9 @@ public class UserBusinessPrefsService {
 
     private UserBusinessPrefsDto withLockStatus(UserBusinessPrefsDto dto, UserEntity user) {
         boolean countryLocked = countryLockService.isLocked(user.getId());
-        boolean currencyLocked = currencyLockService.isLocked(user.getId());
+        // Toujours false depuis FLUTTER-8F : le champ reste servi pour les apps deja
+        // installees, qui grisaient la devise quand il valait true.
+        boolean currencyLocked = false;
         return new UserBusinessPrefsDto(
                 dto.weightUnit(),
                 dto.currencyCode(),

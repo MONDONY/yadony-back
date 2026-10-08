@@ -21,7 +21,6 @@ import com.yadony.api.requests.service.ViewerPaymentCapabilities;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.*;
-import org.springframework.dao.DataIntegrityViolationException;
 
 import java.util.*;
 
@@ -81,7 +80,8 @@ class FavoriteServiceTest {
 
         service.addFavorite(UID, FavoriteTargetType.TRIP, tripId);
 
-        verify(favoriteRepository).save(any(FavoriteEntity.class));
+        verify(favoriteRepository).insertIfAbsent(any(UUID.class), eq(userId), eq("TRIP"), eq(tripId));
+        verify(favoriteRepository, never()).save(any());
     }
 
     @Test
@@ -94,18 +94,20 @@ class FavoriteServiceTest {
         service.addFavorite(UID, FavoriteTargetType.TRIP, tripId);
 
         verify(favoriteRepository, never()).save(any());
+        verify(favoriteRepository, never()).insertIfAbsent(any(), any(), any(), any());
     }
 
     @Test
     void addTrip_raceOnInsert_isIdempotent() {
-        // Deux requêtes simultanées : l'exists() passe pour les deux, le second insert
-        // viole l'index unique — l'exception doit être avalée (toggle idempotent).
+        // Deux requêtes simultanées : l'exists() passe pour les deux, l'INSERT ... ON
+        // CONFLICT DO NOTHING du second ne touche aucune ligne (0) — pas d'exception.
+        // Le vrai comportement Postgres est couvert par FavoriteConcurrencyIT.
         when(announcementRepository.findById(tripId))
                 .thenReturn(Optional.of(tripOwnedBy(UUID.randomUUID())));
         when(favoriteRepository.existsByUserIdAndTargetTypeAndTargetId(userId, FavoriteTargetType.TRIP, tripId))
                 .thenReturn(false);
-        when(favoriteRepository.save(any(FavoriteEntity.class)))
-                .thenThrow(new DataIntegrityViolationException("ux_favorites_active"));
+        when(favoriteRepository.insertIfAbsent(any(UUID.class), eq(userId), eq("TRIP"), eq(tripId)))
+                .thenReturn(0);
 
         assertThatCode(() -> service.addFavorite(UID, FavoriteTargetType.TRIP, tripId))
                 .doesNotThrowAnyException();
@@ -143,7 +145,7 @@ class FavoriteServiceTest {
 
         service.addFavorite(UID, FavoriteTargetType.PACKAGE_REQUEST, reqId);
 
-        verify(favoriteRepository).save(any(FavoriteEntity.class));
+        verify(favoriteRepository).insertIfAbsent(any(UUID.class), eq(userId), eq("PACKAGE_REQUEST"), eq(reqId));
     }
 
     @Test
@@ -684,7 +686,7 @@ class FavoriteServiceTest {
         service.addFavorite(guestUid, FavoriteTargetType.TRIP, tripId);
 
         verify(guestUserProvisioner).resolveOrProvision(guestUid);
-        verify(favoriteRepository).save(argThat(f -> f.getUserId().equals(guestUserId)));
+        verify(favoriteRepository).insertIfAbsent(any(UUID.class), eq(guestUserId), eq("TRIP"), eq(tripId));
         // La résolution passe uniquement par le provisioner : jamais un accès direct au
         // repository qui contournerait la matérialisation paresseuse.
         verify(userRepository, never()).findByFirebaseUid(guestUid);

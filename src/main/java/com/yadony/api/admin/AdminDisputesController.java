@@ -158,7 +158,7 @@ public class AdminDisputesController {
         if (request.beneficiaryUserId() == null) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "guarantee-beneficiary-required", "Guarantee Beneficiary Required",
-                    "Indique à qui verser le fonds de garantie");
+                    "Indiquez à qui verser le fonds de garantie");
         }
         if (request.amountCents() <= 0) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
@@ -241,7 +241,7 @@ public class AdminDisputesController {
         if (normalizedRequested == null) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "guarantee-currency-required", "Guarantee Currency Required",
-                    "Indique la devise du fonds de garantie");
+                    "Indiquez la devise du fonds de garantie");
         }
         return normalizedRequested;
     }

@@ -11,11 +11,14 @@ import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.AuthenticationException;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.validation.FieldError;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.http.HttpMethod;
@@ -34,6 +37,7 @@ import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.net.URI;
+import java.sql.SQLTransientConnectionException;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -400,6 +404,46 @@ public class GlobalExceptionHandler {
             return name != null ? name : "check";
         }
         return null;
+    }
+
+    /**
+     * Pool de connexions épuisé : Hikari n'a pas fourni de connexion dans le délai
+     * {@code connection-timeout}. C'est une surcharge passagère, pas un bug : 503 avec
+     * {@code Retry-After}, un WARN dans les logs et pas d'événement Sentry (test de charge
+     * k6 du 07/10 sur staging : 187 requêtes en attente sur un pool de 10, des centaines
+     * de 500 envoyés à Sentry). Toute autre panne d'accès à la base garde le 500.
+     */
+    @ExceptionHandler({CannotCreateTransactionException.class, DataAccessResourceFailureException.class})
+    public ResponseEntity<ProblemDetail> handleDatabaseUnavailable(Exception ex) {
+        if (!isConnectionPoolTimeout(ex)) {
+            return handleGeneric(ex);
+        }
+        String requestId = MDC.get(RequestCorrelationFilter.MDC_KEY);
+        log.warn("Connection pool exhausted requestId={}: {}", requestId, ex.getMessage());
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.SERVICE_UNAVAILABLE,
+                messagesResolver.forRequest().get("problem.service-busy.detail"));
+        problem.setType(URI.create(BASE_TYPE + "service-busy"));
+        problem.setTitle("Service Busy");
+        problem.setProperty("code", "service-busy");
+        if (requestId != null) {
+            problem.setProperty("requestId", requestId);
+        }
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .header(HttpHeaders.RETRY_AFTER, "2")
+                .body(problem);
+    }
+
+    private static boolean isConnectionPoolTimeout(Throwable ex) {
+        for (Throwable t = ex; t != null; t = t.getCause()) {
+            if (t instanceof SQLTransientConnectionException) {
+                return true;
+            }
+            if (t.getCause() == t) {
+                break;
+            }
+        }
+        return false;
     }
 
     @ExceptionHandler(Exception.class)

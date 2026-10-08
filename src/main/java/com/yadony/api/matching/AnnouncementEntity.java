@@ -22,7 +22,6 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
-import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
@@ -162,7 +161,7 @@ public class AnnouncementEntity extends BaseEntity {
     private List<String> refusedTypes = new ArrayList<>();
 
     @Column(name = "timezone", nullable = false, length = 50)
-    private String timezone = "Europe/Paris";
+    private String timezone = TripTimezones.DEFAULT_ZONE;
 
     @Column(name = "total_trips_counted", nullable = false)
     private boolean totalTripsCounted = false;
@@ -336,10 +335,7 @@ public class AnnouncementEntity extends BaseEntity {
         if (handoverDeadline == null) {
             return false;
         }
-        ZoneId zone = (timezone == null || timezone.isBlank())
-                ? ZoneId.of("Europe/Paris")
-                : ZoneId.of(timezone);
-        return !handoverDeadline.atZone(zone).toInstant().isAfter(now);
+        return !handoverDeadline.atZone(TripTimezones.zoneOf(timezone)).toInstant().isAfter(now);
     }
 
     public UUID getReservedSenderId() { return reservedSenderId; }

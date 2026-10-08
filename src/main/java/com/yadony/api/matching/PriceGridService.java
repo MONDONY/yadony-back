@@ -159,6 +159,39 @@ public class PriceGridService {
         );
     }
 
+    /**
+     * Reconvertit la grille du profil quand la devise active du voyageur change
+     * (FLUTTER-8F). La grille ne porte pas de devise : ses nets se lisent dans la devise
+     * active. Sans cette conversion, 10 € deviendraient 10 F CFA au changement suivant.
+     * Même règle que {@link #snapshotToAnnouncement} : taux administrable, arrondi aux
+     * décimales de la cible, jamais à zéro. Un taux manquant lève un 422 qui annule
+     * aussi le changement de devise (même transaction).
+     */
+    @Transactional
+    public void convertGridCurrency(UUID travelerId, String fromCurrency, String toCurrency) {
+        if (fromCurrency == null || toCurrency == null || fromCurrency.equalsIgnoreCase(toCurrency)) {
+            return;
+        }
+        List<PriceGridItemEntity> items = gridRepo.findByTravelerIdOrderByPositionAsc(travelerId);
+        if (items.isEmpty()) {
+            return;
+        }
+        for (PriceGridItemEntity item : items) {
+            item.setUnitPriceNet(convertNet(item.getUnitPriceNet(), fromCurrency, toCurrency));
+        }
+        gridRepo.saveAll(items);
+        auditService.log(
+            "USER",
+            travelerId,
+            "PRICE_GRID_CURRENCY_CONVERTED",
+            travelerId,
+            Map.<String, Object>of(
+                "itemCount", String.valueOf(items.size()),
+                "previousCurrency", fromCurrency,
+                "newCurrency", toCurrency)
+        );
+    }
+
     private BigDecimal convertNet(BigDecimal net, String from, String to) {
         if (from.equalsIgnoreCase(to)) {
             return net;

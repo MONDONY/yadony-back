@@ -120,16 +120,21 @@ public class GuestUserProvisioner {
         guest.setStatus(UserStatus.ACTIVE);
         guest.setKycStatus(KycStatus.NOT_STARTED);
         try {
-            return userRepository.save(guest).getId();
+            return userRepository.saveAndFlush(guest).getId();
         } catch (DataIntegrityViolationException e) {
-            // Ronde de correction 1, constat 2 : check-then-insert non atomique. Deux
-            // provisionnements simultanés du même invité (ou une collision de username)
-            // violent une contrainte d'unicité ; la ligne existe désormais, on la relit
-            // plutôt que de renvoyer un 500. Même idiome que
-            // FavoriteService.addFavorite pour l'ajout concurrent d'un favori.
-            return userRepository.findByFirebaseUid(firebaseUid)
-                    .map(UserEntity::getId)
-                    .orElseThrow(() -> e);
+            // Check-then-insert non atomique : deux provisionnements simultanés du même
+            // invité (ou une collision de username) violent une contrainte d'unicité.
+            // Relire la ligne gagnante est impossible ici : on est dans la transaction de
+            // l'appelant (REQUIRED), que Postgres vient d'avorter et que Spring a marquée
+            // rollback-only. L'ancien save() + relecture ne voyait d'ailleurs jamais
+            // l'erreur, l'INSERT partant au commit (500). saveAndFlush la fait surgir ici,
+            // et un 409 explicite annule proprement la transaction : la requête gagnante a
+            // créé l'invité, un nouvel essai de celle-ci le retrouvera.
+            throw new YadonyBusinessException(
+                    HttpStatus.CONFLICT,
+                    "guest-provisioning-conflict",
+                    "Requête concurrente",
+                    "Une autre requête vient de créer ce compte invité. Réessayez.");
         }
     }
 }

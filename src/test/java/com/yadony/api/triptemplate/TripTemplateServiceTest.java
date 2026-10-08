@@ -443,4 +443,54 @@ class TripTemplateServiceTest {
         assertThat(dto.pricePerKg()).isEqualTo(5000.0);
     }
 
+
+    // --- FLUTTER-8F : changement de devise active ---
+
+    @Test
+    void pinLegacyTemplatesCurrency_pinsOnlyTemplatesWithoutCurrency() {
+        TripTemplateEntity legacy = new TripTemplateEntity();
+        TripTemplateEntity xof = new TripTemplateEntity();
+        xof.setCurrency("XOF");
+        when(repository.findByUserIdOrderByUpdatedAtDesc(userId)).thenReturn(List.of(legacy, xof));
+
+        service.pinLegacyTemplatesCurrency(userId, "eur");
+
+        assertThat(legacy.getCurrency()).isEqualTo("EUR");
+        assertThat(xof.getCurrency()).isEqualTo("XOF");
+        verify(repository).saveAll(List.of(legacy));
+        verify(auditService).log(org.mockito.ArgumentMatchers.eq("USER"),
+                org.mockito.ArgumentMatchers.eq(userId),
+                org.mockito.ArgumentMatchers.eq("TRIP_TEMPLATES_CURRENCY_PINNED"),
+                org.mockito.ArgumentMatchers.eq(userId), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void pinLegacyTemplatesCurrency_nothingToPin_noWrite() {
+        TripTemplateEntity xof = new TripTemplateEntity();
+        xof.setCurrency("XOF");
+        when(repository.findByUserIdOrderByUpdatedAtDesc(userId)).thenReturn(List.of(xof));
+
+        service.pinLegacyTemplatesCurrency(userId, "EUR");
+
+        verify(repository, never()).saveAll(org.mockito.ArgumentMatchers.any());
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    void pinLegacyTemplatesCurrency_blankPrevious_isIgnored() {
+        service.pinLegacyTemplatesCurrency(userId, null);
+        service.pinLegacyTemplatesCurrency(userId, " ");
+
+        verifyNoInteractions(repository, auditService);
+    }
+
+    @Test
+    void tripTemplateCurrencyListener_delegatesWithPreviousCurrency() {
+        TripTemplateService mocked = mock(TripTemplateService.class);
+
+        new TripTemplateCurrencyListener(mocked).onActiveCurrencyChanged(
+                new com.yadony.api.settings.ActiveCurrencyChangedEvent(userId, "EUR", "XOF"));
+
+        verify(mocked).pinLegacyTemplatesCurrency(userId, "EUR");
+    }
 }
