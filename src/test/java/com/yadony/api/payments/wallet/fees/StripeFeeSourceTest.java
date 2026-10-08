@@ -49,6 +49,43 @@ class StripeFeeSourceTest {
     }
 
     @Test
+    void display_recentFailureIsNotRetried_whileStrictPathStillRetries() throws StripeException {
+        StripeException stripeException = mock(StripeException.class);
+        try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class)) {
+            piStatic.when(() -> PaymentIntent.retrieve(eq("pi_1"), any(PaymentIntentRetrieveParams.class), any()))
+                    .thenThrow(stripeException);
+
+            assertThat(source.feeForDisplay("pi_1", "EUR")).isNull();
+            assertThat(source.feeForDisplay("pi_1", "EUR")).isNull();
+            // Un seul appel pour deux affichages : l'échec est retenu deux minutes.
+            piStatic.verify(() -> PaymentIntent.retrieve(eq("pi_1"), any(PaymentIntentRetrieveParams.class), any()),
+                    times(1));
+
+            // Le remboursement réel, lui, retente à chaque fois.
+            assertThat(source.fee("pi_1", "EUR")).isNull();
+            piStatic.verify(() -> PaymentIntent.retrieve(eq("pi_1"), any(PaymentIntentRetrieveParams.class), any()),
+                    times(2));
+        }
+    }
+
+    @Test
+    void display_usesShortTimeouts_andSharesTheRealFeeCache() throws StripeException {
+        try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class)) {
+            PaymentIntent pi = stubPaymentIntent(126L, "eur");
+            piStatic.when(() -> PaymentIntent.retrieve(eq("pi_1"), any(PaymentIntentRetrieveParams.class),
+                    any(com.stripe.net.RequestOptions.class))).thenReturn(pi);
+
+            assertThat(source.feeForDisplay("pi_1", "EUR")).isEqualByComparingTo("1.26");
+            // Frais réel mis en cache : le chemin strict ne rappelle pas Stripe.
+            assertThat(source.fee("pi_1", "EUR")).isEqualByComparingTo("1.26");
+            piStatic.verify(() -> PaymentIntent.retrieve(eq("pi_1"), any(PaymentIntentRetrieveParams.class),
+                    org.mockito.ArgumentMatchers.<com.stripe.net.RequestOptions>argThat(
+                            o -> o != null && o.getConnectTimeout() == 2_000 && o.getReadTimeout() == 5_000)),
+                    times(1));
+        }
+    }
+
+    @Test
     void stripeDown_fallsBackToConfiguredRate() throws StripeException {
         StripeException stripeException = mock(StripeException.class);
         try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class)) {

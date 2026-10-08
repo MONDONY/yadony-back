@@ -119,7 +119,7 @@ public class WalletController {
     /** Un ledger incohérent ne doit pas casser l'écran portefeuille : on affiche 0 remboursable. */
     private WalletRefundAllocation safeAllocation(UUID userId, String currency) {
         try {
-            return walletSelfRefundService.allocation(userId, currency);
+            return walletSelfRefundService.allocationForDisplay(userId, currency);
         } catch (WalletAllocationInvariantException e) {
             return WalletRefundAllocation.empty();
         }

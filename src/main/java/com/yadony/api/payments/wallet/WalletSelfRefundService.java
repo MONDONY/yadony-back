@@ -28,6 +28,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -69,6 +71,7 @@ public class WalletSelfRefundService {
     private final PawapayFeeTable pawapayFeeTable;
     private final WalletRefundRailIssuer walletRefundRailIssuer;
     private final EntityManager entityManager;
+    private final TransactionTemplate readOnlyTransaction;
 
     public WalletSelfRefundService(WalletAccountRepository walletAccountRepository,
                                    WalletTransactionRepository walletTransactionRepository,
@@ -85,7 +88,8 @@ public class WalletSelfRefundService {
                                    StripeFeeSource stripeFeeSource,
                                    PawapayFeeTable pawapayFeeTable,
                                    WalletRefundRailIssuer walletRefundRailIssuer,
-                                   EntityManager entityManager) {
+                                   EntityManager entityManager,
+                                   PlatformTransactionManager transactionManager) {
         this.walletAccountRepository = walletAccountRepository;
         this.walletTransactionRepository = walletTransactionRepository;
         this.refundRequestRepository = refundRequestRepository;
@@ -102,6 +106,8 @@ public class WalletSelfRefundService {
         this.pawapayFeeTable = pawapayFeeTable;
         this.walletRefundRailIssuer = walletRefundRailIssuer;
         this.entityManager = entityManager;
+        this.readOnlyTransaction = new TransactionTemplate(transactionManager);
+        this.readOnlyTransaction.setReadOnly(true);
     }
 
     /**
@@ -160,8 +166,32 @@ public class WalletSelfRefundService {
         return load(userId, currency).allocation();
     }
 
+    /**
+     * Allocation pour l'écran portefeuille ({@code GET /wallet/balance}), sans connexion tenue
+     * pendant les appels Stripe.
+     *
+     * <p>Les données du rejeu (solde, ledger, demandes, opérations pawaPay) sont lues dans une
+     * transaction courte, donc cohérentes entre elles : un solde et un ledger lus dans deux
+     * transactions pourraient encadrer une recharge et lever une fausse alerte d'incohérence.
+     * Le rejeu, qui peut interroger Stripe pour les frais réels des recharges carte, tourne
+     * ensuite hors transaction. Sous {@link #allocation}, ces appels (jusqu'à 80 s chacun sans
+     * délai configuré) gardaient une connexion du pool pendant toute leur durée.
+     *
+     * <p>Frais Stripe lus par {@link StripeFeeSource#feeForDisplay} : délais courts, et repli
+     * configuré quand Stripe vient d'échouer. Le remboursement réel ({@link #request}) passe
+     * toujours par {@link #allocation}, qui garde la lecture stricte.
+     */
+    public WalletRefundAllocation allocationForDisplay(UUID userId, String currency) {
+        LedgerSnapshot snapshot = readOnlyTransaction.execute(status -> snapshot(userId, currency));
+        return replay(userId, snapshot, displayFeeSources()).allocation();
+    }
+
     /** Allocation et ledger qui l'a produite, pour n'en faire qu'une lecture par devise. */
     private record LoadedAllocation(WalletRefundAllocation allocation, List<WalletTransactionEntity> ledger) {}
+
+    /** Données lues pour un rejeu ; {@code balance} nul quand l'utilisateur n'a pas de portefeuille dans la devise. */
+    private record LedgerSnapshot(String currency, BigDecimal balance, List<WalletTransactionEntity> ledger,
+                                  List<WalletRefundRequestItemEntity> items, Map<String, String> providerByPaymentRef) {}
 
     /**
      * Rejeu effectif du ledger. Renvoie aussi les transactions lues : {@link #listEligibleTopups}
@@ -175,10 +205,14 @@ public class WalletSelfRefundService {
      * la limite de {@code admin_alerts.type}).
      */
     private LoadedAllocation load(UUID userId, String currency) {
+        return replay(userId, snapshot(userId, currency), strictFeeSources());
+    }
+
+    private LedgerSnapshot snapshot(UUID userId, String currency) {
         String code = normalize(currency);
         WalletAccountEntity wallet = walletAccountRepository.findByUserIdAndCurrency(userId, code).orElse(null);
         if (wallet == null) {
-            return new LoadedAllocation(WalletRefundAllocation.empty(), List.of());
+            return new LedgerSnapshot(code, null, List.of(), List.of(), Map.of());
         }
         List<WalletTransactionEntity> ledger =
                 walletTransactionRepository.findByUserIdAndCurrencyOrderByCreatedAtAsc(userId, code);
@@ -195,10 +229,23 @@ public class WalletSelfRefundService {
                         PawapayOperationKind.DEPOSIT)
                 .stream()
                 .collect(Collectors.toMap(op -> "pawapay:" + op.getId(), PawapayOperationEntity::getProvider));
-        WalletRefundFeeCalculator.FeeSources sources = new WalletRefundFeeCalculator.FeeSources() {
+        return new LedgerSnapshot(code, wallet.getBalance(), ledger, items, providerByPaymentRef);
+    }
+
+    private WalletRefundFeeCalculator.FeeSources strictFeeSources() {
+        return feeSources(stripeFeeSource::fee);
+    }
+
+    private WalletRefundFeeCalculator.FeeSources displayFeeSources() {
+        return feeSources(stripeFeeSource::feeForDisplay);
+    }
+
+    private WalletRefundFeeCalculator.FeeSources feeSources(
+            java.util.function.BiFunction<String, String, BigDecimal> stripeRealFee) {
+        return new WalletRefundFeeCalculator.FeeSources() {
             @Override
             public BigDecimal stripeFee(String paymentIntentId, BigDecimal amount, String feeCurrency) {
-                return Optional.ofNullable(stripeFeeSource.fee(paymentIntentId, feeCurrency))
+                return Optional.ofNullable(stripeRealFee.apply(paymentIntentId, feeCurrency))
                         .orElseGet(() -> stripeFeeSource.fallback(amount, feeCurrency));
             }
 
@@ -207,9 +254,17 @@ public class WalletSelfRefundService {
                 return pawapayFeeTable.fee(provider, amount, feeCurrency);
             }
         };
+    }
+
+    private LoadedAllocation replay(UUID userId, LedgerSnapshot snapshot, WalletRefundFeeCalculator.FeeSources sources) {
+        if (snapshot.balance() == null) {
+            return new LoadedAllocation(WalletRefundAllocation.empty(), List.of());
+        }
+        String code = snapshot.currency();
+        List<WalletTransactionEntity> ledger = snapshot.ledger();
         try {
-            return new LoadedAllocation(WalletRefundAllocator.allocate(ledger, items, wallet.getBalance(),
-                    providerByPaymentRef, sources, code), ledger);
+            return new LoadedAllocation(WalletRefundAllocator.allocate(ledger, snapshot.items(), snapshot.balance(),
+                    snapshot.providerByPaymentRef(), sources, code), ledger);
         } catch (WalletAllocationInvariantException e) {
             log.warn("Allocation wallet incoherente pour user {} {} : {}", userId, code, e.getMessage());
             adminAlertEscalator.raiseOnce("wallet-alloc-" + userId,

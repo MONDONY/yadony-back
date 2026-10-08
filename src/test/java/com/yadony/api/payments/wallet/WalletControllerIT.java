@@ -120,6 +120,8 @@ class WalletControllerIT {
         // en dépend indirectement, donc findById doit être doublé lui aussi.
         when(userRepository.findById(USER_UUID)).thenReturn(Optional.of(testUser));
         when(stripeFeeSource.fee(any(), any())).thenReturn(BigDecimal.ZERO);
+        // GET /wallet/balance lit les frais en mode affichage (délais courts, cf. StripeFeeSource).
+        when(stripeFeeSource.feeForDisplay(any(), any())).thenReturn(BigDecimal.ZERO);
     }
 
     private static UsernamePasswordAuthenticationToken authAs(String uid, String role) {
@@ -398,6 +400,8 @@ class WalletControllerIT {
             WalletTransactionType.TOP_UP, "pi_it_fee", "k-it-fee");
         // Frais Stripe au moins égal au montant : rien ne repartirait vers l'utilisateur.
         when(stripeFeeSource.fee(any(), any())).thenReturn(new BigDecimal("0.50"));
+        // GET /wallet/balance lit les frais en mode affichage (délais courts, cf. StripeFeeSource).
+        when(stripeFeeSource.feeForDisplay(any(), any())).thenReturn(new BigDecimal("0.50"));
 
         mockMvc.perform(get("/wallet/balance")
                 .with(authentication(authAs(FIREBASE_UID, "SENDER"))))
@@ -418,6 +422,8 @@ class WalletControllerIT {
         seedCredit(USER_UUID, "XOF", new BigDecimal("200.40"),
             WalletTransactionType.TOP_UP, "pi_it_xof", "k-it-xof");
         when(stripeFeeSource.fee(any(), any())).thenReturn(new BigDecimal("200"));
+        // GET /wallet/balance lit les frais en mode affichage (délais courts, cf. StripeFeeSource).
+        when(stripeFeeSource.feeForDisplay(any(), any())).thenReturn(new BigDecimal("200"));
 
         mockMvc.perform(get("/wallet/balance")
                 .with(authentication(authAs(FIREBASE_UID, "SENDER"))))
