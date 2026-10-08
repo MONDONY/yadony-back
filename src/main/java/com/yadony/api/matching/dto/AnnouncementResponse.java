@@ -57,5 +57,11 @@ public record AnnouncementResponse(
          *  rejouer la règle. */
         Set<PaymentMethod> availablePaymentMethods,
         /** Net voyageur des colis confirmés, dans la devise de l'annonce (KPI « revenus réservés »). */
-        BigDecimal reservedNetAmount
+        BigDecimal reservedNetAmount,
+        /** Voyage à plusieurs étapes (FLUTTER-4D) : identifiant commun aux étapes, null hors voyage. */
+        UUID tripGroupId,
+        /** Rang de cette étape dans son voyage, à partir de 1 ; null hors voyage. */
+        Integer tripLegIndex,
+        /** Nombre d'étapes encore présentes dans le voyage ; null hors voyage. */
+        Integer tripLegCount
 ) {}

@@ -39,6 +39,14 @@ public class AnnouncementEntity extends BaseEntity {
     @Column(name = "source_recurrence_id")
     private UUID sourceRecurrenceId;
 
+    /** Voyage à plusieurs étapes (FLUTTER-4D, V299) : commun aux étapes, null hors voyage. */
+    @Column(name = "trip_group_id")
+    private UUID tripGroupId;
+
+    /** Rang de l'étape dans son voyage, à partir de 1 ; null hors voyage. */
+    @Column(name = "trip_leg_index")
+    private Integer tripLegIndex;
+
     @Column(name = "departure_city", nullable = false, length = 100)
     private String departureCity;
 
@@ -361,6 +369,12 @@ public class AnnouncementEntity extends BaseEntity {
 
     public UUID getSourceRecurrenceId() { return sourceRecurrenceId; }
     public void setSourceRecurrenceId(UUID sourceRecurrenceId) { this.sourceRecurrenceId = sourceRecurrenceId; }
+
+    public UUID getTripGroupId() { return tripGroupId; }
+    public void setTripGroupId(UUID tripGroupId) { this.tripGroupId = tripGroupId; }
+
+    public Integer getTripLegIndex() { return tripLegIndex; }
+    public void setTripLegIndex(Integer tripLegIndex) { this.tripLegIndex = tripLegIndex; }
 
     public String getDepartureCity() { return departureCity; }
     public void setDepartureCity(String departureCity) { this.departureCity = departureCity; }

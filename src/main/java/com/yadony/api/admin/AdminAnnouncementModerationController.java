@@ -7,6 +7,7 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.MatchingTextUtil;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.matching.AnnouncementEntity;
+import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.AnnouncementService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -29,11 +30,14 @@ public class AdminAnnouncementModerationController {
 
     private final AnnouncementService announcementService;
     private final UserRepository userRepository;
+    private final AnnouncementRepository announcementRepository;
 
     public AdminAnnouncementModerationController(AnnouncementService announcementService,
-                                                  UserRepository userRepository) {
+                                                  UserRepository userRepository,
+                                                  AnnouncementRepository announcementRepository) {
         this.announcementService = announcementService;
         this.userRepository = userRepository;
+        this.announcementRepository = announcementRepository;
     }
 
     @PostMapping("/admin/announcements/{id}/remove")
@@ -63,10 +67,8 @@ public class AdminAnnouncementModerationController {
         String travelerName = a.getTravelerId() != null
                 ? userRepository.findById(a.getTravelerId()).map(MatchingTextUtil::buildName).orElse(null)
                 : null;
-        String corridor = MatchingTextUtil.corridorLabel(a.getDepartureCity(), a.getArrivalCity());
-        return new AdminAnnouncementListItemResponse(
-                a.getId(), a.getStatus().name(), travelerName,
-                corridor, a.getDepartureDate(), a.getAvailableKg(), a.getPricePerKg(),
-                a.getCurrency() != null ? a.getCurrency().toUpperCase(java.util.Locale.ROOT) : null);
+        Integer tripLegCount = a.getTripGroupId() != null
+                ? (int) announcementRepository.countByTripGroupId(a.getTripGroupId()) : null;
+        return AdminAnnouncementListItemResponse.of(a, travelerName, tripLegCount);
     }
 }
