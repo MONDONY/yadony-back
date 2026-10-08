@@ -693,6 +693,50 @@ class NegotiationServiceTest {
         }
 
         @Test
+        @DisplayName("trajet dédié depuis Abidjan → fuseau Africa/Abidjan et departureAt posé (il restait nul)")
+        void start_dedicatedTrip_usesDepartureCityTimezone() {
+            stubDedicatedTripRequestFields();
+            request.setDepartureCity("Abidjan");
+            request.setArrivalCity("Paris");
+            when(config.maxOpenThreadsPerTraveler()).thenReturn(5);
+            when(config.threadsPerMinuteRateLimit()).thenReturn(1);
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
+            when(requestRepo.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(threadRepo.findActiveByPackageRequestIdAndTravelerId(REQUEST_ID, TRAVELER_ID))
+                .thenReturn(Optional.empty());
+            when(threadRepo.countByTravelerIdAndStatus(eq(TRAVELER_ID), eq(NegotiationThreadStatus.OPEN)))
+                .thenReturn(0L);
+            when(threadRepo.countCreatedBy(eq(TRAVELER_ID), any())).thenReturn(0L);
+            when(announcementRepo.save(any())).thenAnswer(inv -> {
+                com.yadony.api.matching.AnnouncementEntity a = inv.getArgument(0);
+                var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+                idField.setAccessible(true);
+                idField.set(a, UUID.randomUUID());
+                return a;
+            });
+            when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(announcementRepo.findCountryCodeByCityName("Abidjan")).thenReturn(Optional.of("CI"));
+            when(announcementRepo.findTimezoneByCityName("Abidjan", "CI"))
+                .thenReturn(Optional.of("Africa/Abidjan"));
+
+            NegotiationStartRequest req = new NegotiationStartRequest(
+                REQUEST_ID, new BigDecimal("80"), request.getDesiredDate(),
+                new BigDecimal("5"), null, null, true, dedicatedTripPayload(request.getDesiredDate())
+            );
+            service.start(TRAVELER_ID, req);
+
+            ArgumentCaptor<com.yadony.api.matching.AnnouncementEntity> annCaptor =
+                ArgumentCaptor.forClass(com.yadony.api.matching.AnnouncementEntity.class);
+            verify(announcementRepo).save(annCaptor.capture());
+            com.yadony.api.matching.AnnouncementEntity ann = annCaptor.getValue();
+            assertThat(ann.getTimezone()).isEqualTo("Africa/Abidjan");
+            // 08:00 à Abidjan (UTC+0), et non 08:00 à Paris (06:00 ou 07:00 UTC).
+            assertThat(ann.getDepartureAt().toInstant()).isEqualTo(
+                request.getDesiredDate().atTime(8, 0).toInstant(java.time.ZoneOffset.UTC));
+        }
+
+        @Test
         @DisplayName("createDedicatedTrip=true sans dedicatedTrip → 422 dedicated-trip-invalid")
         void start_throws422_whenDedicatedTripPayloadMissing() {
             stubDedicatedTripRequestFields();

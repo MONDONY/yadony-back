@@ -73,7 +73,7 @@ import java.util.stream.Collectors;
 public class AnnouncementService {
 
     private static final Logger log = LoggerFactory.getLogger(AnnouncementService.class);
-    private static final ZoneId DEFAULT_ZONE = ZoneId.of("Europe/Paris");
+    private static final ZoneId DEFAULT_ZONE = ZoneId.of(TripTimezones.DEFAULT_ZONE);
 
     /**
      * Dérive l'instant canonique de départ : (date + heure) interprétées dans le
@@ -85,12 +85,11 @@ public class AnnouncementService {
      * de départ est portée par {@code @NotNull} sur {@code AnnouncementRequest.departureTime}
      * (validation bean au niveau du contrôleur).
      */
-    static OffsetDateTime deriveDepartureAt(LocalDate date, LocalTime time, String zone) {
+    public static OffsetDateTime deriveDepartureAt(LocalDate date, LocalTime time, String zone) {
         if (date == null || time == null) {
             return null;
         }
-        ZoneId resolved = (zone == null || zone.isBlank()) ? DEFAULT_ZONE : ZoneId.of(zone);
-        return date.atTime(time).atZone(resolved).toOffsetDateTime();
+        return date.atTime(time).atZone(TripTimezones.zoneOf(zone)).toOffsetDateTime();
     }
 
     /**
@@ -534,6 +533,11 @@ public class AnnouncementService {
         announcement.setArrivalCountryCode(TripCountryCodes.resolve(
                 request.arrivalCountryCode(), request.arrivalCity(),
                 announcementRepository::findCountryCodeByCityName));
+        // Date et heure sont saisies en heure locale de la ville de départ : le fuseau en
+        // est déduit, sans quoi tout départ était lu à l'heure de Paris.
+        announcement.setTimezone(TripTimezones.resolve(
+                request.departureCity(), announcement.getDepartureCountryCode(),
+                TripTimezones.Lookup.of(announcementRepository)));
         announcement.setDepartureDate(request.departureDate());
         announcement.setDepartureTime(request.departureTime());
         announcement.setArrivalTime(request.arrivalTime());
@@ -574,7 +578,8 @@ public class AnnouncementService {
                     "Le prix par kg est obligatoire en mode KG"
             );
         }
-        if (request.departureDate() != null && request.departureDate().isBefore(LocalDate.now())) {
+        if (request.departureDate() != null && request.departureDate().isBefore(
+                LocalDate.now(TripTimezones.zoneOf(announcement.getTimezone())))) {
             throw new YadonyBusinessException(
                 HttpStatus.UNPROCESSABLE_ENTITY,
                 "invalid-departure-date",
@@ -1009,7 +1014,13 @@ public class AnnouncementService {
                 request.arrivalCountryCode(), request.arrivalCity(),
                 announcement.getArrivalCity(), announcement.getArrivalCountryCode(),
                 announcementRepository::findCountryCodeByCityName);
+        // Le fuseau suit la ville de départ : recalculé seulement si elle (ou son pays) change.
+        String timezone = TripTimezones.resolveOnUpdate(
+                request.departureCity(), departureCountryCode,
+                announcement.getDepartureCity(), announcement.getDepartureCountryCode(),
+                announcement.getTimezone(), TripTimezones.Lookup.of(announcementRepository));
         announcement.setDepartureCity(request.departureCity());
+        announcement.setTimezone(timezone);
         announcement.setArrivalCity(request.arrivalCity());
         announcement.setDepartureCountryCode(departureCountryCode);
         announcement.setArrivalCountryCode(arrivalCountryCode);
@@ -1170,7 +1181,8 @@ public class AnnouncementService {
         assertStripeCapability(user, announcement.getAcceptedPaymentMethods());
 
         if (announcement.getDepartureDate() != null
-                && announcement.getDepartureDate().isBefore(LocalDate.now())) {
+                && announcement.getDepartureDate().isBefore(
+                        LocalDate.now(TripTimezones.zoneOf(announcement.getTimezone())))) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "departure-date-passed",
                     "Departure Date Passed",
                     "La date de départ est passée. Modifiez le trajet avant de le publier.");

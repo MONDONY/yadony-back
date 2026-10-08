@@ -833,9 +833,7 @@ public class NegotiationService {
         if (ann.getDepartureDate() == null) {
             return false;
         }
-        java.time.ZoneId zone = (ann.getTimezone() == null || ann.getTimezone().isBlank())
-                ? java.time.ZoneId.of("Europe/Paris")
-                : java.time.ZoneId.of(ann.getTimezone());
+        java.time.ZoneId zone = com.yadony.api.matching.TripTimezones.zoneOf(ann.getTimezone());
         return ann.getDepartureDate().isBefore(now.atZone(zone).toLocalDate());
     }
 
@@ -860,8 +858,15 @@ public class NegotiationService {
                 null, request.getDepartureCity(), announcementRepo::findCountryCodeByCityName));
         ann.setArrivalCountryCode(com.yadony.api.matching.TripCountryCodes.resolve(
                 null, request.getArrivalCity(), announcementRepo::findCountryCodeByCityName));
+        // Heure de départ saisie en heure locale de la ville de départ : fuseau déduit de
+        // la ville, et instant de départ posé (il restait nul sur tout trajet dédié).
+        ann.setTimezone(com.yadony.api.matching.TripTimezones.resolve(
+                request.getDepartureCity(), ann.getDepartureCountryCode(),
+                com.yadony.api.matching.TripTimezones.Lookup.of(announcementRepo)));
         ann.setDepartureDate(req.departureDate());
         ann.setDepartureTime(req.departureTime());
+        ann.setDepartureAt(com.yadony.api.matching.AnnouncementService.deriveDepartureAt(
+                req.departureDate(), req.departureTime(), ann.getTimezone()));
         ann.setArrivalTime(req.arrivalTime());
         com.yadony.api.matching.ArrivalRules.validate(req.departureDate(), req.departureTime(),
                 req.arrivalDate(), req.arrivalTime());

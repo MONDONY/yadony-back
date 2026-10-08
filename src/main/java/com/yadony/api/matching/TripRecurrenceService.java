@@ -216,7 +216,11 @@ public class TripRecurrenceService {
         // Une limite déjà expirée à la publication (départ proche, délai de remise long)
         // ouvrirait le signalement de no-show dès l'acceptation du bid : repli sur l'heure
         // du départ, comportement historique d'avant l'introduction du délai de remise.
-        if (handoverDeadline.isBefore(LocalDateTime.now())) {
+        // Comparée à l'heure locale de la ville de départ : c'est dans ce fuseau que le trajet
+        // généré lira sa date limite (TripTimezones), pas dans celui du serveur.
+        java.time.ZoneId departureZone = TripTimezones.zoneOf(TripTimezones.resolve(
+                rec.getDepartureCity(), null, TripTimezones.Lookup.of(announcementRepository)));
+        if (handoverDeadline.isBefore(LocalDateTime.now(departureZone))) {
             handoverDeadline = departureDt;
         }
         return new AnnouncementRequest(

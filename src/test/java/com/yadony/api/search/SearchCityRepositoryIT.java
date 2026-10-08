@@ -66,6 +66,29 @@ class SearchCityRepositoryIT {
         assertThat(announcementRepository.findCountryCodeByCityName("Zzzqqqxxx")).isEmpty();
     }
 
+    /**
+     * Fuseau de la ville de départ d'un trajet, sur le vrai GeoNames : la colonne
+     * {@code cities.timezone} (V300) est remplie à l'import par le chargeur.
+     */
+    @Test
+    void timezoneByCityName_usesGeoNamesZone_andTripCountryFirst() {
+        assertThat(announcementRepository.findTimezoneByCityName("Cotonou", "")).contains("Africa/Porto-Novo");
+        assertThat(announcementRepository.findTimezoneByCityName(" abidjan ", "CI")).contains("Africa/Abidjan");
+        assertThat(announcementRepository.findTimezoneByCityName("Paris", "")).contains("Europe/Paris");
+        assertThat(announcementRepository.findTimezoneByCityName("Toronto", "")).contains("America/Toronto");
+        // Le pays du trajet passe avant la population : Paris (Texas, Ontario…) n'est pas Europe/Paris.
+        assertThat(announcementRepository.findTimezoneByCityName("Paris", "US")).hasValueSatisfying(
+                zone -> assertThat(zone).startsWith("America/"));
+        assertThat(announcementRepository.findTimezoneByCityName("Zzzqqqxxx", "")).isEmpty();
+    }
+
+    @Test
+    void mainTimezoneByCountryCode_isTheMostPopulatedCityZone() {
+        assertThat(announcementRepository.findMainTimezoneByCountryCode("CA")).contains("America/Toronto");
+        assertThat(announcementRepository.findMainTimezoneByCountryCode("BJ")).contains("Africa/Porto-Novo");
+        assertThat(announcementRepository.findMainTimezoneByCountryCode("XX")).isEmpty();
+    }
+
     @Test
     void exactMatchAgainstRealData_scoresOneAndSortsFirst() {
         List<SearchCityRepository.CityMatch> matches = repository.findSimilar("bamako", 0.4, 5);

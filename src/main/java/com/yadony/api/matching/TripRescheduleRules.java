@@ -2,7 +2,6 @@ package com.yadony.api.matching;
 
 import java.time.LocalDateTime;
 import java.time.LocalTime;
-import java.time.ZoneId;
 import java.util.EnumSet;
 import java.util.Set;
 
@@ -63,7 +62,6 @@ public final class TripRescheduleRules {
     }
 
     static LocalDateTime nowAt(AnnouncementEntity announcement) {
-        String zone = announcement.getTimezone();
-        return LocalDateTime.now(zone == null || zone.isBlank() ? ZoneId.of("Europe/Paris") : ZoneId.of(zone));
+        return LocalDateTime.now(TripTimezones.zoneOf(announcement.getTimezone()));
     }
 }

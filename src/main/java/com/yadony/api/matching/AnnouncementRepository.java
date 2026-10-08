@@ -279,4 +279,31 @@ public interface AnnouncementRepository extends JpaRepository<AnnouncementEntity
             LIMIT 1
             """, nativeQuery = true)
     Optional<String> findCountryCodeByCityName(@Param("name") String name);
+
+    /**
+     * Fuseau IANA de la ville de départ d'un trajet : ville la plus peuplée de ce nom,
+     * celle du pays du trajet en priorité (« Paris » d'un trajet US n'est pas Europe/Paris).
+     * {@code countryCode} vide quand le pays est inconnu : seule la population départage.
+     * Lu sur ce repository pour la même raison que {@link #findCountryCodeByCityName}.
+     */
+    @Query(value = """
+            SELECT timezone FROM cities
+            WHERE LOWER(name) = LOWER(TRIM(:name))
+            ORDER BY CASE WHEN country_code = :countryCode THEN 0 ELSE 1 END, population DESC
+            LIMIT 1
+            """, nativeQuery = true)
+    Optional<String> findTimezoneByCityName(@Param("name") String name,
+                                            @Param("countryCode") String countryCode);
+
+    /**
+     * Fuseau principal d'un pays : celui de sa ville la plus peuplée (Toronto pour CA,
+     * New York pour US). Repli quand la ville du trajet est absente du référentiel.
+     */
+    @Query(value = """
+            SELECT timezone FROM cities
+            WHERE country_code = :countryCode AND timezone IS NOT NULL
+            ORDER BY population DESC
+            LIMIT 1
+            """, nativeQuery = true)
+    Optional<String> findMainTimezoneByCountryCode(@Param("countryCode") String countryCode);
 }
