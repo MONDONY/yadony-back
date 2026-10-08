@@ -98,24 +98,32 @@ public class FavoriteController {
 
     /**
      * Identifiant de l'appelant pour les lectures et la suppression, ou {@code null}
-     * pour un invité.
+     * pour un invité qui n'a encore rien mis en favori.
      *
      * <p>Un invité n'a pas de ligne {@code users} tant qu'il n'a rien favorité : la
-     * matérialisation est paresseuse, et tout son intérêt est que naviguer (ou retirer
-     * un favori qui ne peut pas exister) ne laisse aucune trace. On ne provisionne donc
-     * surtout pas ici ; {@link FavoriteService} traite ce {@code null} comme « aucun
-     * favori, rien à retirer ».
+     * matérialisation est paresseuse ({@code GuestUserProvisioner.resolveOrProvision},
+     * appelé par le seul ajout). On ne provisionne donc surtout pas ici, mais on LIT la
+     * ligne si l'ajout l'a déjà créée : renvoyer {@code null} à tout invité laissait ses
+     * favoris invisibles ({@code /favorites/ids}, {@code /trips}, {@code /package-requests}
+     * vides) et son retrait sans effet, alors que l'ajout avait bien écrit (FLUTTER-G3).
      *
-     * <p>La tolérance est délibérément réservée aux invités : pour tout autre appelant,
-     * l'absence de ligne reste un 404 {@code user/not-found}, exactement comme avant
+     * <p>La tolérance à l'absence de ligne est réservée aux invités : pour tout autre
+     * appelant, elle reste un 404 {@code user/not-found}, exactement comme avant
      * l'ouverture aux invités. Même idiome que
      * {@code PackageRequestController.viewerUserIdOrNull}.
      */
     private UUID viewerUserIdOrNull(String firebaseUid) {
         if (isGuest()) {
-            return null;
+            return existingUserIdOrNull(firebaseUid);
         }
         return requireUserId(firebaseUid);
+    }
+
+    private UUID existingUserIdOrNull(String firebaseUid) {
+        if (firebaseUid == null || firebaseUid.isBlank()) return null;
+        return userRepository.findByFirebaseUid(firebaseUid)
+                .map(com.yadony.api.auth.UserEntity::getId)
+                .orElse(null);
     }
 
     private UUID requireUserId(String firebaseUid) {

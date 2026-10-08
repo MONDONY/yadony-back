@@ -38,6 +38,7 @@ import com.yadony.api.payments.events.MobileMoneyDepositFailedEvent;
 import com.yadony.api.payments.events.MobileMoneyPaymentConfirmedEvent;
 import com.yadony.api.payments.events.MobileMoneyPaymentExpiredEvent;
 import com.yadony.api.payments.events.PaymentReleasedEvent;
+import com.yadony.api.tracking.events.ConfirmationCodeBlockedEvent;
 import com.yadony.api.tracking.events.DeliveryConfirmedEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -193,6 +194,20 @@ public class NotificationDispatcher {
         notifyCritical(event.senderId(), text.title(), text.body(),
                 Map.of("type", "HANDOVER_REMINDER_H2",
                        "bidId", event.bidId().toString()));
+    }
+
+    /**
+     * Code de retrait bloqué après trop d'essais faux du voyageur (FLUTTER-G1) : seul
+     * l'expéditeur peut en générer un nouveau, depuis le détail du colis (bids/{id}).
+     * Après commit : la transaction de confirmDelivery se termine par une erreur métier
+     * sans rollback, l'effacement du code est donc bien en base quand l'app rouvre le colis.
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
+    public void onConfirmationCodeBlocked(ConfirmationCodeBlockedEvent event) {
+        var text = NotificationTexts.confirmationCodeBlocked(messagesFor(event.senderId()));
+        notifyUser(event.senderId(), text.title(), text.body(),
+                Map.of("type", "CONFIRMATION_CODE_BLOCKED", "bidId", event.bidId().toString()));
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)

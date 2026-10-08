@@ -219,7 +219,9 @@ public class PackageRequestController {
      *
      * <p>Un invité n'a pas de ligne {@code users} : la matérialisation est paresseuse, et
      * tout son intérêt est que naviguer ne laisse aucune trace. On ne provisionne donc
-     * surtout pas ici, on consulte sans identité. Le service traite déjà ce {@code null}
+     * surtout pas ici. Mais un invité qui a déjà mis une demande en favori a une ligne
+     * (créée par l'ajout) : on la lit, sinon le cœur de ses favoris restait éteint dans
+     * la liste et le détail (FLUTTER-G3). Sans ligne, le service traite ce {@code null}
      * comme un appelant anonyme (aucun favori, aucun statut Connect, jamais propriétaire).
      *
      * <p>La tolérance est délibérément réservée aux invités : pour tout autre appelant,
@@ -227,7 +229,11 @@ public class PackageRequestController {
      */
     private UUID viewerUserIdOrNull() {
         if (isGuest()) {
-            return null;
+            Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+            if (auth == null || !(auth.getPrincipal() instanceof String uid) || uid.isBlank()) {
+                return null;
+            }
+            return userRepository.findByFirebaseUid(uid).map(u -> u.getId()).orElse(null);
         }
         return requireUserId();
     }

@@ -56,6 +56,7 @@ public class NotificationPrefsService {
             // l'expéditeur et suivent donc le même interrupteur que les offres reçues.
             Map.entry("TRAVELER_INVITE",              "pushActivityBids"),
             Map.entry("CONFIRMATION_CODE_READY",      "pushActivityBids"),
+            Map.entry("CONFIRMATION_CODE_BLOCKED",    "pushActivityBids"),
             Map.entry("DELIVERY_NOSHOW_REPORTED",     "pushActivityBids"),
             Map.entry("DELIVERY_RETRY_APPOINTMENT",   "pushActivityBids"),
             Map.entry("PARCEL_UNCLAIMED",             "pushActivityBids"),

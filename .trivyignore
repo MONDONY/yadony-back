@@ -12,3 +12,10 @@ stripe-secret-token
 # (vues = JSON REST + Thymeleaf pour les e-mails). Ajoutée le 2026-10-06 : à RETIRER dès
 # qu'un Spring Boot 3.5.x embarque un spring-webmvc corrigé.
 CVE-2026-47884
+
+# CVE-2026-47890 (spring-webmvc 6.2.19, corruption de flux Server-Sent Events avec
+# rendu de vue) : aucun correctif publié en 6.2.x (corrigée seulement en 7.0.9, Spring
+# Boot 4). Le back n'expose aucun flux SSE (ni SseEmitter, ni ResponseBodyEmitter, ni
+# text/event-stream, ni WebFlux). Ajoutée le 2026-10-09 : à RETIRER dès qu'un Spring
+# Boot 3.5.x embarque un spring-webmvc corrigé.
+CVE-2026-47890
