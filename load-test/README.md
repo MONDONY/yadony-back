@@ -72,7 +72,7 @@ ON CONFLICT DO NOTHING;
 bash load-test/run.sh
 ```
 
-The runner executes `read_endpoints.js` then `favorites.js` and writes a summary to `load-test/reports/load-report.md`.
+The runner executes `read_endpoints.js`, then `favorites.js`, then `bid_journey.js`, and writes a summary to `load-test/reports/load-report.md`.
 
 ### Single scenario
 
@@ -128,6 +128,27 @@ The PUT+DELETE pair is **idempotent and non-destructive** — it adds then immed
 
 #### Load profiles (sequential, via `startTime` offsets)
 
+### `bid_journey.js`
+
+Realistic sender journey: **login → search → bid → cancel**.
+
+| Step | Call | Notes |
+|------|------|-------|
+| Login | token acquired once per VU in `setup()` | `GET /auth/me` identifies the account (used to filter out its own announcements) |
+| Search | `GET /announcements?departureCity=...&arrivalCity=...` | Same corridor params as `read_endpoints.js`, defaults Paris→Dakar |
+| Bid | `POST /announcements/{id}/bids` | Cash bid (`paymentMethod: CASH`) on the first eligible result — active, not self-owned, not `KG_FREE`, enough `availableKg` |
+| Cleanup | `PUT /bids/{bidId}/cancel` | Cancels the bid just created — idempotent, non-destructive, restores announcement capacity |
+
+**Why cash:** no Stripe or mobile-money setup needed. Not every trip accepts cash (traveler's choice, currency), so only announcements whose `availablePaymentMethods` contains `CASH` are picked. On staging (08/10/2026) Paris→Dakar had few of them: `BID_SEARCH_ARRIVAL=Abidjan` finds more.
+
+**Why cancel immediately:** `createBid` persists a real `PENDING` bid. Without the cancel step, each iteration would leave one behind and the "one active bid per (sender, announcement)" rule would start rejecting retries on the same announcement with 409.
+
+**4xx are expected, not failures** (same philosophy as `all_endpoints.js`): the live staging inventory varies run to run (refused category, already-bid, own announcement, closed dedicated trip…). The one to know about: most traveler accounts default to "verified profiles only" (`contactKycOnly`), so a test sender account that is **not KYC-verified** gets `403 contact-kyc-required` on most announcements — the journey still measures the login+search path correctly, it just rarely reaches a `201`. Verify the test account's KYC status on staging to exercise the write path. Only `5xx` counts as a real failure (`journey_server_errors` threshold).
+
+Env: `BID_SEARCH_DEPARTURE` (default `Paris`), `BID_SEARCH_ARRIVAL` (default `Dakar`), `BID_WEIGHT_KG` (default `1`), `BID_RECIPIENT_PHONE`, `BID_FALLBACK_CATEGORY`.
+
+Profiles: **smoke** (1 VU / 30s) + **load** (ramp 0→20 VUs, lower than other scenarios since each iteration does a real write).
+
 | Profile | Start | VUs | Duration | Purpose |
 |---------|-------|-----|----------|---------|
 | smoke   | 0 s   | 1   | 30 s     | Baseline — confirm endpoints respond |
@@ -143,6 +164,8 @@ After `run.sh` completes, check `load-test/reports/`:
 
 - `read_endpoints.json` — raw k6 summary for read_endpoints
 - `favorites.json` — raw k6 summary for favorites
+- `bid_journey.json` — raw k6 summary for bid_journey (via `run.sh --summary-export`)
+- `bid-journey-summary.json` — same run's full summary, written directly by the scenario's own `handleSummary` (includes a bids created/cancelled count)
 - `load-report.md` — aggregated table: p95 / p99 / RPS / error rate per scenario
 
 ---

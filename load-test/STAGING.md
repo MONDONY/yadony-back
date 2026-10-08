@@ -3,7 +3,7 @@
 Objectif : mesurer la **vraie capacité** du backend yadony sur staging (pas le laptop),
 et estimer s'il tient une forte concurrence (vers 10 000 users).
 
-> **Rappel honnête** : 1 instance backend + 1 Postgres (pool 10) **ne tiendra pas
+> **Rappel honnête** : 1 instance backend + 1 Postgres (pool Hikari 20 depuis #434) **ne tiendra pas
 > 10 000 requêtes vraiment simultanées**. Ce runbook sert à (a) mesurer le ceiling
 > réel d'une instance, (b) vérifier la dégradation gracieuse, (c) dimensionner le
 > scaling horizontal nécessaire. Pour 10k concurrents : plusieurs instances derrière
@@ -24,7 +24,7 @@ et estimer s'il tient une forte concurrence (vers 10 000 users).
 | Option | Réaliste ? | Note |
 |--------|-----------|------|
 | k6 sur une **machine séparée** du backend | ✅ le mieux | Pas de contention CPU avec le backend |
-| k6 sur le **VPS** (même machine que le backend) | ⚠️ acceptable | Co-localisé → k6 vole du CPU au backend, latences gonflées. OK si le VPS a des cœurs en rab. |
+| k6 sur le **VPS** (même machine que le backend) | ❌ interdit | Le VPS staging n'a que 3,7 Go de RAM et sature déjà son CPU à 200 VU (08/10/2026) : k6 y fausserait la mesure et peut faire tomber le backend. |
 | k6 cloud / distribué | ✅ pour gros volumes | Plusieurs IP sources (utile face au rate-limit per-IP) |
 
 **Ne jamais** conclure sur la capacité prod si k6 tourne sur la même machine que le backend.
@@ -40,15 +40,20 @@ mesurerait le rate-limiter, pas le backend.
 
 Trois façons de tester la capacité réelle :
 
-**A. Backend direct (recommandé pour mesurer l'instance)**
-Le conteneur `yadony_api` écoute `:8080` (interne au réseau docker, non publié).
-Sur le VPS :
+**A. Backend direct par tunnel SSH (méthode utilisée le 08/10/2026)**
+Le conteneur `yadony_api` écoute `:8080` sur le réseau docker, non publié. On n'ouvre
+aucun port : k6 tourne sur le poste local et passe par un tunnel SSH vers l'IP
+interne du conteneur.
 ```bash
-# publier temporairement 8080 sur localhost (ne PAS laisser en prod)
-docker run ... -p 127.0.0.1:8080:8080 ...   # ou ajouter le mapping au compose
+# IP du conteneur sur le réseau docker (change à chaque recréation)
+ssh debian@92.222.78.78 "docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' yadony_api"
+# tunnel en arrière-plan : localhost:8080 → conteneur
+ssh -f -N -o ExitOnForwardFailure=yes -L 8080:<IP conteneur>:8080 debian@92.222.78.78
 # puis BASE_URL=http://localhost:8080/api/v1
 ```
-ou lancer k6 dans le réseau docker staging avec `BASE_URL=http://api:8080/api/v1`.
+`scenarios/journey.js` refuse toute autre cible que `localhost` ou `api-staging`
+(garde contre un lancement sur la prod). Fermer le tunnel après le test
+(`pkill -f 'L 8080:'`).
 
 **B. Lever le rate-limit le temps du test (mesure le chemin réel nginx→backend)**
 Dans `nginx/nginx.staging.conf`, commenter les `limit_req zone=...` (lignes ~62 et
@@ -79,6 +84,16 @@ ne gêne que les tests mono-source.
 
 Le token va dans `staging.env` → `K6_ID_TOKEN=...`.
 
+**Outil fourni (option 2)** : `tools/mint-token/`.
+```bash
+cd load-test/tools/mint-token && npm install
+# uid d'un compte de test staging, clé Web API Firebase staging,
+# compte de service Admin SDK staging (hors dépôt, jamais commité)
+node mint.js <uid> "$FIREBASE_WEB_API_KEY" <chemin/compte-de-service.json> ../../staging.env
+```
+Le script écrit seulement `K6_ID_TOKEN` dans `staging.env` (ignoré par git) et
+n'affiche que sa longueur. Le jeton expire au bout d'une heure.
+
 ---
 
 ## 4. Lancer
@@ -103,7 +118,9 @@ k6 monte par paliers ; on regarde à quel palier p95 explose / les 5xx apparaiss
 |--------|-------|-----------------|
 | 5xx / `server_errors` | rapport k6 | saturation (pool, threads, OOM) |
 | p95 / p99 latence | rapport k6 | où la dégradation décolle |
-| Connexions Postgres | `SELECT count(*) FROM pg_stat_activity` | pool saturé (max 10) → file d'attente |
+| Connexions Postgres | `SELECT count(*) FROM pg_stat_activity` | pool saturé (max 20) → file d'attente |
+| Pool Hikari | Prometheus staging http://92.222.78.78:9090 : `hikaricp_connections_active`, `hikaricp_connections_pending`, `hikaricp_connections_acquire_seconds_max`, `hikaricp_connections_timeout_total` | `pending` > 0 durable = pool trop petit ou requêtes trop longues |
+| CPU / mémoire JVM | `process_cpu_usage`, `system_cpu_usage`, `jvm_memory_used_bytes` | CPU à 1 = la machine est le plafond, pas le pool |
 | `hikaricp.connections.pending` | `/actuator/metrics` | requêtes en attente d'une connexion DB |
 | CPU/mém conteneur `yadony_api` | `docker stats` | le backend est-il CPU/mém-bound |
 | Threads Tomcat actifs | `/actuator/metrics/tomcat.threads.busy` | plafond à 200 par défaut |
@@ -118,7 +135,7 @@ k6 monte par paliers ; on regarde à quel palier p95 explose / les 5xx apparaiss
   le ceiling d'**une** instance — pas une panne.
 - **5xx / connection-timeout** → vrai point de rupture (pool DB ou Postgres
   `max_connections=100` épuisé, ou OOM).
-- Compare `count(pg_stat_activity)` au max-pool : s'il plafonne à 10 pendant que p95
+- Compare `count(pg_stat_activity)` au max-pool : s'il plafonne à 20 pendant que p95
   monte → la DB est le goulot → augmenter le pool **et** mettre PgBouncer.
 
 ---
