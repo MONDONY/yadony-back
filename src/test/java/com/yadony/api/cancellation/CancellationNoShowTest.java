@@ -45,6 +45,7 @@ class CancellationNoShowTest {
     @Mock private ApplicationEventPublisher eventPublisher;
     @Mock private RematchService rematchService;
     @Mock private com.yadony.api.common.StorageService storageService;
+    @Mock private DeliveryNoShowProcedureService deliveryNoShowProcedure;
 
     private CancellationService service;
 
@@ -59,7 +60,7 @@ class CancellationNoShowTest {
         service = new CancellationService(
                 cancellationRepository, rematchSuggestionRepository,
                 bidRepository, announcementRepository,
-                userRepository, auditService, eventPublisher, commissionProps, rematchService, storageService);
+                userRepository, auditService, eventPublisher, commissionProps, rematchService, storageService, deliveryNoShowProcedure);
     }
 
     private static final UUID ANNOUNCEMENT_ID = UUID.randomUUID();

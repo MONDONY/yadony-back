@@ -89,6 +89,9 @@ class NotificationTextsTest {
         map.put("deliveryConfirmed", NotificationTexts.deliveryConfirmed(m));
         map.put("deliveryNoShowForSender", NotificationTexts.deliveryNoShowForSender(m));
         map.put("deliveryNoShowForTraveler", NotificationTexts.deliveryNoShowForTraveler(m));
+        map.put("deliveryRetryAppointmentForTraveler", NotificationTexts.deliveryRetryAppointmentForTraveler(m));
+        map.put("parcelUnclaimedForSender", NotificationTexts.parcelUnclaimedForSender(m));
+        map.put("parcelUnclaimedForTraveler", NotificationTexts.parcelUnclaimedForTraveler(m));
         map.put("parcelReturnedForSender", NotificationTexts.parcelReturnedForSender(m));
         map.put("parcelReturnedForTraveler", NotificationTexts.parcelReturnedForTraveler(m));
         map.put("returnDeadlineWarningForSender", NotificationTexts.returnDeadlineWarningForSender(m));

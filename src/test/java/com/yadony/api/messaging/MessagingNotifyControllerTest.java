@@ -240,4 +240,43 @@ class MessagingNotifyControllerTest {
         verify(notificationDispatcher).sendMessageNotification(
             eq(recipientId), eq(travelerId), eq("uid-traveler"), eq("Bonjour"), eq("rconv_bid1"), eq(true));
     }
+
+    // ── FLUTTER-E2 : preuve de contact du voyageur ──
+
+    @Test
+    void notify_messageDuVoyageur_marqueLaPreuveDeContact() {
+        UUID senderId = UUID.randomUUID();
+        UUID travelerId = UUID.randomUUID();
+        var conv = new ConversationEntity(UUID.randomUUID(), senderId, travelerId, "conv_bid1");
+        ReflectionTestUtils.setField(conv, "id", UUID.randomUUID());
+        when(conversationRepository.findByFirestoreConversationId("conv_bid1")).thenReturn(Optional.of(conv));
+        UserEntity traveler = new UserEntity();
+        ReflectionTestUtils.setField(traveler, "id", travelerId);
+        when(userRepository.findByFirebaseUid("uid-traveler")).thenReturn(Optional.of(traveler));
+
+        controller.notify("test-secret", new NotifyMessageRequest("conv_bid1", "uid-traveler", "J'arrive"));
+
+        verify(conversationRepository).markTravelerMessaged(eq(conv.getId()), any());
+    }
+
+    @Test
+    void notify_messageDeLExpediteur_neMarquePas_etEchecDuMarquageNeBloquePas() {
+        UUID senderId = UUID.randomUUID();
+        UUID travelerId = UUID.randomUUID();
+        var conv = new ConversationEntity(UUID.randomUUID(), senderId, travelerId, "conv_bid1");
+        when(conversationRepository.findByFirestoreConversationId("conv_bid1")).thenReturn(Optional.of(conv));
+        UserEntity sender = new UserEntity();
+        ReflectionTestUtils.setField(sender, "id", senderId);
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
+
+        controller.notify("test-secret", new NotifyMessageRequest("conv_bid1", "uid-sender", "Hello"));
+        verify(conversationRepository, never()).markTravelerMessaged(any(), any());
+
+        UserEntity traveler = new UserEntity();
+        ReflectionTestUtils.setField(traveler, "id", travelerId);
+        when(userRepository.findByFirebaseUid("uid-traveler")).thenReturn(Optional.of(traveler));
+        when(conversationRepository.markTravelerMessaged(any(), any())).thenThrow(new RuntimeException("db"));
+        controller.notify("test-secret", new NotifyMessageRequest("conv_bid1", "uid-traveler", "Hello"));
+        verify(notificationDispatcher, times(2)).sendMessageNotification(any(), any(), any(), any(), any(), anyBoolean());
+    }
 }

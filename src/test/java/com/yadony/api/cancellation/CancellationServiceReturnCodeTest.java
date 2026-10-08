@@ -46,6 +46,7 @@ class CancellationServiceReturnCodeTest {
     @Mock private ApplicationEventPublisher eventPublisher;
     @Mock private RematchService rematchService;
     @Mock private com.yadony.api.common.StorageService storageService;
+    @Mock private DeliveryNoShowProcedureService deliveryNoShowProcedure;
 
     private CancellationService service;
 
@@ -62,7 +63,7 @@ class CancellationServiceReturnCodeTest {
                 cancellationRepository, rematchSuggestionRepository, bidRepository,
                 announcementRepository, userRepository, auditService, eventPublisher,
                 new CommissionProperties(new BigDecimal("0.12"), new BigDecimal("1.00"), 24),
-                rematchService, storageService);
+                rematchService, storageService, deliveryNoShowProcedure);
     }
 
     private UserEntity user(UUID id) {

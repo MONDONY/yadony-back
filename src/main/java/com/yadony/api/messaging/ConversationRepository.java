@@ -50,6 +50,23 @@ public interface ConversationRepository extends JpaRepository<ConversationEntity
     /** Toutes les conversations d'un bid, tous types et fermées comprises (rétention des photos). */
     java.util.List<ConversationEntity> findAllByBidId(UUID bidId);
 
+    /**
+     * Le voyageur vient d'écrire dans la conversation (V301). Écriture ciblée : la colonne
+     * n'est jamais réécrite par le flush d'une entité chargée avant.
+     */
+    @org.springframework.transaction.annotation.Transactional
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("UPDATE ConversationEntity c SET c.travelerLastMessageAt = :at WHERE c.id = :id")
+    int markTravelerMessaged(@Param("id") UUID id, @Param("at") java.time.LocalDateTime at);
+
+    /**
+     * Le voyageur a écrit au moins une fois depuis {@code since} dans une conversation du bid
+     * (expéditeur ou destinataire, ouverte ou fermée) : preuve de tentative de contact.
+     */
+    @Query("SELECT COUNT(c) > 0 FROM ConversationEntity c WHERE c.bidId = :bidId " +
+           "AND c.travelerLastMessageAt IS NOT NULL AND c.travelerLastMessageAt >= :since")
+    boolean existsTravelerMessageSince(@Param("bidId") UUID bidId, @Param("since") java.time.LocalDateTime since);
+
     // Active conversations: not deleted AND not archived by the requesting user
     @Query("SELECT c FROM ConversationEntity c WHERE " +
            "(c.senderId = :userId AND c.closedAt IS NULL AND c.senderDeletedAt IS NULL AND c.senderArchivedAt IS NULL) OR " +

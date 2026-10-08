@@ -51,6 +51,24 @@ public class DisputeEntity extends BaseEntity {
     @Column(name = "guarantee_currency", length = 3)
     private String guaranteeCurrency;
 
+    /** Partage décidé par l'admin (V301, FLUTTER-E2) : part remboursée à l'expéditeur. */
+    @Column(name = "sender_refund_amount", precision = 10, scale = 2)
+    private java.math.BigDecimal senderRefundAmount;
+
+    /** Partage décidé par l'admin (V301) : part versée au voyageur. */
+    @Column(name = "traveler_payout_amount", precision = 10, scale = 2)
+    private java.math.BigDecimal travelerPayoutAmount;
+
+    @Column(name = "split_currency", length = 3)
+    private String splitCurrency;
+
+    public java.math.BigDecimal getSenderRefundAmount() { return senderRefundAmount; }
+    public void setSenderRefundAmount(java.math.BigDecimal v) { this.senderRefundAmount = v; }
+    public java.math.BigDecimal getTravelerPayoutAmount() { return travelerPayoutAmount; }
+    public void setTravelerPayoutAmount(java.math.BigDecimal v) { this.travelerPayoutAmount = v; }
+    public String getSplitCurrency() { return splitCurrency; }
+    public void setSplitCurrency(String splitCurrency) { this.splitCurrency = splitCurrency; }
+
     public UUID getBidId() { return bidId; }
     public void setBidId(UUID bidId) { this.bidId = bidId; }
 

@@ -44,6 +44,8 @@ class AdminDisputesControllerTest {
     @Mock ApplicationEventPublisher eventPublisher;
 
     @Mock com.yadony.api.matching.BidRepository bidRepo;
+    @Mock com.yadony.api.payments.split.PaymentSplitService splitService;
+    @Mock org.springframework.transaction.PlatformTransactionManager transactionManager;
 
     static final UUID ADMIN_ID = UUID.randomUUID();
 
@@ -57,7 +59,8 @@ class AdminDisputesControllerTest {
 
     private AdminDisputesController controller() {
         return new AdminDisputesController(
-                disputeRepo, cancellationRepo, auditService, userRepo, eventPublisher, bidRepo);
+                disputeRepo, cancellationRepo, auditService, userRepo, eventPublisher, bidRepo,
+                splitService, transactionManager);
     }
 
     private com.yadony.api.matching.BidEntity bidIn(String currency) {
@@ -406,4 +409,151 @@ class AdminDisputesControllerTest {
     }
 
     // listCancellations : déplacé vers cancellation/AdminNoShowQueryServiceTest et AdminNoShowControllerIT.
+
+    // ── Partage chiffré (FLUTTER-E2) ──
+
+    static org.springframework.security.core.Authentication adminAuthWith(String... authorities) {
+        return new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                new com.yadony.api.admin.account.AdminPrincipal(ADMIN_ID, "admin@yadony.test",
+                        com.yadony.api.admin.account.AdminRole.ADMIN, false, "uid-admin"),
+                null, java.util.Arrays.stream(authorities)
+                        .map(org.springframework.security.core.authority.SimpleGrantedAuthority::new).toList());
+    }
+
+    private DisputeEntity openDispute(UUID id, UUID bidId) {
+        DisputeEntity entity = new DisputeEntity();
+        org.springframework.test.util.ReflectionTestUtils.setField(entity, "id", id);
+        entity.setStatus("OPEN");
+        entity.setBidId(bidId);
+        entity.setType("RECIPIENT_NO_SHOW_CONTESTED");
+        when(disputeRepo.findById(id)).thenReturn(Optional.of(entity));
+        return entity;
+    }
+
+    @Test
+    void resolveDispute_avecPartage_decideReclameEtExecute() {
+        UUID id = UUID.randomUUID();
+        UUID bidId = UUID.randomUUID();
+        DisputeEntity entity = openDispute(id, bidId);
+        var plan = new com.yadony.api.payments.split.PaymentSplitService.SplitPlan(UUID.randomUUID(), bidId,
+                UUID.randomUUID(), new java.math.BigDecimal("30.00"), new java.math.BigDecimal("70.00"), "EUR",
+                com.yadony.api.payments.split.PaymentSplitMode.REFUND_TRANSFER, new java.math.BigDecimal("100.00"));
+        when(splitService.plan(bidId, new java.math.BigDecimal("30.00"), new java.math.BigDecimal("70.00"))).thenReturn(plan);
+        com.yadony.api.payments.split.PaymentSplitEntity split = new com.yadony.api.payments.split.PaymentSplitEntity();
+        org.springframework.test.util.ReflectionTestUtils.setField(split, "id", UUID.randomUUID());
+        split.setMode(com.yadony.api.payments.split.PaymentSplitMode.REFUND_TRANSFER);
+        split.setStatus(com.yadony.api.payments.split.PaymentSplitStatus.COMPLETED);
+        split.setSenderRefundAmount(new java.math.BigDecimal("30.00"));
+        split.setTravelerPayoutAmount(new java.math.BigDecimal("70.00"));
+        when(splitService.findForDispute(id)).thenReturn(Optional.of(split));
+
+        var resp = controller().resolveDispute(id, new AdminResolveDisputeRequest("SPLIT", "partage",
+                new java.math.BigDecimal("30.00"), new java.math.BigDecimal("70.00")),
+                adminAuthWith("DISPUTE_RESOLVE", "PAYMENT_RELEASE", "PAYMENT_REFUND"));
+
+        assertThat(entity.getStatus()).isEqualTo("RESOLVED");
+        assertThat(entity.getSenderRefundAmount()).isEqualByComparingTo("30.00");
+        assertThat(entity.getTravelerPayoutAmount()).isEqualByComparingTo("70.00");
+        assertThat(entity.getSplitCurrency()).isEqualTo("EUR");
+        verify(splitService).claim(plan, id, ADMIN_ID);
+        verify(splitService).execute(split.getId());
+        assertThat(resp.getBody().split().status()).isEqualTo("COMPLETED");
+        assertThat(resp.getBody().travelerPayoutAmount()).isEqualByComparingTo("70.00");
+    }
+
+    @Test
+    void resolveDispute_partageSansDroitsArgent_403SansRienToucher() {
+        UUID id = UUID.randomUUID();
+        YadonyBusinessException error = assertThrows(YadonyBusinessException.class,
+                () -> controller().resolveDispute(id, new AdminResolveDisputeRequest("SPLIT", null,
+                        java.math.BigDecimal.ONE, java.math.BigDecimal.ONE), adminAuthWith("DISPUTE_RESOLVE")));
+        assertThat(error.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+        verifyNoInteractions(splitService);
+        verify(disputeRepo, never()).save(any());
+    }
+
+    @Test
+    void resolveDispute_partageInvalide_rienNestEnregistre() {
+        UUID id = UUID.randomUUID();
+        UUID bidId = UUID.randomUUID();
+        openDispute(id, bidId);
+        when(splitService.plan(any(), any(), any())).thenThrow(new YadonyBusinessException(
+                HttpStatus.UNPROCESSABLE_ENTITY, "split-mobile-money-unsupported", "x", "x"));
+
+        YadonyBusinessException error = assertThrows(YadonyBusinessException.class,
+                () -> controller().resolveDispute(id, new AdminResolveDisputeRequest("SPLIT", null,
+                        java.math.BigDecimal.ONE, java.math.BigDecimal.ONE),
+                        adminAuthWith("PAYMENT_RELEASE", "PAYMENT_REFUND")));
+
+        assertThat(error.getErrorCode()).isEqualTo("split-mobile-money-unsupported");
+        verify(disputeRepo, never()).save(any());
+        verify(splitService, never()).claim(any(), any(), any());
+        verify(eventPublisher, never()).publishEvent(any());
+    }
+
+    @Test
+    void resolveDispute_sansPartage_neDeplaceAucunArgent() {
+        UUID id = UUID.randomUUID();
+        openDispute(id, UUID.randomUUID());
+        when(splitService.findForDispute(id)).thenReturn(Optional.empty());
+
+        controller().resolveDispute(id, new AdminResolveDisputeRequest("DISMISSED", "n"), adminAuth());
+
+        verify(splitService, never()).plan(any(), any(), any());
+        verify(splitService, never()).execute(any());
+    }
+
+    @Test
+    void retrySplit_repriseDUnPartageInterrompu() {
+        UUID id = UUID.randomUUID();
+        openDispute(id, UUID.randomUUID());
+        com.yadony.api.payments.split.PaymentSplitEntity split = new com.yadony.api.payments.split.PaymentSplitEntity();
+        org.springframework.test.util.ReflectionTestUtils.setField(split, "id", UUID.randomUUID());
+        split.setMode(com.yadony.api.payments.split.PaymentSplitMode.REFUND_TRANSFER);
+        split.setStatus(com.yadony.api.payments.split.PaymentSplitStatus.SENDER_REFUNDED);
+        split.setSenderRefundAmount(java.math.BigDecimal.ONE);
+        split.setTravelerPayoutAmount(java.math.BigDecimal.ONE);
+        when(splitService.findForDispute(id)).thenReturn(Optional.of(split));
+
+        controller().retrySplit(id, adminAuthWith("PAYMENT_RELEASE", "PAYMENT_REFUND"));
+
+        verify(splitService).execute(split.getId());
+        verify(auditService).log(eq("DISPUTE"), eq(id), eq("SPLIT_RETRY"), eq(ADMIN_ID), any());
+    }
+
+    @Test
+    void retrySplit_dejaTermineOuAbsent_refuse() {
+        UUID id = UUID.randomUUID();
+        openDispute(id, UUID.randomUUID());
+        when(splitService.findForDispute(id)).thenReturn(Optional.empty());
+        assertThat(assertThrows(YadonyBusinessException.class,
+                () -> controller().retrySplit(id, adminAuthWith("PAYMENT_RELEASE", "PAYMENT_REFUND")))
+                .getStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+
+        com.yadony.api.payments.split.PaymentSplitEntity split = new com.yadony.api.payments.split.PaymentSplitEntity();
+        split.setStatus(com.yadony.api.payments.split.PaymentSplitStatus.COMPLETED);
+        when(splitService.findForDispute(id)).thenReturn(Optional.of(split));
+        assertThat(assertThrows(YadonyBusinessException.class,
+                () -> controller().retrySplit(id, adminAuthWith("PAYMENT_RELEASE", "PAYMENT_REFUND")))
+                .getStatus()).isEqualTo(HttpStatus.CONFLICT);
+        verify(splitService, never()).execute(any());
+    }
+
+    @Test
+    void splitOptions_litigeResoluNonPartageable() {
+        UUID id = UUID.randomUUID();
+        UUID bidId = UUID.randomUUID();
+        DisputeEntity entity = openDispute(id, bidId);
+        when(splitService.availability(bidId)).thenReturn(new com.yadony.api.payments.split.PaymentSplitService.SplitAvailability(
+                true, null, "EUR", new java.math.BigDecimal("105"), new java.math.BigDecimal("5"),
+                java.math.BigDecimal.ZERO, new java.math.BigDecimal("100"), "STRIPE", "ESCROW"));
+
+        assertThat(controller().splitOptions(id).getBody().splittable()).isTrue();
+        assertThat(controller().splitOptions(id).getBody().netAvailable()).isEqualByComparingTo("100");
+
+        entity.setStatus("RESOLVED");
+        var resolved = controller().splitOptions(id).getBody();
+        assertThat(resolved.splittable()).isFalse();
+        assertThat(resolved.reasonCode()).isEqualTo("dispute-already-resolved");
+    }
 }

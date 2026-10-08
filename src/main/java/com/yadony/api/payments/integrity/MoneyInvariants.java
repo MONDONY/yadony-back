@@ -103,6 +103,11 @@ public final class MoneyInvariants {
                     WHERE p.deleted_at IS NULL
                       AND p.status = 'RELEASED'
                       AND (b.id IS NULL OR b.status <> 'COMPLETED')
+                      -- FLUTTER-E2 : colis « non réclamé » payé au terme de la garde, ou partage admin.
+                      AND NOT EXISTS (SELECT 1 FROM cancellations cu
+                                      WHERE cu.bid_id = b.id AND cu.unclaimed_at IS NOT NULL)
+                      AND NOT EXISTS (SELECT 1 FROM payment_splits ps
+                                      WHERE ps.payment_id = p.id AND ps.deleted_at IS NULL)
                     """),
             new MoneyInvariant("INV-06", "Colis livré depuis plus de 2 h bien payé au voyageur", Severity.HAUTE, """
                     SELECT p.id AS payment_id, p.rail, p.amount, p.currency, p.disputed, p.payout_held_at,
@@ -128,7 +133,10 @@ public final class MoneyInvariants {
                                CASE
                                    WHEN p.refunded_amount < 0 OR p.refunded_amount > p.amount THEN 'REFUND_HORS_BORNES'
                                    WHEN p.commission_amount > p.amount THEN 'COMMISSION_SUPERIEURE_AU_MONTANT'
-                                   WHEN p.status = 'RELEASED' AND p.refunded_amount > 0 THEN 'REMBOURSE_APRES_VERSEMENT'
+                                   WHEN p.status = 'RELEASED' AND p.refunded_amount > 0
+                                        AND NOT EXISTS (SELECT 1 FROM payment_splits ps
+                                                        WHERE ps.payment_id = p.id AND ps.deleted_at IS NULL)
+                                        THEN 'REMBOURSE_APRES_VERSEMENT'
                                    WHEN p.status = 'ESCROW' AND p.refunded_amount > 0 THEN 'ESCROW_PARTIELLEMENT_REMBOURSE'
                                    WHEN p.status = 'RELEASED' AND p.escrow_released_at IS NULL THEN 'RELEASED_SANS_DATE'
                                    WHEN p.disputed AND p.status = 'RELEASED' THEN 'LITIGE_SUR_FONDS_VERSES'
@@ -137,6 +145,8 @@ public final class MoneyInvariants {
                                         THEN 'CHARGEBACK_OUVERT_NON_MARQUE'
                                    WHEN p.rail = 'STRIPE' AND p.status = 'REFUNDED' AND p.captured_at IS NOT NULL
                                         AND COALESCE(p.refunded_amount, 0) < p.amount
+                                        AND NOT EXISTS (SELECT 1 FROM payment_splits ps
+                                                        WHERE ps.payment_id = p.id AND ps.deleted_at IS NULL)
                                         AND (SELECT max(a.created_at) FROM audit_log a
                                              WHERE a.entity_type = 'PAYMENT' AND a.entity_id = p.id) < now() - interval '1 day'
                                         THEN 'REFUND_STRIPE_NON_CONFIRME'

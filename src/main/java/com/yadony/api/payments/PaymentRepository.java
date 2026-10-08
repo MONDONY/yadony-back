@@ -75,6 +75,19 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
     int markReleasedIfEscrow(@Param("id") UUID id, @Param("releasedAt") LocalDateTime releasedAt);
 
     /**
+     * Claim d'un partage admin (FLUTTER-E2) : ESCROW → {@code status} (RELEASED si le voyageur
+     * reçoit une part, REFUNDED sinon) et {@code refunded_amount} porté d'avance à sa valeur
+     * finale. Stripe renverra la même valeur absolue par {@code charge.refunded} : le webhook la
+     * voit déjà enregistrée et ne lève pas d'alerte « remboursement après versement ». 0 si le
+     * paiement a quitté le séquestre entre-temps.
+     */
+    @Modifying
+    @Query("UPDATE PaymentEntity p SET p.status = :status, p.escrowReleasedAt = :releasedAt, "
+            + "p.refundedAmount = :refunded WHERE p.id = :id AND p.status = 'ESCROW'")
+    int claimForSplit(@Param("id") UUID id, @Param("status") PaymentStatus status,
+                      @Param("releasedAt") LocalDateTime releasedAt, @Param("refunded") java.math.BigDecimal refunded);
+
+    /**
      * Atomic capture-once CAS guard. Returns 1 if the row was updated (first capture),
      * 0 if already captured or not in ESCROW status.
      */

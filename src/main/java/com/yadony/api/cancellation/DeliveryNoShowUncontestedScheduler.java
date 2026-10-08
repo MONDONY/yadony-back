@@ -21,7 +21,9 @@ import java.util.stream.Collectors;
 
 /**
  * Signalement d'absence à la livraison (scope DELIVERY) expiré sans
- * contestation → ouvre un litige "non contesté". Jamais de capture ni de
+ * contestation → ouvre un litige "non contesté", sauf pour un signalement « destinataire
+ * absent » fait avec la procédure FLUTTER-E2 (garde du colis) : il passe CONFIRMED et la garde
+ * continue jusqu'au passage « non réclamé » ({@link UnclaimedParcelScheduler}). Jamais de capture ni de
  * remboursement automatique ici : l'admin tranche toujours via
  * {@code AdminDisputesController.resolveDispute}.
  *
@@ -115,10 +117,21 @@ public class DeliveryNoShowUncontestedScheduler {
      * pour que l'échéance et la décision admin ouvrent exactement le même litige.
      */
     void openUncontestedDispute(CancellationEntity c, BidEntity bid, AnnouncementEntity announcement) {
-        String type = DeliveryNoShowTypes.uncontestedDisputeType(c.getReason());
-
         c.setNoShowStatus(CancellationStatus.CONFIRMED);
         cancellationRepository.save(c);
+
+        // Procédure « destinataire absent » (FLUTTER-E2) : un signalement fait avec la
+        // procédure porte une garde. Non contesté, il ne devient plus un litige : la garde
+        // continue et, à son terme sans livraison, le colis passe « non réclamé »
+        // (UnclaimedParcelScheduler). Les signalements antérieurs à V301 (sans garde) gardent
+        // l'ancien chemin, sinon ils resteraient sans issue.
+        if (DeliveryNoShowTypes.isRecipientNoShow(c.getReason()) && c.getHoldUntil() != null) {
+            auditService.log("CANCELLATION", c.getId(), "DELIVERY_NOSHOW_UNCONTESTED_HOLD_CONTINUES", null,
+                    Map.of("bidId", c.getBidId().toString(), "holdUntil", c.getHoldUntil().toString()));
+            return;
+        }
+
+        String type = DeliveryNoShowTypes.uncontestedDisputeType(c.getReason());
 
         eventPublisher.publishEvent(new DisputeOpenedEvent(
                 c.getBidId(), bid.getSenderId(), announcement.getTravelerId(), type));

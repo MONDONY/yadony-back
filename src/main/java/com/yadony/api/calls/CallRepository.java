@@ -17,6 +17,13 @@ public interface CallRepository extends JpaRepository<CallEntity, UUID> {
     boolean existsByConversationIdAndStatusIn(UUID conversationId, Collection<CallStatus> statuses);
     List<CallEntity> findByBidIdOrderByCreatedAtDesc(UUID bidId);
 
+    /**
+     * Le voyageur a lancé au moins un appel in-app sur ce colis depuis {@code since}, quelle
+     * qu'en soit l'issue (un appel manqué prouve justement la tentative) : preuve de contact
+     * du signalement « destinataire absent » (V301).
+     */
+    boolean existsByBidIdAndCallerIdAndCreatedAtGreaterThanEqual(UUID bidId, UUID callerId, LocalDateTime since);
+
     /** Appels encore en cours, pour l'expiration des lignes que Stream n'a jamais soldées. */
     List<CallEntity> findByStatusIn(Collection<CallStatus> statuses);
 
