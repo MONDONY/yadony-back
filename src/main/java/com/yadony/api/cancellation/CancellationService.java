@@ -55,6 +55,7 @@ public class CancellationService {
     private final CommissionProperties commissionProperties;
     private final RematchService rematchService;
     private final StorageService storageService;
+    private final DeliveryNoShowProcedureService deliveryNoShowProcedure;
 
     private static final SecureRandom RETURN_CODE_RANDOM = new SecureRandom();
     private static final int MAX_RETURN_CODE_ATTEMPTS = 3;
@@ -68,7 +69,8 @@ public class CancellationService {
                                 ApplicationEventPublisher eventPublisher,
                                 CommissionProperties commissionProperties,
                                 RematchService rematchService,
-                                StorageService storageService) {
+                                StorageService storageService,
+                                DeliveryNoShowProcedureService deliveryNoShowProcedure) {
         this.cancellationRepository = cancellationRepository;
         this.rematchSuggestionRepository = rematchSuggestionRepository;
         this.bidRepository = bidRepository;
@@ -79,6 +81,7 @@ public class CancellationService {
         this.commissionProperties = commissionProperties;
         this.rematchService = rematchService;
         this.storageService = storageService;
+        this.deliveryNoShowProcedure = deliveryNoShowProcedure;
     }
 
     @Transactional
@@ -108,7 +111,7 @@ public class CancellationService {
         announcementRepository.save(announcement);
 
         List<CancellationEntity> cancellations =
-                cancelOpenBidsAndPublish(announcement, traveler.getId(), request.reason(), true);
+                cancelOpenBidsAndPublish(announcement, traveler.getId(), request.reason());
 
         // Track cancellation count on traveler profile for reputation penalty
         traveler.setCancellationCount(traveler.getCancellationCount() + 1);
@@ -168,11 +171,8 @@ public class CancellationService {
         announcement.setStatus(AnnouncementStatus.CANCELLED);
         announcementRepository.save(announcement);
 
-        // travelerInitiated = false : comportement inchangé, la commission espèces est rendue
-        // (le compte est de toute façon fermé, le portefeuille soldé par la suppression).
         List<CancellationEntity> cancellations = cancelOpenBidsAndPublish(
-                announcement, announcement.getTravelerId(), CancellationReason.TRAVELER_ACCOUNT_DELETED.name(),
-                false);
+                announcement, announcement.getTravelerId(), CancellationReason.TRAVELER_ACCOUNT_DELETED.name());
 
         auditService.log("ANNOUNCEMENT", announcementId, "TRIP_CANCELLED", announcement.getTravelerId(),
                 Map.of("reason", CancellationReason.TRAVELER_ACCOUNT_DELETED.name(),
@@ -187,7 +187,7 @@ public class CancellationService {
      * basculée à CANCELLED par l'appelant.
      */
     private List<CancellationEntity> cancelOpenBidsAndPublish(
-            AnnouncementEntity announcement, UUID actorId, String reason, boolean travelerInitiated) {
+            AnnouncementEntity announcement, UUID actorId, String reason) {
         // Cancel ALL in-progress bids on this trip (not just ACCEPTED) so each
         // sender's bid reflects the cancelled trip — sinon un bid PENDING /
         // PAYMENT_ESCROWED gardait son statut partout. Set « actif » canonique
@@ -244,8 +244,7 @@ public class CancellationService {
 
         eventPublisher.publishEvent(new TripCancelledEvent(
                 announcement.getId(), announcement.getTravelerId(), affectedSenderIds, reason,
-                affectedBidIds, bidPaymentMethods, bidCommissionChargedVia, rematchInfo,
-                travelerInitiated));
+                affectedBidIds, bidPaymentMethods, bidCommissionChargedVia, rematchInfo));
 
         return cancellations;
     }
@@ -394,9 +393,14 @@ public class CancellationService {
         eventPublisher.publishEvent(new TravelerNoShowReportedEvent(bidId, senderId));
     }
 
-    /** Le voyageur signale que le destinataire ne s'est pas présenté à la remise (arrivée). */
+    /**
+     * Le voyageur signale que le destinataire ne s'est pas présenté à la remise (arrivée).
+     * Procédure encadrée (FLUTTER-E2) : arrivée déclarée, délai d'attente écoulé, preuve de
+     * contact et confirmation du voyageur ({@link DeliveryNoShowProcedureService}). Le
+     * signalement ouvre une garde du colis de {@code holdDays} jours.
+     */
     @Transactional
-    public CancellationEntity reportDeliveryNoShow(UUID bidId, UUID travelerId) {
+    public CancellationEntity reportDeliveryNoShow(UUID bidId, UUID travelerId, boolean contactConfirmed) {
         BidEntity bid = bidRepository.findById(bidId)
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND, "bid-not-found", "Not Found", "Bid introuvable"));
@@ -406,6 +410,9 @@ public class CancellationService {
                     "Vous n'êtes pas le voyageur de ce bid.");
         }
 
+        DeliveryNoShowProcedureService.ReportPreconditions procedure =
+                deliveryNoShowProcedure.checkReportPreconditions(bid, travelerId, contactConfirmed);
+
         CancellationEntity c = new CancellationEntity();
         c.setBidId(bidId);
         c.setCancelledBy(travelerId);
@@ -414,10 +421,15 @@ public class CancellationService {
         c.setNoShowStatus(CancellationStatus.PENDING_CONFIRMATION);
         c.setContestationDeadline(
                 OffsetDateTime.now().plusHours(commissionProperties.noShowContestationHours()));
+        c.setContactProof(procedure.contactProof());
+        c.setContactConfirmedAt(procedure.confirmedAt());
+        c.setHoldUntil(procedure.holdUntil());
         CancellationEntity saved = cancellationRepository.save(c);
 
         auditService.log("BID", bidId, "DELIVERY_NOSHOW_REPORTED_BY_TRAVELER", travelerId,
-                Map.of("bidId", bidId.toString()));
+                Map.of("bidId", bidId.toString(),
+                        "contactProof", procedure.contactProof(),
+                        "holdUntil", procedure.holdUntil().toString()));
         eventPublisher.publishEvent(new DeliveryNoShowReportedEvent(
                 bidId, bid.getSenderId(), travelerId, true));
 
@@ -637,8 +649,7 @@ public class CancellationService {
                 bid.getAnnouncementId(),
                 announcement != null ? announcement.getTravelerId() : null,
                 List.of(bid.getSenderId()), reason.name(),
-                List.of(bidId), bidPaymentMethods, bidCommissionChargedVia, Map.of(),
-                actor == CancellationActor.TRAVELER));
+                List.of(bidId), bidPaymentMethods, bidCommissionChargedVia));
     }
 
     /**

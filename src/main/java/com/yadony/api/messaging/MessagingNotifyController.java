@@ -80,6 +80,18 @@ public class MessagingNotifyController {
             return ResponseEntity.ok(new NotifyMessageResponse(null));
         }
 
+        // Preuve de contact du voyageur (signalement « destinataire absent », V301).
+        // Best-effort : la notification du message ne doit jamais en dépendre.
+        if (sender != null && sender.getId() != null && sender.getId().equals(conv.getTravelerId())) {
+            try {
+                conversationRepository.markTravelerMessaged(conv.getId(),
+                        java.time.LocalDateTime.now(java.time.ZoneOffset.UTC));
+            } catch (RuntimeException e) {
+                org.slf4j.LoggerFactory.getLogger(MessagingNotifyController.class)
+                        .warn("markTravelerMessaged a échoué pour la conversation {} : {}", conv.getId(), e.toString());
+            }
+        }
+
         String preview = request.messagePreview() != null ? request.messagePreview() : "[Image]";
 
         // Sourdine (FLUTTER-CM) : seule celle du DESTINATAIRE compte, celle de l'expéditeur

@@ -91,8 +91,9 @@ public class FavoriteService {
      */
     public void removeFavorite(UUID callerId, FavoriteTargetType type, UUID targetId) {
         if (callerId == null) return;
-        favoriteRepository.findByUserIdAndTargetTypeAndTargetId(callerId, type, targetId)
-                .ifPresent(favoriteRepository::delete);
+        // DELETE direct : deux retraits simultanés du même favori (double appui) ne se
+        // marchent plus dessus (voir FavoriteRepository#deleteActive).
+        favoriteRepository.deleteActive(callerId, type.name(), targetId);
     }
 
     /**

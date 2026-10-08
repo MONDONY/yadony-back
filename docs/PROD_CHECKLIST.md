@@ -1,6 +1,9 @@
 # Checklist Passage en Production — yadony Backend
 
-> **Dernière mise à jour : 07/10/2026.**
+> **Dernière mise à jour : 08/10/2026.**
+> **Mise en prod prévue le samedi 10/10/2026 : lire d'abord la [section 9](#9-mise-en-prod-du-samedi-10102026--ce-qui-change-depuis-le-0710)**
+> (tag d'image à reprendre, migrations jusqu'à **V299**, pool de connexions, contrôles de tenue en charge),
+> puis dérouler la section 8 dans l'ordre.
 > Pour la mise en production du lot de corrections des 05–07/10/2026, suivre la
 > **[section 8](#8-lot-de-corrections-du-05-au-07102026--mise-en-production)** (ordre de déploiement,
 > PR incluses, migrations V291–V294, Stripe, Stream, Sentry, contrôles de données, recette).
@@ -263,6 +266,7 @@ et variables GitHub de l'environnement `production`, redémarre, puis attend `ac
 - [ ] Prendre le tag exact de l'image validée en staging, pas `staging` qui bouge à chaque déploiement.
       Le dernier déploiement staging (07/10/2026, 12:49 UTC) a construit `19ed17e4` = `main` avec
       #421, #422 et #423 : tag attendu **`sha-19ed17e`**, à promouvoir une fois la recette 8.H validée.
+      **Périmé au 08/10 : `main` a reçu #425 à #439. Prendre le tag indiqué en [9.2](#92-tag-dimage-à-promouvoir).**
       Si `main` a bougé entre-temps, redéployer la staging et recetter avant. Contrôle :
       ```bash
       gh run list -R MONDONY/yadony-back --workflow deploy-staging.yml --limit 3
@@ -406,6 +410,7 @@ le démarrage : le health check du workflow échoue alors après 60 s.
       ```
       Attendu si la prod est restée au 20/09 : dernière version **262**. Toute ligne `success = f` : s'arrêter.
 - [ ] **Étape 2 — après le déploiement** : même requête, dernière version attendue **294**, toutes `success = t`.
+      **Au 08/10 : dernière version attendue 299** (V295, V298, V299 en plus, voir [9.3](#93-migrations-flyway-v295-à-v299)).
 
 #### Les quatre migrations du lot
 
@@ -878,3 +883,122 @@ Préalable : staging au commit `19ed17e4` (#421 à #423 inclus, base V294 : c'es
       `SENTRY_WEBHOOK_SECRET`, `GRAFANA_*`. **Bloquant** seulement si on veut les appels et le webhook Sentry en prod.
 - [ ] SMS de repli des notifications critiques (#420) : coupé par défaut (`CRITICAL_SMS_FALLBACK_ENABLED`).
       Décider en back-office s'il faut l'activer (coût SMS).
+
+---
+
+## 9. Mise en prod du samedi 10/10/2026 — ce qui change depuis le 07/10
+
+> Rédigée le 08/10/2026. La section 8 reste le déroulé de référence (Firestore → back → app,
+> sauvegarde, Stripe, Stream, Sentry, contrôles G1 à G7, recette). Cette section ajoute ce qui a été
+> fusionné sur `main` depuis `19ed17e4` et ce que le test de charge du 07-08/10 a appris sur l'API.
+> Aucun secret ici.
+
+### 9.1 Ce qu'il faut savoir avant de commencer
+
+- `main` a reçu **#425 à #439** depuis le tag `sha-19ed17e` recommandé en 8.A. Ce tag ne contient
+  donc ni les corrections de concurrence, ni le nouveau pool, ni les photos de messagerie.
+- **Aucune nouvelle variable d'environnement** ni modification de `deploy-prod.yml`, `docker-compose.prod.yml`
+  ou `nginx/` depuis `19ed17e4` : les secrets et variables listés en 8.E/8.F/8.I suffisent.
+- Trois migrations de plus : **V295, V298, V299** (V296 et V297 n'existent pas, ce trou est sans effet pour Flyway).
+- Le pool de connexions prod passe de **10 à 20** avec un délai d'attente de **5 s** (cette PR, voir 9.4).
+
+### 9.2 Tag d'image à promouvoir
+
+- [ ] Redéployer la staging depuis `main` (dernier déploiement staging : `fc76151c`, #437 ; `main` a reçu
+      #438, #439 et cette PR depuis) :
+      ```bash
+      gh workflow run deploy-staging.yml -R MONDONY/yadony-back -f ref=main
+      gh run list -R MONDONY/yadony-back --workflow deploy-staging.yml --limit 1
+      ```
+- [ ] Noter le commit déployé : le tag à promouvoir est **`sha-<7 premiers caractères>`** de ce commit.
+- [ ] Faire la recette 8.H **et** 9.6 sur cette staging, puis lancer `deploy-prod.yml` avec ce tag (`image_tag=sha-xxxxxxx`).
+
+### 9.3 Migrations Flyway V295 à V299
+
+Après le déploiement, la requête de 8.C (étape 2) doit montrer **299** comme dernière version, toutes `success = t`.
+
+| Migration | Ce qu'elle fait | Risque | Contrôle préalable |
+|---|---|---|---|
+| `V295__messaging_images` | Crée `messaging_images` (photos de la messagerie, #429) + un index partiel. | Faible. Table neuve. | Aucun. |
+| `V298__users_sender_cancellation_count` | Ajoute `users.sender_cancellation_count` (défaut 0) et le remplit depuis `audit_log` (lecture seule). | Faible. `ADD COLUMN ... DEFAULT 0` est instantané en Postgres 16 ; le rattrapage lit `audit_log` une fois. | Aucun. |
+| `V299__trips_country_codes_backfill` | Remplit les codes pays NULL des trajets et modèles depuis la ville, corrige les codes intervertis (FLUTTER-EH). | Moyen-faible : `UPDATE` sur `announcements` et `trip_templates`. Ne touche que les codes NULL ou exactement intervertis. | `cities` doit être peuplée en prod (sinon la migration ne fait rien, sans erreur) : `SELECT count(*) FROM cities;` > 0. |
+
+### 9.4 Configuration : pool de connexions (cette PR)
+
+`application-prod.yml` est aligné sur la staging (#434) :
+
+```yaml
+hikari:
+  maximum-pool-size: 20      # avant : 10
+  minimum-idle: 2
+  connection-timeout: 5000   # avant : 30000 (défaut Hikari)
+```
+
+Pourquoi : au test de charge staging (k6, jusqu'à 200 utilisateurs simultanés sur les favoris), le pool de 10
+saturait (187 requêtes en attente) et les requêtes finissaient en **500 après 30 s**. Avec 20 connexions et
+5 s : **0 erreur 5xx, p95 446 ms, max 2,5 s**. Si le pool est malgré tout épuisé, l'API répond désormais
+**503 `service-busy`** avec `Retry-After: 2` au lieu de bloquer 30 s.
+
+- [ ] **À vérifier sur le VPS prod** : Postgres tourne avec `max_connections` par défaut (100) ; 20 connexions
+      d'API + sauvegarde + supervision restent largement en dessous. Contrôle :
+      ```bash
+      ssh <utilisateur>@<hôte-prod> 'docker exec yadony_db_prod psql -U $POSTGRES_USER -d $POSTGRES_DB -tAc "SHOW max_connections"'
+      ```
+- [ ] **À vérifier** : mémoire libre du VPS prod (`free -m`). 10 connexions de plus coûtent quelques dizaines de Mo
+      côté Postgres ; sans marge, rester à 15.
+
+### 9.5 Ce qui part en plus (PR #425 à #439)
+
+| PR | Sujet | À savoir |
+|---|---|---|
+| #425 | Alertes : un trajet dédié non ouvert n'apparaît plus chez les tiers (FLUTTER-EW) | — |
+| #426 | Admin : auteur d'un message signalé résolu par son UID Firebase | — |
+| #427, #435 | Trajets : codes pays conservés à la création/modification, fuseau déduit de la ville de départ (FLUTTER-EH) | Rattrapage par V299. |
+| #428, #438 | Annulation : commission espèces et compteurs de fiabilité voyageur/expéditeur (FLUTTER-E4/E0/E6) | V298. #438 : la commission espèces est toujours rendue au voyageur, même s'il annule. |
+| #429 | Photos dans la messagerie (FLUTTER-B4) | V295. Stockage R2 existant, pas de nouveau secret. |
+| #430 | La devise active se change même avec des soldes non nuls | — |
+| #432 | Code de connexion et admin au vouvoiement (FLUTTER-CD) | Textes seulement. |
+| #433 | **Concurrence** : favoris, abonnements, drapeaux pays et portefeuilles créés par `INSERT ... ON CONFLICT DO NOTHING` ; solde de portefeuille lu sans écriture ; génération des récurrences de trajet **après** le commit ; création de compte invité concurrente en 409 au lieu de 500 | Supprime les 500 vus sous charge (double clic, deux appareils). |
+| #434 | Pool staging 20 + 5 s ; pool épuisé = **503 `service-busy`** + `Retry-After` (sans alerte Sentry, simple `WARN` dans les logs) | Le 503 est attendu en cas de pic : ce n'est pas un bug. |
+| #437 | Suppression de favori idempotente sous concurrence (DELETE natif) | 40 utilisateurs pendant 3 min : 18 732 requêtes, 0 échec. |
+| #439 | Message « pays verrouillé » : ne cite plus que le compte de paiement | Texte seulement. |
+
+### 9.6 Recette staging en plus de 8.H
+
+- [ ] Messagerie : envoyer une **photo**, elle s'affiche chez l'autre (vignette puis plein écran).
+- [ ] Ajouter/retirer un **favori** en tapant vite plusieurs fois : pas d'erreur, l'état final est juste.
+- [ ] Créer un **trajet récurrent** : les occurrences apparaissent (générées juste après l'enregistrement).
+- [ ] Trajet créé depuis un **modèle** : drapeaux de départ et d'arrivée présents, pays corrects.
+- [ ] Expéditeur qui annule un colis **accepté** : son compteur d'annulations augmente sur le profil public.
+- [ ] Changer de **devise active** avec un solde non nul : accepté.
+
+### 9.7 Contrôles juste après la mise en prod (15 à 30 min)
+
+- [ ] `actuator/health` = `UP` (le workflow l'attend déjà 60 s).
+- [ ] Logs : aucune `SQLTransientConnectionException` / `Connection is not available` :
+      ```bash
+      ssh <utilisateur>@<hôte-prod> 'docker logs --since 30m yadony_api 2>&1 | grep -cE "Connection is not available|service-busy"'
+      ```
+      Quelques `service-busy` lors d'un pic sont tolérables ; un flux continu = pool trop petit ou requête lente.
+- [ ] Grafana prod (`admin.yadony.com/grafana/`) : `hikaricp_connections_active` sous 20 au repos,
+      `hikaricp_connections_pending` à 0 la plupart du temps, `hikaricp_connections_timeout_total` stable.
+- [ ] Sentry prod : pas de nouvelle issue `DataIntegrityViolationException`, `TransactionRequiredException`
+      ou `UnexpectedRollbackException` (les familles corrigées par #433/#437).
+- [ ] Flyway à **299** (9.3) et contrôles G1 à G7 de 8.G.
+
+### 9.8 Si ça se passe mal
+
+- Retour arrière de l'image : relancer `deploy-prod.yml` avec le tag précédent. **Attention** : les migrations
+  V295–V299 restent appliquées ; elles sont compatibles avec l'ancien code (colonnes à défaut, table neuve, données
+  seulement complétées). L'ancienne image redémarre sans erreur Flyway : la configuration garde le défaut
+  `ignore-migration-patterns: "*:future"`, qui ignore les versions appliquées plus récentes que le code.
+- Retour arrière du pool seul : remettre `maximum-pool-size: 10` dans `application-prod.yml` exige un nouveau build ;
+  plus simple, surcharger par variable d'environnement `SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE=10` dans le `.env`
+  du serveur (relu au redémarrage, mais **réécrit** par `deploy-prod.yml` au déploiement suivant).
+
+### 9.9 Points ouverts du test de charge (non bloquants)
+
+- Une connexion tenue **346 s** sur la staging le 08/10 à 00:09 UTC (`hikaricp_connections_usage_seconds_max`) :
+  transaction anormalement longue, non expliquée. Surveiller la même métrique en prod.
+- Une seule instance d'API en prod : la montée en charge horizontale (plusieurs conteneurs derrière nginx)
+  reste à faire si le trafic dépasse ce que 20 connexions absorbent.

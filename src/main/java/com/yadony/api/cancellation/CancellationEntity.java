@@ -60,6 +60,55 @@ public class CancellationEntity extends BaseEntity {
     @Column(name = "decision_reason", columnDefinition = "TEXT")
     private String decisionReason;
 
+    // Procédure « destinataire absent » (V301, FLUTTER-E2). Nulles hors signalement
+    // RECIPIENT_NO_SHOW fait avec la procédure (les signalements antérieurs n'ont pas de garde).
+
+    /** Preuve de tentative de contact retenue au signalement : {@code CALL} ou {@code MESSAGE}. */
+    @Column(name = "contact_proof", length = 10)
+    private String contactProof;
+
+    /** Le voyageur a confirmé avoir attendu et tenté de joindre le destinataire. */
+    @Column(name = "contact_confirmed_at")
+    private OffsetDateTime contactConfirmedAt;
+
+    /** Fin de la garde du colis par le voyageur ; au-delà, le colis passe « non réclamé ». */
+    @Column(name = "hold_until")
+    private OffsetDateTime holdUntil;
+
+    /** Nouveau rendez-vous de livraison fixé par l'expéditeur pendant la garde. */
+    @Column(name = "retry_appointment_at")
+    private OffsetDateTime retryAppointmentAt;
+
+    @Column(name = "retry_appointment_note", columnDefinition = "TEXT")
+    private String retryAppointmentNote;
+
+    /**
+     * Colis passé « non réclamé ». Écrite uniquement par le claim atomique
+     * {@link CancellationRepository#markUnclaimed} : jamais par le flush d'une entité chargée
+     * avant lui, qui l'effacerait (pas de {@code @DynamicUpdate} ici).
+     */
+    @Column(name = "unclaimed_at", insertable = false, updatable = false)
+    private OffsetDateTime unclaimedAt;
+
+    public String getContactProof() { return contactProof; }
+    public void setContactProof(String contactProof) { this.contactProof = contactProof; }
+
+    public OffsetDateTime getContactConfirmedAt() { return contactConfirmedAt; }
+    public void setContactConfirmedAt(OffsetDateTime contactConfirmedAt) { this.contactConfirmedAt = contactConfirmedAt; }
+
+    public OffsetDateTime getHoldUntil() { return holdUntil; }
+    public void setHoldUntil(OffsetDateTime holdUntil) { this.holdUntil = holdUntil; }
+
+    public OffsetDateTime getRetryAppointmentAt() { return retryAppointmentAt; }
+    public void setRetryAppointmentAt(OffsetDateTime retryAppointmentAt) { this.retryAppointmentAt = retryAppointmentAt; }
+
+    public String getRetryAppointmentNote() { return retryAppointmentNote; }
+    public void setRetryAppointmentNote(String retryAppointmentNote) { this.retryAppointmentNote = retryAppointmentNote; }
+
+    public OffsetDateTime getUnclaimedAt() { return unclaimedAt; }
+    /** Réservé aux tests unitaires (la colonne n'est écrite en base que par le claim). */
+    void setUnclaimedAtForTest(OffsetDateTime unclaimedAt) { this.unclaimedAt = unclaimedAt; }
+
     public NoShowAdminDecision getAdminDecision() { return adminDecision; }
     public void setAdminDecision(NoShowAdminDecision adminDecision) { this.adminDecision = adminDecision; }
 

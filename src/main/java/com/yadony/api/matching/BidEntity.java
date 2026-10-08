@@ -195,6 +195,10 @@ public class BidEntity extends BaseEntity {
     @Column(name = "no_show_at")
     private LocalDateTime noShowAt;
 
+    /** Arrivée à destination déclarée par le voyageur (UTC, V301). Nulle avant V301. */
+    @Column(name = "arrived_at")
+    private LocalDateTime arrivedAt;
+
     @Column(name = "payment_intent_id", length = 255)
     private String paymentIntentId;
 
@@ -428,6 +432,9 @@ public class BidEntity extends BaseEntity {
 
     public LocalDateTime getNoShowAt() { return noShowAt; }
     public void setNoShowAt(LocalDateTime noShowAt) { this.noShowAt = noShowAt; }
+
+    public LocalDateTime getArrivedAt() { return arrivedAt; }
+    public void setArrivedAt(LocalDateTime arrivedAt) { this.arrivedAt = arrivedAt; }
 
     public String getPaymentIntentId() { return paymentIntentId; }
     public void setPaymentIntentId(String paymentIntentId) { this.paymentIntentId = paymentIntentId; }

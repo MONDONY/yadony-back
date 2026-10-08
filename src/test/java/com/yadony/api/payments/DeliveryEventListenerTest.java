@@ -359,4 +359,44 @@ class DeliveryEventListenerTest {
         verify(auditService, never()).log(any(), any(), any(), any(), any());
         verify(eventPublisher, never()).publishEvent(any(PaymentReleasedEvent.class));
     }
+
+    // ── FLUTTER-E2 : colis « non réclamé » au terme de la garde ──
+
+    @Test
+    void colisNonReclame_verseLeNetParLeMemeTransfertQueLaLivraison() {
+        PaymentEntity p = payment(false, PaymentStatus.ESCROW, "ch_unclaimed");
+        UUID travelerId = UUID.randomUUID();
+        when(paymentRepository.findByBidId(p.getBidId())).thenReturn(Optional.of(p));
+        when(paymentRepository.markReleasedIfEscrow(any(), any())).thenReturn(1);
+        when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler()));
+
+        try (MockedStatic<Transfer> transferStatic = mockStatic(Transfer.class)) {
+            ArgumentCaptor<TransferCreateParams> captor = ArgumentCaptor.forClass(TransferCreateParams.class);
+            ArgumentCaptor<RequestOptions> optsCaptor = ArgumentCaptor.forClass(RequestOptions.class);
+            transferStatic.when(() -> Transfer.create(captor.capture(), optsCaptor.capture()))
+                    .thenReturn(mock(Transfer.class));
+
+            listener.handleParcelUnclaimed(new com.yadony.api.cancellation.events.ParcelUnclaimedEvent(
+                    p.getBidId(), UUID.randomUUID(), travelerId, UUID.randomUUID()));
+
+            assertThat(captor.getValue().getAmount()).isEqualTo(2640L);
+            // Même clé que la livraison : jamais deux Transfers pour le même paiement.
+            assertThat(optsCaptor.getValue().getIdempotencyKey()).isEqualTo("transfer-" + p.getId());
+        }
+        verify(auditService).log(eq("PAYMENT"), any(), eq("ESCROW_RELEASED_UNCLAIMED"), any(), any());
+        verify(eventPublisher).publishEvent(any(PaymentReleasedEvent.class));
+    }
+
+    @Test
+    void colisNonReclame_paiementDejaVerse_aucunTransfert() {
+        PaymentEntity p = payment(false, PaymentStatus.RELEASED, "ch_x");
+        when(paymentRepository.findByBidId(p.getBidId())).thenReturn(Optional.of(p));
+
+        try (MockedStatic<Transfer> transferStatic = mockStatic(Transfer.class)) {
+            listener.handleParcelUnclaimed(new com.yadony.api.cancellation.events.ParcelUnclaimedEvent(
+                    p.getBidId(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID()));
+            transferStatic.verifyNoInteractions();
+        }
+        verify(paymentRepository, never()).markReleasedIfEscrow(any(), any());
+    }
 }

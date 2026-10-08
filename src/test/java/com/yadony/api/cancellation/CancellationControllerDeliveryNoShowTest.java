@@ -15,7 +15,9 @@ import java.util.UUID;
 
 import static org.mockito.Mockito.*;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest
@@ -27,6 +29,7 @@ class CancellationControllerDeliveryNoShowTest {
     @MockBean CancellationService cancellationService;
     @MockBean com.yadony.api.auth.UserRepository userRepository;
     @MockBean NoShowArbitrationService arbitrationService;
+    @MockBean DeliveryNoShowProcedureService procedureService;
 
     static final UUID BID_ID = UUID.randomUUID();
 
@@ -47,7 +50,7 @@ class CancellationControllerDeliveryNoShowTest {
         mockMvc.perform(post("/cancellations/bids/{bidId}/report-delivery-noshow", BID_ID)
                         .with(authentication(asRole("uid-traveler", "TRAVELER"))))
                 .andExpect(status().isOk());
-        verify(cancellationService).reportDeliveryNoShow(eq(BID_ID), any());
+        verify(cancellationService).reportDeliveryNoShow(eq(BID_ID), any(), org.mockito.ArgumentMatchers.eq(false));
     }
 
     @Test
@@ -121,5 +124,83 @@ class CancellationControllerDeliveryNoShowTest {
                 .andExpect(status().isForbidden());
 
         verifyNoInteractions(cancellationService, arbitrationService);
+    }
+
+    // ── Procédure « destinataire absent » (FLUTTER-E2) ──
+
+    @Test
+    void reportDeliveryNoShow_transmetLaConfirmation() throws Exception {
+        stubUser("uid-traveler");
+        mockMvc.perform(post("/cancellations/bids/{bidId}/report-delivery-noshow", BID_ID)
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"contactConfirmed\":true}")
+                        .with(authentication(asRole("uid-traveler", "TRAVELER"))))
+                .andExpect(status().isOk());
+        verify(cancellationService).reportDeliveryNoShow(eq(BID_ID), any(), org.mockito.ArgumentMatchers.eq(true));
+    }
+
+    @Test
+    void reportDeliveryNoShow_procedureRefusee_problemJson() throws Exception {
+        stubUser("uid-traveler");
+        when(cancellationService.reportDeliveryNoShow(eq(BID_ID), any(), anyBoolean()))
+                .thenThrow(new com.yadony.api.common.YadonyBusinessException(
+                        org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY,
+                        "delivery-noshow-wait-not-elapsed", "Waiting Time Not Elapsed", "Attendez",
+                        java.util.Map.of("availableAt", "2026-10-08T12:00Z")));
+        mockMvc.perform(post("/cancellations/bids/{bidId}/report-delivery-noshow", BID_ID)
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"contactConfirmed\":true}")
+                        .with(authentication(asRole("uid-traveler", "TRAVELER"))))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("delivery-noshow-wait-not-elapsed"))
+                .andExpect(jsonPath("$.availableAt").value("2026-10-08T12:00Z"));
+    }
+
+    @Test
+    void getProcedure_okPourLesDeuxParties() throws Exception {
+        stubUser("uid-sender");
+        when(procedureService.getProcedure(eq(BID_ID), any())).thenReturn(
+                new com.yadony.api.cancellation.dto.DeliveryNoShowProcedureResponse(BID_ID, "SENDER", "ARRIVED",
+                        null, null, false, null, false, true, "CONFIRMED", null, null, null, null, null,
+                        true, 120, 7));
+        mockMvc.perform(get("/cancellations/bids/{bidId}/delivery-noshow", BID_ID)
+                        .with(authentication(asRole("uid-sender", "SENDER"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.role").value("SENDER"))
+                .andExpect(jsonPath("$.canSetRetryAppointment").value(true))
+                .andExpect(jsonPath("$.holdDays").value(7));
+    }
+
+    @Test
+    void retryAppointment_okPourLExpediteur() throws Exception {
+        stubUser("uid-sender");
+        mockMvc.perform(post("/cancellations/bids/{bidId}/delivery-noshow/retry-appointment", BID_ID)
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"appointmentAt\":\"2030-01-01T10:00:00Z\",\"note\":\"Gare\"}")
+                        .with(authentication(asRole("uid-sender", "SENDER"))))
+                .andExpect(status().isOk());
+        verify(procedureService).setRetryAppointment(eq(BID_ID), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq("Gare"));
+    }
+
+    @Test
+    void retryAppointment_interditAuVoyageur() throws Exception {
+        mockMvc.perform(post("/cancellations/bids/{bidId}/delivery-noshow/retry-appointment", BID_ID)
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"appointmentAt\":\"2030-01-01T10:00:00Z\"}")
+                        .with(authentication(asRole("uid-traveler", "TRAVELER"))))
+                .andExpect(status().isForbidden());
+        verifyNoInteractions(procedureService);
+    }
+
+    @Test
+    void retryAppointment_dateManquante_refusee() throws Exception {
+        stubUser("uid-sender");
+        mockMvc.perform(post("/cancellations/bids/{bidId}/delivery-noshow/retry-appointment", BID_ID)
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{}")
+                        .with(authentication(asRole("uid-sender", "SENDER"))))
+                .andExpect(result -> org.assertj.core.api.Assertions.assertThat(result.getResponse().getStatus())
+                        .isBetween(400, 422));
+        verifyNoInteractions(procedureService);
     }
 }

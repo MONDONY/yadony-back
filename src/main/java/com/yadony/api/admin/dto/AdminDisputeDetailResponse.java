@@ -16,5 +16,11 @@ public record AdminDisputeDetailResponse(
     UUID senderId,
     UUID travelerId,
     /** Devise du colis (bid), celle d'un fonds de garantie ; null sans bid. */
-    String bidCurrency
+    String bidCurrency,
+    /** Partage décidé (V301, FLUTTER-E2), null sans partage. */
+    java.math.BigDecimal senderRefundAmount,
+    java.math.BigDecimal travelerPayoutAmount,
+    String splitCurrency,
+    /** Exécution du partage chez Stripe, null sans partage. */
+    AdminDisputeSplitResponse split
 ) {}

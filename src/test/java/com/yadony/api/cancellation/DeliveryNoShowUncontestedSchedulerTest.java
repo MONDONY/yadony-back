@@ -179,4 +179,20 @@ class DeliveryNoShowUncontestedSchedulerTest {
         verifyNoInteractions(eventPublisher, auditService);
         verify(cancellationRepository, never()).save(any());
     }
+
+    /** FLUTTER-E2 : un signalement fait avec la procédure (garde) n'ouvre plus de litige. */
+    @Test
+    void signalementAvecGarde_confirmeSansLitige() {
+        UUID bidId = UUID.randomUUID();
+        CancellationEntity c = pendingDelivery(bidId, "RECIPIENT_NO_SHOW");
+        c.setHoldUntil(OffsetDateTime.now().plusDays(6));
+
+        scheduler.openUncontestedDispute(c, new BidEntity(), new AnnouncementEntity());
+
+        assertThat(c.getNoShowStatus()).isEqualTo(CancellationStatus.CONFIRMED);
+        verify(cancellationRepository).save(c);
+        verify(eventPublisher, never()).publishEvent(any());
+        verify(auditService).log(eq("CANCELLATION"), eq(c.getId()),
+                eq("DELIVERY_NOSHOW_UNCONTESTED_HOLD_CONTINUES"), isNull(), any());
+    }
 }

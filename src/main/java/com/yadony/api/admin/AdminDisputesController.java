@@ -53,19 +53,25 @@ public class AdminDisputesController {
     private final UserRepository userRepo;
     private final ApplicationEventPublisher eventPublisher;
     private final BidRepository bidRepo;
+    private final com.yadony.api.payments.split.PaymentSplitService splitService;
+    private final org.springframework.transaction.support.TransactionTemplate decisionTransaction;
 
     public AdminDisputesController(DisputeRepository disputeRepo,
                                    CancellationRepository cancellationRepo,
                                    AuditService auditService,
                                    UserRepository userRepo,
                                    ApplicationEventPublisher eventPublisher,
-                                   BidRepository bidRepo) {
+                                   BidRepository bidRepo,
+                                   com.yadony.api.payments.split.PaymentSplitService splitService,
+                                   org.springframework.transaction.PlatformTransactionManager transactionManager) {
         this.disputeRepo = disputeRepo;
         this.cancellationRepo = cancellationRepo;
         this.auditService = auditService;
         this.userRepo = userRepo;
         this.eventPublisher = eventPublisher;
         this.bidRepo = bidRepo;
+        this.splitService = splitService;
+        this.decisionTransaction = new org.springframework.transaction.support.TransactionTemplate(transactionManager);
     }
 
     // -------------------------------------------------------------------------
@@ -108,38 +114,116 @@ public class AdminDisputesController {
         return ResponseEntity.ok(toDisputeDetail(entity, usersById));
     }
 
+    /**
+     * Résout un litige. Avec {@code senderRefundAmount} + {@code travelerPayoutAmount}
+     * (FLUTTER-E2), le séquestre du colis est en plus partagé : la décision, le claim du
+     * paiement et la ligne de partage sont commités ensemble, puis les étapes Stripe s'exécutent.
+     * Un échec Stripe n'annule pas la décision : la réponse porte {@code split.status} et
+     * {@code split.lastError}, et {@code POST /admin/disputes/{id}/split/retry} reprend.
+     * Partager déplace de l'argent dans les deux sens : il faut aussi PAYMENT_RELEASE et
+     * PAYMENT_REFUND.
+     */
     @PreAuthorize("hasAuthority('DISPUTE_RESOLVE')")
     @PostMapping("/admin/disputes/{id}/resolve")
-    @Transactional
     public ResponseEntity<AdminDisputeDetailResponse> resolveDispute(
             @PathVariable UUID id,
             @RequestBody AdminResolveDisputeRequest request,
             Authentication authentication) {
 
         UUID adminId = AdminPrincipal.requireAdminId(authentication);
+        if (request.hasSplit()) {
+            requireMoneyAuthorities(authentication);
+        }
+        DisputeEntity entity = decisionTransaction.execute(status -> {
+            DisputeEntity d = findDisputeOrThrow(id);
+            requireNotResolved(d);
+            com.yadony.api.payments.split.PaymentSplitService.SplitPlan plan = request.hasSplit()
+                    ? splitService.plan(d.getBidId(), request.senderRefundAmount(), request.travelerPayoutAmount())
+                    : null;
+            d.setStatus("RESOLVED");
+            d.setResolutionType(request.resolution());
+            d.setResolutionNote(request.note());
+            d.setResolvedAt(OffsetDateTime.now(ZoneOffset.UTC));
+            if (plan != null) {
+                d.setSenderRefundAmount(plan.senderRefund());
+                d.setTravelerPayoutAmount(plan.travelerPayout());
+                d.setSplitCurrency(plan.currency());
+            }
+            disputeRepo.save(d);
+            resolveLinkedCancellation(d);
+            if (plan != null) {
+                splitService.claim(plan, d.getId(), adminId);
+            }
+
+            Map<String, Object> payload = new java.util.HashMap<>();
+            payload.put("resolution", Objects.toString(request.resolution(), ""));
+            payload.put("note", Objects.toString(request.note(), ""));
+            if (plan != null) {
+                payload.put("senderRefundAmount", plan.senderRefund().toPlainString());
+                payload.put("travelerPayoutAmount", plan.travelerPayout().toPlainString());
+                payload.put("currency", plan.currency());
+            }
+            auditService.log("DISPUTE", d.getId(), "RESOLVE", adminId, payload);
+            eventPublisher.publishEvent(new DisputeResolvedEvent(
+                    id, d.getBidId(), d.getSenderId(), d.getTravelerId(), request.resolution()));
+            return d;
+        });
+
+        splitService.findForDispute(id).ifPresent(split -> splitService.execute(split.getId()));
+        return ResponseEntity.ok(toDisputeDetail(entity, usersOf(entity)));
+    }
+
+    /** Montants répartissables du colis d'un litige (formulaire de partage). */
+    @PreAuthorize("hasAuthority('DISPUTE_VIEW')")
+    @GetMapping("/admin/disputes/{id}/split-options")
+    public ResponseEntity<com.yadony.api.admin.dto.AdminDisputeSplitOptionsResponse> splitOptions(@PathVariable UUID id) {
         DisputeEntity entity = findDisputeOrThrow(id);
-        requireNotResolved(entity);
-        entity.setStatus("RESOLVED");
-        entity.setResolutionType(request.resolution());
-        entity.setResolutionNote(request.note());
-        entity.setResolvedAt(OffsetDateTime.now(ZoneOffset.UTC));
-        disputeRepo.save(entity);
-        resolveLinkedCancellation(entity);
+        var a = splitService.availability(entity.getBidId());
+        return ResponseEntity.ok(new com.yadony.api.admin.dto.AdminDisputeSplitOptionsResponse(
+                a.splittable() && !"RESOLVED".equals(entity.getStatus()),
+                "RESOLVED".equals(entity.getStatus()) ? "dispute-already-resolved" : a.reasonCode(),
+                a.currency(), a.amount(), a.commission(), a.refunded(), a.netAvailable(), a.rail(), a.paymentStatus()));
+    }
 
-        auditService.log("DISPUTE", entity.getId(), "RESOLVE", adminId,
-                Map.of("resolution", Objects.toString(request.resolution(), ""),
-                       "note", Objects.toString(request.note(), "")));
-        eventPublisher.publishEvent(new DisputeResolvedEvent(
-                id, entity.getBidId(), entity.getSenderId(), entity.getTravelerId(),
-                request.resolution()));
+    /** Reprend un partage interrompu (échec Stripe entre le remboursement et le transfert). */
+    @PreAuthorize("hasAuthority('DISPUTE_RESOLVE')")
+    @PostMapping("/admin/disputes/{id}/split/retry")
+    public ResponseEntity<AdminDisputeDetailResponse> retrySplit(@PathVariable UUID id, Authentication authentication) {
+        UUID adminId = AdminPrincipal.requireAdminId(authentication);
+        requireMoneyAuthorities(authentication);
+        DisputeEntity entity = findDisputeOrThrow(id);
+        var split = splitService.findForDispute(id)
+                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "split-not-found",
+                        "Not Found", "Aucun partage pour ce litige"));
+        if (split.getStatus() == com.yadony.api.payments.split.PaymentSplitStatus.COMPLETED) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "split-already-completed",
+                    "Split Already Completed", "Ce partage est déjà entièrement exécuté");
+        }
+        auditService.log("DISPUTE", id, "SPLIT_RETRY", adminId,
+                Map.of("splitId", split.getId().toString(), "status", split.getStatus().name()));
+        splitService.execute(split.getId());
+        return ResponseEntity.ok(toDisputeDetail(entity, usersOf(entity)));
+    }
 
-        Set<UUID> resolveIds = new HashSet<>();
-        if (entity.getSenderId() != null) resolveIds.add(entity.getSenderId());
-        if (entity.getTravelerId() != null) resolveIds.add(entity.getTravelerId());
-        Map<UUID, UserEntity> resolveUsers = userRepo.findAllById(resolveIds).stream()
+    private static void requireMoneyAuthorities(Authentication authentication) {
+        java.util.Set<String> granted = authentication == null ? Set.of()
+                : authentication.getAuthorities().stream()
+                        .map(org.springframework.security.core.GrantedAuthority::getAuthority)
+                        .collect(Collectors.toSet());
+        if (!granted.contains("PAYMENT_RELEASE") || !granted.contains("PAYMENT_REFUND")) {
+            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "split-permission-required",
+                    "Permission Required",
+                    "Partager un paiement exige les droits de libération et de remboursement");
+        }
+    }
+
+    private Map<UUID, UserEntity> usersOf(DisputeEntity entity) {
+        Set<UUID> ids = new HashSet<>();
+        if (entity.getSenderId() != null) ids.add(entity.getSenderId());
+        if (entity.getTravelerId() != null) ids.add(entity.getTravelerId());
+        return userRepo.findAllById(ids).stream()
                 .filter(u -> u.getId() != null)
                 .collect(Collectors.toMap(UserEntity::getId, Function.identity(), (a, b) -> a));
-        return ResponseEntity.ok(toDisputeDetail(entity, resolveUsers));
     }
 
     @PreAuthorize("hasAuthority('DISPUTE_RESOLVE')")
@@ -304,7 +388,21 @@ public class AdminDisputesController {
                 d.getGuaranteeCurrency(),
                 d.getSenderId(),
                 d.getTravelerId(),
-                bidCurrencyOf(d));
+                bidCurrencyOf(d),
+                d.getSenderRefundAmount(),
+                d.getTravelerPayoutAmount(),
+                d.getSplitCurrency(),
+                splitOf(d));
+    }
+
+    private com.yadony.api.admin.dto.AdminDisputeSplitResponse splitOf(DisputeEntity d) {
+        if (d.getId() == null) return null;
+        return splitService.findForDispute(d.getId())
+                .map(s -> new com.yadony.api.admin.dto.AdminDisputeSplitResponse(
+                        s.getId(), s.getSenderRefundAmount(), s.getTravelerPayoutAmount(), s.getCurrency(),
+                        s.getMode().name(), s.getStatus().name(), s.getAttempts(), s.getLastError(),
+                        s.getStripeRefundId(), s.getStripeTransferId(), s.getCompletedAt()))
+                .orElse(null);
     }
 
     private String bidCurrencyOf(DisputeEntity d) {

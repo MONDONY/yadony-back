@@ -240,6 +240,24 @@ public final class NotificationTexts {
                 m.get("notification.delivery-no-show.traveler.body"));
     }
 
+    /** FLUTTER-E2 : l'expéditeur a fixé un nouveau rendez-vous pendant la garde. */
+    public static NotificationText deliveryRetryAppointmentForTraveler(Messages m) {
+        return new NotificationText(m.get("notification.delivery-retry-appointment.title"),
+                m.get("notification.delivery-retry-appointment.traveler.body"));
+    }
+
+    /** FLUTTER-E2 : garde échue, colis « non réclamé » (vu de l'expéditeur). */
+    public static NotificationText parcelUnclaimedForSender(Messages m) {
+        return new NotificationText(m.get("notification.parcel-unclaimed.title"),
+                m.get("notification.parcel-unclaimed.sender.body"));
+    }
+
+    /** FLUTTER-E2 : garde échue, colis « non réclamé » (vu du voyageur). */
+    public static NotificationText parcelUnclaimedForTraveler(Messages m) {
+        return new NotificationText(m.get("notification.parcel-unclaimed.title"),
+                m.get("notification.parcel-unclaimed.traveler.body"));
+    }
+
     // ── Colis : déclaration d'absence (no-show) et décision de l'administration ──
 
     /** L'expéditeur déclaré absent à la remise par le voyageur : il peut contester. */

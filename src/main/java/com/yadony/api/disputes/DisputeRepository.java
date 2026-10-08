@@ -19,6 +19,12 @@ public interface DisputeRepository extends JpaRepository<DisputeEntity, UUID> {
         return findByBidIdAndType(bidId, "SENDER_NO_SHOW_CONTESTED");
     }
 
+    /**
+     * Un litige existe pour le bid, ouvert ou résolu, quel que soit son type : l'argent du colis
+     * relève alors de la décision admin et le passage « non réclamé » ne verse rien seul.
+     */
+    boolean existsByBidId(UUID bidId);
+
     // Nouveau — idempotence par type pour les litiges d'arrivée.
     Optional<DisputeEntity> findByBidIdAndType(UUID bidId, String type);
 

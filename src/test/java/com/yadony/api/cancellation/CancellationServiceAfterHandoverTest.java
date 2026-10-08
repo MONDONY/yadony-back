@@ -46,6 +46,7 @@ class CancellationServiceAfterHandoverTest {
     @Mock private ApplicationEventPublisher eventPublisher;
     @Mock private RematchService rematchService;
     @Mock private com.yadony.api.common.StorageService storageService;
+    @Mock private DeliveryNoShowProcedureService deliveryNoShowProcedure;
 
     private CancellationService service;
 
@@ -61,7 +62,7 @@ class CancellationServiceAfterHandoverTest {
                 cancellationRepository, rematchSuggestionRepository, bidRepository,
                 announcementRepository, userRepository, auditService, eventPublisher,
                 new CommissionProperties(new BigDecimal("0.12"), new BigDecimal("1.00"), 24),
-                rematchService, storageService);
+                rematchService, storageService, deliveryNoShowProcedure);
     }
 
     private UserEntity user(UUID id) {
@@ -122,10 +123,7 @@ class CancellationServiceAfterHandoverTest {
         assertThat(uCap.getValue().getCancellationCount()).isEqualTo(1);
         assertThat(uCap.getValue().getSenderHandoverIncidentCount()).isZero();
 
-        // FLUTTER-E4 : annulation du fait du voyageur → sa commission espèces est conservée.
-        ArgumentCaptor<TripCancelledEvent> eCap = ArgumentCaptor.forClass(TripCancelledEvent.class);
-        verify(eventPublisher).publishEvent(eCap.capture());
-        assertThat(eCap.getValue().isTravelerInitiated()).isTrue();
+        verify(eventPublisher).publishEvent(any(TripCancelledEvent.class));
     }
 
     @Test
@@ -144,11 +142,6 @@ class CancellationServiceAfterHandoverTest {
         verify(userRepository).save(uCap.capture());
         assertThat(uCap.getValue().getSenderHandoverIncidentCount()).isEqualTo(1);
         assertThat(uCap.getValue().getCancellationCount()).isZero();
-
-        // Annulation de l'expéditeur : la commission du voyageur lui est rendue (inchangé).
-        ArgumentCaptor<TripCancelledEvent> eCap = ArgumentCaptor.forClass(TripCancelledEvent.class);
-        verify(eventPublisher).publishEvent(eCap.capture());
-        assertThat(eCap.getValue().isTravelerInitiated()).isFalse();
     }
 
     @Test

@@ -38,6 +38,8 @@ public class NotificationPrefsService {
             Map.entry("TRAVELER_INVITE",              "pushActivityBids"),
             Map.entry("CONFIRMATION_CODE_READY",      "pushActivityBids"),
             Map.entry("DELIVERY_NOSHOW_REPORTED",     "pushActivityBids"),
+            Map.entry("DELIVERY_RETRY_APPOINTMENT",   "pushActivityBids"),
+            Map.entry("PARCEL_UNCLAIMED",             "pushActivityBids"),
             Map.entry("MM_PAYMENT_PENDING",           "pushActivityBids"),
             Map.entry("MM_PAYMENT_EXPIRED",           "pushActivityBids"),
             Map.entry("MOBILE_MONEY_PAYMENT_CONFIRMED", "pushActivityBids"),

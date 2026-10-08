@@ -483,6 +483,32 @@ public class NotificationDispatcher {
         }
     }
 
+    /** FLUTTER-E2 : nouveau rendez-vous de livraison fixé par l'expéditeur pendant la garde. */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
+    public void onDeliveryRetryAppointmentSet(
+            com.yadony.api.cancellation.events.DeliveryRetryAppointmentSetEvent event) {
+        if (event.travelerId() == null) return;
+        var text = NotificationTexts.deliveryRetryAppointmentForTraveler(messagesFor(event.travelerId()));
+        notifyUser(event.travelerId(), text.title(), text.body(),
+                Map.of("type", "DELIVERY_RETRY_APPOINTMENT", "bidId", event.bidId().toString()));
+    }
+
+    /** FLUTTER-E2 : garde échue, colis « non réclamé » — les deux parties sont prévenues. */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
+    public void onParcelUnclaimed(com.yadony.api.cancellation.events.ParcelUnclaimedEvent event) {
+        Map<String, String> data = Map.of("type", "PARCEL_UNCLAIMED", "bidId", event.bidId().toString());
+        if (event.senderId() != null) {
+            var text = NotificationTexts.parcelUnclaimedForSender(messagesFor(event.senderId()));
+            notifyUser(event.senderId(), text.title(), text.body(), data);
+        }
+        if (event.travelerId() != null) {
+            var text = NotificationTexts.parcelUnclaimedForTraveler(messagesFor(event.travelerId()));
+            notifyUser(event.travelerId(), text.title(), text.body(), data);
+        }
+    }
+
     // Critical events — SMS fallback triggered by SmsFallbackScheduler after 60s without ACK
 
     @EventListener @Async
