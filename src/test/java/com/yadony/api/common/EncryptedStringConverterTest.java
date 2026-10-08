@@ -1,5 +1,6 @@
 package com.yadony.api.common;
 
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -11,12 +12,29 @@ class EncryptedStringConverterTest {
 
     private final EncryptedStringConverter converter = new EncryptedStringConverter();
 
+    private static EncryptionService previous;
+
     @BeforeAll
     static void initEncryption() {
-        // Initialise le holder statique lu par le converter (fait normalement
-        // par Spring au démarrage du contexte).
+        // Le holder statique est partagé avec les contextes Spring déjà en cache dans
+        // ce fork : on garde l'instance en place pour la remettre après, sinon les
+        // classes suivantes déchiffreraient leurs lignes H2 avec une autre clé.
+        try {
+            previous = EncryptionSupport.encryption();
+        } catch (IllegalStateException notYetInitialized) {
+            previous = null;
+        }
+        // Même passphrase que application-test.yml, par prudence si la restauration
+        // n'avait pas lieu (fork interrompu).
         new EncryptionSupport(new EncryptionService(
-                "test-encryption-key-not-for-production-use-32b"));
+                "yadony-test-encryption-key-not-for-production-use-32-bytes"));
+    }
+
+    @AfterAll
+    static void restoreEncryption() {
+        if (previous != null) {
+            new EncryptionSupport(previous);
+        }
     }
 
     @Test
