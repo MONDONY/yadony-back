@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Optional;
@@ -21,6 +22,9 @@ public interface WalletAccountRepository extends JpaRepository<WalletAccountEnti
      *
      * @return 1 si la ligne a été insérée, 0 si elle existait déjà
      */
+    // @Transactional : une requête @Modifying exige une transaction. Rejoint celle de
+    // l'appelant, ou commite seule quand il n'y en a pas (WalletService.getOrCreate).
+    @Transactional
     @Modifying
     @Query(value = """
             INSERT INTO wallet_accounts
