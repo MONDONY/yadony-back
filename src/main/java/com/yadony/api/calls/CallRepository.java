@@ -20,7 +20,7 @@ public interface CallRepository extends JpaRepository<CallEntity, UUID> {
     /**
      * Le voyageur a lancé au moins un appel in-app sur ce colis depuis {@code since}, quelle
      * qu'en soit l'issue (un appel manqué prouve justement la tentative) : preuve de contact
-     * du signalement « destinataire absent » (V300).
+     * du signalement « destinataire absent » (V301).
      */
     boolean existsByBidIdAndCallerIdAndCreatedAtGreaterThanEqual(UUID bidId, UUID callerId, LocalDateTime since);
 

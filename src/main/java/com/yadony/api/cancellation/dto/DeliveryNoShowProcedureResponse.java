@@ -10,7 +10,7 @@ import java.util.UUID;
  *
  * @param role                 {@code SENDER} ou {@code TRAVELER} : le rôle de l'appelant.
  * @param bidStatus            statut courant du colis.
- * @param arrivedAt            arrivée déclarée (UTC), null si inconnue (colis arrivé avant V300).
+ * @param arrivedAt            arrivée déclarée (UTC), null si inconnue (colis arrivé avant V301).
  * @param reportAvailableAt    heure à partir de laquelle le voyageur peut signaler ; null tant
  *                             que l'arrivée n'est pas déclarée.
  * @param waitElapsed          le délai d'attente minimal est écoulé.

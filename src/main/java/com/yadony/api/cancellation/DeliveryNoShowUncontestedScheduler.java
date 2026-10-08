@@ -123,7 +123,7 @@ public class DeliveryNoShowUncontestedScheduler {
         // Procédure « destinataire absent » (FLUTTER-E2) : un signalement fait avec la
         // procédure porte une garde. Non contesté, il ne devient plus un litige : la garde
         // continue et, à son terme sans livraison, le colis passe « non réclamé »
-        // (UnclaimedParcelScheduler). Les signalements antérieurs à V300 (sans garde) gardent
+        // (UnclaimedParcelScheduler). Les signalements antérieurs à V301 (sans garde) gardent
         // l'ancien chemin, sinon ils resteraient sans issue.
         if (DeliveryNoShowTypes.isRecipientNoShow(c.getReason()) && c.getHoldUntil() != null) {
             auditService.log("CANCELLATION", c.getId(), "DELIVERY_NOSHOW_UNCONTESTED_HOLD_CONTINUES", null,

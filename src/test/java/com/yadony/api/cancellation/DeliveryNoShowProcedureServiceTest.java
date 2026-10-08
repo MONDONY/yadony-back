@@ -155,7 +155,7 @@ class DeliveryNoShowProcedureServiceTest {
         assertThat(service.checkReportPreconditions(b, TRAVELER_ID, true).contactProof()).isEqualTo("MESSAGE");
     }
 
-    /** Colis arrivé avant V300 : pas d'arrived_at, on retombe sur la dernière modification du bid. */
+    /** Colis arrivé avant V301 : pas d'arrived_at, on retombe sur la dernière modification du bid. */
     @Test
     void preconditions_sansArrivedAt_retombeSurUpdatedAt() {
         BidEntity b = bid(BidStatus.ARRIVED, null);

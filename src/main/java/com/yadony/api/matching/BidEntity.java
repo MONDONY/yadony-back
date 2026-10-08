@@ -195,7 +195,7 @@ public class BidEntity extends BaseEntity {
     @Column(name = "no_show_at")
     private LocalDateTime noShowAt;
 
-    /** Arrivée à destination déclarée par le voyageur (UTC, V300). Nulle avant V300. */
+    /** Arrivée à destination déclarée par le voyageur (UTC, V301). Nulle avant V301. */
     @Column(name = "arrived_at")
     private LocalDateTime arrivedAt;
 

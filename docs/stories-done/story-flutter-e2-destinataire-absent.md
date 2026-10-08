@@ -58,7 +58,7 @@ au voyageur. L'admin peut aussi résoudre un litige par un partage chiffré du s
 - `GET /admin/disputes/{id}/split-options` : montants pour le formulaire.
 
 ## Migration
-`V300__destinataire_absent_procedure_et_partage.sql` : `bids.arrived_at`,
+`V301__destinataire_absent_procedure_et_partage.sql` : `bids.arrived_at`,
 `conversations.traveler_last_message_at`, colonnes de garde sur `cancellations`, montants sur
 `disputes`, table `payment_splits` (index unique par paiement).
 

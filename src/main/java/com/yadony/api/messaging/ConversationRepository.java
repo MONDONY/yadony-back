@@ -51,7 +51,7 @@ public interface ConversationRepository extends JpaRepository<ConversationEntity
     java.util.List<ConversationEntity> findAllByBidId(UUID bidId);
 
     /**
-     * Le voyageur vient d'écrire dans la conversation (V300). Écriture ciblée : la colonne
+     * Le voyageur vient d'écrire dans la conversation (V301). Écriture ciblée : la colonne
      * n'est jamais réécrite par le flush d'une entité chargée avant.
      */
     @org.springframework.transaction.annotation.Transactional

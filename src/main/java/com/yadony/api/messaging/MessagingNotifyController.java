@@ -80,7 +80,7 @@ public class MessagingNotifyController {
             return ResponseEntity.ok(new NotifyMessageResponse(null));
         }
 
-        // Preuve de contact du voyageur (signalement « destinataire absent », V300).
+        // Preuve de contact du voyageur (signalement « destinataire absent », V301).
         // Best-effort : la notification du message ne doit jamais en dépendre.
         if (sender != null && sender.getId() != null && sender.getId().equals(conv.getTravelerId())) {
             try {

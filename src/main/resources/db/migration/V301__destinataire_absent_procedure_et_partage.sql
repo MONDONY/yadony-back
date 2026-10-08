@@ -1,11 +1,11 @@
--- V300 — FLUTTER-E2.
+-- V301 — FLUTTER-E2.
 -- Destinataire absent à l'arrivée : procédure encadrée (A) et partage chiffré par l'admin (B).
 --
 -- A. Procédure. Aucun nouveau statut de bid ni de paiement : les machines à états existantes
 --    (BidStatus, PaymentStatus, CancellationStatus) ne changent pas. La procédure vit sur la
 --    ligne cancellations de portée DELIVERY qui porte déjà le signalement RECIPIENT_NO_SHOW.
 --      * bids.arrived_at : heure de l'arrivée déclarée par le voyageur (point de départ du délai
---        d'attente minimal avant de pouvoir signaler). Nulle pour les colis arrivés avant V300.
+--        d'attente minimal avant de pouvoir signaler). Nulle pour les colis arrivés avant V301.
 --      * conversations.traveler_last_message_at : dernier message envoyé par le voyageur dans la
 --        conversation (relayé par la Cloud Function onNewMessage → /internal/messaging/notify).
 --        Preuve de tentative de contact vérifiable côté serveur, avec les appels (table calls).

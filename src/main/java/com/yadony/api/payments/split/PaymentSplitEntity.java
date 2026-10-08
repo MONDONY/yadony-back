@@ -12,7 +12,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
-/** Exécution d'un partage chiffré décidé par l'admin à la résolution d'un litige (V300, FLUTTER-E2). */
+/** Exécution d'un partage chiffré décidé par l'admin à la résolution d'un litige (V301, FLUTTER-E2). */
 @Entity
 @Table(name = "payment_splits")
 @Where(clause = "deleted_at IS NULL")

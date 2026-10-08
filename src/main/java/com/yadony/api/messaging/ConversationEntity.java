@@ -75,7 +75,7 @@ public class ConversationEntity extends BaseEntity {
     private LocalDateTime closedAt;
 
     /**
-     * Dernier message envoyé par le voyageur (V300) : preuve de tentative de contact pour le
+     * Dernier message envoyé par le voyageur (V301) : preuve de tentative de contact pour le
      * signalement « destinataire absent ». Écrite uniquement par
      * {@link ConversationRepository#markTravelerMessaged}, jamais par un flush d'entité.
      */

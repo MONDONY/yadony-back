@@ -60,7 +60,7 @@ public class CancellationEntity extends BaseEntity {
     @Column(name = "decision_reason", columnDefinition = "TEXT")
     private String decisionReason;
 
-    // Procédure « destinataire absent » (V300, FLUTTER-E2). Nulles hors signalement
+    // Procédure « destinataire absent » (V301, FLUTTER-E2). Nulles hors signalement
     // RECIPIENT_NO_SHOW fait avec la procédure (les signalements antérieurs n'ont pas de garde).
 
     /** Preuve de tentative de contact retenue au signalement : {@code CALL} ou {@code MESSAGE}. */

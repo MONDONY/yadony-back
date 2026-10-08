@@ -16,10 +16,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * V300 (FLUTTER-E2) : colonnes de la procédure « destinataire absent » et table
+ * V301 (FLUTTER-E2) : colonnes de la procédure « destinataire absent » et table
  * {@code payment_splits} du partage admin, appliquées sur un vrai PostgreSQL.
  */
-class V300DestinataireAbsentMigrationTest {
+class V301DestinataireAbsentMigrationTest {
 
     private static EmbeddedPostgres postgres;
     private static DataSource dataSource;
@@ -59,12 +59,12 @@ class V300DestinataireAbsentMigrationTest {
 
     @Test
     void v300_ajouteLaProcedureEtLaTableDePartage() throws Exception {
-        Flyway baseline = flywayUpTo("295");
+        Flyway baseline = flywayUpTo("300");
         baseline.clean();
         baseline.migrate();
         assertThat(columnType("cancellations", "hold_until")).isNull();
 
-        flywayUpTo("300").migrate();
+        flywayUpTo("301").migrate();
 
         assertThat(columnType("bids", "arrived_at")).startsWith("timestamp");
         assertThat(columnType("conversations", "traveler_last_message_at")).startsWith("timestamp");

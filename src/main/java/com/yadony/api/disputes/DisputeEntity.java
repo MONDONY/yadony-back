@@ -51,11 +51,11 @@ public class DisputeEntity extends BaseEntity {
     @Column(name = "guarantee_currency", length = 3)
     private String guaranteeCurrency;
 
-    /** Partage décidé par l'admin (V300, FLUTTER-E2) : part remboursée à l'expéditeur. */
+    /** Partage décidé par l'admin (V301, FLUTTER-E2) : part remboursée à l'expéditeur. */
     @Column(name = "sender_refund_amount", precision = 10, scale = 2)
     private java.math.BigDecimal senderRefundAmount;
 
-    /** Partage décidé par l'admin (V300) : part versée au voyageur. */
+    /** Partage décidé par l'admin (V301) : part versée au voyageur. */
     @Column(name = "traveler_payout_amount", precision = 10, scale = 2)
     private java.math.BigDecimal travelerPayoutAmount;
 

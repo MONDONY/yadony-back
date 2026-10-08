@@ -139,7 +139,7 @@ public class DeliveryNoShowProcedureService {
     }
 
     Eligibility evaluate(BidEntity bid, UUID travelerId) {
-        // Repère de l'attente : l'arrivée déclarée. Un colis arrivé avant V300 n'a pas
+        // Repère de l'attente : l'arrivée déclarée. Un colis arrivé avant V301 n'a pas
         // d'arrived_at : on retombe sur la dernière modification du bid, qui lui est postérieure
         // ou égale (repère plus tardif, donc plus prudent).
         LocalDateTime since = bid.getArrivedAt() != null ? bid.getArrivedAt() : bid.getUpdatedAt();
