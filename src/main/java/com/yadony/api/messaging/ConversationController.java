@@ -54,8 +54,8 @@ public class ConversationController {
     // compteurs et badge disparaissaient ensemble.
     //
     // L'instant du dernier message vit dans Firestore et non dans Postgres, d'où le tri
-    // en mémoire. Les réponses, qui coûtent plusieurs lectures chacune, ne sont
-    // construites que pour la page demandée.
+    // en mémoire. Les réponses ne sont construites que pour la page demandée, en une
+    // transaction qui charge ses entités par lot (cf. ConversationService#toResponses).
     @GetMapping
     public ResponseEntity<PageResponse<ConversationResponse>> listConversations(
             @PageableDefault(size = 20) Pageable pageable) {
@@ -77,9 +77,8 @@ public class ConversationController {
         List<ConversationEntity> sorted = ConversationService.sortByLastActivity(all, meta);
         int from = (int) Math.min(pageable.getOffset(), sorted.size());
         int to = Math.min(from + pageable.getPageSize(), sorted.size());
-        List<ConversationResponse> content = sorted.subList(from, to).stream()
-                .map(c -> conversationService.toResponse(c, currentUser.getId(), meta))
-                .toList();
+        List<ConversationResponse> content =
+                conversationService.toResponses(sorted.subList(from, to), currentUser.getId(), meta);
 
         Page<ConversationResponse> responsePage = new PageImpl<>(content, pageable, sorted.size());
         return ResponseEntity.ok(PageResponse.from(responsePage));

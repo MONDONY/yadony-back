@@ -68,6 +68,22 @@ public interface AnnouncementRepository extends JpaRepository<AnnouncementEntity
     );
 
     /**
+     * Même recherche que {@link #findActiveOrFullDepartingOnOrBefore}, bornée aux trajets
+     * d'un voyageur : l'ouverture de « Mes trajets » ne bascule que les siens (le scheduler
+     * horaire couvre tous les autres).
+     */
+    @Query("""
+        SELECT a FROM AnnouncementEntity a
+        WHERE a.travelerId = :travelerId
+        AND a.status IN ('ACTIVE', 'FULL')
+        AND a.departureDate <= :maxDate
+    """)
+    List<AnnouncementEntity> findActiveOrFullDepartingOnOrBeforeForTraveler(
+        @Param("maxDate") LocalDate maxDate,
+        @Param("travelerId") UUID travelerId
+    );
+
+    /**
      * Returns IDs of announcements whose pickup coordinates fall within {@code radiusKm}
      * of (lat, lng). Excludes rows with NULL pickup coordinates.
      * Uses Haversine formula (Earth radius = 6371 km).
@@ -115,6 +131,10 @@ public interface AnnouncementRepository extends JpaRepository<AnnouncementEntity
 
     /** Étapes encore présentes d'un voyage (FLUTTER-4D). */
     long countByTripGroupId(UUID tripGroupId);
+
+    /** Variante par lot de {@link #countByTripGroupId} : une ligne {@code [tripGroupId, count]} par voyage. */
+    @Query("SELECT a.tripGroupId, COUNT(a) FROM AnnouncementEntity a WHERE a.tripGroupId IN :ids GROUP BY a.tripGroupId")
+    List<Object[]> countByTripGroupIds(@Param("ids") java.util.Collection<UUID> ids);
 
     /** Étapes de plusieurs voyages en une requête (pages de « Mes trajets », back-office). */
     List<AnnouncementEntity> findByTripGroupIdIn(java.util.Collection<UUID> tripGroupIds);

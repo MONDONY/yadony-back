@@ -390,14 +390,64 @@ public class ConversationService {
         Map<String, Object> meta = firestoreService
             .getConversationMeta(List.of(conv.getFirestoreConversationId()))
             .get(conv.getFirestoreConversationId());
-        return buildResponse(conv, currentUserId, meta);
+        return buildResponse(conv, currentUserId, meta, false);
     }
 
     /** Variante batch : réutilise une map déjà chargée (cf. {@link #fetchConversationMeta}). */
     public ConversationResponse toResponse(ConversationEntity conv, UUID currentUserId,
                                             Map<String, Map<String, Object>> metaByFirestoreId) {
         Map<String, Object> meta = metaByFirestoreId.get(conv.getFirestoreConversationId());
-        return buildResponse(conv, currentUserId, meta);
+        return buildResponse(conv, currentUserId, meta, false);
+    }
+
+    /**
+     * Réponses d'une page de la liste des conversations, en une seule transaction.
+     *
+     * <p>Chaque réponse lit l'interlocuteur, le colis et le trajet, et les fils d'une
+     * commande en cours relisent aussi la conversation, le colis et l'utilisateur pour le
+     * bouton d'appel et les photos. Fil par fil et hors transaction, une page de 20
+     * coûtait de 60 à plus de 200 requêtes, chacune empruntant sa propre connexion : sous
+     * charge, ces emprunts faisaient la queue et la liste montait à 15 s (test k6 du
+     * 08/10/2026, 200 utilisateurs). Les entités de la page sont donc chargées par lot
+     * d'abord : les {@code findById} qui suivent, ici comme dans
+     * {@link com.yadony.api.calls.CallEligibilityService} et {@link ConversationMediaPolicy},
+     * les trouvent dans le contexte de persistance sans requête SQL.
+     *
+     * <p>Firestore est lu avant, par l'appelant : aucune connexion n'est tenue pendant cet
+     * appel réseau.
+     *
+     * <p>Contrat : {@code page} ne contient que des fils dont la contrepartie est visible
+     * (liste déjà filtrée par {@code hiddenUserIdsFor}). Le blocage étant symétrique, les
+     * contrôles d'appel et de photos ne le relisent pas fil par fil.
+     */
+    @Transactional(readOnly = true)
+    public List<ConversationResponse> toResponses(List<ConversationEntity> page, UUID currentUserId,
+                                                  Map<String, Map<String, Object>> metaByFirestoreId) {
+        prefetch(page, currentUserId);
+        return page.stream()
+            .map(c -> buildResponse(c, currentUserId, metaByFirestoreId.get(c.getFirestoreConversationId()), true))
+            .toList();
+    }
+
+    private void prefetch(List<ConversationEntity> page, UUID currentUserId) {
+        if (page.isEmpty()) {
+            return;
+        }
+        conversationRepository.findAllById(page.stream().map(ConversationEntity::getId).toList());
+        java.util.Set<UUID> userIds = new java.util.HashSet<>();
+        userIds.add(currentUserId);
+        page.forEach(c -> userIds.add(otherUserId(c, currentUserId)));
+        userRepository.findAllById(userIds);
+        List<UUID> bidIds = page.stream().map(ConversationEntity::getBidId)
+            .filter(java.util.Objects::nonNull).distinct().toList();
+        if (bidIds.isEmpty()) {
+            return;
+        }
+        List<UUID> announcementIds = bidRepository.findAllById(bidIds).stream()
+            .map(BidEntity::getAnnouncementId).filter(java.util.Objects::nonNull).distinct().toList();
+        if (!announcementIds.isEmpty()) {
+            announcementRepository.findAllById(announcementIds);
+        }
     }
 
     /** Interlocuteur de la conversation, déduit de l'entité sans requête. */
@@ -406,7 +456,7 @@ public class ConversationService {
     }
 
     private ConversationResponse buildResponse(ConversationEntity conv, UUID currentUserId,
-                                                Map<String, Object> meta) {
+                                                Map<String, Object> meta, boolean visibilityChecked) {
         UUID otherUserId = otherUserId(conv, currentUserId);
 
         UserEntity other = userRepository.findById(otherUserId).orElse(null);
@@ -468,9 +518,9 @@ public class ConversationService {
             conv.getKind() != null ? conv.getKind().name() : ConversationKind.SENDER_TRAVELER.name(),
             !conv.isRecipientConversation() ? null
                     : currentUserId.equals(conv.getTravelerId()) ? "TRAVELER" : "RECIPIENT",
-            callAvailable(conv, currentUserId, bidOpt.orElse(null)),
+            callAvailable(conv, currentUserId, bidOpt.orElse(null), visibilityChecked),
             conv.isNotificationsMutedBy(currentUserId),
-            mediaAllowed(conv, currentUserId, bidOpt.orElse(null))
+            mediaAllowed(conv, currentUserId, bidOpt.orElse(null), visibilityChecked)
         );
     }
 
@@ -478,12 +528,13 @@ public class ConversationService {
      * Photos permises maintenant (FLUTTER-B4, {@link ConversationMediaPolicy}). Comme
      * l'appel : un échec de calcul masque la fonction, il ne casse jamais l'affichage.
      */
-    private boolean mediaAllowed(ConversationEntity conv, UUID currentUserId, BidEntity bid) {
+    private boolean mediaAllowed(ConversationEntity conv, UUID currentUserId, BidEntity bid,
+                                 boolean visibilityChecked) {
         if (!isContactCandidate(conv, bid)) {
             return false;
         }
         try {
-            return mediaPolicy.check(conv, currentUserId, bid, null).isEmpty();
+            return mediaPolicy.check(conv, currentUserId, bid, null, visibilityChecked).isEmpty();
         } catch (Exception e) {
             log.warn("mediaAllowed indisponible pour {} : {}", conv.getId(), e.toString());
             return false;
@@ -491,7 +542,8 @@ public class ConversationService {
     }
 
     /** Le bouton d'appel ne doit jamais casser l'affichage d'une conversation : en cas d'échec, pas de bouton. */
-    private boolean callAvailable(ConversationEntity conv, UUID currentUserId, BidEntity bid) {
+    private boolean callAvailable(ConversationEntity conv, UUID currentUserId, BidEntity bid,
+                                  boolean visibilityChecked) {
         // Filtre sans requête : la règle complète (plusieurs lectures) ne tourne que pour une commande
         // en cours dans une conversation active, soit une poignée de fils par liste.
         if (!isContactCandidate(conv, bid) || conv.isClosed()
@@ -499,7 +551,9 @@ public class ConversationService {
             return false;
         }
         try {
-            return callAvailability.canCall(currentUserId, conv.getId());
+            return visibilityChecked
+                    ? callAvailability.canCall(currentUserId, conv.getId(), true)
+                    : callAvailability.canCall(currentUserId, conv.getId());
         } catch (Exception e) {
             log.warn("callAvailable indisponible pour {} : {}", conv.getId(), e.toString());
             return false;

@@ -39,6 +39,8 @@ import java.util.UUID;
 @RequestMapping("/announcements")
 public class AnnouncementController {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(AnnouncementController.class);
+
     private final AnnouncementService announcementService;
     private final TripGroupService tripGroupService;
 
@@ -122,6 +124,13 @@ public class AnnouncementController {
             @RequestParam(required = false) String arrival,
             Pageable pageable) {
         String firebaseUid = requireFirebaseUid();
+        // « En cours » dès l'ouverture de l'écran, sans attendre le scheduler horaire. Dans sa
+        // propre transaction : une transition ratée ne doit pas empêcher d'afficher la liste.
+        try {
+            announcementService.triggerInProgressTransitionsForTraveler(firebaseUid);
+        } catch (RuntimeException e) {
+            log.warn("Transition « En cours » à l'ouverture de Mes trajets impossible : {}", e.toString());
+        }
         Page<AnnouncementResponse> page = announcementService.getMyAnnouncements(
                 firebaseUid, status, q, date, dateFrom, dateTo, departure, arrival, pageable);
         return ResponseEntity.ok(PageResponse.from(page));

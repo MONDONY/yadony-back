@@ -269,6 +269,12 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
 
     long countByAnnouncementIdAndStatusIn(UUID announcementId, List<BidStatus> statuses);
 
+    /** Variante par lot de {@link #countByAnnouncementIdAndStatusIn} : une ligne {@code [announcementId, count]}. */
+    @Query("SELECT b.announcementId, COUNT(b) FROM BidEntity b "
+            + "WHERE b.announcementId IN :ids AND b.status IN :statuses GROUP BY b.announcementId")
+    List<Object[]> countByAnnouncementIdsAndStatusIn(@Param("ids") java.util.Collection<UUID> ids,
+                                                     @Param("statuses") List<BidStatus> statuses);
+
     /**
      * Net voyageur engagé sur une annonce : somme, pour les bids dont le statut est dans
      * {@code statuses}, de l'accord négocié quand il existe, sinon du barème (poids × prix
@@ -293,6 +299,30 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
         """)
     java.math.BigDecimal sumReservedNetByAnnouncementId(@Param("announcementId") UUID announcementId,
                                              @Param("statuses") List<String> statuses);
+
+    /**
+     * Variante par lot de {@link #sumReservedNetByAnnouncementId} (même calcul) : une ligne
+     * {@code [announcement_id, net]} par annonce ayant au moins un bid dans {@code statuses}.
+     */
+    @Query(nativeQuery = true, value = """
+        SELECT b.announcement_id, SUM(
+            COALESCE(b.negotiated_net_eur,
+                     COALESCE(b.weight_kg, 0) * COALESCE(a.price_per_kg, 0) + COALESCE(g.grid_net, 0))
+        )
+        FROM bids b
+        JOIN announcements a ON a.id = b.announcement_id
+        LEFT JOIN (
+            SELECT bid_id, SUM(unit_price_net_snapshot * quantity) AS grid_net
+            FROM bid_grid_items
+            GROUP BY bid_id
+        ) g ON g.bid_id = b.id
+        WHERE b.announcement_id IN (:ids)
+          AND b.status IN (:statuses)
+          AND b.deleted_at IS NULL
+        GROUP BY b.announcement_id
+        """)
+    List<Object[]> sumReservedNetByAnnouncementIds(@Param("ids") java.util.Collection<UUID> ids,
+                                                   @Param("statuses") List<String> statuses);
 
     boolean existsByAnnouncementIdAndStatus(UUID announcementId, BidStatus status);
 

@@ -472,8 +472,8 @@ class RatingServiceTest {
             RatingEntity r3 = buildRating(4); r3.setComment("Bien");
 
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(user));
-            when(ratingRepository.findIncludedRatingsByRatedUserId(TRAVELER_ID))
-                    .thenReturn(List.of(r1, r2, r3));
+            when(ratingRepository.countIncludedByStars(TRAVELER_ID))
+                    .thenReturn(starRows(new Object[]{5, 1L}, new Object[]{4, 2L}));
             when(ratingRepository.findByRatedUserId(eq(TRAVELER_ID), any()))
                     .thenReturn(new PageImpl<>(List.of(r1, r2, r3)));
 
@@ -515,7 +515,7 @@ class RatingServiceTest {
 
             RatingEntity r = buildRating(5);
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(user));
-            when(ratingRepository.findIncludedRatingsByRatedUserId(TRAVELER_ID)).thenReturn(List.of(r));
+            when(ratingRepository.countIncludedByStars(TRAVELER_ID)).thenReturn(starRows(new Object[]{5, 1L}));
             when(ratingRepository.findByRatedUserId(eq(TRAVELER_ID), any()))
                     .thenReturn(new PageImpl<>(List.of(r)));
 
@@ -546,7 +546,7 @@ class RatingServiceTest {
 
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(ratedUser));
             when(userRepository.findById(blockedAuthorId)).thenReturn(Optional.of(blockedAuthor));
-            when(ratingRepository.findIncludedRatingsByRatedUserId(TRAVELER_ID)).thenReturn(List.of(r));
+            when(ratingRepository.countIncludedByStars(TRAVELER_ID)).thenReturn(starRows(new Object[]{5, 1L}));
             when(ratingRepository.findByRatedUserId(eq(TRAVELER_ID), any()))
                     .thenReturn(new PageImpl<>(List.of(r)));
 
@@ -606,8 +606,8 @@ class RatingServiceTest {
             setField(ann, "travelerId", UUID.randomUUID());
 
             when(userRepository.findById(ratedUserId)).thenReturn(Optional.of(ratedUser));
-            when(ratingRepository.findIncludedRatingsByRatedUserId(ratedUserId))
-                    .thenReturn(List.of(rating));
+            when(ratingRepository.countIncludedByStars(ratedUserId))
+                    .thenReturn(starRows(new Object[]{rating.getStars(), 1L}));
             when(ratingRepository.findByRatedUserId(eq(ratedUserId), any()))
                     .thenReturn(new PageImpl<>(List.of(rating)));
             when(userRepository.findById(raterId)).thenReturn(Optional.of(rater));
@@ -640,7 +640,7 @@ class RatingServiceTest {
             // raterId left null (anonymous recipient rating)
 
             when(userRepository.findById(ratedUserId)).thenReturn(Optional.of(ratedUser));
-            when(ratingRepository.findIncludedRatingsByRatedUserId(ratedUserId)).thenReturn(List.of());
+            when(ratingRepository.countIncludedByStars(ratedUserId)).thenReturn(List.of());
             when(ratingRepository.findByRatedUserId(eq(ratedUserId), any()))
                     .thenReturn(new PageImpl<>(List.of(rating)));
             when(bidRepository.findById(bidId)).thenReturn(Optional.empty());
@@ -734,7 +734,7 @@ class RatingServiceTest {
             RatingEntity r = buildRating(5);
             when(ratingRepository.findByRatedUserId(eq(SENDER_ID), any()))
                     .thenReturn(new PageImpl<>(List.of(r)));
-            when(ratingRepository.findIncludedRatingsByRatedUserId(SENDER_ID)).thenReturn(List.of(r));
+            when(ratingRepository.countIncludedByStars(SENDER_ID)).thenReturn(starRows(new Object[]{5, 1L}));
 
             var result = ratingService.getMyReceivedRatings(SENDER_UID, 0, 20);
 
@@ -768,5 +768,9 @@ class RatingServiceTest {
         }
         f.setAccessible(true);
         f.set(obj, value);
+    }
+
+    private static List<Object[]> starRows(Object[]... rows) {
+        return java.util.Arrays.asList(rows);
     }
 }

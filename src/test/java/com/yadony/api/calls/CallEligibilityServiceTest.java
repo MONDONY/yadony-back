@@ -28,6 +28,7 @@ import java.util.UUID;
 import static com.yadony.api.calls.CallEligibilityService.Reason.*;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 @ExtendWith(MockitoExtension.class)
 class CallEligibilityServiceTest {
@@ -150,6 +151,14 @@ class CallEligibilityServiceTest {
     void bloqueDansLAutreSens() {
         lenient().when(blocks.isHidden(sender, traveler)).thenReturn(true);
         assertThat(service.check(sender, conv.getId()).reason()).isEqualTo(BLOCKED);
+    }
+
+    @Test
+    void visibiliteDejaVerifiee_neRelitPasLesBlocages() {
+        // Liste des conversations : les fils masqués en sont déjà sortis, la règle de
+        // blocage (symétrique) n'est pas relue fil par fil.
+        assertThat(service.canCall(sender, conv.getId(), true)).isTrue();
+        verifyNoInteractions(blocks);
     }
 
     @Test

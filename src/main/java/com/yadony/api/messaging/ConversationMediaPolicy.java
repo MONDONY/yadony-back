@@ -73,13 +73,22 @@ public class ConversationMediaPolicy {
      * int, LocalDateTime)}), retour d'un colis annulé après sa remise compris (FLUTTER-FM).
      */
     public Optional<Denial> check(ConversationEntity conv, UUID userId, BidEntity bid, UserEntity user) {
+        return check(conv, userId, bid, user, false);
+    }
+
+    /**
+     * Même évaluation ; {@code visibilityChecked} : la liste des conversations a déjà écarté les
+     * contreparties masquées, le contrôle de blocage (symétrique) est sauté.
+     */
+    public Optional<Denial> check(ConversationEntity conv, UUID userId, BidEntity bid, UserEntity user,
+                                  boolean visibilityChecked) {
         LocalDateTime now = LocalDateTime.now(clock.withZone(ZoneOffset.UTC));
         // Le retour ne concerne que l'expéditeur et le voyageur : la conversation destinataire
         // garde la fenêtre du seul statut.
         boolean open = conv != null && conv.isRecipientConversation()
                 ? bid != null && ContactWindow.isOpen(bid.getStatus(), bid.getDeliveredAt(), graceDays, now)
                 : ContactWindow.isOpen(bid, graceDays, now);
-        return evaluate(conv, userId, open, user);
+        return evaluate(conv, userId, open, user, visibilityChecked);
     }
 
     /**
@@ -92,10 +101,15 @@ public class ConversationMediaPolicy {
     public Optional<Denial> check(ConversationEntity conv, UUID userId, BidStatus bidStatus,
                                   LocalDateTime deliveredAt, UserEntity user) {
         LocalDateTime now = LocalDateTime.now(clock.withZone(ZoneOffset.UTC));
-        return evaluate(conv, userId, ContactWindow.isOpen(bidStatus, deliveredAt, graceDays, now), user);
+        return evaluate(conv, userId, ContactWindow.isOpen(bidStatus, deliveredAt, graceDays, now), user, false);
     }
 
-    private Optional<Denial> evaluate(ConversationEntity conv, UUID userId, boolean windowOpen, UserEntity user) {
+    /**
+     * @param visibilityChecked l'appelant a déjà écarté les contreparties masquées (liste des
+     *                          conversations) : le contrôle de blocage, symétrique, est sauté.
+     */
+    private Optional<Denial> evaluate(ConversationEntity conv, UUID userId, boolean windowOpen, UserEntity user,
+                                      boolean visibilityChecked) {
         if (conv == null || userId == null || conv.getDeletedAt() != null || conv.isClosed()
                 || !isParticipant(conv, userId)
                 || conv.isDeletedByUser(userId) || conv.isReadOnlyFor(userId)) {
@@ -105,7 +119,8 @@ public class ConversationMediaPolicy {
             return Optional.of(Denial.OUT_OF_WINDOW);
         }
         UUID otherId = userId.equals(conv.participantAId()) ? conv.getTravelerId() : conv.participantAId();
-        if (blockVisibility.isHidden(userId, otherId) || blockVisibility.isHidden(otherId, userId)) {
+        if (!visibilityChecked
+                && (blockVisibility.isHidden(userId, otherId) || blockVisibility.isHidden(otherId, userId))) {
             return Optional.of(Denial.BLOCKED);
         }
         UserEntity actor = user != null ? user : userRepository.findById(userId).orElse(null);

@@ -245,6 +245,7 @@ public class RatingService {
         return toResponse(rating);
     }
 
+    @Transactional(readOnly = true)
     public UserRatingsSummaryResponse getMyReceivedRatings(String firebaseUid, int page, int size) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
                 .orElseThrow(() -> new YadonyBusinessException(
@@ -268,6 +269,7 @@ public class RatingService {
      * donnerait deux moyennes différentes selon qui regarde : on préfère une réputation
      * stable, identique pour tout le monde.
      */
+    @Transactional(readOnly = true)
     public UserRatingsSummaryResponse getUserRatings(UUID userId, int page, int size, UUID viewerId) {
         blockVisibility.assertVisible(viewerId, userId);
 
@@ -278,14 +280,20 @@ public class RatingService {
         Page<RatingEntity> ratingsPage = ratingRepository.findByRatedUserId(
                 userId, PageRequest.of(page, size, Sort.by("createdAt").descending()));
 
-        List<RatingEntity> allIncluded = ratingRepository.findIncludedRatingsByRatedUserId(userId);
-        int ratingCount = allIncluded.size();
-
         Map<Integer, Long> distribution = new HashMap<>();
         for (int i = 1; i <= 5; i++) distribution.put(i, 0L);
-        allIncluded.stream()
-                .collect(Collectors.groupingBy(RatingEntity::getStars, Collectors.counting()))
-                .forEach(distribution::put);
+        long included = 0;
+        for (Object[] row : ratingRepository.countIncludedByStars(userId)) {
+            long count = ((Number) row[1]).longValue();
+            distribution.put(((Number) row[0]).intValue(), count);
+            included += count;
+        }
+        int ratingCount = (int) included;
+
+        // Auteurs, bids et trajets de la page chargés par lot : les findById ci-dessous
+        // les trouvent dans le contexte de persistance (une requête par élément et par
+        // entité sinon, chacune sur sa propre connexion hors transaction).
+        prefetchItems(ratingsPage.getContent());
 
         List<RatingItemResponse> items = ratingsPage.getContent().stream().map(r -> {
             UserEntity author = r.getRaterId() != null
@@ -311,6 +319,27 @@ public class RatingService {
                 page,
                 ratingsPage.getTotalPages()
         );
+    }
+
+    private void prefetchItems(List<RatingEntity> ratings) {
+        if (ratings.isEmpty()) {
+            return;
+        }
+        List<UUID> raterIds = ratings.stream().map(RatingEntity::getRaterId)
+                .filter(java.util.Objects::nonNull).distinct().toList();
+        if (!raterIds.isEmpty()) {
+            userRepository.findAllById(raterIds);
+        }
+        List<UUID> bidIds = ratings.stream().map(RatingEntity::getBidId)
+                .filter(java.util.Objects::nonNull).distinct().toList();
+        if (bidIds.isEmpty()) {
+            return;
+        }
+        List<UUID> announcementIds = bidRepository.findAllById(bidIds).stream()
+                .map(BidEntity::getAnnouncementId).filter(java.util.Objects::nonNull).distinct().toList();
+        if (!announcementIds.isEmpty()) {
+            announcementRepository.findAllById(announcementIds);
+        }
     }
 
     public Optional<PendingRatingResponse> getPendingRating(String firebaseUid) {
