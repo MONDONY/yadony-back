@@ -24,7 +24,7 @@ import java.util.UUID;
  *
  * <p>Même fenêtre que les appels ({@link ContactWindow}) : du bid accepté ET payé
  * (ACCEPTED, HANDED_OVER, IN_TRANSIT, ARRIVED) jusqu'à la livraison + {@code graceDays}
- * jours (COMPLETED). Un bid AWAITING_PAYMENT est exclu par construction : le mobile money
+ * jours (COMPLETED), et pendant le retour d'un colis annulé après sa remise (FLUTTER-FM). Un bid AWAITING_PAYMENT est exclu par construction : le mobile money
  * publie {@code BidAcceptedEvent} avant le paiement, seul le statut ACCEPTED atteste que
  * l'argent est pris, quel que soit le mode (carte, espèces avec commission, mobile money).
  *
@@ -65,10 +65,21 @@ public class ConversationMediaPolicy {
     /** Variante qui charge le bid et l'utilisateur. */
     public Optional<Denial> check(ConversationEntity conv, UUID userId) {
         BidEntity bid = conv.getBidId() == null ? null : bidRepository.findById(conv.getBidId()).orElse(null);
-        return check(conv, userId,
-                bid != null ? bid.getStatus() : null,
-                bid != null ? bid.getDeliveredAt() : null,
-                null);
+        return check(conv, userId, bid, null);
+    }
+
+    /**
+     * Évaluation sur le bid chargé : fenêtre de contact complète ({@link ContactWindow#isOpen(BidEntity,
+     * int, LocalDateTime)}), retour d'un colis annulé après sa remise compris (FLUTTER-FM).
+     */
+    public Optional<Denial> check(ConversationEntity conv, UUID userId, BidEntity bid, UserEntity user) {
+        LocalDateTime now = LocalDateTime.now(clock.withZone(ZoneOffset.UTC));
+        // Le retour ne concerne que l'expéditeur et le voyageur : la conversation destinataire
+        // garde la fenêtre du seul statut.
+        boolean open = conv != null && conv.isRecipientConversation()
+                ? bid != null && ContactWindow.isOpen(bid.getStatus(), bid.getDeliveredAt(), graceDays, now)
+                : ContactWindow.isOpen(bid, graceDays, now);
+        return evaluate(conv, userId, open, user);
     }
 
     /**
@@ -80,13 +91,17 @@ public class ConversationMediaPolicy {
      */
     public Optional<Denial> check(ConversationEntity conv, UUID userId, BidStatus bidStatus,
                                   LocalDateTime deliveredAt, UserEntity user) {
+        LocalDateTime now = LocalDateTime.now(clock.withZone(ZoneOffset.UTC));
+        return evaluate(conv, userId, ContactWindow.isOpen(bidStatus, deliveredAt, graceDays, now), user);
+    }
+
+    private Optional<Denial> evaluate(ConversationEntity conv, UUID userId, boolean windowOpen, UserEntity user) {
         if (conv == null || userId == null || conv.getDeletedAt() != null || conv.isClosed()
                 || !isParticipant(conv, userId)
                 || conv.isDeletedByUser(userId) || conv.isReadOnlyFor(userId)) {
             return Optional.of(Denial.CONVERSATION_UNAVAILABLE);
         }
-        LocalDateTime now = LocalDateTime.now(clock.withZone(ZoneOffset.UTC));
-        if (!ContactWindow.isOpen(bidStatus, deliveredAt, graceDays, now)) {
+        if (!windowOpen) {
             return Optional.of(Denial.OUT_OF_WINDOW);
         }
         UUID otherId = userId.equals(conv.participantAId()) ? conv.getTravelerId() : conv.participantAId();
@@ -103,10 +118,7 @@ public class ConversationMediaPolicy {
     /** Lève un 403 {@code media-not-allowed} si la politique refuse. */
     public void assertAllowed(ConversationEntity conv, UserEntity user) {
         BidEntity bid = conv.getBidId() == null ? null : bidRepository.findById(conv.getBidId()).orElse(null);
-        Optional<Denial> denial = check(conv, user.getId(),
-                bid != null ? bid.getStatus() : null,
-                bid != null ? bid.getDeliveredAt() : null,
-                user);
+        Optional<Denial> denial = check(conv, user.getId(), bid, user);
         if (denial.isPresent()) {
             throw new YadonyBusinessException(HttpStatus.FORBIDDEN, ERROR_CODE, "Media Not Allowed",
                     "Les photos sont disponibles une fois la demande acceptée et payée, "

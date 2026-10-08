@@ -2,6 +2,7 @@ package com.yadony.api.cancellation.events;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 public class TripCancelledEvent {
@@ -24,6 +25,12 @@ public class TripCancelledEvent {
     /** Suggestions rematch par expéditeur (Story 5.6). Clé = senderId. */
     public record RematchBySenderInfo(UUID cancellationId, int suggestionCount) {}
     private final Map<UUID, RematchBySenderInfo> rematchBySender;
+    /**
+     * Bids dont le colis était déjà entre les mains du voyageur : une procédure de retour
+     * (code de retour, délai) leur a été ouverte. L'expéditeur reçoit alors
+     * {@code PARCEL_RETURN_REQUIRED} au lieu du simple « trajet annulé » (FLUTTER-FK).
+     */
+    private final Set<UUID> returnRequiredBidIds;
 
     /** Full constructor. */
     public TripCancelledEvent(UUID announcementId, UUID travelerId,
@@ -31,7 +38,8 @@ public class TripCancelledEvent {
                                List<UUID> affectedBidIds,
                                Map<UUID, String> bidPaymentMethods,
                                Map<UUID, String> bidCommissionChargedVia,
-                               Map<UUID, RematchBySenderInfo> rematchBySender) {
+                               Map<UUID, RematchBySenderInfo> rematchBySender,
+                               Set<UUID> returnRequiredBidIds) {
         this.announcementId = announcementId;
         this.travelerId = travelerId;
         this.affectedSenderIds = affectedSenderIds;
@@ -40,6 +48,18 @@ public class TripCancelledEvent {
         this.bidPaymentMethods = bidPaymentMethods != null ? bidPaymentMethods : Map.of();
         this.bidCommissionChargedVia = bidCommissionChargedVia != null ? bidCommissionChargedVia : Map.of();
         this.rematchBySender = rematchBySender != null ? rematchBySender : Map.of();
+        this.returnRequiredBidIds = returnRequiredBidIds != null ? returnRequiredBidIds : Set.of();
+    }
+
+    /** Backward-compatible constructor — aucun colis à restituer. */
+    public TripCancelledEvent(UUID announcementId, UUID travelerId,
+                               List<UUID> affectedSenderIds, String reason,
+                               List<UUID> affectedBidIds,
+                               Map<UUID, String> bidPaymentMethods,
+                               Map<UUID, String> bidCommissionChargedVia,
+                               Map<UUID, RematchBySenderInfo> rematchBySender) {
+        this(announcementId, travelerId, affectedSenderIds, reason, affectedBidIds, bidPaymentMethods,
+                bidCommissionChargedVia, rematchBySender, Set.of());
     }
 
     /** Backward-compatible constructor — rematchBySender defaults to empty map. */
@@ -74,4 +94,5 @@ public class TripCancelledEvent {
     public Map<UUID, String> getBidPaymentMethods() { return bidPaymentMethods; }
     public Map<UUID, String> getBidCommissionChargedVia() { return bidCommissionChargedVia; }
     public Map<UUID, RematchBySenderInfo> getRematchBySender() { return rematchBySender; }
+    public Set<UUID> getReturnRequiredBidIds() { return returnRequiredBidIds; }
 }

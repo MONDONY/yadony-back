@@ -303,6 +303,12 @@ public final class NotificationTexts {
                 m.get("notification.return-deadline-warning.traveler.body"));
     }
 
+    /** Trajet annulé alors que le voyageur avait déjà le colis : il doit être restitué (FLUTTER-FK). */
+    public static NotificationText parcelReturnRequired(Messages m) {
+        return new NotificationText(m.get("notification.parcel-return-required.title"),
+                m.get("notification.parcel-return-required.body"));
+    }
+
     public static NotificationText returnDeadlineExpired(Messages m) {
         return new NotificationText(m.get("notification.return-deadline-expired.title"),
                 m.get("notification.return-deadline-expired.body"));

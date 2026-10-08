@@ -403,6 +403,18 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
     @Query("SELECT b FROM BidEntity b WHERE b.id = :id AND b.deletedAt IS NULL")
     Optional<BidEntity> findByIdForUpdate(@Param("id") UUID id);
 
+    /**
+     * Colis déjà remis au voyageur (HANDED_OVER, IN_TRANSIT, ARRIVED) d'un trajet, verrouillés :
+     * l'annulation du trajet leur pose un code de retour (FLUTTER-FH). Le verrou évite qu'un scan
+     * concurrent (livraison, arrivée) ne croise la procédure de retour.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT b FROM BidEntity b WHERE b.announcementId = :announcementId AND b.deletedAt IS NULL "
+            + "AND b.status IN (com.yadony.api.matching.BidStatus.HANDED_OVER, "
+            + "com.yadony.api.matching.BidStatus.IN_TRANSIT, com.yadony.api.matching.BidStatus.ARRIVED) "
+            + "ORDER BY b.createdAt ASC")
+    List<BidEntity> findHandedOverByAnnouncementIdForUpdate(@Param("announcementId") UUID announcementId);
+
     // Completed deliveries for a given traveler (via announcement ownership)
     @Query("SELECT b FROM BidEntity b JOIN AnnouncementEntity a ON b.announcementId = a.id " +
            "WHERE a.travelerId = :travelerId AND b.status = 'COMPLETED'")

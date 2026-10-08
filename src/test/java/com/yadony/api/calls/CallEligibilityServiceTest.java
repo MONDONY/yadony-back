@@ -192,4 +192,42 @@ class CallEligibilityServiceTest {
         assertThat(service.canCall(sender, conv.getId())).isTrue();
         assertThat(service.canCall(UUID.randomUUID(), conv.getId())).isFalse();
     }
+
+    // ── Retour d'un colis annulé après remise (FLUTTER-FM) ──────────────────
+
+    private void cancelledAwaitingReturn() {
+        bid.setStatus(BidStatus.CANCELLED);
+        bid.setReturnDeadline(LocalDateTime.ofInstant(NOW, ZoneOffset.UTC).plusDays(2));
+    }
+
+    @Test
+    void retourEnCours_lExpediteurPeutAppelerLeVoyageur() {
+        cancelledAwaitingReturn();
+        var e = service.check(sender, conv.getId());
+        assertThat(e.allowed()).isTrue();
+        assertThat(e.calleeId()).isEqualTo(traveler);
+    }
+
+    @Test
+    void colisRestitue_appelRefuse() {
+        cancelledAwaitingReturn();
+        bid.setReturnedAt(LocalDateTime.ofInstant(NOW, ZoneOffset.UTC).minusHours(1));
+        assertThat(service.check(sender, conv.getId()).reason()).isEqualTo(OUT_OF_WINDOW);
+    }
+
+    @Test
+    void delaiDeRetourEcoule_appelRefuse() {
+        bid.setStatus(BidStatus.CANCELLED);
+        bid.setReturnDeadline(LocalDateTime.ofInstant(NOW, ZoneOffset.UTC).minusMinutes(1));
+        assertThat(service.check(sender, conv.getId()).reason()).isEqualTo(OUT_OF_WINDOW);
+    }
+
+    @Test
+    void retourEnCours_neRouvrePasLaConversationDestinataire() {
+        cancelledAwaitingReturn();
+        ConversationEntity recipientConv = ConversationEntity.forRecipient(bidId, sender, traveler, "fs-r");
+        ReflectionTestUtils.setField(recipientConv, "id", UUID.randomUUID());
+        lenient().when(conversations.findById(recipientConv.getId())).thenReturn(Optional.of(recipientConv));
+        assertThat(service.check(sender, recipientConv.getId()).reason()).isEqualTo(OUT_OF_WINDOW);
+    }
 }

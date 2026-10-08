@@ -197,6 +197,79 @@ class CancellationReliabilityIT {
     }
 
     /**
+     * FLUTTER-FH/FM : le trajet annulé alors qu'un colis est déjà remis ouvre, pour ce colis,
+     * la procédure de l'annulation après remise (code et délai de retour, commission rendue,
+     * une annulation de plus au compteur). Expéditeur et voyageur restent joignables jusqu'à la
+     * restitution, et plus au-delà, ni après l'échéance.
+     */
+    @Test
+    void travelerCancelsTripWithHandedOverParcel_opensReturn_andContactStaysOpenUntilReturned() throws Exception {
+        UserEntity traveler = persistUser();
+        UserEntity sender = persistUser();
+        openWallet(traveler.getId());
+        UUID announcementId = persistAnnouncement(traveler.getId());
+        UUID handedOver = acceptedCashBid(announcementId, sender.getId(), traveler.getId());
+        UUID accepted = acceptedCashBid(announcementId, persistUser().getId(), traveler.getId());
+        jdbc.update("UPDATE bids SET status = 'HANDED_OVER' WHERE id = ?", handedOver);
+
+        mockMvc.perform(post("/cancellations").with(authentication(as(traveler)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"announcementId\":\"" + announcementId + "\",\"reason\":\"Imprévu\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.affectedBidsCount").value(2))
+                .andExpect(jsonPath("$.parcelsToReturnCount").value(1));
+
+        BidEntity returned = bidRepository.findById(handedOver).orElseThrow();
+        assertThat(returned.getStatus()).isEqualTo(BidStatus.CANCELLED);
+        assertThat(returned.getReturnCode()).matches("\\d{6}");
+        assertThat(returned.getReturnDeadline()).isNotNull();
+        assertThat(returned.getReturnedAt()).isNull();
+        assertThat(returned.getCommissionStatus()).isEqualTo(CommissionStatus.REFUNDED);
+        assertThat(bidRepository.findById(accepted).orElseThrow().getReturnCode()).isNull();
+        assertThat(walletBalance(traveler.getId())).isEqualByComparingTo("100");
+        // Une annulation pour le trajet, une pour le colis remis.
+        assertThat(userRepository.findById(traveler.getId()).orElseThrow().getCancellationCount()).isEqualTo(2);
+        assertThat(jdbc.queryForObject("SELECT reason FROM cancellations WHERE bid_id = ?", String.class, handedOver))
+                .isEqualTo("TRAVELER_CANCEL_AFTER_HANDOVER");
+        assertThat(auditCount(handedOver, "BID_CANCELLED_AFTER_HANDOVER")).isEqualTo(1);
+        assertThat(auditCount(handedOver, "RETURN_CODE_GENERATED")).isEqualTo(1);
+
+        // Retour en cours : contact ouvert des deux côtés.
+        mockMvc.perform(get("/bids/{id}", handedOver).with(authentication(as(sender))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.contactWindowOpen").value(true))
+                .andExpect(jsonPath("$.travelerPhoneAvailable").value(true));
+        mockMvc.perform(get("/bids/{id}", handedOver).with(authentication(as(traveler))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.contactWindowOpen").value(true))
+                .andExpect(jsonPath("$.senderPhoneAvailable").value(true));
+        // Colis annulé avant remise : rien à récupérer, pas de contact.
+        mockMvc.perform(get("/bids/{id}", accepted).with(authentication(as(traveler))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.contactWindowOpen").value(false));
+
+        // Échéance du retour dépassée : contact fermé (l'équipe prend le relais).
+        jdbc.update("UPDATE bids SET return_deadline = ? WHERE id = ?",
+                // Un jour plein : la base de test tourne dans le fuseau de la machine, la prod en UTC.
+                java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusDays(1), handedOver);
+        mockMvc.perform(get("/bids/{id}", handedOver).with(authentication(as(sender))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.contactWindowOpen").value(false))
+                .andExpect(jsonPath("$.travelerPhoneAvailable").value(false));
+
+        // Colis restitué : contact fermé.
+        jdbc.update("UPDATE bids SET return_deadline = ? WHERE id = ?",
+                java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).plusDays(2), handedOver);
+        mockMvc.perform(post("/cancellations/bids/{id}/confirm-return", handedOver).with(authentication(as(traveler)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"returnCode\":\"" + returned.getReturnCode() + "\"}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/bids/{id}", handedOver).with(authentication(as(sender))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.contactWindowOpen").value(false));
+    }
+
+    /**
      * Le rattrapage de V298 rejoué sur des traces d'audit réelles : seule l'annulation par
      * l'expéditeur d'un colis déjà accepté compte.
      */

@@ -48,6 +48,7 @@ import org.springframework.transaction.event.TransactionalEventListener;
 
 import java.math.BigDecimal;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -420,21 +421,44 @@ public class NotificationDispatcher {
         // Retrait de l'expéditeur après un report : c'est lui qui a agi, le trajet n'est
         // pas annulé. Le voyageur est prévenu par onTripRescheduleDecided.
         if (CancellationReason.TRIP_RESCHEDULE_WITHDRAWN.name().equals(event.getReason())) return;
-        for (UUID senderId : event.getAffectedSenderIds()) {
-            TripCancelledEvent.RematchBySenderInfo info = event.getRematchBySender().get(senderId);
-            if (info == null) {
-                var text = NotificationTexts.tripCancelledRefund(messagesFor(senderId));
-                notifyUser(senderId, text.title(), text.body(), Map.of("type", "TRIP_CANCELLED"));
-            } else if (info.suggestionCount() > 0) {
-                var text = NotificationTexts.tripCancelledWithRematch(messagesFor(senderId), info.suggestionCount());
-                notifyUser(senderId, text.title(), text.body(),
-                        Map.of("type", "TRIP_CANCELLED",
-                               "cancellationId", info.cancellationId().toString()));
-            } else {
-                var text = NotificationTexts.tripCancelledNoTraveler(messagesFor(senderId));
-                notifyUser(senderId, text.title(), text.body(), Map.of("type", "TRIP_CANCELLED"));
-            }
+        List<UUID> senderIds = event.getAffectedSenderIds();
+        List<UUID> bidIds = event.getAffectedBidIds();
+        // Les deux listes sont alignées (un expéditeur par bid). Un émetteur qui ne les
+        // alignerait pas retombe sur l'ancien envoi par expéditeur, sans colis cible.
+        boolean aligned = bidIds != null && bidIds.size() == senderIds.size();
+        for (int i = 0; i < senderIds.size(); i++) {
+            notifyTripCancelledSender(event, senderIds.get(i), aligned ? bidIds.get(i) : null);
         }
+    }
+
+    /**
+     * Une notification par colis annulé, toujours vers ce colis quand il est connu (FLUTTER-F7) :
+     * sans {@code bidId}, le tap ouvrait l'historique des envois. Un colis déjà remis au
+     * voyageur reçoit {@code PARCEL_RETURN_REQUIRED} : l'expéditeur doit le récupérer avec son
+     * code de retour (FLUTTER-FK), le « trajet annulé » générique n'en disait rien.
+     */
+    private void notifyTripCancelledSender(TripCancelledEvent event, UUID senderId, UUID bidId) {
+        Messages m = messagesFor(senderId);
+        Map<String, String> data = new HashMap<>();
+        if (bidId != null) data.put("bidId", bidId.toString());
+        if (bidId != null && event.getReturnRequiredBidIds().contains(bidId)) {
+            var text = NotificationTexts.parcelReturnRequired(m);
+            data.put("type", "PARCEL_RETURN_REQUIRED");
+            notifyUser(senderId, text.title(), text.body(), Map.copyOf(data));
+            return;
+        }
+        data.put("type", "TRIP_CANCELLED");
+        TripCancelledEvent.RematchBySenderInfo info = event.getRematchBySender().get(senderId);
+        NotificationText text;
+        if (info == null) {
+            text = NotificationTexts.tripCancelledRefund(m);
+        } else if (info.suggestionCount() > 0) {
+            text = NotificationTexts.tripCancelledWithRematch(m, info.suggestionCount());
+            data.put("cancellationId", info.cancellationId().toString());
+        } else {
+            text = NotificationTexts.tripCancelledNoTraveler(m);
+        }
+        notifyUser(senderId, text.title(), text.body(), Map.copyOf(data));
     }
 
     /**

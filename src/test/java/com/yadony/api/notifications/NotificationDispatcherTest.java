@@ -740,6 +740,62 @@ class NotificationDispatcherTest {
         assertThat(dataCaptor.getValue()).doesNotContainKey("cancellationId");
     }
 
+    @Test
+    @SuppressWarnings("unchecked")
+    void onTripCancelled_alignedBids_eachNotificationTargetsItsParcel() {
+        // FLUTTER-F7 : sans bidId, le tap ouvrait l'historique des envois.
+        UUID sender2 = UUID.randomUUID();
+        UUID bid2 = UUID.randomUUID();
+        TripCancelledEvent event = new TripCancelledEvent(
+                annId, travelerId, List.of(senderId, sender2), "sick", List.of(bidId, bid2));
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onTripCancelled(event);
+
+        ArgumentCaptor<Map<String, String>> first = ArgumentCaptor.forClass(Map.class);
+        ArgumentCaptor<Map<String, String>> second = ArgumentCaptor.forClass(Map.class);
+        verify(fcmService).sendToUser(eq(senderId), eq("Trajet annulé"), any(), first.capture());
+        verify(fcmService).sendToUser(eq(sender2), eq("Trajet annulé"), any(), second.capture());
+        assertThat(first.getValue()).containsEntry("type", "TRIP_CANCELLED")
+                .containsEntry("bidId", bidId.toString());
+        assertThat(second.getValue()).containsEntry("type", "TRIP_CANCELLED")
+                .containsEntry("bidId", bid2.toString());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void onTripCancelled_handedOverParcel_sendsParcelReturnRequiredToTheParcel() {
+        // FLUTTER-FK : le colis déjà remis doit être restitué, le texte générique n'en disait rien.
+        UUID sender2 = UUID.randomUUID();
+        UUID openBid = UUID.randomUUID();
+        TripCancelledEvent event = new TripCancelledEvent(
+                annId, travelerId, List.of(senderId, sender2), "sick", List.of(bidId, openBid),
+                Map.of(), Map.of(), Map.of(), java.util.Set.of(bidId));
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onTripCancelled(event);
+
+        ArgumentCaptor<Map<String, String>> returned = ArgumentCaptor.forClass(Map.class);
+        verify(fcmService).sendToUser(eq(senderId), eq("Colis à vous restituer"),
+                eq("Remboursement en cours. Le code de retour est dans le suivi du colis."),
+                returned.capture());
+        assertThat(returned.getValue()).containsEntry("type", "PARCEL_RETURN_REQUIRED")
+                .containsEntry("bidId", bidId.toString())
+                .doesNotContainKey("cancellationId");
+        verify(fcmService).sendToUser(eq(sender2), eq("Trajet annulé"), any(), any());
+        verify(fcmService, never()).sendToUser(eq(senderId), eq("Trajet annulé"), any(), any());
+    }
+
+    @Test
+    void onTripCancelled_rescheduleWithdrawn_isNotRelayed() {
+        TripCancelledEvent event = new TripCancelledEvent(
+                annId, travelerId, List.of(senderId), "TRIP_RESCHEDULE_WITHDRAWN", List.of(bidId));
+
+        dispatcher.onTripCancelled(event);
+
+        verifyNoInteractions(fcmService);
+    }
+
     // ── DeliveryConfirmedEvent ────────────────────────────────────────────────
 
     @Test

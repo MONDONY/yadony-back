@@ -703,7 +703,9 @@ public class BidService {
             throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
                     "Accès non autorisé à ce colis");
         }
-        if (!BidStatus.PHONE_VISIBLE_STATUSES.contains(bid.getStatus())) {
+        // Retour d'un colis annulé après remise : l'expéditeur doit pouvoir joindre le voyageur
+        // pour le récupérer, et inversement (FLUTTER-FM).
+        if (!ContactWindow.phoneVisible(bid, LocalDateTime.now(ZoneOffset.UTC))) {
             throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "phone-not-revealable",
                     "Phone Not Revealable",
                     "Le numéro n'est communiqué qu'une fois le colis accepté");
@@ -1381,13 +1383,15 @@ public class BidService {
      * appliquent la même règle — le second est l'autorité, celui-ci n'est qu'un
      * indice d'affichage.
      */
-    private static boolean phoneAvailableForStatus(UserEntity user, BidStatus status) {
-        return user != null && !user.isHidePhoneNumber() && BidStatus.PHONE_VISIBLE_STATUSES.contains(status);
+    private static boolean phoneAvailableForBid(UserEntity user, BidEntity bid) {
+        // Statuts PHONE_VISIBLE_STATUSES, ou retour d'un colis annulé après remise (FLUTTER-FM).
+        return user != null && !user.isHidePhoneNumber()
+                && ContactWindow.phoneVisible(bid, LocalDateTime.now(ZoneOffset.UTC));
     }
 
     BidResponse toResponse(BidEntity bid, UserEntity sender, UUID callerId) {
         String senderName = buildSenderName(sender);
-        boolean senderPhoneAvailable = phoneAvailableForStatus(sender, bid.getStatus());
+        boolean senderPhoneAvailable = phoneAvailableForBid(sender, bid);
         Integer senderTotalShipments = sender != null ? sender.getTotalShipments() : null;
         boolean senderKycVerified = sender != null
                 && sender.getKycStatus() == com.yadony.api.auth.KycStatus.VERIFIED;
@@ -1445,7 +1449,7 @@ public class BidService {
                 : null;
         UUID travelerId = traveler != null ? traveler.getId() : null;
         String travelerName = buildSenderName(traveler);
-        boolean travelerPhoneAvailable = phoneAvailableForStatus(traveler, bid.getStatus());
+        boolean travelerPhoneAvailable = phoneAvailableForBid(traveler, bid);
         boolean travelerKycVerified = traveler != null
                 && traveler.getKycStatus() == com.yadony.api.auth.KycStatus.VERIFIED;
         boolean travelerIsProAccount = traveler != null && traveler.isProAccount();
@@ -1666,8 +1670,7 @@ public class BidService {
                         : null,
                 recipientDeclined,
                 replacementRequestedAt(recipientLink),
-                ContactWindow.isOpen(bid.getStatus(), bid.getDeliveredAt(), contactGraceDays,
-                        LocalDateTime.now(ZoneOffset.UTC)),
+                ContactWindow.isOpen(bid, contactGraceDays, LocalDateTime.now(ZoneOffset.UTC)),
                 sender != null ? sender.senderReliabilityIncidentCount() : null
         );
     }
@@ -1699,7 +1702,7 @@ public class BidService {
      * a masqué son numéro dans ses réglages de confidentialité : le voyageur ne reçoit
      * pas son téléphone et le joint par la conversation destinataire de l'app (Sentry
      * FLUTTER-6J). Même règle que pour l'expéditeur et le voyageur
-     * ({@link #phoneAvailableForStatus}). Seul le lien CONFIRMED compte : tant que le
+     * ({@link #phoneAvailableForBid}). Seul le lien CONFIRMED compte : tant que le
      * titulaire du numéro n'a pas confirmé, la messagerie destinataire n'existe pas et
      * le téléphone reste le seul moyen de le joindre.
      */

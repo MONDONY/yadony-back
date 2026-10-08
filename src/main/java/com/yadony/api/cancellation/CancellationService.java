@@ -24,7 +24,6 @@ import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
 import com.yadony.api.matching.CapacityUnit;
-import java.security.SecureRandom;
 import com.yadony.api.payments.cash.CommissionProperties;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
@@ -57,7 +56,6 @@ public class CancellationService {
     private final StorageService storageService;
     private final DeliveryNoShowProcedureService deliveryNoShowProcedure;
 
-    private static final SecureRandom RETURN_CODE_RANDOM = new SecureRandom();
     private static final int MAX_RETURN_CODE_ATTEMPTS = 3;
 
     public CancellationService(CancellationRepository cancellationRepository,
@@ -110,18 +108,22 @@ public class CancellationService {
         announcement.setStatus(AnnouncementStatus.CANCELLED);
         announcementRepository.save(announcement);
 
-        List<CancellationEntity> cancellations =
-                cancelOpenBidsAndPublish(announcement, traveler.getId(), request.reason());
+        TripCancellationOutcome outcome =
+                cancelBidsAndPublish(announcement, traveler.getId(), request.reason(), true);
+        List<CancellationEntity> cancellations = outcome.openCancellations();
+        int parcelsToReturn = outcome.returnedBidIds().size();
 
-        // Track cancellation count on traveler profile for reputation penalty
-        traveler.setCancellationCount(traveler.getCancellationCount() + 1);
+        // Réputation : une annulation pour le trajet, plus une par colis déjà remis — exactement
+        // ce que compterait l'annulation après remise de chacun de ces colis (FLUTTER-FH).
+        traveler.setCancellationCount(traveler.getCancellationCount() + 1 + parcelsToReturn);
         userRepository.save(traveler);
 
         int cancellationCount = traveler.getCancellationCount();
 
         auditService.log("ANNOUNCEMENT", request.announcementId(), "TRIP_CANCELLED", traveler.getId(),
                 Map.of("reason", request.reason(),
-                       "affectedBids", String.valueOf(cancellations.size()),
+                       "affectedBids", String.valueOf(cancellations.size() + parcelsToReturn),
+                       "parcelsToReturn", String.valueOf(parcelsToReturn),
                        "cancellationCount", String.valueOf(cancellationCount)));
 
         if (cancellationCount >= 3) {
@@ -141,10 +143,11 @@ public class CancellationService {
 
         return new CancellationResponse(
                 request.announcementId(),
-                cancellations.size(),
+                cancellations.size() + parcelsToReturn,
                 request.reason(),
                 suggestions,
-                LocalDateTime.now(ZoneOffset.UTC)
+                LocalDateTime.now(ZoneOffset.UTC),
+                parcelsToReturn
         );
     }
 
@@ -157,7 +160,9 @@ public class CancellationService {
      * ownership/firebaseUid (acteur système) et SANS pénalité de réputation (le compte est de
      * toute façon banni). Contrairement à {@code cancelTrip}, cancelle aussi FULL — pas
      * seulement ACTIVE — puisqu'il n'y a plus personne pour rouvrir la capacité derrière.
-     * Idempotent : no-op si l'annonce n'existe plus ou n'est déjà plus ACTIVE/FULL.
+     * Les colis déjà remis ne reçoivent pas de procédure de retour : le voyageur supprimé ne
+     * pourrait plus saisir le code. Idempotent : no-op si l'annonce n'existe plus ou n'est déjà
+     * plus ACTIVE/FULL.
      */
     @Transactional
     public void cancelAnnouncementForDeletedTraveler(UUID announcementId) {
@@ -171,8 +176,9 @@ public class CancellationService {
         announcement.setStatus(AnnouncementStatus.CANCELLED);
         announcementRepository.save(announcement);
 
-        List<CancellationEntity> cancellations = cancelOpenBidsAndPublish(
-                announcement, announcement.getTravelerId(), CancellationReason.TRAVELER_ACCOUNT_DELETED.name());
+        List<CancellationEntity> cancellations = cancelBidsAndPublish(
+                announcement, announcement.getTravelerId(), CancellationReason.TRAVELER_ACCOUNT_DELETED.name(),
+                false).openCancellations();
 
         auditService.log("ANNOUNCEMENT", announcementId, "TRIP_CANCELLED", announcement.getTravelerId(),
                 Map.of("reason", CancellationReason.TRAVELER_ACCOUNT_DELETED.name(),
@@ -180,14 +186,28 @@ public class CancellationService {
     }
 
     /**
-     * Cœur commun à {@link #cancelTrip} et {@link #cancelAnnouncementForDeletedTraveler} :
-     * annule les bids ouverts (PENDING/PAYMENT_ESCROWED/ACCEPTED) de l'annonce, crée une
-     * CancellationEntity par bid, génère le rematch, publie {@link TripCancelledEvent} (déclenche
-     * refund + notification + rematch côté listeners). L'annonce elle-même doit déjà avoir été
-     * basculée à CANCELLED par l'appelant.
+     * Issue de {@link #cancelBidsAndPublish} : annulations des bids ouverts (dans l'ordre des
+     * bids, celui du rematch) et bids déjà remis passés en procédure de retour.
      */
-    private List<CancellationEntity> cancelOpenBidsAndPublish(
-            AnnouncementEntity announcement, UUID actorId, String reason) {
+    private record TripCancellationOutcome(List<CancellationEntity> openCancellations,
+                                           List<UUID> returnedBidIds) {}
+
+    /**
+     * Cœur commun à {@link #cancelTrip} et {@link #cancelAnnouncementForDeletedTraveler} :
+     * annule les bids ouverts (PENDING/PAYMENT_ESCROWED/ACCEPTED/NEGOTIATING) de l'annonce, crée
+     * une CancellationEntity par bid, génère le rematch, publie {@link TripCancelledEvent}
+     * (déclenche refund + notification + rematch côté listeners). L'annonce elle-même doit déjà
+     * avoir été basculée à CANCELLED par l'appelant.
+     *
+     * <p>Avec {@code returnHandedOver}, les colis déjà remis au voyageur (HANDED_OVER,
+     * IN_TRANSIT, ARRIVED) suivent la procédure de l'annulation après remise par le voyageur
+     * (FLUTTER-FH) : code de retour et délai de 3 jours, annulation
+     * {@link CancellationReason#TRAVELER_CANCEL_AFTER_HANDOVER} confirmée, remboursement intégral
+     * par le même {@link TripCancelledEvent}, notification de retour à l'expéditeur. Sans cela, ces
+     * colis restaient orphelins sur un trajet annulé.
+     */
+    private TripCancellationOutcome cancelBidsAndPublish(
+            AnnouncementEntity announcement, UUID actorId, String reason, boolean returnHandedOver) {
         // Cancel ALL in-progress bids on this trip (not just ACCEPTED) so each
         // sender's bid reflects the cancelled trip — sinon un bid PENDING /
         // PAYMENT_ESCROWED gardait son statut partout. Set « actif » canonique
@@ -229,9 +249,51 @@ public class CancellationService {
             }
         }
 
+        // Colis déjà remis : même procédure que l'annulation après remise par le voyageur.
+        List<BidEntity> handedOverBids = returnHandedOver
+                ? bidRepository.findHandedOverByAnnouncementIdForUpdate(announcement.getId())
+                : List.of();
+        List<UUID> returnedBidIds = new ArrayList<>();
+        LocalDateTime now = LocalDateTime.now();
+        for (BidEntity bid : handedOverBids) {
+            String previousStatus = bid.getStatus().name();
+            ParcelReturn.open(bid, now);
+            bidRepository.save(bid);
+
+            // UNIQUE(bid_id, scope) : une ligne HANDOVER déjà tranchée (no-show contesté puis
+            // remise malgré tout) est conservée, le retour s'ouvre quand même.
+            if (cancellationRepository.findByBidId(bid.getId()).isEmpty()) {
+                CancellationEntity c = new CancellationEntity();
+                c.setBidId(bid.getId());
+                c.setCancelledBy(actorId);
+                c.setReason(CancellationReason.TRAVELER_CANCEL_AFTER_HANDOVER.name());
+                c.setNoShowStatus(CancellationStatus.CONFIRMED);
+                cancellationRepository.save(c);
+            }
+
+            auditService.log("BID", bid.getId(), "BID_CANCELLED_AFTER_HANDOVER", actorId,
+                    Map.of("actor", CancellationActor.TRAVELER.name(),
+                           "trigger", "TRIP_CANCELLED",
+                           "previousStatus", previousStatus,
+                           "paymentMethod",
+                           bid.getPaymentMethod() != null ? bid.getPaymentMethod().name() : "STRIPE"));
+            auditService.log("BID", bid.getId(), "RETURN_CODE_GENERATED", actorId,
+                    Map.of("returnDeadline", String.valueOf(bid.getReturnDeadline())));
+
+            affectedSenderIds.add(bid.getSenderId());
+            affectedBidIds.add(bid.getId());
+            returnedBidIds.add(bid.getId());
+            String methodName = bid.getPaymentMethod() != null ? bid.getPaymentMethod().name() : "STRIPE";
+            bidPaymentMethods.put(bid.getId(), methodName);
+            if (bid.getCommissionChargedVia() != null) {
+                bidCommissionChargedVia.put(bid.getId(), bid.getCommissionChargedVia().name());
+            }
+        }
+
         // Generate rematch suggestions for each affected sender's cancellation (one
         // RematchService call per bid, capacity-filtered per sender — fix du bug qui ne
-        // générait des suggestions que pour le 1er expéditeur affecté).
+        // générait des suggestions que pour le 1er expéditeur affecté). Un colis à restituer
+        // n'en reçoit pas, comme l'annulation après remise : il doit d'abord être rendu.
         Map<UUID, RematchService.RematchInfo> rematchBySender =
                 rematchService.generateForCancellations(announcement, affectedBids, cancellations);
 
@@ -244,9 +306,10 @@ public class CancellationService {
 
         eventPublisher.publishEvent(new TripCancelledEvent(
                 announcement.getId(), announcement.getTravelerId(), affectedSenderIds, reason,
-                affectedBidIds, bidPaymentMethods, bidCommissionChargedVia, rematchInfo));
+                affectedBidIds, bidPaymentMethods, bidCommissionChargedVia, rematchInfo,
+                java.util.Set.copyOf(returnedBidIds)));
 
-        return cancellations;
+        return new TripCancellationOutcome(cancellations, returnedBidIds);
     }
 
     @Transactional(readOnly = true)
@@ -605,12 +668,7 @@ public class CancellationService {
         }
 
         // Code de retour : détenu par l'expéditeur, saisi par le voyageur (tranche C).
-        LocalDateTime now = LocalDateTime.now();
-        bid.setReturnCode(String.format("%06d", RETURN_CODE_RANDOM.nextInt(1_000_000)));
-        bid.setReturnCodeExpiry(now.plusDays(3));
-        bid.setReturnCodeAttempts(0);
-        bid.setReturnDeadline(now.plusDays(3));
-        bid.setStatus(BidStatus.CANCELLED);
+        ParcelReturn.open(bid, LocalDateTime.now());
         bidRepository.save(bid);
 
         CancellationEntity c = new CancellationEntity();
@@ -645,11 +703,14 @@ public class CancellationService {
         if (bid.getCommissionChargedVia() != null) {
             bidCommissionChargedVia.put(bidId, bid.getCommissionChargedVia().name());
         }
+        // Colis à restituer : l'expéditeur reçoit PARCEL_RETURN_REQUIRED vers son colis
+        // (code de retour), plus le « trajet annulé » générique (FLUTTER-FK, FLUTTER-F7).
         eventPublisher.publishEvent(new TripCancelledEvent(
                 bid.getAnnouncementId(),
                 announcement != null ? announcement.getTravelerId() : null,
                 List.of(bid.getSenderId()), reason.name(),
-                List.of(bidId), bidPaymentMethods, bidCommissionChargedVia));
+                List.of(bidId), bidPaymentMethods, bidCommissionChargedVia, Map.of(),
+                java.util.Set.of(bidId)));
     }
 
     /**

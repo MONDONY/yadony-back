@@ -100,4 +100,45 @@ class ConversationServiceCallAvailableTest {
         when(callAvailability.canCall(any(), any())).thenThrow(new RuntimeException("db"));
         assertThat(service.toResponse(conv, senderId, Map.of()).callAvailable()).isFalse();
     }
+
+    // ── Retour d'un colis annulé après remise (FLUTTER-FM) ──────────────────
+
+    private void withCancelledBid(java.time.LocalDateTime returnDeadline, java.time.LocalDateTime returnedAt) {
+        BidEntity bid = new BidEntity();
+        bid.setStatus(BidStatus.CANCELLED);
+        bid.setReturnDeadline(returnDeadline);
+        bid.setReturnedAt(returnedAt);
+        lenient().when(bidRepository.findById(conv.getBidId())).thenReturn(Optional.of(bid));
+    }
+
+    @Test
+    void retourEnCoursInterrogeLaRegle() {
+        withCancelledBid(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).plusDays(2), null);
+        when(callAvailability.canCall(senderId, conv.getId())).thenReturn(true);
+        assertThat(service.toResponse(conv, senderId, Map.of()).callAvailable()).isTrue();
+    }
+
+    @Test
+    void colisRestitueSansInterrogerLaRegle() {
+        java.time.LocalDateTime now = java.time.LocalDateTime.now(java.time.ZoneOffset.UTC);
+        withCancelledBid(now.plusDays(2), now.minusHours(1));
+        assertThat(service.toResponse(conv, senderId, Map.of()).callAvailable()).isFalse();
+        verify(callAvailability, never()).canCall(any(), any());
+    }
+
+    @Test
+    void annuleSansRetourSansInterrogerLaRegle() {
+        withCancelledBid(null, null);
+        assertThat(service.toResponse(conv, senderId, Map.of()).callAvailable()).isFalse();
+        verify(callAvailability, never()).canCall(any(), any());
+    }
+
+    @Test
+    void retourEnCoursNeRouvrePasLAppelDeLaConversationDestinataire() {
+        conv = ConversationEntity.forRecipient(UUID.randomUUID(), senderId, UUID.randomUUID(), "fs-r");
+        ReflectionTestUtils.setField(conv, "id", UUID.randomUUID());
+        withCancelledBid(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).plusDays(2), null);
+        assertThat(service.toResponse(conv, senderId, Map.of()).callAvailable()).isFalse();
+        verify(callAvailability, never()).canCall(any(), any());
+    }
 }

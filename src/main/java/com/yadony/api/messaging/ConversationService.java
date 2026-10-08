@@ -431,8 +431,10 @@ public class ConversationService {
             // réglages de confidentialité — le chat reste alors son seul canal.
             // Conversation destinataire : jamais de téléphone (le contact passe par le chat
             // et par les canaux du lot 3B, qui ont leurs propres règles).
+            // Retour d'un colis annulé après remise : le numéro reste communicable (FLUTTER-FM).
             revealPhone  = !conv.isRecipientConversation()
-                    && BidStatus.PHONE_VISIBLE_STATUSES.contains(bid.getStatus())
+                    && com.yadony.api.matching.ContactWindow.phoneVisible(bid,
+                            java.time.LocalDateTime.now(java.time.ZoneOffset.UTC))
                     && other != null && !other.isHidePhoneNumber();
 
             Optional<AnnouncementEntity> annOpt = announcementRepository.findById(bid.getAnnouncementId());
@@ -466,7 +468,7 @@ public class ConversationService {
             conv.getKind() != null ? conv.getKind().name() : ConversationKind.SENDER_TRAVELER.name(),
             !conv.isRecipientConversation() ? null
                     : currentUserId.equals(conv.getTravelerId()) ? "TRAVELER" : "RECIPIENT",
-            callAvailable(conv, currentUserId, bidOpt.map(BidEntity::getStatus).orElse(null)),
+            callAvailable(conv, currentUserId, bidOpt.orElse(null)),
             conv.isNotificationsMutedBy(currentUserId),
             mediaAllowed(conv, currentUserId, bidOpt.orElse(null))
         );
@@ -477,11 +479,11 @@ public class ConversationService {
      * l'appel : un échec de calcul masque la fonction, il ne casse jamais l'affichage.
      */
     private boolean mediaAllowed(ConversationEntity conv, UUID currentUserId, BidEntity bid) {
-        if (bid == null || !CALL_CANDIDATE_STATUSES.contains(bid.getStatus())) {
+        if (!isContactCandidate(conv, bid)) {
             return false;
         }
         try {
-            return mediaPolicy.check(conv, currentUserId, bid.getStatus(), bid.getDeliveredAt(), null).isEmpty();
+            return mediaPolicy.check(conv, currentUserId, bid, null).isEmpty();
         } catch (Exception e) {
             log.warn("mediaAllowed indisponible pour {} : {}", conv.getId(), e.toString());
             return false;
@@ -489,10 +491,10 @@ public class ConversationService {
     }
 
     /** Le bouton d'appel ne doit jamais casser l'affichage d'une conversation : en cas d'échec, pas de bouton. */
-    private boolean callAvailable(ConversationEntity conv, UUID currentUserId, BidStatus bidStatus) {
+    private boolean callAvailable(ConversationEntity conv, UUID currentUserId, BidEntity bid) {
         // Filtre sans requête : la règle complète (plusieurs lectures) ne tourne que pour une commande
         // en cours dans une conversation active, soit une poignée de fils par liste.
-        if (bidStatus == null || !CALL_CANDIDATE_STATUSES.contains(bidStatus) || conv.isClosed()
+        if (!isContactCandidate(conv, bid) || conv.isClosed()
                 || conv.isDeletedByUser(currentUserId) || conv.isArchivedByUser(currentUserId)) {
             return false;
         }
@@ -502,6 +504,19 @@ public class ConversationService {
             log.warn("callAvailable indisponible pour {} : {}", conv.getId(), e.toString());
             return false;
         }
+    }
+
+    /**
+     * Pré-filtre sans requête de l'appel et des photos : commande en cours, ou retour d'un colis
+     * annulé après sa remise (FLUTTER-FM, expéditeur et voyageur seulement). La règle complète
+     * reste à {@code calls/} et à {@link ConversationMediaPolicy}.
+     */
+    private static boolean isContactCandidate(ConversationEntity conv, BidEntity bid) {
+        if (bid == null || bid.getStatus() == null) return false;
+        if (CALL_CANDIDATE_STATUSES.contains(bid.getStatus())) return true;
+        return !conv.isRecipientConversation()
+                && com.yadony.api.matching.ContactWindow.isReturnInProgress(bid,
+                        java.time.LocalDateTime.now(java.time.ZoneOffset.UTC));
     }
 
     /**

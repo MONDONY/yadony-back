@@ -18,7 +18,10 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.UUID;
 
-/** Règle unique : qui peut appeler qui, et quand (de l'acceptation jusqu'à J+3 après livraison). */
+/**
+ * Règle unique : qui peut appeler qui, et quand (de l'acceptation jusqu'à J+3 après livraison, et
+ * pendant le retour d'un colis annulé après sa remise).
+ */
 @Service
 public class CallEligibilityService implements CallAvailability {
 
@@ -75,7 +78,7 @@ public class CallEligibilityService implements CallAvailability {
         }
 
         BidEntity bid = bids.findById(conv.getBidId()).orElse(null);
-        if (bid == null || !inWindow(bid)) return Eligibility.denied(Reason.OUT_OF_WINDOW);
+        if (bid == null || !inWindow(bid, conv)) return Eligibility.denied(Reason.OUT_OF_WINDOW);
 
         if (blocks.isHidden(callerId, calleeId) || blocks.isHidden(calleeId, callerId)) {
             return Eligibility.denied(Reason.BLOCKED);
@@ -90,8 +93,12 @@ public class CallEligibilityService implements CallAvailability {
     }
 
     /** Règle partagée avec le bouton téléphone de la fiche colis ({@link ContactWindow}). */
-    private boolean inWindow(BidEntity bid) {
-        return ContactWindow.isOpen(bid.getStatus(), bid.getDeliveredAt(), properties.deliveryGraceDays(),
-                LocalDateTime.now(clock.withZone(ZoneOffset.UTC)));
+    private boolean inWindow(BidEntity bid, ConversationEntity conv) {
+        LocalDateTime now = LocalDateTime.now(clock.withZone(ZoneOffset.UTC));
+        // Retour d'un colis annulé après remise (FLUTTER-FM) : expéditeur et voyageur seulement.
+        if (conv.isRecipientConversation()) {
+            return ContactWindow.isOpen(bid.getStatus(), bid.getDeliveredAt(), properties.deliveryGraceDays(), now);
+        }
+        return ContactWindow.isOpen(bid, properties.deliveryGraceDays(), now);
     }
 }

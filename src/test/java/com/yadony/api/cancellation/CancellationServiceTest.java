@@ -174,6 +174,94 @@ class CancellationServiceTest {
         }
 
         @Test
+        @DisplayName("FLUTTER-FH : colis déjà remis → procédure de retour pour chacun, comme l'annulation après remise")
+        void cancelTrip_withHandedOverParcels_opensReturnForEach() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement(TRAVELER_ID);
+            UUID acceptedSender = UUID.randomUUID();
+            BidEntity acceptedBid = buildAcceptedBid(acceptedSender);
+            UUID handedSender = UUID.randomUUID();
+            UUID handedBidId = UUID.randomUUID();
+            BidEntity handedOver = new BidEntity();
+            handedOver.setAnnouncementId(ANNOUNCEMENT_ID);
+            handedOver.setSenderId(handedSender);
+            handedOver.setStatus(BidStatus.HANDED_OVER);
+            handedOver.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.STRIPE);
+            setId(handedOver, handedBidId);
+            UUID arrivedBidId = UUID.randomUUID();
+            BidEntity arrived = new BidEntity();
+            arrived.setAnnouncementId(ANNOUNCEMENT_ID);
+            arrived.setSenderId(handedSender);
+            arrived.setStatus(BidStatus.ARRIVED);
+            setId(arrived, arrivedBidId);
+            CancellationRequest req = new CancellationRequest(ANNOUNCEMENT_ID, "Vol annulé");
+
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(bidRepository.findByAnnouncementIdAndStatusIn(ANNOUNCEMENT_ID,
+                    List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED,
+                            BidStatus.NEGOTIATING)))
+                    .thenReturn(List.of(acceptedBid));
+            when(bidRepository.findHandedOverByAnnouncementIdForUpdate(ANNOUNCEMENT_ID))
+                    .thenReturn(List.of(handedOver, arrived));
+            when(cancellationRepository.findByBidId(handedBidId)).thenReturn(Optional.empty());
+            // Ligne HANDOVER déjà tranchée : conservée (UNIQUE(bid_id, scope)), le retour s'ouvre quand même.
+            when(cancellationRepository.findByBidId(arrivedBidId)).thenReturn(Optional.of(new CancellationEntity()));
+            when(userRepository.save(any())).thenReturn(traveler);
+            when(cancellationRepository.save(any(CancellationEntity.class))).thenAnswer(inv -> {
+                CancellationEntity c = inv.getArgument(0);
+                setId(c, UUID.randomUUID());
+                return c;
+            });
+
+            CancellationResponse result = cancellationService.cancelTrip(TRAVELER_UID, req);
+
+            for (BidEntity returned : List.of(handedOver, arrived)) {
+                assertThat(returned.getStatus()).isEqualTo(BidStatus.CANCELLED);
+                assertThat(returned.getReturnCode()).matches("\\d{6}");
+                assertThat(returned.getReturnCodeAttempts()).isZero();
+                assertThat(returned.getReturnDeadline())
+                        .isBetween(java.time.LocalDateTime.now().plusDays(3).minusMinutes(1),
+                                java.time.LocalDateTime.now().plusDays(3).plusMinutes(1));
+                assertThat(returned.getReturnCodeExpiry()).isEqualTo(returned.getReturnDeadline());
+            }
+            assertThat(acceptedBid.getReturnCode()).isNull();
+            assertThat(result.affectedBidsCount()).isEqualTo(3);
+            assertThat(result.parcelsToReturnCount()).isEqualTo(2);
+            // Une annulation pour le trajet + une par colis remis (compteur de l'annulation après remise).
+            assertThat(traveler.getCancellationCount()).isEqualTo(3);
+
+            ArgumentCaptor<CancellationEntity> saved = ArgumentCaptor.forClass(CancellationEntity.class);
+            verify(cancellationRepository, times(2)).save(saved.capture());
+            CancellationEntity afterHandover = saved.getAllValues().stream()
+                    .filter(c -> handedBidId.equals(c.getBidId())).findFirst().orElseThrow();
+            assertThat(afterHandover.getReason()).isEqualTo(CancellationReason.TRAVELER_CANCEL_AFTER_HANDOVER.name());
+            assertThat(afterHandover.getNoShowStatus()).isEqualTo(CancellationStatus.CONFIRMED);
+            assertThat(afterHandover.getCancelledBy()).isEqualTo(TRAVELER_ID);
+
+            // Rematch : seulement le colis ouvert, jamais un colis à restituer.
+            verify(rematchService).generateForCancellations(eq(announcement), eq(List.of(acceptedBid)), anyList());
+
+            verify(auditService).log(eq("BID"), eq(handedBidId), eq("BID_CANCELLED_AFTER_HANDOVER"), eq(TRAVELER_ID),
+                    argThat(m -> "TRIP_CANCELLED".equals(m.get("trigger")) && "HANDED_OVER".equals(m.get("previousStatus"))));
+            verify(auditService).log(eq("BID"), eq(arrivedBidId), eq("RETURN_CODE_GENERATED"), eq(TRAVELER_ID), anyMap());
+            verify(auditService).log(eq("ANNOUNCEMENT"), eq(ANNOUNCEMENT_ID), eq("TRIP_CANCELLED"), eq(TRAVELER_ID),
+                    argThat(m -> "2".equals(m.get("parcelsToReturn")) && "3".equals(m.get("affectedBids"))));
+
+            ArgumentCaptor<Object> events = ArgumentCaptor.forClass(Object.class);
+            verify(eventPublisher, atLeastOnce()).publishEvent(events.capture());
+            TripCancelledEvent evt = events.getAllValues().stream()
+                    .filter(e -> e instanceof TripCancelledEvent).map(e -> (TripCancelledEvent) e)
+                    .findFirst().orElseThrow();
+            // Remboursement intégral : les trois colis passent par la matrice de remboursement.
+            assertThat(evt.getAffectedBidIds()).containsExactly(BID_ID, handedBidId, arrivedBidId);
+            assertThat(evt.getAffectedSenderIds()).containsExactly(acceptedSender, handedSender, handedSender);
+            assertThat(evt.getBidPaymentMethods()).containsEntry(handedBidId, "STRIPE")
+                    .containsEntry(arrivedBidId, "STRIPE");
+            assertThat(evt.getReturnRequiredBidIds()).containsExactlyInAnyOrder(handedBidId, arrivedBidId);
+        }
+
+        @Test
         @DisplayName("délègue à RematchService avec les arguments exacts et restitue ses suggestions dans la réponse")
         void cancelTrip_delegatesToRematchServiceAndReturnsItsSuggestions() {
             UserEntity traveler = buildTraveler();
@@ -446,6 +534,8 @@ class CancellationServiceTest {
 
             assertThat(announcement.getStatus()).isEqualTo(AnnouncementStatus.CANCELLED);
             verify(userRepository, never()).save(any());
+            // Le voyageur supprimé ne pourrait plus saisir de code de retour.
+            verify(bidRepository, never()).findHandedOverByAnnouncementIdForUpdate(any());
 
             ArgumentCaptor<Object> eventCaptor = ArgumentCaptor.forClass(Object.class);
             verify(eventPublisher, atLeastOnce()).publishEvent(eventCaptor.capture());

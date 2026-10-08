@@ -20,7 +20,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
@@ -37,8 +36,6 @@ import java.util.UUID;
  */
 @Service
 public class RescheduleDecisionService {
-
-    private static final SecureRandom RETURN_CODE_RANDOM = new SecureRandom();
 
     private final BidRepository bidRepository;
     private final AnnouncementRepository announcementRepository;
@@ -120,11 +117,7 @@ public class RescheduleDecisionService {
 
         if (handedOver) {
             // Le voyageur a déjà le colis : il le rend contre le code que détient l'expéditeur.
-            LocalDateTime now = LocalDateTime.now();
-            bid.setReturnCode(String.format("%06d", RETURN_CODE_RANDOM.nextInt(1_000_000)));
-            bid.setReturnCodeExpiry(now.plusDays(3));
-            bid.setReturnCodeAttempts(0);
-            bid.setReturnDeadline(now.plusDays(3));
+            ParcelReturn.open(bid, LocalDateTime.now());
         }
         bid.setStatus(BidStatus.CANCELLED);
         bid.setPendingRescheduleId(null);
