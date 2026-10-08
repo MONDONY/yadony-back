@@ -39,6 +39,24 @@ public interface FavoriteRepository extends JpaRepository<FavoriteEntity, UUID> 
                        @Param("targetType") String targetType,
                        @Param("targetId") UUID targetId);
 
+    /**
+     * Supprime physiquement le favori s'il existe, en une requête : idempotent sous
+     * concurrence. Charger puis {@code delete()} l'entité échouait pour la seconde de deux
+     * suppressions simultanées (ligne déjà supprimée au flush, verrouillage optimiste en
+     * 409) : 13 % des DELETE au test de charge k6 du 08/10.
+     *
+     * @return le nombre de lignes supprimées (0 ou 1)
+     */
+    @Transactional
+    @Modifying
+    @Query(value = """
+            DELETE FROM favorites
+            WHERE user_id = :userId AND target_type = :targetType AND target_id = :targetId
+            """, nativeQuery = true)
+    int deleteActive(@Param("userId") UUID userId,
+                     @Param("targetType") String targetType,
+                     @Param("targetId") UUID targetId);
+
     Optional<FavoriteEntity> findByUserIdAndTargetTypeAndTargetId(UUID userId, FavoriteTargetType targetType, UUID targetId);
 
     List<FavoriteEntity> findByUserIdAndTargetTypeOrderByCreatedAtDesc(UUID userId, FavoriteTargetType targetType);
