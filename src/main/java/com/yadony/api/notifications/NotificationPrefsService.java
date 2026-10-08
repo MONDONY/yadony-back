@@ -7,13 +7,22 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
 @Transactional
 public class NotificationPrefsService {
 
-    private static final Map<String, String> TYPE_TO_PREF = Map.ofEntries(
+    /**
+     * Type de notification → interrupteur qui le gouverne.
+     *
+     * <p>Un type absent de cette table et de {@link #ALWAYS_ON} part toujours : c'est le
+     * défaut sûr pour une notification nouvelle, mais il rend un réglage inopérant sans
+     * bruit (FLUTTER-GB). {@code NotificationPrefsClassificationTest} échoue donc dès qu'un
+     * type émis dans le code n'est classé nulle part.
+     */
+    static final Map<String, String> TYPE_TO_PREF = Map.ofEntries(
             Map.entry("BID_CREATED",                  "pushActivityBids"),
             Map.entry("BID_ACCEPTED",                 "pushActivityBids"),
             Map.entry("BID_REJECTED",                 "pushActivityBids"),
@@ -33,6 +42,16 @@ public class NotificationPrefsService {
             // entrée, elles échappaient à toute préférence : isAllowed renvoie true par
             // défaut pour un type inconnu.
             Map.entry("negotiation",                  "pushActivityNegotiations"),
+            // FLUTTER-GB : le reste de la négociation (trajet modifié, commission, dépôt,
+            // discussion de prix sur une offre) échappait à l'interrupteur.
+            Map.entry("negotiation_trip_changed",        "pushActivityNegotiations"),
+            Map.entry("negotiation_commission_pending",  "pushActivityNegotiations"),
+            Map.entry("negotiation_commission_declined", "pushActivityNegotiations"),
+            Map.entry("negotiation_commission_expired",  "pushActivityNegotiations"),
+            Map.entry("negotiation_deposit_pending",     "pushActivityNegotiations"),
+            Map.entry("negotiation_deposit_reverted",    "pushActivityNegotiations"),
+            Map.entry("bid_negotiation_message",         "pushActivityNegotiations"),
+            Map.entry("bid_negotiation_expired",         "pushActivityNegotiations"),
             // Famille « quelqu'un répond à mon colis » : ces trois-là appellent une action de
             // l'expéditeur et suivent donc le même interrupteur que les offres reçues.
             Map.entry("TRAVELER_INVITE",              "pushActivityBids"),
@@ -68,11 +87,26 @@ public class NotificationPrefsService {
             // Invitations au carnet de destinataires (lot 4).
             Map.entry("RECIPIENT_INVITATION",         "pushActivityBids"),
             Map.entry("RECIPIENT_INVITATION_ACCEPTED", "pushActivityBids"),
+            Map.entry("RECIPIENT_INVITATION_REMOVED", "pushActivityBids"),
+            // FLUTTER-GB : arrivée du trajet (instructions de retrait, à l'expéditeur) et
+            // demande de colis retirée par la modération, suivies comme le reste du colis.
+            Map.entry("TRIP_ARRIVED",                 "pushActivityBids"),
+            Map.entry("PACKAGE_REQUEST_REMOVED",      "pushActivityBids"),
             Map.entry("NEW_MESSAGE",                  "pushMessages"),
             // Le support vit dans l'onglet Messages (« Yadony Support ») : même interrupteur.
             // Seul le push est coupé, l'entrée du centre de notifications reste.
             Map.entry("SUPPORT_MESSAGE",              "pushMessages"),
-            Map.entry("TRIP_IN_PROGRESS",             "pushTripReminder"),
+            // « Bon voyage ! » suivait pushTripReminder, dont l'interrupteur a quitté
+            // l'application : qui l'avait coupé ne pouvait plus le rallumer. Le rattacher à
+            // un réglage visible plutôt que forcer la colonne à true par migration : une
+            // ancienne version de l'app renvoie la valeur coupée de son cache à chaque PUT
+            // et aurait défait la migration. pushTripReminder n'est plus lu par aucun type.
+            Map.entry("TRIP_IN_PROGRESS",             "pushRemindersTips"),
+            Map.entry("FIRST_ACTION_REMINDER",        "pushRemindersTips"),
+            Map.entry("CALL_MISSED",                  "pushMissedCalls"),
+            Map.entry("automation_capacity_free",     "pushTravelerAutomations"),
+            Map.entry("automation_loyal_sender",      "pushTravelerAutomations"),
+            Map.entry("automation_last_minute",       "pushTravelerAutomations"),
             Map.entry("PROMO",                        "pushPromo"),
             Map.entry("CORRIDOR_ALERT",               "pushCorridorAlerts"),
             // Même famille que les alertes corridor du point de vue de l'utilisateur :
@@ -88,6 +122,36 @@ public class NotificationPrefsService {
             // Un expéditeur propose son colis au voyageur : même famille que les colis compatibles.
             Map.entry("SENDER_INVITE",                "pushTripPackageMatch")
     );
+
+    /**
+     * Types volontairement non réglables : ils partent quels que soient les réglages.
+     * Argent et portefeuille, vérification d'identité, litiges et absences, modération et
+     * sécurité du compte. S'y ajoutent les types critiques de {@link NotificationTypes}, qui
+     * déclenchent en plus un SMS de repli. La liste ne change rien à {@link #isAllowed} (un
+     * type non mappé part déjà) : elle documente le choix et sert de référence au test de
+     * classification. Tout préfixe {@code DISPUTE_} y est assimilé.
+     */
+    static final Set<String> ALWAYS_ON = Set.of(
+            // Paiements et portefeuille
+            "CARD_EXPIRING", "wallet_topup_confirmed", "WALLET_ADJUSTED",
+            "STRIPE_ONBOARDING_INCOMPLETE",
+            // Vérification d'identité
+            "KYC_VERIFIED", "KYC_ACTION_REQUIRED", "KYC_RESET",
+            // Litiges et absences
+            "DISPUTE_UPDATED", "DISPUTE_RESOLVED", "SENDER_NOSHOW_REPORTED", "NOSHOW_DECISION",
+            // Modération et plateforme
+            "ADMIN_BROADCAST", "SYSTEM", "ADMIN_WARNING", "MESSAGING_MUTED",
+            "ACCOUNT_SUSPENDED", "ACCOUNT_DELETION_CANCELLED", "REPORT_RESOLVED",
+            "ANNOUNCEMENT_REMOVED"
+    );
+
+    /** Le type part-il quels que soient les réglages ? */
+    static boolean isAlwaysOn(String type) {
+        return type != null && (NotificationTypes.isCritical(type)
+                || ALWAYS_ON.contains(type)
+                || type.startsWith("DISPUTE_")
+                || type.startsWith("ACCOUNT_"));
+    }
 
     private final NotificationPrefsJpaRepository repository;
     private final UserRepository userRepository;
@@ -120,6 +184,12 @@ public class NotificationPrefsService {
         entity.setPushTripReminder(dto.pushTripReminder());
         entity.setPushPromo(dto.pushPromo());
         entity.setPushCorridorAlerts(dto.pushCorridorAlerts());
+        // null = champ absent (application antérieure à V305) : on garde la valeur stockée.
+        if (dto.pushMissedCalls() != null) entity.setPushMissedCalls(dto.pushMissedCalls());
+        if (dto.pushTravelerAutomations() != null) {
+            entity.setPushTravelerAutomations(dto.pushTravelerAutomations());
+        }
+        if (dto.pushRemindersTips() != null) entity.setPushRemindersTips(dto.pushRemindersTips());
         repository.save(entity);
     }
 
@@ -159,7 +229,7 @@ public class NotificationPrefsService {
     @Transactional(readOnly = true)
     public boolean isAllowed(UUID userId, String notificationType) {
         if (notificationType == null) return true;
-        if (NotificationTypes.isCritical(notificationType)) return true;
+        if (isAlwaysOn(notificationType)) return true;
         String prefKey = TYPE_TO_PREF.get(notificationType);
         if (prefKey == null) return true;
         return repository.findById(userId)
@@ -176,6 +246,9 @@ public class NotificationPrefsService {
             case "pushPromo"                -> prefs.isPushPromo();
             case "pushCorridorAlerts"       -> prefs.isPushCorridorAlerts();
             case "pushTripPackageMatch"     -> prefs.isPushTripPackageMatch();
+            case "pushMissedCalls"          -> prefs.isPushMissedCalls();
+            case "pushTravelerAutomations"  -> prefs.isPushTravelerAutomations();
+            case "pushRemindersTips"        -> prefs.isPushRemindersTips();
             default                         -> true;
         };
     }
@@ -195,7 +268,10 @@ public class NotificationPrefsService {
                 e.isPushMessages(),
                 e.isPushTripReminder(),
                 e.isPushPromo(),
-                e.isPushCorridorAlerts()
+                e.isPushCorridorAlerts(),
+                e.isPushMissedCalls(),
+                e.isPushTravelerAutomations(),
+                e.isPushRemindersTips()
         );
     }
 }

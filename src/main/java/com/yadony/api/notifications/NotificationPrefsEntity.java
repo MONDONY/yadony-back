@@ -41,6 +41,18 @@ public class NotificationPrefsEntity {
     @Column(name = "push_trip_package_match", nullable = false)
     private boolean pushTripPackageMatch = true;
 
+    /** Appels Yadony manqués (CALL_MISSED), V305. */
+    @Column(name = "push_missed_calls", nullable = false)
+    private boolean pushMissedCalls = true;
+
+    /** Automatisations du voyageur (automation_*), V305. */
+    @Column(name = "push_traveler_automations", nullable = false)
+    private boolean pushTravelerAutomations = true;
+
+    /** Rappels et conseils (premiers pas, « Bon voyage »), V305. */
+    @Column(name = "push_reminders_tips", nullable = false)
+    private boolean pushRemindersTips = true;
+
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
 
@@ -66,5 +78,11 @@ public class NotificationPrefsEntity {
     public void setPushCorridorAlerts(boolean v) { this.pushCorridorAlerts = v; }
     public boolean isPushTripPackageMatch() { return pushTripPackageMatch; }
     public void setPushTripPackageMatch(boolean v) { this.pushTripPackageMatch = v; }
+    public boolean isPushMissedCalls() { return pushMissedCalls; }
+    public void setPushMissedCalls(boolean v) { this.pushMissedCalls = v; }
+    public boolean isPushTravelerAutomations() { return pushTravelerAutomations; }
+    public void setPushTravelerAutomations(boolean v) { this.pushTravelerAutomations = v; }
+    public boolean isPushRemindersTips() { return pushRemindersTips; }
+    public void setPushRemindersTips(boolean v) { this.pushRemindersTips = v; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
 }
