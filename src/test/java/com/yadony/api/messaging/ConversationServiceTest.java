@@ -404,6 +404,50 @@ class ConversationServiceTest {
     }
 
     // -------------------------------------------------------------------------
+    // État du colis pour le badge de la liste (FLUTTER-EZ)
+    // -------------------------------------------------------------------------
+
+    @Test
+    void toResponse_exposesRawParcelStatus_alongsideTheDerivedBidStatus() {
+        ConversationEntity conv = new ConversationEntity(bidId, senderId, travelerId, "conv_" + bidId);
+        BidEntity pending = mockBid(BidStatus.PAYMENT_ESCROWED);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(pending));
+
+        var response = service.toResponse(conv, senderId);
+
+        assertThat(response.parcelStatus()).isEqualTo("PAYMENT_ESCROWED");
+        // Le code dérivé reste inchangé : rien pour une demande pas encore acceptée.
+        assertThat(response.bidStatus()).isNull();
+        assertThat(response.returnPending()).isFalse();
+    }
+
+    @Test
+    void toResponse_flagsReturnPending_untilTheParcelIsReturned() {
+        ConversationEntity conv = new ConversationEntity(bidId, senderId, travelerId, "conv_" + bidId);
+        BidEntity cancelled = mockBid(BidStatus.CANCELLED);
+        when(cancelled.getReturnDeadline()).thenReturn(java.time.LocalDateTime.now().plusDays(2));
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(cancelled));
+
+        var awaiting = service.toResponse(conv, senderId);
+        assertThat(awaiting.parcelStatus()).isEqualTo("CANCELLED");
+        assertThat(awaiting.returnPending()).isTrue();
+
+        when(cancelled.getReturnedAt()).thenReturn(java.time.LocalDateTime.now());
+        assertThat(service.toResponse(conv, senderId).returnPending()).isFalse();
+    }
+
+    @Test
+    void toResponse_withoutBid_hasNoParcelState() {
+        ConversationEntity conv = new ConversationEntity(bidId, senderId, travelerId, "conv_" + bidId);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.empty());
+
+        var response = service.toResponse(conv, senderId);
+
+        assertThat(response.parcelStatus()).isNull();
+        assertThat(response.returnPending()).isFalse();
+    }
+
+    // -------------------------------------------------------------------------
     // Tri de la liste : dernier message en tête, repli sur updated_at
     // -------------------------------------------------------------------------
 
