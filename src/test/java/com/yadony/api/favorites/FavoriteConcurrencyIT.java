@@ -131,6 +131,32 @@ class FavoriteConcurrencyIT {
         assertThat(activeRows(tripId)).isEqualTo(1);
     }
 
+    @Test
+    void removeFavorite_concurrentRequests_allSucceedAndRowIsGone() throws Exception {
+        UserEntity user = persistUser();
+        UUID tripId = persistTrip();
+        favoriteService.addFavorite(user.getFirebaseUid(), FavoriteTargetType.TRIP, tripId);
+        int threads = 8;
+        CyclicBarrier start = new CyclicBarrier(threads);
+        ExecutorService pool = Executors.newFixedThreadPool(threads);
+        try {
+            List<Future<?>> calls = new ArrayList<>();
+            for (int i = 0; i < threads; i++) {
+                calls.add(pool.submit(() -> {
+                    start.await(10, TimeUnit.SECONDS);
+                    favoriteService.removeFavorite(user.getId(), FavoriteTargetType.TRIP, tripId);
+                    return null;
+                }));
+            }
+            for (Future<?> call : calls) {
+                assertThatCode(() -> call.get(30, TimeUnit.SECONDS)).doesNotThrowAnyException();
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+        assertThat(activeRows(tripId)).isZero();
+    }
+
     private int activeRows(UUID tripId) {
         Integer count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM favorites WHERE target_id = ? AND deleted_at IS NULL",

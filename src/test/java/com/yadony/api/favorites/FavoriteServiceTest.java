@@ -160,25 +160,22 @@ class FavoriteServiceTest {
     // --- removeFavorite tests ---
 
     @Test
-    void removeTrip_hardDeletesRow() {
-        FavoriteEntity active = new FavoriteEntity(userId, FavoriteTargetType.TRIP, tripId);
-        when(favoriteRepository.findByUserIdAndTargetTypeAndTargetId(userId, FavoriteTargetType.TRIP, tripId))
-                .thenReturn(Optional.of(active));
-
+    void removeTrip_deletesRowInOneStatement() {
         service.removeFavorite(userId, FavoriteTargetType.TRIP, tripId);
 
-        verify(favoriteRepository).delete(active);
-        verify(favoriteRepository, never()).save(any());
+        verify(favoriteRepository).deleteActive(userId, "TRIP", tripId);
+        // Plus de chargement de l'entité : deux suppressions simultanées se marchaient
+        // dessus au flush (409).
+        verify(favoriteRepository, never()).findByUserIdAndTargetTypeAndTargetId(any(), any(), any());
+        verify(favoriteRepository, never()).delete(any());
     }
 
     @Test
     void removeTrip_noOpWhenAbsent() {
-        when(favoriteRepository.findByUserIdAndTargetTypeAndTargetId(userId, FavoriteTargetType.TRIP, tripId))
-                .thenReturn(Optional.empty());
+        when(favoriteRepository.deleteActive(userId, "TRIP", tripId)).thenReturn(0);
 
-        service.removeFavorite(userId, FavoriteTargetType.TRIP, tripId);
-
-        verify(favoriteRepository, never()).delete(any());
+        assertThatCode(() -> service.removeFavorite(userId, FavoriteTargetType.TRIP, tripId))
+                .doesNotThrowAnyException();
         verify(favoriteRepository, never()).save(any());
     }
 
@@ -728,7 +725,7 @@ class FavoriteServiceTest {
     void removeFavorite_nullCallerId_isNoOp() {
         service.removeFavorite(null, FavoriteTargetType.TRIP, tripId);
 
-        verify(favoriteRepository, never()).findByUserIdAndTargetTypeAndTargetId(any(), any(), any());
+        verify(favoriteRepository, never()).deleteActive(any(), any(), any());
         verify(favoriteRepository, never()).delete(any());
     }
 }
