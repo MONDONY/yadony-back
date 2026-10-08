@@ -9,6 +9,7 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.BlockVisibility;
 import com.yadony.api.common.CommissionRateResolver;
+import com.yadony.api.common.PageResponse;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.common.i18n.MessagesResolver;
@@ -55,8 +56,10 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -795,6 +798,43 @@ public class BidService {
                 // suivi, et le téléphone de ses destinataires.
                 .map(b -> toResponse(b, user, user.getId()))
                 .toList();
+    }
+
+    /** Plafond de {@code size} pour {@link #getMyBidsPage} : une page reste bornée quoi que demande le client. */
+    static final int MY_BIDS_MAX_PAGE_SIZE = 50;
+
+    /**
+     * Version paginée de {@link #getMyBids} : {@code GET /bids/me?page=…}.
+     *
+     * <p>La liste complète coûte une dizaine de requêtes par colis (trajet, voyageur,
+     * notes, annulations, grille, photos…) : 741 colis pesaient 1,47 Mo et des
+     * milliers de requêtes au test de charge du 08/10/2026. Ici seule la page lue
+     * est convertie.
+     *
+     * <p>{@code statuses} vide = tous les statuts de colis ; les discussions de prix
+     * restent exclues même si le client les demande (elles vivent dans
+     * {@code /bids/negotiations/me}). {@code announcementId} restreint au trajet,
+     * pour le contrôle « déjà une demande sur ce trajet ».
+     */
+    @Transactional(readOnly = true)
+    @Cacheable(value = "bids-me",
+            key = "'page:' + #firebaseUid + ':' + #statuses + ':' + #announcementId + ':' + #page + ':' + #size")
+    public PageResponse<BidResponse> getMyBidsPage(String firebaseUid, Set<BidStatus> statuses,
+                                                   UUID announcementId, int page, int size) {
+        UserEntity user = findUserByFirebaseUid(firebaseUid);
+        EnumSet<BidStatus> allowed = EnumSet.complementOf(EnumSet.copyOf(BidStatus.NEGOTIATION_STATUSES));
+        if (statuses != null && !statuses.isEmpty()) {
+            allowed.retainAll(statuses);
+        }
+        PageRequest pageable = PageRequest.of(Math.max(page, 0),
+                Math.min(Math.max(size, 1), MY_BIDS_MAX_PAGE_SIZE));
+        if (allowed.isEmpty()) {
+            // Seuls des statuts de négociation demandés : rien à montrer, sans requête.
+            return PageResponse.from(Page.empty(pageable));
+        }
+        Page<BidEntity> bids = bidRepository.findBySenderIdFiltered(user.getId(), allowed, announcementId, pageable);
+        // L'appelant est l'expéditeur : mêmes champs que la liste complète.
+        return PageResponse.from(bids.map(b -> toResponse(b, user, user.getId())));
     }
 
     // Même rationale que getMyBids ci-dessus (données bilatérales, TTL courte).
