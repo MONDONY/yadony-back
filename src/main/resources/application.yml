@@ -10,6 +10,19 @@ spring:
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:dev}
 
+  # Pool JDBC — commun à tous les profils (ne pas surcharger dans application-*.yml).
+  # YADONY-BACK-STAGING-11 : une connexion morte en silence (coupure réseau ou
+  # Postgres redémarré) n'était détectée qu'au maxLifetime par défaut (30 min), à
+  # l'emprunt, et la requête échouait. Le keepalive sonde chaque connexion inactive
+  # toutes les 60 s et la remplace si elle ne répond plus ; un maxLifetime de 15 min
+  # recycle aussi les connexions actives bien avant tout délai côté Postgres
+  # (défauts : idle_session_timeout désactivé, tcp_keepalives_idle système 2 h) ou réseau
+  # (conntrack Linux par défaut : 5 jours). Hikari exige keepalive-time < max-lifetime.
+  datasource:
+    hikari:
+      keepalive-time: 60000
+      max-lifetime: 900000
+
   # JPA / Hibernate
   jpa:
     open-in-view: false
