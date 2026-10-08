@@ -72,32 +72,31 @@ public class WalletController {
         UUID userId = currentUserId();
         String activeCurrency = businessPrefsService.getPrefs(currentFirebaseUid()).currencyCode();
         WalletAccountEntity wallet = walletService.getOrCreate(userId, activeCurrency);
-        List<WalletTransactionEntity> transactions = walletService.getTransactions(userId, page);
-        Map<UUID, String> refundStatusByTxId = walletSelfRefundService.refundStatusByTransactionId(
-                transactions.stream().map(WalletTransactionEntity::getId).toList());
-        Map<UUID, WalletSelfRefundService.RefundFeeBreakdown> feesByTxId =
-                walletSelfRefundService.refundFeesByTransactionId(userId, transactions);
-        List<WalletTransactionDto> txs = transactions
+        // Lu après getOrCreate : le portefeuille de la devise active, créé à l'instant, figure
+        // dans la liste des devises.
+        WalletSelfRefundService.BalanceView view = walletSelfRefundService.balanceView(userId, page);
+        List<WalletTransactionDto> txs = view.transactions()
             .stream()
             .map(tx -> {
-                WalletSelfRefundService.RefundFeeBreakdown fees = feesByTxId.get(tx.getId());
-                return WalletTransactionDto.from(tx, refundStatusByTxId.get(tx.getId()),
+                WalletSelfRefundService.RefundFeeBreakdown fees = view.feesByTxId().get(tx.getId());
+                return WalletTransactionDto.from(tx, view.refundStatusByTxId().get(tx.getId()),
                         fees == null ? null : fees.feeAmount(), fees == null ? null : fees.netAmount());
             })
             .collect(Collectors.toList());
-        List<WalletAccountEntity> wallets = walletService.getAllBalances(userId);
-        WalletEstimate estimate = walletEstimateService.estimate(wallets, activeCurrency);
-        List<WalletCurrencyBalanceDto> balances = wallets
+        WalletEstimate estimate = walletEstimateService.estimate(
+                view.currencies().stream().map(WalletSelfRefundService.CurrencyView::wallet).toList(),
+                activeCurrency);
+        List<WalletCurrencyBalanceDto> balances = view.currencies()
             .stream()
-            .map(w -> {
-                WalletRefundAllocation a = safeAllocation(userId, w.getCurrency());
-                // isEligible reçoit l'allocation déjà calculée : la recalculer ici rejouerait
-                // tout le ledger une seconde fois, pour chaque devise du portefeuille.
-                // Net nul (tout le remboursable part en frais) : rien ne repartirait, bouton inactif.
+            .map(c -> {
+                WalletAccountEntity w = c.wallet();
+                WalletRefundAllocation a = c.allocation();
+                // Bouton « Rembourser » : pas de demande déjà en cours, du remboursable, et un net
+                // non nul (tout le remboursable part en frais : rien ne repartirait).
                 // Net jugé à l'échelle de l'unité mineure de la devise, comme le filtre de
                 // request() : sur a.net() (2 décimales de ledger), un reliquat XOF de 200.40
                 // avec 200 de frais activait le bouton pour un 422 garanti.
-                boolean eligible = walletSelfRefundService.isEligible(userId, w.getCurrency(), a)
+                boolean eligible = !c.refundPending() && a.refundableTotal().signum() > 0
                         && WalletSelfRefundService.issuableNet(w.getCurrency(), a).signum() > 0;
                 // equalsIgnoreCase : les portefeuilles antérieurs à V202 peuvent
                 // encore porter une casse mixte, et un simple equals aurait
@@ -114,15 +113,6 @@ public class WalletController {
         return ResponseEntity.ok(
             new WalletBalanceResponse(wallet.getBalance(), activeCurrency, txs, balances, activeEligible,
                     estimate.total(), estimate.complete()));
-    }
-
-    /** Un ledger incohérent ne doit pas casser l'écran portefeuille : on affiche 0 remboursable. */
-    private WalletRefundAllocation safeAllocation(UUID userId, String currency) {
-        try {
-            return walletSelfRefundService.allocationForDisplay(userId, currency);
-        } catch (WalletAllocationInvariantException e) {
-            return WalletRefundAllocation.empty();
-        }
     }
 
     @PostMapping("/topup")

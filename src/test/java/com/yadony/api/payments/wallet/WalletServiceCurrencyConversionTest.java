@@ -276,8 +276,7 @@ class WalletServiceCurrencyConversionTest {
         entityManager.clear();
 
         List<WalletTransactionEntity> rows = walletTransactionRepository
-                .findByUserIdOrderByCreatedAtDesc(userId, PageRequest.of(0, 10))
-                .getContent();
+                .findByUserIdOrderByCreatedAtDesc(userId, PageRequest.of(0, 10));
         assertThat(rows).hasSize(1);
         WalletTransactionEntity reread = rows.get(0);
 

@@ -10,7 +10,9 @@ import java.util.UUID;
 
 public interface WalletTransactionRepository extends JpaRepository<WalletTransactionEntity, UUID> {
 
-    Page<WalletTransactionEntity> findByUserIdOrderByCreatedAtDesc(UUID userId, Pageable pageable);
+    // Liste et non Page : l'écran portefeuille n'affiche pas le total, et une Page ajoutait un
+    // COUNT(*) de tout l'historique de l'utilisateur à chaque GET /wallet/balance.
+    List<WalletTransactionEntity> findByUserIdOrderByCreatedAtDesc(UUID userId, Pageable pageable);
 
     Optional<WalletTransactionEntity> findByIdempotencyKey(String idempotencyKey);
 

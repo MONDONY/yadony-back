@@ -181,32 +181,72 @@ class WalletSelfRefundServiceTest {
         assertThat(a.refundable().get(0).paymentIntentId()).isEqualTo("pi_1");
     }
 
+    /** Portefeuille unique de l'écran GET /wallet/balance, avec son ledger. */
+    private void stubBalance(String currency, String balance, WalletTransactionEntity... txs) {
+        when(walletAccountRepository.findAllByUserId(USER_ID)).thenReturn(List.of(wallet(currency, balance)));
+        when(walletTransactionRepository.findByUserIdAndCurrencyOrderByCreatedAtAsc(USER_ID, currency))
+                .thenReturn(List.of(txs));
+        lenient().when(refundRequestItemRepository.findByWalletTransactionIdIn(any())).thenReturn(List.of());
+        lenient().when(walletTransactionRepository.findByUserIdOrderByCreatedAtDesc(eq(USER_ID), any()))
+                .thenReturn(List.of());
+    }
+
     @Test
-    void allocationForDisplay_memeRejeu_fraisStripeLusEnModeAffichage_lectureEnTransactionReadOnly() {
+    void balanceView_memeRejeu_fraisStripeLusEnModeAffichage_lecturesDansUneSeuleTransactionReadOnly() {
         WalletTransactionEntity topup = ledgerTx(WalletTransactionType.TOP_UP, "40.00", "pi_1");
-        stubLedger("35.00", topup, ledgerTx(WalletTransactionType.BID_PAYMENT, "-5.00", null));
+        stubBalance("EUR", "35.00", topup, ledgerTx(WalletTransactionType.BID_PAYMENT, "-5.00", null));
         lenient().when(stripeFeeSource.feeForDisplay(any(), any())).thenReturn(BigDecimal.ZERO);
 
-        WalletRefundAllocation a = service.allocationForDisplay(USER_ID, "EUR");
+        WalletSelfRefundService.BalanceView view = service.balanceView(USER_ID, 2);
 
+        assertThat(view.currencies()).hasSize(1);
+        WalletRefundAllocation a = view.currencies().get(0).allocation();
         assertThat(a.refundableTotal()).isEqualByComparingTo("35.00");
         assertThat(a.refundable().get(0).paymentIntentId()).isEqualTo("pi_1");
+        assertThat(view.currencies().get(0).refundPending()).isFalse();
         // Le rejeu de l'écran n'emprunte jamais le chemin strict du remboursement réel.
         verify(stripeFeeSource, never()).fee(any(), any());
-        // Données lues dans une seule transaction en lecture seule, refermée avant le rejeu.
+        // Toutes les lectures dans une seule transaction en lecture seule, refermée avant le rejeu.
         ArgumentCaptor<org.springframework.transaction.TransactionDefinition> definition =
                 ArgumentCaptor.forClass(org.springframework.transaction.TransactionDefinition.class);
         verify(transactionManager).getTransaction(definition.capture());
         assertThat(definition.getValue().isReadOnly()).isTrue();
         verify(transactionManager).commit(any());
+        // Page demandée, sans COUNT ; solde repris de la liste des portefeuilles, pas relu.
+        verify(walletTransactionRepository).findByUserIdOrderByCreatedAtDesc(USER_ID,
+                org.springframework.data.domain.PageRequest.of(2,
+                        WalletSelfRefundService.BALANCE_TRANSACTIONS_PAGE_SIZE));
+        verify(walletAccountRepository, never()).findByUserIdAndCurrency(any(), any());
     }
 
     @Test
-    void allocationForDisplay_sansPortefeuille_allocationVide() {
-        when(walletAccountRepository.findByUserIdAndCurrency(USER_ID, "XOF")).thenReturn(Optional.empty());
+    void balanceView_sansPortefeuille_aucuneDeviseNiLecturePawapay() {
+        when(walletAccountRepository.findAllByUserId(USER_ID)).thenReturn(List.of());
+        when(walletTransactionRepository.findByUserIdOrderByCreatedAtDesc(eq(USER_ID), any())).thenReturn(List.of());
 
-        assertThat(service.allocationForDisplay(USER_ID, "XOF").refundableTotal()).isEqualByComparingTo("0");
-        verifyNoInteractions(walletTransactionRepository);
+        assertThat(service.balanceView(USER_ID, 0).currencies()).isEmpty();
+        verifyNoInteractions(pawapayOperationRepository);
+    }
+
+    @Test
+    void balanceView_demandeEnCours_signaleeParDevise() {
+        stubBalance("EUR", "35.00", ledgerTx(WalletTransactionType.TOP_UP, "35.00", "pi_1"));
+        lenient().when(stripeFeeSource.feeForDisplay(any(), any())).thenReturn(BigDecimal.ZERO);
+        when(refundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any()))
+                .thenReturn(true);
+
+        assertThat(service.balanceView(USER_ID, 0).currencies().get(0).refundPending()).isTrue();
+    }
+
+    @Test
+    void balanceView_ledgerIncoherent_allocationVideEtAlerte() {
+        stubBalance("EUR", "99.00", ledgerTx(WalletTransactionType.TOP_UP, "40.00", "pi_1"));
+        lenient().when(stripeFeeSource.feeForDisplay(any(), any())).thenReturn(BigDecimal.ZERO);
+
+        WalletSelfRefundService.BalanceView view = service.balanceView(USER_ID, 0);
+
+        assertThat(view.currencies().get(0).allocation().refundableTotal()).isEqualByComparingTo("0");
+        verify(adminAlertEscalator).raiseOnce(eq("wallet-alloc-" + USER_ID), any(), any());
     }
 
     @Test
@@ -225,25 +265,6 @@ class WalletSelfRefundServiceTest {
         when(walletAccountRepository.findByUserIdAndCurrency(USER_ID, "EUR")).thenReturn(Optional.empty());
 
         assertThat(service.allocation(USER_ID, "EUR").refundableTotal()).isEqualByComparingTo("0");
-    }
-
-    @Test
-    void isEligible_avecAllocationFournie_neRejouePasLeLedger() {
-        when(refundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any())).thenReturn(false);
-        WalletRefundAllocation deja = new WalletRefundAllocation(List.of(),
-                new BigDecimal("35.00"), BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal("35.00"));
-
-        assertThat(service.isEligible(USER_ID, "EUR", deja)).isTrue();
-        verifyNoInteractions(walletAccountRepository, walletTransactionRepository);
-    }
-
-    @Test
-    void isEligible_avecAllocationFournie_fauxQuandUneDemandeEstActive() {
-        when(refundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any())).thenReturn(true);
-        WalletRefundAllocation deja = new WalletRefundAllocation(List.of(),
-                new BigDecimal("35.00"), BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal("35.00"));
-
-        assertThat(service.isEligible(USER_ID, "EUR", deja)).isFalse();
     }
 
     @Test
