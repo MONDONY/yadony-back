@@ -22,6 +22,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -240,5 +241,68 @@ class PriceGridServiceTest {
         service.snapshotToAnnouncement(travelerId, UUID.randomUUID(), "EUR");
 
         assertThat(capturedSnapshots().get(0).getUnitPriceNet()).isEqualTo(new BigDecimal("0.01"));
+    }
+
+    // --- FLUTTER-8F : conversion de la grille au changement de devise active ---
+
+    @Test
+    void convertGridCurrency_convertsEachNetAndAudits() {
+        UUID travelerId = UUID.randomUUID();
+        PriceGridItemEntity valise = gridItem("Valise", "10.00", 0);
+        PriceGridItemEntity colis = gridItem("Colis", "0.0001", 1);
+        when(gridRepo.findByTravelerIdOrderByPositionAsc(travelerId)).thenReturn(List.of(valise, colis));
+
+        service.convertGridCurrency(travelerId, "EUR", "XOF");
+
+        // 10 € = 6 559,57 F CFA, arrondi a 0 decimale ; un net infime n'est jamais nul.
+        assertThat(valise.getUnitPriceNet()).isEqualByComparingTo("6560");
+        assertThat(colis.getUnitPriceNet()).isEqualByComparingTo("1");
+        verify(gridRepo).saveAll(List.of(valise, colis));
+        verify(auditService).log(eq("USER"), eq(travelerId), eq("PRICE_GRID_CURRENCY_CONVERTED"),
+                eq(travelerId), any());
+    }
+
+    @Test
+    void convertGridCurrency_backToEur_roundsToCents() {
+        UUID travelerId = UUID.randomUUID();
+        PriceGridItemEntity valise = gridItem("Valise", "6560", 0);
+        when(gridRepo.findByTravelerIdOrderByPositionAsc(travelerId)).thenReturn(List.of(valise));
+
+        service.convertGridCurrency(travelerId, "XOF", "EUR");
+
+        assertThat(valise.getUnitPriceNet()).isEqualByComparingTo("10.00");
+    }
+
+    @Test
+    void convertGridCurrency_sameCurrencyOrNull_doesNothing() {
+        UUID travelerId = UUID.randomUUID();
+
+        service.convertGridCurrency(travelerId, "EUR", "eur");
+        service.convertGridCurrency(travelerId, null, "EUR");
+        service.convertGridCurrency(travelerId, "EUR", null);
+
+        verifyNoInteractions(gridRepo, auditService);
+    }
+
+    @Test
+    void convertGridCurrency_emptyGrid_noAudit() {
+        UUID travelerId = UUID.randomUUID();
+        when(gridRepo.findByTravelerIdOrderByPositionAsc(travelerId)).thenReturn(List.of());
+
+        service.convertGridCurrency(travelerId, "EUR", "XOF");
+
+        verify(gridRepo, never()).saveAll(any());
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    void priceGridCurrencyListener_delegatesToService() {
+        PriceGridService mocked = mock(PriceGridService.class);
+        UUID travelerId = UUID.randomUUID();
+
+        new PriceGridCurrencyListener(mocked).onActiveCurrencyChanged(
+                new com.yadony.api.settings.ActiveCurrencyChangedEvent(travelerId, "EUR", "CAD"));
+
+        verify(mocked).convertGridCurrency(travelerId, "EUR", "CAD");
     }
 }

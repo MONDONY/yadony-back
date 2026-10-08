@@ -46,6 +46,31 @@ public class TripTemplateService {
         this.activeCurrencyResolver = activeCurrencyResolver;
     }
 
+    /**
+     * Fige dans {@code previousCurrency} les modèles sans devise (antérieurs à V257) quand
+     * la devise active change (FLUTTER-8F). Un tel modèle se lisait dans la devise active :
+     * sans cela, son prix passerait tel quel dans la nouvelle devise (10 € devenant
+     * 10 F CFA). Aucun montant n'est converti, le modèle garde sa devise d'origine.
+     */
+    @Transactional
+    public void pinLegacyTemplatesCurrency(UUID userId, String previousCurrency) {
+        if (previousCurrency == null || previousCurrency.isBlank()) {
+            return;
+        }
+        List<TripTemplateEntity> legacy = repository.findByUserIdOrderByUpdatedAtDesc(userId).stream()
+                .filter(t -> t.getCurrency() == null)
+                .toList();
+        if (legacy.isEmpty()) {
+            return;
+        }
+        String pinned = previousCurrency.trim().toUpperCase(java.util.Locale.ROOT);
+        legacy.forEach(t -> t.setCurrency(pinned));
+        repository.saveAll(legacy);
+        auditService.log("USER", userId, "TRIP_TEMPLATES_CURRENCY_PINNED", userId,
+                java.util.Map.of("templateCount", String.valueOf(legacy.size()),
+                        "currency", pinned));
+    }
+
     public List<TripTemplateDto> findAll(UUID userId) {
         return repository.findByUserIdOrderByUpdatedAtDesc(userId)
                 .stream().map(this::toDto).collect(Collectors.toList());

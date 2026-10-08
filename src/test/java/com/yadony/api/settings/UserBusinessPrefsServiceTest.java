@@ -2,6 +2,7 @@ package com.yadony.api.settings;
 
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
+import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import org.junit.jupiter.api.BeforeEach;
@@ -12,9 +13,11 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -29,8 +32,9 @@ class UserBusinessPrefsServiceTest {
     @Mock UserBusinessPrefsRepository repository;
     @Mock UserRepository userRepository;
     @Mock CountryLockService countryLockService;
-    @Mock CurrencyLockService currencyLockService;
     @Mock ActiveCurrencyResolver activeCurrencyResolver;
+    @Mock AuditService auditService;
+    @Mock ApplicationEventPublisher eventPublisher;
     @InjectMocks UserBusinessPrefsService service;
 
     private static final String FIREBASE_UID = "uid-test";
@@ -47,7 +51,6 @@ class UserBusinessPrefsServiceTest {
         // meme entite reste geree par la persistence context de la transaction.
         lenient().when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
         lenient().when(countryLockService.isLocked(USER_ID)).thenReturn(false);
-        lenient().when(currencyLockService.isLocked(USER_ID)).thenReturn(false);
         lenient().when(activeCurrencyResolver.resolve(USER_ID)).thenReturn("EUR");
         lenient().when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
     }
@@ -103,11 +106,10 @@ class UserBusinessPrefsServiceTest {
     }
 
     @Test
-    void getPrefs_reportsCurrencyLockAndCountryLockIndependently() {
+    void getPrefs_reportsCountryLock_currencyNeverLocked() {
         UserBusinessPrefsEntity entity = buildEntity("kg", "EUR", 10, 23, 0, null, null);
         when(repository.findById(USER_ID)).thenReturn(Optional.of(entity));
         when(countryLockService.isLocked(USER_ID)).thenReturn(true);
-        when(currencyLockService.isLocked(USER_ID)).thenReturn(false);
         existingUserHasCountry("FR");
 
         UserBusinessPrefsDto result = service.getPrefs(FIREBASE_UID);
@@ -201,15 +203,14 @@ class UserBusinessPrefsServiceTest {
     }
 
     // -------------------------------------------------------------------------
-    // upsert — devise : ecriture normale, gardee par CurrencyLockService
+    // upsert — devise active : libre, meme avec des soldes (FLUTTER-8F)
     // -------------------------------------------------------------------------
 
     @Test
-    @DisplayName("Un PUT changeant la devise avec un solde nul l'enregistre effectivement")
-    void upsert_currencyChange_balanceEmpty_isPersisted() {
+    @DisplayName("Changer de devise active l'enregistre, l'audite et publie l'evenement")
+    void upsert_currencyChange_isPersistedAuditedAndPublished() {
         UserBusinessPrefsEntity existing = buildEntity("kg", "EUR", 10, 23, 0, null, null);
         when(repository.findById(USER_ID)).thenReturn(Optional.of(existing));
-        when(currencyLockService.isLocked(USER_ID)).thenReturn(false);
 
         UserBusinessPrefsDto input = new UserBusinessPrefsDto(
                 "kg", "XOF", 10, 23, 0, null, null, null, null, null, null);
@@ -219,49 +220,62 @@ class UserBusinessPrefsServiceTest {
         verify(repository, times(1)).save(captor.capture());
         assertThat(captor.getValue().getCurrencyCode()).isEqualTo("XOF");
         assertThat(result.currencyCode()).isEqualTo("XOF");
+        // Le verrou n'existe plus : le champ reste servi, toujours a false.
+        assertThat(result.currencyLocked()).isFalse();
 
-        // Persiste vraiment : une lecture ulterieure refleterait la nouvelle valeur,
-        // pas seulement la reponse immediate du PUT.
-        UserBusinessPrefsEntity persisted = captor.getValue();
-        assertThat(persisted.getCurrencyCode()).isEqualTo("XOF");
+        verify(auditService).log("USER", USER_ID, "ACTIVE_CURRENCY_CHANGED", USER_ID,
+                Map.of("previousCurrency", "EUR", "newCurrency", "XOF"));
+        verify(eventPublisher).publishEvent(new ActiveCurrencyChangedEvent(USER_ID, "EUR", "XOF"));
     }
 
     @Test
-    @DisplayName("Un PUT changeant la devise avec un solde non nul leve un 422 currency-locked")
-    void upsert_currencyChange_balanceNotEmpty_throwsCurrencyLocked() {
-        UserBusinessPrefsEntity existing = buildEntity("kg", "EUR", 10, 23, 0, null, null);
+    @DisplayName("Une ancienne devise en minuscules est normalisee dans l'audit")
+    void upsert_currencyChange_legacyLowercasePrevious_isNormalized() {
+        UserBusinessPrefsEntity existing = buildEntity("kg", "cad", 10, 23, 0, null, null);
         when(repository.findById(USER_ID)).thenReturn(Optional.of(existing));
-        when(currencyLockService.isLocked(USER_ID)).thenReturn(true);
 
-        UserBusinessPrefsDto input = new UserBusinessPrefsDto(
-                "kg", "XOF", 10, 23, 0, null, null, null, null, null, null);
+        service.upsert(FIREBASE_UID, new UserBusinessPrefsDto(
+                "kg", "EUR", 10, 23, 0, null, null, null, null, null, null));
 
-        assertThatThrownBy(() -> service.upsert(FIREBASE_UID, input))
-                .isInstanceOf(YadonyBusinessException.class)
-                // getMessage() renvoie le `detail` francais, pas le code : assert sur getErrorCode().
-                .satisfies(ex -> {
-                    YadonyBusinessException dbe = (YadonyBusinessException) ex;
-                    assertThat(dbe.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
-                    assertThat(dbe.getErrorCode()).isEqualTo("currency-locked");
-                });
-        verify(repository, never()).save(any());
+        verify(eventPublisher).publishEvent(new ActiveCurrencyChangedEvent(USER_ID, "CAD", "EUR"));
     }
 
     @Test
-    @DisplayName("Renvoyer la meme devise n'echoue jamais, meme portefeuille verrouille")
-    void upsert_currencyUnchanged_neverFailsEvenWhenLocked() {
+    @DisplayName("Renvoyer la meme devise n'audite rien et ne publie rien")
+    void upsert_currencyUnchanged_noAuditNoEvent() {
         UserBusinessPrefsEntity existing = buildEntity("kg", "EUR", 10, 23, 0, null, null);
         when(repository.findById(USER_ID)).thenReturn(Optional.of(existing));
-        // Verrouille ou non, aucune importance : la garde ne s'applique qu'a un
-        // changement reel de devise (currencyChanges), jamais evalue ici puisque la
-        // valeur envoyee coincide deja avec la valeur stockee.
-        when(currencyLockService.isLocked(USER_ID)).thenReturn(true);
 
         UserBusinessPrefsDto input = new UserBusinessPrefsDto(
-                "kg", "EUR", 10, 23, 0, null, null, null, null, null, null);
+                "kg", "eur", 10, 23, 0, null, null, null, null, null, null);
         UserBusinessPrefsDto result = service.upsert(FIREBASE_UID, input);
 
         assertThat(result.currencyCode()).isEqualTo("EUR");
+        verifyNoInteractions(auditService, eventPublisher);
+    }
+
+    @Test
+    @DisplayName("Premiere ligne : le changement part de la devise derivee du pays")
+    void upsert_firstRow_currencyDiffersFromDerived_isAuditedFromDerived() {
+        when(repository.findById(USER_ID)).thenReturn(Optional.empty());
+        when(activeCurrencyResolver.resolve(USER_ID)).thenReturn("XOF");
+
+        service.upsert(FIREBASE_UID, new UserBusinessPrefsDto(
+                "kg", "EUR", 10, 23, 0, null, null, null, null, null, null));
+
+        verify(eventPublisher).publishEvent(new ActiveCurrencyChangedEvent(USER_ID, "XOF", "EUR"));
+    }
+
+    @Test
+    @DisplayName("Premiere ligne dans la devise deja derivee : aucun changement trace")
+    void upsert_firstRow_sameAsDerived_noEvent() {
+        when(repository.findById(USER_ID)).thenReturn(Optional.empty());
+        when(activeCurrencyResolver.resolve(USER_ID)).thenReturn("EUR");
+
+        service.upsert(FIREBASE_UID, new UserBusinessPrefsDto(
+                "kg", "EUR", 10, 23, 0, null, null, null, null, null, null));
+
+        verifyNoInteractions(auditService, eventPublisher);
     }
 
     @Test
@@ -482,11 +496,10 @@ class UserBusinessPrefsServiceTest {
     // -------------------------------------------------------------------------
 
     @Test
-    @DisplayName("La devise d'affichage se change meme portefeuille verrouille (exemption voulue)")
-    void upsert_displayCurrency_ignoresWalletLock() {
+    @DisplayName("La devise d'affichage se change sans toucher a la devise active")
+    void upsert_displayCurrency_leavesActiveCurrencyUntouched() {
         UserBusinessPrefsEntity entity = buildEntity("kg", "XOF", 10, 23, 0, null, null);
         when(repository.findById(USER_ID)).thenReturn(Optional.of(entity));
-        when(currencyLockService.isLocked(USER_ID)).thenReturn(true);
         UserBusinessPrefsDto input = new UserBusinessPrefsDto(
                 "kg", null, 10, 23, 0, null, null, null, null, null, "USD");
 
@@ -497,6 +510,7 @@ class UserBusinessPrefsServiceTest {
         assertThat(result.currencyCode()).isEqualTo("XOF");
         assertThat(entity.getDisplayCurrencyCode()).isEqualTo("USD");
         assertThat(entity.getCurrencyCode()).isEqualTo("XOF");
+        verifyNoInteractions(eventPublisher);
     }
 
     @Test
